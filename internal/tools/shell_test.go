@@ -14,6 +14,7 @@ import (
 )
 
 func TestExecEcho(t *testing.T) {
+	// Proves basic command execution works and stdout is returned as the result text.
 	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo hello world")
@@ -25,6 +26,7 @@ func TestExecEcho(t *testing.T) {
 }
 
 func TestExecWorkDir(t *testing.T) {
+	// Proves that the configured working directory is set on the subprocess by checking pwd output.
 	t.Parallel()
 	dir := t.TempDir()
 	tool := NewExecTool(nil, nil, 0, nil, dir, nil, 0, "")
@@ -47,6 +49,7 @@ func TestExecWorkDir(t *testing.T) {
 }
 
 func TestExecWithTimeout(t *testing.T) {
+	// Proves that providing a timeout parameter works correctly for commands that complete within it.
 	t.Parallel()
 	tool := newTestExecTool()
 
@@ -61,6 +64,7 @@ func TestExecWithTimeout(t *testing.T) {
 }
 
 func TestExecTimeout(t *testing.T) {
+	// Proves that a command exceeding its timeout is killed and returns an error in the result text.
 	t.Parallel()
 	tool := newTestExecTool()
 
@@ -75,6 +79,7 @@ func TestExecTimeout(t *testing.T) {
 }
 
 func TestExecFailedCommand(t *testing.T) {
+	// Proves that a non-zero exit code is surfaced in the result text rather than returned as a Go error.
 	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "false")
@@ -83,6 +88,7 @@ func TestExecFailedCommand(t *testing.T) {
 }
 
 func TestExecStderr(t *testing.T) {
+	// Proves that stderr output is included in the combined result text.
 	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo stderr_msg >&2")
@@ -91,6 +97,7 @@ func TestExecStderr(t *testing.T) {
 }
 
 func TestExecInvalidParams(t *testing.T) {
+	// Proves that malformed JSON params return a Go error rather than silently failing.
 	t.Parallel()
 	tool := newTestExecTool()
 	_, err := tool.Execute(context.Background(), json.RawMessage(`{invalid`))
@@ -98,6 +105,7 @@ func TestExecInvalidParams(t *testing.T) {
 }
 
 func TestExecMultilineOutput(t *testing.T) {
+	// Proves that multi-line output is preserved correctly with all lines intact.
 	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "printf 'line1\nline2\nline3'")
@@ -110,6 +118,7 @@ func TestExecMultilineOutput(t *testing.T) {
 }
 
 func TestExecBackgroundMode(t *testing.T) {
+	// Proves that background=true still captures and returns stdout.
 	t.Parallel()
 	tool := newTestExecTool()
 
@@ -124,6 +133,7 @@ func TestExecBackgroundMode(t *testing.T) {
 }
 
 func TestExecSecretTemplatesBlocked(t *testing.T) {
+	// Proves that secret template refs in exec commands are blocked to prevent secret exfiltration via shell.
 	t.Parallel()
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
@@ -180,6 +190,7 @@ func TestExecMixedSecretsBlocked(t *testing.T) {
 }
 
 func TestExecBlockedPath(t *testing.T) {
+	// Proves that commands referencing the secrets file path are blocked regardless of content.
 	t.Parallel()
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
@@ -277,8 +288,9 @@ func TestExecAutoBackgroundFastCommand(t *testing.T) {
 }
 
 func TestExecAutoBackgroundSlowCommand(t *testing.T) {
+	// Proves that a command exceeding the auto-background threshold returns immediately with a "still running"
+	// message, then delivers the final result via the notifier when the command completes.
 	t.Parallel()
-	// A slow command should auto-background after 1 second
 	completeCh := make(chan string, 1)
 	tool := NewExecTool(nil, nil, 1, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
@@ -311,8 +323,9 @@ func TestExecAutoBackgroundSlowCommand(t *testing.T) {
 }
 
 func TestExecAutoBackgroundSessionKeyPropagated(t *testing.T) {
+	// Proves that the session key from the context is passed through to the notifier callback
+	// when a command auto-backgrounds, so the result is routed back to the correct session.
 	t.Parallel()
-	// Verify the session key from context reaches the notifier callback
 	type result struct {
 		sk, msg string
 	}
@@ -397,6 +410,8 @@ func TestExecBareSecretStillBlocked(t *testing.T) {
 }
 
 func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
+	// Proves the logic that determines whether all secret refs in a command are scoped
+	// to foci_http_request arguments, covering all shell operator boundaries (|, &&, ||, ;).
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -466,6 +481,7 @@ func TestAllSecretRefsInHTTPRequestScope(t *testing.T) {
 }
 
 func TestExecOutputModeSeparated(t *testing.T) {
+	// Proves that output_mode=separated returns JSON with distinct stdout, stderr, and exit_code fields.
 	t.Parallel()
 	tests := []struct {
 		name       string
@@ -523,6 +539,7 @@ func TestExecOutputModeCombinedDefault(t *testing.T) {
 }
 
 func TestExecSleepBlocked(t *testing.T) {
+	// Proves that bare sleep commands are rejected to prevent the agent from blocking indefinitely.
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -595,6 +612,7 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 }
 
 func TestExecSleepNotBlockedInMiddle(t *testing.T) {
+	// Proves that commands containing the word "sleep" as part of other content are not blocked.
 	t.Parallel()
 	tool := newTestExecTool()
 	result, err := runExec(t, tool, "echo 'going to sleep'")

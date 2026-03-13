@@ -3,6 +3,8 @@ package config
 import "testing"
 
 func TestSetStringDefault(t *testing.T) {
+	// Proves that setStringDefault sets the value when the target is empty and
+	// preserves the existing value when it is already non-empty.
 	t.Run("sets when empty", func(t *testing.T) {
 		v := ""
 		setStringDefault(&v, "hello")
@@ -20,6 +22,8 @@ func TestSetStringDefault(t *testing.T) {
 }
 
 func TestSetIntDefault(t *testing.T) {
+	// Proves that setIntDefault sets the value when the target is zero and
+	// preserves the existing value when it is already non-zero.
 	t.Run("sets when zero", func(t *testing.T) {
 		v := 0
 		setIntDefault(&v, 42)
@@ -37,6 +41,8 @@ func TestSetIntDefault(t *testing.T) {
 }
 
 func TestSetInt64Default(t *testing.T) {
+	// Proves that setInt64Default sets the value when the target is zero and
+	// preserves an existing non-zero int64 value.
 	t.Run("sets when zero", func(t *testing.T) {
 		var v int64
 		setInt64Default(&v, 1024)
@@ -54,6 +60,8 @@ func TestSetInt64Default(t *testing.T) {
 }
 
 func TestSetFloatDefault(t *testing.T) {
+	// Proves that setFloatDefault sets the value when the target is zero and
+	// preserves an existing non-zero float value.
 	t.Run("sets when zero", func(t *testing.T) {
 		v := 0.0
 		setFloatDefault(&v, 0.5)
@@ -71,6 +79,8 @@ func TestSetFloatDefault(t *testing.T) {
 }
 
 func TestSetBoolDefaultDefined(t *testing.T) {
+	// Proves that setBoolDefaultDefined applies the default only when the field has
+	// not been explicitly set (defined=false), and preserves the value when defined.
 	t.Run("sets when not defined", func(t *testing.T) {
 		v := false
 		setBoolDefaultDefined(&v, true, false)
@@ -88,6 +98,8 @@ func TestSetBoolDefaultDefined(t *testing.T) {
 }
 
 func TestSetIntDefaultDefined(t *testing.T) {
+	// Proves that setIntDefaultDefined distinguishes between "zero because unset"
+	// (applies default) and "zero because explicitly set" (preserves zero).
 	t.Run("sets when zero and not defined", func(t *testing.T) {
 		v := 0
 		setIntDefaultDefined(&v, 10, false)
@@ -112,6 +124,8 @@ func TestSetIntDefaultDefined(t *testing.T) {
 }
 
 func TestValidateDurations(t *testing.T) {
+	// Proves that validateDurations accepts valid Go duration strings without error
+	// and returns an error identifying the field when an invalid duration is found.
 	t.Run("valid durations pass", func(t *testing.T) {
 		err := validateDurations([]durationEntry{
 			{"logging", "rotation_period", "24h"},
@@ -133,6 +147,9 @@ func TestValidateDurations(t *testing.T) {
 }
 
 func TestKeepaliveConfigMergeDefaults(t *testing.T) {
+	// Proves that KeepaliveConfig.MergeDefaults fills all fields from the global
+	// config when the local config is a zero value, and only fills empty fields
+	// when the local config has partial values.
 	global := KeepaliveConfig{Enabled: true, Interval: "55m", Prompt: "global.md"}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
@@ -155,6 +172,8 @@ func TestKeepaliveConfigMergeDefaults(t *testing.T) {
 }
 
 func TestBackgroundConfigMergeDefaults(t *testing.T) {
+	// Proves that BackgroundConfig.MergeDefaults copies all global fields when the
+	// local config is zero, and preserves non-zero local fields when merging.
 	global := BackgroundConfig{Interval: "5m", Prompt: "bg.md"}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
@@ -174,6 +193,9 @@ func TestBackgroundConfigMergeDefaults(t *testing.T) {
 }
 
 func TestMemoryFormationConfigMergeDefaults(t *testing.T) {
+	// Proves that MemoryFormationConfig.MergeDefaults copies pointer fields from
+	// the global config when they are nil locally, and preserves locally-set
+	// pointer values (including false) without overwriting them.
 	boolTrue := true
 	global := MemoryFormationConfig{
 		IntervalEnabled: &boolTrue, Interval: "1h", IntervalPrompt: "mf.md",

@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// TestTmuxWatchUnwatch verifies basic watch and unwatch operations.
 func TestTmuxWatchUnwatch(t *testing.T) {
+	// Verifies that watch registers monitoring for a session and unwatch stops it, both returning appropriate confirmation messages.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -60,8 +60,8 @@ func TestTmuxWatchUnwatch(t *testing.T) {
 	}
 }
 
-// TestTmuxWatchAlreadyWatched verifies that watching an already-watched session fails.
 func TestTmuxWatchAlreadyWatched(t *testing.T) {
+	// Verifies that a second watch call on an already-watched session returns a clear error, preventing duplicate watch registrations.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -106,8 +106,8 @@ func TestTmuxWatchAlreadyWatched(t *testing.T) {
 	tool.Execute(context.Background(), unwatchParams)
 }
 
-// TestTmuxUnwatchNotWatched verifies that unwatching a non-watched session fails.
 func TestTmuxUnwatchNotWatched(t *testing.T) {
+	// Verifies that unwatching a session that was never watched returns a clear error, guarding against invalid state transitions.
 	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
@@ -125,8 +125,8 @@ func TestTmuxUnwatchNotWatched(t *testing.T) {
 	}
 }
 
-// TestTmuxWatchWakeCallback verifies that the wake callback fires on inactivity.
 func TestTmuxWatchWakeCallback(t *testing.T) {
+	// Verifies that when a watched session is inactive longer than the threshold, the wake notifier fires with a message containing the session name and TMUX WATCH context.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -192,8 +192,8 @@ func TestTmuxWatchWakeCallback(t *testing.T) {
 	tool.Execute(context.Background(), params)
 }
 
-// TestTmuxWatchDeadSession verifies that dead sessions are cleaned up from watch state.
 func TestTmuxWatchDeadSession(t *testing.T) {
+	// Verifies that when a watched session is externally killed, the watch state is cleaned up automatically without sending a spurious notification.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -264,8 +264,8 @@ func TestTmuxWatchDeadSession(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestTmuxWatchMissingName verifies that watch/unwatch without name are rejected.
 func TestTmuxWatchMissingName(t *testing.T) {
+	// Verifies that both watch and unwatch fail with an error when no session name is provided, enforcing required-parameter validation.
 	t.Parallel()
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 

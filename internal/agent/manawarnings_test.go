@@ -9,6 +9,7 @@ import (
 )
 
 func TestManaWatcherNewNilForEmpty(t *testing.T) {
+	// Proves that NewManaWatcher returns nil when given nil or empty thresholds.
 	mw := NewManaWatcher("", nil)
 	if mw != nil {
 		t.Error("expected nil for empty thresholds")
@@ -21,6 +22,7 @@ func TestManaWatcherNewNilForEmpty(t *testing.T) {
 }
 
 func TestManaWatcherThresholdsSortedDescending(t *testing.T) {
+	// Proves that thresholds are internally sorted in descending order regardless of input order.
 	mw := NewManaWatcher("", []int{10, 50, 25, 5})
 	if mw.thresholds[0] != 50 {
 		t.Errorf("first threshold = %d, want 50", mw.thresholds[0])
@@ -37,6 +39,7 @@ func TestManaWatcherThresholdsSortedDescending(t *testing.T) {
 }
 
 func TestManaWatcherFiresAtThreshold(t *testing.T) {
+	// Proves that CheckAndWarn fires the callback with the correct message when mana drops below a threshold.
 	mw := NewManaWatcher("", []int{50, 25, 10, 5})
 
 	var warned string
@@ -53,6 +56,7 @@ func TestManaWatcherFiresAtThreshold(t *testing.T) {
 }
 
 func TestManaWatcherFiresOnlyOnce(t *testing.T) {
+	// Proves that each threshold fires at most once per day, even if mana stays below it.
 	mw := NewManaWatcher("", []int{50})
 
 	var count int
@@ -70,6 +74,7 @@ func TestManaWatcherFiresOnlyOnce(t *testing.T) {
 }
 
 func TestManaWatcherDoesNotFireAboveThreshold(t *testing.T) {
+	// Proves that no warning is triggered when mana is above all thresholds.
 	mw := NewManaWatcher("", []int{50, 25})
 
 	var warned string
@@ -83,6 +88,7 @@ func TestManaWatcherDoesNotFireAboveThreshold(t *testing.T) {
 }
 
 func TestManaWatcherNilSafe(t *testing.T) {
+	// Proves that CheckAndWarn on a nil ManaWatcher does not panic.
 	var mw *ManaWatcher
 
 	mw.CheckAndWarn("50%", "in 2h", func(w string) {
@@ -91,6 +97,7 @@ func TestManaWatcherNilSafe(t *testing.T) {
 }
 
 func TestManaWatcherEmptyManaString(t *testing.T) {
+	// Proves that an empty mana string is a no-op (no warning fired).
 	mw := NewManaWatcher("", []int{50})
 
 	var called bool
@@ -104,6 +111,7 @@ func TestManaWatcherEmptyManaString(t *testing.T) {
 }
 
 func TestManaWatcherParseError(t *testing.T) {
+	// Proves that a malformed mana string is a no-op (no warning fired).
 	mw := NewManaWatcher("", []int{50})
 
 	var called bool
@@ -117,6 +125,7 @@ func TestManaWatcherParseError(t *testing.T) {
 }
 
 func TestManaWatcherResetsAtMidnight(t *testing.T) {
+	// Proves that previously fired thresholds are cleared after midnight, allowing re-firing the next day.
 	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
 	mw := &ManaWatcher{
 		name:       "mana",
@@ -136,6 +145,7 @@ func TestManaWatcherResetsAtMidnight(t *testing.T) {
 }
 
 func TestManaWatcherCustomName(t *testing.T) {
+	// Proves that a custom name appears in the warning message instead of "mana".
 	mw := NewManaWatcher("juice", []int{50})
 
 	var warned string
@@ -149,6 +159,7 @@ func TestManaWatcherCustomName(t *testing.T) {
 }
 
 func TestManaWatcherEmptyNameDefaultsToMana(t *testing.T) {
+	// Proves that an empty name defaults to "mana" as the watcher name.
 	mw := NewManaWatcher("", []int{50})
 	if mw.name != "mana" {
 		t.Errorf("name = %q, want %q", mw.name, "mana")
@@ -156,6 +167,7 @@ func TestManaWatcherEmptyNameDefaultsToMana(t *testing.T) {
 }
 
 func TestManaWatcherFiresMultipleThresholdsInOrder(t *testing.T) {
+	// Proves that multiple thresholds each fire exactly once as mana drops progressively lower.
 	mw := NewManaWatcher("mana", []int{50, 25, 10})
 
 	var warnings []string
@@ -187,6 +199,7 @@ func TestManaWatcherFiresMultipleThresholdsInOrder(t *testing.T) {
 }
 
 func TestManaWatcherSkipsSystemMessages(t *testing.T) {
+	// Proves that CheckAndWarn fires for user-context mana checks (basic sanity check).
 	mw := NewManaWatcher("mana", []int{50})
 
 	var warned bool
@@ -197,11 +210,13 @@ func TestManaWatcherSkipsSystemMessages(t *testing.T) {
 }
 
 func TestManaWatcherNilWarnFunc(t *testing.T) {
+	// Proves that passing a nil warnFunc does not panic when a threshold is crossed.
 	mw := NewManaWatcher("mana", []int{50})
 	mw.CheckAndWarn("25%", "in 2h", nil)
 }
 
 func TestManaWatcherExactThresholdValue(t *testing.T) {
+	// Proves that the threshold comparison is inclusive: mana exactly at the threshold triggers a warning.
 	mw := NewManaWatcher("mana", []int{50})
 
 	var warned string
@@ -216,6 +231,7 @@ func TestManaWatcherExactThresholdValue(t *testing.T) {
 }
 
 func TestManaWatcherEmptyResetTime(t *testing.T) {
+	// Proves that an empty resetTime omits the "resets in..." clause from the warning message.
 	mw := NewManaWatcher("mana", []int{50})
 
 	var warned string
@@ -230,6 +246,7 @@ func TestManaWatcherEmptyResetTime(t *testing.T) {
 }
 
 func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
+	// Proves that fired thresholds are written to the state store so they survive a restart.
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	store := state.New(statePath)
@@ -260,6 +277,7 @@ func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
 }
 
 func TestManaWatcherRestoreLoadsFiredThreshold(t *testing.T) {
+	// Proves that Restore() loads previously fired thresholds so they don't re-fire the same day.
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	store := state.New(statePath)
@@ -291,6 +309,7 @@ func TestManaWatcherRestoreLoadsFiredThreshold(t *testing.T) {
 }
 
 func TestManaWatcherRestoreIgnoresStaleState(t *testing.T) {
+	// Proves that persisted state from a previous day is discarded rather than blocking new warnings.
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	store := state.New(statePath)
@@ -322,6 +341,7 @@ func TestManaWatcherRestoreIgnoresStaleState(t *testing.T) {
 }
 
 func TestManaWatcherPersistenceAfterRestart(t *testing.T) {
+	// Proves that a simulated restart preserves fired thresholds while allowing unfired ones to still trigger.
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 
@@ -355,11 +375,13 @@ func TestManaWatcherPersistenceAfterRestart(t *testing.T) {
 }
 
 func TestManaWatcherNilRestore(t *testing.T) {
+	// Proves that Restore() on a nil ManaWatcher does not panic.
 	var mw *ManaWatcher
 	mw.Restore()
 }
 
 func TestManaWatcherRestoreWithoutStore(t *testing.T) {
+	// Proves that Restore() is safe when no state store is configured, leaving the watcher functional.
 	mw := NewManaWatcher("mana", []int{50})
 	mw.Restore()
 
@@ -372,6 +394,7 @@ func TestManaWatcherRestoreWithoutStore(t *testing.T) {
 }
 
 func TestManaRestoreNotification(t *testing.T) {
+	// Proves that CheckRestore fires once when mana rises above the restore threshold after having dipped below it.
 	mw := NewManaWatcher("mana", []int{50, 25})
 	mw.SetRestoreThreshold(40)
 
@@ -395,6 +418,7 @@ func TestManaRestoreNotification(t *testing.T) {
 }
 
 func TestManaRestoreNotFiredWithoutDrop(t *testing.T) {
+	// Proves that no restore notification is sent if mana never dropped below the restore threshold.
 	mw := NewManaWatcher("mana", []int{50})
 	mw.SetRestoreThreshold(40)
 
@@ -406,6 +430,7 @@ func TestManaRestoreNotFiredWithoutDrop(t *testing.T) {
 }
 
 func TestManaRestoreDisabledByDefault(t *testing.T) {
+	// Proves that restore notifications are disabled by default (restoreThreshold=0).
 	mw := NewManaWatcher("mana", []int{50})
 	// restoreThreshold = 0 (default)
 
@@ -416,6 +441,7 @@ func TestManaRestoreDisabledByDefault(t *testing.T) {
 }
 
 func TestManaRestoreNilSafe(t *testing.T) {
+	// Proves that CheckRestore on a nil ManaWatcher does not panic and returns an empty string.
 	var mw *ManaWatcher
 	if msg := mw.CheckRestore("100%"); msg != "" {
 		t.Error("should return empty for nil watcher")
@@ -423,6 +449,7 @@ func TestManaRestoreNilSafe(t *testing.T) {
 }
 
 func TestManaRestoreResetsAtMidnight(t *testing.T) {
+	// Proves that the restore state clears at midnight, allowing re-firing on a new day.
 	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
 	mw := &ManaWatcher{
 		name:             "mana",
@@ -443,6 +470,7 @@ func TestManaRestoreResetsAtMidnight(t *testing.T) {
 }
 
 func TestManaRestorePersistence(t *testing.T) {
+	// Proves that the firedRestore flag is persisted so a restart does not re-send the restore notification.
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	store := state.New(statePath)
@@ -473,6 +501,7 @@ func TestManaRestorePersistence(t *testing.T) {
 }
 
 func TestManaWatcherPersistenceCustomName(t *testing.T) {
+	// Proves that state is stored under a key that includes the custom watcher name.
 	tmpDir := t.TempDir()
 	statePath := filepath.Join(tmpDir, "state.json")
 	store := state.New(statePath)

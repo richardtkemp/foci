@@ -11,6 +11,8 @@ import (
 )
 
 func TestSpawnInheritSemaphore(t *testing.T) {
+	// Proves that MaxInherit limits concurrent clone spawn executions, so that 4 simultaneous
+	// spawns with MaxInherit=2 never run more than 2 agents concurrently.
 	t.Parallel()
 	var concurrentCount int32
 	var maxConcurrent int32

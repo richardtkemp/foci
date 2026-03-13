@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// TestDisplayCommand_NoArgs verifies that /display with no arguments shows all
-// current effective display settings with their override status.
 func TestDisplayCommand_NoArgs(t *testing.T) {
+	// Verifies that /display with no arguments shows all
+	// current effective display settings with their override status.
 	cmd := newTestDisplayCommand(nil)
 
 	result, err := cmd.Execute(context.Background(), "")
@@ -29,9 +29,9 @@ func TestDisplayCommand_NoArgs(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_SetShowToolCalls verifies setting show_tool_calls accepts
-// valid values and rejects invalid ones.
 func TestDisplayCommand_SetShowToolCalls(t *testing.T) {
+	// Verifies setting show_tool_calls accepts
+	// valid values and rejects invalid ones.
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -55,9 +55,9 @@ func TestDisplayCommand_SetShowToolCalls(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_SetShowThinking verifies setting show_thinking accepts
-// valid values (off, compact, true) and rejects invalid ones.
 func TestDisplayCommand_SetShowThinking(t *testing.T) {
+	// Verifies setting show_thinking accepts
+	// valid values (off, compact, true) and rejects invalid ones.
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -80,9 +80,9 @@ func TestDisplayCommand_SetShowThinking(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_SetStreamOutput verifies setting stream_output accepts
-// on/off/true/false and normalises to "true"/"false".
 func TestDisplayCommand_SetStreamOutput(t *testing.T) {
+	// Verifies setting stream_output accepts
+	// on/off/true/false and normalises to "true"/"false".
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -119,9 +119,9 @@ func TestDisplayCommand_SetStreamOutput(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_SetDisplayWidth verifies setting display_width accepts
-// valid numeric values (20–200) and rejects out-of-range or non-numeric input.
 func TestDisplayCommand_SetDisplayWidth(t *testing.T) {
+	// Verifies setting display_width accepts
+	// valid numeric values (20–200) and rejects out-of-range or non-numeric input.
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -151,9 +151,9 @@ func TestDisplayCommand_SetDisplayWidth(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_Reset verifies that /display reset clears all overrides
-// and the response confirms the action.
 func TestDisplayCommand_Reset(t *testing.T) {
+	// Verifies that /display reset clears all overrides
+	// and the response confirms the action.
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -176,9 +176,9 @@ func TestDisplayCommand_Reset(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_ShowSingleKey verifies that /display <key> shows the
-// current value for that specific key and reports override status.
 func TestDisplayCommand_ShowSingleKey(t *testing.T) {
+	// Verifies that /display <key> shows the
+	// current value for that specific key and reports override status.
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -205,9 +205,9 @@ func TestDisplayCommand_ShowSingleKey(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_OverrideMarkerInStatus verifies that /display (no args)
-// marks overridden values with "(override)" in the full status output.
 func TestDisplayCommand_OverrideMarkerInStatus(t *testing.T) {
+	// Verifies that /display (no args)
+	// marks overridden values with "(override)" in the full status output.
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -223,9 +223,9 @@ func TestDisplayCommand_OverrideMarkerInStatus(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_UnknownKey verifies that /display with an unknown key
-// returns an error listing valid keys.
 func TestDisplayCommand_UnknownKey(t *testing.T) {
+	// Verifies that /display with an unknown key
+	// returns an error listing valid keys.
 	cmd := newTestDisplayCommand(nil)
 
 	_, err := cmd.Execute(context.Background(), "unknown_key value")
@@ -243,8 +243,8 @@ func TestDisplayCommand_UnknownKey(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_StreamAlias verifies that "stream" is an alias for "stream_output".
 func TestDisplayCommand_StreamAlias(t *testing.T) {
+	// Verifies that "stream" is an alias for "stream_output".
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -260,8 +260,8 @@ func TestDisplayCommand_StreamAlias(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_WidthAlias verifies that "width" is an alias for "display_width".
 func TestDisplayCommand_WidthAlias(t *testing.T) {
+	// Verifies that "width" is an alias for "display_width".
 	overrides := make(map[string]string)
 	cmd := newTestDisplayCommand(overrides)
 
@@ -277,9 +277,9 @@ func TestDisplayCommand_WidthAlias(t *testing.T) {
 	}
 }
 
-// TestDisplayCommand_KeyboardOptions verifies the command returns keyboard
-// options for each setting key plus reset.
 func TestDisplayCommand_KeyboardOptions(t *testing.T) {
+	// Verifies the command returns keyboard
+	// options for each setting key plus reset.
 	cmd := newTestDisplayCommand(nil)
 	opts := cmd.KeyboardOptions(context.Background())
 	if len(opts) != 5 {

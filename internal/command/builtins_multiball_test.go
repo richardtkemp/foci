@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// TestMultiballCommand verifies multiball fork invokes the callback and returns session info.
 func TestMultiballCommand(t *testing.T) {
+	// Verifies multiball fork invokes the callback and returns session info.
 	forked := false
 	cmd := NewMultiballCommand(func(ctx context.Context) (string, error) {
 		forked = true
@@ -29,8 +29,8 @@ func TestMultiballCommand(t *testing.T) {
 	}
 }
 
-// TestMultiballCommandError verifies error handling when fork fails.
 func TestMultiballCommandError(t *testing.T) {
+	// Verifies error handling when fork fails.
 	cmd := NewMultiballCommand(func(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no secondary bots configured")
 	})
@@ -44,8 +44,8 @@ func TestMultiballCommandError(t *testing.T) {
 	}
 }
 
-// TestManaCommand verifies mana/custom resource command displays status correctly.
 func TestManaCommand(t *testing.T) {
+	// Verifies mana/custom resource command displays status correctly.
 	tests := []struct {
 		name       string
 		cmdName    string
@@ -95,8 +95,8 @@ func TestManaCommand(t *testing.T) {
 	}
 }
 
-// TestManaCommandDescription verifies description includes the command name.
 func TestManaCommandDescription(t *testing.T) {
+	// Verifies description includes the command name.
 	cmd := NewManaCommand("juice", func(ctx context.Context) (string, error) {
 		return "", nil
 	})
@@ -105,8 +105,8 @@ func TestManaCommandDescription(t *testing.T) {
 	}
 }
 
-// TestCompactCommand verifies compact session operation.
 func TestCompactCommand(t *testing.T) {
+	// Verifies compact session operation.
 	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
 		if dryRun {
 			t.Error("expected dryRun=false for normal compact")
@@ -126,8 +126,8 @@ func TestCompactCommand(t *testing.T) {
 	}
 }
 
-// TestCompactCommandDryRun verifies dry-run compact operation.
 func TestCompactCommandDryRun(t *testing.T) {
+	// Verifies dry-run compact operation.
 	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
 		if !dryRun {
 			t.Error("expected dryRun=true for dry-run compact")
@@ -147,8 +147,8 @@ func TestCompactCommandDryRun(t *testing.T) {
 	}
 }
 
-// TestCompactCommandError verifies error handling when compact fails.
 func TestCompactCommandError(t *testing.T) {
+	// Verifies error handling when compact fails.
 	cmd := NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
 		return 0, fmt.Errorf("too few messages to compact (3)")
 	})
@@ -162,8 +162,8 @@ func TestCompactCommandError(t *testing.T) {
 	}
 }
 
-// TestScriptCommand verifies script command executes and captures output.
 func TestScriptCommand(t *testing.T) {
+	// Verifies script command executes and captures output.
 	cmd := NewScriptCommand("test", "test cmd", "echo hello from script", 10)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -174,8 +174,8 @@ func TestScriptCommand(t *testing.T) {
 	}
 }
 
-// TestScriptCommandFailure verifies script command captures stderr and exit code.
 func TestScriptCommandFailure(t *testing.T) {
+	// Verifies script command captures stderr and exit code.
 	cmd := NewScriptCommand("fail", "failing cmd", "echo oops >&2; exit 1", 10)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -189,8 +189,8 @@ func TestScriptCommandFailure(t *testing.T) {
 	}
 }
 
-// TestScriptCommandTimeout verifies script command times out correctly.
 func TestScriptCommandTimeout(t *testing.T) {
+	// Verifies script command times out correctly.
 	cmd := NewScriptCommand("slow", "slow cmd", "sleep 60", 1)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -201,8 +201,8 @@ func TestScriptCommandTimeout(t *testing.T) {
 	}
 }
 
-// TestScriptCommandDefaultTimeout verifies default timeout is applied when zero is passed.
 func TestScriptCommandDefaultTimeout(t *testing.T) {
+	// Verifies default timeout is applied when zero is passed.
 	// Verify default timeout is applied (not 0)
 	cmd := NewScriptCommand("test", "test", "echo ok", 0)
 	result, _ := cmd.Execute(context.Background(), "")
@@ -211,8 +211,8 @@ func TestScriptCommandDefaultTimeout(t *testing.T) {
 	}
 }
 
-// TestLogCommand verifies log command displays last N lines in code block.
 func TestLogCommand(t *testing.T) {
+	// Verifies log command displays last N lines in code block.
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "test.log")
 	var lines []string
@@ -247,9 +247,9 @@ func TestLogCommand(t *testing.T) {
 	}
 }
 
-// TestErrorsCommand verifies errors command filters by log level field, not message content.
-// INFO lines containing "ERROR" or "WARN" in their message body must NOT be included.
 func TestErrorsCommand(t *testing.T) {
+	// Verifies errors command filters by log level field, not message content.
+	// INFO lines containing "ERROR" or "WARN" in their message body must NOT be included.
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "test.log")
 	content := strings.Join([]string{

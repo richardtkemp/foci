@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TestContextCommand verifies context display shows token usage, threshold status, and system prompt breakdown.
 func TestContextCommand(t *testing.T) {
+	// Verifies context display shows token usage, threshold status, and system prompt breakdown.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "main/i0/0", Input: 50000, CacheRead: 30000, CacheWrite: 10000},
@@ -68,8 +68,8 @@ func TestContextCommand(t *testing.T) {
 	}
 }
 
-// TestContextCommandAtThreshold verifies "at/above threshold" message when usage reaches compaction threshold.
 func TestContextCommandAtThreshold(t *testing.T) {
+	// Verifies "at/above threshold" message when usage reaches compaction threshold.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "main/i0/0", Input: 150000, CacheRead: 20000, CacheWrite: 0},
@@ -91,8 +91,8 @@ func TestContextCommandAtThreshold(t *testing.T) {
 	}
 }
 
-// TestContextCommandNoApiCalls verifies appropriate message when no API calls exist.
 func TestContextCommandNoApiCalls(t *testing.T) {
+	// Verifies appropriate message when no API calls exist.
 	path := writeAPILog(t, nil)
 
 	info := testContextInfo()
@@ -108,8 +108,8 @@ func TestContextCommandNoApiCalls(t *testing.T) {
 	}
 }
 
-// TestContextCommandOtherSession verifies correct message when API calls exist but not for current session.
 func TestContextCommandOtherSession(t *testing.T) {
+	// Verifies correct message when API calls exist but not for current session.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "other:session", Input: 50000, CacheRead: 0, CacheWrite: 0},
@@ -129,8 +129,8 @@ func TestContextCommandOtherSession(t *testing.T) {
 	}
 }
 
-// TestContextCommandCustomThreshold verifies threshold comparison works with custom values.
 func TestContextCommandCustomThreshold(t *testing.T) {
+	// Verifies threshold comparison works with custom values.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "main/i0/0", Input: 100000, CacheRead: 0, CacheWrite: 0},
@@ -150,8 +150,8 @@ func TestContextCommandCustomThreshold(t *testing.T) {
 	}
 }
 
-// TestContextCommandNoSkillsOrEnv verifies sections with zero tokens are omitted.
 func TestContextCommandNoSkillsOrEnv(t *testing.T) {
+	// Verifies sections with zero tokens are omitted.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "main/i0/0", Input: 10000, CacheRead: 5000, CacheWrite: 1000},
@@ -180,8 +180,8 @@ func TestContextCommandNoSkillsOrEnv(t *testing.T) {
 	}
 }
 
-// TestContextCommandExactTokens verifies exact token counts from CountTokensFn are used without estimates.
 func TestContextCommandExactTokens(t *testing.T) {
+	// Verifies exact token counts from CountTokensFn are used without estimates.
 	path := writeAPILog(t, nil) // no API log entries needed
 
 	info := testContextInfo()
@@ -235,8 +235,8 @@ func TestContextCommandExactTokens(t *testing.T) {
 	}
 }
 
-// TestContextCommandCountingAPIError verifies fallback to estimates when token counting fails.
 func TestContextCommandCountingAPIError(t *testing.T) {
+	// Verifies fallback to estimates when token counting fails.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "main/i0/0", Input: 50000, CacheRead: 30000, CacheWrite: 10000, Output: 500},

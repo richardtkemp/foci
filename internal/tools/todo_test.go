@@ -12,6 +12,7 @@ import (
 )
 
 func TestTodoToolBatchTransitionDone(t *testing.T) {
+	// Proves that multiple IDs can be transitioned to done in a single call using the ids array.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -41,6 +42,7 @@ func TestTodoToolBatchTransitionDone(t *testing.T) {
 }
 
 func TestTodoToolBatchEdit(t *testing.T) {
+	// Proves that batch edit updates all specified items to the new priority simultaneously.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -71,6 +73,7 @@ func TestTodoToolBatchEdit(t *testing.T) {
 }
 
 func TestTodoToolBatchRemove(t *testing.T) {
+	// Proves that batch remove deletes only the specified items, leaving others intact.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -98,6 +101,7 @@ func TestTodoToolBatchRemove(t *testing.T) {
 }
 
 func TestTodoToolBatchBothIdAndIds(t *testing.T) {
+	// Proves that providing both id and ids in the same request is rejected as ambiguous.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -118,6 +122,8 @@ func TestTodoToolBatchBothIdAndIds(t *testing.T) {
 }
 
 func TestTodoToolBatchPartialFailure(t *testing.T) {
+	// Proves that a batch operation with some invalid IDs succeeds for valid ones and reports
+	// failures without returning a Go error, allowing partial progress.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -148,6 +154,7 @@ func TestTodoToolBatchPartialFailure(t *testing.T) {
 }
 
 func TestTodoToolSingleIdStillWorks(t *testing.T) {
+	// Proves backward compatibility: the singular id field still works for single-item transitions.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -175,6 +182,8 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 }
 
 func TestTodoToolGet(t *testing.T) {
+	// Proves that get returns the full formatted representation of a single item including
+	// its ID, text, priority, and tag.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -204,6 +213,7 @@ func TestTodoToolGet(t *testing.T) {
 }
 
 func TestTodoToolGetCompleted(t *testing.T) {
+	// Proves that getting a completed item shows the [x] marker and the close reason.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -228,6 +238,7 @@ func TestTodoToolGetCompleted(t *testing.T) {
 }
 
 func TestTodoToolGetNotFound(t *testing.T) {
+	// Proves that getting a non-existent ID returns an error.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -243,6 +254,7 @@ func TestTodoToolGetNotFound(t *testing.T) {
 }
 
 func TestTodoToolGetMissingId(t *testing.T) {
+	// Proves that get without an id parameter returns a validation error.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -257,6 +269,7 @@ func TestTodoToolGetMissingId(t *testing.T) {
 }
 
 func TestTodoToolGetWrongAgent(t *testing.T) {
+	// Proves that an agent cannot retrieve todo items belonging to a different agent, enforcing ownership.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -274,6 +287,7 @@ func TestTodoToolGetWrongAgent(t *testing.T) {
 }
 
 func TestTodoToolTransitionDropped(t *testing.T) {
+	// Proves that transitioning to "dropped" marks the item as dropped and it appears in the dropped list.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -301,6 +315,7 @@ func TestTodoToolTransitionDropped(t *testing.T) {
 }
 
 func TestTodoToolTransitionReopen(t *testing.T) {
+	// Proves that transitioning a completed item back to "open" clears completed_at and close_reason.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -334,6 +349,7 @@ func TestTodoToolTransitionReopen(t *testing.T) {
 }
 
 func TestTodoToolTransitionAliases(t *testing.T) {
+	// Proves that "cancelled" and "canceled" are accepted as aliases for "dropped".
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -359,6 +375,7 @@ func TestTodoToolTransitionAliases(t *testing.T) {
 }
 
 func TestTodoToolTransitionMissingReason(t *testing.T) {
+	// Proves that transitioning to "done" without a reason is rejected as a validation error.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -377,6 +394,7 @@ func TestTodoToolTransitionMissingReason(t *testing.T) {
 }
 
 func TestTodoToolCompleteBackCompat(t *testing.T) {
+	// Proves that the legacy "complete" action still works as an alias for transitioning to "done".
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -400,6 +418,7 @@ func TestTodoToolCompleteBackCompat(t *testing.T) {
 }
 
 func TestTodoToolInProgressAliases(t *testing.T) {
+	// Proves that all in_progress aliases (wip, started, working, in-progress, etc.) normalize to "in_progress".
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -424,6 +443,7 @@ func TestTodoToolInProgressAliases(t *testing.T) {
 }
 
 func TestTodoToolInProgressMarker(t *testing.T) {
+	// Proves that an in_progress item shows the [>] marker when retrieved.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -445,6 +465,7 @@ func TestTodoToolInProgressMarker(t *testing.T) {
 }
 
 func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
+	// Proves that transitioning to in_progress does not require a reason, unlike done/dropped.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -463,6 +484,8 @@ func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
 }
 
 func TestTodoToolStatusFilterInProgress(t *testing.T) {
+	// Proves that filtering by in_progress (and its aliases) shows only in_progress items
+	// and excludes open items.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -498,7 +521,7 @@ func executeTodoTool(tool *Tool, params map[string]interface{}) (string, error) 
 }
 
 func TestTodoToolListWithSort(t *testing.T) {
-	// Test the sort parameter through the tool interface
+	// Proves that sort=created returns items oldest-first and sort=updated returns most-recently-modified first.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")

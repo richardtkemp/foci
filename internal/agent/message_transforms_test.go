@@ -7,6 +7,7 @@ import (
 )
 
 func TestApplyTransformsQuestion(t *testing.T) {
+	// Proves that a matching regex rule transforms the message and captures the original via back-reference.
 	rules := CompileTransforms([]config.MessageTransform{
 		{
 			Find:    `(?is)^((why|when|what|how|where|who|did|does|do|is|are|was|were|can|could|would|should)\b.*\?\s*)$`,
@@ -22,6 +23,7 @@ func TestApplyTransformsQuestion(t *testing.T) {
 }
 
 func TestApplyTransformsNoMatch(t *testing.T) {
+	// Proves that messages not matching any rule are returned verbatim.
 	rules := CompileTransforms([]config.MessageTransform{
 		{
 			Find:    `(?i)^(why|when)\b`,
@@ -37,6 +39,7 @@ func TestApplyTransformsNoMatch(t *testing.T) {
 }
 
 func TestApplyTransformsChaining(t *testing.T) {
+	// Proves that rules are applied sequentially, with each rule operating on the output of the previous.
 	rules := CompileTransforms([]config.MessageTransform{
 		{Find: `foo`, Replace: `bar`},
 		{Find: `bar`, Replace: `baz`},
@@ -49,6 +52,7 @@ func TestApplyTransformsChaining(t *testing.T) {
 }
 
 func TestApplyTransformsEmpty(t *testing.T) {
+	// Proves that nil rules leave the message unchanged without panicking.
 	got := ApplyTransforms(nil, "hello")
 	if got != "hello" {
 		t.Errorf("nil rules modified message: got %q", got)
@@ -56,6 +60,7 @@ func TestApplyTransformsEmpty(t *testing.T) {
 }
 
 func TestCompileTransformsInvalidRegex(t *testing.T) {
+	// Proves that invalid regex patterns are silently skipped, leaving only the valid rules.
 	rules := CompileTransforms([]config.MessageTransform{
 		{Find: `[invalid`, Replace: "x"},
 		{Find: `valid`, Replace: "y"},

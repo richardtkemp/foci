@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// TestTmuxKillCleansUpChildProcesses verifies that killing a session terminates all descendants.
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
+	// Verifies that killing a tmux session also terminates all descendant processes, not just the pane shell, preventing orphaned processes.
 	t.Parallel()
 	tmuxAvailable(t)
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
@@ -72,9 +72,8 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	}
 }
 
-// TestCollectDescendants verifies that descendant processes are found.
 func TestCollectDescendants(t *testing.T) {
-	// Spawn a process with a known child
+	// Verifies that collectDescendants finds child processes of a given PID, using a bash shell that spawns a sleep subprocess.
 	t.Parallel()
 	cmd := exec.Command("bash", "-c", "sleep 300 & echo $!; wait")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -111,11 +110,9 @@ func TestCollectDescendants(t *testing.T) {
 	}
 }
 
-// TestTerminateProcesses verifies that stubborn processes are killed.
 func TestTerminateProcesses(t *testing.T) {
-	// Spawn a process that ignores SIGHUP and SIGTERM (like OpenCode does).
+	// Verifies that terminateProcesses escalates to SIGKILL for processes that ignore SIGHUP and SIGTERM, ensuring they are reliably killed.
 	t.Parallel()
-	// terminateProcesses should escalate to SIGKILL.
 	cmd := exec.Command("bash", "-c", "trap '' HUP TERM; sleep 300")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -147,8 +144,8 @@ func TestTerminateProcesses(t *testing.T) {
 	}
 }
 
-// TestMaybeKillTmuxServer_WithSessions verifies server stays alive when sessions exist.
 func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
+	// Verifies that maybeKillTmuxServer does not kill the server when active sessions still exist, preserving running work.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -176,8 +173,8 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 	}
 }
 
-// TestMaybeKillTmuxServer_NoSessions verifies server is killed when no sessions.
 func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
+	// Verifies that maybeKillTmuxServer kills the server when no sessions remain, and handles both "server already exited" and "server still running" cases gracefully.
 	// NOT parallel: kills the shared tmux server.
 	tmuxAvailable(t)
 
@@ -208,8 +205,8 @@ func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 	// err != nil is expected ("no server running") — that's the success case.
 }
 
-// TestTmuxKillCleansUpServer verifies that last session kill also kills server.
 func TestTmuxKillCleansUpServer(t *testing.T) {
+	// Verifies that killing the last session via the tool also shuts down the tmux server, leaving no orphaned server process.
 	// NOT parallel: kills the shared tmux server.
 	tmuxAvailable(t)
 
@@ -251,8 +248,8 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 	// err != nil ("no server running") is the expected success case.
 }
 
-// TestTmuxSessionPIDs verifies that session pane PIDs can be extracted.
 func TestTmuxSessionPIDs(t *testing.T) {
+	// Verifies that tmuxSessionPIDs returns valid process IDs for a running session's panes, confirming they are real /proc entries.
 	t.Parallel()
 	tmuxAvailable(t)
 

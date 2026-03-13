@@ -187,7 +187,8 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 }
 
 func TestSpawnCharacterAllTools(t *testing.T) {
-	// Verify character mode includes all tools (no blacklist).
+	// Proves that character context mode sends all registered tools to the model,
+	// including communication tools like send_message_to_user and send_to_session.
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
 	server := mockModelServer(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -236,6 +237,8 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 }
 
 func TestSpawnToolSetExcludesSpawn(t *testing.T) {
+	// Proves that the spawn tool is always excluded from the tool set passed to spawned agents,
+	// preventing recursive spawn chains.
 	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{

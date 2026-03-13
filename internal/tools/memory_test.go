@@ -33,6 +33,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 }
 
 func TestMemorySearch(t *testing.T) {
+	// Verifies that a basic FTS search returns results from multiple indexed files that match the query.
 	t.Parallel()
 	_, memDir := testMemoryTool(t)
 
@@ -67,6 +68,7 @@ func TestMemorySearch(t *testing.T) {
 }
 
 func TestMemorySearchNoMatches(t *testing.T) {
+	// Verifies that a query with no matching content returns the canonical "No matches found." message.
 	t.Parallel()
 	_, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "test.md"), []byte("nothing relevant here\n"), 0644)
@@ -93,6 +95,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 }
 
 func TestMemorySearchEmpty(t *testing.T) {
+	// Verifies that searching an empty index (no indexed files) returns the canonical no-results message.
 	t.Parallel()
 	tool, _ := testMemoryTool(t)
 	params, _ := json.Marshal(map[string]string{"query": "anything"})
@@ -107,6 +110,7 @@ func TestMemorySearchEmpty(t *testing.T) {
 }
 
 func TestMemorySearchShowsSource(t *testing.T) {
+	// Verifies that results include source type labels so the caller can distinguish memory files from conversation history.
 	t.Parallel()
 	_, memDir := testMemoryTool(t)
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The weather is sunny today"), 0644)
@@ -138,6 +142,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 }
 
 func TestMemorySearchSortParam(t *testing.T) {
+	// Verifies that the sort parameter accepts "newest", "oldest", "relevance", and empty (default) without error, and all return the expected file.
 	t.Parallel()
 	_, memDir := testMemoryTool(t)
 
@@ -195,6 +200,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 }
 
 func TestMemorySearchBackendParam(t *testing.T) {
+	// Verifies that when multiple backends are configured, the tool exposes a "backend" parameter in its schema and correctly routes queries to each backend by name.
 	t.Parallel()
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
@@ -265,6 +271,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 }
 
 func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
+	// Verifies that when only one backend is configured, the "backend" parameter is omitted from the tool schema to avoid unnecessary user-facing options.
 	t.Parallel()
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")

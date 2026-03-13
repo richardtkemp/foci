@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// TestPromptsCommand verifies /prompts list renders the full prompts table with all status
-// indicators (custom, default, inline, not-found, disabled) and the unrecognised files section.
 func TestPromptsCommand(t *testing.T) {
+	// Verifies /prompts list renders the full prompts table with all status
+	// indicators (custom, default, inline, not-found, disabled) and the unrecognised files section.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -77,9 +77,9 @@ func TestPromptsCommand(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandEmpty verifies /prompts list with a single default prompt renders correctly
-// and omits the unrecognised files section when there are no files.
 func TestPromptsCommandEmpty(t *testing.T) {
+	// Verifies /prompts list with a single default prompt renders correctly
+	// and omits the unrecognised files section when there are no files.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -111,9 +111,9 @@ func TestPromptsCommandEmpty(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandNoFiles verifies /prompts list omits unrecognised section when there are no
-// files on disk.
 func TestPromptsCommandNoFiles(t *testing.T) {
+	// Verifies /prompts list omits unrecognised section when there are no
+	// files on disk.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -136,9 +136,9 @@ func TestPromptsCommandNoFiles(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandKnownFilenamesFiltered verifies that known filenames (keepalive.md, first-run.md) are excluded
-// from the unrecognised files section while unknown files (custom-cron.md) still appear.
 func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
+	// Verifies that known filenames (keepalive.md, first-run.md) are excluded
+	// from the unrecognised files section while unknown files (custom-cron.md) still appear.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -182,9 +182,9 @@ func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandBareReturnsUsage verifies that /prompts with no args returns a usage string instead of
-// the table, since the inline keyboard handles bare invocations.
 func TestPromptsCommandBareReturnsUsage(t *testing.T) {
+	// Verifies that /prompts with no args returns a usage string instead of
+	// the table, since the inline keyboard handles bare invocations.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{AgentID: "test"}
@@ -203,9 +203,9 @@ func TestPromptsCommandBareReturnsUsage(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandKeyboard verifies that the keyboard options include list, reinstall, and diff
-// buttons for the bare /prompts command.
 func TestPromptsCommandKeyboard(t *testing.T) {
+	// Verifies that the keyboard options include list, reinstall, and diff
+	// buttons for the bare /prompts command.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData { return PromptsData{} },
 	})
@@ -229,9 +229,9 @@ func TestPromptsCommandKeyboard(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandChainKeyboardDiff verifies that selecting "diff" from the keyboard chains to a second
-// keyboard listing prompt labels that have resolved texts.
 func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
+	// Verifies that selecting "diff" from the keyboard chains to a second
+	// keyboard listing prompt labels that have resolved texts.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -271,8 +271,8 @@ func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandReinstall verifies embedded prompts are written to workspace directory.
 func TestPromptsCommandReinstall(t *testing.T) {
+	// Verifies embedded prompts are written to workspace directory.
 	dir := filepath.Join(t.TempDir(), "prompts")
 
 	cmd := NewPromptsCommand(PromptsCmdDeps{
@@ -309,8 +309,8 @@ func TestPromptsCommandReinstall(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandReinstallIdempotent verifies reinstall is idempotent when files match.
 func TestPromptsCommandReinstallIdempotent(t *testing.T) {
+	// Verifies reinstall is idempotent when files match.
 	dir := filepath.Join(t.TempDir(), "prompts")
 
 	embedded := map[string]string{
@@ -347,8 +347,8 @@ func TestPromptsCommandReinstallIdempotent(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandDiff verifies diff file is created and summary generated.
 func TestPromptsCommandDiff(t *testing.T) {
+	// Verifies diff file is created and summary generated.
 	var sentPath string
 
 	cmd := NewPromptsCommand(PromptsCmdDeps{
@@ -391,8 +391,8 @@ func TestPromptsCommandDiff(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandDiffFuzzyMatch verifies fuzzy matching of prompt labels from various input formats.
 func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
+	// Verifies fuzzy matching of prompt labels from various input formats.
 	tests := []struct {
 		input string
 		want  string
@@ -439,8 +439,8 @@ func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandDiffNotFound verifies error when prompt label doesn't match any prompt.
 func TestPromptsCommandDiffNotFound(t *testing.T) {
+	// Verifies error when prompt label doesn't match any prompt.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -473,8 +473,8 @@ func TestPromptsCommandDiffNotFound(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandDiffNoChanges verifies appropriate message when prompt matches embedded default.
 func TestPromptsCommandDiffNoChanges(t *testing.T) {
+	// Verifies appropriate message when prompt matches embedded default.
 	cmd := NewPromptsCommand(PromptsCmdDeps{
 		DataFn: func() PromptsData {
 			return PromptsData{
@@ -501,8 +501,8 @@ func TestPromptsCommandDiffNoChanges(t *testing.T) {
 	}
 }
 
-// TestDiffLines verifies unified diff format for various scenarios.
 func TestDiffLines(t *testing.T) {
+	// Verifies unified diff format for various scenarios.
 	t.Run("identical", func(t *testing.T) {
 		result := diffLines("hello\nworld\n", "hello\nworld\n", "a", "b")
 		if result != "" {

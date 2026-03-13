@@ -12,8 +12,8 @@ import (
 	"foci/internal/state"
 )
 
-// TestTmuxStartAutoWatch verifies that sessions auto-watch by default.
 func TestTmuxStartAutoWatch(t *testing.T) {
+	// Verifies that starting a session with the default watch setting automatically activates watch monitoring and persists the watch entry to the state store.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -69,8 +69,8 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	tool.Execute(context.Background(), params)
 }
 
-// TestTmuxStartWatchFalse verifies that watch=false prevents auto-watch.
 func TestTmuxStartWatchFalse(t *testing.T) {
+	// Verifies that explicitly setting watch=false on start prevents auto-watch and leaves no watch entries in the state store.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -111,12 +111,10 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	}
 }
 
-// TestTmuxStartAutoWatchNoNotifier verifies auto-watch is skipped without notifier.
 func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
+	// Verifies that auto-watch is silently skipped when no notifier is configured, so the session starts successfully without watch-related output.
 	t.Parallel()
 	tmuxAvailable(t)
-
-	// No notifier — auto-watch should be silently skipped
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-autowatch-nonotif"
@@ -141,8 +139,8 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	}
 }
 
-// TestTmuxAutopilotAutoUnwatch verifies autopilot auto-removes watches on inactivity.
 func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
+	// Verifies that in autopilot mode, a session watch is automatically removed after the inactivity threshold fires, so the agent is not re-woken repeatedly.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -204,8 +202,8 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	}
 }
 
-// TestTmuxAutopilotAutoWatchOnSend verifies autopilot re-watches on send.
 func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
+	// Verifies that in autopilot mode, sending keys to an unwatched session automatically starts watching it, and subsequent sends don't register a duplicate watch.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -272,8 +270,8 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	tool.Execute(context.Background(), params)
 }
 
-// TestTmuxAutopilotDisabled verifies autopilot doesn't auto-watch when disabled.
 func TestTmuxAutopilotDisabled(t *testing.T) {
+	// Verifies that when autopilot is disabled, sending to an unwatched session does not trigger auto-watch, leaving watch management entirely manual.
 	t.Parallel()
 	tmuxAvailable(t)
 

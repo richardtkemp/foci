@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestStatusCommand verifies status output contains all required session info, API call stats, and formatting.
 func TestStatusCommand(t *testing.T) {
+	// Verifies status output contains all required session info, API call stats, and formatting.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "agent:main:main", Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001},
@@ -57,8 +57,8 @@ func TestStatusCommand(t *testing.T) {
 	}
 }
 
-// TestStatusCommandBusy verifies busy status is shown correctly when agent is processing.
 func TestStatusCommandBusy(t *testing.T) {
+	// Verifies busy status is shown correctly when agent is processing.
 	path := writeAPILog(t, nil)
 	cmd := NewStatusCommand(func() StatusInfo {
 		return StatusInfo{AgentID: "test", AgentBusy: true}
@@ -70,8 +70,8 @@ func TestStatusCommandBusy(t *testing.T) {
 	}
 }
 
-// TestCacheCommand verifies cache hit rates and token usage are calculated and displayed correctly.
 func TestCacheCommand(t *testing.T) {
+	// Verifies cache hit rates and token usage are calculated and displayed correctly.
 	now := time.Now().UTC()
 	entries := make([]apiEntry, 7)
 	for i := range entries {
@@ -135,8 +135,8 @@ func TestCacheCommand(t *testing.T) {
 	}
 }
 
-// TestCacheCommandEmpty verifies appropriate message for no API calls.
 func TestCacheCommandEmpty(t *testing.T) {
+	// Verifies appropriate message for no API calls.
 	cmd := NewCacheCommand("/nonexistent/api.jsonl")
 	result, _ := cmd.Execute(context.Background(), "")
 	if result != "No API calls logged yet." {
@@ -144,9 +144,9 @@ func TestCacheCommandEmpty(t *testing.T) {
 	}
 }
 
-// TestLastCommand verifies /last shows the most recent API call per agent
-// as a table, and supports filtering by agent name.
 func TestLastCommand(t *testing.T) {
+	// Verifies /last shows the most recent API call per agent
+	// as a table, and supports filtering by agent name.
 	now := time.Now().UTC()
 	path := writeAPILog(t, []apiEntry{
 		{Timestamp: now, Session: "main/c1/100", Model: "claude-haiku-4-5", Input: 100, Output: 50, CostUSD: 0.001},

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestIsBinaryContentType verifies binary vs text content type detection
 func TestIsBinaryContentType(t *testing.T) {
+	// Verifies that image, audio, video, and opaque binary MIME types are detected as binary, while text and JSON types are not.
 	t.Parallel()
 	binary := []string{
 		"image/png", "image/jpeg", "audio/mpeg", "video/mp4",
@@ -31,8 +31,8 @@ func TestIsBinaryContentType(t *testing.T) {
 	}
 }
 
-// TestExtractJSONPath verifies JSON path extraction from response bodies
 func TestExtractJSONPath(t *testing.T) {
+	// Verifies that dot-notation paths correctly traverse nested objects and arrays, and that missing keys or out-of-range indices return errors.
 	t.Parallel()
 	data := []byte(`{"data":[{"url":"hello"},{"url":"world"}],"name":"test"}`)
 
@@ -66,9 +66,8 @@ func TestExtractJSONPath(t *testing.T) {
 	}
 }
 
-// TestDecodeDataURI verifies data URI decoding for embedded data
 func TestDecodeDataURI(t *testing.T) {
-	// Valid base64 data URI
+	// Verifies that valid base64 data URIs are decoded correctly, and that non-data URIs or malformed URIs return errors.
 	t.Parallel()
 	raw := []byte{0x89, 0x50, 0x4e, 0x47}
 	b64 := base64.StdEncoding.EncodeToString(raw)
