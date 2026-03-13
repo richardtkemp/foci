@@ -65,13 +65,13 @@ type StatusInfo struct {
 }
 
 
-func NewStatusCommand(statusFn func() StatusInfo, apiLogPath string) *Command {
+func NewStatusCommand(statusFn func(context.Context) StatusInfo, apiLogPath string) *Command {
 	return &Command{
 		Name:        "status",
 		Description: "Dashboard overview",
 		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
-			info := statusFn()
+			info := statusFn(ctx)
 
 			status := "idle"
 			if info.AgentBusy {

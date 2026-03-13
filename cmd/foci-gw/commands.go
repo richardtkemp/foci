@@ -75,8 +75,8 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	aliases := p.cfg.Models.Aliases
 
 	cmds.Register(command.NewPingCommand())
-	cmds.Register(command.NewStatusCommand(func() command.StatusInfo {
-		return buildStatusInfo(p)
+	cmds.Register(command.NewStatusCommand(func(ctx context.Context) command.StatusInfo {
+		return buildStatusInfo(p, ctx)
 	}, p.cfg.Logging.APIFile))
 	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
 	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))

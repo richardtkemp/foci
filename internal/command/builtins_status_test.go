@@ -16,7 +16,7 @@ func TestStatusCommand(t *testing.T) {
 		{Timestamp: now, Session: "other:session", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005},
 	})
 
-	cmd := NewStatusCommand(func() StatusInfo {
+	cmd := NewStatusCommand(func(_ context.Context) StatusInfo {
 		return StatusInfo{
 			AgentID:          "main",
 			SessionKey:       "agent:main:main",
@@ -60,13 +60,69 @@ func TestStatusCommand(t *testing.T) {
 func TestStatusCommandBusy(t *testing.T) {
 	// Verifies busy status is shown correctly when agent is processing.
 	path := writeAPILog(t, nil)
-	cmd := NewStatusCommand(func() StatusInfo {
+	cmd := NewStatusCommand(func(_ context.Context) StatusInfo {
 		return StatusInfo{AgentID: "test", AgentBusy: true}
 	}, path)
 
 	result, _ := cmd.Execute(context.Background(), "")
 	if !strings.Contains(result, "processing") {
 		t.Errorf("expected 'processing', got:\n%s", result)
+	}
+}
+
+func TestStatusCommandMultiball(t *testing.T) {
+	// Verifies that /status passes the execution context through to the statusFn,
+	// so multiball sessions can resolve the correct session key from ChatIDKey
+	// instead of always showing the primary session's status.
+	now := time.Now().UTC()
+	mainSession := "agent/c1/100"
+	multiballSession := "agent/c1/100/mb-abc123"
+
+	path := writeAPILog(t, []apiEntry{
+		{Timestamp: now, Session: mainSession, Model: "claude-haiku-4-5", Input: 200, Output: 100, CostUSD: 0.002},
+		{Timestamp: now, Session: multiballSession, Model: "claude-sonnet-4-5", Input: 500, Output: 200, CostUSD: 0.010},
+	})
+
+	// statusFn checks for ChatIDKey in context to resolve the correct session,
+	// mimicking the real sessionKeyFromCtx behavior.
+	cmd := NewStatusCommand(func(ctx context.Context) StatusInfo {
+		sk := mainSession
+		if chatID, ok := ctx.Value(ChatIDKey{}).(int64); ok && chatID == 77777 {
+			sk = multiballSession
+		}
+		return StatusInfo{
+			AgentID:          "agent",
+			SessionKey:       sk,
+			MessageCount:     10,
+			Model:            "claude-sonnet-4-5",
+			Uptime:           time.Hour,
+			StartTime:        now.Add(-time.Hour),
+			ContextLimit:     200000,
+			CompactThreshold: 0.8,
+		}
+	}, path)
+
+	// Simulate multiball context with ChatIDKey set.
+	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(77777))
+	result, err := cmd.Execute(ctx, "")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should show the multiball session, not the main session.
+	if !strings.Contains(result, multiballSession) {
+		t.Errorf("expected multiball session key %q in output:\n%s", multiballSession, result)
+	}
+	if strings.Contains(result, mainSession) && !strings.Contains(result, multiballSession) {
+		t.Errorf("should not show main session when run from multiball context:\n%s", result)
+	}
+
+	// Should show multiball session's cost ($0.010), not main's ($0.002).
+	if !strings.Contains(result, "$0.01") {
+		t.Errorf("expected multiball session cost in output:\n%s", result)
+	}
+	if !strings.Contains(result, "1 call") {
+		t.Errorf("expected 1 call for multiball session:\n%s", result)
 	}
 }
 
