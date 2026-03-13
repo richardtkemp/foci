@@ -408,9 +408,9 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int)
 	req.Fields = []string{"todo_id"}
 
 	switch sortOrder {
-	case "newest":
+	case "created", "updated":
 		req.SortBy([]string{"-mtime"})
-	case "oldest":
+	case "created_asc", "updated_asc":
 		req.SortBy([]string{"mtime"})
 	default:
 		req.SortBy([]string{"-_score"})

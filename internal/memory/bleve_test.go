@@ -954,10 +954,10 @@ func TestBleveTodoSearchSortOrder(t *testing.T) {
 	idx.IndexTodo(agentID, 2, "Second deploy task for production", float64(now-50))
 	idx.IndexTodo(agentID, 3, "Third deploy task for testing", float64(now))
 
-	// Oldest first
-	items, err := ts.Search(agentID, "deploy", &TodoSearchOpts{Sort: "oldest"})
+	// Created, reverse=true (oldest first)
+	items, err := ts.Search(agentID, "deploy", &TodoSearchOpts{Sort: "created", Reverse: true})
 	if err != nil {
-		t.Fatalf("Search (oldest): %v", err)
+		t.Fatalf("Search (created reverse): %v", err)
 	}
 	if len(items) < 2 {
 		t.Fatalf("expected at least 2 results, got %d", len(items))
@@ -966,10 +966,10 @@ func TestBleveTodoSearchSortOrder(t *testing.T) {
 		t.Errorf("oldest: first item should be #1, got #%d", items[0].ID)
 	}
 
-	// Newest first
-	items, err = ts.Search(agentID, "deploy", &TodoSearchOpts{Sort: "newest"})
+	// Created, default (newest first)
+	items, err = ts.Search(agentID, "deploy", &TodoSearchOpts{Sort: "created"})
 	if err != nil {
-		t.Fatalf("Search (newest): %v", err)
+		t.Fatalf("Search (created): %v", err)
 	}
 	if len(items) < 2 {
 		t.Fatalf("expected at least 2 results, got %d", len(items))

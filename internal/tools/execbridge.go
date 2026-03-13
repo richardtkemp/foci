@@ -397,7 +397,7 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
   local action="$1"; shift 2>/dev/null || true
-  local text="" priority="" tag="" query="" status="" id="" reason="" sort=""
+  local text="" priority="" tag="" query="" status="" id="" reason="" sort="" reverse="" limit=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --text) text="$2"; shift 2 ;;
@@ -408,9 +408,11 @@ func generateShellFunc(t *Tool) string {
       --id) id="$2"; shift 2 ;;
       --reason) reason="$2"; shift 2 ;;
       --sort) sort="$2"; shift 2 ;;
+      --limit) limit="$2"; shift 2 ;;
+      --reverse) reverse=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --text --priority --tag --query --status --id --reason --sort" >&2
+        echo "valid flags: --text --priority --tag --query --status --id --reason --sort --reverse --limit" >&2
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
@@ -437,6 +439,8 @@ func generateShellFunc(t *Tool) string {
       [ -n "$status" ] && params="$(echo "$params" | jq --arg s "$status" '. + {status: $s}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
+      [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
+      [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     list-all)
@@ -444,11 +448,16 @@ func generateShellFunc(t *Tool) string {
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
+      [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
+      [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     search)
       local params='{"action":"search"}'
       [ -n "$query" ] && params="$(echo "$params" | jq --arg q "$query" '. + {query: $q}')"
+      [ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"
+      [ -n "$reverse" ] && params="$(echo "$params" | jq '. + {reverse: true}')"
+      [ -n "$limit" ] && params="$(echo "$params" | jq --argjson l "$limit" '. + {limit: $l}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     get)

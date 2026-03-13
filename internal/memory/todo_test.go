@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -21,7 +20,7 @@ func TestTodoAddAndList(t *testing.T) {
 		t.Errorf("expected id 1, got %d", id)
 	}
 
-	items, err := store.List("agent1", "", "", "", "")
+	items, err := store.List("agent1", "", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -45,7 +44,7 @@ func TestTodoDefaultPriority(t *testing.T) {
 
 	store.Add("agent1", "Task with default priority", "", "")
 
-	items, err := store.List("agent1", "", "", "", "")
+	items, err := store.List("agent1", "", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -63,7 +62,7 @@ func TestTodoComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	items, err := store.List("agent1", "done", "", "", "")
+	items, err := store.List("agent1", "done", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -97,7 +96,7 @@ func TestTodoRemove(t *testing.T) {
 		t.Fatalf("Remove: %v", err)
 	}
 
-	items, err := store.List("agent1", "", "", "", "")
+	items, err := store.List("agent1", "", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -123,8 +122,8 @@ func TestTodoAgentIsolation(t *testing.T) {
 	store.Add("agent1", "Agent 1 task", "high", "")
 	store.Add("agent2", "Agent 2 task", "low", "")
 
-	items1, _ := store.List("agent1", "", "", "", "")
-	items2, _ := store.List("agent2", "", "", "", "")
+	items1, _ := store.List("agent1", "", "", "", "", false, 0)
+	items2, _ := store.List("agent2", "", "", "", "", false, 0)
 
 	if len(items1) != 1 || items1[0].Text != "Agent 1 task" {
 		t.Errorf("agent1 items = %v, want 1 item", items1)
@@ -176,9 +175,9 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	_ = id1
 	store.Complete("agent1", id2, "finished")
 
-	open, _ := store.List("agent1", "open", "", "", "")
-	done, _ := store.List("agent1", "done", "", "", "")
-	all, _ := store.List("agent1", "", "", "", "")
+	open, _ := store.List("agent1", "open", "", "", "", false, 0)
+	done, _ := store.List("agent1", "done", "", "", "", false, 0)
+	all, _ := store.List("agent1", "", "", "", "", false, 0)
 
 	if len(open) != 1 {
 		t.Errorf("expected 1 open, got %d", len(open))
@@ -204,7 +203,7 @@ func TestTodoListFilterActive(t *testing.T) {
 	store.Transition("agent1", id3, "dropped", "not needed")
 	store.Transition("agent1", id4, "in_progress", "")
 
-	active, err := store.List("agent1", "active", "", "", "")
+	active, err := store.List("agent1", "active", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List active: %v", err)
 	}
@@ -228,7 +227,7 @@ func TestTodoListFilterByPriority(t *testing.T) {
 	store.Add("agent1", "Low task", "low", "")
 
 	// Filter by priority
-	items, err := store.List("agent1", "", "", "high", "")
+	items, err := store.List("agent1", "", "", "high", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with priority: %v", err)
 	}
@@ -243,7 +242,7 @@ func TestTodoListFilterByPriority(t *testing.T) {
 
 	// Filter by priority + status
 	store.Complete("agent1", items[0].ID, "done")
-	open, err := store.List("agent1", "open", "", "high", "")
+	open, err := store.List("agent1", "open", "", "high", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with priority+status: %v", err)
 	}
@@ -252,12 +251,39 @@ func TestTodoListFilterByPriority(t *testing.T) {
 	}
 
 	// No priority filter shows all
-	all, err := store.List("agent1", "", "", "", "")
+	all, err := store.List("agent1", "", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
 	if len(all) != 4 {
 		t.Errorf("expected 4 total items, got %d", len(all))
+	}
+}
+
+func TestTodoListLimit(t *testing.T) {
+	// Verifies that List respects the limit parameter, returning at most N items,
+	// and that limit=0 returns all items.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Task 1", "high", "")
+	store.Add("agent1", "Task 2", "medium", "")
+	store.Add("agent1", "Task 3", "low", "")
+	store.Add("agent1", "Task 4", "medium", "")
+
+	items, err := store.List("agent1", "", "", "", "", false, 2)
+	if err != nil {
+		t.Fatalf("List with limit: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items with limit=2, got %d", len(items))
+	}
+
+	all, err := store.List("agent1", "", "", "", "", false, 0)
+	if err != nil {
+		t.Fatalf("List without limit: %v", err)
+	}
+	if len(all) != 4 {
+		t.Errorf("expected 4 items with limit=0, got %d", len(all))
 	}
 }
 
@@ -269,7 +295,7 @@ func TestTodoPriorityOrdering(t *testing.T) {
 	store.Add("agent1", "High task", "high", "")
 	store.Add("agent1", "Medium task", "medium", "")
 
-	items, _ := store.List("agent1", "open", "", "", "")
+	items, _ := store.List("agent1", "open", "", "", "", false, 0)
 	if len(items) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(items))
 	}
@@ -310,40 +336,14 @@ func TestTodoCrossAgentRemove(t *testing.T) {
 	}
 }
 
-func TestTodoSearch(t *testing.T) {
-	// Verifies case-insensitive substring search scoped to a single agent, with agent isolation from other agents' items.
+func TestTodoSearchRequiresIndex(t *testing.T) {
+	// Verifies that Search returns an error when no search index is configured.
 	store := newTestTodoStore(t)
+	store.Add("agent1", "Some task", "medium", "")
 
-	store.Add("agent1", "Buy milk from store", "high", "")
-	store.Add("agent1", "Fix login bug", "medium", "")
-	store.Add("agent1", "Buy groceries", "low", "")
-	store.Add("agent2", "Buy something for agent2", "medium", "")
-
-	// Case-insensitive substring match
-	items, err := store.Search("agent1", "buy", nil)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 matches, got %d", len(items))
-	}
-
-	// No matches
-	items, err = store.Search("agent1", "deploy", nil)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 matches, got %d", len(items))
-	}
-
-	// Agent isolation — agent2's item should not appear
-	items, err = store.Search("agent1", "agent2", nil)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 matches (agent isolation), got %d", len(items))
+	_, err := store.Search("agent1", "task", nil)
+	if err == nil {
+		t.Error("expected error when searching without a search index")
 	}
 }
 
@@ -356,7 +356,7 @@ func TestTodoTags(t *testing.T) {
 	store.Add("agent1", "Regular task", "low", "")
 
 	// Filter by tag
-	items, err := store.List("agent1", "", "background", "", "")
+	items, err := store.List("agent1", "", "background", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with tag: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestTodoTags(t *testing.T) {
 	}
 
 	// Filter by tag + status
-	items, err = store.List("agent1", "open", "daily", "", "")
+	items, err = store.List("agent1", "open", "daily", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with tag+status: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestTodoTags(t *testing.T) {
 	}
 
 	// No tag filter shows all
-	items, err = store.List("agent1", "", "", "", "")
+	items, err = store.List("agent1", "", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestTodoUpdatedAtOnAdd(t *testing.T) {
 	id, _ := store.Add("agent1", "Task", "medium", "")
 	after := time.Now().UTC().Truncate(time.Second).Add(time.Second)
 
-	items, _ := store.List("agent1", "", "", "", "")
+	items, _ := store.List("agent1", "", "", "", "", false, 0)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -579,7 +579,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original", "medium", "")
-	items, _ := store.List("agent1", "", "", "", "")
+	items, _ := store.List("agent1", "", "", "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
 
 	time.Sleep(1100 * time.Millisecond)
@@ -589,7 +589,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 		t.Fatalf("Edit: %v", err)
 	}
 
-	items, _ = store.List("agent1", "", "", "", "")
+	items, _ = store.List("agent1", "", "", "", "", false, 0)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -606,7 +606,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Task", "medium", "")
-	items, _ := store.List("agent1", "", "", "", "")
+	items, _ := store.List("agent1", "", "", "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
 
 	time.Sleep(1100 * time.Millisecond)
@@ -616,7 +616,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	items, _ = store.List("agent1", "done", "", "", "")
+	items, _ = store.List("agent1", "done", "", "", "", false, 0)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 done item, got %d", len(items))
 	}
@@ -688,7 +688,7 @@ func TestTodoSortOrderInProgress(t *testing.T) {
 
 	store.Transition("agent1", id2, "in_progress", "")
 
-	items, err := store.List("agent1", "", "", "", "")
+	items, err := store.List("agent1", "", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -704,7 +704,8 @@ func TestTodoSortOrderInProgress(t *testing.T) {
 }
 
 func TestTodoSortByCreated(t *testing.T) {
-	// Verifies that sort=created orders todos oldest-first by creation timestamp, using sleep-separated adds to ensure distinct times.
+	// Verifies that sort=created orders todos newest-first by default, and
+	// reverse=true flips to oldest-first.
 	store := newTestTodoStore(t)
 
 	id1, _ := store.Add("agent1", "First task", "high", "")
@@ -713,22 +714,34 @@ func TestTodoSortByCreated(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Third task", "high", "")
 
-	items, err := store.List("agent1", "", "", "", "created")
+	// Default: newest first
+	items, err := store.List("agent1", "", "", "", "created", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=created: %v", err)
 	}
 	if len(items) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(items))
 	}
-	// Should be ordered by creation time (oldest first)
-	if items[0].ID != id1 {
-		t.Errorf("first item ID = %d, want %d (oldest)", items[0].ID, id1)
+	if items[0].ID != id3 {
+		t.Errorf("first item ID = %d, want %d (newest)", items[0].ID, id3)
 	}
 	if items[1].ID != id2 {
 		t.Errorf("second item ID = %d, want %d", items[1].ID, id2)
 	}
+	if items[2].ID != id1 {
+		t.Errorf("third item ID = %d, want %d (oldest)", items[2].ID, id1)
+	}
+
+	// reverse=true: oldest first
+	items, err = store.List("agent1", "", "", "", "created", true, 0)
+	if err != nil {
+		t.Fatalf("List with sort=created reverse: %v", err)
+	}
+	if items[0].ID != id1 {
+		t.Errorf("reversed first item ID = %d, want %d (oldest)", items[0].ID, id1)
+	}
 	if items[2].ID != id3 {
-		t.Errorf("third item ID = %d, want %d (newest)", items[2].ID, id3)
+		t.Errorf("reversed third item ID = %d, want %d (newest)", items[2].ID, id3)
 	}
 }
 
@@ -747,7 +760,7 @@ func TestTodoSortByUpdated(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	store.Edit("agent1", id1, "Updated task 1", "", "", false)
 
-	items, err := store.List("agent1", "", "", "", "updated")
+	items, err := store.List("agent1", "", "", "", "updated", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=updated: %v", err)
 	}
@@ -775,7 +788,7 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 	store.Add("agent1", "Medium task", "medium", "")
 
 	// Empty sort parameter should use priority sort
-	items, err := store.List("agent1", "open", "", "", "")
+	items, err := store.List("agent1", "open", "", "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with empty sort: %v", err)
 	}
@@ -793,7 +806,7 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 	}
 
 	// Explicit priority sort should also work
-	items2, err := store.List("agent1", "open", "", "", "priority")
+	items2, err := store.List("agent1", "open", "", "", "priority", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=priority: %v", err)
 	}
@@ -806,7 +819,7 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 }
 
 func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
-	// Verifies that sort=created orders purely by creation timestamp regardless of status, so items of mixed statuses interleave chronologically.
+	// Verifies that sort=created orders purely by creation timestamp regardless of status, so items of mixed statuses interleave chronologically (newest first by default).
 	store := newTestTodoStore(t)
 
 	// Create items with different statuses at different times
@@ -820,8 +833,8 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	id4, _ := store.Add("agent1", "Fourth task", "high", "")
 
-	// List with sort=created should ignore status and sort purely by creation time
-	items, err := store.List("agent1", "", "", "", "created")
+	// sort=created, default direction = newest first
+	items, err := store.List("agent1", "", "", "", "created", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=created: %v", err)
 	}
@@ -829,17 +842,17 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 		t.Fatalf("expected 4 items, got %d", len(items))
 	}
 	// Should be ordered by creation time only, not grouped by status
-	if items[0].ID != id1 {
-		t.Errorf("first item ID = %d (status=%s), want %d", items[0].ID, items[0].Status, id1)
+	if items[0].ID != id4 {
+		t.Errorf("first item ID = %d (status=%s), want %d (newest)", items[0].ID, items[0].Status, id4)
 	}
-	if items[1].ID != id2 {
-		t.Errorf("second item ID = %d (status=%s), want %d", items[1].ID, items[1].Status, id2)
+	if items[1].ID != id3 {
+		t.Errorf("second item ID = %d (status=%s), want %d", items[1].ID, items[1].Status, id3)
 	}
-	if items[2].ID != id3 {
-		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id3)
+	if items[2].ID != id2 {
+		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id2)
 	}
-	if items[3].ID != id4 {
-		t.Errorf("fourth item ID = %d (status=%s), want %d", items[3].ID, items[3].Status, id4)
+	if items[3].ID != id1 {
+		t.Errorf("fourth item ID = %d (status=%s), want %d (oldest)", items[3].ID, items[3].Status, id1)
 	}
 }
 
@@ -861,7 +874,7 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	store.Edit("agent1", id1, "Updated task 1", "", "", false)
 
 	// List with sort=updated should ignore status and sort purely by updated time (newest first)
-	items, err := store.List("agent1", "", "", "", "updated")
+	items, err := store.List("agent1", "", "", "", "updated", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=updated: %v", err)
 	}
@@ -878,254 +891,6 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	if items[2].ID != id2 {
 		t.Errorf("third item ID = %d (status=%s), want %d", items[2].ID, items[2].Status, id2)
 	}
-}
-
-func TestTodoSearchFTSStemming(t *testing.T) {
-	// Verifies that FTS5 porter stemming matches morphological variants
-	// (e.g. "running" matches "run", "deployments" matches "deploy").
-	store := newTestTodoStore(t)
-
-	store.Add("agent1", "Fix the running server process", "high", "")
-	store.Add("agent1", "Review configuration settings carefully", "medium", "")
-	store.Add("agent1", "Update the documented procedures", "low", "")
-
-	// "run" should match "running" via stemming (step 1b: -ing removal)
-	items, err := store.Search("agent1", "run", nil)
-	if err != nil {
-		t.Fatalf("Search 'run': %v", err)
-	}
-	if len(items) != 1 {
-		t.Errorf("expected 1 match for 'run', got %d", len(items))
-	} else if items[0].Text != "Fix the running server process" {
-		t.Errorf("unexpected match: %q", items[0].Text)
-	}
-
-	// "configuring" should match "configuration" via stemming
-	// (both stem to "configur")
-	items, err = store.Search("agent1", "configuring", nil)
-	if err != nil {
-		t.Fatalf("Search 'configuring': %v", err)
-	}
-	if len(items) != 1 {
-		t.Errorf("expected 1 match for 'configuring', got %d", len(items))
-	}
-
-	// "documenting" should match "documented" via stemming
-	// (both stem to "document")
-	items, err = store.Search("agent1", "documenting", nil)
-	if err != nil {
-		t.Fatalf("Search 'documenting': %v", err)
-	}
-	if len(items) != 1 {
-		t.Errorf("expected 1 match for 'documenting', got %d", len(items))
-	}
-}
-
-func TestTodoSearchFTSRanking(t *testing.T) {
-	// Verifies that results with more term matches rank higher.
-	store := newTestTodoStore(t)
-
-	store.Add("agent1", "Update the server", "medium", "")
-	store.Add("agent1", "Update the server configuration and server logs", "medium", "")
-
-	// "server" appears twice in the second todo — it should rank higher.
-	items, err := store.Search("agent1", "server", nil)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("expected 2 matches, got %d", len(items))
-	}
-	if items[0].Text != "Update the server configuration and server logs" {
-		t.Errorf("expected higher-ranked result first, got %q", items[0].Text)
-	}
-}
-
-func TestTodoSearchFTSMultipleTerms(t *testing.T) {
-	// Verifies that multiple search terms work as an implicit AND.
-	store := newTestTodoStore(t)
-
-	store.Add("agent1", "Fix the login bug", "high", "")
-	store.Add("agent1", "Fix the payment processing", "medium", "")
-	store.Add("agent1", "Review login page design", "low", "")
-
-	// "fix login" should only match the item containing both terms
-	items, err := store.Search("agent1", "fix login", nil)
-	if err != nil {
-		t.Fatalf("Search: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 match for 'fix login', got %d", len(items))
-	}
-	if items[0].Text != "Fix the login bug" {
-		t.Errorf("unexpected match: %q", items[0].Text)
-	}
-}
-
-func TestTodoSearchFTSEditUpdatesIndex(t *testing.T) {
-	// Verifies that editing a todo's text updates the FTS index so the
-	// old text no longer matches and the new text does.
-	store := newTestTodoStore(t)
-
-	id, _ := store.Add("agent1", "Buy groceries from the store", "medium", "")
-
-	// Should find it by original text
-	items, err := store.Search("agent1", "groceries", nil)
-	if err != nil {
-		t.Fatalf("Search before edit: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 match before edit, got %d", len(items))
-	}
-
-	// Edit the text
-	store.Edit("agent1", id, "Deploy the application to staging", "", "", false)
-
-	// Old text should no longer match
-	items, err = store.Search("agent1", "groceries", nil)
-	if err != nil {
-		t.Fatalf("Search old text after edit: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 matches for old text after edit, got %d", len(items))
-	}
-
-	// New text should match
-	items, err = store.Search("agent1", "staging", nil)
-	if err != nil {
-		t.Fatalf("Search new text after edit: %v", err)
-	}
-	if len(items) != 1 {
-		t.Errorf("expected 1 match for new text after edit, got %d", len(items))
-	}
-}
-
-func TestTodoSearchFTSRemoveUpdatesIndex(t *testing.T) {
-	// Verifies that removing a todo removes it from the FTS index.
-	store := newTestTodoStore(t)
-
-	id, _ := store.Add("agent1", "Investigate memory leak", "high", "")
-
-	items, err := store.Search("agent1", "memory", nil)
-	if err != nil {
-		t.Fatalf("Search before remove: %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("expected 1 match before remove, got %d", len(items))
-	}
-
-	store.Remove("agent1", id)
-
-	items, err = store.Search("agent1", "memory", nil)
-	if err != nil {
-		t.Fatalf("Search after remove: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 matches after remove, got %d", len(items))
-	}
-}
-
-func TestTodoSearchFTSEmptyQuery(t *testing.T) {
-	// Verifies that an empty query returns nil without error.
-	store := newTestTodoStore(t)
-
-	store.Add("agent1", "Some task", "medium", "")
-
-	items, err := store.Search("agent1", "", nil)
-	if err != nil {
-		t.Fatalf("Search empty: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 results for empty query, got %d", len(items))
-	}
-
-	items, err = store.Search("agent1", "   ", nil)
-	if err != nil {
-		t.Fatalf("Search whitespace: %v", err)
-	}
-	if len(items) != 0 {
-		t.Errorf("expected 0 results for whitespace query, got %d", len(items))
-	}
-}
-
-func TestTodoSearchFTSSpecialCharacters(t *testing.T) {
-	// Verifies that queries with special characters don't cause FTS5 syntax errors.
-	store := newTestTodoStore(t)
-
-	store.Add("agent1", "Fix bug #123 in the login page", "high", "")
-
-	// These should not error, even if they don't match
-	for _, q := range []string{"bug", `#123`, "bug #123", `"login"`, "OR AND NOT"} {
-		_, err := store.Search("agent1", q, nil)
-		if err != nil {
-			t.Errorf("Search(%q) errored: %v", q, err)
-		}
-	}
-}
-
-func TestTodoSearchFTSMigrationRebuild(t *testing.T) {
-	// Verifies that opening a database with existing todos (but no FTS table)
-	// correctly builds the FTS index from existing content.
-	dbPath := filepath.Join(t.TempDir(), "migrate_test.db")
-
-	// Create a store and add some todos, then close it.
-	store, err := NewTodoStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewTodoStore (first): %v", err)
-	}
-	store.Add("agent1", "Pre-existing task about servers", "high", "")
-	store.Add("agent1", "Another old task about databases", "medium", "")
-	store.Close()
-
-	// Drop the FTS table and triggers to simulate a pre-FTS database.
-	db, err := openAndExec(dbPath,
-		"DROP TABLE IF EXISTS todos_fts",
-		"DROP TRIGGER IF EXISTS todos_fts_ai",
-		"DROP TRIGGER IF EXISTS todos_fts_ad",
-		"DROP TRIGGER IF EXISTS todos_fts_au",
-	)
-	if err != nil {
-		t.Fatalf("drop FTS: %v", err)
-	}
-	db.Close()
-
-	// Re-open — should rebuild FTS from existing content.
-	store, err = NewTodoStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewTodoStore (second): %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	items, err := store.Search("agent1", "servers", nil)
-	if err != nil {
-		t.Fatalf("Search after migration: %v", err)
-	}
-	if len(items) != 1 {
-		t.Errorf("expected 1 match after migration rebuild, got %d", len(items))
-	}
-
-	items, err = store.Search("agent1", "databases", nil)
-	if err != nil {
-		t.Fatalf("Search after migration: %v", err)
-	}
-	if len(items) != 1 {
-		t.Errorf("expected 1 match for 'databases' after migration, got %d", len(items))
-	}
-}
-
-// openAndExec opens a SQLite DB and executes statements, returning the db handle.
-func openAndExec(path string, stmts ...string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			db.Close()
-			return nil, err
-		}
-	}
-	return db, nil
 }
 
 func newTestTodoStore(t *testing.T) *TodoStore {

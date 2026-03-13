@@ -3,6 +3,7 @@ package memory
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,59 +76,7 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		}
 	}
 
-	if err := initTodoFTS(db); err != nil {
-		return closeOnErr("init todo FTS", err)
-	}
-
 	return &TodoStore{db: db}, nil
-}
-
-// initTodoFTS creates the FTS5 virtual table and sync triggers for
-// full-text search over todo text. Uses an external content table
-// backed by todos, so no content is duplicated. Porter stemming
-// provides morphological matching (e.g. "running" matches "run").
-func initTodoFTS(db *sql.DB) error {
-	// Check if FTS table already exists (to know if we need a rebuild).
-	var ftsExists bool
-	if err := db.QueryRow("SELECT 1 FROM sqlite_master WHERE type='table' AND name='todos_fts'").Scan(new(int)); err == nil {
-		ftsExists = true
-	}
-
-	_, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS todos_fts USING fts5(
-		text,
-		content='todos',
-		content_rowid='rowid',
-		tokenize='porter unicode61'
-	)`)
-	if err != nil {
-		return fmt.Errorf("create todos_fts: %w", err)
-	}
-
-	// Triggers keep the FTS index in sync with the todos table.
-	for _, stmt := range []string{
-		`CREATE TRIGGER IF NOT EXISTS todos_fts_ai AFTER INSERT ON todos BEGIN
-			INSERT INTO todos_fts(rowid, text) VALUES (new.rowid, new.text);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS todos_fts_ad AFTER DELETE ON todos BEGIN
-			INSERT INTO todos_fts(todos_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS todos_fts_au AFTER UPDATE ON todos BEGIN
-			INSERT INTO todos_fts(todos_fts, rowid, text) VALUES('delete', old.rowid, old.text);
-			INSERT INTO todos_fts(rowid, text) VALUES (new.rowid, new.text);
-		END`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("create fts trigger: %w", err)
-		}
-	}
-
-	// Populate FTS index from existing content on first creation.
-	if !ftsExists {
-		if _, err := db.Exec("INSERT INTO todos_fts(todos_fts) VALUES('rebuild')"); err != nil {
-			return fmt.Errorf("rebuild fts index: %w", err)
-		}
-	}
-	return nil
 }
 
 // columnExists checks whether a column exists in the given table.
@@ -216,8 +165,10 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 }
 
 // List returns todo items for an agent, optionally filtered by status, tag, and/or priority.
-// sort can be "priority" (default), "created", or "updated".
-func (s *TodoStore) List(agentID, status, tag, priority, sort string) ([]TodoItem, error) {
+// sort can be "created", "updated", "closed", or "priority".
+// Default direction is descending (newest/highest first); reverse=true flips it.
+// limit caps the number of results (0 = no limit).
+func (s *TodoStore) List(agentID, status, tag, priority, sort string, reverse bool, limit int) ([]TodoItem, error) {
 	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
@@ -241,20 +192,35 @@ func (s *TodoStore) List(agentID, status, tag, priority, sort string) ([]TodoIte
 		args = append(args, priority)
 	}
 
-	// Apply sort order
+	// Apply sort order. Default direction is descending (newest/highest first);
+	// reverse=true flips to ascending (oldest/lowest first).
+	dir, idDir := "DESC", "DESC"
+	if reverse {
+		dir, idDir = "ASC", "ASC"
+	}
 	switch sort {
 	case "created":
-		query += ` ORDER BY created_at ASC, id ASC`
+		query += fmt.Sprintf(` ORDER BY created_at %s, id %s`, dir, idDir)
 	case "updated":
-		query += ` ORDER BY updated_at DESC, id DESC`
-	default: // "priority" or empty (default)
-		if status != "" && status != "active" {
-			// Single-status filter: sort by priority only.
-			query += ` ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
-		} else {
-			// Multiple statuses visible: group by status, then priority.
-			query += ` ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, id`
+		query += fmt.Sprintf(` ORDER BY updated_at %s, id %s`, dir, idDir)
+	case "closed":
+		query += fmt.Sprintf(` ORDER BY completed_at %s, id %s`, dir, idDir)
+	default: // "priority" or empty
+		priOrder := `CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END`
+		if reverse {
+			priOrder = `CASE priority WHEN 'low' THEN 0 WHEN 'medium' THEN 1 WHEN 'high' THEN 2 END`
 		}
+		if status != "" && status != "active" {
+			query += fmt.Sprintf(` ORDER BY %s, id %s`, priOrder, idDir)
+		} else {
+			statusOrder := `CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END`
+			query += fmt.Sprintf(` ORDER BY %s, %s, id %s`, statusOrder, priOrder, idDir)
+		}
+	}
+
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
 	}
 
 	rows, err := s.db.Query(query, args...)
@@ -422,23 +388,24 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 
 // TodoSearchOpts controls filtering, sorting, and limiting of search results.
 type TodoSearchOpts struct {
-	Status string // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
-	Sort   string // "relevance" (default), "newest", "oldest"
-	Limit  int    // max results (0 = default 10)
+	Status  string // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
+	Sort    string // "relevance" (default), "created", "updated", "closed", "priority"
+	Reverse bool   // reverse sort direction (default false = descending/highest first)
+	Limit   int    // max results (0 = default 10)
 }
 
 // Search returns todo items matching the query using full-text search
 // with porter stemming (e.g. "running" matches "run"). Results are ranked
 // by relevance, with a secondary sort by status and priority for ties.
-// Uses the bleve search index when available, falling back to FTS5.
+// Requires a bleve search index (set via SetSearchIndex).
 func (s *TodoStore) Search(agentID, query string, opts *TodoSearchOpts) ([]TodoItem, error) {
 	if opts == nil {
 		opts = &TodoSearchOpts{}
 	}
-	if s.searchIndex != nil {
-		return s.searchBleve(agentID, query, opts)
+	if s.searchIndex == nil {
+		return nil, fmt.Errorf("todo search requires a search index (call SetSearchIndex)")
 	}
-	return s.searchFTS5(agentID, query)
+	return s.searchBleve(agentID, query, opts)
 }
 
 // searchBleve queries the bleve index for matching todos, then loads
@@ -450,14 +417,27 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 	if bleveLimit <= 0 {
 		bleveLimit = 10
 	}
-	if opts.Status != "" {
-		bleveLimit *= 5 // overfetch to ensure enough results survive filtering
+	// For sorts bleve can't do (priority, closed), or when status filtering,
+	// overfetch and post-sort.
+	needsPostSort := opts.Sort == "priority" || opts.Sort == "closed"
+	if opts.Status != "" || needsPostSort {
+		bleveLimit *= 5
 		if bleveLimit < 50 {
 			bleveLimit = 50
 		}
 	}
 
-	hits, err := s.searchIndex.SearchTodos(agentID, query, opts.Sort, bleveLimit)
+	// Translate sort+reverse into bleve sort order.
+	bleveSort := opts.Sort
+	if opts.Reverse && (bleveSort == "created" || bleveSort == "updated") {
+		bleveSort = bleveSort + "_asc"
+	}
+	// For sorts bleve can't handle, fetch by relevance and post-sort.
+	if needsPostSort {
+		bleveSort = "relevance"
+	}
+
+	hits, err := s.searchIndex.SearchTodos(agentID, query, bleveSort, bleveLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -467,10 +447,6 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 
 	// Load full items from SQLite by ID, maintaining bleve's order.
 	// Filter by status during load.
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 10
-	}
 	items := make([]TodoItem, 0, len(hits))
 	for _, hit := range hits {
 		item, err := s.Get(agentID, hit.TodoID)
@@ -481,9 +457,20 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 			continue
 		}
 		items = append(items, *item)
-		if len(items) >= limit {
-			break
-		}
+	}
+
+	// Post-sort for sort orders bleve can't handle.
+	if needsPostSort {
+		sortTodoItems(items, opts.Sort, opts.Reverse)
+	}
+
+	// Apply limit.
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if len(items) > limit {
+		items = items[:limit]
 	}
 	return items, nil
 }
@@ -500,45 +487,59 @@ func matchesStatusFilter(status, filter string) bool {
 	}
 }
 
-// searchFTS5 queries the embedded FTS5 index (fallback when no bleve index).
-func (s *TodoStore) searchFTS5(agentID, query string) ([]TodoItem, error) {
-	ftsQuery := buildFTSQuery(query)
-	if ftsQuery == "" {
-		return nil, nil
-	}
-	rows, err := s.db.Query(
-		`SELECT t.id, t.text, t.status, t.priority, t.tags, t.close_reason,
-		        t.agent_id, t.created_at, t.updated_at, t.completed_at
-		 FROM todos_fts f
-		 JOIN todos t ON t.rowid = f.rowid
-		 WHERE todos_fts MATCH ? AND t.agent_id = ?
-		 ORDER BY f.rank,
-		          CASE t.status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END,
-		          CASE t.priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END,
-		          t.id
-		 LIMIT 50`,
-		ftsQuery, agentID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	return scanTodos(rows)
+// sortTodoItems sorts items in-place by the given sort field and direction.
+// Default direction is descending (newest/highest first); reverse=true flips it.
+func sortTodoItems(items []TodoItem, sortField string, reverse bool) {
+	sort.Slice(items, func(i, j int) bool {
+		var less bool
+		switch sortField {
+		case "created":
+			less = items[i].CreatedAt.Before(items[j].CreatedAt)
+		case "updated":
+			less = items[i].UpdatedAt.Before(items[j].UpdatedAt)
+		case "closed":
+			ti, tj := items[i].CompletedAt, items[j].CompletedAt
+			switch {
+			case ti == nil && tj == nil:
+				less = items[i].ID < items[j].ID
+			case ti == nil:
+				less = true // nil sorts before non-nil
+			case tj == nil:
+				less = false
+			default:
+				less = ti.Before(*tj)
+			}
+		case "priority":
+			pi := priorityOrd(items[i].Priority)
+			pj := priorityOrd(items[j].Priority)
+			if pi != pj {
+				less = pi < pj
+			} else {
+				less = items[i].ID < items[j].ID
+			}
+		default:
+			less = items[i].ID < items[j].ID
+		}
+		// Default is descending (newest/highest first), so invert.
+		if !reverse {
+			return !less
+		}
+		return less
+	})
 }
 
-// buildFTSQuery converts a user query into an FTS5 match expression.
-// Each term is quoted to prevent FTS5 syntax errors from special
-// characters, while still allowing porter stemming to apply.
-func buildFTSQuery(query string) string {
-	terms := strings.Fields(query)
-	if len(terms) == 0 {
-		return ""
+// priorityOrd returns a numeric rank for priority (high=0, medium=1, low=2).
+func priorityOrd(p string) int {
+	switch p {
+	case "high":
+		return 0
+	case "medium":
+		return 1
+	case "low":
+		return 2
+	default:
+		return 3
 	}
-	quoted := make([]string, len(terms))
-	for i, t := range terms {
-		quoted[i] = `"` + strings.ReplaceAll(t, `"`, `""`) + `"`
-	}
-	return strings.Join(quoted, " ")
 }
 
 // Close closes the underlying database.
