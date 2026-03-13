@@ -14,6 +14,7 @@ import (
 )
 // buildCommandKeyboard groups KeyboardOptions by row and returns an
 // InlineKeyboardMarkup with callback data prefixed by "cmd:/cmdName ".
+// Rows with more than 3 buttons are auto-split into multiple rows.
 func buildCommandKeyboard(cmdName string, opts []command.KeyboardOption) gotgbot.InlineKeyboardMarkup {
 	rowMap := make(map[int][]gotgbot.InlineKeyboardButton)
 	maxRow := 0
@@ -26,13 +27,38 @@ func buildCommandKeyboard(cmdName string, opts []command.KeyboardOption) gotgbot
 			maxRow = opt.Row
 		}
 	}
-	rows := make([][]gotgbot.InlineKeyboardButton, 0, maxRow+1)
+	var rows [][]gotgbot.InlineKeyboardButton
 	for i := 0; i <= maxRow; i++ {
 		if buttons, ok := rowMap[i]; ok {
-			rows = append(rows, buttons)
+			rows = append(rows, layoutButtons(buttons)...)
 		}
 	}
 	return gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+// layoutButtons splits a slice of buttons into rows of reasonable width.
+// It prefers at most 3 buttons per row, but packs more if that would exceed
+// 4 rows (to avoid overly tall keyboards).
+func layoutButtons(buttons []gotgbot.InlineKeyboardButton) [][]gotgbot.InlineKeyboardButton {
+	n := len(buttons)
+	if n <= 3 {
+		return [][]gotgbot.InlineKeyboardButton{buttons}
+	}
+	const maxRows = 4
+	perRow := 3
+	if (n+perRow-1)/perRow > maxRows {
+		// Pack more per row so we don't exceed maxRows.
+		perRow = (n + maxRows - 1) / maxRows
+	}
+	var rows [][]gotgbot.InlineKeyboardButton
+	for i := 0; i < n; i += perRow {
+		end := i + perRow
+		if end > n {
+			end = n
+		}
+		rows = append(rows, buttons[i:end])
+	}
+	return rows
 }
 
 // singleButtonKeyboard returns an InlineKeyboardMarkup with one button.
