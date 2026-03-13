@@ -11,7 +11,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
-	"foci/internal/sqlite"
 )
 
 // AgentMemoryBoost is the weight added to agent-specific memory sources.
@@ -56,19 +55,6 @@ type memoryResult struct {
 	cleanup         func()
 }
 
-// migrateAgentDB migrates a per-agent database from the shared data_dir to
-// the agent's workspace .data directory. Logs the migration if it occurs.
-func migrateAgentDB(cfg *config.Config, acfg config.AgentConfig, filename string) {
-	oldPath := sqlite.AgentPath(cfg.DataPath(filename), acfg.ID)
-	newPath := config.AgentDataPath(acfg.Workspace, filename)
-	migrated, err := sqlite.MigrateFile(oldPath, newPath)
-	if err != nil {
-		log.Errorf("main", "migrate %s for %s: %v", filename, acfg.ID, err)
-	} else if migrated {
-		log.Infof("main", "migrated %s → %s", oldPath, newPath)
-	}
-}
-
 // initStandaloneStores creates per-agent standalone memory stores (reminder,
 // scratchpad, todo, task list) that should always exist regardless of whether
 // memory search sources are configured. Databases are stored in each agent's
@@ -81,11 +67,6 @@ func initStandaloneStores(cfg *config.Config, result memoryResult, closers *[]io
 		dataDir := filepath.Join(acfg.Workspace, ".data")
 		if err := os.MkdirAll(dataDir, 0755); err != nil {
 			log.Fatalf("main", "create agent data dir %s: %v", dataDir, err)
-		}
-
-		// Migrate databases from shared data_dir to workspace .data
-		for _, filename := range []string{"reminders.db", "scratchpad.db", "todo.db", "tasklist.db"} {
-			migrateAgentDB(cfg, acfg, filename)
 		}
 
 		rs, err := memory.NewReminderStore(config.AgentDataPath(acfg.Workspace, "reminders.db"))
@@ -185,21 +166,6 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	wantFTS5 := cfg.Memory.HasBackend("fts5")
 	wantBleve := cfg.Memory.HasBackend("bleve")
 
-	// migrateBlevePath renames legacy memory-*.bleve paths to search-*.bleve.
-	migrateBlevePath := func(oldName, newName string) {
-		oldPath := cfg.DataPath(oldName)
-		newPath := cfg.DataPath(newName)
-		if _, err := os.Stat(oldPath); err == nil {
-			if _, err := os.Stat(newPath); os.IsNotExist(err) {
-				if err := os.Rename(oldPath, newPath); err != nil {
-					log.Errorf("main", "migrate bleve path %s → %s: %v", oldPath, newPath, err)
-				} else {
-					log.Infof("main", "migrated bleve index %s → %s", oldName, newName)
-				}
-			}
-		}
-	}
-
 	// memoryBackend abstracts over FTS5 and bleve for shared init logic.
 	type memoryBackend interface {
 		memory.Searcher
@@ -264,21 +230,6 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				continue
 			}
 
-			// Migrate memory indices from shared data_dir to workspace .data
-			migrateAgentDB(cfg, acfg, "memory.db")
-			oldBleveName := fmt.Sprintf("search-%s.bleve", acfg.ID)
-			legacyBleveName := fmt.Sprintf("memory-%s.bleve", acfg.ID)
-			// Migrate legacy memory-*.bleve → search-*.bleve in data_dir first
-			migrateBlevePath(legacyBleveName, oldBleveName)
-			// Then migrate search-*.bleve from data_dir to workspace .data/search.bleve
-			oldBlevePath := cfg.DataPath(oldBleveName)
-			newBlevePath := config.AgentDataPath(acfg.Workspace, "search.bleve")
-			if migrated, err := sqlite.MigrateFile(oldBlevePath, newBlevePath); err != nil {
-				log.Errorf("main", "migrate bleve index for %s: %v", acfg.ID, err)
-			} else if migrated {
-				log.Infof("main", "migrated %s → %s", oldBlevePath, newBlevePath)
-			}
-
 			fts5Path := config.AgentDataPath(acfg.Workspace, "memory.db")
 			blevePath := config.AgentDataPath(acfg.Workspace, "search.bleve")
 			backends, fts5Idx, bleveIdx := initBackends(
@@ -315,8 +266,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			}
 		}
 	} else {
-		// Shared indices (backward compat — no agent has per-agent memory)
-		migrateBlevePath("memory.bleve", "search.bleve")
+		// Shared indices — no agent has per-agent memory
 		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, cfg.DataPath("memory.db"), cfg.DataPath("search.bleve"))
 		result.sharedBackends = backends
 		result.sharedFTS5 = fts5Idx

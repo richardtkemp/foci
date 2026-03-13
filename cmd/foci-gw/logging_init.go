@@ -6,7 +6,6 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/sqlite"
 )
 
 // initLogging sets up event logging, log rotation, API DB, and conversation DB.
@@ -59,28 +58,17 @@ func initLogging(cfg *config.Config) func() {
 
 	// Conversation log (per-agent SQLite databases in workspace .data)
 	if cfg.Logging.ConversationFile != "" {
-		// Build agent ID → workspace map for path resolution
-		agentWorkspaces := make(map[string]string, len(cfg.Agents))
 		var agentIDs []string
 		for _, acfg := range cfg.Agents {
 			agentIDs = append(agentIDs, acfg.ID)
-			agentWorkspaces[acfg.ID] = acfg.Workspace
-		}
-		// Migrate conversation DBs from shared data_dir to workspace .data
-		for _, acfg := range cfg.Agents {
-			oldPath := sqlite.AgentPath(cfg.Logging.ConversationFile, acfg.ID)
-			newPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
-			if migrated, err := sqlite.MigrateFile(oldPath, newPath); err != nil {
-				log.Errorf("main", "migrate conversation db for %s: %v", acfg.ID, err)
-			} else if migrated {
-				log.Infof("main", "migrated %s → %s", oldPath, newPath)
-			}
 		}
 		pathFn := func(agentID string) string {
-			if ws, ok := agentWorkspaces[agentID]; ok {
-				return config.AgentDataPath(ws, "conversation.db")
+			for _, acfg := range cfg.Agents {
+				if acfg.ID == agentID {
+					return config.AgentDataPath(acfg.Workspace, "conversation.db")
+				}
 			}
-			return sqlite.AgentPath(cfg.Logging.ConversationFile, agentID)
+			return ""
 		}
 		if err := log.InitPerAgentConversation(agentIDs, pathFn); err != nil {
 			log.Fatalf("main", "init conversation log: %v", err)
