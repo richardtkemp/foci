@@ -341,7 +341,6 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 
 	cols := []display.Column{
 		{Header: "Session Key"},
-		{Header: "Type"},
 		{Header: "Status"},
 		{Header: "Active"},
 		{Header: "Parent"},
@@ -360,8 +359,7 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 		}
 		tableRows[i] = []string{
 			shortenSessionKey(e.SessionKey),
-			e.SessionType,
-			e.Status,
+			statusEmoji(e.Status),
 			activity,
 			parent,
 		}
@@ -388,6 +386,22 @@ func sessionsIndexCmd(deps SessionsDeps, opts SessionIndexOpts) (string, error) 
 
 	return fmt.Sprintf("Session Index — %s%s\n\n%s",
 		countDesc, filterDesc, display.MarkdownTable(cols, tableRows)), nil
+}
+
+// statusEmoji maps session status strings to emoji indicators.
+func statusEmoji(status string) string {
+	switch status {
+	case "active":
+		return "🟢"
+	case "compacted":
+		return "📦"
+	case "archived":
+		return "🗄️"
+	case "cleared":
+		return "🧹"
+	default:
+		return status
+	}
 }
 
 // shortenSessionKey abbreviates a session key for table display.

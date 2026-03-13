@@ -258,8 +258,8 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	if !strings.Contains(result, "3 sessions") {
 		t.Errorf("expected 3 sessions with 'all', got %q", result)
 	}
-	if !strings.Contains(result, "spawn") {
-		t.Errorf("expected spawn type in output, got %q", result)
+	if !strings.Contains(result, "bot/ispa") {
+		t.Errorf("expected spawn session in output, got %q", result)
 	}
 
 	// Filter by type
