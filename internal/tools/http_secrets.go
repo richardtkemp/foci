@@ -123,6 +123,17 @@ func validateAndResolveSecrets(
 		}
 	}
 
+	// Log secret suffixes for debugging (only when debug.log_api_key_suffix is enabled).
+	if log.DebugLogKeySuffix {
+		for _, name := range regularRefs {
+			if store != nil {
+				if val, _ := store.Get(name); len(val) >= 4 {
+					log.Debugf("http_request", "secret %q suffix: ...%s", name, val[len(val)-4:])
+				}
+			}
+		}
+	}
+
 	// resolveValue resolves secret templates in a string using both stores.
 	resolveValue := func(v, label string) (string, error) {
 		if store != nil && len(regularRefs) > 0 {

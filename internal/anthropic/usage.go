@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"foci/internal/log"
 )
 
 const (
@@ -83,11 +85,16 @@ func (c *UsageClient) Invalidate() {
 // resolveToken returns the token to use for usage API requests.
 func (c *UsageClient) resolveToken() (string, error) {
 	if c.tokenFunc != nil {
-		return c.tokenFunc()
+		tok, err := c.tokenFunc()
+		if err == nil {
+			log.KeySuffix("anthropic-usage", tok)
+		}
+		return tok, err
 	}
 	if c.oauthToken == "" {
 		return "", fmt.Errorf("OAuth token not configured")
 	}
+	log.KeySuffix("anthropic-usage", c.oauthToken)
 	return c.oauthToken, nil
 }
 

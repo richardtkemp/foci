@@ -361,6 +361,15 @@ System resource monitoring.
 
 Both thresholds require memory pressure (PSI `avg10` from `/proc/pressure/memory` exceeding `memory_pressure_threshold`) before acting. This avoids false alarms when the system has ample free RAM despite high RSS. The guard reads `/proc` directly — no external commands.
 
+### `[debug]`
+
+Developer and debugging knobs. All off by default.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `log_api_key_suffix` | bool | `false` | Log the last 4 characters of API keys at DEBUG level on each provider API call. Applies to all providers (Anthropic, OpenAI, Gemini, voice) and secrets used in `http_request` tool calls. Useful for diagnosing which credential is being used when multiple keys are configured. |
+| `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. **Moved from `[sessions]`.** For backward compatibility, `sessions.compaction_debug` is still accepted; the `[debug]` value takes precedence. |
+
 ### `[database]`
 
 SQLite database settings.
@@ -691,7 +700,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
 | `task_list_notify` | bool | `true` | Send Telegram notifications when task list entries are created, started, or completed. Shows progress like "✅ 3/5: Fixed token counting". |
-| `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
+| `compaction_debug` | bool | `false` | **Deprecated** — moved to `[debug]` section. Still accepted here for backward compatibility; `debug.compaction_debug` takes precedence. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
 | `compaction_idle_threshold` | string | `"45m"` | Idle duration before idle pressure starts lowering the compaction threshold. `"0"` disables idle-aware compaction. Format: Go duration string (e.g., `"30m"`, `"1h"`). |

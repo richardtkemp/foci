@@ -652,6 +652,12 @@ type ManaConfig struct {
 	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset before spending (default: "30m")
 }
 
+// DebugConfig holds developer/debugging knobs that are off by default.
+type DebugConfig struct {
+	LogAPIKeySuffix bool `toml:"log_api_key_suffix"` // log last 4 chars of API keys on each provider call (default false)
+	CompactionDebug bool `toml:"compaction_debug"`   // send compaction summary as Telegram file attachment (default false)
+}
+
 type Config struct {
 	DataDir            string                    `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
 	LLM                LLMConfig                 `toml:"llm"`       // LLM-specific settings (model, max_output_tokens, summary model/endpoint)
@@ -678,6 +684,7 @@ type Config struct {
 	Environment        EnvironmentConfig         `toml:"environment"`
 	Skills             SkillsConfig              `toml:"skills"`
 	Resources          ResourcesConfig           `toml:"resources"`
+	Debug              DebugConfig               `toml:"debug"`
 	Tools              ToolsConfig               `toml:"tools"`
 	Keepalive          KeepaliveConfig           `toml:"keepalive"`
 	Background         BackgroundConfig          `toml:"background"`

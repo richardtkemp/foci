@@ -150,7 +150,7 @@ system_files = [
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_notify = true
-# compaction_debug = false
+# compaction_debug = false                 # per-agent override; global moved to [debug]
 # compaction_preserve_messages = 25
 
 # Per-agent blocked paths (replaces global):
@@ -244,7 +244,7 @@ compaction_threshold = 0.8
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_notify = true
-# compaction_debug = false
+# compaction_debug = false                 # deprecated: moved to [debug] section
 # compaction_preserve_messages = 25
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
@@ -273,6 +273,11 @@ compaction_threshold = 0.8
 # ─── Database ─────────────────────────────────────────────────────────
 # [database]
 # busy_timeout = "5s"
+
+# ─── Debug ─────────────────────────────────────────────────────────────
+# [debug]
+# log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
+# compaction_debug = false                 # send compaction summary as Telegram file
 
 # ─── HTTP ─────────────────────────────────────────────────────────────
 [http]

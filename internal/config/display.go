@@ -165,7 +165,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Sessions.CompactionNotify != nil {
 		add("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
 	}
-	add("sessions", "compaction_debug", cfg.Sessions.CompactionDebug)
 	add("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
@@ -293,6 +292,10 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 			add(prefix, "model", e.Model)
 		}
 	}
+
+	// debug
+	add("debug", "log_api_key_suffix", cfg.Debug.LogAPIKeySuffix)
+	add("debug", "compaction_debug", cfg.Debug.CompactionDebug)
 
 	// database
 	add("database", "busy_timeout", cfg.Database.BusyTimeout)
@@ -491,6 +494,7 @@ type displayConfig struct {
 	UsageWarnings ManaWarningsConfig `toml:"usage_warnings"`
 	TTS           []TTSConfig        `toml:"tts"`
 	STT           []STTConfig        `toml:"stt"`
+	Debug         DebugConfig        `toml:"debug"`
 	Database      DatabaseConfig     `toml:"database"`
 	Anthropic     displayAnthropic   `toml:"anthropic"`
 }
@@ -546,6 +550,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		UsageWarnings: cfg.ManaWarnings,
 		TTS:           cfg.TTS,
 		STT:           cfg.STT,
+		Debug:         cfg.Debug,
 		Database:      cfg.Database,
 		Anthropic: displayAnthropic{
 			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,

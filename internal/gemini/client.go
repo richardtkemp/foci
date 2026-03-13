@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/log"
 	"foci/internal/provider"
 
 	"google.golang.org/genai"
@@ -18,6 +19,7 @@ type Client struct {
 	client *genai.Client
 	model  string        // default model (can be overridden per request)
 	cache  *CacheManager // nil if caching disabled
+	apiKey string        // kept for debug key-suffix logging
 }
 
 // Option configures a Client.
@@ -67,7 +69,7 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 		return nil, fmt.Errorf("gemini: create client: %w", err)
 	}
 
-	c := &Client{client: gc}
+	c := &Client{client: gc, apiKey: apiKey}
 
 	if cfg.cacheTTL > 0 {
 		c.cache = NewCacheManager(gc, cfg.cacheTTL)
@@ -78,6 +80,7 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 
 // SendMessage sends a message to the Gemini API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
+	log.KeySuffix("gemini", c.apiKey)
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
@@ -118,6 +121,7 @@ func (c *Client) HandlesOwnRetries() bool {
 
 // CountTokens returns the input token count for a request.
 func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) (int, error) {
+	log.KeySuffix("gemini", c.apiKey)
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
 	modelID := config.StripDeveloperPrefix(req.Model)
 

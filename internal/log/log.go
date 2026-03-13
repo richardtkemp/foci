@@ -40,6 +40,19 @@ func (l Level) String() string {
 	}
 }
 
+// DebugLogKeySuffix controls whether API key suffixes are logged on each
+// provider call. Set from config at startup (config.Debug.LogAPIKeySuffix).
+var DebugLogKeySuffix bool
+
+// KeySuffix logs the last 4 characters of an API key at DEBUG level.
+// Only logs when DebugLogKeySuffix is true and key has at least 4 chars.
+func KeySuffix(component, key string) {
+	if !DebugLogKeySuffix || len(key) < 4 {
+		return
+	}
+	Debugf(component, "API key suffix: ...%s", key[len(key)-4:])
+}
+
 // ParseLevel parses a level string. Returns INFO for unrecognized values.
 func ParseLevel(s string) Level {
 	switch strings.ToUpper(strings.TrimSpace(s)) {
