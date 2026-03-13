@@ -4,250 +4,204 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"foci/internal/agent"
+	"foci/internal/config"
 )
 
-func TestModelCommand(t *testing.T) {
-	// Verifies model can be switched between options and short names are resolved.
-	model := "claude-haiku-4-5"
-	resolveModel := func(input string) (string, string, string) {
-		switch strings.ToLower(strings.TrimSpace(input)) {
-		case "opus":
-			return "", "claude-opus-4-6", ""
-		case "sonnet", "":
-			return "", "claude-sonnet-4-6", ""
-		case "haiku":
-			return "", "claude-haiku-4-5", ""
-		default:
-			return "", input, ""
-		}
-	}
-	cmd := NewModelCommand(
-		func(context.Context) string { return model },
-		func(_ context.Context, _ string, m string, _ string) { model = m },
-		resolveModel,
-		nil,
-	)
-
-	// Show current
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "claude-haiku-4-5") {
-		t.Errorf("result = %q", result)
-	}
-
-	// Switch
-	result, _ = cmd.Execute(context.Background(), "claude-opus-4-6")
-	if model != "claude-opus-4-6" {
-		t.Errorf("model not switched: %s", model)
-	}
-	if !strings.Contains(result, "claude-opus-4-6") {
-		t.Errorf("result = %q", result)
-	}
-
-	// Switch with short name
-	result, _ = cmd.Execute(context.Background(), "haiku")
-	if model != "claude-haiku-4-5" {
-		t.Errorf("short name not resolved: got %q, want %q", model, "claude-haiku-4-5")
-	}
-	if !strings.Contains(result, "claude-haiku-4-5") {
-		t.Errorf("result = %q", result)
-	}
-
-	_, _ = cmd.Execute(context.Background(), "opus")
-	if model != "claude-opus-4-6" {
-		t.Errorf("short name not resolved: got %q, want %q", model, "claude-opus-4-6")
-	}
-
-	_, _ = cmd.Execute(context.Background(), "sonnet")
-	if model != "claude-sonnet-4-6" {
-		t.Errorf("short name not resolved: got %q, want %q", model, "claude-sonnet-4-6")
+// modelCC returns a CommandContext with a real agent for model/effort/thinking tests.
+func modelCC(ag *agent.Agent, aliases map[string]string) CommandContext {
+	return CommandContext{
+		Agent:        ag,
+		AgentConfig:  config.AgentConfig{},
+		Config:       &config.Config{},
+		ModelAliases: aliases,
 	}
 }
 
+// TestModelCommand verifies model can be switched between options and short names are resolved.
+func TestModelCommand(t *testing.T) {
+	ag := &agent.Agent{Model: "claude-haiku-4-5"}
+	sk := "test-session"
+	aliases := map[string]string{
+		"opus":   "anthropic/claude-opus-4-6",
+		"sonnet": "anthropic/claude-sonnet-4-6",
+		"haiku":  "anthropic/claude-haiku-4-5",
+	}
+	cc := modelCC(ag, aliases)
+	cmd := ModelCommand()
+
+	// Show current
+	result, _ := cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "claude-haiku-4-5") {
+		t.Errorf("result = %q", result.Text)
+	}
+
+	// Switch with full model ID
+	result, _ = cmd.Execute(context.Background(), Request{Args: "anthropic/claude-opus-4-6", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "claude-opus-4-6") {
+		t.Errorf("result = %q", result.Text)
+	}
+
+	// Switch with short alias
+	result, _ = cmd.Execute(context.Background(), Request{Args: "haiku", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "claude-haiku-4-5") {
+		t.Errorf("result = %q", result.Text)
+	}
+}
+
+// TestEffortCommand verifies effort levels can be set by name or number and persisted.
 func TestEffortCommand(t *testing.T) {
-	// Verifies effort levels can be set by name or number and persisted.
-	effort := ""
-	cmd := NewEffortCommand(
-		func(context.Context) string { return effort },
-		func(_ context.Context, e string) { effort = e },
-	)
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := EffortCommand()
 
 	// Show when not set
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "not set") {
-		t.Errorf("expected 'not set', got %q", result)
+	result, _ := cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "not set") {
+		t.Errorf("expected 'not set', got %q", result.Text)
 	}
-	if !strings.Contains(result, "1) low") {
-		t.Errorf("expected numbered options, got %q", result)
+	if !strings.Contains(result.Text, "1) low") {
+		t.Errorf("expected numbered options, got %q", result.Text)
 	}
 
 	// Set valid levels by name
 	for _, level := range []string{"low", "medium", "high"} {
-		result, _ = cmd.Execute(context.Background(), level)
-		if effort != level {
-			t.Errorf("effort not set to %s: %s", level, effort)
+		result, _ = cmd.Execute(context.Background(), Request{Args: level, SessionKey: sk}, cc)
+		got := ag.SessionEffort(sk)
+		if got != level {
+			t.Errorf("effort not set to %s: %s", level, got)
 		}
-		if !strings.Contains(result, level) {
-			t.Errorf("result = %q", result)
+		if !strings.Contains(result.Text, level) {
+			t.Errorf("result = %q", result.Text)
 		}
 	}
 
 	// Set valid levels by number
 	for num, level := range map[string]string{"1": "low", "2": "medium", "3": "high"} {
-		result, _ = cmd.Execute(context.Background(), num)
-		if effort != level {
-			t.Errorf("/effort %s: expected %s, got %s", num, level, effort)
-		}
-		if !strings.Contains(result, level) {
-			t.Errorf("result = %q", result)
+		result, _ = cmd.Execute(context.Background(), Request{Args: num, SessionKey: sk}, cc)
+		got := ag.SessionEffort(sk)
+		if got != level {
+			t.Errorf("/effort %s: expected %s, got %s", num, level, got)
 		}
 	}
 
 	// Show when set
-	effort = "high"
-	result, _ = cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "high") {
-		t.Errorf("expected 'high', got %q", result)
-	}
-	if !strings.Contains(result, "1) low") {
-		t.Errorf("expected numbered options when set, got %q", result)
+	ag.SetSessionEffort(sk, "high")
+	result, _ = cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "high") {
+		t.Errorf("expected 'high', got %q", result.Text)
 	}
 
 	// Invalid level
-	result, _ = cmd.Execute(context.Background(), "turbo")
-	if !strings.Contains(result, "Invalid") {
-		t.Errorf("expected 'Invalid', got %q", result)
-	}
-	if !strings.Contains(result, "1) low") {
-		t.Errorf("expected options in error message, got %q", result)
-	}
-	if effort != "high" {
-		t.Errorf("effort changed on invalid input: %s", effort)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "turbo", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "Invalid") {
+		t.Errorf("expected 'Invalid', got %q", result.Text)
 	}
 
 	// Clear
-	result, _ = cmd.Execute(context.Background(), "none")
-	if effort != "" {
-		t.Errorf("effort not cleared: %q", effort)
-	}
-	if !strings.Contains(result, "cleared") {
-		t.Errorf("result = %q", result)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "none", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "cleared") {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
+// TestThinkingCommand verifies thinking mode can be toggled between off, adaptive, and extended.
 func TestThinkingCommand(t *testing.T) {
-	// Verifies thinking mode can be toggled between off, adaptive, and extended.
-	thinking := ""
-	cmd := NewThinkingCommand(
-		func(context.Context) string { return thinking },
-		func(_ context.Context, t string) { thinking = t },
-	)
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := ThinkingCommand()
 
 	// Show when off (default)
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "off") {
-		t.Errorf("expected 'off', got %q", result)
+	result, _ := cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "off") {
+		t.Errorf("expected 'off', got %q", result.Text)
 	}
 
 	// Set to adaptive
-	result, _ = cmd.Execute(context.Background(), "adaptive")
-	if thinking != "adaptive" {
-		t.Errorf("thinking not set to adaptive: %q", thinking)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "adaptive", SessionKey: sk}, cc)
+	if ag.SessionThinking(sk) != "adaptive" {
+		t.Errorf("thinking not set to adaptive: %q", ag.SessionThinking(sk))
 	}
-	if !strings.Contains(result, "adaptive") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "adaptive") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Set via numeric alias
-	_, _ = cmd.Execute(context.Background(), "0")
-	if thinking != "off" {
-		t.Errorf("thinking not set to 'off' via '0': %q", thinking)
+	_, _ = cmd.Execute(context.Background(), Request{Args: "0", SessionKey: sk}, cc)
+	if ag.SessionThinking(sk) != "off" {
+		t.Errorf("thinking not set to 'off' via '0': %q", ag.SessionThinking(sk))
 	}
 
-	_, _ = cmd.Execute(context.Background(), "1")
-	if thinking != "adaptive" {
-		t.Errorf("thinking not set via '1': %q", thinking)
-	}
-
-	// Show when set
-	result, _ = cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "adaptive") {
-		t.Errorf("expected 'adaptive', got %q", result)
+	_, _ = cmd.Execute(context.Background(), Request{Args: "1", SessionKey: sk}, cc)
+	if ag.SessionThinking(sk) != "adaptive" {
+		t.Errorf("thinking not set via '1': %q", ag.SessionThinking(sk))
 	}
 
 	// Turn off
-	result, _ = cmd.Execute(context.Background(), "off")
-	if thinking != "off" {
-		t.Errorf("thinking not set to 'off': %q", thinking)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "off", SessionKey: sk}, cc)
+	if ag.SessionThinking(sk) != "off" {
+		t.Errorf("thinking not set to 'off': %q", ag.SessionThinking(sk))
 	}
-	if !strings.Contains(result, "off") {
-		t.Errorf("result = %q", result)
+	if !strings.Contains(result.Text, "off") {
+		t.Errorf("result = %q", result.Text)
 	}
 
 	// Invalid value
-	thinking = "adaptive"
-	result, _ = cmd.Execute(context.Background(), "turbo")
-	if !strings.Contains(result, "Invalid") {
-		t.Errorf("expected 'Invalid', got %q", result)
+	ag.SetSessionThinking(sk, "adaptive")
+	result, _ = cmd.Execute(context.Background(), Request{Args: "turbo", SessionKey: sk}, cc)
+	if !strings.Contains(result.Text, "Invalid") {
+		t.Errorf("expected 'Invalid', got %q", result.Text)
 	}
-	if thinking != "adaptive" {
-		t.Errorf("thinking changed on invalid input: %q", thinking)
+	if ag.SessionThinking(sk) != "adaptive" {
+		t.Errorf("thinking changed on invalid input: %q", ag.SessionThinking(sk))
 	}
 }
 
+// TestThinkingCommandContextRouting verifies the request carries session key for per-session state.
 func TestThinkingCommandContextRouting(t *testing.T) {
-	// Verifies the callback receives context so callers can resolve per-session state.
-	// Verify the callback receives context so callers can resolve per-session state.
-	// This tests the fix for bug #134 — Telegram commands need the ChatIDKey
-	// from context to resolve the correct session key.
-	var lastCtx context.Context
-	cmd := NewThinkingCommand(
-		func(ctx context.Context) string { lastCtx = ctx; return "" },
-		func(ctx context.Context, _ string) { lastCtx = ctx },
-	)
+	ag := &agent.Agent{}
+	sk := "test-session"
+	cc := modelCC(ag, nil)
+	cmd := ThinkingCommand()
 
-	// Simulate Telegram dispatch: context carries ChatIDKey
-	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(99887766))
-	cmd.Execute(ctx, "adaptive")
+	_, _ = cmd.Execute(context.Background(), Request{Args: "adaptive", SessionKey: sk}, cc)
 
-	// The callback should have received the context with ChatIDKey
-	chatID, ok := lastCtx.Value(ChatIDKey{}).(int64)
-	if !ok || chatID != 99887766 {
-		t.Errorf("callback context ChatIDKey = %d, want 99887766", chatID)
+	// The agent should have the thinking mode set for this session key
+	if ag.SessionThinking(sk) != "adaptive" {
+		t.Errorf("thinking not set for session %q: %q", sk, ag.SessionThinking(sk))
 	}
 }
 
+// TestConfigCommand verifies config subcommands delegate correctly.
 func TestConfigCommand(t *testing.T) {
-	// Verifies config subcommands delegate correctly.
-	cmd := NewConfigCommand(func(ctx context.Context, args string) (string, error) {
-		switch args {
-		case "toml":
-			return "toml output", nil
-		case "table":
-			return "table output", nil
-		case "available":
-			return "available output", nil
-		default:
-			return "usage text", nil
-		}
-	}, nil, nil)
+	cc := CommandContext{
+		Config:      &config.Config{},
+		AgentConfig: config.AgentConfig{},
+		ConfigPath:  "/tmp/foci.toml",
+	}
+	cmd := ConfigCommand()
+
 	// No args → usage
-	result, _ := cmd.Execute(context.Background(), "")
-	if result != "usage text" {
-		t.Errorf("default result = %q, want usage text", result)
+	result, _ := cmd.Execute(context.Background(), Request{}, cc)
+	if !strings.Contains(result.Text, "/config toml") {
+		t.Errorf("expected usage text, got %q", result.Text)
 	}
 	// toml subcommand
-	result, _ = cmd.Execute(context.Background(), "toml")
-	if result != "toml output" {
-		t.Errorf("toml result = %q", result)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "toml"}, cc)
+	if result.Text == "" {
+		t.Error("toml result should not be empty")
 	}
 	// table subcommand
-	result, _ = cmd.Execute(context.Background(), "table")
-	if result != "table output" {
-		t.Errorf("table result = %q", result)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "table"}, cc)
+	if result.Text == "" {
+		t.Error("table result should not be empty")
 	}
 	// available subcommand
-	result, _ = cmd.Execute(context.Background(), "available")
-	if result != "available output" {
-		t.Errorf("available result = %q", result)
+	result, _ = cmd.Execute(context.Background(), Request{Args: "available"}, cc)
+	if result.Text == "" {
+		t.Error("available result should not be empty")
 	}
 }

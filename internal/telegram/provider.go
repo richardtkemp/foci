@@ -50,12 +50,14 @@ func (p *telegramProvider) ConnectionManager() platform.ConnectionManager {
 
 func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionParams) *platform.SetupResult {
 	cmds, _ := params.Commands.(*command.Registry)
+	cc, _ := params.CommandContext.(command.CommandContext)
 	lastMsgStore, _ := params.LastMsgStore.(*command.LastMessageStore)
 
 	return SetupAgent(p.mgr, AgentSetupParams{
-		Agent:           params.Handler,
-		Commands:        cmds,
-		LastMsgStore:    lastMsgStore,
+		Agent:          params.Handler,
+		Commands:       cmds,
+		CommandContext: cc,
+		LastMsgStore:   lastMsgStore,
 		AgentConfig:     params.AgentConfig,
 		GlobalConfig:    p.deps.Config,
 		SecretStore:     p.deps.SecretStore,
@@ -212,9 +214,12 @@ func restoreMultiballSessions(
 			bot.SetSessionKeyDirect(savedKey)
 
 			agentID := extractAgentID(savedKey)
-			if handler, commands, acfg, ok := params.Resolver(agentID); ok {
+			if handler, commands, commandContext, acfg, ok := params.Resolver(agentID); ok {
 				cmds, _ := commands.(*command.Registry)
 				bot.SetHandlerAndCommands(handler, cmds)
+				if cc, ok := commandContext.(command.CommandContext); ok {
+					bot.SetCommandContext(cc)
+				}
 				ApplyAgentDisplaySettings(bot, acfg, cfg)
 			}
 

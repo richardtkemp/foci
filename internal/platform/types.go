@@ -171,14 +171,15 @@ type ProviderDeps struct {
 // AllowedUsers is resolved by each provider from its own config section
 // (e.g. telegram reads from [telegram] and [agents.platforms.telegram]).
 type AgentConnectionParams struct {
-	AgentID      string
-	Handler      MessageHandler
-	Commands     any // *command.Registry
-	LastMsgStore any // *command.LastMessageStore
-	AgentConfig  config.AgentConfig
-	STT          voice.STT
-	TTS          voice.TTS
-	ReclaimHook  func(sessionKey string)
+	AgentID        string
+	Handler        MessageHandler
+	Commands       any // *command.Registry
+	CommandContext any // command.CommandContext
+	LastMsgStore   any // *command.LastMessageStore
+	AgentConfig    config.AgentConfig
+	STT            voice.STT
+	TTS            voice.TTS
+	ReclaimHook    func(sessionKey string)
 
 	// DisplayOverrideFn returns per-session display overrides.
 	// Returns (showToolCalls, showThinking, streamOutput, displayWidth).
@@ -200,10 +201,11 @@ type SharedMultiballParams struct {
 // RestoreParams holds parameters for restoring multiball sessions after restart.
 type RestoreParams struct {
 	AgentOrder []string
-	// Resolver returns the handler, commands, and config for a given agent.
+	// Resolver returns the handler, commands, command context, and config for a given agent.
 	// Used to reconfigure multiball bots with the correct agent after restart.
-	// handler: platform.MessageHandler, commands: any (*command.Registry), config: config.AgentConfig
-	Resolver func(agentID string) (handler MessageHandler, commands any, agentCfg config.AgentConfig, ok bool)
+	// handler: platform.MessageHandler, commands: any (*command.Registry),
+	// commandContext: any (command.CommandContext), config: config.AgentConfig
+	Resolver func(agentID string) (handler MessageHandler, commands any, commandContext any, agentCfg config.AgentConfig, ok bool)
 }
 
 // --- Setup Wizard ---

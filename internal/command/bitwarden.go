@@ -17,32 +17,31 @@ type BitwardenStoreInfo interface {
 	CachedIDs() []string
 }
 
-// NewBitwardenCommand creates the /bitwarden slash command with setup and status subcommands.
-// storeInfo may be nil if bitwarden is disabled (setup still works).
-func NewBitwardenCommand(storeInfo BitwardenStoreInfo, enabled bool) *Command {
+// BitwardenCommand creates the /bitwarden slash command with setup and status subcommands.
+func BitwardenCommand() *Command {
 	return &Command{
 		Name:        "bitwarden",
 		Description: "Bitwarden integration (setup/status)",
 		Category:    "operations",
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "status", Data: "status"},
 				{Label: "setup", Data: "setup"},
 			}
 		},
-		Execute: func(ctx context.Context, args string) (string, error) {
-			parts := strings.Fields(args)
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			parts := strings.Fields(req.Args)
 			if len(parts) == 0 {
-				return bitwardenUsage, nil
+				return Response{Text: bitwardenUsage}, nil
 			}
 
 			switch parts[0] {
 			case "setup":
-				return bitwardenSetup()
+				return Response{Text: bitwardenSetup()}, nil
 			case "status":
-				return bitwardenStatus(storeInfo, enabled)
+				return Response{Text: bitwardenStatus(cc.BitwardenStore, cc.BitwardenEnabled)}, nil
 			default:
-				return bitwardenUsage, nil
+				return Response{Text: bitwardenUsage}, nil
 			}
 		},
 	}
@@ -52,28 +51,24 @@ const bitwardenUsage = `Usage:
   /bitwarden setup  — check prerequisites and create bitwarden system user
   /bitwarden status — show current bitwarden integration state`
 
-// bitwardenSetup checks prerequisites and creates the bitwarden system user if needed.
-func bitwardenSetup() (string, error) {
+func bitwardenSetup() string {
 	var sb strings.Builder
 	sb.WriteString("Bitwarden Setup\n")
 	sb.WriteString(strings.Repeat("─", 40) + "\n\n")
 
-	// 1. Check bw CLI installed
 	bwPath, err := exec.LookPath("bw")
 	if err != nil {
 		sb.WriteString("✗ bw CLI: NOT FOUND\n")
 		sb.WriteString("  Install: https://bitwarden.com/help/cli/\n")
 		sb.WriteString("\nSetup cannot continue without bw CLI.\n")
-		return sb.String(), nil
+		return sb.String()
 	}
 	sb.WriteString(fmt.Sprintf("✓ bw CLI: %s\n", bwPath))
 
-	// Get bw version
 	if out, err := exec.Command("bw", "--version").Output(); err == nil {
 		sb.WriteString(fmt.Sprintf("  Version: %s\n", strings.TrimSpace(string(out))))
 	}
 
-	// 2. Check bitwarden system user exists
 	userExists := false
 	if _, err := exec.Command("id", "bitwarden").Output(); err == nil {
 		userExists = true
@@ -81,7 +76,6 @@ func bitwardenSetup() (string, error) {
 	} else {
 		sb.WriteString("✗ bitwarden user: NOT FOUND\n")
 
-		// Try to create it via aisudo
 		sb.WriteString("  Creating bitwarden system user via aisudo...\n")
 		cmd := exec.Command("sudo", "useradd", "--system", "--create-home", "--shell", "/usr/sbin/nologin", "bitwarden")
 		var stderr bytes.Buffer
@@ -95,7 +89,6 @@ func bitwardenSetup() (string, error) {
 		}
 	}
 
-	// 3. Check bw login status (as bitwarden user)
 	if userExists {
 		cmd := exec.Command("sudo", "-u", "bitwarden", "bw", "status", "--nointeraction")
 		out, err := cmd.Output()
@@ -117,7 +110,6 @@ func bitwardenSetup() (string, error) {
 		}
 	}
 
-	// 4. Summary
 	sb.WriteString("\n")
 	if userExists {
 		sb.WriteString("Next steps:\n")
@@ -130,11 +122,10 @@ func bitwardenSetup() (string, error) {
 		sb.WriteString("Fix the issues above, then run /bitwarden setup again.\n")
 	}
 
-	return sb.String(), nil
+	return sb.String()
 }
 
-// bitwardenStatus reports the current state of the bitwarden integration.
-func bitwardenStatus(storeInfo BitwardenStoreInfo, enabled bool) (string, error) {
+func bitwardenStatus(storeInfo BitwardenStoreInfo, enabled bool) string {
 	var sb strings.Builder
 	sb.WriteString("Bitwarden Status\n")
 	sb.WriteString(strings.Repeat("─", 40) + "\n\n")
@@ -144,14 +135,14 @@ func bitwardenStatus(storeInfo BitwardenStoreInfo, enabled bool) (string, error)
 		sb.WriteString("\nEnable in foci.toml:\n")
 		sb.WriteString("  [bitwarden]\n")
 		sb.WriteString("  enabled = true\n")
-		return sb.String(), nil
+		return sb.String()
 	}
 
 	sb.WriteString("State: ENABLED\n")
 
 	if storeInfo == nil {
 		sb.WriteString("Store: not initialized\n")
-		return sb.String(), nil
+		return sb.String()
 	}
 
 	itemCount := storeInfo.ItemCount()
@@ -174,5 +165,5 @@ func bitwardenStatus(storeInfo BitwardenStoreInfo, enabled bool) (string, error)
 		}
 	}
 
-	return sb.String(), nil
+	return sb.String()
 }

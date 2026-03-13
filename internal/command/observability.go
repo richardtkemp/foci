@@ -10,24 +10,26 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/compaction"
 	"foci/internal/display"
+	"foci/internal/provider"
 )
+
 type apiEntry struct {
-	Timestamp    time.Time `json:"ts"`
-	Session      string    `json:"session"`
-	Model        string    `json:"model"`
-	Input        int       `json:"input"`
-	Output       int       `json:"output"`
-	CacheRead    int       `json:"cache_read"`
-	CacheWrite   int       `json:"cache_write"`
-	CostUSD      float64   `json:"cost_usd"`
-	DurationMS   int64     `json:"duration_ms"`
-	StopReason   string    `json:"stop_reason"`
-	CallType     string    `json:"call_type"`
+	Timestamp  time.Time `json:"ts"`
+	Session    string    `json:"session"`
+	Model      string    `json:"model"`
+	Input      int       `json:"input"`
+	Output     int       `json:"output"`
+	CacheRead  int       `json:"cache_read"`
+	CacheWrite int       `json:"cache_write"`
+	CostUSD    float64   `json:"cost_usd"`
+	DurationMS int64     `json:"duration_ms"`
+	StopReason string    `json:"stop_reason"`
+	CallType   string    `json:"call_type"`
 }
 
 // categoryCosts computes per-category cost breakdown from API log entries.
-// Duplicates pricing from log.CalculateCost since command can't import log.
 func categoryCosts(entries []apiEntry) (cacheRead, cacheWrite, input, output float64) {
 	type pricing struct{ input, output, cacheRead, cacheWrite float64 }
 	prices := map[string]pricing{
@@ -49,122 +51,30 @@ func categoryCosts(entries []apiEntry) (cacheRead, cacheWrite, input, output flo
 	return
 }
 
-// StatusInfo holds data for the /status command.
-type StatusInfo struct {
-	AgentID          string
-	SessionKey       string
-	MessageCount     int
-	Model            string
-	Uptime           time.Duration
-	StartTime        time.Time
-	AgentBusy        bool
-	CreatedAt        string
-	LastActivity     string
-	ContextLimit     int     // model context window
-	CompactThreshold float64 // e.g. 0.8
-}
-
-
-func NewStatusCommand(statusFn func(context.Context) StatusInfo, apiLogPath string) *Command {
-	return &Command{
-		Name:        "status",
-		Description: "Dashboard overview",
-		Category:    "observability",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			info := statusFn(ctx)
-
-			status := "idle"
-			if info.AgentBusy {
-				status = "processing"
-			}
-
-			// Compute session cost and context from API log
-			entries := readAPILog(apiLogPath)
-			var sessionCost float64
-			var sessionCalls int
-			var contextTokens int
-			for _, e := range entries {
-				if e.Session == info.SessionKey {
-					sessionCost += e.CostUSD
-					sessionCalls++
-					if e.CallType == "conversation" || e.CallType == "" {
-						contextTokens = e.Input + e.CacheRead + e.CacheWrite
-					}
-				}
-			}
-
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "🤖 %s — %s\n", info.AgentID, info.Model)
-			sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-
-			// Session
-			created := info.CreatedAt
-			if t, err := time.Parse(time.RFC3339, created); err == nil {
-				created = t.Format("15:04 UTC")
-			}
-			active := info.LastActivity
-			if t, err := time.Parse(time.RFC3339, active); err == nil {
-				active = t.Format("15:04 UTC")
-			}
-			fmt.Fprintf(&sb, "📊 Session: %s\n", info.SessionKey)
-			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", info.MessageCount, status)
-			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
-
-			// Uptime
-			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s (started %s)\n",
-				display.FormatDuration(info.Uptime),
-				info.StartTime.UTC().Format("15:04:05Z"))
-
-			// Context
-			if contextTokens > 0 && info.ContextLimit > 0 {
-				pct := float64(contextTokens) / float64(info.ContextLimit) * 100
-				threshTokens := int(float64(info.ContextLimit) * info.CompactThreshold)
-				remaining := threshTokens - contextTokens
-				if remaining < 0 {
-					remaining = 0
-				}
-				fmt.Fprintf(&sb, "\n📈 Context: %.1f%% (%s / %s tokens)\n",
-					pct, display.FormatCommas(contextTokens), display.FormatCommas(info.ContextLimit))
-				fmt.Fprintf(&sb, "   Compaction at %.0f%% (%sk tokens remaining)\n",
-					info.CompactThreshold*100, display.FormatCommas(remaining/1000))
-			}
-
-			// Cost
-			if sessionCalls > 0 {
-				fmt.Fprintf(&sb, "\n💰 Session cost: $%.2f eq. (%d calls)", sessionCost, sessionCalls)
-			}
-
-			return strings.TrimRight(sb.String(), "\n"), nil
-		},
-	}
-}
-
-
-func NewCacheCommand(apiLogPath string) *Command {
+// CacheCommand returns a /cache command showing API calls with cache breakdown.
+func CacheCommand() *Command {
 	return &Command{
 		Name:        "cache",
 		Description: "API calls with cache breakdown (default 5)",
 		Category:    "observability",
-		Execute: func(ctx context.Context, args string) (string, error) {
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			n := 5
-			if args != "" {
-				if parsed, err := strconv.Atoi(args); err == nil && parsed > 0 {
+			if req.Args != "" {
+				if parsed, err := strconv.Atoi(req.Args); err == nil && parsed > 0 {
 					n = parsed
 				}
 			}
-			entries := readAPILog(apiLogPath)
+			entries := readAPILog(cc.APILogPath)
 			if len(entries) == 0 {
-				return "No API calls logged yet.", nil
+				return Response{Text: "No API calls logged yet."}, nil
 			}
 
-			// Take last n
 			start := 0
 			if len(entries) > n {
 				start = len(entries) - n
 			}
 			recent := entries[start:]
 
-			// Compute average hit rate across recent entries
 			var totalCacheRead, totalInput int
 			for _, e := range recent {
 				totalCacheRead += e.CacheRead
@@ -175,7 +85,6 @@ func NewCacheCommand(apiLogPath string) *Command {
 				avgHit = float64(totalCacheRead) / float64(totalInput) * 100
 			}
 
-			// Pre-compute per-row values for column width measurement
 			type cacheRow struct {
 				time   string
 				input  string
@@ -213,8 +122,8 @@ func NewCacheCommand(apiLogPath string) *Command {
 			for i, r := range rows {
 				tableRows[i] = []string{r.time, r.input, r.cRead, r.cWrite, r.cost, r.hitPct}
 			}
-			return fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n%s",
-				len(recent), avgHit, display.MarkdownTable(cols, tableRows)), nil
+			return Response{Text: fmt.Sprintf("Cache — last %d calls (avg %.1f%% hit)\n\n%s",
+				len(recent), avgHit, display.MarkdownTable(cols, tableRows))}, nil
 		},
 	}
 }
@@ -236,22 +145,20 @@ func truncateSession(session string) string {
 	return session
 }
 
-// NewLastCommand returns a /last command showing the most recent API call per agent.
-// With an argument, filters to that agent only.
-func NewLastCommand(apiLogPath string) *Command {
+// LastCommand returns a /last command showing the most recent API call per agent.
+func LastCommand() *Command {
 	return &Command{
 		Name:        "last",
 		Description: "Last API call per agent (or /last <agent>)",
 		Category:    "observability",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			entries := readAPILog(apiLogPath)
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			entries := readAPILog(cc.APILogPath)
 			if len(entries) == 0 {
-				return "No API calls logged yet.", nil
+				return Response{Text: "No API calls logged yet."}, nil
 			}
 
-			filter := strings.TrimSpace(args)
+			filter := strings.TrimSpace(req.Args)
 
-			// Find the most recent entry per agent (iterate reverse to get latest first).
 			latest := make(map[string]apiEntry)
 			var order []string
 			for i := len(entries) - 1; i >= 0; i-- {
@@ -267,12 +174,11 @@ func NewLastCommand(apiLogPath string) *Command {
 
 			if len(latest) == 0 {
 				if filter != "" {
-					return fmt.Sprintf("No API calls for agent %q.", filter), nil
+					return Response{Text: fmt.Sprintf("No API calls for agent %q.", filter)}, nil
 				}
-				return "No API calls logged yet.", nil
+				return Response{Text: "No API calls logged yet."}, nil
 			}
 
-			// Reverse order so earliest-seen agent comes first (stable ordering).
 			for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
 				order[i], order[j] = order[j], order[i]
 			}
@@ -285,10 +191,10 @@ func NewLastCommand(apiLogPath string) *Command {
 				{Header: "Cost", Align: display.AlignRight},
 				{Header: "Session"},
 			}
-			rows := make([][]string, 0, len(order))
+			tableRows := make([][]string, 0, len(order))
 			for _, agent := range order {
 				e := latest[agent]
-				rows = append(rows, []string{
+				tableRows = append(tableRows, []string{
 					agent,
 					display.RelativeTime(e.Timestamp),
 					e.Model,
@@ -302,58 +208,44 @@ func NewLastCommand(apiLogPath string) *Command {
 			if filter != "" {
 				title = fmt.Sprintf("Last API call — %s", filter)
 			}
-			return fmt.Sprintf("%s\n\n%s", title, display.MarkdownTable(cols, rows)), nil
+			return Response{Text: fmt.Sprintf("%s\n\n%s", title, display.MarkdownTable(cols, tableRows))}, nil
 		},
 	}
 }
 
-// NewCostCommand returns a /cost command showing aggregated costs.
-func NewCostCommand(apiLogPath string) *Command {
+// CostCommand returns a /cost command showing aggregated costs.
+func CostCommand() *Command {
 	return &Command{
 		Name:        "cost",
 		Description: "API cost summary",
 		Category:    "observability",
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "today", Data: "today"},
 				{Label: "24h", Data: "24h"},
 				{Label: "week", Data: "week"},
 			}
 		},
-		Execute: func(ctx context.Context, args string) (string, error) {
-			entries := readAPILog(apiLogPath)
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			entries := readAPILog(cc.APILogPath)
 			if len(entries) == 0 {
-				return "No API calls logged yet.", nil
+				return Response{Text: "No API calls logged yet."}, nil
 			}
 
-			scope := strings.ToLower(strings.TrimSpace(args))
+			scope := strings.ToLower(strings.TrimSpace(req.Args))
 
 			switch scope {
 			case "":
-				return costUsage(), nil
+				return Response{Text: costUsage()}, nil
 			case "today", "session":
-				return costToday(entries, ctx)
+				return Response{Text: costToday(entries)}, nil
 			case "24h":
-				return cost24h(entries, ctx)
+				return Response{Text: cost24h(entries)}, nil
 			case "week":
-				return costWeek(entries, ctx)
+				return Response{Text: costWeek(entries)}, nil
 			default:
-				return costDays(entries, scope)
+				return Response{Text: costDays(entries, scope)}, nil
 			}
-		},
-	}
-}
-
-
-// NewManaCommand returns a dynamic slash command for checking quota.
-// The command name is configurable (e.g., /mana, /juice, /credits).
-func NewManaCommand(name string, manaFn func(context.Context) (string, error)) *Command {
-	return &Command{
-		Name:        name,
-		Description: "Check current " + name + " (quota remaining)",
-		Category:    "observability",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return manaFn(ctx)
 		},
 	}
 }
@@ -393,24 +285,27 @@ type ContextInfo struct {
 	Model            string
 	CompactionThresh float64
 	ContextLimit     int
-	SystemSections   []SystemSection                                 // workspace file sections
-	EnvironmentChars int                                             // environment block chars
-	SkillsChars      int                                             // skills/extra system blocks chars
-	Messages         MessageBreakdown                                // conversation breakdown
-	CountTokensFn    func(ctx context.Context) (*TokenCounts, error) // nil = use estimates
+	SystemSections   []SystemSection  // workspace file sections
+	EnvironmentChars int              // environment block chars
+	SkillsChars      int              // skills/extra system blocks chars
+	Messages         MessageBreakdown // conversation breakdown
+	CountTokensFn    func(ctx context.Context) (*TokenCounts, error)
 }
 
-// NewContextCommand returns a /context command showing context size breakdown.
-func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
+// ContextCommand returns a /context command showing context size breakdown.
+func ContextCommand() *Command {
 	return &Command{
 		Name:        "context",
 		Description: "Context window breakdown: system prompt, conversation, compaction status",
 		Category:    "observability",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			info := infoFn()
+		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+			infoFn := cc.ContextInfoFn
+			if infoFn == nil {
+				infoFn = buildContextInfo
+			}
+			info := infoFn(cc)
 
-			// Get last API call for this session
-			entries := readAPILog(apiLogPath)
+			entries := readAPILog(cc.APILogPath)
 			var lastInput, lastCacheRead, lastCacheWrite, lastOutput int
 			for i := len(entries) - 1; i >= 0; i-- {
 				if entries[i].Session == info.SessionKey {
@@ -422,18 +317,16 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 				}
 			}
 
-			// Try detailed token counts via counting API
 			var tc *TokenCounts
 			if info.CountTokensFn != nil {
-				tc, _ = info.CountTokensFn(ctx) // ignore error, fall back to estimates
+				tc, _ = info.CountTokensFn(ctx)
 			}
 
 			totalTokens := lastInput + lastCacheRead + lastCacheWrite
 			if tc == nil && totalTokens == 0 {
-				return "No API calls yet for this session.", nil
+				return Response{Text: "No API calls yet for this session."}, nil
 			}
 
-			// Header tokens
 			headerTokens := totalTokens
 			useExact := tc != nil
 			if useExact {
@@ -446,7 +339,6 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 
 			var sb strings.Builder
 
-			// Header section
 			tokenLabel := display.FormatCommas(headerTokens)
 			if !useExact {
 				tokenLabel = "~" + tokenLabel
@@ -464,7 +356,6 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			}
 			sb.WriteString("```")
 
-			// System prompt breakdown
 			sb.WriteString("\n\n```\n")
 			if useExact {
 				fmt.Fprintf(&sb, "System prompt: %s tokens\n", display.FormatCommas(tc.System))
@@ -510,7 +401,6 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			}
 			sb.WriteString("```")
 
-			// Conversation breakdown
 			mb := info.Messages
 			sb.WriteString("\n\n```\n")
 			if useExact {
@@ -521,7 +411,6 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 				fmt.Fprintf(&sb, "Conversation: ~%s tokens (%d messages)\n",
 					display.FormatCommas(totalConvChars/4), mb.UserCount+mb.AssistantCount)
 			}
-			// Per-role always estimated from chars
 			fmt.Fprintf(&sb, "  User messages     ~%s tokens (%d msgs)\n",
 				display.FormatCommas(mb.UserChars/4), mb.UserCount)
 			fmt.Fprintf(&sb, "  Assistant         ~%s tokens (%d msgs)\n",
@@ -532,7 +421,6 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			}
 			sb.WriteString("```")
 
-			// Token breakdown from last API call
 			sb.WriteString("\n\n```\n")
 			fmt.Fprintf(&sb, "Last API call tokens:\n")
 			fmt.Fprintf(&sb, "  input:       %s\n", display.FormatCommas(lastInput))
@@ -541,12 +429,196 @@ func NewContextCommand(apiLogPath string, infoFn func() ContextInfo) *Command {
 			fmt.Fprintf(&sb, "  output:      %s\n", display.FormatCommas(lastOutput))
 			sb.WriteString("```")
 
-			return sb.String(), nil
+			return Response{Text: sb.String()}, nil
 		},
 	}
 }
 
-// NewReloadCommand returns a /reload command that reloads config and system files.
+// buildContextInfo constructs ContextInfo from CommandContext.
+func buildContextInfo(cc CommandContext) ContextInfo {
+	sk := cc.DefaultSessionKey()
+	model := cc.Agent.SessionModel(sk)
+
+	var sections []SystemSection
+	for _, s := range cc.Bootstrap.SectionSizes() {
+		sections = append(sections, SystemSection{Name: s.Name, Chars: s.Chars})
+	}
+	var skillsChars int
+	for _, b := range cc.Agent.ExtraSystemBlocks {
+		skillsChars += len(b.Text)
+	}
+
+	totalSysChars := len(cc.Agent.EnvironmentBlock) + skillsChars
+	for _, s := range sections {
+		totalSysChars += s.Chars
+	}
+
+	var msgs []provider.Message
+	if sk != "" {
+		if loaded, err := cc.Sessions.LoadFull(sk); err == nil {
+			msgs = loaded
+		}
+	}
+	mb := MessageBreakdown{}
+	for _, m := range msgs {
+		chars := 0
+		var hasToolResult bool
+		for _, cb := range m.Content {
+			switch cb.Type {
+			case "text":
+				chars += len(cb.Text)
+			case "tool_use":
+				chars += len(cb.Name) + len(cb.Input)
+			case "tool_result":
+				chars += len(cb.Content)
+				hasToolResult = true
+			}
+		}
+		switch {
+		case hasToolResult:
+			mb.ToolResultChars += chars
+		case m.Role == "user":
+			mb.UserChars += chars
+			mb.UserCount++
+		case m.Role == "assistant":
+			mb.AssistantChars += chars
+			mb.AssistantCount++
+		}
+	}
+
+	msgCount := len(msgs)
+
+	var countFn func(ctx context.Context) (*TokenCounts, error)
+	if cc.Client != nil {
+		countFn = func(ctx context.Context) (*TokenCounts, error) {
+			if cc.TokenCountCache != nil {
+				if cached := cc.TokenCountCache.Get(msgCount, totalSysChars); cached != nil {
+					return cached, nil
+				}
+			}
+			tc, err := countContextTokens(ctx, cc, sk, model)
+			if err != nil {
+				return nil, err
+			}
+			if cc.TokenCountCache != nil {
+				cc.TokenCountCache.Set(msgCount, totalSysChars, tc)
+			}
+			return tc, nil
+		}
+	}
+
+	return ContextInfo{
+		SessionKey:       sk,
+		Model:            model,
+		CompactionThresh: cc.CompactionThreshold,
+		ContextLimit:     compaction.ContextLimit(model),
+		SystemSections:   sections,
+		EnvironmentChars: len(cc.Agent.EnvironmentBlock),
+		SkillsChars:      skillsChars,
+		Messages:         mb,
+		CountTokensFn:    countFn,
+	}
+}
+
+// countContextTokens calls the counting API to get exact token counts.
+func countContextTokens(ctx context.Context, cc CommandContext, sk, model string) (*TokenCounts, error) {
+	system := cc.Bootstrap.SystemBlocks()
+	if cc.Agent.EnvironmentBlock != "" {
+		system = append(system, provider.SystemBlock{Type: "text", Text: cc.Agent.EnvironmentBlock})
+	}
+	system = append(system, cc.Agent.ExtraSystemBlocks...)
+
+	msgs, _ := cc.Sessions.LoadFull(sk)
+	toolDefs := cc.ToolsRegistry.ToolDefs()
+
+	req := &provider.MessageRequest{
+		Model:  model,
+		System: system,
+		Tools:  toolDefs,
+	}
+	for _, m := range msgs {
+		req.Messages = append(req.Messages, m)
+	}
+
+	total, err := cc.Client.CountTokens(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Compute system tokens by counting without messages
+	sysReq := &provider.MessageRequest{
+		Model:    model,
+		System:   system,
+		Tools:    toolDefs,
+		Messages: []provider.Message{{Role: "user", Content: provider.TextContent("x")}},
+	}
+	sysTotal, err := cc.Client.CountTokens(ctx, sysReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Tool tokens: count with just tools + minimal message
+	toolReq := &provider.MessageRequest{
+		Model:    model,
+		Tools:    toolDefs,
+		Messages: []provider.Message{{Role: "user", Content: provider.TextContent("x")}},
+	}
+	toolTotal, err := cc.Client.CountTokens(ctx, toolReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Minimal baseline (no system, no tools)
+	baseReq := &provider.MessageRequest{
+		Model:    model,
+		Messages: []provider.Message{{Role: "user", Content: provider.TextContent("x")}},
+	}
+	baseTotal, _ := cc.Client.CountTokens(ctx, baseReq)
+
+	toolTokens := toolTotal - baseTotal
+	if toolTokens < 0 {
+		toolTokens = 0
+	}
+	systemTokens := sysTotal - baseTotal - toolTokens
+	if systemTokens < 0 {
+		systemTokens = 0
+	}
+	convTokens := total - sysTotal
+	if convTokens < 0 {
+		convTokens = 0
+	}
+
+	// Per-section breakdown
+	var sectionTokens []SectionTokens
+	if cc.Agent.EnvironmentBlock != "" {
+		envReq := &provider.MessageRequest{
+			Model:    model,
+			System:   []provider.SystemBlock{{Type: "text", Text: cc.Agent.EnvironmentBlock}},
+			Messages: []provider.Message{{Role: "user", Content: provider.TextContent("x")}},
+		}
+		envTotal, _ := cc.Client.CountTokens(ctx, envReq)
+		sectionTokens = append(sectionTokens, SectionTokens{Name: "Environment", Tokens: envTotal - baseTotal})
+	}
+	for _, s := range cc.Bootstrap.SectionSizes() {
+		estimated := s.Chars / 4
+		sectionTokens = append(sectionTokens, SectionTokens{Name: s.Name, Tokens: estimated})
+	}
+	if len(cc.Agent.ExtraSystemBlocks) > 0 {
+		var skillChars int
+		for _, b := range cc.Agent.ExtraSystemBlocks {
+			skillChars += len(b.Text)
+		}
+		sectionTokens = append(sectionTokens, SectionTokens{Name: "Skills", Tokens: skillChars / 4})
+	}
+
+	return &TokenCounts{
+		Total:        total,
+		System:       systemTokens,
+		Conversation: convTokens,
+		Tools:        toolTokens,
+		Sections:     sectionTokens,
+	}, nil
+}
 
 func readAPILog(path string) []apiEntry {
 	f, err := os.Open(path)
@@ -565,5 +637,3 @@ func readAPILog(path string) []apiEntry {
 	}
 	return entries
 }
-
-

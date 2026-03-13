@@ -147,10 +147,10 @@ main
  ├── tools         → provider, platform, log, memory, secrets, voice
  ├── workspace     → provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       (no deps — embedded .md files)
+ ├── prompts       → log (embedded .md files + BuildBranchOrientation, ResolveOrientPath helpers)
  ├── compaction    → provider, prompts, session, log
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
- ├── command       → table, provision, agent, session, workspace, config, state, provider
+ ├── command       → agent, compaction, config, display, mana, prompts, provider, provision, session, skills, state, tools, workspace
  ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → provider, anthropic, compaction, mana, warnings, nudge, session, tools, workspace, log
@@ -173,9 +173,9 @@ Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana
 
 Slash commands (`/ping`, `/model`, etc.) are dispatched through a two-layer architecture:
 
-1. **Platform layer** (`telegram/dispatch.go`): Parses platform-specific command syntax (e.g., `/cmd args` for Telegram, `!cmd args` for Discord) and builds a platform-agnostic `Request` struct with `Name`, `Args`, `SessionID`, and `UserID`.
+1. **Platform layer** (`telegram/dispatch.go`): Parses platform-specific command syntax (e.g., `/cmd args` for Telegram, `!cmd args` for Discord) and builds a platform-agnostic `Request` struct with `Name`, `Args`, `SessionKey`, `UserID`, and `ChatID`.
 
-2. **Command layer** (`command/registry.go`): Receives `Request` and `Deps` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
+2. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
 
 **Dispatch flow:**
 ```
@@ -183,22 +183,22 @@ Telegram message "/model haiku"
     ↓
 telegram.Dispatcher.Dispatch()
     ↓ parses "/model" + "haiku"
-command.Request{Name: "model", Args: "haiku", SessionID: "...", UserID: "..."}
+command.Request{Name: "model", Args: "haiku", SessionKey: "...", UserID: "..."}
     ↓
-command.Registry.DispatchV2()
-    ↓ executes with command.Deps
+command.Registry.Dispatch(ctx, req, cc)
+    ↓ executes with command.CommandContext
 command.Response{Text: "Model set to haiku"}
     ↓
 Telegram renders response (markdown, keyboards, etc.)
 ```
 
-**Backward compatibility:** Commands can use either `Execute(ctx, args) (string, error)` (legacy) or `ExecuteV2(ctx, Request, Deps) (Response, error)` (new). The registry supports both patterns, falling back from ExecuteV2 to Execute when needed.
+All commands use a unified signature: `Execute(ctx context.Context, req Request, cc CommandContext) (Response, error)`. The `CommandContext` struct provides all dependencies (Agent, Sessions, Config, client references, etc.) — no per-command closure constructors.
 
 **Key types:**
-- `command.Request`: Platform-agnostic command invocation (`Name`, `Args`, `SessionID`, `UserID`)
+- `command.Request`: Platform-agnostic command invocation (`Name`, `Args`, `SessionKey`, `UserID`, `ChatID`)
 - `command.Response`: Platform-agnostic result (`Text`, `DocPath`)
-- `command.Deps`: Platform-agnostic dependencies (Agent, Sessions, Config, callbacks)
-- `command.Registry.DispatchV2()`: Executes commands using the new pattern
+- `command.CommandContext`: Platform-agnostic dependencies struct (Agent, Sessions, Config, client references, stores, paths, etc.)
+- `command.Registry.Dispatch()`: Executes commands using `(ctx, Request, CommandContext)`
 
 **Why this split:** Telegram owns the parsing of `/cmd args` format. The command layer owns what commands do. This enables other platforms (Discord, Matrix) to use the same command logic with different syntax.
 
@@ -675,9 +675,9 @@ Messages starting with `/` are intercepted at the Telegram router level before r
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
-**`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The `resolveModel` callback in `main.go` calls `config.ResolveModel()` to resolve aliases and returns `(endpoint, model, format)`. The `setModel` callback calls `ResolveEndpointClient(endpoint, format)` to lazy-init the correct client and calls `ag.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
+**`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The Execute function calls `config.ResolveModel()` to resolve aliases and `cc.ClientProvider.ResolveEndpointClient(endpoint, format)` to lazy-init the correct client. Calls `cc.Agent.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
 
-**Command registration** (`commands.go` in main package): All per-agent slash commands are registered in `registerAgentCommands()`, which takes a `cmdRegParams` struct bundling agent references, config, clients, and stores. Large command bodies (e.g. `/prompts` data builder, `/compact`, `/sessions`) are extracted into named top-level functions in `commands.go` rather than inline closures, reducing cognitive complexity. The `command` package also defines `AgentDeps` (`command/deps.go`) which documents the dependency surface between commands and agent internals. Commands use callbacks for telegram operations to avoid importing the `telegram` package (which imports `command`).
+**Command registration** (`commands.go` in main package): All per-agent slash commands are registered in `registerAgentCommands()`, which builds a `command.CommandContext` struct from agent references, config, clients, and stores. Commands are zero-argument constructors (e.g. `ModelCommand()`, `ResetCommand()`) returning `*Command` structs with an `Execute(ctx, Request, CommandContext)` function. All command logic accesses dependencies through the `CommandContext` parameter — no closures or per-command constructor injection. Commands interact with platforms via `cc.ConnMgr` (a `platform.ConnectionManager` interface) to avoid importing the `telegram` package.
 
 ## Config (`config/config.go`)
 
@@ -920,18 +920,19 @@ Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints fo
 
 Before a session is cleared (`/reset` or multiball TTL reclaim), the agent captures memories asynchronously. Configured via `[memory_formation]` section (replaces `session_reset_prompt`).
 
-Flow (`fireSessionEndMemory` in `main.go`):
+Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
 1. Check `memory_formation.session_end_enabled` (nil = true, explicit false skips)
 2. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
 3. If prompt resolves to empty, skip
-4. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip
+4. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip (unless skipMetaCheck=true for background branches)
 5. Create branch from expiring session (copies conversation history)
 6. Return immediately — caller proceeds to clear the main session
 7. Async: `HandleMessage(ctx, branchKey, prompt)` with 120s timeout, trigger `"session_end_memory"`, NoCompact
 
 Entry points:
-- `/reset` command → `fireSessionEndMemory` (async) → `Clear` → `Reload`
-- `Pool.Acquire` (TTL reclaim) → `Pool.ReclaimHook` → `fireSessionEndMemory` (async) → clear session key
+- `/reset` command → `agent.FireSessionEndMemory` (async) → `RotateKey` → `Reload`
+- `Pool.Acquire` (TTL reclaim) → `ReclaimHook` → `agent.FireSessionEndMemory` (async) → clear session key
+- Periodic runner (background branch completion) → `agent.FireSessionEndMemory` (async, skipMetaCheck=true)
 
 ## Memory Formation & Consolidation Timers
 

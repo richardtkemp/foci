@@ -14,8 +14,8 @@ func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
 	cmds.Register(&command.Command{
 		Name:        "ping",
 		Description: "test",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "pong", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
 		},
 	})
 
@@ -41,8 +41,8 @@ func TestReceiveMessage_UnknownSlashCommandGetsSuggestion(t *testing.T) {
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name: "ping",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "pong", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
 		},
 	})
 

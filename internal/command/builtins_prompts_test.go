@@ -8,34 +8,38 @@ import (
 	"testing"
 )
 
+// promptsCC returns a CommandContext with the given PromptsData injected via PromptsDataFn.
+func promptsCC(data PromptsData) CommandContext {
+	return CommandContext{
+		PromptsDataFn: func(_ CommandContext) PromptsData { return data },
+	}
+}
+
+// TestPromptsCommand verifies /prompts list renders the full prompts table with all status
+// indicators (custom, default, inline, not-found, disabled) and the unrecognised files section.
 func TestPromptsCommand(t *testing.T) {
-	// Verifies /prompts list renders the full prompts table with all status
-	// indicators (custom, default, inline, not-found, disabled) and the unrecognised files section.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID: "clutch",
-				Prompts: []PromptInfo{
-					{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Filename: "compaction-summary.md", Exists: true, Default: false},
-					{Label: "keepalive", Filename: "keepalive.md", Default: true},
-					{Label: "handoff_msg", Inline: "You are picking up a compacted session.", Default: false},
-					{Label: "branch_orientation", Path: "/missing/file.md", Filename: "branch-orientation.md", Exists: false},
-					{Label: "background", Filename: "background.md", Disabled: true},
-					{Label: "braindead_warning", Inline: "Stop!", Default: true},
-				},
-				PromptDirs: []string{"/home/foci/prompts"},
-				Files: []PromptFile{
-					{Dir: "/home/foci/prompts", Name: "compaction.md", Configured: true},
-					{Dir: "/home/foci/prompts", Name: "daily-review.md", Configured: false},
-				},
-				KnownFilenames: map[string]bool{
-					"compaction.md": true,
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID: "clutch",
+		Prompts: []PromptInfo{
+			{Label: "compaction_summary", Path: "/home/foci/prompts/compaction.md", Filename: "compaction-summary.md", Exists: true, Default: false},
+			{Label: "keepalive", Filename: "keepalive.md", Default: true},
+			{Label: "handoff_msg", Inline: "You are picking up a compacted session.", Default: false},
+			{Label: "branch_orientation", Path: "/missing/file.md", Filename: "branch-orientation.md", Exists: false},
+			{Label: "background", Filename: "background.md", Disabled: true},
+			{Label: "braindead_warning", Inline: "Stop!", Default: true},
+		},
+		PromptDirs: []string{"/home/foci/prompts"},
+		Files: []PromptFile{
+			{Dir: "/home/foci/prompts", Name: "compaction.md", Configured: true},
+			{Dir: "/home/foci/prompts", Name: "daily-review.md", Configured: false},
+		},
+		KnownFilenames: map[string]bool{
+			"compaction.md": true,
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "list")
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -62,158 +66,139 @@ func TestPromptsCommand(t *testing.T) {
 		"daily-review.md",
 	}
 	for _, check := range checks {
-		if !strings.Contains(result, check) {
-			t.Errorf("missing %q in:\n%s", check, result)
+		if !strings.Contains(result.Text, check) {
+			t.Errorf("missing %q in:\n%s", check, result.Text)
 		}
 	}
 	// Known filename should be filtered out of unrecognised
-	if strings.Contains(result, "Unrecognised") && strings.Contains(result, "compaction.md") {
-		// compaction.md is known, so it should NOT appear in the unrecognised section
-		// But it could appear in the configured prompts path — check it's not in the unrecognised section specifically
-		parts := strings.SplitN(result, "Unrecognised", 2)
+	if strings.Contains(result.Text, "Unrecognised") && strings.Contains(result.Text, "compaction.md") {
+		parts := strings.SplitN(result.Text, "Unrecognised", 2)
 		if len(parts) == 2 && strings.Contains(parts[1], "compaction.md") {
-			t.Errorf("known filename compaction.md should not appear in unrecognised section:\n%s", result)
+			t.Errorf("known filename compaction.md should not appear in unrecognised section:\n%s", result.Text)
 		}
 	}
 }
 
+// TestPromptsCommandEmpty verifies /prompts list with a single default prompt renders correctly
+// and omits the unrecognised files section when there are no files.
 func TestPromptsCommandEmpty(t *testing.T) {
-	// Verifies /prompts list with a single default prompt renders correctly
-	// and omits the unrecognised files section when there are no files.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID: "test",
-				Prompts: []PromptInfo{
-					{Label: "branch_orientation", Filename: "branch-orientation.md", Default: true},
-				},
-				KnownFilenames: map[string]bool{},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID: "test",
+		Prompts: []PromptInfo{
+			{Label: "branch_orientation", Filename: "branch-orientation.md", Default: true},
 		},
+		KnownFilenames: map[string]bool{},
 	})
 
-	result, err := cmd.Execute(context.Background(), "list")
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "[default]") {
-		t.Errorf("expected [default] in:\n%s", result)
+	if !strings.Contains(result.Text, "[default]") {
+		t.Errorf("expected [default] in:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "✅") {
-		t.Errorf("expected ✅ emoji in:\n%s", result)
+	if !strings.Contains(result.Text, "✅") {
+		t.Errorf("expected ✅ emoji in:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "---") {
-		t.Errorf("expected table separator in:\n%s", result)
+	if !strings.Contains(result.Text, "---") {
+		t.Errorf("expected table separator in:\n%s", result.Text)
 	}
-	// No unrecognised files section when no files
-	if strings.Contains(result, "Unrecognised") {
-		t.Errorf("should not show unrecognised section when no files:\n%s", result)
+	if strings.Contains(result.Text, "Unrecognised") {
+		t.Errorf("should not show unrecognised section when no files:\n%s", result.Text)
 	}
 }
 
+// TestPromptsCommandNoFiles verifies /prompts list omits unrecognised section when there are no
+// files on disk.
 func TestPromptsCommandNoFiles(t *testing.T) {
-	// Verifies /prompts list omits unrecognised section when there are no
-	// files on disk.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID:        "test",
-				Prompts:        []PromptInfo{{Label: "branch_orientation", Filename: "branch-orientation.md", Default: true}},
-				PromptDirs:     []string{"/some/dir"},
-				Files:          nil,
-				KnownFilenames: map[string]bool{},
-			}
-		},
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:        "test",
+		Prompts:        []PromptInfo{{Label: "branch_orientation", Filename: "branch-orientation.md", Default: true}},
+		PromptDirs:     []string{"/some/dir"},
+		Files:          nil,
+		KnownFilenames: map[string]bool{},
 	})
 
-	result, err := cmd.Execute(context.Background(), "list")
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	// No unrecognised section when no files
-	if strings.Contains(result, "Unrecognised") {
-		t.Errorf("should not show unrecognised section when no files:\n%s", result)
+	if strings.Contains(result.Text, "Unrecognised") {
+		t.Errorf("should not show unrecognised section when no files:\n%s", result.Text)
 	}
 }
 
+// TestPromptsCommandKnownFilenamesFiltered verifies that known filenames (keepalive.md, first-run.md) are excluded
+// from the unrecognised files section while unknown files (custom-cron.md) still appear.
 func TestPromptsCommandKnownFilenamesFiltered(t *testing.T) {
-	// Verifies that known filenames (keepalive.md, first-run.md) are excluded
-	// from the unrecognised files section while unknown files (custom-cron.md) still appear.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID: "test",
-				Prompts: []PromptInfo{{Label: "keepalive", Filename: "keepalive.md", Default: true}},
-				PromptDirs: []string{"/ws/prompts"},
-				Files: []PromptFile{
-					{Dir: "/ws/prompts", Name: "keepalive.md", Configured: true},
-					{Dir: "/ws/prompts", Name: "first-run.md", Configured: false},
-					{Dir: "/ws/prompts", Name: "custom-cron.md", Configured: false},
-				},
-				KnownFilenames: map[string]bool{
-					"keepalive.md":  true,
-					"first-run.md":  true,
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID: "test",
+		Prompts: []PromptInfo{{Label: "keepalive", Filename: "keepalive.md", Default: true}},
+		PromptDirs: []string{"/ws/prompts"},
+		Files: []PromptFile{
+			{Dir: "/ws/prompts", Name: "keepalive.md", Configured: true},
+			{Dir: "/ws/prompts", Name: "first-run.md", Configured: false},
+			{Dir: "/ws/prompts", Name: "custom-cron.md", Configured: false},
+		},
+		KnownFilenames: map[string]bool{
+			"keepalive.md": true,
+			"first-run.md": true,
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "list")
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	// Only custom-cron.md should appear in unrecognised
-	if !strings.Contains(result, "custom-cron.md") {
-		t.Errorf("expected custom-cron.md in unrecognised section:\n%s", result)
+	if !strings.Contains(result.Text, "custom-cron.md") {
+		t.Errorf("expected custom-cron.md in unrecognised section:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "Unrecognised") {
-		t.Errorf("expected Unrecognised header:\n%s", result)
+	if !strings.Contains(result.Text, "Unrecognised") {
+		t.Errorf("expected Unrecognised header:\n%s", result.Text)
 	}
-	// Known filenames should NOT appear in unrecognised section
-	parts := strings.SplitN(result, "Unrecognised", 2)
+	parts := strings.SplitN(result.Text, "Unrecognised", 2)
 	if len(parts) == 2 {
 		unrecSection := parts[1]
 		if strings.Contains(unrecSection, "keepalive.md") {
-			t.Errorf("keepalive.md should not appear in unrecognised section:\n%s", result)
+			t.Errorf("keepalive.md should not appear in unrecognised section:\n%s", result.Text)
 		}
 		if strings.Contains(unrecSection, "first-run.md") {
-			t.Errorf("first-run.md should not appear in unrecognised section:\n%s", result)
+			t.Errorf("first-run.md should not appear in unrecognised section:\n%s", result.Text)
 		}
 	}
 }
 
+// TestPromptsCommandBareReturnsUsage verifies that /prompts with no args returns a usage string instead of
+// the table, since the inline keyboard handles bare invocations.
 func TestPromptsCommandBareReturnsUsage(t *testing.T) {
-	// Verifies that /prompts with no args returns a usage string instead of
-	// the table, since the inline keyboard handles bare invocations.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{AgentID: "test"}
-		},
-	})
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{AgentID: "test"})
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Usage:") {
-		t.Errorf("bare /prompts should return usage, got: %s", result)
+	if !strings.Contains(result.Text, "Usage:") {
+		t.Errorf("bare /prompts should return usage, got: %s", result.Text)
 	}
-	if !strings.Contains(result, "list") {
-		t.Errorf("usage should mention 'list', got: %s", result)
+	if !strings.Contains(result.Text, "list") {
+		t.Errorf("usage should mention 'list', got: %s", result.Text)
 	}
 }
 
+// TestPromptsCommandKeyboard verifies that the keyboard options include list, reinstall, and diff
+// buttons for the bare /prompts command.
 func TestPromptsCommandKeyboard(t *testing.T) {
-	// Verifies that the keyboard options include list, reinstall, and diff
-	// buttons for the bare /prompts command.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData { return PromptsData{} },
-	})
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{})
 
 	if cmd.KeyboardOptions == nil {
 		t.Fatal("KeyboardOptions should not be nil")
 	}
-	opts := cmd.KeyboardOptions(context.Background())
+	opts := cmd.KeyboardOptions(context.Background(), cc)
 	if len(opts) != 3 {
 		t.Fatalf("expected 3 keyboard options, got %d", len(opts))
 	}
@@ -229,22 +214,19 @@ func TestPromptsCommandKeyboard(t *testing.T) {
 	}
 }
 
+// TestPromptsCommandChainKeyboardDiff verifies that selecting "diff" from the keyboard chains to a second
+// keyboard listing prompt labels that have resolved texts.
 func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
-	// Verifies that selecting "diff" from the keyboard chains to a second
-	// keyboard listing prompt labels that have resolved texts.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				Prompts: []PromptInfo{
-					{Label: "keepalive"},
-					{Label: "background"},
-					{Label: "compaction_summary"},
-				},
-				ResolvedTexts: map[string]string{
-					"keepalive":          "text",
-					"compaction_summary": "text",
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		Prompts: []PromptInfo{
+			{Label: "keepalive"},
+			{Label: "background"},
+			{Label: "compaction_summary"},
+		},
+		ResolvedTexts: map[string]string{
+			"keepalive":          "text",
+			"compaction_summary": "text",
 		},
 	})
 
@@ -253,7 +235,7 @@ func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
 	}
 
 	// "diff" should produce options for prompts with resolved texts
-	opts := cmd.ChainKeyboard(context.Background(), "diff")
+	opts := cmd.ChainKeyboard(context.Background(), "diff", cc)
 	if len(opts) != 2 {
 		t.Fatalf("expected 2 chain options, got %d", len(opts))
 	}
@@ -263,43 +245,39 @@ func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
 	}
 
 	// Non-diff subcommands should not chain
-	if opts := cmd.ChainKeyboard(context.Background(), "list"); opts != nil {
+	if opts := cmd.ChainKeyboard(context.Background(), "list", cc); opts != nil {
 		t.Errorf("expected nil chain for 'list', got %v", opts)
 	}
-	if opts := cmd.ChainKeyboard(context.Background(), "reinstall"); opts != nil {
+	if opts := cmd.ChainKeyboard(context.Background(), "reinstall", cc); opts != nil {
 		t.Errorf("expected nil chain for 'reinstall', got %v", opts)
 	}
 }
 
+// TestPromptsCommandReinstall verifies embedded prompts are written to workspace directory.
 func TestPromptsCommandReinstall(t *testing.T) {
-	// Verifies embedded prompts are written to workspace directory.
 	dir := filepath.Join(t.TempDir(), "prompts")
 
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID:             "test",
-				WorkspacePromptsDir: dir,
-				EmbeddedPrompts: map[string]string{
-					"keepalive.md":          "keepalive default text",
-					"compaction-summary.md": "compaction default text",
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:             "test",
+		WorkspacePromptsDir: dir,
+		EmbeddedPrompts: map[string]string{
+			"keepalive.md":          "keepalive default text",
+			"compaction-summary.md": "compaction default text",
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "reinstall")
+	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
 	if err != nil {
 		t.Fatalf("Execute reinstall: %v", err)
 	}
-	if !strings.Contains(result, "Wrote 2 of 2") {
-		t.Errorf("expected 'Wrote 2 of 2' in: %s", result)
+	if !strings.Contains(result.Text, "Wrote 2 of 2") {
+		t.Errorf("expected 'Wrote 2 of 2' in: %s", result.Text)
 	}
-	if !strings.Contains(result, dir) {
-		t.Errorf("expected dir path in: %s", result)
+	if !strings.Contains(result.Text, dir) {
+		t.Errorf("expected dir path in: %s", result.Text)
 	}
 
-	// Verify files were written
 	data, err := os.ReadFile(filepath.Join(dir, "keepalive.md"))
 	if err != nil {
 		t.Fatalf("read keepalive.md: %v", err)
@@ -309,90 +287,70 @@ func TestPromptsCommandReinstall(t *testing.T) {
 	}
 }
 
+// TestPromptsCommandReinstallIdempotent verifies reinstall is idempotent when files match.
 func TestPromptsCommandReinstallIdempotent(t *testing.T) {
-	// Verifies reinstall is idempotent when files match.
 	dir := filepath.Join(t.TempDir(), "prompts")
 
-	embedded := map[string]string{
-		"keepalive.md":          "keepalive default text",
-		"compaction-summary.md": "compaction default text",
-	}
-
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID:             "test",
-				WorkspacePromptsDir: dir,
-				EmbeddedPrompts:     embedded,
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:             "test",
+		WorkspacePromptsDir: dir,
+		EmbeddedPrompts: map[string]string{
+			"keepalive.md":          "keepalive default text",
+			"compaction-summary.md": "compaction default text",
 		},
 	})
 
 	// First run
-	_, err := cmd.Execute(context.Background(), "reinstall")
+	_, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
 	if err != nil {
 		t.Fatalf("first reinstall: %v", err)
 	}
 
 	// Second run — all should match
-	result, err := cmd.Execute(context.Background(), "reinstall")
+	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
 	if err != nil {
 		t.Fatalf("second reinstall: %v", err)
 	}
-	if !strings.Contains(result, "Wrote 0 of 2") {
-		t.Errorf("expected 'Wrote 0 of 2' in: %s", result)
+	if !strings.Contains(result.Text, "Wrote 0 of 2") {
+		t.Errorf("expected 'Wrote 0 of 2' in: %s", result.Text)
 	}
-	if !strings.Contains(result, "2 already match") {
-		t.Errorf("expected '2 already match' in: %s", result)
+	if !strings.Contains(result.Text, "2 already match") {
+		t.Errorf("expected '2 already match' in: %s", result.Text)
 	}
 }
 
+// TestPromptsCommandDiff verifies diff computes correctly and returns result text.
 func TestPromptsCommandDiff(t *testing.T) {
-	// Verifies diff file is created and summary generated.
-	var sentPath string
-
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID: "test",
-				Prompts: []PromptInfo{
-					{Label: "keepalive", Default: false},
-				},
-				ResolvedTexts: map[string]string{
-					"keepalive": "custom keepalive\nwith changes",
-				},
-				DefaultTexts: map[string]string{
-					"keepalive": "default keepalive\noriginal text",
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID: "test",
+		Prompts: []PromptInfo{
+			{Label: "keepalive", Default: false},
 		},
-		SendDocFn: func(path string) error {
-			sentPath = path
-			// Read and keep the content before it gets deleted
-			return nil
+		ResolvedTexts: map[string]string{
+			"keepalive": "custom keepalive\nwith changes",
 		},
-		DiffSummaryFn: func(ctx context.Context, customText, defaultText, name string) (string, error) {
-			return "Test summary of differences.", nil
+		DefaultTexts: map[string]string{
+			"keepalive": "default keepalive\noriginal text",
 		},
 	})
+	// cc.Client and cc.ConnMgr are nil — no summary, no doc send
 
-	result, err := cmd.Execute(context.Background(), "diff keepalive")
+	result, err := cmd.Execute(context.Background(), Request{Args: "diff keepalive"}, cc)
 	if err != nil {
 		t.Fatalf("Execute diff: %v", err)
 	}
-	if !strings.Contains(result, "Diff for keepalive sent") {
-		t.Errorf("unexpected result: %s", result)
+	if !strings.Contains(result.Text, "Diff for keepalive sent") {
+		t.Errorf("unexpected result: %s", result.Text)
 	}
-	if !strings.Contains(result, "lines changed") {
-		t.Errorf("expected 'lines changed' in: %s", result)
-	}
-	if sentPath == "" {
-		t.Error("SendDocFn was not called")
+	if !strings.Contains(result.Text, "lines changed") {
+		t.Errorf("expected 'lines changed' in: %s", result.Text)
 	}
 }
 
+// TestPromptsCommandDiffFuzzyMatch verifies fuzzy matching of prompt labels from various input formats.
 func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
-	// Verifies fuzzy matching of prompt labels from various input formats.
 	tests := []struct {
 		input string
 		want  string
@@ -439,29 +397,26 @@ func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
 	}
 }
 
+// TestPromptsCommandDiffNotFound verifies error when prompt label doesn't match any prompt.
 func TestPromptsCommandDiffNotFound(t *testing.T) {
-	// Verifies error when prompt label doesn't match any prompt.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID: "test",
-				Prompts: []PromptInfo{
-					{Label: "keepalive"},
-					{Label: "background"},
-				},
-				ResolvedTexts: map[string]string{
-					"keepalive":  "text",
-					"background": "text",
-				},
-				DefaultTexts: map[string]string{
-					"keepalive":  "text",
-					"background": "text",
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID: "test",
+		Prompts: []PromptInfo{
+			{Label: "keepalive"},
+			{Label: "background"},
+		},
+		ResolvedTexts: map[string]string{
+			"keepalive":  "text",
+			"background": "text",
+		},
+		DefaultTexts: map[string]string{
+			"keepalive":  "text",
+			"background": "text",
 		},
 	})
 
-	_, err := cmd.Execute(context.Background(), "diff nonexistent")
+	_, err := cmd.Execute(context.Background(), Request{Args: "diff nonexistent"}, cc)
 	if err == nil {
 		t.Fatal("expected error for nonexistent prompt")
 	}
@@ -473,36 +428,33 @@ func TestPromptsCommandDiffNotFound(t *testing.T) {
 	}
 }
 
+// TestPromptsCommandDiffNoChanges verifies appropriate message when prompt matches embedded default.
 func TestPromptsCommandDiffNoChanges(t *testing.T) {
-	// Verifies appropriate message when prompt matches embedded default.
-	cmd := NewPromptsCommand(PromptsCmdDeps{
-		DataFn: func() PromptsData {
-			return PromptsData{
-				AgentID: "test",
-				Prompts: []PromptInfo{
-					{Label: "keepalive", Default: true},
-				},
-				ResolvedTexts: map[string]string{
-					"keepalive": "same text",
-				},
-				DefaultTexts: map[string]string{
-					"keepalive": "same text",
-				},
-			}
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID: "test",
+		Prompts: []PromptInfo{
+			{Label: "keepalive", Default: true},
+		},
+		ResolvedTexts: map[string]string{
+			"keepalive": "same text",
+		},
+		DefaultTexts: map[string]string{
+			"keepalive": "same text",
 		},
 	})
 
-	result, err := cmd.Execute(context.Background(), "diff keepalive")
+	result, err := cmd.Execute(context.Background(), Request{Args: "diff keepalive"}, cc)
 	if err != nil {
 		t.Fatalf("Execute diff: %v", err)
 	}
-	if !strings.Contains(result, "matches the embedded default") {
-		t.Errorf("expected 'matches the embedded default' in: %s", result)
+	if !strings.Contains(result.Text, "matches the embedded default") {
+		t.Errorf("expected 'matches the embedded default' in: %s", result.Text)
 	}
 }
 
+// TestDiffLines verifies unified diff format for various scenarios.
 func TestDiffLines(t *testing.T) {
-	// Verifies unified diff format for various scenarios.
 	t.Run("identical", func(t *testing.T) {
 		result := diffLines("hello\nworld\n", "hello\nworld\n", "a", "b")
 		if result != "" {

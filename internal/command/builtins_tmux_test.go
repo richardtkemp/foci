@@ -5,20 +5,33 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"foci/internal/tools"
 )
 
+// tmuxCC builds a CommandContext with a mock TmuxTool for testing.
+func tmuxCC(result string, err error) (CommandContext, *[]map[string]interface{}) {
+	execFn, calls := mockTmuxExec(result, err)
+	return CommandContext{
+		TmuxTool: &tools.Tool{
+			Name:    "tmux",
+			Execute: execFn,
+		},
+	}, calls
+}
+
+// TestTmuxCommandList verifies tmux list sessions operation.
 func TestTmuxCommandList(t *testing.T) {
-	// Verifies tmux list sessions operation.
-	execFn, calls := mockTmuxExec("SESSION  W  AGE  STATUS\nwork  2w  1h  idle", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("SESSION  W  AGE  STATUS\nwork  2w  1h  idle", nil)
+	cmd := TmuxCommand()
 
 	// Explicit "list" arg
-	result, err := cmd.Execute(context.Background(), "list")
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatalf("Execute list: %v", err)
 	}
-	if !strings.Contains(result, "work") {
-		t.Errorf("result = %q, want 'work'", result)
+	if !strings.Contains(result.Text, "work") {
+		t.Errorf("result = %q, want 'work'", result.Text)
 	}
 	if len(*calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(*calls))
@@ -28,12 +41,12 @@ func TestTmuxCommandList(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandStart verifies tmux session creation with auto-watch.
 func TestTmuxCommandStart(t *testing.T) {
-	// Verifies tmux session creation with auto-watch.
-	execFn, calls := mockTmuxExec("Session started: myses", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Session started: myses", nil)
+	cmd := TmuxCommand()
 
-	result, err := cmd.Execute(context.Background(), "start myses sleep 60")
+	result, err := cmd.Execute(context.Background(), Request{Args: "start myses sleep 60"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -56,17 +69,17 @@ func TestTmuxCommandStart(t *testing.T) {
 	if (*calls)[1]["name"] != "myses" {
 		t.Errorf("call[1] name = %v, want myses", (*calls)[1]["name"])
 	}
-	if !strings.Contains(result, "Session started") {
-		t.Errorf("result = %q, want 'Session started'", result)
+	if !strings.Contains(result.Text, "Session started") {
+		t.Errorf("result = %q, want 'Session started'", result.Text)
 	}
 }
 
+// TestTmuxCommandStartNoWatch verifies tmux session creation without auto-watch.
 func TestTmuxCommandStartNoWatch(t *testing.T) {
-	// Verifies tmux session creation without auto-watch.
-	execFn, calls := mockTmuxExec("Session started: myses", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Session started: myses", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "start myses --no-watch sleep 60")
+	_, err := cmd.Execute(context.Background(), Request{Args: "start myses --no-watch sleep 60"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -79,12 +92,12 @@ func TestTmuxCommandStartNoWatch(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandStartAutoName verifies auto-generated session names are tracked for watch.
 func TestTmuxCommandStartAutoName(t *testing.T) {
-	// Verifies auto-generated session names are tracked for watch.
-	execFn, calls := mockTmuxExec("Session started: foci-1", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Session started: foci-1", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "start")
+	_, err := cmd.Execute(context.Background(), Request{Args: "start"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -97,12 +110,12 @@ func TestTmuxCommandStartAutoName(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandSend verifies sending keys to a tmux session.
 func TestTmuxCommandSend(t *testing.T) {
-	// Verifies sending keys to a tmux session.
-	execFn, calls := mockTmuxExec("Keys sent.", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Keys sent.", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "send myses hello world")
+	_, err := cmd.Execute(context.Background(), Request{Args: "send myses hello world"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -114,32 +127,32 @@ func TestTmuxCommandSend(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandSendMissingArgs verifies error when send missing keys.
 func TestTmuxCommandSendMissingArgs(t *testing.T) {
-	// Verifies error when send missing keys.
-	execFn, _ := mockTmuxExec("", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, _ := tmuxCC("", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "send myses")
+	_, err := cmd.Execute(context.Background(), Request{Args: "send myses"}, cc)
 	if err == nil {
 		t.Fatal("expected error for send with no keys")
 	}
 }
 
+// TestTmuxCommandRead verifies reading output from a tmux session.
 func TestTmuxCommandRead(t *testing.T) {
-	// Verifies reading output from a tmux session.
-	execFn, calls := mockTmuxExec("some output here", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("some output here", nil)
+	cmd := TmuxCommand()
 
-	result, err := cmd.Execute(context.Background(), "read myses 100")
+	result, err := cmd.Execute(context.Background(), Request{Args: "read myses 100"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	// Should wrap in code block
-	if !strings.HasPrefix(result, "```\n") || !strings.HasSuffix(result, "\n```") {
-		t.Errorf("result not wrapped in code block: %q", result)
+	if !strings.HasPrefix(result.Text, "```\n") || !strings.HasSuffix(result.Text, "\n```") {
+		t.Errorf("result not wrapped in code block: %q", result.Text)
 	}
-	if !strings.Contains(result, "some output here") {
-		t.Errorf("result missing output: %q", result)
+	if !strings.Contains(result.Text, "some output here") {
+		t.Errorf("result missing output: %q", result.Text)
 	}
 	// Check lines param
 	if (*calls)[0]["lines"] != float64(100) { // JSON numbers are float64
@@ -147,23 +160,23 @@ func TestTmuxCommandRead(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandReadMissingName verifies error when read missing session name.
 func TestTmuxCommandReadMissingName(t *testing.T) {
-	// Verifies error when read missing session name.
-	execFn, _ := mockTmuxExec("", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, _ := tmuxCC("", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "read")
+	_, err := cmd.Execute(context.Background(), Request{Args: "read"}, cc)
 	if err == nil {
 		t.Fatal("expected error for read with no name")
 	}
 }
 
+// TestTmuxCommandKill verifies killing a tmux session.
 func TestTmuxCommandKill(t *testing.T) {
-	// Verifies killing a tmux session.
-	execFn, calls := mockTmuxExec("Session killed: myses", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Session killed: myses", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "kill myses")
+	_, err := cmd.Execute(context.Background(), Request{Args: "kill myses"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -172,12 +185,12 @@ func TestTmuxCommandKill(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandWatch verifies setting up tmux session watch with threshold.
 func TestTmuxCommandWatch(t *testing.T) {
-	// Verifies setting up tmux session watch with threshold.
-	execFn, calls := mockTmuxExec("Watching session myses", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Watching session myses", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "watch myses 60")
+	_, err := cmd.Execute(context.Background(), Request{Args: "watch myses 60"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -186,12 +199,12 @@ func TestTmuxCommandWatch(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandUnwatch verifies stopping watch on a tmux session.
 func TestTmuxCommandUnwatch(t *testing.T) {
-	// Verifies stopping watch on a tmux session.
-	execFn, calls := mockTmuxExec("Stopped watching session myses", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("Stopped watching session myses", nil)
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "unwatch myses")
+	_, err := cmd.Execute(context.Background(), Request{Args: "unwatch myses"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -200,46 +213,46 @@ func TestTmuxCommandUnwatch(t *testing.T) {
 	}
 }
 
+// TestTmuxCommandUnknownOp verifies usage message for unknown operation.
 func TestTmuxCommandUnknownOp(t *testing.T) {
-	// Verifies usage message for unknown operation.
-	execFn, _ := mockTmuxExec("", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, _ := tmuxCC("", nil)
+	cmd := TmuxCommand()
 
-	result, err := cmd.Execute(context.Background(), "restart")
+	result, err := cmd.Execute(context.Background(), Request{Args: "restart"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Usage:") {
-		t.Errorf("result = %q, want usage help", result)
+	if !strings.Contains(result.Text, "Usage:") {
+		t.Errorf("result = %q, want usage help", result.Text)
 	}
 }
 
+// TestTmuxCommandNoArgsShowsUsage verifies usage message when no args provided.
 func TestTmuxCommandNoArgsShowsUsage(t *testing.T) {
-	// Verifies usage message when no args provided.
-	execFn, calls := mockTmuxExec("session1\nsession2\n", nil)
-	cmd := NewTmuxCommand(execFn)
+	cc, calls := tmuxCC("session1\nsession2\n", nil)
+	cmd := TmuxCommand()
 
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Usage:") {
-		t.Errorf("result = %q, want usage help", result)
+	if !strings.Contains(result.Text, "Usage:") {
+		t.Errorf("result = %q, want usage help", result.Text)
 	}
-	if !strings.Contains(result, "Commands:") {
-		t.Errorf("result = %q, want commands list", result)
+	if !strings.Contains(result.Text, "Commands:") {
+		t.Errorf("result = %q, want commands list", result.Text)
 	}
 	if len(*calls) > 0 {
 		t.Errorf("execFn should not be called with no args, got calls: %v", *calls)
 	}
 }
 
+// TestTmuxCommandError verifies error handling when tmux operation fails.
 func TestTmuxCommandError(t *testing.T) {
-	// Verifies error handling when tmux operation fails.
-	execFn, _ := mockTmuxExec("", fmt.Errorf("tmux not running"))
-	cmd := NewTmuxCommand(execFn)
+	cc, _ := tmuxCC("", fmt.Errorf("tmux not running"))
+	cmd := TmuxCommand()
 
-	_, err := cmd.Execute(context.Background(), "list")
+	_, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err == nil {
 		t.Fatal("expected error")
 	}

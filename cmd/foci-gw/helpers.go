@@ -68,18 +68,6 @@ func resolveIntPtrPtr(perAgent, global *int) *int {
 // resolveIdlePreserve is an alias for resolveIntPtrPtr for idle-preserve config.
 var resolveIdlePreserve = resolveIntPtrPtr
 
-// resolveOrientPath resolves the branch orientation prompt path for a given variant.
-// Precedence: specific per-agent → specific global → deprecated per-agent → deprecated global.
-func resolveOrientPath(specificAgent, specificGlobal, deprecatedAgent, deprecatedGlobal string) string {
-	if specificAgent != "" {
-		return specificAgent
-	}
-	if specificGlobal != "" {
-		return specificGlobal
-	}
-	return resolveString(deprecatedAgent, deprecatedGlobal)
-}
-
 // parseDurationDefault parses a Go duration string, returning fallback on error or empty.
 func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 	if s == "" {
