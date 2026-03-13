@@ -29,6 +29,7 @@ import (
 //
 // Requires ANTHROPIC_API_KEY environment variable.
 func TestBranchCacheSharing(t *testing.T) {
+	// Proves end-to-end that branched sessions share the Anthropic prompt cache with their parent: a branch request must show cache_read > 0, confirming no redundant token billing for the shared system prompt prefix.
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		t.Skip("ANTHROPIC_API_KEY not set")
