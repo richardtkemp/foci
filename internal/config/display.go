@@ -369,6 +369,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.StartupNotify != nil {
 		add("startup_notify", *agent.StartupNotify)
 	}
+	if agent.MultiballNoCompact != nil {
+		add("multiball_no_compact", *agent.MultiballNoCompact)
+	}
 	if agent.ShowToolCalls != nil {
 		add("show_tool_calls", string(*agent.ShowToolCalls))
 	}

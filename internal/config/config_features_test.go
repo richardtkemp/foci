@@ -678,3 +678,60 @@ id = "a"
 		}
 	})
 }
+
+// TestMultiballNoCompactConfig verifies multiball_no_compact *bool parsing:
+// nil (default) means true, explicit true/false are preserved.
+func TestMultiballNoCompactConfig(t *testing.T) {
+	t.Run("defaults to nil", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].MultiballNoCompact != nil {
+			t.Error("MultiballNoCompact should default to nil (treated as true)")
+		}
+	})
+
+	t.Run("explicit true", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+multiball_no_compact = true
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].MultiballNoCompact == nil || !*cfg.Agents[0].MultiballNoCompact {
+			t.Error("MultiballNoCompact should be true")
+		}
+	})
+
+	t.Run("explicit false", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+multiball_no_compact = false
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Agents[0].MultiballNoCompact == nil || *cfg.Agents[0].MultiballNoCompact {
+			t.Error("MultiballNoCompact should be false")
+		}
+	})
+}
