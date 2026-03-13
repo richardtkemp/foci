@@ -7,13 +7,39 @@ import (
 	"strings"
 )
 
+// legacyMIME maps legacy MIME types to their modern convertible equivalents.
+var legacyMIME = map[string]string{
+	"application/msword":                                                          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel":                                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint":                                               "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.template":      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.template":         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.openxmlformats-officedocument.presentationml.template":        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.openxmlformats-officedocument.presentationml.slideshow":       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.ms-word.document.macroEnabled.12":                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel.sheet.macroEnabled.12":                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint.presentation.macroEnabled.12":                   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+// normalizeMIME strips parameters (e.g. "; charset=utf-8") and maps legacy
+// MIME types to their modern equivalents for consistent matching.
+func normalizeMIME(mime string) string {
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	if mapped, ok := legacyMIME[mime]; ok {
+		return mapped
+	}
+	return mime
+}
+
 func isPDFMIME(mime string) bool {
-	return mime == "application/pdf"
+	return normalizeMIME(mime) == "application/pdf"
 }
 
 // isImageMIME returns true if the MIME type is a supported image format.
 func isImageMIME(mime string) bool {
-	switch mime {
+	switch normalizeMIME(mime) {
 	case "image/jpeg", "image/png", "image/gif", "image/webp":
 		return true
 	}
@@ -23,7 +49,7 @@ func isImageMIME(mime string) bool {
 // isConvertibleDocMIME returns true if the MIME type is a document format
 // that can be converted to text for LLM consumption (docx, xlsx, pptx, HTML, CSV, plain text).
 func isConvertibleDocMIME(mime string) bool {
-	switch mime {
+	switch normalizeMIME(mime) {
 	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
