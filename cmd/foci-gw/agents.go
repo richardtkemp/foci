@@ -44,8 +44,9 @@ type agentInstance struct {
 	promptSearchDirs  []string         // directories to search for prompt files
 	tmuxClearAll      func()           // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount    func() int       // returns number of active tmux watches
-	kaRunner          *periodic.Runner // keepalive & background work timer (nil if disabled)
-	mcpManager        *mcpkg.Manager   // nil if no MCP servers configured
+	webhooks          map[string]string // hook ID → prompt path (merged from global + per-agent)
+	kaRunner          *periodic.Runner  // keepalive & background work timer (nil if disabled)
+	mcpManager        *mcpkg.Manager    // nil if no MCP servers configured
 }
 
 // setupParams holds the shared resources needed by each agent.
@@ -599,6 +600,19 @@ func setupAgent(p setupParams) *agentInstance {
 		})
 	}
 
+	// Merge webhooks: global defaults, then per-agent overlay.
+	// Per-agent entries override global entries with the same key.
+	var webhooks map[string]string
+	if len(p.cfg.Defaults.Webhooks) > 0 || len(acfg.Webhooks) > 0 {
+		webhooks = make(map[string]string, len(p.cfg.Defaults.Webhooks)+len(acfg.Webhooks))
+		for k, v := range p.cfg.Defaults.Webhooks {
+			webhooks[k] = v
+		}
+		for k, v := range acfg.Webhooks {
+			webhooks[k] = v
+		}
+	}
+
 	return &agentInstance{
 		id:                acfg.ID,
 		ag:                ag,
@@ -608,6 +622,7 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
+		webhooks:          webhooks,
 		tmuxClearAll:      tmuxClearAll,
 		tmuxWatchCount:    tmuxWatchCount,
 		mcpManager:        mcpMgr,

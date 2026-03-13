@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -307,11 +308,14 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 	}
 }
 
-// handleWebhook returns the handler for POST /webhook/{agent}/{prompt}.
-// It resolves the named prompt file from the agent's prompt search dirs,
-// reads the request body as a webhook payload, combines them, and sends
-// the combined message to the agent. Async (202) by default; ?sync=true
-// for synchronous response.
+// webhookMaxBodyBytes is the maximum request body size for webhook payloads (1 MB).
+const webhookMaxBodyBytes = 1 << 20
+
+// handleWebhook returns the handler for POST /webhook/{agent}/{hookid}.
+// The hookid must be declared in the agent's webhooks config map, which maps
+// hook IDs to prompt file paths. The prompt is resolved via ResolvePrompt,
+// the request body is read as a webhook payload, and the combined message
+// is sent to the agent. Async (202) by default; ?sync=true for synchronous.
 func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive activityChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -319,13 +323,13 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			return
 		}
 
-		// Parse /webhook/{agent}/{prompt} from the URL path.
+		// Parse /webhook/{agent}/{hookid} from the URL path.
 		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/", 2)
 		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			http.Error(w, "bad request: path must be /webhook/{agent}/{prompt}", http.StatusBadRequest)
+			http.Error(w, "bad request: path must be /webhook/{agent}/{hookid}", http.StatusBadRequest)
 			return
 		}
-		agentID, promptName := parts[0], parts[1]
+		agentID, hookID := parts[0], parts[1]
 
 		inst, ok := resolveAgent(agentID)
 		if !ok {
@@ -334,20 +338,35 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			return
 		}
 
+		// Look up hookID in the agent's configured webhooks.
+		promptPath, ok := inst.webhooks[hookID]
+		if !ok {
+			http.Error(w, fmt.Sprintf("unknown webhook: %q", hookID), http.StatusNotFound)
+			return
+		}
+
 		q := r.URL.Query()
 		if !checkActivityGate(w, inst.id, q.Get("if_active"), q.Get("if_inactive"), isAgentActive, "http", "/webhook") {
 			return
 		}
 
-		// Resolve the prompt file (searches agent workspace/prompts, then shared).
-		promptText := prompts.ResolvePrompt("", promptName, "", inst.promptSearchDirs...)
+		// Resolve the prompt file. Absolute paths read directly; bare filenames
+		// search agent workspace/prompts then shared/prompts.
+		var resolvedPath, resolvedFilename string
+		if filepath.IsAbs(promptPath) {
+			resolvedPath = promptPath
+			resolvedFilename = filepath.Base(promptPath)
+		} else {
+			resolvedFilename = promptPath
+		}
+		promptText := prompts.ResolvePrompt(resolvedPath, resolvedFilename, "", inst.promptSearchDirs...)
 		if promptText == "" {
-			http.Error(w, fmt.Sprintf("prompt not found: %q", promptName), http.StatusNotFound)
+			http.Error(w, fmt.Sprintf("prompt file not found for webhook %q", hookID), http.StatusNotFound)
 			return
 		}
 
-		// Read webhook payload from request body.
-		body, err := io.ReadAll(r.Body)
+		// Read webhook payload from request body (capped at 1 MB).
+		body, err := io.ReadAll(io.LimitReader(r.Body, webhookMaxBodyBytes))
 		if err != nil {
 			http.Error(w, "failed to read request body", http.StatusBadRequest)
 			return
@@ -369,7 +388,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			return
 		}
 
-		log.Infof("http", "webhook (agent=%s, prompt=%s, payload=%d bytes)", inst.id, promptName, len(payload))
+		log.Infof("http", "webhook (agent=%s, hook=%s, payload=%d bytes)", inst.id, hookID, len(payload))
 
 		sendCtx := agent.WithTrigger(d.ctx, "webhook")
 		sync := q.Get("sync") == "true"

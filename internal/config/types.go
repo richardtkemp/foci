@@ -199,6 +199,8 @@ type AgentConfig struct {
 	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
 
 	CacheTTL string `toml:"cache_ttl"` // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
+
+	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
 }
 
 type GeminiConfig struct {
@@ -567,6 +569,8 @@ type DefaultsConfig struct {
 	NudgeMaxPerBatch       int  `toml:"nudge_max_per_batch"`       // max reminders injected per tool batch (default 1)
 	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
 	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
+
+	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
 }
 
 // ModelsConfig holds model-related configuration.

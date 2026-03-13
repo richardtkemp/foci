@@ -41,6 +41,7 @@ model = "claude-sonnet-4-20250514"
 # summary_context_chars = 6000           # max chars of context for auto-summary
 # search_provider = "anthropic"          # "anthropic" (default) or "brave"
 # fetch_provider = "builtin"            # "builtin" (default) or "anthropic"
+# webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
 # ─── Model aliases ───────────────────────────────────────────────────
 # [models]

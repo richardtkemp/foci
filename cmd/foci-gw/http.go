@@ -105,7 +105,7 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/wake", handleWake(d, resolveAgent, isAgentActive))
 	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, isAgentActive))
 
-	endpointList := "/send, /status, /command, /wake, /webhook/{agent}/{prompt}"
+	endpointList := "/send, /status, /command, /wake, /webhook/{agent}/{hookid}"
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"
