@@ -105,7 +105,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persistkill"
-	tmuxSetup(t, name)
+	tmuxSetupWithSentinel(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{

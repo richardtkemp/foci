@@ -137,7 +137,7 @@ func TestTmuxKill(t *testing.T) {
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-kill"
-	tmuxSetup(t, name)
+	tmuxSetupWithSentinel(t, name)
 
 	// Start
 	params, _ := json.Marshal(map[string]interface{}{
