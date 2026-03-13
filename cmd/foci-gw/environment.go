@@ -116,11 +116,12 @@ func buildContextInfoFn(
 				mb.AssistantCount++
 			}
 		}
+		model := ag.SessionModel(sk)
 		return command.ContextInfo{
 			SessionKey:       sk,
-			Model:            ag.Model,
+			Model:            model,
 			CompactionThresh: compactionThreshold,
-			ContextLimit:     compaction.ContextLimit(ag.Model),
+			ContextLimit:     compaction.ContextLimit(model),
 			SystemSections:   sections,
 			EnvironmentChars: len(ag.EnvironmentBlock),
 			SkillsChars:      skillsChars,
