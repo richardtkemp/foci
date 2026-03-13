@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"database/sql"
 	"fmt"
 	"html"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/sqlite"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -234,6 +236,82 @@ func (b *BleveIndex) IndexConversation(text, session string) {
 	if err := b.index.Index(docID, doc); err != nil {
 		log.Errorf("memory", "bleve index conversation: %v", err)
 	}
+}
+
+// BackfillConversations reads historical messages from a conversation SQLite
+// database and indexes any that are missing from the bleve index. Returns the
+// number of messages backfilled. Safe to call concurrently with other index
+// operations.
+func (b *BleveIndex) BackfillConversations(dbPath string) (int, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return 0, nil // no conversation DB yet — nothing to backfill
+	}
+
+	db, err := sqlite.Open(dbPath)
+	if err != nil {
+		return 0, fmt.Errorf("open conversation db: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	rows, err := db.Query(
+		`SELECT id, ts, text, session FROM messages WHERE text != '' ORDER BY id`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("query conversation messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var count int
+	batch := b.index.NewBatch()
+
+	for rows.Next() {
+		var id int64
+		var ts, text string
+		var session sql.NullString
+		if err := rows.Scan(&id, &ts, &text, &session); err != nil {
+			return count, fmt.Errorf("scan row: %w", err)
+		}
+
+		sess := session.String
+		docID := fmt.Sprintf("conversation:%s:%d", sess, id)
+
+		// Check if already indexed
+		existing, _ := b.index.Document(docID)
+		if existing != nil {
+			continue
+		}
+
+		mtime := float64(time.Now().Unix())
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			mtime = float64(t.Unix())
+		}
+
+		doc := map[string]interface{}{
+			"content": text,
+			"path":    sess,
+			"source":  "conversation",
+			"mtime":   mtime,
+		}
+		if err := batch.Index(docID, doc); err != nil {
+			log.Errorf("memory", "bleve backfill index doc: %v", err)
+			continue
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return count, fmt.Errorf("iterate rows: %w", err)
+	}
+
+	if count > 0 {
+		b.mu.Lock()
+		err = b.index.Batch(batch)
+		b.mu.Unlock()
+		if err != nil {
+			return 0, fmt.Errorf("commit backfill batch: %w", err)
+		}
+	}
+
+	return count, nil
 }
 
 // TodoSearchHit is a single todo search result from bleve, carrying the

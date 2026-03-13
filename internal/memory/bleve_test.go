@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"foci/internal/sqlite"
 )
 
 func testBleveIndex(t *testing.T) (*BleveIndex, string) {
@@ -1014,5 +1016,206 @@ func TestBleveTodoSearchLimit(t *testing.T) {
 	}
 	if len(items) != 15 {
 		t.Errorf("limit=20: expected 15, got %d", len(items))
+	}
+}
+
+// createTestConversationDB creates a conversation SQLite DB with test messages
+// and returns its path.
+func createTestConversationDB(t *testing.T, dir string, messages []struct {
+	ts, text, session string
+}) string {
+	t.Helper()
+	dbPath := filepath.Join(dir, "conversation.db")
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE IF NOT EXISTS messages (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts         TEXT    NOT NULL,
+		direction  TEXT    NOT NULL,
+		user_id    TEXT    NOT NULL,
+		username   TEXT    NOT NULL,
+		chat_id    INTEGER NOT NULL,
+		text       TEXT    NOT NULL,
+		parse_mode TEXT,
+		session    TEXT,
+		error      TEXT
+	)`)
+	if err != nil {
+		t.Fatalf("create conversation db: %v", err)
+	}
+	for _, m := range messages {
+		_, err := db.Exec(
+			`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, session)
+			 VALUES (?, 'recv', 'u1', 'testuser', 1, ?, ?)`,
+			m.ts, m.text, m.session,
+		)
+		if err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+	db.Close()
+	return dbPath
+}
+
+// TestBleveBackfillConversations verifies that historical conversation messages
+// from a SQLite database are backfilled into the bleve index.
+func TestBleveBackfillConversations(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+	dir := t.TempDir()
+
+	now := time.Now().UTC()
+	dbPath := createTestConversationDB(t, dir, []struct{ ts, text, session string }{
+		{now.Add(-2 * time.Hour).Format(time.RFC3339Nano), "Discussing quantum entanglement theory", "agent1/chat/v1"},
+		{now.Add(-1 * time.Hour).Format(time.RFC3339Nano), "Neural network training strategies", "agent1/chat/v1"},
+		{now.Format(time.RFC3339Nano), "Kubernetes cluster management tips", "agent1/chat/v2"},
+	})
+
+	n, err := idx.BackfillConversations(dbPath)
+	if err != nil {
+		t.Fatalf("BackfillConversations: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("backfilled %d messages, want 3", n)
+	}
+
+	// All messages should be searchable
+	results, err := idx.Search("quantum entanglement", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for 'quantum entanglement'")
+	}
+	if results[0].Source != "conversation" {
+		t.Errorf("source = %q, want 'conversation'", results[0].Source)
+	}
+
+	results, err = idx.Search("kubernetes cluster", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for 'kubernetes cluster'")
+	}
+}
+
+// TestBleveBackfillSkipsAlreadyIndexed verifies that backfill does not
+// duplicate messages that are already in the bleve index.
+func TestBleveBackfillSkipsAlreadyIndexed(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+	dir := t.TempDir()
+
+	now := time.Now().UTC()
+	dbPath := createTestConversationDB(t, dir, []struct{ ts, text, session string }{
+		{now.Format(time.RFC3339Nano), "Unique backfill deduplication test message", "agent1/chat/v1"},
+	})
+
+	// First backfill
+	n1, err := idx.BackfillConversations(dbPath)
+	if err != nil {
+		t.Fatalf("first BackfillConversations: %v", err)
+	}
+	if n1 != 1 {
+		t.Errorf("first backfill: got %d, want 1", n1)
+	}
+
+	// Second backfill should skip the already-indexed message
+	n2, err := idx.BackfillConversations(dbPath)
+	if err != nil {
+		t.Fatalf("second BackfillConversations: %v", err)
+	}
+	if n2 != 0 {
+		t.Errorf("second backfill: got %d, want 0 (should skip duplicates)", n2)
+	}
+
+	// Should still have exactly one result
+	results, err := idx.Search("deduplication test", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(results))
+	}
+}
+
+// TestBleveBackfillMissingDB verifies that backfill gracefully handles
+// a non-existent conversation database (returns 0, nil).
+func TestBleveBackfillMissingDB(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+
+	n, err := idx.BackfillConversations("/nonexistent/path/conversation.db")
+	if err != nil {
+		t.Fatalf("BackfillConversations: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 backfilled, got %d", n)
+	}
+}
+
+// TestBleveBackfillSkipsEmptyText verifies that messages with empty text
+// are not indexed during backfill.
+func TestBleveBackfillSkipsEmptyText(t *testing.T) {
+	idx, _ := testBleveIndex(t)
+	dir := t.TempDir()
+
+	now := time.Now().UTC()
+	// The DB query already filters text != '', but verify the WHERE clause works
+	dbPath := filepath.Join(dir, "conversation.db")
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE IF NOT EXISTS messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, direction TEXT NOT NULL,
+		user_id TEXT NOT NULL, username TEXT NOT NULL, chat_id INTEGER NOT NULL,
+		text TEXT NOT NULL, parse_mode TEXT, session TEXT, error TEXT
+	)`)
+	if err != nil {
+		t.Fatalf("create db: %v", err)
+	}
+	db.Exec(`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, session)
+		VALUES (?, 'recv', 'u1', 'user', 1, '', 'a/b/c')`, now.Format(time.RFC3339Nano))
+	db.Exec(`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, session)
+		VALUES (?, 'recv', 'u1', 'user', 1, 'Actual content here', 'a/b/c')`, now.Format(time.RFC3339Nano))
+	db.Close()
+
+	n, err := idx.BackfillConversations(dbPath)
+	if err != nil {
+		t.Fatalf("BackfillConversations: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 backfilled (skipping empty), got %d", n)
+	}
+}
+
+// TestBleveBackfillSurvivesReindex verifies that backfilled conversation
+// entries are preserved across Reindex() calls.
+func TestBleveBackfillSurvivesReindex(t *testing.T) {
+	idx, memDir := testBleveIndex(t)
+	dir := t.TempDir()
+
+	now := time.Now().UTC()
+	dbPath := createTestConversationDB(t, dir, []struct{ ts, text, session string }{
+		{now.Format(time.RFC3339Nano), "Backfilled message about photosynthesis", "agent1/chat/v1"},
+	})
+
+	n, err := idx.BackfillConversations(dbPath)
+	if err != nil {
+		t.Fatalf("BackfillConversations: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 backfilled, got %d", n)
+	}
+
+	// Reindex (adds a file, preserves dynamic docs)
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Biology notes"), 0644)
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	// Backfilled conversation should survive
+	results, err := idx.Search("photosynthesis", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("backfilled conversation should survive reindex")
+	}
+	if results[0].Source != "conversation" {
+		t.Errorf("source = %q, want 'conversation'", results[0].Source)
 	}
 }
