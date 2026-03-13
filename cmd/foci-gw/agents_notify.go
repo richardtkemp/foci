@@ -63,11 +63,11 @@ func newAsyncNotifier(
 				}
 
 				// STEP 2: Display to user in calling session's chat.
-				// Use SendTextToSession (not SendToSession) — the response is an
+				// Use SendToSession (not SendInjectedMessage) — the response is an
 				// agent reply, not a system injection, so no header prefix.
 				callerConn := connMgr.ForSession(replyToSession)
 				if callerConn != nil {
-					if err := callerConn.SendTextToSession(replyToSession, formattedResp); err != nil {
+					if err := callerConn.SendToSession(replyToSession, formattedResp); err != nil {
 						log.Errorf(trigger, "platform delivery to caller %s: %v", replyToSession, err)
 					}
 				} else {
@@ -89,9 +89,9 @@ func newAsyncNotifier(
 			if conn != nil && !isBranchWithoutConn {
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
-						// Intermediate replies are agent output — use SendTextToSession
+						// Intermediate replies are agent output — use SendToSession
 						// to avoid prepending the system injection header.
-						if err := conn.SendTextToSession(target, text); err != nil {
+						if err := conn.SendToSession(target, text); err != nil {
 							log.Errorf(trigger, "intermediate platform delivery: %v", err)
 						}
 					},
@@ -115,9 +115,9 @@ func newAsyncNotifier(
 				}
 				return
 			}
-			// Final reply is agent output — use SendTextToSession to avoid
+			// Final reply is agent output — use SendToSession to avoid
 			// prepending the system injection header.
-			if err := conn.SendTextToSession(target, resp); err != nil {
+			if err := conn.SendToSession(target, resp); err != nil {
 				log.Errorf(trigger, "platform delivery: %v", err)
 			}
 		}()
@@ -162,9 +162,9 @@ func newSessionNotifyFn(
 				return
 			}
 
-			// Agent reply — use SendTextToSession to avoid prepending the
+			// Agent reply — use SendToSession to avoid prepending the
 			// system injection header.
-			if err := conn.SendTextToSession(targetSessionKey, resp); err != nil {
+			if err := conn.SendToSession(targetSessionKey, resp); err != nil {
 				log.Errorf("session_notify", "platform delivery for session %s: %v", targetSessionKey, err)
 			}
 		}()

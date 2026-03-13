@@ -65,8 +65,8 @@ func (m *mockConnection) SetChatID(chatID int64)                {}
 func (m *mockConnection) ChatID() int64                         { return 0 }
 func (m *mockConnection) Username() string                      { return "" }
 func (m *mockConnection) UpdateChatSessionKey(int64, string)     {}
-func (m *mockConnection) SendToSession(sk, text string) error     { return nil }
-func (m *mockConnection) SendTextToSession(sk, text string) error { return nil }
+func (m *mockConnection) SendInjectedMessage(sk, text string) error { return nil }
+func (m *mockConnection) SendToSession(sk, text string) error       { return nil }
 func (m *mockConnection) SendNotification(text string)            {}
 
 type mockHandler struct{}
