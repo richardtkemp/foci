@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"testing"
+
+	"foci/internal/platform"
 )
 
 // TestIsImageMIME verifies that isImageMIME correctly identifies image MIME
@@ -48,8 +50,8 @@ func TestExtForMediaType(t *testing.T) {
 	}
 }
 
-// TestIsConvertibleDocMIME verifies that isConvertibleDocMIME correctly
-// identifies document types that can be converted to text.
+// TestIsConvertibleDocMIME verifies that platform.IsConvertibleDocMIME
+// correctly identifies document types that can be converted to text.
 func TestIsConvertibleDocMIME(t *testing.T) {
 	tests := []struct {
 		mime string
@@ -67,8 +69,8 @@ func TestIsConvertibleDocMIME(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		if got := isConvertibleDocMIME(tt.mime); got != tt.want {
-			t.Errorf("isConvertibleDocMIME(%q) = %v, want %v", tt.mime, got, tt.want)
+		if got := platform.IsConvertibleDocMIME(tt.mime); got != tt.want {
+			t.Errorf("IsConvertibleDocMIME(%q) = %v, want %v", tt.mime, got, tt.want)
 		}
 	}
 }

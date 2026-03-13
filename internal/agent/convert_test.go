@@ -139,8 +139,8 @@ func TestIsConvertibleMIME(t *testing.T) {
 		{"application/zip", false},
 	}
 	for _, tt := range tests {
-		if got := isConvertibleMIME(tt.mime); got != tt.want {
-			t.Errorf("isConvertibleMIME(%q) = %v, want %v", tt.mime, got, tt.want)
+		if got := platform.IsConvertibleDocMIME(tt.mime); got != tt.want {
+			t.Errorf("platform.IsConvertibleDocMIME(%q) = %v, want %v", tt.mime, got, tt.want)
 		}
 	}
 }
