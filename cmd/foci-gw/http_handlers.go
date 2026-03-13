@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/voice"
+	"foci/prompts"
 )
 
 // agentResolver returns the agent instance for the given ID, or the first agent if empty.
@@ -302,6 +304,90 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			ttsRepls := voice.MergeReplacements(d.cfg.Defaults.TTSReplacements, inst.agentCfg.TTSReplacements)
 			return resolveTTS(d.ttsMap, d.cfg.TTS, inst.agentCfg.TTS, inst.agentCfg.TTSRate, ttsRepls)
 		},
+	}
+}
+
+// handleWebhook returns the handler for POST /webhook/{agent}/{prompt}.
+// It resolves the named prompt file from the agent's prompt search dirs,
+// reads the request body as a webhook payload, combines them, and sends
+// the combined message to the agent. Async (202) by default; ?sync=true
+// for synchronous response.
+func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive activityChecker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse /webhook/{agent}/{prompt} from the URL path.
+		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/webhook/"), "/", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			http.Error(w, "bad request: path must be /webhook/{agent}/{prompt}", http.StatusBadRequest)
+			return
+		}
+		agentID, promptName := parts[0], parts[1]
+
+		inst, ok := resolveAgent(agentID)
+		if !ok {
+			log.Warnf("http", "POST /webhook: unknown agent %q", agentID)
+			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
+			return
+		}
+
+		q := r.URL.Query()
+		if !checkActivityGate(w, inst.id, q.Get("if_active"), q.Get("if_inactive"), isAgentActive, "http", "/webhook") {
+			return
+		}
+
+		// Resolve the prompt file (searches agent workspace/prompts, then shared).
+		promptText := prompts.ResolvePrompt("", promptName, "", inst.promptSearchDirs...)
+		if promptText == "" {
+			http.Error(w, fmt.Sprintf("prompt not found: %q", promptName), http.StatusNotFound)
+			return
+		}
+
+		// Read webhook payload from request body.
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		// Combine prompt + payload.
+		var combined string
+		payload := strings.TrimSpace(string(body))
+		if payload != "" {
+			combined = promptText + "\n\n## Webhook Payload\n\n" + payload
+		} else {
+			combined = promptText
+		}
+
+		sessionKey := inst.defaultSessionKey()
+		if sessionKey == "" {
+			log.Warnf("http", "POST /webhook: no default session for agent %q", inst.id)
+			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+			return
+		}
+
+		log.Infof("http", "webhook (agent=%s, prompt=%s, payload=%d bytes)", inst.id, promptName, len(payload))
+
+		sendCtx := agent.WithTrigger(d.ctx, "webhook")
+		sync := q.Get("sync") == "true"
+		if !sync {
+			asyncDispatch(w, inst, d.connMgr, sendCtx, sessionKey, combined, "http", false)
+			return
+		}
+
+		resp, err := inst.ag.HandleMessage(sendCtx, sessionKey, combined)
+		if err != nil {
+			log.Errorf("http", "webhook error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
+			log.Errorf("http", "encode response: %v", err)
+		}
 	}
 }
 

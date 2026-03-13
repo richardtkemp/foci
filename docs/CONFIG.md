@@ -125,7 +125,7 @@ HTTP API server.
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
 | `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 
-Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
+Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `POST /webhook/{agent}/{prompt}`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
 
 All endpoints accept an `agent` field (JSON body for POST, query param for GET) to target a specific agent by ID. When empty or omitted, the first configured agent is used. The `/send` endpoint also accepts an optional `session` field to target a specific session key (defaults to `main`).
 

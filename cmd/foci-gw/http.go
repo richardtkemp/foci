@@ -95,7 +95,7 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-// registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /wake, /voice).
+// registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /wake, /webhook, /voice).
 func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	resolveAgent, isAgentActive := buildResolvers(d)
 
@@ -103,8 +103,9 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	mux.HandleFunc("/status", handleStatus(d, resolveAgent))
 	mux.HandleFunc("/command", handleCommand(d, resolveAgent))
 	mux.HandleFunc("/wake", handleWake(d, resolveAgent, isAgentActive))
+	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, isAgentActive))
 
-	endpointList := "/send, /status, /command, /wake"
+	endpointList := "/send, /status, /command, /wake, /webhook/{agent}/{prompt}"
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
 		mux.HandleFunc("/voice", voice.Handler(buildVoiceConfig(d)))
 		endpointList += ", /voice (ws)"
@@ -129,7 +130,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 			log.Errorf(logTag, "async error: %v", err)
 			return
 		}
-		if resp != "" && !silent {
+		if resp != "" && !silent && connMgr != nil {
 			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
 				if err := conn.SendTextToSession(sessionKey, resp); err != nil {
 					log.Errorf(logTag, "async platform delivery: %v", err)
