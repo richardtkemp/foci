@@ -19,6 +19,7 @@ type sessionMeta struct {
 	prevCacheWrite  int
 	effort          string                 // per-session effort override (empty = use agent default)
 	thinking        string                 // per-session thinking override (empty = use agent default)
+	speed           string                 // per-session speed override (empty = use agent default)
 	model           string                 // per-session model override (empty = use agent default)
 	modelEndpoint   string                 // per-session endpoint override (empty = use agent default)
 	modelFormat     string                 // per-session format override (empty = use agent default)
@@ -72,6 +73,16 @@ func (a *Agent) SessionThinking(sessionKey string) string {
 // SetSessionThinking sets the per-session thinking override and persists it.
 func (a *Agent) SetSessionThinking(sessionKey, value string) {
 	a.setSessionString(sessionKey, "thinking", value, func(sm *sessionMeta, v string) { sm.thinking = v })
+}
+
+// SessionSpeed returns the effective speed mode for the session.
+func (a *Agent) SessionSpeed(sessionKey string) string {
+	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.speed }, a.Speed)
+}
+
+// SetSessionSpeed sets the per-session speed override and persists it.
+func (a *Agent) SetSessionSpeed(sessionKey, value string) {
+	a.setSessionString(sessionKey, "speed", value, func(sm *sessionMeta, v string) { sm.speed = v })
 }
 
 // SessionModel returns the effective model for the session.
@@ -246,6 +257,12 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 		restored = append(restored, "thinking="+val)
 	}
 
+	// Restore speed
+	if a.StateStore.Get("speed/"+sessionKey, &val) && val != "" {
+		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.speed = val })
+		restored = append(restored, "speed="+val)
+	}
+
 	// Restore model, endpoint, format, and resolve the matching client
 	if a.StateStore.Get("model/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.model = val })
@@ -360,7 +377,7 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 
 	// Migrate StateStore keys
 	if a.StateStore != nil {
-		for _, prefix := range []string{"effort", "thinking", "model", "model_endpoint", "model_format", "no_compact", "show_tool_calls", "display_show_thinking", "stream_output", "display_width"} {
+		for _, prefix := range []string{"effort", "thinking", "speed", "model", "model_endpoint", "model_format", "no_compact", "show_tool_calls", "display_show_thinking", "stream_output", "display_width"} {
 			oldStoreKey := prefix + "/" + oldKey
 			newStoreKey := prefix + "/" + newKey
 			var val string

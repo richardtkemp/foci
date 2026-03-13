@@ -46,7 +46,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 
 	slog.Debug("anthropic: stream_call_start", "model", req.Model)
 
-	stream := sc.Messages.NewStreaming(ctx, params, sdkRequestOptions(token)...)
+	stream := sc.Messages.NewStreaming(ctx, params, sdkRequestOptions(token, req.Speed)...)
 
 	var msg sdk.Message
 	deltasEmitted := false

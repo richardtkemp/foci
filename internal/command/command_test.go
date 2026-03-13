@@ -267,6 +267,7 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 		cmd := NewEffortCommand(
 			func(context.Context) string { return "medium" },
 			func(context.Context, string) {},
+			nil,
 		)
 		if cmd.KeyboardOptions == nil {
 			t.Fatal("effort command should have KeyboardOptions")
@@ -294,6 +295,7 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 		cmd := NewThinkingCommand(
 			func(context.Context) string { return "adaptive" },
 			func(context.Context, string) {},
+			nil,
 		)
 		if cmd.KeyboardOptions == nil {
 			t.Fatal("thinking command should have KeyboardOptions")

@@ -63,6 +63,33 @@ func TestSessionNoCompact(t *testing.T) {
 	}
 }
 
+func TestSessionSpeed(t *testing.T) {
+	// Proves that per-session speed overrides take precedence over the agent default, are isolated per session, and revert to the default when cleared.
+	ag := &Agent{Model: "test", Speed: ""}
+
+	// Default: falls back to agent-wide (empty = standard)
+	if got := ag.SessionSpeed("s1"); got != "" {
+		t.Errorf("SessionSpeed fallback = %q, want %q", got, "")
+	}
+
+	// Set per-session override
+	ag.SetSessionSpeed("s1", "fast")
+	if got := ag.SessionSpeed("s1"); got != "fast" {
+		t.Errorf("SessionSpeed after set = %q, want %q", got, "fast")
+	}
+
+	// Other session unaffected
+	if got := ag.SessionSpeed("s2"); got != "" {
+		t.Errorf("SessionSpeed other session = %q, want %q", got, "")
+	}
+
+	// Clear override — falls back to agent default
+	ag.SetSessionSpeed("s1", "")
+	if got := ag.SessionSpeed("s1"); got != "" {
+		t.Errorf("SessionSpeed after clear = %q, want %q", got, "")
+	}
+}
+
 func TestSessionThinking(t *testing.T) {
 	// Proves that per-session thinking mode overrides the agent-wide default, are scoped to a single session, and revert to the default when cleared.
 	ag := &Agent{Model: "test", Thinking: "off"}
@@ -121,7 +148,7 @@ func TestSessionModel(t *testing.T) {
 }
 
 func TestRestoreSessionOverrides(t *testing.T) {
-	// Proves that session overrides (effort, thinking, model, format, no_compact) survive an agent restart by persisting to and reloading from the state store.
+	// Proves that session overrides (effort, thinking, speed, model, format, no_compact) survive an agent restart by persisting to and reloading from the state store.
 	dir := t.TempDir()
 	ss := state.New(dir + "/state.json")
 	if err := ss.Load(); err != nil {
@@ -138,6 +165,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	// Persist values via setters
 	ag.SetSessionEffort("s1", "high")
 	ag.SetSessionThinking("s1", "adaptive")
+	ag.SetSessionSpeed("s1", "fast")
 	ag.SetSessionModel("s1", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
 	ag.SetSessionNoCompact("s1", true)
 
@@ -163,6 +191,9 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	}
 	if got := ag2.SessionThinking("s1"); got != "adaptive" {
 		t.Errorf("after restore thinking = %q, want %q", got, "adaptive")
+	}
+	if got := ag2.SessionSpeed("s1"); got != "fast" {
+		t.Errorf("after restore speed = %q, want %q", got, "fast")
 	}
 	if got := ag2.SessionModel("s1"); got != "anthropic/claude-opus-4-6" {
 		t.Errorf("after restore model = %q, want %q", got, "anthropic/claude-opus-4-6")

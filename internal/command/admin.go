@@ -168,7 +168,7 @@ func NewHelpCommand(registry *Registry) *Command {
 			var other []*Command
 
 			for _, cmd := range registry.All() {
-				if cmd.Hidden {
+				if cmd.Hidden || (cmd.Visible != nil && !cmd.Visible(ctx)) {
 					continue
 				}
 				if cmd.Category != "" {
