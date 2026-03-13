@@ -373,12 +373,15 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 					}
 				}
 			} else if result.sharedBleve != nil {
-				dbPath := cfg.DataPath("conversation.db")
-				n, err := result.sharedBleve.BackfillConversations(dbPath)
-				if err != nil {
-					log.Errorf("main", "backfill conversations: %v", err)
-				} else if n > 0 {
-					log.Infof("main", "backfilled %d conversation messages into bleve", n)
+				// Shared mode: conversation DBs are still per-agent, iterate all.
+				for _, acfg := range cfg.Agents {
+					dbPath := config.AgentDataPath(acfg.Workspace, "conversation.db")
+					n, err := result.sharedBleve.BackfillConversations(dbPath)
+					if err != nil {
+						log.Errorf("main", "backfill conversations for agent %s: %v", acfg.ID, err)
+					} else if n > 0 {
+						log.Infof("main", "backfilled %d conversation messages into bleve for agent %s", n, acfg.ID)
+					}
 				}
 			}
 		}()
