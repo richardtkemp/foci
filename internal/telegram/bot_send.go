@@ -5,43 +5,26 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
 	"foci/internal/session"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// sendHTMLChunks sends pre-converted HTML to a chat, splitting into chunks,
-// falling back to plain text if HTML parsing fails, and logging each chunk.
-func (b *Bot) sendHTMLChunks(chatID int64, html, userID, username string) {
+// sendHTMLChunks sends pre-converted HTML to a chat, splitting into chunks
+// and falling back to plain text if HTML parsing fails.
+func (b *Bot) sendHTMLChunks(chatID int64, html string) {
 	for _, chunk := range splitMessage(html, 4096) {
-		parseMode := "HTML"
-		sendErr := ""
 		if _, err := b.client.SendMessage(chatID, chunk, &gotgbot.SendMessageOpts{ParseMode: "HTML"}); err != nil {
-			parseMode = ""
 			if _, err := b.client.SendMessage(chatID, chunk, nil); err != nil {
 				b.logger().Errorf("send error: %s", b.sanitizeError(err))
-				sendErr = err.Error()
 			}
 		}
-
-		log.Conversation(log.ConversationEntry{
-			Direction: "sent",
-			UserID:    userID,
-			Username:  username,
-			ChatID:    chatID,
-			Text:      chunk,
-			ParseMode: parseMode,
-			Session:   b.SessionKey(),
-			Error:     sendErr,
-		})
 	}
 }
 
 // sendReply sends a response back to the user, splitting long messages and
 // falling back to plain text if HTML formatting fails.
-// Logs each chunk to the conversation log.
-func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
+func (b *Bot) sendReply(msg *gotgbot.Message, response string) {
 	parts := []string{response}
 	if strings.Contains(response, "\x00") {
 		parts = strings.Split(response, "\x00")
@@ -51,22 +34,22 @@ func (b *Bot) sendReply(msg *gotgbot.Message, userID string, response string) {
 		if part == "" {
 			continue
 		}
-		b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(part, b.tableOpts()), userID, msg.From.Username)
+		b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(part, b.tableOpts()))
 	}
 }
 
 // sendReplyWithFullThinking sends thinking (italic) + divider + response as a single message.
 // Thinking and response are converted to HTML separately to avoid markdown interference.
-func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
+func (b *Bot) sendReplyWithFullThinking(msg *gotgbot.Message, response, thinkingText string) {
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
 	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
 	divider := "\n" + strings.Repeat("—", b.effectiveDisplayWidth()) + "\n\n"
-	b.sendHTMLChunks(msg.Chat.Id, thinkingHTML+divider+responseHTML, userID, msg.From.Username)
+	b.sendHTMLChunks(msg.Chat.Id, thinkingHTML+divider+responseHTML)
 }
 
 // sendReplyWithThinking sends a response with a "Show thinking" inline keyboard button.
 // The thinking content is stored for later toggle via callback query.
-func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, response, thinkingText string) {
+func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, response, thinkingText string) {
 	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
 
 	// Send with placeholder button (msgID unknown until sent)
@@ -81,7 +64,7 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 	for i, chunk := range chunks {
 		if i < len(chunks)-1 {
 			// Non-last chunks: use sendHTMLChunks for fallback + logging
-			b.sendHTMLChunks(msg.Chat.Id, chunk, userID, msg.From.Username)
+			b.sendHTMLChunks(msg.Chat.Id, chunk)
 			continue
 		}
 		// Last chunk — send with button
@@ -101,15 +84,6 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, userID string, respons
 		b.thinkingStore.Store(sent.MessageId, thinkingEntry{
 			responseHTML: chunk,
 			thinkingText: thinkingText,
-		})
-		log.Conversation(log.ConversationEntry{
-			Direction: "sent",
-			UserID:    userID,
-			Username:  msg.From.Username,
-			ChatID:    msg.Chat.Id,
-			Text:      chunk,
-			ParseMode: "HTML",
-			Session:   b.SessionKey(),
 		})
 	}
 }
@@ -200,7 +174,7 @@ func (b *Bot) SendText(text string) error {
 		return fmt.Errorf("no chat ID — no default chat configured")
 	}
 
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
 	return nil
 }
 
@@ -244,6 +218,6 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 		return fmt.Errorf("no chat ID for session %q and no default chat", sessionKey)
 	}
 
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()), "", "")
+	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
 	return nil
 }

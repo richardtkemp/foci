@@ -295,6 +295,24 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		return "", ctx.Err()
 	}
 
+	// Log received message for conversation log (platform-agnostic).
+	meta := TurnMetadataFromContext(ctx)
+	if meta == nil {
+		meta = &TurnMetadata{}
+	}
+	convChatID := meta.ChatID
+	if convChatID == 0 {
+		convChatID = session.ChatIDFromKey(sessionKey)
+	}
+	log.Conversation(log.ConversationEntry{
+		Direction: "recv",
+		UserID:    meta.UserID,
+		Username:  meta.Username,
+		ChatID:    convChatID,
+		Text:      userMessage,
+		Session:   sessionKey,
+	})
+
 	// Touch session activity for index tracking.
 	for _, fn := range a.OnActivity {
 		fn(sessionKey)
@@ -408,6 +426,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				batchedText.WriteString(text)
 			} else {
 				sendIntermediateCtx(ctx, text)
+				a.logConversationSent(convChatID, meta, sessionKey, text)
 			}
 		}
 	}
@@ -604,8 +623,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 					batchedText.WriteString(a.BatchPartialJoiner)
 					batchedText.WriteString(finalText)
 				}
-				return batchedText.String(), nil
+				sentText := batchedText.String()
+				a.logConversationSent(convChatID, meta, sessionKey, sentText)
+				return sentText, nil
 			}
+			a.logConversationSent(convChatID, meta, sessionKey, finalText)
 			return finalText, nil
 		}
 
@@ -711,6 +733,21 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		sessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
 
 	return "Max tool call depth reached.", nil
+}
+
+// logConversationSent logs an outbound conversation entry with the turn's metadata.
+func (a *Agent) logConversationSent(chatID int64, meta *TurnMetadata, sessionKey, text string) {
+	if text == "" {
+		return
+	}
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		UserID:    meta.UserID,
+		Username:  meta.Username,
+		ChatID:    chatID,
+		Text:      text,
+		Session:   sessionKey,
+	})
 }
 
 // TurnResult holds the result of a single agent turn.
