@@ -29,17 +29,17 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, user
 		}
 	}
 
-	// Try platform-aware dispatcher first (DispatchV2 path)
+	// Try platform-aware dispatcher first
 	if b.dispatcher != nil {
-		return b.tryDispatchV2(ctx, msg, userID, text)
+		return b.tryDispatchViaDispatcher(ctx, msg, userID, text)
 	}
 
-	// Legacy dispatch path (original Dispatch method)
-	return b.tryDispatchLegacy(ctx, msg, userID, text)
+	// Direct dispatch (no Dispatcher configured)
+	return b.tryDispatchDirect(ctx, msg, userID, text)
 }
 
-// tryDispatchV2 uses the platform-aware dispatcher (DispatchV2).
-func (b *Bot) tryDispatchV2(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
+// tryDispatchViaDispatcher uses the platform-aware Dispatcher.
+func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
 	result := b.dispatcher.Dispatch(ctx, msg)
 	if !result.Handled {
 		return false
@@ -60,8 +60,8 @@ func (b *Bot) tryDispatchV2(ctx context.Context, msg *gotgbot.Message, userID, t
 	return true
 }
 
-// tryDispatchLegacy uses the original command.Dispatch method.
-func (b *Bot) tryDispatchLegacy(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
+// tryDispatchDirect dispatches commands directly to the command registry.
+func (b *Bot) tryDispatchDirect(ctx context.Context, msg *gotgbot.Message, userID, text string) bool {
 	// Dot-command alias (.xxx → /xxx) — easier to type on phone keyboards.
 	// Only treated as a command if it matches a registered command.
 	if strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
