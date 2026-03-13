@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"unicode/utf8"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -93,7 +94,7 @@ func detectContentExtension(content string) string {
 
 func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel string, tr tools.ToolResult, messages []provider.Message) string {
 	result := tr.Text
-	if a.MaxResultChars <= 0 || len(result) <= a.MaxResultChars {
+	if a.MaxResultChars <= 0 || utf8.RuneCountInString(result) <= a.MaxResultChars {
 		return result
 	}
 
@@ -120,7 +121,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 		}
 	}
 
-	resultLen := len(result)
+	resultLen := utf8.RuneCountInString(result)
 	if tr.ResultSize > 0 {
 		resultLen = int(tr.ResultSize) // use the full size, not the truncated head
 	}
@@ -177,9 +178,9 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 	// Truncate result text embedded in summary prompt to cap memory and tokens.
 	// The full result is already on disk at savedPath.
 	summaryInput := result
-	if a.MaxSummaryInputChars > 0 && len(summaryInput) > a.MaxSummaryInputChars {
-		summaryInput = summaryInput[:a.MaxSummaryInputChars] +
-			fmt.Sprintf("\n[... truncated — full output is %d chars, only first %d shown]", len(result), a.MaxSummaryInputChars)
+	if a.MaxSummaryInputChars > 0 && utf8.RuneCountInString(summaryInput) > a.MaxSummaryInputChars {
+		summaryInput = summaryInput[:a.MaxSummaryInputChars] + // byte slice; may split a multi-byte rune
+			fmt.Sprintf("\n[... truncated — full output is %d chars, only first %d shown]", utf8.RuneCountInString(result), a.MaxSummaryInputChars)
 	}
 
 	var userText string
@@ -222,7 +223,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client,
 		return ""
 	}
 
-	return fmt.Sprintf("[Auto-summary by %s — full output (%d chars) saved to %s]\n\n%s", model, len(result), savedPath, summary)
+	return fmt.Sprintf("[Auto-summary by %s — full output (%d chars) saved to %s]\n\n%s", model, utf8.RuneCountInString(result), savedPath, summary)
 }
 
 // recentContext extracts text from the last N conversation turns,
@@ -249,11 +250,13 @@ func recentContext(messages []provider.Message, maxTurns, maxChars int) string {
 		}
 		turns++
 		remaining := maxChars - total
-		if len(text) > remaining {
-			text = text[:remaining]
+		rc := utf8.RuneCountInString(text)
+		if rc > remaining {
+			text = text[:remaining] // byte slice; may split a multi-byte rune
+			rc = remaining
 		}
 		parts = append(parts, fmt.Sprintf("[%s] %s", msg.Role, text))
-		total += len(text)
+		total += rc
 		if total >= maxChars {
 			break
 		}

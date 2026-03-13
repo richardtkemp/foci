@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"foci/internal/log"
 	"foci/internal/mana"
@@ -110,9 +111,9 @@ func (a *Agent) convertAttachmentToText(sessionKey string, att platform.Attachme
 	}
 
 	// Apply size guard: if converted text exceeds MaxResultChars, truncate with hint
-	if a.MaxResultChars > 0 && len(text) > a.MaxResultChars {
-		a.logger().Infof("session=%s converted %s text too large (%d chars, limit %d), truncating", sessionKey, label, len(text), a.MaxResultChars)
-		text = text[:a.MaxResultChars]
+	if a.MaxResultChars > 0 && utf8.RuneCountInString(text) > a.MaxResultChars {
+		a.logger().Infof("session=%s converted %s text too large (%d chars, limit %d), truncating", sessionKey, label, utf8.RuneCountInString(text), a.MaxResultChars)
+		text = text[:a.MaxResultChars] // byte slice; may split a multi-byte rune
 		truncNote := fmt.Sprintf("\n[... truncated — full document is on disk")
 		if att.SavedPath != "" {
 			truncNote += " at " + att.SavedPath
