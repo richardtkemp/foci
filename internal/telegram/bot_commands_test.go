@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"foci/internal/command"
@@ -89,28 +88,6 @@ func TestSendReply_SkipsEmptyText(t *testing.T) {
 	b.sendReply(msg, "111", "")
 	if mock.sentCount() != 0 {
 		t.Errorf("sends = %d, want 0 (sendReply skips empty text)", mock.sentCount())
-	}
-}
-
-// TestEmptyResponseGuard verifies the logic for detecting empty responses.
-func TestEmptyResponseGuard(t *testing.T) {
-	// Verify the guard logic: empty and whitespace-only strings should be
-	// detected. This mirrors the strings.TrimSpace check in processAgentMessage.
-	cases := []struct {
-		response string
-		isEmpty  bool
-	}{
-		{"", true},
-		{"   ", true},
-		{"\n\t", true},
-		{"hello", false},
-		{" x ", false},
-	}
-	for _, tc := range cases {
-		got := strings.TrimSpace(tc.response) == ""
-		if got != tc.isEmpty {
-			t.Errorf("TrimSpace(%q)==\"\" = %v, want %v", tc.response, got, tc.isEmpty)
-		}
 	}
 }
 

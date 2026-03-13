@@ -7,6 +7,9 @@ import (
 )
 
 func TestBotManagerPrimary(t *testing.T) {
+	// Verifies that AddPrimary registers bots by agent ID and that PrimaryBot
+	// returns the correct bot or nil for unknown agents. Also confirms AgentIDs
+	// returns all registered agent names.
 	mgr := NewBotManager()
 
 	bot1, _ := testBot(nil, command.NewRegistry())
@@ -32,6 +35,8 @@ func TestBotManagerPrimary(t *testing.T) {
 }
 
 func TestBotManagerMultiball(t *testing.T) {
+	// Verifies that AddMultiball adds bots to the per-agent pool, marks them as
+	// secondary, and that Pool() returns the correct pool with the right size.
 	mgr := NewBotManager()
 
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -66,7 +71,8 @@ func TestBotManagerMultiball(t *testing.T) {
 }
 
 func TestBotManagerIsolation(t *testing.T) {
-	// Verify that multiball pools are per-agent, not shared
+	// Verifies that multiball pools are per-agent and completely isolated:
+	// acquiring from one agent's pool does not affect another agent's pool.
 	mgr := NewBotManager()
 
 	// Two agents, each with their own multiball bot
@@ -109,6 +115,8 @@ func TestBotManagerIsolation(t *testing.T) {
 }
 
 func TestBotManagerSharedPool(t *testing.T) {
+	// Verifies that AddSharedMultiball populates the shared pool, marks bots
+	// as secondary, and that SharedPool() returns the pool with the correct size.
 	mgr := NewBotManager()
 
 	// No shared pool initially
@@ -138,6 +146,8 @@ func TestBotManagerSharedPool(t *testing.T) {
 }
 
 func TestAcquireMultiball_PerAgentOnly(t *testing.T) {
+	// Verifies that AcquireMultiball returns a bot from the per-agent pool when
+	// one is available, without touching the shared pool.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -156,6 +166,8 @@ func TestAcquireMultiball_PerAgentOnly(t *testing.T) {
 }
 
 func TestAcquireMultiball_SharedFallback(t *testing.T) {
+	// Verifies that AcquireMultiball falls back to the shared pool when no
+	// per-agent bots are configured for the requested agent.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -174,6 +186,8 @@ func TestAcquireMultiball_SharedFallback(t *testing.T) {
 }
 
 func TestAcquireMultiball_PerAgentBusyFallsToShared(t *testing.T) {
+	// Verifies that when all per-agent bots are busy, AcquireMultiball falls back
+	// to the shared pool rather than failing immediately.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -202,6 +216,8 @@ func TestAcquireMultiball_PerAgentBusyFallsToShared(t *testing.T) {
 }
 
 func TestAcquireMultiball_BothExhausted(t *testing.T) {
+	// Verifies that AcquireMultiball returns false when both the per-agent pool
+	// and shared pool are fully occupied.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -226,6 +242,8 @@ func TestAcquireMultiball_BothExhausted(t *testing.T) {
 }
 
 func TestAcquireMultiball_NoPools(t *testing.T) {
+	// Verifies that AcquireMultiball returns false when no pools are configured
+	// at all for the agent.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -238,6 +256,8 @@ func TestAcquireMultiball_NoPools(t *testing.T) {
 }
 
 func TestHasMultiball(t *testing.T) {
+	// Verifies that HasMultiball correctly reports whether an agent has any
+	// available multiball bots, including when only the shared pool is present.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -263,6 +283,8 @@ func TestHasMultiball(t *testing.T) {
 }
 
 func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
+	// Verifies that bots released via their respective pool objects (per-agent and
+	// shared) return to the correct pool and become available there, not in the other.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -313,6 +335,8 @@ func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
 // --- BotForSession tests ---
 
 func TestBotForSession_PerAgentPool(t *testing.T) {
+	// Verifies that BotForSession finds a secondary bot in the per-agent pool
+	// that currently holds the matching session key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -331,6 +355,8 @@ func TestBotForSession_PerAgentPool(t *testing.T) {
 }
 
 func TestBotForSession_SharedPool(t *testing.T) {
+	// Verifies that BotForSession finds a secondary bot in the shared pool
+	// when it holds the matching session key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -349,6 +375,8 @@ func TestBotForSession_SharedPool(t *testing.T) {
 }
 
 func TestBotForSession_NotFound(t *testing.T) {
+	// Verifies that BotForSession returns nil when no secondary bot holds
+	// the requested session key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -363,6 +391,8 @@ func TestBotForSession_NotFound(t *testing.T) {
 }
 
 func TestBotForSession_EmptyKey(t *testing.T) {
+	// Verifies that BotForSession returns nil safely when called with an empty
+	// session key, without panicking.
 	mgr := NewBotManager()
 	found := mgr.BotForSession("")
 	if found != nil {
@@ -373,8 +403,9 @@ func TestBotForSession_EmptyKey(t *testing.T) {
 // --- OnSessionKeyChange persistence integration ---
 
 func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {
-	// Verify that SetSessionKey fires the callback and the callback
-	// can persist/delete from a state store, matching the main.go wiring.
+	// Verifies that SetSessionKey fires the OnSessionKeyChange callback and
+	// that the callback can persist and clean up session assignments, mirroring
+	// the real wiring in main.go where state is persisted to a store.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
@@ -407,6 +438,8 @@ func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {
 }
 
 func TestMultiball_SetSessionKeyDirectSkipsCallback(t *testing.T) {
+	// Verifies that SetSessionKeyDirect sets the session key without firing
+	// OnSessionKeyChange, which is used during state restoration at startup.
 	mb := testSecondaryBot("mb1")
 	called := false
 	mb.OnSessionKeyChange = func(username, sessionKey string) {

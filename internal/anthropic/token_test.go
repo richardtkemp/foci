@@ -7,6 +7,7 @@ import (
 )
 
 func TestReadSetupToken(t *testing.T) {
+	// Proves that ReadSetupToken reads the access token from a Claude Code format credentials file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 
@@ -23,6 +24,7 @@ func TestReadSetupToken(t *testing.T) {
 }
 
 func TestReadSetupTokenMissingFile(t *testing.T) {
+	// Proves that ReadSetupToken returns an error when the file does not exist.
 	_, err := ReadSetupToken("/nonexistent/path/credentials.json")
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -30,6 +32,7 @@ func TestReadSetupTokenMissingFile(t *testing.T) {
 }
 
 func TestReadSetupTokenInvalidJSON(t *testing.T) {
+	// Proves that ReadSetupToken returns an error when the file contains malformed JSON.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	os.WriteFile(path, []byte("not json"), 0644)
@@ -41,6 +44,7 @@ func TestReadSetupTokenInvalidJSON(t *testing.T) {
 }
 
 func TestReadSetupTokenEmptyToken(t *testing.T) {
+	// Proves that ReadSetupToken returns an empty string without error when the access token field exists but is empty, letting callers decide whether an empty token is acceptable.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "credentials.json")
 	os.WriteFile(path, []byte(`{"claudeAiOauth":{"accessToken":""}}`), 0644)
@@ -55,6 +59,7 @@ func TestReadSetupTokenEmptyToken(t *testing.T) {
 }
 
 func TestExpandHome(t *testing.T) {
+	// Proves that expandHome replaces a leading ~ with the actual home directory path, and leaves paths that do not start with ~ unchanged.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("no home dir")
