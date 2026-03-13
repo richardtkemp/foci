@@ -570,7 +570,7 @@ func TestExecBridgeTmuxShellFunc(t *testing.T) {
 	}
 }
 
-func TestFinalizeExecDescription(t *testing.T) {
+func TestFinalizeShellDescription(t *testing.T) {
 	t.Parallel()
 	reg := NewRegistry()
 	reg.Register(&Tool{
@@ -597,7 +597,7 @@ func TestFinalizeExecDescription(t *testing.T) {
 		Parameters:  json.RawMessage(`{}`),
 	})
 
-	reg.FinalizeExecDescription()
+	reg.FinalizeShellDescription()
 
 	shell := reg.Get("shell")
 	if !strings.Contains(shell.Description, "foci_summary") {
@@ -617,8 +617,8 @@ func TestFinalizeExecDescription(t *testing.T) {
 		t.Error("exported names should be in alphabetical order (foci_summary before foci_web_search)")
 	}
 
-	// Calling FinalizeExecDescription again should not duplicate the list
-	reg.FinalizeExecDescription()
+	// Calling FinalizeShellDescription again should not duplicate the list
+	reg.FinalizeShellDescription()
 	count := strings.Count(shell.Description, "Shell functions are available")
 	if count != 1 {
 		t.Errorf("expected 1 occurrence of shell functions sentence, got %d", count)
