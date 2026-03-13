@@ -469,8 +469,11 @@ func StatusCommand() *Command {
 		Name:        "status",
 		Description: "Dashboard overview",
 		Category:    "observability",
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
-			sk := cc.DefaultSessionKey()
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			sk := req.SessionKey
+			if sk == "" {
+				sk = cc.DefaultSessionKey()
+			}
 			model := cc.Agent.SessionModel(sk)
 			mc := sessionMessageCount(cc, sk)
 
