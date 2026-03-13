@@ -77,7 +77,7 @@ func NewClientWithTimeout(apiKey string, timeout time.Duration) *Client {
 }
 
 // NewClientWithTokenFunc creates a client that calls tokenFunc for each request
-// to get the current Bearer token. Used with OAuthManager for auto-refreshing tokens.
+// to get the current Bearer token. Used with CCTokenSource for auto-refreshing tokens.
 func NewClientWithTokenFunc(tokenFunc func() (string, error), timeout time.Duration) *Client {
 	return &Client{
 		tokenFunc:  tokenFunc,

@@ -57,6 +57,11 @@ func runShutdown(
 		}
 	}
 
+	// Stop Anthropic CC token source polling
+	if anthropicResolver != nil {
+		anthropicResolver.Close()
+	}
+
 	// Clean up Gemini cache (delete server-side cached content)
 	if gc := clients.PeekClient("gemini", "gemini"); gc != nil {
 		if gcTyped, ok := gc.(*gemini.Client); ok {

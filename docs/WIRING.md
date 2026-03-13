@@ -511,9 +511,11 @@ Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
    - Supports static token (`NewUsageClient`) or dynamic token func (`NewUsageClientWithFunc`)
    - Returns utilization for 5-hour window, 7-day limits, extra usage billing
 
-3. **OAuthManager** (`oauth.go`) — OAuth PKCE token lifecycle
-   - Loads credentials from disk (foci-native or Claude Code format)
-   - Background refresh goroutine refreshes ~5min before expiry
+3. **CCTokenSource** (`cctoken.go`) — Claude Code credential reader
+   - Polls `~/.claude/.credentials.json` on a configurable interval (default 30s)
+   - Started lazily on first use via `sync.Once` (not at boot)
+   - Never refreshes tokens itself — only reads what Claude Code writes
+   - Fires `OnExpired` callback once when token expiry detected; resets on fresh token
    - Provides `Token()` func used by both Client and UsageClient via tokenFunc
 
 ## Gemini API Client (`gemini/`)
