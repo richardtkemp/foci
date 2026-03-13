@@ -539,15 +539,11 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 	return err
 }
 
-// ResolvePartialKey finds the most recently active session whose key starts
-// with the given partial key prefix followed by "/". This allows partial keys
-// like "scout/c5970082313" to resolve to the full active session key
-// "scout/c5970082313/1772794601". Returns "" if no match is found.
 // ResolvePartialKey resolves a partial session key (agent/typeID, e.g.
-// "scout/c5970082313") to the latest active full key with a versionTS.
-// Only accepts keys with exactly 2 slash-separated segments where the
-// second starts with a valid session type ('c' or 'i'). Returns "" if
-// no match is found or the format is invalid.
+// "scout/c5970082313") to the most recently active full key with a versionTS
+// ("scout/c5970082313/1772794601"). Only accepts keys with exactly 2
+// slash-separated segments where the second starts with 'c' or 'i'.
+// Returns "" if no match is found or the format is invalid.
 func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
 	// Validate format: must be exactly agent/typeID (2 segments)
 	parts := strings.Split(partialKey, "/")
