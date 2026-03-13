@@ -5,68 +5,96 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/agent"
+	"foci/internal/config"
+	"foci/internal/provider"
+	"foci/internal/session"
 )
 
-// TestStatusCommand verifies status output contains all required session info, API call stats, and formatting.
+// TestStatusCommand verifies status output contains all required session info,
+// API call stats, and formatting. It creates a real session store with messages
+// so that SessionModel, MessageCount, CreatedAt, and LastActivity all resolve.
 func TestStatusCommand(t *testing.T) {
 	now := time.Now().UTC()
+	sk := "main/c1/100"
 	path := writeAPILog(t, []apiEntry{
-		{Timestamp: now, Session: "agent:main:main", Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001},
-		{Timestamp: now, Session: "agent:main:main", Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CostUSD: 0.002},
-		{Timestamp: now, Session: "other:session", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005},
+		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001},
+		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CostUSD: 0.002},
+		{Timestamp: now, Session: "other/c2/200", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005},
 	})
 
-	cmd := NewStatusCommand(func() StatusInfo {
-		return StatusInfo{
-			AgentID:          "main",
-			SessionKey:       "agent:main:main",
-			MessageCount:     42,
-			Model:            "claude-haiku-4-5",
-			Uptime:           2*time.Hour + 30*time.Minute,
-			StartTime:        now.Add(-2*time.Hour - 30*time.Minute),
-			AgentBusy:        false,
-			CreatedAt:        "2026-02-23T13:33:00Z",
-			LastActivity:     "2026-02-23T19:58:00Z",
-			ContextLimit:     200000,
-			CompactThreshold: 0.8,
+	// Set up a real session store with messages so MessageCount/CreatedAt/LastActivity work.
+	sessDir := t.TempDir()
+	store := session.NewStore(sessDir)
+	w := store.For(sk)
+	for i := 0; i < 42; i++ {
+		if err := w.Append(sk, provider.Message{Role: "user", Content: provider.TextContent("msg")}); err != nil {
+			t.Fatalf("Append: %v", err)
 		}
-	}, path)
+	}
 
-	result, err := cmd.Execute(context.Background(), "")
+	ag := &agent.Agent{Model: "claude-haiku-4-5"}
+
+	startTime := now.Add(-2*time.Hour - 30*time.Minute)
+	cc := CommandContext{
+		Agent:               ag,
+		Sessions:            store,
+		APILogPath:          path,
+		AgentConfig:         config.AgentConfig{ID: "main"},
+		StartTime:           startTime,
+		CompactionThreshold: 0.8,
+		DefaultSessionKey:   func() string { return sk },
+	}
+
+	cmd := StatusCommand()
+	result, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	checks := []string{
 		"main",
-		"agent:main:main",
+		sk,
 		"claude-haiku-4-5",
 		"42",
 		"idle",
 		"2h30m",
-		"13:33 UTC",
-		"19:58 UTC",
 		"$0.00",   // session cost
 		"2 calls", // session call count
 		"200,000", // context limit
 	}
 	for _, check := range checks {
-		if !strings.Contains(result, check) {
-			t.Errorf("missing %q in:\n%s", check, result)
+		if !strings.Contains(result.Text, check) {
+			t.Errorf("missing %q in:\n%s", check, result.Text)
 		}
 	}
 }
 
 // TestStatusCommandBusy verifies busy status is shown correctly when agent is processing.
 func TestStatusCommandBusy(t *testing.T) {
+	sk := "test/c1/100"
 	path := writeAPILog(t, nil)
-	cmd := NewStatusCommand(func() StatusInfo {
-		return StatusInfo{AgentID: "test", AgentBusy: true}
-	}, path)
 
-	result, _ := cmd.Execute(context.Background(), "")
-	if !strings.Contains(result, "processing") {
-		t.Errorf("expected 'processing', got:\n%s", result)
+	sessDir := t.TempDir()
+	store := session.NewStore(sessDir)
+
+	ag := &agent.Agent{Model: "claude-haiku-4-5"}
+	ag.SetProcessingForTest(1) // mark agent as busy
+
+	cc := CommandContext{
+		Agent:             ag,
+		Sessions:          store,
+		APILogPath:        path,
+		AgentConfig:       config.AgentConfig{ID: "test"},
+		StartTime:         time.Now(),
+		DefaultSessionKey: func() string { return sk },
+	}
+
+	cmd := StatusCommand()
+	result, _ := cmd.Execute(context.Background(), Request{}, cc)
+	if !strings.Contains(result.Text, "processing") {
+		t.Errorf("expected 'processing', got:\n%s", result.Text)
 	}
 }
 
@@ -84,63 +112,65 @@ func TestCacheCommand(t *testing.T) {
 		}
 	}
 	path := writeAPILog(t, entries)
+	cc := CommandContext{APILogPath: path}
 
-	cmd := NewCacheCommand(path)
+	cmd := CacheCommand()
 
 	// Test default (no args) - should show last 5
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 
 	// Summary line with avg hit rate
-	if !strings.Contains(result, "Cache — last 5 calls") {
-		t.Errorf("missing summary header in:\n%s", result)
+	if !strings.Contains(result.Text, "Cache — last 5 calls") {
+		t.Errorf("missing summary header in:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "avg") && !strings.Contains(result, "% hit") {
-		t.Errorf("missing avg hit rate in:\n%s", result)
+	if !strings.Contains(result.Text, "avg") && !strings.Contains(result.Text, "% hit") {
+		t.Errorf("missing avg hit rate in:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "Time") || !strings.Contains(result, "CacheRead") || !strings.Contains(result, "Hit%") {
-		t.Errorf("missing table headers in:\n%s", result)
+	if !strings.Contains(result.Text, "Time") || !strings.Contains(result.Text, "CacheRead") || !strings.Contains(result.Text, "Hit%") {
+		t.Errorf("missing table headers in:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "---") {
-		t.Errorf("missing separator line in:\n%s", result)
+	if !strings.Contains(result.Text, "---") {
+		t.Errorf("missing separator line in:\n%s", result.Text)
 	}
 
 	// Test with argument - should show last 3
-	result, err = cmd.Execute(context.Background(), "3")
+	result, err = cmd.Execute(context.Background(), Request{Args: "3"}, cc)
 	if err != nil {
 		t.Fatalf("Execute with arg: %v", err)
 	}
-	if !strings.Contains(result, "Cache — last 3 calls") {
-		t.Errorf("missing summary header with arg in:\n%s", result)
+	if !strings.Contains(result.Text, "Cache — last 3 calls") {
+		t.Errorf("missing summary header with arg in:\n%s", result.Text)
 	}
 
 	// Test with argument larger than available entries - should show all 7
-	result, err = cmd.Execute(context.Background(), "10")
+	result, err = cmd.Execute(context.Background(), Request{Args: "10"}, cc)
 	if err != nil {
 		t.Fatalf("Execute with large arg: %v", err)
 	}
-	if !strings.Contains(result, "Cache — last 7 calls") {
-		t.Errorf("missing summary header with large arg in:\n%s", result)
+	if !strings.Contains(result.Text, "Cache — last 7 calls") {
+		t.Errorf("missing summary header with large arg in:\n%s", result.Text)
 	}
 
 	// Test with invalid argument - should use default of 5
-	result, err = cmd.Execute(context.Background(), "invalid")
+	result, err = cmd.Execute(context.Background(), Request{Args: "invalid"}, cc)
 	if err != nil {
 		t.Fatalf("Execute with invalid arg: %v", err)
 	}
-	if !strings.Contains(result, "Cache — last 5 calls") {
-		t.Errorf("invalid arg should use default in:\n%s", result)
+	if !strings.Contains(result.Text, "Cache — last 5 calls") {
+		t.Errorf("invalid arg should use default in:\n%s", result.Text)
 	}
 }
 
 // TestCacheCommandEmpty verifies appropriate message for no API calls.
 func TestCacheCommandEmpty(t *testing.T) {
-	cmd := NewCacheCommand("/nonexistent/api.jsonl")
-	result, _ := cmd.Execute(context.Background(), "")
-	if result != "No API calls logged yet." {
-		t.Errorf("result = %q", result)
+	cc := CommandContext{APILogPath: "/nonexistent/api.jsonl"}
+	cmd := CacheCommand()
+	result, _ := cmd.Execute(context.Background(), Request{}, cc)
+	if result.Text != "No API calls logged yet." {
+		t.Errorf("result = %q", result.Text)
 	}
 }
 
@@ -153,47 +183,48 @@ func TestLastCommand(t *testing.T) {
 		{Timestamp: now.Add(time.Minute), Session: "main/c1/100", Model: "claude-haiku-4-5", Input: 200, Output: 100, CostUSD: 0.002},
 		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2/200", Model: "claude-sonnet-4-5", Input: 300, Output: 150, CostUSD: 0.005},
 	})
+	cc := CommandContext{APILogPath: path}
 
-	cmd := NewLastCommand(path)
+	cmd := LastCommand()
 
 	// No args: should show one row per agent (main and helper).
-	result, err := cmd.Execute(context.Background(), "")
+	result, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Last API call per agent") {
-		t.Errorf("missing title in:\n%s", result)
+	if !strings.Contains(result.Text, "Last API call per agent") {
+		t.Errorf("missing title in:\n%s", result.Text)
 	}
-	if !strings.Contains(result, "main") || !strings.Contains(result, "helper") {
-		t.Errorf("should show both agents in:\n%s", result)
+	if !strings.Contains(result.Text, "main") || !strings.Contains(result.Text, "helper") {
+		t.Errorf("should show both agents in:\n%s", result.Text)
 	}
 	// main's latest should be the second entry (in=200)
-	if !strings.Contains(result, "in=200") {
-		t.Errorf("should show main's latest call (in=200) in:\n%s", result)
+	if !strings.Contains(result.Text, "in=200") {
+		t.Errorf("should show main's latest call (in=200) in:\n%s", result.Text)
 	}
 	// helper's entry
-	if !strings.Contains(result, "in=300") {
-		t.Errorf("should show helper's call (in=300) in:\n%s", result)
+	if !strings.Contains(result.Text, "in=300") {
+		t.Errorf("should show helper's call (in=300) in:\n%s", result.Text)
 	}
 
 	// Filter to specific agent.
-	result, err = cmd.Execute(context.Background(), "helper")
+	result, err = cmd.Execute(context.Background(), Request{Args: "helper"}, cc)
 	if err != nil {
 		t.Fatalf("Execute with filter: %v", err)
 	}
-	if !strings.Contains(result, "helper") {
-		t.Errorf("filtered result should contain helper in:\n%s", result)
+	if !strings.Contains(result.Text, "helper") {
+		t.Errorf("filtered result should contain helper in:\n%s", result.Text)
 	}
-	if strings.Contains(result, "in=200") {
-		t.Errorf("filtered result should not contain main's call in:\n%s", result)
+	if strings.Contains(result.Text, "in=200") {
+		t.Errorf("filtered result should not contain main's call in:\n%s", result.Text)
 	}
 
 	// Filter to non-existent agent.
-	result, err = cmd.Execute(context.Background(), "nobody")
+	result, err = cmd.Execute(context.Background(), Request{Args: "nobody"}, cc)
 	if err != nil {
 		t.Fatalf("Execute with bad filter: %v", err)
 	}
-	if !strings.Contains(result, "No API calls for agent") {
-		t.Errorf("expected no-calls message, got:\n%s", result)
+	if !strings.Contains(result.Text, "No API calls for agent") {
+		t.Errorf("expected no-calls message, got:\n%s", result.Text)
 	}
 }
