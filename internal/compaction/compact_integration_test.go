@@ -17,7 +17,7 @@ import (
 )
 
 func TestCompactBasic(t *testing.T) {
-	// TestCompactBasic verifies the end-to-end compaction workflow: a session with enough
+	// Verifies the end-to-end compaction workflow: a session with enough
 	// messages is compacted into a new session key containing exactly a marker message, an
 	// assistant summary from the mock API, and a user handoff message — in the correct roles
 	// and with the expected text content.
@@ -78,7 +78,7 @@ func TestCompactBasic(t *testing.T) {
 }
 
 func TestCompactDryRun(t *testing.T) {
-	// TestCompactDryRun verifies that dry-run mode calls the API and returns a summary
+	// Verifies that dry-run mode calls the API and returns a summary
 	// but leaves the original session completely unmodified, proving the flag acts as a
 	// true preview with no side effects on stored messages.
 	server := mockCompactionServer("Dry-run summary of conversation.")
@@ -117,7 +117,7 @@ func TestCompactDryRun(t *testing.T) {
 }
 
 func TestCompactTooFewMessages(t *testing.T) {
-	// TestCompactTooFewMessages verifies that compaction is a no-op when the session has
+	// Verifies that compaction is a no-op when the session has
 	// fewer messages than minMessages: no API call is made, the session is unchanged, and
 	// the returned summary is empty — proving the guard condition works correctly.
 	store := session.NewStore(t.TempDir())
@@ -144,7 +144,7 @@ func TestCompactTooFewMessages(t *testing.T) {
 }
 
 func TestCompactWithScratchpad(t *testing.T) {
-	// TestCompactWithScratchpad verifies that when a scratchpad has entries, the compaction
+	// Verifies that when a scratchpad has entries, the compaction
 	// handoff message includes a scratchpad section containing the stored keys and values,
 	// so that important agent notes survive the session rotation.
 	server := mockCompactionServer("Summary: testing scratchpad.")
@@ -199,7 +199,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 }
 
 func TestCompactEmptyScratchpad(t *testing.T) {
-	// TestCompactEmptyScratchpad verifies that when the scratchpad has no entries, the
+	// Verifies that when the scratchpad has no entries, the
 	// handoff message does not include any scratchpad section, keeping the handoff clean
 	// and avoiding misleading references to empty storage.
 	server := mockCompactionServer("Summary: empty scratchpad.")
@@ -240,7 +240,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 }
 
 func TestCompactAPIError(t *testing.T) {
-	// TestCompactAPIError verifies that when the summarisation API returns an error, Compact
+	// Verifies that when the summarisation API returns an error, Compact
 	// propagates a descriptive error and leaves the original session messages entirely
 	// unchanged, ensuring atomicity — either compaction fully succeeds or nothing changes.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +275,7 @@ func TestCompactAPIError(t *testing.T) {
 }
 
 func TestCompactStreaming(t *testing.T) {
-	// TestCompactStreaming verifies that when the client supports SSE streaming, compaction
+	// Verifies that when the client supports SSE streaming, compaction
 	// collects the streamed summary correctly and produces a valid compacted session,
 	// proving the streaming path reaches the same end state as the non-streaming path.
 	server := mockStreamingCompactionServer("Streamed summary of conversation.")
@@ -311,7 +311,7 @@ func TestCompactStreaming(t *testing.T) {
 }
 
 func TestSetLogger(t *testing.T) {
-	// TestSetLogger verifies that SetLogger replaces the compactor's internal logger with
+	// Verifies that SetLogger replaces the compactor's internal logger with
 	// the supplied one, confirming the logger is injectable for test isolation and
 	// structured log routing at runtime.
 	store := session.NewStore(t.TempDir())
@@ -331,7 +331,7 @@ func TestSetLogger(t *testing.T) {
 }
 
 func TestCompactLoadError(t *testing.T) {
-	// TestCompactLoadError verifies that Compact returns a descriptive error and does not
+	// Verifies that Compact returns a descriptive error and does not
 	// panic when the session cannot be loaded from disk, by placing a file where the session
 	// directory is expected so that the store's open call fails with an I/O error.
 	dir := t.TempDir()
@@ -355,7 +355,7 @@ func TestCompactLoadError(t *testing.T) {
 }
 
 func TestCompactPreserveNegativeClamped(t *testing.T) {
-	// TestCompactPreserveNegativeClamped verifies that when the preserve count would leave
+	// Verifies that when the preserve count would leave
 	// fewer messages than minMessages for summarisation, it is clamped to zero rather than
 	// going negative, resulting in a standard no-preservation compact output.
 	server := mockCompactionServer("Summary.")
@@ -389,7 +389,7 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 }
 
 func TestCompactWalkBackBelowMinMessages(t *testing.T) {
-	// TestCompactWalkBackBelowMinMessages verifies that when safeSplitPoint walks back past
+	// Verifies that when safeSplitPoint walks back past
 	// a tool pair and the resulting split point leaves fewer than minMessages for
 	// summarisation, the entire preservation is dropped rather than producing an invalid
 	// compact with too little history summarised.
@@ -425,7 +425,7 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 }
 
 func TestCompactScratchpadError(t *testing.T) {
-	// TestCompactScratchpadError verifies that a scratchpad failure (here: a closed database)
+	// Verifies that a scratchpad failure (here: a closed database)
 	// is treated as best-effort and does not abort the compaction — the overall Compact call
 	// succeeds even when scratchpad content cannot be read.
 	server := mockCompactionServer("Summary with scratchpad error.")
@@ -460,7 +460,7 @@ func TestCompactScratchpadError(t *testing.T) {
 }
 
 func TestCompactReplaceError(t *testing.T) {
-	// TestCompactReplaceError verifies that when the session store cannot write the compacted
+	// Verifies that when the session store cannot write the compacted
 	// result (here: the session directory is made read-only), Compact returns a descriptive
 	// error wrapping "replace session after compaction" rather than silently succeeding with
 	// a corrupt state.

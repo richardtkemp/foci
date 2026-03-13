@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadInt64Values(t *testing.T) {
-	// TestLoadInt64Values proves that large integer values (e.g. OAuth expiry timestamps)
+	// Proves that large integer values (e.g. OAuth expiry timestamps)
 	// in TOML are loaded as their decimal string representation alongside normal string secrets.
 	path := writeSecrets(t, `
 [anthropic]
@@ -35,7 +35,7 @@ oauth_expires_at = 1772334580401
 }
 
 func TestSaveInt64Values(t *testing.T) {
-	// TestSaveInt64Values proves that when a value is a valid integer, Save writes it
+	// Proves that when a value is a valid integer, Save writes it
 	// as an unquoted TOML integer rather than a quoted string, preserving the original type.
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
@@ -61,7 +61,7 @@ func TestSaveInt64Values(t *testing.T) {
 }
 
 func TestRoundtripInt64(t *testing.T) {
-	// TestRoundtripInt64 proves that integer values are not corrupted across a full
+	// Proves that integer values are not corrupted across a full
 	// load→save→load cycle, confirming type-preserving serialization end-to-end.
 	path := writeSecrets(t, `
 [anthropic]

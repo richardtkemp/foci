@@ -12,7 +12,7 @@ import (
 )
 
 func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
-	// TestReceiveMessage_PhotoMessageQueued verifies that photo messages are
+	// Verifies that photo messages are
 	// properly queued for processing.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -38,7 +38,7 @@ func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
 }
 
 func TestReceiveMessage_PhotoWithoutCaption(t *testing.T) {
-	// TestReceiveMessage_PhotoWithoutCaption verifies that photos without a
+	// Verifies that photos without a
 	// caption are handled correctly.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	mock := b.client.(*mockClient)
@@ -57,7 +57,7 @@ func TestReceiveMessage_PhotoWithoutCaption(t *testing.T) {
 }
 
 func TestReceiveMessage_DocumentImageQueued(t *testing.T) {
-	// TestReceiveMessage_DocumentImageQueued verifies that image documents are
+	// Verifies that image documents are
 	// handled correctly.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	mock := b.client.(*mockClient)
@@ -74,7 +74,7 @@ func TestReceiveMessage_DocumentImageQueued(t *testing.T) {
 }
 
 func TestReceiveMessage_NonImageDocumentIgnored(t *testing.T) {
-	// TestReceiveMessage_NonImageDocumentIgnored verifies that non-image, non-PDF
+	// Verifies that non-image, non-PDF
 	// documents without text are ignored.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
@@ -98,7 +98,7 @@ func makeMsgWithVoice(userID int64, username string) *gotgbot.Message {
 }
 
 func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
-	// TestReceiveMessage_VoiceWithoutTranscriber verifies that voice notes without
+	// Verifies that voice notes without
 	// a transcriber configured are rejected with an error message.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 

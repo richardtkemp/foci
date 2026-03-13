@@ -8,7 +8,7 @@ import (
 )
 
 func TestGenerateAgentBlock(t *testing.T) {
-	// TestGenerateAgentBlock verifies agent block TOML generation with basic spec.
+	// Verifies agent block TOML generation with basic spec.
 	spec := AgentSpec{
 		ID:      "greek-tutor",
 		Model:   "claude-sonnet-4-6",
@@ -37,7 +37,7 @@ func TestGenerateAgentBlock(t *testing.T) {
 }
 
 func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
-	// TestGenerateAgentBlockCustomSystemFiles verifies system_files array in agent block.
+	// Verifies system_files array in agent block.
 	spec := AgentSpec{
 		ID:          "scout",
 		Model:       "claude-haiku-4-5-20251001",
@@ -53,7 +53,7 @@ func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
 }
 
 func TestGenerateCrontabFromTemplate(t *testing.T) {
-	// TestGenerateCrontabFromTemplate verifies crontab template processing with substitutions.
+	// Verifies crontab template processing with substitutions.
 	tmpDir := t.TempDir()
 	template := `# Comment line
 0 4 * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/review.md 2>&1 >> HOMEDIR/logs/cron.log
@@ -86,7 +86,7 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 }
 
 func TestGenerateCrontabStagger(t *testing.T) {
-	// TestGenerateCrontabStagger verifies staggering of absolute minute times for multiple agents.
+	// Verifies staggering of absolute minute times for multiple agents.
 	tmpDir := t.TempDir()
 	template := `0 4 * * * foci branch --oneshot -a AGENT_NAME cmd
 */30 * * * * foci branch --oneshot -a AGENT_NAME keepalive
@@ -113,7 +113,7 @@ func TestGenerateCrontabStagger(t *testing.T) {
 }
 
 func TestGenerateCrontabMissing(t *testing.T) {
-	// TestGenerateCrontabMissing verifies GenerateCrontab errors on missing template file.
+	// Verifies GenerateCrontab errors on missing template file.
 	_, err := GenerateCrontab("/nonexistent/crontab.template", AgentSpec{ID: "test"}, 0)
 	if err == nil {
 		t.Fatal("expected error for missing template")

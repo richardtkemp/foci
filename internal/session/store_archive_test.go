@@ -131,7 +131,7 @@ func TestIsArchiveFile(t *testing.T) {
 }
 
 func TestSessionWriter(t *testing.T) {
-	// TestSessionWriter verifies that SessionWriter prevents cross-session writes for all operations.
+	// Verifies that SessionWriter prevents cross-session writes for all operations.
 	dir := t.TempDir()
 	store := NewStore(dir)
 

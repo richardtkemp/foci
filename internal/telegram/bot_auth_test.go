@@ -8,7 +8,7 @@ import (
 )
 
 func TestReceiveMessage_RejectsUnauthorizedUser(t *testing.T) {
-	// TestReceiveMessage_RejectsUnauthorizedUser verifies that unauthorized users
+	// Verifies that unauthorized users
 	// cannot send messages to the bot.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -25,7 +25,7 @@ func TestReceiveMessage_RejectsUnauthorizedUser(t *testing.T) {
 }
 
 func TestReceiveMessage_AcceptsAuthorizedUser(t *testing.T) {
-	// TestReceiveMessage_AcceptsAuthorizedUser verifies that authorized users can
+	// Verifies that authorized users can
 	// send messages to the bot and they are properly queued.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
@@ -46,7 +46,7 @@ func TestReceiveMessage_AcceptsAuthorizedUser(t *testing.T) {
 }
 
 func TestReceiveMessage_IgnoresEmptyText(t *testing.T) {
-	// TestReceiveMessage_IgnoresEmptyText verifies that empty or whitespace-only
+	// Verifies that empty or whitespace-only
 	// messages are not queued.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 

@@ -8,7 +8,7 @@ import (
 )
 
 func TestReceiveMessage_QueueFull(t *testing.T) {
-	// TestReceiveMessage_QueueFull verifies that when the message queue is full,
+	// Verifies that when the message queue is full,
 	// new messages are dropped and a reply is sent to the user.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -33,7 +33,7 @@ func TestReceiveMessage_QueueFull(t *testing.T) {
 }
 
 func TestReceiveMessage_MultipleUsersAllowed(t *testing.T) {
-	// TestReceiveMessage_MultipleUsersAllowed verifies that multiple authorized
+	// Verifies that multiple authorized
 	// users can send messages and they all get queued.
 	b, _ := testBot([]string{"111", "222"}, command.NewRegistry())
 

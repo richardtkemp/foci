@@ -10,7 +10,7 @@ import (
 )
 
 func TestSaveAttachment(t *testing.T) {
-	// TestSaveAttachment verifies that attachments are saved with the correct
+	// Verifies that attachments are saved with the correct
 	// content and filename pattern.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -42,7 +42,7 @@ func TestSaveAttachment(t *testing.T) {
 }
 
 func TestSaveAttachmentDisabled(t *testing.T) {
-	// TestSaveAttachmentDisabled verifies that save is only used when
+	// Verifies that save is only used when
 	// receivedFilesDir is set.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	// receivedFilesDir not set — verify it's empty by default
@@ -58,7 +58,7 @@ func TestSaveAttachmentDisabled(t *testing.T) {
 }
 
 func TestSaveAttachmentPNG(t *testing.T) {
-	// TestSaveAttachmentPNG verifies that PNG images are saved with the correct
+	// Verifies that PNG images are saved with the correct
 	// extension and content.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -84,7 +84,7 @@ func TestSaveAttachmentPNG(t *testing.T) {
 }
 
 func TestSaveAttachmentCreatesDir(t *testing.T) {
-	// TestSaveAttachmentCreatesDir verifies that saveMedia creates intermediate
+	// Verifies that saveMedia creates intermediate
 	// directories as needed.
 	base := t.TempDir()
 	dir := filepath.Join(base, "subdir", "files")
@@ -101,7 +101,7 @@ func TestSaveAttachmentCreatesDir(t *testing.T) {
 }
 
 func TestSavedPathPropagatedToQueue(t *testing.T) {
-	// TestSavedPathPropagatedToQueue verifies that attachment.savedPath flows
+	// Verifies that attachment.savedPath flows
 	// through queuedMessage.
 	att := attachment{
 		data:      []byte("test"),

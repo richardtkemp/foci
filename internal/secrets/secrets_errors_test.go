@@ -15,7 +15,7 @@ func TestLoadReadError(t *testing.T) {
 }
 
 func TestLoadAgentsNonMapValue(t *testing.T) {
-	// TestLoadAgentsNonMapValue proves that Load rejects a file where the [agents] key
+	// Proves that Load rejects a file where the [agents] key
 	// holds a scalar instead of a TOML table, catching malformed configuration early.
 	path := writeSecrets(t, `
 [custom]
@@ -31,7 +31,7 @@ agents = "not a table"
 }
 
 func TestLoadUnknownValueType(t *testing.T) {
-	// TestLoadUnknownValueType proves that Load silently skips array-valued keys rather
+	// Proves that Load silently skips array-valued keys rather
 	// than failing, so a file with mixed types still yields the string secrets it contains.
 	path := writeSecrets(t, `
 [custom]
@@ -50,7 +50,7 @@ strange_value = ["array", "of", "things"]
 }
 
 func TestLoadAgentNonTableSubValue(t *testing.T) {
-	// TestLoadAgentNonTableSubValue proves that Load rejects a file where an agent
+	// Proves that Load rejects a file where an agent
 	// entry is a scalar string rather than a nested table, catching structural errors.
 	path := writeSecrets(t, `
 [agents]
@@ -64,7 +64,7 @@ alice = "not a table"
 }
 
 func TestLoadAgentIntValue(t *testing.T) {
-	// TestLoadAgentIntValue proves that integer values in an agent section are loaded
+	// Proves that integer values in an agent section are loaded
 	// without error, with string secrets in the same section still retrievable.
 	path := writeSecrets(t, `
 [agents.alice.custom]
@@ -83,7 +83,7 @@ token = "sk-test"
 }
 
 func TestSaveEmptySection(t *testing.T) {
-	// TestSaveEmptySection proves that Save handles sections that have no keys without
+	// Proves that Save handles sections that have no keys without
 	// panicking, ensuring empty TOML sections don't break the serialization path.
 	path := writeSecrets(t, `
 [empty]
@@ -102,7 +102,7 @@ key = "val"
 }
 
 func TestFlatKeysToSectionsNoDot(t *testing.T) {
-	// TestFlatKeysToSectionsNoDot proves that setting a key without a "section.name"
+	// Proves that setting a key without a "section.name"
 	// dot separator either saves gracefully or returns an error, but never panics.
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
@@ -118,7 +118,7 @@ func TestFlatKeysToSectionsNoDot(t *testing.T) {
 }
 
 func TestFindSecretRefs(t *testing.T) {
-	// TestFindSecretRefs proves that FindSecretRefs correctly extracts unique secret
+	// Proves that FindSecretRefs correctly extracts unique secret
 	// key names from {{secret:...}} templates, including UUID-style keys, and returns
 	// nil for text with no templates.
 	refs := FindSecretRefs("no templates here")
@@ -143,7 +143,7 @@ func TestFindSecretRefs(t *testing.T) {
 }
 
 func TestSavePreservesAllowedHosts(t *testing.T) {
-	// TestSavePreservesAllowedHosts proves that allowed_hosts arrays survive a full
+	// Proves that allowed_hosts arrays survive a full
 	// save/load cycle alongside their sibling string secrets, and that sections without
 	// allowed_hosts still return nil after the roundtrip.
 	path := writeSecrets(t, `

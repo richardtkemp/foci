@@ -15,7 +15,7 @@ import (
 )
 
 func TestWithConfigOverrides(t *testing.T) {
-	// TestWithConfigOverrides verifies that WithConfig applies maxTokens, minMessages, and
+	// Verifies that WithConfig applies maxTokens, minMessages, and
 	// preserveMessages correctly, and that the model is never changed by WithConfig since it
 	// must always match the agent's configured model.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
@@ -37,7 +37,7 @@ func TestWithConfigOverrides(t *testing.T) {
 }
 
 func TestWithConfigEmptyValues(t *testing.T) {
-	// TestWithConfigEmptyValues verifies that passing zero values to WithConfig does not
+	// Verifies that passing zero values to WithConfig does not
 	// overwrite maxTokens or minMessages (zero is not a valid value), but preserveMessages=0
 	// is a valid setting that should be applied as-is.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
@@ -57,7 +57,7 @@ func TestWithConfigEmptyValues(t *testing.T) {
 }
 
 func TestWithEffort(t *testing.T) {
-	// TestWithEffort verifies that WithEffort stores the given effort string and that
+	// Verifies that WithEffort stores the given effort string and that
 	// clearing it with an empty string returns to the no-effort default state.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
 	if c.effort != "" {
@@ -76,7 +76,7 @@ func TestWithEffort(t *testing.T) {
 }
 
 func TestCompactCustomPrompts(t *testing.T) {
-	// TestCompactCustomPrompts verifies that caller-supplied summary and handoff prompts
+	// Verifies that caller-supplied summary and handoff prompts
 	// are sent to the API and appear in the resulting session, proving the customisation
 	// path overrides the built-in defaults end-to-end.
 	var capturedBody []byte
@@ -126,7 +126,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 }
 
 func TestCompactDefaultPrompts(t *testing.T) {
-	// TestCompactDefaultPrompts verifies that passing empty strings for the summary and
+	// Verifies that passing empty strings for the summary and
 	// handoff prompts falls back to the built-in defaults, by inspecting the captured API
 	// request body for the fallback summary phrase and comparing the handoff text against
 	// DefaultHandoffMessage.
@@ -175,7 +175,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 }
 
 func TestCheckConfig_Safe(t *testing.T) {
-	// TestCheckConfig_Safe verifies that checkConfig does not panic or error when the
+	// Verifies that checkConfig does not panic or error when the
 	// sum of the compaction trigger point and maxTokens fits within the model's context
 	// window, confirming a well-configured compactor is accepted silently.
 	store := session.NewStore(t.TempDir())
@@ -189,7 +189,7 @@ func TestCheckConfig_Safe(t *testing.T) {
 }
 
 func TestCheckConfig_Unsafe(t *testing.T) {
-	// TestCheckConfig_Unsafe verifies that checkConfig handles the case where maxTokens
+	// Verifies that checkConfig handles the case where maxTokens
 	// is large enough that trigger point + maxTokens would exceed the context window,
 	// and does so without panicking (it logs a warning rather than returning an error).
 	store := session.NewStore(t.TempDir())

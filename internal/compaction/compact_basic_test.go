@@ -7,7 +7,7 @@ import (
 )
 
 func TestEstimateTokens(t *testing.T) {
-	// TestEstimateTokens verifies that the token estimator returns a non-zero count for a
+	// Verifies that the token estimator returns a non-zero count for a
 	// small set of messages, confirming the character-based heuristic produces a sensible
 	// lower bound rather than returning zero.
 	msgs := []provider.Message{
@@ -22,7 +22,7 @@ func TestEstimateTokens(t *testing.T) {
 }
 
 func TestEstimateTokensEmpty(t *testing.T) {
-	// TestEstimateTokensEmpty verifies that estimating tokens for a nil or empty message
+	// Verifies that estimating tokens for a nil or empty message
 	// list returns exactly zero, so callers can safely use the result without a zero-check
 	// guard.
 	tokens := estimateTokens(nil)
@@ -32,7 +32,7 @@ func TestEstimateTokensEmpty(t *testing.T) {
 }
 
 func TestContextLimit(t *testing.T) {
-	// TestContextLimit verifies the internal contextLimit function covers all supported model
+	// Verifies the internal contextLimit function covers all supported model
 	// families — Claude (200k), Gemini 2.x (1M), Gemini 1.5 (2M) — as well as unknown
 	// models, which must fall back to the 200k default.
 	tests := []struct {
@@ -61,7 +61,7 @@ func TestContextLimit(t *testing.T) {
 }
 
 func TestContextLimitExported(t *testing.T) {
-	// TestContextLimitExported verifies that the exported ContextLimit wrapper delegates
+	// Verifies that the exported ContextLimit wrapper delegates
 	// correctly to the internal function, covering a representative Claude, Gemini, and
 	// unknown model to confirm the public API behaves identically to the private one.
 	tests := []struct {
@@ -80,7 +80,7 @@ func TestContextLimitExported(t *testing.T) {
 }
 
 func TestShouldCompactWithUsage(t *testing.T) {
-	// TestShouldCompactWithUsage verifies that ShouldCompact returns true only when the
+	// Verifies that ShouldCompact returns true only when the
 	// total token count (input + cache read) exceeds the threshold, and that both token
 	// types are correctly summed before comparison — testing under, at, and over the limit.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
@@ -108,7 +108,7 @@ func TestShouldCompactWithUsage(t *testing.T) {
 }
 
 func TestShouldCompactWithEstimate(t *testing.T) {
-	// TestShouldCompactWithEstimate verifies that when no usage stats are provided,
+	// Verifies that when no usage stats are provided,
 	// ShouldCompact falls back to the character-based token estimate and correctly rejects
 	// a tiny conversation that is well under any reasonable compaction threshold.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
@@ -124,7 +124,7 @@ func TestShouldCompactWithEstimate(t *testing.T) {
 }
 
 func TestShouldCompactExactThreshold(t *testing.T) {
-	// TestShouldCompactExactThreshold verifies the boundary condition: exactly at the
+	// Verifies the boundary condition: exactly at the
 	// threshold is not a trigger (uses strict greater-than), while one token over the
 	// threshold is, confirming the comparison operator is correct.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)

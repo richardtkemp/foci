@@ -9,7 +9,7 @@ import (
 )
 
 func TestInitWithFiles(t *testing.T) {
-	// TestInitWithFiles verifies that Init opens event and API log files, and that
+	// Verifies that Init opens event and API log files, and that
 	// log calls write to those files on disk.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -51,7 +51,7 @@ func TestInitWithFiles(t *testing.T) {
 }
 
 func TestInitBadEventPath(t *testing.T) {
-	// TestInitBadEventPath verifies Init returns an error when the event file path is invalid.
+	// Verifies Init returns an error when the event file path is invalid.
 	err := Init(Config{EventFile: "/nonexistent/dir/foci.log"})
 	if err == nil {
 		t.Fatal("expected error for bad event file path")
@@ -59,7 +59,7 @@ func TestInitBadEventPath(t *testing.T) {
 }
 
 func TestInitBadAPIPath(t *testing.T) {
-	// TestInitBadAPIPath verifies Init returns an error when the API file path is invalid.
+	// Verifies Init returns an error when the API file path is invalid.
 	err := Init(Config{APIFile: "/nonexistent/dir/api.jsonl"})
 	if err == nil {
 		t.Fatal("expected error for bad API file path")
@@ -67,7 +67,7 @@ func TestInitBadAPIPath(t *testing.T) {
 }
 
 func TestInitBadPayloadPath(t *testing.T) {
-	// TestInitBadPayloadPath verifies Init returns an error for a bad payload file path.
+	// Verifies Init returns an error for a bad payload file path.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -78,7 +78,7 @@ func TestInitBadPayloadPath(t *testing.T) {
 }
 
 func TestFilePaths(t *testing.T) {
-	// TestFilePaths verifies that FilePaths returns the exact paths passed to Init
+	// Verifies that FilePaths returns the exact paths passed to Init
 	// for the event, API, and payload log files.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -112,7 +112,7 @@ func TestFilePaths(t *testing.T) {
 }
 
 func TestInitEventFileOpenError(t *testing.T) {
-	// TestInitEventFileOpenError verifies Init returns an error when the event file path
+	// Verifies Init returns an error when the event file path
 	// is an existing directory (OpenFile on a directory fails).
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -129,7 +129,7 @@ func TestInitEventFileOpenError(t *testing.T) {
 }
 
 func TestInitAPIFileOpenError(t *testing.T) {
-	// TestInitAPIFileOpenError verifies Init returns an error when the API file can't be opened
+	// Verifies Init returns an error when the API file can't be opened
 	// (e.g. the path is an existing directory).
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -146,7 +146,7 @@ func TestInitAPIFileOpenError(t *testing.T) {
 }
 
 func TestInitPayloadFileOpenError(t *testing.T) {
-	// TestInitPayloadFileOpenError verifies Init returns an error when the payload file can't be opened.
+	// Verifies Init returns an error when the payload file can't be opened.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -162,7 +162,7 @@ func TestInitPayloadFileOpenError(t *testing.T) {
 }
 
 func TestReopenAllFiles(t *testing.T) {
-	// TestReopenAllFiles verifies that Reopen closes and reopens all three log file types,
+	// Verifies that Reopen closes and reopens all three log file types,
 	// and that writes before and after reopen both appear in the files.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -216,7 +216,7 @@ func TestReopenAllFiles(t *testing.T) {
 }
 
 func TestReopenNoFiles(t *testing.T) {
-	// TestReopenNoFiles verifies that Reopen is a no-op (no error) when no files are open.
+	// Verifies that Reopen is a no-op (no error) when no files are open.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -226,7 +226,7 @@ func TestReopenNoFiles(t *testing.T) {
 }
 
 func TestReopenEventError(t *testing.T) {
-	// TestReopenEventError verifies Reopen returns an error when the event file can't be reopened.
+	// Verifies Reopen returns an error when the event file can't be reopened.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -250,7 +250,7 @@ func TestReopenEventError(t *testing.T) {
 }
 
 func TestReopenAPIError(t *testing.T) {
-	// TestReopenAPIError verifies Reopen returns an error when the API file can't be reopened.
+	// Verifies Reopen returns an error when the API file can't be reopened.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -273,7 +273,7 @@ func TestReopenAPIError(t *testing.T) {
 }
 
 func TestReopenPayloadError(t *testing.T) {
-	// TestReopenPayloadError verifies Reopen returns an error when the payload file can't be reopened.
+	// Verifies Reopen returns an error when the payload file can't be reopened.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -296,7 +296,7 @@ func TestReopenPayloadError(t *testing.T) {
 }
 
 func TestPreInitBufferReplay(t *testing.T) {
-	// TestPreInitBufferReplay verifies that messages logged before Init are buffered,
+	// Verifies that messages logged before Init are buffered,
 	// written to stderr immediately, and then replayed to the event file when Init runs.
 	// The buffer is cleared after Init and post-Init messages are not buffered.
 	resetGlobal()
@@ -368,7 +368,7 @@ func TestPreInitBufferReplay(t *testing.T) {
 }
 
 func TestPreInitBufferNoFile(t *testing.T) {
-	// TestPreInitBufferNoFile verifies that the pre-Init buffer is cleared after Init
+	// Verifies that the pre-Init buffer is cleared after Init
 	// even when no event file is configured (no replay occurs, buffer just cleared).
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -393,7 +393,7 @@ func TestPreInitBufferNoFile(t *testing.T) {
 }
 
 func TestPreInitFilteredByLevel(t *testing.T) {
-	// TestPreInitFilteredByLevel verifies that messages below the configured level
+	// Verifies that messages below the configured level
 	// are not added to the pre-Init buffer (DEBUG is filtered at the default INFO level).
 	resetGlobal()
 	t.Cleanup(resetGlobal)

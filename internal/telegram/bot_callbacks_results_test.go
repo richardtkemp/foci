@@ -14,7 +14,7 @@ import (
 )
 
 func TestToolCallFull_InlineKeyboard(t *testing.T) {
-	// TestToolCallFull_InlineKeyboard verifies that inline keyboards are properly
+	// Verifies that inline keyboards are properly
 	// generated for tool calls in full mode.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.showToolCalls = "full"
@@ -91,7 +91,7 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 }
 
 func TestHandleCallbackQuery_Show(t *testing.T) {
-	// TestHandleCallbackQuery_Show verifies that callback queries expand compact
+	// Verifies that callback queries expand compact
 	// tool call summaries to show full details.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -150,7 +150,7 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 }
 
 func TestHandleCallbackQuery_Hide(t *testing.T) {
-	// TestHandleCallbackQuery_Hide verifies that callback queries collapse
+	// Verifies that callback queries collapse
 	// expanded tool call summaries.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -193,7 +193,7 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 }
 
 func TestHandleCommandCallback_HTMLFallback(t *testing.T) {
-	// TestHandleCommandCallback_HTMLFallback verifies that command callbacks
+	// Verifies that command callbacks
 	// fall back to plain text when HTML parsing fails.
 	reg := command.NewRegistry()
 	reg.Register(&command.Command{
@@ -225,7 +225,7 @@ func TestHandleCommandCallback_HTMLFallback(t *testing.T) {
 }
 
 func TestHandleCommandCallback_Chain(t *testing.T) {
-	// TestHandleCommandCallback_Chain verifies that command callbacks can trigger
+	// Verifies that command callbacks can trigger
 	// chained keyboard menus.
 	reg := command.NewRegistry()
 	reg.Register(&command.Command{
@@ -288,7 +288,7 @@ func TestHandleCommandCallback_Chain(t *testing.T) {
 }
 
 func TestToolResultObserver_StoresResult(t *testing.T) {
-	// TestToolResultObserver_StoresResult verifies that tool results are stored
+	// Verifies that tool results are stored
 	// for later display.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.showToolCalls = "full"
@@ -331,7 +331,7 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 }
 
 func TestFormatToolCallWithResult_Truncation(t *testing.T) {
-	// TestFormatToolCallWithResult_Truncation verifies that formatted tool
+	// Verifies that formatted tool
 	// results with very long outputs are truncated.
 	longOutput := strings.Repeat("x", 1000)
 	result := "Result:\n" + longOutput
@@ -345,7 +345,7 @@ func TestFormatToolCallWithResult_Truncation(t *testing.T) {
 }
 
 func TestSteerBuffer_AppendAndDrain(t *testing.T) {
-	// TestSteerBuffer_AppendAndDrain verifies basic steer buffer operations.
+	// Verifies basic steer buffer operations.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
 	b.appendSteer("message1")
@@ -365,7 +365,7 @@ func TestSteerBuffer_AppendAndDrain(t *testing.T) {
 }
 
 func TestSteerBuffer_DrainEmpty(t *testing.T) {
-	// TestSteerBuffer_DrainEmpty verifies that draining an empty buffer returns
+	// Verifies that draining an empty buffer returns
 	// empty string.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
@@ -375,7 +375,7 @@ func TestSteerBuffer_DrainEmpty(t *testing.T) {
 }
 
 func TestSteerBuffer_Concurrent(t *testing.T) {
-	// TestSteerBuffer_Concurrent verifies that steer buffer is safe for
+	// Verifies that steer buffer is safe for
 	// concurrent access.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
@@ -416,7 +416,7 @@ func TestSteerBuffer_Concurrent(t *testing.T) {
 }
 
 func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
-	// TestReceiveMessage_SteerRoutesToBuffer verifies that when steer mode is
+	// Verifies that when steer mode is
 	// enabled and a turn is active, text messages go to the steer buffer.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.SetSteerMode(true)
@@ -444,7 +444,7 @@ func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
 }
 
 func TestReceiveMessage_SteerDisabledQueuesNormally(t *testing.T) {
-	// TestReceiveMessage_SteerDisabledQueuesNormally verifies that when steer
+	// Verifies that when steer
 	// mode is disabled, messages go to the queue even during an active turn.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	// steerMode defaults to false
@@ -468,7 +468,7 @@ func TestReceiveMessage_SteerDisabledQueuesNormally(t *testing.T) {
 }
 
 func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
-	// TestReceiveMessage_SteerNoActiveTurnQueuesNormally verifies that when steer
+	// Verifies that when steer
 	// mode is enabled but no turn is active, messages go to the normal queue.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.SetSteerMode(true)
@@ -486,7 +486,7 @@ func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
 }
 
 func TestSetSteerMode(t *testing.T) {
-	// TestSetSteerMode verifies that SetSteerMode toggles the flag.
+	// Verifies that SetSteerMode toggles the flag.
 	b, _ := testBot([]string{}, command.NewRegistry())
 	if b.steerMode {
 		t.Error("steerMode should default to false")

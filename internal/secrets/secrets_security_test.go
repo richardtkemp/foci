@@ -9,7 +9,7 @@ import (
 )
 
 func TestCheckSecurityMissingFile(t *testing.T) {
-	// TestCheckSecurityMissingFile proves that CheckSecurity emits no warnings when the
+	// Proves that CheckSecurity emits no warnings when the
 	// store was loaded from a nonexistent path — no file means nothing to audit.
 	s, _ := Load("/nonexistent/secrets.toml")
 	warnings := s.CheckSecurity()
@@ -19,7 +19,7 @@ func TestCheckSecurityMissingFile(t *testing.T) {
 }
 
 func TestCheckSecurityEmptyPath(t *testing.T) {
-	// TestCheckSecurityEmptyPath proves that a Store with an empty path field returns
+	// Proves that a Store with an empty path field returns
 	// no security warnings, handling the zero-value case safely.
 	s := &Store{path: ""}
 	warnings := s.CheckSecurity()
@@ -29,7 +29,7 @@ func TestCheckSecurityEmptyPath(t *testing.T) {
 }
 
 func TestCheckSecurityBadPermissions(t *testing.T) {
-	// TestCheckSecurityBadPermissions proves that CheckSecurity detects both incorrect
+	// Proves that CheckSecurity detects both incorrect
 	// file ownership and overly permissive modes, producing warnings that mention
 	// "owner"/"uid" and "permission"/"0660" respectively.
 	path := writeSecrets(t, `[custom]
@@ -55,7 +55,7 @@ key = "val"
 }
 
 func TestCheckSecurityGroupName(t *testing.T) {
-	// TestCheckSecurityGroupName proves the SecurityGroupName constant has the expected
+	// Proves the SecurityGroupName constant has the expected
 	// value "foci-secrets", which is the Unix group used to gate read access.
 	if SecurityGroupName != "foci-secrets" {
 		t.Errorf("SecurityGroupName = %q, want foci-secrets", SecurityGroupName)
@@ -63,7 +63,7 @@ func TestCheckSecurityGroupName(t *testing.T) {
 }
 
 func TestCheckSecurityGroupNotFound(t *testing.T) {
-	// TestCheckSecurityGroupNotFound proves that CheckSecurity handles the edge case
+	// Proves that CheckSecurity handles the edge case
 	// where the file's GID is 0 (root group) without panicking, even when the expected
 	// foci-secrets group doesn't exist on the system.
 	dir := t.TempDir()
@@ -87,7 +87,7 @@ func TestCheckSecurityGroupNotFound(t *testing.T) {
 }
 
 func TestCheckSecurityGroupFound(t *testing.T) {
-	// TestCheckSecurityGroupFound proves that CheckSecurity does not panic when run
+	// Proves that CheckSecurity does not panic when run
 	// against a real file with 0660 permissions, regardless of what warnings it produces.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secrets.toml")

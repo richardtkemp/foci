@@ -8,7 +8,7 @@ import (
 )
 
 func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
-	// TestReceiveMessage_DoneOnPrimaryBot verifies that /done on the primary bot
+	// Verifies that /done on the primary bot
 	// returns a "nothing to detach" message.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -25,7 +25,7 @@ func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 }
 
 func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
-	// TestReceiveMessage_DoneOnSecondaryBot verifies that /done on a secondary bot
+	// Verifies that /done on a secondary bot
 	// with an active session detaches the session.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	pool := NewPool()
@@ -49,7 +49,7 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 }
 
 func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
-	// TestReceiveMessage_IdleSecondaryBot verifies that idle secondary bots
+	// Verifies that idle secondary bots
 	// (with no assigned session) silently drop messages.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
@@ -68,7 +68,7 @@ func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
 }
 
 func TestReceiveMessage_SecondaryBotWithSession(t *testing.T) {
-	// TestReceiveMessage_SecondaryBotWithSession verifies that secondary bots
+	// Verifies that secondary bots
 	// with an active session queue messages normally.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true

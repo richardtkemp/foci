@@ -7,7 +7,7 @@ import (
 )
 
 func TestHtmlTagName(t *testing.T) {
-	// TestHtmlTagName verifies that htmlTagName correctly extracts tag names
+	// Verifies that htmlTagName correctly extracts tag names
 	// from HTML tag strings.
 	tests := []struct {
 		in   string
@@ -28,7 +28,7 @@ func TestHtmlTagName(t *testing.T) {
 }
 
 func TestUnescapeJSONStringLiterals(t *testing.T) {
-	// TestUnescapeJSONStringLiterals verifies that JSON escape sequences are
+	// Verifies that JSON escape sequences are
 	// properly converted to actual characters.
 	tests := []struct {
 		in   string
@@ -49,7 +49,7 @@ func TestUnescapeJSONStringLiterals(t *testing.T) {
 }
 
 func TestHtmlEscapeBot(t *testing.T) {
-	// TestHtmlEscapeBot verifies that HTML special characters are properly
+	// Verifies that HTML special characters are properly
 	// escaped.
 	tests := []struct {
 		in   string
@@ -70,7 +70,7 @@ func TestHtmlEscapeBot(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	// TestTruncate verifies that truncate properly shortens strings and adds
+	// Verifies that truncate properly shortens strings and adds
 	// ellipsis when needed.
 	tests := []struct {
 		in   string
@@ -91,7 +91,7 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestSanitizeError(t *testing.T) {
-	// TestSanitizeError verifies that sanitizeError removes sensitive tokens
+	// Verifies that sanitizeError removes sensitive tokens
 	// from error messages.
 	b := &Bot{botToken: "secret123"}
 
@@ -121,7 +121,7 @@ func TestSanitizeError(t *testing.T) {
 }
 
 func TestFindSplitPoint(t *testing.T) {
-	// TestFindSplitPoint verifies that findSplitPoint correctly identifies where
+	// Verifies that findSplitPoint correctly identifies where
 	// to split text.
 	tests := []struct {
 		name   string

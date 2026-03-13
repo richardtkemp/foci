@@ -8,7 +8,7 @@ import (
 )
 
 func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
-	// TestReceiveMessage_StopCancelsTurn verifies that /stop cancels an active turn.
+	// Verifies that /stop cancels an active turn.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Simulate an active turn
@@ -35,7 +35,7 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 }
 
 func TestReceiveMessage_StopAlias(t *testing.T) {
-	// TestReceiveMessage_StopAlias verifies that stop aliases like /wait work
+	// Verifies that stop aliases like /wait work
 	// when enabled.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
@@ -61,7 +61,7 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 }
 
 func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
-	// TestReceiveMessage_StopAliasNotConfigured verifies that aliases don't work
+	// Verifies that aliases don't work
 	// when disabled.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 

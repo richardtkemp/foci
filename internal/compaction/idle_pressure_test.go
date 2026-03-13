@@ -6,7 +6,7 @@ import (
 )
 
 func TestCalculateIdlePressure_NotIdle(t *testing.T) {
-	// TestCalculateIdlePressure_NotIdle verifies no adjustment when idle time
+	// Verifies no adjustment when idle time
 	// is below the idle threshold.
 	adj, refresh := CalculateIdlePressure(0.8, 30*time.Minute, 45*time.Minute,
 		"70%", 0.15, time.Time{}, 15*time.Minute, 140000, 200000)
@@ -19,7 +19,7 @@ func TestCalculateIdlePressure_NotIdle(t *testing.T) {
 }
 
 func TestCalculateIdlePressure_IdleRamp(t *testing.T) {
-	// TestCalculateIdlePressure_IdleRamp verifies the linear ramp from idle threshold
+	// Verifies the linear ramp from idle threshold
 	// to 2x idle threshold reduces the compaction threshold proportionally.
 	base := 0.8
 	idleThreshold := 45 * time.Minute
@@ -58,7 +58,7 @@ func TestCalculateIdlePressure_IdleRamp(t *testing.T) {
 }
 
 func TestCalculateIdlePressure_ManaRefreshMode(t *testing.T) {
-	// TestCalculateIdlePressure_ManaRefreshMode verifies aggressive threshold
+	// Verifies aggressive threshold
 	// and refresh flag when mana reset is imminent.
 	resetsAt := time.Now().Add(10 * time.Minute)
 	adj, refresh := CalculateIdlePressure(0.8, 30*time.Minute, 45*time.Minute,
@@ -72,7 +72,7 @@ func TestCalculateIdlePressure_ManaRefreshMode(t *testing.T) {
 }
 
 func TestCalculateIdlePressure_ManaRefreshPriority(t *testing.T) {
-	// TestCalculateIdlePressure_ManaRefreshPriority verifies mana refresh mode
+	// Verifies mana refresh mode
 	// takes priority over idle pressure.
 	resetsAt := time.Now().Add(5 * time.Minute)
 	// Even though idle for 90m (would give max pressure), mana refresh wins
@@ -115,7 +115,7 @@ func TestCalculateIdlePressure_DecimalPressureStart(t *testing.T) {
 }
 
 func TestCalculateIdlePressure_ManaResetPast(t *testing.T) {
-	// TestCalculateIdlePressure_ManaResetPast verifies no mana refresh mode
+	// Verifies no mana refresh mode
 	// when the reset time is in the past.
 	resetsAt := time.Now().Add(-5 * time.Minute) // in the past
 	adj, refresh := CalculateIdlePressure(0.8, 30*time.Minute, 45*time.Minute,
@@ -129,7 +129,7 @@ func TestCalculateIdlePressure_ManaResetPast(t *testing.T) {
 }
 
 func TestCalculateIdlePressure_ManaResetFarFuture(t *testing.T) {
-	// TestCalculateIdlePressure_ManaResetFarFuture verifies no mana refresh mode
+	// Verifies no mana refresh mode
 	// when reset is far in the future (beyond the threshold).
 	resetsAt := time.Now().Add(2 * time.Hour) // well beyond 15m threshold
 	adj, refresh := CalculateIdlePressure(0.8, 30*time.Minute, 45*time.Minute,
@@ -143,7 +143,7 @@ func TestCalculateIdlePressure_ManaResetFarFuture(t *testing.T) {
 }
 
 func TestCalculateIdlePressure_ZeroContextLimit(t *testing.T) {
-	// TestCalculateIdlePressure_ZeroContextLimit verifies no panic with zero context limit.
+	// Verifies no panic with zero context limit.
 	adj, refresh := CalculateIdlePressure(0.8, 60*time.Minute, 45*time.Minute,
 		"70%", 0.15, time.Time{}, 15*time.Minute, 0, 0)
 	// With zero context limit, pressure start check is skipped → ramp applies
@@ -156,7 +156,7 @@ func TestCalculateIdlePressure_ZeroContextLimit(t *testing.T) {
 }
 
 func TestParsePressureStart(t *testing.T) {
-	// TestParsePressureStart verifies the pressure start parsing for both formats.
+	// Verifies the pressure start parsing for both formats.
 	tests := []struct {
 		input    string
 		fallback float64
@@ -178,7 +178,7 @@ func TestParsePressureStart(t *testing.T) {
 }
 
 func TestCompactorGettersSetters(t *testing.T) {
-	// TestCompactorGettersSetters verifies that Threshold returns the compaction ratio set at
+	// Verifies that Threshold returns the compaction ratio set at
 	// construction, that PreserveMessages reflects the value from WithConfig, and that
 	// SetPreserveMessages can update the preserve count independently at runtime.
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8).WithConfig(4096, 4, 25)

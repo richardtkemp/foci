@@ -7,7 +7,7 @@ import (
 )
 
 func TestContentHash(t *testing.T) {
-	// TestContentHash verifies that identical inputs produce the same hash
+	// Verifies that identical inputs produce the same hash
 	// and different inputs produce different hashes.
 	t.Parallel()
 
@@ -31,7 +31,7 @@ func TestContentHash(t *testing.T) {
 }
 
 func TestContentHashSeparator(t *testing.T) {
-	// TestContentHashSeparator ensures that concatenation boundaries are respected:
+	// Ensures that concatenation boundaries are respected:
 	// ["ab", "c"] ≠ ["a", "bc"].
 	t.Parallel()
 
@@ -43,7 +43,7 @@ func TestContentHashSeparator(t *testing.T) {
 }
 
 func TestSaveAndLoadRules(t *testing.T) {
-	// TestSaveAndLoadRules round-trips a RuleSet through JSON serialization.
+	// Round-trips a RuleSet through JSON serialization.
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -95,7 +95,7 @@ func TestSaveAndLoadRules(t *testing.T) {
 }
 
 func TestLoadRulesNotExist(t *testing.T) {
-	// TestLoadRulesNotExist returns nil when the file does not exist.
+	// Returns nil when the file does not exist.
 	t.Parallel()
 
 	rs, err := LoadRules("/nonexistent/path/rules.json")
@@ -108,7 +108,7 @@ func TestLoadRulesNotExist(t *testing.T) {
 }
 
 func TestRulesPathCharacterDir(t *testing.T) {
-	// TestRulesPathCharacterDir prefers the character/ subdirectory if it exists.
+	// Prefers the character/ subdirectory if it exists.
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -131,7 +131,7 @@ func TestRulesPathCharacterDir(t *testing.T) {
 }
 
 func TestSaveRulesCreatesDir(t *testing.T) {
-	// TestSaveRulesCreatesDir ensures SaveRules creates parent directories.
+	// Ensures SaveRules creates parent directories.
 	t.Parallel()
 
 	dir := t.TempDir()
