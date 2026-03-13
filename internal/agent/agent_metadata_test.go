@@ -374,3 +374,64 @@ func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	}
 }
 
+// Verifies that duplicate_messages is suppressed when extended thinking
+// is enabled with effort above "low", since thinking already produces
+// high-quality first responses.
+func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
+	var receivedReq *provider.MessageRequest
+
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		receivedReq = req
+		return &provider.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	ag := &Agent{
+		Client:            client,
+		Sessions:          store,
+		Tools:             tools.NewRegistry(),
+		Bootstrap:         bootstrap,
+		Model:             "claude-haiku-4-5",
+		DuplicateMessages: true,
+		Thinking:          "enabled",
+		Effort:            "high",
+	}
+
+	// With thinking+effort>low, duplication should be suppressed
+	ag.HandleMessage(context.Background(), "test/ithink/1000000000", "Do the thing")
+
+	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	text := provider.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 1 {
+		t.Errorf("thinking+high effort should suppress duplication: expected 1, got %d", count)
+	}
+
+	// With effort=low, duplication should NOT be suppressed
+	ag.Effort = "low"
+	ag.HandleMessage(context.Background(), "test/ilow/1000000000", "Do the thing")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = provider.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 2 {
+		t.Errorf("thinking+low effort should allow duplication: expected 2, got %d", count)
+	}
+
+	// With no thinking, duplication should NOT be suppressed
+	ag.Thinking = ""
+	ag.Effort = "high"
+	ag.HandleMessage(context.Background(), "test/inothink/1000000000", "Do the thing")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = provider.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 2 {
+		t.Errorf("no thinking should allow duplication: expected 2, got %d", count)
+	}
+}
+
