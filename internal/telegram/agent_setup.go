@@ -38,7 +38,7 @@ type AgentSetupParams struct {
 
 	// DisplayOverrideFn returns per-session display overrides.
 	// See platform.AgentConnectionParams for details.
-	DisplayOverrideFn func(sessionKey string) (showToolCalls, showThinking, streamOutput, displayWidth string)
+	DisplayOverrideFn func(sessionKey string) platform.DisplaySettings
 
 	// ResolveTTS resolves the TTS provider for a given agent config.
 	ResolveTTS func(ttsMap map[string]voice.TTS, ttsEntries []config.TTSConfig, ttsID string, rate float64, replacements map[string]string) voice.TTS
@@ -73,6 +73,22 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			tBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			ApplyAgentDisplaySettings(tBot, acfg, cfg)
+		},
+		DisplayDefaultsFn: func() platform.DisplaySettings {
+			soStr := "off"
+			if bot.StreamOutputDefault() {
+				soStr = "on"
+			}
+			dwStr := ""
+			if dw := bot.DisplayWidthDefault(); dw > 0 {
+				dwStr = fmt.Sprintf("%d", dw)
+			}
+			return platform.DisplaySettings{
+				ShowToolCalls: bot.ShowToolCallsDefault(),
+				ShowThinking:  bot.ShowThinkingDefault(),
+				StreamOutput:  soStr,
+				DisplayWidth:  dwStr,
+			}
 		},
 	}
 }
@@ -146,15 +162,15 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		overrideFn := p.DisplayOverrideFn
 		primaryBot.SetDisplayOverrideFn(func() DisplayOverrides {
 			sk := primaryBot.SessionKey()
-			stc, st, so, dw := overrideFn(sk)
+			ds := overrideFn(sk)
 			var dwi int
-			if dw != "" {
-				_, _ = fmt.Sscanf(dw, "%d", &dwi)
+			if ds.DisplayWidth != "" {
+				_, _ = fmt.Sscanf(ds.DisplayWidth, "%d", &dwi)
 			}
 			return DisplayOverrides{
-				ShowToolCalls: stc,
-				ShowThinking:  st,
-				StreamOutput:  so,
+				ShowToolCalls: ds.ShowToolCalls,
+				ShowThinking:  ds.ShowThinking,
+				StreamOutput:  ds.StreamOutput,
 				DisplayWidth:  dwi,
 			}
 		})

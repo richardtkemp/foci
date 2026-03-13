@@ -309,6 +309,18 @@ func (b *Bot) effectiveStreamOutput() bool {
 	return b.streamOutput
 }
 
+// ShowToolCallsDefault returns the bot's configured show_tool_calls default.
+func (b *Bot) ShowToolCallsDefault() string { return b.showToolCalls }
+
+// ShowThinkingDefault returns the bot's configured show_thinking default.
+func (b *Bot) ShowThinkingDefault() string { return b.showThinking }
+
+// StreamOutputDefault returns the bot's configured stream_output default.
+func (b *Bot) StreamOutputDefault() bool { return b.streamOutput }
+
+// DisplayWidthDefault returns the bot's configured display_width default.
+func (b *Bot) DisplayWidthDefault() int { return b.displayWidth }
+
 // SetStreamOutput enables or disables real-time streaming of model output to Telegram.
 func (b *Bot) SetStreamOutput(enabled bool) { b.streamOutput = enabled }
 

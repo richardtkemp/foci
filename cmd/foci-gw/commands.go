@@ -9,7 +9,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,6 +65,7 @@ type cmdRegParams struct {
 	plat               *platform.Messaging
 	connMgr            platform.ConnectionManager
 	configureMultiball func(platform.Connection)
+	displayDefaultsFn  func() platform.DisplaySettings
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
@@ -123,30 +123,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		func(ctx context.Context) string { return p.ag.SessionThinking(p.sessionKeyFromCtx(ctx)) },
 		func(ctx context.Context, t string) { p.ag.SetSessionThinking(p.sessionKeyFromCtx(ctx), t) },
 	))
-	// Resolve config defaults for display settings.
-	defaultShowToolCalls := "off"
-	if p.acfg.ShowToolCalls != nil {
-		defaultShowToolCalls = string(*p.acfg.ShowToolCalls)
-	} else if p.cfg.Defaults.ShowToolCalls != nil {
-		defaultShowToolCalls = string(*p.cfg.Defaults.ShowToolCalls)
-	}
-	defaultShowThinking := "off"
-	if p.acfg.ShowThinking != nil {
-		defaultShowThinking = string(*p.acfg.ShowThinking)
-	} else if p.cfg.Defaults.ShowThinking != nil {
-		defaultShowThinking = string(*p.cfg.Defaults.ShowThinking)
-	}
-	defaultStreamOutput := "off"
-	if p.cfg.Defaults.StreamOutput {
-		defaultStreamOutput = "on"
-	}
-	defaultDisplayWidth := "44"
-	if p.acfg.DisplayWidth != nil {
-		defaultDisplayWidth = fmt.Sprintf("%d", *p.acfg.DisplayWidth)
-	} else if p.cfg.Telegram.DisplayWidth != nil {
-		defaultDisplayWidth = fmt.Sprintf("%d", *p.cfg.Telegram.DisplayWidth)
-	}
-
 	displayGetters := command.DisplayGetters{
 		ShowToolCalls: func(ctx context.Context) (string, string) {
 			sk := p.sessionKeyFromCtx(ctx)
@@ -154,7 +130,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			if override != "" {
 				return override, override
 			}
-			return "", defaultShowToolCalls
+			return "", p.displayDefaultsFn().ShowToolCalls
 		},
 		ShowThinking: func(ctx context.Context) (string, string) {
 			sk := p.sessionKeyFromCtx(ctx)
@@ -162,7 +138,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			if override != "" {
 				return override, override
 			}
-			return "", defaultShowThinking
+			return "", p.displayDefaultsFn().ShowThinking
 		},
 		StreamOutput: func(ctx context.Context) (string, string) {
 			sk := p.sessionKeyFromCtx(ctx)
@@ -174,7 +150,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 				}
 				return override, effective
 			}
-			return "", defaultStreamOutput
+			return "", p.displayDefaultsFn().StreamOutput
 		},
 		DisplayWidth: func(ctx context.Context) (string, string) {
 			sk := p.sessionKeyFromCtx(ctx)
@@ -182,7 +158,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			if override != "" {
 				return override, override
 			}
-			return "", defaultDisplayWidth
+			return "", p.displayDefaultsFn().DisplayWidth
 		},
 	}
 	displaySetters := command.DisplaySetters{
