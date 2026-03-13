@@ -4,7 +4,8 @@ import (
 	"testing"
 )
 
-// TestIsBlockedPath verifies sensitive paths are blocked.
+// TestIsBlockedPath proves that well-known sensitive paths (the secrets file itself
+// and /proc/self/environ) are blocked by default, while ordinary code files are not.
 func TestIsBlockedPath(t *testing.T) {
 	path := writeSecrets(t, `[custom]
 key = "val"
@@ -25,7 +26,8 @@ key = "val"
 	}
 }
 
-// TestIsBlockedCommand verifies commands referencing blocked paths are blocked.
+// TestIsBlockedCommand proves that a shell command is blocked whenever it references
+// a blocked path, regardless of which shell tool is used, while harmless commands pass.
 func TestIsBlockedCommand(t *testing.T) {
 	path := writeSecrets(t, `[custom]
 key = "val"
@@ -43,7 +45,8 @@ key = "val"
 	}
 }
 
-// TestAddBlockedPaths verifies custom paths can be blocked.
+// TestAddBlockedPaths proves that callers can extend the block list at runtime
+// and that newly added paths are immediately rejected by IsBlockedPath.
 func TestAddBlockedPaths(t *testing.T) {
 	s, _ := Load("/nonexistent")
 	s.AddBlockedPaths([]string{".env", "credentials.json"})
@@ -56,7 +59,8 @@ func TestAddBlockedPaths(t *testing.T) {
 	}
 }
 
-// TestIsBlockedPathDefault verifies default blocked paths include secrets file.
+// TestIsBlockedPathDefault proves that even a store loaded from a nonexistent file
+// still enforces the built-in block list, so the defaults are always active.
 func TestIsBlockedPathDefault(t *testing.T) {
 	s, _ := Load("/nonexistent")
 	if !s.IsBlockedPath("secrets.toml") {
@@ -67,7 +71,8 @@ func TestIsBlockedPathDefault(t *testing.T) {
 	}
 }
 
-// TestAddAndCheckBlockedPaths verifies adding and checking paths together.
+// TestAddAndCheckBlockedPaths proves that AddBlockedPaths appends entries without
+// removing existing ones, and that the count grows by exactly the number added.
 func TestAddAndCheckBlockedPaths(t *testing.T) {
 	s, _ := Load("/nonexistent")
 	originalLen := len(s.blockedPaths)

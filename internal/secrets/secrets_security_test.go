@@ -8,7 +8,8 @@ import (
 	"testing"
 )
 
-// TestCheckSecurityMissingFile verifies no warnings for nonexistent file.
+// TestCheckSecurityMissingFile proves that CheckSecurity emits no warnings when the
+// store was loaded from a nonexistent path — no file means nothing to audit.
 func TestCheckSecurityMissingFile(t *testing.T) {
 	s, _ := Load("/nonexistent/secrets.toml")
 	warnings := s.CheckSecurity()
@@ -17,7 +18,8 @@ func TestCheckSecurityMissingFile(t *testing.T) {
 	}
 }
 
-// TestCheckSecurityEmptyPath verifies no warnings for empty path.
+// TestCheckSecurityEmptyPath proves that a Store with an empty path field returns
+// no security warnings, handling the zero-value case safely.
 func TestCheckSecurityEmptyPath(t *testing.T) {
 	s := &Store{path: ""}
 	warnings := s.CheckSecurity()
@@ -26,7 +28,9 @@ func TestCheckSecurityEmptyPath(t *testing.T) {
 	}
 }
 
-// TestCheckSecurityBadPermissions verifies warnings for wrong permissions.
+// TestCheckSecurityBadPermissions proves that CheckSecurity detects both incorrect
+// file ownership and overly permissive modes, producing warnings that mention
+// "owner"/"uid" and "permission"/"0660" respectively.
 func TestCheckSecurityBadPermissions(t *testing.T) {
 	path := writeSecrets(t, `[custom]
 key = "val"
@@ -50,24 +54,17 @@ key = "val"
 	}
 }
 
-// TestCheckSecurityGroupName verifies security group constant.
+// TestCheckSecurityGroupName proves the SecurityGroupName constant has the expected
+// value "foci-secrets", which is the Unix group used to gate read access.
 func TestCheckSecurityGroupName(t *testing.T) {
 	if SecurityGroupName != "foci-secrets" {
 		t.Errorf("SecurityGroupName = %q, want foci-secrets", SecurityGroupName)
 	}
 }
 
-// TestCheckSecurityStatError verifies handling of stat errors.
-func TestCheckSecurityStatError(t *testing.T) {
-	s := &Store{path: "/nonexistent/does/not/exist.toml"}
-	warnings := s.CheckSecurity()
-	// No error, just skip non-existent file
-	if len(warnings) > 0 {
-		t.Errorf("should not warn for nonexistent file: %v", warnings)
-	}
-}
-
-// TestCheckSecurityGroupNotFound verifies handling when group is not found.
+// TestCheckSecurityGroupNotFound proves that CheckSecurity handles the edge case
+// where the file's GID is 0 (root group) without panicking, even when the expected
+// foci-secrets group doesn't exist on the system.
 func TestCheckSecurityGroupNotFound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secrets.toml")
@@ -89,7 +86,8 @@ func TestCheckSecurityGroupNotFound(t *testing.T) {
 	}
 }
 
-// TestCheckSecurityGroupFound verifies checking existing valid group.
+// TestCheckSecurityGroupFound proves that CheckSecurity does not panic when run
+// against a real file with 0660 permissions, regardless of what warnings it produces.
 func TestCheckSecurityGroupFound(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secrets.toml")

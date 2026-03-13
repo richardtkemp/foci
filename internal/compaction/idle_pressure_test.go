@@ -181,7 +181,9 @@ func TestParsePressureStart(t *testing.T) {
 	}
 }
 
-// TestCompactorGettersSetters verifies Threshold, PreserveMessages, and SetPreserveMessages.
+// TestCompactorGettersSetters verifies that Threshold returns the compaction ratio set at
+// construction, that PreserveMessages reflects the value from WithConfig, and that
+// SetPreserveMessages can update the preserve count independently at runtime.
 func TestCompactorGettersSetters(t *testing.T) {
 	c := NewCompactor(nil, "claude-haiku-4-5", 0.8).WithConfig(4096, 4, 25)
 

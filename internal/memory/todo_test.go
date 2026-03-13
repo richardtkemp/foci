@@ -10,6 +10,7 @@ import (
 )
 
 func TestTodoAddAndList(t *testing.T) {
+	// Verifies that Add assigns a sequential ID and stores the text, priority, and default status, which are all retrievable via List.
 	store := newTestTodoStore(t)
 
 	id, err := store.Add("agent1", "Buy milk", "high", "")
@@ -39,6 +40,7 @@ func TestTodoAddAndList(t *testing.T) {
 }
 
 func TestTodoDefaultPriority(t *testing.T) {
+	// Verifies that an empty priority string is stored as "medium" by default.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Task with default priority", "", "")
@@ -53,6 +55,7 @@ func TestTodoDefaultPriority(t *testing.T) {
 }
 
 func TestTodoComplete(t *testing.T) {
+	// Verifies that Complete transitions a todo to "done", sets completed_at, and stores the close reason.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Finish report", "medium", "")
@@ -76,6 +79,7 @@ func TestTodoComplete(t *testing.T) {
 }
 
 func TestTodoCompleteNotFound(t *testing.T) {
+	// Verifies that Complete returns an error for a nonexistent todo ID.
 	store := newTestTodoStore(t)
 
 	err := store.Complete("agent1", 999, "reason")
@@ -85,6 +89,7 @@ func TestTodoCompleteNotFound(t *testing.T) {
 }
 
 func TestTodoRemove(t *testing.T) {
+	// Verifies that Remove permanently deletes a todo so it no longer appears in List.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Temp task", "low", "")
@@ -102,6 +107,7 @@ func TestTodoRemove(t *testing.T) {
 }
 
 func TestTodoRemoveNotFound(t *testing.T) {
+	// Verifies that Remove returns an error for a nonexistent todo ID.
 	store := newTestTodoStore(t)
 
 	err := store.Remove("agent1", 999)
@@ -111,6 +117,7 @@ func TestTodoRemoveNotFound(t *testing.T) {
 }
 
 func TestTodoAgentIsolation(t *testing.T) {
+	// Verifies that different agents have completely separate todo lists and cannot see each other's items.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Agent 1 task", "high", "")
@@ -128,9 +135,8 @@ func TestTodoAgentIsolation(t *testing.T) {
 }
 
 func TestTodoPerAgentIDs(t *testing.T) {
+	// Verifies that each agent has an independent ID sequence starting from 1, and that the same ID resolves to different items for different agents.
 	store := newTestTodoStore(t)
-
-	// Each agent gets its own ID sequence starting from 1.
 	id1a, _ := store.Add("agent1", "A1 first", "medium", "")
 	id1b, _ := store.Add("agent1", "A1 second", "medium", "")
 	id2a, _ := store.Add("agent2", "A2 first", "medium", "")
@@ -162,6 +168,7 @@ func TestTodoPerAgentIDs(t *testing.T) {
 }
 
 func TestTodoListFilterByStatus(t *testing.T) {
+	// Verifies that List correctly filters by status ("open", "done") and that no filter returns all items.
 	store := newTestTodoStore(t)
 
 	id1, _ := store.Add("agent1", "Open task", "medium", "")
@@ -184,8 +191,8 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	}
 }
 
-// Verifies the "active" status filter excludes done and dropped items.
 func TestTodoListFilterActive(t *testing.T) {
+	// Verifies the "active" status filter excludes done and dropped items, returning only open and in-progress todos.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Open task", "medium", "")
@@ -212,6 +219,7 @@ func TestTodoListFilterActive(t *testing.T) {
 }
 
 func TestTodoListFilterByPriority(t *testing.T) {
+	// Verifies that List filters by priority, that combined priority+status filters work, and that no filter returns all items.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "High task 1", "high", "")
@@ -254,6 +262,7 @@ func TestTodoListFilterByPriority(t *testing.T) {
 }
 
 func TestTodoPriorityOrdering(t *testing.T) {
+	// Verifies that List orders items by priority (high → medium → low) when no explicit sort is specified.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Low task", "low", "")
@@ -276,6 +285,7 @@ func TestTodoPriorityOrdering(t *testing.T) {
 }
 
 func TestTodoCrossAgentComplete(t *testing.T) {
+	// Verifies that one agent cannot complete a todo owned by another agent.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Agent 1 only", "medium", "")
@@ -288,6 +298,7 @@ func TestTodoCrossAgentComplete(t *testing.T) {
 }
 
 func TestTodoCrossAgentRemove(t *testing.T) {
+	// Verifies that one agent cannot remove a todo owned by another agent.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Agent 1 only", "medium", "")
@@ -300,6 +311,7 @@ func TestTodoCrossAgentRemove(t *testing.T) {
 }
 
 func TestTodoSearch(t *testing.T) {
+	// Verifies case-insensitive substring search scoped to a single agent, with agent isolation from other agents' items.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Buy milk from store", "high", "")
@@ -336,6 +348,7 @@ func TestTodoSearch(t *testing.T) {
 }
 
 func TestTodoTags(t *testing.T) {
+	// Verifies that List can filter by tag, that combined tag+status filters work, and that no tag filter returns all items.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Check email", "medium", "background")
@@ -371,6 +384,7 @@ func TestTodoTags(t *testing.T) {
 }
 
 func TestTodoCountOpenByTag(t *testing.T) {
+	// Verifies that CountOpenByTag returns the count of open (non-completed) todos with a given tag, scoped to a single agent.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "BG task 1", "medium", "background")
@@ -397,6 +411,7 @@ func TestTodoCountOpenByTag(t *testing.T) {
 }
 
 func TestFormatTags(t *testing.T) {
+	// Verifies that FormatTags normalises whitespace, formats tags as " {tag1,tag2}", and returns empty string for no tags.
 	tests := []struct {
 		input string
 		want  string
@@ -415,11 +430,10 @@ func TestFormatTags(t *testing.T) {
 }
 
 func TestTodoEdit(t *testing.T) {
+	// Verifies that Edit updates only the specified fields (text here) while leaving unspecified fields unchanged.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original text", "high", "work")
-
-	// Edit text only — priority and tags stay unchanged.
 	item, err := store.Edit("agent1", id, "Updated text", "", "", false)
 	if err != nil {
 		t.Fatalf("Edit text: %v", err)
@@ -436,6 +450,7 @@ func TestTodoEdit(t *testing.T) {
 }
 
 func TestTodoEditPriority(t *testing.T) {
+	// Verifies that Edit can change only the priority while leaving the text unchanged.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "My task", "high", "")
@@ -453,11 +468,10 @@ func TestTodoEditPriority(t *testing.T) {
 }
 
 func TestTodoEditTags(t *testing.T) {
+	// Verifies that Edit replaces tags when setTags is true, and clears them when both setTags is true and the new tag is empty.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Tagged task", "medium", "old")
-
-	// Set new tag.
 	item, err := store.Edit("agent1", id, "", "", "new", true)
 	if err != nil {
 		t.Fatalf("Edit tags: %v", err)
@@ -477,6 +491,7 @@ func TestTodoEditTags(t *testing.T) {
 }
 
 func TestTodoEditMultipleFields(t *testing.T) {
+	// Verifies that Edit can simultaneously update text, priority, and tags in a single call.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original", "low", "a")
@@ -497,6 +512,7 @@ func TestTodoEditMultipleFields(t *testing.T) {
 }
 
 func TestTodoEditNotFound(t *testing.T) {
+	// Verifies that Edit returns an error for a nonexistent todo ID.
 	store := newTestTodoStore(t)
 
 	_, err := store.Edit("agent1", 999, "text", "", "", false)
@@ -506,11 +522,10 @@ func TestTodoEditNotFound(t *testing.T) {
 }
 
 func TestTodoCrossAgentEdit(t *testing.T) {
+	// Verifies that one agent cannot edit a todo owned by another agent.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Agent 1 only", "medium", "")
-
-	// Agent 2 should not be able to edit agent 1's todo.
 	_, err := store.Edit("agent2", id, "hacked", "", "", false)
 	if err == nil {
 		t.Error("expected error when editing another agent's todo")
@@ -518,6 +533,7 @@ func TestTodoCrossAgentEdit(t *testing.T) {
 }
 
 func TestTodoEditNothingToUpdate(t *testing.T) {
+	// Verifies that Edit returns an error when no fields are specified to update.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Task", "medium", "")
@@ -529,6 +545,7 @@ func TestTodoEditNothingToUpdate(t *testing.T) {
 }
 
 func TestTodoUpdatedAtOnAdd(t *testing.T) {
+	// Verifies that created_at and updated_at are both set to the current time when a todo is first added.
 	store := newTestTodoStore(t)
 
 	before := time.Now().UTC().Truncate(time.Second)
@@ -558,6 +575,7 @@ func TestTodoUpdatedAtOnAdd(t *testing.T) {
 }
 
 func TestTodoUpdatedAtOnEdit(t *testing.T) {
+	// Verifies that updated_at advances after an Edit call, proving the timestamp changes on modification.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original", "medium", "")
@@ -584,6 +602,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 }
 
 func TestTodoUpdatedAtOnComplete(t *testing.T) {
+	// Verifies that updated_at and completed_at are both set when a todo is completed.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Task", "medium", "")
@@ -610,6 +629,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 }
 
 func TestTodoTransitionInProgress(t *testing.T) {
+	// Verifies the full status lifecycle: open → in_progress → done → in_progress, checking that completed_at is set/cleared appropriately.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Working on it", "high", "")
@@ -659,6 +679,7 @@ func TestTodoTransitionInProgress(t *testing.T) {
 }
 
 func TestTodoSortOrderInProgress(t *testing.T) {
+	// Verifies that in-progress todos are sorted before open todos in the default list order.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Open task", "high", "")
@@ -683,7 +704,7 @@ func TestTodoSortOrderInProgress(t *testing.T) {
 }
 
 func TestTodoSortByCreated(t *testing.T) {
-	// Test sorting by creation timestamp (oldest first)
+	// Verifies that sort=created orders todos oldest-first by creation timestamp, using sleep-separated adds to ensure distinct times.
 	store := newTestTodoStore(t)
 
 	id1, _ := store.Add("agent1", "First task", "high", "")
@@ -712,7 +733,7 @@ func TestTodoSortByCreated(t *testing.T) {
 }
 
 func TestTodoSortByUpdated(t *testing.T) {
-	// Test sorting by updated timestamp (newest first)
+	// Verifies that sort=updated orders todos newest-first by updated_at, confirming a later edit promotes an older item to the top.
 	store := newTestTodoStore(t)
 
 	// Add items with delays to ensure distinct timestamps (need >1s for RFC3339 precision)
@@ -746,7 +767,7 @@ func TestTodoSortByUpdated(t *testing.T) {
 }
 
 func TestTodoSortByPriorityDefault(t *testing.T) {
-	// Test that priority sort is the default
+	// Verifies that both an empty sort parameter and an explicit "priority" sort produce the same high→medium→low ordering.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Low task", "low", "")
@@ -785,7 +806,7 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 }
 
 func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
-	// Test that sort=created sorts purely by timestamp, ignoring status
+	// Verifies that sort=created orders purely by creation timestamp regardless of status, so items of mixed statuses interleave chronologically.
 	store := newTestTodoStore(t)
 
 	// Create items with different statuses at different times
@@ -823,7 +844,7 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 }
 
 func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
-	// Test that sort=updated sorts purely by timestamp, ignoring status
+	// Verifies that sort=updated orders purely by updated_at regardless of status, so items of mixed statuses interleave by recency.
 	store := newTestTodoStore(t)
 
 	// Create items with different statuses and update at different times

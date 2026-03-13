@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// TestLoadWithAllowedHosts verifies loading hosts restrictions.
+// TestLoadWithAllowedHosts proves that allowed_hosts arrays are loaded correctly per
+// section: sections that declare them expose the list, while sections without return nil.
 func TestLoadWithAllowedHosts(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -43,7 +44,9 @@ allowed_hosts = ["api.locked.com"]
 	}
 }
 
-// TestCheckHostAllowed verifies host allowlist enforcement.
+// TestCheckHostAllowed proves the full allowlist enforcement contract: allowed hosts
+// (including with ports and case variations) pass, unknown hosts fail, and userinfo
+// injection attacks are detected and rejected.
 func TestCheckHostAllowed(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -76,7 +79,9 @@ allowed_hosts = ["api.example.com", "api.backup.com"]
 	}
 }
 
-// TestCheckHostAllowedNoHosts verifies error when secret has no allowed_hosts.
+// TestCheckHostAllowedNoHosts proves that a secret without an allowed_hosts list
+// cannot be used with CheckHostAllowed — the absence of a list is treated as a
+// restriction, not open access.
 func TestCheckHostAllowedNoHosts(t *testing.T) {
 	path := writeSecrets(t, `
 [legacy]
@@ -96,7 +101,8 @@ token = "sk-legacy"
 	}
 }
 
-// TestSectionAllowedHosts verifies querying allowed hosts for a section.
+// TestSectionAllowedHosts proves that SectionAllowedHosts returns the host list for
+// sections that have one, and nil for sections that don't.
 func TestSectionAllowedHosts(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -120,7 +126,8 @@ key = "val"
 	}
 }
 
-// TestAddAllowedHost verifies adding hosts to a section.
+// TestAddAllowedHost proves that AddAllowedHost appends new hosts correctly and
+// that adding a duplicate (case-insensitively) is a no-op that doesn't grow the list.
 func TestAddAllowedHost(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -145,7 +152,9 @@ allowed_hosts = ["api.example.com"]
 	}
 }
 
-// TestRemoveAllowedHost verifies removing hosts from a section.
+// TestRemoveAllowedHost proves that RemoveAllowedHost removes an existing host
+// case-insensitively (returning true), leaves remaining hosts intact, and returns
+// false when the target host is not in the list.
 func TestRemoveAllowedHost(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -170,7 +179,8 @@ allowed_hosts = ["api.example.com", "api.backup.com"]
 	}
 }
 
-// TestSetAllowedHosts verifies replacing the full hosts list.
+// TestSetAllowedHosts proves that SetAllowedHosts replaces the entire host list
+// atomically, and that passing nil clears it completely.
 func TestSetAllowedHosts(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -194,7 +204,8 @@ allowed_hosts = ["old.com"]
 	}
 }
 
-// TestAddRemoveAllowedHostsPersist verifies changes survive save/load cycle.
+// TestAddRemoveAllowedHostsPersist proves that host list mutations (adding a host)
+// are durably written to disk and correctly reloaded on the next Load call.
 func TestAddRemoveAllowedHostsPersist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	os.WriteFile(path, []byte(`
@@ -223,7 +234,8 @@ allowed_hosts = ["api.example.com"]
 	}
 }
 
-// TestAllowedHostsNoDot verifies localhost (no dot) is allowed in the config.
+// TestAllowedHostsNoDot proves that a bare hostname like "localhost" (no dot) is
+// a valid allowed_hosts entry and is loaded without modification.
 func TestAllowedHostsNoDot(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -240,7 +252,8 @@ allowed_hosts = ["localhost"]
 	}
 }
 
-// TestCheckHostAllowedInvalidURL verifies error handling for invalid URLs.
+// TestCheckHostAllowedInvalidURL proves that CheckHostAllowed returns an error
+// for a malformed URL rather than silently allowing or panicking.
 func TestCheckHostAllowedInvalidURL(t *testing.T) {
 	path := writeSecrets(t, `
 [myapi]
@@ -254,7 +267,8 @@ allowed_hosts = ["api.example.com"]
 	}
 }
 
-// TestAllowedHostsPerSecret verifies per-secret hosts configuration.
+// TestAllowedHostsPerSecret proves that each section's allowed_hosts list is
+// independent — one section's list does not leak into another's.
 func TestAllowedHostsPerSecret(t *testing.T) {
 	path := writeSecrets(t, `
 [api_a]
@@ -278,30 +292,3 @@ allowed_hosts = ["api-b.example.com"]
 	}
 }
 
-// TestCheckHostAllowedSuccess verifies successful host allowance.
-func TestCheckHostAllowedSuccess(t *testing.T) {
-	path := writeSecrets(t, `
-[api]
-token = "sk-test"
-allowed_hosts = ["api.example.com"]
-`)
-	s, _ := Load(path)
-	err := s.CheckHostAllowed("api.token", "https://api.example.com/v1/endpoint")
-	if err != nil {
-		t.Errorf("expected success, got error: %v", err)
-	}
-}
-
-// TestCheckHostAllowedFailure verifies blocked host rejection.
-func TestCheckHostAllowedFailure(t *testing.T) {
-	path := writeSecrets(t, `
-[api]
-token = "sk-test"
-allowed_hosts = ["api.example.com"]
-`)
-	s, _ := Load(path)
-	err := s.CheckHostAllowed("api.token", "https://evil.com/endpoint")
-	if err == nil {
-		t.Error("expected error for disallowed host")
-	}
-}

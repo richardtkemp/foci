@@ -12,6 +12,9 @@ import (
 )
 
 func TestReplaceBranchPreservesMeta(t *testing.T) {
+	// Proves that Replace on a branch file preserves branch_meta (parent key and
+	// NoResetHook flag) in the new file, resets BranchPoint to 0, and that
+	// LoadFull after compaction returns only the compacted messages.
 	s := NewStore(t.TempDir())
 	parentKey := "test/c123/1000000000"
 	branchKey := "test/iwake-999/1000000000"
@@ -88,6 +91,9 @@ func TestReplaceBranchPreservesMeta(t *testing.T) {
 }
 
 func TestReplaceRotatesFile(t *testing.T) {
+	// Proves that Replace archives the old session file before writing new content:
+	// the current file holds only the compacted messages while an archive file
+	// retains the original messages.
 	dir := t.TempDir()
 	s := NewStore(dir)
 	key := "test/c999/1000000000"
@@ -142,6 +148,9 @@ func TestReplaceRotatesFile(t *testing.T) {
 }
 
 func TestReplaceMultipleRotations(t *testing.T) {
+	// Proves that each successive Replace creates a new archive file with a unique
+	// timestamp suffix, accumulating N archives for N replacements while the current
+	// file always holds only the latest compacted content.
 	dir := t.TempDir()
 	s := NewStore(dir)
 	key := "test/c888/1000000000"
@@ -185,6 +194,9 @@ func TestReplaceMultipleRotations(t *testing.T) {
 }
 
 func TestReplaceBranchRotation(t *testing.T) {
+	// Proves that when a branch session is compacted via Replace, the archive file
+	// preserves branch_meta as its first line with the original BranchPoint, and
+	// the new file's branch_meta has BranchPoint reset to 0.
 	dir := t.TempDir()
 	s := NewStore(dir)
 	parentKey := "test/c777/1000000000"

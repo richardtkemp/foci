@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-// TestLoadAndGet verifies basic load and retrieval of secrets.
+// TestLoadAndGet proves that secrets stored in multiple named TOML sections are all
+// accessible by "section.key" lookup after loading, and that missing keys return false.
 func TestLoadAndGet(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -56,7 +57,8 @@ openrouter_key = "sk-or-v1-test"
 	}
 }
 
-// TestLoadMissing verifies empty store is returned for nonexistent file.
+// TestLoadMissing proves that loading a nonexistent file succeeds without error
+// and returns an empty store, so a missing secrets file is not fatal.
 func TestLoadMissing(t *testing.T) {
 	s, err := Load("/nonexistent/secrets.toml")
 	if err != nil {
@@ -67,7 +69,8 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
-// TestLoadInvalid verifies error for invalid TOML.
+// TestLoadInvalid proves that a file containing malformed TOML causes Load to
+// return an error rather than silently producing an empty or partial store.
 func TestLoadInvalid(t *testing.T) {
 	path := writeSecrets(t, "this is not valid toml [[[")
 	_, err := Load(path)
@@ -76,7 +79,8 @@ func TestLoadInvalid(t *testing.T) {
 	}
 }
 
-// TestNames verifies Names() returns sorted unique key names.
+// TestNames proves that Names() returns every "section.key" in alphabetical order,
+// regardless of the order they appear in the TOML file.
 func TestNames(t *testing.T) {
 	path := writeSecrets(t, `
 [anthropic]
@@ -98,7 +102,8 @@ a_key = "z"
 	}
 }
 
-// TestSetAndSave verifies setting secrets and persisting to disk.
+// TestSetAndSave proves that values written via Set are durably persisted: after
+// Save and a fresh Load they are retrievable with the original values.
 func TestSetAndSave(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
@@ -129,7 +134,8 @@ func TestSetAndSave(t *testing.T) {
 	}
 }
 
-// TestRemove verifies removing secrets and persisting deletions.
+// TestRemove proves that Remove deletes a key (returning true) and leaves siblings
+// intact, and that the deletion persists after Save and reload.
 func TestRemove(t *testing.T) {
 	path := writeSecrets(t, `
 [custom]

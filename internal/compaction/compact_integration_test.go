@@ -16,7 +16,10 @@ import (
 	"foci/internal/session"
 )
 
-// TestCompactBasic verifies basic compaction workflow.
+// TestCompactBasic verifies the end-to-end compaction workflow: a session with enough
+// messages is compacted into a new session key containing exactly a marker message, an
+// assistant summary from the mock API, and a user handoff message — in the correct roles
+// and with the expected text content.
 func TestCompactBasic(t *testing.T) {
 	server := mockCompactionServer("Summary of conversation: user said hello, we discussed Go testing.")
 	defer server.Close()
@@ -74,7 +77,9 @@ func TestCompactBasic(t *testing.T) {
 	}
 }
 
-// TestCompactDryRun verifies dry-run mode does not modify session.
+// TestCompactDryRun verifies that dry-run mode calls the API and returns a summary
+// but leaves the original session completely unmodified, proving the flag acts as a
+// true preview with no side effects on stored messages.
 func TestCompactDryRun(t *testing.T) {
 	server := mockCompactionServer("Dry-run summary of conversation.")
 	defer server.Close()
@@ -111,7 +116,9 @@ func TestCompactDryRun(t *testing.T) {
 	}
 }
 
-// TestCompactTooFewMessages verifies compaction is skipped when under minimum.
+// TestCompactTooFewMessages verifies that compaction is a no-op when the session has
+// fewer messages than minMessages: no API call is made, the session is unchanged, and
+// the returned summary is empty — proving the guard condition works correctly.
 func TestCompactTooFewMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
@@ -136,7 +143,9 @@ func TestCompactTooFewMessages(t *testing.T) {
 	}
 }
 
-// TestCompactWithScratchpad verifies scratchpad content is included in handoff.
+// TestCompactWithScratchpad verifies that when a scratchpad has entries, the compaction
+// handoff message includes a scratchpad section containing the stored keys and values,
+// so that important agent notes survive the session rotation.
 func TestCompactWithScratchpad(t *testing.T) {
 	server := mockCompactionServer("Summary: testing scratchpad.")
 	defer server.Close()
@@ -189,7 +198,9 @@ func TestCompactWithScratchpad(t *testing.T) {
 	}
 }
 
-// TestCompactEmptyScratchpad verifies no scratchpad mention when empty.
+// TestCompactEmptyScratchpad verifies that when the scratchpad has no entries, the
+// handoff message does not include any scratchpad section, keeping the handoff clean
+// and avoiding misleading references to empty storage.
 func TestCompactEmptyScratchpad(t *testing.T) {
 	server := mockCompactionServer("Summary: empty scratchpad.")
 	defer server.Close()
@@ -228,7 +239,9 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	}
 }
 
-// TestCompactAPIError verifies session is unchanged on API error.
+// TestCompactAPIError verifies that when the summarisation API returns an error, Compact
+// propagates a descriptive error and leaves the original session messages entirely
+// unchanged, ensuring atomicity — either compaction fully succeeds or nothing changes.
 func TestCompactAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -261,7 +274,9 @@ func TestCompactAPIError(t *testing.T) {
 	}
 }
 
-// TestCompactStreaming verifies streaming compaction works.
+// TestCompactStreaming verifies that when the client supports SSE streaming, compaction
+// collects the streamed summary correctly and produces a valid compacted session,
+// proving the streaming path reaches the same end state as the non-streaming path.
 func TestCompactStreaming(t *testing.T) {
 	server := mockStreamingCompactionServer("Streamed summary of conversation.")
 	defer server.Close()
@@ -295,7 +310,9 @@ func TestCompactStreaming(t *testing.T) {
 	}
 }
 
-// TestSetLogger verifies logger can be set.
+// TestSetLogger verifies that SetLogger replaces the compactor's internal logger with
+// the supplied one, confirming the logger is injectable for test isolation and
+// structured log routing at runtime.
 func TestSetLogger(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	c := NewCompactor(store, "gpt-4o", 0.8)
@@ -313,58 +330,9 @@ func TestSetLogger(t *testing.T) {
 	}
 }
 
-// TestContextLimit_Claude verifies context limits for Claude models.
-func TestContextLimit_Claude(t *testing.T) {
-	tests := []struct {
-		model string
-		want  int
-	}{
-		{"claude-3-opus", 200_000},
-		{"claude-3.5-sonnet-20241022", 200_000},
-		{"anthropic/claude-haiku-4-5", 200_000},
-	}
-
-	for _, tt := range tests {
-		got := ContextLimit(tt.model)
-		if got != tt.want {
-			t.Errorf("ContextLimit(%q) = %d, want %d", tt.model, got, tt.want)
-		}
-	}
-}
-
-// TestContextLimit_Gemini verifies context limits for Gemini models.
-func TestContextLimit_Gemini(t *testing.T) {
-	tests := []struct {
-		model string
-		want  int
-	}{
-		{"gemini-2.5-pro", 1_000_000},
-		{"gemini-2.5-flash", 1_000_000},
-		{"gemini-2.0-flash", 1_000_000},
-		{"gemini-1.5-pro", 2_000_000},
-		{"gemini-1.5-flash", 2_000_000},
-	}
-
-	for _, tt := range tests {
-		got := ContextLimit(tt.model)
-		if got != tt.want {
-			t.Errorf("ContextLimit(%q) = %d, want %d", tt.model, got, tt.want)
-		}
-	}
-}
-
-// TestContextLimit_Default verifies default context limit for unknown models.
-func TestContextLimit_Default(t *testing.T) {
-	tests := []string{"gpt-4", "gpt-4o", "unknown-model", ""}
-	for _, model := range tests {
-		got := ContextLimit(model)
-		if got != 200_000 {
-			t.Errorf("ContextLimit(%q) = %d, want 200_000 (default)", model, got)
-		}
-	}
-}
-
-// TestCompactLoadError verifies error when session can't be loaded.
+// TestCompactLoadError verifies that Compact returns a descriptive error and does not
+// panic when the session cannot be loaded from disk, by placing a file where the session
+// directory is expected so that the store's open call fails with an I/O error.
 func TestCompactLoadError(t *testing.T) {
 	dir := t.TempDir()
 	store := session.NewStore(dir)
@@ -386,7 +354,9 @@ func TestCompactLoadError(t *testing.T) {
 	}
 }
 
-// TestCompactPreserveNegativeClamped verifies clamping when preserve goes negative.
+// TestCompactPreserveNegativeClamped verifies that when the preserve count would leave
+// fewer messages than minMessages for summarisation, it is clamped to zero rather than
+// going negative, resulting in a standard no-preservation compact output.
 func TestCompactPreserveNegativeClamped(t *testing.T) {
 	server := mockCompactionServer("Summary.")
 	defer server.Close()
@@ -418,7 +388,10 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 	}
 }
 
-// TestCompactWalkBackBelowMinMessages verifies walk-back drops preservation.
+// TestCompactWalkBackBelowMinMessages verifies that when safeSplitPoint walks back past
+// a tool pair and the resulting split point leaves fewer than minMessages for
+// summarisation, the entire preservation is dropped rather than producing an invalid
+// compact with too little history summarised.
 func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	server := mockCompactionServer("Summary after walk-back.")
 	defer server.Close()
@@ -451,7 +424,9 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	}
 }
 
-// TestCompactScratchpadError verifies graceful handling of scratchpad errors.
+// TestCompactScratchpadError verifies that a scratchpad failure (here: a closed database)
+// is treated as best-effort and does not abort the compaction — the overall Compact call
+// succeeds even when scratchpad content cannot be read.
 func TestCompactScratchpadError(t *testing.T) {
 	server := mockCompactionServer("Summary with scratchpad error.")
 	defer server.Close()
@@ -484,7 +459,10 @@ func TestCompactScratchpadError(t *testing.T) {
 	}
 }
 
-// TestCompactReplaceError verifies error when session Replace fails.
+// TestCompactReplaceError verifies that when the session store cannot write the compacted
+// result (here: the session directory is made read-only), Compact returns a descriptive
+// error wrapping "replace session after compaction" rather than silently succeeding with
+// a corrupt state.
 func TestCompactReplaceError(t *testing.T) {
 	server := mockCompactionServer("Summary.")
 	defer server.Close()

@@ -6,6 +6,7 @@ import (
 )
 
 func TestTextContent(t *testing.T) {
+	// Proves that TextContent wraps a plain string into a single-element text ContentBlock slice.
 	blocks := TextContent("hello")
 	if len(blocks) != 1 || blocks[0].Type != "text" || blocks[0].Text != "hello" {
 		t.Errorf("TextContent = %+v", blocks)
@@ -13,6 +14,8 @@ func TestTextContent(t *testing.T) {
 }
 
 func TestTextOf(t *testing.T) {
+	// Proves that TextOf extracts the text from the first text-typed block, ignoring
+	// non-text blocks like tool_use.
 	blocks := []ContentBlock{
 		{Type: "tool_use", Name: "exec"},
 		{Type: "text", Text: "hello"},
@@ -23,6 +26,8 @@ func TestTextOf(t *testing.T) {
 }
 
 func TestToolResultBlock(t *testing.T) {
+	// Proves that ToolResultBlock constructs a correctly typed tool_result block with
+	// the given tool use ID and content string.
 	block := ToolResultBlock("tu_123", "result", false)
 	if block.Type != "tool_result" || block.ToolUseID != "tu_123" || block.Content != "result" {
 		t.Errorf("block = %+v", block)
@@ -30,6 +35,8 @@ func TestToolResultBlock(t *testing.T) {
 }
 
 func TestContentBlockRoundTrip(t *testing.T) {
+	// Proves that a tool_use ContentBlock survives a JSON marshal/unmarshal round-trip
+	// with all key fields (type, ID, name) intact.
 	block := ContentBlock{
 		Type:  "tool_use",
 		ID:    "tu_abc",
@@ -50,6 +57,8 @@ func TestContentBlockRoundTrip(t *testing.T) {
 }
 
 func TestNewCustomToolName(t *testing.T) {
+	// Proves that NewCustomTool produces a ToolDef whose Name() accessor returns
+	// the name that was passed in.
 	td := NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`))
 	if td.Name() != "exec" {
 		t.Errorf("Name() = %q, want exec", td.Name())
@@ -57,6 +66,8 @@ func TestNewCustomToolName(t *testing.T) {
 }
 
 func TestImageBlock(t *testing.T) {
+	// Proves that ImageBlock produces a ContentBlock with type "image" and a base64
+	// source populated with the given MIME type.
 	block := ImageBlock("image/jpeg", "base64data")
 	if block.Type != "image" {
 		t.Errorf("ImageBlock type = %q, want 'image'", block.Type)
@@ -67,6 +78,8 @@ func TestImageBlock(t *testing.T) {
 }
 
 func TestDocumentBlock(t *testing.T) {
+	// Proves that DocumentBlock produces a ContentBlock with type "document" and a
+	// base64 source populated with the given MIME type.
 	block := DocumentBlock("application/pdf", "pdfbase64data")
 	if block.Type != "document" {
 		t.Errorf("DocumentBlock type = %q, want 'document'", block.Type)
@@ -77,6 +90,8 @@ func TestDocumentBlock(t *testing.T) {
 }
 
 func TestNewServerTool(t *testing.T) {
+	// Proves that NewServerTool wraps a raw config map into a ToolDef and correctly
+	// extracts the tool name from the "name" key.
 	config := map[string]interface{}{
 		"type": "web_search",
 		"name": "search",
@@ -88,6 +103,8 @@ func TestNewServerTool(t *testing.T) {
 }
 
 func TestToolDefRaw(t *testing.T) {
+	// Proves that Raw() returns non-empty JSON bytes for a ToolDef created via
+	// NewCustomTool.
 	td := NewCustomTool("test", "desc", json.RawMessage(`{}`))
 	raw := td.Raw()
 	if len(raw) == 0 {
@@ -96,6 +113,8 @@ func TestToolDefRaw(t *testing.T) {
 }
 
 func TestAPIErrorError(t *testing.T) {
+	// Proves that APIError.Error() formats the status code and body into a readable
+	// string matching the expected template.
 	err := &APIError{StatusCode: 500, Body: "Internal Server Error"}
 	msg := err.Error()
 	if msg != "API error (status 500): Internal Server Error" {
@@ -104,6 +123,8 @@ func TestAPIErrorError(t *testing.T) {
 }
 
 func TestAPIErrorIsRateLimit(t *testing.T) {
+	// Proves that IsRateLimit correctly identifies only HTTP 429 as a rate-limit error,
+	// returning false for other status codes.
 	tests := []struct {
 		status   int
 		wantRate bool
@@ -121,6 +142,8 @@ func TestAPIErrorIsRateLimit(t *testing.T) {
 }
 
 func TestAPIErrorIsOverloaded(t *testing.T) {
+	// Proves that IsOverloaded correctly identifies only HTTP 529 as an overload error,
+	// returning false for other status codes.
 	tests := []struct {
 		status    int
 		wantOvld  bool
@@ -138,6 +161,8 @@ func TestAPIErrorIsOverloaded(t *testing.T) {
 }
 
 func TestAPIErrorIsRetryable(t *testing.T) {
+	// Proves that IsRetryable returns true only for server-side transient codes (500,
+	// 502, 503, 529) and false for client errors and success codes.
 	tests := []struct {
 		status    int
 		wantRetry bool
@@ -159,6 +184,8 @@ func TestAPIErrorIsRetryable(t *testing.T) {
 }
 
 func TestAPIErrorIsAuthError(t *testing.T) {
+	// Proves that IsAuthError correctly identifies only HTTP 401 as an authentication
+	// error, not 403 or other codes.
 	tests := []struct {
 		status   int
 		wantAuth bool
@@ -176,6 +203,8 @@ func TestAPIErrorIsAuthError(t *testing.T) {
 }
 
 func TestAPIErrorRetryAfterSeconds(t *testing.T) {
+	// Proves that RetryAfterSeconds correctly parses numeric strings and returns 0 for
+	// empty or non-numeric values.
 	tests := []struct {
 		retryAfter string
 		wantSecs   int
@@ -195,6 +224,8 @@ func TestAPIErrorRetryAfterSeconds(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_TextBlock(t *testing.T) {
+	// Proves that a JSON text block unmarshals correctly into a ContentBlock with the
+	// right type and text fields.
 	data := []byte(`{"type":"text","text":"hello"}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -206,6 +237,8 @@ func TestContentBlockUnmarshalJSON_TextBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultStringContent(t *testing.T) {
+	// Proves that a tool_result block with content as a plain JSON string unmarshals
+	// with the string value preserved in the Content field.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":"result"}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -217,7 +250,8 @@ func TestContentBlockUnmarshalJSON_ToolResultStringContent(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultArrayContent(t *testing.T) {
-	// SDK format: content as array of text blocks
+	// Proves that a tool_result block in SDK array format (content as an array of text
+	// blocks) is normalized to a plain string in the Content field.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[{"type":"text","text":"result"}]}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -229,7 +263,8 @@ func TestContentBlockUnmarshalJSON_ToolResultArrayContent(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ServerTool(t *testing.T) {
-	// Server tool with unknown type
+	// Proves that blocks with an unknown type are still accepted and that the raw JSON
+	// bytes are preserved so the block can be re-serialized faithfully.
 	data := []byte(`{"type":"web_search_tool_result","id":"ws_123","name":"web_search"}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -245,6 +280,8 @@ func TestContentBlockUnmarshalJSON_ServerTool(t *testing.T) {
 }
 
 func TestContentBlockMarshalJSON_KnownType(t *testing.T) {
+	// Proves that a known-type ContentBlock marshals to valid JSON and round-trips
+	// cleanly through unmarshal.
 	cb := ContentBlock{
 		Type: "text",
 		Text: "hello",
@@ -263,6 +300,8 @@ func TestContentBlockMarshalJSON_KnownType(t *testing.T) {
 }
 
 func TestContentBlockMarshalJSON_UnknownTypeWithRaw(t *testing.T) {
+	// Proves that a block with an unknown type that carries raw bytes marshals back to
+	// valid JSON using the preserved raw representation.
 	rawData := []byte(`{"type":"web_search_tool_result","id":"ws_123"}`)
 	var cb ContentBlock
 	json.Unmarshal(rawData, &cb)
@@ -280,6 +319,8 @@ func TestContentBlockMarshalJSON_UnknownTypeWithRaw(t *testing.T) {
 }
 
 func TestTextOf_MultipleBlocks(t *testing.T) {
+	// Proves that TextOf concatenates all text blocks with double newlines as separator,
+	// skipping non-text blocks in between.
 	blocks := []ContentBlock{
 		{Type: "text", Text: "hello"},
 		{Type: "tool_use", Name: "exec"},
@@ -291,6 +332,7 @@ func TestTextOf_MultipleBlocks(t *testing.T) {
 }
 
 func TestTextOf_NoTextBlocks(t *testing.T) {
+	// Proves that TextOf returns an empty string when no text-typed blocks are present.
 	blocks := []ContentBlock{
 		{Type: "tool_use", Name: "exec"},
 	}
@@ -300,6 +342,8 @@ func TestTextOf_NoTextBlocks(t *testing.T) {
 }
 
 func TestTextOf_EmptyTextBlocks(t *testing.T) {
+	// Proves that TextOf skips empty text blocks when building its result, returning
+	// only the non-empty text.
 	blocks := []ContentBlock{
 		{Type: "text", Text: ""},
 		{Type: "text", Text: "hello"},
@@ -310,6 +354,8 @@ func TestTextOf_EmptyTextBlocks(t *testing.T) {
 }
 
 func TestToolDefMarshalJSON(t *testing.T) {
+	// Proves that a ToolDef created via NewCustomTool marshals to valid JSON without
+	// error.
 	td := NewCustomTool("test", "description", json.RawMessage(`{"type":"object"}`))
 	data, err := json.Marshal(td)
 	if err != nil {
@@ -321,6 +367,8 @@ func TestToolDefMarshalJSON(t *testing.T) {
 }
 
 func TestToolDefUnmarshalJSON(t *testing.T) {
+	// Proves that a ToolDef can be unmarshaled from raw JSON and that the Name()
+	// accessor correctly returns the deserialized name.
 	rawData := []byte(`{"name":"test","description":"desc"}`)
 	var td ToolDef
 	if err := json.Unmarshal(rawData, &td); err != nil {
@@ -332,6 +380,8 @@ func TestToolDefUnmarshalJSON(t *testing.T) {
 }
 
 func TestToolDefRoundTrip(t *testing.T) {
+	// Proves that a ToolDef survives a full marshal/unmarshal round-trip with its name
+	// preserved correctly.
 	original := NewCustomTool("myTool", "my description", json.RawMessage(`{"type":"object"}`))
 
 	// Marshal
@@ -353,6 +403,8 @@ func TestToolDefRoundTrip(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ImageBlock(t *testing.T) {
+	// Proves that an image content block with a base64 source unmarshals correctly,
+	// including the MIME type in the Source field.
 	data := []byte(`{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"base64data"}}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -364,6 +416,8 @@ func TestContentBlockUnmarshalJSON_ImageBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_DocumentBlock(t *testing.T) {
+	// Proves that a document content block with a base64 source unmarshals correctly,
+	// including the PDF MIME type in the Source field.
 	data := []byte(`{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"pdfdata"}}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -375,6 +429,8 @@ func TestContentBlockUnmarshalJSON_DocumentBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ThinkingBlock(t *testing.T) {
+	// Proves that a thinking block unmarshals with the thinking text preserved in the
+	// Thinking field.
 	data := []byte(`{"type":"thinking","thinking":"internal reasoning"}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -386,6 +442,8 @@ func TestContentBlockUnmarshalJSON_ThinkingBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolUseBlock(t *testing.T) {
+	// Proves that a tool_use block unmarshals with ID, name, and input all correctly
+	// populated.
 	data := []byte(`{"type":"tool_use","id":"tu_abc","name":"exec","input":{"command":"ls"}}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -397,6 +455,8 @@ func TestContentBlockUnmarshalJSON_ToolUseBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_RedactedThinking(t *testing.T) {
+	// Proves that a redacted_thinking block unmarshals correctly with its encrypted
+	// data and signature fields populated.
 	data := []byte(`{"type":"redacted_thinking","data":"encrypted","signature":"sig"}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -408,7 +468,8 @@ func TestContentBlockUnmarshalJSON_RedactedThinking(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_InvalidJSONForKnownType(t *testing.T) {
-	// Known type with invalid JSON should fail
+	// Proves that unmarshaling a known block type with a type-mismatched field value
+	// returns an error rather than silently accepting invalid data.
 	data := []byte(`{"type":"text","text":123}`) // text should be string
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err == nil {
@@ -417,7 +478,8 @@ func TestContentBlockUnmarshalJSON_InvalidJSONForKnownType(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_UnknownTypeInvalidJSON(t *testing.T) {
-	// Unknown type with invalid JSON should still work (Raw is used)
+	// Proves that blocks with an unknown type tolerate unexpected field structures by
+	// falling back to raw storage rather than failing the unmarshal.
 	data := []byte(`{"type":"future_tool","id":"123","content":[1,2,3]}`) // invalid structure
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -429,6 +491,8 @@ func TestContentBlockUnmarshalJSON_UnknownTypeInvalidJSON(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultEmptyContent(t *testing.T) {
+	// Proves that a tool_result block with an empty string content field unmarshals
+	// without error and preserves the empty string in Content.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":""}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -440,7 +504,8 @@ func TestContentBlockUnmarshalJSON_ToolResultEmptyContent(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultMultipleBlocks(t *testing.T) {
-	// SDK format with multiple text blocks - should extract first one
+	// Proves that when a tool_result's content array contains multiple text blocks,
+	// only the first block's text is extracted into the Content field.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -453,6 +518,8 @@ func TestContentBlockUnmarshalJSON_ToolResultMultipleBlocks(t *testing.T) {
 
 // TestContentBlockUnmarshalJSON_ToolResultEmptyArray tests array format with no blocks
 func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
+	// Proves that a tool_result block with an empty content array falls back to storing
+	// the raw "[]" string in Content rather than an empty string or an error.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[]}`)
 	var cb ContentBlock
 	if err := json.Unmarshal(data, &cb); err != nil {
@@ -465,19 +532,6 @@ func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
 	}
 	if cb.Content != "[]" {
 		t.Errorf("Content = %q, want [] (fallback to raw string)", cb.Content)
-	}
-}
-
-// TestContentBlockUnmarshalJSON_ToolResultInvalidJSON tests fallback to raw string
-func TestContentBlockUnmarshalJSON_ToolResultInvalidJSON(t *testing.T) {
-	// Content that is neither string nor valid array format - should fallback to raw
-	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":"raw-json-fallback"}`)
-	var cb ContentBlock
-	if err := json.Unmarshal(data, &cb); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if cb.Type != "tool_result" || cb.Content != "raw-json-fallback" {
-		t.Errorf("decoded = %+v, want Content 'raw-json-fallback'", cb)
 	}
 }
 

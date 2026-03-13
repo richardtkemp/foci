@@ -221,11 +221,6 @@ func TestRetryCallbacks529Overload(t *testing.T) {
 	}
 }
 
-// TestRetryExponentialBackoff verifies exponential backoff timing.
-func TestRetryExponentialBackoff(t *testing.T) {
-	t.Skip("Skipping slow timing test - timing verified in TestRetryCallbacks")
-}
-
 // TestRetryNonRetryableError verifies that non-retryable errors stop immediately.
 func TestRetryNonRetryableError(t *testing.T) {
 	attempts := &atomic.Int32{}
