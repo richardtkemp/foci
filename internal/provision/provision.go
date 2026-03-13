@@ -36,7 +36,7 @@ type AgentSpec struct {
 	DisplayName string // "Greek Tutor" (optional)
 	HomeDir     string // workspace parent: /home/foci
 	DefaultsDir string // shared/defaults/ root (in repo or on disk)
-	CharMode    string // "defaults", "openclaw", "copy", "blank"
+	CharMode    string // "defaults", "openclaw", "copy", "import", "blank"
 	CopyFrom    string // source agent ID when CharMode=="copy"
 	SystemFiles []string // nil → DefaultSystemFiles
 }
@@ -89,6 +89,9 @@ func Provision(spec AgentSpec) (*Result, error) {
 		if err := copyDir(filepath.Join(sourceWorkspace, "character"), filepath.Join(workspace, "character")); err != nil {
 			return nil, fmt.Errorf("copy from %s: %w", spec.CopyFrom, err)
 		}
+
+	case "import":
+		// Dirs already created above; caller handles the interactive file import.
 
 	case "blank":
 		for _, name := range DefaultCharacterFileNames {
