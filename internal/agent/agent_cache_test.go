@@ -310,3 +310,53 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 	}
 }
 
+func TestCacheBustSkippedForNonAnthropicFormat(t *testing.T) {
+	// Cache bust detection only applies to Anthropic. Other providers (Gemini,
+	// OpenAI) have different caching semantics and shouldn't trigger warnings.
+	for _, format := range []string{"gemini", "openai"} {
+		t.Run(format, func(t *testing.T) {
+			callCount := 0
+			client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+				callCount++
+				resp := &provider.MessageResponse{
+					ID:         fmt.Sprintf("msg_%d", callCount),
+					Type:       "message",
+					Role:       "assistant",
+					Content:    provider.TextContent("ok"),
+					StopReason: "end_turn",
+				}
+				if callCount == 1 {
+					resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 15000}
+				} else {
+					resp.Usage = provider.Usage{InputTokens: 100, OutputTokens: 10, CacheReadInputTokens: 0}
+				}
+				return resp
+			})
+			store := session.NewStore(t.TempDir())
+			registry := tools.NewRegistry()
+			bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+			var alerts []string
+			ag := &Agent{
+				Client:          client,
+				Sessions:        store,
+				Tools:           registry,
+				Bootstrap:       bootstrap,
+				Model:           "test-model",
+				Format:          format,
+				CacheBustDetect: true,
+				CacheBustAlert: HookList[CacheBustFunc]{func(session string, prevRead, curRead int) {
+					alerts = append(alerts, fmt.Sprintf("%s:%d→%d", session, prevRead, curRead))
+				}},
+			}
+
+			ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
+			ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
+
+			if len(alerts) != 0 {
+				t.Fatalf("expected 0 alerts for %s format, got %d: %v", format, len(alerts), alerts)
+			}
+		})
+	}
+}
+
