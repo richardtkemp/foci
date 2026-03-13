@@ -780,7 +780,7 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
 | `stream_output` | bool | `false` | `[telegram]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time. A message is created on the first text delta and edited periodically as more tokens arrive. The final edit replaces the streamed text with the HTML-formatted response. Requires `streaming = true` for API-level delta callbacks. Set globally in `[telegram]` or per-agent in platform config. |
 | `stream_update_interval` | string | `"250ms"` | `[telegram]` / `[agents.platforms.telegram]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. Per-agent override via `stream_interval` in platform config. |
-| `multiball_no_compact` | bool | `true` | — | Set `no_compact` on multiball sessions. Multiball sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want multiball sessions to compact normally. |
+| `multiball_no_compact` | bool | `true` | `[defaults]` | Set `no_compact` on multiball sessions. Multiball sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want multiball sessions to compact normally. |
 
 ### Telegram Overrides
 

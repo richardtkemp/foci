@@ -559,8 +559,9 @@ type DefaultsConfig struct {
 	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
 	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
 	SteerMode           bool   `toml:"steer_mode"`            // default steer_mode (default: true)
-	EnableStartupNotify bool   `toml:"enable_startup_notify"` // send notification on startup (default true)
-	CacheTTL             string  `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
+	EnableStartupNotify  bool   `toml:"enable_startup_notify"`  // send notification on startup (default true)
+	MultiballNoCompact   *bool  `toml:"multiball_no_compact"`   // set no_compact on multiball sessions (nil = true)
+	CacheTTL             string `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 
 	// Nudge system: mid-turn behavioral reminders extracted from character files
 	NudgeEnable            bool `toml:"nudge_enable"`              // enable the nudge system (default true)

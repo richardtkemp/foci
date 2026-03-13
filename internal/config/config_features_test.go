@@ -731,4 +731,35 @@ multiball_no_compact = false
 			t.Error("MultiballNoCompact should be false")
 		}
 	})
+
+	t.Run("inherited from defaults", func(t *testing.T) {
+		// Verifies that [defaults] multiball_no_compact propagates to agents
+		// that don't set it explicitly.
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[defaults]
+multiball_no_compact = false
+
+[[agents]]
+id = "inherits"
+
+[[agents]]
+id = "overrides"
+multiball_no_compact = true
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		// Agent without explicit value should inherit false from defaults
+		if cfg.Agents[0].MultiballNoCompact == nil || *cfg.Agents[0].MultiballNoCompact {
+			t.Error("inherits agent should get false from defaults")
+		}
+		// Agent with explicit true should keep its own value
+		if cfg.Agents[1].MultiballNoCompact == nil || !*cfg.Agents[1].MultiballNoCompact {
+			t.Error("overrides agent should keep true")
+		}
+	})
 }
