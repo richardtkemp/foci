@@ -198,8 +198,8 @@ func TestHandleCommandCallback_HTMLFallback(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.Register(&command.Command{
 		Name: "test",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "result with <bad> html & stuff", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "result with <bad> html & stuff"}, nil
 		},
 	})
 
@@ -230,10 +230,10 @@ func TestHandleCommandCallback_Chain(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.Register(&command.Command{
 		Name: "tmux",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "executed: " + args, nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "executed: " + req.Args}, nil
 		},
-		ChainKeyboard: func(ctx context.Context, subcommand string) []command.KeyboardOption {
+		ChainKeyboard: func(ctx context.Context, subcommand string, cc command.CommandContext) []command.KeyboardOption {
 			if subcommand == "kill" {
 				return []command.KeyboardOption{
 					{Label: "sess-a", Data: "kill sess-a"},

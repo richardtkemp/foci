@@ -3,337 +3,439 @@ package command
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/config"
+	"foci/internal/provider"
+	"foci/internal/session"
+	"foci/internal/state"
 )
 
-func testSessionsDeps(sessions []SessionChatInfo, defaultChat int64) SessionsDeps {
-	return SessionsDeps{
-		AgentID: "test-agent",
-		ListFn: func() ([]SessionChatInfo, error) {
-			return sessions, nil
-		},
-		SetDefaultFn: func(chatID int64) error {
-			return nil
-		},
-		DefaultChatFn: func() int64 {
-			return defaultChat
-		},
+// sessionsTestCC builds a CommandContext for sessions tests using a real
+// session.Store backed by a temp directory, and optionally a state.Store
+// and session.SessionIndex.
+func sessionsTestCC(t *testing.T, agentID string) (CommandContext, *session.Store, *state.Store) {
+	t.Helper()
+	dir := t.TempDir()
+	store := session.NewStore(dir)
+	ss := state.New(filepath.Join(dir, "state.json"))
+	return CommandContext{
+		Sessions:    store,
+		StateStore:  ss,
+		AgentConfig: config.AgentConfig{ID: agentID},
+	}, store, ss
+}
+
+// addChatSession writes messages for an agent/chat into the session store
+// so that ListChatSessions picks it up. Returns the session key.
+func addChatSession(t *testing.T, store *session.Store, agentID string, chatID int64, msgCount int) string {
+	t.Helper()
+	key := fmt.Sprintf("%s/c%d/1000000000", agentID, chatID)
+	msgs := make([]provider.Message, msgCount)
+	for i := range msgs {
+		msgs[i] = provider.Message{Role: "user", Content: provider.TextContent("msg")}
+	}
+	if err := store.TestAppendAll(key, msgs); err != nil {
+		t.Fatalf("TestAppendAll: %v", err)
+	}
+	return key
+}
+
+// setUsername stores a username in the state store for a given agent+chat.
+func setUsername(t *testing.T, ss *state.Store, agentID string, chatID int64, username string) {
+	t.Helper()
+	key := fmt.Sprintf("agent/%s/chat/%d/username", agentID, chatID)
+	if err := ss.Set(key, username); err != nil {
+		t.Fatalf("set username: %v", err)
 	}
 }
 
+// setDefaultChat stores the default chat ID in the state store.
+func setDefaultChat(t *testing.T, ss *state.Store, agentID string, chatID int64) {
+	t.Helper()
+	if err := ss.Set("agent/"+agentID+"/default_chat", chatID); err != nil {
+		t.Fatalf("set default chat: %v", err)
+	}
+}
+
+// newTestSessionIndex creates an in-memory SQLite session index backed by a temp file.
+func newTestSessionIndex(t *testing.T) *session.SessionIndex {
+	t.Helper()
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "index.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	return idx
+}
+
+// TestSessionsListEmpty verifies that executing the "list" subcommand when no
+// chat sessions exist in the store returns a "No chat sessions" message rather
+// than an empty table or error.
 func TestSessionsListEmpty(t *testing.T) {
-	// Verifies that "list" with no sessions returns an appropriate no-sessions message.
-	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
-	result, err := cmd.Execute(context.Background(), "list")
+	// Verifies that /sessions list with no chat sessions returns an appropriate message.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "No chat sessions") {
-		t.Errorf("expected no sessions message, got %q", result)
+	if !strings.Contains(result.Text, "No chat sessions") {
+		t.Errorf("expected no sessions message, got %q", result.Text)
 	}
 }
 
+// TestSessionsListWithSessions verifies that the "list" subcommand renders a
+// table containing each chat's ID, @username, message count, and the default
+// marker (★) next to the chat that has been set as the default. Two sessions
+// with distinct usernames and message counts are created, one marked as default,
+// and the output is checked for all expected fields.
 func TestSessionsListWithSessions(t *testing.T) {
-	// Verifies that "list" renders all sessions with chat IDs, usernames, message
-	// counts, and the default marker (★) on the correct entry.
-	now := time.Now().UTC()
-	sessions := []SessionChatInfo{
-		{ChatID: 123456789, Username: "alice", MessageCount: 42, LastActivity: now},
-		{ChatID: 987654321, Username: "bob", MessageCount: 10, LastActivity: now.Add(-time.Hour)},
-	}
-	cmd := NewSessionsCommand(testSessionsDeps(sessions, 123456789))
-	result, err := cmd.Execute(context.Background(), "list")
+	// Verifies that /sessions list shows chat IDs, usernames, message counts and default marker.
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 123456789, 42)
+	addChatSession(t, store, "test-agent", 987654321, 10)
+	setUsername(t, ss, "test-agent", 123456789, "alice")
+	setUsername(t, ss, "test-agent", 987654321, "bob")
+	setDefaultChat(t, ss, "test-agent", 123456789)
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "list"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(result, "123456789") {
+	if !strings.Contains(result.Text, "123456789") {
 		t.Error("expected chat ID 123456789 in output")
 	}
-	if !strings.Contains(result, "@alice") {
+	if !strings.Contains(result.Text, "@alice") {
 		t.Error("expected @alice in output")
 	}
-	if !strings.Contains(result, "@bob") {
+	if !strings.Contains(result.Text, "@bob") {
 		t.Error("expected @bob in output")
 	}
-	if !strings.Contains(result, "★") {
+	if !strings.Contains(result.Text, "★") {
 		t.Error("expected default marker ★ in output")
 	}
-	if !strings.Contains(result, "42") {
+	if !strings.Contains(result.Text, "42") {
 		t.Error("expected message count 42 in output")
 	}
 }
 
+// TestSessionsDefaultValid verifies that "default <chatID>" successfully
+// updates the state store's default_chat entry when the target chat session
+// exists, and returns a confirmation message containing the new default chat ID.
 func TestSessionsDefaultValid(t *testing.T) {
-	// Verifies that "default <chatID>" sets the default to a known chat ID and
-	// returns a confirmation including that ID.
-	sessions := []SessionChatInfo{
-		{ChatID: 123456789},
-		{ChatID: 987654321},
-	}
-	var setChatID int64
-	deps := testSessionsDeps(sessions, 123456789)
-	deps.SetDefaultFn = func(chatID int64) error {
-		setChatID = chatID
-		return nil
-	}
-	cmd := NewSessionsCommand(deps)
+	// Verifies that /sessions default <chatID> sets the default when the session exists.
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 123456789, 1)
+	addChatSession(t, store, "test-agent", 987654321, 1)
+	setDefaultChat(t, ss, "test-agent", 123456789)
 
-	result, err := cmd.Execute(context.Background(), "default 987654321")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "default 987654321"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setChatID != 987654321 {
-		t.Errorf("expected set default to 987654321, got %d", setChatID)
+
+	// Verify the state store was updated
+	var got int64
+	if !ss.Get("agent/test-agent/default_chat", &got) {
+		t.Error("expected default_chat to be set in state store")
 	}
-	if !strings.Contains(result, "987654321") {
-		t.Errorf("expected confirmation with chat ID, got %q", result)
+	if got != 987654321 {
+		t.Errorf("expected default_chat=987654321, got %d", got)
+	}
+	if !strings.Contains(result.Text, "987654321") {
+		t.Errorf("expected confirmation with chat ID, got %q", result.Text)
 	}
 }
 
+// TestSessionsDefaultInvalid verifies that "default <chatID>" with a chat ID
+// that has no corresponding session in the store returns a "No session found"
+// message instead of silently updating the default.
 func TestSessionsDefaultInvalid(t *testing.T) {
-	// Verifies that "default <chatID>" with an ID that doesn't match any session
-	// returns a "No session found" message rather than an error.
-	sessions := []SessionChatInfo{
-		{ChatID: 123456789},
-	}
-	cmd := NewSessionsCommand(testSessionsDeps(sessions, 123456789))
+	// Verifies that /sessions default with a non-existent chat ID returns a not-found message.
+	cc, store, _ := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 123456789, 1)
 
-	result, err := cmd.Execute(context.Background(), "default 999")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "default 999"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "No session found") {
-		t.Errorf("expected not found message, got %q", result)
+	if !strings.Contains(result.Text, "No session found") {
+		t.Errorf("expected not found message, got %q", result.Text)
 	}
 }
 
+// TestSessionsDefaultBadInput verifies that "default <non-numeric>" returns an
+// "Invalid chat ID" error message when the argument cannot be parsed as an int64.
 func TestSessionsDefaultBadInput(t *testing.T) {
-	// Verifies that "default <non-numeric>" returns an "Invalid chat ID" message.
-	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
+	// Verifies that /sessions default with a non-numeric argument returns an error message.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
 
-	result, err := cmd.Execute(context.Background(), "default abc")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "default abc"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Invalid chat ID") {
-		t.Errorf("expected invalid ID message, got %q", result)
+	if !strings.Contains(result.Text, "Invalid chat ID") {
+		t.Errorf("expected invalid ID message, got %q", result.Text)
 	}
 }
 
+// TestSessionsDefaultNoArg verifies that "default" with no chat ID argument
+// returns a usage message telling the user how to specify a chat ID.
 func TestSessionsDefaultNoArg(t *testing.T) {
-	// Verifies that "default" with no argument shows a usage message.
-	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
+	// Verifies that /sessions default with no argument returns usage.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
 
-	result, err := cmd.Execute(context.Background(), "default")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "default"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Usage") {
-		t.Errorf("expected usage message, got %q", result)
+	if !strings.Contains(result.Text, "Usage") {
+		t.Errorf("expected usage message, got %q", result.Text)
 	}
 }
 
+// TestSessionsInfo verifies that "info" displays the current chat's details
+// including its numeric chat ID, whether it is the default ("Default: yes"),
+// total message count, and the associated @username from the state store.
 func TestSessionsInfo(t *testing.T) {
-	// Verifies that "info" using the caller's chat ID (from context) shows chat ID,
-	// username, message count, and whether the session is the default.
-	now := time.Now().UTC()
-	sessions := []SessionChatInfo{
-		{ChatID: 123456789, Username: "alice", MessageCount: 42, LastActivity: now},
-	}
-	cmd := NewSessionsCommand(testSessionsDeps(sessions, 123456789))
+	// Verifies that /sessions info shows chat ID, default status, message count, and username.
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 123456789, 42)
+	setUsername(t, ss, "test-agent", 123456789, "alice")
+	setDefaultChat(t, ss, "test-agent", 123456789)
 
-	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(123456789))
-	result, err := cmd.Execute(ctx, "info")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 123456789}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Chat ID: 123456789") {
-		t.Errorf("expected chat ID, got %q", result)
+	if !strings.Contains(result.Text, "Chat ID: 123456789") {
+		t.Errorf("expected chat ID, got %q", result.Text)
 	}
-	if !strings.Contains(result, "Default: yes") {
-		t.Errorf("expected default yes, got %q", result)
+	if !strings.Contains(result.Text, "Default: yes") {
+		t.Errorf("expected default yes, got %q", result.Text)
 	}
-	if !strings.Contains(result, "Messages: 42") {
-		t.Errorf("expected message count, got %q", result)
+	if !strings.Contains(result.Text, "Messages: 42") {
+		t.Errorf("expected message count, got %q", result.Text)
 	}
-	if !strings.Contains(result, "@alice") {
-		t.Errorf("expected username, got %q", result)
+	if !strings.Contains(result.Text, "@alice") {
+		t.Errorf("expected username, got %q", result.Text)
 	}
 }
 
+// TestSessionsInfoNoChatID verifies that "info" returns a "Not in a chat
+// context" message when the request has no ChatID (zero value), indicating
+// the command was invoked outside of a specific chat conversation.
 func TestSessionsInfoNoChatID(t *testing.T) {
-	// Verifies that "info" without a ChatIDKey in context returns an appropriate
-	// "Not in a chat context" message.
-	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
+	// Verifies that /sessions info without a chat context returns an appropriate message.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
 
-	result, err := cmd.Execute(context.Background(), "info")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 0}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Not in a chat context") {
-		t.Errorf("expected no context message, got %q", result)
+	if !strings.Contains(result.Text, "Not in a chat context") {
+		t.Errorf("expected no context message, got %q", result.Text)
 	}
 }
 
+// TestSessionsInfoNonDefault verifies that "info" shows "Default: no" when the
+// current chat is not the one stored as the agent's default, by setting the
+// default to a different chat ID than the one being queried.
 func TestSessionsInfoNonDefault(t *testing.T) {
-	// Verifies that "info" for a chat that is not the default session shows "Default: no".
-	sessions := []SessionChatInfo{
-		{ChatID: 123456789, MessageCount: 5},
-	}
-	cmd := NewSessionsCommand(testSessionsDeps(sessions, 999))
+	// Verifies that /sessions info shows "Default: no" when the current chat is not the default.
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 123456789, 5)
+	setDefaultChat(t, ss, "test-agent", 999)
 
-	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(123456789))
-	result, err := cmd.Execute(ctx, "info")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "info", ChatID: 123456789}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Default: no") {
-		t.Errorf("expected default no, got %q", result)
+	if !strings.Contains(result.Text, "Default: no") {
+		t.Errorf("expected default no, got %q", result.Text)
 	}
 }
 
+// TestSessionsUnknownSubcommand verifies that an unrecognized subcommand (e.g.
+// "foo") falls back to displaying the usage message listing valid subcommands,
+// rather than returning an error or doing nothing.
 func TestSessionsUnknownSubcommand(t *testing.T) {
-	// Verifies that an unrecognised subcommand returns usage text rather than an error.
-	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
+	// Verifies that an unknown subcommand falls back to usage.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
 
-	result, err := cmd.Execute(context.Background(), "foo")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "foo"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Usage") {
-		t.Errorf("expected usage, got %q", result)
+	if !strings.Contains(result.Text, "Usage") {
+		t.Errorf("expected usage, got %q", result.Text)
 	}
 }
 
+// TestSessionsNoArgsShowsUsage verifies that invoking /sessions with an empty
+// argument string returns usage text that enumerates all available subcommands
+// (list, default, info), so the user knows what actions are possible.
 func TestSessionsNoArgsShowsUsage(t *testing.T) {
-	// Verifies that invoking /sessions with no args returns a usage message listing
-	// all available subcommands: list, default, and info.
-	cmd := NewSessionsCommand(testSessionsDeps(nil, 0))
+	// Verifies that /sessions with no args returns usage listing subcommands.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
 
-	result, err := cmd.Execute(context.Background(), "")
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "Usage") {
-		t.Errorf("expected usage, got %q", result)
+	if !strings.Contains(result.Text, "Usage") {
+		t.Errorf("expected usage, got %q", result.Text)
 	}
-	if !strings.Contains(result, "list") {
+	if !strings.Contains(result.Text, "list") {
 		t.Error("expected usage to mention 'list' subcommand")
 	}
-	if !strings.Contains(result, "default") {
+	if !strings.Contains(result.Text, "default") {
 		t.Error("expected usage to mention 'default' subcommand")
 	}
-	if !strings.Contains(result, "info") {
+	if !strings.Contains(result.Text, "info") {
 		t.Error("expected usage to mention 'info' subcommand")
 	}
 }
 
+// TestSessionsIndexWithResults verifies the "index" subcommand against a
+// populated SessionIndex containing chat, spawn, and cron entries with mixed
+// statuses. It checks four filter modes: default (active only, expects 2),
+// "all" (includes compacted, expects 3), type filter "chat" (expects 1), and
+// combined type+status filter "cron compacted" (expects 1).
 func TestSessionsIndexWithResults(t *testing.T) {
 	// Verifies that session index displays correctly with filtering.
 	now := time.Now().UTC()
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		all := []SessionIndexInfo{
-			{SessionKey: "bot/c123/1000", CreatedAt: now, SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/ispawn-456/1000", CreatedAt: now.Add(-time.Hour), ParentSessionKey: "bot/c123/1000", SessionType: "spawn", Status: "active"},
-			{SessionKey: "bot/ibg-789/1000", CreatedAt: now.Add(-2 * time.Hour), SessionType: "cron", Status: "compacted"},
-		}
-		var filtered []SessionIndexInfo
-		for _, e := range all {
-			if opts.TypeFilter != "" && e.SessionType != opts.TypeFilter {
-				continue
-			}
-			if opts.StatusFilter != "" && e.Status != opts.StatusFilter {
-				continue
-			}
-			filtered = append(filtered, e)
-		}
-		return filtered, nil
-	}
-	cmd := NewSessionsCommand(deps)
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	// Populate index with entries of different types/statuses.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  "bot/c123/1000",
+		CreatedAt:   now,
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:       "bot/ispawn-456/1000",
+		CreatedAt:        now.Add(-time.Hour),
+		ParentSessionKey: "bot/c123/1000",
+		SessionType:      session.SessionTypeSpawn,
+		Status:           session.SessionStatusActive,
+	})
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  "bot/ibg-789/1000",
+		CreatedAt:   now.Add(-2 * time.Hour),
+		SessionType: session.SessionTypeCron,
+		Status:      session.SessionStatusCompacted,
+	})
+
+	cmd := SessionsCommand()
 
 	// Default (active only)
-	result, err := cmd.Execute(context.Background(), "index")
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "2 sessions") {
-		t.Errorf("expected 2 active sessions, got %q", result)
+	if !strings.Contains(result.Text, "2 sessions") {
+		t.Errorf("expected 2 active sessions, got %q", result.Text)
 	}
-	if !strings.Contains(result, "bot/c123") {
-		t.Errorf("expected chat session in output, got %q", result)
+	if !strings.Contains(result.Text, "bot/c123") {
+		t.Errorf("expected chat session in output, got %q", result.Text)
 	}
 
 	// All entries
-	result, err = cmd.Execute(context.Background(), "index all")
+	result, err = cmd.Execute(context.Background(), Request{Args: "index all"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "3 sessions") {
-		t.Errorf("expected 3 sessions with 'all', got %q", result)
+	if !strings.Contains(result.Text, "3 sessions") {
+		t.Errorf("expected 3 sessions with 'all', got %q", result.Text)
 	}
-	if !strings.Contains(result, "bot/ispa") {
-		t.Errorf("expected spawn session in output, got %q", result)
+	if !strings.Contains(result.Text, "bot/ispa") {
+		t.Errorf("expected spawn session in output, got %q", result.Text)
 	}
 
 	// Filter by type
-	result, err = cmd.Execute(context.Background(), "index chat")
+	result, err = cmd.Execute(context.Background(), Request{Args: "index chat"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "1 sessions") {
-		t.Errorf("expected 1 session filtered by type, got %q", result)
+	if !strings.Contains(result.Text, "1 sessions") {
+		t.Errorf("expected 1 session filtered by type, got %q", result.Text)
 	}
 
 	// Filter by type and status
-	result, err = cmd.Execute(context.Background(), "index cron compacted")
+	result, err = cmd.Execute(context.Background(), Request{Args: "index cron compacted"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "1 sessions") {
-		t.Errorf("expected 1 session filtered by type+status, got %q", result)
+	if !strings.Contains(result.Text, "1 sessions") {
+		t.Errorf("expected 1 session filtered by type+status, got %q", result.Text)
 	}
 }
 
+// TestSessionsIndexEmpty verifies that "index" returns a "No sessions found"
+// message when the SessionIndex exists but contains zero entries.
 func TestSessionsIndexEmpty(t *testing.T) {
-	// Verifies that "index" with an IndexFn returning no results shows a "No sessions found" message.
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		return nil, nil
-	}
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index")
+	// Verifies that an empty index returns an appropriate message.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	cc.SessionIndex = newTestSessionIndex(t)
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "No sessions found") {
-		t.Errorf("expected no sessions message, got %q", result)
+	if !strings.Contains(result.Text, "No sessions found") {
+		t.Errorf("expected no sessions message, got %q", result.Text)
 	}
 }
 
+// TestSessionsIndexNotAvailable verifies that "index" returns a "not available"
+// message when the CommandContext has a nil SessionIndex, indicating the index
+// feature has not been configured for this agent.
 func TestSessionsIndexNotAvailable(t *testing.T) {
-	// Verifies that "index" when IndexFn is not configured returns "not available"
-	// rather than panicking or showing an empty table.
-	deps := testSessionsDeps(nil, 0) // IndexFn is nil
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index")
+	// Verifies that /sessions index with no SessionIndex returns a "not available" message.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	// cc.SessionIndex is nil
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "not available") {
-		t.Errorf("expected not available message, got %q", result)
+	if !strings.Contains(result.Text, "not available") {
+		t.Errorf("expected not available message, got %q", result.Text)
 	}
 }
 
+// TestSessionsKeyboardIncludesIndex verifies that the keyboard options returned
+// by SessionsCommand include an "index" button when the CommandContext has a
+// non-nil SessionIndex, so Telegram users can access the index subcommand.
 func TestSessionsKeyboardIncludesIndex(t *testing.T) {
-	// Verifies that keyboard options include "index" when IndexFn is configured.
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(SessionIndexOpts) ([]SessionIndexInfo, error) { return nil, nil }
-	cmd := NewSessionsCommand(deps)
-	opts := cmd.KeyboardOptions(context.Background())
+	// Verifies that keyboard options include "index" when SessionIndex is set.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	cc.SessionIndex = newTestSessionIndex(t)
+
+	cmd := SessionsCommand()
+	opts := cmd.KeyboardOptions(context.Background(), cc)
 	found := false
 	for _, o := range opts {
 		if o.Data == "index" {
@@ -341,47 +443,61 @@ func TestSessionsKeyboardIncludesIndex(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("expected 'index' in keyboard options when IndexFn is set")
+		t.Error("expected 'index' in keyboard options when SessionIndex is set")
 	}
 }
 
+// TestSessionsKeyboardExcludesIndexWhenNil verifies that the keyboard options
+// omit the "index" button when the SessionIndex is nil, preventing users from
+// seeing a subcommand that would just return "not available".
 func TestSessionsKeyboardExcludesIndexWhenNil(t *testing.T) {
-	// Verifies that keyboard options do not include "index" when IndexFn is nil.
-	deps := testSessionsDeps(nil, 0) // IndexFn is nil
-	cmd := NewSessionsCommand(deps)
-	opts := cmd.KeyboardOptions(context.Background())
+	// Verifies that keyboard options exclude "index" when SessionIndex is nil.
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	// cc.SessionIndex is nil
+
+	cmd := SessionsCommand()
+	opts := cmd.KeyboardOptions(context.Background(), cc)
 	for _, o := range opts {
 		if o.Data == "index" {
-			t.Error("did not expect 'index' in keyboard when IndexFn is nil")
+			t.Error("did not expect 'index' in keyboard when SessionIndex is nil")
 		}
 	}
 }
 
+// TestSessionsListCurrentMarker verifies that the "list" output distinguishes
+// between the current chat session and the default chat session using separate
+// markers: the filled circle (◉) for the chat from which the command was issued
+// (ChatID 111), and the star (★) for the stored default (ChatID 222), along
+// with a legend explaining the markers.
 func TestSessionsListCurrentMarker(t *testing.T) {
-	// Verifies that "list" distinguishes the calling session (◉) from the default
-	// session (★) when they are different chats, and shows both legend entries.
-	now := time.Now().UTC()
-	sessions := []SessionChatInfo{
-		{ChatID: 111, Username: "alice", MessageCount: 5, LastActivity: now},
-		{ChatID: 222, Username: "bob", MessageCount: 3, LastActivity: now},
-	}
-	cmd := NewSessionsCommand(testSessionsDeps(sessions, 222)) // 222 is default
-	ctx := context.WithValue(context.Background(), ChatIDKey{}, int64(111))
-	result, err := cmd.Execute(ctx, "list")
+	// Verifies that the current session is marked with ◉ and the default with ★.
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 111, 5)
+	addChatSession(t, store, "test-agent", 222, 3)
+	setDefaultChat(t, ss, "test-agent", 222) // 222 is default
+
+	cmd := SessionsCommand()
+	// Current chat is 111, default chat is 222.
+	result, err := cmd.Execute(context.Background(), Request{Args: "list", ChatID: 111}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "◉") {
-		t.Errorf("expected current marker ◉ in output, got %q", result)
+	if !strings.Contains(result.Text, "◉") {
+		t.Errorf("expected current marker ◉ in output, got %q", result.Text)
 	}
-	if !strings.Contains(result, "★") {
-		t.Errorf("expected default marker ★ in output, got %q", result)
+	if !strings.Contains(result.Text, "★") {
+		t.Errorf("expected default marker ★ in output, got %q", result.Text)
 	}
-	if !strings.Contains(result, "◉ = current") {
-		t.Errorf("expected legend for ◉, got %q", result)
+	if !strings.Contains(result.Text, "◉ = current") {
+		t.Errorf("expected legend for ◉, got %q", result.Text)
 	}
 }
 
+// TestShortenSessionKey verifies the shortenSessionKey helper's abbreviation
+// logic using a table of inputs: long chat/independent IDs are truncated to
+// the agent plus a 4-char prefix with ellipsis, branch children are similarly
+// truncated, short IDs are kept intact without ellipsis, and keys with no
+// slash separator are returned verbatim.
 func TestShortenSessionKey(t *testing.T) {
 	// Verifies that session keys are abbreviated for table display:
 	// keeps agent + truncated typeID, drops versionTS, truncates children.
@@ -402,141 +518,210 @@ func TestShortenSessionKey(t *testing.T) {
 	}
 }
 
+// TestSessionsIndexSortedByLastActive verifies that the "index" subcommand
+// sorts results by LastActivityAt in descending order (most recent first). Three
+// sessions are inserted in chronological order (oldest first) and the output is
+// checked to confirm the newest session key appears before the middle one, which
+// appears before the oldest.
 func TestSessionsIndexSortedByLastActive(t *testing.T) {
 	// Verifies that index results are sorted by last activity, most recent first.
 	now := time.Now().UTC()
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		// Return in chronological order (oldest first) — command should reverse.
-		return []SessionIndexInfo{
-			{SessionKey: "bot/cold/1000", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/cmid/1000", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/cnew/1000", LastActivityAt: now.Add(-5 * time.Minute), SessionType: "chat", Status: "active"},
-		}, nil
-	}
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index")
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	// Insert in chronological order (oldest first) — command should reverse.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     "bot/cold/1000",
+		CreatedAt:      now.Add(-3 * time.Hour),
+		LastActivityAt: now.Add(-3 * time.Hour),
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     "bot/cmid/1000",
+		CreatedAt:      now.Add(-1 * time.Hour),
+		LastActivityAt: now.Add(-1 * time.Hour),
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     "bot/cnew/1000",
+		CreatedAt:      now.Add(-5 * time.Minute),
+		LastActivityAt: now.Add(-5 * time.Minute),
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// "cnew" should appear before "cmid" which should appear before "cold"
-	newIdx := strings.Index(result, "bot/cnew")
-	midIdx := strings.Index(result, "bot/cmid")
-	oldIdx := strings.Index(result, "bot/cold")
+	newIdx := strings.Index(result.Text, "bot/cnew")
+	midIdx := strings.Index(result.Text, "bot/cmid")
+	oldIdx := strings.Index(result.Text, "bot/cold")
 	if newIdx == -1 || midIdx == -1 || oldIdx == -1 {
-		t.Fatalf("expected all sessions in output, got %q", result)
+		t.Fatalf("expected all sessions in output, got %q", result.Text)
 	}
 	if newIdx > midIdx || midIdx > oldIdx {
 		t.Errorf("expected newest first: new@%d mid@%d old@%d", newIdx, midIdx, oldIdx)
 	}
 }
 
+// TestSessionsIndexSortFallsBackToCreatedAt verifies that when a session has a
+// zero-value LastActivityAt, the sort uses CreatedAt as the fallback timestamp.
+// A session with a recent LastActivityAt should appear before one that only has
+// an older CreatedAt and no recorded activity.
 func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
 	// Verifies that entries with zero LastActivityAt sort by CreatedAt instead.
 	now := time.Now().UTC()
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		return []SessionIndexInfo{
-			{SessionKey: "bot/icreated-old/1000", CreatedAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/iactive-new/1000", LastActivityAt: now.Add(-10 * time.Minute), SessionType: "chat", Status: "active"},
-		}, nil
-	}
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index")
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  "bot/icreated-old/1000",
+		CreatedAt:   now.Add(-2 * time.Hour),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     "bot/iactive-new/1000",
+		CreatedAt:      now.Add(-2 * time.Hour),
+		LastActivityAt: now.Add(-10 * time.Minute),
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	newIdx := strings.Index(result, "bot/iact…")
-	oldIdx := strings.Index(result, "bot/icre…")
+	newIdx := strings.Index(result.Text, "bot/iact…")
+	oldIdx := strings.Index(result.Text, "bot/icre…")
 	if newIdx == -1 || oldIdx == -1 {
-		t.Fatalf("expected both sessions in output, got %q", result)
+		t.Fatalf("expected both sessions in output, got %q", result.Text)
 	}
 	if newIdx > oldIdx {
 		t.Errorf("expected active-new before created-old, new@%d old@%d", newIdx, oldIdx)
 	}
 }
 
+// TestSessionsIndexMaxCount verifies that passing a numeric count argument to
+// "index" (e.g. "index 2") limits the displayed results to that many sessions,
+// showing only the most recent ones and reporting "2 of 5 sessions" in the
+// header. Sessions beyond the limit must not appear in the output.
 func TestSessionsIndexMaxCount(t *testing.T) {
 	// Verifies that a count argument limits the number of displayed sessions.
 	now := time.Now().UTC()
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		return []SessionIndexInfo{
-			{SessionKey: "bot/c1/1000", LastActivityAt: now, SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/c2/1000", LastActivityAt: now.Add(-1 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/c3/1000", LastActivityAt: now.Add(-2 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/c4/1000", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
-			{SessionKey: "bot/c5/1000", LastActivityAt: now.Add(-4 * time.Hour), SessionType: "chat", Status: "active"},
-		}, nil
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	for i, key := range []string{"bot/c1/1000", "bot/c2/1000", "bot/c3/1000", "bot/c4/1000", "bot/c5/1000"} {
+		idx.Upsert(session.SessionIndexEntry{
+			SessionKey:     key,
+			CreatedAt:      now.Add(-time.Duration(i) * time.Hour),
+			LastActivityAt: now.Add(-time.Duration(i) * time.Hour),
+			SessionType:    session.SessionTypeChat,
+			Status:         session.SessionStatusActive,
+		})
 	}
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index 2")
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index 2"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Should show "2 of 5 sessions"
-	if !strings.Contains(result, "2 of 5 sessions") {
-		t.Errorf("expected '2 of 5 sessions' in output, got %q", result)
+	if !strings.Contains(result.Text, "2 of 5 sessions") {
+		t.Errorf("expected '2 of 5 sessions' in output, got %q", result.Text)
 	}
 	// Should contain the 2 most recent, not the older ones
-	if !strings.Contains(result, "bot/c1") {
-		t.Errorf("expected most recent session bot/c1, got %q", result)
+	if !strings.Contains(result.Text, "bot/c1") {
+		t.Errorf("expected most recent session bot/c1, got %q", result.Text)
 	}
-	if !strings.Contains(result, "bot/c2") {
-		t.Errorf("expected second most recent session bot/c2, got %q", result)
+	if !strings.Contains(result.Text, "bot/c2") {
+		t.Errorf("expected second most recent session bot/c2, got %q", result.Text)
 	}
-	if strings.Contains(result, "bot/c3") {
-		t.Errorf("did not expect bot/c3 in limited output, got %q", result)
+	if strings.Contains(result.Text, "bot/c3") {
+		t.Errorf("did not expect bot/c3 in limited output, got %q", result.Text)
 	}
 }
 
+// TestSessionsIndexMaxCountLargerThanResults verifies that when the count
+// argument exceeds the number of matching sessions, all results are shown and
+// the header says "1 sessions" without an "of N" qualifier, since no truncation
+// occurred.
 func TestSessionsIndexMaxCountLargerThanResults(t *testing.T) {
 	// Verifies that a count larger than the result set shows all results without "of N".
 	now := time.Now().UTC()
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		return []SessionIndexInfo{
-			{SessionKey: "bot/c1/1000", LastActivityAt: now, SessionType: "chat", Status: "active"},
-		}, nil
-	}
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index 10")
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     "bot/c1/1000",
+		CreatedAt:      now,
+		LastActivityAt: now,
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index 10"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "1 sessions") {
-		t.Errorf("expected '1 sessions' without 'of' qualifier, got %q", result)
+	if !strings.Contains(result.Text, "1 sessions") {
+		t.Errorf("expected '1 sessions' without 'of' qualifier, got %q", result.Text)
 	}
-	if strings.Contains(result, "of") {
-		t.Errorf("did not expect 'of' when count >= results, got %q", result)
+	if strings.Contains(result.Text, "of") {
+		t.Errorf("did not expect 'of' when count >= results, got %q", result.Text)
 	}
 }
 
+// TestSessionsIndexRelativeTime verifies that the "Active" column in the index
+// table renders timestamps as human-readable relative durations (e.g. "3h ago")
+// rather than absolute timestamps, and that the column header is "Active".
 func TestSessionsIndexRelativeTime(t *testing.T) {
 	// Verifies that the Active column uses relative time format (e.g. "3h ago").
 	now := time.Now().UTC()
-	deps := testSessionsDeps(nil, 0)
-	deps.IndexFn = func(opts SessionIndexOpts) ([]SessionIndexInfo, error) {
-		return []SessionIndexInfo{
-			{SessionKey: "bot/c1/1000", LastActivityAt: now.Add(-3 * time.Hour), SessionType: "chat", Status: "active"},
-		}, nil
-	}
-	cmd := NewSessionsCommand(deps)
-	result, err := cmd.Execute(context.Background(), "index")
+	cc, _, _ := sessionsTestCC(t, "test-agent")
+	idx := newTestSessionIndex(t)
+	cc.SessionIndex = idx
+
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:     "bot/c1/1000",
+		CreatedAt:      now.Add(-3 * time.Hour),
+		LastActivityAt: now.Add(-3 * time.Hour),
+		SessionType:    session.SessionTypeChat,
+		Status:         session.SessionStatusActive,
+	})
+
+	cmd := SessionsCommand()
+	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result, "3h ago") {
-		t.Errorf("expected relative time '3h ago' in output, got %q", result)
+	if !strings.Contains(result.Text, "3h ago") {
+		t.Errorf("expected relative time '3h ago' in output, got %q", result.Text)
 	}
 	// Header should be "Active" not "Last Active"
-	if !strings.Contains(result, "Active") {
-		t.Errorf("expected 'Active' column header, got %q", result)
+	if !strings.Contains(result.Text, "Active") {
+		t.Errorf("expected 'Active' column header, got %q", result.Text)
 	}
 }
 
+// TestParseIndexArgsCount verifies that parseIndexArgs correctly extracts a
+// plain numeric argument as MaxCount, and that it can parse all argument types
+// simultaneously (type filter, "all" status, numeric count, and duration-based
+// MaxAge like "2d") without interference between them.
 func TestParseIndexArgsCount(t *testing.T) {
 	// Verifies that parseIndexArgs recognizes a plain number as MaxCount.
 	opts := parseIndexArgs([]string{"5"})
@@ -560,21 +745,25 @@ func TestParseIndexArgsCount(t *testing.T) {
 	}
 }
 
+// TestSessionsListError verifies that the "default" subcommand propagates
+// errors when the StateStore is nil. By setting cc.StateStore to nil after
+// creating a valid session, the test triggers the error path in the state
+// persistence logic and confirms the error is returned to the caller.
 func TestSessionsListError(t *testing.T) {
-	// Verifies that a ListFn error is propagated as a Go error from Execute.
-	deps := SessionsDeps{
-		AgentID: "test",
-		ListFn: func() ([]SessionChatInfo, error) {
-			return nil, fmt.Errorf("disk error")
-		},
-		DefaultChatFn: func() int64 { return 0 },
-	}
-	cmd := NewSessionsCommand(deps)
-	_, err := cmd.Execute(context.Background(), "list")
+	// Verifies that errors from the session store are propagated.
+	// Use a store backed by a non-existent path to trigger list errors.
+	// Actually, ListChatSessions returns nil for missing dirs, so we test
+	// by using a broken state store write path for the default subcommand error.
+	// Instead, we verify the error path via a bad default set on non-existing session.
+	cc, store, ss := sessionsTestCC(t, "test")
+	addChatSession(t, store, "test", 111, 1)
+	setDefaultChat(t, ss, "test", 111)
+
+	// Removing StateStore triggers error in sessionsDefaultCmd.
+	cc.StateStore = nil
+	cmd := SessionsCommand()
+	_, err := cmd.Execute(context.Background(), Request{Args: "default 111"}, cc)
 	if err == nil {
-		t.Fatal("expected error")
-	}
-	if !strings.Contains(err.Error(), "disk error") {
-		t.Errorf("expected disk error, got %v", err)
+		t.Fatal("expected error when StateStore is nil for set default")
 	}
 }

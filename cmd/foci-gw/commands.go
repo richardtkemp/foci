@@ -2,14 +2,10 @@ package main
 
 // commands.go — slash command registration, extracted from setupAgent().
 //
-// registerAgentCommands creates the command registry for a single agent.
-// Named helper functions below replace the large inline closures that
-// previously lived inside setupAgent(), reducing its cognitive complexity.
+// registerAgentCommands creates the command registry for a single agent
+// and builds the CommandContext that all commands share.
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -34,7 +30,6 @@ type cmdRegParams struct {
 	ag                  *agent.Agent
 	acfg                config.AgentConfig
 	defaultSessionKey   func() string
-	sessionKeyFromCtx   func(context.Context) string
 	bootstrap           *workspace.Bootstrap
 	promptSearchDirs    []string
 	compactionThreshold float64
@@ -51,7 +46,6 @@ type cmdRegParams struct {
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
 	startTime           time.Time
-	ctx                 context.Context
 
 	// Tools & skills
 	registry      *tools.Registry
@@ -69,149 +63,12 @@ type cmdRegParams struct {
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
-// This was extracted from setupAgent() to reduce its cognitive complexity.
-func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStore) *command.Registry {
+func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStore) (*command.Registry, command.CommandContext) {
 	cmds := command.NewRegistry()
-	aliases := p.cfg.Models.Aliases
 
-	cmds.Register(command.NewPingCommand())
-	cmds.Register(command.NewStatusCommand(func(ctx context.Context) command.StatusInfo {
-		return buildStatusInfo(p, ctx)
-	}, p.cfg.Logging.APIFile))
-	cmds.Register(command.NewCacheCommand(p.cfg.Logging.APIFile))
-	cmds.Register(command.NewLastCommand(p.cfg.Logging.APIFile))
-	cmds.Register(command.NewCostCommand(p.cfg.Logging.APIFile))
-
-	if p.tmuxTool != nil {
-		cmds.Register(command.NewTmuxCommand(func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-			return p.tmuxTool.Execute(ctx, params)
-		}))
-	}
-
-	cmds.Register(command.NewContextCommand(p.cfg.Logging.APIFile, buildContextInfoFn(
-		p.ag, p.bootstrap, p.registry, p.acfg, p.client, p.sessions, p.defaultSessionKey, p.compactionThreshold,
-	)))
-
-	cmds.Register(command.NewResetCommand(func() error {
-		return runReset(p)
-	}))
-
-	cmds.Register(command.NewModelCommand(
-		func(ctx context.Context) string { return p.ag.SessionModel(p.sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, endpoint string, m string, format string) {
-			var client provider.Client
-			if endpoint != "" && format != "" && p.clientProvider != nil {
-				client = p.clientProvider.ResolveEndpointClient(endpoint, format)
-			}
-			p.ag.SetSessionModel(p.sessionKeyFromCtx(ctx), m, endpoint, format, client)
-		},
-		func(input string) (string, string, string) {
-			resolved, err := config.ResolveModel(input, "", aliases)
-			if err != nil {
-				return "", input, ""
-			}
-			return resolved.Endpoint, resolved.Developer + "/" + resolved.ModelID, resolved.Format
-		},
-		aliases,
-	))
-
-	cmds.Register(command.NewEffortCommand(
-		func(ctx context.Context) string { return p.ag.SessionEffort(p.sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, e string) { p.ag.SetSessionEffort(p.sessionKeyFromCtx(ctx), e) },
-	))
-	cmds.Register(command.NewThinkingCommand(
-		func(ctx context.Context) string { return p.ag.SessionThinking(p.sessionKeyFromCtx(ctx)) },
-		func(ctx context.Context, t string) { p.ag.SetSessionThinking(p.sessionKeyFromCtx(ctx), t) },
-	))
-	// Resolve config defaults for display settings.
-	defaultShowToolCalls := "off"
-	if p.acfg.ShowToolCalls != nil {
-		defaultShowToolCalls = string(*p.acfg.ShowToolCalls)
-	} else if p.cfg.Defaults.ShowToolCalls != nil {
-		defaultShowToolCalls = string(*p.cfg.Defaults.ShowToolCalls)
-	}
-	defaultShowThinking := "off"
-	if p.acfg.ShowThinking != nil {
-		defaultShowThinking = string(*p.acfg.ShowThinking)
-	} else if p.cfg.Defaults.ShowThinking != nil {
-		defaultShowThinking = string(*p.cfg.Defaults.ShowThinking)
-	}
-	defaultStreamOutput := "off"
-	if p.cfg.Defaults.StreamOutput {
-		defaultStreamOutput = "on"
-	}
-	defaultDisplayWidth := "44"
-	if p.acfg.DisplayWidth != nil {
-		defaultDisplayWidth = fmt.Sprintf("%d", *p.acfg.DisplayWidth)
-	} else if p.cfg.Telegram.DisplayWidth != nil {
-		defaultDisplayWidth = fmt.Sprintf("%d", *p.cfg.Telegram.DisplayWidth)
-	}
-
-	displayGetters := command.DisplayGetters{
-		ShowToolCalls: func(ctx context.Context) (string, string) {
-			sk := p.sessionKeyFromCtx(ctx)
-			override := p.ag.SessionShowToolCalls(sk)
-			if override != "" {
-				return override, override
-			}
-			return "", defaultShowToolCalls
-		},
-		ShowThinking: func(ctx context.Context) (string, string) {
-			sk := p.sessionKeyFromCtx(ctx)
-			override := p.ag.SessionDisplayShowThinking(sk)
-			if override != "" {
-				return override, override
-			}
-			return "", defaultShowThinking
-		},
-		StreamOutput: func(ctx context.Context) (string, string) {
-			sk := p.sessionKeyFromCtx(ctx)
-			override := p.ag.SessionStreamOutput(sk)
-			if override != "" {
-				effective := "off"
-				if override == "true" {
-					effective = "on"
-				}
-				return override, effective
-			}
-			return "", defaultStreamOutput
-		},
-		DisplayWidth: func(ctx context.Context) (string, string) {
-			sk := p.sessionKeyFromCtx(ctx)
-			override := p.ag.SessionDisplayWidth(sk)
-			if override != "" {
-				return override, override
-			}
-			return "", defaultDisplayWidth
-		},
-	}
-	displaySetters := command.DisplaySetters{
-		SetShowToolCalls: func(ctx context.Context, value string) {
-			p.ag.SetSessionShowToolCalls(p.sessionKeyFromCtx(ctx), value)
-		},
-		SetShowThinking: func(ctx context.Context, value string) {
-			p.ag.SetSessionDisplayShowThinking(p.sessionKeyFromCtx(ctx), value)
-		},
-		SetStreamOutput: func(ctx context.Context, value string) {
-			p.ag.SetSessionStreamOutput(p.sessionKeyFromCtx(ctx), value)
-		},
-		SetDisplayWidth: func(ctx context.Context, value string) {
-			p.ag.SetSessionDisplayWidth(p.sessionKeyFromCtx(ctx), value)
-		},
-		ResetAll: func(ctx context.Context) {
-			p.ag.ClearSessionDisplayOverrides(p.sessionKeyFromCtx(ctx))
-		},
-	}
-	cmds.Register(command.NewDisplayCommand(displayGetters, displaySetters))
-
-	cmds.Register(command.NewToolsCommand(func() []command.ToolInfo {
-		var infos []command.ToolInfo
-		for _, t := range p.registry.All() {
-			infos = append(infos, command.ToolInfo{Name: t.Name, Description: t.Description})
-		}
-		return infos
-	}))
+	// Build ConfigSetDeps (needs registry reference for wizard activation)
 	configSetDeps := &command.ConfigSetDeps{
+		Registry:        cmds,
 		ConfigPath:      p.configPath,
 		AgentID:         p.acfg.ID,
 		SectionsFn:      config.FieldSections,
@@ -219,75 +76,11 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		LookupFn:        config.LookupField,
 		SetInFileFn:     config.SetInFile,
 	}
-	cmds.Register(command.NewConfigCommand(func(ctx context.Context, args string) (string, error) {
-		return runConfig(p, ctx, args)
-	}, cmds, configSetDeps))
-	cmds.Register(command.NewPromptsCommand(command.PromptsCmdDeps{
-		DataFn:    func() command.PromptsData { return buildPromptsData(p) },
-		SendDocFn: buildSendDocFn(p),
-		DiffSummaryFn: func(ctx context.Context, customText, defaultText, name string) (string, error) {
-			return buildDiffSummary(p, ctx, customText, defaultText, name)
-		},
-	}))
-	cmds.Register(command.NewLogCommand(p.cfg.Logging.EventFile))
-	cmds.Register(command.NewErrorsCommand(p.cfg.Logging.EventFile))
-	cmds.Register(command.NewVersionCommand(command.BuildInfo{
-		Version:   version,
-		GoVersion: goVersion,
-		GitCommit: gitCommit,
-		BuildTime: buildTime,
-	}))
-	cmds.Register(command.NewHelpCommand(cmds))
 
-	// Dynamic mana command — only register if the provider supports usage tracking.
-	if p.ag.UsageClient != nil {
-		manaName := p.cfg.ManaWarnings.Name
-		if manaName == "" {
-			manaName = "mana"
-		}
-		manaFn := func(ctx context.Context) (string, error) { return manaCheck(p, manaName, ctx) }
-		cmds.Register(command.NewManaCommand(manaName, manaFn))
-		cmds.Register(&command.Command{
-			Name: "usage", Hidden: true,
-			Execute: func(ctx context.Context, args string) (string, error) { return manaFn(ctx) },
-		})
-		if manaName != "m" {
-			cmds.Register(&command.Command{
-				Name: "m", Hidden: true,
-				Execute: func(ctx context.Context, args string) (string, error) { return manaFn(ctx) },
-			})
-		}
-	}
-
-	cmds.Register(command.NewReloadCommand(func() (string, error) {
-		return runReload(p)
-	}))
-
-	// Custom script commands from config
-	for _, cc := range p.cfg.Commands {
-		cmds.Register(command.NewScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
-	}
-
-	// Skill slash commands (command + script in frontmatter)
-	for _, s := range p.skillRegistry.All() {
-		if s.Command != "" && s.Script != "" {
-			name := strings.TrimPrefix(s.Command, "/")
-			cmds.Register(command.NewScriptCommand(name, s.Description, s.Script, 30))
-		}
-	}
-
-	// /multiball and /mb — per-agent pool first, shared pool fallback.
-	forkFn := func(ctx context.Context) (string, error) {
-		return forkMultiball(p, ctx)
-	}
-	cmds.Register(command.NewMultiballCommand(forkFn))
-	cmds.Register(&command.Command{
-		Name: "mb", Description: "Fork session to a secondary bot (alias for /multiball)",
-		Category: "session", Hidden: true,
-		Execute: func(ctx context.Context, args string) (string, error) { return forkFn(ctx) },
-	})
-
+	// Build AgentNewDeps
+	aliases := p.cfg.Models.Aliases
 	agentNewDeps := &command.AgentNewDeps{
+		Registry:    cmds,
 		ConfigPath:  p.configPath,
 		DefaultsDir: filepath.Join(filepath.Dir(p.acfg.Workspace), "shared", "defaults"),
 		HomeDir:     filepath.Dir(p.acfg.Workspace),
@@ -299,26 +92,130 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			return p.plat.AgentPreFlight(agentID)
 		},
 		ResolveModel: func(input string) string {
-			// Use new ResolveModel for resolution
 			resolved, err := config.ResolveModel(input, "", aliases)
 			if err != nil {
-				// Fallback for invalid input - return as-is
 				return input
 			}
-			// Return full developer/model_id format
 			return resolved.Developer + "/" + resolved.ModelID
 		},
 	}
-	cmds.Register(command.NewAgentsCommand(p.agentListFn, cmds, agentNewDeps))
 
-	cmds.Register(command.NewCompactCommand(func(ctx context.Context, dryRun bool) (int, error) {
-		return runCompaction(p, ctx, dryRun)
-	}))
-	cmds.Register(command.NewRepeatCommand(lastMsgStore))
-	cmds.Register(command.NewSessionsCommand(buildSessionsDeps(p)))
-	cmds.Register(command.NewSecretsCommand(p.store))
-	cmds.Register(command.NewBitwardenCommand(p.bwStore, p.cfg.Bitwarden.Enabled))
-	cmds.Register(command.NewRestartCommand(nil))
+	// Construct the CommandContext
+	cc := command.CommandContext{
+		Agent:               p.ag,
+		Sessions:            p.sessions,
+		Bootstrap:           p.bootstrap,
+		StateStore:          p.stateStore,
+		SessionIndex:        p.sessionIndex,
+		Config:              p.cfg,
+		AgentConfig:         p.acfg,
+		DefaultSessionKey:   p.defaultSessionKey,
+		Client:              p.client,
+		ClientProvider:      p.clientProvider,
+		ConnMgr:             p.connMgr,
+		PromptSearchDirs:    p.promptSearchDirs,
+		APILogPath:          p.cfg.Logging.APIFile,
+		EventLogPath:        p.cfg.Logging.EventFile,
+		ConfigPath:          p.configPath,
+		ModelAliases:        aliases,
+		ToolsRegistry:       p.registry,
+		TmuxTool:            p.tmuxTool,
+		BuildInfo: command.BuildInfo{
+			Version:   version,
+			GoVersion: goVersion,
+			GitCommit: gitCommit,
+			BuildTime: buildTime,
+		},
+		ManaName:            p.cfg.ManaWarnings.Name,
+		StartTime:           p.startTime,
+		CompactionThreshold: p.compactionThreshold,
+		SecretsStore:        p.store,
+		BitwardenStore:      p.bwStore,
+		BitwardenEnabled:    p.cfg.Bitwarden.Enabled,
+		AgentListFn:         p.agentListFn,
+		LastMessageStore:    lastMsgStore,
+		ConfigSetDeps:       configSetDeps,
+		AgentNewDeps:        agentNewDeps,
+		SkillsDirs:          p.skillsDirs,
+		TokenCountCache:     command.NewTokenCountCache(),
+		ConfigureMultiball:  p.configureMultiball,
+		UsageClientProvider: p.usageClientProvider,
+	}
 
-	return cmds
+	// Register all commands
+	cmds.Register(command.PingCommand())
+	cmds.Register(command.StatusCommand())
+	cmds.Register(command.CacheCommand())
+	cmds.Register(command.LastCommand())
+	cmds.Register(command.CostCommand())
+	cmds.Register(command.ContextCommand())
+	cmds.Register(command.ResetCommand())
+	cmds.Register(command.ModelCommand())
+	cmds.Register(command.EffortCommand())
+	cmds.Register(command.ThinkingCommand())
+	cmds.Register(command.DisplayCommand())
+	cmds.Register(command.ToolsCommand())
+	cmds.Register(command.ConfigCommand())
+	cmds.Register(command.PromptsCommand())
+	cmds.Register(command.LogCommand())
+	cmds.Register(command.ErrorsCommand())
+	cmds.Register(command.VersionCommand())
+	cmds.Register(command.HelpCommand(cmds))
+	cmds.Register(command.ReloadCommand())
+	cmds.Register(command.CompactCommand())
+	cmds.Register(command.RestartCommand())
+	cmds.Register(command.SecretsCommand())
+	cmds.Register(command.BitwardenCommand())
+	cmds.Register(command.SessionsCommand())
+	cmds.Register(command.AgentsCommand())
+	cmds.Register(command.RepeatCommand())
+
+	// Tmux command (only if tool is available)
+	if p.tmuxTool != nil {
+		cmds.Register(command.TmuxCommand())
+	}
+
+	// Multiball and alias
+	cmds.Register(command.MultiballCommand())
+	cmds.Register(&command.Command{
+		Name: "mb", Description: "Fork session to a secondary bot (alias for /multiball)",
+		Category: "session", Hidden: true,
+		Execute: command.MultiballCommand().Execute,
+	})
+
+	// Dynamic mana command — only register if the provider supports usage tracking.
+	if p.ag.UsageClient != nil {
+		manaName := p.cfg.ManaWarnings.Name
+		if manaName == "" {
+			manaName = "mana"
+		}
+		cc.ManaName = manaName
+		manaCmd := command.ManaCommand(manaName)
+		cmds.Register(manaCmd)
+		cmds.Register(&command.Command{
+			Name: "usage", Hidden: true,
+			Execute: manaCmd.Execute,
+		})
+		if manaName != "m" {
+			cmds.Register(&command.Command{
+				Name: "m", Hidden: true,
+				Execute: manaCmd.Execute,
+			})
+		}
+	}
+
+	// Custom script commands from config
+	for _, cc := range p.cfg.Commands {
+		cmds.Register(command.ScriptCommand(cc.Name, cc.Description, cc.Script, cc.Timeout))
+	}
+
+	// Skill slash commands (command + script in frontmatter)
+	for _, s := range p.skillRegistry.All() {
+		if s.Command != "" && s.Script != "" {
+			name := strings.TrimPrefix(s.Command, "/")
+			cmds.Register(command.ScriptCommand(name, s.Description, s.Script, 30))
+		}
+	}
+
+	return cmds, cc
 }

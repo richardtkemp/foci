@@ -15,16 +15,23 @@ type TodoItem struct {
 	Tags     string
 }
 
-// NewTodoCommand returns a /todo command that lists open todo items.
-// listFn returns open todos, optionally filtered by tag (empty = all).
-// searchFn returns todos matching a query.
-func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(query string) ([]TodoItem, error)) *Command {
+// TodoStore provides read access to todo items for the /todo command.
+type TodoStore interface {
+	ListOpen(agentID, tag string) ([]TodoItem, error)
+	Search(agentID, query string) ([]TodoItem, error)
+}
+
+// TodoCommand returns a /todo command that lists open todo items.
+func TodoCommand() *Command {
 	return &Command{
 		Name:        "todo",
 		Description: "List active todo items",
 		Category:    "observability",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			args = strings.TrimSpace(args)
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			if cc.TodoStore == nil {
+				return Response{Text: "Todo store not configured."}, nil
+			}
+			args := strings.TrimSpace(req.Args)
 
 			if strings.ToLower(args) == "search" || strings.HasPrefix(strings.ToLower(args), "search ") {
 				query := ""
@@ -32,14 +39,14 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 					query = strings.TrimSpace(args[7:])
 				}
 				if query == "" {
-					return "Usage: /todo search <query>", nil
+					return Response{Text: "Usage: /todo search <query>"}, nil
 				}
-				items, err := searchFn(query)
+				items, err := cc.TodoStore.Search(cc.AgentConfig.ID, query)
 				if err != nil {
-					return "", fmt.Errorf("search todos: %w", err)
+					return Response{}, fmt.Errorf("search todos: %w", err)
 				}
 				if len(items) == 0 {
-					return fmt.Sprintf("No todos matching %q.", query), nil
+					return Response{Text: fmt.Sprintf("No todos matching %q.", query)}, nil
 				}
 				var lines []string
 				for _, item := range items {
@@ -49,16 +56,16 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 					lines = append(lines, formatTodoLine(item))
 				}
 				if len(lines) == 0 {
-					return fmt.Sprintf("No open todos matching %q.", query), nil
+					return Response{Text: fmt.Sprintf("No open todos matching %q.", query)}, nil
 				}
-				return "📋 Search results\n\n" + strings.Join(lines, "\n"), nil
+				return Response{Text: "📋 Search results\n\n" + strings.Join(lines, "\n")}, nil
 			}
 
 			includeBackground := strings.ToLower(args) == "all"
 
-			items, err := listFn("")
+			items, err := cc.TodoStore.ListOpen(cc.AgentConfig.ID, "")
 			if err != nil {
-				return "", fmt.Errorf("list todos: %w", err)
+				return Response{}, fmt.Errorf("list todos: %w", err)
 			}
 
 			var visible, background []TodoItem
@@ -82,9 +89,9 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 
 			if len(items) == 0 {
 				if backgroundCount > 0 {
-					return fmt.Sprintf("No open todos (%d background items hidden).", backgroundCount), nil
+					return Response{Text: fmt.Sprintf("No open todos (%d background items hidden).", backgroundCount)}, nil
 				}
-				return "No open todos.", nil
+				return Response{Text: "No open todos."}, nil
 			}
 
 			limit := 20
@@ -109,7 +116,7 @@ func NewTodoCommand(listFn func(tag string) ([]TodoItem, error), searchFn func(q
 				lines = append(lines, formatTodoLine(item))
 			}
 
-			return header + "\n\n" + strings.Join(lines, "\n"), nil
+			return Response{Text: header + "\n\n" + strings.Join(lines, "\n")}, nil
 		},
 	}
 }

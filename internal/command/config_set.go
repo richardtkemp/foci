@@ -9,6 +9,7 @@ import (
 
 // ConfigSetDeps holds dependencies for the /config set wizard and direct mode.
 type ConfigSetDeps struct {
+	Registry        *Registry // for activating wizard via SetWizard
 	ConfigPath      string
 	AgentID         string // current agent's ID, for targeting [[agents]] block
 	SectionsFn      func() []string
