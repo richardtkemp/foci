@@ -62,7 +62,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 		data, mediaType := att.Data, att.MimeType
 
 		// Convertible documents: convert to text and include as a text block
-		if isConvertibleMIME(mediaType) {
+		if platform.IsConvertibleDocMIME(mediaType) {
 			textBlock := a.convertAttachmentToText(sessionKey, att)
 			if textBlock != "" {
 				contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: textBlock})

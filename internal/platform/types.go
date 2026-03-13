@@ -34,6 +34,19 @@ type Attachment struct {
 	SavedPath string
 }
 
+// IsConvertibleDocMIME returns true if the MIME type is a document format
+// that can be converted to text for LLM consumption.
+func IsConvertibleDocMIME(mime string) bool {
+	switch mime {
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		"text/html", "text/csv", "text/plain":
+		return true
+	}
+	return false
+}
+
 type SendOptions struct {
 	ParseMode string
 	ReplyTo   string

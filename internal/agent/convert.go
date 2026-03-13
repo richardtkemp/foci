@@ -22,15 +22,6 @@ const (
 	mimeTXT  = "text/plain"
 )
 
-// isConvertibleMIME returns true if the MIME type can be converted to text
-// for LLM consumption.
-func isConvertibleMIME(mime string) bool {
-	switch mime {
-	case mimeDocx, mimeXlsx, mimePptx, mimeHTML, mimeCSV, mimeTXT:
-		return true
-	}
-	return false
-}
 
 // convertResult holds the output of a document conversion attempt.
 type convertResult struct {

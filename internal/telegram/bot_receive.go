@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -150,7 +151,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 				attachments = append(attachments, att)
 			}
 		}
-	} else if msg.Document != nil && isConvertibleDocMIME(msg.Document.MimeType) {
+	} else if msg.Document != nil && platform.IsConvertibleDocMIME(msg.Document.MimeType) {
 		// Convertible documents (docx, xlsx, pptx, HTML, CSV, plain text):
 		// download and pass through the attachment pipeline for text conversion.
 		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
@@ -169,7 +170,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	}
 
 	// Handle remaining document types (not image, not PDF, not convertible)
-	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) && !isPDFMIME(msg.Document.MimeType) && !isConvertibleDocMIME(msg.Document.MimeType) {
+	if msg.Document != nil && !isImageMIME(msg.Document.MimeType) && !isPDFMIME(msg.Document.MimeType) && !platform.IsConvertibleDocMIME(msg.Document.MimeType) {
 		ext := filepath.Ext(msg.Document.FileName)
 		if ext == "" {
 			ext = extForMIME(msg.Document.MimeType)
