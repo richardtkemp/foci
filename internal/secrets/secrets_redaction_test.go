@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// TestRedact verifies secrets are redacted from output.
 func TestRedact(t *testing.T) {
+	// Proves that every secret value in the store is replaced with [REDACTED]
+	// in the output, while non-secret text is left intact.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-ant-oat01-supersecret"
@@ -37,8 +38,9 @@ other stuff`
 	}
 }
 
-// TestRedactShortValues verifies short secrets (< 4 chars) are not redacted.
 func TestRedactShortValues(t *testing.T) {
+	// Proves that very short secret values (fewer than 4 characters)
+	// are intentionally excluded from redaction to avoid false positives on common tokens.
 	path := writeSecrets(t, `
 [custom]
 short = "ab"
@@ -57,8 +59,9 @@ long = "longersecret123"
 	}
 }
 
-// TestRedactEmpty verifies redact is no-op for empty secrets.
 func TestRedactEmpty(t *testing.T) {
+	// Proves that Redact on a store with no secrets is a pure passthrough,
+	// returning the input unchanged.
 	s, _ := Load("/nonexistent")
 	result := s.Redact("nothing to redact")
 	if result != "nothing to redact" {

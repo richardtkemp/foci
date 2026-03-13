@@ -12,11 +12,9 @@ import (
 	"foci/internal/workspace"
 )
 
-// TestNudgeMatchDoesNotDropReply verifies that when a match nudge fires on a
-// non-tool-use response, the original reply text is delivered as an intermediate
-// message before the nudge loop continues. Without the fix, the original reply
-// would be silently discarded.
 func TestNudgeMatchDoesNotDropReply(t *testing.T) {
+	// Proves that when a match nudge fires on a non-tool-use response, the original
+	// reply is delivered via ReplyFunc before the nudge loop continues, so no text is lost.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -100,10 +98,9 @@ func TestNudgeMatchDoesNotDropReply(t *testing.T) {
 	}
 }
 
-// TestNudgePreAnswerDoesNotDropReply verifies that when a pre-answer gate fires
-// on a non-tool-use response, the original reply text is delivered as an
-// intermediate message before the loop continues.
 func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
+	// Proves that when a pre_answer gate fires, the original answer is sent via ReplyFunc
+	// before the gate injects its nudge, ensuring the initial response is never silently discarded.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -182,10 +179,9 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 	}
 }
 
-// TestNudgeMatchBatchMode verifies that when BatchPartialAssistantMessages is
-// enabled, a match-nudge response accumulates text rather than sending via
-// ReplyFunc, and the final return contains both the original and nudge text.
 func TestNudgeMatchBatchMode(t *testing.T) {
+	// Proves that with BatchPartialAssistantMessages enabled, a match-nudge turn
+	// accumulates all text into the final return value rather than calling ReplyFunc.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

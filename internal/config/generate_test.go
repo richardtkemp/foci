@@ -7,9 +7,10 @@ import (
 	tomlParser "github.com/BurntSushi/toml"
 )
 
-// Verifies GenerateConfig produces valid TOML with all expected fields
-// when given a full SetupOptions (agent ID, model, system files).
 func TestGenerateConfig(t *testing.T) {
+	// Proves GenerateConfig produces valid, parseable TOML containing the
+	// agent ID, model, and system files, while omitting default-restating
+	// keys and platform-specific sections.
 	opts := SetupOptions{
 		AgentID: "fotini",
 		Model:   "claude-sonnet-4-6",
@@ -61,8 +62,9 @@ func TestGenerateConfig(t *testing.T) {
 	}
 }
 
-// Verifies GenerateConfig produces valid minimal TOML with just an agent ID.
 func TestGenerateConfigMinimal(t *testing.T) {
+	// Proves GenerateConfig works with just an agent ID, producing valid TOML
+	// without a [defaults] section when model is empty.
 	opts := SetupOptions{
 		AgentID: "main",
 	}
@@ -81,8 +83,9 @@ func TestGenerateConfigMinimal(t *testing.T) {
 	}
 }
 
-// Verifies GenerateConfig uses pre-built AgentBlock when provided.
 func TestGenerateConfigWithAgentBlock(t *testing.T) {
+	// Proves that when a pre-built AgentBlock string is supplied, GenerateConfig
+	// embeds it verbatim, including workspace and system_files entries.
 	agentBlock := `[[agents]]
 id = "fotini"
 model = "claude-sonnet-4-6"
@@ -109,8 +112,9 @@ system_files = ["character/SOUL.md", "character/COHERENCE.md", "character/CRAFT.
 	}
 }
 
-// Verifies GenerateSecrets produces valid TOML with setup token.
 func TestGenerateSecretsSetupToken(t *testing.T) {
+	// Proves GenerateSecrets emits valid TOML containing the setup_token and
+	// does not include a [telegram] section (platform secrets are provider-managed).
 	opts := SecretsOptions{
 		SetupToken: "sk-ant-oat01-testtoken123456789012345678901234567890123456789012345678901234567",
 	}
@@ -131,8 +135,9 @@ func TestGenerateSecretsSetupToken(t *testing.T) {
 	}
 }
 
-// Verifies GenerateSecrets produces valid TOML with API key.
 func TestGenerateSecretsAPIKey(t *testing.T) {
+	// Proves that a direct API key token (sk-ant-api03-* prefix) is stored as
+	// setup_token and does not generate oauth-specific fields.
 	opts := SecretsOptions{
 		SetupToken: "sk-ant-api03-test",
 	}
@@ -152,8 +157,9 @@ func TestGenerateSecretsAPIKey(t *testing.T) {
 	}
 }
 
-// Verifies GenerateSecrets produces empty output when no auth configured.
 func TestGenerateSecretsNoAuth(t *testing.T) {
+	// Proves that GenerateSecrets returns empty output when SecretsOptions has
+	// no token, producing nothing rather than an empty [anthropic] section.
 	opts := SecretsOptions{}
 
 	result := GenerateSecrets(opts)

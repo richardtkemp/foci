@@ -155,9 +155,9 @@ func TestDrainRateLimitQueue(t *testing.T) {
 	}
 }
 
-// TestCanFireBackgroundOperation_RateLimited proves that the method returns false
-// when the rate limit gate is closed, with a descriptive reason including reset time.
 func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
+	// Proves that a closed rate-limit gate makes CanFireBackgroundOperation return false
+	// with a reason that includes "rate limited" and the gate's reset time.
 	ag := &Agent{ManaInvestInterval: 30 * time.Minute, Endpoint: "anthropic"}
 	gate := ag.getOrCreateRateLimitGate("anthropic")
 	gate.Close(time.Now().Add(2 * time.Hour))
@@ -175,11 +175,9 @@ func TestCanFireBackgroundOperation_RateLimited(t *testing.T) {
 	}
 }
 
-// TestCanFireBackgroundOperation_NoSessionKey proves that the method returns false
-// with "no session key" when given an empty session key.
-// TestCanFireBackgroundOperation_NoSessionKey proves that the method returns false
-// with "no session key" when given an empty session key.
 func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
+	// Proves that an empty session key is rejected immediately with "no session key",
+	// without consulting the rate-limit gate or mana state.
 	ag := &Agent{ManaInvestInterval: 30 * time.Minute}
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "")
@@ -192,11 +190,9 @@ func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
 	}
 }
 
-// TestCanFireBackgroundOperation_NoUsageClient proves that the method returns true
-// (skips mana check) when there's no UsageClient for the session's endpoint.
-// TestCanFireBackgroundOperation_NoUsageClient proves that the method returns true
-// (skips mana check) when there's no UsageClient for the session's endpoint.
 func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
+	// Proves that when no UsageClient is available for the session's endpoint, the
+	// mana check is skipped and the operation is allowed to proceed.
 	ag := &Agent{
 		UsageClient:        nil,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
@@ -213,11 +209,9 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 	}
 }
 
-// TestCanFireBackgroundOperation_ZeroInvestInterval proves that mana checking is skipped
-// when ManaInvestInterval is zero (mana tracking disabled).
-// TestCanFireBackgroundOperation_ZeroInvestInterval proves that mana checking is skipped
-// when ManaInvestInterval is zero (mana tracking disabled).
 func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
+	// Proves that ManaInvestInterval=0 (mana tracking disabled) bypasses the mana
+	// check entirely, allowing the operation to fire regardless of token usage.
 	// Mock UsageClient that would fail if called
 	mockClient := &mockUsageClient{}
 
@@ -237,21 +231,18 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 	}
 }
 
-// TestCanFireBackgroundOperation_ManaInsufficient proves that the method returns false
-// when mana is insufficient according to the monitor's IsGoodFor check.
-// TestCanFireBackgroundOperation_ManaInsufficient proves that the method returns false
-// when mana is insufficient according to the monitor's IsGoodFor check.
 func TestCanFireBackgroundOperation_ManaInsufficient(t *testing.T) {
+	// Proves that insufficient mana blocks background operations; skipped here because
+	// mana.Monitor.IsGoodFor is already covered by mana package tests and the UsageClient
+	// base URL cannot be easily mocked at the agent level.
 	// Skipping this test since UsageClient baseURL cannot be easily mocked in agent tests.
 	// The mana.Monitor.IsGoodFor logic is already tested in the mana package tests.
 	t.Skip("Skipping mana insufficient test - UsageClient baseURL cannot be easily mocked in agent tests")
 }
 
-// TestCanFireBackgroundOperation_Success proves that the method returns true
-// when all checks pass (gate open, valid session, no usage client = mana check skipped).
-// TestCanFireBackgroundOperation_Success proves that the method returns true
-// when all checks pass (gate open, valid session, no usage client = mana check skipped).
 func TestCanFireBackgroundOperation_Success(t *testing.T) {
+	// Proves the full success path: gate open, valid session key, and no UsageClient
+	// (mana check skipped) all combine to return canFire=true with no reason string.
 	// Test the success path by having no usage client (mana check skipped)
 	// This is the common path for non-Anthropic endpoints
 	ag := &Agent{
@@ -270,9 +261,10 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	}
 }
 
-// Test getOrCreateRateLimitGate creates gates lazily and returns the same instance.
-// Test getOrCreateRateLimitGate creates gates lazily and returns the same instance.
 func TestGetOrCreateRateLimitGate(t *testing.T) {
+	// Proves that getOrCreateRateLimitGate creates gates lazily, returns the same instance
+	// for the same endpoint, uses different instances for different endpoints, and maps
+	// an empty endpoint string to the agent's configured default endpoint.
 	ag := &Agent{Endpoint: "anthropic"}
 
 	// First call creates gate
@@ -300,9 +292,9 @@ func TestGetOrCreateRateLimitGate(t *testing.T) {
 	}
 }
 
-// Test that per-endpoint rate limiting isolates endpoints.
-// Test that per-endpoint rate limiting isolates endpoints.
 func TestPerEndpointRateLimiting(t *testing.T) {
+	// Proves that rate-limit gates are isolated per endpoint: closing the anthropic gate
+	// blocks only anthropic sessions while gemini sessions remain unaffected.
 	ag := &Agent{
 		Endpoint:           "anthropic",
 		ManaInvestInterval: 30 * time.Minute,
@@ -343,9 +335,9 @@ func TestPerEndpointRateLimiting(t *testing.T) {
 	}
 }
 
-// Test that DrainRateLimitQueue drains all endpoint queues independently.
-// Test that DrainRateLimitQueue drains all endpoint queues independently.
 func TestDrainRateLimitQueue_MultipleEndpoints(t *testing.T) {
+	// Proves that rate-limit gate expiry is independent per endpoint: an anthropic gate
+	// with an already-expired time opens while a gemini gate with a future time stays closed.
 	ag := &Agent{Endpoint: "anthropic"}
 
 	// Create gates for two endpoints
@@ -370,9 +362,9 @@ func TestDrainRateLimitQueue_MultipleEndpoints(t *testing.T) {
 	}
 }
 
-// Test concurrent gate creation doesn't create duplicates.
-// Test concurrent gate creation doesn't create duplicates.
 func TestGetOrCreateRateLimitGate_Concurrent(t *testing.T) {
+	// Proves that concurrent calls to getOrCreateRateLimitGate for the same endpoint
+	// all receive the exact same gate pointer, with no races or duplicate creation.
 	ag := &Agent{}
 
 	const goroutines = 100

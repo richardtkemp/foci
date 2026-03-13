@@ -9,6 +9,8 @@ import (
 )
 
 func TestValidateCompactionThreshold(t *testing.T) {
+	// Proves that compaction_threshold must be between 0 and 1 exclusive, rejecting
+	// values above 1 or below 0 with an error identifying the bad value.
 	tests := []struct {
 		name    string
 		toml    string
@@ -54,6 +56,8 @@ func TestValidateCompactionThreshold(t *testing.T) {
 }
 
 func TestValidateHTTPPort(t *testing.T) {
+	// Proves that the HTTP port is validated against the valid range (1-65535), with
+	// port 0 accepted (it gets defaulted), and ports above 65535 rejected.
 	tests := []struct {
 		name    string
 		toml    string
@@ -100,6 +104,8 @@ func TestValidateHTTPPort(t *testing.T) {
 }
 
 func TestValidateLoggingLevel(t *testing.T) {
+	// Proves that an unrecognized logging level produces an error mentioning the
+	// invalid value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
@@ -114,6 +120,7 @@ func TestValidateLoggingLevel(t *testing.T) {
 }
 
 func TestValidateCacheStrategy(t *testing.T) {
+	// Proves that an unrecognized cache strategy value produces a validation error.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
@@ -128,7 +135,8 @@ func TestValidateCacheStrategy(t *testing.T) {
 }
 
 func TestValidateCacheTTL(t *testing.T) {
-	// Verify that invalid cache TTL values are rejected during config validation.
+	// Proves that a cache TTL string that is not a valid Go duration is rejected
+	// with an error mentioning the "ttl" field name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
@@ -143,7 +151,8 @@ func TestValidateCacheTTL(t *testing.T) {
 }
 
 func TestValidateCacheTTLValid(t *testing.T) {
-	// Verify valid cache TTL values are accepted.
+	// Proves that valid Go duration strings like "5m" and "1h" are accepted as
+	// cache TTL values and stored correctly in the config struct.
 	dir := t.TempDir()
 	for _, ttl := range []string{"5m", "1h"} {
 		path := filepath.Join(dir, "foci.toml")
@@ -159,6 +168,8 @@ func TestValidateCacheTTLValid(t *testing.T) {
 }
 
 func TestValidateWarningWindowDuration(t *testing.T) {
+	// Proves that an invalid warning_window_duration string is rejected with an
+	// error mentioning the field name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
@@ -173,6 +184,8 @@ func TestValidateWarningWindowDuration(t *testing.T) {
 }
 
 func TestValidateMemorySourceWeight(t *testing.T) {
+	// Proves that a memory source with weight > 1.0 is rejected with a validation
+	// error mentioning "weight".
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -196,6 +209,8 @@ weight = 2.0
 }
 
 func TestLoadMemoryConversationWeightDefault(t *testing.T) {
+	// Proves that conversation_weight defaults to 0.1 when not specified in the
+	// [memory] section.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -215,6 +230,8 @@ id = "test"
 }
 
 func TestLoadMemoryConversationWeightCustom(t *testing.T) {
+	// Proves that an explicitly configured conversation_weight value is loaded and
+	// preserved correctly in the Memory config struct.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -237,6 +254,8 @@ conversation_weight = 0.25
 }
 
 func TestValidateMemoryConversationWeight(t *testing.T) {
+	// Proves that conversation_weight must be between 0 and 1 inclusive, rejecting
+	// values above 1 or below 0 with an error naming the bad value.
 	tests := []struct {
 		name    string
 		toml    string
@@ -282,6 +301,9 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 }
 
 func TestValidateNewDurationFields(t *testing.T) {
+	// Proves that all duration-typed config fields (http_timeout, busy_timeout,
+	// long_poll_timeout, graceful_shutdown_timeout, tmux/web timeouts) are validated
+	// as Go duration strings and reject invalid values with the field name in the error.
 	tests := []struct {
 		name    string
 		toml    string
@@ -383,8 +405,8 @@ web_search_timeout = "invalid"
 }
 
 func TestValidateReservedAgentIDs(t *testing.T) {
-	// Verifies that agent IDs matching reserved home directory names are rejected,
-	// and that dot-prefixed IDs are rejected, while normal IDs pass.
+	// Proves that agent IDs matching reserved home directory names (bin, data, logs,
+	// etc.) are rejected, dot-prefixed IDs are rejected, and regular IDs pass.
 	reserved := []string{"bin", "character", "config", "data", "go", "logs", "memory", "oldscripts", "scripts", "shared"}
 	for _, id := range reserved {
 		t.Run("reserved_"+id, func(t *testing.T) {
@@ -435,6 +457,9 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 }
 
 func TestValidateMemoryThreshold(t *testing.T) {
+	// Proves that ValidateMemoryThreshold accepts percent (1-100%), MB, and GB
+	// formats and rejects empty strings, out-of-range values, non-numeric values,
+	// and unsupported units like KB.
 	tests := []struct {
 		name    string
 		input   string

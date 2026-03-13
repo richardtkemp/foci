@@ -15,6 +15,7 @@ import (
 )
 
 func TestSummaryTool_MissingParams(t *testing.T) {
+	// Proves that missing required parameters (file or prompt) are each rejected with a descriptive error.
 	t.Parallel()
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
@@ -44,6 +45,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 }
 
 func TestSummaryTool_FileNotFound(t *testing.T) {
+	// Proves that a non-existent file path returns a "read file" error before any API call.
 	t.Parallel()
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
@@ -63,6 +65,7 @@ func TestSummaryTool_FileNotFound(t *testing.T) {
 }
 
 func TestSummaryTool_EmptyFile(t *testing.T) {
+	// Proves that an empty file is rejected with a "file is empty" error rather than sending an empty prompt.
 	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "empty.txt")
 	os.WriteFile(tmp, []byte{}, 0644)
@@ -85,6 +88,8 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 }
 
 func TestSummaryTool_BinaryFile(t *testing.T) {
+	// Proves that files containing null bytes are rejected with a "binary" error to avoid sending
+	// binary data to the language model.
 	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "binary.dat")
 	data := []byte("some text\x00more binary data")
@@ -108,6 +113,8 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 }
 
 func TestSummaryTool_Success(t *testing.T) {
+	// Proves the happy path: file content and prompt are sent to the model API and the response
+	// text is returned. Verifies correct model name, max_tokens, and message structure.
 	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "test.go")
 	fileContent := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
@@ -176,6 +183,8 @@ func TestSummaryTool_Success(t *testing.T) {
 }
 
 func TestSummaryTool_ModelAlias(t *testing.T) {
+	// Proves that a model alias configured in the aliases map is resolved to the full model name
+	// before the API request is made.
 	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "test.txt")
 	os.WriteFile(tmp, []byte("hello"), 0644)

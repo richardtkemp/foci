@@ -6,6 +6,8 @@ import (
 )
 
 func TestHTMLEscape(t *testing.T) {
+	// Verifies that htmlEscape correctly escapes all HTML special characters
+	// (<, >, &, ") while leaving safe text unchanged.
 	tests := []struct {
 		in, want string
 	}{
@@ -24,6 +26,10 @@ func TestHTMLEscape(t *testing.T) {
 }
 
 func TestConvertToTelegramHTML(t *testing.T) {
+	// Verifies that ConvertToTelegramHTML correctly converts Markdown to Telegram
+	// HTML across a wide range of features: bold, italic, code blocks, links, tables,
+	// headings, lists, blockquotes, horizontal rules, snake_case protection, and HTML
+	// escaping. Each subtest targets a specific formatting rule or edge case.
 	tests := []struct {
 		name string
 		in   string
@@ -336,6 +342,9 @@ func TestConvertToTelegramHTML(t *testing.T) {
 }
 
 func TestConvertToTelegramHTMLTableWrapping(t *testing.T) {
+	// Verifies that ConvertToTelegramHTML respects RenderOpts for table rendering:
+	// constrained width, line wrapping, truncation, and different table styles
+	// (pretty vs. markdown). Each subtest exercises a distinct combination of options.
 	tests := []struct {
 		name string
 		in   string

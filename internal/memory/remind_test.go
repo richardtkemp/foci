@@ -18,6 +18,7 @@ func testReminderStore(t *testing.T) *ReminderStore {
 }
 
 func TestReminderAddAndDue(t *testing.T) {
+	// Verifies that adding a reminder with due tag "now" makes it immediately retrievable via Due.
 	rs := testReminderStore(t)
 
 	if err := rs.Add("test", "check logs", "now"); err != nil {
@@ -40,6 +41,7 @@ func TestReminderAddAndDue(t *testing.T) {
 }
 
 func TestReminderNextKeepalive(t *testing.T) {
+	// Verifies that "next_keepalive" is treated as immediately due (resolves to now), so Due returns it right away.
 	rs := testReminderStore(t)
 
 	if err := rs.Add("test", "think about caching", "next_keepalive"); err != nil {
@@ -59,6 +61,7 @@ func TestReminderNextKeepalive(t *testing.T) {
 }
 
 func TestReminderTomorrow(t *testing.T) {
+	// Verifies that a reminder scheduled for "tomorrow" is not returned by Due when called immediately after creation.
 	rs := testReminderStore(t)
 
 	if err := rs.Add("test", "ask about Greece", "tomorrow"); err != nil {
@@ -76,6 +79,7 @@ func TestReminderTomorrow(t *testing.T) {
 }
 
 func TestReminderFutureDate(t *testing.T) {
+	// Verifies that a reminder with an explicit future date is not returned by Due until that date is reached.
 	rs := testReminderStore(t)
 
 	futureDate := time.Now().AddDate(0, 0, 7).Format("2006-01-02")
@@ -94,6 +98,7 @@ func TestReminderFutureDate(t *testing.T) {
 }
 
 func TestReminderDismiss(t *testing.T) {
+	// Verifies that Dismiss removes exactly one reminder by ID, leaving any others intact.
 	rs := testReminderStore(t)
 
 	rs.Add("test", "reminder 1", "now")
@@ -119,6 +124,7 @@ func TestReminderDismiss(t *testing.T) {
 }
 
 func TestReminderDismissAll(t *testing.T) {
+	// Verifies that DismissAll clears all currently due reminders for an agent but does not affect future ones.
 	rs := testReminderStore(t)
 
 	rs.Add("test", "r1", "now")
@@ -138,6 +144,7 @@ func TestReminderDismissAll(t *testing.T) {
 }
 
 func TestResolveWhen(t *testing.T) {
+	// Verifies resolveWhen correctly maps all supported when strings — "now", "next_keepalive", "tomorrow", date strings, durations, and unknown values — to the expected time.
 	tests := []struct {
 		when  string
 		check func(t time.Time) bool
@@ -166,6 +173,7 @@ func TestResolveWhen(t *testing.T) {
 }
 
 func TestReminderMultiple(t *testing.T) {
+	// Verifies that multiple due reminders are all returned by Due with valid IDs.
 	rs := testReminderStore(t)
 
 	rs.Add("test", "first", "now")
@@ -189,6 +197,7 @@ func TestReminderMultiple(t *testing.T) {
 }
 
 func TestAddWakeAndPendingWakes(t *testing.T) {
+	// Verifies that AddWake stores a wake reminder and PendingWakes retrieves it with the correct ID and text.
 	rs := testReminderStore(t)
 
 	id, err := rs.AddWake("test", "check inbox", "30m")
@@ -215,6 +224,7 @@ func TestAddWakeAndPendingWakes(t *testing.T) {
 }
 
 func TestDueSkipsWakes(t *testing.T) {
+	// Verifies that Due only returns passive reminders and never returns wake reminders, even if both are currently due.
 	rs := testReminderStore(t)
 
 	// Add a passive reminder (due now)
@@ -239,6 +249,7 @@ func TestDueSkipsWakes(t *testing.T) {
 }
 
 func TestDismissAllSkipsWakes(t *testing.T) {
+	// Verifies that DismissAll removes passive reminders but leaves wake reminders untouched.
 	rs := testReminderStore(t)
 
 	// Add a passive reminder (due now) and a wake reminder (due now)
@@ -266,6 +277,7 @@ func TestDismissAllSkipsWakes(t *testing.T) {
 }
 
 func TestDismissWorksForWakes(t *testing.T) {
+	// Verifies that Dismiss can remove a wake reminder by ID, so it no longer appears in PendingWakes.
 	rs := testReminderStore(t)
 
 	id, _ := rs.AddWake("test", "fire me", "now")
@@ -281,6 +293,7 @@ func TestDismissWorksForWakes(t *testing.T) {
 }
 
 func TestReminderStoreBusyTimeout(t *testing.T) {
+	// Verifies that the SQLite connection is configured with a 5-second busy timeout to avoid immediate lock failures under contention.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	rs, err := NewReminderStore(dbPath)
 	if err != nil {

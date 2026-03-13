@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestPingCommand verifies that the ping command returns a response starting with "pong ".
 func TestPingCommand(t *testing.T) {
+	// Verifies that the ping command returns a response starting with "pong ".
 	cmd := NewPingCommand()
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
@@ -18,8 +18,8 @@ func TestPingCommand(t *testing.T) {
 	}
 }
 
-// TestResetCommand verifies that reset invokes the reset callback and returns confirmation.
 func TestResetCommand(t *testing.T) {
+	// Verifies that reset invokes the reset callback and returns confirmation.
 	cleared := false
 	cmd := NewResetCommand(func() error {
 		cleared = true
@@ -38,8 +38,8 @@ func TestResetCommand(t *testing.T) {
 	}
 }
 
-// TestVersionCommand verifies that version info is rendered correctly.
 func TestVersionCommand(t *testing.T) {
+	// Verifies that version info is rendered correctly.
 	cmd := NewVersionCommand(BuildInfo{
 		Version:   "1.0.0",
 		GoVersion: "go1.22",
@@ -53,8 +53,8 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
-// TestHelpCommand verifies help output includes all categories and commands with correct ordering.
 func TestHelpCommand(t *testing.T) {
+	// Verifies help output includes all categories and commands with correct ordering.
 	reg := NewRegistry()
 	reg.Register(NewPingCommand())                                      // category: session
 	reg.Register(NewCacheCommand("/dev/null"))                          // category: observability
@@ -104,8 +104,8 @@ func TestHelpCommand(t *testing.T) {
 	}
 }
 
-// TestToolsCommand verifies tools list renders with all registered tools.
 func TestToolsCommand(t *testing.T) {
+	// Verifies tools list renders with all registered tools.
 	cmd := NewToolsCommand(func() []ToolInfo {
 		return []ToolInfo{
 			{Name: "shell", Description: "Run commands"},
@@ -122,8 +122,8 @@ func TestToolsCommand(t *testing.T) {
 	}
 }
 
-// TestToolsCommandEmpty verifies empty tools list renders appropriate message.
 func TestToolsCommandEmpty(t *testing.T) {
+	// Verifies empty tools list renders appropriate message.
 	cmd := NewToolsCommand(func() []ToolInfo { return nil })
 	result, _ := cmd.Execute(context.Background(), "")
 	if result != "No tools registered." {
@@ -131,8 +131,8 @@ func TestToolsCommandEmpty(t *testing.T) {
 	}
 }
 
-// TestAgentsCommand verifies agents list renders with all agent info and statuses.
 func TestAgentsCommand(t *testing.T) {
+	// Verifies agents list renders with all agent info and statuses.
 	cmd := NewAgentsCommand(func() []AgentInfo {
 		return []AgentInfo{
 			{ID: "main", SessionKey: "agent:main:main", Model: "opus-4", Busy: false, MessageCount: 31},
@@ -168,8 +168,8 @@ func TestAgentsCommand(t *testing.T) {
 	}
 }
 
-// TestAgentsCommandNoSession verifies agents without sessions show placeholder dashes.
 func TestAgentsCommandNoSession(t *testing.T) {
+	// Verifies agents without sessions show placeholder dashes.
 	cmd := NewAgentsCommand(func() []AgentInfo {
 		return []AgentInfo{
 			{ID: "clutch", SessionKey: "agent:clutch:main", Model: "opus-4", MessageCount: 31},
@@ -194,8 +194,8 @@ func TestAgentsCommandNoSession(t *testing.T) {
 	}
 }
 
-// TestAgentsCommandEmpty verifies empty agents list renders appropriate message.
 func TestAgentsCommandEmpty(t *testing.T) {
+	// Verifies empty agents list renders appropriate message.
 	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, nil, nil)
 	result, _ := cmd.Execute(context.Background(), "")
 	if result != "No agents configured." {

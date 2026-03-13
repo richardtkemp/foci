@@ -8,6 +8,7 @@ import (
 )
 
 func TestContentHash_Deterministic(t *testing.T) {
+	// Proves that contentHash produces the same output for the same inputs on repeated calls.
 	system := &genai.Content{
 		Parts: []*genai.Part{{Text: "You are helpful."}},
 		Role:  "user",
@@ -26,6 +27,7 @@ func TestContentHash_Deterministic(t *testing.T) {
 }
 
 func TestContentHash_DiffersOnChange(t *testing.T) {
+	// Proves that changing the system prompt content produces a different hash, so cache misses are detected.
 	system1 := &genai.Content{
 		Parts: []*genai.Part{{Text: "Version 1"}},
 		Role:  "user",
@@ -43,13 +45,13 @@ func TestContentHash_DiffersOnChange(t *testing.T) {
 }
 
 func TestContentHash_NilInputs(t *testing.T) {
+	// Proves that contentHash handles nil system content and nil tools without panicking.
 	h := contentHash(nil, nil)
-	// Should not panic, and should return a valid hash
-	// MD5 of encoding nothing produces all zeros - that's fine, it represents "nothing to cache"
 	_ = h
 }
 
 func TestContentHash_ToolsOnly(t *testing.T) {
+	// Proves that tool definitions contribute to the hash, so adding tools invalidates the cache.
 	tools := []*genai.Tool{
 		{FunctionDeclarations: []*genai.FunctionDeclaration{
 			{Name: "read", Description: "read files"},
@@ -64,7 +66,7 @@ func TestContentHash_ToolsOnly(t *testing.T) {
 }
 
 func TestNewCacheManager_DefaultTTL(t *testing.T) {
-	// TTL <= 0 should default to 1 hour
+	// Proves that a zero or negative TTL is replaced with a sensible default (1 hour) so misconfigured deployments still work.
 	m := NewCacheManager(nil, 0)
 	if m.ttl.Hours() != 1 {
 		t.Errorf("ttl = %v, want 1h", m.ttl)
@@ -77,8 +79,8 @@ func TestNewCacheManager_DefaultTTL(t *testing.T) {
 }
 
 func TestEnsureCache_NothingToCache(t *testing.T) {
+	// Proves that EnsureCache returns an empty name when there is nothing cacheable (no system prompt, no tools), avoiding unnecessary API calls.
 	m := NewCacheManager(nil, 0)
-	// nil system and no tools → nothing to cache
 	name := m.EnsureCache(context.TODO(), "model", nil, nil)
 	if name != "" {
 		t.Errorf("expected empty cache name, got %q", name)

@@ -22,6 +22,7 @@ func testScratchpadTool(t *testing.T) *Tool {
 }
 
 func TestScratchpadToolWriteRead(t *testing.T) {
+	// Proves the round-trip: writing a value and reading it back returns the same content.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	ctx := context.Background()
@@ -48,6 +49,7 @@ func TestScratchpadToolWriteRead(t *testing.T) {
 }
 
 func TestScratchpadToolReadEmpty(t *testing.T) {
+	// Proves that reading a key that was never written returns an "empty" indicator rather than an error.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "read", "key": "missing"})
@@ -62,6 +64,7 @@ func TestScratchpadToolReadEmpty(t *testing.T) {
 }
 
 func TestScratchpadToolClear(t *testing.T) {
+	// Proves that clearing a key removes its content, so a subsequent read returns empty.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	ctx := context.Background()
@@ -88,6 +91,7 @@ func TestScratchpadToolClear(t *testing.T) {
 }
 
 func TestScratchpadToolWriteMissingKey(t *testing.T) {
+	// Proves that writing with an empty key is rejected with an error.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "write", "key": "", "content": "data"})
@@ -99,6 +103,7 @@ func TestScratchpadToolWriteMissingKey(t *testing.T) {
 }
 
 func TestScratchpadToolListEmpty(t *testing.T) {
+	// Proves that listing an empty scratchpad returns the "no entries" message rather than an error.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "list"})
@@ -113,6 +118,7 @@ func TestScratchpadToolListEmpty(t *testing.T) {
 }
 
 func TestScratchpadToolListWithEntries(t *testing.T) {
+	// Proves that listing after writing multiple keys returns all key names with a header.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	ctx := context.Background()
@@ -138,6 +144,7 @@ func TestScratchpadToolListWithEntries(t *testing.T) {
 }
 
 func TestScratchpadToolUnknownAction(t *testing.T) {
+	// Proves that an unrecognized action returns an "unknown action" error.
 	t.Parallel()
 	tool := testScratchpadTool(t)
 	params, _ := json.Marshal(map[string]string{"action": "delete"})

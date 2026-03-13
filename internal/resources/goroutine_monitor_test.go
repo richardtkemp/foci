@@ -18,9 +18,9 @@ func newTestMonitor(threshold int) (*GoroutineMonitor, *int) {
 	return m, &count
 }
 
-// TestGoroutineMonitor_BelowThreshold verifies that no warning fires when
-// the goroutine count is below the threshold.
 func TestGoroutineMonitor_BelowThreshold(t *testing.T) {
+	// Verifies that no warning fires when
+	// the goroutine count is below the threshold.
 	m, _ := newTestMonitor(100)
 
 	m.checkOnce()
@@ -32,9 +32,9 @@ func TestGoroutineMonitor_BelowThreshold(t *testing.T) {
 	}
 }
 
-// TestGoroutineMonitor_AboveThreshold verifies that a warning fires when
-// the goroutine count exceeds the threshold.
 func TestGoroutineMonitor_AboveThreshold(t *testing.T) {
+	// Verifies that a warning fires when
+	// the goroutine count exceeds the threshold.
 	m, count := newTestMonitor(100)
 	*count = 150
 
@@ -47,9 +47,9 @@ func TestGoroutineMonitor_AboveThreshold(t *testing.T) {
 	}
 }
 
-// TestGoroutineMonitor_WarnDedup verifies that repeated checks above the
-// threshold only fire the warning once (dedup).
 func TestGoroutineMonitor_WarnDedup(t *testing.T) {
+	// Verifies that repeated checks above the
+	// threshold only fire the warning once (dedup).
 	m, count := newTestMonitor(100)
 	*count = 150
 
@@ -63,9 +63,9 @@ func TestGoroutineMonitor_WarnDedup(t *testing.T) {
 	}
 }
 
-// TestGoroutineMonitor_WarnResetsOnRecovery verifies that the warning resets
-// when the count drops below the threshold, allowing re-fire if it spikes again.
 func TestGoroutineMonitor_WarnResetsOnRecovery(t *testing.T) {
+	// Verifies that the warning resets
+	// when the count drops below the threshold, allowing re-fire if it spikes again.
 	m, count := newTestMonitor(100)
 
 	// Trigger warn
@@ -93,9 +93,9 @@ func TestGoroutineMonitor_WarnResetsOnRecovery(t *testing.T) {
 	}
 }
 
-// TestGoroutineMonitor_StartStop verifies that the monitor starts a goroutine
-// and stops cleanly via context cancellation.
 func TestGoroutineMonitor_StartStop(t *testing.T) {
+	// Verifies that the monitor starts a goroutine
+	// and stops cleanly via context cancellation.
 	m, _ := newTestMonitor(100)
 	m.cfg.Interval = 10 * time.Millisecond
 
@@ -108,9 +108,9 @@ func TestGoroutineMonitor_StartStop(t *testing.T) {
 	m.Stop()
 }
 
-// TestGoroutineMonitor_Start_ZeroInterval verifies that Start with zero
-// interval returns immediately without spawning a goroutine.
 func TestGoroutineMonitor_Start_ZeroInterval(t *testing.T) {
+	// Verifies that Start with zero
+	// interval returns immediately without spawning a goroutine.
 	m := NewGoroutineMonitor(GoroutineMonitorConfig{Interval: 0, Threshold: 100})
 
 	ctx := context.Background()
@@ -121,15 +121,15 @@ func TestGoroutineMonitor_Start_ZeroInterval(t *testing.T) {
 	}
 }
 
-// TestGoroutineMonitor_Stop_WithoutStart verifies that calling Stop without
-// Start does not panic.
 func TestGoroutineMonitor_Stop_WithoutStart(t *testing.T) {
+	// Verifies that calling Stop without
+	// Start does not panic.
 	m := NewGoroutineMonitor(GoroutineMonitorConfig{})
 	m.Stop() // should not panic
 }
 
-// TestNewGoroutineMonitor verifies the constructor sets config correctly.
 func TestNewGoroutineMonitor(t *testing.T) {
+	// Verifies the constructor sets config correctly.
 	cfg := GoroutineMonitorConfig{
 		Interval:  30 * time.Second,
 		Threshold: 200,
@@ -144,9 +144,9 @@ func TestNewGoroutineMonitor(t *testing.T) {
 	}
 }
 
-// TestGoroutineMonitor_ExactThreshold verifies that the count equal to the
-// threshold does NOT trigger a warning (only > threshold does).
 func TestGoroutineMonitor_ExactThreshold(t *testing.T) {
+	// Verifies that the count equal to the
+	// threshold does NOT trigger a warning (only > threshold does).
 	m, count := newTestMonitor(100)
 	*count = 100
 

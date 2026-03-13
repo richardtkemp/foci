@@ -17,8 +17,8 @@ func makeButtons(n int) []gotgbot.InlineKeyboardButton {
 	return btns
 }
 
-// TestLayoutButtons_SmallCounts verifies that 1–3 buttons stay on one row.
 func TestLayoutButtons_SmallCounts(t *testing.T) {
+	// Verifies that 1–3 buttons stay on one row.
 	for n := 1; n <= 3; n++ {
 		rows := layoutButtons(makeButtons(n))
 		if len(rows) != 1 {
@@ -30,9 +30,9 @@ func TestLayoutButtons_SmallCounts(t *testing.T) {
 	}
 }
 
-// TestLayoutButtons_SplitsAt3 verifies that 4–12 buttons are split into rows
-// of at most 3, respecting the 4-row maximum.
 func TestLayoutButtons_SplitsAt3(t *testing.T) {
+	// Verifies that 4–12 buttons are split into rows
+	// of at most 3, respecting the 4-row maximum.
 	tests := []struct {
 		n       int
 		wantMax int // max buttons per row
@@ -61,9 +61,9 @@ func TestLayoutButtons_SplitsAt3(t *testing.T) {
 	}
 }
 
-// TestLayoutButtons_PacksWhenTooManyRows verifies that when 3-per-row would
-// exceed 4 rows, buttons are packed more densely.
 func TestLayoutButtons_PacksWhenTooManyRows(t *testing.T) {
+	// Verifies that when 3-per-row would
+	// exceed 4 rows, buttons are packed more densely.
 	tests := []struct {
 		n          int
 		wantRows   int
@@ -86,9 +86,9 @@ func TestLayoutButtons_PacksWhenTooManyRows(t *testing.T) {
 	}
 }
 
-// TestBuildCommandKeyboard_ExplicitRows verifies that buttons with different
-// explicit Row values are kept in separate rows (not merged or reordered).
 func TestBuildCommandKeyboard_ExplicitRows(t *testing.T) {
+	// Verifies that buttons with different
+	// explicit Row values are kept in separate rows (not merged or reordered).
 	opts := []command.KeyboardOption{
 		{Label: "A", Data: "a", Row: 0},
 		{Label: "B", Data: "b", Row: 0},
@@ -107,9 +107,9 @@ func TestBuildCommandKeyboard_ExplicitRows(t *testing.T) {
 	}
 }
 
-// TestBuildCommandKeyboard_AutoLayoutDefaultRow verifies that 8 buttons all
-// on row 0 get auto-split into rows of 3.
 func TestBuildCommandKeyboard_AutoLayoutDefaultRow(t *testing.T) {
+	// Verifies that 8 buttons all
+	// on row 0 get auto-split into rows of 3.
 	opts := make([]command.KeyboardOption, 8)
 	for i := range opts {
 		opts[i] = command.KeyboardOption{
@@ -130,10 +130,10 @@ func TestBuildCommandKeyboard_AutoLayoutDefaultRow(t *testing.T) {
 	}
 }
 
-// TestBuildCommandKeyboard_MixedExplicitAndLargeRow verifies that auto-layout
-// applies per-row: explicit rows with few buttons stay as-is, while a large
-// default row gets split.
 func TestBuildCommandKeyboard_MixedExplicitAndLargeRow(t *testing.T) {
+	// Verifies that auto-layout
+	// applies per-row: explicit rows with few buttons stay as-is, while a large
+	// default row gets split.
 	opts := []command.KeyboardOption{
 		{Label: "A", Data: "a", Row: 0},
 		{Label: "B", Data: "b", Row: 0},
@@ -149,9 +149,9 @@ func TestBuildCommandKeyboard_MixedExplicitAndLargeRow(t *testing.T) {
 	}
 }
 
-// TestBuildCommandKeyboard_CallbackDataFormat verifies callback data is
-// correctly formatted after auto-layout.
 func TestBuildCommandKeyboard_CallbackDataFormat(t *testing.T) {
+	// Verifies callback data is
+	// correctly formatted after auto-layout.
 	opts := []command.KeyboardOption{
 		{Label: "X", Data: "val1"},
 		{Label: "Y", Data: "val2"},

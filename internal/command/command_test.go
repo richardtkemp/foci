@@ -8,6 +8,9 @@ import (
 )
 
 func TestRegistryDispatch(t *testing.T) {
+	// Verifies the registry routes slash commands to the correct handler, passes
+	// args correctly, and returns a suggestion message for unknown commands while
+	// returning false for non-command input.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name:        "test",
@@ -57,6 +60,8 @@ func TestRegistryDispatch(t *testing.T) {
 }
 
 func TestDispatchCaseInsensitive(t *testing.T) {
+	// Verifies that command dispatch is case-insensitive so /PING matches the
+	// lowercase-registered "ping" command.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name:    "ping",
@@ -73,6 +78,8 @@ func TestDispatchCaseInsensitive(t *testing.T) {
 }
 
 func TestDispatchError(t *testing.T) {
+	// Verifies that when a command's Execute function returns an error, Dispatch
+	// surfaces it as an "Error: ..." string rather than propagating the Go error.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name: "fail",
@@ -91,6 +98,9 @@ func TestDispatchError(t *testing.T) {
 }
 
 func TestDispatchUnknownSuggestion(t *testing.T) {
+	// Verifies that unknown commands produce useful suggestions: typos get the
+	// closest matching command, prefix matches find the right command, and
+	// completely unrelated input suggests /help.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name:    "status",
@@ -130,6 +140,9 @@ func TestDispatchUnknownSuggestion(t *testing.T) {
 }
 
 func TestLevenshtein(t *testing.T) {
+	// Verifies the levenshtein distance implementation produces correct edit distances
+	// for empty strings, identical strings, single-character differences, and
+	// multi-character transformations used by the suggestion engine.
 	tests := []struct {
 		a, b string
 		want int
@@ -152,6 +165,9 @@ func TestLevenshtein(t *testing.T) {
 }
 
 func TestLookupKeyboard(t *testing.T) {
+	// Verifies that LookupKeyboard returns inline keyboard options only for bare
+	// commands that define KeyboardOptions, and returns nothing for commands with
+	// args, commands without options, unknown commands, and non-command input.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name: "model",
@@ -226,6 +242,8 @@ func TestLookupKeyboard(t *testing.T) {
 }
 
 func TestLookupKeyboardCaseInsensitive(t *testing.T) {
+	// Verifies that keyboard lookup is case-insensitive so /EFFORT matches the
+	// lowercase-registered "effort" command and returns its options.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name:    "effort",
@@ -242,7 +260,9 @@ func TestLookupKeyboardCaseInsensitive(t *testing.T) {
 }
 
 func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
-	// Verify the builtin commands that should have keyboards do have them
+	// Verifies that every builtin command that should expose an inline keyboard
+	// actually does, and that the options are correct in count and content —
+	// including current-value markers for effort, thinking, and model commands.
 	t.Run("effort", func(t *testing.T) {
 		cmd := NewEffortCommand(
 			func(context.Context) string { return "medium" },
@@ -398,6 +418,9 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 }
 
 func TestLookupChainKeyboard(t *testing.T) {
+	// Verifies that LookupChainKeyboard returns a second-level keyboard for a
+	// bare subcommand that has chain options, and returns nothing for full args,
+	// bare commands, commands without chain support, and non-command input.
 	r := NewRegistry()
 	r.Register(&Command{
 		Name: "tmux",
@@ -469,6 +492,8 @@ func TestLookupChainKeyboard(t *testing.T) {
 }
 
 func TestAll(t *testing.T) {
+	// Verifies that All() returns every registered command sorted alphabetically
+	// by name, regardless of registration order.
 	r := NewRegistry()
 	r.Register(&Command{Name: "beta"})
 	r.Register(&Command{Name: "alpha"})
@@ -540,6 +565,8 @@ func (m *mockSecretsStore) SetAllowedHosts(section string, hosts []string) {
 }
 
 func TestRestartCommand(t *testing.T) {
+	// Verifies the restart command is properly constructed with the right name and
+	// description, and that a nil notifyFn does not cause a panic.
 	var notified string
 	cmd := NewRestartCommand(func(msg string) {
 		notified = msg
@@ -567,6 +594,8 @@ func TestRestartCommand(t *testing.T) {
 }
 
 func TestSecretsCommand(t *testing.T) {
+	// Verifies the full secrets command lifecycle: keyboard options, list (without
+	// exposing values), set, remove, remove-nonexistent, and usage display.
 	store := &mockSecretsStore{data: map[string]string{
 		"anthropic.setup_token": "sk-ant-123",
 		"custom.api_key":  "key-456",
@@ -663,6 +692,8 @@ func (m *mockWizard) Handle(text string) (string, bool) {
 }
 
 func TestSetWizard(t *testing.T) {
+	// Verifies that SetWizard installs a wizard so HandleMessage routes messages
+	// to it and returns the wizard's response with handled=true.
 	reg := NewRegistry()
 	wizard := &mockWizard{
 		responses: map[string]string{
@@ -684,6 +715,8 @@ func TestSetWizard(t *testing.T) {
 }
 
 func TestClearWizard(t *testing.T) {
+	// Verifies that ClearWizard removes the active wizard so subsequent messages
+	// are no longer intercepted (handled=false).
 	reg := NewRegistry()
 	wizard := &mockWizard{
 		responses: map[string]string{
@@ -702,6 +735,8 @@ func TestClearWizard(t *testing.T) {
 }
 
 func TestHandleMessageWizardCancel(t *testing.T) {
+	// Verifies that /cancel when a wizard is active returns a "cancelled" message,
+	// clears the wizard, and subsequent messages are no longer intercepted.
 	reg := NewRegistry()
 	wizard := &mockWizard{
 		responses: map[string]string{},
@@ -725,6 +760,8 @@ func TestHandleMessageWizardCancel(t *testing.T) {
 }
 
 func TestHandleMessageWizardStop(t *testing.T) {
+	// Verifies that /stop is an alias for /cancel: it clears the wizard and
+	// returns a "cancelled" message.
 	reg := NewRegistry()
 	wizard := &mockWizard{
 		responses: map[string]string{},
@@ -748,6 +785,8 @@ func TestHandleMessageWizardStop(t *testing.T) {
 }
 
 func TestHandleMessageWizardDone(t *testing.T) {
+	// Verifies that when a wizard signals done=true, the wizard is automatically
+	// cleared so the next message is no longer intercepted.
 	reg := NewRegistry()
 	wizard := &mockWizard{
 		responses: map[string]string{

@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestTmuxCommandList verifies tmux list sessions operation.
 func TestTmuxCommandList(t *testing.T) {
+	// Verifies tmux list sessions operation.
 	execFn, calls := mockTmuxExec("SESSION  W  AGE  STATUS\nwork  2w  1h  idle", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -28,8 +28,8 @@ func TestTmuxCommandList(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandStart verifies tmux session creation with auto-watch.
 func TestTmuxCommandStart(t *testing.T) {
+	// Verifies tmux session creation with auto-watch.
 	execFn, calls := mockTmuxExec("Session started: myses", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -61,8 +61,8 @@ func TestTmuxCommandStart(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandStartNoWatch verifies tmux session creation without auto-watch.
 func TestTmuxCommandStartNoWatch(t *testing.T) {
+	// Verifies tmux session creation without auto-watch.
 	execFn, calls := mockTmuxExec("Session started: myses", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -79,8 +79,8 @@ func TestTmuxCommandStartNoWatch(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandStartAutoName verifies auto-generated session names are tracked for watch.
 func TestTmuxCommandStartAutoName(t *testing.T) {
+	// Verifies auto-generated session names are tracked for watch.
 	execFn, calls := mockTmuxExec("Session started: foci-1", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -97,8 +97,8 @@ func TestTmuxCommandStartAutoName(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandSend verifies sending keys to a tmux session.
 func TestTmuxCommandSend(t *testing.T) {
+	// Verifies sending keys to a tmux session.
 	execFn, calls := mockTmuxExec("Keys sent.", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -114,8 +114,8 @@ func TestTmuxCommandSend(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandSendMissingArgs verifies error when send missing keys.
 func TestTmuxCommandSendMissingArgs(t *testing.T) {
+	// Verifies error when send missing keys.
 	execFn, _ := mockTmuxExec("", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -125,8 +125,8 @@ func TestTmuxCommandSendMissingArgs(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandRead verifies reading output from a tmux session.
 func TestTmuxCommandRead(t *testing.T) {
+	// Verifies reading output from a tmux session.
 	execFn, calls := mockTmuxExec("some output here", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -147,8 +147,8 @@ func TestTmuxCommandRead(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandReadMissingName verifies error when read missing session name.
 func TestTmuxCommandReadMissingName(t *testing.T) {
+	// Verifies error when read missing session name.
 	execFn, _ := mockTmuxExec("", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -158,8 +158,8 @@ func TestTmuxCommandReadMissingName(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandKill verifies killing a tmux session.
 func TestTmuxCommandKill(t *testing.T) {
+	// Verifies killing a tmux session.
 	execFn, calls := mockTmuxExec("Session killed: myses", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -172,8 +172,8 @@ func TestTmuxCommandKill(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandWatch verifies setting up tmux session watch with threshold.
 func TestTmuxCommandWatch(t *testing.T) {
+	// Verifies setting up tmux session watch with threshold.
 	execFn, calls := mockTmuxExec("Watching session myses", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -186,8 +186,8 @@ func TestTmuxCommandWatch(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandUnwatch verifies stopping watch on a tmux session.
 func TestTmuxCommandUnwatch(t *testing.T) {
+	// Verifies stopping watch on a tmux session.
 	execFn, calls := mockTmuxExec("Stopped watching session myses", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -200,8 +200,8 @@ func TestTmuxCommandUnwatch(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandUnknownOp verifies usage message for unknown operation.
 func TestTmuxCommandUnknownOp(t *testing.T) {
+	// Verifies usage message for unknown operation.
 	execFn, _ := mockTmuxExec("", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -214,8 +214,8 @@ func TestTmuxCommandUnknownOp(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandNoArgsShowsUsage verifies usage message when no args provided.
 func TestTmuxCommandNoArgsShowsUsage(t *testing.T) {
+	// Verifies usage message when no args provided.
 	execFn, calls := mockTmuxExec("session1\nsession2\n", nil)
 	cmd := NewTmuxCommand(execFn)
 
@@ -234,8 +234,8 @@ func TestTmuxCommandNoArgsShowsUsage(t *testing.T) {
 	}
 }
 
-// TestTmuxCommandError verifies error handling when tmux operation fails.
 func TestTmuxCommandError(t *testing.T) {
+	// Verifies error handling when tmux operation fails.
 	execFn, _ := mockTmuxExec("", fmt.Errorf("tmux not running"))
 	cmd := NewTmuxCommand(execFn)
 

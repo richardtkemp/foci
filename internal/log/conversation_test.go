@@ -9,9 +9,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestConversationLog verifies that conversation entries are written to the database
-// and can be queried back with correct fields.
 func TestConversationLog(t *testing.T) {
+	// Verifies that conversation entries are written to the database
+	// and can be queried back with correct fields.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 
 	if err := InitConversation(dbPath); err != nil {
@@ -126,8 +126,6 @@ func TestConversationLog(t *testing.T) {
 	}
 }
 
-// TestConversationNoopWhenUninitialized verifies that logging doesn't panic
-// when the conversation system hasn't been initialized.
 func TestConversationNoopWhenUninitialized(t *testing.T) {
 	// Save and restore global state
 	savedLogs := convLogs
@@ -149,9 +147,9 @@ func TestConversationNoopWhenUninitialized(t *testing.T) {
 	})
 }
 
-// TestConversationBusyTimeout verifies that the conversation database has the
-// correct busy_timeout PRAGMA set.
 func TestConversationBusyTimeout(t *testing.T) {
+	// Verifies that the conversation database has the
+	// correct busy_timeout PRAGMA set.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 
 	if err := InitConversation(dbPath); err != nil {
@@ -168,8 +166,8 @@ func TestConversationBusyTimeout(t *testing.T) {
 	}
 }
 
-// TestAgentFromSession verifies extraction of agent IDs from session key strings.
 func TestAgentFromSession(t *testing.T) {
+	// Verifies extraction of agent IDs from session key strings.
 	tests := []struct {
 		session string
 		want    string
@@ -188,8 +186,8 @@ func TestAgentFromSession(t *testing.T) {
 	}
 }
 
-// TestConversationHook verifies that ConversationHook is called for non-empty text entries.
 func TestConversationHook(t *testing.T) {
+	// Verifies that ConversationHook is called for non-empty text entries.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 	if err := InitConversation(dbPath); err != nil {
 		t.Fatalf("InitConversation: %v", err)
@@ -226,9 +224,9 @@ func TestConversationHook(t *testing.T) {
 	}
 }
 
-// TestConversationFallbackRouting verifies that entries with an unknown agent
-// session are routed to the fallback log.
 func TestConversationFallbackRouting(t *testing.T) {
+	// Verifies that entries with an unknown agent
+	// session are routed to the fallback log.
 	dir := t.TempDir()
 	agentIDs := []string{"alpha"}
 	pathFn := func(id string) string {
@@ -260,9 +258,9 @@ func TestConversationFallbackRouting(t *testing.T) {
 	}
 }
 
-// TestInitPerAgentConversationError verifies that InitPerAgentConversation
-// cleans up already-opened logs when one fails to open.
 func TestInitPerAgentConversationError(t *testing.T) {
+	// Verifies that InitPerAgentConversation
+	// cleans up already-opened logs when one fails to open.
 	dir := t.TempDir()
 	pathFn := func(id string) string {
 		if id == "bad" {
@@ -278,8 +276,8 @@ func TestInitPerAgentConversationError(t *testing.T) {
 	}
 }
 
-// TestInitConversationError verifies InitConversation returns an error for a bad path.
 func TestInitConversationError(t *testing.T) {
+	// Verifies InitConversation returns an error for a bad path.
 	err := InitConversation("/nonexistent/dir/conv.db")
 	if err == nil {
 		CloseConversation()
@@ -287,9 +285,9 @@ func TestInitConversationError(t *testing.T) {
 	}
 }
 
-// TestPerAgentConversationRouting verifies that entries are routed to the
-// correct per-agent database based on session key.
 func TestPerAgentConversationRouting(t *testing.T) {
+	// Verifies that entries are routed to the
+	// correct per-agent database based on session key.
 	dir := t.TempDir()
 
 	agentIDs := []string{"alpha", "beta"}

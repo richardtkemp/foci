@@ -6,6 +6,8 @@ import (
 )
 
 func TestConnectedMsg_JSON(t *testing.T) {
+	// Proves that ConnectedMsg round-trips through JSON correctly, preserving the
+	// type field and all AgentListItem fields including Unicode emoji.
 	msg := ConnectedMsg{
 		Type: "connected",
 		Agents: []AgentListItem{
@@ -39,6 +41,8 @@ func TestConnectedMsg_JSON(t *testing.T) {
 }
 
 func TestSessionReadyMsg_JSON(t *testing.T) {
+	// Proves that SessionReadyMsg round-trips through JSON with agent_id and
+	// session_key fields intact.
 	msg := SessionReadyMsg{
 		Type:       "session_ready",
 		AgentID:    "clutch",
@@ -64,6 +68,8 @@ func TestSessionReadyMsg_JSON(t *testing.T) {
 }
 
 func TestResponseTextMsg_JSON(t *testing.T) {
+	// Proves that ResponseTextMsg round-trips through JSON, preserving the
+	// content string and the boolean final flag.
 	msg := ResponseTextMsg{
 		Type:    "response_text",
 		Content: "Hello there!",
@@ -89,6 +95,8 @@ func TestResponseTextMsg_JSON(t *testing.T) {
 }
 
 func TestSelectAgentMsg_JSON(t *testing.T) {
+	// Proves that SelectAgentMsg round-trips through JSON with the type
+	// discriminator and agent_id fields correctly serialised.
 	msg := SelectAgentMsg{
 		Type:    "select_agent",
 		AgentID: "fotini",
@@ -113,6 +121,7 @@ func TestSelectAgentMsg_JSON(t *testing.T) {
 }
 
 func TestErrorMsg_JSON(t *testing.T) {
+	// Proves that ErrorMsg round-trips through JSON with the message field intact.
 	msg := ErrorMsg{
 		Type:    "error",
 		Message: "something broke",
@@ -134,6 +143,8 @@ func TestErrorMsg_JSON(t *testing.T) {
 }
 
 func TestTranscriptionMsg_JSON(t *testing.T) {
+	// Proves that TranscriptionMsg round-trips through JSON with the text
+	// field correctly preserved.
 	msg := TranscriptionMsg{
 		Type: "transcription",
 		Text: "what is the weather",
@@ -155,6 +166,8 @@ func TestTranscriptionMsg_JSON(t *testing.T) {
 }
 
 func TestClientMessage_TypeExtraction(t *testing.T) {
+	// Proves that the ClientMessage type can extract the "type" discriminator
+	// field from all known client message shapes without error.
 	tests := []struct {
 		json string
 		want string

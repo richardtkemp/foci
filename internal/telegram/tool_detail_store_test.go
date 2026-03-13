@@ -19,6 +19,8 @@ func tempStore(t *testing.T) *ToolDetailStore {
 }
 
 func TestToolDetailStore_StoreAndLoadAll(t *testing.T) {
+	// Verifies that multiple entries can be stored and then loaded back by LoadAll
+	// with all fields (compact text, full input, result) intact.
 	s := tempStore(t)
 
 	s.Store(100, "compact1", "full1", "result1")
@@ -40,6 +42,8 @@ func TestToolDetailStore_StoreAndLoadAll(t *testing.T) {
 }
 
 func TestToolDetailStore_Replace(t *testing.T) {
+	// Verifies that storing a second entry with the same message ID replaces
+	// the first, so LoadAll returns only one entry with the updated values.
 	s := tempStore(t)
 
 	s.Store(100, "old", "old", "old")
@@ -58,6 +62,8 @@ func TestToolDetailStore_Replace(t *testing.T) {
 }
 
 func TestToolDetailStore_Count(t *testing.T) {
+	// Verifies that Count() accurately reflects the number of stored entries,
+	// starting at zero and incrementing with each distinct message ID stored.
 	s := tempStore(t)
 
 	if s.Count() != 0 {
@@ -73,6 +79,8 @@ func TestToolDetailStore_Count(t *testing.T) {
 }
 
 func TestToolDetailStore_ExpireAndVacuum(t *testing.T) {
+	// Verifies that ExpireAndVacuum removes entries older than 48 hours while
+	// leaving fresh entries intact, by backdating one row directly in the DB.
 	s := tempStore(t)
 
 	// Insert a row with a manually backdated created_at to simulate old entry
@@ -109,6 +117,8 @@ func TestToolDetailStore_ExpireAndVacuum(t *testing.T) {
 }
 
 func TestToolDetailStore_LoadAll_SkipsExpired(t *testing.T) {
+	// Verifies that LoadAll itself filters out entries older than 48 hours,
+	// even without calling ExpireAndVacuum first.
 	s := tempStore(t)
 
 	// Insert an old entry directly
@@ -129,6 +139,8 @@ func TestToolDetailStore_LoadAll_SkipsExpired(t *testing.T) {
 }
 
 func TestToolDetailStore_EmptyLoadAll(t *testing.T) {
+	// Verifies that LoadAll returns an empty map (not an error or nil) when the
+	// store has no entries.
 	s := tempStore(t)
 
 	m, err := s.LoadAll()
@@ -141,6 +153,8 @@ func TestToolDetailStore_EmptyLoadAll(t *testing.T) {
 }
 
 func TestToolDetailStore_InvalidPath(t *testing.T) {
+	// Verifies that NewToolDetailStore returns an error when given a path in a
+	// non-existent directory, rather than panicking or silently failing.
 	_, err := NewToolDetailStore("/nonexistent/dir/test.db")
 	if err == nil {
 		t.Fatal("expected error for invalid path")
@@ -148,6 +162,8 @@ func TestToolDetailStore_InvalidPath(t *testing.T) {
 }
 
 func TestToolDetailStore_PersistsAcrossReopen(t *testing.T) {
+	// Verifies that data written to the store persists after Close() and
+	// is fully readable when the database is reopened at the same path.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -177,6 +193,8 @@ func TestToolDetailStore_PersistsAcrossReopen(t *testing.T) {
 }
 
 func TestToolDetailStore_DbFileCreated(t *testing.T) {
+	// Verifies that the SQLite database file is physically created on disk after
+	// data is stored, confirming the store is backed by a real file.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 

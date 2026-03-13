@@ -13,6 +13,7 @@ import (
 )
 
 func TestReadFile(t *testing.T) {
+	// Verifies that the read tool returns file content with line numbers in the expected format.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -36,6 +37,7 @@ func TestReadFile(t *testing.T) {
 }
 
 func TestReadDirectory(t *testing.T) {
+	// Verifies that reading a directory path returns a listing with filenames and a trailing slash on subdirectories.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("x"), 0644)
@@ -57,6 +59,7 @@ func TestReadDirectory(t *testing.T) {
 }
 
 func TestReadDirectoryEmpty(t *testing.T) {
+	// Verifies that reading an empty directory returns a clear "(empty directory)" message rather than blank output.
 	t.Parallel()
 	dir := t.TempDir()
 
@@ -73,6 +76,7 @@ func TestReadDirectoryEmpty(t *testing.T) {
 }
 
 func TestReadFileMissing(t *testing.T) {
+	// Verifies that reading a path that does not exist returns an error rather than empty output.
 	t.Parallel()
 	tool := NewReadTool(nil, "")
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/file.txt"})
@@ -84,6 +88,7 @@ func TestReadFileMissing(t *testing.T) {
 }
 
 func TestWriteFile(t *testing.T) {
+	// Verifies that the write tool creates a file with the given content and confirms success in the result text.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "output.txt")
@@ -109,6 +114,7 @@ func TestWriteFile(t *testing.T) {
 }
 
 func TestWriteFileOverwrite(t *testing.T) {
+	// Verifies that writing to an existing file replaces its content completely.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.txt")
@@ -129,6 +135,7 @@ func TestWriteFileOverwrite(t *testing.T) {
 }
 
 func TestEditFile(t *testing.T) {
+	// Verifies that the edit tool replaces a unique occurrence of old_string with new_string in a file.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
@@ -158,6 +165,7 @@ func TestEditFile(t *testing.T) {
 }
 
 func TestEditFileNotFound(t *testing.T) {
+	// Verifies that attempting to replace a string that doesn't exist in the file returns a "not found" error.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
@@ -175,6 +183,7 @@ func TestEditFileNotFound(t *testing.T) {
 }
 
 func TestEditFileNonUnique(t *testing.T) {
+	// Verifies that attempting to replace a string that appears more than once returns an error reporting the count.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "edit.txt")
@@ -192,6 +201,7 @@ func TestEditFileNonUnique(t *testing.T) {
 }
 
 func TestEditFileMissing(t *testing.T) {
+	// Verifies that editing a file path that does not exist returns an error.
 	t.Parallel()
 	tool := NewEditTool(nil, "", nil)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -207,6 +217,7 @@ func TestEditFileMissing(t *testing.T) {
 }
 
 func TestEditFileSyntaxValidToValid(t *testing.T) {
+	// Verifies that editing a syntactically valid file to remain valid succeeds without warnings.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
@@ -234,6 +245,7 @@ func TestEditFileSyntaxValidToValid(t *testing.T) {
 }
 
 func TestEditFileSyntaxValidToInvalid(t *testing.T) {
+	// Verifies that an edit that would introduce a syntax error into a valid file is rejected, leaving the file unchanged.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
@@ -262,6 +274,7 @@ func TestEditFileSyntaxValidToInvalid(t *testing.T) {
 }
 
 func TestEditFileSyntaxInvalidToValid(t *testing.T) {
+	// Verifies that fixing a pre-existing syntax error succeeds and produces a warning about the original errors.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
@@ -284,6 +297,7 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 }
 
 func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
+	// Verifies that editing an already-invalid file to remain invalid still proceeds, with a warning but no hard error.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.json")
@@ -306,6 +320,7 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 }
 
 func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
+	// Verifies that files with unrecognised extensions (e.g. .txt) skip syntax validation entirely, producing no warnings.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -328,6 +343,7 @@ func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
 }
 
 func TestReadLargeFile(t *testing.T) {
+	// Verifies that reading a file exceeding the line limit produces a truncation notice indicating how many lines remain.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "big.txt")
@@ -351,8 +367,8 @@ func TestReadLargeFile(t *testing.T) {
 	}
 }
 
-// Verify offset returns lines starting from the given line number.
 func TestReadFileOffset(t *testing.T) {
+	// Verify offset returns lines starting from the given line number.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -378,8 +394,8 @@ func TestReadFileOffset(t *testing.T) {
 	}
 }
 
-// Verify limit caps the number of lines returned.
 func TestReadFileLimit(t *testing.T) {
+	// Verify limit caps the number of lines returned.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -404,8 +420,8 @@ func TestReadFileLimit(t *testing.T) {
 	}
 }
 
-// Verify offset and limit work together to return a window of lines.
 func TestReadFileOffsetAndLimit(t *testing.T) {
+	// Verify offset and limit work together to return a window of lines.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -430,8 +446,8 @@ func TestReadFileOffsetAndLimit(t *testing.T) {
 	}
 }
 
-// Verify offset past end of file returns informative message.
 func TestReadFileOffsetPastEnd(t *testing.T) {
+	// Verify offset past end of file returns informative message.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -488,6 +504,7 @@ func TestBlockedPathsAccessDenied(t *testing.T) {
 }
 
 func TestReadPDF(t *testing.T) {
+	// Verifies that reading a .pdf file returns a text description and an ExtraBlocks document block with base64-encoded PDF data.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.pdf")
@@ -531,6 +548,7 @@ func TestReadPDF(t *testing.T) {
 }
 
 func TestReadPDFCaseInsensitive(t *testing.T) {
+	// Verifies that PDF detection is case-insensitive, so .PDF files are treated the same as .pdf.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "report.PDF")
@@ -554,6 +572,7 @@ func TestReadPDFCaseInsensitive(t *testing.T) {
 // --- resolveAndValidatePath tests ---
 
 func TestResolveAndValidatePath_RelativeInside(t *testing.T) {
+	// Verifies that a relative path inside the base directory resolves correctly to an absolute path under it.
 	t.Parallel()
 	dir := t.TempDir()
 	got, err := resolveAndValidatePath("sub/file.txt", dir)
@@ -567,6 +586,7 @@ func TestResolveAndValidatePath_RelativeInside(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_Rejected(t *testing.T) {
+	// Verifies that absolute paths and path traversal attempts (../) are rejected with appropriate errors.
 	t.Parallel()
 	dir := t.TempDir()
 	tests := []struct {
@@ -587,6 +607,7 @@ func TestResolveAndValidatePath_Rejected(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_SymlinkEscape(t *testing.T) {
+	// Verifies that a symlink inside the base directory pointing outside is detected and rejected as path traversal.
 	t.Parallel()
 	dir := t.TempDir()
 	// Create a symlink inside baseDir that points outside
@@ -604,6 +625,7 @@ func TestResolveAndValidatePath_SymlinkEscape(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_SymlinkEscapeNewFile(t *testing.T) {
+	// Verifies that a symlink escape is blocked even when the target file does not yet exist (write-path protection).
 	t.Parallel()
 	dir := t.TempDir()
 	// Symlink to outside dir — target file doesn't exist yet
@@ -620,6 +642,7 @@ func TestResolveAndValidatePath_SymlinkEscapeNewFile(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_SymlinkInsideOK(t *testing.T) {
+	// Verifies that a symlink whose resolved target remains inside the base directory is allowed.
 	t.Parallel()
 	dir := t.TempDir()
 	// Symlink within baseDir is fine
@@ -639,6 +662,7 @@ func TestResolveAndValidatePath_SymlinkInsideOK(t *testing.T) {
 }
 
 func TestResolveAndValidatePath_EmptyBaseDir(t *testing.T) {
+	// Verifies that when no base directory is configured, paths are passed through without sandbox enforcement.
 	t.Parallel()
 	got, err := resolveAndValidatePath("/any/path", "")
 	if err != nil {
@@ -652,6 +676,7 @@ func TestResolveAndValidatePath_EmptyBaseDir(t *testing.T) {
 // --- Isolated tool end-to-end tests ---
 
 func TestIsolatedReadInside(t *testing.T) {
+	// Verifies that the isolated read tool can read a file that exists within the sandbox directory.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("hello\n"), 0644)
@@ -668,6 +693,7 @@ func TestIsolatedReadInside(t *testing.T) {
 }
 
 func TestIsolatedReadEscapeBlocked(t *testing.T) {
+	// Verifies that the isolated read tool blocks path traversal attempts that would escape the sandbox.
 	t.Parallel()
 	dir := t.TempDir()
 	tool := NewIsolatedReadTool(nil, dir)
@@ -679,6 +705,7 @@ func TestIsolatedReadEscapeBlocked(t *testing.T) {
 }
 
 func TestIsolatedWriteInside(t *testing.T) {
+	// Verifies that the isolated write tool can create a file inside the sandbox and the content is correct.
 	t.Parallel()
 	dir := t.TempDir()
 	tool := NewIsolatedWriteTool(nil, dir)
@@ -697,6 +724,7 @@ func TestIsolatedWriteInside(t *testing.T) {
 }
 
 func TestIsolatedWriteEscapeBlocked(t *testing.T) {
+	// Verifies that the isolated write tool rejects paths that would write outside the sandbox via traversal.
 	t.Parallel()
 	dir := t.TempDir()
 	tool := NewIsolatedWriteTool(nil, dir)
@@ -711,6 +739,7 @@ func TestIsolatedWriteEscapeBlocked(t *testing.T) {
 }
 
 func TestIsolatedEditEscapeBlocked(t *testing.T) {
+	// Verifies that editing via a symlink that points outside the sandbox is blocked and leaves the target file unmodified.
 	t.Parallel()
 	dir := t.TempDir()
 	// Create a file outside the base dir
@@ -737,6 +766,7 @@ func TestIsolatedEditEscapeBlocked(t *testing.T) {
 }
 
 func TestReadAllowedWithStore(t *testing.T) {
+	// Verifies that a non-blocked file can still be read when a secrets store is configured.
 	t.Parallel()
 	store := loadTestStore(t)
 	dir := t.TempDir()
@@ -758,6 +788,7 @@ func TestReadAllowedWithStore(t *testing.T) {
 // --- Config blocked paths tests ---
 
 func TestWriteBlockedByConfig(t *testing.T) {
+	// Verifies that writing to a config-blocked directory returns the rebuke message and does not create the file.
 	t.Parallel()
 	dir := t.TempDir()
 	blocked := []config.BlockedPath{
@@ -784,6 +815,7 @@ func TestWriteBlockedByConfig(t *testing.T) {
 }
 
 func TestWriteNotBlockedByConfig(t *testing.T) {
+	// Verifies that writing to a directory not in the blocked list succeeds normally.
 	t.Parallel()
 	blockedDir := t.TempDir()
 	writeDir := t.TempDir()
@@ -811,6 +843,7 @@ func TestWriteNotBlockedByConfig(t *testing.T) {
 }
 
 func TestEditBlockedByConfig(t *testing.T) {
+	// Verifies that editing a file in a config-blocked directory returns the rebuke message and leaves the file unchanged.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "file.go")
@@ -880,10 +913,10 @@ func TestBlockedPathPrefixMatching(t *testing.T) {
 	}
 }
 
-// Tests that read/write/edit resolve relative paths against the workspace directory,
-// not the process cwd. Creates a file in a temp "workspace" dir and verifies that
-// tools can access it via a relative path when workspace is set.
 func TestWorkspaceResolution(t *testing.T) {
+	// Tests that read/write/edit resolve relative paths against the workspace directory,
+	// not the process cwd. Creates a file in a temp "workspace" dir and verifies that
+	// tools can access it via a relative path when workspace is set.
 	t.Parallel()
 	workspace := t.TempDir()
 	os.MkdirAll(filepath.Join(workspace, "subdir"), 0755)
@@ -939,6 +972,7 @@ func TestWorkspaceResolution(t *testing.T) {
 }
 
 func TestWriteNoBlockedPaths(t *testing.T) {
+	// Verifies that write works normally when the blocked paths list is nil (no restrictions configured).
 	t.Parallel()
 	dir := t.TempDir()
 	tool := NewWriteTool(nil, "", nil)

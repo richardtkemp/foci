@@ -3,6 +3,7 @@ package tools
 import "testing"
 
 func TestAsyncNotifierDelivers(t *testing.T) {
+	// Verifies that InjectToAgent calls the notify func with the correct session key, message, and replyTo fields.
 	t.Parallel()
 	var gotKey, gotMsg, gotReplyTo string
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
@@ -23,18 +24,21 @@ func TestAsyncNotifierDelivers(t *testing.T) {
 }
 
 func TestAsyncNotifierNilReceiver(t *testing.T) {
+	// Verifies that calling InjectToAgent on a nil AsyncNotifier does not panic.
 	t.Parallel()
 	var n *AsyncNotifier
 	n.InjectToAgent("sess", "should not panic", "", "") // must not panic
 }
 
 func TestAsyncNotifierNilFunc(t *testing.T) {
+	// Verifies that an AsyncNotifier with no notify function set does not panic when injecting.
 	t.Parallel()
 	n := &AsyncNotifier{}
 	n.InjectToAgent("sess", "should not panic", "", "") // must not panic
 }
 
 func TestAsyncNotifierPendingCounter(t *testing.T) {
+	// Verifies that HasPending tracks MarkPending/MarkDone correctly per session key and does not bleed across sessions.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
@@ -59,6 +63,7 @@ func TestAsyncNotifierPendingCounter(t *testing.T) {
 }
 
 func TestAsyncNotifierMultiplePending(t *testing.T) {
+	// Verifies that the pending counter counts correctly when multiple goroutines mark pending before any completes.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
@@ -79,6 +84,7 @@ func TestAsyncNotifierMultiplePending(t *testing.T) {
 }
 
 func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
+	// Verifies that calling MarkDone without a prior MarkPending does not panic or produce a negative count.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
@@ -90,6 +96,7 @@ func TestAsyncNotifierMarkDoneUnderflow(t *testing.T) {
 }
 
 func TestAsyncNotifierNilPending(t *testing.T) {
+	// Verifies that all pending-counter methods are safe to call on a nil receiver.
 	t.Parallel()
 	var n *AsyncNotifier
 	// All methods should be safe on nil receiver

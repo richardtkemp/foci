@@ -7,6 +7,8 @@ import (
 )
 
 func TestCreateBranchAndLoadFull(t *testing.T) {
+	// Proves that LoadFull on a branch returns the parent messages at the branch point
+	// followed by the branch's own messages — in the correct order and count.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/imorning/1000000000"
@@ -53,6 +55,8 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 }
 
 func TestBranchParentContinuesGrowing(t *testing.T) {
+	// Proves that a branch snapshot is fixed at creation time: messages appended to
+	// the parent after branching are not visible when loading the branch.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/itest/1000000000"
@@ -88,6 +92,8 @@ func TestBranchParentContinuesGrowing(t *testing.T) {
 }
 
 func TestBranchFromEmptyParent(t *testing.T) {
+	// Proves that branching from a parent with no messages works correctly:
+	// LoadFull returns only the branch's own messages.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iempty/1000000000"
@@ -109,6 +115,8 @@ func TestBranchFromEmptyParent(t *testing.T) {
 }
 
 func TestLoadFullNonBranch(t *testing.T) {
+	// Proves that LoadFull on a regular (non-branch) session behaves identically
+	// to a plain Load — it returns all messages without attempting parent resolution.
 	s := NewStore(t.TempDir())
 	key := "main/imain/1000000000"
 
@@ -125,6 +133,8 @@ func TestLoadFullNonBranch(t *testing.T) {
 }
 
 func TestLoadFullNonexistent(t *testing.T) {
+	// Proves that LoadFull on a key that has never been written returns nil
+	// without error, matching the behaviour of a plain Load on a missing file.
 	s := NewStore(t.TempDir())
 	msgs, err := s.LoadFull("ghost/imain/1000000000")
 	if err != nil {
@@ -136,6 +146,8 @@ func TestLoadFullNonexistent(t *testing.T) {
 }
 
 func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
+	// Proves that the NoResetHook option is persisted in branch metadata and can
+	// be read back via GetBranchMeta, with the correct BranchPoint recorded.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iopts/1000000000"
@@ -163,6 +175,8 @@ func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 }
 
 func TestCreateBranchWithOptionsDefault(t *testing.T) {
+	// Proves that omitting BranchOptions leaves NoResetHook as false in the
+	// persisted metadata — the safe default for normal branches.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/idefault/1000000000"
@@ -184,6 +198,8 @@ func TestCreateBranchWithOptionsDefault(t *testing.T) {
 }
 
 func TestGetBranchMetaRegularSession(t *testing.T) {
+	// Proves that GetBranchMeta returns nil for a regular session (no branch_meta
+	// header), allowing callers to use nil as a "not a branch" signal.
 	s := NewStore(t.TempDir())
 	key := "main/imain/1000000000"
 
@@ -199,6 +215,8 @@ func TestGetBranchMetaRegularSession(t *testing.T) {
 }
 
 func TestGetBranchMetaNonexistent(t *testing.T) {
+	// Proves that GetBranchMeta returns nil without error for a session key
+	// that has never been written to disk.
 	s := NewStore(t.TempDir())
 
 	meta, err := s.GetBranchMeta("ghost/imain/1000000000")
@@ -210,31 +228,10 @@ func TestGetBranchMetaNonexistent(t *testing.T) {
 	}
 }
 
-func TestBranchMetaBackwardCompat(t *testing.T) {
-	s := NewStore(t.TempDir())
-	parentKey := "main/imain/1000000000"
-	branchKey := "main/iold/1000000000"
-
-	s.TestAppend(parentKey, msg("user", "hello"))
-
-	// CreateBranch (old method) doesn't set NoResetHook
-	if err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
-		t.Fatalf("CreateBranch: %v", err)
-	}
-
-	meta, err := s.GetBranchMeta(branchKey)
-	if err != nil {
-		t.Fatalf("GetBranchMeta: %v", err)
-	}
-	if meta == nil {
-		t.Fatal("expected branch meta")
-	}
-	if meta.NoResetHook {
-		t.Error("NoResetHook should be false for old-style branches")
-	}
-}
 
 func TestBranchDoesNotContaminateParent(t *testing.T) {
+	// Proves that messages appended to a branch are not visible in the parent
+	// session — branches are one-way forks that never write back.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/itest/1000000000"
@@ -255,6 +252,9 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 }
 
 func TestCreateBranchWithOrientationMessage(t *testing.T) {
+	// Proves that an orientation message is injected as the first branch message
+	// when provided in BranchOptions, appearing after the inherited parent messages
+	// in the LoadFull result.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iorient/1000000000"
@@ -291,6 +291,8 @@ func TestCreateBranchWithOrientationMessage(t *testing.T) {
 }
 
 func TestCreateBranchWithoutOrientationMessage(t *testing.T) {
+	// Proves that an empty orientation message adds no extra messages — the branch
+	// starts clean with only the inherited parent messages.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/inoorient/1000000000"

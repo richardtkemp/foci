@@ -70,9 +70,9 @@ func testBrowserManager(t *testing.T) *BrowserManager {
 	return mgr
 }
 
-// TestBrowserNavigateAndSnapshot verifies that navigating to a page and
-// capturing a snapshot returns YAML with element refs and page metadata.
 func TestBrowserNavigateAndSnapshot(t *testing.T) {
+	// Verifies that navigating to a page and
+	// capturing a snapshot returns YAML with element refs and page metadata.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><head><title>Test Page</title></head>
@@ -107,9 +107,9 @@ func TestBrowserNavigateAndSnapshot(t *testing.T) {
 	}
 }
 
-// TestBrowserClickByRef verifies that after navigating and getting a snapshot,
-// we can click an element using its ref from the snapshot.
 func TestBrowserClickByRef(t *testing.T) {
+	// Verifies that after navigating and getting a snapshot,
+	// we can click an element using its ref from the snapshot.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body>
@@ -149,8 +149,8 @@ func TestBrowserClickByRef(t *testing.T) {
 	}
 }
 
-// TestBrowserFillByRef verifies that we can fill an input field using its ref.
 func TestBrowserFillByRef(t *testing.T) {
+	// Verifies that we can fill an input field using its ref.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body>
@@ -190,9 +190,9 @@ func TestBrowserFillByRef(t *testing.T) {
 	}
 }
 
-// TestBrowserStaleRef verifies that using a ref from a previous generation
-// (stale snapshot) returns a meaningful error.
 func TestBrowserStaleRef(t *testing.T) {
+	// Verifies that using a ref from a previous generation
+	// (stale snapshot) returns a meaningful error.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body><button>Click Me</button></body></html>`)
@@ -234,9 +234,9 @@ func TestBrowserStaleRef(t *testing.T) {
 	}
 }
 
-// TestBrowserInvalidRef verifies that using a malformed ref string returns
-// a validation error.
 func TestBrowserInvalidRef(t *testing.T) {
+	// Verifies that using a malformed ref string returns
+	// a validation error.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body><button>Test</button></body></html>`)
@@ -263,9 +263,9 @@ func TestBrowserInvalidRef(t *testing.T) {
 	}
 }
 
-// TestBrowserMultiFill verifies that the fill action supports a "fields"
-// array to fill multiple inputs in a single tool call with one snapshot.
 func TestBrowserMultiFill(t *testing.T) {
+	// Verifies that the fill action supports a "fields"
+	// array to fill multiple inputs in a single tool call with one snapshot.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body>
@@ -318,9 +318,9 @@ func TestBrowserMultiFill(t *testing.T) {
 	}
 }
 
-// TestBrowserMultiFillBackwardCompat verifies that single ref+value fill
-// still works after adding multi-fill support.
 func TestBrowserMultiFillBackwardCompat(t *testing.T) {
+	// Verifies that single ref+value fill
+	// still works after adding multi-fill support.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body>
@@ -361,9 +361,9 @@ func TestBrowserMultiFillBackwardCompat(t *testing.T) {
 	}
 }
 
-// TestBrowserFillScopedSnapshot verifies that the snapshot returned after
-// a fill action is scoped to the form context, not the full page.
 func TestBrowserFillScopedSnapshot(t *testing.T) {
+	// Verifies that the snapshot returned after
+	// a fill action is scoped to the form context, not the full page.
 	skipIfNoBrowser(t)
 
 	// Page with a form and lots of unrelated content
@@ -421,9 +421,9 @@ func TestBrowserFillScopedSnapshot(t *testing.T) {
 	}
 }
 
-// TestBrowserFillNoRefOrFields verifies that fill returns an error when
-// neither ref nor fields is provided.
 func TestBrowserFillNoRefOrFields(t *testing.T) {
+	// Verifies that fill returns an error when
+	// neither ref nor fields is provided.
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><body><input type="text" /></body></html>`)

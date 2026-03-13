@@ -23,8 +23,8 @@ func testConfigSetDeps(setFn func(path string, target config.SetTarget, value st
 	}
 }
 
-// Verifies the full wizard flow: section → key → value, confirming SetInFileFn is called correctly.
 func TestConfigSetWizardHappyPath(t *testing.T) {
+	// Verifies the full wizard flow: section → key → value, confirming SetInFileFn is called correctly.
 	var captured config.SetTarget
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
@@ -76,8 +76,8 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 }
 
-// Verifies that the "agent" section targets the [[agents]] block with the correct agent ID.
 func TestConfigSetWizardAgentSection(t *testing.T) {
+	// Verifies that the "agent" section targets the [[agents]] block with the correct agent ID.
 	var captured config.SetTarget
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		captured = target
@@ -98,8 +98,8 @@ func TestConfigSetWizardAgentSection(t *testing.T) {
 	}
 }
 
-// Verifies that an unknown section shows available sections.
 func TestConfigSetWizardInvalidSection(t *testing.T) {
+	// Verifies that an unknown section shows available sections.
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
 
@@ -115,8 +115,8 @@ func TestConfigSetWizardInvalidSection(t *testing.T) {
 	}
 }
 
-// Verifies that an unknown key shows available keys for the section.
 func TestConfigSetWizardInvalidKey(t *testing.T) {
+	// Verifies that an unknown key shows available keys for the section.
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
 
@@ -131,8 +131,8 @@ func TestConfigSetWizardInvalidKey(t *testing.T) {
 	}
 }
 
-// Verifies that an invalid value for the field type is rejected with a retry prompt.
 func TestConfigSetWizardInvalidValue(t *testing.T) {
+	// Verifies that an invalid value for the field type is rejected with a retry prompt.
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
 
@@ -151,8 +151,8 @@ func TestConfigSetWizardInvalidValue(t *testing.T) {
 	}
 }
 
-// Verifies direct mode parsing and execution.
 func TestConfigSetDirect(t *testing.T) {
+	// Verifies direct mode parsing and execution.
 	var captured config.SetTarget
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
@@ -177,8 +177,8 @@ func TestConfigSetDirect(t *testing.T) {
 	}
 }
 
-// Verifies direct mode with agent section.
 func TestConfigSetDirectAgent(t *testing.T) {
+	// Verifies direct mode with agent section.
 	var captured config.SetTarget
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		captured = target
@@ -198,8 +198,8 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	}
 }
 
-// Verifies direct mode rejects unknown fields.
 func TestConfigSetDirectUnknownField(t *testing.T) {
+	// Verifies direct mode rejects unknown fields.
 	deps := testConfigSetDeps(nil)
 
 	_, err := ConfigSetDirect(deps, "nonexistent.field=value")
@@ -211,8 +211,8 @@ func TestConfigSetDirectUnknownField(t *testing.T) {
 	}
 }
 
-// Verifies direct mode rejects missing equals sign.
 func TestConfigSetDirectMissingEquals(t *testing.T) {
+	// Verifies direct mode rejects missing equals sign.
 	deps := testConfigSetDeps(nil)
 
 	_, err := ConfigSetDirect(deps, "defaults.model")
@@ -221,8 +221,8 @@ func TestConfigSetDirectMissingEquals(t *testing.T) {
 	}
 }
 
-// Verifies direct mode with boolean value normalization.
 func TestConfigSetDirectBool(t *testing.T) {
+	// Verifies direct mode with boolean value normalization.
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		capturedValue = value
@@ -238,8 +238,8 @@ func TestConfigSetDirectBool(t *testing.T) {
 	}
 }
 
-// Verifies direct mode with integer value.
 func TestConfigSetDirectInt(t *testing.T) {
+	// Verifies direct mode with integer value.
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		capturedValue = value
@@ -255,8 +255,8 @@ func TestConfigSetDirectInt(t *testing.T) {
 	}
 }
 
-// Verifies the old value is shown in the result when replacing.
 func TestConfigSetDirectShowsOldValue(t *testing.T) {
+	// Verifies the old value is shown in the result when replacing.
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		return `"old-model"`, nil
 	})

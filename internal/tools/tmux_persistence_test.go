@@ -13,8 +13,8 @@ import (
 	"foci/internal/state"
 )
 
-// TestTmuxPersistOwnedSessions verifies that owned sessions are persisted.
 func TestTmuxPersistOwnedSessions(t *testing.T) {
+	// Verifies that starting a session writes the session name to the state store under the agent key, so ownership survives process restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -53,8 +53,8 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 	}
 }
 
-// TestTmuxRestoreOwnedSessions verifies that owned sessions are restored.
 func TestTmuxRestoreOwnedSessions(t *testing.T) {
+	// Verifies that a tool instance initialized with pre-populated state can read sessions that were persisted by a previous instance.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -91,8 +91,8 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 }
 
-// TestTmuxPersistOnKill verifies that sessions are removed from state when killed.
 func TestTmuxPersistOnKill(t *testing.T) {
+	// Verifies that killing a session removes it from the persisted state, ensuring the state store stays in sync with actual session existence.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -145,10 +145,9 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	}
 }
 
-// TestTmuxPersistClearedOnStaleSessions verifies stale sessions are cleaned from state.
 func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
-	// NOT parallel: lists sessions on the shared tmux server which
-	// other parallel tests may create/destroy concurrently.
+	// Verifies that listing sessions clears stale entries from persisted state when the corresponding tmux sessions no longer exist.
+	// NOT parallel: lists sessions on the shared tmux server which other parallel tests may create/destroy concurrently.
 	tmuxAvailable(t)
 
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -186,8 +185,8 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	}
 }
 
-// TestTmuxNoStateStore verifies that tool works without state store.
 func TestTmuxNoStateStore(t *testing.T) {
+	// Verifies that the tool operates correctly when no state store is configured, allowing stateless use without persistence.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -220,8 +219,8 @@ func TestTmuxNoStateStore(t *testing.T) {
 	}
 }
 
-// TestTmuxStateFileRoundTrip verifies state persistence and restoration end-to-end.
 func TestTmuxStateFileRoundTrip(t *testing.T) {
+	// Verifies end-to-end persistence: a session started by one instance is accessible from a new instance that reads from the same state file.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -278,8 +277,8 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTmuxPersistWatches verifies that watches are persisted to state.
 func TestTmuxPersistWatches(t *testing.T) {
+	// Verifies that adding a watch writes the session name and threshold to the persistent state store, enabling watch restoration after restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -340,8 +339,8 @@ func TestTmuxPersistWatches(t *testing.T) {
 	tool.Execute(context.Background(), params)
 }
 
-// TestTmuxRestoreWatches verifies that watches are restored from state.
 func TestTmuxRestoreWatches(t *testing.T) {
+	// Verifies that a new tool instance restores watches from pre-populated state, resuming monitoring for sessions that survived the restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -390,8 +389,8 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	cleanup()
 }
 
-// TestTmuxRestoreWatchesStaleSessions verifies stale watched sessions are cleaned.
 func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
+	// Verifies that watches for sessions that no longer exist are silently dropped during restore, keeping the persisted state consistent with reality.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -422,8 +421,8 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 	}
 }
 
-// TestTmuxUnwatchPersists verifies that unwatch updates persisted state.
 func TestTmuxUnwatchPersists(t *testing.T) {
+	// Verifies that calling unwatch removes the watch entry from the state store, so the watch is not erroneously restored after a restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -484,8 +483,8 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 }
 
-// TestTmuxClearAllPersistsWatches verifies that ClearAll removes watches from state.
 func TestTmuxClearAllPersistsWatches(t *testing.T) {
+	// Verifies that the ClearAll cleanup function removes all watches from the state store, ensuring no stale watches survive shutdown.
 	t.Parallel()
 	tmuxAvailable(t)
 
@@ -540,8 +539,8 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 }
 
-// TestTmuxUnwatchNotRestoredOnRestart verifies unwatched sessions don't restore.
 func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
+	// Verifies that after unwatching and restarting, the session is not restored into the new instance's watch set, confirming the unwatch is durable.
 	t.Parallel()
 	tmuxAvailable(t)
 

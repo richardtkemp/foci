@@ -12,6 +12,9 @@ import (
 )
 
 func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
+	// Proves that ArchiveSweep gzips all sessions whose last activity exceeds the
+	// maxAge threshold, removes the original .jsonl files, and marks them archived
+	// in the index.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
@@ -64,6 +67,8 @@ func TestArchiveSweep_GzipsIdleSessions(t *testing.T) {
 }
 
 func TestArchiveSweep_SkipsRecentSessions(t *testing.T) {
+	// Proves that ArchiveSweep leaves sessions untouched when their last activity
+	// is within the maxAge window.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
@@ -82,6 +87,8 @@ func TestArchiveSweep_SkipsRecentSessions(t *testing.T) {
 }
 
 func TestArchiveSweep_SkipsSessionsWithActiveBranches(t *testing.T) {
+	// Proves that a parent session is not archived when it has at least one
+	// active branch, even if the parent itself is old enough to qualify.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
@@ -151,6 +158,8 @@ func TestArchiveSweep_SkipsCurrentChatSession(t *testing.T) {
 }
 
 func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
+	// Proves that ArchiveSweep also compresses numbered archive files alongside
+	// the main .jsonl — both are gzipped and the originals removed.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	idx := tempIndex(t)
@@ -206,6 +215,8 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 }
 
 func TestDecompressIfGzipped(t *testing.T) {
+	// Proves that Load transparently decompresses a .jsonl.gz file: the original
+	// content is returned, the .jsonl is restored on disk, and the .gz is removed.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -258,6 +269,9 @@ func TestDecompressIfGzipped(t *testing.T) {
 }
 
 func TestScanAllSessions_IncludesArchivesAndGzipped(t *testing.T) {
+	// Proves that ScanAllSessions enumerates both the active current file and
+	// compacted archive files within the same session directory, each with the
+	// correct status.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -293,6 +307,9 @@ func TestScanAllSessions_IncludesArchivesAndGzipped(t *testing.T) {
 }
 
 func TestScanAllSessions_CurrentFileAlwaysActive(t *testing.T) {
+	// Proves that no matter how many archive rotations have occurred, the
+	// current root.jsonl file is always reported as active while archives
+	// are reported as compacted.
 	dir := t.TempDir()
 	store := NewStore(dir)
 

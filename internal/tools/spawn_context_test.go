@@ -13,6 +13,8 @@ import (
 )
 
 func TestSpawnContextRaw(t *testing.T) {
+	// Proves that raw context sends no system prompt to the model, resolves the model alias,
+	// and returns the model's response directly.
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
@@ -67,6 +69,8 @@ func TestSpawnContextRaw(t *testing.T) {
 }
 
 func TestSpawnContextCharacter(t *testing.T) {
+	// Proves that character context injects the full bootstrap system blocks into the request,
+	// giving the spawned model the agent's identity and soul.
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
@@ -192,7 +196,8 @@ func TestSpawnContextClone(t *testing.T) {
 }
 
 func TestSpawnContextCloneDefault(t *testing.T) {
-	// Clone should be the default context mode — nil notifier = sync fallback
+	// Proves that omitting the context parameter defaults to clone mode, and that a nil notifier
+	// causes execution to be synchronous rather than async.
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
@@ -227,6 +232,8 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 }
 
 func TestSpawnExploreMode(t *testing.T) {
+	// Proves that explore context always uses haiku regardless of the requested model, injects
+	// a read-only explorer system prompt, and provides exploration tools but not shell.
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
 
@@ -306,7 +313,8 @@ func TestSpawnExploreMode(t *testing.T) {
 }
 
 func TestSpawnExploreToolSet(t *testing.T) {
-	// Register all real tools in a registry.
+	// Proves that the explore tool set includes all required exploration tools (ls, find, grep, git, read)
+	// and excludes dangerous tools, with consistent defs and handler maps.
 	t.Parallel()
 	reg := NewRegistry()
 	allRegistryTools := []string{
@@ -400,9 +408,9 @@ func TestSpawnExploreToolSet(t *testing.T) {
 }
 
 func TestSpawnExploreToolAllowlist(t *testing.T) {
-	// Exhaustive audit: every known tool must be explicitly classified
+	// Exhaustive audit: every known tool must be explicitly classified as either allowed
+	// or excluded for explore mode to prevent accidental exposure of dangerous capabilities.
 	t.Parallel()
-	// as either allowed or excluded for explore mode.
 	// If you add a new tool and this test fails, you MUST decide:
 	//   - Is the tool safe for read-only exploration (no mutation, no messaging)?
 	//     Add it to spawnExploreAllowed in spawn.go.

@@ -4,10 +4,9 @@ import (
 	"testing"
 )
 
-// TestReflectFindsExplicitSecrets verifies that the reflection walker finds
-// string fields tagged as secret references (secret, *_secret, api_key) in
-// all config struct types, and ignores empty values.
 func TestReflectFindsExplicitSecrets(t *testing.T) {
+	// Proves the reflection walker finds all explicitly-declared secret references
+	// across agent, TTS, STT, and endpoint config structs, ignoring empty values.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", BotSecret: "custom.bot_token"},
@@ -44,9 +43,9 @@ func TestReflectFindsExplicitSecrets(t *testing.T) {
 	}
 }
 
-// TestReflectIgnoresEmptySecrets verifies that empty secret fields are not
-// reported as required secrets.
 func TestReflectIgnoresEmptySecrets(t *testing.T) {
+	// Proves that empty secret fields do not produce entries in the required
+	// secrets list, preventing spurious missing-secret warnings.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", BotSecret: ""},
@@ -64,9 +63,9 @@ func TestReflectIgnoresEmptySecrets(t *testing.T) {
 	}
 }
 
-// TestConventionTelegramBot verifies that an agent with telegram_bot set but
-// no bot_secret produces a "telegram.<bot_name>" convention secret ref.
 func TestConventionTelegramBot(t *testing.T) {
+	// Proves that an agent with telegram_bot set but no bot_secret produces
+	// a "telegram.<bot_name>" convention secret reference.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", TelegramBot: "scout_bot"},
@@ -77,10 +76,9 @@ func TestConventionTelegramBot(t *testing.T) {
 	assertHasKey(t, refs, "telegram.scout_bot")
 }
 
-// TestConventionTelegramBotWithOverride verifies that when bot_secret is set,
-// the convention "telegram.<bot>" ref is NOT produced (the explicit one is
-// found by reflection instead).
 func TestConventionTelegramBotWithOverride(t *testing.T) {
+	// Proves that when bot_secret is set, the convention "telegram.<bot>" ref is
+	// not produced; only the explicit override key is reported.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", TelegramBot: "scout_bot", BotSecret: "custom.token"},
@@ -92,9 +90,9 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	assertMissingKey(t, refs, "telegram.scout_bot")
 }
 
-// TestConventionMultiballBots verifies that both per-agent and global multiball
-// bot entries produce "telegram.<name>" convention secret refs.
 func TestConventionMultiballBots(t *testing.T) {
+	// Proves that both per-agent and global [telegram] multiball_bots entries
+	// produce "telegram.<name>" convention secret references.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", MultiballBots: []string{"extra1"}},
@@ -110,10 +108,10 @@ func TestConventionMultiballBots(t *testing.T) {
 	assertHasKey(t, refs, "telegram.shared2")
 }
 
-// TestConventionEndpointAPIKey verifies that an endpoint used by an agent with
-// no explicit api_key field produces an "<endpoint>.api_key" convention ref.
-// The anthropic endpoint is excluded (it has its own credential resolution).
 func TestConventionEndpointAPIKey(t *testing.T) {
+	// Proves that an endpoint used by an agent with no explicit api_key generates
+	// a "<endpoint>.api_key" convention ref, while anthropic endpoints are
+	// excluded from this convention.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929"},
@@ -129,10 +127,9 @@ func TestConventionEndpointAPIKey(t *testing.T) {
 	assertMissingKey(t, refs, "anthropic.api_key")
 }
 
-// TestConventionEndpointExplicitAPIKey verifies that an endpoint with an
-// explicit api_key field does not produce a convention ref (the explicit one
-// is found by reflection).
 func TestConventionEndpointExplicitAPIKey(t *testing.T) {
+	// Proves that when an endpoint has an explicit api_key, only that key is
+	// reported and no convention ref is generated for the endpoint name.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", Model: "deepseek/deepseek-chat", Endpoint: "openrouter"},
@@ -147,10 +144,10 @@ func TestConventionEndpointExplicitAPIKey(t *testing.T) {
 	assertMissingKey(t, refs, "openrouter.api_key")
 }
 
-// TestConventionBraveSearch verifies that brave.api_key is required when any
-// agent effectively uses brave search, considering the per-agent → defaults →
-// tools resolution chain.
 func TestConventionBraveSearch(t *testing.T) {
+	// Proves that brave.api_key is required whenever any agent uses brave search
+	// (directly or via tools default), and is not required when another provider
+	// is configured.
 	t.Run("explicit brave", func(t *testing.T) {
 		cfg := Config{
 			Agents: []AgentConfig{
@@ -180,9 +177,9 @@ func TestConventionBraveSearch(t *testing.T) {
 	})
 }
 
-// TestConventionTTSHostname verifies that a TTS entry with no explicit secret
-// derives the key from the endpoint hostname. edge-tts entries are skipped.
 func TestConventionTTSHostname(t *testing.T) {
+	// Proves that a TTS entry with no explicit secret derives the required key
+	// from the endpoint's hostname, and that edge-tts entries require no secret.
 	cfg := Config{
 		TTS: []TTSConfig{
 			{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/speech"},
@@ -194,9 +191,9 @@ func TestConventionTTSHostname(t *testing.T) {
 	assertHasKey(t, refs, "groq.api_key")
 }
 
-// TestConventionSTTHostname verifies that an STT entry with no explicit secret
-// derives the key from the endpoint hostname.
 func TestConventionSTTHostname(t *testing.T) {
+	// Proves that an STT entry with no explicit secret derives the required key
+	// from the endpoint's hostname.
 	cfg := Config{
 		STT: []STTConfig{
 			{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/transcriptions"},
@@ -207,9 +204,10 @@ func TestConventionSTTHostname(t *testing.T) {
 	assertHasKey(t, refs, "groq.api_key")
 }
 
-// TestDeduplication verifies that the same secret key referenced by multiple
-// agents or by both reflection and convention only appears once.
 func TestDeduplication(t *testing.T) {
+	// Proves that the same secret key referenced by multiple agents only appears
+	// once in the required secrets list, even if both agents need the same
+	// endpoint credential.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", Model: "deepseek/deepseek-chat", Endpoint: "openrouter"},
@@ -232,8 +230,9 @@ func TestDeduplication(t *testing.T) {
 	}
 }
 
-// TestHostnameSecretKey verifies the URL → secret key derivation.
 func TestHostnameSecretKey(t *testing.T) {
+	// Proves HostnameSecretKey correctly derives "<hostname>.api_key" from a
+	// full URL, stripping the "api." subdomain prefix where present.
 	tests := []struct {
 		endpoint string
 		want     string
@@ -252,9 +251,9 @@ func TestHostnameSecretKey(t *testing.T) {
 	}
 }
 
-// TestContextPathsUseIDs verifies that the context field uses slice element IDs
-// (not numeric indices) when available.
 func TestContextPathsUseIDs(t *testing.T) {
+	// Proves that the Context field in SecretRef uses the element's ID (e.g.
+	// "tts[groq-tts].secret") rather than a numeric index for readability.
 	cfg := Config{
 		TTS: []TTSConfig{
 			{ID: "groq-tts", Secret: "groq.api_key"},
@@ -273,12 +272,10 @@ func TestContextPathsUseIDs(t *testing.T) {
 	t.Error("groq.api_key ref not found")
 }
 
-// TestUnusedEndpointSecretNotRequired verifies that default endpoints are only
-// created for developers agents actually reference. An anthropic-only config
-// should NOT produce openai.api_key, gemini.api_key, or openrouter.api_key
-// requirements, while TTS/STT secrets (hostname convention + explicit) still
-// appear correctly.
 func TestUnusedEndpointSecretNotRequired(t *testing.T) {
+	// Proves that endpoints not referenced by any agent do not generate secret
+	// requirements, so an anthropic-only deployment does not ask for openai,
+	// gemini, or openrouter keys, while TTS/STT secrets still appear.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "main", Model: "anthropic/claude-sonnet-4-5-20250929"},

@@ -98,6 +98,8 @@ func readRawMessage(t *testing.T, ws *websocket.Conn) (int, []byte) {
 // --- Tests ---
 
 func TestConnect(t *testing.T) {
+	// Proves that opening a WebSocket connection to the handler immediately
+	// receives a "connected" message as the first server response.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -113,6 +115,8 @@ func TestConnect(t *testing.T) {
 }
 
 func TestConnected_AgentList(t *testing.T) {
+	// Proves that the connected message includes the full list of agents from
+	// ListAgents, with IDs and emoji correctly populated.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -134,6 +138,8 @@ func TestConnected_AgentList(t *testing.T) {
 }
 
 func TestSelectAgent_SessionReady(t *testing.T) {
+	// Proves that sending select_agent for a valid agent yields a session_ready
+	// response carrying the correct agent_id and a well-formed session key.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -162,6 +168,8 @@ func TestSelectAgent_SessionReady(t *testing.T) {
 }
 
 func TestSelectAgent_UnknownAgent(t *testing.T) {
+	// Proves that selecting a nonexistent agent returns an error message
+	// mentioning the unknown agent ID instead of crashing or hanging.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -185,6 +193,8 @@ func TestSelectAgent_UnknownAgent(t *testing.T) {
 }
 
 func TestPingPong(t *testing.T) {
+	// Proves that sending a ping message results in a pong response, confirming
+	// the keepalive protocol is handled by the server.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -205,6 +215,10 @@ func TestPingPong(t *testing.T) {
 }
 
 func TestTextInput_FullPipeline(t *testing.T) {
+	// Proves that sending a text message through an established agent session
+	// produces the complete response sequence: response_start, response_text
+	// (with the agent's reply), audio_start, binary audio chunk, audio_end,
+	// and response_end — in that exact order.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -276,6 +290,9 @@ func TestTextInput_FullPipeline(t *testing.T) {
 }
 
 func TestAudioFlow_FullPipeline(t *testing.T) {
+	// Proves the end-to-end voice pipeline: audio_start + binary frames +
+	// audio_end triggers STT transcription, produces a transcription message,
+	// then drives the full response sequence including TTS audio output.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -334,6 +351,8 @@ func TestAudioFlow_FullPipeline(t *testing.T) {
 }
 
 func TestNoAgentSelected_Error(t *testing.T) {
+	// Proves that sending a text message before selecting an agent returns an
+	// error message rather than silently discarding the input or panicking.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -356,6 +375,9 @@ func TestNoAgentSelected_Error(t *testing.T) {
 }
 
 func TestEmptyAudio_Error(t *testing.T) {
+	// Proves that starting and immediately ending an audio session with no
+	// binary frames results in an "empty audio" error rather than a transcription
+	// attempt on zero bytes.
 	srv := httptest.NewServer(Handler(testConfig()))
 	defer srv.Close()
 
@@ -382,6 +404,9 @@ func TestEmptyAudio_Error(t *testing.T) {
 }
 
 func TestSTTError(t *testing.T) {
+	// Proves that an STT failure during transcription surfaces as a
+	// "transcription failed" error message to the client rather than
+	// silently dropping the response.
 	cfg := testConfig(func(c *HandlerConfig) {
 		c.STT = &mockSTT{err: fmt.Errorf("whisper down")}
 	})
@@ -411,6 +436,9 @@ func TestSTTError(t *testing.T) {
 }
 
 func TestTTSError_NonFatal(t *testing.T) {
+	// Proves that a TTS synthesis failure is non-fatal: the text response still
+	// reaches the client and the session terminates cleanly with response_end,
+	// with no audio_start/audio_end emitted.
 	cfg := testConfig(func(c *HandlerConfig) {
 		c.AgentTTS = func(_ string) TTS { return &mockTTS{err: fmt.Errorf("tts broken")} }
 	})
@@ -450,6 +478,9 @@ func TestTTSError_NonFatal(t *testing.T) {
 }
 
 func TestAudioChunking(t *testing.T) {
+	// Proves that large TTS audio is split into multiple binary WebSocket frames
+	// each not exceeding audioChunkSize, and that all bytes are delivered with
+	// no loss, followed by audio_end.
 	// Create audio data larger than audioChunkSize (4096).
 	bigAudio := bytes.Repeat([]byte("x"), 10000)
 	cfg := testConfig(func(c *HandlerConfig) {
@@ -528,6 +559,8 @@ func TestAudioChunking(t *testing.T) {
 }
 
 func TestNilTTS_NoAudio(t *testing.T) {
+	// Proves that when AgentTTS returns nil (TTS disabled for an agent), the
+	// response completes without any audio messages — just text and response_end.
 	cfg := testConfig(func(c *HandlerConfig) {
 		c.AgentTTS = func(_ string) TTS { return nil }
 	})
