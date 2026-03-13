@@ -778,8 +778,8 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `inject_agent_warnings` | bool | `false` | `[defaults]` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
-| `stream_output` | bool | `false` | `[defaults]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time. A message is created on the first text delta and edited periodically as more tokens arrive. The final edit replaces the streamed text with the HTML-formatted response. Requires `streaming = true` for API-level delta callbacks. Set globally in `[defaults]` or per-agent in platform config. |
-| `stream_update_interval` | string | `"250ms"` | `[defaults]` / `[agents.platforms.telegram]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. Per-agent override via `stream_interval` in platform config. |
+| `stream_output` | bool | `false` | `[telegram]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time. A message is created on the first text delta and edited periodically as more tokens arrive. The final edit replaces the streamed text with the HTML-formatted response. Requires `streaming = true` for API-level delta callbacks. Set globally in `[telegram]` or per-agent in platform config. |
+| `stream_update_interval` | string | `"250ms"` | `[telegram]` / `[agents.platforms.telegram]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. Per-agent override via `stream_interval` in platform config. |
 | `multiball_no_compact` | bool | `true` | — | Set `no_compact` on multiball sessions. Multiball sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want multiball sessions to compact normally. |
 
 ### Telegram Overrides
@@ -943,7 +943,7 @@ received_files_dir = ""
 | `display_width` | int | `[telegram]` | Display width for dividers in Telegram messages. |
 | `table_wrap_lines` | int | `[telegram]` | Max wrapped lines per table cell. |
 | `table_style` | string | `[telegram]` | Table style: `pretty` or `markdown`. |
-| `stream_output` | bool | `[defaults]` | Stream model output to Telegram in real-time. |
+| `stream_output` | bool | `[telegram]` | Stream model output to Telegram in real-time. |
 | `stream_interval` | duration | `[defaults]` | Duration between message edits during streaming. |
 | `received_files_dir` | string | `[telegram]` | Save received files to this directory. |
 

@@ -302,7 +302,7 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
 	setBoolDefaultDefined(&cfg.Defaults.EnableStartupNotify, true, md.IsDefined("defaults", "enable_startup_notify"))
-	setStringDefault(&cfg.Defaults.StreamUpdateInterval, "250ms")
+	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
 
 	// Backward compat: [agent] (singular) → single-element Agents array
 	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
