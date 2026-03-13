@@ -13,6 +13,8 @@ import (
 )
 
 func TestLoadNewConfigFields(t *testing.T) {
+	// Proves that non-default values for all newly-added config fields across
+	// multiple sections are correctly loaded from TOML into their struct fields.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -102,6 +104,8 @@ web_search_timeout = "20s"
 }
 
 func TestNewConfigDefaults(t *testing.T) {
+	// Proves that all newly-added config fields have the expected default values
+	// when not explicitly set in the TOML file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -164,6 +168,9 @@ id = "test"
 }
 
 func TestApplyProviderDefaults(t *testing.T) {
+	// Proves that ApplyProviderDefaults copies effort and thinking from the
+	// matching provider section, respects per-agent overrides, and only populates
+	// fields relevant to each provider (e.g. effort is anthropic-only).
 	cfg := &Config{
 		Anthropic: AnthropicConfig{Effort: "low", Thinking: "adaptive"},
 		Gemini:    GeminiConfig{Thinking: "adaptive"},
@@ -399,6 +406,9 @@ func TestExampleConfigKeysValid(t *testing.T) {
 }
 
 func TestMemorySourcesInheritance(t *testing.T) {
+	// Proves that global memory sources are prepended to each agent's source list,
+	// with the agent's own source appended last, and that explicit per-agent sources
+	// replace the default agent source while still including global ones.
 	t.Run("global sources prepended to agent default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
@@ -493,6 +503,8 @@ workspace = "/ws/clutch"
 }
 
 func TestDataDirDefault(t *testing.T) {
+	// Proves that when data_dir is not set, it defaults to ~/data (relative to the
+	// user's home directory).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -513,6 +525,8 @@ id = "test"
 }
 
 func TestDataDirExplicitNotOverridden(t *testing.T) {
+	// Proves that an explicitly-configured data_dir is preserved and not replaced
+	// by the default home-relative path during Load.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`

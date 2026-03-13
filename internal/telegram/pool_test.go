@@ -19,6 +19,9 @@ func testSecondaryBot(name string) *Bot {
 }
 
 func TestPool_AcquireRelease(t *testing.T) {
+	// Verifies the basic acquire/release lifecycle: adding a bot makes it available,
+	// acquiring it reduces availability, and releasing it restores availability and
+	// clears the session key.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	bot1.pool = pool
@@ -65,6 +68,9 @@ func TestPool_AcquireRelease(t *testing.T) {
 }
 
 func TestPool_AcquireLRU(t *testing.T) {
+	// Verifies the LRU (least recently used) acquisition policy: after acquiring
+	// and releasing bot1, a subsequent acquire returns bot1 again because it was
+	// used longest ago.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
@@ -101,6 +107,7 @@ func TestPool_AcquireLRU(t *testing.T) {
 }
 
 func TestPool_Empty(t *testing.T) {
+	// Verifies that acquiring from an empty pool returns false without panicking.
 	pool := NewPool()
 	if pool.Size() != 0 {
 		t.Fatalf("size = %d, want 0", pool.Size())
@@ -124,6 +131,8 @@ func (m *mockSessionChecker) LastActivity(key string) string {
 }
 
 func TestPool_TTLReclaimsStaleBot(t *testing.T) {
+	// Verifies that when all bots are busy but a bot's session has exceeded
+	// the TTL, it is automatically reclaimed and returned by the next Acquire.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
@@ -161,6 +170,8 @@ func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 }
 
 func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
+	// Verifies that a bot whose session has recent activity is not reclaimed
+	// by the TTL mechanism, even when all bots are busy.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
@@ -194,6 +205,8 @@ func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 }
 
 func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
+	// Verifies that a bot holding a session key that no longer exists in the
+	// store (returns "n/a") is treated as stale and reclaimed by TTL.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
@@ -221,6 +234,8 @@ func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
 }
 
 func TestPool_AllBotsBusyWithTTL(t *testing.T) {
+	// Verifies that when all bots have active (non-stale) sessions, TTL does not
+	// reclaim them and Acquire correctly returns false.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
@@ -251,6 +266,8 @@ func TestPool_AllBotsBusyWithTTL(t *testing.T) {
 }
 
 func TestPool_ZeroTTLDisablesReclaim(t *testing.T) {
+	// Verifies that setting TTL=0 disables automatic reclaim entirely, even
+	// when a checker is configured and sessions are demonstrably stale.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
@@ -274,6 +291,8 @@ func TestPool_ZeroTTLDisablesReclaim(t *testing.T) {
 }
 
 func TestPool_MixedStaleAndActive(t *testing.T) {
+	// Verifies that when one bot's session is stale and another is active,
+	// only the stale bot is reclaimed and the active bot is left untouched.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
@@ -306,6 +325,8 @@ func TestPool_MixedStaleAndActive(t *testing.T) {
 }
 
 func TestPool_ReclaimHookFires(t *testing.T) {
+	// Verifies that when a stale bot is reclaimed, the ReclaimHook is called
+	// with the session key before the bot is returned to the caller.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
@@ -340,6 +361,8 @@ func TestPool_ReclaimHookFires(t *testing.T) {
 }
 
 func TestPool_ReclaimHookNil(t *testing.T) {
+	// Verifies that TTL reclaim works correctly when ReclaimHook is nil,
+	// i.e., the absence of a hook does not cause a panic.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	pool.Add(bot1)
@@ -366,6 +389,7 @@ func TestPool_ReclaimHookNil(t *testing.T) {
 }
 
 func TestPool_ForEach(t *testing.T) {
+	// Verifies that ForEach visits all bots in the pool in insertion order.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")
@@ -388,6 +412,8 @@ func TestPool_ForEach(t *testing.T) {
 }
 
 func TestPool_ForEachEmpty(t *testing.T) {
+	// Verifies that ForEach on an empty pool calls the callback zero times
+	// without panicking.
 	pool := NewPool()
 	count := 0
 	pool.ForEach(func(b *Bot) {
@@ -399,6 +425,8 @@ func TestPool_ForEachEmpty(t *testing.T) {
 }
 
 func TestPool_ReclaimHookMultipleBots(t *testing.T) {
+	// Verifies that when multiple stale bots exist, the ReclaimHook is called
+	// once per reclaimed bot during a single Acquire call.
 	pool := NewPool()
 	bot1 := testSecondaryBot("bot1")
 	bot2 := testSecondaryBot("bot2")

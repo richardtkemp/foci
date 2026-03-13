@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -523,18 +524,23 @@ func TestAgentsNewSubcommand(t *testing.T) {
 		DefaultsDir: "/tmp/defaults",
 		HomeDir:     "/tmp",
 		ListFn:      func() []AgentInfo { return nil },
+		Registry:    reg,
 	}
-	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, reg, deps)
+	cc := CommandContext{
+		AgentListFn:  func() []AgentInfo { return nil },
+		AgentNewDeps: deps,
+	}
+	cmd := AgentsCommand()
 
-	result, err := cmd.Execute(nil, "new")
+	result, err := cmd.Execute(context.Background(), Request{Args: "new"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "Wizard") {
-		t.Errorf("expected wizard prompt, got %q", result)
+	if !strings.Contains(result.Text, "Wizard") {
+		t.Errorf("expected wizard prompt, got %q", result.Text)
 	}
-	if !strings.Contains(result, "Agent name") {
-		t.Errorf("expected Agent name prompt, got %q", result)
+	if !strings.Contains(result.Text, "Agent name") {
+		t.Errorf("expected Agent name prompt, got %q", result.Text)
 	}
 
 	_, ok := reg.HandleMessage("test-input")
@@ -545,14 +551,18 @@ func TestAgentsNewSubcommand(t *testing.T) {
 
 // Verifies wizard is unavailable when deps are nil.
 func TestAgentsNewDisabled(t *testing.T) {
-	cmd := NewAgentsCommand(func() []AgentInfo { return nil }, nil, nil)
+	cc := CommandContext{
+		AgentListFn:  func() []AgentInfo { return nil },
+		AgentNewDeps: nil,
+	}
+	cmd := AgentsCommand()
 
-	result, err := cmd.Execute(nil, "new")
+	result, err := cmd.Execute(context.Background(), Request{Args: "new"}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(result, "not available") {
-		t.Errorf("expected not available, got %q", result)
+	if !strings.Contains(result.Text, "not available") {
+		t.Errorf("expected not available, got %q", result.Text)
 	}
 }
 

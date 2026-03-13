@@ -37,6 +37,7 @@ type agentInstance struct {
 	id                string
 	ag                *agent.Agent
 	cmds              *command.Registry
+	cc                command.CommandContext
 	registry          *tools.Registry
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
@@ -111,23 +112,7 @@ func setupAgent(p setupParams) *agentInstance {
 		return ""
 	}
 
-	// sessionKeyFromCtx resolves the session key from a command/tool context.
-	// Priority: (1) tools.SessionKeyFromContext (set by agent tool execution),
-	// (2) command.ChatIDKey via primary bot cache (stable across calls),
-	// (3) defaultSessionKey fallback.
 	connMgr := p.connMgr
-	sessionKeyFromCtx := func(ctx context.Context) string {
-		if sk := tools.SessionKeyFromContext(ctx); sk != "" {
-			return sk
-		}
-		if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-			if conn := connMgr.Primary(acfg.ID); conn != nil {
-				return conn.SessionKeyForChat(chatID)
-			}
-			return session.NewChatSessionKey(acfg.ID, chatID)
-		}
-		return defaultSessionKey()
-	}
 
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
 	// Assigned later in this function.
@@ -358,6 +343,7 @@ func setupAgent(p setupParams) *agentInstance {
 		TurnLockWarnThreshold:         parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                        acfg.Effort,
 		Thinking:                      acfg.Thinking,
+		Speed:                         acfg.Speed,
 		CacheTTL:                      resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
 		Streaming:                     resolveStreamingConfig(acfg, p.cfg),
 		ManaInvestInterval:            parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
@@ -471,7 +457,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
 	// Uses lazy getter for agent since ag is assigned later in this function.
-	spawnOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
 		ClientProvider:  p.clientProvider,
@@ -486,7 +472,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
 		Notifier:        notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
-			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
+			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
 		},
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
@@ -504,11 +490,10 @@ func setupAgent(p setupParams) *agentInstance {
 	var displayDefaultsFn func() platform.DisplaySettings
 
 	lastMsgStore := command.NewLastMessageStore()
-	cmds := registerAgentCommands(cmdRegParams{
+	cmds, cc := registerAgentCommands(cmdRegParams{
 		ag:                  ag,
 		acfg:                acfg,
 		defaultSessionKey:   defaultSessionKey,
-		sessionKeyFromCtx:   sessionKeyFromCtx,
 		bootstrap:           bootstrap,
 		promptSearchDirs:    promptSearchDirs,
 		compactionThreshold: compactionThreshold,
@@ -523,7 +508,6 @@ func setupAgent(p setupParams) *agentInstance {
 		store:               p.store,
 		bwStore:             p.bwStore,
 		startTime:           p.startTime,
-		ctx:                 p.ctx,
 		registry:            registry,
 		tmuxTool:            tmuxTool,
 		skillsDirs:          skillsDirs,
@@ -544,8 +528,8 @@ func setupAgent(p setupParams) *agentInstance {
 		},
 	}, lastMsgStore)
 
-	// Finalize exec tool description with dynamically-generated shell function list.
-	registry.FinalizeExecDescription()
+	// Finalize shell tool description with dynamically-generated shell function list.
+	registry.FinalizeShellDescription()
 
 	// Log registered tools
 	allTools := registry.All()
@@ -564,30 +548,23 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Create and register platform connections (allowed users resolved by each provider)
 	if p.plat != nil {
-		reclaimOrientPath := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 		reclaimMfCfg := acfg.MemoryFormation
 		reclaimSearchDirs := promptSearchDirs
 
 		results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
-			AgentID:      acfg.ID,
-			Handler:      ag,
-			Commands:     cmds,
-			LastMsgStore: lastMsgStore,
+			AgentID:        acfg.ID,
+			Handler:        ag,
+			Commands:       cmds,
+			CommandContext: cc,
+			LastMsgStore:   lastMsgStore,
 			AgentConfig:  acfg,
 			STT:          resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
 			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
 			ReclaimHook: func(sessionKey string) {
-				fireSessionEndMemory(sessionEndMemoryOpts{
-					ag:         ag,
-					sessions:   p.sessions,
-					sessionKey: sessionKey,
-					mfCfg:      reclaimMfCfg,
-					buildOrientation: func(bk, pk, bt string) string {
-						return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
-					},
-					searchDirs: reclaimSearchDirs,
-					parentCtx:  p.ctx,
-				})
+				agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
+					return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
+				}, reclaimSearchDirs, p.ctx, false)
 			},
 			DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
 				return platform.DisplaySettings{
@@ -640,6 +617,7 @@ func setupAgent(p setupParams) *agentInstance {
 		id:                acfg.ID,
 		ag:                ag,
 		cmds:              cmds,
+		cc:                cc,
 		registry:          registry,
 		bootstrap:         bootstrap,
 		defaultSessionKey: defaultSessionKey,

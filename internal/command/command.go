@@ -21,13 +21,12 @@ type Command struct {
 	Description string
 	Category    string
 	Hidden      bool
+	Visible func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
 
-	Execute func(ctx context.Context, args string) (string, error)
+	Execute func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 
-	ExecuteV2 func(ctx context.Context, req Request, deps Deps) (Response, error)
-
-	KeyboardOptions func(ctx context.Context) []KeyboardOption
-	ChainKeyboard   func(ctx context.Context, subcommand string) []KeyboardOption
+	KeyboardOptions func(ctx context.Context, cc CommandContext) []KeyboardOption
+	ChainKeyboard   func(ctx context.Context, subcommand string, cc CommandContext) []KeyboardOption
 }
 
 // WizardHandler is implemented by interactive wizards that take over message routing.
@@ -73,7 +72,7 @@ func (r *Registry) All() []*Command {
 
 // LookupKeyboard checks if a bare command (no args) has inline keyboard options.
 // Returns (command_name, options, true) if a keyboard should be shown, or ("", nil, false) otherwise.
-func (r *Registry) LookupKeyboard(ctx context.Context, text string) (string, []KeyboardOption, bool) {
+func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandContext) (string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return "", nil, false
@@ -92,8 +91,11 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string) (string, []K
 	if cmd == nil || cmd.KeyboardOptions == nil {
 		return "", nil, false
 	}
+	if cmd.Visible != nil && !cmd.Visible(ctx, Request{Name: name}, cc) {
+		return "", nil, false
+	}
 
-	opts := cmd.KeyboardOptions(ctx)
+	opts := cmd.KeyboardOptions(ctx, cc)
 	if len(opts) == 0 {
 		return "", nil, false
 	}
@@ -104,7 +106,7 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string) (string, []K
 // LookupChainKeyboard checks if a command callback text (e.g. "/tmux kill") needs
 // a second keyboard to select a parameter. Returns (command_name, options, true)
 // if chaining should occur, or ("", nil, false) otherwise.
-func (r *Registry) LookupChainKeyboard(ctx context.Context, text string) (string, []KeyboardOption, bool) {
+func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc CommandContext) (string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return "", nil, false
@@ -129,7 +131,7 @@ func (r *Registry) LookupChainKeyboard(ctx context.Context, text string) (string
 		return "", nil, false
 	}
 
-	opts := cmd.ChainKeyboard(ctx, sub)
+	opts := cmd.ChainKeyboard(ctx, sub, cc)
 	if len(opts) == 0 {
 		return "", nil, false
 	}
@@ -137,70 +139,23 @@ func (r *Registry) LookupChainKeyboard(ctx context.Context, text string) (string
 	return name, opts, true
 }
 
-// Dispatch parses a "/command args" string, looks up the command, and executes it.
-// Returns (result, true) if the command was found and executed, or ("", false) if
-// the text is not a recognized command.
-func (r *Registry) Dispatch(ctx context.Context, text string) (string, bool) {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "/") {
-		return "", false
-	}
-
-	text = text[1:]
-	name, args, _ := strings.Cut(text, " ")
-	name = strings.ToLower(name)
-	args = strings.TrimSpace(args)
-
-	cmd := r.commands[name]
-	if cmd == nil {
-		return r.suggestCommand(name), true
-	}
-
-	if cmd.Execute != nil {
-		result, err := cmd.Execute(ctx, args)
-		if err != nil {
-			return "Error: " + err.Error(), true
-		}
-		return result, true
-	}
-
-	// Fall back to ExecuteV2 with a minimal Request if Execute is nil.
-	if cmd.ExecuteV2 != nil {
-		resp, err := cmd.ExecuteV2(ctx, Request{Name: name, Args: args}, Deps{})
-		if err != nil {
-			return "Error: " + err.Error(), true
-		}
-		return resp.Text, true
-	}
-
-	return fmt.Sprintf("Error: command /%s has no handler", name), true
-}
-
-// DispatchV2 executes a command using the platform-agnostic Request/Response pattern.
+// Dispatch executes a command using the platform-agnostic Request/Response pattern.
 // Returns (Response, true) if the command was found, or (Response{}, false) if not.
-func (r *Registry) DispatchV2(ctx context.Context, req Request, deps Deps) (Response, bool, error) {
+func (r *Registry) Dispatch(ctx context.Context, req Request, cc CommandContext) (Response, bool, error) {
 	cmd := r.commands[req.Name]
 	if cmd == nil {
 		return Response{Text: r.suggestCommand(req.Name)}, true, nil
 	}
 
-	if cmd.ExecuteV2 != nil {
-		resp, err := cmd.ExecuteV2(ctx, req, deps)
+	if cmd.Execute != nil {
+		resp, err := cmd.Execute(ctx, req, cc)
 		if err != nil {
 			return Response{Text: "Error: " + err.Error()}, true, nil
 		}
 		return resp, true, nil
 	}
 
-	if cmd.Execute != nil {
-		result, err := cmd.Execute(ctx, req.Args)
-		if err != nil {
-			return Response{Text: "Error: " + err.Error()}, true, nil
-		}
-		return Response{Text: result}, true, nil
-	}
-
-	return Response{}, false, fmt.Errorf("command /%s has no Execute or ExecuteV2 function", req.Name)
+	return Response{}, false, fmt.Errorf("command /%s has no Execute function", req.Name)
 }
 
 // suggestCommand returns a helpful message when a command isn't found,
@@ -274,10 +229,6 @@ func (r *Registry) ClearWizard() {
 	defer r.wizardMu.Unlock()
 	r.wizard = nil
 }
-
-// ChatIDKey is the context key for storing the platform chat ID.
-// Used by commands that need to know which chat issued the command (e.g. /sessions info).
-type ChatIDKey struct{}
 
 // HandleMessage routes a message to the active wizard, if any.
 // Returns (response, true) if the wizard handled the message, or ("", false)

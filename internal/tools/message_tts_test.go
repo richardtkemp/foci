@@ -22,8 +22,8 @@ func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 	return m.data, nil
 }
 
-// TestSendMessageToUserVoiceTTS verifies that text with send_as=voice synthesizes audio.
 func TestSendMessageToUserVoiceTTS(t *testing.T) {
+	// Verifies that providing text with send_as=voice synthesizes audio via TTS and sends it as voice data, without sending the text separately.
 	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
@@ -53,8 +53,8 @@ func TestSendMessageToUserVoiceTTS(t *testing.T) {
 	}
 }
 
-// TestSendMessageToUserVoiceTTSChatRouting verifies that TTS audio is routed to chat-targeted method.
 func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
+	// Verifies that TTS-synthesized voice data is dispatched to the specific chat via SendVoiceDataToChat when a chat ID is in the session key.
 	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
@@ -84,8 +84,8 @@ func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 	}
 }
 
-// TestSendMessageToUserVoiceTTSNoProvider verifies that error is returned when TTS is not configured.
 func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
+	// Verifies that requesting TTS synthesis when no TTS provider is configured returns a "tts not configured" error.
 	t.Parallel()
 	mock := &mockMessageSender{}
 	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
@@ -104,8 +104,8 @@ func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
 	}
 }
 
-// TestSendMessageToUserVoiceTTSSynthesizeError verifies that TTS synthesis errors are propagated.
 func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
+	// Verifies that errors from the TTS synthesis step (e.g. API rate limit) are propagated back to the caller.
 	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
@@ -125,9 +125,8 @@ func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
 	}
 }
 
-// TestSendMessageToUserVoiceFilePathStillWorks verifies that file_path takes precedence over TTS synthesis.
 func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
-	// When file_path is provided with send_as=voice, it should use the file-based path
+	// Verifies that when a file_path is provided with send_as=voice, the file-based path takes precedence over TTS synthesis.
 	t.Parallel()
 	mock := &mockMessageSender{}
 	tts := &mockTTS{data: []byte("should-not-be-used")}

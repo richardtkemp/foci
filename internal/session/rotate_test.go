@@ -9,10 +9,10 @@ import (
 	"foci/internal/provider"
 )
 
-// TestRotateKey verifies that RotateKey archives the old root.jsonl, returns
-// a new key with an updated VersionTS, and that the old path is gone while
-// the archive exists.
 func TestRotateKey(t *testing.T) {
+	// Verifies that RotateKey archives the old root.jsonl, returns
+	// a new key with an updated VersionTS, and that the old path is gone while
+	// the archive exists.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -89,9 +89,9 @@ func TestRotateKey(t *testing.T) {
 	}
 }
 
-// TestReplaceAndRotate verifies that ReplaceAndRotate archives the old file,
-// writes new messages to the rotated key path, and preserves metadata.
 func TestReplaceAndRotate(t *testing.T) {
+	// Verifies that ReplaceAndRotate archives the old file,
+	// writes new messages to the rotated key path, and preserves metadata.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -175,9 +175,9 @@ func TestReplaceAndRotate(t *testing.T) {
 	}
 }
 
-// TestReplaceAndRotate_PreservesCreatedAt verifies that the original session's
-// creation time is carried through to the rotated key.
 func TestReplaceAndRotate_PreservesCreatedAt(t *testing.T) {
+	// Verifies that the original session's
+	// creation time is carried through to the rotated key.
 	dir := t.TempDir()
 	store := NewStore(dir)
 	key := "bot/c300/1000000000"
@@ -202,8 +202,8 @@ func TestReplaceAndRotate_PreservesCreatedAt(t *testing.T) {
 	}
 }
 
-// TestRotateKey_NoFile verifies RotateKey works when the session file doesn't exist.
 func TestRotateKey_NoFile(t *testing.T) {
+	// Verifies RotateKey works when the session file doesn't exist.
 	dir := t.TempDir()
 	store := NewStore(dir)
 

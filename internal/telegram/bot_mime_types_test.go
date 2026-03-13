@@ -6,9 +6,9 @@ import (
 	"foci/internal/platform"
 )
 
-// TestIsImageMIME verifies that isImageMIME correctly identifies image MIME
-// types.
 func TestIsImageMIME(t *testing.T) {
+	// Verifies that isImageMIME correctly identifies image MIME
+	// types.
 	tests := []struct {
 		mime string
 		want bool
@@ -28,9 +28,9 @@ func TestIsImageMIME(t *testing.T) {
 	}
 }
 
-// TestExtForMediaType verifies that extForMediaType returns correct file
-// extensions for MIME types.
 func TestExtForMediaType(t *testing.T) {
+	// Verifies that extForMediaType returns correct file
+	// extensions for MIME types.
 	tests := []struct {
 		mt   string
 		want string
@@ -50,9 +50,9 @@ func TestExtForMediaType(t *testing.T) {
 	}
 }
 
-// TestIsConvertibleDocMIME verifies that platform.IsConvertibleDocMIME
-// correctly identifies document types that can be converted to text.
 func TestIsConvertibleDocMIME(t *testing.T) {
+	// Verifies that isConvertibleDocMIME correctly
+	// identifies document types that can be converted to text.
 	tests := []struct {
 		mime string
 		want bool
@@ -75,8 +75,8 @@ func TestIsConvertibleDocMIME(t *testing.T) {
 	}
 }
 
-// TestIsPDFMIME verifies that isPDFMIME correctly identifies PDF MIME types.
 func TestIsPDFMIME(t *testing.T) {
+	// Verifies that isPDFMIME correctly identifies PDF MIME types.
 	if !isPDFMIME("application/pdf") {
 		t.Error("application/pdf should be PDF")
 	}

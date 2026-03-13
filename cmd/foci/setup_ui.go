@@ -127,7 +127,6 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 }
 
 // importCharacterFiles lists .md files from srcDir and lets the user select which to import.
-// Kept for potential future use with advanced import flows.
 func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {

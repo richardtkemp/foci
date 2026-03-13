@@ -9,7 +9,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
 
 all: build cli foci-call
 
@@ -99,6 +99,9 @@ vet:
 lint:
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
+	@echo "=== deadcode (whole-program reachability) ==="
+	@output=$$($(GOBIN)/deadcode ./... 2>&1); \
+	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 
 lint-fix:
 	@echo "=== golangci-lint --fix ==="

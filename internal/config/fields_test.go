@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// Verifies Fields returns a non-empty registry and all entries have required fields populated.
 func TestFieldsNonEmpty(t *testing.T) {
+	// Proves Fields() returns a non-empty registry where every entry has Section,
+	// Key, and Description populated.
 	fields := Fields()
 	if len(fields) == 0 {
 		t.Fatal("Fields() returned empty slice")
@@ -25,8 +26,10 @@ func TestFieldsNonEmpty(t *testing.T) {
 	}
 }
 
-// Verifies LookupField finds known fields and returns false for unknown ones.
 func TestLookupField(t *testing.T) {
+	// Proves LookupField finds a known field by dotted path, is case-insensitive,
+	// and returns false for unknown paths.
+
 	// Known field
 	f, ok := LookupField("llm.model")
 	if !ok {
@@ -52,8 +55,9 @@ func TestLookupField(t *testing.T) {
 	}
 }
 
-// Verifies FieldSections returns unique section names in registry order.
 func TestFieldSections(t *testing.T) {
+	// Proves FieldSections returns a deduplicated list of section names that
+	// includes all well-known sections.
 	sections := FieldSections()
 	if len(sections) == 0 {
 		t.Fatal("FieldSections() returned empty")
@@ -76,8 +80,9 @@ func TestFieldSections(t *testing.T) {
 	}
 }
 
-// Verifies FieldsInSection returns the correct subset and empty for unknown sections.
 func TestFieldsInSection(t *testing.T) {
+	// Proves FieldsInSection returns only entries for the requested section,
+	// is case-insensitive, and returns empty for unknown section names.
 	fields := FieldsInSection("defaults")
 	if len(fields) == 0 {
 		t.Fatal("FieldsInSection(defaults) returned empty")
@@ -101,9 +106,10 @@ func TestFieldsInSection(t *testing.T) {
 	}
 }
 
-// Verifies every field in the registry maps to a real TOML-tagged field
-// in the corresponding config struct via reflection.
 func TestFieldsMatchStructTags(t *testing.T) {
+	// Proves every field registered in Fields() corresponds to a real TOML-tagged
+	// struct field in the relevant config struct, guarding against registry drift.
+
 	// Map section names to the struct types they represent.
 	sectionStructs := map[string]reflect.Type{
 		"llm":              reflect.TypeOf(LLMConfig{}),

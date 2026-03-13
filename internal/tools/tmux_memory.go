@@ -98,7 +98,7 @@ func (m *TmuxMemoryMonitor) checkOnce() {
 	}
 	getMemTotal := m.getMemTotalFn
 	if getMemTotal == nil {
-		getMemTotal = getMemTotal_
+		getMemTotal = readProcMemTotal
 	}
 
 	rssKB, err := getRSS()
@@ -291,8 +291,8 @@ func readProcVmRSS(pid string) (int64, error) {
 	return 0, fmt.Errorf("VmRSS not found in /proc/%s/status", pid)
 }
 
-// getMemTotal_ reads MemTotal from /proc/meminfo in kB.
-func getMemTotal_() (int64, error) {
+// readProcMemTotal reads MemTotal from /proc/meminfo in kB.
+func readProcMemTotal() (int64, error) {
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
 		return 0, err

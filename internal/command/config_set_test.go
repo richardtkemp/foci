@@ -23,7 +23,10 @@ func testConfigSetDeps(setFn func(path string, target config.SetTarget, value st
 	}
 }
 
-// Verifies the full wizard flow: section → key → value, confirming SetInFileFn is called correctly.
+// TestConfigSetWizardHappyPath walks the three-step wizard (section → key → value)
+// and verifies: each step returns the expected prompt, the wizard terminates after
+// the value step, SetInFileFn receives the correct SetTarget (section, key) and a
+// TOML-quoted string value, and the confirmation includes a restart hint.
 func TestConfigSetWizardHappyPath(t *testing.T) {
 	var captured config.SetTarget
 	var capturedValue string
@@ -76,7 +79,9 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 }
 
-// Verifies that the "agent" section targets the [[agents]] block with the correct agent ID.
+// TestConfigSetWizardAgentSection verifies that selecting the "agent" section
+// remaps to "agents" in the SetTarget and populates AgentID, so the TOML writer
+// targets the per-agent [[agents]] block instead of a nonexistent [agent] table.
 func TestConfigSetWizardAgentSection(t *testing.T) {
 	var captured config.SetTarget
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
@@ -98,7 +103,9 @@ func TestConfigSetWizardAgentSection(t *testing.T) {
 	}
 }
 
-// Verifies that an unknown section shows available sections.
+// TestConfigSetWizardInvalidSection verifies that entering a nonexistent section
+// name does not terminate the wizard, returns an "Unknown section" error with a
+// list of valid sections (including "defaults"), and allows the user to retry.
 func TestConfigSetWizardInvalidSection(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
@@ -115,7 +122,9 @@ func TestConfigSetWizardInvalidSection(t *testing.T) {
 	}
 }
 
-// Verifies that an unknown key shows available keys for the section.
+// TestConfigSetWizardInvalidKey verifies that after selecting a valid section,
+// entering a nonexistent key does not terminate the wizard and returns an
+// "Unknown key" error so the user can retry with a valid key name.
 func TestConfigSetWizardInvalidKey(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
@@ -131,7 +140,9 @@ func TestConfigSetWizardInvalidKey(t *testing.T) {
 	}
 }
 
-// Verifies that an invalid value for the field type is rejected with a retry prompt.
+// TestConfigSetWizardInvalidValue verifies type validation at the value step:
+// entering a non-numeric string for an integer field (max_tool_loops) returns an
+// "Invalid value" error with a "Try again" prompt, without terminating the wizard.
 func TestConfigSetWizardInvalidValue(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
@@ -151,7 +162,9 @@ func TestConfigSetWizardInvalidValue(t *testing.T) {
 	}
 }
 
-// Verifies direct mode parsing and execution.
+// TestConfigSetDirect verifies the one-shot "section.key=value" syntax: parses
+// the section and key from the dotted path, TOML-quotes the string value, calls
+// SetInFileFn with the correct SetTarget, and returns a "Set section.key" confirmation.
 func TestConfigSetDirect(t *testing.T) {
 	var captured config.SetTarget
 	var capturedValue string
@@ -177,7 +190,9 @@ func TestConfigSetDirect(t *testing.T) {
 	}
 }
 
-// Verifies direct mode with agent section.
+// TestConfigSetDirectAgent verifies that direct mode with "agent.key=value"
+// remaps the section to "agents" and populates AgentID on the SetTarget,
+// mirroring the wizard's agent section remapping behaviour.
 func TestConfigSetDirectAgent(t *testing.T) {
 	var captured config.SetTarget
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
@@ -198,7 +213,9 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	}
 }
 
-// Verifies direct mode rejects unknown fields.
+// TestConfigSetDirectUnknownField verifies that direct mode returns an error containing
+// "unknown config field" when the section.key path ("nonexistent.field") does not correspond
+// to any known config field, preventing writes to nonexistent configuration keys.
 func TestConfigSetDirectUnknownField(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 
@@ -211,7 +228,9 @@ func TestConfigSetDirectUnknownField(t *testing.T) {
 	}
 }
 
-// Verifies direct mode rejects missing equals sign.
+// TestConfigSetDirectMissingEquals verifies that direct mode returns an error when the input
+// string lacks an "=" separator (e.g. "defaults.model" without "=value"), ensuring the parser
+// rejects malformed input rather than silently misinterpreting it.
 func TestConfigSetDirectMissingEquals(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 
@@ -221,7 +240,10 @@ func TestConfigSetDirectMissingEquals(t *testing.T) {
 	}
 }
 
-// Verifies direct mode with boolean value normalization.
+// TestConfigSetDirectBool verifies that direct mode normalizes boolean-like input values
+// (e.g. "yes") to their canonical TOML form ("true") before passing them to SetInFileFn,
+// ensuring consistent boolean representation in the config file regardless of the user's
+// input style.
 func TestConfigSetDirectBool(t *testing.T) {
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
@@ -238,7 +260,9 @@ func TestConfigSetDirectBool(t *testing.T) {
 	}
 }
 
-// Verifies direct mode with integer value.
+// TestConfigSetDirectInt verifies that integer values pass through as bare
+// numeric strings (not TOML-quoted), so the file contains `key = 50` rather
+// than `key = "50"`.
 func TestConfigSetDirectInt(t *testing.T) {
 	var capturedValue string
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
@@ -255,7 +279,9 @@ func TestConfigSetDirectInt(t *testing.T) {
 	}
 }
 
-// Verifies the old value is shown in the result when replacing.
+// TestConfigSetDirectShowsOldValue verifies that when SetInFileFn returns a
+// previous value (e.g. `"old-model"`), the confirmation message includes "was"
+// and the old value, giving the user feedback about what was replaced.
 func TestConfigSetDirectShowsOldValue(t *testing.T) {
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		return `"old-model"`, nil

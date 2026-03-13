@@ -71,10 +71,10 @@ func (r *Registry) ExportedNames() []string {
 	return names
 }
 
-// FinalizeExecDescription updates the exec tool's description to include
+// FinalizeShellDescription updates the shell tool's description to include
 // the current list of ExecExport shell functions. Call this after all tools
 // have been registered so the description stays in sync.
-func (r *Registry) FinalizeExecDescription() {
+func (r *Registry) FinalizeShellDescription() {
 	execTool := r.Get("shell")
 	if execTool == nil {
 		return

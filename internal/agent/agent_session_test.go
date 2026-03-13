@@ -10,6 +10,7 @@ import (
 )
 
 func TestSessionEffort(t *testing.T) {
+	// Proves that per-session effort overrides take precedence over the agent default, are isolated per session, and revert to the default when cleared.
 	ag := &Agent{Model: "test", Effort: "low"}
 
 	// Default: falls back to agent-wide
@@ -36,6 +37,7 @@ func TestSessionEffort(t *testing.T) {
 }
 
 func TestSessionNoCompact(t *testing.T) {
+	// Proves that per-session no_compact overrides work independently per session and can be cleared to restore the default false value.
 	ag := &Agent{Model: "test"}
 
 	// Default: should return false (allow compaction)
@@ -61,7 +63,35 @@ func TestSessionNoCompact(t *testing.T) {
 	}
 }
 
+func TestSessionSpeed(t *testing.T) {
+	// Proves that per-session speed overrides take precedence over the agent default, are isolated per session, and revert to the default when cleared.
+	ag := &Agent{Model: "test", Speed: ""}
+
+	// Default: falls back to agent-wide (empty = standard)
+	if got := ag.SessionSpeed("s1"); got != "" {
+		t.Errorf("SessionSpeed fallback = %q, want %q", got, "")
+	}
+
+	// Set per-session override
+	ag.SetSessionSpeed("s1", "fast")
+	if got := ag.SessionSpeed("s1"); got != "fast" {
+		t.Errorf("SessionSpeed after set = %q, want %q", got, "fast")
+	}
+
+	// Other session unaffected
+	if got := ag.SessionSpeed("s2"); got != "" {
+		t.Errorf("SessionSpeed other session = %q, want %q", got, "")
+	}
+
+	// Clear override — falls back to agent default
+	ag.SetSessionSpeed("s1", "")
+	if got := ag.SessionSpeed("s1"); got != "" {
+		t.Errorf("SessionSpeed after clear = %q, want %q", got, "")
+	}
+}
+
 func TestSessionThinking(t *testing.T) {
+	// Proves that per-session thinking mode overrides the agent-wide default, are scoped to a single session, and revert to the default when cleared.
 	ag := &Agent{Model: "test", Thinking: "off"}
 
 	// Default: falls back to agent-wide
@@ -88,6 +118,7 @@ func TestSessionThinking(t *testing.T) {
 }
 
 func TestSessionModel(t *testing.T) {
+	// Proves that per-session model and format overrides replace the agent-wide defaults, are isolated per session, and are fully removed when cleared.
 	ag := &Agent{Model: "anthropic/claude-haiku-4-5", Format: "anthropic"}
 
 	// Default: falls back to agent-wide
@@ -117,6 +148,7 @@ func TestSessionModel(t *testing.T) {
 }
 
 func TestRestoreSessionOverrides(t *testing.T) {
+	// Proves that session overrides (effort, thinking, speed, model, format, no_compact) survive an agent restart by persisting to and reloading from the state store.
 	dir := t.TempDir()
 	ss := state.New(dir + "/state.json")
 	if err := ss.Load(); err != nil {
@@ -133,6 +165,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	// Persist values via setters
 	ag.SetSessionEffort("s1", "high")
 	ag.SetSessionThinking("s1", "adaptive")
+	ag.SetSessionSpeed("s1", "fast")
 	ag.SetSessionModel("s1", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
 	ag.SetSessionNoCompact("s1", true)
 
@@ -159,6 +192,9 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	if got := ag2.SessionThinking("s1"); got != "adaptive" {
 		t.Errorf("after restore thinking = %q, want %q", got, "adaptive")
 	}
+	if got := ag2.SessionSpeed("s1"); got != "fast" {
+		t.Errorf("after restore speed = %q, want %q", got, "fast")
+	}
 	if got := ag2.SessionModel("s1"); got != "anthropic/claude-opus-4-6" {
 		t.Errorf("after restore model = %q, want %q", got, "anthropic/claude-opus-4-6")
 	}
@@ -176,6 +212,7 @@ func TestRestoreSessionOverrides(t *testing.T) {
 }
 
 func TestRestoreSessionOverrides_NilStateStore(t *testing.T) {
+	// Proves that RestoreSessionOverrides is safe to call with a nil state store — it is a no-op that does not panic.
 	ag := &Agent{Model: "test", Effort: "low"}
 
 	// Should not panic with nil state store
@@ -187,6 +224,7 @@ func TestRestoreSessionOverrides_NilStateStore(t *testing.T) {
 }
 
 func TestParseMetaTime(t *testing.T) {
+	// Proves that parseMetaTime correctly extracts the RFC3339 timestamp from well-formed [meta] headers and returns false for missing, malformed, or unrelated strings.
 	tests := []struct {
 		name    string
 		text    string
@@ -246,6 +284,7 @@ func TestParseMetaTime(t *testing.T) {
 }
 
 func TestSeedSessionMeta(t *testing.T) {
+	// Proves that SeedSessionMeta reads the most recent [meta] timestamp from a populated session so that a restarted agent knows when the last message was sent.
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
 
@@ -288,6 +327,7 @@ func TestSeedSessionMeta(t *testing.T) {
 }
 
 func TestSeedSessionMetaSkipsNonMetaMessages(t *testing.T) {
+	// Proves that SeedSessionMeta ignores non-meta user messages (e.g. restart markers) and correctly returns the timestamp from the last genuine [meta] header.
 	store := session.NewStore(t.TempDir())
 	ag := &Agent{Sessions: store, Model: "claude-haiku-4-5"}
 

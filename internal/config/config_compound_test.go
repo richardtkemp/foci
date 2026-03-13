@@ -8,8 +8,9 @@ import (
 )
 
 func TestNoSecretsInConfig(t *testing.T) {
-	// Config structs must not contain credential fields.
-	// Secrets belong in secrets.toml, resolved via the secrets store at runtime.
+	// Proves that no Config struct fields carry credential names (token, key,
+	// password), enforcing the invariant that secrets stay out of the config struct
+	// and are always resolved at runtime via the secrets store.
 	secretPatterns := []*regexp.Regexp{
 		regexp.MustCompile(`_token$`),  // api_token, setup_token — but not max_output_tokens
 		regexp.MustCompile(`_key$`),    // api_key, brave_api_key

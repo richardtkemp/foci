@@ -12,6 +12,7 @@ import (
 )
 
 func TestEnvironmentBlockPrepended(t *testing.T) {
+	// Proves that when EnvironmentBlock is set, it is prepended as the first system block in every API request, including workspace path and agent ID.
 	var receivedReq *provider.MessageRequest
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req
@@ -68,6 +69,7 @@ func TestEnvironmentBlockPrepended(t *testing.T) {
 }
 
 func TestEnvironmentBlockOmittedWhenEmpty(t *testing.T) {
+	// Proves that when EnvironmentBlock is empty (environment disabled), no environment system block is added to API requests.
 	var receivedReq *provider.MessageRequest
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		receivedReq = req

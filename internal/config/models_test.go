@@ -5,6 +5,9 @@ import (
 )
 
 func TestResolveModel(t *testing.T) {
+	// Proves that ResolveModel correctly handles alias expansion, developer/model_id
+	// syntax, endpoint overrides, case normalization, and error cases for malformed
+	// or empty input.
 	aliases := map[string]string{
 		"opus":     "anthropic/claude-opus-4-6",
 		"sonnet":   "anthropic/claude-sonnet-4-6",
@@ -236,6 +239,9 @@ func TestResolveModel(t *testing.T) {
 }
 
 func TestInferWireFormat(t *testing.T) {
+	// Proves that InferWireFormat maps anthropic→anthropic, google/gemini→gemini,
+	// and everything else (including openai, deepseek, unknown) to openai format,
+	// case-insensitively.
 	tests := []struct {
 		developer string
 		want      string
@@ -264,6 +270,9 @@ func TestInferWireFormat(t *testing.T) {
 }
 
 func TestSplitDeveloperModel(t *testing.T) {
+	// Proves that SplitDeveloperModel splits on the first slash and handles edge
+	// cases: no slash returns empty developer, leading slash returns empty developer,
+	// and empty string returns both empty.
 	tests := []struct {
 		input           string
 		wantDeveloper   string
@@ -294,6 +303,9 @@ func TestSplitDeveloperModel(t *testing.T) {
 }
 
 func TestStripDeveloperPrefix(t *testing.T) {
+	// Proves that StripDeveloperPrefix removes the "developer/" prefix from model
+	// strings, handles no-slash and leading-slash edge cases, and strips only the
+	// first component when multiple slashes are present.
 	tests := []struct {
 		input    string
 		expected string
@@ -325,9 +337,10 @@ func TestStripDeveloperPrefix(t *testing.T) {
 	}
 }
 
-// TestModelCapabilities verifies that capabilities are correctly reported per model family.
-// Sonnet/Opus support effort+thinking, Haiku supports neither, non-Anthropic supports neither.
 func TestModelCapabilities(t *testing.T) {
+	// Proves that ModelCapabilities correctly reports effort and thinking support per
+	// model family: sonnet/opus support both, haiku supports neither, and non-Anthropic
+	// models support neither.
 	t.Parallel()
 	tests := []struct {
 		model        string

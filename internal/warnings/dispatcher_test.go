@@ -7,6 +7,7 @@ import (
 )
 
 func TestDispatcher_NilQueue_Skips(t *testing.T) {
+	// Proves that MaybeFire is a no-op when the dispatcher has no queue configured.
 	calls := 0
 	d := NewDispatcher(DispatcherConfig{
 		DispatchFn: func(text string) { calls++ },
@@ -18,6 +19,7 @@ func TestDispatcher_NilQueue_Skips(t *testing.T) {
 }
 
 func TestDispatcher_EmptyQueue_Skips(t *testing.T) {
+	// Proves that MaybeFire does not invoke the dispatch function when the queue has no pending warnings.
 	calls := 0
 	q := NewQueue(0, 0)
 	d := NewDispatcher(DispatcherConfig{
@@ -31,6 +33,7 @@ func TestDispatcher_EmptyQueue_Skips(t *testing.T) {
 }
 
 func TestDispatcher_ActiveUser_RateLimit(t *testing.T) {
+	// Proves that when the user is active, a second MaybeFire call within the active interval is suppressed even though warnings are queued.
 	q := NewQueue(0, 0)
 	var mu sync.Mutex
 	calls := 0
@@ -74,6 +77,7 @@ func TestDispatcher_ActiveUser_RateLimit(t *testing.T) {
 }
 
 func TestDispatcher_InactiveUser_RateLimit(t *testing.T) {
+	// Proves that when the user is inactive, the longer inactive interval is enforced and a second MaybeFire within that interval is suppressed.
 	q := NewQueue(0, 0)
 	var mu sync.Mutex
 	calls := 0
@@ -117,6 +121,7 @@ func TestDispatcher_InactiveUser_RateLimit(t *testing.T) {
 }
 
 func TestDispatcher_Dispatches(t *testing.T) {
+	// Proves that MaybeFire drains the queue, passes the result through FormatFn, and delivers the formatted text to DispatchFn.
 	q := NewQueue(0, 0)
 	var mu sync.Mutex
 	var dispatched string
@@ -152,6 +157,7 @@ func TestDispatcher_Dispatches(t *testing.T) {
 }
 
 func TestDispatcher_ConcurrentGuard(t *testing.T) {
+	// Proves that a second MaybeFire call while a dispatch goroutine is still running does not launch a concurrent second dispatch.
 	q := NewQueue(0, 0)
 	var mu sync.Mutex
 	calls := 0

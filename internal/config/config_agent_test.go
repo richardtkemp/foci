@@ -10,6 +10,9 @@ import (
 )
 
 func TestResolveBotToken(t *testing.T) {
+	// Proves that ResolveBotToken follows the telegram.<botName> convention by
+	// default and uses an explicit bot_secret override when provided, returning
+	// empty when the bot name is empty or the secret is not found.
 	t.Run("convention: telegram.<botName>", func(t *testing.T) {
 		secrets := mockSecrets{
 			"telegram.primary": "token-primary-123",
@@ -52,7 +55,9 @@ func TestResolveBotToken(t *testing.T) {
 }
 
 func TestMultiAgentSessionKeys(t *testing.T) {
-	// Verify that multi-agent config produces correct session key namespaces
+	// Proves that a multi-agent config produces distinct session key namespaces per
+	// agent, and that bot token resolution maps each agent's telegram_bot to a unique
+	// secret, including multiball bots resolving independently.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -138,6 +143,8 @@ allowed_users = ["111"]
 }
 
 func TestAgentTTSRateRecognized(t *testing.T) {
+	// Proves that tts_rate is recognized as a valid agent config field, not
+	// flagged as an unknown key, and correctly decoded into the TTSRate field.
 	tomlData := `
 [[agents]]
 id = "clutch"
@@ -165,6 +172,8 @@ tts_rate = 1.3
 }
 
 func TestAgentNameDefault(t *testing.T) {
+	// Proves that an agent's display name defaults to the title-cased version of
+	// its ID when no explicit name is configured, and that explicit names are preserved.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -190,6 +199,9 @@ name = "Scout Override"
 }
 
 func TestAgentMemorySourcesDefault(t *testing.T) {
+	// Proves that an agent without explicit memory sources gets a default source
+	// pointing to <workspace>/memory, while an agent with explicit sources retains
+	// those and does not get the default.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -237,6 +249,7 @@ weight = 0.5
 }
 
 func TestBraindeadThresholdDefault(t *testing.T) {
+	// Proves that braindead_threshold defaults to 10 when not explicitly configured.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -255,6 +268,8 @@ id = "test"
 }
 
 func TestBraindeadThresholdExplicit(t *testing.T) {
+	// Proves that explicitly setting braindead_threshold and braindead_prompt in
+	// an agent block is correctly loaded and overrides any default.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -278,6 +293,8 @@ braindead_prompt = "custom warning"
 }
 
 func TestBraindeadThresholdPerAgent(t *testing.T) {
+	// Proves that a global braindead_threshold in [defaults] is inherited by agents
+	// that don't override it, while agents with explicit values keep their own.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -317,6 +334,8 @@ braindead_prompt = "agent prompt"
 }
 
 func TestBraindeadThresholdDisabled(t *testing.T) {
+	// Proves that setting braindead_threshold = 0 in [defaults] disables the
+	// feature (threshold remains 0, not overridden by the built-in default).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`

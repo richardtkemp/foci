@@ -83,6 +83,8 @@ func testConfig() (*Config, AgentConfig) {
 }
 
 func TestFormatConfig(t *testing.T) {
+	// Proves that FormatConfig produces a markdown table with KEY/VALUE columns
+	// and section headers like [agent], [telegram], with agent field values visible.
 	cfg, agent := testConfig()
 	result := FormatConfig(cfg, agent)
 
@@ -123,6 +125,8 @@ func TestFormatConfig(t *testing.T) {
 }
 
 func TestFormatConfigBackgroundFieldsAlwaysShown(t *testing.T) {
+	// Proves that background and mana invest_interval fields appear in FormatConfig
+	// output even when background is disabled, since they are always shown.
 	cfg, agent := testConfig()
 	// Background is disabled — fields should still appear
 	agent.Background.Enabled = false
@@ -144,6 +148,9 @@ func TestFormatConfigBackgroundFieldsAlwaysShown(t *testing.T) {
 }
 
 func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
+	// Proves that background and invest_interval fields appear in the grouped output
+	// even when background is disabled, verifying the always-shown behavior in the
+	// multi-table format as well.
 	cfg, agent := testConfig()
 	cfg.Agents = []AgentConfig{agent}
 	cfg.Background.Enabled = false
@@ -166,6 +173,8 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 }
 
 func TestFormatConfigTOML(t *testing.T) {
+	// Proves that FormatConfigTOML produces valid parseable TOML containing at
+	// minimum an [agent] and [telegram] section.
 	cfg, agent := testConfig()
 	result := FormatConfigTOML(cfg, agent)
 
@@ -185,6 +194,8 @@ func TestFormatConfigTOML(t *testing.T) {
 }
 
 func TestFormatAvailable(t *testing.T) {
+	// Proves that FormatAvailable lists unset optional fields (like system_files and
+	// orientation prompts) and excludes already-set fields like max_tool_loops.
 	cfg, agent := testConfig()
 	result := FormatAvailable(cfg, agent)
 
@@ -209,6 +220,8 @@ func TestFormatAvailable(t *testing.T) {
 }
 
 func TestFormatAvailableAllSet(t *testing.T) {
+	// Proves that when all optional config fields are explicitly set, FormatAvailable
+	// returns an "all set" message rather than listing any remaining options.
 	cfg, agent := testConfig()
 	// Set all optional agent fields
 	agent.SystemFiles = []string{"IDENTITY.md"}
@@ -258,6 +271,9 @@ func TestFormatAvailableAllSet(t *testing.T) {
 }
 
 func TestFormatConfigGrouped(t *testing.T) {
+	// Proves that FormatConfigGrouped produces a Global table (non-agent sections)
+	// and one table for the calling agent only, with other agents excluded and
+	// section headers present in the global table.
 	cfg, agent := testConfig()
 	cfg.Agents = []AgentConfig{agent, {
 		ID:        "second-agent",
@@ -307,6 +323,9 @@ func TestFormatConfigGrouped(t *testing.T) {
 }
 
 func TestFormatConfigGroupedAnnotations(t *testing.T) {
+	// Proves that FormatConfigGrouped annotates global default values as "(overridden)"
+	// when the active agent uses a different value, and shows no annotation when the
+	// agent matches the default.
 	cfg, _ := testConfig()
 	// Set defaults as Load() would.
 	cfg.LLM = LLMConfig{
@@ -362,6 +381,9 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 }
 
 func TestFormatTableBySection(t *testing.T) {
+	// Proves that formatTableBySection groups rows under [section] headers in
+	// insertion order, without a SECTION column, and includes all keys even when
+	// the same section name appears non-consecutively in the input.
 	rows := []configRow{
 		{"alpha", "key1", "val1"},
 		{"alpha", "key2", "val2"},
@@ -400,6 +422,8 @@ func TestFormatTableBySection(t *testing.T) {
 }
 
 func TestFormatAvailableDeduplication(t *testing.T) {
+	// Proves that FormatAvailable deduplicates fields that appear in both agent and
+	// sessions sections, showing each option only once in the output.
 	cfg, agent := testConfig()
 	// Ensure both agent and sessions have orientation prompts unset
 	agent.BranchOrientationPrompt = ""

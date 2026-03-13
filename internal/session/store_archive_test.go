@@ -13,6 +13,8 @@ import (
 )
 
 func TestListChatSessionsSkipsArchives(t *testing.T) {
+	// Proves that ListChatSessions counts only the active root.jsonl file and
+	// ignores numbered archive files in the same session directory.
 	dir := t.TempDir()
 	s := NewStore(dir)
 
@@ -41,6 +43,9 @@ func TestListChatSessionsSkipsArchives(t *testing.T) {
 }
 
 func TestRepairOrphansSkipsArchives(t *testing.T) {
+	// Proves that RepairOrphans only repairs the current active file and does not
+	// attempt to repair archive files, even when those archives also end with
+	// an unanswered tool_use message.
 	dir := t.TempDir()
 	s := NewStore(dir)
 
@@ -74,6 +79,8 @@ func TestRepairOrphansSkipsArchives(t *testing.T) {
 }
 
 func TestReplaceNonexistentFile(t *testing.T) {
+	// Proves that Replace works even when no file previously existed — it creates
+	// the file with the provided messages without requiring a prior rotation.
 	s := NewStore(t.TempDir())
 	key := "test/c333/1000000000"
 
@@ -92,6 +99,9 @@ func TestReplaceNonexistentFile(t *testing.T) {
 }
 
 func TestIsArchiveFile(t *testing.T) {
+	// Proves that isArchiveFile correctly distinguishes archive filenames
+	// (both old numbered and new timestamp patterns) from active session filenames,
+	// including edge cases with invalid or partial timestamp formats.
 	tests := []struct {
 		name string
 		want bool
@@ -120,8 +130,8 @@ func TestIsArchiveFile(t *testing.T) {
 	}
 }
 
-// TestSessionWriter verifies that SessionWriter prevents cross-session writes for all operations.
 func TestSessionWriter(t *testing.T) {
+	// Verifies that SessionWriter prevents cross-session writes for all operations.
 	dir := t.TempDir()
 	store := NewStore(dir)
 

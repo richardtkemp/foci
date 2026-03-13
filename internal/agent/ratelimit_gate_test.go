@@ -8,6 +8,7 @@ import (
 )
 
 func TestRateLimitGate_NotLimitedByDefault(t *testing.T) {
+	// Proves that a zero-value RateLimitGate is not limited.
 	var g RateLimitGate
 	limited, _ := g.IsLimited()
 	if limited {
@@ -16,6 +17,7 @@ func TestRateLimitGate_NotLimitedByDefault(t *testing.T) {
 }
 
 func TestRateLimitGate_CloseAndIsLimited(t *testing.T) {
+	// Proves that Close() marks the gate as limited until the given time, which IsLimited reports correctly.
 	var g RateLimitGate
 	until := time.Now().Add(1 * time.Hour)
 	g.Close(until)
@@ -30,6 +32,7 @@ func TestRateLimitGate_CloseAndIsLimited(t *testing.T) {
 }
 
 func TestRateLimitGate_ExpiredNotLimited(t *testing.T) {
+	// Proves that a gate whose limit time has passed is no longer considered limited.
 	var g RateLimitGate
 	g.Close(time.Now().Add(-1 * time.Second))
 
@@ -40,6 +43,7 @@ func TestRateLimitGate_ExpiredNotLimited(t *testing.T) {
 }
 
 func TestRateLimitGate_EnqueueAndDrain(t *testing.T) {
+	// Proves that queued items are held while the gate is limited and released in order after expiry.
 	var g RateLimitGate
 	g.Close(time.Now().Add(1 * time.Hour))
 
@@ -74,6 +78,7 @@ func TestRateLimitGate_EnqueueAndDrain(t *testing.T) {
 }
 
 func TestRateLimitGate_DrainClearsGate(t *testing.T) {
+	// Proves that DrainQueue clears the gate's limited state so subsequent calls show it unlocked.
 	var g RateLimitGate
 	g.Close(time.Now().Add(-1 * time.Millisecond))
 	g.Enqueue("s1", "msg", "user")
@@ -88,6 +93,7 @@ func TestRateLimitGate_DrainClearsGate(t *testing.T) {
 }
 
 func TestRateLimitGate_ConcurrentAccess(t *testing.T) {
+	// Proves that concurrent Enqueue and IsLimited calls are race-condition-free and all items are preserved.
 	var g RateLimitGate
 	g.Close(time.Now().Add(100 * time.Millisecond))
 
@@ -119,6 +125,7 @@ func TestRateLimitGate_ConcurrentAccess(t *testing.T) {
 }
 
 func TestRateLimitedError_Message(t *testing.T) {
+	// Proves that RateLimitedError.Error() produces a human-readable message with "rate limited" and reset info.
 	until := time.Now().Add(2 * time.Hour)
 	err := &RateLimitedError{Until: until}
 	msg := err.Error()
@@ -131,6 +138,7 @@ func TestRateLimitedError_Message(t *testing.T) {
 }
 
 func TestRateLimitGate_DrainEmptyQueueNoItems(t *testing.T) {
+	// Proves that DrainQueue on an empty, non-limited gate returns nil without panicking.
 	var g RateLimitGate
 	// Not limited, empty queue
 	items := g.DrainQueue()

@@ -7,10 +7,10 @@ import (
 	"github.com/go-rod/rod"
 )
 
-// TestParseRef validates that ParseRef correctly accepts valid ref formats
-// and rejects invalid ones, covering plain refs, frame-prefixed refs,
-// and various malformed strings.
 func TestParseRef(t *testing.T) {
+	// Validates that ParseRef correctly accepts valid ref formats
+	// and rejects invalid ones, covering plain refs, frame-prefixed refs,
+	// and various malformed strings.
 	t.Parallel()
 
 	tests := []struct {
@@ -42,9 +42,9 @@ func TestParseRef(t *testing.T) {
 	}
 }
 
-// TestLocatorInFrameNilSnapshot verifies that LocatorInFrame returns a clear
-// error when called on a nil snapshot (no snapshot captured yet).
 func TestLocatorInFrameNilSnapshot(t *testing.T) {
+	// Verifies that LocatorInFrame returns a clear
+	// error when called on a nil snapshot (no snapshot captured yet).
 	t.Parallel()
 
 	var snap *Snapshot
@@ -57,9 +57,9 @@ func TestLocatorInFrameNilSnapshot(t *testing.T) {
 	}
 }
 
-// TestLocatorInFrameEmptyFrames verifies that LocatorInFrame returns a clear
-// error when the snapshot has no frames registered.
 func TestLocatorInFrameEmptyFrames(t *testing.T) {
+	// Verifies that LocatorInFrame returns a clear
+	// error when the snapshot has no frames registered.
 	t.Parallel()
 
 	snap := &Snapshot{}
@@ -69,9 +69,9 @@ func TestLocatorInFrameEmptyFrames(t *testing.T) {
 	}
 }
 
-// TestLocatorInFrameOutOfRange verifies that a frame index beyond the
-// registered frames slice returns a clear out-of-range error.
 func TestLocatorInFrameOutOfRange(t *testing.T) {
+	// Verifies that a frame index beyond the
+	// registered frames slice returns a clear out-of-range error.
 	t.Parallel()
 
 	snap := &Snapshot{
@@ -94,9 +94,9 @@ func TestLocatorInFrameOutOfRange(t *testing.T) {
 	}
 }
 
-// TestSnapshotString verifies that the Snapshot.String() method returns
-// the stored text.
 func TestSnapshotString(t *testing.T) {
+	// Verifies that the Snapshot.String() method returns
+	// the stored text.
 	t.Parallel()
 
 	snap := &Snapshot{text: "test snapshot content", generation: 42}
@@ -108,9 +108,9 @@ func TestSnapshotString(t *testing.T) {
 	}
 }
 
-// TestSnapshotJSONContentType verifies that navigating to a JSON endpoint
-// produces a snapshot with ```json code block instead of ```yaml.
 func TestSnapshotJSONContentType(t *testing.T) {
+	// Verifies that navigating to a JSON endpoint
+	// produces a snapshot with ```json code block instead of ```yaml.
 	skipIfNoBrowser(t)
 
 	srv := testJSONServer(t, `{"status":"ok","count":42}`)
@@ -131,9 +131,9 @@ func TestSnapshotJSONContentType(t *testing.T) {
 	}
 }
 
-// TestSnapshotHTMLContentType verifies that navigating to an HTML page
-// produces a snapshot with ```yaml code block (the default for accessibility trees).
 func TestSnapshotHTMLContentType(t *testing.T) {
+	// Verifies that navigating to an HTML page
+	// produces a snapshot with ```yaml code block (the default for accessibility trees).
 	skipIfNoBrowser(t)
 
 	srv := testHTMLServer(t, `<html><head><title>Test</title></head><body><h1>Hello</h1></body></html>`)

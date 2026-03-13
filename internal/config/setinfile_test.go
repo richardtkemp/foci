@@ -7,8 +7,9 @@ import (
 	"testing"
 )
 
-// Verifies updating an existing key preserves the rest of the file.
 func TestSetInFile_UpdateExistingKey(t *testing.T) {
+	// Proves that SetInFile updates an existing key in place and returns the old
+	// value, while preserving all other keys, comments, and sections unchanged.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `# comment
@@ -46,8 +47,9 @@ dir = "/tmp/sessions"
 	}
 }
 
-// Verifies inserting a new key into an existing section.
 func TestSetInFile_InsertNewKey(t *testing.T) {
+	// Proves that SetInFile inserts a new key into an existing section, returns an
+	// empty old value, and places the key within the correct section boundaries.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[defaults]
@@ -81,8 +83,9 @@ dir = "/tmp"
 	}
 }
 
-// Verifies creating a new section when it doesn't exist.
 func TestSetInFile_CreateNewSection(t *testing.T) {
+	// Proves that SetInFile creates a new section header and inserts the key/value
+	// when the target section does not yet exist in the file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[defaults]
@@ -106,8 +109,9 @@ model = "haiku"
 	}
 }
 
-// Verifies new sections are inserted before [[agents]] blocks.
 func TestSetInFile_NewSectionBeforeAgents(t *testing.T) {
+	// Proves that a newly-created section is inserted before any [[agents]] blocks
+	// to maintain the conventional ordering of the config file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[defaults]
@@ -134,8 +138,9 @@ model = "sonnet"
 	}
 }
 
-// Verifies targeting the correct [[agents]] block by ID.
 func TestSetInFile_AgentBlock(t *testing.T) {
+	// Proves that SetInFile updates only the [[agents]] block with the matching ID,
+	// leaving other agents' values unchanged, and returns the old value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[defaults]
@@ -192,8 +197,9 @@ model = "haiku"
 	}
 }
 
-// Verifies error when agent ID is not found.
 func TestSetInFile_AgentNotFound(t *testing.T) {
+	// Proves that SetInFile returns an error mentioning the missing ID when no
+	// [[agents]] block with the requested AgentID exists.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[[agents]]
@@ -210,8 +216,9 @@ id = "alpha"
 	}
 }
 
-// Verifies inserting a new key into an agent block.
 func TestSetInFile_AgentInsertKey(t *testing.T) {
+	// Proves that SetInFile inserts a new key into the correct [[agents]] block
+	// when the key does not yet exist in that agent's section.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[[agents]]
@@ -233,8 +240,10 @@ model = "sonnet"
 	}
 }
 
-// Verifies FormatTOMLValue for each field type.
 func TestFormatTOMLValue(t *testing.T) {
+	// Proves that FormatTOMLValue correctly formats values for string, int, float,
+	// bool (including yes/no/1/0 aliases), and duration field types, and returns
+	// an error for invalid values.
 	tests := []struct {
 		value   string
 		ft      FieldType
@@ -275,8 +284,9 @@ func TestFormatTOMLValue(t *testing.T) {
 	}
 }
 
-// Verifies comments surrounding the edited section are preserved.
 func TestSetInFile_PreserveComments(t *testing.T) {
+	// Proves that SetInFile preserves all comments (top-level, inline, and section
+	// comments) when updating a key, leaving the surrounding text untouched.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `# Top-level comment
@@ -314,8 +324,9 @@ dir = "/tmp"
 	}
 }
 
-// Verifies round-trip: set a value, then Load() the result and check the field.
 func TestSetInFile_RoundTrip(t *testing.T) {
+	// Proves that a value written by SetInFile can be read back correctly by Load,
+	// confirming that the file output is valid TOML with the expected field value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `[llm]

@@ -7,6 +7,8 @@ import (
 )
 
 func TestListChatSessions_Empty(t *testing.T) {
+	// Proves that ListChatSessions returns an empty (not nil) slice when no
+	// sessions exist for the requested agent.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -20,6 +22,8 @@ func TestListChatSessions_Empty(t *testing.T) {
 }
 
 func TestListChatSessions_WithSessions(t *testing.T) {
+	// Proves that ListChatSessions discovers all chat sessions for an agent,
+	// returning the correct chat IDs and per-session message counts.
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -57,6 +61,9 @@ func TestListChatSessions_WithSessions(t *testing.T) {
 }
 
 func TestListChatSessions_IgnoresNonChat(t *testing.T) {
+	// Proves that ListChatSessions filters out non-chat sessions (e.g. independent
+	// sessions with 'i' prefix) and only returns chat-keyed sessions.
+
 	dir := t.TempDir()
 	store := NewStore(dir)
 
@@ -77,6 +84,8 @@ func TestListChatSessions_IgnoresNonChat(t *testing.T) {
 }
 
 func TestListChatSessions_DifferentAgents(t *testing.T) {
+	// Proves that ListChatSessions is scoped to the requested agent and does not
+	// return sessions belonging to other agents sharing the same store.
 	dir := t.TempDir()
 	store := NewStore(dir)
 

@@ -415,10 +415,19 @@ func countToolsToSDK(tools []ToolDef) []sdk.MessageCountTokensToolUnionParam {
 }
 
 // sdkRequestOptions builds per-request SDK options for auth and beta headers.
-func sdkRequestOptions(token string) []option.RequestOption {
+// When speed is "fast", appends the fast-mode beta header and injects
+// the speed field into the request body via WithJSONSet.
+func sdkRequestOptions(token, speed string) []option.RequestOption {
+	betaHeader := "oauth-2025-04-20"
+	if speed == "fast" {
+		betaHeader += ",fast-mode-2026-02-01"
+	}
 	opts := []option.RequestOption{
 		option.WithAuthToken(token),
-		option.WithHeader("anthropic-beta", "oauth-2025-04-20"),
+		option.WithHeader("anthropic-beta", betaHeader),
+	}
+	if speed == "fast" {
+		opts = append(opts, option.WithJSONSet("speed", "fast"))
 	}
 	return opts
 }

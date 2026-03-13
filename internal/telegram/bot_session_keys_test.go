@@ -12,15 +12,15 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// TestReceiveMessage_FreshSlashCommandDispatched verifies that fresh slash
-// commands are dispatched immediately.
 func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
+	// Verifies that fresh slash
+	// commands are dispatched immediately.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name:        "ping",
 		Description: "test",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "pong", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
 		},
 	})
 
@@ -39,15 +39,15 @@ func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_StaleSlashCommandDropped verifies that stale slash
-// commands are dropped without reply.
 func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
+	// Verifies that stale slash
+	// commands are dropped without reply.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name:        "ping",
 		Description: "test",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			return "pong", nil
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			return command.Response{Text: "pong"}, nil
 		},
 	})
 
@@ -67,9 +67,9 @@ func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_StaleNonSlashMessageStillQueued verifies that stale
-// non-slash messages are still queued.
 func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
+	// Verifies that stale
+	// non-slash messages are still queued.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
 	// Create a plain text message with a stale timestamp (60 seconds ago)
@@ -87,18 +87,18 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 	}
 }
 
-// TestNewSessionKeyForChat verifies that session keys are created with the
-// correct chat prefix.
 func TestNewSessionKeyForChat(t *testing.T) {
+	// Verifies that session keys are created with the
+	// correct chat prefix.
 	key := NewSessionKeyForChat("fotini", 123456789)
 	if !strings.HasPrefix(key, "fotini/c123456789/") {
 		t.Errorf("got %q, want prefix %q", key, "fotini/c123456789/")
 	}
 }
 
-// TestNewSessionKeyForChat_DifferentChats verifies that different chat IDs
-// produce different session keys.
 func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
+	// Verifies that different chat IDs
+	// produce different session keys.
 	k1 := NewSessionKeyForChat("fotini", 111)
 	k2 := NewSessionKeyForChat("fotini", 222)
 	if k1 == k2 {
@@ -106,9 +106,9 @@ func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
 	}
 }
 
-// TestDefaultChatAssignment verifies that the default chat is set on first
-// message and does not change.
 func TestDefaultChatAssignment(t *testing.T) {
+	// Verifies that the default chat is set on first
+	// message and does not change.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
@@ -141,9 +141,9 @@ func TestDefaultChatAssignment(t *testing.T) {
 	}
 }
 
-// TestDefaultSessionKey verifies that DefaultSessionKey returns the correct
-// session key for the default chat.
 func TestDefaultSessionKey(t *testing.T) {
+	// Verifies that DefaultSessionKey returns the correct
+	// session key for the default chat.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
@@ -161,9 +161,9 @@ func TestDefaultSessionKey(t *testing.T) {
 	}
 }
 
-// TestSessionKey_PrimaryBotUsesDefault verifies that primary bots use the
-// default chat session key.
 func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
+	// Verifies that primary bots use the
+	// default chat session key.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
@@ -177,9 +177,9 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	}
 }
 
-// TestSessionKey_PrimaryBotIsStable verifies that SessionKey() returns the
-// same value on repeated calls.
 func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
+	// Verifies that SessionKey() returns the
+	// same value on repeated calls.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
@@ -194,9 +194,9 @@ func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
 	}
 }
 
-// TestDefaultSessionKey_IsStable verifies that DefaultSessionKey() returns
-// the same value on repeated calls.
 func TestDefaultSessionKey_IsStable(t *testing.T) {
+	// Verifies that DefaultSessionKey() returns
+	// the same value on repeated calls.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
@@ -210,9 +210,9 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 	}
 }
 
-// TestSessionKey_SecondaryBotUsesOverride verifies that secondary bots use
-// the configured session key override.
 func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
+	// Verifies that secondary bots use
+	// the configured session key override.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
 	b.SetSessionKey("agent:test:multiball:mb-123")
@@ -222,9 +222,9 @@ func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 	}
 }
 
-// TestChatUsernameRecording verifies that chat usernames are recorded when
-// messages are received.
 func TestChatUsernameRecording(t *testing.T) {
+	// Verifies that chat usernames are recorded when
+	// messages are received.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
@@ -237,9 +237,9 @@ func TestChatUsernameRecording(t *testing.T) {
 	// (testBot doesn't set up the state/storage for usernames)
 }
 
-// TestSetSessionKey_FiresCallback verifies that SetSessionKey fires the
-// registered callback.
 func TestSetSessionKey_FiresCallback(t *testing.T) {
+	// Verifies that SetSessionKey fires the
+	// registered callback.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
 
@@ -257,9 +257,9 @@ func TestSetSessionKey_FiresCallback(t *testing.T) {
 	}
 }
 
-// TestSetSessionKey_NilCallbackDoesNotPanic verifies that SetSessionKey
-// handles nil callback without panicking.
 func TestSetSessionKey_NilCallbackDoesNotPanic(t *testing.T) {
+	// Verifies that SetSessionKey
+	// handles nil callback without panicking.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
 	// No callback set
@@ -272,9 +272,9 @@ func TestSetSessionKey_NilCallbackDoesNotPanic(t *testing.T) {
 	b.SetSessionKey("test-key")
 }
 
-// TestSetSessionKeyDirect_DoesNotFireCallback verifies that SetSessionKeyDirect
-// does not fire the callback.
 func TestSetSessionKeyDirect_DoesNotFireCallback(t *testing.T) {
+	// Verifies that SetSessionKeyDirect
+	// does not fire the callback.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
 
@@ -292,8 +292,8 @@ func TestSetSessionKeyDirect_DoesNotFireCallback(t *testing.T) {
 	}
 }
 
-// TestUsername_NilSafe verifies that the bot handles nil API without panicking.
 func TestUsername_NilSafe(t *testing.T) {
+	// Verifies that the bot handles nil API without panicking.
 	b, _ := testBot([]string{}, command.NewRegistry())
 	// Bot created with testBot doesn't set API, so Username() should return empty
 	// Just verify no panic when accessing Username()

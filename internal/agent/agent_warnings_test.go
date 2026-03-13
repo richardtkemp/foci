@@ -15,6 +15,7 @@ import (
 )
 
 func TestMaxTokensWarning(t *testing.T) {
+	// Proves that when the API returns stop_reason="max_tokens", the MaxTokensWarnFunc callback fires with a message that includes the session key, while still returning the truncated response to the caller.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -63,6 +64,7 @@ func TestMaxTokensWarning(t *testing.T) {
 }
 
 func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
+	// Proves that a normal end_turn response does not trigger the MaxTokensWarnFunc — warnings are specific to max_tokens truncation.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -96,6 +98,7 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 }
 
 func TestBraindeadWarningInjected(t *testing.T) {
+	// Proves that once the tool-call loop exceeds BraindeadWarningThreshold iterations, a [system] warning is injected into the conversation to nudge the model toward finishing.
 	var callCount atomic.Int32
 	threshold := 3
 
@@ -163,6 +166,7 @@ func TestBraindeadWarningInjected(t *testing.T) {
 }
 
 func TestBraindeadWarningOnlyOnce(t *testing.T) {
+	// Proves that the braindead warning is injected at most once per turn even when the threshold is exceeded multiple times in a single tool-call loop.
 	var callCount atomic.Int32
 	totalLoops := 6
 	threshold := 2
@@ -229,6 +233,7 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 }
 
 func TestBraindeadDisabledWhenZero(t *testing.T) {
+	// Proves that setting BraindeadWarningThreshold=0 disables the braindead warning entirely, even when the loop runs many iterations.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

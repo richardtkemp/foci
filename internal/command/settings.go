@@ -6,80 +6,89 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"foci/internal/config"
 )
-func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string, string), resolveModel func(string) (string, string, string), modelAliases map[string]string) *Command {
+
+// ModelCommand returns a /model command to show or switch the model.
+func ModelCommand() *Command {
 	return &Command{
 		Name:        "model",
 		Description: "Show or switch model (supports endpoint:alias syntax, e.g. gemini:flash)",
 		Category:    "operations",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			if args == "" {
-				return fmt.Sprintf("Current model: %s", getModel(ctx)), nil
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			if req.Args == "" {
+				current := cc.Agent.SessionModel(req.SessionKey)
+				return Response{Text: fmt.Sprintf("Current model: %s", current)}, nil
 			}
-			endpoint, resolved, format := resolveModel(args)
-			setModel(ctx, endpoint, resolved, format)
-			display := resolved
+			resolved, err := config.ResolveModel(req.Args, "", cc.ModelAliases)
+			var endpoint, model, format string
+			if err != nil {
+				endpoint = ""
+				model = req.Args
+				format = ""
+			} else {
+				endpoint = resolved.Endpoint
+				model = resolved.Developer + "/" + resolved.ModelID
+				format = resolved.Format
+			}
+			var client interface{ Send(context.Context, *interface{}, interface{}) (interface{}, error) }
+			_ = client // ResolveEndpointClient handled below
+			if endpoint != "" && format != "" && cc.ClientProvider != nil {
+				provClient := cc.ClientProvider.ResolveEndpointClient(endpoint, format)
+				cc.Agent.SetSessionModel(req.SessionKey, model, endpoint, format, provClient)
+			} else {
+				cc.Agent.SetSessionModel(req.SessionKey, model, endpoint, format, nil)
+			}
+			display := model
 			if endpoint != "" {
-				display = endpoint + ":" + resolved
+				display = endpoint + ":" + model
 			}
-			return fmt.Sprintf("Model switched to: %s", display), nil
+			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil
 		},
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
-			current := getModel(ctx)
-			if len(modelAliases) > 0 {
-				// Use aliases sorted alphabetically
-				names := make([]string, 0, len(modelAliases))
-				for alias := range modelAliases {
+		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
+			if len(cc.ModelAliases) > 0 {
+				names := make([]string, 0, len(cc.ModelAliases))
+				for alias := range cc.ModelAliases {
 					names = append(names, alias)
 				}
 				sort.Strings(names)
 				var opts []KeyboardOption
 				for _, alias := range names {
-					label := alias
-					// Match against the alias value (which includes endpoint prefix)
-					// Current model is just the model ID, so check if alias value ends with it
-					aliasVal := modelAliases[alias]
-					if aliasVal == current || (strings.Contains(aliasVal, ":") && strings.HasSuffix(aliasVal, ":"+current)) {
-						label += " ✓"
-					}
-					opts = append(opts, KeyboardOption{Label: label, Data: alias})
+					opts = append(opts, KeyboardOption{Label: alias, Data: alias})
 				}
 				return opts
 			}
-			// Fallback: show common model names
 			models := []string{"haiku", "sonnet", "opus"}
 			var opts []KeyboardOption
 			for _, m := range models {
-				label := m
-				if strings.Contains(current, m) {
-					label += " ✓"
-				}
-				opts = append(opts, KeyboardOption{Label: label, Data: m})
+				opts = append(opts, KeyboardOption{Label: m, Data: m})
 			}
 			return opts
 		},
 	}
 }
 
-// NewEffortCommand returns a /effort command to show or set the effort level.
-// getEffort returns current effort; setEffort changes it (runtime only).
-// Callbacks receive the command's context so callers can resolve per-session state.
-func NewEffortCommand(getEffort func(context.Context) string, setEffort func(context.Context, string)) *Command {
+// EffortCommand returns a /effort command to show or set the effort level.
+// Visible is set to hide the command when the current model doesn't support effort.
+func EffortCommand() *Command {
 	return &Command{
 		Name:        "effort",
 		Description: "Show or set effort level (low/medium/high)",
 		Category:    "operations",
-		Execute: func(ctx context.Context, args string) (string, error) {
+		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
+			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Effort
+		},
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			const optionsLine = "Options: 1) low  2) medium  3) high"
-			if args == "" {
-				e := getEffort(ctx)
+			if req.Args == "" {
+				e := cc.Agent.SessionEffort(req.SessionKey)
 				if e == "" {
-					return "Effort: not set (using API default)\n" + optionsLine, nil
+					return Response{Text: "Effort: not set (using API default)\n" + optionsLine}, nil
 				}
-				return fmt.Sprintf("Effort: %s\n%s", e, optionsLine), nil
+				return Response{Text: fmt.Sprintf("Effort: %s\n%s", e, optionsLine)}, nil
 			}
-			arg := strings.ToLower(strings.TrimSpace(args))
-			// Accept numeric aliases
+			arg := strings.ToLower(strings.TrimSpace(req.Args))
 			switch arg {
 			case "1":
 				arg = "low"
@@ -90,49 +99,46 @@ func NewEffortCommand(getEffort func(context.Context) string, setEffort func(con
 			}
 			switch arg {
 			case "low", "medium", "high":
-				setEffort(ctx, arg)
-				return fmt.Sprintf("Effort set to: %s", arg), nil
+				cc.Agent.SetSessionEffort(req.SessionKey, arg)
+				return Response{Text: fmt.Sprintf("Effort set to: %s", arg)}, nil
 			case "none", "off", "":
-				setEffort(ctx, "")
-				return "Effort cleared (using API default)", nil
+				cc.Agent.SetSessionEffort(req.SessionKey, "")
+				return Response{Text: "Effort cleared (using API default)"}, nil
 			default:
-				return fmt.Sprintf("Invalid effort level: %q\n%s", args, optionsLine), nil
+				return Response{Text: fmt.Sprintf("Invalid effort level: %q\n%s", req.Args, optionsLine)}, nil
 			}
 		},
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
-			current := getEffort(ctx)
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			levels := []string{"low", "medium", "high"}
 			opts := make([]KeyboardOption, len(levels))
 			for i, l := range levels {
-				label := l
-				if l == current {
-					label += " ✓"
-				}
-				opts[i] = KeyboardOption{Label: label, Data: l}
+				opts[i] = KeyboardOption{Label: l, Data: l}
 			}
 			return opts
 		},
 	}
 }
 
-// NewThinkingCommand returns a /thinking command to show or set the thinking mode.
-// getThinking returns current mode; setThinking changes it (runtime only).
-// Callbacks receive the command's context so callers can resolve per-session state.
-func NewThinkingCommand(getThinking func(context.Context) string, setThinking func(context.Context, string)) *Command {
+// ThinkingCommand returns a /thinking command to show or set the thinking mode.
+// Visible is set to hide the command when the current model doesn't support thinking.
+func ThinkingCommand() *Command {
 	return &Command{
 		Name:        "thinking",
 		Description: "Show or set thinking mode (off/adaptive)",
 		Category:    "operations",
-		Execute: func(ctx context.Context, args string) (string, error) {
+		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
+			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Thinking
+		},
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
 			const optionsLine = "Options: 0) off  1) adaptive"
-			if args == "" {
-				t := getThinking(ctx)
+			if req.Args == "" {
+				t := cc.Agent.SessionThinking(req.SessionKey)
 				if t == "" || t == "off" {
-					return "Thinking: off\n" + optionsLine, nil
+					return Response{Text: "Thinking: off\n" + optionsLine}, nil
 				}
-				return fmt.Sprintf("Thinking: %s\n%s", t, optionsLine), nil
+				return Response{Text: fmt.Sprintf("Thinking: %s\n%s", t, optionsLine)}, nil
 			}
-			arg := strings.ToLower(strings.TrimSpace(args))
+			arg := strings.ToLower(strings.TrimSpace(req.Args))
 			switch arg {
 			case "0":
 				arg = "off"
@@ -141,27 +147,73 @@ func NewThinkingCommand(getThinking func(context.Context) string, setThinking fu
 			}
 			switch arg {
 			case "off", "none":
-				setThinking(ctx, "off")
-				return "Thinking: off", nil
+				cc.Agent.SetSessionThinking(req.SessionKey, "off")
+				return Response{Text: "Thinking: off"}, nil
 			case "adaptive":
-				setThinking(ctx, "adaptive")
-				return "Thinking: adaptive", nil
+				cc.Agent.SetSessionThinking(req.SessionKey, "adaptive")
+				return Response{Text: "Thinking: adaptive"}, nil
 			default:
-				return fmt.Sprintf("Invalid thinking mode: %q\n%s", args, optionsLine), nil
+				return Response{Text: fmt.Sprintf("Invalid thinking mode: %q\n%s", req.Args, optionsLine)}, nil
 			}
 		},
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
-			current := getThinking(ctx)
-			opts := []KeyboardOption{
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
+			return []KeyboardOption{
 				{Label: "off", Data: "off"},
 				{Label: "adaptive", Data: "adaptive"},
 			}
-			for i := range opts {
-				if opts[i].Data == current || (current == "" && opts[i].Data == "off") {
-					opts[i].Label += " ✓"
-				}
+		},
+	}
+}
+
+// SpeedCommand returns a /speed command to show or set Anthropic fast mode.
+// Visible is set to hide the command when the current model doesn't support speed.
+func SpeedCommand() *Command {
+	return &Command{
+		Name:        "speed",
+		Description: "Show or set speed mode (standard/fast)",
+		Category:    "operations",
+		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
+			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Speed
+		},
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			const optionsLine = "Options: 0) standard  1) fast"
+
+			// Gate: reject if current model doesn't support speed
+			m := cc.Agent.SessionModel(req.SessionKey)
+			if !config.ModelCapabilities(m).Speed {
+				return Response{Text: fmt.Sprintf("Speed is not supported by %s (Opus only)", m)}, nil
 			}
-			return opts
+
+			if req.Args == "" {
+				s := cc.Agent.SessionSpeed(req.SessionKey)
+				if s == "" || s == "standard" {
+					return Response{Text: "Speed: standard\n" + optionsLine}, nil
+				}
+				return Response{Text: fmt.Sprintf("Speed: %s\n%s", s, optionsLine)}, nil
+			}
+			arg := strings.ToLower(strings.TrimSpace(req.Args))
+			switch arg {
+			case "0":
+				arg = "standard"
+			case "1":
+				arg = "fast"
+			}
+			switch arg {
+			case "standard", "off", "none":
+				cc.Agent.SetSessionSpeed(req.SessionKey, "")
+				return Response{Text: "Speed: standard"}, nil
+			case "fast":
+				cc.Agent.SetSessionSpeed(req.SessionKey, "fast")
+				return Response{Text: "Speed: fast (6x pricing, separate prompt cache)"}, nil
+			default:
+				return Response{Text: fmt.Sprintf("Invalid speed mode: %q\n%s", req.Args, optionsLine)}, nil
+			}
+		},
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "standard", Data: "standard"},
+				{Label: "fast", Data: "fast"},
+			}
 		},
 	}
 }
@@ -173,55 +225,33 @@ type DisplayField struct {
 	Override string // per-session override value (empty = using default)
 }
 
-// DisplayGetters provides callbacks for reading per-session display overrides.
-type DisplayGetters struct {
-	ShowToolCalls func(ctx context.Context) (override, effective string)
-	ShowThinking  func(ctx context.Context) (override, effective string)
-	StreamOutput  func(ctx context.Context) (override, effective string)
-	DisplayWidth  func(ctx context.Context) (override, effective string)
-}
-
-// DisplaySetters provides callbacks for writing per-session display overrides.
-type DisplaySetters struct {
-	SetShowToolCalls func(ctx context.Context, value string)
-	SetShowThinking  func(ctx context.Context, value string)
-	SetStreamOutput  func(ctx context.Context, value string)
-	SetDisplayWidth  func(ctx context.Context, value string)
-	ResetAll         func(ctx context.Context)
-}
-
-// NewDisplayCommand returns a /display command to show or set per-session display overrides.
-// Supported keys: show_tool_calls, show_thinking, stream_output, display_width.
-func NewDisplayCommand(getters DisplayGetters, setters DisplaySetters) *Command {
+// DisplayCommand returns a /display command to show or set per-session display overrides.
+func DisplayCommand() *Command {
 	return &Command{
 		Name:        "display",
 		Description: "Show or set display options (show_tool_calls, show_thinking, stream_output, display_width)",
 		Category:    "operations",
-		Execute: func(ctx context.Context, args string) (string, error) {
-			args = strings.TrimSpace(args)
+		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			args := strings.TrimSpace(req.Args)
 
-			// /display reset — clear all overrides
 			if args == "reset" {
-				setters.ResetAll(ctx)
-				return "Display overrides cleared — using config defaults.", nil
+				cc.Agent.ClearSessionDisplayOverrides(req.SessionKey)
+				return Response{Text: "Display overrides cleared — using config defaults."}, nil
 			}
 
-			// /display — show all current values
 			if args == "" {
-				return formatDisplayStatus(ctx, getters), nil
+				return Response{Text: formatDisplayStatus(req.SessionKey, cc)}, nil
 			}
 
-			// /display <key> [value] — get or set a single key
 			parts := strings.SplitN(args, " ", 2)
 			key := strings.ToLower(parts[0])
 			if len(parts) == 1 {
-				// Show single key
-				return formatSingleDisplay(ctx, getters, key)
+				return formatSingleDisplay(req.SessionKey, cc, key)
 			}
 			value := strings.TrimSpace(parts[1])
-			return applyDisplaySetting(ctx, setters, key, value)
+			return applyDisplaySetting(req.SessionKey, cc, key, value)
 		},
-		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
 				{Label: "show_tool_calls", Data: "show_tool_calls"},
 				{Label: "show_thinking", Data: "show_thinking"},
@@ -233,11 +263,79 @@ func NewDisplayCommand(getters DisplayGetters, setters DisplaySetters) *Command 
 	}
 }
 
+// displayFieldValue returns (override, effective) for a display field.
+func displayFieldValue(sessionKey string, cc CommandContext, key string) (override, effective string) {
+	switch key {
+	case "show_tool_calls":
+		override = cc.Agent.SessionShowToolCalls(sessionKey)
+		if override != "" {
+			return override, override
+		}
+		effective = "off"
+		if cc.AgentConfig.ShowToolCalls != nil {
+			effective = string(*cc.AgentConfig.ShowToolCalls)
+		} else if cc.Config.Telegram.ShowToolCalls != nil {
+			effective = string(*cc.Config.Telegram.ShowToolCalls)
+		}
+		return "", effective
+	case "show_thinking":
+		override = cc.Agent.SessionDisplayShowThinking(sessionKey)
+		if override != "" {
+			return override, override
+		}
+		effective = "off"
+		if cc.AgentConfig.ShowThinking != nil {
+			effective = string(*cc.AgentConfig.ShowThinking)
+		} else if cc.Config.Telegram.ShowThinking != nil {
+			effective = string(*cc.Config.Telegram.ShowThinking)
+		}
+		return "", effective
+	case "stream_output":
+		override = cc.Agent.SessionStreamOutput(sessionKey)
+		if override != "" {
+			eff := "off"
+			if override == "true" {
+				eff = "on"
+			}
+			return override, eff
+		}
+		effective = "off"
+		if cc.Config.Telegram.StreamOutput {
+			effective = "on"
+		}
+		return "", effective
+	case "display_width":
+		override = cc.Agent.SessionDisplayWidth(sessionKey)
+		if override != "" {
+			return override, override
+		}
+		effective = "44"
+		if cc.AgentConfig.DisplayWidth != nil {
+			effective = fmt.Sprintf("%d", *cc.AgentConfig.DisplayWidth)
+		} else if cc.Config.Telegram.DisplayWidth != nil {
+			effective = fmt.Sprintf("%d", *cc.Config.Telegram.DisplayWidth)
+		}
+		return "", effective
+	}
+	return "", ""
+}
+
+// allDisplayFields returns all display fields with their current status.
+func allDisplayFields(sessionKey string, cc CommandContext) []DisplayField {
+	keys := []string{"show_tool_calls", "show_thinking", "stream_output", "display_width"}
+	fields := make([]DisplayField, len(keys))
+	for i, key := range keys {
+		override, effective := displayFieldValue(sessionKey, cc, key)
+		fields[i] = DisplayField{Key: key, Value: effective, Override: override}
+	}
+	return fields
+}
+
 // formatDisplayStatus builds the full status string for all display settings.
-func formatDisplayStatus(ctx context.Context, g DisplayGetters) string {
+func formatDisplayStatus(sessionKey string, cc CommandContext) string {
 	var b strings.Builder
 	b.WriteString("Display settings:\n")
-	for _, field := range allDisplayFields(ctx, g) {
+	for _, field := range allDisplayFields(sessionKey, cc) {
 		if field.Override != "" {
 			fmt.Fprintf(&b, "  %s: %s (override)\n", field.Key, field.Value)
 		} else {
@@ -255,38 +353,24 @@ var displayKeyAliases = map[string]string{
 }
 
 // formatSingleDisplay returns the status of a single display key.
-func formatSingleDisplay(ctx context.Context, g DisplayGetters, key string) (string, error) {
+func formatSingleDisplay(sessionKey string, cc CommandContext, key string) (Response, error) {
 	if canonical, ok := displayKeyAliases[key]; ok {
 		key = canonical
 	}
-	fields := allDisplayFields(ctx, g)
+	fields := allDisplayFields(sessionKey, cc)
 	for _, f := range fields {
 		if f.Key == key {
 			if f.Override != "" {
-				return fmt.Sprintf("%s: %s (override)", f.Key, f.Value), nil
+				return Response{Text: fmt.Sprintf("%s: %s (override)", f.Key, f.Value)}, nil
 			}
-			return fmt.Sprintf("%s: %s", f.Key, f.Value), nil
+			return Response{Text: fmt.Sprintf("%s: %s", f.Key, f.Value)}, nil
 		}
 	}
-	return "", fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output (stream), display_width (width)", key)
-}
-
-// allDisplayFields returns all display fields with their current status.
-func allDisplayFields(ctx context.Context, g DisplayGetters) []DisplayField {
-	fields := make([]DisplayField, 4)
-	override, effective := g.ShowToolCalls(ctx)
-	fields[0] = DisplayField{Key: "show_tool_calls", Value: effective, Override: override}
-	override, effective = g.ShowThinking(ctx)
-	fields[1] = DisplayField{Key: "show_thinking", Value: effective, Override: override}
-	override, effective = g.StreamOutput(ctx)
-	fields[2] = DisplayField{Key: "stream_output", Value: effective, Override: override}
-	override, effective = g.DisplayWidth(ctx)
-	fields[3] = DisplayField{Key: "display_width", Value: effective, Override: override}
-	return fields
+	return Response{}, fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output (stream), display_width (width)", key)
 }
 
 // applyDisplaySetting validates and applies a display setting override.
-func applyDisplaySetting(ctx context.Context, s DisplaySetters, key, value string) (string, error) {
+func applyDisplaySetting(sessionKey string, cc CommandContext, key, value string) (Response, error) {
 	if canonical, ok := displayKeyAliases[key]; ok {
 		key = canonical
 	}
@@ -296,43 +380,42 @@ func applyDisplaySetting(ctx context.Context, s DisplaySetters, key, value strin
 	case "show_tool_calls":
 		switch value {
 		case "off", "preview", "full":
-			s.SetShowToolCalls(ctx, value)
-			return fmt.Sprintf("show_tool_calls set to: %s", value), nil
+			cc.Agent.SetSessionShowToolCalls(sessionKey, value)
+			return Response{Text: fmt.Sprintf("show_tool_calls set to: %s", value)}, nil
 		default:
-			return "", fmt.Errorf("invalid show_tool_calls value: %q\nOptions: off, preview, full", value)
+			return Response{}, fmt.Errorf("invalid show_tool_calls value: %q\nOptions: off, preview, full", value)
 		}
 
 	case "show_thinking":
 		switch value {
 		case "off", "compact", "true":
-			s.SetShowThinking(ctx, value)
-			return fmt.Sprintf("show_thinking set to: %s", value), nil
+			cc.Agent.SetSessionDisplayShowThinking(sessionKey, value)
+			return Response{Text: fmt.Sprintf("show_thinking set to: %s", value)}, nil
 		default:
-			return "", fmt.Errorf("invalid show_thinking value: %q\nOptions: off, compact, true", value)
+			return Response{}, fmt.Errorf("invalid show_thinking value: %q\nOptions: off, compact, true", value)
 		}
 
 	case "stream_output":
 		switch value {
 		case "on", "true":
-			s.SetStreamOutput(ctx, "true")
-			return "stream_output set to: on", nil
+			cc.Agent.SetSessionStreamOutput(sessionKey, "true")
+			return Response{Text: "stream_output set to: on"}, nil
 		case "off", "false":
-			s.SetStreamOutput(ctx, "false")
-			return "stream_output set to: off", nil
+			cc.Agent.SetSessionStreamOutput(sessionKey, "false")
+			return Response{Text: "stream_output set to: off"}, nil
 		default:
-			return "", fmt.Errorf("invalid stream_output value: %q\nOptions: on, off", value)
+			return Response{}, fmt.Errorf("invalid stream_output value: %q\nOptions: on, off", value)
 		}
 
 	case "display_width":
 		w, err := strconv.Atoi(value)
 		if err != nil || w < 20 || w > 200 {
-			return "", fmt.Errorf("invalid display_width: %q (must be 20–200)", value)
+			return Response{}, fmt.Errorf("invalid display_width: %q (must be 20–200)", value)
 		}
-		s.SetDisplayWidth(ctx, strconv.Itoa(w))
-		return fmt.Sprintf("display_width set to: %d", w), nil
+		cc.Agent.SetSessionDisplayWidth(sessionKey, strconv.Itoa(w))
+		return Response{Text: fmt.Sprintf("display_width set to: %d", w)}, nil
 
 	default:
-		return "", fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output, display_width", key)
+		return Response{}, fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output, display_width", key)
 	}
 }
-

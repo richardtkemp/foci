@@ -60,6 +60,36 @@ func TestFormatInjectedMessageEmptyBody(t *testing.T) {
 	}
 }
 
+func TestFormatInjectedMessageCustomContextNote(t *testing.T) {
+	// Verifies that a custom context note replaces the default.
+	when := time.Date(2026, 3, 1, 14, 30, 0, 0, time.UTC)
+	custom := "[CUSTOM NOTE — reply goes elsewhere]"
+	result := FormatInjectedMessage("TEST", when, "hello", custom)
+
+	if strings.Contains(result, defaultInjectionNote) {
+		t.Error("default note should not appear when custom note is provided")
+	}
+	if !strings.Contains(result, custom) {
+		t.Errorf("custom note missing, got:\n%s", result)
+	}
+	if !strings.Contains(result, "[TEST @ 2026-03-01T14:30:00Z]") {
+		t.Error("header missing")
+	}
+	if !strings.Contains(result, "hello") {
+		t.Error("body missing")
+	}
+}
+
+func TestFormatInjectedMessageDefaultContextNote(t *testing.T) {
+	// Verifies that omitting the contextNote parameter uses the default.
+	when := time.Date(2026, 3, 1, 14, 30, 0, 0, time.UTC)
+	result := FormatInjectedMessage("TEST", when, "body")
+
+	if !strings.Contains(result, defaultInjectionNote) {
+		t.Error("default note should appear when no custom note is provided")
+	}
+}
+
 func TestFormatInjectedMessageUTCConversion(t *testing.T) {
 	// Provide a non-UTC time — should be converted to UTC in output
 	loc := time.FixedZone("EST", -5*3600)

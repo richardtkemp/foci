@@ -12,6 +12,7 @@ import (
 )
 
 func TestGetUsageSuccess(t *testing.T) {
+	// Proves that GetUsage sends a request to the correct path with the OAuth Bearer token and anthropic-beta header, and correctly deserializes the utilization value from the response.
 	util := 55.0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify path
@@ -53,6 +54,7 @@ func TestGetUsageSuccess(t *testing.T) {
 }
 
 func TestGetUsageEmptyToken(t *testing.T) {
+	// Proves that GetUsage returns a descriptive error when no OAuth token is configured, rather than sending an unauthenticated request.
 	client := &UsageClient{
 		oauthToken: "",
 		httpClient: http.DefaultClient,
@@ -70,6 +72,7 @@ func TestGetUsageEmptyToken(t *testing.T) {
 }
 
 func TestGetUsageAPIError(t *testing.T) {
+	// Proves that a 401 from the usage endpoint surfaces as a descriptive API error with the status code, rather than returning empty data.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"error":"invalid token"}`))
@@ -93,6 +96,7 @@ func TestGetUsageAPIError(t *testing.T) {
 }
 
 func TestGetUsageCacheHit(t *testing.T) {
+	// Proves that a second call to GetUsage within the cache TTL returns the same cached response pointer without making a second HTTP request to the server.
 	var calls atomic.Int32
 	util := 55.0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +141,7 @@ func TestGetUsageCacheHit(t *testing.T) {
 }
 
 func TestGetUsageCacheExpiry(t *testing.T) {
+	// Proves that GetUsage re-fetches from the server after the cache TTL expires, by using a very short TTL and verifying two distinct server hits.
 	var calls atomic.Int32
 	util := 55.0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +183,7 @@ func TestGetUsageCacheExpiry(t *testing.T) {
 }
 
 func TestInvalidateForcesFetch(t *testing.T) {
+	// Proves that Invalidate() clears the cache so the next GetUsage call hits the server even when the TTL has not yet expired.
 	var calls atomic.Int32
 	util := 55.0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -214,9 +220,7 @@ func TestInvalidateForcesFetch(t *testing.T) {
 }
 
 func TestErrorBackoff(t *testing.T) {
-	// Consecutive fetch errors suppress retries with exponential backoff.
-	// First error sets backoff to cacheTTL, second doubles it.
-	// Calls within backoff return the cached error without hitting the server.
+	// Proves that consecutive fetch failures trigger exponential backoff: the first error sets a backoff window equal to the cache TTL, subsequent calls within the window are suppressed (no server hit), and after the window expires the client retries and doubles the backoff.
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -268,7 +272,7 @@ func TestErrorBackoff(t *testing.T) {
 }
 
 func TestErrorBackoffResetsOnSuccess(t *testing.T) {
-	// A successful fetch after errors resets the backoff state entirely.
+	// Proves that a successful response after a period of failures fully clears the error backoff state, leaving errBackoff at zero and lastErr nil.
 	var calls atomic.Int32
 	failing := true
 	util := 55.0
@@ -322,7 +326,7 @@ func TestErrorBackoffResetsOnSuccess(t *testing.T) {
 }
 
 func TestInvalidateClearsErrorBackoff(t *testing.T) {
-	// Invalidate() clears error backoff so /mana force-refresh retries immediately.
+	// Proves that Invalidate() also clears the error backoff state, allowing an immediate retry even while still within the backoff window — this supports the /mana force-refresh user flow.
 	var calls atomic.Int32
 	util := 55.0
 	failing := true
@@ -376,6 +380,7 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 }
 
 func TestSetCacheTTL(t *testing.T) {
+	// Proves that SetCacheTTL updates the cache TTL field and that NewUsageClient initialises it to the default TTL.
 	client := NewUsageClient("tok")
 	if client.cacheTTL != defaultCacheTTL {
 		t.Fatalf("default cacheTTL = %v, want %v", client.cacheTTL, defaultCacheTTL)

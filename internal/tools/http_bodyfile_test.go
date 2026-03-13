@@ -14,8 +14,8 @@ import (
 	"testing"
 )
 
-// TestHTTPRequestBodyFile verifies request body can be loaded from file
 func TestHTTPRequestBodyFile(t *testing.T) {
+	// Proves that body_file reads a file's contents and sends them verbatim as the request body, so the server receives exactly the file's bytes.
 	t.Parallel()
 	var receivedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,8 +48,8 @@ func TestHTTPRequestBodyFile(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestBodyFileWithSecrets verifies secrets in body_file are resolved
 func TestHTTPRequestBodyFileWithSecrets(t *testing.T) {
+	// Proves that secret templates inside a body_file are resolved before sending, so the server receives the actual secret value with no unresolved placeholders.
 	t.Parallel()
 	var receivedBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,8 +87,8 @@ allowed_hosts = ["%s"]
 	}
 }
 
-// TestHTTPRequestBodyFileNotFound verifies missing body_file is rejected
 func TestHTTPRequestBodyFileNotFound(t *testing.T) {
+	// Proves that a nonexistent body_file path returns an error mentioning "body_file" rather than silently sending an empty body.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -106,8 +106,8 @@ func TestHTTPRequestBodyFileNotFound(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestBodyFileMutualExclusionWithBody verifies body + body_file is rejected
 func TestHTTPRequestBodyFileMutualExclusionWithBody(t *testing.T) {
+	// Proves that specifying both "body" and "body_file" is rejected as mutually exclusive, preventing ambiguous request bodies.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -126,8 +126,8 @@ func TestHTTPRequestBodyFileMutualExclusionWithBody(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestBodyFileMutualExclusionWithFiles verifies body_file + files is rejected
 func TestHTTPRequestBodyFileMutualExclusionWithFiles(t *testing.T) {
+	// Proves that combining body_file and files is rejected as mutually exclusive, since both would attempt to set the request body.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{
@@ -148,8 +148,8 @@ func TestHTTPRequestBodyFileMutualExclusionWithFiles(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestBodyFileIsDirectory verifies directories are rejected as body_file
 func TestHTTPRequestBodyFileIsDirectory(t *testing.T) {
+	// Proves that passing a directory path as body_file returns an error mentioning "directory" rather than attempting to read the directory as file content.
 	t.Parallel()
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
 	params, _ := json.Marshal(map[string]interface{}{

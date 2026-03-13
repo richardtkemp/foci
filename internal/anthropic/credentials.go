@@ -48,6 +48,8 @@ func (h *tokenHolder) Set(token string) {
 type AnthropicResolver struct {
 	store         SecretsStore
 	ccSrc         *CCTokenSource
+	ccStartOnce   sync.Once
+	ctx           context.Context
 	credHolders   map[string]*tokenHolder
 	mu            sync.Mutex
 	httpTimeout   time.Duration
@@ -85,7 +87,6 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 			log.Warnf("anthropic", "CC credentials expired — starting claude to refresh")
 			go startClaudeForRefresh()
 		})
-		src.Start(ctx)
 		ccSrc = src
 		log.Infof("anthropic", "CC token source configured (%s, poll %s)", ccCredsFile, ccPollInterval)
 	}
@@ -93,11 +94,30 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 	return &AnthropicResolver{
 		store:         store,
 		ccSrc:         ccSrc,
+		ctx:           ctx,
 		credHolders:   make(map[string]*tokenHolder),
 		httpTimeout:   httpTimeout,
 		usageCacheTTL: usageCacheTTL,
 		useSDK:        anthropicCfg.UseSDK,
 	}, nil
+}
+
+// ensureCCStarted starts the CCTokenSource background poller on first use.
+func (r *AnthropicResolver) ensureCCStarted() {
+	if r.ccSrc == nil {
+		return
+	}
+	r.ccStartOnce.Do(func() {
+		r.ccSrc.Start(r.ctx)
+		log.Infof("anthropic", "CC token source started (lazy)")
+	})
+}
+
+// Close stops the CCTokenSource background poller.
+func (r *AnthropicResolver) Close() {
+	if r.ccSrc != nil {
+		r.ccSrc.Stop()
+	}
 }
 
 // ResolveClient implements provider.CredentialResolver.
@@ -136,6 +156,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 	}
 
 	// Priority 3: Claude Code credentials
+	r.ensureCCStarted()
 	if r.ccSrc != nil {
 		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, passive)", endpointName)
 		c := NewClientWithTokenFunc(r.ccSrc.Token, r.httpTimeout)
@@ -155,6 +176,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 // OAuth scopes and will be rejected by the usage endpoint.
 func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (provider.UsageClient, error) {
 	// Usage API requires OAuth with user:profile scope — only CC credentials work.
+	r.ensureCCStarted()
 	if r.ccSrc != nil {
 		client := NewUsageClientWithFunc(r.ccSrc.Token)
 		client.SetCacheTTL(r.usageCacheTTL)

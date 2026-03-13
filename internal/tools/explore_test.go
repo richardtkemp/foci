@@ -11,6 +11,7 @@ import (
 )
 
 func TestLsBasic(t *testing.T) {
+	// Verifies that the ls tool lists files in a directory by name.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hi"), 0644)
@@ -31,6 +32,7 @@ func TestLsBasic(t *testing.T) {
 }
 
 func TestLsFlags(t *testing.T) {
+	// Verifies that extra flags (e.g. -la) are passed through to ls and the output still contains the expected filename.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("data"), 0644)
@@ -51,6 +53,7 @@ func TestLsFlags(t *testing.T) {
 }
 
 func TestLsNonexistentPath(t *testing.T) {
+	// Verifies that ls on a path that does not exist returns an Error: message in the result rather than a Go error.
 	t.Parallel()
 	tool := NewLsTool()
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/path/xyz"})
@@ -64,6 +67,7 @@ func TestLsNonexistentPath(t *testing.T) {
 }
 
 func TestFindByName(t *testing.T) {
+	// Verifies that the find tool's -name glob filter returns only files whose names match, excluding others.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "foo.go"), []byte("package main"), 0644)
@@ -87,6 +91,7 @@ func TestFindByName(t *testing.T) {
 }
 
 func TestFindByType(t *testing.T) {
+	// Verifies that the find tool with -type d returns directories and not regular files.
 	t.Parallel()
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0755)
@@ -107,6 +112,7 @@ func TestFindByType(t *testing.T) {
 }
 
 func TestFindMaxdepth(t *testing.T) {
+	// Verifies that -maxdepth limits the search to shallow entries, excluding deeply nested files.
 	t.Parallel()
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "a", "b"), 0755)
@@ -131,6 +137,7 @@ func TestFindMaxdepth(t *testing.T) {
 }
 
 func TestFindBlockedExec(t *testing.T) {
+	// Verifies that dangerous find predicates (-exec, -execdir, -delete, -fls) are rejected with a "blocked predicate" error.
 	t.Parallel()
 	tool := NewFindTool()
 	for _, blocked := range []string{"-exec", "-execdir", "-delete", "-fls"} {
@@ -149,6 +156,7 @@ func TestFindBlockedExec(t *testing.T) {
 }
 
 func TestGrepBasicMatch(t *testing.T) {
+	// Verifies that the grep tool returns matching lines from a file when given a simple pattern.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world\nfoo bar\nhello again"), 0644)
@@ -169,6 +177,7 @@ func TestGrepBasicMatch(t *testing.T) {
 }
 
 func TestGrepParams(t *testing.T) {
+	// Verifies that additional grep flags like -i (case-insensitive) and -c (count) are passed through and affect the result.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("Hello World\nhello lower\nHELLO UPPER"), 0644)
@@ -191,6 +200,7 @@ func TestGrepParams(t *testing.T) {
 }
 
 func TestGrepContextLines(t *testing.T) {
+	// Verifies that the -C flag causes grep to include lines before and after each match in the output.
 	t.Parallel()
 	dir := t.TempDir()
 	content := "line1\nline2\ntarget\nline4\nline5\n"
@@ -216,6 +226,7 @@ func TestGrepContextLines(t *testing.T) {
 }
 
 func TestGrepNoMatch(t *testing.T) {
+	// Verifies that a pattern with no matches produces a "(no matches)" message rather than an error or empty output.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
@@ -236,6 +247,7 @@ func TestGrepNoMatch(t *testing.T) {
 }
 
 func TestGrepRejectedParams(t *testing.T) {
+	// Verifies that unrecognised flags are silently dropped with a notice, while the valid flags still take effect.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
@@ -260,6 +272,7 @@ func TestGrepRejectedParams(t *testing.T) {
 }
 
 func TestGrepGlobFlag(t *testing.T) {
+	// Verifies that --glob restricts the search to files matching the given pattern, excluding other file types.
 	t.Parallel()
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main\nfunc hello()"), 0644)
@@ -286,6 +299,7 @@ func TestGrepGlobFlag(t *testing.T) {
 }
 
 func TestResolveGrepBinary(t *testing.T) {
+	// Verifies that resolveGrepBinary finds a usable binary and returns a recognised name (rg, ack, ag, or grep).
 	t.Parallel()
 	path, name := resolveGrepBinary()
 	if path == "" {
@@ -302,6 +316,7 @@ func TestResolveGrepBinary(t *testing.T) {
 }
 
 func TestTranslateGrepFlags(t *testing.T) {
+	// Verifies that translateGrepFlags maps common flags to the right binary-specific arguments and generates notices for unsupported or unknown flags.
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -351,6 +366,7 @@ func TestTranslateGrepFlags(t *testing.T) {
 }
 
 func TestGitAllowedSubcommands(t *testing.T) {
+	// Verifies that every subcommand in the allowlist does not produce a "not allowed" error, even if the underlying git command may fail.
 	t.Parallel()
 	tool := NewGitTool()
 
@@ -367,6 +383,7 @@ func TestGitAllowedSubcommands(t *testing.T) {
 }
 
 func TestGitBlockedSubcommands(t *testing.T) {
+	// Verifies that write-capable git subcommands (push, commit, reset, etc.) are rejected with a "not allowed" error.
 	t.Parallel()
 	tool := NewGitTool()
 
@@ -385,6 +402,7 @@ func TestGitBlockedSubcommands(t *testing.T) {
 }
 
 func TestGitEmptyCommand(t *testing.T) {
+	// Verifies that an empty command string is rejected with an error rather than silently passed to git.
 	t.Parallel()
 	tool := NewGitTool()
 	params, _ := json.Marshal(map[string]string{"command": ""})
@@ -395,7 +413,7 @@ func TestGitEmptyCommand(t *testing.T) {
 }
 
 func TestGitLogInRepo(t *testing.T) {
-	// This test runs in the foci repo itself, so git log should work.
+	// Verifies that git log works end-to-end by running it in the foci repository and checking for non-empty output.
 	t.Parallel()
 	tool := NewGitTool()
 	params, _ := json.Marshal(map[string]string{"command": "log --oneline -3"})
@@ -409,6 +427,7 @@ func TestGitLogInRepo(t *testing.T) {
 }
 
 func TestSplitShellArgs(t *testing.T) {
+	// Verifies that splitShellArgs correctly tokenises shell-style argument strings, respecting single and double quoting.
 	t.Parallel()
 	tests := []struct {
 		input string

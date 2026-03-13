@@ -113,9 +113,9 @@ func initSessions(cfg *config.Config) sessionInfra {
 					})
 				}
 				// Mark old key as rotated
-				sessionIndex.SetStatus(e.Key, session.SessionStatusRotated)
+				sessionIndex.UpdateStatus(e.Key, session.SessionStatusRotated)
 			case session.SessionStatusCleared:
-				sessionIndex.SetStatus(e.Key, session.SessionStatusCleared)
+				sessionIndex.UpdateStatus(e.Key, session.SessionStatusCleared)
 			}
 		})
 
