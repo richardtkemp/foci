@@ -132,7 +132,9 @@ func (idx *Index) Reindex() error {
 }
 
 // IndexConversation adds a conversation message to the FTS5 index.
-func (idx *Index) IndexConversation(text, session string) {
+// The rowID parameter is accepted for signature compatibility with BleveIndex
+// but not used — FTS5 assigns its own internal rowids.
+func (idx *Index) IndexConversation(text, session string, _ int64) {
 	if text == "" {
 		return
 	}
