@@ -105,6 +105,11 @@ type SetupResult struct {
 	// a newly acquired multiball connection (handler, commands, display settings).
 	// May be nil if multiball is not supported.
 	ConfigureMultiballConn func(Connection)
+
+	// DisplayDefaultsFn returns the platform's resolved display defaults.
+	// Called lazily at query time by the /display command.
+	// May be nil if the platform doesn't provide display defaults.
+	DisplayDefaultsFn func() DisplaySettings
 }
 
 type MessageHandler interface {
@@ -164,6 +169,16 @@ type ProviderDeps struct {
 	ResolveTTS   func(map[string]voice.TTS, []config.TTSConfig, string, float64, map[string]string) voice.TTS
 }
 
+// DisplaySettings holds resolved display configuration values.
+// Used for both per-session overrides and platform defaults.
+// Empty strings mean "not set" / "not overridden".
+type DisplaySettings struct {
+	ShowToolCalls string // "off"/"preview"/"full"
+	ShowThinking  string // "off"/"compact"/"true"
+	StreamOutput  string // "on"/"off"
+	DisplayWidth  string // e.g. "44"
+}
+
 // AgentConnectionParams holds the per-agent parameters for setting up platform connections.
 // Commands and LastMsgStore are typed as any to avoid importing command (which
 // imports agent, which imports platform — circular). Providers type-assert.
@@ -181,10 +196,9 @@ type AgentConnectionParams struct {
 	ReclaimHook  func(sessionKey string)
 
 	// DisplayOverrideFn returns per-session display overrides.
-	// Returns (showToolCalls, showThinking, streamOutput, displayWidth).
-	// Empty strings / "0" mean "not overridden — use config default".
+	// Empty fields mean "not overridden — use config default".
 	// May be nil if per-session display overrides are not supported.
-	DisplayOverrideFn func(sessionKey string) (showToolCalls, showThinking, streamOutput, displayWidth string)
+	DisplayOverrideFn func(sessionKey string) DisplaySettings
 }
 
 // SharedMultiballParams holds parameters for setting up shared multiball bots.

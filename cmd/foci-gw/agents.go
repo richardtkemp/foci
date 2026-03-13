@@ -499,6 +499,10 @@ func setupAgent(p setupParams) *agentInstance {
 	// by the closure below, which is only called at runtime (forkMultiball).
 	var configureMultiball func(platform.Connection)
 
+	// displayDefaultsFn is set after platform setup — provides resolved
+	// display defaults from the platform (lazy-forward pattern).
+	var displayDefaultsFn func() platform.DisplaySettings
+
 	lastMsgStore := command.NewLastMessageStore()
 	cmds := registerAgentCommands(cmdRegParams{
 		ag:                  ag,
@@ -531,6 +535,12 @@ func setupAgent(p setupParams) *agentInstance {
 			if configureMultiball != nil {
 				configureMultiball(conn)
 			}
+		},
+		displayDefaultsFn: func() platform.DisplaySettings {
+			if displayDefaultsFn != nil {
+				return displayDefaultsFn()
+			}
+			return platform.DisplaySettings{}
 		},
 	}, lastMsgStore)
 
@@ -571,11 +581,13 @@ func setupAgent(p setupParams) *agentInstance {
 					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
 				}, reclaimSearchDirs, p.ctx, false)
 			},
-			DisplayOverrideFn: func(sessionKey string) (string, string, string, string) {
-				return ag.SessionShowToolCalls(sessionKey),
-					ag.SessionDisplayShowThinking(sessionKey),
-					ag.SessionStreamOutput(sessionKey),
-					ag.SessionDisplayWidth(sessionKey)
+			DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
+				return platform.DisplaySettings{
+					ShowToolCalls: ag.SessionShowToolCalls(sessionKey),
+					ShowThinking:  ag.SessionDisplayShowThinking(sessionKey),
+					StreamOutput:  ag.SessionStreamOutput(sessionKey),
+					DisplayWidth:  ag.SessionDisplayWidth(sessionKey),
+				}
 			},
 		})
 		for _, result := range results {
@@ -584,6 +596,9 @@ func setupAgent(p setupParams) *agentInstance {
 			}
 			if result.ConfigureMultiballConn != nil {
 				configureMultiball = result.ConfigureMultiballConn
+			}
+			if result.DisplayDefaultsFn != nil {
+				displayDefaultsFn = result.DisplayDefaultsFn
 			}
 		}
 
