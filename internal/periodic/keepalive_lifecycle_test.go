@@ -10,8 +10,8 @@ import (
 	"foci/internal/state"
 )
 
-// TestMaybeKeepalive_Disabled verifies keepalive doesn't fire when disabled.
 func TestMaybeKeepalive_Disabled(t *testing.T) {
+	// Verifies that maybeKeepalive is a no-op when the keepalive feature is disabled in config.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -32,8 +32,8 @@ func TestMaybeKeepalive_Disabled(t *testing.T) {
 	}
 }
 
-// TestMaybeKeepalive_BadInterval verifies keepalive doesn't fire with invalid interval.
 func TestMaybeKeepalive_BadInterval(t *testing.T) {
+	// Verifies that maybeKeepalive skips dispatch when the configured interval string is unparseable.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -55,8 +55,9 @@ func TestMaybeKeepalive_BadInterval(t *testing.T) {
 	}
 }
 
-// TestMaybeKeepalive_RecentCache verifies keepalive doesn't fire with recent cache.
 func TestMaybeKeepalive_RecentCache(t *testing.T) {
+	// Verifies that maybeKeepalive skips dispatch when the cache was warmed recently and the
+	// interval has not yet elapsed.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -78,8 +79,9 @@ func TestMaybeKeepalive_RecentCache(t *testing.T) {
 	}
 }
 
-// TestMaybeKeepalive_Fires verifies keepalive fires when enabled and cache is stale.
 func TestMaybeKeepalive_Fires(t *testing.T) {
+	// Verifies that maybeKeepalive dispatches a branch when enabled, the cache is stale, and
+	// no keepalive is already running.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -104,8 +106,9 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 	}
 }
 
-// TestMaybeKeepalive_AlreadyRunning verifies keepalive doesn't fire while already running.
 func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
+	// Verifies that maybeKeepalive is a no-op when keepaliveRunning is already true, preventing
+	// concurrent keepalive sessions.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -128,8 +131,8 @@ func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 	}
 }
 
-// TestMaybeBackgroundWork_Disabled verifies background work doesn't fire when disabled.
 func TestMaybeBackgroundWork_Disabled(t *testing.T) {
+	// Verifies that maybeBackgroundWork is a no-op when the background feature is disabled in config.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -150,8 +153,9 @@ func TestMaybeBackgroundWork_Disabled(t *testing.T) {
 	}
 }
 
-// TestMaybeBackgroundWork_BadInterval verifies background work doesn't fire with invalid interval.
 func TestMaybeBackgroundWork_BadInterval(t *testing.T) {
+	// Verifies that maybeBackgroundWork skips dispatch when the configured interval string cannot
+	// be parsed.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -173,8 +177,9 @@ func TestMaybeBackgroundWork_BadInterval(t *testing.T) {
 	}
 }
 
-// TestMaybeBackgroundWork_RecentInteraction verifies background work doesn't fire with recent interaction.
 func TestMaybeBackgroundWork_RecentInteraction(t *testing.T) {
+	// Verifies that maybeBackgroundWork skips dispatch when a user interaction occurred recently
+	// and the idle interval has not elapsed.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -196,8 +201,8 @@ func TestMaybeBackgroundWork_RecentInteraction(t *testing.T) {
 	}
 }
 
-// TestMaybeMemoryFormation_Disabled verifies memory formation doesn't fire when disabled.
 func TestMaybeMemoryFormation_Disabled(t *testing.T) {
+	// Verifies that maybeMemoryFormation is a no-op when IntervalEnabled is explicitly set to false.
 	disabled := false
 	var calls int
 	r := &Runner{
@@ -220,8 +225,9 @@ func TestMaybeMemoryFormation_Disabled(t *testing.T) {
 	}
 }
 
-// TestMaybeMemoryFormation_BadInterval verifies memory formation doesn't fire with invalid interval.
 func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
+	// Verifies that maybeMemoryFormation skips dispatch when the configured interval string is
+	// unparseable.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -243,8 +249,9 @@ func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
 	}
 }
 
-// TestMaybeMemoryFormation_Fires verifies memory formation fires when enabled and interval elapsed.
 func TestMaybeMemoryFormation_Fires(t *testing.T) {
+	// Verifies that maybeMemoryFormation dispatches a "memory-formation" branch when enabled,
+	// there has been recent activity, and the interval since the last formation has elapsed.
 	var calls int
 	now := time.Now()
 	r := &Runner{
@@ -273,8 +280,8 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 	}
 }
 
-// TestMaybeConsolidation_Disabled verifies consolidation doesn't fire when disabled.
 func TestMaybeConsolidation_Disabled(t *testing.T) {
+	// Verifies that maybeConsolidation is a no-op when ConsolidationEnabled is explicitly false.
 	disabled := false
 	var calls int
 	r := &Runner{
@@ -297,8 +304,9 @@ func TestMaybeConsolidation_Disabled(t *testing.T) {
 	}
 }
 
-// TestMaybeConsolidation_BadInterval verifies consolidation doesn't fire with invalid interval.
 func TestMaybeConsolidation_BadInterval(t *testing.T) {
+	// Verifies that maybeConsolidation skips dispatch when the configured consolidation interval
+	// string cannot be parsed.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -320,8 +328,9 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 	}
 }
 
-// TestMaybeConsolidation_Fires verifies consolidation fires when enabled and interval elapsed.
 func TestMaybeConsolidation_Fires(t *testing.T) {
+	// Verifies that maybeConsolidation dispatches a "consolidation" branch when enabled, there
+	// has been recent activity, and the consolidation interval has elapsed.
 	var calls int
 	now := time.Now()
 	r := &Runner{
@@ -350,8 +359,9 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 	}
 }
 
-// TestMaybeMemoryFormation_NoActivity verifies memory formation doesn't fire without recent activity.
 func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
+	// Verifies that maybeMemoryFormation requires recent interaction activity; if the last
+	// interaction is also older than the interval, formation is skipped.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -373,8 +383,9 @@ func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
 	}
 }
 
-// TestMaybeMemoryFormation_AlreadyRunning verifies memory formation doesn't fire while already running.
 func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
+	// Verifies that maybeMemoryFormation is a no-op when memoryFormationRunning is true, preventing
+	// concurrent formation sessions.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -397,8 +408,9 @@ func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
 	}
 }
 
-// TestMaybeConsolidation_TooMuchInactivity verifies consolidation doesn't fire with too much inactivity.
 func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
+	// Verifies that maybeConsolidation skips dispatch when the last interaction was too long ago,
+	// meaning there is no meaningful recent activity to consolidate.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -420,8 +432,9 @@ func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 	}
 }
 
-// TestMaybeConsolidation_AlreadyRunning verifies consolidation doesn't fire while already running.
 func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
+	// Verifies that maybeConsolidation is a no-op when consolidationRunning is true, preventing
+	// concurrent consolidation sessions.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
@@ -444,8 +457,9 @@ func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
 	}
 }
 
-// TestNew verifies basic Runner initialization with config.
 func TestNew(t *testing.T) {
+	// Verifies that New correctly initialises a Runner from RunnerConfig, wiring agentID, feature
+	// configs, and the done channel.
 	cfg := RunnerConfig{
 		AgentID: "test-agent",
 		Keepalive: config.KeepaliveConfig{
@@ -475,8 +489,9 @@ func TestNew(t *testing.T) {
 	}
 }
 
-// TestNew_WithStateStore verifies Runner initializes lastConsolidation from state store.
 func TestNew_WithStateStore(t *testing.T) {
+	// Verifies that New loads lastConsolidation from a persistent state store on startup,
+	// so that consolidation timing survives process restarts.
 	// Create a temporary state store file
 	tmpfile := t.TempDir() + "/state.json"
 	ss := state.New(tmpfile)
@@ -498,8 +513,8 @@ func TestNew_WithStateStore(t *testing.T) {
 	r.mu.Unlock()
 }
 
-// TestNotifyCacheWarmed verifies NotifyCacheWarmed updates lastCacheWarmed.
 func TestNotifyCacheWarmed(t *testing.T) {
+	// Verifies that NotifyCacheWarmed advances lastCacheWarmed to a time after the previous value.
 	r := &Runner{
 		log:             log.NewComponentLogger("keepalive:test"),
 		lastCacheWarmed: time.Now().Add(-10 * time.Second),
@@ -516,8 +531,8 @@ func TestNotifyCacheWarmed(t *testing.T) {
 	}
 }
 
-// TestNotifyInteraction verifies NotifyInteraction updates lastInteraction.
 func TestNotifyInteraction(t *testing.T) {
+	// Verifies that NotifyInteraction advances lastInteraction to a time after the previous value.
 	r := &Runner{
 		log:             log.NewComponentLogger("keepalive:test"),
 		lastInteraction: time.Now().Add(-10 * time.Second),
@@ -534,8 +549,8 @@ func TestNotifyInteraction(t *testing.T) {
 	}
 }
 
-// TestStartStop verifies Start and Stop complete without deadlock.
 func TestStartStop(t *testing.T) {
+	// Verifies that Start launches the run loop and Stop shuts it down cleanly without deadlock.
 	r := New(RunnerConfig{
 		AgentID: "test",
 		Keepalive: config.KeepaliveConfig{
@@ -559,8 +574,8 @@ func TestStartStop(t *testing.T) {
 	// If we got here without deadlock, test passed
 }
 
-// TestStop_WithoutStart verifies Stop doesn't panic when Start was not called.
 func TestStop_WithoutStart(t *testing.T) {
+	// Verifies that calling Stop on a Runner that was never Started does not panic.
 	r := New(RunnerConfig{
 		AgentID:    "test",
 		BranchFunc: func(branchType, promptText string, noCompact bool) {},
@@ -569,8 +584,9 @@ func TestStop_WithoutStart(t *testing.T) {
 	r.Stop() // Should not panic
 }
 
-// TestRun_ContextCancellation verifies run loop exits cleanly when context is cancelled.
 func TestRun_ContextCancellation(t *testing.T) {
+	// Verifies that the run loop exits and closes the done channel within a reasonable timeout
+	// after the context is cancelled.
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
