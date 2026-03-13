@@ -100,7 +100,7 @@ lint:
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== deadcode (whole-program reachability) ==="
-	@output=$$($(GOBIN)/deadcode -test ./... 2>&1 | grep -v '_test\.go:.*unreachable func: mock'); \
+	@output=$$($(GOBIN)/deadcode ./... 2>&1); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 
 lint-fix:
