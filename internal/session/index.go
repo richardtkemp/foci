@@ -568,7 +568,7 @@ func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
 	prefix := partialKey + "/"
 	var key string
 	err := idx.db.QueryRow(
-		`SELECT session_key FROM sessions
+		`SELECT session_key FROM session_index
 		 WHERE session_key LIKE ? AND status = 'active'
 		 ORDER BY last_activity_at DESC, created_at DESC
 		 LIMIT 1`,

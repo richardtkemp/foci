@@ -419,6 +419,83 @@ func TestSessionIndex_PersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+// ========== ResolvePartialKey tests ==========
+
+// Verifies that ResolvePartialKey rejects invalid formats and resolves
+// valid partial keys to the most recently active full session key.
+func TestSessionIndex_ResolvePartialKey(t *testing.T) {
+	idx := tempIndex(t)
+
+	now := time.Now().UTC()
+	// Insert two sessions for the same chat, different versions
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "scout/c123/1000000000", FilePath: "a", CreatedAt: now.Add(-time.Hour),
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+		LastActivityAt: now.Add(-time.Hour),
+	})
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "scout/c123/2000000000", FilePath: "b", CreatedAt: now,
+		SessionType: SessionTypeChat, Status: SessionStatusActive,
+		LastActivityAt: now,
+	})
+	// Insert an independent session
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "scout/i456/1000000000", FilePath: "c", CreatedAt: now,
+		SessionType: SessionTypeSpawn, Status: SessionStatusActive,
+		LastActivityAt: now,
+	})
+
+	tests := []struct {
+		name    string
+		partial string
+		want    string
+	}{
+		// Valid resolutions
+		{"chat resolves to latest", "scout/c123", "scout/c123/2000000000"},
+		{"independent resolves", "scout/i456", "scout/i456/1000000000"},
+
+		// Invalid formats — should return ""
+		{"empty string", "", ""},
+		{"single segment", "scout", ""},
+		{"three segments (already full)", "scout/c123/1000000000", ""},
+		{"empty agent ID", "/c123", ""},
+		{"empty type ID", "scout/", ""},
+		{"type ID too short", "scout/c", ""},
+		{"invalid type prefix", "scout/x123", ""},
+		{"invalid type prefix b", "scout/b123", ""},
+
+		// Valid format but no match
+		{"no matching agent", "other/c123", ""},
+		{"no matching chat", "scout/c999", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := idx.ResolvePartialKey(tt.partial)
+			if got != tt.want {
+				t.Errorf("ResolvePartialKey(%q) = %q, want %q", tt.partial, got, tt.want)
+			}
+		})
+	}
+}
+
+// Verifies that ResolvePartialKey only returns active sessions,
+// not compacted or cleared ones.
+func TestSessionIndex_ResolvePartialKey_IgnoresInactive(t *testing.T) {
+	idx := tempIndex(t)
+
+	now := time.Now().UTC()
+	idx.Upsert(SessionIndexEntry{
+		SessionKey: "bot/c1/1000000000", FilePath: "a", CreatedAt: now,
+		SessionType: SessionTypeChat, Status: SessionStatusCompacted,
+	})
+
+	got := idx.ResolvePartialKey("bot/c1")
+	if got != "" {
+		t.Errorf("should not resolve compacted session, got %q", got)
+	}
+}
+
 // ========== Count tests ==========
 
 func TestSessionIndex_Count_Empty(t *testing.T) {
