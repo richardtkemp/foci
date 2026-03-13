@@ -281,10 +281,11 @@ type toolCallTracker struct {
 	chatID int64
 
 	mu         sync.Mutex
-	msgID      int64  // Telegram message ID of the current tool-call message
-	text       string // last compact summary HTML (full mode) or full HTML (preview mode)
-	fullText   string // last full formatted tool call HTML (full mode only)
-	retryMsgID int64  // Telegram message ID of the retry notification message
+	msgID      int64            // Telegram message ID of the current tool-call message
+	text       string           // last compact summary HTML (full mode) or full HTML (preview mode)
+	fullText   string           // last full formatted tool call HTML (full mode only)
+	lastParams json.RawMessage  // params of the last tool call (for result hints)
+	retryMsgID int64            // Telegram message ID of the retry notification message
 }
 
 // lastMsgID returns the current tool-call message ID (thread-safe).
@@ -333,6 +334,7 @@ func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawM
 	t.msgID = sent.MessageId
 	t.text = compact
 	t.fullText = full
+	t.lastParams = params
 	t.bot.toolResults.Store(t.msgID, toolResultEntry{
 		compactText: compact,
 		fullInput:   full,
@@ -373,6 +375,8 @@ func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.R
 }
 
 // observeToolResult stores tool results for inline keyboard expansion (full mode only).
+// When a result hint is available, the compact notification is updated inline
+// (e.g. "☑️ todo: add" becomes "☑️ todo: add → #542").
 func (t *toolCallTracker) observeToolResult(toolName string, result string, isError bool) {
 	if t.bot.effectiveShowToolCalls() != "full" {
 		return
@@ -381,9 +385,16 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 	msgID := t.msgID
 	compact := t.text
 	full := t.fullText
+	params := t.lastParams
 	t.mu.Unlock()
 	if msgID == 0 {
 		return
+	}
+
+	// Generate a result hint to append to the compact notification.
+	hint := compactResultHint(toolName, params, result)
+	if hint != "" {
+		compact = compact + " → " + htmlEscapeBot(hint)
 	}
 
 	var wasExpanded bool
@@ -407,6 +418,15 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 		expanded := formatToolCallWithResult(full, result)
 		kb := singleButtonKeyboard("Hide", fmt.Sprintf("tc:hide:%d", msgID))
 		_, _, _ = t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
+			ChatId:    t.chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+			ReplyMarkup: kb,
+		})
+	} else if hint != "" {
+		// Update the compact notification with the result hint.
+		kb := singleButtonKeyboard("Show full", fmt.Sprintf("tc:show:%d", msgID))
+		_, _, _ = t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
 			ChatId:    t.chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",

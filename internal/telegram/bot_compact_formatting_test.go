@@ -85,3 +85,39 @@ func TestFormatToolCallCompact_EmptyParams(t *testing.T) {
 		t.Errorf("empty params should not have colon separator, got: %s", result)
 	}
 }
+
+func TestCompactResultHint(t *testing.T) {
+	// Verifies that compactResultHint extracts meaningful key info
+	// from tool results to display inline in compact notifications.
+	tests := []struct {
+		name   string
+		tool   string
+		params string
+		result string
+		want   string
+	}{
+		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "Added #542 (medium)", "#542"},
+		{"todo add high", "todo", `{"action":"add","text":"urgent"}`, "Added #1 (high)", "#1"},
+		{"todo list items", "todo", `{"action":"list"}`, "#1 [ ] [medium] buy milk\n#2 [ ] [high] fix bug", "2 items"},
+		{"todo list single", "todo", `{"action":"list"}`, "#1 [ ] [medium] buy milk", "1 item"},
+		{"todo list empty", "todo", `{"action":"list"}`, "No active todos.", "0 items"},
+		{"todo search empty", "todo", `{"action":"search","query":"x"}`, "No todos matching \"x\".", "0 items"},
+		{"todo transition", "todo", `{"action":"transition","id":5,"state":"done"}`, "#5: done", "done"},
+		{"todo edit", "todo", `{"action":"edit","id":3,"text":"new"}`, "#3: text: old → new", "#3"},
+		{"todo remove", "todo", `{"action":"remove","id":7}`, "#7: removed", ""},
+		{"shell multiline", "shell", `{"command":"ls"}`, "a\nb\nc\nd\ne", "5 lines"},
+		{"shell short", "shell", `{"command":"pwd"}`, "/home/user", ""},
+		{"shell empty", "shell", `{"command":"true"}`, "", "(empty)"},
+		{"write", "write", `{"path":"f.go","content":"x"}`, "Wrote 42 bytes to f.go", "42 bytes"},
+		{"edit applied", "edit", `{"path":"f.go"}`, "Applied 1 edit to f.go", "Applied 1 edit to f.go"},
+		{"unknown tool", "web_fetch", `{"url":"x"}`, "some content", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compactResultHint(tt.tool, json.RawMessage(tt.params), tt.result)
+			if got != tt.want {
+				t.Errorf("compactResultHint(%s) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
