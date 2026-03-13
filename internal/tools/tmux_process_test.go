@@ -19,7 +19,7 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-killproc"
-	tmuxSetup(t, name)
+	tmuxSetupWithSentinel(t, name)
 
 	// Start a session that spawns a child process
 	params, _ := json.Marshal(map[string]interface{}{
