@@ -13,7 +13,7 @@ import (
 
 // prepareUserMessage builds the annotated user message with mana warnings,
 // attachment path annotations, metadata prefix, reminders, and content blocks.
-func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []platform.Attachment) provider.Message {
+func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, images []platform.Attachment, duplicateMessages bool) provider.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
@@ -50,7 +50,7 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	reminderBlock := a.collectReminders(sessionKey)
 	stateBlock := a.collectStateDashboard(sessionKey)
 	msgBody := manaRestoreNote + imagePaths + userMessage
-	if a.DuplicateMessages && isUserTrigger(trigger) {
+	if duplicateMessages && isUserTrigger(trigger) {
 		msgBody = userMessage + "\n\n" + userMessage
 	}
 	annotatedMessage := metaPrefix + reminderBlock + stateBlock + "\n" + msgBody

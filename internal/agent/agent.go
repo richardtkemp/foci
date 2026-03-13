@@ -333,10 +333,18 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	turnEffort := a.SessionEffort(sessionKey)
 	turnThinking := a.SessionThinking(sessionKey)
 
+	// When extended thinking is active with effort above "low", duplicate_messages
+	// wastes tokens — thinking already produces high-quality first responses.
+	effectiveDuplicate := a.DuplicateMessages
+	if effectiveDuplicate && turnThinking != "" && turnEffort != "" && turnEffort != "low" {
+		effectiveDuplicate = false
+		a.logger().Debugf("session=%s duplicate_messages suppressed: thinking=%s effort=%s", sessionKey, turnThinking, turnEffort)
+	}
+
 	now := time.Now()
 	sm = a.getSessionMeta(sessionKey)
 
-	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, images)
+	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, images, effectiveDuplicate)
 	messages = append(messages, userMsg)
 
 	// Track new messages to save. The defer flushes unsaved messages on
