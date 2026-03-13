@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/config"
@@ -306,8 +307,11 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 
 	// Backfill historical conversations into bleve indices.
 	// Runs in a goroutine to avoid blocking startup.
+	var backfillWG sync.WaitGroup
 	if wantBleve {
+		backfillWG.Add(1)
 		go func() {
+			defer backfillWG.Done()
 			if hasPerAgentMemory {
 				for _, acfg := range cfg.Agents {
 					idx, ok := result.agentBleve[acfg.ID]
@@ -338,6 +342,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	}
 
 	result.cleanup = func() {
+		backfillWG.Wait()
 		for i := len(closers) - 1; i >= 0; i-- {
 			_ = closers[i].Close()
 		}
