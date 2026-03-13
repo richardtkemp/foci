@@ -50,7 +50,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	kaOrientPrompt := resolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
 	buildOrient := func(branchKey, parentKey, branchType string) string {
-		return buildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false, inst.promptSearchDirs)
+		return buildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, inst.promptSearchDirs)
 	}
 	branchFn := buildBranchFunc(
 		acfg.ID, inst.ag, p.sessions, inst.defaultSessionKey,

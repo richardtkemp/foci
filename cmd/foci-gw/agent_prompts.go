@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/md5" // #nosec G501 - used for content checksums, not security
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -51,21 +50,15 @@ func seedDefaultPrompts(dir string) {
 // buildBranchOrientation constructs orientation text for a branch session.
 // Resolves the prompt through ResolvePrompt: explicit path → search dirs → embedded default.
 // Template variables: {branch_key}, {parent_key}, {branch_type}, {direct_chat}.
-func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool, searchDirs []string) string {
-	var filename, embedded string
-	if directChat {
-		filename = "branch-orientation-multiball.md"
-		embedded = prompts.BranchOrientationMultiball()
-	} else {
-		filename = "branch-orientation-headless.md"
-		embedded = prompts.BranchOrientationHeadless()
-	}
+func buildBranchOrientation(promptPath, branchKey, parentKey, branchType string, searchDirs []string) string {
+	filename := "branch-orientation-headless.md"
+	embedded := prompts.BranchOrientationHeadless()
 	text := prompts.ResolvePrompt(promptPath, filename, embedded, searchDirs...)
 	return prompts.ReplaceVars(text, map[string]string{
 		"branch_key":  branchKey,
 		"parent_key":  parentKey,
 		"branch_type": branchType,
-		"direct_chat": fmt.Sprintf("%v", directChat),
+		"direct_chat": "false",
 	})
 }
 

@@ -1,7 +1,6 @@
 package command
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -17,7 +16,7 @@ func costUsage() string {
 }
 
 // costToday shows today's total with per-session breakdown.
-func costToday(entries []apiEntry, _ context.Context) (string, error) {
+func costToday(entries []apiEntry) string {
 	today := time.Now().UTC().Format("2006-01-02")
 	filtered := filterEntries(entries, func(e apiEntry) bool {
 		return e.Timestamp.Format("2006-01-02") == today
@@ -75,11 +74,11 @@ func costToday(entries []apiEntry, _ context.Context) (string, error) {
 		b.WriteByte('\n')
 		b.WriteString(display.MarkdownTable(cols, tableRows))
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 // cost24h shows the last 24 hours with category breakdown.
-func cost24h(entries []apiEntry, _ context.Context) (string, error) {
+func cost24h(entries []apiEntry) string {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	filtered := filterEntries(entries, func(e apiEntry) bool {
 		return e.Timestamp.After(cutoff)
@@ -103,11 +102,11 @@ func cost24h(entries []apiEntry, _ context.Context) (string, error) {
 	tableRows = append(tableRows, []string{"Total", fmt.Sprintf("$%.2f", total)})
 	b.WriteByte('\n')
 	b.WriteString(display.MarkdownTable(cols, tableRows))
-	return b.String(), nil
+	return b.String()
 }
 
 // costWeek shows a 7-day summary with daily breakdown.
-func costWeek(entries []apiEntry, _ context.Context) (string, error) {
+func costWeek(entries []apiEntry) string {
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	cutoff := startOfToday.AddDate(0, 0, -6)
@@ -140,21 +139,21 @@ func costWeek(entries []apiEntry, _ context.Context) (string, error) {
 	tableRows = append(tableRows, []string{"Mean/day", fmt.Sprintf("$%.2f", mean)})
 	b.WriteByte('\n')
 	b.WriteString(display.MarkdownTable(cols, tableRows))
-	return b.String(), nil
+	return b.String()
 }
 
 // costDays shows the total cost for the last N days.
-func costDays(entries []apiEntry, scope string) (string, error) {
+func costDays(entries []apiEntry, scope string) string {
 	days, err := strconv.Atoi(scope)
 	if err != nil {
-		return "Usage: /cost [today|24h|week|<days>]", nil
+		return "Usage: /cost [today|24h|week|<days>]"
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days)
 	filtered := filterEntries(entries, func(e apiEntry) bool {
 		return e.Timestamp.After(cutoff)
 	})
 	total, count := sumCosts(filtered)
-	return fmt.Sprintf("Last %d days: $%.4f (%d API calls)", days, total, count), nil
+	return fmt.Sprintf("Last %d days: $%.4f (%d API calls)", days, total, count)
 }
 
 // filterEntries returns entries matching the predicate.

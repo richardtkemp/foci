@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/command"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/voice"
@@ -91,9 +92,10 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		log.Infof("http", "send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
 
 		if strings.HasPrefix(req.Text, "/") {
-			if result, ok := inst.cmds.Dispatch(d.ctx, req.Text); ok {
+			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
+			if result, ok, _ := inst.cmds.Dispatch(d.ctx, cmdReq, inst.cc); ok {
 				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(map[string]string{"response": result}); err != nil {
+				if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
 					log.Errorf("http", "encode response: %v", err)
 				}
 				return
@@ -133,13 +135,14 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
-		result, ok := inst.cmds.Dispatch(context.Background(), "/status")
+		cmdReq := command.RequestFromText("/status", inst.defaultSessionKey(), "", 0)
+		result, ok, _ := inst.cmds.Dispatch(context.Background(), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "status command not available", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": result}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
 			log.Errorf("http", "encode response: %v", err)
 		}
 	}
@@ -166,13 +169,14 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
-		result, ok := inst.cmds.Dispatch(context.Background(), req.Command)
+		cmdReq := command.RequestFromText(req.Command, inst.defaultSessionKey(), "", 0)
+		result, ok, _ := inst.cmds.Dispatch(context.Background(), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": result}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
 			log.Errorf("http", "encode response: %v", err)
 		}
 	}
@@ -232,7 +236,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		orientPath := resolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt, inst.agentCfg.BranchOrientationPrompt, d.cfg.Sessions.BranchOrientationPrompt)
-		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
+		orientText := buildBranchOrientation(orientPath, branchKey, parentKey, "cron", inst.promptSearchDirs)
 		branchErr := d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        req.NoResetHook,
 			OrientationMessage: orientText,

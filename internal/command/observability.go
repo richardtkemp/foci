@@ -238,17 +238,13 @@ func CostCommand() *Command {
 			case "":
 				return Response{Text: costUsage()}, nil
 			case "today", "session":
-				text, err := costToday(entries, ctx)
-				return Response{Text: text}, err
+				return Response{Text: costToday(entries)}, nil
 			case "24h":
-				text, err := cost24h(entries, ctx)
-				return Response{Text: text}, err
+				return Response{Text: cost24h(entries)}, nil
 			case "week":
-				text, err := costWeek(entries, ctx)
-				return Response{Text: text}, err
+				return Response{Text: costWeek(entries)}, nil
 			default:
-				text, err := costDays(entries, scope)
-				return Response{Text: text}, err
+				return Response{Text: costDays(entries, scope)}, nil
 			}
 		},
 	}

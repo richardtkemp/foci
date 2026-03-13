@@ -118,6 +118,10 @@ type CommandContext struct {
 	// When nil, buildContextInfo is used.
 	ContextInfoFn func(cc CommandContext) ContextInfo
 
+	// PromptsDataFn overrides buildPromptsData for testing.
+	// When nil, buildPromptsData is used.
+	PromptsDataFn func(cc CommandContext) PromptsData
+
 	// Multiball configuration callback
 	ConfigureMultiball func(platform.Connection)
 

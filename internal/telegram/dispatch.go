@@ -13,15 +13,15 @@ import (
 
 type Dispatcher struct {
 	registry     *command.Registry
-	deps         command.Deps
+	cc           command.CommandContext
 	agentID      string
 	sessionKeyFn func(chatID int64) string // stable session key resolver; falls back to NewChatSessionKey
 }
 
-func NewDispatcher(registry *command.Registry, deps command.Deps, agentID string) *Dispatcher {
+func NewDispatcher(registry *command.Registry, cc command.CommandContext, agentID string) *Dispatcher {
 	return &Dispatcher{
 		registry: registry,
-		deps:     deps,
+		cc:       cc,
 		agentID:  agentID,
 	}
 }
@@ -32,10 +32,10 @@ func (d *Dispatcher) SetSessionKeyFunc(fn func(chatID int64) string) {
 }
 
 type DispatchResult struct {
-	Handled   bool
-	Response  command.Response
+	Handled    bool
+	Response   command.Response
 	SessionKey string
-	UserID    string
+	UserID     string
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, msg *gotgbot.Message) DispatchResult {
@@ -72,20 +72,20 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message,
 	}
 
 	req := command.Request{
-		Name:      cmdName,
-		Args:      extractArgs(dotText),
+		Name:       cmdName,
+		Args:       extractArgs(dotText),
 		SessionKey: sessionKey,
-		UserID:    userID,
+		UserID:     userID,
 	}
 
-	resp, handled, err := d.registry.DispatchRich(ctx, req, d.deps)
+	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
 	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
 }
 
-func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
+func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, msg *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
 	cmd := strings.ToLower(strings.TrimSpace(text))
 
 	if cmd == "/stop" || cmd == "/done" {
@@ -98,13 +98,14 @@ func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, _ *gotgbot.Messag
 	args = strings.TrimSpace(args)
 
 	req := command.Request{
-		Name:      name,
-		Args:      args,
+		Name:       name,
+		Args:       args,
 		SessionKey: sessionKey,
-		UserID:    userID,
+		UserID:     userID,
+		ChatID:     msg.Chat.Id,
 	}
 
-	resp, handled, err := d.registry.DispatchRich(ctx, req, d.deps)
+	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
@@ -120,13 +121,14 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 	sessionKey := d.sessionKeyForChat(chatID)
 
 	req := command.Request{
-		Name:      name,
-		Args:      args,
+		Name:       name,
+		Args:       args,
 		SessionKey: sessionKey,
-		UserID:    "",
+		UserID:     "",
+		ChatID:     chatID,
 	}
 
-	resp, handled, err := d.registry.DispatchRich(ctx, req, d.deps)
+	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
 	if err != nil {
 		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
 	}
@@ -141,11 +143,11 @@ func (d *Dispatcher) sessionKeyForChat(chatID int64) string {
 }
 
 func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string) (string, []command.KeyboardOption, bool) {
-	return d.registry.LookupKeyboard(ctx, text)
+	return d.registry.LookupKeyboard(ctx, text, d.cc)
 }
 
 func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string) (string, []command.KeyboardOption, bool) {
-	return d.registry.LookupChainKeyboard(ctx, text)
+	return d.registry.LookupChainKeyboard(ctx, text, d.cc)
 }
 
 func extractArgs(text string) string {

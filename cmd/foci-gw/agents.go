@@ -37,6 +37,7 @@ type agentInstance struct {
 	id                string
 	ag                *agent.Agent
 	cmds              *command.Registry
+	cc                command.CommandContext
 	registry          *tools.Registry
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
@@ -110,23 +111,7 @@ func setupAgent(p setupParams) *agentInstance {
 		return ""
 	}
 
-	// sessionKeyFromCtx resolves the session key from a command/tool context.
-	// Priority: (1) tools.SessionKeyFromContext (set by agent tool execution),
-	// (2) command.ChatIDKey via primary bot cache (stable across calls),
-	// (3) defaultSessionKey fallback.
 	connMgr := p.connMgr
-	sessionKeyFromCtx := func(ctx context.Context) string {
-		if sk := tools.SessionKeyFromContext(ctx); sk != "" {
-			return sk
-		}
-		if chatID, ok := ctx.Value(command.ChatIDKey{}).(int64); ok && chatID != 0 {
-			if conn := connMgr.Primary(acfg.ID); conn != nil {
-				return conn.SessionKeyForChat(chatID)
-			}
-			return session.NewChatSessionKey(acfg.ID, chatID)
-		}
-		return defaultSessionKey()
-	}
 
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
 	// Assigned later in this function.
@@ -485,7 +470,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
 		Notifier:        notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
-			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
+			return buildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", promptSearchDirs)
 		},
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
@@ -499,11 +484,10 @@ func setupAgent(p setupParams) *agentInstance {
 	var configureMultiball func(platform.Connection)
 
 	lastMsgStore := command.NewLastMessageStore()
-	cmds := registerAgentCommands(cmdRegParams{
+	cmds, cc := registerAgentCommands(cmdRegParams{
 		ag:                  ag,
 		acfg:                acfg,
 		defaultSessionKey:   defaultSessionKey,
-		sessionKeyFromCtx:   sessionKeyFromCtx,
 		bootstrap:           bootstrap,
 		promptSearchDirs:    promptSearchDirs,
 		compactionThreshold: compactionThreshold,
@@ -518,7 +502,6 @@ func setupAgent(p setupParams) *agentInstance {
 		store:               p.store,
 		bwStore:             p.bwStore,
 		startTime:           p.startTime,
-		ctx:                 p.ctx,
 		registry:            registry,
 		tmuxTool:            tmuxTool,
 		skillsDirs:          skillsDirs,
@@ -558,16 +541,17 @@ func setupAgent(p setupParams) *agentInstance {
 		reclaimSearchDirs := promptSearchDirs
 
 		results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
-			AgentID:      acfg.ID,
-			Handler:      ag,
-			Commands:     cmds,
-			LastMsgStore: lastMsgStore,
+			AgentID:        acfg.ID,
+			Handler:        ag,
+			Commands:       cmds,
+			CommandContext: cc,
+			LastMsgStore:   lastMsgStore,
 			AgentConfig:  acfg,
 			STT:          resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
 			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
 			ReclaimHook: func(sessionKey string) {
 				fireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
+					return buildBranchOrientation(reclaimOrientPath, bk, pk, bt, reclaimSearchDirs)
 				}, reclaimSearchDirs, p.ctx, false)
 			},
 			DisplayOverrideFn: func(sessionKey string) (string, string, string, string) {
@@ -603,6 +587,7 @@ func setupAgent(p setupParams) *agentInstance {
 		id:                acfg.ID,
 		ag:                ag,
 		cmds:              cmds,
+		cc:                cc,
 		registry:          registry,
 		bootstrap:         bootstrap,
 		defaultSessionKey: defaultSessionKey,
