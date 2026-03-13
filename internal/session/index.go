@@ -290,11 +290,6 @@ func (idx *SessionIndex) UpdateStatus(sessionKey string, status SessionStatus) {
 	}
 }
 
-// SetStatus is an alias for UpdateStatus (for backwards compatibility).
-func (idx *SessionIndex) SetStatus(sessionKey string, status SessionStatus) {
-	idx.UpdateStatus(sessionKey, status)
-}
-
 // TouchActivity updates the last_activity_at timestamp to now.
 func (idx *SessionIndex) TouchActivity(sessionKey string) {
 	idx.UpdateActivity(sessionKey, time.Now())

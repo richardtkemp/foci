@@ -180,7 +180,7 @@ func TestSessionIndex_SetStatus(t *testing.T) {
 		Status: SessionStatusActive,
 	})
 
-	idx.SetStatus("bot/c1/1000000000", SessionStatusCompacted)
+	idx.UpdateStatus("bot/c1/1000000000", SessionStatusCompacted)
 
 	entries, err := idx.Query(QueryOptions{})
 	if err != nil {
@@ -312,9 +312,9 @@ func TestSessionIndex_EventFiring(t *testing.T) {
 				Status:           SessionStatusActive,
 			})
 		case SessionStatusCompacted:
-			idx.SetStatus(e.Key, SessionStatusCompacted)
+			idx.UpdateStatus(e.Key, SessionStatusCompacted)
 		case SessionStatusCleared:
-			idx.SetStatus(e.Key, SessionStatusCleared)
+			idx.UpdateStatus(e.Key, SessionStatusCleared)
 		}
 	})
 
