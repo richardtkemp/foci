@@ -2,9 +2,13 @@ package agent
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+
+	"foci/internal/log"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-shiori/go-readability"
@@ -107,41 +111,49 @@ func convertHTML(data []byte) convertResult {
 }
 
 // convertWithPandoc converts a document file to plain text using pandoc.
+// Runs pandoc directly rather than pre-checking LookPath, which can fail
+// spuriously in some process environments even when pandoc is installed.
 func convertWithPandoc(path, format string) convertResult {
-	if _, err := exec.LookPath("pandoc"); err != nil {
-		return convertResult{Err: fmt.Sprintf("Need pandoc to read .%s files. Install: https://pandoc.org/installing.html", format)}
-	}
-
 	cmd := exec.Command("pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if isExecNotFound(err) {
+			return convertResult{Err: fmt.Sprintf("Need pandoc to read .%s files. Install: https://pandoc.org/installing.html", format)}
+		}
+		log.Debugf("convert", "pandoc failed (PATH=%s): %v — stderr: %s", os.Getenv("PATH"), err, strings.TrimSpace(stderr.String()))
 		return convertResult{Err: fmt.Sprintf("pandoc conversion failed: %s", strings.TrimSpace(stderr.String()))}
 	}
 	return convertResult{Text: stdout.String()}
+}
+
+// isExecNotFound returns true if the error indicates the executable was not found.
+func isExecNotFound(err error) bool {
+	var notFound *exec.Error
+	return errors.As(err, &notFound) && errors.Is(notFound.Err, exec.ErrNotFound)
 }
 
 // convertXlsx converts an xlsx file to CSV text using ssconvert (from gnumeric)
 // or falls back to pandoc.
 func convertXlsx(path string) convertResult {
 	// Try ssconvert first (produces clean CSV output)
-	if ssconvert, err := exec.LookPath("ssconvert"); err == nil {
-		cmd := exec.Command(ssconvert, "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err == nil && stdout.Len() > 0 {
-			return convertResult{Text: stdout.String()}
-		}
+	cmd := exec.Command("ssconvert", "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err == nil && stdout.Len() > 0 {
+		return convertResult{Text: stdout.String()}
+	} else if err != nil && !isExecNotFound(err) {
+		log.Debugf("convert", "ssconvert failed: %v", err)
 	}
 
 	// Fall back to pandoc
-	if _, err := exec.LookPath("pandoc"); err == nil {
-		return convertWithPandoc(path, "xlsx")
+	result := convertWithPandoc(path, "xlsx")
+	if result.Err != "" && strings.Contains(result.Err, "Need pandoc") {
+		return convertResult{Err: "Need ssconvert (gnumeric) or pandoc to read .xlsx files"}
 	}
-
-	return convertResult{Err: "Need ssconvert (gnumeric) or pandoc to read .xlsx files"}
+	return result
 }
 
 // labelForMIME returns a human-readable label for a MIME type.
