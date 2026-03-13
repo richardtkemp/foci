@@ -17,7 +17,7 @@ import (
 func TestSummaryTool_MissingParams(t *testing.T) {
 	t.Parallel()
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", nil)
+	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	tests := []struct {
 		name   string
@@ -46,7 +46,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 func TestSummaryTool_FileNotFound(t *testing.T) {
 	t.Parallel()
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", nil)
+	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   "/tmp/nonexistent-summary-test-file-xyz",
@@ -68,7 +68,7 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 	os.WriteFile(tmp, []byte{}, 0644)
 
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", nil)
+	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -91,7 +91,7 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 	os.WriteFile(tmp, data, 0644)
 
 	client := anthropic.NewClientWithBase("http://unused", "test-key")
-	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", nil)
+	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -139,7 +139,7 @@ func TestSummaryTool_Success(t *testing.T) {
 
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
 	aliases := map[string]string{"haiku": "anthropic/claude-haiku-4-5"}
-	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", aliases)
+	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", aliases)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -201,7 +201,7 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 		"haiku": "anthropic/claude-haiku-4-5-custom",
 	}
 	client := anthropic.NewClientWithBase(server.URL, "test-key")
-	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", aliases)
+	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", aliases)
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})
 	_, err := tool.Execute(context.Background(), params)

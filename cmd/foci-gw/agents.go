@@ -178,10 +178,10 @@ func setupAgent(p setupParams) *agentInstance {
 	if len(blockedPaths) > 0 {
 		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
 	}
-	registry.Register(tools.NewReadTool(agentStore))
-	registry.Register(tools.NewWriteTool(agentStore, blockedPaths))
-	registry.Register(tools.NewEditTool(agentStore, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, acfg.Model, p.cfg.Models.Aliases))
+	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
+	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths))
+	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths))
+	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, acfg.Model, acfg.Workspace, p.cfg.Models.Aliases))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.

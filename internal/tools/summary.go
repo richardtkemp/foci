@@ -21,7 +21,7 @@ import (
 // the right lightweight model for the summary call (e.g. haiku for Anthropic, flash for Gemini).
 // modelAliases maps short names (e.g. "haiku") to full model IDs (with endpoint prefix);
 // used to resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, agentModel string, modelAliases map[string]string) *Tool {
+func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, agentModel, workspace string, modelAliases map[string]string) *Tool {
 	// Parse the agent's model to get the bare model ID
 	// agentModel is now in developer/model_id format
 	_, agentModelID := splitDeveloperModel(agentModel)
@@ -69,7 +69,7 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, resolveClient(), summaryAlias, modelAliases, defaultFormat)
+			return summaryExecute(ctx, params, resolveClient(), summaryAlias, workspace, modelAliases, defaultFormat)
 		},
 	}
 }
@@ -88,7 +88,7 @@ func splitDeveloperModel(model string) (developer, modelID string) {
 	return "", model
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, summaryAlias string, modelAliases map[string]string, defaultFormat string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, summaryAlias, workspace string, modelAliases map[string]string, defaultFormat string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -104,7 +104,8 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		return ToolResult{}, fmt.Errorf("prompt parameter is required")
 	}
 
-	data, err := os.ReadFile(p.File)
+	filePath := resolveWorkspacePath(p.File, workspace)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read file: %w", err)
 	}

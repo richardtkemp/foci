@@ -33,18 +33,18 @@ const readToolSchema = `{
 	"required": ["path"]
 }`
 
-func NewReadTool(store *secrets.Store) *Tool {
+func NewReadTool(store *secrets.Store, workspace string) *Tool {
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
 		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return readFile(ctx, params, store, "")
+			return readFile(ctx, params, store, "", workspace)
 		},
 	}
 }
 
-func NewWriteTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool {
+func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath) *Tool {
 	return &Tool{
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
@@ -63,12 +63,12 @@ func NewWriteTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, store, "", blockedPaths)
+			return writeFile(ctx, params, store, "", workspace, blockedPaths)
 		},
 	}
 }
 
-func NewEditTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool {
+func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -91,7 +91,7 @@ func NewEditTool(store *secrets.Store, blockedPaths []config.BlockedPath) *Tool 
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, store, "", blockedPaths)
+			return editFile(ctx, params, store, "", workspace, blockedPaths)
 		},
 	}
 }
@@ -102,7 +102,7 @@ func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
 		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return readFile(ctx, params, store, baseDir)
+			return readFile(ctx, params, store, baseDir, "")
 		},
 	}
 }
@@ -126,7 +126,7 @@ func NewIsolatedWriteTool(store *secrets.Store, baseDir string) *Tool {
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, store, baseDir)
+			return writeFile(ctx, params, store, baseDir, "")
 		},
 	}
 }
@@ -154,9 +154,19 @@ func NewIsolatedEditTool(store *secrets.Store, baseDir string) *Tool {
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, store, baseDir)
+			return editFile(ctx, params, store, baseDir, "")
 		},
 	}
+}
+
+// resolveWorkspacePath resolves a relative path against the agent's workspace directory.
+// Absolute paths pass through unchanged. This is NOT a security boundary — it just ensures
+// relative paths resolve from the agent's workspace rather than the foci-gw process cwd.
+func resolveWorkspacePath(path, workspace string) string {
+	if workspace == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(workspace, path)
 }
 
 func resolveAndValidatePath(path, baseDir string) (string, error) {
@@ -250,7 +260,7 @@ func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) 
 	return "", false
 }
 
-func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string) (ToolResult, error) {
+func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string) (ToolResult, error) {
 	var p struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
@@ -260,7 +270,7 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	resolved, err := resolveAndValidatePath(p.Path, baseDir)
+	resolved, err := resolveAndValidatePath(resolveWorkspacePath(p.Path, workspace), baseDir)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -359,7 +369,7 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 	return TextResult(out.String()), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -368,7 +378,7 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	resolved, err := resolveAndValidatePath(p.Path, baseDir)
+	resolved, err := resolveAndValidatePath(resolveWorkspacePath(p.Path, workspace), baseDir)
 	if err != nil {
 		return ToolResult{}, err
 	}
@@ -390,7 +400,7 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 	return TextResult(fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path)), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
@@ -400,7 +410,7 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	resolved, err := resolveAndValidatePath(p.Path, baseDir)
+	resolved, err := resolveAndValidatePath(resolveWorkspacePath(p.Path, workspace), baseDir)
 	if err != nil {
 		return ToolResult{}, err
 	}
