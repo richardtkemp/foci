@@ -60,7 +60,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"limit": {
 					"type": "integer",
-					"description": "Max results for 'search' (default: 10)"
+					"description": "Max results for 'list' and 'search' (default: 10)"
 				},
 				"reason": {
 					"type": "string",
@@ -68,8 +68,12 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"sort": {
 					"type": "string",
-					"enum": ["priority", "created", "updated", "relevance", "newest", "oldest"],
-					"description": "Sort order. For 'list': 'priority' (default), 'created', 'updated'. For 'search': 'relevance' (default), 'newest', 'oldest'"
+					"enum": ["priority", "created", "updated", "closed", "relevance"],
+					"description": "Sort order for 'list' and 'search'. 'list' default: 'created'. 'search' default: 'relevance'. All sort descending (newest/highest first) unless reverse=true"
+				},
+				"reverse": {
+					"type": "boolean",
+					"description": "Reverse the sort order (default: false). E.g. sort=created with reverse=true returns oldest first"
 				}
 			},
 			"required": ["action"]
@@ -87,6 +91,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				Query    string  `json:"query"`
 				Reason   string  `json:"reason"`
 				Sort     string  `json:"sort"`
+				Reverse  bool    `json:"reverse"`
 				Limit    int     `json:"limit"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
@@ -98,9 +103,9 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return todoAdd(store, agentID, p.Text, p.Priority, p.Tag)
 			case "list":
 				status := normalizeStatusFilter(p.Status)
-				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort)
+				return todoList(store, agentID, status, p.Tag, p.Priority, p.Sort, p.Reverse, p.Limit)
 			case "search":
-				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Limit)
+				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Reverse, p.Limit)
 			case "get":
 				return todoGet(store, agentID, p.ID)
 			case "transition":
@@ -162,8 +167,15 @@ func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (Tool
 	return TextResult(fmt.Sprintf("Added #%d (%s)", id, pri)), nil
 }
 
-func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort string) (ToolResult, error) {
-	items, err := store.List(agentID, status, tag, priority, sort)
+func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort string, reverse bool, limit int) (ToolResult, error) {
+	// Defaults: 10 most recently created active todos.
+	if sort == "" {
+		sort = "created"
+	}
+	if limit == 0 {
+		limit = 10
+	}
+	items, err := store.List(agentID, status, tag, priority, sort, reverse, limit)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list todos: %w", err)
 	}
@@ -180,7 +192,7 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 	return TextResult(formatTodoLines(items)), nil
 }
 
-func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, limit int) (ToolResult, error) {
+func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, reverse bool, limit int) (ToolResult, error) {
 	if query == "" {
 		return ToolResult{}, fmt.Errorf("query is required for search")
 	}
@@ -191,20 +203,14 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, li
 	if status == "" {
 		statusFilter = ""
 	}
-	// Normalize sort for search: map list-style sorts to search-style sorts.
-	searchSort := ""
-	switch sort {
-	case "created", "oldest":
-		searchSort = "oldest"
-	case "updated", "newest":
-		searchSort = "newest"
-	default:
-		searchSort = "relevance"
+	if sort == "" {
+		sort = "relevance"
 	}
 	items, err := store.Search(agentID, query, &memory.TodoSearchOpts{
-		Status: statusFilter,
-		Sort:   searchSort,
-		Limit:  limit,
+		Status:  statusFilter,
+		Sort:    sort,
+		Reverse: reverse,
+		Limit:   limit,
 	})
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("search todos: %w", err)
