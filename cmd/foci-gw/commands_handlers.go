@@ -27,17 +27,18 @@ import (
 // buildStatusInfo gathers status info for the /status command.
 func buildStatusInfo(p cmdRegParams) command.StatusInfo {
 	sk := p.defaultSessionKey()
+	model := p.ag.SessionModel(sk)
 	return command.StatusInfo{
 		AgentID:          p.acfg.ID,
 		SessionKey:       sk,
 		MessageCount:     sessionMessageCount(p.sessions, sk),
-		Model:            p.ag.Model,
+		Model:            model,
 		Uptime:           time.Since(p.startTime),
 		StartTime:        p.startTime,
 		AgentBusy:        p.ag.IsProcessing(),
 		CreatedAt:        p.sessions.CreatedAt(sk),
 		LastActivity:     p.sessions.LastActivity(sk),
-		ContextLimit:     compaction.ContextLimit(p.ag.Model),
+		ContextLimit:     compaction.ContextLimit(model),
 		CompactThreshold: p.compactionThreshold,
 	}
 }
