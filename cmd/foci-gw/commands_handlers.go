@@ -25,8 +25,8 @@ import (
 // ---------------------------------------------------------------------------
 
 // buildStatusInfo gathers status info for the /status command.
-func buildStatusInfo(p cmdRegParams) command.StatusInfo {
-	sk := p.defaultSessionKey()
+func buildStatusInfo(p cmdRegParams, ctx context.Context) command.StatusInfo {
+	sk := p.sessionKeyFromCtx(ctx)
 	model := p.ag.SessionModel(sk)
 	return command.StatusInfo{
 		AgentID:          p.acfg.ID,
