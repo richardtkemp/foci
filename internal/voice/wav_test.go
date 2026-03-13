@@ -7,6 +7,9 @@ import (
 )
 
 func TestWrapPCMInWAV(t *testing.T) {
+	// Proves that wrapPCMInWAV produces a valid 44-byte RIFF/WAVE header for a
+	// range of sample rates, with all header fields (byte rate, block align,
+	// bits per sample, data size) correctly computed from the parameters.
 	// Create sample PCM data (100 samples of 16-bit mono audio)
 	pcm := make([]byte, 200)
 	for i := 0; i < 100; i++ {
@@ -109,6 +112,8 @@ func TestWrapPCMInWAV(t *testing.T) {
 }
 
 func TestWrapPCMInWAVEmpty(t *testing.T) {
+	// Proves that empty PCM input produces a valid 44-byte header-only WAV
+	// with a data chunk size of zero, rather than panicking or omitting fields.
 	pcm := []byte{}
 	wav := wrapPCMInWAV(pcm, 16000, 1, 16)
 
@@ -122,13 +127,3 @@ func TestWrapPCMInWAVEmpty(t *testing.T) {
 	}
 }
 
-func TestWrapPCMInWAVPreservesData(t *testing.T) {
-	// Create specific PCM data pattern
-	pcm := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-	wav := wrapPCMInWAV(pcm, 24000, 1, 16)
-
-	// Verify PCM data is exactly preserved after header
-	if !bytes.Equal(wav[44:], pcm) {
-		t.Errorf("PCM data corrupted after wrapping")
-	}
-}

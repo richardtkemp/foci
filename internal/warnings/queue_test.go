@@ -7,6 +7,7 @@ import (
 )
 
 func TestQueue_PushAndDrain(t *testing.T) {
+	// Proves that pushed warnings are preserved in order and drained correctly, and that a second drain returns nil.
 	q := NewQueue(0, 0)
 
 	q.Push("WARN", "config", "unknown key: foo")
@@ -30,6 +31,7 @@ func TestQueue_PushAndDrain(t *testing.T) {
 }
 
 func TestQueue_DrainEmpty(t *testing.T) {
+	// Proves that draining a queue that has never received warnings returns nil rather than an empty slice.
 	q := NewQueue(0, 0)
 	if warnings := q.Drain(); warnings != nil {
 		t.Errorf("Drain() on empty queue = %v, want nil", warnings)
@@ -37,6 +39,7 @@ func TestQueue_DrainEmpty(t *testing.T) {
 }
 
 func TestQueue_MaxSize(t *testing.T) {
+	// Proves that the queue hard-caps at maxSize entries, discarding pushes beyond that limit.
 	q := NewQueue(0, 0)
 	q.maxSize = 3
 
@@ -50,6 +53,7 @@ func TestQueue_MaxSize(t *testing.T) {
 }
 
 func TestQueue_Format(t *testing.T) {
+	// Proves that warnings are formatted as "[LEVEL] [component] message" with no extra whitespace or reordering.
 	q := NewQueue(0, 0)
 	q.Push("WARN", "config", "unknown key: foo.bar")
 
@@ -63,6 +67,7 @@ func TestQueue_Format(t *testing.T) {
 // --- Normalization tests ---
 
 func TestNormalizeWarning(t *testing.T) {
+	// Proves that NormalizeWarning strips volatile tokens (multi-digit numbers, hex IDs, IP addresses) to canonical placeholders, leaving unchanged text that has no volatile parts.
 	tests := []struct {
 		name string
 		in   string
@@ -96,6 +101,7 @@ func newTestQueue(max int, window time.Duration) (*Queue, *time.Time) {
 }
 
 func TestQueue_Dedup_AllowsUpToMax(t *testing.T) {
+	// Proves that repeated identical warnings are all accepted when the count stays within the per-window max.
 	q, _ := newTestQueue(3, 5*time.Minute)
 
 	for i := 0; i < 3; i++ {
@@ -114,6 +120,7 @@ func TestQueue_Dedup_AllowsUpToMax(t *testing.T) {
 }
 
 func TestQueue_Dedup_SuppressesAfterMax(t *testing.T) {
+	// Proves that pushes beyond the per-window max are suppressed, and a summary "... and N more" entry is appended on drain.
 	q, _ := newTestQueue(2, 5*time.Minute)
 
 	for i := 0; i < 10; i++ {
@@ -135,6 +142,7 @@ func TestQueue_Dedup_SuppressesAfterMax(t *testing.T) {
 }
 
 func TestQueue_Dedup_WindowExpiry(t *testing.T) {
+	// Proves that after the dedup window expires without saturation, the bucket resets and the same warning is allowed through again.
 	q, now := newTestQueue(2, 5*time.Minute)
 
 	// Fill window (not saturated — only 1 of 2 allowed)
@@ -154,6 +162,7 @@ func TestQueue_Dedup_WindowExpiry(t *testing.T) {
 }
 
 func TestQueue_Dedup_DifferentKeysIndependent(t *testing.T) {
+	// Proves that dedup buckets are keyed on (level, component, normalised message), so the same message text with a different component or level counts as a distinct warning.
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "telegram", "error A")
@@ -167,6 +176,7 @@ func TestQueue_Dedup_DifferentKeysIndependent(t *testing.T) {
 }
 
 func TestQueue_Dedup_NormalizationGroups(t *testing.T) {
+	// Proves that messages differing only in volatile tokens (numbers, IPs) are grouped into the same dedup bucket and collectively suppressed after the first.
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	// These should all normalize to the same key
@@ -189,6 +199,7 @@ func TestQueue_Dedup_NormalizationGroups(t *testing.T) {
 }
 
 func TestQueue_Dedup_DrainResetsSuppressed(t *testing.T) {
+	// Proves that after a drain clears queued warnings, subsequent suppressed pushes within the same window accumulate a new summary that is emitted on the next drain.
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "test", "error")
@@ -214,6 +225,7 @@ func TestQueue_Dedup_DrainResetsSuppressed(t *testing.T) {
 }
 
 func TestQueue_Dedup_DrainPrunesExpired(t *testing.T) {
+	// Proves that draining after a window expires removes the stale bucket, so the next push starts a fresh dedup window rather than inheriting old state.
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	q.Push("WARN", "test", "error")
@@ -237,6 +249,7 @@ func TestQueue_Dedup_DrainPrunesExpired(t *testing.T) {
 // --- Pending() tests ---
 
 func TestQueue_Pending_Empty(t *testing.T) {
+	// Proves that Pending returns false on a freshly created queue with no warnings.
 	q := NewQueue(0, 0)
 	if q.Pending() {
 		t.Error("Pending() on empty queue should be false")
@@ -244,6 +257,7 @@ func TestQueue_Pending_Empty(t *testing.T) {
 }
 
 func TestQueue_Pending_WithWarnings(t *testing.T) {
+	// Proves that Pending returns true once at least one warning has been pushed and not yet drained.
 	q := NewQueue(0, 0)
 	q.Push("WARN", "test", "something happened")
 	if !q.Pending() {
@@ -252,6 +266,7 @@ func TestQueue_Pending_WithWarnings(t *testing.T) {
 }
 
 func TestQueue_Pending_SuppressedOnly(t *testing.T) {
+	// Proves that Pending returns true even when all new pushes are suppressed (no queued entry), because suppressed counts create a pending summary.
 	q, _ := newTestQueue(1, 5*time.Minute)
 
 	// One allowed, two suppressed
@@ -274,6 +289,7 @@ func TestQueue_Pending_SuppressedOnly(t *testing.T) {
 }
 
 func TestQueue_Pending_AfterDrain(t *testing.T) {
+	// Proves that Pending returns false immediately after a drain empties the queue.
 	q := NewQueue(0, 0)
 	q.Push("WARN", "test", "something")
 	q.Drain()
@@ -285,6 +301,7 @@ func TestQueue_Pending_AfterDrain(t *testing.T) {
 // --- Quiet mode tests ---
 
 func TestQueue_QuietMode_EntersAfterSaturatedWindow(t *testing.T) {
+	// Proves that when a window expires having been saturated, the next push triggers quiet mode: the queued warnings plus a summary are retained but subsequent pushes are silently dropped.
 	q, now := newTestQueue(3, 5*time.Minute)
 
 	// Fill and saturate window (3 allowed + 1 suppressed)
@@ -318,6 +335,7 @@ func TestQueue_QuietMode_EntersAfterSaturatedWindow(t *testing.T) {
 }
 
 func TestQueue_QuietMode_PendingIgnoresQuiet(t *testing.T) {
+	// Proves that Pending returns false when suppressions exist only within an active quiet bucket, preventing spurious dispatch wake-ups.
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	// Saturate and expire
@@ -340,6 +358,7 @@ func TestQueue_QuietMode_PendingIgnoresQuiet(t *testing.T) {
 }
 
 func TestQueue_QuietMode_DrainSkipsActiveQuiet(t *testing.T) {
+	// Proves that Drain returns nil when the only pending suppressions are inside an active quiet bucket, deferring them until the quiet window expires.
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	// Enter quiet mode
@@ -362,6 +381,7 @@ func TestQueue_QuietMode_DrainSkipsActiveQuiet(t *testing.T) {
 }
 
 func TestQueue_QuietMode_DrainFlushesExpiredQuiet(t *testing.T) {
+	// Proves that once the quiet window expires, Drain emits a summary of all suppressed messages and then prunes the bucket so Pending returns false.
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	// Enter quiet mode
@@ -394,6 +414,7 @@ func TestQueue_QuietMode_DrainFlushesExpiredQuiet(t *testing.T) {
 }
 
 func TestQueue_QuietMode_QuietWindowRenewal(t *testing.T) {
+	// Proves that when a push arrives after the quiet window expires, the suppressed summary is flushed and quiet mode restarts for the new window.
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	// Enter quiet mode
@@ -427,6 +448,7 @@ func TestQueue_QuietMode_QuietWindowRenewal(t *testing.T) {
 }
 
 func TestQueue_QuietMode_Recovery(t *testing.T) {
+	// Proves that when no pushes occur during a quiet window and Drain is called after expiry, the bucket is deleted and the next push starts a completely fresh non-quiet bucket.
 	q, now := newTestQueue(1, 5*time.Minute)
 
 	// Enter quiet mode
@@ -454,6 +476,7 @@ func TestQueue_QuietMode_Recovery(t *testing.T) {
 }
 
 func TestQueue_QuietMode_NonSaturatedWindowNoQuiet(t *testing.T) {
+	// Proves that a window that expired without being fully saturated resets normally (no quiet mode), allowing the warning through again.
 	q, now := newTestQueue(3, 5*time.Minute)
 
 	// Push 2 (below max of 3 — not saturated)
@@ -481,6 +504,7 @@ func TestQueue_QuietMode_NonSaturatedWindowNoQuiet(t *testing.T) {
 // --- FormatDuration tests ---
 
 func TestFormatDuration(t *testing.T) {
+	// Proves that FormatDuration picks the largest whole unit (ms/s/m/h) and formats zero as "0ms".
 	tests := []struct {
 		d    time.Duration
 		want string

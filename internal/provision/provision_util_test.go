@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// TestStaggerCrontabLine tests staggering with various minute values and offsets.
+// TestStaggerCrontabLine proves that absolute minute fields are shifted by offset (with modulo-60 wrap),
+// while interval expressions and short/comment lines pass through unchanged.
 func TestStaggerCrontabLine(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -39,7 +40,8 @@ func TestStaggerCrontabLineNonNumericMinute(t *testing.T) {
 	}
 }
 
-// TestStaggerCrontabLineEdgeCases tests StaggerCrontabLine with various edge cases.
+// TestStaggerCrontabLineEdgeCases proves that large offsets wrap correctly via modulo-60, and that
+// lines with fewer than 6 space-separated fields are always returned unchanged regardless of content.
 func TestStaggerCrontabLineEdgeCases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -120,7 +122,8 @@ func TestToSlug(t *testing.T) {
 	}
 }
 
-// TestSeedDefaultsWalkError tests SeedDefaults with locked source directory.
+// TestSeedDefaultsWalkError proves that SeedDefaults propagates walk errors by making a source
+// subdirectory unreadable (mode 0000) and verifying the returned error is non-nil.
 func TestSeedDefaultsWalkError(t *testing.T) {
 	src := t.TempDir()
 	subdir := filepath.Join(src, "locked")
@@ -136,7 +139,8 @@ func TestSeedDefaultsWalkError(t *testing.T) {
 	}
 }
 
-// TestSeedDefaultsCopyError tests SeedDefaults when target file can't be copied.
+// TestSeedDefaultsCopyError proves that SeedDefaults surfaces copy failures by making the target
+// directory read-only and verifying an error is returned when a file cannot be written.
 func TestSeedDefaultsCopyError(t *testing.T) {
 	src := t.TempDir()
 	os.WriteFile(filepath.Join(src, "file.md"), []byte("data"), 0644)
@@ -162,7 +166,8 @@ func TestRunCrontabCmdDefault(t *testing.T) {
 	}
 }
 
-// TestAppendCrontab tests AppendCrontab with mocked command execution.
+// TestAppendCrontab proves that AppendCrontab invokes the crontab command with the supplied lines
+// by injecting a mock that records the call and verifying it was made without error.
 func TestAppendCrontab(t *testing.T) {
 	// Test successful append
 	orig := RunCrontabCmd
@@ -188,7 +193,8 @@ func TestAppendCrontab(t *testing.T) {
 	}
 }
 
-// TestAppendCrontabError tests AppendCrontab with command error.
+// TestAppendCrontabError proves that AppendCrontab propagates errors from the underlying crontab
+// command by injecting a mock that returns an error and verifying it surfaces to the caller.
 func TestAppendCrontabError(t *testing.T) {
 	orig := RunCrontabCmd
 	defer func() { RunCrontabCmd = orig }()
@@ -203,8 +209,8 @@ func TestAppendCrontabError(t *testing.T) {
 	}
 }
 
-// TestProvisionDefaultsTemplateError tests Provision when SOUL.md template fails.
-// Creates SOUL.md as a directory so os.ReadFile returns EISDIR (not NotExist).
+// TestProvisionDefaultsTemplateError proves that Provision in defaults mode surfaces a "template SOUL.md"
+// error when templating fails, by pre-creating SOUL.md as a directory to trigger EISDIR on ReadFile.
 func TestProvisionDefaultsTemplateError(t *testing.T) {
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
@@ -236,7 +242,8 @@ func TestProvisionDefaultsTemplateError(t *testing.T) {
 	}
 }
 
-// TestProvisionOpenclawTemplateError tests Provision when openclaw SOUL.md template fails.
+// TestProvisionOpenclawTemplateError proves that Provision in openclaw mode surfaces a clear error
+// when SOUL.md templating fails, using a pre-created directory at the SOUL.md path to trigger EISDIR.
 func TestProvisionOpenclawTemplateError(t *testing.T) {
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
