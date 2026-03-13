@@ -313,7 +313,7 @@ func TestWithRate_ZeroReturnsOriginal(t *testing.T) {
 // --- Factory function tests ---
 
 func TestNewTTS_OpenAI(t *testing.T) {
-	// TestNewTTS_OpenAI verifies that NewTTS with an openai config returns an *OpenAITTS
+	// Verifies that NewTTS with an openai config returns an *OpenAITTS
 	// with all fields wired correctly from the TTSConfig struct.
 	cfg := config.TTSConfig{
 		Format:         "openai",
@@ -351,7 +351,7 @@ func TestNewTTS_OpenAI(t *testing.T) {
 }
 
 func TestNewTTS_EdgeTTS(t *testing.T) {
-	// TestNewTTS_EdgeTTS verifies that NewTTS with an edge-tts config returns an *EdgeTTS
+	// Verifies that NewTTS with an edge-tts config returns an *EdgeTTS
 	// with voice and command fields set.
 	cfg := config.TTSConfig{
 		Format:  "edge-tts",
@@ -375,7 +375,7 @@ func TestNewTTS_EdgeTTS(t *testing.T) {
 }
 
 func TestNewTTS_UnknownFormat(t *testing.T) {
-	// TestNewTTS_UnknownFormat verifies that NewTTS rejects unknown format strings.
+	// Verifies that NewTTS rejects unknown format strings.
 	_, err := NewTTS(config.TTSConfig{Format: "whisper"}, "")
 	if err == nil {
 		t.Fatal("expected error for unknown format")
@@ -386,7 +386,7 @@ func TestNewTTS_UnknownFormat(t *testing.T) {
 }
 
 func TestNewSTT_OpenAI(t *testing.T) {
-	// TestNewSTT_OpenAI verifies that NewSTT("openai", ...) returns an *OpenAISTT
+	// Verifies that NewSTT("openai", ...) returns an *OpenAISTT
 	// with all fields wired correctly.
 	stt, err := NewSTT("openai", "https://api.groq.com/stt", "groq-key", "whisper-large-v3")
 	if err != nil {
@@ -408,7 +408,7 @@ func TestNewSTT_OpenAI(t *testing.T) {
 }
 
 func TestNewSTT_UnknownFormat(t *testing.T) {
-	// TestNewSTT_UnknownFormat verifies that NewSTT rejects unknown format strings.
+	// Verifies that NewSTT rejects unknown format strings.
 	_, err := NewSTT("edge-tts", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for unknown format")
@@ -419,7 +419,7 @@ func TestNewSTT_UnknownFormat(t *testing.T) {
 }
 
 func TestOpenAITTS_ResponseFormatInPayload(t *testing.T) {
-	// TestOpenAITTS_ResponseFormatInPayload verifies that response_format from config
+	// Verifies that response_format from config
 	// is included in the JSON payload sent to the TTS API.
 	var gotBody map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

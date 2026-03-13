@@ -5,7 +5,7 @@ import (
 )
 
 func TestParseLevel(t *testing.T) {
-	// TestParseLevel verifies that ParseLevel correctly maps string inputs to Level constants,
+	// Verifies that ParseLevel correctly maps string inputs to Level constants,
 	// including case-insensitivity, whitespace trimming, and fallback to INFO for unknowns.
 	tests := []struct {
 		input string
@@ -32,7 +32,7 @@ func TestParseLevel(t *testing.T) {
 }
 
 func TestLevelString(t *testing.T) {
-	// TestLevelString verifies that each Level constant produces the correct string representation.
+	// Verifies that each Level constant produces the correct string representation.
 	tests := []struct {
 		level Level
 		want  string
@@ -50,14 +50,14 @@ func TestLevelString(t *testing.T) {
 }
 
 func TestLevelStringUnknown(t *testing.T) {
-	// TestLevelStringUnknown verifies that an out-of-range Level returns "???".
+	// Verifies that an out-of-range Level returns "???".
 	if got := Level(99).String(); got != "???" {
 		t.Errorf("Level(99).String() = %q, want %q", got, "???")
 	}
 }
 
 func TestGetLevel(t *testing.T) {
-	// TestGetLevel verifies GetLevel returns the current log level accurately after SetLevel calls.
+	// Verifies GetLevel returns the current log level accurately after SetLevel calls.
 	SetLevel(WARN)
 	defer SetLevel(INFO)
 
@@ -72,7 +72,7 @@ func TestGetLevel(t *testing.T) {
 }
 
 func TestKeySuffix(t *testing.T) {
-	// TestKeySuffix verifies KeySuffix only logs when DebugLogKeySuffix is true
+	// Verifies KeySuffix only logs when DebugLogKeySuffix is true
 	// and the key has at least 4 characters; short keys are silently ignored.
 	orig := DebugLogKeySuffix
 	defer func() { DebugLogKeySuffix = orig }()
@@ -89,7 +89,7 @@ func TestKeySuffix(t *testing.T) {
 }
 
 func TestIsOpenAIModel(t *testing.T) {
-	// TestIsOpenAIModel verifies that model names are correctly identified as OpenAI or not,
+	// Verifies that model names are correctly identified as OpenAI or not,
 	// covering gpt-, o1/o3/o4 prefixes, chatgpt- prefix, and non-OpenAI models.
 	tests := []struct {
 		model string

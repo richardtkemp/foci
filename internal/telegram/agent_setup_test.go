@@ -9,7 +9,7 @@ import (
 func ptr[T any](v T) *T { return &v }
 
 func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
-	// TestApplyAgentDisplaySettings_AgentOverridesGlobal verifies that per-agent
+	// Verifies that per-agent
 	// display settings take precedence over global defaults.
 	bot := NewBotForTest()
 	acfg := config.AgentConfig{
@@ -54,7 +54,7 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 }
 
 func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
-	// TestApplyAgentDisplaySettings_FallsBackToDefaults verifies that when no
+	// Verifies that when no
 	// agent-level settings are set, global defaults are used.
 	bot := NewBotForTest()
 	acfg := config.AgentConfig{} // all nil/zero — should fall back to defaults
@@ -93,7 +93,7 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 }
 
 func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
-	// TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty verifies that a
+	// Verifies that a
 	// pre-existing ReceivedFilesDir is not overwritten when both agent and global are empty.
 	bot := NewBotForTest()
 	// Pre-set a value to verify it's NOT overwritten when both are empty
@@ -113,7 +113,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 }
 
 func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
-	// TestApplyAgentDisplaySettings_PartialOverride verifies that partial agent
+	// Verifies that partial agent
 	// overrides work correctly with defaults filling the gaps.
 	bot := NewBotForTest()
 	// Only override ShowToolCalls; rest falls back to defaults

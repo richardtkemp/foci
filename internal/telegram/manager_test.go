@@ -459,7 +459,7 @@ func TestMultiball_SetSessionKeyDirectSkipsCallback(t *testing.T) {
 // --- BotForSessionOrPrimary routing tests ---
 
 func TestBotForSessionOrPrimary_MultiballSessionUsesMultiballBot(t *testing.T) {
-	// TestBotForSessionOrPrimary_MultiballSessionUsesMultiballBot verifies that
+	// Verifies that
 	// BotForSessionOrPrimary returns the multiball bot when it holds the session key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -479,7 +479,7 @@ func TestBotForSessionOrPrimary_MultiballSessionUsesMultiballBot(t *testing.T) {
 }
 
 func TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary(t *testing.T) {
-	// TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary verifies
+	// Verifies
 	// fallback to primary when no secondary bot holds the session key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -495,7 +495,7 @@ func TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary(t *testing.T
 }
 
 func TestBotForSessionOrPrimary_NonMultiballSessionUsesPrimary(t *testing.T) {
-	// TestBotForSessionOrPrimary_NonMultiballSessionUsesPrimary verifies that
+	// Verifies that
 	// a regular (non-multiball) session key routes to the primary bot.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -513,7 +513,7 @@ func TestBotForSessionOrPrimary_NonMultiballSessionUsesPrimary(t *testing.T) {
 }
 
 func TestBotForSessionOrPrimary_NoPrimaryReturnsNil(t *testing.T) {
-	// TestBotForSessionOrPrimary_NoPrimaryReturnsNil verifies nil when no
+	// Verifies nil when no
 	// primary bot is registered and no secondary matches.
 	mgr := NewBotManager()
 
@@ -524,7 +524,7 @@ func TestBotForSessionOrPrimary_NoPrimaryReturnsNil(t *testing.T) {
 }
 
 func TestBotForSessionOrPrimary_MultiballNoPrimaryReturnsNil(t *testing.T) {
-	// TestBotForSessionOrPrimary_MultiballNoPrimaryReturnsNil verifies nil when
+	// Verifies nil when
 	// multiball exists but no bot holds the key and no primary is registered.
 	mgr := NewBotManager()
 	mb := testSecondaryBot("mb1")
@@ -537,7 +537,7 @@ func TestBotForSessionOrPrimary_MultiballNoPrimaryReturnsNil(t *testing.T) {
 }
 
 func TestBotForSessionOrPrimary_NewFormatBranchKey(t *testing.T) {
-	// TestBotForSessionOrPrimary_NewFormatBranchKey verifies that new slash-separated
+	// Verifies that new slash-separated
 	// branch keys (which don't contain ":multiball:") still find the secondary bot
 	// when it holds that session key. This was broken when BotForSessionOrPrimary
 	// gated the lookup on strings.Contains(":multiball:").
@@ -560,7 +560,7 @@ func TestBotForSessionOrPrimary_NewFormatBranchKey(t *testing.T) {
 }
 
 func TestBotForSessionOrPrimary_NewFormatChatKey(t *testing.T) {
-	// TestBotForSessionOrPrimary_NewFormatChatKey verifies that new slash-separated
+	// Verifies that new slash-separated
 	// chat keys route to primary when no secondary holds the key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())

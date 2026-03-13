@@ -10,7 +10,7 @@ import (
 )
 
 func TestCacheSharing(t *testing.T) {
-	// TestCacheSharing is the go/no-go test for the entire project.
+	// Is the go/no-go test for the entire project.
 	// It validates that branched sessions share cache prefixes with parent sessions.
 	//
 	// Flow:

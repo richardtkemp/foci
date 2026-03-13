@@ -10,7 +10,7 @@ import (
 )
 
 func TestCancelTurn_NoActiveTurn(t *testing.T) {
-	// TestCancelTurn_NoActiveTurn verifies that cancelTurn does not panic when
+	// Verifies that cancelTurn does not panic when
 	// no turn is active.
 	b, _ := testBot([]string{}, command.NewRegistry())
 	// Should not panic when no turn is active
@@ -18,7 +18,7 @@ func TestCancelTurn_NoActiveTurn(t *testing.T) {
 }
 
 func TestCancelTurn_CancelsContext(t *testing.T) {
-	// TestCancelTurn_CancelsContext verifies that cancelTurn properly cancels
+	// Verifies that cancelTurn properly cancels
 	// the active turn's context.
 	b, _ := testBot([]string{}, command.NewRegistry())
 
@@ -38,7 +38,7 @@ func TestCancelTurn_CancelsContext(t *testing.T) {
 }
 
 func TestSplitMessage_Short(t *testing.T) {
-	// TestSplitMessage_Short verifies that short messages are not split.
+	// Verifies that short messages are not split.
 	chunks := splitMessage("hello", 100)
 	if len(chunks) != 1 || chunks[0] != "hello" {
 		t.Errorf("expected [hello], got %v", chunks)
@@ -46,7 +46,7 @@ func TestSplitMessage_Short(t *testing.T) {
 }
 
 func TestSplitMessage_ExactLimit(t *testing.T) {
-	// TestSplitMessage_ExactLimit verifies that messages exactly at the limit
+	// Verifies that messages exactly at the limit
 	// are not split.
 	chunks := splitMessage("hello", 5)
 	if len(chunks) != 1 || chunks[0] != "hello" {
@@ -55,7 +55,7 @@ func TestSplitMessage_ExactLimit(t *testing.T) {
 }
 
 func TestSplitMessage_SplitsAtNewline(t *testing.T) {
-	// TestSplitMessage_SplitsAtNewline verifies that message splitting prefers
+	// Verifies that message splitting prefers
 	// newline boundaries.
 	text := "line1\nline2\nline3"
 	chunks := splitMessage(text, 10)
@@ -75,7 +75,7 @@ func TestSplitMessage_SplitsAtNewline(t *testing.T) {
 }
 
 func TestSplitMessage_LongNoNewlines(t *testing.T) {
-	// TestSplitMessage_LongNoNewlines verifies that long text without newlines
+	// Verifies that long text without newlines
 	// is split at the limit.
 	text := "abcdefghijklmnop"
 	chunks := splitMessage(text, 5)
@@ -92,7 +92,7 @@ func TestSplitMessage_LongNoNewlines(t *testing.T) {
 }
 
 func TestSplitMessage_Empty(t *testing.T) {
-	// TestSplitMessage_Empty verifies that empty messages are handled correctly.
+	// Verifies that empty messages are handled correctly.
 	chunks := splitMessage("", 100)
 	if len(chunks) != 1 || chunks[0] != "" {
 		t.Errorf("expected [\"\"], got %v", chunks)
@@ -186,7 +186,7 @@ func TestSplitMessage_NestedTags(t *testing.T) {
 }
 
 func TestOpenHTMLTags(t *testing.T) {
-	// TestOpenHTMLTags verifies that openHTMLTags correctly identifies open
+	// Verifies that openHTMLTags correctly identifies open
 	// HTML tags in a string.
 	cases := []struct {
 		html string
@@ -215,7 +215,7 @@ func TestOpenHTMLTags(t *testing.T) {
 }
 
 func TestClosingHTMLTag(t *testing.T) {
-	// TestClosingHTMLTag verifies that closingHTMLTag returns the correct closing
+	// Verifies that closingHTMLTag returns the correct closing
 	// tag for a given opening tag.
 	cases := []struct {
 		open, want string

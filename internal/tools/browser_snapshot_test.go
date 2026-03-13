@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseRef(t *testing.T) {
-	// TestParseRef validates that ParseRef correctly accepts valid ref formats
+	// Validates that ParseRef correctly accepts valid ref formats
 	// and rejects invalid ones, covering plain refs, frame-prefixed refs,
 	// and various malformed strings.
 	t.Parallel()
@@ -43,7 +43,7 @@ func TestParseRef(t *testing.T) {
 }
 
 func TestLocatorInFrameNilSnapshot(t *testing.T) {
-	// TestLocatorInFrameNilSnapshot verifies that LocatorInFrame returns a clear
+	// Verifies that LocatorInFrame returns a clear
 	// error when called on a nil snapshot (no snapshot captured yet).
 	t.Parallel()
 
@@ -58,7 +58,7 @@ func TestLocatorInFrameNilSnapshot(t *testing.T) {
 }
 
 func TestLocatorInFrameEmptyFrames(t *testing.T) {
-	// TestLocatorInFrameEmptyFrames verifies that LocatorInFrame returns a clear
+	// Verifies that LocatorInFrame returns a clear
 	// error when the snapshot has no frames registered.
 	t.Parallel()
 
@@ -70,7 +70,7 @@ func TestLocatorInFrameEmptyFrames(t *testing.T) {
 }
 
 func TestLocatorInFrameOutOfRange(t *testing.T) {
-	// TestLocatorInFrameOutOfRange verifies that a frame index beyond the
+	// Verifies that a frame index beyond the
 	// registered frames slice returns a clear out-of-range error.
 	t.Parallel()
 
@@ -95,7 +95,7 @@ func TestLocatorInFrameOutOfRange(t *testing.T) {
 }
 
 func TestSnapshotString(t *testing.T) {
-	// TestSnapshotString verifies that the Snapshot.String() method returns
+	// Verifies that the Snapshot.String() method returns
 	// the stored text.
 	t.Parallel()
 
@@ -109,7 +109,7 @@ func TestSnapshotString(t *testing.T) {
 }
 
 func TestSnapshotJSONContentType(t *testing.T) {
-	// TestSnapshotJSONContentType verifies that navigating to a JSON endpoint
+	// Verifies that navigating to a JSON endpoint
 	// produces a snapshot with ```json code block instead of ```yaml.
 	skipIfNoBrowser(t)
 
@@ -132,7 +132,7 @@ func TestSnapshotJSONContentType(t *testing.T) {
 }
 
 func TestSnapshotHTMLContentType(t *testing.T) {
-	// TestSnapshotHTMLContentType verifies that navigating to an HTML page
+	// Verifies that navigating to an HTML page
 	// produces a snapshot with ```yaml code block (the default for accessibility trees).
 	skipIfNoBrowser(t)
 

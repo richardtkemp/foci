@@ -6,7 +6,7 @@ import (
 )
 
 func TestGeneratePassphrase(t *testing.T) {
-	// TestGeneratePassphrase proves the full contract of GeneratePassphrase: it produces
+	// Proves the full contract of GeneratePassphrase: it produces
 	// the requested number of words joined by hyphens, every word comes from the EFF
 	// wordlist, consecutive calls produce different passphrases, and invalid counts error.
 	p, err := GeneratePassphrase(5)
@@ -55,7 +55,7 @@ func TestGeneratePassphrase(t *testing.T) {
 }
 
 func TestEFFWordlistSize(t *testing.T) {
-	// TestEFFWordlistSize proves the embedded EFF short wordlist contains exactly 1296
+	// Proves the embedded EFF short wordlist contains exactly 1296
 	// words, matching the official EFF specification for 4-dice (6^4) lookups.
 	if len(effShortWordlist) != 1296 {
 		t.Errorf("EFF short wordlist has %d words, expected 1296", len(effShortWordlist))
@@ -63,7 +63,7 @@ func TestEFFWordlistSize(t *testing.T) {
 }
 
 func TestGeneratePassphraseWordCount(t *testing.T) {
-	// TestGeneratePassphraseWordCount proves that the wordCount parameter is strictly
+	// Proves that the wordCount parameter is strictly
 	// honored across a range of values, with the output containing exactly that many
 	// hyphen-separated words.
 	for count := 2; count <= 10; count++ {

@@ -12,7 +12,7 @@ import (
 )
 
 func TestCompactPreserveMessages(t *testing.T) {
-	// TestCompactPreserveMessages verifies that the preserve count correctly retains the
+	// Verifies that the preserve count correctly retains the
 	// last N messages verbatim in the compacted session, that the summary includes a
 	// preservation note, that the handoff is folded into the summary when the first
 	// preserved message is a user turn, and that role alternation is maintained throughout.
@@ -89,7 +89,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 }
 
 func TestCompactPreserveMessagesZero(t *testing.T) {
-	// TestCompactPreserveMessagesZero verifies that setting preserveMessages to zero behaves
+	// Verifies that setting preserveMessages to zero behaves
 	// identically to the default no-preservation mode: the compacted session contains only
 	// the marker, summary, and handoff — no original messages are kept — and the summary
 	// does not include a preservation note.
@@ -126,7 +126,7 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 }
 
 func TestCompactPreserveMoreThanAvailable(t *testing.T) {
-	// TestCompactPreserveMoreThanAvailable verifies that when preserveMessages exceeds the
+	// Verifies that when preserveMessages exceeds the
 	// number of messages that can be spared (i.e., leaving fewer than minMessages for
 	// summarisation), the preserve count is clamped downward to the maximum feasible value
 	// rather than failing or preserving everything.
@@ -161,7 +161,7 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 }
 
 func TestCompactPreserveRoleAlternation(t *testing.T) {
-	// TestCompactPreserveRoleAlternation verifies that role alternation is maintained after
+	// Verifies that role alternation is maintained after
 	// compaction regardless of whether the first preserved message is a user or assistant turn.
 	// When preserved messages start with a user turn the handoff is folded into the summary;
 	// when they start with an assistant turn the handoff appears as a separate user message —

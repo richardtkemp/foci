@@ -13,7 +13,7 @@ import (
 )
 
 func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
-	// TestReceiveMessage_FreshSlashCommandDispatched verifies that fresh slash
+	// Verifies that fresh slash
 	// commands are dispatched immediately.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
@@ -40,7 +40,7 @@ func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
 }
 
 func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
-	// TestReceiveMessage_StaleSlashCommandDropped verifies that stale slash
+	// Verifies that stale slash
 	// commands are dropped without reply.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
@@ -68,7 +68,7 @@ func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
 }
 
 func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
-	// TestReceiveMessage_StaleNonSlashMessageStillQueued verifies that stale
+	// Verifies that stale
 	// non-slash messages are still queued.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
@@ -88,7 +88,7 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 }
 
 func TestNewSessionKeyForChat(t *testing.T) {
-	// TestNewSessionKeyForChat verifies that session keys are created with the
+	// Verifies that session keys are created with the
 	// correct chat prefix.
 	key := NewSessionKeyForChat("fotini", 123456789)
 	if !strings.HasPrefix(key, "fotini/c123456789/") {
@@ -97,7 +97,7 @@ func TestNewSessionKeyForChat(t *testing.T) {
 }
 
 func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
-	// TestNewSessionKeyForChat_DifferentChats verifies that different chat IDs
+	// Verifies that different chat IDs
 	// produce different session keys.
 	k1 := NewSessionKeyForChat("fotini", 111)
 	k2 := NewSessionKeyForChat("fotini", 222)
@@ -107,7 +107,7 @@ func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
 }
 
 func TestDefaultChatAssignment(t *testing.T) {
-	// TestDefaultChatAssignment verifies that the default chat is set on first
+	// Verifies that the default chat is set on first
 	// message and does not change.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -142,7 +142,7 @@ func TestDefaultChatAssignment(t *testing.T) {
 }
 
 func TestDefaultSessionKey(t *testing.T) {
-	// TestDefaultSessionKey verifies that DefaultSessionKey returns the correct
+	// Verifies that DefaultSessionKey returns the correct
 	// session key for the default chat.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -162,7 +162,7 @@ func TestDefaultSessionKey(t *testing.T) {
 }
 
 func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
-	// TestSessionKey_PrimaryBotUsesDefault verifies that primary bots use the
+	// Verifies that primary bots use the
 	// default chat session key.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -178,7 +178,7 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 }
 
 func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
-	// TestSessionKey_PrimaryBotIsStable verifies that SessionKey() returns the
+	// Verifies that SessionKey() returns the
 	// same value on repeated calls.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -195,7 +195,7 @@ func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
 }
 
 func TestDefaultSessionKey_IsStable(t *testing.T) {
-	// TestDefaultSessionKey_IsStable verifies that DefaultSessionKey() returns
+	// Verifies that DefaultSessionKey() returns
 	// the same value on repeated calls.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -211,7 +211,7 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 }
 
 func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
-	// TestSessionKey_SecondaryBotUsesOverride verifies that secondary bots use
+	// Verifies that secondary bots use
 	// the configured session key override.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
@@ -223,7 +223,7 @@ func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 }
 
 func TestChatUsernameRecording(t *testing.T) {
-	// TestChatUsernameRecording verifies that chat usernames are recorded when
+	// Verifies that chat usernames are recorded when
 	// messages are received.
 	ss := state.New(t.TempDir() + "/state.json")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -238,7 +238,7 @@ func TestChatUsernameRecording(t *testing.T) {
 }
 
 func TestSetSessionKey_FiresCallback(t *testing.T) {
-	// TestSetSessionKey_FiresCallback verifies that SetSessionKey fires the
+	// Verifies that SetSessionKey fires the
 	// registered callback.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
@@ -258,7 +258,7 @@ func TestSetSessionKey_FiresCallback(t *testing.T) {
 }
 
 func TestSetSessionKey_NilCallbackDoesNotPanic(t *testing.T) {
-	// TestSetSessionKey_NilCallbackDoesNotPanic verifies that SetSessionKey
+	// Verifies that SetSessionKey
 	// handles nil callback without panicking.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
@@ -273,7 +273,7 @@ func TestSetSessionKey_NilCallbackDoesNotPanic(t *testing.T) {
 }
 
 func TestSetSessionKeyDirect_DoesNotFireCallback(t *testing.T) {
-	// TestSetSessionKeyDirect_DoesNotFireCallback verifies that SetSessionKeyDirect
+	// Verifies that SetSessionKeyDirect
 	// does not fire the callback.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
@@ -293,7 +293,7 @@ func TestSetSessionKeyDirect_DoesNotFireCallback(t *testing.T) {
 }
 
 func TestUsername_NilSafe(t *testing.T) {
-	// TestUsername_NilSafe verifies that the bot handles nil API without panicking.
+	// Verifies that the bot handles nil API without panicking.
 	b, _ := testBot([]string{}, command.NewRegistry())
 	// Bot created with testBot doesn't set API, so Username() should return empty
 	// Just verify no panic when accessing Username()

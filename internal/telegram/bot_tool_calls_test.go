@@ -244,7 +244,7 @@ func TestShowToolCalls_Full(t *testing.T) {
 }
 
 func TestFormatToolCall(t *testing.T) {
-	// TestFormatToolCall verifies that formatToolCall produces properly formatted
+	// Verifies that formatToolCall produces properly formatted
 	// tool call messages.
 	b := &Bot{}
 	text := b.formatToolCall("shell", json.RawMessage(`{"command":"ls -la"}`))
@@ -260,7 +260,7 @@ func TestFormatToolCall(t *testing.T) {
 }
 
 func TestFormatToolCall_HTMLEscape(t *testing.T) {
-	// TestFormatToolCall_HTMLEscape verifies that HTML is properly escaped in
+	// Verifies that HTML is properly escaped in
 	// tool call messages.
 	b := &Bot{}
 	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo <script>"}`))
@@ -273,7 +273,7 @@ func TestFormatToolCall_HTMLEscape(t *testing.T) {
 }
 
 func TestFormatToolCall_LongParams(t *testing.T) {
-	// TestFormatToolCall_LongParams verifies that long parameters are truncated.
+	// Verifies that long parameters are truncated.
 	b := &Bot{}
 	longVal := strings.Repeat("x", 500)
 	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
@@ -284,7 +284,7 @@ func TestFormatToolCall_LongParams(t *testing.T) {
 }
 
 func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
-	// TestFormatToolCall_UnescapesNewlinesAndTabs verifies that escaped newlines
+	// Verifies that escaped newlines
 	// and tabs in JSON are properly displayed.
 	b := &Bot{}
 	// Simulate a tool call where the JSON string value contains literal \n and \t
@@ -296,7 +296,7 @@ func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
 }
 
 func TestFormatToolCall_UnescapesUnicodeSequences(t *testing.T) {
-	// TestFormatToolCall_UnescapesUnicodeSequences verifies that Unicode escape
+	// Verifies that Unicode escape
 	// sequences are properly displayed.
 	b := &Bot{}
 	// Emoji or other Unicode escape sequences should be unescaped

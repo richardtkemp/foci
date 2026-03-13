@@ -3,7 +3,7 @@ package tools
 import "testing"
 
 func TestMigrateSession_InjectResolvesToNewKey(t *testing.T) {
-	// TestMigrateSession_InjectResolvesToNewKey verifies that after migration,
+	// Verifies that after migration,
 	// InjectToAgent delivers to the new key even when called with the old key.
 	t.Parallel()
 	var delivered string
@@ -21,7 +21,7 @@ func TestMigrateSession_InjectResolvesToNewKey(t *testing.T) {
 }
 
 func TestMigrateSession_MarkDoneResolvesToNewKey(t *testing.T) {
-	// TestMigrateSession_MarkDoneResolvesToNewKey verifies that MarkDone
+	// Verifies that MarkDone
 	// decrements the new key's count when called with the old key.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
@@ -49,7 +49,7 @@ func TestMigrateSession_MarkDoneResolvesToNewKey(t *testing.T) {
 }
 
 func TestMigrateSession_PendingCountMerges(t *testing.T) {
-	// TestMigrateSession_PendingCountMerges verifies that migrating into a key
+	// Verifies that migrating into a key
 	// that already has pending results adds the counts together.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
@@ -73,7 +73,7 @@ func TestMigrateSession_PendingCountMerges(t *testing.T) {
 }
 
 func TestMigrateSession_ChainedRotation(t *testing.T) {
-	// TestMigrateSession_ChainedRotation verifies that multiple rotations
+	// Verifies that multiple rotations
 	// (A→B→C) flatten correctly — old goroutines holding key A resolve to C.
 	t.Parallel()
 	var delivered string
@@ -102,7 +102,7 @@ func TestMigrateSession_ChainedRotation(t *testing.T) {
 }
 
 func TestMigrateSession_NoOp(t *testing.T) {
-	// TestMigrateSession_NoOp verifies that migration is a no-op when old
+	// Verifies that migration is a no-op when old
 	// equals new, when newKey is empty, or on a nil receiver.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
@@ -124,7 +124,7 @@ func TestMigrateSession_NoOp(t *testing.T) {
 }
 
 func TestMigrateSession_NoPendingStillRemaps(t *testing.T) {
-	// TestMigrateSession_NoPendingStillRemaps verifies that migration installs
+	// Verifies that migration installs
 	// a remap even when there are no pending results, so that a slow goroutine
 	// that calls InjectToAgent after MarkDone still resolves correctly.
 	t.Parallel()
@@ -142,7 +142,7 @@ func TestMigrateSession_NoPendingStillRemaps(t *testing.T) {
 }
 
 func TestMigrateSession_ReplyToSessionUnchanged(t *testing.T) {
-	// TestMigrateSession_ReplyToSessionUnchanged verifies that replyToSession
+	// Verifies that replyToSession
 	// is passed through unmodified (only targetSession is remapped).
 	t.Parallel()
 	var gotTarget, gotReplyTo string

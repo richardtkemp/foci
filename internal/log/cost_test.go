@@ -44,7 +44,7 @@ func TestCalculateCost(t *testing.T) {
 }
 
 func TestCalculateCostOpus(t *testing.T) {
-	// TestCalculateCostOpus verifies Opus input pricing is $15/M tokens.
+	// Verifies Opus input pricing is $15/M tokens.
 	cost := CalculateCost("claude-opus-4-6", 1_000_000, 0, 0, 0)
 	if cost != 15.0 {
 		t.Errorf("1M input opus = %f, want 15.0", cost)

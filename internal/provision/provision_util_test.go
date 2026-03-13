@@ -8,7 +8,7 @@ import (
 )
 
 func TestStaggerCrontabLine(t *testing.T) {
-	// TestStaggerCrontabLine proves that absolute minute fields are shifted by offset (with modulo-60 wrap),
+	// Proves that absolute minute fields are shifted by offset (with modulo-60 wrap),
 	// while interval expressions and short/comment lines pass through unchanged.
 	tests := []struct {
 		name   string
@@ -32,7 +32,7 @@ func TestStaggerCrontabLine(t *testing.T) {
 }
 
 func TestStaggerCrontabLineNonNumericMinute(t *testing.T) {
-	// TestStaggerCrontabLineNonNumericMinute verifies non-numeric minute fields pass through unchanged.
+	// Verifies non-numeric minute fields pass through unchanged.
 	line := "abc 4 * * * * cmd"
 	got := StaggerCrontabLine(line, 5)
 	if got != line {
@@ -41,7 +41,7 @@ func TestStaggerCrontabLineNonNumericMinute(t *testing.T) {
 }
 
 func TestStaggerCrontabLineEdgeCases(t *testing.T) {
-	// TestStaggerCrontabLineEdgeCases proves that large offsets wrap correctly via modulo-60, and that
+	// Proves that large offsets wrap correctly via modulo-60, and that
 	// lines with fewer than 6 space-separated fields are always returned unchanged regardless of content.
 	tests := []struct {
 		name   string
@@ -80,7 +80,7 @@ func TestStaggerCrontabLineEdgeCases(t *testing.T) {
 }
 
 func TestTitleCase(t *testing.T) {
-	// TestTitleCase verifies hyphen-separated agent IDs convert to title case.
+	// Verifies hyphen-separated agent IDs convert to title case.
 	tests := []struct {
 		input string
 		want  string
@@ -99,7 +99,7 @@ func TestTitleCase(t *testing.T) {
 }
 
 func TestToSlug(t *testing.T) {
-	// TestToSlug verifies display names convert to valid lowercase hyphenated slugs.
+	// Verifies display names convert to valid lowercase hyphenated slugs.
 	tests := []struct {
 		input string
 		want  string
@@ -123,7 +123,7 @@ func TestToSlug(t *testing.T) {
 }
 
 func TestSeedDefaultsWalkError(t *testing.T) {
-	// TestSeedDefaultsWalkError proves that SeedDefaults propagates walk errors by making a source
+	// Proves that SeedDefaults propagates walk errors by making a source
 	// subdirectory unreadable (mode 0000) and verifying the returned error is non-nil.
 	src := t.TempDir()
 	subdir := filepath.Join(src, "locked")
@@ -140,7 +140,7 @@ func TestSeedDefaultsWalkError(t *testing.T) {
 }
 
 func TestSeedDefaultsCopyError(t *testing.T) {
-	// TestSeedDefaultsCopyError proves that SeedDefaults surfaces copy failures by making the target
+	// Proves that SeedDefaults surfaces copy failures by making the target
 	// directory read-only and verifying an error is returned when a file cannot be written.
 	src := t.TempDir()
 	os.WriteFile(filepath.Join(src, "file.md"), []byte("data"), 0644)
@@ -191,7 +191,7 @@ func TestAppendCrontab(t *testing.T) {
 }
 
 func TestAppendCrontabError(t *testing.T) {
-	// TestAppendCrontabError proves that AppendCrontab propagates errors from the underlying crontab
+	// Proves that AppendCrontab propagates errors from the underlying crontab
 	// command by injecting a mock that returns an error and verifying it surfaces to the caller.
 	orig := RunCrontabCmd
 	defer func() { RunCrontabCmd = orig }()
@@ -207,7 +207,7 @@ func TestAppendCrontabError(t *testing.T) {
 }
 
 func TestProvisionDefaultsTemplateError(t *testing.T) {
-	// TestProvisionDefaultsTemplateError proves that Provision in defaults mode surfaces a "template SOUL.md"
+	// Proves that Provision in defaults mode surfaces a "template SOUL.md"
 	// error when templating fails, by pre-creating SOUL.md as a directory to trigger EISDIR on ReadFile.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
@@ -240,7 +240,7 @@ func TestProvisionDefaultsTemplateError(t *testing.T) {
 }
 
 func TestProvisionOpenclawTemplateError(t *testing.T) {
-	// TestProvisionOpenclawTemplateError proves that Provision in openclaw mode surfaces a clear error
+	// Proves that Provision in openclaw mode surfaces a clear error
 	// when SOUL.md templating fails, using a pre-created directory at the SOUL.md path to trigger EISDIR.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")

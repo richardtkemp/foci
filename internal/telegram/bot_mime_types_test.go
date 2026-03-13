@@ -5,7 +5,7 @@ import (
 )
 
 func TestIsImageMIME(t *testing.T) {
-	// TestIsImageMIME verifies that isImageMIME correctly identifies image MIME
+	// Verifies that isImageMIME correctly identifies image MIME
 	// types.
 	tests := []struct {
 		mime string
@@ -27,7 +27,7 @@ func TestIsImageMIME(t *testing.T) {
 }
 
 func TestExtForMediaType(t *testing.T) {
-	// TestExtForMediaType verifies that extForMediaType returns correct file
+	// Verifies that extForMediaType returns correct file
 	// extensions for MIME types.
 	tests := []struct {
 		mt   string
@@ -49,7 +49,7 @@ func TestExtForMediaType(t *testing.T) {
 }
 
 func TestIsConvertibleDocMIME(t *testing.T) {
-	// TestIsConvertibleDocMIME verifies that isConvertibleDocMIME correctly
+	// Verifies that isConvertibleDocMIME correctly
 	// identifies document types that can be converted to text.
 	tests := []struct {
 		mime string
@@ -74,7 +74,7 @@ func TestIsConvertibleDocMIME(t *testing.T) {
 }
 
 func TestIsPDFMIME(t *testing.T) {
-	// TestIsPDFMIME verifies that isPDFMIME correctly identifies PDF MIME types.
+	// Verifies that isPDFMIME correctly identifies PDF MIME types.
 	if !isPDFMIME("application/pdf") {
 		t.Error("application/pdf should be PDF")
 	}

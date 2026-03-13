@@ -72,7 +72,7 @@ func (m *retryMockRetryableClient) OverloadMaxDuration() time.Duration {
 }
 
 func TestRetryCallbacks(t *testing.T) {
-	// TestRetryCallbacks verifies that retry callbacks are called exactly once per
+	// Verifies that retry callbacks are called exactly once per
 	// retry sequence, and success callback is called when retry succeeds.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
@@ -129,7 +129,7 @@ func TestRetryCallbacks(t *testing.T) {
 }
 
 func TestRetryCallbacksNoRetry(t *testing.T) {
-	// TestRetryCallbacksNoRetry verifies that when request succeeds on first attempt,
+	// Verifies that when request succeeds on first attempt,
 	// callbacks should not fire.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
@@ -168,7 +168,7 @@ func TestRetryCallbacksNoRetry(t *testing.T) {
 }
 
 func TestRetryCallbacks529Overload(t *testing.T) {
-	// TestRetryCallbacks529Overload verifies callbacks work with 529 overload retries
+	// Verifies callbacks work with 529 overload retries
 	// (phase 2) when using a retryableClient.
 	attempts := &atomic.Int32{}
 	client := &retryMockRetryableClient{
@@ -222,7 +222,7 @@ func TestRetryCallbacks529Overload(t *testing.T) {
 }
 
 func TestRetryNonRetryableError(t *testing.T) {
-	// TestRetryNonRetryableError verifies that non-retryable errors stop immediately.
+	// Verifies that non-retryable errors stop immediately.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
 		attempts:  attempts,
@@ -247,7 +247,7 @@ func TestRetryNonRetryableError(t *testing.T) {
 }
 
 func TestRetryStreamingClient(t *testing.T) {
-	// TestRetryStreamingClient verifies retry works with streaming clients.
+	// Verifies retry works with streaming clients.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
 		attempts:  attempts,
@@ -288,7 +288,7 @@ func TestRetryStreamingClient(t *testing.T) {
 }
 
 func TestRetry500DoesNotExtendTo529(t *testing.T) {
-	// TestRetry500DoesNotExtendTo529 verifies that 500 errors don't trigger phase 2.
+	// Verifies that 500 errors don't trigger phase 2.
 	attempts := &atomic.Int32{}
 	client := &retryMockRetryableClient{
 		retryMockClient: retryMockClient{

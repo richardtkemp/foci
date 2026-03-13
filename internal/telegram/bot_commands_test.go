@@ -8,7 +8,7 @@ import (
 )
 
 func TestRegisterCommands(t *testing.T) {
-	// TestRegisterCommands verifies that RegisterCommands properly registers
+	// Verifies that RegisterCommands properly registers
 	// commands with the Telegram API.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "help", Description: "List available commands"})
@@ -49,7 +49,7 @@ func TestRegisterCommands(t *testing.T) {
 }
 
 func TestRegisterCommands_EmptyDescription(t *testing.T) {
-	// TestRegisterCommands_EmptyDescription verifies that RegisterCommands falls
+	// Verifies that RegisterCommands falls
 	// back to the command name when description is empty.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "test", Description: ""})
@@ -66,7 +66,7 @@ func TestRegisterCommands_EmptyDescription(t *testing.T) {
 }
 
 func TestRegisterCommands_APIError(t *testing.T) {
-	// TestRegisterCommands_APIError verifies that RegisterCommands handles API
+	// Verifies that RegisterCommands handles API
 	// errors gracefully without panicking.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "help", Description: "List commands"})
@@ -90,7 +90,7 @@ func TestSendReply_SkipsEmptyText(t *testing.T) {
 }
 
 func TestSendNotification_EmptyTextSkipped(t *testing.T) {
-	// TestSendNotification_EmptyTextSkipped verifies that SendNotification skips
+	// Verifies that SendNotification skips
 	// empty or whitespace-only text.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.SetChatID(12345)

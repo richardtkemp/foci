@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadAndGet(t *testing.T) {
-	// TestLoadAndGet proves that secrets stored in multiple named TOML sections are all
+	// Proves that secrets stored in multiple named TOML sections are all
 	// accessible by "section.key" lookup after loading, and that missing keys return false.
 	path := writeSecrets(t, `
 [anthropic]
@@ -58,7 +58,7 @@ openrouter_key = "sk-or-v1-test"
 }
 
 func TestLoadMissing(t *testing.T) {
-	// TestLoadMissing proves that loading a nonexistent file succeeds without error
+	// Proves that loading a nonexistent file succeeds without error
 	// and returns an empty store, so a missing secrets file is not fatal.
 	s, err := Load("/nonexistent/secrets.toml")
 	if err != nil {
@@ -70,7 +70,7 @@ func TestLoadMissing(t *testing.T) {
 }
 
 func TestLoadInvalid(t *testing.T) {
-	// TestLoadInvalid proves that a file containing malformed TOML causes Load to
+	// Proves that a file containing malformed TOML causes Load to
 	// return an error rather than silently producing an empty or partial store.
 	path := writeSecrets(t, "this is not valid toml [[[")
 	_, err := Load(path)
@@ -80,7 +80,7 @@ func TestLoadInvalid(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	// TestNames proves that Names() returns every "section.key" in alphabetical order,
+	// Proves that Names() returns every "section.key" in alphabetical order,
 	// regardless of the order they appear in the TOML file.
 	path := writeSecrets(t, `
 [anthropic]
@@ -103,7 +103,7 @@ a_key = "z"
 }
 
 func TestSetAndSave(t *testing.T) {
-	// TestSetAndSave proves that values written via Set are durably persisted: after
+	// Proves that values written via Set are durably persisted: after
 	// Save and a fresh Load they are retrievable with the original values.
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
@@ -135,7 +135,7 @@ func TestSetAndSave(t *testing.T) {
 }
 
 func TestRemove(t *testing.T) {
-	// TestRemove proves that Remove deletes a key (returning true) and leaves siblings
+	// Proves that Remove deletes a key (returning true) and leaves siblings
 	// intact, and that the deletion persists after Save and reload.
 	path := writeSecrets(t, `
 [custom]

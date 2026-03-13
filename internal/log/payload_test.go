@@ -9,7 +9,7 @@ import (
 )
 
 func TestSystemHash(t *testing.T) {
-	// TestSystemHash verifies that SystemHash returns a stable 16-char hex digest
+	// Verifies that SystemHash returns a stable 16-char hex digest
 	// for the same input and an empty string for nil/empty input.
 	if got := SystemHash(nil); got != "" {
 		t.Errorf("SystemHash(nil) = %q, want empty", got)
@@ -35,7 +35,7 @@ func TestSystemHash(t *testing.T) {
 }
 
 func TestPayloadEnabled(t *testing.T) {
-	// TestPayloadEnabled verifies that PayloadEnabled returns false when no payload file is
+	// Verifies that PayloadEnabled returns false when no payload file is
 	// configured, and true after Init with a PayloadFile path.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -60,7 +60,7 @@ func TestPayloadEnabled(t *testing.T) {
 }
 
 func TestPayloadLog(t *testing.T) {
-	// TestPayloadLog verifies that Payload() serializes a PayloadEntry to the payload file
+	// Verifies that Payload() serializes a PayloadEntry to the payload file
 	// with session and model fields present.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -104,7 +104,7 @@ func TestPayloadLog(t *testing.T) {
 }
 
 func TestPayload(t *testing.T) {
-	// TestPayload verifies that Payload() does not panic when payloadFile is nil.
+	// Verifies that Payload() does not panic when payloadFile is nil.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -116,7 +116,7 @@ func TestPayload(t *testing.T) {
 }
 
 func TestPayloadNoFileNoOp(t *testing.T) {
-	// TestPayloadNoFileNoOp verifies that the internal payload method is a no-op
+	// Verifies that the internal payload method is a no-op
 	// (no panic) when payloadFile is nil.
 	resetGlobal()
 	t.Cleanup(resetGlobal)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseExtractionResponse(t *testing.T) {
-	// TestParseExtractionResponse verifies JSON array parsing from model output.
+	// Verifies JSON array parsing from model output.
 	t.Parallel()
 
 	input := `[
@@ -47,7 +47,7 @@ func TestParseExtractionResponse(t *testing.T) {
 }
 
 func TestParseExtractionResponseCodeFence(t *testing.T) {
-	// TestParseExtractionResponseCodeFence handles markdown-wrapped JSON.
+	// Handles markdown-wrapped JSON.
 	t.Parallel()
 
 	input := "```json\n" + `[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]` + "\n```"
@@ -65,7 +65,7 @@ func TestParseExtractionResponseCodeFence(t *testing.T) {
 }
 
 func TestParseExtractionResponseEmpty(t *testing.T) {
-	// TestParseExtractionResponseEmpty handles empty array.
+	// Handles empty array.
 	t.Parallel()
 
 	rules, err := ParseExtractionResponse("[]")
@@ -78,7 +78,7 @@ func TestParseExtractionResponseEmpty(t *testing.T) {
 }
 
 func TestNeedsExtraction(t *testing.T) {
-	// TestNeedsExtraction verifies hash comparison logic.
+	// Verifies hash comparison logic.
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -122,7 +122,7 @@ func TestNeedsExtraction(t *testing.T) {
 }
 
 func TestNeedsExtractionNoFiles(t *testing.T) {
-	// TestNeedsExtractionNoFiles returns false when no character files exist.
+	// Returns false when no character files exist.
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -145,7 +145,7 @@ func (m *mockHandler) HandleMessage(_ context.Context, _ string, _ string) (stri
 }
 
 func TestExtractEndToEnd(t *testing.T) {
-	// TestExtractEndToEnd verifies extraction writes rules to disk.
+	// Verifies extraction writes rules to disk.
 	t.Parallel()
 
 	dir := t.TempDir()

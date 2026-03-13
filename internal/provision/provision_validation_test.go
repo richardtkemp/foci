@@ -5,7 +5,7 @@ import (
 )
 
 func TestIsValidAgentID(t *testing.T) {
-	// TestIsValidAgentID verifies agent ID validation rules: lowercase letters, numbers, hyphens only.
+	// Verifies agent ID validation rules: lowercase letters, numbers, hyphens only.
 	valid := []string{"main", "fotini", "my-agent", "agent1", "a", "x123-test"}
 	for _, s := range valid {
 		if !IsValidAgentID(s) {
@@ -22,7 +22,7 @@ func TestIsValidAgentID(t *testing.T) {
 }
 
 func TestResolveModelAlias(t *testing.T) {
-	// TestResolveModelAlias verifies model alias resolution for opus, sonnet, haiku shorthands.
+	// Verifies model alias resolution for opus, sonnet, haiku shorthands.
 	tests := []struct {
 		input string
 		want  string
