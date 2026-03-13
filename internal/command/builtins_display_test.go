@@ -277,6 +277,34 @@ func TestDisplayCommand_WidthAlias(t *testing.T) {
 	}
 }
 
+// TestDisplayCommand_StreamAliasGet verifies that "/display stream" (GET) works
+// as an alias for "/display stream_output".
+func TestDisplayCommand_StreamAliasGet(t *testing.T) {
+	cmd := newTestDisplayCommand(nil)
+
+	result, err := cmd.Execute(context.Background(), "stream")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "stream_output") {
+		t.Errorf("expected canonical key in output, got %q", result)
+	}
+}
+
+// TestDisplayCommand_WidthAliasGet verifies that "/display width" (GET) works
+// as an alias for "/display display_width".
+func TestDisplayCommand_WidthAliasGet(t *testing.T) {
+	cmd := newTestDisplayCommand(nil)
+
+	result, err := cmd.Execute(context.Background(), "width")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result, "display_width") {
+		t.Errorf("expected canonical key in output, got %q", result)
+	}
+}
+
 // TestDisplayCommand_KeyboardOptions verifies the command returns keyboard
 // options for each setting key plus reset.
 func TestDisplayCommand_KeyboardOptions(t *testing.T) {
