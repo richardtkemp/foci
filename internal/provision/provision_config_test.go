@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestGenerateAgentBlock verifies agent block TOML generation with basic spec.
 func TestGenerateAgentBlock(t *testing.T) {
+	// TestGenerateAgentBlock verifies agent block TOML generation with basic spec.
 	spec := AgentSpec{
 		ID:      "greek-tutor",
 		Model:   "claude-sonnet-4-6",
@@ -36,8 +36,8 @@ func TestGenerateAgentBlock(t *testing.T) {
 	}
 }
 
-// TestGenerateAgentBlockCustomSystemFiles verifies system_files array in agent block.
 func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
+	// TestGenerateAgentBlockCustomSystemFiles verifies system_files array in agent block.
 	spec := AgentSpec{
 		ID:          "scout",
 		Model:       "claude-haiku-4-5-20251001",
@@ -52,8 +52,8 @@ func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
 	}
 }
 
-// TestGenerateCrontabFromTemplate verifies crontab template processing with substitutions.
 func TestGenerateCrontabFromTemplate(t *testing.T) {
+	// TestGenerateCrontabFromTemplate verifies crontab template processing with substitutions.
 	tmpDir := t.TempDir()
 	template := `# Comment line
 0 4 * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/review.md 2>&1 >> HOMEDIR/logs/cron.log
@@ -85,8 +85,8 @@ func TestGenerateCrontabFromTemplate(t *testing.T) {
 	}
 }
 
-// TestGenerateCrontabStagger verifies staggering of absolute minute times for multiple agents.
 func TestGenerateCrontabStagger(t *testing.T) {
+	// TestGenerateCrontabStagger verifies staggering of absolute minute times for multiple agents.
 	tmpDir := t.TempDir()
 	template := `0 4 * * * foci branch --oneshot -a AGENT_NAME cmd
 */30 * * * * foci branch --oneshot -a AGENT_NAME keepalive
@@ -112,8 +112,8 @@ func TestGenerateCrontabStagger(t *testing.T) {
 	}
 }
 
-// TestGenerateCrontabMissing verifies GenerateCrontab errors on missing template file.
 func TestGenerateCrontabMissing(t *testing.T) {
+	// TestGenerateCrontabMissing verifies GenerateCrontab errors on missing template file.
 	_, err := GenerateCrontab("/nonexistent/crontab.template", AgentSpec{ID: "test"}, 0)
 	if err == nil {
 		t.Fatal("expected error for missing template")

@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestTemplateSoulFile verifies placeholder substitution in SOUL.md files.
 func TestTemplateSoulFile(t *testing.T) {
+	// TestTemplateSoulFile verifies placeholder substitution in SOUL.md files.
 	tmpDir := t.TempDir()
 	soulPath := filepath.Join(tmpDir, "SOUL.md")
 	os.WriteFile(soulPath, []byte("- **Name:** <!-- your name -->\n"), 0644)
@@ -23,15 +23,15 @@ func TestTemplateSoulFile(t *testing.T) {
 	}
 }
 
-// TestTemplateSoulFileMissing verifies templateSoulFile silently skips missing files.
 func TestTemplateSoulFileMissing(t *testing.T) {
+	// TestTemplateSoulFileMissing verifies templateSoulFile silently skips missing files.
 	if err := templateSoulFile(filepath.Join(t.TempDir(), "nope.md"), "Name"); err != nil {
 		t.Errorf("expected no error for missing file, got: %v", err)
 	}
 }
 
-// TestTemplateSoulFileEmpty verifies empty display names don't modify the file.
 func TestTemplateSoulFileEmpty(t *testing.T) {
+	// TestTemplateSoulFileEmpty verifies empty display names don't modify the file.
 	tmpDir := t.TempDir()
 	soulPath := filepath.Join(tmpDir, "SOUL.md")
 	os.WriteFile(soulPath, []byte("- **Name:** <!-- your name -->\n"), 0644)
@@ -46,8 +46,8 @@ func TestTemplateSoulFileEmpty(t *testing.T) {
 	}
 }
 
-// TestCopyDir verifies copying all files (not dirs) from source to destination.
 func TestCopyDir(t *testing.T) {
+	// TestCopyDir verifies copying all files (not dirs) from source to destination.
 	src := t.TempDir()
 	os.WriteFile(filepath.Join(src, "a.md"), []byte("aaa"), 0644)
 	os.WriteFile(filepath.Join(src, "b.md"), []byte("bbb"), 0644)
@@ -68,16 +68,16 @@ func TestCopyDir(t *testing.T) {
 	}
 }
 
-// TestCopyDirReadError tests copyDir when source doesn't exist.
 func TestCopyDirReadError(t *testing.T) {
+	// TestCopyDirReadError tests copyDir when source doesn't exist.
 	err := copyDir("/nonexistent/source", filepath.Join(t.TempDir(), "dst"))
 	if err == nil {
 		t.Error("expected error when source doesn't exist")
 	}
 }
 
-// TestCopyDirMkdirError tests copyDir when destination can't be created.
 func TestCopyDirMkdirError(t *testing.T) {
+	// TestCopyDirMkdirError tests copyDir when destination can't be created.
 	src := t.TempDir()
 	os.WriteFile(filepath.Join(src, "file.txt"), []byte("content"), 0644)
 
@@ -89,8 +89,8 @@ func TestCopyDirMkdirError(t *testing.T) {
 	}
 }
 
-// TestCopyDirCopyFileError tests copyDir when a file within the source dir can't be copied.
 func TestCopyDirCopyFileError(t *testing.T) {
+	// TestCopyDirCopyFileError tests copyDir when a file within the source dir can't be copied.
 	src := t.TempDir()
 	// Create an unreadable file
 	unreadable := filepath.Join(src, "secret.md")
@@ -105,16 +105,16 @@ func TestCopyDirCopyFileError(t *testing.T) {
 	}
 }
 
-// TestCopyFileReadError tests copyFile when source can't be read.
 func TestCopyFileReadError(t *testing.T) {
+	// TestCopyFileReadError tests copyFile when source can't be read.
 	err := copyFile("/nonexistent/source.txt", filepath.Join(t.TempDir(), "dst.txt"))
 	if err == nil {
 		t.Error("expected error when source doesn't exist")
 	}
 }
 
-// TestCopyFileCreateError tests copyFile when the destination can't be created.
 func TestCopyFileCreateError(t *testing.T) {
+	// TestCopyFileCreateError tests copyFile when the destination can't be created.
 	src := filepath.Join(t.TempDir(), "src.txt")
 	os.WriteFile(src, []byte("data"), 0644)
 
@@ -126,8 +126,8 @@ func TestCopyFileCreateError(t *testing.T) {
 	}
 }
 
-// TestTemplateSoulFileReadError tests templateSoulFile for non-NotExist read failures.
 func TestTemplateSoulFileReadError(t *testing.T) {
+	// TestTemplateSoulFileReadError tests templateSoulFile for non-NotExist read failures.
 	tmpDir := t.TempDir()
 	soulPath := filepath.Join(tmpDir, "SOUL.md")
 	os.WriteFile(soulPath, []byte("content"), 0644)
@@ -140,8 +140,8 @@ func TestTemplateSoulFileReadError(t *testing.T) {
 	}
 }
 
-// TestCopyDefaultFilesWithKeepalive tests copyDefaultFiles with keepalive file.
 func TestCopyDefaultFilesWithKeepalive(t *testing.T) {
+	// TestCopyDefaultFilesWithKeepalive tests copyDefaultFiles with keepalive file.
 	tmpDir := t.TempDir()
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
@@ -164,8 +164,8 @@ func TestCopyDefaultFilesWithKeepalive(t *testing.T) {
 	}
 }
 
-// TestCopyDefaultFilesNoKeepalive verifies copyDefaultFiles returns nil when no KEEPALIVE.md exists.
 func TestCopyDefaultFilesNoKeepalive(t *testing.T) {
+	// TestCopyDefaultFilesNoKeepalive verifies copyDefaultFiles returns nil when no KEEPALIVE.md exists.
 	tmpDir := t.TempDir()
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
@@ -186,8 +186,8 @@ func TestCopyDefaultFilesNoKeepalive(t *testing.T) {
 	}
 }
 
-// TestCopyDefaultFilesNoDefaults tests copyDefaultFiles with missing defaults dir.
 func TestCopyDefaultFilesNoDefaults(t *testing.T) {
+	// TestCopyDefaultFilesNoDefaults tests copyDefaultFiles with missing defaults dir.
 	workspace := filepath.Join(t.TempDir(), "workspace")
 	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
 	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)

@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestResolve proves that Resolve substitutes all {{secret:section.key}} templates
-// with the corresponding secret values, handles multiple substitutions in one string,
-// and leaves template-free strings unchanged.
 func TestResolve(t *testing.T) {
+	// TestResolve proves that Resolve substitutes all {{secret:section.key}} templates
+	// with the corresponding secret values, handles multiple substitutions in one string,
+	// and leaves template-free strings unchanged.
 	path := writeSecrets(t, `
 [custom]
 github_token = "ghp_abc123"
@@ -50,9 +50,9 @@ api_key = "key_xyz"
 	}
 }
 
-// TestResolveUnknown proves that Resolve returns a descriptive error naming the
-// missing key when a template references a secret that doesn't exist in the store.
 func TestResolveUnknown(t *testing.T) {
+	// TestResolveUnknown proves that Resolve returns a descriptive error naming the
+	// missing key when a template references a secret that doesn't exist in the store.
 	path := writeSecrets(t, `[custom]
 key = "val"
 `)
@@ -67,10 +67,10 @@ key = "val"
 	}
 }
 
-// TestResolveNestedDots proves that keys containing underscores (not additional dots)
-// are resolved correctly, confirming the parser correctly treats only the first dot
-// as the section separator.
 func TestResolveNestedDots(t *testing.T) {
+	// TestResolveNestedDots proves that keys containing underscores (not additional dots)
+	// are resolved correctly, confirming the parser correctly treats only the first dot
+	// as the section separator.
 	path := writeSecrets(t, `
 [custom]
 my_key = "value123"

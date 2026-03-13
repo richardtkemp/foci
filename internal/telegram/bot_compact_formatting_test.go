@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// TestFormatToolCallCompact verifies that formatToolCallCompact produces
-// compact, emoji-enhanced tool call summaries.
 func TestFormatToolCallCompact(t *testing.T) {
+	// TestFormatToolCallCompact verifies that formatToolCallCompact produces
+	// compact, emoji-enhanced tool call summaries.
 	tests := []struct {
 		name     string
 		tool     string
@@ -50,9 +50,9 @@ func TestFormatToolCallCompact(t *testing.T) {
 	}
 }
 
-// TestFormatToolCallCompact_HTMLEscape verifies that HTML is properly escaped
-// in compact tool call messages.
 func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
+	// TestFormatToolCallCompact_HTMLEscape verifies that HTML is properly escaped
+	// in compact tool call messages.
 	result := formatToolCallCompact("shell", json.RawMessage(`{"command":"echo <script>"}`))
 	if strings.Contains(result, "<script>") {
 		t.Errorf("HTML not escaped in %q", result)
@@ -62,9 +62,9 @@ func TestFormatToolCallCompact_HTMLEscape(t *testing.T) {
 	}
 }
 
-// TestFormatToolCallCompact_Truncation verifies that long compact messages
-// are truncated with ellipsis.
 func TestFormatToolCallCompact_Truncation(t *testing.T) {
+	// TestFormatToolCallCompact_Truncation verifies that long compact messages
+	// are truncated with ellipsis.
 	longCmd := strings.Repeat("x", 200)
 	result := formatToolCallCompact("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longCmd)))
 	// Should be truncated to ~60 chars + "..."
@@ -73,9 +73,9 @@ func TestFormatToolCallCompact_Truncation(t *testing.T) {
 	}
 }
 
-// TestFormatToolCallCompact_EmptyParams verifies that compact format handles
-// empty parameters correctly.
 func TestFormatToolCallCompact_EmptyParams(t *testing.T) {
+	// TestFormatToolCallCompact_EmptyParams verifies that compact format handles
+	// empty parameters correctly.
 	result := formatToolCallCompact("unknown", json.RawMessage(`{}`))
 	// Should just be the tool name with no summary; unknown tool gets 🔧
 	if !strings.Contains(result, "🔧") {

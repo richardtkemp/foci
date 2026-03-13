@@ -574,8 +574,8 @@ func TestTodoToolListWithSort(t *testing.T) {
 	}
 }
 
-// Verifies that list without a status filter excludes done and dropped items.
 func TestTodoToolListDefaultExcludesDoneDropped(t *testing.T) {
+	// Verifies that list without a status filter excludes done and dropped items.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -607,8 +607,8 @@ func TestTodoToolListDefaultExcludesDoneDropped(t *testing.T) {
 	}
 }
 
-// Verifies that list with status=all includes done and dropped items.
 func TestTodoToolListAllIncludesDoneDropped(t *testing.T) {
+	// Verifies that list with status=all includes done and dropped items.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -635,8 +635,8 @@ func TestTodoToolListAllIncludesDoneDropped(t *testing.T) {
 	}
 }
 
-// Verifies that list with no active items shows appropriate message.
 func TestTodoToolListDefaultNoActive(t *testing.T) {
+	// Verifies that list with no active items shows appropriate message.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -653,8 +653,8 @@ func TestTodoToolListDefaultNoActive(t *testing.T) {
 	}
 }
 
-// Verifies normalizeStatusFilter maps correctly, including new "all" and "active" values.
 func TestNormalizeStatusFilter(t *testing.T) {
+	// Verifies normalizeStatusFilter maps correctly, including new "all" and "active" values.
 	t.Parallel()
 	tests := []struct {
 		input string

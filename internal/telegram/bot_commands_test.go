@@ -7,9 +7,9 @@ import (
 	"foci/internal/command"
 )
 
-// TestRegisterCommands verifies that RegisterCommands properly registers
-// commands with the Telegram API.
 func TestRegisterCommands(t *testing.T) {
+	// TestRegisterCommands verifies that RegisterCommands properly registers
+	// commands with the Telegram API.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "help", Description: "List available commands"})
 	cmds.Register(&command.Command{Name: "ping", Description: "Check bot health"})
@@ -48,9 +48,9 @@ func TestRegisterCommands(t *testing.T) {
 	}
 }
 
-// TestRegisterCommands_EmptyDescription verifies that RegisterCommands falls
-// back to the command name when description is empty.
 func TestRegisterCommands_EmptyDescription(t *testing.T) {
+	// TestRegisterCommands_EmptyDescription verifies that RegisterCommands falls
+	// back to the command name when description is empty.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "test", Description: ""})
 
@@ -65,9 +65,9 @@ func TestRegisterCommands_EmptyDescription(t *testing.T) {
 	}
 }
 
-// TestRegisterCommands_APIError verifies that RegisterCommands handles API
-// errors gracefully without panicking.
 func TestRegisterCommands_APIError(t *testing.T) {
+	// TestRegisterCommands_APIError verifies that RegisterCommands handles API
+	// errors gracefully without panicking.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{Name: "help", Description: "List commands"})
 
@@ -78,8 +78,6 @@ func TestRegisterCommands_APIError(t *testing.T) {
 	b.RegisterCommands()
 }
 
-// TestSendReply_SkipsEmptyText verifies that sendReply skips empty text
-// without sending.
 func TestSendReply_SkipsEmptyText(t *testing.T) {
 	// sendReply trims parts and skips empty text — callers don't need to guard.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
@@ -91,9 +89,9 @@ func TestSendReply_SkipsEmptyText(t *testing.T) {
 	}
 }
 
-// TestSendNotification_EmptyTextSkipped verifies that SendNotification skips
-// empty or whitespace-only text.
 func TestSendNotification_EmptyTextSkipped(t *testing.T) {
+	// TestSendNotification_EmptyTextSkipped verifies that SendNotification skips
+	// empty or whitespace-only text.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.SetChatID(12345)
 

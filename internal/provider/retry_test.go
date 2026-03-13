@@ -71,9 +71,9 @@ func (m *retryMockRetryableClient) OverloadMaxDuration() time.Duration {
 	return 500 * time.Millisecond // short max duration for tests
 }
 
-// TestRetryCallbacks verifies that retry callbacks are called exactly once per
-// retry sequence, and success callback is called when retry succeeds.
 func TestRetryCallbacks(t *testing.T) {
+	// TestRetryCallbacks verifies that retry callbacks are called exactly once per
+	// retry sequence, and success callback is called when retry succeeds.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
 		attempts:  attempts,
@@ -128,9 +128,9 @@ func TestRetryCallbacks(t *testing.T) {
 	}
 }
 
-// TestRetryCallbacksNoRetry verifies that when request succeeds on first attempt,
-// callbacks should not fire.
 func TestRetryCallbacksNoRetry(t *testing.T) {
+	// TestRetryCallbacksNoRetry verifies that when request succeeds on first attempt,
+	// callbacks should not fire.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
 		attempts:  attempts,
@@ -167,9 +167,9 @@ func TestRetryCallbacksNoRetry(t *testing.T) {
 	}
 }
 
-// TestRetryCallbacks529Overload verifies callbacks work with 529 overload retries
-// (phase 2) when using a retryableClient.
 func TestRetryCallbacks529Overload(t *testing.T) {
+	// TestRetryCallbacks529Overload verifies callbacks work with 529 overload retries
+	// (phase 2) when using a retryableClient.
 	attempts := &atomic.Int32{}
 	client := &retryMockRetryableClient{
 		retryMockClient: retryMockClient{
@@ -221,8 +221,8 @@ func TestRetryCallbacks529Overload(t *testing.T) {
 	}
 }
 
-// TestRetryNonRetryableError verifies that non-retryable errors stop immediately.
 func TestRetryNonRetryableError(t *testing.T) {
+	// TestRetryNonRetryableError verifies that non-retryable errors stop immediately.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
 		attempts:  attempts,
@@ -246,8 +246,8 @@ func TestRetryNonRetryableError(t *testing.T) {
 	}
 }
 
-// TestRetryStreamingClient verifies retry works with streaming clients.
 func TestRetryStreamingClient(t *testing.T) {
+	// TestRetryStreamingClient verifies retry works with streaming clients.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
 		attempts:  attempts,
@@ -287,8 +287,8 @@ func TestRetryStreamingClient(t *testing.T) {
 	}
 }
 
-// TestRetry500DoesNotExtendTo529 verifies that 500 errors don't trigger phase 2.
 func TestRetry500DoesNotExtendTo529(t *testing.T) {
+	// TestRetry500DoesNotExtendTo529 verifies that 500 errors don't trigger phase 2.
 	attempts := &atomic.Int32{}
 	client := &retryMockRetryableClient{
 		retryMockClient: retryMockClient{

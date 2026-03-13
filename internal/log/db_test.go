@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// TestAPIDB verifies the SQLite API DB stores entries with all fields including
-// call_type, session_file, and that session-based queries work correctly.
 func TestAPIDB(t *testing.T) {
+	// TestAPIDB verifies the SQLite API DB stores entries with all fields including
+	// call_type, session_file, and that session-based queries work correctly.
 	dbPath := filepath.Join(t.TempDir(), "test_api.db")
 
 	if err := InitAPIDB(dbPath); err != nil {
@@ -133,8 +133,8 @@ func TestAPIDB(t *testing.T) {
 	}
 }
 
-// TestAPIDBDisabled verifies that API() is a no-op (no panic) when no DB is initialized.
 func TestAPIDBDisabled(t *testing.T) {
+	// TestAPIDBDisabled verifies that API() is a no-op (no panic) when no DB is initialized.
 	old := apiLog
 	apiLog = nil
 	defer func() { apiLog = old }()
@@ -143,8 +143,8 @@ func TestAPIDBDisabled(t *testing.T) {
 	// No panic = pass
 }
 
-// TestInitAPIDBError verifies InitAPIDB returns an error for a path that can't be created.
 func TestInitAPIDBError(t *testing.T) {
+	// TestInitAPIDBError verifies InitAPIDB returns an error for a path that can't be created.
 	err := InitAPIDB("/nonexistent/deep/dir/api.db")
 	if err == nil {
 		CloseAPIDB()
@@ -152,9 +152,9 @@ func TestInitAPIDBError(t *testing.T) {
 	}
 }
 
-// TestInsertError verifies that insert logs an error (rather than panicking) when
-// the prepared statement has been closed.
 func TestInsertError(t *testing.T) {
+	// TestInsertError verifies that insert logs an error (rather than panicking) when
+	// the prepared statement has been closed.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -184,9 +184,9 @@ func TestInsertError(t *testing.T) {
 	apiLog = nil
 }
 
-// TestInsertSessionLineNullability verifies that session_line is stored as NULL for 0
-// and as a non-NULL integer for positive values in the SQLite API log.
 func TestInsertSessionLineNullability(t *testing.T) {
+	// TestInsertSessionLineNullability verifies that session_line is stored as NULL for 0
+	// and as a non-NULL integer for positive values in the SQLite API log.
 	dbPath := filepath.Join(t.TempDir(), "test_api.db")
 	if err := InitAPIDB(dbPath); err != nil {
 		t.Fatalf("InitAPIDB: %v", err)
@@ -209,9 +209,9 @@ func TestInsertSessionLineNullability(t *testing.T) {
 	}
 }
 
-// TestConversationLogInsertError verifies that the conversation log handles a DB insert
-// error gracefully — logging an error rather than panicking.
 func TestConversationLogInsertError(t *testing.T) {
+	// TestConversationLogInsertError verifies that the conversation log handles a DB insert
+	// error gracefully — logging an error rather than panicking.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)

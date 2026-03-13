@@ -660,8 +660,6 @@ func TestExportedNamesAlphabetical(t *testing.T) {
 	}
 }
 
-// TestExecExportToolsHaveShellFunc verifies that every tool with ExecExport:true
-// produces a non-empty shell function via generateShellFunc.
 func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	// All tools that set ExecExport:true in production code.
 	t.Parallel()
@@ -696,10 +694,6 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	}
 }
 
-// TestAllToolsExportedOrSkipped ensures every known tool is either exported
-// to the exec bridge (ExecExport:true) or explicitly listed in the skip
-// list below with a reason. When a new tool is added, this test fails until
-// the developer either exports it or adds it to the skip list.
 func TestAllToolsExportedOrSkipped(t *testing.T) {
 	// Tools that intentionally do NOT have ExecExport:true.
 	t.Parallel()

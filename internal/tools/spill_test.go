@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// TestSpillWriterUnderThreshold verifies that writes below the threshold
-// stay entirely in the head buffer with no temp file created.
 func TestSpillWriterUnderThreshold(t *testing.T) {
+	// TestSpillWriterUnderThreshold verifies that writes below the threshold
+	// stay entirely in the head buffer with no temp file created.
 	t.Parallel()
 	sw := newSpillWriter(100, t.TempDir())
 	defer sw.Cleanup()
@@ -34,9 +34,9 @@ func TestSpillWriterUnderThreshold(t *testing.T) {
 	}
 }
 
-// TestSpillWriterAtThreshold verifies that writes up to exactly the threshold
-// remain in memory without spilling.
 func TestSpillWriterAtThreshold(t *testing.T) {
+	// TestSpillWriterAtThreshold verifies that writes up to exactly the threshold
+	// remain in memory without spilling.
 	t.Parallel()
 	data := make([]byte, 50)
 	for i := range data {
@@ -54,9 +54,9 @@ func TestSpillWriterAtThreshold(t *testing.T) {
 	}
 }
 
-// TestSpillWriterOverflow verifies that exceeding the threshold creates a temp
-// file containing the full output, and String() returns the head portion.
 func TestSpillWriterOverflow(t *testing.T) {
+	// TestSpillWriterOverflow verifies that exceeding the threshold creates a temp
+	// file containing the full output, and String() returns the head portion.
 	t.Parallel()
 	threshold := int64(10)
 	sw := newSpillWriter(threshold, t.TempDir())
@@ -89,9 +89,9 @@ func TestSpillWriterOverflow(t *testing.T) {
 	}
 }
 
-// TestSpillWriterMultipleWrites verifies that multiple small writes correctly
-// transition from head buffer to temp file when cumulative size exceeds threshold.
 func TestSpillWriterMultipleWrites(t *testing.T) {
+	// TestSpillWriterMultipleWrites verifies that multiple small writes correctly
+	// transition from head buffer to temp file when cumulative size exceeds threshold.
 	t.Parallel()
 	sw := newSpillWriter(8, t.TempDir())
 	defer sw.Cleanup()
@@ -116,8 +116,8 @@ func TestSpillWriterMultipleWrites(t *testing.T) {
 	}
 }
 
-// TestSpillWriterConcurrent verifies thread safety with concurrent writes.
 func TestSpillWriterConcurrent(t *testing.T) {
+	// TestSpillWriterConcurrent verifies thread safety with concurrent writes.
 	t.Parallel()
 	sw := newSpillWriter(100, t.TempDir())
 	defer sw.Cleanup()
@@ -137,8 +137,8 @@ func TestSpillWriterConcurrent(t *testing.T) {
 	}
 }
 
-// TestSpillWriterCleanup verifies that Cleanup removes the temp file.
 func TestSpillWriterCleanup(t *testing.T) {
+	// TestSpillWriterCleanup verifies that Cleanup removes the temp file.
 	t.Parallel()
 	sw := newSpillWriter(5, t.TempDir())
 	sw.Write([]byte("1234567890")) // spill

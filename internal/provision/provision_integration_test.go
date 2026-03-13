@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// TestProvisionDefaults verifies full agent provisioning from defaults mode.
-// Sets up defaults directory with character templates and crontab, provisions agent,
-// and verifies all files are created and templated correctly.
 func TestProvisionDefaults(t *testing.T) {
+	// TestProvisionDefaults verifies full agent provisioning from defaults mode.
+	// Sets up defaults directory with character templates and crontab, provisions agent,
+	// and verifies all files are created and templated correctly.
 	tmpDir := t.TempDir()
 
 	// Set up defaults directory
@@ -67,9 +67,9 @@ func TestProvisionDefaults(t *testing.T) {
 	}
 }
 
-// TestProvisionOpenclaw verifies agent provisioning with openclaw character mode.
-// Uses openclaw directory template instead of defaults character directory.
 func TestProvisionOpenclaw(t *testing.T) {
+	// TestProvisionOpenclaw verifies agent provisioning with openclaw character mode.
+	// Uses openclaw directory template instead of defaults character directory.
 	tmpDir := t.TempDir()
 
 	defaultsDir := filepath.Join(tmpDir, "defaults")
@@ -105,9 +105,9 @@ func TestProvisionOpenclaw(t *testing.T) {
 	}
 }
 
-// TestProvisionBlank verifies agent provisioning with blank character mode.
-// Creates empty character files without copying from defaults.
 func TestProvisionBlank(t *testing.T) {
+	// TestProvisionBlank verifies agent provisioning with blank character mode.
+	// Creates empty character files without copying from defaults.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 
@@ -137,9 +137,9 @@ func TestProvisionBlank(t *testing.T) {
 	}
 }
 
-// TestProvisionCopy verifies agent provisioning in copy mode.
-// Copies character files from an existing agent's workspace.
 func TestProvisionCopy(t *testing.T) {
+	// TestProvisionCopy verifies agent provisioning in copy mode.
+	// Copies character files from an existing agent's workspace.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 
@@ -168,9 +168,9 @@ func TestProvisionCopy(t *testing.T) {
 	}
 }
 
-// TestSeedDefaults verifies seeding a defaults directory from a source.
-// Verifies that existing files are not overwritten.
 func TestSeedDefaults(t *testing.T) {
+	// TestSeedDefaults verifies seeding a defaults directory from a source.
+	// Verifies that existing files are not overwritten.
 	src := t.TempDir()
 	os.MkdirAll(filepath.Join(src, "character"), 0755)
 	os.WriteFile(filepath.Join(src, "character", "SOUL.md"), []byte("soul"), 0644)
@@ -201,8 +201,8 @@ func TestSeedDefaults(t *testing.T) {
 	}
 }
 
-// TestProvisionErrorCreatingWorkspace tests Provision when workspace creation fails.
 func TestProvisionErrorCreatingWorkspace(t *testing.T) {
+	// TestProvisionErrorCreatingWorkspace tests Provision when workspace creation fails.
 	tmpDir := t.TempDir()
 
 	// Create a file where the workspace dir should be
@@ -225,8 +225,8 @@ func TestProvisionErrorCreatingWorkspace(t *testing.T) {
 	}
 }
 
-// TestProvisionDefaultsCopyError verifies Provision errors when defaults character dir is missing.
 func TestProvisionDefaultsCopyError(t *testing.T) {
+	// TestProvisionDefaultsCopyError verifies Provision errors when defaults character dir is missing.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 	defaultsDir := filepath.Join(tmpDir, "defaults")
@@ -250,8 +250,8 @@ func TestProvisionDefaultsCopyError(t *testing.T) {
 	}
 }
 
-// TestProvisionOpenclawCopyError verifies Provision errors when openclaw dir is missing.
 func TestProvisionOpenclawCopyError(t *testing.T) {
+	// TestProvisionOpenclawCopyError verifies Provision errors when openclaw dir is missing.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 	defaultsDir := filepath.Join(tmpDir, "defaults")
@@ -274,8 +274,8 @@ func TestProvisionOpenclawCopyError(t *testing.T) {
 	}
 }
 
-// TestProvisionCopySourceMissing verifies Provision errors when source agent doesn't exist in copy mode.
 func TestProvisionCopySourceMissing(t *testing.T) {
+	// TestProvisionCopySourceMissing verifies Provision errors when source agent doesn't exist in copy mode.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 
@@ -297,8 +297,8 @@ func TestProvisionCopySourceMissing(t *testing.T) {
 	}
 }
 
-// TestProvisionBlankWriteError verifies Provision errors when character dir is read-only.
 func TestProvisionBlankWriteError(t *testing.T) {
+	// TestProvisionBlankWriteError verifies Provision errors when character dir is read-only.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 	workspace := filepath.Join(homeDir, "blank-err")
@@ -323,8 +323,8 @@ func TestProvisionBlankWriteError(t *testing.T) {
 	}
 }
 
-// TestProvisionWithoutCrontabTemplate verifies Provision succeeds with missing crontab template.
 func TestProvisionWithoutCrontabTemplate(t *testing.T) {
+	// TestProvisionWithoutCrontabTemplate verifies Provision succeeds with missing crontab template.
 	tmpDir := t.TempDir()
 	homeDir := filepath.Join(tmpDir, "home")
 	defaultsDir := filepath.Join(tmpDir, "defaults")
@@ -352,8 +352,8 @@ func TestProvisionWithoutCrontabTemplate(t *testing.T) {
 	}
 }
 
-// TestProvisionInvalidCharMode tests Provision with invalid character mode.
 func TestProvisionInvalidCharMode(t *testing.T) {
+	// TestProvisionInvalidCharMode tests Provision with invalid character mode.
 	tmpDir := t.TempDir()
 	spec := AgentSpec{
 		ID:          "bad-agent",

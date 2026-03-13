@@ -15,10 +15,10 @@ import (
 	"foci/internal/session"
 )
 
-// TestHasToolUse verifies that hasToolUse correctly distinguishes between a plain text
-// assistant message (no tool_use) and an assistant message that contains a tool_use
-// content block.
 func TestHasToolUse(t *testing.T) {
+	// TestHasToolUse verifies that hasToolUse correctly distinguishes between a plain text
+	// assistant message (no tool_use) and an assistant message that contains a tool_use
+	// content block.
 	if hasToolUse(provider.Message{Role: "user", Content: provider.TextContent("hi")}) {
 		t.Error("plain user message should not have tool_use")
 	}
@@ -27,28 +27,28 @@ func TestHasToolUse(t *testing.T) {
 	}
 }
 
-// TestToolUseIDs verifies that toolUseIDs extracts all tool call IDs from an assistant
-// message in order, including messages with multiple tool_use blocks.
 func TestToolUseIDs(t *testing.T) {
+	// TestToolUseIDs verifies that toolUseIDs extracts all tool call IDs from an assistant
+	// message in order, including messages with multiple tool_use blocks.
 	ids := toolUseIDs(toolUseMsg("toolu_A", "toolu_B"))
 	if len(ids) != 2 || ids[0] != "toolu_A" || ids[1] != "toolu_B" {
 		t.Errorf("toolUseIDs = %v, want [toolu_A, toolu_B]", ids)
 	}
 }
 
-// TestToolResultIDs verifies that toolResultIDs returns a set containing all tool_use IDs
-// whose results appear in a user message, enabling O(1) lookup for orphan detection.
 func TestToolResultIDs(t *testing.T) {
+	// TestToolResultIDs verifies that toolResultIDs returns a set containing all tool_use IDs
+	// whose results appear in a user message, enabling O(1) lookup for orphan detection.
 	ids := toolResultIDs(toolResultMsg("toolu_X", "toolu_Y"))
 	if !ids["toolu_X"] || !ids["toolu_Y"] || len(ids) != 2 {
 		t.Errorf("toolResultIDs = %v, want {toolu_X, toolu_Y}", ids)
 	}
 }
 
-// TestSafeSplitPointNoToolUse verifies that when the message immediately before the
-// proposed split point is plain text (no tool_use), safeSplitPoint returns the split
-// unchanged — no walk-back is needed.
 func TestSafeSplitPointNoToolUse(t *testing.T) {
+	// TestSafeSplitPointNoToolUse verifies that when the message immediately before the
+	// proposed split point is plain text (no tool_use), safeSplitPoint returns the split
+	// unchanged — no walk-back is needed.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("u0")},
 		{Role: "assistant", Content: provider.TextContent("a0")},
@@ -62,11 +62,11 @@ func TestSafeSplitPointNoToolUse(t *testing.T) {
 	}
 }
 
-// TestSafeSplitPointBreaksPair verifies that when the proposed split would place a
-// tool_result in the preserved window while its tool_use stays in the summarised
-// window, safeSplitPoint walks back one step to keep the entire pair on the summarised
-// side.
 func TestSafeSplitPointBreaksPair(t *testing.T) {
+	// TestSafeSplitPointBreaksPair verifies that when the proposed split would place a
+	// tool_result in the preserved window while its tool_use stays in the summarised
+	// window, safeSplitPoint walks back one step to keep the entire pair on the summarised
+	// side.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("u0")},      // 0
 		{Role: "assistant", Content: provider.TextContent("a0")}, // 1
@@ -83,9 +83,6 @@ func TestSafeSplitPointBreaksPair(t *testing.T) {
 	}
 }
 
-// TestSafeSplitPointConsecutiveToolPairs verifies that safeSplitPoint keeps walking back
-// through a run of consecutive tool_use messages (simulating a corrupt session) until it
-// finds a non-tool_use predecessor, rather than stopping after a single step.
 func TestSafeSplitPointConsecutiveToolPairs(t *testing.T) {
 	// In a corrupt session, two assistant tool_use messages in a row.
 	msgs := []provider.Message{
@@ -104,9 +101,6 @@ func TestSafeSplitPointConsecutiveToolPairs(t *testing.T) {
 	}
 }
 
-// TestSafeSplitPointBounded verifies that the walk-back terminates after maxWalkBack
-// steps even when more walk-back would be needed for a clean split, preventing
-// unbounded regression through the entire message history.
 func TestSafeSplitPointBounded(t *testing.T) {
 	// Walk-back bounded by maxWalkBack.
 	msgs := []provider.Message{
@@ -124,10 +118,10 @@ func TestSafeSplitPointBounded(t *testing.T) {
 	}
 }
 
-// TestSafeSplitPointAtZero verifies that a split at index 0 (before all messages) is
-// returned unchanged, since there is nothing to walk back to and the function must not
-// produce a negative split index.
 func TestSafeSplitPointAtZero(t *testing.T) {
+	// TestSafeSplitPointAtZero verifies that a split at index 0 (before all messages) is
+	// returned unchanged, since there is nothing to walk back to and the function must not
+	// produce a negative split index.
 	msgs := []provider.Message{
 		toolUseMsg("toolu_1"),
 		toolResultMsg("toolu_1"),
@@ -139,10 +133,10 @@ func TestSafeSplitPointAtZero(t *testing.T) {
 	}
 }
 
-// TestRepairOrphanedToolUseNoOrphans verifies that repairOrphanedToolUse is a no-op
-// when every tool_use already has a matching tool_result, confirming the repair path
-// does not mutate a valid message sequence.
 func TestRepairOrphanedToolUseNoOrphans(t *testing.T) {
+	// TestRepairOrphanedToolUseNoOrphans verifies that repairOrphanedToolUse is a no-op
+	// when every tool_use already has a matching tool_result, confirming the repair path
+	// does not mutate a valid message sequence.
 	msgs := []provider.Message{
 		{Role: "user", Content: provider.TextContent("u0")},
 		toolUseMsg("toolu_1"),
@@ -155,9 +149,6 @@ func TestRepairOrphanedToolUseNoOrphans(t *testing.T) {
 	}
 }
 
-// TestRepairOrphanedToolUseMissingResult verifies that when a tool_use has no matching
-// result, a synthetic error tool_result block is prepended to the next user message
-// rather than inserting a new message, keeping the sequence length the same.
 func TestRepairOrphanedToolUseMissingResult(t *testing.T) {
 	// Assistant has tool_use but no tool_result follows at all.
 	msgs := []provider.Message{
@@ -191,9 +182,6 @@ func TestRepairOrphanedToolUseMissingResult(t *testing.T) {
 	}
 }
 
-// TestRepairOrphanedToolUseNoNextMessage verifies that when a tool_use is the very last
-// message (no subsequent message exists to receive the synthetic result), the repair
-// inserts a new standalone user message containing the tool_result block.
 func TestRepairOrphanedToolUseNoNextMessage(t *testing.T) {
 	// Tool_use is the last message — no following message at all.
 	msgs := []provider.Message{
@@ -214,10 +202,6 @@ func TestRepairOrphanedToolUseNoNextMessage(t *testing.T) {
 	}
 }
 
-// TestRepairOrphanedToolUsePartialMatch verifies that when an assistant message has
-// multiple tool_use blocks but only some are matched by the following tool_result message,
-// synthetic error results are prepended only for the unmatched IDs, leaving the existing
-// matched results in place.
 func TestRepairOrphanedToolUsePartialMatch(t *testing.T) {
 	// Assistant has 2 tool_use blocks, but only 1 has a result.
 	msgs := []provider.Message{
@@ -246,10 +230,6 @@ func TestRepairOrphanedToolUsePartialMatch(t *testing.T) {
 	}
 }
 
-// TestRepairOrphanedToolUseNextIsAssistant verifies that when a tool_use is immediately
-// followed by another assistant message (no user turn with results), the repair inserts
-// a new standalone user message with the synthetic result between the two assistant
-// messages, restoring valid role alternation.
 func TestRepairOrphanedToolUseNextIsAssistant(t *testing.T) {
 	// Corrupt: assistant tool_use followed by another assistant message.
 	msgs := []provider.Message{
@@ -271,11 +251,11 @@ func TestRepairOrphanedToolUseNextIsAssistant(t *testing.T) {
 	}
 }
 
-// TestCompactSplitBreaksToolUsePair verifies end-to-end that when the requested preserve
-// boundary falls between a tool_use and its tool_result, Compact adjusts the split to
-// keep the pair together, and the resulting compacted session has no orphaned tool_use
-// blocks and maintains strict role alternation.
 func TestCompactSplitBreaksToolUsePair(t *testing.T) {
+	// TestCompactSplitBreaksToolUsePair verifies end-to-end that when the requested preserve
+	// boundary falls between a tool_use and its tool_result, Compact adjusts the split to
+	// keep the pair together, and the resulting compacted session has no orphaned tool_use
+	// blocks and maintains strict role alternation.
 	server := mockCompactionServer("Summary of tool conversation.")
 	defer server.Close()
 
@@ -335,11 +315,11 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 	}
 }
 
-// TestCompactOrphanedToolUseInHistory verifies that Compact does not fail when the
-// session history contains a pre-existing orphaned tool_use (e.g. due to data corruption
-// or an aborted tool call) — repairOrphanedToolUse should patch the history before
-// sending it to the summarisation API.
 func TestCompactOrphanedToolUseInHistory(t *testing.T) {
+	// TestCompactOrphanedToolUseInHistory verifies that Compact does not fail when the
+	// session history contains a pre-existing orphaned tool_use (e.g. due to data corruption
+	// or an aborted tool call) — repairOrphanedToolUse should patch the history before
+	// sending it to the summarisation API.
 	server := mockCompactionServer("Summary of corrupt session.")
 	defer server.Close()
 
@@ -366,11 +346,11 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	}
 }
 
-// TestCompactWithEffortOverride verifies that the effort parameter is included in the
-// API request body for models that support it (Sonnet), and is silently omitted for
-// models that do not (Haiku), by capturing and inspecting the raw request body for
-// both cases in a single test.
 func TestCompactWithEffortOverride(t *testing.T) {
+	// TestCompactWithEffortOverride verifies that the effort parameter is included in the
+	// API request body for models that support it (Sonnet), and is silently omitted for
+	// models that do not (Haiku), by capturing and inspecting the raw request body for
+	// both cases in a single test.
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
@@ -429,10 +409,10 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	}
 }
 
-// TestCompactWithoutEffortOverride verifies that when no effort level is configured,
-// neither the "effort" field nor the "output_config" wrapper appear in the API request,
-// keeping the request minimal for models that don't use extended thinking.
 func TestCompactWithoutEffortOverride(t *testing.T) {
+	// TestCompactWithoutEffortOverride verifies that when no effort level is configured,
+	// neither the "effort" field nor the "output_config" wrapper appear in the API request,
+	// keeping the request minimal for models that don't use extended thinking.
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)

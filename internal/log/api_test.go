@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// TestAPILog verifies that a well-formed APIEntry is serialized as JSONL to the API
-// writer, with all fields correctly round-tripped through JSON.
 func TestAPILog(t *testing.T) {
+	// TestAPILog verifies that a well-formed APIEntry is serialized as JSONL to the API
+	// writer, with all fields correctly round-tripped through JSON.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.jsonl")
 	f := openAPIWriter(t, path)
@@ -60,16 +60,16 @@ func TestAPILog(t *testing.T) {
 	}
 }
 
-// TestAPILogDisabled verifies that API() is a no-op (no panic) when no API writer is set.
 func TestAPILogDisabled(t *testing.T) {
+	// TestAPILogDisabled verifies that API() is a no-op (no panic) when no API writer is set.
 	SetAPIWriter(nil)
 	API(APIEntry{Session: "test"})
 	// No panic = pass
 }
 
-// TestMultipleAPIEntries verifies that multiple API() calls produce one JSONL line each,
-// all appended to the same file.
 func TestMultipleAPIEntries(t *testing.T) {
+	// TestMultipleAPIEntries verifies that multiple API() calls produce one JSONL line each,
+	// all appended to the same file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.jsonl")
 	f := openAPIWriter(t, path)
@@ -86,9 +86,9 @@ func TestMultipleAPIEntries(t *testing.T) {
 	}
 }
 
-// TestAPIDefaultCallType verifies that an APIEntry with empty CallType is written
-// with CallType defaulting to "conversation".
 func TestAPIDefaultCallType(t *testing.T) {
+	// TestAPIDefaultCallType verifies that an APIEntry with empty CallType is written
+	// with CallType defaulting to "conversation".
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.jsonl")
 	f := openAPIWriter(t, path)
@@ -104,10 +104,10 @@ func TestAPIDefaultCallType(t *testing.T) {
 	}
 }
 
-// TestAPIProviderInferenceSQLite verifies the provider column is populated in the SQLite
-// api_calls table for all model families, including Anthropic models (the prior bug was
-// that claude-* models had an empty provider).
 func TestAPIProviderInferenceSQLite(t *testing.T) {
+	// TestAPIProviderInferenceSQLite verifies the provider column is populated in the SQLite
+	// api_calls table for all model families, including Anthropic models (the prior bug was
+	// that claude-* models had an empty provider).
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -147,9 +147,9 @@ func TestAPIProviderInferenceSQLite(t *testing.T) {
 	}
 }
 
-// TestAPIProviderExplicitOverridesInference verifies that an explicitly set Provider field
-// on the APIEntry is preserved and not overwritten by inference.
 func TestAPIProviderExplicitOverridesInference(t *testing.T) {
+	// TestAPIProviderExplicitOverridesInference verifies that an explicitly set Provider field
+	// on the APIEntry is preserved and not overwritten by inference.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -179,9 +179,9 @@ func TestAPIProviderExplicitOverridesInference(t *testing.T) {
 	}
 }
 
-// TestAPIProviderInference verifies that the Provider field is auto-inferred from the model name:
-// gemini models get "gemini", openai models get "openai", claude models get "anthropic".
 func TestAPIProviderInference(t *testing.T) {
+	// TestAPIProviderInference verifies that the Provider field is auto-inferred from the model name:
+	// gemini models get "gemini", openai models get "openai", claude models get "anthropic".
 	dir := t.TempDir()
 	path := filepath.Join(dir, "api.jsonl")
 	f := openAPIWriter(t, path)

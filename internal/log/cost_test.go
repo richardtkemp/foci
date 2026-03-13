@@ -4,9 +4,6 @@ import (
 	"testing"
 )
 
-// TestCalculateCost verifies per-token pricing for Haiku across all token types
-// (input, output, cache read, cache write) and mixed realistic requests.
-// Unknown models fall back to Haiku pricing.
 func TestCalculateCost(t *testing.T) {
 	// 1M input tokens on Haiku = $1.00
 	cost := CalculateCost("claude-haiku-4-5", 1_000_000, 0, 0, 0)
@@ -46,16 +43,14 @@ func TestCalculateCost(t *testing.T) {
 	}
 }
 
-// TestCalculateCostOpus verifies Opus input pricing is $15/M tokens.
 func TestCalculateCostOpus(t *testing.T) {
+	// TestCalculateCostOpus verifies Opus input pricing is $15/M tokens.
 	cost := CalculateCost("claude-opus-4-6", 1_000_000, 0, 0, 0)
 	if cost != 15.0 {
 		t.Errorf("1M input opus = %f, want 15.0", cost)
 	}
 }
 
-// TestCalculateCostGemini verifies Gemini model pricing for flash and pro tiers,
-// and that unknown Gemini models fall back to flash pricing.
 func TestCalculateCostGemini(t *testing.T) {
 	// 1M input on gemini-2.5-flash = $0.15
 	cost := CalculateCost("gemini-2.5-flash", 1_000_000, 0, 0, 0)
@@ -76,7 +71,6 @@ func TestCalculateCostGemini(t *testing.T) {
 	}
 }
 
-// TestCalculateCostOpenAIFallback verifies that unknown OpenAI models use OpenAI fallback pricing.
 func TestCalculateCostOpenAIFallback(t *testing.T) {
 	// 1M input tokens on unknown OpenAI model = $5.00
 	cost := CalculateCost("gpt-5-turbo", 1_000_000, 0, 0, 0)

@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// TestApplyReplacements verifies that word replacement is case-insensitive,
-// whole-word only, and preserves the case pattern of the original text.
 func TestApplyReplacements(t *testing.T) {
+	// TestApplyReplacements verifies that word replacement is case-insensitive,
+	// whole-word only, and preserves the case pattern of the original text.
 	repls := map[string]string{
 		"foci": "foki",
 	}
@@ -40,9 +40,9 @@ func TestApplyReplacements(t *testing.T) {
 	}
 }
 
-// TestApplyReplacementsMultipleWords verifies that multiple replacement
-// pairs work simultaneously and later entries in the map don't interfere.
 func TestApplyReplacementsMultipleWords(t *testing.T) {
+	// TestApplyReplacementsMultipleWords verifies that multiple replacement
+	// pairs work simultaneously and later entries in the map don't interfere.
 	repls := map[string]string{
 		"foci":  "foki",
 		"llm":   "L L M",
@@ -57,8 +57,8 @@ func TestApplyReplacementsMultipleWords(t *testing.T) {
 	}
 }
 
-// TestApplyReplacementsNilMap verifies that nil/empty maps are no-ops.
 func TestApplyReplacementsNilMap(t *testing.T) {
+	// TestApplyReplacementsNilMap verifies that nil/empty maps are no-ops.
 	input := "foci test"
 	if got := ApplyReplacements(input, nil); got != input {
 		t.Errorf("nil map: got %q, want %q", got, input)
@@ -68,8 +68,8 @@ func TestApplyReplacementsNilMap(t *testing.T) {
 	}
 }
 
-// TestMatchCase verifies the case-matching logic used for replacements.
 func TestMatchCase(t *testing.T) {
+	// TestMatchCase verifies the case-matching logic used for replacements.
 	tests := []struct {
 		original, replacement, want string
 	}{
@@ -88,9 +88,9 @@ func TestMatchCase(t *testing.T) {
 	}
 }
 
-// TestReplacingTTSWrapper verifies that ReplacingTTS applies word replacements
-// to the text before passing it to the inner TTS provider.
 func TestReplacingTTSWrapper(t *testing.T) {
+	// TestReplacingTTSWrapper verifies that ReplacingTTS applies word replacements
+	// to the text before passing it to the inner TTS provider.
 	inner := &fakeTTS{}
 	wrapped := &ReplacingTTS{
 		Inner:        inner,
@@ -106,9 +106,9 @@ func TestReplacingTTSWrapper(t *testing.T) {
 	}
 }
 
-// TestReplacingSTTWrapper verifies that ReplacingSTT applies word replacements
-// to the transcribed text returned by the inner STT provider.
 func TestReplacingSTTWrapper(t *testing.T) {
+	// TestReplacingSTTWrapper verifies that ReplacingSTT applies word replacements
+	// to the transcribed text returned by the inner STT provider.
 	inner := &fakeSTT{result: "hello foki"}
 	wrapped := &ReplacingSTT{
 		Inner:        inner,
@@ -124,9 +124,9 @@ func TestReplacingSTTWrapper(t *testing.T) {
 	}
 }
 
-// TestMergeReplacements verifies that later maps override earlier ones and
-// nil/empty inputs produce nil output.
 func TestMergeReplacements(t *testing.T) {
+	// TestMergeReplacements verifies that later maps override earlier ones and
+	// nil/empty inputs produce nil output.
 	a := map[string]string{"foci": "foki", "api": "A P I"}
 	b := map[string]string{"foci": "fokee"} // override
 
@@ -146,8 +146,8 @@ func TestMergeReplacements(t *testing.T) {
 	}
 }
 
-// TestWrapTTSNoop verifies WrapTTS returns the original when no replacements.
 func TestWrapTTSNoop(t *testing.T) {
+	// TestWrapTTSNoop verifies WrapTTS returns the original when no replacements.
 	inner := &fakeTTS{}
 	if WrapTTS(inner, nil) != inner {
 		t.Error("expected same provider for nil replacements")
@@ -160,8 +160,8 @@ func TestWrapTTSNoop(t *testing.T) {
 	}
 }
 
-// TestWrapSTTNoop verifies WrapSTT returns the original when no replacements.
 func TestWrapSTTNoop(t *testing.T) {
+	// TestWrapSTTNoop verifies WrapSTT returns the original when no replacements.
 	inner := &fakeSTT{}
 	if WrapSTT(inner, nil) != inner {
 		t.Error("expected same provider for nil replacements")

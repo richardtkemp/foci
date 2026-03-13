@@ -7,9 +7,9 @@ import (
 	"foci/internal/command"
 )
 
-// TestReceiveMessage_RejectsUnauthorizedUser verifies that unauthorized users
-// cannot send messages to the bot.
 func TestReceiveMessage_RejectsUnauthorizedUser(t *testing.T) {
+	// TestReceiveMessage_RejectsUnauthorizedUser verifies that unauthorized users
+	// cannot send messages to the bot.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	msg := makeMsg(999, "hacker", "hello")
@@ -24,9 +24,9 @@ func TestReceiveMessage_RejectsUnauthorizedUser(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_AcceptsAuthorizedUser verifies that authorized users can
-// send messages to the bot and they are properly queued.
 func TestReceiveMessage_AcceptsAuthorizedUser(t *testing.T) {
+	// TestReceiveMessage_AcceptsAuthorizedUser verifies that authorized users can
+	// send messages to the bot and they are properly queued.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
 	msg := makeMsg(111, "owner", "hello world")
@@ -45,9 +45,9 @@ func TestReceiveMessage_AcceptsAuthorizedUser(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_IgnoresEmptyText verifies that empty or whitespace-only
-// messages are not queued.
 func TestReceiveMessage_IgnoresEmptyText(t *testing.T) {
+	// TestReceiveMessage_IgnoresEmptyText verifies that empty or whitespace-only
+	// messages are not queued.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	msg := makeMsg(111, "owner", "")

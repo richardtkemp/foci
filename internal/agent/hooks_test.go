@@ -2,8 +2,6 @@ package agent
 
 import "testing"
 
-// TestHookListAddAndRange verifies that Add appends callbacks and range
-// iterates them in registration order, including the empty-list base case.
 func TestHookListAddAndRange(t *testing.T) {
 	// Proves that HookList is empty and safe to range over before any Add calls, and that after adding callbacks they are invoked in registration order when iterated.
 	var hooks HookList[func(string)]
@@ -31,7 +29,6 @@ func TestHookListAddAndRange(t *testing.T) {
 	}
 }
 
-// TestHookListMultiArg verifies HookList works with multi-argument callback types.
 func TestHookListMultiArg(t *testing.T) {
 	// Proves that HookList is generic enough to hold multi-argument function types and that all registered callbacks receive all arguments correctly.
 	var hooks HookList[func(string, int)]

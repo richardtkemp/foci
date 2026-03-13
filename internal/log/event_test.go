@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// TestEventLogFormat verifies the structured log line includes timestamp (RFC3339),
-// level, component tag, message, and trailing newline.
 func TestEventLogFormat(t *testing.T) {
+	// TestEventLogFormat verifies the structured log line includes timestamp (RFC3339),
+	// level, component tag, message, and trailing newline.
 	buf := captureOutput(t)
 	withDebugLevel(t)
 
@@ -36,9 +36,9 @@ func TestEventLogFormat(t *testing.T) {
 	}
 }
 
-// TestEventLogLevelPadding verifies that INFO and WARN are padded to 5 characters
-// so that log columns align consistently.
 func TestEventLogLevelPadding(t *testing.T) {
+	// TestEventLogLevelPadding verifies that INFO and WARN are padded to 5 characters
+	// so that log columns align consistently.
 	buf := captureOutput(t)
 	withDebugLevel(t)
 
@@ -58,9 +58,9 @@ func TestEventLogLevelPadding(t *testing.T) {
 	}
 }
 
-// TestLevelFiltering verifies that messages below the current level are suppressed:
-// at WARN level, DEBUG and INFO are dropped, WARN and ERROR pass through.
 func TestLevelFiltering(t *testing.T) {
+	// TestLevelFiltering verifies that messages below the current level are suppressed:
+	// at WARN level, DEBUG and INFO are dropped, WARN and ERROR pass through.
 	buf := captureOutput(t)
 
 	SetLevel(WARN)
@@ -83,8 +83,8 @@ func TestLevelFiltering(t *testing.T) {
 	}
 }
 
-// TestDebugFilteredAtInfoLevel verifies that DEBUG messages are not emitted at the default INFO level.
 func TestDebugFilteredAtInfoLevel(t *testing.T) {
+	// TestDebugFilteredAtInfoLevel verifies that DEBUG messages are not emitted at the default INFO level.
 	buf := captureOutput(t)
 
 	SetLevel(INFO)
@@ -96,8 +96,8 @@ func TestDebugFilteredAtInfoLevel(t *testing.T) {
 	}
 }
 
-// TestPackageLevelDebugf verifies the package-level Debugf emits output at DEBUG level.
 func TestPackageLevelDebugf(t *testing.T) {
+	// TestPackageLevelDebugf verifies the package-level Debugf emits output at DEBUG level.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -110,8 +110,8 @@ func TestPackageLevelDebugf(t *testing.T) {
 	}
 }
 
-// TestPackageLevelInfof verifies the package-level Infof emits output at INFO level.
 func TestPackageLevelInfof(t *testing.T) {
+	// TestPackageLevelInfof verifies the package-level Infof emits output at INFO level.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -123,8 +123,8 @@ func TestPackageLevelInfof(t *testing.T) {
 	}
 }
 
-// TestPackageLevelWarnf verifies the package-level Warnf emits output.
 func TestPackageLevelWarnf(t *testing.T) {
+	// TestPackageLevelWarnf verifies the package-level Warnf emits output.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -136,8 +136,8 @@ func TestPackageLevelWarnf(t *testing.T) {
 	}
 }
 
-// TestPackageLevelErrorf verifies the package-level Errorf emits output.
 func TestPackageLevelErrorf(t *testing.T) {
+	// TestPackageLevelErrorf verifies the package-level Errorf emits output.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -149,9 +149,9 @@ func TestPackageLevelErrorf(t *testing.T) {
 	}
 }
 
-// TestNewComponentLogger verifies NewComponentLogger returns a non-nil logger
-// with the correct component name set.
 func TestNewComponentLogger(t *testing.T) {
+	// TestNewComponentLogger verifies NewComponentLogger returns a non-nil logger
+	// with the correct component name set.
 	cl := NewComponentLogger("test-component")
 	if cl == nil {
 		t.Fatal("NewComponentLogger returned nil")
@@ -161,8 +161,8 @@ func TestNewComponentLogger(t *testing.T) {
 	}
 }
 
-// TestComponentLoggerDebugf verifies the component logger's Debugf emits at DEBUG level.
 func TestComponentLoggerDebugf(t *testing.T) {
+	// TestComponentLoggerDebugf verifies the component logger's Debugf emits at DEBUG level.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -176,8 +176,8 @@ func TestComponentLoggerDebugf(t *testing.T) {
 	}
 }
 
-// TestComponentLoggerInfof verifies the component logger's Infof emits at INFO level.
 func TestComponentLoggerInfof(t *testing.T) {
+	// TestComponentLoggerInfof verifies the component logger's Infof emits at INFO level.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -190,8 +190,8 @@ func TestComponentLoggerInfof(t *testing.T) {
 	}
 }
 
-// TestComponentLoggerWarnf verifies the component logger's Warnf emits output.
 func TestComponentLoggerWarnf(t *testing.T) {
+	// TestComponentLoggerWarnf verifies the component logger's Warnf emits output.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -204,8 +204,8 @@ func TestComponentLoggerWarnf(t *testing.T) {
 	}
 }
 
-// TestComponentLoggerErrorf verifies the component logger's Errorf emits output.
 func TestComponentLoggerErrorf(t *testing.T) {
+	// TestComponentLoggerErrorf verifies the component logger's Errorf emits output.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	buf := captureOutput(t)
@@ -218,9 +218,9 @@ func TestComponentLoggerErrorf(t *testing.T) {
 	}
 }
 
-// TestSetWarnHook verifies that a registered warn hook is called with the correct
-// level, component, and message when Warnf is invoked.
 func TestSetWarnHook(t *testing.T) {
+	// TestSetWarnHook verifies that a registered warn hook is called with the correct
+	// level, component, and message when Warnf is invoked.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 	captureOutput(t)
@@ -239,10 +239,10 @@ func TestSetWarnHook(t *testing.T) {
 	}
 }
 
-// TestWarnHookBuffering verifies that warnings logged before SetWarnHook is called
-// are buffered and replayed when the hook is registered, and that subsequent
-// warnings fire directly without buffering.
 func TestWarnHookBuffering(t *testing.T) {
+	// TestWarnHookBuffering verifies that warnings logged before SetWarnHook is called
+	// are buffered and replayed when the hook is registered, and that subsequent
+	// warnings fire directly without buffering.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
 
@@ -287,9 +287,9 @@ func TestWarnHookBuffering(t *testing.T) {
 	warnMu.Unlock()
 }
 
-// TestFatalf verifies that Fatalf logs a message and exits with code 1.
-// Uses the subprocess test pattern since Fatalf calls os.Exit.
 func TestFatalf(t *testing.T) {
+	// TestFatalf verifies that Fatalf logs a message and exits with code 1.
+	// Uses the subprocess test pattern since Fatalf calls os.Exit.
 	if os.Getenv("TEST_FATALF_SUBPROCESS") == "1" {
 		SetOutput(os.Stderr)
 		Fatalf("test", "fatal error: %s", "boom")
