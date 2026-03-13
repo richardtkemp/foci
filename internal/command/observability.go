@@ -219,11 +219,29 @@ func NewCacheCommand(apiLogPath string) *Command {
 	}
 }
 
-// NewLastCommand returns a /last command showing the most recent API call.
+// agentFromSession extracts the agent ID (first segment) from a session key.
+func agentFromSession(session string) string {
+	if i := strings.Index(session, "/"); i > 0 {
+		return session[:i]
+	}
+	return session
+}
+
+// truncateSession returns a short prefix of a session key for display.
+func truncateSession(session string) string {
+	parts := strings.SplitN(session, "/", 3)
+	if len(parts) >= 2 {
+		return parts[0] + "/" + parts[1]
+	}
+	return session
+}
+
+// NewLastCommand returns a /last command showing the most recent API call per agent.
+// With an argument, filters to that agent only.
 func NewLastCommand(apiLogPath string) *Command {
 	return &Command{
 		Name:        "last",
-		Description: "Last API request details",
+		Description: "Last API call per agent (or /last <agent>)",
 		Category:    "observability",
 		Execute: func(ctx context.Context, args string) (string, error) {
 			entries := readAPILog(apiLogPath)
@@ -231,11 +249,60 @@ func NewLastCommand(apiLogPath string) *Command {
 				return "No API calls logged yet.", nil
 			}
 
-			e := entries[len(entries)-1]
-			return fmt.Sprintf("time: %s\nmodel: %s\nstop: %s\ntokens: in=%d out=%d cache_read=%d cache_write=%d\nduration: %dms\ncost: $%.4f\nsession: %s",
-				e.Timestamp.Format(time.RFC3339), e.Model, e.StopReason,
-				e.Input, e.Output, e.CacheRead, e.CacheWrite,
-				e.DurationMS, e.CostUSD, e.Session), nil
+			filter := strings.TrimSpace(args)
+
+			// Find the most recent entry per agent (iterate reverse to get latest first).
+			latest := make(map[string]apiEntry)
+			var order []string
+			for i := len(entries) - 1; i >= 0; i-- {
+				agent := agentFromSession(entries[i].Session)
+				if filter != "" && agent != filter {
+					continue
+				}
+				if _, exists := latest[agent]; !exists {
+					latest[agent] = entries[i]
+					order = append(order, agent)
+				}
+			}
+
+			if len(latest) == 0 {
+				if filter != "" {
+					return fmt.Sprintf("No API calls for agent %q.", filter), nil
+				}
+				return "No API calls logged yet.", nil
+			}
+
+			// Reverse order so earliest-seen agent comes first (stable ordering).
+			for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
+				order[i], order[j] = order[j], order[i]
+			}
+
+			cols := []display.Column{
+				{Header: "Agent"},
+				{Header: "Time"},
+				{Header: "Model"},
+				{Header: "Tokens"},
+				{Header: "Cost", Align: display.AlignRight},
+				{Header: "Session"},
+			}
+			rows := make([][]string, 0, len(order))
+			for _, agent := range order {
+				e := latest[agent]
+				rows = append(rows, []string{
+					agent,
+					display.RelativeTime(e.Timestamp),
+					e.Model,
+					fmt.Sprintf("in=%d out=%d cR=%d", e.Input, e.Output, e.CacheRead),
+					fmt.Sprintf("$%.4f", e.CostUSD),
+					truncateSession(e.Session),
+				})
+			}
+
+			title := "Last API call per agent"
+			if filter != "" {
+				title = fmt.Sprintf("Last API call — %s", filter)
+			}
+			return fmt.Sprintf("%s\n\n%s", title, display.MarkdownTable(cols, rows)), nil
 		},
 	}
 }
