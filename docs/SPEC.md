@@ -129,7 +129,15 @@ The saved path is injected into the user message text as `[Image saved to: /path
 
 **Size limits:** Telegram Bot API has a 20MB download limit. Files exceeding this show `[Video too large to download (N MB)]` or `[Document too large to download (N MB)]` instead of a path.
 
-Saving is non-fatal — errors are logged as warnings. Images are still sent to the API for vision processing; videos and documents are saved only (no API processing).
+Saving is non-fatal — errors are logged as warnings. Images are sent to the API as image content blocks; PDFs (≤32MB) as document content blocks.
+
+**Document conversion:** Convertible document types are automatically extracted to text and included as text content blocks:
+- **CSV, plain text** — passed through as-is (no external tools needed)
+- **HTML** — readability extraction → markdown (same pipeline as `web_fetch`)
+- **DOCX, PPTX** — converted via `pandoc` (must be installed; agent is told if missing)
+- **XLSX** — converted via `ssconvert` (gnumeric) or `pandoc` (agent is told if missing)
+
+Converted text is subject to the tool result size guard (`max_result_chars`): oversized output is truncated with a pointer to the saved file on disk. Videos and unconvertible documents are saved only (no API processing).
 
 ### Message Metadata
 

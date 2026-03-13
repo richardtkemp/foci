@@ -238,8 +238,9 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 	return a.HandleMessageWithAttachments(ctx, sessionKey, userMessage, nil)
 }
 
-// HandleMessageWithAttachments processes a user message with optional image/document attachments.
-func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, images []platform.Attachment) (string, error) {
+// HandleMessageWithAttachments processes a user message with optional attachments
+// (images, PDFs, or convertible documents like docx/xlsx/pptx/HTML/CSV).
+func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, attachments []platform.Attachment) (string, error) {
 	// Gate check: resolve session's endpoint and check its gate.
 	// Only that endpoint's sessions are blocked when rate-limited.
 	sm := a.getSessionMeta(sessionKey)
@@ -344,7 +345,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	now := time.Now()
 	sm = a.getSessionMeta(sessionKey)
 
-	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, images, effectiveDuplicate)
+	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, attachments, effectiveDuplicate)
 	messages = append(messages, userMsg)
 
 	// Track new messages to save. The defer flushes unsaved messages on

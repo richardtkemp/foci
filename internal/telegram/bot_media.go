@@ -350,38 +350,28 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string)
 	return path, nil
 }
 
-// saveAttachment writes image data to disk and returns the saved file path.
-func (b *Bot) saveAttachment(data []byte, mediaType string, chatID int64) (string, error) {
-	if err := os.MkdirAll(b.receivedFilesDir, 0o755); err != nil {
-		return "", fmt.Errorf("create image dir: %w", err)
-	}
-	ext := extForMediaType(mediaType)
-	filename := fmt.Sprintf("%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), chatID, ext)
-	path := filepath.Join(b.receivedFilesDir, filename)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return "", fmt.Errorf("write image: %w", err)
-	}
-	return path, nil
-}
-
 // downloadAttachment downloads a file and returns it as an attachment,
 // optionally saving to disk. Returns (attachment, true) on success.
 func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachment, bool) {
 	data, err := b.downloadFile(fileID)
 	if err != nil {
-		b.logger().Errorf("download image: %s", b.sanitizeError(err))
+		b.logger().Errorf("download attachment: %s", b.sanitizeError(err))
 		if b.handler == nil || b.handler.Warnings() == nil {
-			b.sendHTMLChunks(chatID, "Could not download image — please try again.", "", "")
+			b.sendHTMLChunks(chatID, "Could not download attachment — please try again.", "", "")
 		}
 		return attachment{}, false
 	}
 	att := attachment{data: data, mediaType: mimeType}
 	if b.receivedFilesDir != "" {
-		if path, err := b.saveAttachment(data, mimeType, chatID); err != nil {
-			b.logger().Warnf("save image: %v", err)
+		ext := extForMediaType(mimeType)
+		if ext == ".bin" {
+			ext = extForMIME(mimeType)
+		}
+		if path, err := b.saveMedia(data, "attachment", chatID, ext); err != nil {
+			b.logger().Warnf("save attachment: %v", err)
 		} else {
 			att.savedPath = path
-			b.logger().Infof("saved image to %s", path)
+			b.logger().Infof("saved attachment to %s", path)
 		}
 	}
 	return att, true

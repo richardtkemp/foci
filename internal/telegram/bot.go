@@ -42,7 +42,7 @@ type sessionIndexInterface interface {
 	SetChatMetadata(agentID string, chatID int64, key, value string) error
 }
 
-// attachment is a downloaded image ready for the agent.
+// attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
 type attachment struct {
 	data      []byte
 	mediaType string
@@ -51,10 +51,10 @@ type attachment struct {
 
 // queuedMessage is a message waiting for the agent to process.
 type queuedMessage struct {
-	msg    *gotgbot.Message
-	userID string
-	text   string
-	images []attachment
+	msg         *gotgbot.Message
+	userID      string
+	text        string
+	attachments []attachment
 }
 
 // Bot wraps the Telegram bot API with agent integration.

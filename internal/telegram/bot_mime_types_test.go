@@ -48,6 +48,31 @@ func TestExtForMediaType(t *testing.T) {
 	}
 }
 
+// TestIsConvertibleDocMIME verifies that isConvertibleDocMIME correctly
+// identifies document types that can be converted to text.
+func TestIsConvertibleDocMIME(t *testing.T) {
+	tests := []struct {
+		mime string
+		want bool
+	}{
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", true},
+		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true},
+		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", true},
+		{"text/html", true},
+		{"text/csv", true},
+		{"text/plain", true},
+		{"application/pdf", false},
+		{"image/jpeg", false},
+		{"application/zip", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isConvertibleDocMIME(tt.mime); got != tt.want {
+			t.Errorf("isConvertibleDocMIME(%q) = %v, want %v", tt.mime, got, tt.want)
+		}
+	}
+}
+
 // TestIsPDFMIME verifies that isPDFMIME correctly identifies PDF MIME types.
 func TestIsPDFMIME(t *testing.T) {
 	if !isPDFMIME("application/pdf") {

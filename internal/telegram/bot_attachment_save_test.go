@@ -9,17 +9,17 @@ import (
 	"foci/internal/command"
 )
 
-// TestSaveImage verifies that attachments are saved with the correct content
-// and filename pattern.
-func TestSaveImage(t *testing.T) {
+// TestSaveAttachment verifies that attachments are saved with the correct
+// content and filename pattern.
+func TestSaveAttachment(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
 
 	data := []byte("fake-jpeg-data")
-	path, err := b.saveAttachment(data, "image/jpeg", 12345)
+	path, err := b.saveMedia(data, "attachment", 12345, ".jpg")
 	if err != nil {
-		t.Fatalf("saveAttachment: %v", err)
+		t.Fatalf("saveMedia: %v", err)
 	}
 
 	// Verify file exists with correct content
@@ -31,7 +31,7 @@ func TestSaveImage(t *testing.T) {
 		t.Errorf("saved content = %q, want %q", got, data)
 	}
 
-	// Verify filename pattern: YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.jpg
+	// Verify filename pattern: YYYY-MM-DDTHH-MM-SSZ_attachment_chat-CHATID.jpg
 	base := filepath.Base(path)
 	if !strings.HasSuffix(base, "_chat-12345.jpg") {
 		t.Errorf("filename %q doesn't match expected pattern", base)
@@ -41,11 +41,11 @@ func TestSaveImage(t *testing.T) {
 	}
 }
 
-// TestSaveImageDisabled verifies that saveAttachment is only called when
+// TestSaveAttachmentDisabled verifies that save is only used when
 // receivedFilesDir is set.
-func TestSaveImageDisabled(t *testing.T) {
+func TestSaveAttachmentDisabled(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	// receivedFilesDir not set — verify saveAttachment is only called when dir is set
+	// receivedFilesDir not set — verify it's empty by default
 	if b.receivedFilesDir != "" {
 		t.Error("expected empty receivedFilesDir by default")
 	}
@@ -57,17 +57,17 @@ func TestSaveImageDisabled(t *testing.T) {
 	}
 }
 
-// TestSaveImagePNG verifies that PNG images are saved with the correct
+// TestSaveAttachmentPNG verifies that PNG images are saved with the correct
 // extension and content.
-func TestSaveImagePNG(t *testing.T) {
+func TestSaveAttachmentPNG(t *testing.T) {
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
 
 	data := []byte("fake-png-data")
-	path, err := b.saveAttachment(data, "image/png", 99999)
+	path, err := b.saveMedia(data, "attachment", 99999, ".png")
 	if err != nil {
-		t.Fatalf("saveAttachment: %v", err)
+		t.Fatalf("saveMedia: %v", err)
 	}
 
 	if !strings.HasSuffix(path, ".png") {
@@ -83,17 +83,17 @@ func TestSaveImagePNG(t *testing.T) {
 	}
 }
 
-// TestSaveImageCreatesDir verifies that saveAttachment creates intermediate
+// TestSaveAttachmentCreatesDir verifies that saveMedia creates intermediate
 // directories as needed.
-func TestSaveImageCreatesDir(t *testing.T) {
+func TestSaveAttachmentCreatesDir(t *testing.T) {
 	base := t.TempDir()
-	dir := filepath.Join(base, "subdir", "images")
+	dir := filepath.Join(base, "subdir", "files")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
 
-	path, err := b.saveAttachment([]byte("data"), "image/jpeg", 1)
+	path, err := b.saveMedia([]byte("data"), "attachment", 1, ".jpg")
 	if err != nil {
-		t.Fatalf("saveAttachment: %v", err)
+		t.Fatalf("saveMedia: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Errorf("saved file not found: %v", err)
@@ -103,17 +103,16 @@ func TestSaveImageCreatesDir(t *testing.T) {
 // TestSavedPathPropagatedToQueue verifies that attachment.savedPath flows
 // through queuedMessage.
 func TestSavedPathPropagatedToQueue(t *testing.T) {
-	// Test that attachment.savedPath flows through queuedMessage
 	att := attachment{
 		data:      []byte("test"),
 		mediaType: "image/jpeg",
 		savedPath: "/tmp/test.jpg",
 	}
 	qm := queuedMessage{
-		text:   "look at this",
-		images: []attachment{att},
+		text:        "look at this",
+		attachments: []attachment{att},
 	}
-	if qm.images[0].savedPath != "/tmp/test.jpg" {
-		t.Errorf("savedPath not propagated: got %q", qm.images[0].savedPath)
+	if qm.attachments[0].savedPath != "/tmp/test.jpg" {
+		t.Errorf("savedPath not propagated: got %q", qm.attachments[0].savedPath)
 	}
 }
