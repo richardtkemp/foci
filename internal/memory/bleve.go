@@ -263,8 +263,11 @@ func (b *BleveIndex) BackfillConversations(dbPath string) (int, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
+	const backfillBatchSize = 1000
+
 	var count int
 	batch := b.index.NewBatch()
+	batchCount := 0
 
 	for rows.Next() {
 		var id int64
@@ -299,17 +302,29 @@ func (b *BleveIndex) BackfillConversations(dbPath string) (int, error) {
 			continue
 		}
 		count++
+		batchCount++
+
+		if batchCount >= backfillBatchSize {
+			b.mu.Lock()
+			err = b.index.Batch(batch)
+			b.mu.Unlock()
+			if err != nil {
+				return count - batchCount, fmt.Errorf("commit backfill batch: %w", err)
+			}
+			batch = b.index.NewBatch()
+			batchCount = 0
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return count, fmt.Errorf("iterate rows: %w", err)
 	}
 
-	if count > 0 {
+	if batchCount > 0 {
 		b.mu.Lock()
 		err = b.index.Batch(batch)
 		b.mu.Unlock()
 		if err != nil {
-			return 0, fmt.Errorf("commit backfill batch: %w", err)
+			return count - batchCount, fmt.Errorf("commit backfill batch: %w", err)
 		}
 	}
 
