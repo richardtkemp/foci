@@ -9,9 +9,9 @@ import (
 	"foci/internal/command"
 )
 
-// TestSaveAttachment verifies that attachments are saved with the correct
-// content and filename pattern.
 func TestSaveAttachment(t *testing.T) {
+	// TestSaveAttachment verifies that attachments are saved with the correct
+	// content and filename pattern.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -41,9 +41,9 @@ func TestSaveAttachment(t *testing.T) {
 	}
 }
 
-// TestSaveAttachmentDisabled verifies that save is only used when
-// receivedFilesDir is set.
 func TestSaveAttachmentDisabled(t *testing.T) {
+	// TestSaveAttachmentDisabled verifies that save is only used when
+	// receivedFilesDir is set.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	// receivedFilesDir not set — verify it's empty by default
 	if b.receivedFilesDir != "" {
@@ -57,9 +57,9 @@ func TestSaveAttachmentDisabled(t *testing.T) {
 	}
 }
 
-// TestSaveAttachmentPNG verifies that PNG images are saved with the correct
-// extension and content.
 func TestSaveAttachmentPNG(t *testing.T) {
+	// TestSaveAttachmentPNG verifies that PNG images are saved with the correct
+	// extension and content.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -83,9 +83,9 @@ func TestSaveAttachmentPNG(t *testing.T) {
 	}
 }
 
-// TestSaveAttachmentCreatesDir verifies that saveMedia creates intermediate
-// directories as needed.
 func TestSaveAttachmentCreatesDir(t *testing.T) {
+	// TestSaveAttachmentCreatesDir verifies that saveMedia creates intermediate
+	// directories as needed.
 	base := t.TempDir()
 	dir := filepath.Join(base, "subdir", "files")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
@@ -100,9 +100,9 @@ func TestSaveAttachmentCreatesDir(t *testing.T) {
 	}
 }
 
-// TestSavedPathPropagatedToQueue verifies that attachment.savedPath flows
-// through queuedMessage.
 func TestSavedPathPropagatedToQueue(t *testing.T) {
+	// TestSavedPathPropagatedToQueue verifies that attachment.savedPath flows
+	// through queuedMessage.
 	att := attachment{
 		data:      []byte("test"),
 		mediaType: "image/jpeg",

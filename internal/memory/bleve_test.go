@@ -504,9 +504,9 @@ func TestBleveSearchDateRangeFilter(t *testing.T) {
 	}
 }
 
-// TestBleveIndexConversation verifies that conversation messages are indexed
-// and searchable, matching the FTS5 backend's conversation indexing behavior.
 func TestBleveIndexConversation(t *testing.T) {
+	// TestBleveIndexConversation verifies that conversation messages are indexed
+	// and searchable, matching the FTS5 backend's conversation indexing behavior.
 	idx, _ := testBleveIndex(t)
 
 	idx.IndexConversation("Tell me about quantum computing", "agent:main:main")
@@ -526,15 +526,15 @@ func TestBleveIndexConversation(t *testing.T) {
 	}
 }
 
-// TestBleveConversationEmpty verifies that empty conversation text is a no-op.
 func TestBleveConversationEmpty(t *testing.T) {
+	// TestBleveConversationEmpty verifies that empty conversation text is a no-op.
 	idx, _ := testBleveIndex(t)
 	idx.IndexConversation("", "agent:main:main") // should not panic or error
 }
 
-// TestBleveMemoryWeightedHigher verifies that memory results rank higher
-// than conversation results when both match the same query.
 func TestBleveMemoryWeightedHigher(t *testing.T) {
+	// TestBleveMemoryWeightedHigher verifies that memory results rank higher
+	// than conversation results when both match the same query.
 	idx, memDir := testBleveIndex(t)
 
 	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("Important fact about neural networks"), 0644)
@@ -555,9 +555,9 @@ func TestBleveMemoryWeightedHigher(t *testing.T) {
 	}
 }
 
-// TestBleveConversationSurvivedReindex verifies that conversation entries
-// are preserved when Reindex() recreates the file portion of the index.
 func TestBleveConversationSurvivedReindex(t *testing.T) {
+	// TestBleveConversationSurvivedReindex verifies that conversation entries
+	// are preserved when Reindex() recreates the file portion of the index.
 	idx, memDir := testBleveIndex(t)
 
 	idx.IndexConversation("Discussing special relativity theory", "agent:main:main")
@@ -590,9 +590,9 @@ func TestBleveConversationSurvivedReindex(t *testing.T) {
 	}
 }
 
-// TestBleveConversationWeight verifies that the conversation weight multiplier
-// is applied correctly and is configurable.
 func TestBleveConversationWeight(t *testing.T) {
+	// TestBleveConversationWeight verifies that the conversation weight multiplier
+	// is applied correctly and is configurable.
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -634,9 +634,9 @@ func TestBleveConversationWeight(t *testing.T) {
 	}
 }
 
-// TestBleveTodoIndexAndSearch verifies that todos can be indexed and
-// searched via the shared bleve index, with agent ID filtering.
 func TestBleveTodoIndexAndSearch(t *testing.T) {
+	// TestBleveTodoIndexAndSearch verifies that todos can be indexed and
+	// searched via the shared bleve index, with agent ID filtering.
 	idx, _ := testBleveIndex(t)
 
 	idx.IndexTodo("agent1", 1, "Fix the login bug in authentication module", float64(time.Now().Unix()))
@@ -668,9 +668,9 @@ func TestBleveTodoIndexAndSearch(t *testing.T) {
 	}
 }
 
-// TestBleveTodoRemove verifies that removing a todo from the bleve index
-// makes it no longer searchable.
 func TestBleveTodoRemove(t *testing.T) {
+	// TestBleveTodoRemove verifies that removing a todo from the bleve index
+	// makes it no longer searchable.
 	idx, _ := testBleveIndex(t)
 
 	idx.IndexTodo("agent1", 1, "Fix the critical bug", float64(time.Now().Unix()))
@@ -685,9 +685,9 @@ func TestBleveTodoRemove(t *testing.T) {
 	}
 }
 
-// TestBleveTodoStemming verifies that porter stemming works for todo
-// search (e.g. "running" matches "run").
 func TestBleveTodoStemming(t *testing.T) {
+	// TestBleveTodoStemming verifies that porter stemming works for todo
+	// search (e.g. "running" matches "run").
 	idx, _ := testBleveIndex(t)
 
 	idx.IndexTodo("agent1", 1, "Running server process in background", float64(time.Now().Unix()))
@@ -701,9 +701,9 @@ func TestBleveTodoStemming(t *testing.T) {
 	}
 }
 
-// TestBleveTodoSurvivesReindex verifies that todo documents are
-// preserved when Reindex() recreates the file portion of the index.
 func TestBleveTodoSurvivesReindex(t *testing.T) {
+	// TestBleveTodoSurvivesReindex verifies that todo documents are
+	// preserved when Reindex() recreates the file portion of the index.
 	idx, memDir := testBleveIndex(t)
 
 	idx.IndexTodo("agent1", 1, "Important task about deployment", float64(time.Now().Unix()))
@@ -722,8 +722,8 @@ func TestBleveTodoSurvivesReindex(t *testing.T) {
 	}
 }
 
-// TestBleveTodoEmptyQuery verifies that empty queries return nil.
 func TestBleveTodoEmptyQuery(t *testing.T) {
+	// TestBleveTodoEmptyQuery verifies that empty queries return nil.
 	idx, _ := testBleveIndex(t)
 
 	hits, err := idx.SearchTodos("agent1", "", "", 0)
@@ -743,8 +743,6 @@ func TestBleveTodoEmptyQuery(t *testing.T) {
 	}
 }
 
-// TestBleveTodoSearchIntegration verifies end-to-end todo search through
-// TodoStore backed by a bleve index (instead of FTS5).
 func TestBleveTodoSearchIntegration(t *testing.T) {
 	// Create bleve index
 	dir := t.TempDir()
@@ -813,9 +811,9 @@ func TestBleveTodoSearchIntegration(t *testing.T) {
 	}
 }
 
-// TestBleveTodoIndexAllTodos verifies that IndexAllTodos populates the
-// bleve index with pre-existing todos from SQLite.
 func TestBleveTodoIndexAllTodos(t *testing.T) {
+	// TestBleveTodoIndexAllTodos verifies that IndexAllTodos populates the
+	// bleve index with pre-existing todos from SQLite.
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -858,9 +856,9 @@ func TestBleveTodoIndexAllTodos(t *testing.T) {
 	ts.Close()
 }
 
-// TestBleveTodoSearchStatusFilter verifies that status filters exclude
-// done/dropped todos from search results when requested.
 func TestBleveTodoSearchStatusFilter(t *testing.T) {
+	// TestBleveTodoSearchStatusFilter verifies that status filters exclude
+	// done/dropped todos from search results when requested.
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -922,9 +920,9 @@ func TestBleveTodoSearchStatusFilter(t *testing.T) {
 	}
 }
 
-// TestBleveTodoSearchSortOrder verifies that sort overrides the default
-// relevance ordering.
 func TestBleveTodoSearchSortOrder(t *testing.T) {
+	// TestBleveTodoSearchSortOrder verifies that sort overrides the default
+	// relevance ordering.
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -981,8 +979,8 @@ func TestBleveTodoSearchSortOrder(t *testing.T) {
 	}
 }
 
-// TestBleveTodoSearchLimit verifies the default limit of 10 and custom limits.
 func TestBleveTodoSearchLimit(t *testing.T) {
+	// TestBleveTodoSearchLimit verifies the default limit of 10 and custom limits.
 	dir := t.TempDir()
 	memDir := filepath.Join(dir, "memory")
 	os.MkdirAll(memDir, 0755)
@@ -1071,9 +1069,9 @@ func createTestConversationDB(t *testing.T, dir string, messages []struct {
 	return dbPath
 }
 
-// TestBleveBackfillConversations verifies that historical conversation messages
-// from a SQLite database are backfilled into the bleve index.
 func TestBleveBackfillConversations(t *testing.T) {
+	// TestBleveBackfillConversations verifies that historical conversation messages
+	// from a SQLite database are backfilled into the bleve index.
 	idx, _ := testBleveIndex(t)
 	dir := t.TempDir()
 
@@ -1113,9 +1111,9 @@ func TestBleveBackfillConversations(t *testing.T) {
 	}
 }
 
-// TestBleveBackfillSkipsAlreadyIndexed verifies that backfill does not
-// duplicate messages that are already in the bleve index.
 func TestBleveBackfillSkipsAlreadyIndexed(t *testing.T) {
+	// TestBleveBackfillSkipsAlreadyIndexed verifies that backfill does not
+	// duplicate messages that are already in the bleve index.
 	idx, _ := testBleveIndex(t)
 	dir := t.TempDir()
 
@@ -1152,9 +1150,9 @@ func TestBleveBackfillSkipsAlreadyIndexed(t *testing.T) {
 	}
 }
 
-// TestBleveBackfillMissingDB verifies that backfill gracefully handles
-// a non-existent conversation database (returns 0, nil).
 func TestBleveBackfillMissingDB(t *testing.T) {
+	// TestBleveBackfillMissingDB verifies that backfill gracefully handles
+	// a non-existent conversation database (returns 0, nil).
 	idx, _ := testBleveIndex(t)
 
 	n, err := idx.BackfillConversations("/nonexistent/path/conversation.db")
@@ -1166,9 +1164,9 @@ func TestBleveBackfillMissingDB(t *testing.T) {
 	}
 }
 
-// TestBleveBackfillSkipsEmptyText verifies that messages with empty text
-// are not indexed during backfill.
 func TestBleveBackfillSkipsEmptyText(t *testing.T) {
+	// TestBleveBackfillSkipsEmptyText verifies that messages with empty text
+	// are not indexed during backfill.
 	idx, _ := testBleveIndex(t)
 	dir := t.TempDir()
 
@@ -1198,9 +1196,9 @@ func TestBleveBackfillSkipsEmptyText(t *testing.T) {
 	}
 }
 
-// TestBleveBackfillSurvivesReindex verifies that backfilled conversation
-// entries are preserved across Reindex() calls.
 func TestBleveBackfillSurvivesReindex(t *testing.T) {
+	// TestBleveBackfillSurvivesReindex verifies that backfilled conversation
+	// entries are preserved across Reindex() calls.
 	idx, memDir := testBleveIndex(t)
 	dir := t.TempDir()
 

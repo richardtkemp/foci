@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// TestRedact proves that every secret value in the store is replaced with [REDACTED]
-// in the output, while non-secret text is left intact.
 func TestRedact(t *testing.T) {
+	// TestRedact proves that every secret value in the store is replaced with [REDACTED]
+	// in the output, while non-secret text is left intact.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-ant-oat01-supersecret"
@@ -38,9 +38,9 @@ other stuff`
 	}
 }
 
-// TestRedactShortValues proves that very short secret values (fewer than 4 characters)
-// are intentionally excluded from redaction to avoid false positives on common tokens.
 func TestRedactShortValues(t *testing.T) {
+	// TestRedactShortValues proves that very short secret values (fewer than 4 characters)
+	// are intentionally excluded from redaction to avoid false positives on common tokens.
 	path := writeSecrets(t, `
 [custom]
 short = "ab"
@@ -59,9 +59,9 @@ long = "longersecret123"
 	}
 }
 
-// TestRedactEmpty proves that Redact on a store with no secrets is a pure passthrough,
-// returning the input unchanged.
 func TestRedactEmpty(t *testing.T) {
+	// TestRedactEmpty proves that Redact on a store with no secrets is a pure passthrough,
+	// returning the input unchanged.
 	s, _ := Load("/nonexistent")
 	result := s.Redact("nothing to redact")
 	if result != "nothing to redact" {

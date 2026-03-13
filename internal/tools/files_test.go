@@ -367,8 +367,8 @@ func TestReadLargeFile(t *testing.T) {
 	}
 }
 
-// Verify offset returns lines starting from the given line number.
 func TestReadFileOffset(t *testing.T) {
+	// Verify offset returns lines starting from the given line number.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -394,8 +394,8 @@ func TestReadFileOffset(t *testing.T) {
 	}
 }
 
-// Verify limit caps the number of lines returned.
 func TestReadFileLimit(t *testing.T) {
+	// Verify limit caps the number of lines returned.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -420,8 +420,8 @@ func TestReadFileLimit(t *testing.T) {
 	}
 }
 
-// Verify offset and limit work together to return a window of lines.
 func TestReadFileOffsetAndLimit(t *testing.T) {
+	// Verify offset and limit work together to return a window of lines.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -446,8 +446,8 @@ func TestReadFileOffsetAndLimit(t *testing.T) {
 	}
 }
 
-// Verify offset past end of file returns informative message.
 func TestReadFileOffsetPastEnd(t *testing.T) {
+	// Verify offset past end of file returns informative message.
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.txt")
@@ -913,10 +913,10 @@ func TestBlockedPathPrefixMatching(t *testing.T) {
 	}
 }
 
-// Tests that read/write/edit resolve relative paths against the workspace directory,
-// not the process cwd. Creates a file in a temp "workspace" dir and verifies that
-// tools can access it via a relative path when workspace is set.
 func TestWorkspaceResolution(t *testing.T) {
+	// Tests that read/write/edit resolve relative paths against the workspace directory,
+	// not the process cwd. Creates a file in a temp "workspace" dir and verifies that
+	// tools can access it via a relative path when workspace is set.
 	t.Parallel()
 	workspace := t.TempDir()
 	os.MkdirAll(filepath.Join(workspace, "subdir"), 0755)

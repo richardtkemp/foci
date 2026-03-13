@@ -189,10 +189,10 @@ func TestSessionKeyBranch(t *testing.T) {
 	}
 }
 
-// TestChatIDFromKey verifies that ChatIDFromKey extracts chat IDs from
-// slash-separated session key formats, including branch keys which
-// preserve the root chat type.
 func TestChatIDFromKey(t *testing.T) {
+	// TestChatIDFromKey verifies that ChatIDFromKey extracts chat IDs from
+	// slash-separated session key formats, including branch keys which
+	// preserve the root chat type.
 	tests := []struct {
 		name string
 		key  string

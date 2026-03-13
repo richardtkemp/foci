@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// TestLoadReadError proves that loading from an inaccessible or nonexistent path
-// does not panic — errors are tolerated and the caller is simply informed.
 func TestLoadReadError(t *testing.T) {
 	// Try to load from a path that will cause permission denied
 	_, err := Load("/root/nonexistent_secret_file_cant_read.toml")
@@ -16,9 +14,9 @@ func TestLoadReadError(t *testing.T) {
 	}
 }
 
-// TestLoadAgentsNonMapValue proves that Load rejects a file where the [agents] key
-// holds a scalar instead of a TOML table, catching malformed configuration early.
 func TestLoadAgentsNonMapValue(t *testing.T) {
+	// TestLoadAgentsNonMapValue proves that Load rejects a file where the [agents] key
+	// holds a scalar instead of a TOML table, catching malformed configuration early.
 	path := writeSecrets(t, `
 [custom]
 key = "val"
@@ -32,9 +30,9 @@ agents = "not a table"
 	}
 }
 
-// TestLoadUnknownValueType proves that Load silently skips array-valued keys rather
-// than failing, so a file with mixed types still yields the string secrets it contains.
 func TestLoadUnknownValueType(t *testing.T) {
+	// TestLoadUnknownValueType proves that Load silently skips array-valued keys rather
+	// than failing, so a file with mixed types still yields the string secrets it contains.
 	path := writeSecrets(t, `
 [custom]
 key = "val"
@@ -51,9 +49,9 @@ strange_value = ["array", "of", "things"]
 	}
 }
 
-// TestLoadAgentNonTableSubValue proves that Load rejects a file where an agent
-// entry is a scalar string rather than a nested table, catching structural errors.
 func TestLoadAgentNonTableSubValue(t *testing.T) {
+	// TestLoadAgentNonTableSubValue proves that Load rejects a file where an agent
+	// entry is a scalar string rather than a nested table, catching structural errors.
 	path := writeSecrets(t, `
 [agents]
 alice = "not a table"
@@ -65,9 +63,9 @@ alice = "not a table"
 	}
 }
 
-// TestLoadAgentIntValue proves that integer values in an agent section are loaded
-// without error, with string secrets in the same section still retrievable.
 func TestLoadAgentIntValue(t *testing.T) {
+	// TestLoadAgentIntValue proves that integer values in an agent section are loaded
+	// without error, with string secrets in the same section still retrievable.
 	path := writeSecrets(t, `
 [agents.alice.custom]
 count = 42
@@ -84,9 +82,9 @@ token = "sk-test"
 	}
 }
 
-// TestSaveEmptySection proves that Save handles sections that have no keys without
-// panicking, ensuring empty TOML sections don't break the serialization path.
 func TestSaveEmptySection(t *testing.T) {
+	// TestSaveEmptySection proves that Save handles sections that have no keys without
+	// panicking, ensuring empty TOML sections don't break the serialization path.
 	path := writeSecrets(t, `
 [empty]
 
@@ -103,9 +101,9 @@ key = "val"
 	}
 }
 
-// TestFlatKeysToSectionsNoDot proves that setting a key without a "section.name"
-// dot separator either saves gracefully or returns an error, but never panics.
 func TestFlatKeysToSectionsNoDot(t *testing.T) {
+	// TestFlatKeysToSectionsNoDot proves that setting a key without a "section.name"
+	// dot separator either saves gracefully or returns an error, but never panics.
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
 	if err != nil {
@@ -119,10 +117,10 @@ func TestFlatKeysToSectionsNoDot(t *testing.T) {
 	}
 }
 
-// TestFindSecretRefs proves that FindSecretRefs correctly extracts unique secret
-// key names from {{secret:...}} templates, including UUID-style keys, and returns
-// nil for text with no templates.
 func TestFindSecretRefs(t *testing.T) {
+	// TestFindSecretRefs proves that FindSecretRefs correctly extracts unique secret
+	// key names from {{secret:...}} templates, including UUID-style keys, and returns
+	// nil for text with no templates.
 	refs := FindSecretRefs("no templates here")
 	if refs != nil {
 		t.Errorf("expected nil, got %v", refs)
@@ -144,10 +142,10 @@ func TestFindSecretRefs(t *testing.T) {
 	}
 }
 
-// TestSavePreservesAllowedHosts proves that allowed_hosts arrays survive a full
-// save/load cycle alongside their sibling string secrets, and that sections without
-// allowed_hosts still return nil after the roundtrip.
 func TestSavePreservesAllowedHosts(t *testing.T) {
+	// TestSavePreservesAllowedHosts proves that allowed_hosts arrays survive a full
+	// save/load cycle alongside their sibling string secrets, and that sections without
+	// allowed_hosts still return nil after the roundtrip.
 	path := writeSecrets(t, `
 [myapi]
 token = "sk-test"

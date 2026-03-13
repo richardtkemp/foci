@@ -62,9 +62,9 @@ func makeMsgWithNonImageDocument(userID int64, username, filename, mime string, 
 	}
 }
 
-// TestReceiveMessage_VideoQueuedWithSavedPath verifies that video messages
-// are queued with saved file paths.
 func TestReceiveMessage_VideoQueuedWithSavedPath(t *testing.T) {
+	// TestReceiveMessage_VideoQueuedWithSavedPath verifies that video messages
+	// are queued with saved file paths.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -85,9 +85,9 @@ func TestReceiveMessage_VideoQueuedWithSavedPath(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_VideoTooLarge verifies that oversized videos are flagged
-// without download attempts.
 func TestReceiveMessage_VideoTooLarge(t *testing.T) {
+	// TestReceiveMessage_VideoTooLarge verifies that oversized videos are flagged
+	// without download attempts.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
@@ -105,9 +105,9 @@ func TestReceiveMessage_VideoTooLarge(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_VideoWithoutCaption verifies that videos without captions
-// and failed downloads are dropped.
 func TestReceiveMessage_VideoWithoutCaption(t *testing.T) {
+	// TestReceiveMessage_VideoWithoutCaption verifies that videos without captions
+	// and failed downloads are dropped.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -123,9 +123,9 @@ func TestReceiveMessage_VideoWithoutCaption(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_VideoNoteQueuedWithSavedPath verifies that video notes
-// are queued with saved paths.
 func TestReceiveMessage_VideoNoteQueuedWithSavedPath(t *testing.T) {
+	// TestReceiveMessage_VideoNoteQueuedWithSavedPath verifies that video notes
+	// are queued with saved paths.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -146,9 +146,9 @@ func TestReceiveMessage_VideoNoteQueuedWithSavedPath(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_VideoNoteTooLarge verifies that oversized video notes
-// are queued with size warnings.
 func TestReceiveMessage_VideoNoteTooLarge(t *testing.T) {
+	// TestReceiveMessage_VideoNoteTooLarge verifies that oversized video notes
+	// are queued with size warnings.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
@@ -166,9 +166,9 @@ func TestReceiveMessage_VideoNoteTooLarge(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_NonImageDocumentSaved verifies that non-image documents
-// are queued with captions.
 func TestReceiveMessage_NonImageDocumentSaved(t *testing.T) {
+	// TestReceiveMessage_NonImageDocumentSaved verifies that non-image documents
+	// are queued with captions.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -189,9 +189,9 @@ func TestReceiveMessage_NonImageDocumentSaved(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_NonImageDocumentTooLarge verifies that oversized documents
-// are flagged.
 func TestReceiveMessage_NonImageDocumentTooLarge(t *testing.T) {
+	// TestReceiveMessage_NonImageDocumentTooLarge verifies that oversized documents
+	// are flagged.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
@@ -210,9 +210,9 @@ func TestReceiveMessage_NonImageDocumentTooLarge(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_VideoNoSaveDir verifies that videos are queued even
-// without a save directory.
 func TestReceiveMessage_VideoNoSaveDir(t *testing.T) {
+	// TestReceiveMessage_VideoNoSaveDir verifies that videos are queued even
+	// without a save directory.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	// receivedFilesDir not set
 	b.botToken = "test-token"
@@ -231,9 +231,9 @@ func TestReceiveMessage_VideoNoSaveDir(t *testing.T) {
 	}
 }
 
-// TestExtForVideo verifies that extForVideo returns correct extensions for
-// video MIME types.
 func TestExtForVideo(t *testing.T) {
+	// TestExtForVideo verifies that extForVideo returns correct extensions for
+	// video MIME types.
 	tests := []struct {
 		mime string
 		want string
@@ -254,9 +254,9 @@ func TestExtForVideo(t *testing.T) {
 	}
 }
 
-// TestExtForMIME verifies that extForMIME returns correct extensions for
-// various MIME types.
 func TestExtForMIME(t *testing.T) {
+	// TestExtForMIME verifies that extForMIME returns correct extensions for
+	// various MIME types.
 	tests := []struct {
 		mime string
 		want string
@@ -282,9 +282,9 @@ func TestExtForMIME(t *testing.T) {
 	}
 }
 
-// TestIsFileTooLarge verifies that isFileTooLarge correctly identifies
-// fileTooLargeError instances.
 func TestIsFileTooLarge(t *testing.T) {
+	// TestIsFileTooLarge verifies that isFileTooLarge correctly identifies
+	// fileTooLargeError instances.
 	err := &fileTooLargeError{size: 25 * 1024 * 1024}
 	if !isFileTooLarge(err) {
 		t.Error("isFileTooLarge should return true for fileTooLargeError")
@@ -294,8 +294,8 @@ func TestIsFileTooLarge(t *testing.T) {
 	}
 }
 
-// TestFileTooLargeError verifies that fileTooLargeError formats correctly.
 func TestFileTooLargeError(t *testing.T) {
+	// TestFileTooLargeError verifies that fileTooLargeError formats correctly.
 	size := int64(25 * 1024 * 1024)
 	err := &fileTooLargeError{size: size}
 	if !strings.Contains(err.Error(), "26214400") {
@@ -306,8 +306,8 @@ func TestFileTooLargeError(t *testing.T) {
 	}
 }
 
-// TestSaveMedia verifies that saveMedia saves files with correct metadata.
 func TestSaveMedia(t *testing.T) {
+	// TestSaveMedia verifies that saveMedia saves files with correct metadata.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir
@@ -335,8 +335,8 @@ func TestSaveMedia(t *testing.T) {
 	}
 }
 
-// TestSaveMediaDocument verifies that saveMedia correctly saves documents.
 func TestSaveMediaDocument(t *testing.T) {
+	// TestSaveMediaDocument verifies that saveMedia correctly saves documents.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.receivedFilesDir = dir

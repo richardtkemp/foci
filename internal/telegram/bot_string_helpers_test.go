@@ -9,17 +9,17 @@ import (
 	"foci/internal/command"
 )
 
-// TestCancelTurn_NoActiveTurn verifies that cancelTurn does not panic when
-// no turn is active.
 func TestCancelTurn_NoActiveTurn(t *testing.T) {
+	// TestCancelTurn_NoActiveTurn verifies that cancelTurn does not panic when
+	// no turn is active.
 	b, _ := testBot([]string{}, command.NewRegistry())
 	// Should not panic when no turn is active
 	b.cancelTurn()
 }
 
-// TestCancelTurn_CancelsContext verifies that cancelTurn properly cancels
-// the active turn's context.
 func TestCancelTurn_CancelsContext(t *testing.T) {
+	// TestCancelTurn_CancelsContext verifies that cancelTurn properly cancels
+	// the active turn's context.
 	b, _ := testBot([]string{}, command.NewRegistry())
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -37,26 +37,26 @@ func TestCancelTurn_CancelsContext(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_Short verifies that short messages are not split.
 func TestSplitMessage_Short(t *testing.T) {
+	// TestSplitMessage_Short verifies that short messages are not split.
 	chunks := splitMessage("hello", 100)
 	if len(chunks) != 1 || chunks[0] != "hello" {
 		t.Errorf("expected [hello], got %v", chunks)
 	}
 }
 
-// TestSplitMessage_ExactLimit verifies that messages exactly at the limit
-// are not split.
 func TestSplitMessage_ExactLimit(t *testing.T) {
+	// TestSplitMessage_ExactLimit verifies that messages exactly at the limit
+	// are not split.
 	chunks := splitMessage("hello", 5)
 	if len(chunks) != 1 || chunks[0] != "hello" {
 		t.Errorf("expected [hello], got %v", chunks)
 	}
 }
 
-// TestSplitMessage_SplitsAtNewline verifies that message splitting prefers
-// newline boundaries.
 func TestSplitMessage_SplitsAtNewline(t *testing.T) {
+	// TestSplitMessage_SplitsAtNewline verifies that message splitting prefers
+	// newline boundaries.
 	text := "line1\nline2\nline3"
 	chunks := splitMessage(text, 10)
 
@@ -74,9 +74,9 @@ func TestSplitMessage_SplitsAtNewline(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_LongNoNewlines verifies that long text without newlines
-// is split at the limit.
 func TestSplitMessage_LongNoNewlines(t *testing.T) {
+	// TestSplitMessage_LongNoNewlines verifies that long text without newlines
+	// is split at the limit.
 	text := "abcdefghijklmnop"
 	chunks := splitMessage(text, 5)
 	if len(chunks) != 4 {
@@ -91,16 +91,14 @@ func TestSplitMessage_LongNoNewlines(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_Empty verifies that empty messages are handled correctly.
 func TestSplitMessage_Empty(t *testing.T) {
+	// TestSplitMessage_Empty verifies that empty messages are handled correctly.
 	chunks := splitMessage("", 100)
 	if len(chunks) != 1 || chunks[0] != "" {
 		t.Errorf("expected [\"\"], got %v", chunks)
 	}
 }
 
-// TestSplitMessage_PreservesCodeBlock verifies that <pre><code> blocks are
-// properly closed and reopened when split.
 func TestSplitMessage_PreservesCodeBlock(t *testing.T) {
 	// A <pre><code> block that exceeds maxLen — tags must be closed/reopened.
 	inner := "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\n"
@@ -123,8 +121,6 @@ func TestSplitMessage_PreservesCodeBlock(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_PreservesPreBlock verifies that <pre> blocks are properly
-// closed and reopened when split.
 func TestSplitMessage_PreservesPreBlock(t *testing.T) {
 	// A <pre> block (table) that exceeds maxLen.
 	inner := "row1\nrow2\nrow3\nrow4\nrow5\nrow6\n"
@@ -144,8 +140,6 @@ func TestSplitMessage_PreservesPreBlock(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_NoTagsUnchanged verifies that plain text without HTML
-// tags splits correctly.
 func TestSplitMessage_NoTagsUnchanged(t *testing.T) {
 	// Plain text without HTML tags — same behavior as before.
 	text := "line1\nline2\nline3"
@@ -159,8 +153,6 @@ func TestSplitMessage_NoTagsUnchanged(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_ClosedTagsBeforeSplit verifies that fully closed tags
-// before split point are not reopened.
 func TestSplitMessage_ClosedTagsBeforeSplit(t *testing.T) {
 	// Tags are fully closed before the split point — no reopening needed.
 	text := "<b>bold</b>\nplain text that is long enough to need splitting"
@@ -175,8 +167,6 @@ func TestSplitMessage_ClosedTagsBeforeSplit(t *testing.T) {
 	}
 }
 
-// TestSplitMessage_NestedTags verifies that nested tags are properly closed
-// and reopened in the correct order.
 func TestSplitMessage_NestedTags(t *testing.T) {
 	// Nested <b> inside <pre> — both should be closed/reopened.
 	text := "<pre><b>" + strings.Repeat("x\n", 20) + "</b></pre>"
@@ -195,9 +185,9 @@ func TestSplitMessage_NestedTags(t *testing.T) {
 	}
 }
 
-// TestOpenHTMLTags verifies that openHTMLTags correctly identifies open
-// HTML tags in a string.
 func TestOpenHTMLTags(t *testing.T) {
+	// TestOpenHTMLTags verifies that openHTMLTags correctly identifies open
+	// HTML tags in a string.
 	cases := []struct {
 		html string
 		want []string
@@ -224,9 +214,9 @@ func TestOpenHTMLTags(t *testing.T) {
 	}
 }
 
-// TestClosingHTMLTag verifies that closingHTMLTag returns the correct closing
-// tag for a given opening tag.
 func TestClosingHTMLTag(t *testing.T) {
+	// TestClosingHTMLTag verifies that closingHTMLTag returns the correct closing
+	// tag for a given opening tag.
 	cases := []struct {
 		open, want string
 	}{

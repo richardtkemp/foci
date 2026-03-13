@@ -44,7 +44,6 @@ func TestBuildSDKParamsBasic(t *testing.T) {
 	}
 }
 
-// TestBuildSDKParamsWithEffort verifies effort is set for models that support it (Sonnet).
 func TestBuildSDKParamsWithEffort(t *testing.T) {
 	// Proves that the effort output config is passed through to SDK params for Sonnet, which supports the effort parameter.
 	req := &MessageRequest{
@@ -61,8 +60,6 @@ func TestBuildSDKParamsWithEffort(t *testing.T) {
 	}
 }
 
-// TestStripUnsupportedParamsEffort verifies effort is silently dropped for Haiku,
-// which does not support the effort parameter and returns a 400 error.
 func TestStripUnsupportedParamsEffort(t *testing.T) {
 	// Proves that stripUnsupportedParams removes the Output/effort config for Haiku to avoid sending unsupported parameters that would cause a 400 error.
 	req := &MessageRequest{
@@ -79,7 +76,6 @@ func TestStripUnsupportedParamsEffort(t *testing.T) {
 	}
 }
 
-// TestBuildSDKParamsWithThinking verifies thinking is set for supported models (Sonnet).
 func TestBuildSDKParamsWithThinking(t *testing.T) {
 	// Proves that the adaptive thinking config is passed through to SDK params for Sonnet, which supports extended thinking.
 	req := &MessageRequest{
@@ -96,7 +92,6 @@ func TestBuildSDKParamsWithThinking(t *testing.T) {
 	}
 }
 
-// TestStripUnsupportedParamsThinking verifies thinking is silently dropped for Haiku.
 func TestStripUnsupportedParamsThinking(t *testing.T) {
 	// Proves that stripUnsupportedParams removes the Thinking config for Haiku, which does not support extended thinking.
 	req := &MessageRequest{
@@ -113,7 +108,6 @@ func TestStripUnsupportedParamsThinking(t *testing.T) {
 	}
 }
 
-// TestStripUnsupportedParamsPreservedForSonnet verifies params are kept for supported models.
 func TestStripUnsupportedParamsPreservedForSonnet(t *testing.T) {
 	// Proves that stripUnsupportedParams leaves both Output/effort and Thinking configs intact for Sonnet, which supports both features.
 	req := &MessageRequest{

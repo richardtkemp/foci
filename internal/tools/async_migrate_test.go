@@ -2,9 +2,9 @@ package tools
 
 import "testing"
 
-// TestMigrateSession_InjectResolvesToNewKey verifies that after migration,
-// InjectToAgent delivers to the new key even when called with the old key.
 func TestMigrateSession_InjectResolvesToNewKey(t *testing.T) {
+	// TestMigrateSession_InjectResolvesToNewKey verifies that after migration,
+	// InjectToAgent delivers to the new key even when called with the old key.
 	t.Parallel()
 	var delivered string
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
@@ -20,9 +20,9 @@ func TestMigrateSession_InjectResolvesToNewKey(t *testing.T) {
 	}
 }
 
-// TestMigrateSession_MarkDoneResolvesToNewKey verifies that MarkDone
-// decrements the new key's count when called with the old key.
 func TestMigrateSession_MarkDoneResolvesToNewKey(t *testing.T) {
+	// TestMigrateSession_MarkDoneResolvesToNewKey verifies that MarkDone
+	// decrements the new key's count when called with the old key.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
@@ -48,9 +48,9 @@ func TestMigrateSession_MarkDoneResolvesToNewKey(t *testing.T) {
 	}
 }
 
-// TestMigrateSession_PendingCountMerges verifies that migrating into a key
-// that already has pending results adds the counts together.
 func TestMigrateSession_PendingCountMerges(t *testing.T) {
+	// TestMigrateSession_PendingCountMerges verifies that migrating into a key
+	// that already has pending results adds the counts together.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
@@ -72,9 +72,9 @@ func TestMigrateSession_PendingCountMerges(t *testing.T) {
 	}
 }
 
-// TestMigrateSession_ChainedRotation verifies that multiple rotations
-// (A→B→C) flatten correctly — old goroutines holding key A resolve to C.
 func TestMigrateSession_ChainedRotation(t *testing.T) {
+	// TestMigrateSession_ChainedRotation verifies that multiple rotations
+	// (A→B→C) flatten correctly — old goroutines holding key A resolve to C.
 	t.Parallel()
 	var delivered string
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
@@ -101,9 +101,9 @@ func TestMigrateSession_ChainedRotation(t *testing.T) {
 	}
 }
 
-// TestMigrateSession_NoOp verifies that migration is a no-op when old
-// equals new, when newKey is empty, or on a nil receiver.
 func TestMigrateSession_NoOp(t *testing.T) {
+	// TestMigrateSession_NoOp verifies that migration is a no-op when old
+	// equals new, when newKey is empty, or on a nil receiver.
 	t.Parallel()
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
 
@@ -123,10 +123,10 @@ func TestMigrateSession_NoOp(t *testing.T) {
 	nilNotifier.MigrateSession("a", "b")
 }
 
-// TestMigrateSession_NoPendingStillRemaps verifies that migration installs
-// a remap even when there are no pending results, so that a slow goroutine
-// that calls InjectToAgent after MarkDone still resolves correctly.
 func TestMigrateSession_NoPendingStillRemaps(t *testing.T) {
+	// TestMigrateSession_NoPendingStillRemaps verifies that migration installs
+	// a remap even when there are no pending results, so that a slow goroutine
+	// that calls InjectToAgent after MarkDone still resolves correctly.
 	t.Parallel()
 	var delivered string
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
@@ -141,9 +141,9 @@ func TestMigrateSession_NoPendingStillRemaps(t *testing.T) {
 	}
 }
 
-// TestMigrateSession_ReplyToSessionUnchanged verifies that replyToSession
-// is passed through unmodified (only targetSession is remapped).
 func TestMigrateSession_ReplyToSessionUnchanged(t *testing.T) {
+	// TestMigrateSession_ReplyToSessionUnchanged verifies that replyToSession
+	// is passed through unmodified (only targetSession is remapped).
 	t.Parallel()
 	var gotTarget, gotReplyTo string
 	n := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {

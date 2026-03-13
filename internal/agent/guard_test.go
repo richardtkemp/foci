@@ -528,8 +528,6 @@ func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
 	}
 }
 
-// TestCheckMissingQueryTools verifies the tool detection function reports
-// tools absent from PATH.
 func TestCheckMissingQueryTools(t *testing.T) {
 	// Proves that checkMissingQueryTools returns a map containing only known tool names (jq, mdq, yq) and no unexpected entries.
 	missing := checkMissingQueryTools()
@@ -542,8 +540,6 @@ func TestCheckMissingQueryTools(t *testing.T) {
 	}
 }
 
-// TestWithInstallHint verifies that install hints are appended for missing
-// tools and omitted for present tools.
 func TestWithInstallHint(t *testing.T) {
 	// Proves that withInstallHint appends an install recommendation (including a summary alternative) when the referenced tool is absent from PATH, and omits it when the tool is present.
 	// Simulate all tools missing.
@@ -566,8 +562,6 @@ func TestWithInstallHint(t *testing.T) {
 	}
 }
 
-// TestGuardHintPlainTextInstallRecommendation verifies that the plain text
-// fallback includes install recommendations for missing query tools.
 func TestGuardHintPlainTextInstallRecommendation(t *testing.T) {
 	// Proves that when plain text content has no structured format, guardHint recommends the summary tool and lists install instructions for any missing query tools (mdq, yq) while omitting instructions for tools that are present.
 	// Simulate mdq and yq missing, jq present.

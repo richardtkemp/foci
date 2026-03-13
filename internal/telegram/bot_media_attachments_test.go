@@ -11,9 +11,9 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// TestReceiveMessage_PhotoMessageQueued verifies that photo messages are
-// properly queued for processing.
 func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
+	// TestReceiveMessage_PhotoMessageQueued verifies that photo messages are
+	// properly queued for processing.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set up mock file info for photo downloads
@@ -37,9 +37,9 @@ func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_PhotoWithoutCaption verifies that photos without a
-// caption are handled correctly.
 func TestReceiveMessage_PhotoWithoutCaption(t *testing.T) {
+	// TestReceiveMessage_PhotoWithoutCaption verifies that photos without a
+	// caption are handled correctly.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	mock := b.client.(*mockClient)
 	mock.files = map[string]string{
@@ -56,9 +56,9 @@ func TestReceiveMessage_PhotoWithoutCaption(t *testing.T) {
 	// This case tests that empty caption + failed download = dropped
 }
 
-// TestReceiveMessage_DocumentImageQueued verifies that image documents are
-// handled correctly.
 func TestReceiveMessage_DocumentImageQueued(t *testing.T) {
+	// TestReceiveMessage_DocumentImageQueued verifies that image documents are
+	// handled correctly.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	mock := b.client.(*mockClient)
 	mock.files = map[string]string{
@@ -73,9 +73,9 @@ func TestReceiveMessage_DocumentImageQueued(t *testing.T) {
 	// Just verify no panic
 }
 
-// TestReceiveMessage_NonImageDocumentIgnored verifies that non-image, non-PDF
-// documents without text are ignored.
 func TestReceiveMessage_NonImageDocumentIgnored(t *testing.T) {
+	// TestReceiveMessage_NonImageDocumentIgnored verifies that non-image, non-PDF
+	// documents without text are ignored.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
 	msg := makeMsgWithDocument(111, "owner", "application/zip")
@@ -97,9 +97,9 @@ func makeMsgWithVoice(userID int64, username string) *gotgbot.Message {
 	}
 }
 
-// TestReceiveMessage_VoiceWithoutTranscriber verifies that voice notes without
-// a transcriber configured are rejected with an error message.
 func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
+	// TestReceiveMessage_VoiceWithoutTranscriber verifies that voice notes without
+	// a transcriber configured are rejected with an error message.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// No transcriber set — voice note should not be queued but should get an error reply

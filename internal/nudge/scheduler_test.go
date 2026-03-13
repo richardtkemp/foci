@@ -17,8 +17,8 @@ func makeTestRuleSet() *RuleSet {
 	}
 }
 
-// TestPeriodicTrigger verifies periodic rules fire at the correct intervals.
 func TestPeriodicTrigger(t *testing.T) {
+	// TestPeriodicTrigger verifies periodic rules fire at the correct intervals.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 1) // cooldown=1 to avoid interference
@@ -53,8 +53,8 @@ func TestPeriodicTrigger(t *testing.T) {
 	}
 }
 
-// TestAfterStreakTrigger verifies streak detection fires after N same-tool calls.
 func TestAfterStreakTrigger(t *testing.T) {
+	// TestAfterStreakTrigger verifies streak detection fires after N same-tool calls.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5) // allow multiple per batch
@@ -75,8 +75,8 @@ func TestAfterStreakTrigger(t *testing.T) {
 	}
 }
 
-// TestAfterErrorTrigger verifies error trigger fires when lastToolError is true.
 func TestAfterErrorTrigger(t *testing.T) {
+	// TestAfterErrorTrigger verifies error trigger fires when lastToolError is true.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5) // allow multiple per batch
@@ -98,8 +98,8 @@ func TestAfterErrorTrigger(t *testing.T) {
 	}
 }
 
-// TestMatchTrigger verifies regex match fires when user message matches.
 func TestMatchTrigger(t *testing.T) {
+	// TestMatchTrigger verifies regex match fires when user message matches.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
@@ -114,8 +114,8 @@ func TestMatchTrigger(t *testing.T) {
 	}
 }
 
-// TestMatchTriggerNoMatch verifies match doesn't fire when message doesn't match.
 func TestMatchTriggerNoMatch(t *testing.T) {
+	// TestMatchTriggerNoMatch verifies match doesn't fire when message doesn't match.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
@@ -127,9 +127,9 @@ func TestMatchTriggerNoMatch(t *testing.T) {
 	}
 }
 
-// TestPreAnswerTrigger verifies pre_answer rules are returned by CheckPreAnswer
-// and not by CheckAfterTools.
 func TestPreAnswerTrigger(t *testing.T) {
+	// TestPreAnswerTrigger verifies pre_answer rules are returned by CheckPreAnswer
+	// and not by CheckAfterTools.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
@@ -146,8 +146,8 @@ func TestPreAnswerTrigger(t *testing.T) {
 	}
 }
 
-// TestHasPreAnswerRules checks the convenience method.
 func TestHasPreAnswerRules(t *testing.T) {
+	// TestHasPreAnswerRules checks the convenience method.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 5, 1)
@@ -163,9 +163,9 @@ func TestHasPreAnswerRules(t *testing.T) {
 	}
 }
 
-// TestCooldownPreventsSpam verifies the cooldown prevents firing the same rule
-// too frequently.
 func TestCooldownPreventsSpam(t *testing.T) {
+	// TestCooldownPreventsSpam verifies the cooldown prevents firing the same rule
+	// too frequently.
 	t.Parallel()
 
 	rs := &RuleSet{
@@ -199,8 +199,8 @@ func TestCooldownPreventsSpam(t *testing.T) {
 	}
 }
 
-// TestMaxPerBatchLimits verifies only maxPerBatch rules fire per check.
 func TestMaxPerBatchLimits(t *testing.T) {
+	// TestMaxPerBatchLimits verifies only maxPerBatch rules fire per check.
 	t.Parallel()
 
 	rs := &RuleSet{
@@ -219,9 +219,9 @@ func TestMaxPerBatchLimits(t *testing.T) {
 	}
 }
 
-// TestCheckMatchFiresWithoutTools verifies CheckMatch returns unfired match
-// rules, ensuring match triggers work even on turns with no tool calls.
 func TestCheckMatchFiresWithoutTools(t *testing.T) {
+	// TestCheckMatchFiresWithoutTools verifies CheckMatch returns unfired match
+	// rules, ensuring match triggers work even on turns with no tool calls.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
@@ -240,9 +240,9 @@ func TestCheckMatchFiresWithoutTools(t *testing.T) {
 	}
 }
 
-// TestCheckMatchNoopAfterToolsFired verifies CheckMatch returns "" when
-// the match rule already fired via CheckAfterTools.
 func TestCheckMatchNoopAfterToolsFired(t *testing.T) {
+	// TestCheckMatchNoopAfterToolsFired verifies CheckMatch returns "" when
+	// the match rule already fired via CheckAfterTools.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
@@ -258,8 +258,8 @@ func TestCheckMatchNoopAfterToolsFired(t *testing.T) {
 	}
 }
 
-// TestCheckMatchNoMatch verifies CheckMatch returns "" when no patterns match.
 func TestCheckMatchNoMatch(t *testing.T) {
+	// TestCheckMatchNoMatch verifies CheckMatch returns "" when no patterns match.
 	t.Parallel()
 
 	s := NewScheduler(makeTestRuleSet(), 1, 5)
@@ -271,8 +271,8 @@ func TestCheckMatchNoMatch(t *testing.T) {
 	}
 }
 
-// TestNilSchedulerSafe verifies nil scheduler doesn't panic.
 func TestNilSchedulerSafe(t *testing.T) {
+	// TestNilSchedulerSafe verifies nil scheduler doesn't panic.
 	t.Parallel()
 
 	var s *Scheduler
@@ -291,8 +291,8 @@ func TestNilSchedulerSafe(t *testing.T) {
 	}
 }
 
-// TestStartTurnClearsState verifies that StartTurn clears per-turn state.
 func TestStartTurnClearsState(t *testing.T) {
+	// TestStartTurnClearsState verifies that StartTurn clears per-turn state.
 	t.Parallel()
 
 	rs := &RuleSet{
@@ -314,8 +314,8 @@ func TestStartTurnClearsState(t *testing.T) {
 	}
 }
 
-// TestNewSchedulerNilRuleSet returns nil scheduler.
 func TestNewSchedulerNilRuleSet(t *testing.T) {
+	// TestNewSchedulerNilRuleSet returns nil scheduler.
 	t.Parallel()
 
 	s := NewScheduler(nil, 5, 1)

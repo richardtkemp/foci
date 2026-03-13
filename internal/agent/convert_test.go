@@ -12,9 +12,9 @@ import (
 	"foci/internal/workspace"
 )
 
-// TestConvertCSV verifies that CSV documents pass through as plain text
-// with no external tool dependency.
 func TestConvertCSV(t *testing.T) {
+	// TestConvertCSV verifies that CSV documents pass through as plain text
+	// with no external tool dependency.
 	data := []byte("name,age\nAlice,30\nBob,25")
 	result := convertDocument(data, mimeCSV, "/tmp/test.csv")
 	if result.Err != "" {
@@ -25,8 +25,8 @@ func TestConvertCSV(t *testing.T) {
 	}
 }
 
-// TestConvertPlainText verifies that text/plain documents pass through unchanged.
 func TestConvertPlainText(t *testing.T) {
+	// TestConvertPlainText verifies that text/plain documents pass through unchanged.
 	data := []byte("Hello, world!")
 	result := convertDocument(data, mimeTXT, "/tmp/test.txt")
 	if result.Err != "" {
@@ -37,9 +37,9 @@ func TestConvertPlainText(t *testing.T) {
 	}
 }
 
-// TestConvertHTML verifies that HTML documents are converted to markdown
-// using readability extraction.
 func TestConvertHTML(t *testing.T) {
+	// TestConvertHTML verifies that HTML documents are converted to markdown
+	// using readability extraction.
 	html := []byte(`<html><body>
 		<article>
 			<h1>Test Article</h1>
@@ -59,8 +59,8 @@ func TestConvertHTML(t *testing.T) {
 	}
 }
 
-// TestConvertHTMLMinimal verifies that even minimal/broken HTML returns something.
 func TestConvertHTMLMinimal(t *testing.T) {
+	// TestConvertHTMLMinimal verifies that even minimal/broken HTML returns something.
 	html := []byte("<p>Just a paragraph</p>")
 	result := convertDocument(html, mimeHTML, "/tmp/test.html")
 	if result.Err != "" {
@@ -71,8 +71,6 @@ func TestConvertHTMLMinimal(t *testing.T) {
 	}
 }
 
-// TestConvertDocxNoPandoc verifies that docx conversion returns a helpful
-// error message when pandoc is not installed.
 func TestConvertDocxNoPandoc(t *testing.T) {
 	// Override PATH to ensure pandoc isn't found
 	t.Setenv("PATH", "")
@@ -85,9 +83,9 @@ func TestConvertDocxNoPandoc(t *testing.T) {
 	}
 }
 
-// TestConvertPptxNoPandoc verifies that pptx conversion returns a helpful
-// error message when pandoc is not installed.
 func TestConvertPptxNoPandoc(t *testing.T) {
+	// TestConvertPptxNoPandoc verifies that pptx conversion returns a helpful
+	// error message when pandoc is not installed.
 	t.Setenv("PATH", "")
 	result := convertDocument([]byte("fake"), mimePptx, "/tmp/test.pptx")
 	if result.Err == "" {
@@ -98,9 +96,9 @@ func TestConvertPptxNoPandoc(t *testing.T) {
 	}
 }
 
-// TestConvertXlsxNoTools verifies that xlsx conversion returns a helpful
-// error message when neither ssconvert nor pandoc is installed.
 func TestConvertXlsxNoTools(t *testing.T) {
+	// TestConvertXlsxNoTools verifies that xlsx conversion returns a helpful
+	// error message when neither ssconvert nor pandoc is installed.
 	t.Setenv("PATH", "")
 	result := convertDocument([]byte("fake"), mimeXlsx, "/tmp/test.xlsx")
 	if result.Err == "" {
@@ -111,8 +109,8 @@ func TestConvertXlsxNoTools(t *testing.T) {
 	}
 }
 
-// TestConvertUnsupportedMIME verifies that unknown MIME types produce an error.
 func TestConvertUnsupportedMIME(t *testing.T) {
+	// TestConvertUnsupportedMIME verifies that unknown MIME types produce an error.
 	result := convertDocument([]byte("data"), "application/zip", "/tmp/test.zip")
 	if result.Err == "" {
 		t.Fatal("expected error for unsupported MIME type")
@@ -122,8 +120,8 @@ func TestConvertUnsupportedMIME(t *testing.T) {
 	}
 }
 
-// TestIsConvertibleMIME verifies that the MIME type detection is correct.
 func TestIsConvertibleMIME(t *testing.T) {
+	// TestIsConvertibleMIME verifies that the MIME type detection is correct.
 	tests := []struct {
 		mime string
 		want bool
@@ -145,8 +143,8 @@ func TestIsConvertibleMIME(t *testing.T) {
 	}
 }
 
-// TestLabelForMIME verifies the human-readable labels for MIME types.
 func TestLabelForMIME(t *testing.T) {
+	// TestLabelForMIME verifies the human-readable labels for MIME types.
 	tests := []struct {
 		mime string
 		want string
@@ -169,9 +167,9 @@ func TestLabelForMIME(t *testing.T) {
 	}
 }
 
-// TestConvertAttachmentToTextCSV verifies that a CSV attachment is converted
-// to a text content block with a header and the file contents.
 func TestConvertAttachmentToTextCSV(t *testing.T) {
+	// TestConvertAttachmentToTextCSV verifies that a CSV attachment is converted
+	// to a text content block with a header and the file contents.
 	ag := &Agent{MaxResultChars: 10000}
 	att := platform.Attachment{
 		MimeType:  mimeCSV,
@@ -187,9 +185,9 @@ func TestConvertAttachmentToTextCSV(t *testing.T) {
 	}
 }
 
-// TestConvertAttachmentToTextTruncation verifies that large converted documents
-// are truncated with a note pointing to the saved file.
 func TestConvertAttachmentToTextTruncation(t *testing.T) {
+	// TestConvertAttachmentToTextTruncation verifies that large converted documents
+	// are truncated with a note pointing to the saved file.
 	ag := &Agent{MaxResultChars: 50}
 	att := platform.Attachment{
 		MimeType:  mimeTXT,
@@ -205,9 +203,9 @@ func TestConvertAttachmentToTextTruncation(t *testing.T) {
 	}
 }
 
-// TestConvertAttachmentToTextError verifies that conversion errors produce
-// a user-facing message rather than crashing.
 func TestConvertAttachmentToTextError(t *testing.T) {
+	// TestConvertAttachmentToTextError verifies that conversion errors produce
+	// a user-facing message rather than crashing.
 	t.Setenv("PATH", "")
 	ag := &Agent{MaxResultChars: 10000}
 	att := platform.Attachment{
@@ -224,9 +222,9 @@ func TestConvertAttachmentToTextError(t *testing.T) {
 	}
 }
 
-// TestHandleMessageWithCSVAttachment verifies the full pipeline: a CSV attachment
-// is converted to text and included as a content block in the API request.
 func TestHandleMessageWithCSVAttachment(t *testing.T) {
+	// TestHandleMessageWithCSVAttachment verifies the full pipeline: a CSV attachment
+	// is converted to text and included as a content block in the API request.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -292,9 +290,9 @@ func TestHandleMessageWithCSVAttachment(t *testing.T) {
 	}
 }
 
-// TestHandleMessageWithHTMLAttachment verifies that HTML attachments are
-// converted to markdown text blocks.
 func TestHandleMessageWithHTMLAttachment(t *testing.T) {
+	// TestHandleMessageWithHTMLAttachment verifies that HTML attachments are
+	// converted to markdown text blocks.
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {

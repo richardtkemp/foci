@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// TestLoadAndGet proves that secrets stored in multiple named TOML sections are all
-// accessible by "section.key" lookup after loading, and that missing keys return false.
 func TestLoadAndGet(t *testing.T) {
+	// TestLoadAndGet proves that secrets stored in multiple named TOML sections are all
+	// accessible by "section.key" lookup after loading, and that missing keys return false.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-ant-oat01-test"
@@ -57,9 +57,9 @@ openrouter_key = "sk-or-v1-test"
 	}
 }
 
-// TestLoadMissing proves that loading a nonexistent file succeeds without error
-// and returns an empty store, so a missing secrets file is not fatal.
 func TestLoadMissing(t *testing.T) {
+	// TestLoadMissing proves that loading a nonexistent file succeeds without error
+	// and returns an empty store, so a missing secrets file is not fatal.
 	s, err := Load("/nonexistent/secrets.toml")
 	if err != nil {
 		t.Fatalf("Load missing should not error: %v", err)
@@ -69,9 +69,9 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
-// TestLoadInvalid proves that a file containing malformed TOML causes Load to
-// return an error rather than silently producing an empty or partial store.
 func TestLoadInvalid(t *testing.T) {
+	// TestLoadInvalid proves that a file containing malformed TOML causes Load to
+	// return an error rather than silently producing an empty or partial store.
 	path := writeSecrets(t, "this is not valid toml [[[")
 	_, err := Load(path)
 	if err == nil {
@@ -79,9 +79,9 @@ func TestLoadInvalid(t *testing.T) {
 	}
 }
 
-// TestNames proves that Names() returns every "section.key" in alphabetical order,
-// regardless of the order they appear in the TOML file.
 func TestNames(t *testing.T) {
+	// TestNames proves that Names() returns every "section.key" in alphabetical order,
+	// regardless of the order they appear in the TOML file.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "x"
@@ -102,9 +102,9 @@ a_key = "z"
 	}
 }
 
-// TestSetAndSave proves that values written via Set are durably persisted: after
-// Save and a fresh Load they are retrievable with the original values.
 func TestSetAndSave(t *testing.T) {
+	// TestSetAndSave proves that values written via Set are durably persisted: after
+	// Save and a fresh Load they are retrievable with the original values.
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
 	if err != nil {
@@ -134,9 +134,9 @@ func TestSetAndSave(t *testing.T) {
 	}
 }
 
-// TestRemove proves that Remove deletes a key (returning true) and leaves siblings
-// intact, and that the deletion persists after Save and reload.
 func TestRemove(t *testing.T) {
+	// TestRemove proves that Remove deletes a key (returning true) and leaves siblings
+	// intact, and that the deletion persists after Save and reload.
 	path := writeSecrets(t, `
 [custom]
 key1 = "val1"

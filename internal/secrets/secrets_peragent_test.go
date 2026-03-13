@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestLoadPerAgentSecrets proves that per-agent secret sections override global values
-// for matching keys, add agent-exclusive keys, and leave global sections untouched,
-// while also correctly loading per-agent allowed_hosts.
 func TestLoadPerAgentSecrets(t *testing.T) {
+	// TestLoadPerAgentSecrets proves that per-agent secret sections override global values
+	// for matching keys, add agent-exclusive keys, and leave global sections untouched,
+	// while also correctly loading per-agent allowed_hosts.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-global"
@@ -57,10 +57,10 @@ allowed_hosts = ["api.fotini.com"]
 	}
 }
 
-// TestForAgentOverridesGlobal proves that when the same key exists in both the
-// global section and an agent's override section, the agent view returns the override
-// while the root store still returns the global value.
 func TestForAgentOverridesGlobal(t *testing.T) {
+	// TestForAgentOverridesGlobal proves that when the same key exists in both the
+	// global section and an agent's override section, the agent view returns the override
+	// while the root store still returns the global value.
 	path := writeSecrets(t, `
 [custom]
 api_key = "global_key"
@@ -82,10 +82,10 @@ api_key = "alpha_key"
 	}
 }
 
-// TestForAgentFallbackToGlobal proves that keys not present in an agent's override
-// section transparently resolve from the global store, covering both same-section
-// and different-section fallback paths.
 func TestForAgentFallbackToGlobal(t *testing.T) {
+	// TestForAgentFallbackToGlobal proves that keys not present in an agent's override
+	// section transparently resolve from the global store, covering both same-section
+	// and different-section fallback paths.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-global"
@@ -114,9 +114,9 @@ key_a = "beta_a"
 	}
 }
 
-// TestForAgentIsolation proves that per-agent secret sections are fully isolated:
-// agent A cannot see agent B's private keys, while both can still access global ones.
 func TestForAgentIsolation(t *testing.T) {
+	// TestForAgentIsolation proves that per-agent secret sections are fully isolated:
+	// agent A cannot see agent B's private keys, while both can still access global ones.
 	path := writeSecrets(t, `
 [custom]
 shared = "global"
@@ -150,9 +150,9 @@ private = "bob_secret"
 	}
 }
 
-// TestForAgentNames proves that Names() on an agent view includes both global keys
-// and the agent's own keys, sorted alphabetically, with no duplicates.
 func TestForAgentNames(t *testing.T) {
+	// TestForAgentNames proves that Names() on an agent view includes both global keys
+	// and the agent's own keys, sorted alphabetically, with no duplicates.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-global"
@@ -178,10 +178,10 @@ extra = "extra_val"
 	}
 }
 
-// TestForAgentResolve proves that template resolution on an agent view substitutes
-// the agent's overridden value, while the same template on the root store uses the
-// global value.
 func TestForAgentResolve(t *testing.T) {
+	// TestForAgentResolve proves that template resolution on an agent view substitutes
+	// the agent's overridden value, while the same template on the root store uses the
+	// global value.
 	path := writeSecrets(t, `
 [custom]
 token = "global_tok"
@@ -209,9 +209,9 @@ token = "delta_tok"
 	}
 }
 
-// TestForAgentRedact proves that Redact on an agent view scrubs both the agent's
-// own secrets and global secrets from the output, leaving non-secret text intact.
 func TestForAgentRedact(t *testing.T) {
+	// TestForAgentRedact proves that Redact on an agent view scrubs both the agent's
+	// own secrets and global secrets from the output, leaving non-secret text intact.
 	path := writeSecrets(t, `
 [custom]
 global_key = "supersecretglobal"
@@ -236,9 +236,9 @@ agent_key = "supersecretagent"
 	}
 }
 
-// TestForAgentNoSection proves that ForAgent for an agent with no dedicated section
-// in the file behaves identically to the global store — all global secrets are visible.
 func TestForAgentNoSection(t *testing.T) {
+	// TestForAgentNoSection proves that ForAgent for an agent with no dedicated section
+	// in the file behaves identically to the global store — all global secrets are visible.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-global"
@@ -264,10 +264,10 @@ key = "val"
 	}
 }
 
-// TestLoadPerAgentBackwardCompat proves that a secrets file with no [agents] section
-// loads correctly and any agent view falls back entirely to the global secrets, ensuring
-// backward compatibility with pre-per-agent configurations.
 func TestLoadPerAgentBackwardCompat(t *testing.T) {
+	// TestLoadPerAgentBackwardCompat proves that a secrets file with no [agents] section
+	// loads correctly and any agent view falls back entirely to the global secrets, ensuring
+	// backward compatibility with pre-per-agent configurations.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-ant-test"
@@ -293,9 +293,9 @@ allowed_hosts = ["api.github.com"]
 	}
 }
 
-// TestSavePreservesAgentSections proves that agent-specific sections, including their
-// secrets and allowed_hosts, are fully preserved through a save/load roundtrip.
 func TestSavePreservesAgentSections(t *testing.T) {
+	// TestSavePreservesAgentSections proves that agent-specific sections, including their
+	// secrets and allowed_hosts, are fully preserved through a save/load roundtrip.
 	path := writeSecrets(t, `
 [anthropic]
 setup_token = "sk-global"

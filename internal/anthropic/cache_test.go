@@ -9,15 +9,15 @@ import (
 	"testing"
 )
 
-// TestCacheSharing is the go/no-go test for the entire project.
-// It validates that branched sessions share cache prefixes with parent sessions.
-//
-// Flow:
-//  1. Send a request with system prompt + prefix messages → cache WRITE
-//  2. Send another request on same session (same prefix, new msgs) → cache READ
-//  3. Send a request on a branch (same prefix, different new msgs) → cache READ (KEY TEST)
-//  4. Send another request on parent → cache READ still works
 func TestCacheSharing(t *testing.T) {
+	// TestCacheSharing is the go/no-go test for the entire project.
+	// It validates that branched sessions share cache prefixes with parent sessions.
+	//
+	// Flow:
+	//  1. Send a request with system prompt + prefix messages → cache WRITE
+	//  2. Send another request on same session (same prefix, new msgs) → cache READ
+	//  3. Send a request on a branch (same prefix, different new msgs) → cache READ (KEY TEST)
+	//  4. Send another request on parent → cache READ still works
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		t.Skip("ANTHROPIC_API_KEY not set")

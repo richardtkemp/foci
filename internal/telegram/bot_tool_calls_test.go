@@ -12,8 +12,6 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// TestAsyncNotifierDeliveryViaSendInjected verifies that async notifier
-// delivery via SendInjected works correctly.
 func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {
 	// Simulates the async notifier delivery path in main.go:
 	// notifier calls HandleMessage → gets response → calls bot.SendInjected()
@@ -38,8 +36,6 @@ func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {
 	}
 }
 
-// TestAsyncNotifierNoPrimaryBot verifies that PrimaryBot returns nil when
-// no primary bot is configured.
 func TestAsyncNotifierNoPrimaryBot(t *testing.T) {
 	// When no primary bot is configured, PrimaryBot returns nil.
 	// The main.go closure logs a warning and skips delivery.
@@ -49,8 +45,6 @@ func TestAsyncNotifierNoPrimaryBot(t *testing.T) {
 	}
 }
 
-// TestToolCallObserverResetsAfterReply verifies that toolMsgID is reset
-// after intermediate replies, forcing new messages instead of edits.
 func TestToolCallObserverResetsAfterReply(t *testing.T) {
 	// Simulates the processAgentMessage closure interactions to verify
 	// that intermediate text resets toolMsgID, forcing subsequent tool
@@ -115,8 +109,6 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 	}
 }
 
-// TestShowToolCalls_Preview verifies that tool calls are displayed when
-// showToolCalls is set to "preview".
 func TestShowToolCalls_Preview(t *testing.T) {
 	// When showToolCalls is "preview", tool call observer should send messages.
 	mock := &mockClient{}
@@ -153,8 +145,6 @@ func TestShowToolCalls_Preview(t *testing.T) {
 	}
 }
 
-// TestShowToolCalls_Off verifies that tool calls are suppressed when
-// showToolCalls is "off".
 func TestShowToolCalls_Off(t *testing.T) {
 	// When showToolCalls is "off", tool call observer should be a no-op.
 	mock := &mockClient{}
@@ -191,8 +181,6 @@ func TestShowToolCalls_Off(t *testing.T) {
 	}
 }
 
-// TestShowToolCalls_Full verifies that tool calls generate individual messages
-// when showToolCalls is "full".
 func TestShowToolCalls_Full(t *testing.T) {
 	// When showToolCalls is "full", every tool call gets its own persistent
 	// message with compact summary. The final response goes via sendReply.
@@ -255,9 +243,9 @@ func TestShowToolCalls_Full(t *testing.T) {
 	}
 }
 
-// TestFormatToolCall verifies that formatToolCall produces properly formatted
-// tool call messages.
 func TestFormatToolCall(t *testing.T) {
+	// TestFormatToolCall verifies that formatToolCall produces properly formatted
+	// tool call messages.
 	b := &Bot{}
 	text := b.formatToolCall("shell", json.RawMessage(`{"command":"ls -la"}`))
 	if !strings.Contains(text, "▶️") {
@@ -271,9 +259,9 @@ func TestFormatToolCall(t *testing.T) {
 	}
 }
 
-// TestFormatToolCall_HTMLEscape verifies that HTML is properly escaped in
-// tool call messages.
 func TestFormatToolCall_HTMLEscape(t *testing.T) {
+	// TestFormatToolCall_HTMLEscape verifies that HTML is properly escaped in
+	// tool call messages.
 	b := &Bot{}
 	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo <script>"}`))
 	if strings.Contains(text, "<script>") {
@@ -284,8 +272,8 @@ func TestFormatToolCall_HTMLEscape(t *testing.T) {
 	}
 }
 
-// TestFormatToolCall_LongParams verifies that long parameters are truncated.
 func TestFormatToolCall_LongParams(t *testing.T) {
+	// TestFormatToolCall_LongParams verifies that long parameters are truncated.
 	b := &Bot{}
 	longVal := strings.Repeat("x", 500)
 	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
@@ -295,9 +283,9 @@ func TestFormatToolCall_LongParams(t *testing.T) {
 	}
 }
 
-// TestFormatToolCall_UnescapesNewlinesAndTabs verifies that escaped newlines
-// and tabs in JSON are properly displayed.
 func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
+	// TestFormatToolCall_UnescapesNewlinesAndTabs verifies that escaped newlines
+	// and tabs in JSON are properly displayed.
 	b := &Bot{}
 	// Simulate a tool call where the JSON string value contains literal \n and \t
 	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo\nline2"}`))
@@ -307,9 +295,9 @@ func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
 	}
 }
 
-// TestFormatToolCall_UnescapesUnicodeSequences verifies that Unicode escape
-// sequences are properly displayed.
 func TestFormatToolCall_UnescapesUnicodeSequences(t *testing.T) {
+	// TestFormatToolCall_UnescapesUnicodeSequences verifies that Unicode escape
+	// sequences are properly displayed.
 	b := &Bot{}
 	// Emoji or other Unicode escape sequences should be unescaped
 	text := b.formatToolCall("notify", json.RawMessage(`{"msg":"hello \\u2764"}`))

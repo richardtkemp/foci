@@ -8,9 +8,9 @@ import (
 	"foci/internal/state"
 )
 
-// TestSendInjected_SkipsEmptyMessage verifies that SendInjected silently
-// skips empty strings.
 func TestSendInjected_SkipsEmptyMessage(t *testing.T) {
+	// TestSendInjected_SkipsEmptyMessage verifies that SendInjected silently
+	// skips empty strings.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set a chat ID so the bot can send
@@ -25,9 +25,9 @@ func TestSendInjected_SkipsEmptyMessage(t *testing.T) {
 	}
 }
 
-// TestSendInjected_SkipsWhitespaceOnlyMessage verifies that SendInjected
-// silently skips whitespace-only messages.
 func TestSendInjected_SkipsWhitespaceOnlyMessage(t *testing.T) {
+	// TestSendInjected_SkipsWhitespaceOnlyMessage verifies that SendInjected
+	// silently skips whitespace-only messages.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set a chat ID so the bot can send
@@ -42,9 +42,9 @@ func TestSendInjected_SkipsWhitespaceOnlyMessage(t *testing.T) {
 	}
 }
 
-// TestSendInjected_SendsNonEmptyMessage verifies that SendInjected sends
-// non-empty messages.
 func TestSendInjected_SendsNonEmptyMessage(t *testing.T) {
+	// TestSendInjected_SendsNonEmptyMessage verifies that SendInjected sends
+	// non-empty messages.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Set a chat ID so the bot can send
@@ -59,9 +59,9 @@ func TestSendInjected_SendsNonEmptyMessage(t *testing.T) {
 	}
 }
 
-// TestSendToSession_ChatSession verifies that SendToSession extracts the
-// chat ID from a chat-based session key and sends to that chat.
 func TestSendToSession_ChatSession(t *testing.T) {
+	// TestSendToSession_ChatSession verifies that SendToSession extracts the
+	// chat ID from a chat-based session key and sends to that chat.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Session key with chat ID 67890
@@ -74,9 +74,9 @@ func TestSendToSession_ChatSession(t *testing.T) {
 	}
 }
 
-// TestSendToSession_IndependentSessionFallsBackToDefault verifies that
-// SendToSession falls back to defaultChatID for independent sessions.
 func TestSendToSession_IndependentSessionFallsBackToDefault(t *testing.T) {
+	// TestSendToSession_IndependentSessionFallsBackToDefault verifies that
+	// SendToSession falls back to defaultChatID for independent sessions.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Independent session has no chat ID — needs a default chat fallback.
@@ -95,9 +95,9 @@ func TestSendToSession_IndependentSessionFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// TestSendToSession_NoChatIDNoDefaultErrors verifies that SendToSession
-// returns an error when no chat ID and no default chat are configured.
 func TestSendToSession_NoChatIDNoDefaultErrors(t *testing.T) {
+	// TestSendToSession_NoChatIDNoDefaultErrors verifies that SendToSession
+	// returns an error when no chat ID and no default chat are configured.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
 	err := b.SendToSession("main/i1709596800/1709596800", "hello")
@@ -106,9 +106,9 @@ func TestSendToSession_NoChatIDNoDefaultErrors(t *testing.T) {
 	}
 }
 
-// TestSendToSession_SkipsEmptyMessage verifies that SendToSession silently
-// skips empty messages.
 func TestSendToSession_SkipsEmptyMessage(t *testing.T) {
+	// TestSendToSession_SkipsEmptyMessage verifies that SendToSession silently
+	// skips empty messages.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	if err := b.SendToSession("main/c123/1709590000", ""); err != nil {
@@ -119,9 +119,9 @@ func TestSendToSession_SkipsEmptyMessage(t *testing.T) {
 	}
 }
 
-// TestSendToSession_BranchKeyUsesParentChat verifies that branch session keys
-// resolve to the parent chat ID.
 func TestSendToSession_BranchKeyUsesParentChat(t *testing.T) {
+	// TestSendToSession_BranchKeyUsesParentChat verifies that branch session keys
+	// resolve to the parent chat ID.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	err := b.SendToSession("main/c67890/1709590000/b1709596800", "branch message")

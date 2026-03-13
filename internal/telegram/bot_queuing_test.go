@@ -7,9 +7,9 @@ import (
 	"foci/internal/command"
 )
 
-// TestReceiveMessage_QueueFull verifies that when the message queue is full,
-// new messages are dropped and a reply is sent to the user.
 func TestReceiveMessage_QueueFull(t *testing.T) {
+	// TestReceiveMessage_QueueFull verifies that when the message queue is full,
+	// new messages are dropped and a reply is sent to the user.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Fill the queue
@@ -32,9 +32,9 @@ func TestReceiveMessage_QueueFull(t *testing.T) {
 	}
 }
 
-// TestReceiveMessage_MultipleUsersAllowed verifies that multiple authorized
-// users can send messages and they all get queued.
 func TestReceiveMessage_MultipleUsersAllowed(t *testing.T) {
+	// TestReceiveMessage_MultipleUsersAllowed verifies that multiple authorized
+	// users can send messages and they all get queued.
 	b, _ := testBot([]string{"111", "222"}, command.NewRegistry())
 
 	b.receiveMessage(context.Background(), makeMsg(111, "user1", "hello"))

@@ -516,7 +516,6 @@ func TestContentBlockUnmarshalJSON_ToolResultMultipleBlocks(t *testing.T) {
 	}
 }
 
-// TestContentBlockUnmarshalJSON_ToolResultEmptyArray tests array format with no blocks
 func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
 	// Proves that a tool_result block with an empty content array falls back to storing
 	// the raw "[]" string in Content rather than an empty string or an error.
@@ -535,8 +534,8 @@ func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
 	}
 }
 
-// TestComputeSessionStats_Empty verifies that an empty message slice returns zero stats.
 func TestComputeSessionStats_Empty(t *testing.T) {
+	// TestComputeSessionStats_Empty verifies that an empty message slice returns zero stats.
 	s := ComputeSessionStats(nil)
 	if s.Messages != 0 || s.Blocks != 0 || s.ApproxBytes != 0 {
 		t.Errorf("empty stats = %+v, want all zeros", s)
@@ -546,9 +545,9 @@ func TestComputeSessionStats_Empty(t *testing.T) {
 	}
 }
 
-// TestComputeSessionStats_MixedBlocks verifies byte counting across text, thinking,
-// tool input, tool result content, and base64 source data.
 func TestComputeSessionStats_MixedBlocks(t *testing.T) {
+	// TestComputeSessionStats_MixedBlocks verifies byte counting across text, thinking,
+	// tool input, tool result content, and base64 source data.
 	msgs := []Message{
 		{
 			Role: "user",
@@ -589,9 +588,9 @@ func TestComputeSessionStats_MixedBlocks(t *testing.T) {
 	}
 }
 
-// TestComputeSessionStats_ApproxTokensRounding verifies integer division truncation
-// in the token estimate.
 func TestComputeSessionStats_ApproxTokensRounding(t *testing.T) {
+	// TestComputeSessionStats_ApproxTokensRounding verifies integer division truncation
+	// in the token estimate.
 	msgs := []Message{
 		{Role: "user", Content: []ContentBlock{{Type: "text", Text: "ab"}}}, // 2 bytes
 	}
