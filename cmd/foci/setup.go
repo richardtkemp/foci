@@ -36,7 +36,8 @@ type setupState struct {
 	agentID     string
 	displayName string
 	model       string
-	charMode    string // "defaults", "openclaw", "blank"
+	charMode    string // "defaults", "openclaw", "import"
+	importDir   string // source directory when charMode=="import"
 }
 
 func setupUsage() {
@@ -338,12 +339,13 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 6:
-			charMode, back := stepCharacterMode(reader, f, totalSteps)
+			charMode, importDir, back := stepCharacterMode(reader, f, totalSteps)
 			if back {
 				step--
 				continue
 			}
 			state.charMode = charMode
+			state.importDir = importDir
 			step++
 
 		case 7:
@@ -373,6 +375,13 @@ func runSetupInteractive(f setupFlags) error {
 			provResult, err := provision.Provision(spec)
 			if err != nil {
 				return fmt.Errorf("provision agent: %w", err)
+			}
+
+			if state.charMode == "import" {
+				charDir := filepath.Join(provResult.Workspace, "character")
+				if err := importCharacterFiles(reader, state.importDir, charDir); err != nil {
+					return fmt.Errorf("import character files: %w", err)
+				}
 			}
 
 			configOpts := config.SetupOptions{

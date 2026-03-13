@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"strings"
 
 	"foci/internal/anthropic"
@@ -180,13 +181,13 @@ func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total
 }
 
 // stepCharacterMode prompts for character file sourcing.
-func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode string, back bool) { // nolint:unparam
+func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode, importDir string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 6/%d: Character Files\n", total)
 	fmt.Println("  How should we set up the character files?")
 	fmt.Println("  [1] Defaults (recommended for new users)")
 	fmt.Println("  [2] OpenClaw templates")
-	fmt.Println("  [3] Blank (empty files)")
+	fmt.Println("  [3] Import from a directory")
 	fmt.Println()
 
 	for {
@@ -195,19 +196,33 @@ func stepCharacterMode(reader *bufio.Reader, f setupFlags, total int) (charMode 
 		input = strings.TrimSpace(input)
 
 		if input == "back" {
-			return "", true
+			return "", "", true
 		}
 
 		switch input {
 		case "1", "":
 			fmt.Println("  Character files: defaults")
-			return "defaults", false
+			return "defaults", "", false
 		case "2":
 			fmt.Println("  Character files: openclaw")
-			return "openclaw", false
+			return "openclaw", "", false
 		case "3":
-			fmt.Println("  Character files: blank")
-			return "blank", false
+			fmt.Println("  Path to directory containing .md character files:")
+			for {
+				fmt.Print("> ")
+				dir, _ := reader.ReadString('\n')
+				dir = strings.TrimSpace(dir)
+				if dir == "back" {
+					break // re-show the mode menu
+				}
+				info, err := os.Stat(dir)
+				if err != nil || !info.IsDir() {
+					fmt.Printf("  Not a valid directory: %s\n  Try again (or 'back'):\n", dir)
+					continue
+				}
+				fmt.Printf("  Import from: %s\n", dir)
+				return "import", dir, false
+			}
 		default:
 			fmt.Println("  Enter 1, 2, or 3.")
 		}
