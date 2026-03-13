@@ -226,6 +226,7 @@ type MessageRequest struct {
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
 	CacheStrategy string          `json:"cache_strategy,omitempty"` // "auto" or "explicit" (read by Anthropic translate layer)
 	CacheTTL      string          `json:"cache_ttl,omitempty"`      // Anthropic prompt cache TTL: "5m" or "1h" (read by Anthropic translate layer)
+	Speed         string          `json:"speed,omitempty"`          // "fast" for Anthropic fast mode (Opus only, 6x pricing)
 }
 
 // Usage contains token usage information from a response.

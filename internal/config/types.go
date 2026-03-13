@@ -122,6 +122,7 @@ type AgentConfig struct {
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
 	Effort                string `toml:"effort"`                   // effort level: "low" (default), "medium", "high"
 	Thinking              string `toml:"thinking"`                 // thinking mode: "adaptive" (default) or "off"
+	Speed                 string `toml:"speed"`                    // speed mode: "standard" (default) or "fast" (Opus only, 6x pricing)
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
 	MultiballNoCompact    *bool  `toml:"multiball_no_compact"`     // set no_compact on multiball sessions (nil = true)
 
@@ -221,6 +222,7 @@ type AnthropicConfig struct {
 	Streaming                 bool   `toml:"streaming"`                    // use streaming API (default false; requires use_sdk)
 	Effort                    string `toml:"effort"`                       // effort level: "low" (default), "medium", "high"
 	Thinking                  string `toml:"thinking"`                     // thinking mode: "adaptive" (default) or "off"
+	Speed                     string `toml:"speed"`                        // speed mode: "standard" (default) or "fast" (Opus only, 6x pricing)
 }
 
 type TelegramConfig struct {

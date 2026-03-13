@@ -115,13 +115,23 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		aliases,
 	))
 
+	getModel := func(ctx context.Context) string {
+		return p.ag.SessionModel(p.sessionKeyFromCtx(ctx))
+	}
 	cmds.Register(command.NewEffortCommand(
 		func(ctx context.Context) string { return p.ag.SessionEffort(p.sessionKeyFromCtx(ctx)) },
 		func(ctx context.Context, e string) { p.ag.SetSessionEffort(p.sessionKeyFromCtx(ctx), e) },
+		getModel,
 	))
 	cmds.Register(command.NewThinkingCommand(
 		func(ctx context.Context) string { return p.ag.SessionThinking(p.sessionKeyFromCtx(ctx)) },
 		func(ctx context.Context, t string) { p.ag.SetSessionThinking(p.sessionKeyFromCtx(ctx), t) },
+		getModel,
+	))
+	cmds.Register(command.NewSpeedCommand(
+		func(ctx context.Context) string { return p.ag.SessionSpeed(p.sessionKeyFromCtx(ctx)) },
+		func(ctx context.Context, s string) { p.ag.SetSessionSpeed(p.sessionKeyFromCtx(ctx), s) },
+		getModel,
 	))
 	// Resolve config defaults for display settings.
 	defaultShowToolCalls := "off"

@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"foci/internal/config"
 )
 func NewModelCommand(getModel func(context.Context) string, setModel func(context.Context, string, string, string), resolveModel func(string) (string, string, string), modelAliases map[string]string) *Command {
 	return &Command{
@@ -63,9 +65,10 @@ func NewModelCommand(getModel func(context.Context) string, setModel func(contex
 
 // NewEffortCommand returns a /effort command to show or set the effort level.
 // getEffort returns current effort; setEffort changes it (runtime only).
+// getModel returns the current session model (for visibility gating); nil disables.
 // Callbacks receive the command's context so callers can resolve per-session state.
-func NewEffortCommand(getEffort func(context.Context) string, setEffort func(context.Context, string)) *Command {
-	return &Command{
+func NewEffortCommand(getEffort func(context.Context) string, setEffort func(context.Context, string), getModel func(context.Context) string) *Command {
+	cmd := &Command{
 		Name:        "effort",
 		Description: "Show or set effort level (low/medium/high)",
 		Category:    "operations",
@@ -113,13 +116,20 @@ func NewEffortCommand(getEffort func(context.Context) string, setEffort func(con
 			return opts
 		},
 	}
+	if getModel != nil {
+		cmd.Visible = func(ctx context.Context) bool {
+			return config.ModelCapabilities(getModel(ctx)).Effort
+		}
+	}
+	return cmd
 }
 
 // NewThinkingCommand returns a /thinking command to show or set the thinking mode.
 // getThinking returns current mode; setThinking changes it (runtime only).
+// getModel returns the current session model (for visibility gating); nil disables.
 // Callbacks receive the command's context so callers can resolve per-session state.
-func NewThinkingCommand(getThinking func(context.Context) string, setThinking func(context.Context, string)) *Command {
-	return &Command{
+func NewThinkingCommand(getThinking func(context.Context) string, setThinking func(context.Context, string), getModel func(context.Context) string) *Command {
+	cmd := &Command{
 		Name:        "thinking",
 		Description: "Show or set thinking mode (off/adaptive)",
 		Category:    "operations",
@@ -164,6 +174,78 @@ func NewThinkingCommand(getThinking func(context.Context) string, setThinking fu
 			return opts
 		},
 	}
+	if getModel != nil {
+		cmd.Visible = func(ctx context.Context) bool {
+			return config.ModelCapabilities(getModel(ctx)).Thinking
+		}
+	}
+	return cmd
+}
+
+// NewSpeedCommand returns a /speed command to show or set the speed mode.
+// getSpeed returns current speed; setSpeed changes it (runtime only).
+// getModel returns the current session model (for visibility gating); nil disables.
+func NewSpeedCommand(getSpeed func(context.Context) string, setSpeed func(context.Context, string), getModel func(context.Context) string) *Command {
+	cmd := &Command{
+		Name:        "speed",
+		Description: "Show or set speed mode (standard/fast)",
+		Category:    "operations",
+		Execute: func(ctx context.Context, args string) (string, error) {
+			const optionsLine = "Options: 0) standard  1) fast"
+
+			// Gate: reject if current model doesn't support speed
+			if getModel != nil {
+				m := getModel(ctx)
+				if !config.ModelCapabilities(m).Speed {
+					return fmt.Sprintf("Speed is not supported by %s (Opus only)", m), nil
+				}
+			}
+
+			if args == "" {
+				s := getSpeed(ctx)
+				if s == "" || s == "standard" {
+					return "Speed: standard\n" + optionsLine, nil
+				}
+				return fmt.Sprintf("Speed: %s\n%s", s, optionsLine), nil
+			}
+			arg := strings.ToLower(strings.TrimSpace(args))
+			switch arg {
+			case "0":
+				arg = "standard"
+			case "1":
+				arg = "fast"
+			}
+			switch arg {
+			case "standard", "off", "none":
+				setSpeed(ctx, "")
+				return "Speed: standard", nil
+			case "fast":
+				setSpeed(ctx, "fast")
+				return "Speed: fast (6x pricing, separate prompt cache)", nil
+			default:
+				return fmt.Sprintf("Invalid speed mode: %q\n%s", args, optionsLine), nil
+			}
+		},
+		KeyboardOptions: func(ctx context.Context) []KeyboardOption {
+			current := getSpeed(ctx)
+			opts := []KeyboardOption{
+				{Label: "standard", Data: "standard"},
+				{Label: "fast", Data: "fast"},
+			}
+			for i := range opts {
+				if opts[i].Data == current || (current == "" && opts[i].Data == "standard") {
+					opts[i].Label += " ✓"
+				}
+			}
+			return opts
+		},
+	}
+	if getModel != nil {
+		cmd.Visible = func(ctx context.Context) bool {
+			return config.ModelCapabilities(getModel(ctx)).Speed
+		}
+	}
+	return cmd
 }
 
 // DisplayField represents one display setting with its effective value and override status.

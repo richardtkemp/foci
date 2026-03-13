@@ -69,6 +69,7 @@ func TestEffortCommand(t *testing.T) {
 	cmd := NewEffortCommand(
 		func(context.Context) string { return effort },
 		func(_ context.Context, e string) { effort = e },
+		nil,
 	)
 
 	// Show when not set
@@ -140,6 +141,7 @@ func TestThinkingCommand(t *testing.T) {
 	cmd := NewThinkingCommand(
 		func(context.Context) string { return thinking },
 		func(_ context.Context, t string) { thinking = t },
+		nil,
 	)
 
 	// Show when off (default)
@@ -203,6 +205,7 @@ func TestThinkingCommandContextRouting(t *testing.T) {
 	cmd := NewThinkingCommand(
 		func(ctx context.Context) string { lastCtx = ctx; return "" },
 		func(ctx context.Context, _ string) { lastCtx = ctx },
+		nil,
 	)
 
 	// Simulate Telegram dispatch: context carries ChatIDKey
@@ -249,5 +252,167 @@ func TestConfigCommand(t *testing.T) {
 	result, _ = cmd.Execute(context.Background(), "available")
 	if result != "available output" {
 		t.Errorf("available result = %q", result)
+	}
+}
+
+func TestSpeedCommand(t *testing.T) {
+	// Verifies speed mode can be set to fast/standard by name or number and cleared.
+	speed := ""
+	cmd := NewSpeedCommand(
+		func(context.Context) string { return speed },
+		func(_ context.Context, s string) { speed = s },
+		func(context.Context) string { return "anthropic/claude-opus-4-6" },
+	)
+
+	// Show when standard (default)
+	result, _ := cmd.Execute(context.Background(), "")
+	if !strings.Contains(result, "standard") {
+		t.Errorf("expected 'standard', got %q", result)
+	}
+
+	// Set to fast
+	result, _ = cmd.Execute(context.Background(), "fast")
+	if speed != "fast" {
+		t.Errorf("speed not set to fast: %q", speed)
+	}
+	if !strings.Contains(result, "fast") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Set via numeric alias
+	_, _ = cmd.Execute(context.Background(), "0")
+	if speed != "" {
+		t.Errorf("speed not cleared via '0': %q", speed)
+	}
+
+	_, _ = cmd.Execute(context.Background(), "1")
+	if speed != "fast" {
+		t.Errorf("speed not set via '1': %q", speed)
+	}
+
+	// Show when set
+	result, _ = cmd.Execute(context.Background(), "")
+	if !strings.Contains(result, "fast") {
+		t.Errorf("expected 'fast', got %q", result)
+	}
+
+	// Clear via "standard"
+	result, _ = cmd.Execute(context.Background(), "standard")
+	if speed != "" {
+		t.Errorf("speed not cleared: %q", speed)
+	}
+	if !strings.Contains(result, "standard") {
+		t.Errorf("result = %q", result)
+	}
+
+	// Invalid value
+	speed = "fast"
+	result, _ = cmd.Execute(context.Background(), "turbo")
+	if !strings.Contains(result, "Invalid") {
+		t.Errorf("expected 'Invalid', got %q", result)
+	}
+	if speed != "fast" {
+		t.Errorf("speed changed on invalid input: %q", speed)
+	}
+}
+
+func TestSpeedCommandUnsupportedModel(t *testing.T) {
+	// Proves that /speed returns an error when the current model doesn't support fast mode.
+	speed := ""
+	cmd := NewSpeedCommand(
+		func(context.Context) string { return speed },
+		func(_ context.Context, s string) { speed = s },
+		func(context.Context) string { return "anthropic/claude-haiku-4-5-20251001" },
+	)
+
+	result, _ := cmd.Execute(context.Background(), "fast")
+	if !strings.Contains(result, "not supported") {
+		t.Errorf("expected unsupported error, got %q", result)
+	}
+	if speed != "" {
+		t.Errorf("speed should not be set: %q", speed)
+	}
+}
+
+func TestSpeedCommandVisibility(t *testing.T) {
+	// Proves that the Visible callback returns false for haiku and true for opus.
+	model := ""
+	cmd := NewSpeedCommand(
+		func(context.Context) string { return "" },
+		func(context.Context, string) {},
+		func(context.Context) string { return model },
+	)
+
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set")
+	}
+
+	ctx := context.Background()
+
+	model = "anthropic/claude-haiku-4-5-20251001"
+	if cmd.Visible(ctx) {
+		t.Error("Visible should return false for haiku")
+	}
+
+	model = "anthropic/claude-opus-4-6"
+	if !cmd.Visible(ctx) {
+		t.Error("Visible should return true for opus")
+	}
+
+	model = "anthropic/claude-sonnet-4-6"
+	if cmd.Visible(ctx) {
+		t.Error("Visible should return false for sonnet")
+	}
+}
+
+func TestEffortCommandVisibility(t *testing.T) {
+	// Proves that the effort command's Visible callback returns false for haiku and true for sonnet/opus.
+	model := ""
+	cmd := NewEffortCommand(
+		func(context.Context) string { return "" },
+		func(context.Context, string) {},
+		func(context.Context) string { return model },
+	)
+
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set")
+	}
+
+	ctx := context.Background()
+
+	model = "anthropic/claude-haiku-4-5-20251001"
+	if cmd.Visible(ctx) {
+		t.Error("Visible should return false for haiku")
+	}
+
+	model = "anthropic/claude-sonnet-4-6"
+	if !cmd.Visible(ctx) {
+		t.Error("Visible should return true for sonnet")
+	}
+}
+
+func TestThinkingCommandVisibility(t *testing.T) {
+	// Proves that the thinking command's Visible callback returns false for haiku and true for sonnet/opus.
+	model := ""
+	cmd := NewThinkingCommand(
+		func(context.Context) string { return "" },
+		func(context.Context, string) {},
+		func(context.Context) string { return model },
+	)
+
+	if cmd.Visible == nil {
+		t.Fatal("Visible should be set")
+	}
+
+	ctx := context.Background()
+
+	model = "anthropic/claude-haiku-4-5-20251001"
+	if cmd.Visible(ctx) {
+		t.Error("Visible should return false for haiku")
+	}
+
+	model = "anthropic/claude-opus-4-6"
+	if !cmd.Visible(ctx) {
+		t.Error("Visible should return true for opus")
 	}
 }
