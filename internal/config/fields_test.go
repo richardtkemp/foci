@@ -7,11 +7,11 @@ import (
 )
 
 func TestFieldsNonEmpty(t *testing.T) {
-	// Proves Fields() returns a non-empty registry where every entry has Section,
+	// Proves configFields returns a non-empty registry where every entry has Section,
 	// Key, and Description populated.
-	fields := Fields()
+	fields := configFields
 	if len(fields) == 0 {
-		t.Fatal("Fields() returned empty slice")
+		t.Fatal("configFields returned empty slice")
 	}
 	for i, f := range fields {
 		if f.Section == "" {
@@ -107,7 +107,7 @@ func TestFieldsInSection(t *testing.T) {
 }
 
 func TestFieldsMatchStructTags(t *testing.T) {
-	// Proves every field registered in Fields() corresponds to a real TOML-tagged
+	// Proves every field registered in configFields corresponds to a real TOML-tagged
 	// struct field in the relevant config struct, guarding against registry drift.
 
 	// Map section names to the struct types they represent.
@@ -134,7 +134,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"http":             reflect.TypeOf(HTTPConfig{}),
 	}
 
-	for _, f := range Fields() {
+	for _, f := range configFields {
 		st, ok := sectionStructs[f.Section]
 		if !ok {
 			t.Errorf("field %s.%s: section %q has no mapped struct", f.Section, f.Key, f.Section)
