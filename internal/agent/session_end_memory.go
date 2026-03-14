@@ -62,7 +62,6 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
 		defer cancel()
 		hookCtx = WithTrigger(hookCtx, "session_end_memory")
-		ag.SetSessionNoCompact(branchKey, true)
 		if _, err := ag.HandleMessage(hookCtx, branchKey, prompt); err != nil {
 			log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
 		}

@@ -97,6 +97,20 @@ func (s *Store) saveLocked() error {
 	return nil
 }
 
+// DeleteKeys removes multiple keys and saves to disk once.
+func (s *Store) DeleteKeys(keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, k := range keys {
+		delete(s.data, k)
+	}
+	return s.saveLocked()
+}
+
 // AllKeys returns all keys in the state store.
 // Used for migration from state.json to database.
 func (s *Store) AllKeys() []string {

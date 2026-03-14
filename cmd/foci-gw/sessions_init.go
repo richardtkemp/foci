@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -160,6 +161,8 @@ func initSessions(cfg *config.Config) sessionInfra {
 		log.Errorf("main", "load state: %v", err)
 	}
 
+	cleanupLegacyStateKeys(stateStore, sessions)
+
 	return sessionInfra{
 		sessions:     sessions,
 		sessionIndex: sessionIndex,
@@ -169,5 +172,47 @@ func initSessions(cfg *config.Config) sessionInfra {
 				cleanups[i]()
 			}
 		},
+	}
+}
+
+// cleanupLegacyStateKeys migrates colon-separated agent keys to slash format
+// and removes stale no_compact entries for branch sessions that no longer exist.
+func cleanupLegacyStateKeys(stateStore *state.Store, sessions *session.Store) {
+	keys := stateStore.AllKeys()
+	var toDelete []string
+
+	for _, k := range keys {
+		// Migrate colon-separated agent keys: "agent:X:Y" → "agent/X/Y"
+		if strings.HasPrefix(k, "agent:") {
+			newKey := strings.ReplaceAll(k, ":", "/")
+			var val interface{}
+			if stateStore.Get(k, &val) {
+				_ = stateStore.Set(newKey, val)
+			}
+			toDelete = append(toDelete, k)
+			continue
+		}
+
+		// Remove stale no_compact entries for branch/spawn sessions whose
+		// session files no longer exist on disk.
+		if strings.HasPrefix(k, "no_compact/") {
+			sessionKey := strings.TrimPrefix(k, "no_compact/")
+			path, err := sessions.SessionPath(sessionKey)
+			if err != nil {
+				toDelete = append(toDelete, k)
+				continue
+			}
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				toDelete = append(toDelete, k)
+			}
+		}
+	}
+
+	if len(toDelete) > 0 {
+		if err := stateStore.DeleteKeys(toDelete); err != nil {
+			log.Warnf("main", "cleanup legacy state keys: %v", err)
+		} else {
+			log.Infof("main", "cleaned up %d stale state key(s)", len(toDelete))
+		}
 	}
 }
