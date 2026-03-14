@@ -99,10 +99,28 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		// When intermediate text fires, reset the tracker so the next tool call
 		// creates a fresh message below the text instead of editing the stale
 		// earlier message (which would appear above the text in chat).
-		// When streaming is active, skip: the text was already delivered via the
-		// stream writer, so sending here would create a duplicate message.
+		// When streaming is active, the text was already delivered via the
+		// stream writer. Finalize that message so the next API call's text
+		// goes to a fresh Telegram message (no duplicate send).
 		ReplyFunc: func(text string) {
 			if sw != nil {
+				msgID := sw.Finish()
+				if msgID != 0 {
+					content := sw.Content()
+					if strings.TrimSpace(content) != "" {
+						html := ConvertToTelegramHTML(content, b.tableOpts())
+						_, _, _ = b.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
+							ChatId:    qm.msg.Chat.Id,
+							MessageId: msgID,
+							ParseMode: "HTML",
+						})
+					}
+				}
+				interval := b.streamUpdateInterval
+				if interval == 0 {
+					interval = 250 * time.Millisecond
+				}
+				sw = newStreamWriter(b.client, qm.msg.Chat.Id, interval, b.tableOpts())
 				return
 			}
 			b.sendReply(qm.msg, text)
