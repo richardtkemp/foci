@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/tempdir"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/mana"
@@ -101,7 +102,7 @@ func wireAgentPlatformCallbacks(
 			if c == nil {
 				return
 			}
-			f, err := os.CreateTemp("", "compaction-summary-*.md")
+			f, err := os.CreateTemp(tempdir.Dir(), "compaction-summary-*.md")
 			if err != nil {
 				log.Warnf("agent", "compaction debug: create temp file: %v", err)
 				return

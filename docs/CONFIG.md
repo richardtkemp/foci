@@ -455,7 +455,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `temp_dir` | string | `"/tmp/foci-tool-results"` | Directory for large tool result files. |
+| `temp_dir` | string | `"/tmp/foci/tool-results"` | Directory for large tool result files. |
 | `tmux_cols` | int | `300` | Window width (columns) applied via `resize-window` after `tmux new-session`. |
 | `tmux_rows` | int | `30` | Window height (rows) applied via `resize-window` after `tmux new-session`. |
 | `exec_default_timeout` | int | `30` | Default timeout for exec commands in seconds. |

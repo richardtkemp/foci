@@ -423,7 +423,7 @@ type BrowserConfig struct {
 
 type ToolsConfig struct {
 	MaxResultChars          int      `toml:"max_result_chars"`           // max chars before writing result to file (default 15000)
-	TempDir                 string   `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci-tool-results)
+	TempDir                 string   `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci/tool-results)
 	TmuxCols                int      `toml:"tmux_cols"`                  // tmux window columns on start (default 300)
 	TmuxRows                int      `toml:"tmux_rows"`                  // tmux window rows on start (default 30)
 	ExecAutoBackground      int      `toml:"exec_auto_background"`       // seconds before auto-backgrounding exec (default 10, 0 disables)

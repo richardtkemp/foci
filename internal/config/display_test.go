@@ -49,7 +49,7 @@ func testConfig() (*Config, AgentConfig) {
 		},
 		Tools: ToolsConfig{
 			MaxResultChars:          15000,
-			TempDir:                 "/tmp/foci-tool-results",
+			TempDir:                 "/tmp/foci/tool-results",
 			TmuxCols:                300,
 			TmuxRows:                30,
 			ExecAutoBackground:      10,

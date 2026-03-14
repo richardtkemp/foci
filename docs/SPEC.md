@@ -347,7 +347,7 @@ When a tool returns a result exceeding a configurable character threshold (defau
 1. Write the full result to a temp file: `{temp_dir}/tool-result-{tool}-{random}.txt`
 2. Return only a guard message — no partial content is included:
    ```
-   Result too large (47231 chars, limit 5000). Full output saved to /tmp/foci-tool-results/tool-result-shell-a1b2c3d4.txt.
+   Result too large (47231 chars, limit 5000). Full output saved to /tmp/foci/tool-results/tool-result-shell-a1b2c3d4.txt.
    Use `head -n 50` to preview, or `grep`/`ack` to search for specific content.
    ```
 

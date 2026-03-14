@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/tempdir"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 )
@@ -34,7 +35,7 @@ type fileAttachment struct {
 // Secrets referenced via {{secret:NAME}} are resolved server-side and validated
 // against per-secret allowed_hosts before the request is sent. If store is nil,
 // requests without secrets work normally but secret templates will fail.
-// tempDir is used for auto-saving binary responses; if empty, os.TempDir() is used.
+// tempDir is used for auto-saving binary responses; if empty, /tmp/foci is used.
 // autoBackgroundSecs is the threshold after which a running request is auto-backgrounded
 // (0 disables). notifier delivers results when an auto-backgrounded request finishes.
 // maxUploadFileSize is the max file size in bytes for multipart uploads (0 = 50MB default).
@@ -262,7 +263,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		// Auto-save binary responses to temp file
 		dir := tempDir
 		if dir == "" {
-			dir = os.TempDir()
+			dir = tempdir.Dir()
 		}
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
