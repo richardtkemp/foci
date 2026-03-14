@@ -70,7 +70,7 @@ gh codeql query run query.ql --database=codeql-db
 
 ## When You Make Changes
 
-- **DON'T REPEAT YOURSELF!!** Any time you want to create a new function, or just add functionality, check if the the logic already exists somewhere. fzf is available, might be helpful. Don't duplicate logic. Feel free to extract or refactor in order to make your changes DRY.
+- **DON'T REPEAT YOURSELF!!** Any time you want to create a new function, or just add functionality, check if the the logic already exists somewhere. Don't duplicate logic. Feel free to extract or refactor in order to make your changes DRY.
 - Always think deeply about how to use best practice for coding in the language you are writing. If the user makes a suggestion which contravenes best practice, suggest better alternatives.
 - If you modify how packages connect, add new packages, change the startup flow, add tools, or alter the agent loop, **update `docs/WIRING.md`** to reflect the change.
 - If you add a new feature, **check if it's appropriate to update `docs/COMPARISON.md`**, searching for additional info if required.
@@ -84,7 +84,6 @@ gh codeql query run query.ql --database=codeql-db
 - **Sessions are append-only JSONL.** Branch files have a `branch_meta` first line.
 - **Secrets stay out of agent context.** Credentials are in Go structs, never in messages.
 - **Never** refer to API-related things as providers, it's confusing. We have models (haiku), developers (anthropic), endpoints (api.anthropic.com), and formats (anthropic). However we cannot always know one by knowing the others! Need to be explicit about the differences.
-
 ## Running
 
 ```
