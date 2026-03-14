@@ -283,7 +283,7 @@ func todoListCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 		return Response{Text: fmt.Sprintf("No %s todos.", label)}, nil
 	}
 	header := fmt.Sprintf("Todos (%d)", len(items))
-	return Response{Text: header + "\n\n" + tools.FormatTodoLines(items)}, nil
+	return Response{Text: header + "\n\n" + tools.FormatTodoTable(items)}, nil
 }
 
 // todoNewCmd creates a new todo item.
@@ -362,7 +362,7 @@ func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs) (Resp
 	if len(items) == 0 {
 		return Response{Text: fmt.Sprintf("No todos matching %q.", args.text)}, nil
 	}
-	return Response{Text: fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), tools.FormatTodoLines(items))}, nil
+	return Response{Text: fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), tools.FormatTodoTable(items))}, nil
 }
 
 // todoRmCmd hard-deletes one or more todos.

@@ -143,8 +143,17 @@ func FormatTodoLine(item memory.TodoItem) string {
 	return line
 }
 
-// FormatTodoLines formats a slice of todo items as a markdown table.
+// FormatTodoLines formats a slice of todo items, one per line.
 func FormatTodoLines(items []memory.TodoItem) string {
+	lines := make([]string, len(items))
+	for i, item := range items {
+		lines[i] = FormatTodoLine(item)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// FormatTodoTable formats a slice of todo items as a markdown table.
+func FormatTodoTable(items []memory.TodoItem) string {
 	// Check if any items have tags.
 	hasTags := false
 	for _, item := range items {

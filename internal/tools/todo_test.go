@@ -547,10 +547,9 @@ func TestTodoToolListWithSort(t *testing.T) {
 	if len(lines) < 1 {
 		t.Fatal("expected at least one line in result")
 	}
-	// First data row should be the newest (Third) — skip header and separator lines.
-	dataLines := tableDataLines(lines)
-	if !strings.Contains(dataLines[0], "Third") {
-		t.Errorf("first data row should contain Third (newest), got: %s", dataLines[0])
+	// First line should be the newest (Third).
+	if !strings.Contains(lines[0], "Third") {
+		t.Errorf("first line should contain Third (newest), got: %s", lines[0])
 	}
 
 	// Test sort by created with reverse=true (oldest first)
@@ -564,9 +563,8 @@ func TestTodoToolListWithSort(t *testing.T) {
 		t.Fatalf("list with sort=created reverse: %v", err)
 	}
 	lines = strings.Split(strings.TrimSpace(result), "\n")
-	dataLines = tableDataLines(lines)
-	if !strings.Contains(dataLines[0], "First") {
-		t.Errorf("first data row should contain First (oldest), got: %s", dataLines[0])
+	if !strings.Contains(lines[0], "First") {
+		t.Errorf("first line should contain First (oldest), got: %s", lines[0])
 	}
 
 	// Test sort by updated (edit one task to make it most recent)
@@ -581,13 +579,12 @@ func TestTodoToolListWithSort(t *testing.T) {
 		t.Fatalf("list with sort=updated: %v", err)
 	}
 	lines = strings.Split(strings.TrimSpace(result), "\n")
-	dataLines = tableDataLines(lines)
-	if len(dataLines) < 1 {
-		t.Fatal("expected at least one data row in result")
+	if len(lines) < 1 {
+		t.Fatal("expected at least one line in result")
 	}
-	// First data row should contain the updated task (newest)
-	if !strings.Contains(dataLines[0], "Updated First") {
-		t.Errorf("first data row should contain Updated First (newest), got: %s", dataLines[0])
+	// First line should contain the updated task (newest)
+	if !strings.Contains(lines[0], "Updated First") {
+		t.Errorf("first line should contain Updated First (newest), got: %s", lines[0])
 	}
 }
 
@@ -696,13 +693,6 @@ func TestNormalizeStatusFilter(t *testing.T) {
 	}
 }
 
-// tableDataLines returns only the data rows from a markdown table, skipping header and separator.
-func tableDataLines(lines []string) []string {
-	if len(lines) > 2 {
-		return lines[2:]
-	}
-	return lines
-}
 
 func newTestTodoStore(t *testing.T) *memory.TodoStore {
 	t.Helper()
