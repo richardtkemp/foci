@@ -20,7 +20,6 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 	b.showToolCalls = "full"
 
 	// Simulate the ToolCallObserver closure from processAgentMessage.
-	var toolMsgID int64
 	var toolMsgMu sync.Mutex
 	chatID := int64(12345)
 
@@ -33,26 +32,14 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 			ParseMode: "HTML",
 			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show full", CallbackData: "tc:show:0"},
+					{Text: "Show full", CallbackData: "tc:show"},
 				}},
 			},
 		}
-		sent, err := b.client.SendMessage(chatID, compact, sendOpts)
+		_, err := b.client.SendMessage(chatID, compact, sendOpts)
 		if err != nil {
 			return
 		}
-		toolMsgID = sent.MessageId
-		// Update callback data with real message ID.
-		b.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
-			ChatId:    chatID,
-			MessageId: toolMsgID,
-			ParseMode: "HTML",
-			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-					{Text: "Show full", CallbackData: fmt.Sprintf("tc:show:%d", toolMsgID)},
-				}},
-			},
-		})
 	}
 
 	observer("shell", json.RawMessage(`{"command":"ls"}`))
@@ -66,14 +53,11 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 	if mock.lastSendOpts == nil {
 		t.Fatal("expected SendMessageOpts to be set")
 	}
-	// After send, an edit should update the callback data with the real message ID
-	if mock.edits != 1 {
-		t.Fatalf("expected 1 edit (to update callback data), got %d", mock.edits)
+	// No edit needed — callback data no longer contains message ID
+	if mock.edits != 0 {
+		t.Fatalf("expected 0 edits, got %d", mock.edits)
 	}
-	if mock.lastEditOpts == nil {
-		t.Fatal("expected EditMessageTextOpts to be set")
-	}
-	kb := mock.lastEditOpts.ReplyMarkup
+	kb := mock.lastSendOpts.ReplyMarkup.(gotgbot.InlineKeyboardMarkup)
 	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 1 {
 		t.Fatal("expected 1x1 inline keyboard")
 	}
@@ -81,8 +65,8 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 	if btn.Text != "Show full" {
 		t.Errorf("button text = %q, want %q", btn.Text, "Show full")
 	}
-	if btn.CallbackData != "tc:show:1" {
-		t.Errorf("callback data = %q, want %q", btn.CallbackData, "tc:show:1")
+	if btn.CallbackData != "tc:show" {
+		t.Errorf("callback data = %q, want %q", btn.CallbackData, "tc:show")
 	}
 	// Sent text should be compact (no <pre> block)
 	if strings.Contains(mock.lastSendInjected, "<pre>") {
@@ -112,7 +96,7 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 			MessageId: msgID,
 			Chat:      gotgbot.Chat{Id: 12345},
 		},
-		Data: fmt.Sprintf("tc:show:%d", msgID),
+		Data: "tc:show",
 	}
 	b.handleCallbackQuery(context.Background(), cq)
 
@@ -144,8 +128,8 @@ func TestHandleCallbackQuery_Show(t *testing.T) {
 	if btn.Text != "Hide" {
 		t.Errorf("button text = %q, want %q", btn.Text, "Hide")
 	}
-	if !strings.HasPrefix(btn.CallbackData, "tc:hide:") {
-		t.Errorf("callback data = %q, want tc:hide: prefix", btn.CallbackData)
+	if btn.CallbackData != "tc:hide" {
+		t.Errorf("callback data = %q, want %q", btn.CallbackData, "tc:hide")
 	}
 }
 
@@ -170,7 +154,7 @@ func TestHandleCallbackQuery_Hide(t *testing.T) {
 			MessageId: msgID,
 			Chat:      gotgbot.Chat{Id: 12345},
 		},
-		Data: fmt.Sprintf("tc:hide:%d", msgID),
+		Data: "tc:hide",
 	}
 	b.handleCallbackQuery(context.Background(), cq)
 

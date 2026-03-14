@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -98,15 +97,12 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 		return
 	}
 
-	parts := strings.SplitN(cq.Data, ":", 3)
-	if len(parts) != 3 {
+	parts := strings.SplitN(cq.Data, ":", 2)
+	if len(parts) != 2 {
 		return
 	}
 	action := parts[1] // "show" or "hide"
-	msgID, err := strconv.ParseInt(parts[2], 10, 64)
-	if err != nil {
-		return
-	}
+	msgID := cq.Message.GetMessageId()
 
 	switch parts[0] {
 	case "tc":
@@ -191,7 +187,7 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 		stored.expanded = true
 		stored.chatID = chatID
 		b.toolResults.Store(msgID, stored)
-		kb := singleButtonKeyboard("Hide", fmt.Sprintf("tc:hide:%d", msgID))
+		kb := singleButtonKeyboard("Hide", "tc:hide")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -201,7 +197,7 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 	case "hide":
 		stored.expanded = false
 		b.toolResults.Store(msgID, stored)
-		kb := singleButtonKeyboard("Show full", fmt.Sprintf("tc:show:%d", msgID))
+		kb := singleButtonKeyboard("Show full", "tc:show")
 		_, _, _ = b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -222,7 +218,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 	switch action {
 	case "show":
 		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.effectiveDisplayWidth())
-		kb := singleButtonKeyboard("Hide thinking", fmt.Sprintf("th:hide:%d", msgID))
+		kb := singleButtonKeyboard("Hide thinking", "th:hide")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -230,7 +226,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 			ReplyMarkup: kb,
 		})
 	case "hide":
-		kb := singleButtonKeyboard("Show thinking", fmt.Sprintf("th:show:%d", msgID))
+		kb := singleButtonKeyboard("Show thinking", "th:show")
 		_, _, _ = b.client.EditMessageText(entry.responseHTML, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
@@ -323,7 +319,7 @@ func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessag
 func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawMessage) {
 	compact := formatToolCallCompact(toolName, params)
 	full := t.bot.formatToolCall(toolName, params)
-	kb := singleButtonKeyboard("Show full", "tc:show:0")
+	kb := singleButtonKeyboard("Show full", "tc:show")
 	sent, err := t.bot.client.SendMessage(t.chatID, compact, &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
 		ReplyMarkup: kb,
@@ -340,13 +336,6 @@ func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawM
 		compactText: compact,
 		fullInput:   full,
 		chatID:      t.chatID,
-	})
-	kb = singleButtonKeyboard("Show full", fmt.Sprintf("tc:show:%d", t.msgID))
-	_, _, _ = t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
-		ChatId:    t.chatID,
-		MessageId: t.msgID,
-		ParseMode: "HTML",
-		ReplyMarkup: kb,
 	})
 }
 
@@ -431,7 +420,7 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 
 	if wasExpanded {
 		expanded := formatToolCallWithResult(full, result)
-		kb := singleButtonKeyboard("Hide", fmt.Sprintf("tc:hide:%d", msgID))
+		kb := singleButtonKeyboard("Hide", "tc:hide")
 		_, _, _ = t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    t.chatID,
 			MessageId: msgID,
@@ -440,7 +429,7 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 		})
 	} else if hint != "" {
 		// Update the compact notification with the result hint.
-		kb := singleButtonKeyboard("Show full", fmt.Sprintf("tc:show:%d", msgID))
+		kb := singleButtonKeyboard("Show full", "tc:show")
 		_, _, _ = t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
 			ChatId:    t.chatID,
 			MessageId: msgID,

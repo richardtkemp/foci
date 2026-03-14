@@ -87,7 +87,7 @@ func TestEditStreamWithThinking_CompactMode(t *testing.T) {
 	if btn.Text != "Show thinking" {
 		t.Errorf("button text = %q, want %q", btn.Text, "Show thinking")
 	}
-	wantCB := "th:show:100"
+	wantCB := "th:show"
 	if btn.CallbackData != wantCB {
 		t.Errorf("callback data = %q, want %q", btn.CallbackData, wantCB)
 	}
