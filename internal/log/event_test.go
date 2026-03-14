@@ -63,8 +63,8 @@ func TestLevelFiltering(t *testing.T) {
 	// at WARN level, DEBUG and INFO are dropped, WARN and ERROR pass through.
 	buf := captureOutput(t)
 
-	SetLevel(WARN)
-	defer SetLevel(INFO)
+	setLevel(WARN)
+	defer setLevel(INFO)
 
 	Debugf("test", "debug")
 	Infof("test", "info")
@@ -87,7 +87,7 @@ func TestDebugFilteredAtInfoLevel(t *testing.T) {
 	// Verifies that DEBUG messages are not emitted at the default INFO level.
 	buf := captureOutput(t)
 
-	SetLevel(INFO)
+	setLevel(INFO)
 
 	Debugf("test", "should not appear")
 
@@ -308,7 +308,7 @@ func TestFatalf(t *testing.T) {
 	// Verifies that Fatalf logs a message and exits with code 1.
 	// Uses the subprocess test pattern since Fatalf calls os.Exit.
 	if os.Getenv("TEST_FATALF_SUBPROCESS") == "1" {
-		SetOutput(os.Stderr)
+		setOutput(os.Stderr)
 		Fatalf("test", "fatal error: %s", "boom")
 		return // unreachable
 	}

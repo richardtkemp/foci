@@ -7,7 +7,6 @@ package mana
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"foci/internal/log"
@@ -55,36 +54,6 @@ func FormatReset(usage *provider.UsageResponse) string {
 		return ""
 	}
 	return ParseResetTime(*usage.FiveHour.ResetsAt)
-}
-
-// FormatUsage returns a human-readable usage summary string.
-func FormatUsage(usage *provider.UsageResponse) string {
-	if usage == nil {
-		return "No usage data"
-	}
-
-	var parts []string
-
-	if usage.FiveHour != nil && usage.FiveHour.Utilization != nil {
-		util := *usage.FiveHour.Utilization
-		parts = append(parts, fmt.Sprintf("%s used", formatPercentValue(util)))
-
-		if usage.FiveHour.ResetsAt != nil {
-			if resetTime := ParseResetTime(*usage.FiveHour.ResetsAt); resetTime != "" {
-				parts = append(parts, fmt.Sprintf("resets %s", resetTime))
-			}
-		}
-	}
-
-	if usage.ExtraUsage != nil && usage.ExtraUsage.IsEnabled && usage.ExtraUsage.UsedCredits > 0 {
-		parts = append(parts, fmt.Sprintf("overage $%.2f", usage.ExtraUsage.UsedCredits))
-	}
-
-	if len(parts) == 0 {
-		return "No active usage limits"
-	}
-
-	return strings.Join(parts, ", ")
 }
 
 // ParseResetTime converts ISO timestamp to human-readable relative time.
@@ -164,15 +133,6 @@ func NewMonitor(usageClient provider.UsageClient) *Monitor {
 	return &Monitor{
 		log:         log.NewComponentLogger("mana"),
 		usageClient: usageClient,
-	}
-}
-
-// NewMonitorWithFunc creates a Monitor that lazily resolves UsageClient on each check.
-// Used by keepalive to track default session's current endpoint.
-func NewMonitorWithFunc(getClient func() provider.UsageClient) *Monitor {
-	return &Monitor{
-		log:       log.NewComponentLogger("mana"),
-		getClient: getClient,
 	}
 }
 

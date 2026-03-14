@@ -51,7 +51,7 @@ func TestExtForMediaType(t *testing.T) {
 }
 
 func TestIsConvertibleDocMIME(t *testing.T) {
-	// Verifies that isConvertibleDocMIME correctly
+	// Verifies that platform.IsConvertibleDocMIME correctly
 	// identifies document types that can be converted to text.
 	tests := []struct {
 		mime string
@@ -130,12 +130,12 @@ func TestNormalizeMIME(t *testing.T) {
 }
 
 func TestMIMEChecksWithParameters(t *testing.T) {
-	// Verifies that isConvertibleDocMIME, isPDFMIME, and isImageMIME all
+	// Verifies that platform.IsConvertibleDocMIME, isPDFMIME, and isImageMIME all
 	// handle MIME types with parameters (e.g. "; charset=utf-8").
-	if !isConvertibleDocMIME("text/html; charset=utf-8") {
+	if !platform.IsConvertibleDocMIME("text/html; charset=utf-8") {
 		t.Error("text/html with charset should be convertible")
 	}
-	if !isConvertibleDocMIME("text/csv; header=present") {
+	if !platform.IsConvertibleDocMIME("text/csv; header=present") {
 		t.Error("text/csv with params should be convertible")
 	}
 	if !isPDFMIME("application/pdf; version=1.7") {
@@ -147,15 +147,15 @@ func TestMIMEChecksWithParameters(t *testing.T) {
 }
 
 func TestMIMEChecksWithLegacyTypes(t *testing.T) {
-	// Verifies that isConvertibleDocMIME recognizes legacy Office MIME types
+	// Verifies that platform.IsConvertibleDocMIME recognizes legacy Office MIME types
 	// (application/msword, application/vnd.ms-excel, application/vnd.ms-powerpoint).
-	if !isConvertibleDocMIME("application/msword") {
+	if !platform.IsConvertibleDocMIME("application/msword") {
 		t.Error("application/msword should be convertible")
 	}
-	if !isConvertibleDocMIME("application/vnd.ms-excel") {
+	if !platform.IsConvertibleDocMIME("application/vnd.ms-excel") {
 		t.Error("application/vnd.ms-excel should be convertible")
 	}
-	if !isConvertibleDocMIME("application/vnd.ms-powerpoint") {
+	if !platform.IsConvertibleDocMIME("application/vnd.ms-powerpoint") {
 		t.Error("application/vnd.ms-powerpoint should be convertible")
 	}
 }

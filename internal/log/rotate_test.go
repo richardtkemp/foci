@@ -396,8 +396,8 @@ func TestRotateAllWithFailingFile(t *testing.T) {
 	defer resetGlobal()
 
 	var buf bytes.Buffer
-	SetOutput(&buf)
-	SetLevel(DEBUG)
+	setOutput(&buf)
+	setLevel(DEBUG)
 
 	dir := t.TempDir()
 	// Use a path inside a non-writable directory to trigger mkdir failure for archive
@@ -424,7 +424,7 @@ func TestRotateFileLineTooLong(t *testing.T) {
 	defer resetGlobal()
 
 	var buf bytes.Buffer
-	SetOutput(&buf)
+	setOutput(&buf)
 
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
@@ -554,7 +554,7 @@ func TestRotateAllReopenError(t *testing.T) {
 
 	// Capture output after Init (Init replaces eventOut)
 	var buf bytes.Buffer
-	SetOutput(&buf)
+	setOutput(&buf)
 
 	// Break the event path so Reopen fails
 	std.mu.Lock()

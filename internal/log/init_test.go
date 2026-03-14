@@ -78,7 +78,7 @@ func TestInitBadPayloadPath(t *testing.T) {
 }
 
 func TestFilePaths(t *testing.T) {
-	// Verifies that FilePaths returns the exact paths passed to Init
+	// Verifies that filePaths returns the exact paths passed to Init
 	// for the event, API, and payload log files.
 	resetGlobal()
 	t.Cleanup(resetGlobal)
@@ -99,7 +99,7 @@ func TestFilePaths(t *testing.T) {
 	}
 	defer Close()
 
-	gotEvent, gotAPI, gotPayload := FilePaths()
+	gotEvent, gotAPI, gotPayload := filePaths()
 	if gotEvent != eventPath {
 		t.Errorf("event path = %q, want %q", gotEvent, eventPath)
 	}
@@ -305,10 +305,10 @@ func TestPreInitBufferReplay(t *testing.T) {
 	dir := t.TempDir()
 	eventPath := filepath.Join(dir, "foci.log")
 
-	// Log before Init — should go to stderr (captured by SetOutput)
+	// Log before Init — should go to stderr (captured by setOutput)
 	// and be buffered for replay.
 	var stderrBuf bytes.Buffer
-	SetOutput(&stderrBuf)
+	setOutput(&stderrBuf)
 
 	Warnf("config", "unknown key: foo.bar")
 	Infof("startup", "loading config from foci.toml")

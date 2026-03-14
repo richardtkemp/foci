@@ -217,8 +217,8 @@ func TestConversationLogInsertError(t *testing.T) {
 	buf := captureOutput(t)
 
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
-	if err := InitConversation(dbPath); err != nil {
-		t.Fatalf("InitConversation: %v", err)
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
 	}
 
 	// Close the DB to force an error on insert

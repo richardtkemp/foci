@@ -94,11 +94,6 @@ type Manager struct {
 	tf        transportFactory // nil in production, set for testing
 }
 
-// NewManager creates an empty MCP manager with no connections.
-func NewManager() *Manager {
-	return &Manager{}
-}
-
 // NewManagerForAgent creates an MCP manager that dynamically re-reads
 // mcp.toml from configDir on every tool call, filtering servers for agentID.
 func NewManagerForAgent(configDir, agentID string) *Manager {
@@ -106,12 +101,6 @@ func NewManagerForAgent(configDir, agentID string) *Manager {
 		configDir: configDir,
 		agentID:   agentID,
 	}
-}
-
-// Connect connects to all configured MCP servers. Servers that fail to
-// connect are logged and skipped — partial success is acceptable.
-func (m *Manager) Connect(ctx context.Context, servers []ServerConfig) error {
-	return m.connectWith(ctx, servers, nil)
 }
 
 // transportFactory creates a transport for a server config. Used for testing.
@@ -192,24 +181,6 @@ func (m *Manager) Close() error {
 		return fmt.Errorf("closing MCP sessions: %s", strings.Join(errs, "; "))
 	}
 	return nil
-}
-
-// ServerCount returns the number of connected servers.
-func (m *Manager) ServerCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.servers)
-}
-
-// ToolCount returns the total number of tools across all connected servers.
-func (m *Manager) ToolCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n := 0
-	for _, s := range m.servers {
-		n += len(s.tools)
-	}
-	return n
 }
 
 // Tool returns a foci tool that dispatches to MCP servers, or nil if

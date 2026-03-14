@@ -24,9 +24,6 @@ type Snapshot struct {
 // String returns the formatted snapshot text.
 func (s *Snapshot) String() string { return s.text }
 
-// Generation returns the snapshot generation number.
-func (s *Snapshot) Generation() int { return s.generation }
-
 // injectSnapshotJS injects the ARIA snapshot engine into a page's JS context.
 // Must be called before each capture since page navigation resets JS context.
 // Uses page.Eval (rod's Runtime.callFunctionOn) so the injection targets the

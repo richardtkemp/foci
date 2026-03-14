@@ -103,8 +103,8 @@ func TestSnapshotString(t *testing.T) {
 	if snap.String() != "test snapshot content" {
 		t.Errorf("String() = %q, want %q", snap.String(), "test snapshot content")
 	}
-	if snap.Generation() != 42 {
-		t.Errorf("Generation() = %d, want 42", snap.Generation())
+	if snap.generation != 42 {
+		t.Errorf("generation = %d, want 42", snap.generation)
 	}
 }
 

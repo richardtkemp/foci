@@ -134,17 +134,6 @@ func NewChatSession(agentID string, chatID int64) SessionKey {
 	}
 }
 
-// NewIndependentSession creates a new independent session key.
-func NewIndependentSession(agentID string) SessionKey {
-	ts := time.Now().Unix()
-	return SessionKey{
-		AgentID:   agentID,
-		Type:      'i',
-		ID:        strconv.FormatInt(ts, 10), // independent sessions use timestamp as ID
-		VersionTS: ts,
-	}
-}
-
 // withChild creates a child session key with the given child type.
 func (k SessionKey) withChild(childType rune) SessionKey {
 	return SessionKey{
@@ -162,17 +151,6 @@ func (k SessionKey) Branch() SessionKey {
 	return k.withChild('b')
 }
 
-// IndependentSpawn creates an independent spawn from this session.
-func (k SessionKey) IndependentSpawn() SessionKey {
-	return k.withChild('i')
-}
-
-// WithCollision returns a copy with the collision counter set.
-func (k SessionKey) WithCollision(n int) SessionKey {
-	k.Collision = n
-	return k
-}
-
 // WithVersion returns a copy with a new version timestamp.
 func (k SessionKey) WithVersion(versionTS int64) SessionKey {
 	k.VersionTS = versionTS
@@ -185,19 +163,6 @@ func (k SessionKey) WithVersion(versionTS int64) SessionKey {
 // IsRoot returns true if this is a root session (not a child).
 func (k SessionKey) IsRoot() bool {
 	return k.ChildType == 0
-}
-
-// RootKey returns the root key (strips child suffix if present).
-func (k SessionKey) RootKey() SessionKey {
-	if k.IsRoot() {
-		return k
-	}
-	return SessionKey{
-		AgentID:   k.AgentID,
-		Type:      k.Type,
-		ID:        k.ID,
-		VersionTS: k.VersionTS,
-	}
 }
 
 // ChatID returns the chat ID if this is a chat session, or 0 otherwise.
@@ -213,13 +178,6 @@ func (k SessionKey) ChatID() int64 {
 // Each call generates a unique key — cache the result if you need stable keys across calls.
 func NewChatSessionKey(agentID string, chatID int64) string {
 	return NewChatSession(agentID, chatID).String()
-}
-
-
-// IndependentSessionKey constructs an independent session key string.
-// Uses current timestamp as both ID and version. Call this for HTTP or other independent sessions.
-func IndependentSessionKey(agentID string) string {
-	return NewIndependentSession(agentID).String()
 }
 
 // NamedIndependentSessionKey constructs a deterministic independent session key
@@ -254,11 +212,3 @@ func BranchFromSession(parentKey string) (string, error) {
 	return parent.Branch().String(), nil
 }
 
-// IndependentSpawnFromSession creates an independent spawn child key from a parent session key string.
-func IndependentSpawnFromSession(parentKey string) (string, error) {
-	parent, err := ParseSessionKey(parentKey)
-	if err != nil {
-		return "", err
-	}
-	return parent.IndependentSpawn().String(), nil
-}
