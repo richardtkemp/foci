@@ -216,7 +216,7 @@ func TestShortPath(t *testing.T) {
 			name:     "same dir",
 			absPath:  "/home/foci/workspace/SKILL.md",
 			baseDir:  "/home/foci/workspace",
-			expected: "SKILL.md",
+			expected: "./SKILL.md",
 		},
 	}
 

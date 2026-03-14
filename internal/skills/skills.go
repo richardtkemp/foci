@@ -115,6 +115,11 @@ func shortPath(absPath, baseDir string) string {
 		return absPath
 	}
 	if len(rel) < len(absPath) {
+		// Prefix with "./" if the relative path doesn't already start
+		// with "../", so it's visually clear it's a relative path.
+		if !strings.HasPrefix(rel, "..") {
+			rel = "./" + rel
+		}
 		return rel
 	}
 	return absPath
