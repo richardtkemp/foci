@@ -157,7 +157,7 @@ if $IS_UPDATE && [[ -n "$OLD_COMMIT" ]] && [[ "$OLD_COMMIT" != "$NEW_COMMIT" ]];
             echo ""
             echo "## Instructions"
             echo ""
-            echo "Tell your user what just changed. Summarise the updates above in a brief, friendly message — highlight the most impactful changes and anything they'll notice. Send it via Telegram."
+            echo "Tell your user what just changed. Summarise the updates above in a brief, friendly message — highlight the most impactful changes and anything they'll notice."
         } > "$STAGED_WELCOME"
         info "  Staged changelog ($OLD_COMMIT → $NEW_COMMIT)"
     else
