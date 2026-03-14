@@ -37,18 +37,19 @@ func buildCommandKeyboard(cmdName string, opts []command.KeyboardOption) gotgbot
 }
 
 // layoutButtons splits a slice of buttons into rows of reasonable width.
-// It prefers at most 3 buttons per row, but packs more if that would exceed
-// 4 rows (to avoid overly tall keyboards).
+// It uses at most 3 buttons per row, dropping to 2 if any button label
+// exceeds 14 characters (to keep text readable on narrow screens).
 func layoutButtons(buttons []gotgbot.InlineKeyboardButton) [][]gotgbot.InlineKeyboardButton {
 	n := len(buttons)
-	if n <= 3 {
-		return [][]gotgbot.InlineKeyboardButton{buttons}
-	}
-	const maxRows = 4
 	perRow := 3
-	if (n+perRow-1)/perRow > maxRows {
-		// Pack more per row so we don't exceed maxRows.
-		perRow = (n + maxRows - 1) / maxRows
+	for _, b := range buttons {
+		if len([]rune(b.Text)) > 14 {
+			perRow = 2
+			break
+		}
+	}
+	if n <= perRow {
+		return [][]gotgbot.InlineKeyboardButton{buttons}
 	}
 	var rows [][]gotgbot.InlineKeyboardButton
 	for i := 0; i < n; i += perRow {
