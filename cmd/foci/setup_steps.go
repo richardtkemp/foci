@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"foci/internal/anthropic"
@@ -227,6 +228,86 @@ func stepCharacterMode(reader *bufio.Reader, _ setupFlags, total int) (charMode,
 			fmt.Println("  Enter 1, 2, or 3.")
 		}
 	}
+}
+
+// stepMemoryImport prompts for memory file import.
+// If the user imported character files in step 6, it auto-suggests likely memory directories.
+func stepMemoryImport(reader *bufio.Reader, importDir string, total int) (memoryDir string, back bool) {
+	fmt.Println()
+	fmt.Printf("Step 7/%d: Memory Import\n", total)
+	fmt.Println("  Import daily memory files from an existing agent?")
+	fmt.Println("  [1] Skip (default)")
+	fmt.Println("  [2] Import from a directory")
+	fmt.Println()
+
+	for {
+		fmt.Print("> ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+
+		if input == "back" {
+			return "", true
+		}
+
+		switch input {
+		case "1", "":
+			fmt.Println("  Skipping memory import.")
+			return "", false
+		case "2":
+			// Auto-suggest based on character import dir
+			suggested := suggestMemoryDir(importDir)
+
+			if suggested != "" {
+				fmt.Printf("  Suggested: %s\n", suggested)
+				fmt.Println("  Press Enter to accept, or type a different path:")
+			} else {
+				fmt.Println("  Path to directory containing .md memory files:")
+			}
+
+			for {
+				fmt.Print("> ")
+				dir, _ := reader.ReadString('\n')
+				dir = strings.TrimSpace(dir)
+				if dir == "back" {
+					break // re-show the mode menu
+				}
+				if dir == "" && suggested != "" {
+					dir = suggested
+				}
+				if dir == "" {
+					fmt.Println("  Please enter a directory path (or 'back').")
+					continue
+				}
+				info, err := os.Stat(dir)
+				if err != nil || !info.IsDir() {
+					fmt.Printf("  Not a valid directory: %s\n  Try again (or 'back'):\n", dir)
+					continue
+				}
+				fmt.Printf("  Memory import from: %s\n", dir)
+				return dir, false
+			}
+		default:
+			fmt.Println("  Enter 1 or 2.")
+		}
+	}
+}
+
+// suggestMemoryDir tries to find a memory/ directory relative to the character import dir.
+func suggestMemoryDir(importDir string) string {
+	if importDir == "" {
+		return ""
+	}
+	// If user pointed at workspace root: check importDir/memory/
+	candidate := filepath.Join(importDir, "memory")
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return candidate
+	}
+	// If user pointed at character/ subdir: check importDir/../memory/
+	candidate = filepath.Join(importDir, "..", "memory")
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return filepath.Clean(candidate)
+	}
+	return ""
 }
 
 // runProviderSetups runs each provider's interactive setup and collects results.

@@ -18,26 +18,28 @@ import (
 
 // setupFlags holds parsed flags for the setup command.
 type setupFlags struct {
-	configDir      string // directory for foci.toml and secrets.toml
-	homeDir        string // foci user home (workspace parent)
-	nonInteractive bool
-	agentID        string
-	displayName    string // display name for agent
-	model          string // model alias or full ID
-	setupToken     string // setup token from 'claude setup-token'
-	apiKey         string // API key (auth credential)
+	configDir       string // directory for foci.toml and secrets.toml
+	homeDir         string // foci user home (workspace parent)
+	nonInteractive  bool
+	agentID         string
+	displayName     string // display name for agent
+	model           string // model alias or full ID
+	setupToken      string // setup token from 'claude setup-token'
+	apiKey          string // API key (auth credential)
+	memoryImportDir string // directory to import memory .md files from
 	// Provider-contributed flags are stored here by name.
 	providerFlags map[string]string
 }
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
-	authMethod  string // "setup-token", "apikey", "skip"
-	agentID     string
-	displayName string
-	model       string
-	charMode    string // "defaults", "openclaw", "import"
-	importDir   string // source directory when charMode=="import"
+	authMethod      string // "setup-token", "apikey", "skip"
+	agentID         string
+	displayName     string
+	model           string
+	charMode        string // "defaults", "openclaw", "import"
+	importDir       string // source directory when charMode=="import"
+	memoryImportDir string // source directory for memory file import
 }
 
 func setupUsage() {
@@ -55,6 +57,7 @@ Flags:
   --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
   --setup-token <token>  Setup token from 'claude setup-token'
   --api-key <key>        API key (direct Anthropic API key)
+  --memory-import-dir <path>  Directory to import memory .md files from
 `)
 	// Print provider-contributed flags
 	for _, w := range platform.SetupProviders() {
@@ -135,6 +138,11 @@ func parseSetupFlags(args []string) setupFlags {
 		case "--api-key":
 			if i+1 < len(args) {
 				f.apiKey = args[i+1]
+				i++
+			}
+		case "--memory-import-dir":
+			if i+1 < len(args) {
+				f.memoryImportDir = args[i+1]
 				i++
 			}
 		default:
@@ -258,12 +266,51 @@ func runSetupNonInteractive(f setupFlags) error {
 		return fmt.Errorf("provision agent: %w", err)
 	}
 
+	// Copy memory files if --memory-import-dir was specified
+	if f.memoryImportDir != "" {
+		memDir := filepath.Join(result.Workspace, "memory")
+		if err := copyMDFiles(f.memoryImportDir, memDir); err != nil {
+			return fmt.Errorf("import memory files: %w", err)
+		}
+	}
+
 	configOpts := config.SetupOptions{
 		AgentBlock: result.ConfigBlock,
 		Model:      model,
 	}
 
 	return writeSetupFiles(f, configOpts, secretsOpts, store, result, providerConfigFragments, providerSecrets)
+}
+
+// copyMDFiles copies all .md files from srcDir to destDir (non-interactive).
+func copyMDFiles(srcDir, destDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("read directory %s: %w", srcDir, err)
+	}
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		src := filepath.Join(srcDir, entry.Name())
+		dst := filepath.Join(destDir, entry.Name())
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", entry.Name(), err)
+		}
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", entry.Name(), err)
+		}
+		count++
+	}
+	fmt.Printf("  Imported %d memory files to %s/\n", count, destDir)
+	return nil
 }
 
 func runSetupInteractive(f setupFlags) error {
@@ -287,7 +334,7 @@ func runSetupInteractive(f setupFlags) error {
 	secretsOpts := config.SecretsOptions{}
 
 	// Generic steps
-	totalSteps := 7
+	totalSteps := 8
 	step := 1
 	for step <= totalSteps {
 		switch step {
@@ -349,6 +396,15 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 7:
+			memoryDir, back := stepMemoryImport(reader, state.importDir, totalSteps)
+			if back {
+				step--
+				continue
+			}
+			state.memoryImportDir = memoryDir
+			step++
+
+		case 8:
 			// Platform provider steps (e.g. telegram bot token + user ID)
 			provFlags := map[string]string{"agent-id": state.agentID}
 			providerConfigFragments, providerSecrets, back, err := runProviderSetups(ui, provFlags, totalSteps)
@@ -381,6 +437,13 @@ func runSetupInteractive(f setupFlags) error {
 				charDir := filepath.Join(provResult.Workspace, "character")
 				if err := importCharacterFiles(reader, state.importDir, charDir); err != nil {
 					return fmt.Errorf("import character files: %w", err)
+				}
+			}
+
+			if state.memoryImportDir != "" {
+				memDir := filepath.Join(provResult.Workspace, "memory")
+				if err := importMemoryFiles(reader, state.memoryImportDir, memDir); err != nil {
+					return fmt.Errorf("import memory files: %w", err)
 				}
 			}
 

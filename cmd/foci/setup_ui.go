@@ -126,19 +126,18 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 	return bestID
 }
 
-// importCharacterFiles lists .md files from srcDir and lets the user select which to import.
-func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
+// mdImportOptions configures the importMDFiles file picker.
+type mdImportOptions struct {
+	label     string                 // e.g. "character" or "memory"
+	preSelect func(name string) bool // which files to pre-select
+	emptySkip bool                   // true = skip gracefully on empty, false = error
+}
+
+// importMDFiles lists .md files from srcDir and lets the user select which to import into destDir.
+func importMDFiles(reader *bufio.Reader, srcDir, destDir string, opts mdImportOptions) error {
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
 		return fmt.Errorf("read directory %s: %w", srcDir, err)
-	}
-
-	knownCharacterFiles := map[string]bool{
-		"SOUL.md":      true,
-		"CRAFT.md":     true,
-		"COHERENCE.md": true,
-		"USER.md":      true,
-		"MEMORY.md":    true,
 	}
 
 	type fileEntry struct {
@@ -159,20 +158,24 @@ func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 		files = append(files, fileEntry{
 			name:     entry.Name(),
 			size:     info.Size(),
-			selected: knownCharacterFiles[entry.Name()],
+			selected: opts.preSelect(entry.Name()),
 		})
 	}
 
 	if len(files) == 0 {
+		if opts.emptySkip {
+			fmt.Printf("  No .md files found in %s, skipping %s import.\n", srcDir, opts.label)
+			return nil
+		}
 		return fmt.Errorf("no .md files found in %s", srcDir)
 	}
 
-	// Sort: known files first, then alphabetical
+	// Sort: pre-selected files first, then alphabetical
 	sort.Slice(files, func(i, j int) bool {
-		ki := knownCharacterFiles[files[i].name]
-		kj := knownCharacterFiles[files[j].name]
-		if ki != kj {
-			return ki
+		si := files[i].selected
+		sj := files[j].selected
+		if si != sj {
+			return si
 		}
 		return files[i].name < files[j].name
 	})
@@ -187,7 +190,7 @@ func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 			fmt.Printf("    %2d. %s %s (%.1f KB)\n", i+1, check, f.name, float64(f.size)/1024)
 		}
 		fmt.Println()
-		fmt.Println("  Known character files are pre-selected. Toggle with number, 'a' for all, Enter to confirm.")
+		fmt.Printf("  Toggle with number, 'a' for all, Enter to confirm.\n")
 	}
 
 	printFileList()
@@ -255,8 +258,33 @@ func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
 		}
 		count++
 	}
-	fmt.Printf("  Imported %d files to %s/\n", count, destDir)
+	fmt.Printf("  Imported %d %s files to %s/\n", count, opts.label, destDir)
 	return nil
+}
+
+// importCharacterFiles lists .md files from srcDir and lets the user select which to import.
+func importCharacterFiles(reader *bufio.Reader, srcDir, destDir string) error {
+	knownCharacterFiles := map[string]bool{
+		"SOUL.md":      true,
+		"CRAFT.md":     true,
+		"COHERENCE.md": true,
+		"USER.md":      true,
+		"MEMORY.md":    true,
+	}
+	return importMDFiles(reader, srcDir, destDir, mdImportOptions{
+		label:     "character",
+		preSelect: func(name string) bool { return knownCharacterFiles[name] },
+		emptySkip: false,
+	})
+}
+
+// importMemoryFiles lists .md files from srcDir and lets the user select which to import.
+func importMemoryFiles(reader *bufio.Reader, srcDir, destDir string) error {
+	return importMDFiles(reader, srcDir, destDir, mdImportOptions{
+		label:     "memory",
+		preSelect: func(_ string) bool { return true },
+		emptySkip: true,
+	})
 }
 
 // copyMap returns a shallow copy of a string map.
