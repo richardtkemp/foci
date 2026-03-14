@@ -27,8 +27,8 @@ func TestModelKeyboardOptionsFiltersUnconfiguredEndpoints(t *testing.T) {
 		"opus":     "anthropic/claude-opus-4-6",
 		"sonnet":   "anthropic/claude-sonnet-4-6",
 		"haiku":    "anthropic/claude-haiku-4-5-20251001",
-		"flash":    "google/gemini-2.5-flash",
-		"deepseek": "deepseek/deepseek-chat",
+		"gemini-flash": "google/gemini-2.5-flash",
+		"deepseek":     "deepseek/deepseek-chat",
 	}
 	// Only anthropic endpoint is configured.
 	cc := CommandContext{
@@ -55,7 +55,7 @@ func TestModelKeyboardOptionsFiltersUnconfiguredEndpoints(t *testing.T) {
 		}
 	}
 	// Non-anthropic aliases should be filtered out.
-	for _, unwanted := range []string{"flash", "deepseek"} {
+	for _, unwanted := range []string{"gemini-flash", "deepseek"} {
 		if got[unwanted] {
 			t.Errorf("alias %q should not appear (endpoint not configured)", unwanted)
 		}
@@ -68,7 +68,7 @@ func TestModelKeyboardOptionsAllEndpoints(t *testing.T) {
 	ag := &agent.Agent{}
 	aliases := map[string]string{
 		"opus":  "anthropic/claude-opus-4-6",
-		"flash": "google/gemini-2.5-flash",
+		"gemini-flash": "google/gemini-2.5-flash",
 	}
 	cc := CommandContext{
 		Agent:        ag,

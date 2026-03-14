@@ -31,7 +31,7 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 	summaryAlias := "haiku"
 	defaultFormat := "anthropic"
 	if strings.HasPrefix(agentModelID, "gemini-") {
-		summaryAlias = "flash"
+		summaryAlias = "gemini-flash"
 		defaultFormat = "gemini"
 	} else if modelinfo.IsOpenAI(agentModelID) {
 		summaryAlias = "gpt4o"
