@@ -260,6 +260,29 @@ func DisplayCommand() *Command {
 				{Label: "reset", Data: "reset"},
 			}
 		},
+		ChainKeyboard: func(_ context.Context, subcommand string, _ CommandContext) []KeyboardOption {
+			switch subcommand {
+			case "show_tool_calls":
+				return []KeyboardOption{
+					{Label: "off", Data: "show_tool_calls off"},
+					{Label: "preview", Data: "show_tool_calls preview"},
+					{Label: "full", Data: "show_tool_calls full"},
+				}
+			case "show_thinking":
+				return []KeyboardOption{
+					{Label: "off", Data: "show_thinking off"},
+					{Label: "compact", Data: "show_thinking compact"},
+					{Label: "true", Data: "show_thinking true"},
+				}
+			case "stream_output":
+				return []KeyboardOption{
+					{Label: "off", Data: "stream_output off"},
+					{Label: "on", Data: "stream_output on"},
+				}
+			default:
+				return nil
+			}
+		},
 	}
 }
 
