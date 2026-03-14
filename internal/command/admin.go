@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/tempdir"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/display"
@@ -342,7 +343,7 @@ func runCompaction(ctx context.Context, cc CommandContext, dryRun bool) (int, er
 		} else if summary != "" {
 			if cc.ConnMgr != nil {
 				if conn := cc.ConnMgr.Primary(cc.AgentConfig.ID); conn != nil {
-					f, tmpErr := os.CreateTemp("", "compaction-dryrun-*.md")
+					f, tmpErr := os.CreateTemp(tempdir.Dir(), "compaction-dryrun-*.md")
 					if tmpErr == nil {
 						if _, writeErr := f.WriteString(summary); writeErr == nil {
 							_ = f.Close()

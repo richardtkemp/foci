@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/tempdir"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/provider"
@@ -163,7 +164,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			switch p.Context {
 			case "raw":
-				tempDir, err := os.MkdirTemp("", "foci-spawn-*")
+				tempDir, err := os.MkdirTemp(tempdir.Dir(), "foci-spawn-*")
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
@@ -390,7 +391,7 @@ func spawnGuardResult(toolName, result string, limit int) string {
 	if len(result) <= limit {
 		return result
 	}
-	f, err := os.CreateTemp("", "spawn-result-"+toolName+"-*.txt")
+	f, err := os.CreateTemp(tempdir.Dir(), "spawn-result-"+toolName+"-*.txt")
 	if err != nil {
 		return result // fallback: return original
 	}

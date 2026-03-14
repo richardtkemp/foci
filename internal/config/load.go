@@ -410,7 +410,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Cache.TTL, "1h")
 	setStringDefault(&cfg.ManaWarnings.Name, "mana")
 	setIntDefault(&cfg.Tools.MaxResultChars, 15000)
-	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci-tool-results")
+	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci/tool-results")
 	setIntDefault(&cfg.Tools.TmuxCols, 300)
 	setIntDefault(&cfg.Tools.TmuxRows, 30)
 	setIntDefaultDefined(&cfg.Tools.ExecAutoBackground, 10, md.IsDefined("tools", "exec_auto_background"))

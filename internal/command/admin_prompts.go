@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/tempdir"
 	"foci/internal/display"
 	"foci/internal/provider"
 	"foci/prompts"
@@ -446,7 +447,7 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, cc CommandC
 	content.WriteString(diff)
 	content.WriteString("\n```\n")
 
-	tmpFile, err := os.CreateTemp("", "prompt-diff-*.md")
+	tmpFile, err := os.CreateTemp(tempdir.Dir(), "prompt-diff-*.md")
 	if err != nil {
 		return Response{}, fmt.Errorf("create temp file: %w", err)
 	}

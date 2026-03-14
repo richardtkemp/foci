@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"foci/internal/log"
+	"foci/internal/tempdir"
 )
 
 // bridgeCounter provides unique socket paths across concurrent exec calls.
@@ -35,8 +36,8 @@ type ExecBridge struct {
 // from the calling agent (used by tools that need session identity).
 func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error) {
 	n := bridgeCounter.Add(1)
-	sockPath := fmt.Sprintf("/tmp/foci-exec-%d-%d.sock", os.Getpid(), n)
-	funcsPath := fmt.Sprintf("/tmp/foci-exec-%d-%d-funcs.sh", os.Getpid(), n)
+	sockPath := fmt.Sprintf("%s/exec-%d-%d.sock", tempdir.Dir(), os.Getpid(), n)
+	funcsPath := fmt.Sprintf("%s/exec-%d-%d-funcs.sh", tempdir.Dir(), os.Getpid(), n)
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -510,7 +511,8 @@ func generateShellFunc(t *Tool) string {
     return 1
   fi
   if [ -z "$file" ] && [ ! -t 0 ]; then
-    file="$(mktemp /tmp/foci-summary-XXXXXX)"
+    mkdir -p /tmp/foci
+    file="$(mktemp /tmp/foci/summary-XXXXXX)"
     cat > "$file"
     trap "rm -f '$file'" EXIT
   fi

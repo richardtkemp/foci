@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	"foci/internal/provision"
+	"foci/internal/tempdir"
 )
 
 func testDeps(agents []AgentInfo, preFlightFn func(string) []string) AgentNewDeps {
 	return AgentNewDeps{
-		ConfigPath:  filepath.Join(os.TempDir(), "test-foci.toml"),
+		ConfigPath:  filepath.Join(tempdir.TestDir(), "test-foci.toml"),
 		DefaultsDir: "",
-		HomeDir:     os.TempDir(),
+		HomeDir:     tempdir.TestDir(),
 		ListFn:      func() []AgentInfo { return agents },
 		PreFlightFn: preFlightFn,
 	}
@@ -520,9 +521,9 @@ func TestRegistryHandleMessageStop(t *testing.T) {
 func TestAgentsNewSubcommand(t *testing.T) {
 	reg := NewRegistry()
 	deps := &AgentNewDeps{
-		ConfigPath:  "/tmp/test.toml",
-		DefaultsDir: "/tmp/defaults",
-		HomeDir:     "/tmp",
+		ConfigPath:  filepath.Join(tempdir.TestDir(), "test.toml"),
+		DefaultsDir: filepath.Join(tempdir.TestDir(), "defaults"),
+		HomeDir:     tempdir.TestDir(),
 		ListFn:      func() []AgentInfo { return nil },
 		Registry:    reg,
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/tempdir"
 	"foci/internal/log"
 )
 
@@ -159,7 +160,7 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 		cmd = "edge-tts"
 	}
 
-	tmpFile, err := os.CreateTemp("", "foci-tts-*.mp3")
+	tmpFile, err := os.CreateTemp(tempdir.Dir(), "foci-tts-*.mp3")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
