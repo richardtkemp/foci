@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -246,7 +245,7 @@ func (r *TurnRenderer) sendWithCompactThinking(response, thinkingText string) {
 
 	sendOpts := &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
-		ReplyMarkup: singleButtonKeyboard("Show thinking", "th:show:0"),
+		ReplyMarkup: singleButtonKeyboard("Show thinking", "th:show"),
 	}
 
 	chunks := splitMessage(responseHTML, 4096)
@@ -260,13 +259,6 @@ func (r *TurnRenderer) sendWithCompactThinking(response, thinkingText string) {
 			r.bot.logger().Errorf("send reply with thinking button: %v", err)
 			return
 		}
-		kb := singleButtonKeyboard("Show thinking", fmt.Sprintf("th:show:%d", sent.MessageId))
-		_, _, _ = r.bot.client.EditMessageText(chunk, &gotgbot.EditMessageTextOpts{
-			ChatId:      r.chatID,
-			MessageId:   sent.MessageId,
-			ParseMode:   "HTML",
-			ReplyMarkup: kb,
-		})
 		r.bot.thinkingStore.Store(sent.MessageId, thinkingEntry{
 			responseHTML: chunk,
 			thinkingText: thinkingText,
@@ -278,7 +270,7 @@ func (r *TurnRenderer) sendWithCompactThinking(response, thinkingText string) {
 // response and a "Show thinking" inline keyboard button.
 func (r *TurnRenderer) editStreamWithThinking(msgID int64, response, thinkingText string) {
 	responseHTML := ConvertToTelegramHTML(response, r.bot.tableOpts())
-	kb := singleButtonKeyboard("Show thinking", fmt.Sprintf("th:show:%d", msgID))
+	kb := singleButtonKeyboard("Show thinking", "th:show")
 	_, _, err := r.bot.client.EditMessageText(responseHTML, &gotgbot.EditMessageTextOpts{
 		ChatId:      r.chatID,
 		MessageId:   msgID,
