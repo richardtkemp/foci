@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,16 @@ import (
 
 	"foci/internal/log"
 )
+
+// tokenResolutionError wraps token resolution failures. These errors should
+// not trigger error backoff because the token can be refreshed at any moment
+// (e.g., background OAuth refresh) and we want to pick it up immediately.
+type tokenResolutionError struct {
+	err error
+}
+
+func (e *tokenResolutionError) Error() string { return e.err.Error() }
+func (e *tokenResolutionError) Unwrap() error { return e.err }
 
 const (
 	// defaultCacheTTL is the default cache duration for usage API responses.
@@ -93,16 +104,18 @@ func (c *UsageClient) Invalidate() {
 }
 
 // resolveToken returns the token to use for usage API requests.
+// Errors are wrapped as tokenResolutionError to distinguish them from API errors.
 func (c *UsageClient) resolveToken() (string, error) {
 	if c.tokenFunc != nil {
 		tok, err := c.tokenFunc()
-		if err == nil {
-			log.KeySuffix("anthropic-usage", tok)
+		if err != nil {
+			return "", &tokenResolutionError{err}
 		}
-		return tok, err
+		log.KeySuffix("anthropic-usage", tok)
+		return tok, nil
 	}
 	if c.oauthToken == "" {
-		return "", fmt.Errorf("OAuth token not configured")
+		return "", &tokenResolutionError{fmt.Errorf("OAuth token not configured")}
 	}
 	log.KeySuffix("anthropic-usage", c.oauthToken)
 	return c.oauthToken, nil
@@ -129,18 +142,23 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 
 	resp, err := c.fetchUsage(ctx)
 	if err != nil {
-		c.mu.Lock()
-		if c.errBackoff == 0 {
-			c.errBackoff = c.cacheTTL
-		} else {
-			c.errBackoff *= 2
+		// Don't apply error backoff for token resolution errors — the token
+		// can be refreshed at any moment and we should retry immediately.
+		var te *tokenResolutionError
+		if !errors.As(err, &te) {
+			c.mu.Lock()
+			if c.errBackoff == 0 {
+				c.errBackoff = c.cacheTTL
+			} else {
+				c.errBackoff *= 2
+			}
+			if c.errBackoff > maxErrBackoff {
+				c.errBackoff = maxErrBackoff
+			}
+			c.lastErr = err
+			c.lastErrAt = time.Now()
+			c.mu.Unlock()
 		}
-		if c.errBackoff > maxErrBackoff {
-			c.errBackoff = maxErrBackoff
-		}
-		c.lastErr = err
-		c.lastErrAt = time.Now()
-		c.mu.Unlock()
 		return nil, err
 	}
 
