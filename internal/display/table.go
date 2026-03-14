@@ -543,6 +543,22 @@ func FormatBytes(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
+// CompactRelativeTime formats a timestamp as a compact relative time string
+// without the " ago" suffix (e.g. "3h", "18m", "now"). Suitable for table columns.
+func CompactRelativeTime(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Minute {
+		return "now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
+}
+
 // RelativeTime formats a timestamp as a relative time string (e.g. "3h ago").
 func RelativeTime(t time.Time) string {
 	d := time.Since(t)

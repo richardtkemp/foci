@@ -188,7 +188,7 @@ func LastCommand() *Command {
 				{Header: "Time"},
 				{Header: "Model"},
 				{Header: "Tokens"},
-				{Header: "Cost", Align: display.AlignRight},
+				{Header: "$ Cost", Align: display.AlignRight},
 				{Header: "Session"},
 			}
 			tableRows := make([][]string, 0, len(order))
@@ -196,10 +196,10 @@ func LastCommand() *Command {
 				e := latest[agent]
 				tableRows = append(tableRows, []string{
 					agent,
-					display.RelativeTime(e.Timestamp),
+					display.CompactRelativeTime(e.Timestamp),
 					e.Model,
 					fmt.Sprintf("in=%d out=%d cR=%d", e.Input, e.Output, e.CacheRead),
-					fmt.Sprintf("$%.4f", e.CostUSD),
+					fmt.Sprintf("%.4f", e.CostUSD),
 					truncateSession(e.Session),
 				})
 			}
