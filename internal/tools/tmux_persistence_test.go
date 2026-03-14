@@ -160,10 +160,20 @@ func TestTmuxPersistOnKill(t *testing.T) {
 
 func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	// Verifies that listing sessions clears stale entries from persisted state when the corresponding tmux sessions no longer exist.
-	// NOT parallel: lists sessions on the shared tmux server which other parallel tests may create/destroy concurrently.
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
+	// Isolated tmux server so listing doesn't see other parallel tests' sessions.
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "tmux.sock")
+	exec.Command("tmux", "-S", sock, "start-server").Run()
+	t.Cleanup(func() {
+		exec.Command("tmux", "-S", sock, "kill-server").Run()
+	})
+
+	orig := tmuxSocketPath
+	tmuxSocketPath = sock
+
+	stateFile := filepath.Join(dir, "state.json")
 	store := state.New(stateFile)
 
 	// Pre-populate state with sessions that no longer exist
@@ -177,6 +187,9 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 
 	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
+	tmuxSocketPath = orig
+	t.Parallel()
+
 	// List should detect stale sessions and clear persisted state
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "list",
@@ -185,8 +198,6 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	// The stale sessions should not appear as "owned" in the output
-	// (the main check is that persisted state is cleared, below)
 
 	// Verify persisted state was cleared
 	var owned map[string]string
