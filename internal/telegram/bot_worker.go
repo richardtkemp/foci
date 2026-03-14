@@ -181,30 +181,52 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	// a toggle button ("compact" mode).
 	thinkingText := thinkingBuf.String()
 
-	// Determine which message to edit with the final response.
-	// The stream message takes priority (it's what the user sees as "in-progress"),
-	// then the tool call preview message.
 	showThinkMode := b.effectiveShowThinking()
 	hasThinking := thinkingText != "" && showThinkMode != "off" && showThinkMode != ""
 
+	// Stream finalization: when streaming delivered the response, edit the stream
+	// message in-place rather than sending a new message alongside a useless preview.
+	if streamMsgID != 0 && len(response) <= 4096 {
+		chatID := qm.msg.Chat.Id
+		switch {
+		case hasThinking && showThinkMode == "compact":
+			b.editStreamWithThinking(streamMsgID, chatID, response, thinkingText)
+		case hasThinking && showThinkMode == "true":
+			b.editStreamWithFullThinking(streamMsgID, chatID, response, thinkingText)
+		default:
+			// No thinking — edit stream message with final HTML.
+			// If edit fails (e.g. "message is not modified"), the stream
+			// already has the content, so just return — no duplicate.
+			htmlResp := ConvertToTelegramHTML(response, b.tableOpts())
+			_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
+				ChatId:    chatID,
+				MessageId: streamMsgID,
+				ParseMode: "HTML",
+			})
+			if editErr != nil {
+				b.logger().Debugf("edit stream final: %v (stream already has content)", editErr)
+			}
+		}
+		return
+	}
+
+	// Stream message exists but response is too long for a single edit — send as
+	// new message(s) and convert the stream message to a truncated preview.
+	if streamMsgID != 0 {
+		if hasThinking && showThinkMode == "true" {
+			b.sendReplyWithFullThinking(qm.msg, response, thinkingText)
+		} else if hasThinking && showThinkMode == "compact" {
+			b.sendReplyWithThinking(qm.msg, response, thinkingText)
+		} else {
+			b.sendReply(qm.msg, response)
+		}
+		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
+		return
+	}
+
+	// No streaming — use tool call preview edit or send a new message.
 	editID := tracker.lastMsgID()
-	if streamMsgID != 0 {
-		editID = streamMsgID
-	}
-
-	// Try to edit an existing message with the final HTML-formatted response.
-	// Works for both stream messages and tool call preview messages.
-	// Skip when thinking will be shown — thinking-aware send functions handle the full reply.
-	var canEditInPlace bool
-	if streamMsgID != 0 {
-		// Stream messages can always be edited (no show_tool_calls mode gate).
-		canEditInPlace = editID != 0 && !hasThinking && len(response) <= 4096
-	} else {
-		// Tool call preview: only edit in preview mode.
-		canEditInPlace = editID != 0 && b.effectiveShowToolCalls() == "preview" && !hasThinking && len(response) <= 4096
-	}
-
-	if canEditInPlace {
+	if editID != 0 && b.effectiveShowToolCalls() == "preview" && !hasThinking && len(response) <= 4096 {
 		htmlResp := ConvertToTelegramHTML(response, b.tableOpts())
 		_, _, editErr := b.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 			ChatId:    qm.msg.Chat.Id,
@@ -217,22 +239,15 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		b.logger().Debugf("edit final response failed, falling back: %v", editErr)
 	}
 
-	// Full thinking: prepend italic thinking + divider to response
-	if showThinkMode == "true" && thinkingText != "" {
+	if hasThinking && showThinkMode == "true" {
 		b.sendReplyWithFullThinking(qm.msg, response, thinkingText)
-		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
-
-	// Compact thinking: send response with "Show thinking" toggle button
-	if showThinkMode == "compact" && thinkingText != "" {
+	if hasThinking && showThinkMode == "compact" {
 		b.sendReplyWithThinking(qm.msg, response, thinkingText)
-		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 		return
 	}
-
 	b.sendReply(qm.msg, response)
-	b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
 }
 
 // editStreamPreview edits the stream message to a truncated preview when the
