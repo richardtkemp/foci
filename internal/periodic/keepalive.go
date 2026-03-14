@@ -173,6 +173,13 @@ func (r *Runner) NotifyInteraction() {
 	r.mu.Unlock()
 }
 
+// NotifyTurnEnd flushes any warnings that were deferred during the agent turn.
+func (r *Runner) NotifyTurnEnd() {
+	if r.warningDispatcher != nil {
+		r.warningDispatcher.FlushPending()
+	}
+}
+
 func (r *Runner) run(ctx context.Context) {
 	defer close(r.done)
 

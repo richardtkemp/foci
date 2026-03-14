@@ -195,6 +195,99 @@ func TestDispatcher_ConcurrentGuard(t *testing.T) {
 	}
 }
 
+func TestDispatcher_SkipsWhenProcessing(t *testing.T) {
+	// Proves that MaybeFire defers dispatch when IsProcessingFn returns true,
+	// leaving warnings in the queue for later FlushPending.
+	q := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue:            q,
+		ActiveInterval:   0,
+		InactiveInterval: 0,
+		DispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+		IsProcessingFn: func() bool { return true },
+	})
+
+	q.Push("WARN", "test", "deferred warning")
+	d.MaybeFire()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("expected 0 dispatches while processing, got %d", got)
+	}
+	if !q.Pending() {
+		t.Errorf("expected warnings to remain in queue")
+	}
+}
+
+func TestDispatcher_FlushPending(t *testing.T) {
+	// Proves that FlushPending dispatches queued warnings without rate-limit checks.
+	q := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue:            q,
+		ActiveInterval:   1 * time.Hour, // would normally block
+		InactiveInterval: 1 * time.Hour,
+		DispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+	})
+
+	q.Push("WARN", "test", "flush me")
+	d.FlushPending()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected 1 dispatch from FlushPending, got %d", got)
+	}
+}
+
+func TestDispatcher_FiresWhenNotProcessing(t *testing.T) {
+	// Proves that MaybeFire dispatches normally when IsProcessingFn returns false.
+	q := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue:            q,
+		ActiveInterval:   0,
+		InactiveInterval: 0,
+		DispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+		},
+		IsProcessingFn: func() bool { return false },
+	})
+
+	q.Push("WARN", "test", "should fire")
+	d.MaybeFire()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("expected 1 dispatch when not processing, got %d", got)
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		found := false

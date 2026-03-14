@@ -76,7 +76,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 		agentID := acfg.ID
 		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
-			Queue: inst.ag.Warnings(),
+			Queue:          inst.ag.Warnings(),
+			IsProcessingFn: inst.ag.IsProcessing,
 			FormatFn: func(body string) string {
 				return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
 			},

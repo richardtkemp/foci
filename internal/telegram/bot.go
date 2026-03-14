@@ -77,6 +77,7 @@ type Bot struct {
 	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
 	OnUserMessage      func()                            // fires on each inbound user message (for keepalive interaction tracking)
 	OnTurnComplete     func()                            // fires after each agent turn completes (for cache warming tracking)
+	OnTurnEnd          func()                            // fires after turn's final message is sent and cleanup is done
 	botToken           string                            // for building file download URLs
 
 	transcriber       voice.STT // nil = voice notes not supported
@@ -113,6 +114,9 @@ type Bot struct {
 	steerMode  bool       // steer mode enabled: user messages route to buffer during active turns
 	steerMu    sync.Mutex // protects steerParts
 	steerParts []string   // pending steer messages; drained atomically
+
+	pendingNotifsMu sync.Mutex // protects pendingNotifs
+	pendingNotifs   []string   // notifications buffered during active turns; drained after turn ends
 
 	streamOutput         bool          // stream model output to Telegram in real-time
 	streamUpdateInterval time.Duration // duration between Telegram message edits during streaming

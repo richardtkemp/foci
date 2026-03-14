@@ -274,6 +274,8 @@ Subcommands:
 				func() { inst.kaRunner.NotifyInteraction() })
 			plat.SetLifecycleCallback(acfg.ID, platform.OnTurnComplete,
 				func() { inst.kaRunner.NotifyCacheWarmed() })
+			plat.SetLifecycleCallback(acfg.ID, platform.OnTurnEnd,
+				func() { inst.kaRunner.NotifyTurnEnd() })
 		}
 
 		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)

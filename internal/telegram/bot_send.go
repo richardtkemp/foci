@@ -130,12 +130,29 @@ func (b *Bot) editStreamWithFullThinking(msgID, chatID int64, response, thinking
 // SendNotification sends a plain text notification to the default chat.
 // Used for system alerts (cache bust, etc.) — not an agent turn, no tokens spent.
 // Silently skips empty or whitespace-only messages.
+// If an agent turn is active, the notification is buffered and sent after the turn ends.
 func (b *Bot) SendNotification(text string) {
 	if strings.TrimSpace(text) == "" {
 		b.logger().Debugf("skipping empty notification")
 		return
 	}
 
+	// Buffer during active turns to avoid interrupting streaming output.
+	b.turnMu.Lock()
+	active := b.turnCancel != nil
+	b.turnMu.Unlock()
+	if active {
+		b.pendingNotifsMu.Lock()
+		b.pendingNotifs = append(b.pendingNotifs, text)
+		b.pendingNotifsMu.Unlock()
+		return
+	}
+
+	b.sendNotificationImmediate(text)
+}
+
+// sendNotificationImmediate sends a notification directly to the default chat.
+func (b *Bot) sendNotificationImmediate(text string) {
 	chatID := b.defaultChatID()
 	if chatID == 0 {
 		// Fall back to last known chat (e.g. when no state store is configured).
@@ -150,6 +167,20 @@ func (b *Bot) SendNotification(text string) {
 
 	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
 		b.logger().Errorf("send notification: %s", b.sanitizeError(err))
+	}
+}
+
+// drainPendingNotifications sends all buffered notifications to the default chat.
+// Called after an agent turn ends. Atomically swaps the buffer to nil so new
+// notifications arriving during drain go directly via sendNotificationImmediate.
+func (b *Bot) drainPendingNotifications() {
+	b.pendingNotifsMu.Lock()
+	notifs := b.pendingNotifs
+	b.pendingNotifs = nil
+	b.pendingNotifsMu.Unlock()
+
+	for _, text := range notifs {
+		b.sendNotificationImmediate(text)
 	}
 }
 
