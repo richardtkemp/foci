@@ -17,11 +17,13 @@ func testRenderer(b *Bot, chatID int64) *TurnRenderer {
 		Chat: gotgbot.Chat{Id: chatID},
 		From: &gotgbot.User{Id: 1},
 	}
+	d := b.resolveDisplay()
 	return &TurnRenderer{
 		bot:     b,
 		msg:     msg,
 		chatID:  chatID,
-		tracker: &toolCallTracker{bot: b, chatID: chatID},
+		display: d,
+		tracker: &toolCallTracker{bot: b, chatID: chatID, display: d},
 	}
 }
 

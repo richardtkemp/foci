@@ -249,7 +249,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 	// message exists.
 	mock := &mockClient{}
 	b := &Bot{client: mock, showToolCalls: "preview"}
-	tracker := &toolCallTracker{bot: b, chatID: 12345}
+	tracker := &toolCallTracker{bot: b, chatID: 12345, display: b.resolveDisplay()}
 
 	// No message → no delete.
 	tracker.cleanupPreview()
@@ -274,6 +274,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 
 	// In "full" mode, cleanupPreview should not delete.
 	b.showToolCalls = "full"
+	tracker.display = b.resolveDisplay()
 	tracker.mu.Lock()
 	tracker.msgID = 99
 	tracker.mu.Unlock()
