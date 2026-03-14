@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -22,6 +24,126 @@ type ConfigField struct {
 	Key         string    // TOML key within the section
 	Type        FieldType // value type
 	Description string    // one-line description
+}
+
+// Constraint defines validation rules for a config field value.
+type Constraint struct {
+	Min     *float64 // minimum (inclusive), for FieldInt/FieldFloat
+	Max     *float64 // maximum (inclusive), for FieldInt/FieldFloat
+	Choices []string // valid values, for FieldString (case-insensitive match)
+}
+
+func fptr(v float64) *float64 { return &v }
+
+// fieldConstraints maps "section.key" to its constraint.
+// Fields not in this map accept any value that passes type parsing.
+var fieldConstraints = map[string]Constraint{
+	// Float [0,1]
+	"sessions.compaction_threshold": {Min: fptr(0), Max: fptr(1)},
+	"memory.conversation_weight":   {Min: fptr(0), Max: fptr(1)},
+
+	// Int ranges
+	"http.port":                        {Min: fptr(1), Max: fptr(65535)},
+	"usage_warnings.restore_threshold": {Min: fptr(0), Max: fptr(100)},
+
+	// Int >= 0
+	"sessions.compaction_max_tokens":       {Min: fptr(0)},
+	"sessions.compaction_min_messages":     {Min: fptr(0)},
+	"sessions.compaction_preserve_messages": {Min: fptr(0)},
+
+	// String choices
+	"logging.level":            {Choices: []string{"DEBUG", "INFO", "WARN", "ERROR"}},
+	"cache.strategy":           {Choices: []string{"auto", "explicit"}},
+	"cache.ttl":                {Choices: []string{"5m", "1h"}},
+	"telegram.show_tool_calls": {Choices: []string{"off", "preview", "full"}},
+	"telegram.show_thinking":   {Choices: []string{"off", "compact", "true"}},
+	"telegram.table_style":     {Choices: []string{"pretty", "markdown"}},
+	"defaults.search_provider": {Choices: []string{"brave", "anthropic"}},
+	"defaults.fetch_provider":  {Choices: []string{"anthropic", "builtin"}},
+	"defaults.compaction_effort": {Choices: []string{"low", "medium", "high"}},
+	"anthropic.effort":         {Choices: []string{"low", "medium", "high"}},
+	"anthropic.thinking":       {Choices: []string{"adaptive", "off"}},
+	"gemini.thinking":          {Choices: []string{"adaptive", "off"}},
+	"agent.effort":             {Choices: []string{"low", "medium", "high"}},
+	"agent.thinking":           {Choices: []string{"adaptive", "off"}},
+	"agent.show_tool_calls":    {Choices: []string{"off", "preview", "full"}},
+	"agent.show_thinking":      {Choices: []string{"off", "compact", "true"}},
+	"agent.compaction_effort":  {Choices: []string{"low", "medium", "high"}},
+	"agent.search_provider":    {Choices: []string{"brave", "anthropic"}},
+	"agent.fetch_provider":     {Choices: []string{"anthropic", "builtin"}},
+	"tools.search_provider":    {Choices: []string{"brave", "anthropic"}},
+	"tools.fetch_provider":     {Choices: []string{"anthropic", "builtin"}},
+}
+
+// GetConstraint returns the constraint for this field, or nil if unconstrained.
+func (f ConfigField) GetConstraint() *Constraint {
+	c, ok := fieldConstraints[f.Section+"."+f.Key]
+	if !ok {
+		return nil
+	}
+	return &c
+}
+
+// ValidateValue checks raw user input against this field's constraint.
+// It returns nil if the value is acceptable (or the field has no constraint).
+func (f ConfigField) ValidateValue(raw string) error {
+	c := f.GetConstraint()
+	if c == nil {
+		return nil
+	}
+
+	if len(c.Choices) > 0 {
+		lower := strings.ToLower(raw)
+		for _, ch := range c.Choices {
+			if strings.ToLower(ch) == lower {
+				return nil
+			}
+		}
+		return fmt.Errorf("must be one of: %s", strings.Join(c.Choices, ", "))
+	}
+
+	// Numeric range check (works for both FieldInt and FieldFloat).
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil // type parsing will catch this separately
+	}
+	if c.Min != nil && v < *c.Min {
+		return fmt.Errorf("must be >= %s", formatNum(*c.Min))
+	}
+	if c.Max != nil && v > *c.Max {
+		return fmt.Errorf("must be <= %s", formatNum(*c.Max))
+	}
+	return nil
+}
+
+// ConstraintHint returns a human-readable hint string, e.g. "0–1" or "off, preview, full".
+// Returns "" if the field has no constraint.
+func (f ConfigField) ConstraintHint() string {
+	c := f.GetConstraint()
+	if c == nil {
+		return ""
+	}
+	if len(c.Choices) > 0 {
+		return strings.Join(c.Choices, ", ")
+	}
+	if c.Min != nil && c.Max != nil {
+		return formatNum(*c.Min) + "–" + formatNum(*c.Max)
+	}
+	if c.Min != nil {
+		return ">= " + formatNum(*c.Min)
+	}
+	if c.Max != nil {
+		return "<= " + formatNum(*c.Max)
+	}
+	return ""
+}
+
+// formatNum formats a float64 as an integer string when possible.
+func formatNum(v float64) string {
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 // LookupField finds a field by "section.key" (case-insensitive).

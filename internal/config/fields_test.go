@@ -106,6 +106,102 @@ func TestFieldsInSection(t *testing.T) {
 	}
 }
 
+func TestValidateValueFloat(t *testing.T) {
+	// Proves float fields with [0,1] constraint accept valid fractions and reject
+	// values outside the range.
+	f, ok := LookupField("sessions.compaction_threshold")
+	if !ok {
+		t.Fatal("field not found")
+	}
+
+	for _, v := range []string{"0", "0.5", "0.8", "1"} {
+		if err := f.ValidateValue(v); err != nil {
+			t.Errorf("ValidateValue(%q) = %v, want nil", v, err)
+		}
+	}
+	for _, v := range []string{"80", "-1", "1.5"} {
+		if err := f.ValidateValue(v); err == nil {
+			t.Errorf("ValidateValue(%q) = nil, want error", v)
+		}
+	}
+}
+
+func TestValidateValueInt(t *testing.T) {
+	// Proves int fields with range constraints accept valid values and reject
+	// values outside the range (e.g. port 0 or 70000).
+	f, ok := LookupField("http.port")
+	if !ok {
+		t.Fatal("field not found")
+	}
+
+	for _, v := range []string{"1", "8080", "65535"} {
+		if err := f.ValidateValue(v); err != nil {
+			t.Errorf("ValidateValue(%q) = %v, want nil", v, err)
+		}
+	}
+	for _, v := range []string{"0", "70000"} {
+		if err := f.ValidateValue(v); err == nil {
+			t.Errorf("ValidateValue(%q) = nil, want error", v)
+		}
+	}
+}
+
+func TestValidateValueChoices(t *testing.T) {
+	// Proves string fields with choice constraints accept valid values
+	// (case-insensitive) and reject unknown values.
+	f, ok := LookupField("logging.level")
+	if !ok {
+		t.Fatal("field not found")
+	}
+
+	for _, v := range []string{"DEBUG", "debug", "Info", "WARN", "error"} {
+		if err := f.ValidateValue(v); err != nil {
+			t.Errorf("ValidateValue(%q) = %v, want nil", v, err)
+		}
+	}
+	if err := f.ValidateValue("verbose"); err == nil {
+		t.Error("ValidateValue(\"verbose\") = nil, want error")
+	}
+}
+
+func TestValidateValueNoConstraint(t *testing.T) {
+	// Proves fields without constraints accept any value.
+	f, ok := LookupField("llm.model")
+	if !ok {
+		t.Fatal("field not found")
+	}
+
+	for _, v := range []string{"anything", "123", "true"} {
+		if err := f.ValidateValue(v); err != nil {
+			t.Errorf("ValidateValue(%q) = %v, want nil", v, err)
+		}
+	}
+}
+
+func TestConstraintHint(t *testing.T) {
+	// Proves ConstraintHint returns the correct human-readable hint string
+	// for range constraints and choice constraints.
+	tests := []struct {
+		field string
+		want  string
+	}{
+		{"sessions.compaction_threshold", "0–1"},
+		{"http.port", "1–65535"},
+		{"sessions.compaction_max_tokens", ">= 0"},
+		{"logging.level", "DEBUG, INFO, WARN, ERROR"},
+		{"llm.model", ""},
+	}
+	for _, tt := range tests {
+		f, ok := LookupField(tt.field)
+		if !ok {
+			t.Fatalf("field %q not found", tt.field)
+		}
+		if got := f.ConstraintHint(); got != tt.want {
+			t.Errorf("ConstraintHint(%q) = %q, want %q", tt.field, got, tt.want)
+		}
+	}
+}
+
 func TestFieldsMatchStructTags(t *testing.T) {
 	// Proves every field registered in configFields corresponds to a real TOML-tagged
 	// struct field in the relevant config struct, guarding against registry drift.
