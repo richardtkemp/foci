@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -132,12 +133,25 @@ func TestTmuxReadDefault(t *testing.T) {
 
 func TestTmuxKill(t *testing.T) {
 	// Verifies that killing a session removes it from the list, confirming kill actually terminates and deregisters the session.
-	t.Parallel()
 	tmuxAvailable(t)
+
+	// Isolated tmux server so the kill path's maybeKillTmuxServer
+	// can't race with other parallel tests on the shared server.
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "tmux.sock")
+	exec.Command("tmux", "-S", sock, "start-server").Run()
+	t.Cleanup(func() {
+		exec.Command("tmux", "-S", sock, "kill-server").Run()
+	})
+
+	orig := tmuxSocketPath
+	tmuxSocketPath = sock
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	tmuxSocketPath = orig
+
+	t.Parallel()
 
 	name := "foci-test-kill"
-	tmuxSetupWithSentinel(t, name)
 
 	// Start
 	params, _ := json.Marshal(map[string]interface{}{

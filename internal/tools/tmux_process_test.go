@@ -15,12 +15,25 @@ import (
 
 func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	// Verifies that killing a tmux session also terminates all descendant processes, not just the pane shell, preventing orphaned processes.
-	t.Parallel()
 	tmuxAvailable(t)
+
+	// Isolated tmux server so the kill path's maybeKillTmuxServer
+	// can't race with other parallel tests on the shared server.
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "tmux.sock")
+	exec.Command("tmux", "-S", sock, "start-server").Run()
+	t.Cleanup(func() {
+		exec.Command("tmux", "-S", sock, "kill-server").Run()
+	})
+
+	orig := tmuxSocketPath
+	tmuxSocketPath = sock
 	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	tmuxSocketPath = orig
+
+	t.Parallel()
 
 	name := "foci-test-killproc"
-	tmuxSetupWithSentinel(t, name)
 
 	// Start a session that spawns a child process
 	params, _ := json.Marshal(map[string]interface{}{
@@ -36,7 +49,8 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Get the pane PID before killing
-	pids := testTmuxInstance().tmuxSessionPIDs(name)
+	inst := &tmuxInstance{socketPath: sock}
+	pids := inst.tmuxSessionPIDs(name)
 	if len(pids) == 0 {
 		t.Fatal("no pane PIDs found before kill")
 	}
