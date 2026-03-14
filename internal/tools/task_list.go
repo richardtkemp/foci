@@ -59,7 +59,7 @@ type TaskNotifyFunc func(string, string)
 func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNotifyFunc) *Tool {
 	return &Tool{
 		Name:        "task_list",
-		Description: "Track tasks for the current work. Survives compaction. Use create/get/update/list to manage tasks. For batch create, put one task per line in subject. When all tasks are completed, the list is automatically cleared.",
+		Description: "Track tasks for the current work. Survives compaction. Use create/get/update/list to manage tasks. When all tasks are completed, the list is automatically cleared.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -72,13 +72,25 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNot
 					"type": "integer",
 					"description": "Task ID (required for 'get' and 'update')"
 				},
+				"tasks": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"subject": { "type": "string" },
+							"description": { "type": "string" }
+						},
+						"required": ["subject"]
+					},
+					"description": "Tasks to create (required for 'create'). Each item has subject (required) and description (optional)."
+				},
 				"subject": {
 					"type": "string",
-					"description": "Task title (required for 'create'; optional for 'update'). For batch create, put one task per line — each line becomes a separate task."
+					"description": "New task title (optional for 'update')"
 				},
 				"description": {
 					"type": "string",
-					"description": "Task details (optional for 'create' and 'update')"
+					"description": "New task details (optional for 'update')"
 				},
 				"status": {
 					"type": "string",
@@ -90,11 +102,12 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNot
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
-				Action      string `json:"action"`
-				ID          int    `json:"id"`
-				Subject     string `json:"subject"`
-				Description string `json:"description"`
-				Status      string `json:"status"`
+				Action      string      `json:"action"`
+				ID          int         `json:"id"`
+				Tasks       []taskInput `json:"tasks"`
+				Subject     string      `json:"subject"`
+				Description string      `json:"description"`
+				Status      string      `json:"status"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return ToolResult{}, fmt.Errorf("parse params: %w", err)
@@ -104,7 +117,7 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNot
 
 			switch p.Action {
 			case "create":
-				return taskCreate(store, agentID, p.Subject, p.Description, sk, notify)
+				return taskCreate(store, agentID, p.Tasks, sk, notify)
 			case "get":
 				return taskGet(store, agentID, p.ID)
 			case "update":
@@ -118,43 +131,45 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNot
 	}
 }
 
-func taskCreate(store *memory.TaskListStore, agentID, subject, description, sk string, notify TaskNotifyFunc) (ToolResult, error) {
-	if subject == "" {
-		return ToolResult{}, fmt.Errorf("subject is required for create")
+type taskInput struct {
+	Subject     string `json:"subject"`
+	Description string `json:"description"`
+}
+
+func taskCreate(store *memory.TaskListStore, agentID string, tasks []taskInput, sk string, notify TaskNotifyFunc) (ToolResult, error) {
+	if len(tasks) == 0 {
+		return ToolResult{}, fmt.Errorf("tasks array is required for create")
 	}
 
-	// Split by newlines for batch create.
-	lines := strings.Split(subject, "\n")
-	var subjects []string
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			subjects = append(subjects, line)
+	if len(tasks) == 1 {
+		t := tasks[0]
+		if t.Subject == "" {
+			return ToolResult{}, fmt.Errorf("subject is required for each task")
 		}
-	}
-
-	if len(subjects) == 1 {
-		id, err := store.Create(agentID, subjects[0], description)
+		id, err := store.Create(agentID, t.Subject, t.Description)
 		if err != nil {
 			return ToolResult{}, fmt.Errorf("create task: %w", err)
 		}
 		if notify != nil && sk != "" {
-			notify(sk, fmt.Sprintf("📋 Created #%d: %s", id, subjects[0]))
+			notify(sk, fmt.Sprintf("📋 Created #%d: %s", id, t.Subject))
 		}
-		return TextResult(fmt.Sprintf("Created task #%d: %s", id, subjects[0])), nil
+		return TextResult(fmt.Sprintf("Created task #%d: %s", id, t.Subject)), nil
 	}
 
-	// Batch create — one task per non-empty line, description ignored.
+	// Batch create.
 	var b strings.Builder
-	for _, subj := range subjects {
-		id, err := store.Create(agentID, subj, "")
-		if err != nil {
-			return ToolResult{}, fmt.Errorf("create task %q: %w", subj, err)
+	for _, t := range tasks {
+		if t.Subject == "" {
+			return ToolResult{}, fmt.Errorf("subject is required for each task")
 		}
-		fmt.Fprintf(&b, "Created task #%d: %s\n", id, subj)
+		id, err := store.Create(agentID, t.Subject, t.Description)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("create task %q: %w", t.Subject, err)
+		}
+		fmt.Fprintf(&b, "Created task #%d: %s\n", id, t.Subject)
 	}
 	if notify != nil && sk != "" {
-		notify(sk, fmt.Sprintf("📋 Created %d tasks", len(subjects)))
+		notify(sk, fmt.Sprintf("📋 Created %d tasks", len(tasks)))
 	}
 	return TextResult(strings.TrimRight(b.String(), "\n")), nil
 }
