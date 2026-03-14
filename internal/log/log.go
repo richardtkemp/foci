@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/modelinfo"
 	"foci/internal/sqlite"
 )
 
@@ -505,23 +506,13 @@ func API(entry APIEntry) {
 	if entry.Provider == "" {
 		if strings.HasPrefix(entry.Model, "gemini-") {
 			entry.Provider = "gemini"
-		} else if isOpenAIModel(entry.Model) {
+		} else if modelinfo.IsOpenAI(entry.Model) {
 			entry.Provider = "openai"
 		} else if strings.HasPrefix(entry.Model, "claude-") {
 			entry.Provider = "anthropic"
 		}
 	}
 	std.api(entry)
-}
-
-// isOpenAIModel returns true if the model name looks like an OpenAI model.
-func isOpenAIModel(model string) bool {
-	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
-		if strings.HasPrefix(model, p) {
-			return true
-		}
-	}
-	return false
 }
 
 func Payload(entry PayloadEntry) {
@@ -577,34 +568,5 @@ func SetAPIWriter(f *os.File) {
 
 // CalculateCost returns the estimated cost in USD for an API request.
 func CalculateCost(model string, input, output, cacheRead, cacheWrite int) float64 {
-	type pricing struct {
-		input, output, cacheRead, cacheWrite float64 // per million tokens
-	}
-
-	prices := map[string]pricing{
-		"claude-haiku-4-5":  {1.00, 5.00, 0.10, 1.25},
-		"claude-sonnet-4-5": {3.00, 15.00, 0.30, 3.75},
-		"claude-opus-4-6":   {15.00, 75.00, 1.50, 18.75},
-		"gemini-2.5-pro":    {1.25, 10.00, 0.315, 0},
-		"gemini-2.5-flash":  {0.15, 0.60, 0.0375, 0},
-		"gemini-2.0-flash":  {0.10, 0.40, 0.025, 0},
-	}
-
-	p, ok := prices[model]
-	if !ok {
-		if strings.HasPrefix(model, "gemini-") {
-			p = prices["gemini-2.5-flash"]
-		} else if isOpenAIModel(model) {
-			// OpenAI models: use approximate pricing
-			p = pricing{5.00, 15.00, 0, 0}
-		} else {
-			p = prices["claude-haiku-4-5"]
-		}
-	}
-
-	mtok := 1_000_000.0
-	return float64(input)/mtok*p.input +
-		float64(output)/mtok*p.output +
-		float64(cacheRead)/mtok*p.cacheRead +
-		float64(cacheWrite)/mtok*p.cacheWrite
+	return modelinfo.Cost(model, input, output, cacheRead, cacheWrite)
 }

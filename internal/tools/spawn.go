@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/tempdir"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/tempdir"
 )
 
 // SystemBlocksProvider returns the system prompt blocks (for full context mode).
@@ -215,17 +215,6 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			}
 		},
 	}
-}
-
-// isOpenAIModel returns true if the model name looks like an OpenAI model.
-// Kept for use in summary.go.
-func isOpenAIModel(model string) bool {
-	for _, p := range []string{"gpt-", "o1", "o3", "o4", "chatgpt-"} {
-		if strings.HasPrefix(model, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // spawnToolSet builds API tool definitions and a name→Tool map from the

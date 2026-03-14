@@ -87,29 +87,3 @@ func TestKeySuffix(t *testing.T) {
 	KeySuffix("test", "")       // empty — no-op
 	KeySuffix("test", "sk-1234") // long enough and enabled — logs (no crash)
 }
-
-func TestIsOpenAIModel(t *testing.T) {
-	// Verifies that model names are correctly identified as OpenAI or not,
-	// covering gpt-, o1/o3/o4 prefixes, chatgpt- prefix, and non-OpenAI models.
-	tests := []struct {
-		model string
-		want  bool
-	}{
-		{"gpt-4", true},
-		{"gpt-3.5-turbo", true},
-		{"o1", true},
-		{"o3", true},
-		{"o4", true},
-		{"chatgpt-4", true},
-		{"claude-3-sonnet", false},
-		{"gemini-2-flash", false},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		got := isOpenAIModel(tt.model)
-		if got != tt.want {
-			t.Errorf("isOpenAIModel(%q) = %v, want %v", tt.model, got, tt.want)
-		}
-	}
-}

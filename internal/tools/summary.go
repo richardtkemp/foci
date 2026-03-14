@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -32,7 +33,7 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 	if strings.HasPrefix(agentModelID, "gemini-") {
 		summaryAlias = "flash"
 		defaultFormat = "gemini"
-	} else if isOpenAIModel(agentModelID) {
+	} else if modelinfo.IsOpenAI(agentModelID) {
 		summaryAlias = "gpt4o"
 		defaultFormat = "openai"
 	}
