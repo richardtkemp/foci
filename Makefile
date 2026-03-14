@@ -13,18 +13,20 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
 
 all: build cli foci-call
 
+BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
+
 build:
 	@mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/foci-gw ./cmd/foci-gw
+	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-gw ./cmd/foci-gw
 	@command -v upx >/dev/null 2>&1 && upx -q bin/foci-gw || true
 
 cli:
 	@mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/foci ./cmd/foci
+	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci ./cmd/foci
 
 foci-call:
 	@mkdir -p bin
-	go build -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
+	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
 
 test:
 	go test -p=$(NPROC) ./...
