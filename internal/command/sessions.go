@@ -61,7 +61,7 @@ func SessionsCommand() *Command {
 					"  index [filters]   Query session index (all agents)\n\n" +
 					"Index filters: type (chat/spawn/cron/multiball/branch),\n" +
 					"  status (active/compacted/archived/cleared/all), duration (3d/4h),\n" +
-					"  count (5/10) — show only the N most recent sessions"}, nil
+					"  count (5/20) — show only the N most recent (default: 10)"}, nil
 
 			case "list":
 				text, err := sessionsListCmd(cc, req.ChatID)
@@ -318,7 +318,6 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 		SessionType: opts.TypeFilter,
 		Status:      opts.StatusFilter,
 		MaxAge:      opts.MaxAge,
-		Limit:       50,
 	}
 	entries, err := cc.SessionIndex.Query(qopts)
 	if err != nil {
@@ -345,8 +344,12 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 	})
 
 	totalCount := len(entries)
-	if opts.MaxCount > 0 && opts.MaxCount < len(entries) {
-		entries = entries[:opts.MaxCount]
+	displayCount := opts.MaxCount
+	if displayCount == 0 {
+		displayCount = 10
+	}
+	if displayCount < len(entries) {
+		entries = entries[:displayCount]
 	}
 
 	cols := []display.Column{
@@ -365,10 +368,10 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 		}
 		parent := "—"
 		if e.ParentSessionKey != "" {
-			parent = shortenSessionKey(e.ParentSessionKey)
+			parent = e.ParentSessionKey
 		}
 		tableRows[i] = []string{
-			shortenSessionKey(e.SessionKey),
+			e.SessionKey,
 			statusEmoji(string(e.Status)),
 			activity,
 			parent,
@@ -390,7 +393,7 @@ func sessionsIndexCmd(cc CommandContext, opts SessionIndexOpts) (string, error) 
 	}
 
 	countDesc := fmt.Sprintf("%d sessions", len(entries))
-	if opts.MaxCount > 0 && opts.MaxCount < totalCount {
+	if len(entries) < totalCount {
 		countDesc = fmt.Sprintf("%d of %d sessions", len(entries), totalCount)
 	}
 
@@ -413,22 +416,3 @@ func statusEmoji(status string) string {
 	}
 }
 
-func shortenSessionKey(key string) string {
-	parts := strings.Split(key, "/")
-	if len(parts) < 2 {
-		return key
-	}
-	typeID := parts[1]
-	if len(typeID) > 4 {
-		typeID = typeID[:4] + "…"
-	}
-	short := parts[0] + "/" + typeID
-	if len(parts) >= 4 {
-		child := parts[3]
-		if len(child) > 4 {
-			child = child[:4] + "…"
-		}
-		short += "/" + child
-	}
-	return short
-}

@@ -368,7 +368,7 @@ func TestSessionsIndexWithResults(t *testing.T) {
 	if !strings.Contains(result.Text, "3 sessions") {
 		t.Errorf("expected 3 sessions with 'all', got %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "bot/ispa") {
+	if !strings.Contains(result.Text, "bot/ispawn-456/1000") {
 		t.Errorf("expected spawn session in output, got %q", result.Text)
 	}
 
@@ -493,30 +493,6 @@ func TestSessionsListCurrentMarker(t *testing.T) {
 	}
 }
 
-// TestShortenSessionKey verifies the shortenSessionKey helper's abbreviation
-// logic using a table of inputs: long chat/independent IDs are truncated to
-// the agent plus a 4-char prefix with ellipsis, branch children are similarly
-// truncated, short IDs are kept intact without ellipsis, and keys with no
-// slash separator are returned verbatim.
-func TestShortenSessionKey(t *testing.T) {
-	// Verifies that session keys are abbreviated for table display:
-	// keeps agent + truncated typeID, drops versionTS, truncates children.
-	tests := []struct {
-		input, want string
-	}{
-		{"scout/c5970082313/1772794601", "scout/c597…"},                              // long chat ID truncated
-		{"mybot/i1709596800/1709596800", "mybot/i170…"},                              // independent truncated
-		{"bot/c123/1000/b1772795000", "bot/c123/b177…"},                              // branch child truncated
-		{"bot/c123/1000", "bot/c123"},                                                 // short ID, no truncation
-		{"raw-key", "raw-key"},                                                        // no slash, returned as-is
-	}
-	for _, tt := range tests {
-		got := shortenSessionKey(tt.input)
-		if got != tt.want {
-			t.Errorf("shortenSessionKey(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
 
 // TestSessionsIndexSortedByLastActive verifies that the "index" subcommand
 // sorts results by LastActivityAt in descending order (most recent first). Three
@@ -602,8 +578,8 @@ func TestSessionsIndexSortFallsBackToCreatedAt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	newIdx := strings.Index(result.Text, "bot/iact…")
-	oldIdx := strings.Index(result.Text, "bot/icre…")
+	newIdx := strings.Index(result.Text, "bot/iactive-new/1000")
+	oldIdx := strings.Index(result.Text, "bot/icreated-old/1000")
 	if newIdx == -1 || oldIdx == -1 {
 		t.Fatalf("expected both sessions in output, got %q", result.Text)
 	}
