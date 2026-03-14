@@ -69,7 +69,7 @@ func (s *Store) RepairOrphans() (int, error) {
 		// Build synthetic tool_result message
 		var results []provider.ContentBlock
 		for _, id := range toolUseIDs {
-			results = append(results, provider.ToolResultBlock(id, "Tool call interrupted by service restart", true))
+			results = append(results, provider.ToolResultBlock(id, "Tool call interrupted", true))
 		}
 		repairMsg := provider.Message{Role: "user", Content: results}
 

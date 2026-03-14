@@ -32,7 +32,7 @@ func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 
 	var results []provider.ContentBlock
 	for _, id := range toolUseIDs {
-		results = append(results, provider.ToolResultBlock(id, "Tool call interrupted by service restart", true))
+		results = append(results, provider.ToolResultBlock(id, "Tool call interrupted", true))
 	}
 	return &provider.Message{Role: "user", Content: results}
 }
