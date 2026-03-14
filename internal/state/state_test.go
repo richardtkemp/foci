@@ -365,6 +365,58 @@ func TestDeleteThenGet(t *testing.T) {
 	}
 }
 
+// TestDeleteKeys tests batch deletion of multiple keys with a single disk write.
+func TestDeleteKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := New(path)
+
+	s.Set("a", 1)
+	s.Set("b", 2)
+	s.Set("c", 3)
+	s.Set("d", 4)
+
+	if err := s.DeleteKeys([]string{"a", "c"}); err != nil {
+		t.Fatalf("DeleteKeys: %v", err)
+	}
+
+	var val int
+	if s.Get("a", &val) {
+		t.Error("key 'a' should be deleted")
+	}
+	if !s.Get("b", &val) || val != 2 {
+		t.Error("key 'b' should still exist")
+	}
+	if s.Get("c", &val) {
+		t.Error("key 'c' should be deleted")
+	}
+	if !s.Get("d", &val) || val != 4 {
+		t.Error("key 'd' should still exist")
+	}
+
+	// Verify persistence
+	s2 := New(path)
+	s2.Load()
+	if s2.Get("a", &val) {
+		t.Error("key 'a' should be deleted after reload")
+	}
+	if !s2.Get("b", &val) {
+		t.Error("key 'b' should survive reload")
+	}
+}
+
+// TestDeleteKeysEmpty tests that empty batch deletion is a no-op.
+func TestDeleteKeysEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := New(path)
+
+	if err := s.DeleteKeys(nil); err != nil {
+		t.Fatalf("DeleteKeys(nil): %v", err)
+	}
+	if err := s.DeleteKeys([]string{}); err != nil {
+		t.Fatalf("DeleteKeys([]): %v", err)
+	}
+}
+
 // TestSetMultipleUpdatesSameKey tests overwriting a key
 func TestSetMultipleUpdatesSameKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")

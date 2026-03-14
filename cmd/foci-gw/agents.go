@@ -646,6 +646,14 @@ func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
 		return ""
 	}
 
+	// Check legacy colon-separated key format and migrate if found (self-healing)
+	legacyKey := "agent:" + acfg.ID + ":first_run_completed"
+	if stateStore.Get(legacyKey, &completed) && completed {
+		_ = stateStore.Set(key, true)
+		_ = stateStore.Delete(legacyKey)
+		return ""
+	}
+
 	// First run — inject the onboarding prompt
 	prompt := prompts.FirstRun()
 	if prompt == "" {
