@@ -56,7 +56,7 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 		t.Errorf("expected value prompt, got %q", resp)
 	}
 	if !strings.Contains(resp, "Current: not set") {
-		t.Errorf("expected 'Current: not set' (no GetValueFn), got %q", resp)
+		t.Errorf("expected 'Current: not set' (no EffectiveValueFn), got %q", resp)
 	}
 	if !strings.Contains(resp, "/stop") {
 		t.Errorf("expected /stop cancel hint, got %q", resp)
@@ -85,16 +85,16 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 }
 
-// TestConfigSetWizardShowsCurrentValue verifies the wizard displays the current
-// config file value when stepping to the value prompt, so the user knows what
-// they're replacing.
+// TestConfigSetWizardShowsCurrentValue verifies the wizard displays the
+// effective running value (which includes defaults) when prompting for a new
+// value, so the user knows what they're replacing.
 func TestConfigSetWizardShowsCurrentValue(t *testing.T) {
 	deps := testConfigSetDeps(nil)
-	deps.GetValueFn = func(path string, target config.SetTarget) (string, error) {
-		if target.Section == "sessions" && target.Key == "compaction_threshold" {
-			return "0.7", nil
+	deps.EffectiveValueFn = func(section, key string) string {
+		if section == "sessions" && key == "compaction_threshold" {
+			return "0.7"
 		}
-		return "", nil
+		return ""
 	}
 
 	w := newConfigSetWizard(deps)
