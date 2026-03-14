@@ -24,8 +24,8 @@ type setupFlags struct {
 	agentID         string
 	displayName     string // display name for agent
 	model           string // model alias or full ID
-	setupToken      string // setup token from 'claude setup-token'
-	apiKey          string // API key (auth credential)
+	authMethod      string // "setup-token", "apikey", "skip"
+	authToken       string // setup token or API key (interpretation depends on authMethod)
 	memoryImportDir string // directory to import memory .md files from
 	// Provider-contributed flags are stored here by name.
 	providerFlags map[string]string
@@ -55,8 +55,8 @@ Flags:
   --agent-id <id>        Agent identifier (default: main)
   --display-name <name>  Display name for agent (default: titlecased agent ID)
   --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
-  --setup-token <token>  Setup token from 'claude setup-token'
-  --api-key <key>        API key (direct Anthropic API key)
+  --auth-method <method> Auth method: setup-token, apikey, skip (default: interactive prompt)
+  --auth-token <token>   Auth credential (setup token or API key, per --auth-method)
   --memory-import-dir <path>  Directory to import memory .md files from
 `)
 	// Print provider-contributed flags
@@ -130,14 +130,14 @@ func parseSetupFlags(args []string) setupFlags {
 				f.model = args[i+1]
 				i++
 			}
-		case "--setup-token":
+		case "--auth-method":
 			if i+1 < len(args) {
-				f.setupToken = args[i+1]
+				f.authMethod = args[i+1]
 				i++
 			}
-		case "--api-key":
+		case "--auth-token":
 			if i+1 < len(args) {
-				f.apiKey = args[i+1]
+				f.authToken = args[i+1]
 				i++
 			}
 		case "--memory-import-dir":
@@ -221,13 +221,16 @@ func runSetupNonInteractive(f setupFlags) error {
 
 	secretsOpts := config.SecretsOptions{}
 
-	// Auth: setup-token takes precedence, then api-key, then skip.
-	if f.setupToken != "" {
-		store.Set("anthropic.setup_token", f.setupToken)
-		secretsOpts.SetupToken = f.setupToken
-	} else if f.apiKey != "" {
-		store.Set("anthropic.api_key", f.apiKey)
-		secretsOpts.SetupToken = f.apiKey
+	// Auth: apply token based on method.
+	if f.authToken != "" {
+		switch f.authMethod {
+		case "apikey":
+			store.Set("anthropic.api_key", f.authToken)
+			secretsOpts.SetupToken = f.authToken
+		default: // "setup-token" or unspecified
+			store.Set("anthropic.setup_token", f.authToken)
+			secretsOpts.SetupToken = f.authToken
+		}
 	}
 
 	// Run provider setup (non-interactive)
