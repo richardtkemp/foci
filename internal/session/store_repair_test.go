@@ -51,7 +51,7 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	if !block.IsError {
 		t.Error("expected is_error = true")
 	}
-	if block.Content != "Tool call interrupted by service restart" {
+	if block.Content != "Tool call interrupted" {
 		t.Errorf("content = %q", block.Content)
 	}
 }

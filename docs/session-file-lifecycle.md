@@ -107,7 +107,7 @@ Key does NOT change. Old file is archived with timestamp suffix.
 
 On startup (`sessions_init.go:initSessions`):
 
-1. `RepairOrphans()` — walks all `.jsonl` files, finds assistant messages ending with tool_use blocks that have no tool_result response. Appends synthetic "Tool call interrupted by service restart" tool_result messages to the **existing file**.
+1. `RepairOrphans()` — walks all `.jsonl` files, finds assistant messages ending with tool_use blocks that have no tool_result response. Appends synthetic "Tool call interrupted" tool_result messages to the **existing file**.
 
 2. `InjectRestartMarkers()` — walks all `.jsonl` files modified within `RestartMarkerMaxAge` (1 hour). Appends a "SYSTEM RESTART" user message to the **existing file**.
 
