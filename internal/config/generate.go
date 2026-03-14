@@ -24,13 +24,6 @@ type SecretsOptions struct {
 func GenerateConfig(opts SetupOptions) string {
 	var b strings.Builder
 
-	// [defaults]
-	if opts.Model != "" {
-		b.WriteString("[defaults]\n")
-		b.WriteString(fmt.Sprintf("model = %q\n", opts.Model))
-		b.WriteString("\n")
-	}
-
 	// [[agents]]
 	if opts.AgentBlock != "" {
 		b.WriteString(strings.TrimLeft(opts.AgentBlock, "\n"))
@@ -38,6 +31,9 @@ func GenerateConfig(opts SetupOptions) string {
 	} else {
 		b.WriteString("[[agents]]\n")
 		b.WriteString(fmt.Sprintf("id = %q\n", opts.AgentID))
+		if opts.Model != "" {
+			b.WriteString(fmt.Sprintf("model = %q\n", opts.Model))
+		}
 		if len(opts.SystemFiles) > 0 {
 			b.WriteString("system_files = [\n")
 			for _, f := range opts.SystemFiles {
