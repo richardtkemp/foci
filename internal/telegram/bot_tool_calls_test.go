@@ -243,6 +243,46 @@ func TestShowToolCalls_Full(t *testing.T) {
 	}
 }
 
+func TestToolCallTracker_CleanupPreview(t *testing.T) {
+	// Verifies that cleanupPreview deletes the tool call preview message
+	// when in preview mode, and does nothing in other modes or when no
+	// message exists.
+	mock := &mockClient{}
+	b := &Bot{client: mock, showToolCalls: "preview"}
+	tracker := &toolCallTracker{bot: b, chatID: 12345}
+
+	// No message → no delete.
+	tracker.cleanupPreview()
+	if mock.deleteCount() != 0 {
+		t.Errorf("deleteCount = %d, want 0 (no message to clean)", mock.deleteCount())
+	}
+
+	// Set a message ID → should delete.
+	tracker.mu.Lock()
+	tracker.msgID = 42
+	tracker.mu.Unlock()
+	tracker.cleanupPreview()
+	if mock.deleteCount() != 1 {
+		t.Errorf("deleteCount = %d, want 1", mock.deleteCount())
+	}
+
+	// After cleanup, msgID should be 0 → second call is a no-op.
+	tracker.cleanupPreview()
+	if mock.deleteCount() != 1 {
+		t.Errorf("deleteCount = %d, want 1 (idempotent)", mock.deleteCount())
+	}
+
+	// In "full" mode, cleanupPreview should not delete.
+	b.showToolCalls = "full"
+	tracker.mu.Lock()
+	tracker.msgID = 99
+	tracker.mu.Unlock()
+	tracker.cleanupPreview()
+	if mock.deleteCount() != 1 {
+		t.Errorf("deleteCount = %d, want 1 (full mode should not delete)", mock.deleteCount())
+	}
+}
+
 func TestFormatToolCall(t *testing.T) {
 	// Verifies that formatToolCall produces properly formatted
 	// tool call messages.

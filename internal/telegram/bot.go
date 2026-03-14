@@ -34,6 +34,7 @@ type botClient interface {
 	GetFile(fileId string, opts *gotgbot.GetFileOpts) (*gotgbot.File, error)
 	SetMyCommands(commands []gotgbot.BotCommand, opts *gotgbot.SetMyCommandsOpts) (bool, error)
 	AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.AnswerCallbackQueryOpts) (bool, error)
+	DeleteMessage(chatId int64, messageId int64, opts *gotgbot.DeleteMessageOpts) (bool, error)
 }
 
 // sessionIndexInterface abstracts session index operations for testability.

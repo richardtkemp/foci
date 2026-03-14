@@ -375,6 +375,20 @@ func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.R
 	}
 }
 
+// cleanupPreview deletes the tool call preview message if one exists.
+// Called when the final response is delivered via a separate message (streaming,
+// thinking, or long response) so the transient tool call doesn't linger in chat.
+func (t *toolCallTracker) cleanupPreview() {
+	t.mu.Lock()
+	id := t.msgID
+	t.msgID = 0
+	t.mu.Unlock()
+	if id == 0 || t.bot.effectiveShowToolCalls() != "preview" {
+		return
+	}
+	_, _ = t.bot.client.DeleteMessage(t.chatID, id, nil)
+}
+
 // observeToolResult stores tool results for inline keyboard expansion (full mode only).
 // When a result hint is available, the compact notification is updated inline
 // (e.g. "☑️ todo: add" becomes "☑️ todo: add → #542").
