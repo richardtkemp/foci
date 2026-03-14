@@ -16,14 +16,6 @@ type configRow struct {
 	Value   string
 }
 
-// FormatConfig returns a pipe-table of the running config for the given agent.
-// Secrets are redacted.
-func FormatConfig(cfg *Config, agent AgentConfig) string {
-	rows := collectAgentRows(agent)
-	rows = append(rows, collectGlobalConfigRows(cfg)...)
-	return formatTableBySection(rows)
-}
-
 // FormatConfigGrouped returns per-group config tables as markdown pipe tables.
 // The first table is "Global" config (all non-agent sections), followed by one
 // table for the given agent. Each table is small enough to fit in a single

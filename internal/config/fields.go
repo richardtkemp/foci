@@ -24,13 +24,6 @@ type ConfigField struct {
 	Description string    // one-line description
 }
 
-// Fields returns the registry of settable config fields.
-// This is a curated list of scalar fields that can be set via /config set.
-// Array, map, and complex nested fields are excluded.
-func Fields() []ConfigField {
-	return configFields
-}
-
 // LookupField finds a field by "section.key" (case-insensitive).
 func LookupField(sectionKey string) (ConfigField, bool) {
 	lower := strings.ToLower(sectionKey)

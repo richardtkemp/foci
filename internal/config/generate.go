@@ -51,17 +51,3 @@ func GenerateConfig(opts SetupOptions) string {
 	return b.String()
 }
 
-// GenerateSecrets produces a secrets.toml containing credentials.
-// The output is valid TOML ready to write to disk.
-func GenerateSecrets(opts SecretsOptions) string {
-	var b strings.Builder
-
-	// [anthropic]
-	if opts.SetupToken != "" {
-		b.WriteString("[anthropic]\n")
-		b.WriteString(fmt.Sprintf("setup_token = %q\n", opts.SetupToken))
-		b.WriteString("\n")
-	}
-
-	return b.String()
-}
