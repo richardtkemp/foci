@@ -361,7 +361,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	// When extended thinking is active with effort above "low", duplicate_messages
 	// wastes tokens — thinking already produces high-quality first responses.
 	effectiveDuplicate := a.DuplicateMessages
-	if effectiveDuplicate && turnThinking != "" && turnEffort != "" && turnEffort != "low" {
+	if effectiveDuplicate && turnThinking != "" && turnThinking != "off" && turnEffort != "low" {
 		effectiveDuplicate = false
 		a.logger().Debugf("session=%s duplicate_messages suppressed: thinking=%s effort=%s", sessionKey, turnThinking, turnEffort)
 	}
