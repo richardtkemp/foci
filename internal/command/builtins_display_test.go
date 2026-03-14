@@ -299,6 +299,54 @@ func TestDisplayCommand_WidthAliasGet(t *testing.T) {
 	}
 }
 
+// TestDisplayCommand_ChainKeyboard verifies that selecting a display setting
+// key from the keyboard chains to a second keyboard with the valid values.
+func TestDisplayCommand_ChainKeyboard(t *testing.T) {
+	cmd := DisplayCommand()
+	cc := displayCC()
+	ctx := context.Background()
+
+	if cmd.ChainKeyboard == nil {
+		t.Fatal("ChainKeyboard should not be nil")
+	}
+
+	// show_tool_calls → off, preview, full
+	opts := cmd.ChainKeyboard(ctx, "show_tool_calls", cc)
+	if len(opts) != 3 {
+		t.Fatalf("show_tool_calls: expected 3 options, got %d", len(opts))
+	}
+	wantData := []string{"show_tool_calls off", "show_tool_calls preview", "show_tool_calls full"}
+	for i, w := range wantData {
+		if opts[i].Data != w {
+			t.Errorf("show_tool_calls option[%d].Data = %q, want %q", i, opts[i].Data, w)
+		}
+	}
+
+	// show_thinking → off, compact, true
+	opts = cmd.ChainKeyboard(ctx, "show_thinking", cc)
+	if len(opts) != 3 {
+		t.Fatalf("show_thinking: expected 3 options, got %d", len(opts))
+	}
+
+	// stream_output → off, on
+	opts = cmd.ChainKeyboard(ctx, "stream_output", cc)
+	if len(opts) != 2 {
+		t.Fatalf("stream_output: expected 2 options, got %d", len(opts))
+	}
+
+	// display_width → no chain (numeric, not button-friendly)
+	opts = cmd.ChainKeyboard(ctx, "display_width", cc)
+	if opts != nil {
+		t.Errorf("display_width should not chain, got %v", opts)
+	}
+
+	// reset → no chain
+	opts = cmd.ChainKeyboard(ctx, "reset", cc)
+	if opts != nil {
+		t.Errorf("reset should not chain, got %v", opts)
+	}
+}
+
 // TestDisplayCommand_KeyboardOptions verifies the command returns keyboard
 // options for each setting key plus reset.
 func TestDisplayCommand_KeyboardOptions(t *testing.T) {
