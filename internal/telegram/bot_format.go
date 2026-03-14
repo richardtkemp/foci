@@ -5,21 +5,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"foci/internal/platform"
 )
 
 func isPDFMIME(mime string) bool {
-	return mime == "application/pdf"
+	return platform.NormalizeMIME(mime) == "application/pdf"
 }
 
 // isImageMIME returns true if the MIME type is a supported image format.
 func isImageMIME(mime string) bool {
-	switch mime {
+	switch platform.NormalizeMIME(mime) {
 	case "image/jpeg", "image/png", "image/gif", "image/webp":
 		return true
 	}
 	return false
 }
 
+// isConvertibleDocMIME returns true if the MIME type is a document format
+// that can be converted to text for LLM consumption (docx, xlsx, pptx, HTML, CSV, plain text).
+func isConvertibleDocMIME(mime string) bool {
+	return platform.IsConvertibleDocMIME(mime)
+}
 
 // splitMessage splits text into chunks of at most maxLen bytes.
 // It prefers splitting at newline boundaries and preserves HTML formatting
@@ -275,6 +282,116 @@ func compactSummary(toolName string, m map[string]json.RawMessage) string {
 		if v := str(key); v != "" {
 			return truncate(v, 60)
 		}
+	}
+	return ""
+}
+
+// compactResultHint extracts a short hint from a tool result to append
+// to the compact notification line. Returns "" if no useful hint can be extracted.
+func compactResultHint(toolName string, params json.RawMessage, result string) string {
+	switch toolName {
+	case "todo":
+		return todoResultHint(params, result)
+	case "shell":
+		return shellResultHint(result)
+	case "write":
+		return writeResultHint(result)
+	case "edit":
+		return editResultHint(result)
+	case "spawn":
+		return spawnResultHint(result)
+	}
+	return ""
+}
+
+// todoResultHint extracts key info from todo results (e.g. "#542" from "Added #542 (medium)").
+func todoResultHint(params json.RawMessage, result string) string {
+	var p struct {
+		Action string `json:"action"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return ""
+	}
+	firstLine, _, _ := strings.Cut(result, "\n")
+	switch p.Action {
+	case "add":
+		// "Added #542 (medium)" → "#542"
+		if i := strings.Index(firstLine, "#"); i >= 0 {
+			end := strings.IndexByte(firstLine[i:], ' ')
+			if end > 0 {
+				return firstLine[i : i+end]
+			}
+			return firstLine[i:]
+		}
+	case "list", "search":
+		// Count items by counting lines (each item is one line)
+		if strings.HasPrefix(firstLine, "No ") {
+			return "0 items"
+		}
+		n := strings.Count(result, "\n") + 1
+		if n == 1 {
+			return "1 item"
+		}
+		return fmt.Sprintf("%d items", n)
+	case "transition":
+		// "#542: done" or "#1: done\n#2: done" → "done" (first line's state)
+		if _, after, ok := strings.Cut(firstLine, ": "); ok {
+			return truncate(after, 20)
+		}
+	case "remove":
+		// "#542: removed" → "done"
+		return ""
+	case "edit":
+		// "#542: text: old → new" → show the ID
+		if i := strings.Index(firstLine, "#"); i >= 0 {
+			end := strings.IndexByte(firstLine[i:], ':')
+			if end > 0 {
+				return firstLine[i : i+end]
+			}
+		}
+	}
+	return ""
+}
+
+// shellResultHint shows line count for multi-line output.
+func shellResultHint(result string) string {
+	if result == "" {
+		return "(empty)"
+	}
+	lines := strings.Count(result, "\n") + 1
+	if lines <= 3 {
+		return ""
+	}
+	return fmt.Sprintf("%d lines", lines)
+}
+
+// writeResultHint extracts byte count from "Wrote N bytes to /path".
+func writeResultHint(result string) string {
+	if strings.HasPrefix(result, "Wrote ") {
+		// "Wrote 42 bytes to /path/file.go" → "42 bytes"
+		parts := strings.SplitN(result, " ", 4)
+		if len(parts) >= 3 {
+			return parts[1] + " " + parts[2]
+		}
+	}
+	return ""
+}
+
+// editResultHint extracts edit confirmation info.
+func editResultHint(result string) string {
+	if strings.HasPrefix(result, "Applied ") || strings.HasPrefix(result, "Edited ") {
+		firstLine, _, _ := strings.Cut(result, "\n")
+		return truncate(firstLine, 30)
+	}
+	return ""
+}
+
+// spawnResultHint shows the spawned agent name.
+func spawnResultHint(result string) string {
+	// Spawn results start with "Spawned agent: <name>" or similar
+	if strings.HasPrefix(result, "Spawned ") {
+		firstLine, _, _ := strings.Cut(result, "\n")
+		return truncate(firstLine, 30)
 	}
 	return ""
 }

@@ -142,80 +142,80 @@ func TestCLIEnvVars(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
-		env     []string // extra env vars beyond CLOD_ADDR
+		env     []string // extra env vars beyond FOCI_ADDR
 		want    string
 		wantErr bool
 	}{
 		{
-			name: "CLOD_AGENT env var",
+			name: "FOCI_AGENT env var",
 			args: []string{"send", "--sync", "hello"},
-			env:  []string{"CLOD_AGENT=research"},
+			env:  []string{"FOCI_AGENT=research"},
 			want: "[research] echo: hello",
 		},
 		{
-			name: "flag overrides CLOD_AGENT",
+			name: "flag overrides FOCI_AGENT",
 			args: []string{"send", "--sync", "-a", "main", "hello"},
-			env:  []string{"CLOD_AGENT=research"},
+			env:  []string{"FOCI_AGENT=research"},
 			want: "[main] echo: hello",
 		},
 		{
-			name: "CLOD_SESSION env var",
+			name: "FOCI_SESSION env var",
 			args: []string{"send", "--sync", "hello"},
-			env:  []string{"CLOD_SESSION=research"},
+			env:  []string{"FOCI_SESSION=research"},
 			want: "(session:research) echo: hello",
 		},
 		{
-			name: "CLOD_IF_ACTIVE env var for send",
+			name: "FOCI_IF_ACTIVE env var for send",
 			args: []string{"send", "--sync", "hello"},
-			env:  []string{"CLOD_IF_ACTIVE=8h"},
+			env:  []string{"FOCI_IF_ACTIVE=8h"},
 			want: "(if_active:8h) echo: hello",
 		},
 		{
-			name: "CLOD_MESSAGE_TEXT env var",
+			name: "FOCI_MESSAGE_TEXT env var",
 			args: []string{"send", "--sync"},
-			env:  []string{"CLOD_MESSAGE_TEXT=from env"},
+			env:  []string{"FOCI_MESSAGE_TEXT=from env"},
 			want: "echo: from env",
 		},
 		{
-			name: "CLOD_MESSAGE_FILE env var",
+			name: "FOCI_MESSAGE_FILE env var",
 			args: []string{"send", "--sync"},
-			env:  []string{"CLOD_MESSAGE_FILE=" + msgFile},
+			env:  []string{"FOCI_MESSAGE_FILE=" + msgFile},
 			want: "echo: env file msg",
 		},
 		{
-			name: "CLOD_NO_COMPACT env var",
+			name: "FOCI_NO_COMPACT env var",
 			args: []string{"branch", "--sync"},
-			env:  []string{"CLOD_NO_COMPACT=1"},
+			env:  []string{"FOCI_NO_COMPACT=1"},
 			want: "wake ok (no_compact)",
 		},
 		{
-			name: "CLOD_ONESHOT env var",
+			name: "FOCI_ONESHOT env var",
 			args: []string{"branch", "--sync"},
-			env:  []string{"CLOD_ONESHOT=1"},
+			env:  []string{"FOCI_ONESHOT=1"},
 			want: "wake ok (no_compact)",
 		},
 		{
-			name: "CLOD_IF_ACTIVE env var for branch",
+			name: "FOCI_IF_ACTIVE env var for branch",
 			args: []string{"branch", "--sync"},
-			env:  []string{"CLOD_IF_ACTIVE=12h"},
+			env:  []string{"FOCI_IF_ACTIVE=12h"},
 			want: "(if_active:12h) wake ok",
 		},
 		{
-			name: "CLOD_IF_INACTIVE env var for send",
+			name: "FOCI_IF_INACTIVE env var for send",
 			args: []string{"send", "--sync", "hello"},
-			env:  []string{"CLOD_IF_INACTIVE=30m"},
+			env:  []string{"FOCI_IF_INACTIVE=30m"},
 			want: "(if_inactive:30m) echo: hello",
 		},
 		{
-			name: "CLOD_IF_INACTIVE env var for branch",
+			name: "FOCI_IF_INACTIVE env var for branch",
 			args: []string{"branch", "--sync"},
-			env:  []string{"CLOD_IF_INACTIVE=45m"},
+			env:  []string{"FOCI_IF_INACTIVE=45m"},
 			want: "(if_inactive:45m) wake ok",
 		},
 		{
 			name: "--addr flag",
 			args: []string{"--addr", addr, "send", "--sync", "hello"},
-			env:  nil, // no CLOD_ADDR
+			env:  nil, // no FOCI_ADDR
 			want: "echo: hello",
 		},
 		{
@@ -225,33 +225,33 @@ func TestCLIEnvVars(t *testing.T) {
 			want: "echo: hello",
 		},
 		{
-			name: "CLOD_AGENT env var for branch",
+			name: "FOCI_AGENT env var for branch",
 			args: []string{"branch", "--sync", "do work"},
-			env:  []string{"CLOD_AGENT=research"},
+			env:  []string{"FOCI_AGENT=research"},
 			want: "[research] wake ok",
 		},
 		{
-			name: "CLOD_SYNC env var for send",
+			name: "FOCI_SYNC env var for send",
 			args: []string{"send", "hello"},
-			env:  []string{"CLOD_SYNC=1"},
+			env:  []string{"FOCI_SYNC=1"},
 			want: "echo: hello",
 		},
 		{
-			name: "CLOD_SYNC env var for branch",
+			name: "FOCI_SYNC env var for branch",
 			args: []string{"branch"},
-			env:  []string{"CLOD_SYNC=1"},
+			env:  []string{"FOCI_SYNC=1"},
 			want: "wake ok",
 		},
 		{
-			name: "CLOD_ASYNC env var for send",
+			name: "FOCI_ASYNC env var for send",
 			args: []string{"send", "hello"},
-			env:  []string{"CLOD_ASYNC=1"},
+			env:  []string{"FOCI_ASYNC=1"},
 			want: "queued",
 		},
 		{
-			name: "CLOD_ASYNC env var for branch",
+			name: "FOCI_ASYNC env var for branch",
 			args: []string{"branch"},
-			env:  []string{"CLOD_ASYNC=1"},
+			env:  []string{"FOCI_ASYNC=1"},
 			want: "queued",
 		},
 	}
@@ -259,15 +259,15 @@ func TestCLIEnvVars(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, tt.args...)
-			// Start with minimal env to avoid inheriting CLOD_ vars
+			// Start with minimal env to avoid inheriting FOCI_ vars
 			env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
 			if tt.env != nil {
 				env = append(env, tt.env...)
 			}
-			// Add CLOD_ADDR unless --addr is being tested
+			// Add FOCI_ADDR unless --addr is being tested
 			hasAddr := false
 			for _, e := range tt.env {
-				if strings.HasPrefix(e, "CLOD_ADDR=") {
+				if strings.HasPrefix(e, "FOCI_ADDR=") {
 					hasAddr = true
 				}
 			}
@@ -277,7 +277,7 @@ func TestCLIEnvVars(t *testing.T) {
 				}
 			}
 			if !hasAddr {
-				env = append(env, "CLOD_ADDR="+addr)
+				env = append(env, "FOCI_ADDR="+addr)
 			}
 			cmd.Env = env
 

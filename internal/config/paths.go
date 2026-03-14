@@ -90,9 +90,6 @@ func (c *Config) ResolveAllPaths() {
 	} else {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
-	if c.Sessions.BranchOrientationPrompt != "" {
-		c.Sessions.BranchOrientationPrompt = ResolvePath(c.Sessions.BranchOrientationPrompt)
-	}
 	if c.Sessions.BranchOrientationMultiballPrompt != "" {
 		c.Sessions.BranchOrientationMultiballPrompt = ResolvePath(c.Sessions.BranchOrientationMultiballPrompt)
 	}
@@ -111,8 +108,9 @@ func (c *Config) ResolveAllPaths() {
 		c.Telegram.ReceivedFilesDir = ResolvePath(c.Telegram.ReceivedFilesDir)
 	}
 	for i := range c.Agents {
-		if c.Agents[i].ReceivedFilesDir != "" {
-			c.Agents[i].ReceivedFilesDir = ResolvePath(c.Agents[i].ReceivedFilesDir)
+		tg := c.Agents[i].GetTelegramPlatform()
+		if tg != nil && tg.ReceivedFilesDir != "" {
+			tg.ReceivedFilesDir = ResolvePath(tg.ReceivedFilesDir)
 		}
 	}
 }

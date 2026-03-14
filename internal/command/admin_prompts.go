@@ -116,10 +116,10 @@ func buildPromptsData(cc CommandContext) PromptsData {
 			resolveString(acfg.CompactionSummaryPrompt, cfg.Sessions.CompactionSummaryPrompt),
 			"compaction-summary.md", prompts.CompactionSummary(), dirs),
 		resolvePromptInfo("branch_orient_multiball",
-			prompts.ResolveOrientPath(acfg.BranchOrientationMultiballPrompt, cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt),
+			prompts.ResolveOrientPath(acfg.BranchOrientationMultiballPrompt, cfg.Sessions.BranchOrientationMultiballPrompt),
 			"branch-orientation-multiball.md", prompts.BranchOrientationMultiball(), dirs),
 		resolvePromptInfo("branch_orient_headless",
-			prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt),
+			prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt),
 			"branch-orientation-headless.md", prompts.BranchOrientationHeadless(), dirs),
 		resolvePromptInfo("keepalive",
 			acfg.Keepalive.Prompt,
@@ -163,8 +163,8 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	}
 	fileDefs := []promptDef{
 		{"compaction_summary", resolveString(acfg.CompactionSummaryPrompt, cfg.Sessions.CompactionSummaryPrompt), "compaction-summary.md", prompts.CompactionSummary()},
-		{"branch_orient_multiball", prompts.ResolveOrientPath(acfg.BranchOrientationMultiballPrompt, cfg.Sessions.BranchOrientationMultiballPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt), "branch-orientation-multiball.md", prompts.BranchOrientationMultiball()},
-		{"branch_orient_headless", prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, cfg.Sessions.BranchOrientationPrompt), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
+		{"branch_orient_multiball", prompts.ResolveOrientPath(acfg.BranchOrientationMultiballPrompt, cfg.Sessions.BranchOrientationMultiballPrompt), "branch-orientation-multiball.md", prompts.BranchOrientationMultiball()},
+		{"branch_orient_headless", prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
 		{"keepalive", acfg.Keepalive.Prompt, "keepalive.md", prompts.Keepalive()},
 		{"background", acfg.Background.Prompt, "background.md", prompts.Background()},
 		{"memory_formation", acfg.MemoryFormation.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation()},

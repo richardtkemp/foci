@@ -9,7 +9,7 @@ func TestReflectFindsExplicitSecrets(t *testing.T) {
 	// across agent, TTS, STT, and endpoint config structs, ignoring empty values.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", BotSecret: "custom.bot_token"},
+			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{BotSecret: "custom.bot_token"}}},
 		},
 		TTS: []TTSConfig{
 			{ID: "tts1", Secret: "groq.api_key"},
@@ -48,7 +48,7 @@ func TestReflectIgnoresEmptySecrets(t *testing.T) {
 	// secrets list, preventing spurious missing-secret warnings.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", BotSecret: ""},
+			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{BotSecret: ""}}},
 		},
 		TTS: []TTSConfig{
 			{ID: "tts1", Secret: ""},
@@ -68,7 +68,7 @@ func TestConventionTelegramBot(t *testing.T) {
 	// a "telegram.<bot_name>" convention secret reference.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", TelegramBot: "scout_bot"},
+			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot"}}},
 		},
 	}
 
@@ -81,7 +81,7 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	// not produced; only the explicit override key is reported.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", TelegramBot: "scout_bot", BotSecret: "custom.token"},
+			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot", BotSecret: "custom.token"}}},
 		},
 	}
 
@@ -95,7 +95,7 @@ func TestConventionMultiballBots(t *testing.T) {
 	// produce "telegram.<name>" convention secret references.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", MultiballBots: []string{"extra1"}},
+			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{MultiballBots: []string{"extra1"}}}},
 		},
 		Telegram: TelegramConfig{
 			MultiballBots: []string{"shared1", "shared2"},

@@ -310,8 +310,9 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "44"
-		if cc.AgentConfig.DisplayWidth != nil {
-			effective = fmt.Sprintf("%d", *cc.AgentConfig.DisplayWidth)
+		tg := cc.AgentConfig.GetTelegramPlatform()
+		if tg != nil && tg.DisplayWidth != nil {
+			effective = fmt.Sprintf("%d", *tg.DisplayWidth)
 		} else if cc.Config.Telegram.DisplayWidth != nil {
 			effective = fmt.Sprintf("%d", *cc.Config.Telegram.DisplayWidth)
 		}

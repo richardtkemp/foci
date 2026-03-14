@@ -43,7 +43,6 @@ func forkMultiball(_ context.Context, req Request, cc CommandContext) (string, e
 
 	orientPath := prompts.ResolveOrientPath(
 		cc.AgentConfig.BranchOrientationMultiballPrompt, cc.Config.Sessions.BranchOrientationMultiballPrompt,
-		cc.AgentConfig.BranchOrientationPrompt, cc.Config.Sessions.BranchOrientationPrompt,
 	)
 	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true, cc.PromptSearchDirs)
 	if err := cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{

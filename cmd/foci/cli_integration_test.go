@@ -120,7 +120,7 @@ func TestCLIIntegration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, tt.args...)
-			cmd.Env = append(os.Environ(), "CLOD_ADDR="+addr)
+			cmd.Env = append(os.Environ(), "FOCI_ADDR="+addr)
 
 			out, err := cmd.CombinedOutput()
 			output := strings.TrimSpace(string(out))
@@ -180,7 +180,7 @@ func TestCLIMessageFile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(binPath, tt.args...)
-			cmd.Env = append(os.Environ(), "CLOD_ADDR="+addr)
+			cmd.Env = append(os.Environ(), "FOCI_ADDR="+addr)
 
 			out, err := cmd.CombinedOutput()
 			output := strings.TrimSpace(string(out))

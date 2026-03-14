@@ -52,7 +52,7 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 
 	return &Tool{
 		Name:        "summary",
-		Description: "Summarize or extract specific information from a file using a fast, cheap model call. Use this instead of read for large files when you only need specific information, not the full content.",
+		Description: "Summarize or extract specific information from a file using a fast, cheap model call. Do NOT use this to read or dump full file contents — use the read tool for that. This tool is for targeted questions like 'what config options are defined?' or 'summarize the error handling approach', not for retrieving the file text itself.",
 		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",

@@ -153,7 +153,9 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	} else if msg.Document != nil && platform.IsConvertibleDocMIME(msg.Document.MimeType) {
 		// Convertible documents (docx, xlsx, pptx, HTML, CSV, plain text):
 		// download and pass through the attachment pipeline for text conversion.
-		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
+		// Use normalized MIME so the agent layer sees a canonical type.
+		normalizedMIME := platform.NormalizeMIME(msg.Document.MimeType)
+		if att, ok := b.downloadAttachment(msg.Document.FileId, normalizedMIME, msg.Chat.Id); ok {
 			attachments = append(attachments, att)
 		}
 	}

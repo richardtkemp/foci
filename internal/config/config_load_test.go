@@ -16,7 +16,7 @@ func TestLoadFullConfig(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[agent]
+[[agents]]
 id = "main"
 model = "anthropic/claude-haiku-4-5"
 workspace = "/tmp/workspace"
@@ -89,7 +89,7 @@ func TestLoadDefaults(t *testing.T) {
 
 	// Minimal config — only required fields
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -134,7 +134,7 @@ func TestLoadCustomManaName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 
 [usage_warnings]
@@ -162,7 +162,7 @@ func TestLoadCustomCommands(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 
 [[commands]]
@@ -197,13 +197,12 @@ timeout = 30
 	}
 }
 
-func TestLoadSingleAgentBackwardCompat(t *testing.T) {
-	// Proves that the legacy [agent] (singular) format still works, populating the
-	// Agents slice with one entry and mirroring it in cfg.Agent for backward compat.
+func TestLoadSingleAgent(t *testing.T) {
+	// Proves that a single [[agents]] entry is loaded and cfg.Agent mirrors it.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "main"
 model = "anthropic/claude-sonnet-4-6"
 workspace = "/tmp/workspace"
@@ -215,7 +214,6 @@ workspace = "/tmp/workspace"
 		t.Fatalf("Load: %v", err)
 	}
 
-	// Agents slice should be populated from [agent]
 	if len(cfg.Agents) != 1 {
 		t.Fatalf("Agents len = %d, want 1", len(cfg.Agents))
 	}
@@ -244,13 +242,16 @@ id = "clutch"
 model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/rich/workspace1"
 
-telegram_bot = "primary"
+[agents.platforms.telegram]
+bot = "primary"
 multiball_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
 workspace = "/home/rich/workspace2"
-telegram_bot = "scout"
+
+[agents.platforms.telegram]
+bot = "scout"
 
 [telegram]
 allowed_users = ["111"]
@@ -274,11 +275,12 @@ allowed_users = ["111"]
 	if cfg.Agents[0].Model != "anthropic/claude-sonnet-4-6" {
 		t.Errorf("Agents[0].Model = %q", cfg.Agents[0].Model)
 	}
-	if cfg.Agents[0].TelegramBot != "primary" {
-		t.Errorf("Agents[0].TelegramBot = %q", cfg.Agents[0].TelegramBot)
+	tg0 := cfg.Agents[0].GetTelegramPlatform()
+	if tg0 == nil || tg0.Bot != "primary" {
+		t.Errorf("Agents[0] telegram bot = %v", tg0)
 	}
-	if len(cfg.Agents[0].MultiballBots) != 1 || cfg.Agents[0].MultiballBots[0] != "secondary" {
-		t.Errorf("Agents[0].MultiballBots = %v, want [secondary]", cfg.Agents[0].MultiballBots)
+	if len(tg0.MultiballBots) != 1 || tg0.MultiballBots[0] != "secondary" {
+		t.Errorf("Agents[0].MultiballBots = %v, want [secondary]", tg0.MultiballBots)
 	}
 
 	// Second agent — defaults applied
@@ -288,11 +290,12 @@ allowed_users = ["111"]
 	if cfg.Agents[1].Model != "anthropic/claude-haiku-4-5-20251001" {
 		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
 	}
-	if cfg.Agents[1].TelegramBot != "scout" {
-		t.Errorf("Agents[1].TelegramBot = %q", cfg.Agents[1].TelegramBot)
+	tg1 := cfg.Agents[1].GetTelegramPlatform()
+	if tg1 == nil || tg1.Bot != "scout" {
+		t.Errorf("Agents[1] telegram bot = %v", tg1)
 	}
-	if len(cfg.Agents[1].MultiballBots) != 0 {
-		t.Errorf("Agents[1].MultiballBots = %v, want empty", cfg.Agents[1].MultiballBots)
+	if tg1 != nil && len(tg1.MultiballBots) != 0 {
+		t.Errorf("Agents[1].MultiballBots = %v, want empty", tg1.MultiballBots)
 	}
 
 	// cfg.Agent should mirror first agent
@@ -343,42 +346,11 @@ id = "other"
 	}
 }
 
-func TestLoadAgentsIgnoresLegacyWhenBothPresent(t *testing.T) {
-	// Proves that when both legacy [agent] and new [[agents]] are present, the
-	// [[agents]] format takes precedence and the [agent] block is ignored.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	toml := `
-[agent]
-id = "ignored"
-
-[[agents]]
-id = "used"
-`
-	os.WriteFile(path, []byte(toml), 0644)
-
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if len(cfg.Agents) != 1 {
-		t.Fatalf("Agents len = %d, want 1", len(cfg.Agents))
-	}
-	if cfg.Agents[0].ID != "used" {
-		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "used")
-	}
-	// cfg.Agent should be the first from [[agents]], not the [agent] block
-	if cfg.Agent.ID != "used" {
-		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "used")
-	}
-}
-
 func TestUnknownKeysDetected(t *testing.T) {
 	// Proves that UnknownKeys returns both unrecognized fields within known sections
 	// and entire unknown sections, as dotted paths sorted for deterministic comparison.
 	tomlData := `
-[agent]
+[[agents]]
 id = "main"
 bogus_field = "oops"
 
@@ -398,7 +370,7 @@ some_key = "value"
 	}
 
 	sort.Strings(keys)
-	expected := []string{"agent.bogus_field", "unknown_section", "unknown_section.foo", "unknown_section.some_key"}
+	expected := []string{"agents.bogus_field", "unknown_section", "unknown_section.foo", "unknown_section.some_key"}
 	sort.Strings(expected)
 
 	if len(keys) != len(expected) {
@@ -418,7 +390,7 @@ func TestLoadWarnsUnknownKeys(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[agent]
+[[agents]]
 id = "main"
 
 [unknown_section]
@@ -430,8 +402,8 @@ foo = "bar"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Agent.ID != "main" {
-		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
+	if cfg.Agents[0].ID != "main" {
+		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
 	}
 }
 
@@ -456,22 +428,23 @@ func TestLoadInvalidTOML(t *testing.T) {
 	}
 }
 
-func TestLoadPlatformConfigMigration(t *testing.T) {
-	// Proves that legacy telegram_* fields at the agent level are migrated to the
-	// new [agents.platforms.telegram] structure at load time, with all values
-	// (bot, bot_secret, multiball_bots, allowed_users, show_tool_calls) preserved.
+func TestLoadPlatformConfigSync(t *testing.T) {
+	// Proves that agent-level display fields (show_tool_calls) are synced to
+	// Platforms.Telegram at load time, and that platform-specific fields are set
+	// directly via [agents.platforms.telegram].
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
-	// Old-style config with telegram fields at agent level
 	toml := `
 [[agents]]
 id = "testbot"
-telegram_bot = "my_bot"
+show_tool_calls = "preview"
+
+[agents.platforms.telegram]
+bot = "my_bot"
 bot_secret = "custom.secret"
 multiball_bots = ["extra1", "extra2"]
 allowed_users = ["123", "456"]
-show_tool_calls = "preview"
 
 [telegram]
 allowed_users = ["789"]
@@ -489,17 +462,12 @@ allowed_users = ["789"]
 
 	agent := cfg.Agents[0]
 
-	// Old fields should still be accessible (backward compat)
-	if agent.TelegramBot != "my_bot" {
-		t.Errorf("TelegramBot = %q, want %q", agent.TelegramBot, "my_bot")
-	}
-
-	// New Platforms structure should be populated via migration
+	// Platforms structure should be populated
 	if agent.Platforms == nil {
-		t.Fatal("Platforms is nil after migration")
+		t.Fatal("Platforms is nil")
 	}
 	if agent.Platforms.Telegram == nil {
-		t.Fatal("Platforms.Telegram is nil after migration")
+		t.Fatal("Platforms.Telegram is nil")
 	}
 
 	tg := agent.Platforms.Telegram

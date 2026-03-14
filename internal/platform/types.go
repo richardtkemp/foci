@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,10 +35,37 @@ type Attachment struct {
 	SavedPath string
 }
 
+// legacyMIMEMap maps legacy MIME types to their modern convertible equivalents.
+var legacyMIMEMap = map[string]string{
+	"application/msword":                                                          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel":                                                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint":                                               "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.template":      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.template":         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.openxmlformats-officedocument.presentationml.template":        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.openxmlformats-officedocument.presentationml.slideshow":       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	"application/vnd.ms-word.document.macroEnabled.12":                             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"application/vnd.ms-excel.sheet.macroEnabled.12":                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	"application/vnd.ms-powerpoint.presentation.macroEnabled.12":                   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+// NormalizeMIME strips parameters (e.g. "; charset=utf-8") and maps legacy
+// MIME types to their modern equivalents.
+func NormalizeMIME(mime string) string {
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	if mapped, ok := legacyMIMEMap[mime]; ok {
+		return mapped
+	}
+	return mime
+}
+
 // IsConvertibleDocMIME returns true if the MIME type is a document format
 // that can be converted to text for LLM consumption.
+// Handles parameterized and legacy MIME types.
 func IsConvertibleDocMIME(mime string) bool {
-	switch mime {
+	switch NormalizeMIME(mime) {
 	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		"application/vnd.openxmlformats-officedocument.presentationml.presentation",

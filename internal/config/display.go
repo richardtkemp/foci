@@ -171,9 +171,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
-	if cfg.Sessions.BranchOrientationPrompt != "" {
-		add("sessions", "branch_orientation_prompt", cfg.Sessions.BranchOrientationPrompt)
-	}
 	if cfg.Sessions.BranchOrientationMultiballPrompt != "" {
 		add("sessions", "branch_orientation_multiball_prompt", cfg.Sessions.BranchOrientationMultiballPrompt)
 	}
@@ -338,20 +335,18 @@ func collectAgentRows(agent AgentConfig) []configRow {
 		add("system_files", agent.SystemFiles)
 	}
 	add("duplicate_messages", agent.DuplicateMessages)
-	if agent.BranchOrientationPrompt != "" {
-		add("branch_orientation_prompt", agent.BranchOrientationPrompt)
-	}
 	if agent.BranchOrientationMultiballPrompt != "" {
 		add("branch_orientation_multiball_prompt", agent.BranchOrientationMultiballPrompt)
 	}
 	if agent.BranchOrientationHeadlessPrompt != "" {
 		add("branch_orientation_headless_prompt", agent.BranchOrientationHeadlessPrompt)
 	}
-	if agent.TelegramBot != "" {
-		add("telegram_bot", agent.TelegramBot)
+	tg := agent.GetTelegramPlatform()
+	if tg != nil && tg.Bot != "" {
+		add("platforms.telegram.bot", tg.Bot)
 	}
-	if len(agent.MultiballBots) > 0 {
-		add("multiball_bots", agent.MultiballBots)
+	if tg != nil && len(tg.MultiballBots) > 0 {
+		add("multiball_bots", tg.MultiballBots)
 	}
 	add("max_tool_loops", agent.MaxToolLoops)
 	add("max_output_tokens", agent.MaxOutputTokens)
@@ -381,26 +376,26 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.ShowThinking != nil {
 		add("show_thinking", string(*agent.ShowThinking))
 	}
-	if agent.DisplayWidth != nil {
-		add("display_width", *agent.DisplayWidth)
+	if tg != nil && tg.DisplayWidth != nil {
+		add("platforms.telegram.display_width", *tg.DisplayWidth)
 	}
-	if agent.TableWrapLines != nil {
-		add("table_wrap_lines", *agent.TableWrapLines)
+	if tg != nil && tg.TableWrapLines != nil {
+		add("platforms.telegram.table_wrap_lines", *tg.TableWrapLines)
 	}
-	if agent.TableStyle != nil {
-		add("table_style", *agent.TableStyle)
+	if tg != nil && tg.TableStyle != nil {
+		add("platforms.telegram.table_style", *tg.TableStyle)
 	}
 	if agent.MessagesInLog != nil {
 		add("messages_in_log", *agent.MessagesInLog)
 	}
-	if agent.ReceivedFilesDir != "" {
-		add("received_files_dir", agent.ReceivedFilesDir)
+	if tg != nil && tg.ReceivedFilesDir != "" {
+		add("platforms.telegram.received_files_dir", tg.ReceivedFilesDir)
 	}
 	if agent.InjectedMessageHeader != "" {
 		add("injected_message_header", agent.InjectedMessageHeader)
 	}
-	if len(agent.AllowedUsers) > 0 {
-		add("allowed_users", agent.AllowedUsers)
+	if tg != nil && len(tg.AllowedUsers) > 0 {
+		add("platforms.telegram.allowed_users", tg.AllowedUsers)
 	}
 	if agent.CompactionPreserveMessages != nil {
 		add("compaction_preserve_messages", *agent.CompactionPreserveMessages)

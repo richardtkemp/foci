@@ -262,7 +262,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Per-agent send_message_to_user tool (closure captures this agent's bot)
 	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.TTSReplacements)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls)
-	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) tools.MessageSender {
+	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
 		if conn == nil {
 			return nil
@@ -457,7 +457,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
 	// Uses lazy getter for agent since ag is assigned later in this function.
-	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
 		ClientProvider:  p.clientProvider,
@@ -548,7 +548,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Create and register platform connections (allowed users resolved by each provider)
 	if p.plat != nil {
-		reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+		reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
 		reclaimMfCfg := acfg.MemoryFormation
 		reclaimSearchDirs := promptSearchDirs
 

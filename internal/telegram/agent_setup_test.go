@@ -13,11 +13,13 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	// display settings take precedence over global defaults.
 	bot := NewBotForTest()
 	acfg := config.AgentConfig{
-		ShowToolCalls:    ptr(config.ToolCallFull),
-		ShowThinking:     ptr(config.ShowThinkingCompact),
-		DisplayWidth:     ptr(80),
-		MessagesInLog:    ptr(true),
-		ReceivedFilesDir: "/agent/files",
+		ShowToolCalls: ptr(config.ToolCallFull),
+		ShowThinking:  ptr(config.ShowThinkingCompact),
+		MessagesInLog: ptr(true),
+		Platforms: &config.PlatformsConfig{Telegram: &config.TelegramPlatformConfig{
+			DisplayWidth:     ptr(80),
+			ReceivedFilesDir: "/agent/files",
+		}},
 	}
 	cfg := &config.Config{
 		Telegram: config.TelegramConfig{
@@ -95,7 +97,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	// Pre-set a value to verify it's NOT overwritten when both are empty
 	bot.SetReceivedFilesDir("/pre-existing")
 
-	acfg := config.AgentConfig{ReceivedFilesDir: ""}
+	acfg := config.AgentConfig{}
 	cfg := &config.Config{
 		Telegram: config.TelegramConfig{ReceivedFilesDir: ""},
 	}

@@ -19,7 +19,7 @@ func TestLoadNewConfigFields(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 max_tool_loops = 50
 max_output_tokens = 16384
@@ -110,7 +110,7 @@ func TestNewConfigDefaults(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -371,7 +371,7 @@ func TestExampleConfigKeysValid(t *testing.T) {
 	// Check 2: every Config struct field appears in the example.
 	structKeys := collectTOMLKeys(reflect.TypeOf(Config{}), "")
 
-	// The legacy [agent] (singular) section has the same fields as [[agents]].
+	// The legacy [[agents]] (singular) section has the same fields as [[agents]].
 	// The example only shows [[agents]]; skip all agent.* paths.
 	exampleSkipPrefixes := []string{"agent."}
 
@@ -508,7 +508,7 @@ func TestDataDirDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[agent]
+[[agents]]
 id = "test"
 `), 0644)
 
@@ -532,7 +532,7 @@ func TestDataDirExplicitNotOverridden(t *testing.T) {
 	os.WriteFile(path, []byte(`
 data_dir = "/opt/foci/data"
 
-[agent]
+[[agents]]
 id = "test"
 `), 0644)
 

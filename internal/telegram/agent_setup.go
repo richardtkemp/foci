@@ -96,14 +96,11 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 }
 
 // resolveAllowedUsers returns the effective allowed user list for an agent.
-// Priority: per-agent platform config > per-agent deprecated field > global.
+// Priority: per-agent platform config > global.
 func resolveAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
 	tg := acfg.GetTelegramPlatform()
 	if tg != nil && len(tg.AllowedUsers) > 0 {
 		return tg.AllowedUsers
-	}
-	if len(acfg.AllowedUsers) > 0 {
-		return acfg.AllowedUsers
 	}
 	return cfg.Telegram.AllowedUsers
 }
@@ -114,15 +111,11 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	cfg := p.GlobalConfig
 
 	tg := acfg.GetTelegramPlatform()
-	var botName, botSecret string
-	switch {
-	case tg != nil && tg.Bot != "":
-		botName = tg.Bot
-		botSecret = tg.BotSecret
-	default:
-		botName = acfg.TelegramBot
-		botSecret = acfg.BotSecret
+	if tg == nil || tg.Bot == "" {
+		return
 	}
+	botName := tg.Bot
+	botSecret := tg.BotSecret
 
 	telegramToken := config.ResolveBotToken(botName, botSecret, p.SecretStore)
 	if telegramToken == "" {
@@ -184,10 +177,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Per-agent multiball bots
 	var multiballBots []string
-	if tg != nil && len(tg.MultiballBots) > 0 {
+	if len(tg.MultiballBots) > 0 {
 		multiballBots = tg.MultiballBots
-	} else {
-		multiballBots = acfg.MultiballBots
 	}
 	for _, mbName := range multiballBots {
 		mbToken := config.ResolveBotToken(mbName, "", p.SecretStore)
@@ -291,24 +282,18 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	switch {
 	case tg != nil && tg.DisplayWidth != nil:
 		bot.SetDisplayWidth(*tg.DisplayWidth)
-	case acfg.DisplayWidth != nil:
-		bot.SetDisplayWidth(*acfg.DisplayWidth)
 	case cfg.Telegram.DisplayWidth != nil:
 		bot.SetDisplayWidth(*cfg.Telegram.DisplayWidth)
 	}
 	switch {
 	case tg != nil && tg.TableWrapLines != nil:
 		bot.SetTableWrapLines(*tg.TableWrapLines)
-	case acfg.TableWrapLines != nil:
-		bot.SetTableWrapLines(*acfg.TableWrapLines)
 	case cfg.Telegram.TableWrapLines != nil:
 		bot.SetTableWrapLines(*cfg.Telegram.TableWrapLines)
 	}
 	switch {
 	case tg != nil && tg.TableStyle != nil:
 		bot.SetTableStyle(*tg.TableStyle)
-	case acfg.TableStyle != nil:
-		bot.SetTableStyle(*acfg.TableStyle)
 	case cfg.Telegram.TableStyle != nil:
 		bot.SetTableStyle(*cfg.Telegram.TableStyle)
 	}
@@ -320,8 +305,6 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	switch {
 	case tg != nil && tg.ReceivedFilesDir != "":
 		bot.SetReceivedFilesDir(tg.ReceivedFilesDir)
-	case acfg.ReceivedFilesDir != "":
-		bot.SetReceivedFilesDir(acfg.ReceivedFilesDir)
 	case cfg.Telegram.ReceivedFilesDir != "":
 		bot.SetReceivedFilesDir(cfg.Telegram.ReceivedFilesDir)
 	}
