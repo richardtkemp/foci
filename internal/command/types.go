@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -106,7 +107,7 @@ type CommandContext struct {
 	AgentNewDeps  *AgentNewDeps
 
 	// Todo store (for /todo command)
-	TodoStore TodoStore
+	TodoStore *memory.TodoStore
 
 	// Skills (for /reload)
 	SkillsDirs []string

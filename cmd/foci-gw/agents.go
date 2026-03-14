@@ -508,6 +508,7 @@ func setupAgent(p setupParams) *agentInstance {
 		store:               p.store,
 		bwStore:             p.bwStore,
 		startTime:           p.startTime,
+		todoStore:           p.todoStore,
 		registry:            registry,
 		tmuxTool:            tmuxTool,
 		skillsDirs:          skillsDirs,

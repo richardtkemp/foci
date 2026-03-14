@@ -124,8 +124,8 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	}
 }
 
-// formatTodoLine formats a single todo item for display.
-func formatTodoLine(item memory.TodoItem) string {
+// FormatTodoLine formats a single todo item for display.
+func FormatTodoLine(item memory.TodoItem) string {
 	marker := "[ ]"
 	switch item.Status {
 	case "in_progress":
@@ -136,18 +136,18 @@ func formatTodoLine(item memory.TodoItem) string {
 		marker = "[-]"
 	}
 	tags := memory.FormatTags(item.Tags)
-	line := fmt.Sprintf("#%d %s [%s]%s %s %s", item.ID, marker, item.Priority, tags, item.Text, formatTodoTimestamp(item))
+	line := fmt.Sprintf("#%d %s [%s]%s %s %s", item.ID, marker, item.Priority, tags, item.Text, FormatTodoTimestamp(item))
 	if (item.Status == "done" || item.Status == "dropped") && item.CloseReason != "" {
 		line += fmt.Sprintf(" — %s", item.CloseReason)
 	}
 	return line
 }
 
-// formatTodoLines formats a slice of todo items, one per line.
-func formatTodoLines(items []memory.TodoItem) string {
+// FormatTodoLines formats a slice of todo items, one per line.
+func FormatTodoLines(items []memory.TodoItem) string {
 	lines := make([]string, len(items))
 	for i, item := range items {
-		lines[i] = formatTodoLine(item)
+		lines[i] = FormatTodoLine(item)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -189,7 +189,7 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 			return TextResult(fmt.Sprintf("No %s todos.", status)), nil
 		}
 	}
-	return TextResult(formatTodoLines(items)), nil
+	return TextResult(FormatTodoLines(items)), nil
 }
 
 func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, reverse bool, limit int) (ToolResult, error) {
@@ -218,7 +218,7 @@ func todoSearch(store *memory.TodoStore, agentID, query, status, sort string, re
 	if len(items) == 0 {
 		return TextResult(fmt.Sprintf("No todos matching %q.", query)), nil
 	}
-	return TextResult(formatTodoLines(items)), nil
+	return TextResult(FormatTodoLines(items)), nil
 }
 
 func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, error) {
@@ -229,7 +229,7 @@ func todoGet(store *memory.TodoStore, agentID string, id int64) (ToolResult, err
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("get todo: %w", err)
 	}
-	return TextResult(formatTodoLine(*item)), nil
+	return TextResult(FormatTodoLine(*item)), nil
 }
 
 // normalizeStatusFilter maps status filter aliases to canonical values for list.
@@ -369,7 +369,8 @@ func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) 
 	return TextResult(strings.Join(results, "\n")), nil
 }
 
-func formatTodoTimestamp(item memory.TodoItem) string {
+// FormatTodoTimestamp formats a todo item's timestamp for display.
+func FormatTodoTimestamp(item memory.TodoItem) string {
 	if (item.Status == "done" || item.Status == "dropped") && item.CompletedAt != nil {
 		return "(" + item.Status + " " + display.RelativeTime(*item.CompletedAt) + ")"
 	}
