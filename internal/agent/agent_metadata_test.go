@@ -434,6 +434,17 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 		t.Errorf("thinking+low effort should allow duplication: expected 2, got %d", count)
 	}
 
+	// With thinking but default (empty) effort, duplication should still be suppressed
+	ag.Thinking = "adaptive"
+	ag.Effort = ""
+	ag.HandleMessage(context.Background(), "test/idefaulteffort/1000000000", "Do the thing")
+
+	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
+	text = provider.TextOf(lastMsg.Content)
+	if count := strings.Count(text, "Do the thing"); count != 1 {
+		t.Errorf("thinking+default effort should suppress duplication: expected 1, got %d", count)
+	}
+
 	// With no thinking, duplication should NOT be suppressed
 	ag.Thinking = ""
 	ag.Effort = "high"
