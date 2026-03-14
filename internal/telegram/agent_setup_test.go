@@ -125,7 +125,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 // SessionKey(). This ensures multi-chat bots resolve overrides for the chat
 // that is actually being served, not the first chat that ever messaged.
 func TestDisplayOverrideFn_UsesTurnSessionKey(t *testing.T) {
-	bot := NewBotForTest()
+	bot := newBotForTest()
 	bot.SetShowToolCalls("off") // bot default
 
 	// Simulate a display override function that returns "full" for sk-turn

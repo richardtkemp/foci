@@ -268,11 +268,11 @@ func TestTodoListWithItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(resp.Text, "#1") || !contains(resp.Text, "#2") {
+	if !contains(resp.Text, "| 1 |") || !contains(resp.Text, "| 2 |") {
 		t.Errorf("expected both items in output: %s", resp.Text)
 	}
-	if !contains(resp.Text, "Todos (2)") {
-		t.Errorf("expected header with count: %s", resp.Text)
+	if !contains(resp.Text, "buy milk") || !contains(resp.Text, "buy bread") {
+		t.Errorf("expected item text in output: %s", resp.Text)
 	}
 }
 
