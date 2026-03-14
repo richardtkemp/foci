@@ -119,7 +119,7 @@ func TestStreamWriter_ContentReturnsFullBuffer(t *testing.T) {
 	// response is empty (nudges consumed intermediate text) but the stream has the
 	// full text that was displayed to the user.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond)
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
 
 	sw.OnDelta("first ")
 	sw.OnDelta("second ")
@@ -135,7 +135,7 @@ func TestStreamWriter_ContentReturnsFullBuffer(t *testing.T) {
 func TestStreamWriter_ContentEmptyWhenNoDeltas(t *testing.T) {
 	// Verifies that Content() returns empty string when no deltas arrived.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond)
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
 	sw.Finish()
 
 	if content := sw.Content(); content != "" {

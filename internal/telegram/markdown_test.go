@@ -231,6 +231,27 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "| Status | Count |\n|--------|-------|\n| ✅ | 5 |\n| ❌ | 2 |",
 			want: "<pre>Status  Count\n─────────────\n✅      5    \n❌      2    </pre>",
 		},
+		// Tables with markdown in cells — degraded to Unicode styled text
+		{
+			name: "table with bold cells",
+			in:   "| Name | Status |\n|------|--------|\n| **Alpha** | done |",
+			want: "<pre>Name   Status\n─────────────\n𝗔𝗹𝗽𝗵𝗮  done  </pre>",
+		},
+		{
+			name: "table with italic cells",
+			in:   "| Key | Note |\n|-----|------|\n| foo | *bar* |",
+			want: "<pre>Key  Note\n─────────\nfoo  𝘣𝘢𝘳 </pre>",
+		},
+		{
+			name: "table with inline code cells",
+			in:   "| Cmd | Desc |\n|-----|------|\n| `ls` | list |",
+			want: "<pre>Cmd  Desc\n─────────\nls   list</pre>",
+		},
+		{
+			name: "table bold header and plain data",
+			in:   "| **Tool** | **Count** |\n|----------|----------|\n| exec | 5 |",
+			want: "<pre>𝗧𝗼𝗼𝗹  𝗖𝗼𝘂𝗻𝘁\n───────────\nexec  5    </pre>",
+		},
 		// Snake case protection
 		{
 			name: "snake_case identifier protected",
