@@ -122,6 +122,17 @@ func ConfigCommand() *Command {
 				{Label: "set", Data: "set"},
 			}
 		},
+		ChainKeyboard: func(_ context.Context, subcommand string, cc CommandContext) []KeyboardOption {
+			if subcommand != "set" || cc.ConfigSetDeps == nil {
+				return nil
+			}
+			sections := cc.ConfigSetDeps.SectionsFn()
+			opts := make([]KeyboardOption, len(sections))
+			for i, s := range sections {
+				opts[i] = KeyboardOption{Label: s, Data: "set " + s}
+			}
+			return opts
+		},
 	}
 }
 
@@ -137,6 +148,15 @@ func configSet(deps *ConfigSetDeps, args string) (string, error) {
 
 	w := newConfigSetWizard(*deps)
 	deps.Registry.SetWizard(w)
+
+	// If a section name was provided, feed it directly to the wizard.
+	if args != "" {
+		resp, done := w.Handle(args)
+		if done {
+			deps.Registry.ClearWizard()
+		}
+		return resp, nil
+	}
 
 	sections := deps.SectionsFn()
 	return fmt.Sprintf("Which section?\n%s", strings.Join(sections, ", ")), nil

@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // FieldType describes the expected value type for a settable config field.
 type FieldType int
@@ -39,7 +42,7 @@ func LookupField(sectionKey string) (ConfigField, bool) {
 	return ConfigField{}, false
 }
 
-// FieldSections returns the distinct section names in registry order.
+// FieldSections returns the distinct section names in alphabetical order.
 func FieldSections() []string {
 	seen := map[string]bool{}
 	var sections []string
@@ -49,6 +52,7 @@ func FieldSections() []string {
 			sections = append(sections, f.Section)
 		}
 	}
+	sort.Strings(sections)
 	return sections
 }
 
