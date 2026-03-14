@@ -13,6 +13,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/secrets"
@@ -46,6 +47,9 @@ type cmdRegParams struct {
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
 	startTime           time.Time
+
+	// Stores
+	todoStore *memory.TodoStore
 
 	// Tools & skills
 	registry      *tools.Registry
@@ -135,6 +139,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		BitwardenEnabled:    p.cfg.Bitwarden.Enabled,
 		AgentListFn:         p.agentListFn,
 		LastMessageStore:    lastMsgStore,
+		TodoStore:           p.todoStore,
 		ConfigSetDeps:       configSetDeps,
 		AgentNewDeps:        agentNewDeps,
 		SkillsDirs:          p.skillsDirs,
@@ -171,6 +176,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.SessionsCommand())
 	cmds.Register(command.AgentsCommand())
 	cmds.Register(command.RepeatCommand())
+	cmds.Register(command.TodoCommand())
 
 	// Tmux command (only if tool is available)
 	if p.tmuxTool != nil {
