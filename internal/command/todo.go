@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,6 +77,7 @@ func parseTodoArgs(raw string) todoArgs {
 		return a
 	case "stats":
 		a.subcommand = "stats"
+		parseListArgs(&a, rest)
 		return a
 	case "done":
 		// Ambiguity rule: if all remaining tokens are integers, it's a transition.
@@ -245,7 +247,7 @@ func TodoCommand() *Command {
 			case "rm":
 				return todoRmCmd(cc.TodoStore, agentID, args.ids)
 			case "stats":
-				return todoStatsCmd(cc.TodoStore, agentID)
+				return todoStatsCmd(cc.TodoStore, agentID, args)
 			default:
 				return todoListCmd(cc.TodoStore, agentID, args)
 			}
@@ -380,8 +382,11 @@ func todoRmCmd(store *memory.TodoStore, agentID string, ids []int64) (Response, 
 }
 
 // todoStatsCmd shows counts by status and tag.
-func todoStatsCmd(store *memory.TodoStore, agentID string) (Response, error) {
-	items, err := store.List(agentID, "", "", "", "priority", false, 0)
+// Accepts filters via args: status (default "active" for tag counts), priority, tag.
+// Use "/todo stats all" to include done/dropped in tag counts.
+func todoStatsCmd(store *memory.TodoStore, agentID string, args todoArgs) (Response, error) {
+	// Always fetch all items for the status breakdown.
+	items, err := store.List(agentID, "", args.tag, args.priority, "priority", false, 0)
 	if err != nil {
 		return Response{}, fmt.Errorf("list todos: %w", err)
 	}
@@ -391,8 +396,12 @@ func todoStatsCmd(store *memory.TodoStore, agentID string) (Response, error) {
 
 	statusCounts := map[string]int{}
 	tagCounts := map[string]int{}
+	tagStatus := args.status // default "active" from parser
 	for _, item := range items {
 		statusCounts[item.Status]++
+		if !matchesStatus(item.Status, tagStatus) {
+			continue
+		}
 		if item.Tags != "" {
 			for _, t := range strings.Split(item.Tags, ",") {
 				t = strings.TrimSpace(t)
@@ -403,24 +412,60 @@ func todoStatsCmd(store *memory.TodoStore, agentID string) (Response, error) {
 		}
 	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Total: %d\n\n", len(items)))
-
-	sb.WriteString("By status:\n")
+	// Status table.
+	statusCols := []display.Column{
+		{Header: "Status"},
+		{Header: "Count", Align: display.AlignRight},
+	}
+	var statusRows [][]string
 	for _, s := range []string{"open", "in_progress", "done", "dropped"} {
 		if c := statusCounts[s]; c > 0 {
-			sb.WriteString(fmt.Sprintf("  %-12s %d\n", s, c))
+			statusRows = append(statusRows, []string{s, strconv.Itoa(c)})
 		}
 	}
 
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Todos — %d total\n\n", len(items)))
+	sb.WriteString(display.MarkdownTable(statusCols, statusRows))
+
+	// Tag table.
 	if len(tagCounts) > 0 {
-		sb.WriteString("\nBy tag:\n")
-		for tag, count := range tagCounts {
-			sb.WriteString(fmt.Sprintf("  %-12s %d\n", tag, count))
+		tagHeader := "Active"
+		if tagStatus == "" {
+			tagHeader = "Count"
 		}
+		tagCols := []display.Column{
+			{Header: "Tag"},
+			{Header: tagHeader, Align: display.AlignRight},
+		}
+		tags := make([]string, 0, len(tagCounts))
+		for t := range tagCounts {
+			tags = append(tags, t)
+		}
+		sort.Strings(tags)
+		tagRows := make([][]string, 0, len(tags))
+		for _, t := range tags {
+			tagRows = append(tagRows, []string{t, strconv.Itoa(tagCounts[t])})
+		}
+		sb.WriteString("\n")
+		sb.WriteString(display.MarkdownTable(tagCols, tagRows))
 	}
 
 	return Response{Text: strings.TrimRight(sb.String(), "\n")}, nil
+}
+
+// matchesStatus reports whether itemStatus passes the given filter.
+// Empty filter matches all; "active" matches open and in_progress;
+// otherwise exact match.
+func matchesStatus(itemStatus, filter string) bool {
+	switch filter {
+	case "":
+		return true
+	case "active":
+		return itemStatus == "open" || itemStatus == "in_progress"
+	default:
+		return itemStatus == filter
+	}
 }
 
 // formatTodoDetail formats a single todo item with full detail.

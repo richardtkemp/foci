@@ -543,7 +543,8 @@ func TestTodoRm(t *testing.T) {
 	}
 }
 
-// TestTodoStats verifies the stats subcommand output.
+// TestTodoStats verifies the stats subcommand renders tables and filters tags
+// to active items by default, with "stats all" showing all statuses.
 func TestTodoStats(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
@@ -555,18 +556,31 @@ func TestTodoStats(t *testing.T) {
 	store.Add(testAgent, "dropped item", "low", "personal")
 	store.Transition(testAgent, 3, "dropped", "nah")
 
+	// Default: tag counts are active-only.
 	resp, err := cmd.Execute(context.Background(), Request{Args: "stats"}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(resp.Text, "Total: 3") {
+	if !contains(resp.Text, "3 total") {
 		t.Errorf("expected total 3: %s", resp.Text)
 	}
 	if !contains(resp.Text, "open") || !contains(resp.Text, "done") || !contains(resp.Text, "dropped") {
 		t.Errorf("expected all statuses: %s", resp.Text)
 	}
+	if !contains(resp.Text, "work") {
+		t.Errorf("expected work tag: %s", resp.Text)
+	}
+	if contains(resp.Text, "personal") {
+		t.Errorf("expected personal tag excluded (dropped): %s", resp.Text)
+	}
+
+	// "stats all" includes tags from all statuses.
+	resp, err = cmd.Execute(context.Background(), Request{Args: "stats all"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !contains(resp.Text, "work") || !contains(resp.Text, "personal") {
-		t.Errorf("expected all tags: %s", resp.Text)
+		t.Errorf("expected all tags with 'all' filter: %s", resp.Text)
 	}
 }
 
