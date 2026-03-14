@@ -16,13 +16,15 @@ const streamMaxChars = 3900
 
 // streamWriter accumulates text deltas and periodically edits a Telegram message
 // to show model output in real-time. The goroutine and initial message are lazily
-// started on the first delta, so no resources are wasted if streaming is disabled
-// or the agent returns no text.
+// started on the first delta (when live is true). When live is false, the writer
+// accumulates text into its buffer without sending any Telegram messages,
+// allowing a uniform interface regardless of streaming mode.
 type streamWriter struct {
 	client    botClient
 	chatID    int64
 	interval  time.Duration
 	tableOpts display.RenderOpts
+	live      bool // when false, buffer-only (no messages or goroutines)
 
 	mu      sync.Mutex
 	buf     strings.Builder
@@ -34,13 +36,16 @@ type streamWriter struct {
 	done    chan struct{} // closed when editLoop goroutine exits
 }
 
-// newStreamWriter creates a stream writer. No goroutines are started until OnDelta is called.
-func newStreamWriter(client botClient, chatID int64, interval time.Duration, tableOpts display.RenderOpts) *streamWriter {
+// newStreamWriter creates a stream writer. When live is true, the first OnDelta
+// call sends a Telegram message and starts the periodic edit goroutine. When
+// live is false, deltas are accumulated in the buffer but no messages are sent.
+func newStreamWriter(client botClient, chatID int64, interval time.Duration, tableOpts display.RenderOpts, live bool) *streamWriter {
 	return &streamWriter{
 		client:    client,
 		chatID:    chatID,
 		interval:  interval,
 		tableOpts: tableOpts,
+		live:      live,
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
 	}
@@ -59,8 +64,8 @@ func (sw *streamWriter) OnDelta(delta string) {
 	sw.buf.WriteString(delta)
 	sw.dirty = true
 
-	// Lazy start: first delta triggers initial message + edit loop.
-	if sw.ticker == nil {
+	// Lazy start: first delta triggers initial message + edit loop (live mode only).
+	if sw.live && sw.ticker == nil {
 		sw.sendInitial()
 		sw.ticker = time.NewTicker(sw.interval)
 		go sw.editLoop()

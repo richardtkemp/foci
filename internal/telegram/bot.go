@@ -354,6 +354,14 @@ func (b *Bot) SetStreamOutput(enabled bool) { b.streamOutput = enabled }
 // SetStreamUpdateInterval sets the duration between Telegram message edits during streaming.
 func (b *Bot) SetStreamUpdateInterval(d time.Duration) { b.streamUpdateInterval = d }
 
+// streamInterval returns the configured stream update interval, defaulting to 250ms.
+func (b *Bot) streamInterval() time.Duration {
+	if b.streamUpdateInterval > 0 {
+		return b.streamUpdateInterval
+	}
+	return 250 * time.Millisecond
+}
+
 // appendSteer adds text to the steer buffer. Called by the receiver goroutine.
 func (b *Bot) appendSteer(text string) {
 	b.steerMu.Lock()

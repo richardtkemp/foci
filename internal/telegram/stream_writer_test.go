@@ -12,7 +12,7 @@ func TestStreamWriter_NoDeltasNoMessage(t *testing.T) {
 	// Verifies that if no deltas arrive, Finish returns 0 and no messages are sent.
 	// This proves the lazy-start design: no goroutines or messages are created without data.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, true)
 
 	msgID := sw.Finish()
 
@@ -28,7 +28,7 @@ func TestStreamWriter_FirstDeltaSendsMessage(t *testing.T) {
 	// Verifies that the first OnDelta call sends an initial message with HTML
 	// formatting and that Finish returns the message ID.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("hello")
 	msgID := sw.Finish()
@@ -52,7 +52,7 @@ func TestStreamWriter_EditsOnTick(t *testing.T) {
 	// Verifies that after the initial message, subsequent deltas trigger periodic
 	// edits via the ticker with HTML formatting.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("first")
 	sw.OnDelta(" second")
@@ -84,7 +84,7 @@ func TestStreamWriter_Truncation(t *testing.T) {
 	// Verifies that text exceeding streamMaxChars is truncated with "..." appended.
 	// This ensures we stay within Telegram's 4096 character message limit.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, true)
 
 	long := strings.Repeat("x", streamMaxChars+500)
 	sw.OnDelta(long)
@@ -100,7 +100,7 @@ func TestStreamWriter_FinishStopsTicker(t *testing.T) {
 	// Verifies that after Finish(), the edit loop has exited and no further edits
 	// occur even if we wait past the interval.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("data")
 	sw.Finish()
@@ -119,7 +119,7 @@ func TestStreamWriter_ContentReturnsFullBuffer(t *testing.T) {
 	// response is empty (nudges consumed intermediate text) but the stream has the
 	// full text that was displayed to the user.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("first ")
 	sw.OnDelta("second ")
@@ -135,7 +135,7 @@ func TestStreamWriter_ContentReturnsFullBuffer(t *testing.T) {
 func TestStreamWriter_ContentEmptyWhenNoDeltas(t *testing.T) {
 	// Verifies that Content() returns empty string when no deltas arrived.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, true)
 	sw.Finish()
 
 	if content := sw.Content(); content != "" {
@@ -147,7 +147,7 @@ func TestStreamWriter_DeltaAfterFinishIgnored(t *testing.T) {
 	// Verifies that OnDelta calls after Finish() are silently ignored and do not
 	// send additional messages or start new goroutines.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("before")
 	sw.Finish()
@@ -165,7 +165,7 @@ func TestStreamWriter_HTMLFormatting(t *testing.T) {
 	// Verifies that streaming edits apply markdown-to-HTML conversion.
 	// Complete markdown (matched delimiters) should render as HTML tags.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("**bold text**")
 
@@ -183,7 +183,7 @@ func TestStreamWriter_PartialMarkdownStripped(t *testing.T) {
 	// Verifies that incomplete markdown delimiters are stripped before HTML
 	// conversion so Telegram doesn't reject the message.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	// Simulate partial bold: opening ** without closing
 	sw.OnDelta("**Bold tex")
@@ -199,7 +199,7 @@ func TestStreamWriter_PartialThenComplete(t *testing.T) {
 	// Verifies the streaming progression: first partial markdown is stripped,
 	// then once complete, it renders as proper HTML.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	// First delta: incomplete bold
 	sw.OnDelta("**Bold tex")
@@ -229,7 +229,7 @@ func TestStreamWriter_PartialThenComplete(t *testing.T) {
 func TestStreamWriter_PartialCodeFence(t *testing.T) {
 	// Verifies that an unclosed code fence is stripped from streaming output.
 	mc := &mockClient{}
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("before\n```\nsome code")
 	sw.Finish()
@@ -251,7 +251,7 @@ func TestStreamWriter_FallbackOnHTMLError(t *testing.T) {
 
 	// We need a custom mock for this test. Use the editErr pattern but for sends.
 	// Actually, the mockClient doesn't have sendErr. Let's test the edit fallback instead.
-	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{})
+	sw := newStreamWriter(mc, 123, 20*time.Millisecond, display.RenderOpts{}, true)
 
 	sw.OnDelta("hello **world**")
 
@@ -271,5 +271,29 @@ func TestStreamWriter_FallbackOnHTMLError(t *testing.T) {
 	_ = sendCount
 	if mc.editCount() < 2 {
 		t.Errorf("expected at least 2 edits (HTML + fallback), got %d", mc.editCount())
+	}
+}
+
+func TestStreamWriter_BufferOnlyMode(t *testing.T) {
+	// Non-live stream writer accumulates text but sends no messages and starts
+	// no goroutines. Finish returns 0 and Content returns the accumulated text.
+	mc := &mockClient{}
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond, display.RenderOpts{}, false)
+
+	sw.OnDelta("hello")
+	sw.OnDelta(" world")
+	msgID := sw.Finish()
+
+	if msgID != 0 {
+		t.Errorf("expected msgID 0 in buffer-only mode, got %d", msgID)
+	}
+	if mc.sentCount() != 0 {
+		t.Errorf("expected 0 sends in buffer-only mode, got %d", mc.sentCount())
+	}
+	if mc.editCount() != 0 {
+		t.Errorf("expected 0 edits in buffer-only mode, got %d", mc.editCount())
+	}
+	if content := sw.Content(); content != "hello world" {
+		t.Errorf("Content() = %q, want %q", content, "hello world")
 	}
 }
