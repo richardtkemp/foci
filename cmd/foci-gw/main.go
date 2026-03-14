@@ -206,7 +206,8 @@ Subcommands:
 		// Resolve model using new ResolveModel function
 		resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, cfg.Models.Aliases)
 		if err != nil {
-			log.Fatalf("agent %q: %v", acfg.ID, err)
+			log.Errorf("main", "agent %q: %v (agent skipped)", acfg.ID, err)
+			continue
 		}
 
 		// Update acfg.Model to the resolved developer/model_id format so all
