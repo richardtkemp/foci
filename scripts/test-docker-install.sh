@@ -2,9 +2,10 @@
 # Test foci installation in a clean Docker container.
 #
 # Usage:
-#   ./scripts/test-docker-install.sh                  # Ubuntu 24.04 (default)
-#   ./scripts/test-docker-install.sh debian:12         # Debian 12
-#   ./scripts/test-docker-install.sh ubuntu:22.04      # Ubuntu 22.04
+#   ./scripts/test-docker-install.sh                      # Ubuntu 24.04 (default)
+#   ./scripts/test-docker-install.sh debian:12             # Debian 12
+#   ./scripts/test-docker-install.sh --persist             # leave container running after test
+#   ./scripts/test-docker-install.sh --persist ubuntu:22.04
 #
 # Secrets are loaded from .env.test (gitignored). Create it with:
 #
@@ -12,14 +13,22 @@
 #   FOCI_TELEGRAM_USER=5970082313
 #   FOCI_AUTH_METHOD=skip
 #
-# The script cleans up the container on exit (success or failure).
+# By default the container is removed on exit. Use --persist to keep it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE="${1:-ubuntu:24.04}"
-CONTAINER="foci-install-test-$$"
 ENV_FILE="$REPO_DIR/.env.test"
+
+PERSIST=false
+IMAGE="ubuntu:24.04"
+for arg in "$@"; do
+    case "$arg" in
+        --persist) PERSIST=true ;;
+        *)         IMAGE="$arg" ;;
+    esac
+done
+CONTAINER="foci-install-test-$$"
 
 # Colors
 if [[ -t 1 ]]; then
@@ -52,8 +61,11 @@ for var in FOCI_TELEGRAM_TOKEN FOCI_TELEGRAM_USER; do
     fi
 done
 
-# Clean up on exit
+# Clean up on exit unless --persist was given
 cleanup() {
+    if $PERSIST; then
+        return
+    fi
     info "Cleaning up container $CONTAINER"
     docker rm -f "$CONTAINER" &>/dev/null || true
 }
@@ -146,10 +158,26 @@ else
     ERRORS=$((ERRORS + 1))
 fi
 
+# foci-gw started (no systemd in container, so setup.sh should start it via runuser)
+sleep 2
+if run "pgrep -x foci-gw >/dev/null 2>&1"; then
+    pass "Process: foci-gw running"
+else
+    fail "foci-gw not running"
+    ERRORS=$((ERRORS + 1))
+fi
+
 echo ""
 if [[ $ERRORS -eq 0 ]]; then
     pass "All checks passed ($IMAGE)"
 else
     fail "$ERRORS check(s) failed ($IMAGE)"
     exit 1
+fi
+
+if $PERSIST; then
+    echo ""
+    info "Container left running: $CONTAINER"
+    info "  docker exec -it $CONTAINER bash"
+    info "  docker rm -f $CONTAINER"
 fi

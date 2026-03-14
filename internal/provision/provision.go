@@ -32,7 +32,7 @@ var DefaultCharacterFileNames = []string{
 // AgentSpec describes the inputs needed to provision a new agent workspace.
 type AgentSpec struct {
 	ID          string // slug: "greek-tutor"
-	Model       string // full model ID: "claude-sonnet-4-6"
+	Model       string // developer/model_id: "anthropic/claude-sonnet-4-6"
 	DisplayName string // "Greek Tutor" (optional)
 	HomeDir     string // workspace parent: /home/foci
 	DefaultsDir string // shared/defaults/ root (in repo or on disk)
@@ -59,7 +59,7 @@ func Provision(spec AgentSpec) (*Result, error) {
 	workspace := spec.workspacePath()
 
 	// 1. Create workspace directories
-	for _, dir := range []string{"character", "memory", "prompts"} {
+	for _, dir := range []string{"character", "memory", "prompts", ".data"} {
 		if err := os.MkdirAll(filepath.Join(workspace, dir), 0755); err != nil {
 			return nil, fmt.Errorf("create %s: %w", dir, err)
 		}

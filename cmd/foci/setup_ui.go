@@ -123,7 +123,7 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 	}
 
 	fmt.Printf("  %s\n", bestID)
-	return bestID
+	return "anthropic/" + bestID
 }
 
 // mdImportOptions configures the importMDFiles file picker.

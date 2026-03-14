@@ -8,7 +8,7 @@ import (
 // SetupOptions holds the inputs collected by the setup wizard.
 type SetupOptions struct {
 	AgentID     string   // agent identifier (e.g. "fotini")
-	Model       string   // model ID (e.g. "claude-sonnet-4-6")
+	Model       string   // developer/model_id (e.g. "anthropic/claude-sonnet-4-6")
 	AgentBlock  string   // pre-built [[agents]] TOML from provision.GenerateAgentBlock (if set, overrides AgentID/SystemFiles)
 	SystemFiles []string // workspace-relative character file paths (used when AgentBlock is empty)
 }
