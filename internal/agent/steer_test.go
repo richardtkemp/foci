@@ -86,10 +86,11 @@ func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
 		t.Errorf("tool executions = %d, want 1", toolCalls)
 	}
 
-	// Results should contain: tool_result for tu_1 (success), tool_result for
-	// tu_2 and tu_3 (skipped), and a text block with [user] prefix.
-	if len(results) != 4 {
-		t.Fatalf("got %d result blocks, want 4", len(results))
+	// Results: tool_result for tu_1 (success) + steer text block.
+	// No synthetic "Skipped" results — the caller strips unexecuted tool_use
+	// blocks from the assistant message instead.
+	if len(results) != 2 {
+		t.Fatalf("got %d result blocks, want 2", len(results))
 	}
 
 	// First result: successful execution of tu_1
@@ -97,22 +98,9 @@ func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
 		t.Errorf("result[0]: expected successful tu_1, got toolUseID=%q isError=%v", results[0].ToolUseID, results[0].IsError)
 	}
 
-	// Second result: skipped tu_2
-	if results[1].ToolUseID != "tu_2" || !results[1].IsError {
-		t.Errorf("result[1]: expected skipped tu_2, got toolUseID=%q isError=%v", results[1].ToolUseID, results[1].IsError)
-	}
-	if results[1].Content != "Skipped: user redirected the conversation" {
-		t.Errorf("result[1] content = %q", results[1].Content)
-	}
-
-	// Third result: skipped tu_3
-	if results[2].ToolUseID != "tu_3" || !results[2].IsError {
-		t.Errorf("result[2]: expected skipped tu_3, got toolUseID=%q isError=%v", results[2].ToolUseID, results[2].IsError)
-	}
-
-	// Fourth result: steer text block
-	if results[3].Type != "text" || results[3].Text != "[user] stop and do something else" {
-		t.Errorf("result[3]: expected steer text block, got type=%q text=%q", results[3].Type, results[3].Text)
+	// Second result: steer text block
+	if results[1].Type != "text" || results[1].Text != "[user] stop and do something else" {
+		t.Errorf("result[1]: expected steer text block, got type=%q text=%q", results[1].Type, results[1].Text)
 	}
 }
 
@@ -198,13 +186,13 @@ func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
 		t.Errorf("tool executions = %d, want 0", toolCalls)
 	}
 
-	// 2 skipped tool results + 1 steer text = 3
-	if len(results) != 3 {
-		t.Fatalf("got %d result blocks, want 3", len(results))
+	// Just the steer text block — no synthetic "Skipped" results.
+	if len(results) != 1 {
+		t.Fatalf("got %d result blocks, want 1", len(results))
 	}
 
-	if results[2].Type != "text" || results[2].Text != "[user] abort" {
-		t.Errorf("steer block: type=%q text=%q", results[2].Type, results[2].Text)
+	if results[0].Type != "text" || results[0].Text != "[user] abort" {
+		t.Errorf("steer block: type=%q text=%q", results[0].Type, results[0].Text)
 	}
 }
 
@@ -305,5 +293,119 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 
 	if resp != "Got your redirect." {
 		t.Errorf("response = %q, want %q", resp, "Got your redirect.")
+	}
+}
+
+func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
+	// Proves that when a steer fires mid-batch, the assistant message sent
+	// in the next API call has the unexecuted tool_use blocks stripped and
+	// no "Skipped" tool_results appear anywhere.
+	var callCount atomic.Int32
+
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		n := callCount.Add(1)
+
+		if n == 1 {
+			// First call: model requests 3 tool calls
+			return &provider.MessageResponse{
+				ID:   "msg_1",
+				Type: "message",
+				Role: "assistant",
+				Content: []provider.ContentBlock{
+					{Type: "text", Text: "Let me run these tools"},
+					{Type: "tool_use", ID: "tu_A", Name: "echo_tool", Input: json.RawMessage(`{"text":"first"}`)},
+					{Type: "tool_use", ID: "tu_B", Name: "echo_tool", Input: json.RawMessage(`{"text":"second"}`)},
+					{Type: "tool_use", ID: "tu_C", Name: "echo_tool", Input: json.RawMessage(`{"text":"third"}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
+			}
+		}
+
+		// Second call: verify the assistant message was rewritten.
+		// It should only contain the text block and tu_A (executed),
+		// not tu_B or tu_C (skipped by steer).
+		for _, msg := range req.Messages {
+			if msg.Role == "assistant" {
+				for _, block := range msg.Content {
+					if block.Type == "tool_use" && (block.ID == "tu_B" || block.ID == "tu_C") {
+						return &provider.MessageResponse{
+							ID:         "msg_2",
+							Type:       "message",
+							Role:       "assistant",
+							Content:    provider.TextContent("FAIL: unexecuted tool_use blocks present"),
+							StopReason: "end_turn",
+							Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
+						}
+					}
+				}
+			}
+			// Also verify no "Skipped" results
+			for _, block := range msg.Content {
+				if block.Type == "tool_result" && block.Content == "Skipped: user redirected the conversation" {
+					return &provider.MessageResponse{
+						ID:         "msg_2",
+						Type:       "message",
+						Role:       "assistant",
+						Content:    provider.TextContent("FAIL: Skipped tool_result present"),
+						StopReason: "end_turn",
+						Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
+					}
+				}
+			}
+		}
+
+		return &provider.MessageResponse{
+			ID:         "msg_2",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("Clean rewrite confirmed."),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
+		}
+	})
+
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:        "echo_tool",
+		Description: "echoes text",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
+			var p struct{ Text string }
+			json.Unmarshal(params, &p)
+			return tools.TextResult(fmt.Sprintf("echo: %s", p.Text)), nil
+		},
+	})
+
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+
+	// Steer fires after the first tool executes (second steer check).
+	var checkCount int
+	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
+		SteerCheckFunc: func() string {
+			checkCount++
+			if checkCount == 2 {
+				return "stop everything"
+			}
+			return ""
+		},
+	})
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: bootstrap,
+		Model:     "claude-haiku-4-5",
+	}
+
+	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/2000000000", "Run three tools", nil)
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	if resp != "Clean rewrite confirmed." {
+		t.Errorf("response = %q, want %q", resp, "Clean rewrite confirmed.")
 	}
 }

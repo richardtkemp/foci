@@ -62,7 +62,9 @@ func notifyResponseBlocks(ctx context.Context, content []provider.ContentBlock) 
 // executeToolCalls iterates over response content blocks, executes client-side
 // tool_use blocks, handles errors, guards oversized results, and redacts secrets.
 // If a steer message arrives between tool calls, remaining tools are skipped
-// with synthetic error results and the steer text is appended as a [user] block.
+// and the steer text is appended as a [user] block. The caller is responsible
+// for stripping unexecuted tool_use blocks from the assistant message via
+// stripUnmatchedToolUse.
 func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient provider.Client, sessionKey, turnModel string, blocks []provider.ContentBlock, messages []provider.Message) ([]provider.ContentBlock, error) {
 	toolCtx := tools.WithSessionKey(ctx, sessionKey)
 
@@ -77,17 +79,12 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			return nil, ctx.Err()
 		}
 
-		// Check for steer message before executing this tool
+		// Check for steer message before executing this tool.
+		// Don't create synthetic "Skipped" tool_results — the caller will
+		// strip the unexecuted tool_use blocks from the assistant message
+		// so the model never sees tools it didn't run.
 		if steer := steerCheckFromCtx(ctx); steer != "" {
 			a.logger().Infof("steer: user redirected conversation, skipping remaining tools in session %s", sessionKey)
-			// Skip this and all remaining tool_use blocks with synthetic errors
-			for j := i; j < len(blocks); j++ {
-				if blocks[j].Type == "tool_use" {
-					toolResults = append(toolResults, provider.ToolResultBlock(
-						blocks[j].ID, "Skipped: user redirected the conversation", true,
-					))
-				}
-			}
 			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[user] " + steer})
 			return toolResults, nil
 		}

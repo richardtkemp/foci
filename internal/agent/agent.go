@@ -658,6 +658,15 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			return "", err
 		}
 
+		// Steer rewrite: if some tool_use blocks in the assistant message
+		// have no matching tool_result (steer skipped them), strip them so
+		// the model never sees tools it didn't run. Safe because the
+		// assistant message hasn't been flushed to disk yet.
+		if filtered, stripped := stripUnmatchedToolUse(resp.Content, toolResults); stripped {
+			messages[len(messages)-1].Content = filtered
+			newMessages[len(newMessages)-1].Content = filtered
+		}
+
 		// Track tool streak and error state for nudge triggers.
 		lastToolError = false
 		batchToolName := ""

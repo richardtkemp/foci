@@ -189,6 +189,53 @@ func repairDuplicateToolIDs(messages []provider.Message, logger func(string, ...
 	return result, true
 }
 
+// stripUnmatchedToolUse removes tool_use blocks from an assistant message's
+// content when no matching tool_result exists in the results. This is used
+// after a steer interruption: the model requested N tool calls but only some
+// executed before the user redirected. Rather than leaving unexecuted tool_use
+// blocks (which confuse the model into retrying), we rewrite history so it
+// looks like the model only requested the tools that actually ran.
+//
+// Preserves text, thinking, and other non-tool_use blocks. If all content
+// blocks are stripped, inserts a "(interrupted)" text placeholder so the
+// assistant message isn't empty.
+//
+// Returns (filtered, true) if any blocks were stripped; (original, false) otherwise.
+func stripUnmatchedToolUse(assistantContent []provider.ContentBlock, toolResults []provider.ContentBlock) ([]provider.ContentBlock, bool) {
+	// Build set of tool_use IDs that have matching tool_results.
+	matchedIDs := make(map[string]bool)
+	for _, block := range toolResults {
+		if block.Type == "tool_result" {
+			matchedIDs[block.ToolUseID] = true
+		}
+	}
+
+	// Check if any tool_use blocks lack a matching result.
+	hasUnmatched := false
+	for _, block := range assistantContent {
+		if block.Type == "tool_use" && !matchedIDs[block.ID] {
+			hasUnmatched = true
+			break
+		}
+	}
+	if !hasUnmatched {
+		return assistantContent, false
+	}
+
+	// Filter out unmatched tool_use blocks.
+	var filtered []provider.ContentBlock
+	for _, block := range assistantContent {
+		if block.Type == "tool_use" && !matchedIDs[block.ID] {
+			continue
+		}
+		filtered = append(filtered, block)
+	}
+	if len(filtered) == 0 {
+		filtered = provider.TextContent("(interrupted)")
+	}
+	return filtered, true
+}
+
 // sanitizeEmptyTextBlocks removes empty text content blocks from messages.
 // Both Anthropic and Gemini APIs reject requests containing text blocks with empty text.
 // This can happen from corrupted sessions or API responses that returned empty content.
