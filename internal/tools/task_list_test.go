@@ -293,6 +293,101 @@ func TestTaskListUnknownAction(t *testing.T) {
 	}
 }
 
+func TestTaskListBatchCreate(t *testing.T) {
+	// Verifies that a subject with multiple lines creates one task per line.
+	t.Parallel()
+	tool, store := testTaskListTool(t)
+
+	result, err := execTaskList(t, tool, map[string]any{
+		"action":  "create",
+		"subject": "Task A\nTask B\n\nTask C\n",
+	})
+	if err != nil {
+		t.Fatalf("batch create: %v", err)
+	}
+	if !strings.Contains(result.Text, "#1") || !strings.Contains(result.Text, "#2") || !strings.Contains(result.Text, "#3") {
+		t.Errorf("expected three task IDs: %q", result.Text)
+	}
+	if !strings.Contains(result.Text, "Task A") || !strings.Contains(result.Text, "Task C") {
+		t.Errorf("missing task subjects: %q", result.Text)
+	}
+
+	tasks, _ := store.List("test")
+	if len(tasks) != 3 {
+		t.Fatalf("got %d tasks, want 3", len(tasks))
+	}
+	if tasks[0].Subject != "Task A" || tasks[1].Subject != "Task B" || tasks[2].Subject != "Task C" {
+		t.Errorf("subjects = %q, %q, %q", tasks[0].Subject, tasks[1].Subject, tasks[2].Subject)
+	}
+}
+
+func TestTaskListBatchCreateSingleLine(t *testing.T) {
+	// Verifies that a subject with a single line (no newlines) works normally.
+	t.Parallel()
+	tool, _ := testTaskListTool(t)
+
+	result, err := execTaskList(t, tool, map[string]any{
+		"action":  "create",
+		"subject": "Just one task",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !strings.Contains(result.Text, "#1") || !strings.Contains(result.Text, "Just one task") {
+		t.Errorf("unexpected result: %q", result.Text)
+	}
+}
+
+func TestTaskListAutoClearOnAllCompleted(t *testing.T) {
+	// Verifies that completing the last pending task clears the entire list.
+	t.Parallel()
+	tool, store := testTaskListTool(t)
+
+	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task A"})
+	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task B"})
+
+	// Complete first — list should NOT be cleared yet.
+	execTaskList(t, tool, map[string]any{"action": "update", "id": 1, "status": "completed"})
+	tasks, _ := store.List("test")
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks after partial completion, got %d", len(tasks))
+	}
+
+	// Complete second — list should be cleared.
+	result, err := execTaskList(t, tool, map[string]any{"action": "update", "id": 2, "status": "completed"})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if !strings.Contains(result.Text, "list cleared") {
+		t.Errorf("expected clear message: %q", result.Text)
+	}
+
+	tasks, _ = store.List("test")
+	if len(tasks) != 0 {
+		t.Errorf("expected 0 tasks after auto-clear, got %d", len(tasks))
+	}
+}
+
+func TestTaskListNoClearWithPending(t *testing.T) {
+	// Verifies that the list is NOT cleared when non-completed tasks remain.
+	t.Parallel()
+	tool, store := testTaskListTool(t)
+
+	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task A"})
+	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task B"})
+	execTaskList(t, tool, map[string]any{"action": "update", "id": 2, "status": "in_progress"})
+
+	result, _ := execTaskList(t, tool, map[string]any{"action": "update", "id": 1, "status": "completed"})
+	if strings.Contains(result.Text, "list cleared") {
+		t.Errorf("should not clear with in_progress tasks remaining: %q", result.Text)
+	}
+
+	tasks, _ := store.List("test")
+	if len(tasks) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(tasks))
+	}
+}
+
 func TestFormatTasks(t *testing.T) {
 	// Verifies FormatTasks renders markers correctly.
 	t.Parallel()
