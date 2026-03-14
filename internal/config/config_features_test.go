@@ -15,7 +15,7 @@ func TestLoadTelegramToggleDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -38,7 +38,7 @@ func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 
 [telegram]
@@ -396,7 +396,9 @@ func TestLoadMultiballBotsPlural(t *testing.T) {
 	toml := `
 [[agents]]
 id = "clutch"
-telegram_bot = "primary"
+
+[agents.platforms.telegram]
+bot = "primary"
 multiball_bots = ["mb1", "mb2"]
 
 [telegram]
@@ -409,11 +411,15 @@ allowed_users = ["111"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	if len(cfg.Agents[0].MultiballBots) != 2 {
-		t.Fatalf("MultiballBots len = %d, want 2", len(cfg.Agents[0].MultiballBots))
+	tg := cfg.Agents[0].GetTelegramPlatform()
+	if tg == nil {
+		t.Fatal("GetTelegramPlatform() = nil")
 	}
-	if cfg.Agents[0].MultiballBots[0] != "mb1" || cfg.Agents[0].MultiballBots[1] != "mb2" {
-		t.Errorf("MultiballBots = %v, want [mb1 mb2]", cfg.Agents[0].MultiballBots)
+	if len(tg.MultiballBots) != 2 {
+		t.Fatalf("MultiballBots len = %d, want 2", len(tg.MultiballBots))
+	}
+	if tg.MultiballBots[0] != "mb1" || tg.MultiballBots[1] != "mb2" {
+		t.Errorf("MultiballBots = %v, want [mb1 mb2]", tg.MultiballBots)
 	}
 }
 
@@ -425,7 +431,9 @@ func TestLoadSharedMultiballBots(t *testing.T) {
 	toml := `
 [[agents]]
 id = "clutch"
-telegram_bot = "primary"
+
+[agents.platforms.telegram]
+bot = "primary"
 
 [telegram]
 allowed_users = ["111"]
@@ -453,7 +461,7 @@ func TestCompactionPreserveMessagesConfig(t *testing.T) {
 	t.Run("global default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[agent]
+		os.WriteFile(path, []byte(`[[agents]]
 id = "test"
 `), 0644)
 
@@ -469,7 +477,7 @@ id = "test"
 	t.Run("global explicit", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[agent]
+		os.WriteFile(path, []byte(`[[agents]]
 id = "test"
 [sessions]
 compaction_preserve_messages = 10
@@ -487,7 +495,7 @@ compaction_preserve_messages = 10
 	t.Run("global explicit zero", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[agent]
+		os.WriteFile(path, []byte(`[[agents]]
 id = "test"
 [sessions]
 compaction_preserve_messages = 0
@@ -534,7 +542,7 @@ id = "b"
 	t.Run("negative rejected", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[agent]
+		os.WriteFile(path, []byte(`[[agents]]
 id = "test"
 [sessions]
 compaction_preserve_messages = -1
@@ -556,7 +564,7 @@ func TestMessagesInLogConfig(t *testing.T) {
 	t.Run("default false", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[agent]
+		os.WriteFile(path, []byte(`[[agents]]
 id = "test"
 `), 0644)
 
@@ -572,7 +580,7 @@ id = "test"
 	t.Run("global explicit true", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[agent]
+		os.WriteFile(path, []byte(`[[agents]]
 id = "test"
 [logging]
 messages_in_log = true

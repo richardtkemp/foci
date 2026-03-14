@@ -89,7 +89,7 @@ func TestDataPathLoadsFromConfig(t *testing.T) {
 	toml := `
 data_dir = "/opt/foci/data"
 
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -114,7 +114,7 @@ func TestPromptFilePathsConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 
 [sessions]
@@ -137,7 +137,7 @@ func TestPromptFilePathsDefaultEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -161,7 +161,7 @@ func TestResolveAllPaths(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	// Minimal config with no path overrides — all defaults
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -208,7 +208,7 @@ func TestResolveAllPathsAbsoluteOverrides(t *testing.T) {
 	toml := `
 welcome_file = "/opt/welcome.md"
 
-[agent]
+[[agents]]
 id = "test"
 
 [logging]

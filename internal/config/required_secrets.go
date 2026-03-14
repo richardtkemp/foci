@@ -124,17 +124,20 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 	// Convention: agent with telegram_bot="scout" and no bot_secret override
 	// needs secret "telegram.scout".
 	for _, agent := range cfg.Agents {
-		if agent.TelegramBot != "" && agent.BotSecret == "" {
+		tg := agent.GetTelegramPlatform()
+		if tg != nil && tg.Bot != "" && tg.BotSecret == "" {
 			refs = append(refs, SecretRef{
-				Key:     "telegram." + agent.TelegramBot,
-				Context: fmt.Sprintf("agent %q telegram bot %q", agent.ID, agent.TelegramBot),
+				Key:     "telegram." + tg.Bot,
+				Context: fmt.Sprintf("agent %q telegram bot %q", agent.ID, tg.Bot),
 			})
 		}
-		for _, bot := range agent.MultiballBots {
-			refs = append(refs, SecretRef{
-				Key:     "telegram." + bot,
-				Context: fmt.Sprintf("agent %q multiball bot %q", agent.ID, bot),
-			})
+		if tg != nil {
+			for _, bot := range tg.MultiballBots {
+				refs = append(refs, SecretRef{
+					Key:     "telegram." + bot,
+					Context: fmt.Sprintf("agent %q multiball bot %q", agent.ID, bot),
+				})
+			}
 		}
 	}
 	for _, bot := range cfg.Telegram.MultiballBots {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"foci/internal/platform"
 )
 
 // mockTTS provides a mock TTS synthesizer for testing.
@@ -25,9 +27,9 @@ func (m *mockTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 func TestSendMessageToUserVoiceTTS(t *testing.T) {
 	// Verifies that providing text with send_as=voice synthesizes audio via TTS and sends it as voice data, without sending the text separately.
 	t.Parallel()
-	mock := &mockMessageSender{}
+	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -56,9 +58,9 @@ func TestSendMessageToUserVoiceTTS(t *testing.T) {
 func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 	// Verifies that TTS-synthesized voice data is dispatched to the specific chat via SendVoiceDataToChat when a chat ID is in the session key.
 	t.Parallel()
-	mock := &mockMessageSender{}
+	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -87,8 +89,8 @@ func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
 	// Verifies that requesting TTS synthesis when no TTS provider is configured returns a "tts not configured" error.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -107,9 +109,9 @@ func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
 func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
 	// Verifies that errors from the TTS synthesis step (e.g. API rate limit) are propagated back to the caller.
 	t.Parallel()
-	mock := &mockMessageSender{}
+	mock := &mockSender{}
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello",
@@ -128,9 +130,9 @@ func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
 func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	// Verifies that when a file_path is provided with send_as=voice, the file-based path takes precedence over TTS synthesis.
 	t.Parallel()
-	mock := &mockMessageSender{}
+	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("should-not-be-used")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, tts)
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",

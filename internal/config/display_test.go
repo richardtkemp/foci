@@ -225,9 +225,20 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg, agent := testConfig()
 	// Set all optional agent fields
 	agent.SystemFiles = []string{"IDENTITY.md"}
-	agent.BranchOrientationPrompt = "/tmp/orientation.md"
-	agent.TelegramBot = "primary"
-	agent.MultiballBots = []string{"mb1"}
+	agent.BranchOrientationMultiballPrompt = "/tmp/orientation-multiball.md"
+	agent.BranchOrientationHeadlessPrompt = "/tmp/orientation-headless.md"
+	displayWidth := 44
+	tableWrapLines := 5
+	tableStyle := "pretty"
+	agent.Platforms = &PlatformsConfig{Telegram: &TelegramPlatformConfig{
+		Bot:              "primary",
+		MultiballBots:    []string{"mb1"},
+		DisplayWidth:     &displayWidth,
+		TableWrapLines:   &tableWrapLines,
+		TableStyle:       &tableStyle,
+		ReceivedFilesDir: "/tmp/images",
+		AllowedUsers:     []string{"123"},
+	}}
 	agent.TTSRate = 1.3
 	boolTrue := true
 	agent.StartupNotify = &boolTrue
@@ -235,14 +246,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ShowToolCalls = &showPreview
 	showCompact := ShowThinkingCompact
 	agent.ShowThinking = &showCompact
-	displayWidth := 44
-	agent.DisplayWidth = &displayWidth
-	tableWrapLines := 5
-	agent.TableWrapLines = &tableWrapLines
-	tableStyle := "pretty"
-	agent.TableStyle = &tableStyle
-	agent.ReceivedFilesDir = "/tmp/images"
-	agent.AllowedUsers = []string{"123"}
 	agent.Effort = "high"
 	agent.CompactionEffort = "high"
 	// Set optional global fields
@@ -251,7 +254,8 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
-	cfg.Sessions.BranchOrientationPrompt = "/tmp/orient.md"
+	cfg.Sessions.BranchOrientationMultiballPrompt = "/tmp/orient-multiball.md"
+	cfg.Sessions.BranchOrientationHeadlessPrompt = "/tmp/orient-headless.md"
 	cfg.Sessions.CompactionPreserveMessages = 25
 	cfg.Memory.ReindexDebounce = "2s"
 	cfg.Logging.MessagesInLog = true
@@ -426,10 +430,8 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	// sessions sections, showing each option only once in the output.
 	cfg, agent := testConfig()
 	// Ensure both agent and sessions have orientation prompts unset
-	agent.BranchOrientationPrompt = ""
 	agent.BranchOrientationMultiballPrompt = ""
 	agent.BranchOrientationHeadlessPrompt = ""
-	cfg.Sessions.BranchOrientationPrompt = ""
 	cfg.Sessions.BranchOrientationMultiballPrompt = ""
 	cfg.Sessions.BranchOrientationHeadlessPrompt = ""
 	// Ensure both agent and defaults have system_files unset

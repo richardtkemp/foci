@@ -109,67 +109,22 @@ func agentDefinedFields(md toml.MetaData) []map[string]bool {
 	return result
 }
 
-// =========================================================================
-// BACKWARD COMPATIBILITY MIGRATION: migrateAgentTelegramFields
-//
-// This function migrates deprecated telegram fields from AgentConfig to
-// the new Platforms.Telegram structure. This is TEMPORARY code that will
-// be removed once all callers read from Platforms.Telegram directly.
-//
-// Migration happens at config load time. Old config files with telegram_bot,
-// allowed_users, etc. at the agent level will continue to work.
-// =========================================================================
-func migrateAgentTelegramFields(acfg *AgentConfig) {
-	// Skip if agent has no telegram config at all (old or new)
-	if acfg.TelegramBot == "" && acfg.Platforms == nil {
+// syncDisplayFields copies agent-level display fields (ShowToolCalls, ShowThinking)
+// to/from Platforms.Telegram so both levels stay in sync.
+func syncDisplayFields(acfg *AgentConfig) {
+	if acfg.Platforms == nil || acfg.Platforms.Telegram == nil {
 		return
 	}
-
-	// Initialize Platforms if needed
-	if acfg.Platforms == nil {
-		acfg.Platforms = &PlatformsConfig{}
-	}
-
-	// Initialize Platforms.Telegram if needed
-	if acfg.Platforms.Telegram == nil {
-		acfg.Platforms.Telegram = &TelegramPlatformConfig{}
-	}
-
 	tg := acfg.Platforms.Telegram
 
-	// Migrate each field only if the new field is empty (don't overwrite new config)
-	if acfg.TelegramBot != "" && tg.Bot == "" {
-		tg.Bot = acfg.TelegramBot
-	}
-	if acfg.BotSecret != "" && tg.BotSecret == "" {
-		tg.BotSecret = acfg.BotSecret
-	}
-	if len(acfg.MultiballBots) > 0 && len(tg.MultiballBots) == 0 {
-		tg.MultiballBots = acfg.MultiballBots
-	}
-	if len(acfg.AllowedUsers) > 0 && len(tg.AllowedUsers) == 0 {
-		tg.AllowedUsers = acfg.AllowedUsers
-	}
+	// Forward: agent → platform (so telegram bot inherits agent display prefs).
 	if acfg.ShowToolCalls != nil && tg.ShowToolCalls == nil {
 		tg.ShowToolCalls = acfg.ShowToolCalls
 	}
 	if acfg.ShowThinking != nil && tg.ShowThinking == nil {
 		tg.ShowThinking = acfg.ShowThinking
 	}
-	if acfg.DisplayWidth != nil && tg.DisplayWidth == nil {
-		tg.DisplayWidth = acfg.DisplayWidth
-	}
-	if acfg.TableWrapLines != nil && tg.TableWrapLines == nil {
-		tg.TableWrapLines = acfg.TableWrapLines
-	}
-	if acfg.TableStyle != nil && tg.TableStyle == nil {
-		tg.TableStyle = acfg.TableStyle
-	}
-	if acfg.ReceivedFilesDir != "" && tg.ReceivedFilesDir == "" {
-		tg.ReceivedFilesDir = acfg.ReceivedFilesDir
-	}
-	// Reverse normalization: copy telegram platform values back to agent-level
-	// fields so generic code (environment block) can access them without importing telegram config.
+	// Reverse: platform → agent (so generic code sees platform overrides).
 	if tg.ShowToolCalls != nil && acfg.ShowToolCalls == nil {
 		acfg.ShowToolCalls = tg.ShowToolCalls
 	}
@@ -307,11 +262,6 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.EnableStartupNotify, true, md.IsDefined("defaults", "enable_startup_notify"))
 	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
 
-	// Backward compat: [agent] (singular) → single-element Agents array
-	if len(cfg.Agents) == 0 && cfg.Agent.ID != "" {
-		cfg.Agents = []AgentConfig{cfg.Agent}
-	}
-
 	// Apply [defaults] to all agents (agent value > global default > hardcoded).
 	// Uses reflect to iterate DefaultsConfig fields and copy to matching
 	// AgentConfig fields when the agent value is zero and wasn't explicitly
@@ -325,9 +275,6 @@ func Load(path string) (*Config, error) {
 		}
 		applyDefaultsToAgent(&cfg.Agents[i], &cfg, defined)
 
-		if cfg.Agents[i].BranchOrientationPrompt != "" {
-			cfg.Agents[i].BranchOrientationPrompt = ResolvePath(cfg.Agents[i].BranchOrientationPrompt)
-		}
 		if cfg.Agents[i].BranchOrientationMultiballPrompt != "" {
 			cfg.Agents[i].BranchOrientationMultiballPrompt = ResolvePath(cfg.Agents[i].BranchOrientationMultiballPrompt)
 		}
@@ -342,7 +289,7 @@ func Load(path string) (*Config, error) {
 		// Platforms.Telegram, the deprecated fields on AgentConfig and this
 		// migration code will be removed.
 		// =========================================================================
-		migrateAgentTelegramFields(&cfg.Agents[i])
+		syncDisplayFields(&cfg.Agents[i])
 	}
 
 	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
@@ -590,13 +537,20 @@ func Load(path string) (*Config, error) {
 			home, _ := os.UserHomeDir()
 			cfg.Agents[i].Workspace = filepath.Join(home, cfg.Agents[i].ID)
 		}
-		// TelegramBot default: agent ID (token resolved by convention: "telegram.<id>")
-		if cfg.Agents[i].TelegramBot == "" {
-			cfg.Agents[i].TelegramBot = cfg.Agents[i].ID
+		// Telegram defaults: bot name = agent ID, received_files_dir = $workspace/received_files.
+		// Initialize Platforms.Telegram if not already set (every agent gets one by default).
+		if cfg.Agents[i].Platforms == nil {
+			cfg.Agents[i].Platforms = &PlatformsConfig{}
 		}
-		// ReceivedFilesDir default: $workspace/received_files
-		if cfg.Agents[i].ReceivedFilesDir == "" {
-			cfg.Agents[i].ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
+		if cfg.Agents[i].Platforms.Telegram == nil {
+			cfg.Agents[i].Platforms.Telegram = &TelegramPlatformConfig{}
+		}
+		tg := cfg.Agents[i].Platforms.Telegram
+		if tg.Bot == "" {
+			tg.Bot = cfg.Agents[i].ID
+		}
+		if tg.ReceivedFilesDir == "" {
+			tg.ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
 		}
 		// Name default: capitalised ID (e.g. "clutch" → "Clutch")
 		if cfg.Agents[i].Name == "" && cfg.Agents[i].ID != "" {

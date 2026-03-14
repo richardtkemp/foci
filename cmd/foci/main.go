@@ -29,34 +29,17 @@ var client = &http.Client{Timeout: 5 * time.Minute}
 // When adding new flags, add the env var fallback in parseSendFlags (for send flags)
 // or cmdBranch (for branch-specific flags), and update the usage() text for both.
 
-// legacyEnvFallback returns the value of the legacy CLOD_ env var if it exists.
-// Used for backward compatibility with old CLOD_ environment variable names.
-func legacyEnvFallback(envKey string) string {
-	if strings.HasPrefix(envKey, "FOCI_") {
-		return os.Getenv("CLOD_" + strings.TrimPrefix(envKey, "FOCI_"))
-	}
-	return ""
-}
-
 // envDefault returns val if non-empty, otherwise falls back to the env var.
-// Checks FOCI_ prefix first, then CLOD_ prefix as legacy fallback.
 func envDefault(val, envKey string) string {
 	if val != "" {
 		return val
 	}
-	if v := os.Getenv(envKey); v != "" {
-		return v
-	}
-	return legacyEnvFallback(envKey)
+	return os.Getenv(envKey)
 }
 
 // envBool returns true if val is true, or the env var is non-empty.
-// Checks FOCI_ prefix first, then CLOD_ prefix as legacy fallback.
 func envBool(val bool, envKey string) bool {
-	if val || os.Getenv(envKey) != "" {
-		return true
-	}
-	return legacyEnvFallback(envKey) != ""
+	return val || os.Getenv(envKey) != ""
 }
 
 // wantsHelp returns true if args contain -h or --help.

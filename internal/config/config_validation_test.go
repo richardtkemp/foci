@@ -18,17 +18,17 @@ func TestValidateCompactionThreshold(t *testing.T) {
 	}{
 		{
 			"threshold too high",
-			"[agent]\nid = \"test\"\n[sessions]\ncompaction_threshold = 1.5",
+			"[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = 1.5",
 			"compaction_threshold = 1.5",
 		},
 		{
 			"threshold negative",
-			"[agent]\nid = \"test\"\n[sessions]\ncompaction_threshold = -0.1",
+			"[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = -0.1",
 			"compaction_threshold = -0.1",
 		},
 		{
 			"threshold valid",
-			"[agent]\nid = \"test\"\n[sessions]\ncompaction_threshold = 0.7",
+			"[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = 0.7",
 			"",
 		},
 	}
@@ -65,18 +65,18 @@ func TestValidateHTTPPort(t *testing.T) {
 	}{
 		{
 			"port too high",
-			"[agent]\nid = \"test\"\n[http]\nport = 70000",
+			"[[agents]]\nid = \"test\"\n[http]\nport = 70000",
 			"port = 70000",
 		},
 		{
 			"port zero",
 			// port 0 gets defaulted to 18791, so it should pass
-			"[agent]\nid = \"test\"\n[http]\nport = 0",
+			"[[agents]]\nid = \"test\"\n[http]\nport = 0",
 			"",
 		},
 		{
 			"port valid",
-			"[agent]\nid = \"test\"\n[http]\nport = 8080",
+			"[[agents]]\nid = \"test\"\n[http]\nport = 8080",
 			"",
 		},
 	}
@@ -108,7 +108,7 @@ func TestValidateLoggingLevel(t *testing.T) {
 	// invalid value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
+	os.WriteFile(path, []byte("[[agents]]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -123,7 +123,7 @@ func TestValidateCacheStrategy(t *testing.T) {
 	// Proves that an unrecognized cache strategy value produces a validation error.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
+	os.WriteFile(path, []byte("[[agents]]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -139,7 +139,7 @@ func TestValidateCacheTTL(t *testing.T) {
 	// with an error mentioning the "ttl" field name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
+	os.WriteFile(path, []byte("[[agents]]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -156,7 +156,7 @@ func TestValidateCacheTTLValid(t *testing.T) {
 	dir := t.TempDir()
 	for _, ttl := range []string{"5m", "1h"} {
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = \"test\"\n[cache]\nttl = %q", ttl)), 0644)
+		os.WriteFile(path, []byte(fmt.Sprintf("[[agents]]\nid = \"test\"\n[cache]\nttl = %q", ttl)), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Errorf("ttl=%q: unexpected error: %v", ttl, err)
@@ -172,7 +172,7 @@ func TestValidateWarningWindowDuration(t *testing.T) {
 	// error mentioning the field name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[agent]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
+	os.WriteFile(path, []byte("[[agents]]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -189,7 +189,7 @@ func TestValidateMemorySourceWeight(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 
 [[memory.sources]]
@@ -214,7 +214,7 @@ func TestLoadMemoryConversationWeightDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -235,7 +235,7 @@ func TestLoadMemoryConversationWeightCustom(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[agent]
+[[agents]]
 id = "test"
 
 [memory]
@@ -263,17 +263,17 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 	}{
 		{
 			"weight too high",
-			"[agent]\nid = \"test\"\n[memory]\nconversation_weight = 1.5",
+			"[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = 1.5",
 			"conversation_weight = 1.5",
 		},
 		{
 			"weight negative",
-			"[agent]\nid = \"test\"\n[memory]\nconversation_weight = -0.1",
+			"[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = -0.1",
 			"conversation_weight = -0.1",
 		},
 		{
 			"weight valid",
-			"[agent]\nid = \"test\"\n[memory]\nconversation_weight = 0.5",
+			"[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = 0.5",
 			"",
 		},
 	}
@@ -312,7 +312,7 @@ func TestValidateNewDurationFields(t *testing.T) {
 		{
 			name: "invalid http_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [anthropic]
 http_timeout = "invalid"
@@ -322,7 +322,7 @@ http_timeout = "invalid"
 		{
 			name: "invalid database busy_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [database]
 busy_timeout = "invalid"
@@ -332,7 +332,7 @@ busy_timeout = "invalid"
 		{
 			name: "invalid telegram long_poll_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [telegram]
 long_poll_timeout = "invalid"
@@ -342,7 +342,7 @@ long_poll_timeout = "invalid"
 		{
 			name: "invalid http graceful_shutdown_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [http]
 graceful_shutdown_timeout = "invalid"
@@ -352,7 +352,7 @@ graceful_shutdown_timeout = "invalid"
 		{
 			name: "invalid tools tmux_command_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [tools]
 tmux_command_timeout = "invalid"
@@ -362,7 +362,7 @@ tmux_command_timeout = "invalid"
 		{
 			name: "invalid tools web_fetch_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [tools]
 web_fetch_timeout = "invalid"
@@ -372,7 +372,7 @@ web_fetch_timeout = "invalid"
 		{
 			name: "invalid tools web_search_timeout",
 			toml: `
-[agent]
+[[agents]]
 id = "test"
 [tools]
 web_search_timeout = "invalid"
@@ -412,7 +412,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 		t.Run("reserved_"+id, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "foci.toml")
-			os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = %q", id)), 0644)
+			os.WriteFile(path, []byte(fmt.Sprintf("[[agents]]\nid = %q", id)), 0644)
 
 			_, err := Load(path)
 			if err == nil {
@@ -429,7 +429,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 		t.Run("dot_"+id, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "foci.toml")
-			os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = %q", id)), 0644)
+			os.WriteFile(path, []byte(fmt.Sprintf("[[agents]]\nid = %q", id)), 0644)
 
 			_, err := Load(path)
 			if err == nil {
@@ -446,7 +446,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 		t.Run("valid_"+id, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "foci.toml")
-			os.WriteFile(path, []byte(fmt.Sprintf("[agent]\nid = %q", id)), 0644)
+			os.WriteFile(path, []byte(fmt.Sprintf("[[agents]]\nid = %q", id)), 0644)
 
 			_, err := Load(path)
 			if err != nil {
