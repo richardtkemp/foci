@@ -103,6 +103,9 @@ func (w *configSetWizard) handleKey(text string) (string, bool) {
 	}
 
 	typeHint := fieldTypeHint(field.Type)
+	if hint := field.ConstraintHint(); hint != "" {
+		typeHint += ", " + hint
+	}
 
 	// Look up the effective (running) value, which includes defaults.
 	currentHint := "not set"
@@ -123,6 +126,10 @@ func (w *configSetWizard) handleValue(text string) (string, bool) {
 
 	formatted, err := config.FormatTOMLValue(text, w.field.Type)
 	if err != nil {
+		return fmt.Sprintf("Invalid value: %s. Try again:", err), false
+	}
+
+	if err := w.field.ValidateValue(text); err != nil {
 		return fmt.Sprintf("Invalid value: %s. Try again:", err), false
 	}
 
@@ -170,6 +177,10 @@ func ConfigSetDirect(deps ConfigSetDeps, args string) (string, error) {
 
 	formatted, err := config.FormatTOMLValue(rawValue, field.Type)
 	if err != nil {
+		return "", err
+	}
+
+	if err := field.ValidateValue(rawValue); err != nil {
 		return "", err
 	}
 
