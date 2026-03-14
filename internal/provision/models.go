@@ -7,11 +7,11 @@ import "strings"
 func ResolveModelAlias(input string) string {
 	switch strings.ToLower(strings.TrimSpace(input)) {
 	case "opus":
-		return "claude-opus-4-6"
+		return "anthropic/claude-opus-4-6"
 	case "sonnet", "":
-		return "claude-sonnet-4-6"
+		return "anthropic/claude-sonnet-4-6"
 	case "haiku":
-		return "claude-haiku-4-5-20251001"
+		return "anthropic/claude-haiku-4-5-20251001"
 	default:
 		return input
 	}

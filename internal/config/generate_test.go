@@ -13,7 +13,7 @@ func TestGenerateConfig(t *testing.T) {
 	// keys and platform-specific sections.
 	opts := SetupOptions{
 		AgentID: "fotini",
-		Model:   "claude-sonnet-4-6",
+		Model:   "anthropic/claude-sonnet-4-6",
 		SystemFiles: []string{
 			"character/SOUL.md",
 			"character/CRAFT.md",
@@ -34,7 +34,7 @@ func TestGenerateConfig(t *testing.T) {
 	if !strings.Contains(result, `id = "fotini"`) {
 		t.Error("missing agent id")
 	}
-	if !strings.Contains(result, `model = "claude-sonnet-4-6"`) {
+	if !strings.Contains(result, `model = "anthropic/claude-sonnet-4-6"`) {
 		t.Error("missing model")
 	}
 	if !strings.Contains(result, `"character/SOUL.md"`) {
@@ -88,12 +88,12 @@ func TestGenerateConfigWithAgentBlock(t *testing.T) {
 	// embeds it verbatim, including workspace and system_files entries.
 	agentBlock := `[[agents]]
 id = "fotini"
-model = "claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/foci/fotini"
 system_files = ["character/SOUL.md", "character/COHERENCE.md", "character/CRAFT.md", "character/USER.md", "character/MEMORY.md"]
 `
 	opts := SetupOptions{
-		Model:      "claude-sonnet-4-6",
+		Model:      "anthropic/claude-sonnet-4-6",
 		AgentBlock: agentBlock,
 	}
 

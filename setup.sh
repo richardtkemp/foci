@@ -358,7 +358,7 @@ if $IS_SELF && ! $DRY_RUN; then
     info "Self-mode: handling directories, config, and files directly"
 
     # Create directories (no chown needed — we own them)
-    mkdir -p "$FOCI_HOME/config" "$FOCI_HOME/data"
+    mkdir -p "$FOCI_HOME/config" "$FOCI_HOME/data" "$FOCI_HOME/logs"
 
     # Copy shared directory (defaults, docs, skills) — must happen before wizard
     mkdir -p "$FOCI_HOME/shared"
@@ -439,8 +439,8 @@ emit "install -m 755 \"$SCRIPT_DIR/bin/foci-call\" \"$INSTALL_DIR/foci-call\""
 # --- Directories (only if needed and not self-mode) ---
 if $NEED_DIRS; then
     emit_comment "Create directories"
-    emit "mkdir -p \"$FOCI_HOME/config\" \"$FOCI_HOME/data\""
-    emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/config\" \"$FOCI_HOME/data\""
+    emit "mkdir -p \"$FOCI_HOME/config\" \"$FOCI_HOME/data\" \"$FOCI_HOME/logs\""
+    emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/config\" \"$FOCI_HOME/data\" \"$FOCI_HOME/logs\""
 fi
 
 # --- Copy shared files (defaults, docs) — must happen before wizard ---
@@ -558,6 +558,9 @@ if $HAS_SYSTEMCTL; then
         emit_comment "Start service"
         emit "systemctl start \"$SERVICE_NAME\""
     fi
+else
+    emit_comment "Start foci manually (no systemd available)"
+    emit "runuser -u \"$FOCI_USER\" -- nohup \"$INSTALL_DIR/foci-gw\" -config \"$FOCI_HOME/config/foci.toml\" >> \"$FOCI_HOME/logs/foci-gw.out\" 2>&1 &"
 fi
 
 chmod +x "$INSTALL_SCRIPT"
@@ -599,6 +602,8 @@ elif $DO_INSTALL; then
     if $HAS_SYSTEMCTL; then
         info "  Status:  systemctl status $SERVICE_NAME"
         info "  Logs:    journalctl -u $SERVICE_NAME -f"
+    else
+        info "  Logs:    tail -f $FOCI_HOME/logs/foci.log"
     fi
     info "  Now message your bot on Telegram — it will introduce itself."
 else

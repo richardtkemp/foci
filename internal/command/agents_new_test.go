@@ -64,7 +64,7 @@ func TestAgentWizardHappyPath(t *testing.T) {
 	if captured.display != "Greek Tutor" {
 		t.Errorf("display = %q", captured.display)
 	}
-	if captured.model != "claude-opus-4-6" {
+	if captured.model != "anthropic/claude-opus-4-6" {
 		t.Errorf("model = %q", captured.model)
 	}
 	if captured.charMode != "defaults" {
@@ -183,12 +183,12 @@ func TestAgentWizardModelResolution(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"opus", "claude-opus-4-6"},
-		{"sonnet", "claude-sonnet-4-6"},
-		{"haiku", "claude-haiku-4-5-20251001"},
-		{"", "claude-sonnet-4-6"},
+		{"opus", "anthropic/claude-opus-4-6"},
+		{"sonnet", "anthropic/claude-sonnet-4-6"},
+		{"haiku", "anthropic/claude-haiku-4-5-20251001"},
+		{"", "anthropic/claude-sonnet-4-6"},
 		{"claude-custom-model", "claude-custom-model"},
-		{"OPUS", "claude-opus-4-6"},
+		{"OPUS", "anthropic/claude-opus-4-6"},
 	}
 
 	for _, tt := range tests {
@@ -334,7 +334,7 @@ func TestCreateWorkspace(t *testing.T) {
 		deps:     deps,
 		id:       "test-agent",
 		display:  "Test Agent",
-		model:    "claude-sonnet-4-6",
+		model:    "anthropic/claude-sonnet-4-6",
 		charMode: "defaults",
 	}
 
@@ -417,7 +417,7 @@ func TestCreateWorkspaceBlank(t *testing.T) {
 		deps:     deps,
 		id:       "blank-agent",
 		display:  "Blank",
-		model:    "claude-haiku-4-5-20251001",
+		model:    "anthropic/claude-haiku-4-5-20251001",
 		charMode: "blank",
 	}
 
