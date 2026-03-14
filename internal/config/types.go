@@ -93,27 +93,11 @@ type AgentConfig struct {
 	BatchPartialAssistantMessages bool     `toml:"batch_partial_assistant_messages"` // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
 	BatchPartialJoiner            string   `toml:"batch_partial_joiner"`             // separator between batched partial messages (default: "")
 
-	BranchOrientationPrompt          string `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
 	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 
-	// =========================================================================
-	// DEPRECATED TELEGRAM FIELDS (will be removed in a future release)
-	//
-	// Use [agents.platforms.telegram] instead. The Load() function migrates
-	// these fields to the new structure at config load time for backward
-	// compatibility. Once all callers read from Platforms.Telegram, these
-	// fields and the migration code will be removed.
-	// =========================================================================
-	TelegramBot   string            `toml:"telegram_bot"`   // DEPRECATED: use [agents.platforms.telegram.bot]
-	BotSecret     string            `toml:"bot_secret"`     // DEPRECATED: use [agents.platforms.telegram.bot_secret]
-	MultiballBots []string          `toml:"multiball_bots"` // DEPRECATED: use [agents.platforms.telegram.multiball_bots]
-	Memory        AgentMemoryConfig `toml:"memory"`         // per-agent memory sources (combined with global [memory])
-
-	// Platforms holds per-agent platform configurations (telegram, discord, etc.).
-	// This is the NEW preferred way to configure platforms. Old telegram_*
-	// fields above are deprecated and will be migrated here at load time.
-	Platforms *PlatformsConfig `toml:"platforms"`
+	Memory    AgentMemoryConfig `toml:"memory"`    // per-agent memory sources (combined with global [memory])
+	Platforms *PlatformsConfig  `toml:"platforms"` // per-agent platform configurations (telegram, discord, etc.)
 
 	MaxToolLoops          int    `toml:"max_tool_loops"`           // max tool iterations per turn (default 25)
 	MaxOutputTokens       int    `toml:"max_output_tokens"`        // max tokens in model response (default 8192)
@@ -134,16 +118,9 @@ type AgentConfig struct {
 
 	InjectAgentWarnings bool  `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
 	StartupNotify       *bool `toml:"startup_notify"`        // send startup notification (nil = use global defaults.enable_startup_notify)
-	// DEPRECATED: The following Telegram-related fields will be removed.
-	// Use [agents.platforms.telegram] instead. Migration happens at load time.
-	ShowToolCalls *ToolCallDisplay `toml:"show_tool_calls"` // DEPRECATED: use [agents.platforms.telegram.show_tool_calls]
-	ShowThinking        *ShowThinking    `toml:"show_thinking"`        // DEPRECATED: use [agents.platforms.telegram.show_thinking]
-	DisplayWidth        *int             `toml:"display_width"`        // DEPRECATED: use [agents.platforms.telegram.display_width]
-	TableWrapLines      *int             `toml:"table_wrap_lines"`     // DEPRECATED: use [agents.platforms.telegram.table_wrap_lines]
-	TableStyle          *string          `toml:"table_style"`          // DEPRECATED: use [agents.platforms.telegram.table_style]
-	MessagesInLog       *bool            `toml:"messages_in_log"`      // log user message content to event log (nil = use global logging.messages_in_log)
-	ReceivedFilesDir    string           `toml:"received_files_dir"`   // DEPRECATED: use [agents.platforms.telegram.received_files_dir]
-	AllowedUsers        []string         `toml:"allowed_users"`        // DEPRECATED: use [agents.platforms.telegram.allowed_users]
+	ShowToolCalls *ToolCallDisplay `toml:"show_tool_calls"` // show tool call messages (nil = use global/default)
+	ShowThinking  *ShowThinking   `toml:"show_thinking"`  // show thinking blocks (nil = use global/default)
+	MessagesInLog *bool           `toml:"messages_in_log"` // log user message content to event log (nil = use global logging.messages_in_log)
 	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
 	CompactionThreshold        *float64 `toml:"compaction_threshold"`         // compact at this % of context window
 	CompactionSummaryPrompt    string   `toml:"compaction_summary_prompt"`    // path to summary prompt file
@@ -241,14 +218,6 @@ type TelegramConfig struct {
 }
 
 // TelegramPlatformConfig holds per-agent Telegram platform settings.
-// This is the new preferred location for Telegram-specific config; the old
-// top-level fields on AgentConfig (telegram_bot, allowed_users, etc.) are
-// deprecated and will be migrated to this structure at load time.
-//
-// NOTE: This struct and the migration code in Load() are TEMPORARY.
-// They exist to provide backward compatibility during the transition to
-// platform-based config. Once all code reads from Platforms.Telegram,
-// the deprecated fields on AgentConfig and the migration code will be removed.
 type TelegramPlatformConfig struct {
 	Bot              string           `toml:"bot"`                // bot name; token resolved via "telegram.<bot>" secret
 	BotSecret        string           `toml:"bot_secret"`         // override secret key for bot token (default: "telegram.<bot>")
@@ -272,14 +241,7 @@ type PlatformsConfig struct {
 	// Discord *DiscordPlatformConfig `toml:"discord"`
 }
 
-// GetTelegramPlatform returns the Telegram platform config for this agent.
-// After the migration at load time, this will always return a non-nil config
-// if the agent has any telegram-related settings (either from the new
-// [platforms.telegram] section or migrated from deprecated top-level fields).
-//
-// This method is the preferred way to access telegram config. Direct access
-// to the deprecated fields (TelegramBot, AllowedUsers, etc.) will be removed
-// in a future version.
+// GetTelegramPlatform returns the Telegram platform config for this agent, or nil.
 func (a *AgentConfig) GetTelegramPlatform() *TelegramPlatformConfig {
 	if a.Platforms == nil {
 		return nil
@@ -307,7 +269,6 @@ type SessionsConfig struct {
 	CompactionManaRefreshThreshold string  `toml:"compaction_mana_refresh_threshold"` // trigger mana-refresh compact when reset this soon (default "15m")
 	CompactionManaRefreshPreserve  *int    `toml:"compaction_mana_refresh_preserve"`  // messages to preserve in refresh mode (nil = ALL)
 
-	BranchOrientationPrompt          string `toml:"branch_orientation_prompt"`           // deprecated: sets both multiball and headless if the specific fields are empty
 	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 

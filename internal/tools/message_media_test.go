@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"foci/internal/platform"
 )
 
 func TestSendMessageToUserSendAsVideo(t *testing.T) {
 	// Verifies that send_as=video routes the file to SendVideo rather than SendDocument.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/clip.mp4",
@@ -37,8 +39,8 @@ func TestSendMessageToUserSendAsVideo(t *testing.T) {
 func TestSendMessageToUserSendAsVoice(t *testing.T) {
 	// Verifies that send_as=voice with a file path routes to SendVoice rather than SendDocument.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
@@ -60,8 +62,8 @@ func TestSendMessageToUserSendAsVoice(t *testing.T) {
 func TestSendMessageToUserSendAsDocument(t *testing.T) {
 	// Verifies that an explicit send_as=document sends the file as a document.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
@@ -83,8 +85,8 @@ func TestSendMessageToUserSendAsDocument(t *testing.T) {
 func TestSendMessageToUserSendAsDefaultIsDocument(t *testing.T) {
 	// Verifies that omitting send_as defaults to sending the file as a document.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/file.bin",
@@ -105,8 +107,8 @@ func TestSendMessageToUserSendAsDefaultIsDocument(t *testing.T) {
 func TestSendMessageToUserVideoError(t *testing.T) {
 	// Verifies that send errors from the video sender are propagated back to the caller.
 	t.Parallel()
-	mock := &mockMessageSender{videoErr: fmt.Errorf("video too large")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{videoErr: fmt.Errorf("video too large")}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/big.mp4",
@@ -125,8 +127,8 @@ func TestSendMessageToUserVideoError(t *testing.T) {
 func TestSendMessageToUserVideoChatRouting(t *testing.T) {
 	// Verifies that when a chat ID is present in the session key, videos are dispatched via SendVideoToChat rather than the default SendVideo.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -153,8 +155,8 @@ func TestSendMessageToUserVideoChatRouting(t *testing.T) {
 func TestSendMessageToUserTextAndVideo(t *testing.T) {
 	// Verifies that providing both text and a video file sends both independently and reports the combined result.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "check this out",
@@ -180,8 +182,8 @@ func TestSendMessageToUserTextAndVideo(t *testing.T) {
 func TestSendMessageToUserSendAsPhoto(t *testing.T) {
 	// Verifies that send_as=photo routes the file to SendPhoto rather than SendDocument.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/image.jpg",
@@ -203,8 +205,8 @@ func TestSendMessageToUserSendAsPhoto(t *testing.T) {
 func TestSendMessageToUserPhotoError(t *testing.T) {
 	// Verifies that send errors from the photo sender are propagated back to the caller.
 	t.Parallel()
-	mock := &mockMessageSender{photoErr: fmt.Errorf("image too large")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{photoErr: fmt.Errorf("image too large")}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/huge.jpg",
@@ -223,8 +225,8 @@ func TestSendMessageToUserPhotoError(t *testing.T) {
 func TestSendMessageToUserPhotoChatRouting(t *testing.T) {
 	// Verifies that when a chat ID is present in the session key, photos are dispatched via SendPhotoToChat rather than the default SendPhoto.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -247,8 +249,8 @@ func TestSendMessageToUserPhotoChatRouting(t *testing.T) {
 func TestSendMessageToUserSendAsAudio(t *testing.T) {
 	// Verifies that send_as=audio routes the file to SendAudio rather than SendDocument.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/song.mp3",
@@ -270,8 +272,8 @@ func TestSendMessageToUserSendAsAudio(t *testing.T) {
 func TestSendMessageToUserAudioError(t *testing.T) {
 	// Verifies that send errors from the audio sender are propagated back to the caller.
 	t.Parallel()
-	mock := &mockMessageSender{audioErr: fmt.Errorf("bad format")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{audioErr: fmt.Errorf("bad format")}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/bad.mp3",
@@ -290,8 +292,8 @@ func TestSendMessageToUserAudioError(t *testing.T) {
 func TestSendMessageToUserAudioChatRouting(t *testing.T) {
 	// Verifies that when a chat ID is present in the session key, audio is dispatched via SendAudioToChat rather than the default SendAudio.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -314,8 +316,8 @@ func TestSendMessageToUserAudioChatRouting(t *testing.T) {
 func TestSendMessageToUserSendAsAnimation(t *testing.T) {
 	// Verifies that send_as=animation routes the file to SendAnimation rather than SendDocument.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/funny.gif",
@@ -337,8 +339,8 @@ func TestSendMessageToUserSendAsAnimation(t *testing.T) {
 func TestSendMessageToUserAnimationError(t *testing.T) {
 	// Verifies that send errors from the animation sender are propagated back to the caller.
 	t.Parallel()
-	mock := &mockMessageSender{animationErr: fmt.Errorf("gif corrupted")}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{animationErr: fmt.Errorf("gif corrupted")}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/bad.gif",
@@ -357,8 +359,8 @@ func TestSendMessageToUserAnimationError(t *testing.T) {
 func TestSendMessageToUserAnimationChatRouting(t *testing.T) {
 	// Verifies that when a chat ID is present in the session key, animations are dispatched via SendAnimationToChat rather than the default SendAnimation.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{

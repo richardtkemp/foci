@@ -24,17 +24,18 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if len(agent.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
-	if agent.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationMultiballPrompt == "" && agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+	if agent.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationMultiballPrompt == "" {
 		opts = append(opts, availableOption{"agent", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
 	}
-	if agent.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationHeadlessPrompt == "" && agent.BranchOrientationPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+	if agent.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationHeadlessPrompt == "" {
 		opts = append(opts, availableOption{"agent", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
 	}
-	if agent.TelegramBot == "" {
-		opts = append(opts, availableOption{"agent", "telegram_bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
+	tg := agent.GetTelegramPlatform()
+	if tg == nil || tg.Bot == "" {
+		opts = append(opts, availableOption{"agent.platforms.telegram", "bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
 	}
-	if len(agent.MultiballBots) == 0 {
-		opts = append(opts, availableOption{"agent", "multiball_bots", "[]", "additional bot names for multiball"})
+	if tg == nil || len(tg.MultiballBots) == 0 {
+		opts = append(opts, availableOption{"agent.platforms.telegram", "multiball_bots", "[]", "additional bot names for multiball"})
 	}
 	if agent.TTSRate == 0 {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
@@ -49,26 +50,26 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if agent.ShowThinking == nil && cfg.Defaults.ShowThinking != nil && *cfg.Defaults.ShowThinking == ShowThinkingOff {
 		opts = append(opts, availableOption{"agent", "show_thinking", "(defaults)", "thinking display mode: off, compact, true (nil = use defaults)"})
 	}
-	if agent.DisplayWidth == nil {
+	if tg == nil || tg.DisplayWidth == nil {
 		dw := 44
 		if cfg.Telegram.DisplayWidth != nil {
 			dw = *cfg.Telegram.DisplayWidth
 		}
-		opts = append(opts, availableOption{"agent", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use telegram)"})
+		opts = append(opts, availableOption{"agent.platforms.telegram", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use telegram)"})
 	}
-	if agent.TableWrapLines == nil {
+	if tg == nil || tg.TableWrapLines == nil {
 		twl := 5
 		if cfg.Telegram.TableWrapLines != nil {
 			twl = *cfg.Telegram.TableWrapLines
 		}
-		opts = append(opts, availableOption{"agent", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use telegram)"})
+		opts = append(opts, availableOption{"agent.platforms.telegram", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use telegram)"})
 	}
-	if agent.TableStyle == nil {
+	if tg == nil || tg.TableStyle == nil {
 		ts := "pretty"
 		if cfg.Telegram.TableStyle != nil {
 			ts = *cfg.Telegram.TableStyle
 		}
-		opts = append(opts, availableOption{"agent", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown (nil = use telegram)"})
+		opts = append(opts, availableOption{"agent.platforms.telegram", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown (nil = use telegram)"})
 	}
 	if agent.Effort == "" && cfg.Anthropic.Effort == "" {
 		opts = append(opts, availableOption{"agent", "effort", "\"\"", "effort level: low, medium, high (empty = omit)"})
@@ -76,11 +77,11 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if agent.CompactionEffort == "" {
 		opts = append(opts, availableOption{"agent", "compaction_effort", "\"\"", "effort for compaction API calls (empty = use session effort)"})
 	}
-	if agent.ReceivedFilesDir == "" && cfg.Telegram.ReceivedFilesDir == "" {
-		opts = append(opts, availableOption{"agent", "received_files_dir", "\"\"", "save received files to this directory"})
+	if (tg == nil || tg.ReceivedFilesDir == "") && cfg.Telegram.ReceivedFilesDir == "" {
+		opts = append(opts, availableOption{"agent.platforms.telegram", "received_files_dir", "\"\"", "save received files to this directory"})
 	}
-	if len(agent.AllowedUsers) == 0 && len(cfg.Telegram.AllowedUsers) == 0 {
-		opts = append(opts, availableOption{"agent", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
+	if (tg == nil || len(tg.AllowedUsers) == 0) && len(cfg.Telegram.AllowedUsers) == 0 {
+		opts = append(opts, availableOption{"agent.platforms.telegram", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
 	}
 
 	// Sessions fields
@@ -102,10 +103,10 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if cfg.Sessions.CompactionPreserveMessages == 0 {
 		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
 	}
-	if cfg.Sessions.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+	if cfg.Sessions.BranchOrientationMultiballPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
 	}
-	if cfg.Sessions.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationPrompt == "" {
+	if cfg.Sessions.BranchOrientationHeadlessPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
 	}
 

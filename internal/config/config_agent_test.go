@@ -65,13 +65,17 @@ func TestMultiAgentSessionKeys(t *testing.T) {
 id = "clutch"
 model = "anthropic/claude-sonnet-4-6"
 workspace = "/tmp/ws1"
-telegram_bot = "primary"
+
+[agents.platforms.telegram]
+bot = "primary"
 multiball_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
 workspace = "/tmp/ws2"
-telegram_bot = "scout"
+
+[agents.platforms.telegram]
+bot = "scout"
 
 [telegram]
 allowed_users = ["111"]
@@ -100,16 +104,21 @@ allowed_users = ["111"]
 			if mbKey != "clutch/imb-12345/0" {
 				t.Errorf("clutch mbKey = %q", mbKey)
 			}
-			if len(acfg.MultiballBots) != 1 || acfg.MultiballBots[0] != "secondary" {
-				t.Errorf("clutch MultiballBots = %v, want [secondary]", acfg.MultiballBots)
+			tg := acfg.GetTelegramPlatform()
+			if tg == nil {
+				t.Fatal("clutch: GetTelegramPlatform() = nil")
+			}
+			if len(tg.MultiballBots) != 1 || tg.MultiballBots[0] != "secondary" {
+				t.Errorf("clutch MultiballBots = %v, want [secondary]", tg.MultiballBots)
 			}
 		}
 		if acfg.ID == "scout" {
 			if mainKey != "scout/i0/0" {
 				t.Errorf("scout mainKey = %q", mainKey)
 			}
-			if len(acfg.MultiballBots) != 0 {
-				t.Errorf("scout MultiballBots = %v, want empty", acfg.MultiballBots)
+			tg := acfg.GetTelegramPlatform()
+			if tg != nil && len(tg.MultiballBots) != 0 {
+				t.Errorf("scout MultiballBots = %v, want empty", tg.MultiballBots)
 			}
 		}
 	}
@@ -122,8 +131,10 @@ allowed_users = ["111"]
 	}
 
 	// Each agent's bot should resolve to a different token
-	clutchToken := ResolveBotToken(cfg.Agents[0].TelegramBot, cfg.Agents[0].BotSecret, secrets)
-	scoutToken := ResolveBotToken(cfg.Agents[1].TelegramBot, cfg.Agents[1].BotSecret, secrets)
+	tg0 := cfg.Agents[0].GetTelegramPlatform()
+	tg1 := cfg.Agents[1].GetTelegramPlatform()
+	clutchToken := ResolveBotToken(tg0.Bot, tg0.BotSecret, secrets)
+	scoutToken := ResolveBotToken(tg1.Bot, tg1.BotSecret, secrets)
 
 	if clutchToken == scoutToken {
 		t.Errorf("clutch and scout resolved to same token: %q", clutchToken)
@@ -136,7 +147,7 @@ allowed_users = ["111"]
 	}
 
 	// Multiball bot should resolve differently from primary
-	mbToken := ResolveBotToken(cfg.Agents[0].MultiballBots[0], "", secrets)
+	mbToken := ResolveBotToken(tg0.MultiballBots[0], "", secrets)
 	if mbToken != "token-secondary" {
 		t.Errorf("multiball token = %q, want token-secondary", mbToken)
 	}
@@ -253,7 +264,7 @@ func TestBraindeadThresholdDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[agent]
+[[agents]]
 id = "test"
 `), 0644)
 
@@ -342,7 +353,7 @@ func TestBraindeadThresholdDisabled(t *testing.T) {
 [defaults]
 braindead_threshold = 0
 
-[agent]
+[[agents]]
 id = "test"
 `), 0644)
 

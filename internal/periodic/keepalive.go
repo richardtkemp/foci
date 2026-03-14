@@ -21,7 +21,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/mana"
+
 	"foci/internal/memory"
 	"foci/internal/provider"
 	"foci/prompts"
@@ -61,7 +61,7 @@ type Runner struct {
 	todoStore          *memory.TodoStore
 	stateStore         *state.Store
 	branchFn           BranchFunc
-	manaMonitor        *mana.Monitor
+
 	warningDispatcher  *warnings.Dispatcher
 	hasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	drainFn            func() // called each tick to drain rate-limit queues
@@ -99,7 +99,7 @@ type RunnerConfig struct {
 	TodoStore          *memory.TodoStore
 	StateStore         *state.Store
 	BranchFunc         BranchFunc
-	ManaMonitor        *mana.Monitor
+
 	WarningDispatcher  *warnings.Dispatcher
 	HasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
@@ -124,7 +124,7 @@ func New(cfg RunnerConfig) *Runner {
 		todoStore:          cfg.TodoStore,
 		stateStore:         cfg.StateStore,
 		branchFn:           cfg.BranchFunc,
-		manaMonitor:        cfg.ManaMonitor,
+
 		warningDispatcher:  cfg.WarningDispatcher,
 		hasActiveWorkFn:    cfg.HasActiveWorkFn,
 		drainFn:            cfg.DrainFn,

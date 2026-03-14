@@ -12,9 +12,7 @@ import (
 	"foci/internal/voice"
 )
 
-type MessageSender = platform.Sender
-
-func NewSendMessageToUserTool(getSender func(sessionKey string) MessageSender, tts voice.TTS) *Tool {
+func NewSendMessageToUserTool(getSender func(sessionKey string) platform.Sender, tts voice.TTS) *Tool {
 	return &Tool{
 		Name:        "send_message_to_user",
 		ExecExport:  true,
