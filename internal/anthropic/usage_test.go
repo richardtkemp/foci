@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -391,5 +392,102 @@ func TestSetCacheTTL(t *testing.T) {
 	client.mu.Unlock()
 	if ttl != 10*time.Second {
 		t.Fatalf("after SetCacheTTL: cacheTTL = %v, want 10s", ttl)
+	}
+}
+
+func TestTokenErrorSkipsBackoff(t *testing.T) {
+	// Proves that token resolution errors don't trigger error backoff, so a
+	// refreshed token is picked up on the very next call. This prevents the
+	// bug where an expired CC token causes a 5-minute backoff window during
+	// which the refreshed token is never read.
+	tokenErr := true
+	var calls atomic.Int32
+	util := 42.0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(UsageResponse{
+			FiveHour: &UsageWindow{Utilization: &util},
+		})
+	}))
+	defer server.Close()
+
+	client := &UsageClient{
+		tokenFunc: func() (string, error) {
+			if tokenErr {
+				return "", fmt.Errorf("CC token expired at 2026-03-14T13:56:36Z, refresh triggered")
+			}
+			return "fresh-token", nil
+		},
+		httpClient: http.DefaultClient,
+		baseURL:    server.URL,
+		cacheTTL:   5 * time.Minute,
+	}
+
+	// First call — token expired, returns error
+	_, err := client.GetUsage(context.Background())
+	if err == nil {
+		t.Fatal("expected token error")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("token error should not hit server, got %d hits", calls.Load())
+	}
+
+	// Verify no error backoff was set
+	client.mu.Lock()
+	bo := client.errBackoff
+	le := client.lastErr
+	client.mu.Unlock()
+	if bo != 0 || le != nil {
+		t.Fatalf("token error should not set backoff: errBackoff=%v, lastErr=%v", bo, le)
+	}
+
+	// Simulate token refresh completing — next call should succeed immediately
+	tokenErr = false
+	resp, err := client.GetUsage(context.Background())
+	if err != nil {
+		t.Fatalf("after token refresh: %v", err)
+	}
+	if resp.FiveHour == nil || *resp.FiveHour.Utilization != 42.0 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("after token refresh: server hits = %d, want 1", calls.Load())
+	}
+}
+
+func TestAPIErrorStillGetsBackoff(t *testing.T) {
+	// Proves that API errors (as opposed to token errors) still trigger
+	// exponential backoff — the token error fix didn't break normal backoff.
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`internal error`))
+	}))
+	defer server.Close()
+
+	client := &UsageClient{
+		tokenFunc: func() (string, error) {
+			return "valid-token", nil
+		},
+		httpClient: http.DefaultClient,
+		baseURL:    server.URL,
+		cacheTTL:   100 * time.Millisecond,
+	}
+
+	// First call — API error, should set backoff
+	_, err := client.GetUsage(context.Background())
+	if err == nil {
+		t.Fatal("expected API error")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("first call: server hits = %d, want 1", calls.Load())
+	}
+
+	// Immediate retry — should be suppressed by backoff
+	_, _ = client.GetUsage(context.Background())
+	if calls.Load() != 1 {
+		t.Fatalf("during backoff: server hits = %d, want 1 (backoff should suppress)", calls.Load())
 	}
 }
