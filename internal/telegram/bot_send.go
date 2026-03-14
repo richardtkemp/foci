@@ -88,6 +88,45 @@ func (b *Bot) sendReplyWithThinking(msg *gotgbot.Message, response, thinkingText
 	}
 }
 
+// editStreamWithThinking edits the stream message in-place with the final HTML response
+// and a "Show thinking" inline keyboard button. Since we already know the message ID
+// (unlike sendReplyWithThinking which sends then edits), this is a single edit call.
+func (b *Bot) editStreamWithThinking(msgID, chatID int64, response, thinkingText string) {
+	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
+	kb := singleButtonKeyboard("Show thinking", fmt.Sprintf("th:show:%d", msgID))
+	_, _, err := b.client.EditMessageText(responseHTML, &gotgbot.EditMessageTextOpts{
+		ChatId:      chatID,
+		MessageId:   msgID,
+		ParseMode:   "HTML",
+		ReplyMarkup: kb,
+	})
+	if err != nil {
+		b.logger().Errorf("edit stream with thinking button: %v", err)
+		return
+	}
+	b.thinkingStore.Store(msgID, thinkingEntry{
+		responseHTML: responseHTML,
+		thinkingText: thinkingText,
+	})
+}
+
+// editStreamWithFullThinking edits the stream message in-place with thinking (italic)
+// + divider + response HTML combined into a single message.
+func (b *Bot) editStreamWithFullThinking(msgID, chatID int64, response, thinkingText string) {
+	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
+	responseHTML := ConvertToTelegramHTML(response, b.tableOpts())
+	divider := "\n" + strings.Repeat("—", b.effectiveDisplayWidth()) + "\n\n"
+	combined := thinkingHTML + divider + responseHTML
+	_, _, err := b.client.EditMessageText(combined, &gotgbot.EditMessageTextOpts{
+		ChatId:    chatID,
+		MessageId: msgID,
+		ParseMode: "HTML",
+	})
+	if err != nil {
+		b.logger().Errorf("edit stream with full thinking: %v", err)
+	}
+}
+
 // SendNotification sends a plain text notification to the default chat.
 // Used for system alerts (cache bust, etc.) — not an agent turn, no tokens spent.
 // Silently skips empty or whitespace-only messages.
