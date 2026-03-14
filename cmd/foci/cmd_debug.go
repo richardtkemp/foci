@@ -1,0 +1,274 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"foci/internal/config"
+	"foci/internal/session"
+
+	"github.com/fsnotify/fsnotify"
+)
+
+func cmdDebug(args []string) error {
+	if len(args) == 0 || wantsHelp(args) {
+		debugUsage()
+		return nil
+	}
+
+	subcmd := args[0]
+	switch subcmd {
+	case "session":
+		return cmdDebugSession(args[1:])
+	default:
+		return fmt.Errorf("unknown debug subcommand: %s", subcmd)
+	}
+}
+
+func cmdDebugSession(args []string) error {
+	// Parse --config flag
+	configPath, args := parseFlagValue(args, "config")
+	if configPath == "" {
+		configPath = envDefault("", "FOCI_CONFIG")
+	}
+	if configPath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve home dir: %w", err)
+		}
+		configPath = filepath.Join(home, "config", "foci.toml")
+	}
+
+	if len(args) == 0 {
+		return fmt.Errorf("usage: foci debug session <key>")
+	}
+	keyArg := args[0]
+
+	// Load config for paths
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	store := session.NewStore(cfg.Sessions.Dir)
+
+	// Open session index read-only
+	dbPath := cfg.DataPath("state.db")
+	idx, err := session.OpenSessionIndexReadOnly(dbPath)
+	if err != nil {
+		return fmt.Errorf("open session index: %w", err)
+	}
+	defer idx.Close() //nolint:errcheck
+
+	// Resolve session key
+	sessionKey, err := resolveSessionKey(idx, keyArg)
+	if err != nil {
+		return err
+	}
+
+	// Resolve file path
+	filePath, err := store.SessionPath(sessionKey)
+	if err != nil {
+		return fmt.Errorf("session path: %w", err)
+	}
+
+	// Check file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return fmt.Errorf("session file not found: %s", filePath)
+	}
+
+	// Print header
+	fmt.Printf("── session: %s ──\n", sessionKey)
+	fmt.Printf("── file: %s ──\n\n", filePath)
+
+	// Read and print existing content
+	offset, err := printExistingContent(filePath)
+	if err != nil {
+		return fmt.Errorf("read session: %w", err)
+	}
+
+	// Set up fsnotify watcher for tailing
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("create watcher: %w", err)
+	}
+	defer watcher.Close() //nolint:errcheck
+
+	// Watch the directory containing the file (fsnotify requires watching dirs on some platforms)
+	watchDir := filepath.Dir(filePath)
+	if err := watcher.Add(watchDir); err != nil {
+		return fmt.Errorf("watch %s: %w", watchDir, err)
+	}
+
+	// Handle Ctrl+C
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	fmt.Fprintf(os.Stderr, "[tailing — Ctrl+C to stop]\n")
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			// Only process writes to our target file
+			if event.Name != filePath {
+				continue
+			}
+			if event.Op&fsnotify.Write == 0 {
+				continue
+			}
+			newOffset, err := printNewContent(filePath, offset)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "read error: %v\n", err)
+				continue
+			}
+			offset = newOffset
+
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "watcher error: %v\n", err)
+
+		case <-sigCh:
+			fmt.Fprintln(os.Stderr, "\n[stopped]")
+			return nil
+		}
+	}
+}
+
+// resolveSessionKey resolves a user-provided key argument to a full session key.
+// Supports: bare agent name ("scout"), partial key ("scout/c123"), full key ("scout/c123/17095...").
+func resolveSessionKey(idx *session.SessionIndex, keyArg string) (string, error) {
+	segments := strings.Count(keyArg, "/") + 1
+
+	switch {
+	case segments == 1:
+		// Bare agent name → find default session
+		key := idx.DefaultSessionKeyForAgent(keyArg)
+		if key == "" {
+			return "", fmt.Errorf("no active session found for agent %q", keyArg)
+		}
+		return key, nil
+
+	case segments == 2:
+		// Partial key → resolve to full key
+		key := idx.ResolvePartialKey(keyArg)
+		if key == "" {
+			return "", fmt.Errorf("no active session matching %q", keyArg)
+		}
+		return key, nil
+
+	default:
+		// Full key → use directly
+		return keyArg, nil
+	}
+}
+
+// printExistingContent reads and formats all existing lines in the session file.
+// Returns the file offset after reading.
+func printExistingContent(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close() //nolint:errcheck
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		out := formatLine(line)
+		if out != "" {
+			fmt.Print(out)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+
+	// Get current file offset
+	offset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		// Scanner consumed the whole file; stat for size
+		info, statErr := f.Stat()
+		if statErr != nil {
+			return 0, statErr
+		}
+		return info.Size(), nil
+	}
+	return offset, nil
+}
+
+// printNewContent reads and formats lines added since the given offset.
+// Returns the new offset.
+func printNewContent(path string, offset int64) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return offset, err
+	}
+	defer f.Close() //nolint:errcheck
+
+	// Check if file was truncated (rotation)
+	info, err := f.Stat()
+	if err != nil {
+		return offset, err
+	}
+	if info.Size() < offset {
+		// File was truncated — read from beginning
+		offset = 0
+	}
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return offset, err
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		out := formatLine(line)
+		if out != "" {
+			fmt.Print(out)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return offset, err
+	}
+
+	newOffset, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return info.Size(), nil
+	}
+	return newOffset, nil
+}
+
+func debugUsage() {
+	fmt.Fprintf(os.Stderr, `Usage: foci debug <subcommand> [args...]
+
+Subcommands:
+  session <key>    Tail a session file with formatted output
+
+Session key formats:
+  scout                        Agent name (resolves to most recent active session)
+  scout/c5970082313            Partial key (resolves to latest version)
+  scout/c5970082313/1709590000 Full session key
+
+Flags:
+  --config <path>  Config file path (default: ~/config/foci.toml)
+`)
+}

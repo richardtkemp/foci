@@ -51,6 +51,16 @@ type SessionIndex struct {
 	mu sync.Mutex
 }
 
+// OpenSessionIndexReadOnly opens the session index database in read-only mode.
+// Used by CLI tools that only need to query the index without modifying it.
+func OpenSessionIndexReadOnly(dbPath string) (*SessionIndex, error) {
+	db, err := sqlite.OpenReadOnly(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	return &SessionIndex{db: db}, nil
+}
+
 // NewSessionIndex opens (or creates) the SQLite database for the session index.
 func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	db, err := sqlite.OpenInit(dbPath,
@@ -532,6 +542,86 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 		key,
 	)
 	return err
+}
+
+// DefaultSessionKeyForAgent resolves the most recently active session key for
+// an agent. First checks chat_metadata for persisted "session_key" values
+// (set by Telegram/platform on first message). If multiple chats exist, picks
+// the one with the most recent activity in session_index. Falls back to querying
+// session_index directly for the most recently active root session.
+func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// Try chat_metadata first: find session keys assigned to this agent.
+	rows, err := idx.db.Query(
+		`SELECT value FROM chat_metadata WHERE agent_id = ? AND key = 'session_key'`,
+		agentID,
+	)
+	if err == nil {
+		defer rows.Close() //nolint:errcheck
+		var candidates []string
+		for rows.Next() {
+			var v string
+			if err := rows.Scan(&v); err == nil && v != "" {
+				candidates = append(candidates, v)
+			}
+		}
+		if len(candidates) == 1 {
+			return candidates[0]
+		}
+		if len(candidates) > 1 {
+			// Multiple chats — pick the most recently active via session_index.
+			var best string
+			err := idx.db.QueryRow(
+				`SELECT si.session_key FROM session_index si
+				 WHERE si.session_key IN (`+placeholders(len(candidates))+`)
+				 ORDER BY si.last_activity_at DESC
+				 LIMIT 1`,
+				toArgs(candidates)...,
+			).Scan(&best)
+			if err == nil {
+				return best
+			}
+			// Fall back to first candidate if index query fails.
+			return candidates[0]
+		}
+	}
+
+	// Fallback: query session_index for most recently active root session.
+	// Root sessions have exactly 3 segments (agent/typeID/versionTS).
+	var key string
+	err = idx.db.QueryRow(
+		`SELECT session_key FROM session_index
+		 WHERE session_key LIKE ? AND status = 'active'
+		   AND session_key NOT LIKE ?
+		 ORDER BY last_activity_at DESC, created_at DESC
+		 LIMIT 1`,
+		agentID+"/%",
+		agentID+"/%/%/%", // exclude children (4+ segments)
+	).Scan(&key)
+	if err != nil {
+		return ""
+	}
+	return key
+}
+
+// placeholders generates a comma-separated list of ? for SQL IN clauses.
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	s := strings.Repeat("?,", n)
+	return s[:len(s)-1]
+}
+
+// toArgs converts a string slice to []interface{} for sql.Query.
+func toArgs(ss []string) []interface{} {
+	args := make([]interface{}, len(ss))
+	for i, s := range ss {
+		args[i] = s
+	}
+	return args
 }
 
 // ResolvePartialKey resolves a partial session key (agent/typeID, e.g.

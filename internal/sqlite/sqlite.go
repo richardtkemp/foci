@@ -27,6 +27,21 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// OpenReadOnly opens a SQLite database in read-only mode (query_only pragma).
+// The database must already exist. WAL mode and busy timeout are still set for
+// read concurrency with a writing process.
+func OpenReadOnly(path string) (*sql.DB, error) {
+	db, err := Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec("PRAGMA query_only = ON"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite query_only on %s: %w", filepath.Base(path), err)
+	}
+	return db, nil
+}
+
 // OpenInit opens a database and executes DDL statements (e.g. CREATE TABLE).
 // If any statement fails, the database is closed and the error returned.
 func OpenInit(path string, stmts ...string) (*sql.DB, error) {
@@ -42,4 +57,3 @@ func OpenInit(path string, stmts ...string) (*sql.DB, error) {
 	}
 	return db, nil
 }
-
