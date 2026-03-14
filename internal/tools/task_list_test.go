@@ -33,8 +33,8 @@ func TestTaskListCreate(t *testing.T) {
 	tool, _ := testTaskListTool(t)
 
 	result, err := execTaskList(t, tool, map[string]any{
-		"action":  "create",
-		"subject": "Fix the bug",
+		"action": "create",
+		"tasks":  []map[string]any{{"subject": "Fix the bug"}},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -48,13 +48,13 @@ func TestTaskListCreate(t *testing.T) {
 }
 
 func TestTaskListCreateValidation(t *testing.T) {
-	// Verifies create requires subject.
+	// Verifies create requires a non-empty tasks array.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
-	_, err := execTaskList(t, tool, map[string]any{"action": "create", "subject": ""})
+	_, err := execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{}})
 	if err == nil {
-		t.Error("expected error for empty subject")
+		t.Error("expected error for empty tasks array")
 	}
 }
 
@@ -64,9 +64,8 @@ func TestTaskListGet(t *testing.T) {
 	tool, _ := testTaskListTool(t)
 
 	execTaskList(t, tool, map[string]any{
-		"action":      "create",
-		"subject":     "Task one",
-		"description": "Details here",
+		"action": "create",
+		"tasks":  []map[string]any{{"subject": "Task one", "description": "Details here"}},
 	})
 
 	result, err := execTaskList(t, tool, map[string]any{"action": "get", "id": 1})
@@ -112,8 +111,8 @@ func TestTaskListUpdate(t *testing.T) {
 	tool, store := testTaskListTool(t)
 
 	execTaskList(t, tool, map[string]any{
-		"action":  "create",
-		"subject": "Original",
+		"action": "create",
+		"tasks":  []map[string]any{{"subject": "Original"}},
 	})
 
 	result, err := execTaskList(t, tool, map[string]any{
@@ -145,8 +144,8 @@ func TestTaskListUpdateDelete(t *testing.T) {
 	tool, _ := testTaskListTool(t)
 
 	execTaskList(t, tool, map[string]any{
-		"action":  "create",
-		"subject": "To delete",
+		"action": "create",
+		"tasks":  []map[string]any{{"subject": "To delete"}},
 	})
 
 	result, err := execTaskList(t, tool, map[string]any{
@@ -194,8 +193,8 @@ func TestTaskListList(t *testing.T) {
 	}
 
 	// With tasks
-	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task A"})
-	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task B"})
+	execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Task A"}}})
+	execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Task B"}}})
 	execTaskList(t, tool, map[string]any{"action": "update", "id": 1, "status": "completed"})
 
 	result, err = execTaskList(t, tool, map[string]any{"action": "list"})
@@ -230,7 +229,7 @@ func TestTaskListNotifications(t *testing.T) {
 	tool := NewTaskListTool(s, "test", notify)
 
 	ctx := WithSessionKey(context.Background(), "agent:chat:123:v1")
-	data, _ := json.Marshal(map[string]any{"action": "create", "subject": "Review cache"})
+	data, _ := json.Marshal(map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Review cache"}}})
 	if _, err := tool.Execute(ctx, data); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -257,7 +256,7 @@ func TestTaskListNotifications(t *testing.T) {
 	}
 
 	// Mark completed — should fire with progress
-	data, _ = json.Marshal(map[string]any{"action": "create", "subject": "Write tests"})
+	data, _ = json.Marshal(map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Write tests"}}})
 	tool.Execute(ctx, data) // creates #2, fires notification
 	data, _ = json.Marshal(map[string]any{"action": "update", "id": 1, "status": "completed"})
 	if _, err := tool.Execute(ctx, data); err != nil {
@@ -294,13 +293,18 @@ func TestTaskListUnknownAction(t *testing.T) {
 }
 
 func TestTaskListBatchCreate(t *testing.T) {
-	// Verifies that a subject with multiple lines creates one task per line.
+	// Verifies that a tasks array with multiple items creates one task per item,
+	// each with its own description.
 	t.Parallel()
 	tool, store := testTaskListTool(t)
 
 	result, err := execTaskList(t, tool, map[string]any{
-		"action":  "create",
-		"subject": "Task A\nTask B\n\nTask C\n",
+		"action": "create",
+		"tasks": []map[string]any{
+			{"subject": "Task A", "description": "Details A"},
+			{"subject": "Task B", "description": "Details B"},
+			{"subject": "Task C", "description": "Details C"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("batch create: %v", err)
@@ -319,16 +323,19 @@ func TestTaskListBatchCreate(t *testing.T) {
 	if tasks[0].Subject != "Task A" || tasks[1].Subject != "Task B" || tasks[2].Subject != "Task C" {
 		t.Errorf("subjects = %q, %q, %q", tasks[0].Subject, tasks[1].Subject, tasks[2].Subject)
 	}
+	if tasks[0].Description != "Details A" || tasks[1].Description != "Details B" || tasks[2].Description != "Details C" {
+		t.Errorf("descriptions = %q, %q, %q", tasks[0].Description, tasks[1].Description, tasks[2].Description)
+	}
 }
 
-func TestTaskListBatchCreateSingleLine(t *testing.T) {
-	// Verifies that a subject with a single line (no newlines) works normally.
+func TestTaskListCreateSingle(t *testing.T) {
+	// Verifies that a single-element tasks array works normally.
 	t.Parallel()
 	tool, _ := testTaskListTool(t)
 
 	result, err := execTaskList(t, tool, map[string]any{
-		"action":  "create",
-		"subject": "Just one task",
+		"action": "create",
+		"tasks":  []map[string]any{{"subject": "Just one task"}},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -343,8 +350,8 @@ func TestTaskListAutoClearOnAllCompleted(t *testing.T) {
 	t.Parallel()
 	tool, store := testTaskListTool(t)
 
-	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task A"})
-	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task B"})
+	execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Task A"}}})
+	execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Task B"}}})
 
 	// Complete first — list should NOT be cleared yet.
 	execTaskList(t, tool, map[string]any{"action": "update", "id": 1, "status": "completed"})
@@ -373,8 +380,8 @@ func TestTaskListNoClearWithPending(t *testing.T) {
 	t.Parallel()
 	tool, store := testTaskListTool(t)
 
-	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task A"})
-	execTaskList(t, tool, map[string]any{"action": "create", "subject": "Task B"})
+	execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Task A"}}})
+	execTaskList(t, tool, map[string]any{"action": "create", "tasks": []map[string]any{{"subject": "Task B"}}})
 	execTaskList(t, tool, map[string]any{"action": "update", "id": 2, "status": "in_progress"})
 
 	result, _ := execTaskList(t, tool, map[string]any{"action": "update", "id": 1, "status": "completed"})

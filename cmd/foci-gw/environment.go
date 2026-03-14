@@ -103,7 +103,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	// Task List
 	b.WriteString("\n## Task List\n")
 	b.WriteString("The `task_list` tool tracks progress when working through a list of steps with the user (e.g., reviewing items, multi-step processes).\n")
-	b.WriteString("Create individual tasks, mark them `in_progress` as you work on each, and `completed` when done.\n")
+	b.WriteString("Create tasks using the `tasks` JSON array (each item has `subject` and optional `description`), mark them `in_progress` as you work on each, and `completed` when done.\n")
 	b.WriteString("The state dashboard auto-injects progress into every message (e.g., \"tasks: 2/12 → current task\"), and tasks survive compaction.\n")
 	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
 
