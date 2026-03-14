@@ -64,7 +64,7 @@ func TestGenerateConfig(t *testing.T) {
 
 func TestGenerateConfigMinimal(t *testing.T) {
 	// Proves GenerateConfig works with just an agent ID, producing valid TOML
-	// without a [defaults] section when model is empty.
+	// without a model key when model is empty.
 	opts := SetupOptions{
 		AgentID: "main",
 	}
@@ -78,8 +78,8 @@ func TestGenerateConfigMinimal(t *testing.T) {
 	if !strings.Contains(result, `id = "main"`) {
 		t.Error("missing agent id")
 	}
-	if strings.Contains(result, "[defaults]") {
-		t.Error("should not have [defaults] section when model is empty")
+	if strings.Contains(result, "model") {
+		t.Error("should not have model key when model is empty")
 	}
 }
 
@@ -93,7 +93,6 @@ workspace = "/home/foci/fotini"
 system_files = ["character/SOUL.md", "character/COHERENCE.md", "character/CRAFT.md", "character/USER.md", "character/MEMORY.md"]
 `
 	opts := SetupOptions{
-		Model:      "anthropic/claude-sonnet-4-6",
 		AgentBlock: agentBlock,
 	}
 
