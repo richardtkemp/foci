@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"foci/internal/platform"
 )
 
 func TestSendMessageToUserChatRouting(t *testing.T) {
 	// Verifies that when the session key contains a chat ID, text is dispatched via SendTextToChat to that specific chat rather than the default sender.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c99887766/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -44,8 +46,8 @@ func TestSendMessageToUserChatRouting(t *testing.T) {
 func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
 	// Verifies that when the session key contains a chat ID, documents are dispatched via SendDocumentToChat rather than the default sender.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -71,8 +73,8 @@ func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
 func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 	// Verifies that when the session key contains a chat ID, voice notes are dispatched via SendVoiceToChat rather than the default sender.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -99,8 +101,8 @@ func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 	// Verifies that when the session key has no chat ID (e.g. an independent spawn), the default SendText is used rather than the chat-targeted method.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	// Independent session — no chat ID
 	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345/1000")
@@ -125,8 +127,8 @@ func TestSendMessageToUserFallbackNoChat(t *testing.T) {
 func TestSendMessageToUserFallbackNoContext(t *testing.T) {
 	// Verifies that when there is no session key in context at all, the default SendText is used.
 	t.Parallel()
-	mock := &mockMessageSender{}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -175,10 +177,10 @@ func TestChatIDFromSessionKey(t *testing.T) {
 func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 	// Verifies that regular chat sessions use the primary bot's sender even when a multiball callback is registered, preventing misrouting.
 	t.Parallel()
-	multiballMock := &mockMessageSender{}
-	primaryMock := &mockMessageSender{}
+	multiballMock := &mockSender{}
+	primaryMock := &mockSender{}
 
-	tool := NewSendMessageToUserTool(func(sessionKey string) MessageSender {
+	tool := NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
 		if strings.Contains(sessionKey, "/imb-") {
 			return multiballMock
 		}
@@ -205,8 +207,8 @@ func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 	// Verifies that messages arriving from a session different from the bot's own session are prepended with a session header so the user knows the source.
 	t.Parallel()
-	mock := &mockMessageSender{sessionKey: "fotini/c99887766/1000"}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{sessionKey: "fotini/c99887766/1000"}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -230,8 +232,8 @@ func TestSendMessageToUserCrossSessionHeader(t *testing.T) {
 func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 	// Verifies that messages from the bot's own session are sent without a header, since no attribution is needed.
 	t.Parallel()
-	mock := &mockMessageSender{sessionKey: "fotini/c99887766/1000"}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{sessionKey: "fotini/c99887766/1000"}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c99887766/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -254,8 +256,8 @@ func TestSendMessageToUserSameSessionNoHeader(t *testing.T) {
 func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) {
 	// Verifies that when the bot has no session key (not yet attached), no header is prepended even for messages from other sessions.
 	t.Parallel()
-	mock := &mockMessageSender{sessionKey: ""}
-	tool := NewSendMessageToUserTool(func(string) MessageSender { return mock }, nil)
+	mock := &mockSender{sessionKey: ""}
+	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
 
 	ctx := WithSessionKey(context.Background(), "fotini/ispawn-12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -278,10 +280,10 @@ func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) 
 func TestSendMessageToUserMultiballRouting(t *testing.T) {
 	// Verifies that multiball session keys are passed to the getSender callback so the correct per-bot sender is resolved rather than the primary one.
 	t.Parallel()
-	multiballMock := &mockMessageSender{}
-	primaryMock := &mockMessageSender{}
+	multiballMock := &mockSender{}
+	primaryMock := &mockSender{}
 
-	tool := NewSendMessageToUserTool(func(sessionKey string) MessageSender {
+	tool := NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
 		if strings.Contains(sessionKey, "/imb-") {
 			return multiballMock
 		}

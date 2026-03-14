@@ -48,7 +48,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		return nil
 	}
 
-	kaOrientPrompt := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt, acfg.BranchOrientationPrompt, p.cfg.Sessions.BranchOrientationPrompt)
+	kaOrientPrompt := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
 	buildOrient := func(branchKey, parentKey, branchType string) string {
 		return prompts.BuildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false, inst.promptSearchDirs)
 	}
@@ -126,7 +126,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		TodoStore:          p.todoStore,
 		StateStore:         p.stateStore,
 		BranchFunc:         branchFn,
-		ManaMonitor:        nil, // DEPRECATED: no longer used
+
 		WarningDispatcher:  warningDispatcher,
 		HasActiveWorkFn: func() int {
 			if inst.tmuxWatchCount == nil {

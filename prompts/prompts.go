@@ -108,19 +108,12 @@ func BuildBranchOrientation(promptPath, branchKey, parentKey, branchType string,
 	})
 }
 
-// ResolveOrientPath picks the first non-empty value from a priority list:
-// specific type → global type → specific fallback → global fallback.
-func ResolveOrientPath(specific, globalSpecific, fallback, globalFallback string) string {
-	if specific != "" {
-		return specific
+// ResolveOrientPath picks the first non-empty value: agent-level then global.
+func ResolveOrientPath(agentLevel, global string) string {
+	if agentLevel != "" {
+		return agentLevel
 	}
-	if globalSpecific != "" {
-		return globalSpecific
-	}
-	if fallback != "" {
-		return fallback
-	}
-	return globalFallback
+	return global
 }
 
 // ReplaceVars performs template variable substitution on text.
