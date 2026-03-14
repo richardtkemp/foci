@@ -99,7 +99,12 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		// When intermediate text fires, reset the tracker so the next tool call
 		// creates a fresh message below the text instead of editing the stale
 		// earlier message (which would appear above the text in chat).
+		// When streaming is active, skip: the text was already delivered via the
+		// stream writer, so sending here would create a duplicate message.
 		ReplyFunc: func(text string) {
+			if sw != nil {
+				return
+			}
 			b.sendReply(qm.msg, text)
 			tracker.resetMsgID()
 		},
@@ -165,9 +170,27 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}
 
 	// Finish the stream writer and get the message ID it created (if any).
+	//
+	// Streaming + nudge interaction:
+	// During a turn, the model's text is delivered two ways simultaneously:
+	//   1. TextDeltaObserver → stream writer (real-time edits to a Telegram message)
+	//   2. ReplyFunc (called when the agent loop splits a turn — nudges, deferred replies)
+	// Without streaming, only #2 exists. With streaming, both fire for the same
+	// text, creating duplicates. We suppress #2 (see ReplyFunc above) and rely
+	// solely on the stream writer during streaming.
+	//
+	// However, the agent loop's return value (`response`) only contains text from
+	// the *last* API call — nudges consume earlier text into intermediate replies
+	// that would normally be sent via ReplyFunc. Since we skipped those sends, the
+	// stream writer's buffer is the only place that has the full text. When
+	// `response` is empty but the stream has content, we use the stream's buffer
+	// so the message gets properly HTML-finalized below.
 	var streamMsgID int64
 	if sw != nil {
 		streamMsgID = sw.Finish()
+		if streamContent := sw.Content(); strings.TrimSpace(response) == "" && strings.TrimSpace(streamContent) != "" {
+			response = streamContent
+		}
 	}
 
 	// Guard against empty responses (e.g. end_turn after tool use with no text).

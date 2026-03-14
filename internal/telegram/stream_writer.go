@@ -169,3 +169,11 @@ func (sw *streamWriter) Finish() int64 {
 
 	return msgID
 }
+
+// Content returns the full accumulated buffer contents.
+// Safe to call after Finish.
+func (sw *streamWriter) Content() string {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+	return sw.buf.String()
+}

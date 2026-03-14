@@ -113,6 +113,36 @@ func TestStreamWriter_FinishStopsTicker(t *testing.T) {
 	}
 }
 
+func TestStreamWriter_ContentReturnsFullBuffer(t *testing.T) {
+	// Verifies that Content() returns the full accumulated text from all deltas,
+	// even after Finish(). This is used during finalization when the agent loop's
+	// response is empty (nudges consumed intermediate text) but the stream has the
+	// full text that was displayed to the user.
+	mc := &mockClient{}
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond)
+
+	sw.OnDelta("first ")
+	sw.OnDelta("second ")
+	sw.OnDelta("third")
+	sw.Finish()
+
+	content := sw.Content()
+	if content != "first second third" {
+		t.Errorf("Content() = %q, want %q", content, "first second third")
+	}
+}
+
+func TestStreamWriter_ContentEmptyWhenNoDeltas(t *testing.T) {
+	// Verifies that Content() returns empty string when no deltas arrived.
+	mc := &mockClient{}
+	sw := newStreamWriter(mc, 123, 50*time.Millisecond)
+	sw.Finish()
+
+	if content := sw.Content(); content != "" {
+		t.Errorf("Content() = %q, want empty", content)
+	}
+}
+
 func TestStreamWriter_DeltaAfterFinishIgnored(t *testing.T) {
 	// Verifies that OnDelta calls after Finish() are silently ignored and do not
 	// send additional messages or start new goroutines.
