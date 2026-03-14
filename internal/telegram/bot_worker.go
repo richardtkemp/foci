@@ -256,6 +256,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 				b.logger().Debugf("edit stream final: %v (stream already has content)", editErr)
 			}
 		}
+		tracker.cleanupPreview()
 		return
 	}
 
@@ -270,6 +271,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 			b.sendReply(qm.msg, response)
 		}
 		b.editStreamPreview(streamMsgID, qm.msg.Chat.Id, response)
+		tracker.cleanupPreview()
 		return
 	}
 
@@ -287,6 +289,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		}
 		b.logger().Debugf("edit final response failed, falling back: %v", editErr)
 	}
+
+	// Response sent as a new message — clean up any lingering tool call preview.
+	tracker.cleanupPreview()
 
 	if hasThinking && showThinkMode == "true" {
 		b.sendReplyWithFullThinking(qm.msg, response, thinkingText)

@@ -19,6 +19,7 @@ type mockClient struct {
 	mu             sync.Mutex
 	sends          int                  // counts SendMessage calls
 	edits          int                  // counts EditMessageText calls
+	deletes        int                  // counts DeleteMessage calls
 	files          map[string]string    // fileId → filePath for GetFile mock
 	setCmds        []gotgbot.BotCommand // last SetMyCommands call
 	setCmdsErr     error                // error to return from SetMyCommands
@@ -114,6 +115,13 @@ func (m *mockClient) AnswerCallbackQuery(callbackQueryId string, opts *gotgbot.A
 	return true, nil
 }
 
+func (m *mockClient) DeleteMessage(chatId int64, messageId int64, opts *gotgbot.DeleteMessageOpts) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deletes++
+	return true, nil
+}
+
 func (m *mockClient) sentCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -124,6 +132,12 @@ func (m *mockClient) editCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.edits
+}
+
+func (m *mockClient) deleteCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deletes
 }
 
 // testBot creates a Bot for testing with a mock client.
