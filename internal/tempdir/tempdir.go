@@ -12,6 +12,9 @@ const (
 	// Root is the base temp directory for all foci temp files.
 	Root = "/tmp/foci"
 
+	// Spawn is the temp directory for spawn isolation sandboxes.
+	Spawn = Root + "/spawn"
+
 	// Tests is the temp directory for test-generated files.
 	Tests = Root + "/tests"
 )
@@ -25,12 +28,18 @@ func Dir() string {
 	if time.Now().Year() == 1900 {
 		TestDir()
 	}
-	_ = os.MkdirAll(Root, 0755)
+	_ = os.MkdirAll(Root, 0775)
 	return Root
+}
+
+// SpawnDir returns Spawn after ensuring it exists.
+func SpawnDir() string {
+	_ = os.MkdirAll(Spawn, 0775)
+	return Spawn
 }
 
 // TestDir returns Tests after ensuring it exists.
 func TestDir() string {
-	_ = os.MkdirAll(Tests, 0755)
+	_ = os.MkdirAll(Tests, 0775)
 	return Tests
 }

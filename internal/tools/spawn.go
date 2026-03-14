@@ -164,7 +164,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			switch p.Context {
 			case "raw":
-				tempDir, err := os.MkdirTemp(tempdir.Dir(), "foci-spawn-*")
+				tempDir, err := os.MkdirTemp(tempdir.SpawnDir(), "foci-spawn-*")
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
