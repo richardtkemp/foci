@@ -287,6 +287,23 @@ func TestWarnHookBuffering(t *testing.T) {
 	warnMu.Unlock()
 }
 
+func TestMultilineMessageCollapsed(t *testing.T) {
+	// Verifies that newlines in log messages are replaced with literal \n
+	// so that each log entry remains a single line for reliable parsing.
+	buf := captureOutput(t)
+
+	Warnf("mana", "API error (status 429): {\n  \"error\": {\n    \"type\": \"rate_limit_error\"\n  }\n}")
+
+	output := buf.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 log line, got %d:\n%s", len(lines), output)
+	}
+	if !strings.Contains(output, `\n`) {
+		t.Errorf("expected literal \\n in output: %s", output)
+	}
+}
+
 func TestFatalf(t *testing.T) {
 	// Verifies that Fatalf logs a message and exits with code 1.
 	// Uses the subprocess test pattern since Fatalf calls os.Exit.

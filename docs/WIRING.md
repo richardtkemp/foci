@@ -574,6 +574,7 @@ Four outputs:
      initialized at construction with a prefix like `"agent/mybot"`. This avoids repeating
      the component string at every call site and encodes the agent ID for multi-agent setups.
    - Levels: DEBUG < INFO < WARN < ERROR
+   - Newlines in messages are replaced with literal `\n` to guarantee one log line per event
 
 2. **API log — JSONL** (`api.jsonl`): One JSON object per Anthropic API call with ts, session, model, token counts, cost_usd, duration_ms.
    - Use: `log.API(log.APIEntry{...})`
