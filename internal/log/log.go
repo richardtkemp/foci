@@ -361,7 +361,7 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 		return
 	}
 
-	msg := fmt.Sprintf(format, args...)
+	msg := strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", "\\n")
 	ts := time.Now().UTC().Format(time.RFC3339)
 
 	// Pad level to 5 chars: "DEBUG", "INFO ", "WARN ", "ERROR"
