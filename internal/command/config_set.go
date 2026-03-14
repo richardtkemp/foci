@@ -16,6 +16,7 @@ type ConfigSetDeps struct {
 	FieldsInSection func(section string) []config.ConfigField
 	LookupFn        func(sectionKey string) (config.ConfigField, bool)
 	SetInFileFn     func(path string, target config.SetTarget, value string) (string, error)
+	GetValueFn      func(path string, target config.SetTarget) (string, error)
 }
 
 // configSetWizard implements WizardHandler for interactive config editing.
@@ -102,8 +103,17 @@ func (w *configSetWizard) handleKey(text string) (string, bool) {
 	}
 
 	typeHint := fieldTypeHint(field.Type)
+
+	// Look up current value from the config file.
+	currentHint := "not set"
+	if w.deps.GetValueFn != nil {
+		if v, err := w.deps.GetValueFn(w.deps.ConfigPath, w.target); err == nil && v != "" {
+			currentHint = v
+		}
+	}
+
 	w.step = 2
-	return fmt.Sprintf("[%s] %s (%s)\n%s\nNew value:", w.section, w.key, typeHint, field.Description), false
+	return fmt.Sprintf("[%s] %s (%s)\n%s\nCurrent: %s\nNew value (enter /stop to cancel):", w.section, w.key, typeHint, field.Description, currentHint), false
 }
 
 func (w *configSetWizard) handleValue(text string) (string, bool) {

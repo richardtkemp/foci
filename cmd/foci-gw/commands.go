@@ -80,6 +80,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		FieldsInSection: config.FieldsInSection,
 		LookupFn:        config.LookupField,
 		SetInFileFn:     config.SetInFile,
+		GetValueFn:      config.GetValueFromFile,
 	}
 
 	// Build AgentNewDeps

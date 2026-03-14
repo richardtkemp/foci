@@ -240,6 +240,69 @@ model = "sonnet"
 	}
 }
 
+// TestGetValueFromFile_ExistingKey verifies that GetValueFromFile returns the
+// raw TOML value for a key that exists in the file, without modifying the file.
+func TestGetValueFromFile_ExistingKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := `[sessions]
+compaction_threshold = 0.7
+dir = "/tmp"
+`
+	os.WriteFile(path, []byte(content), 0o644)
+
+	val, err := GetValueFromFile(path, SetTarget{Section: "sessions", Key: "compaction_threshold"})
+	if err != nil {
+		t.Fatalf("GetValueFromFile: %v", err)
+	}
+	if val != "0.7" {
+		t.Errorf("value = %q, want %q", val, "0.7")
+	}
+}
+
+// TestGetValueFromFile_MissingKey verifies that GetValueFromFile returns an
+// empty string when the key does not exist in the section.
+func TestGetValueFromFile_MissingKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := `[sessions]
+dir = "/tmp"
+`
+	os.WriteFile(path, []byte(content), 0o644)
+
+	val, err := GetValueFromFile(path, SetTarget{Section: "sessions", Key: "compaction_threshold"})
+	if err != nil {
+		t.Fatalf("GetValueFromFile: %v", err)
+	}
+	if val != "" {
+		t.Errorf("value = %q, want empty", val)
+	}
+}
+
+// TestGetValueFromFile_AgentBlock verifies that GetValueFromFile reads from the
+// correct [[agents]] block when targeting a per-agent key.
+func TestGetValueFromFile_AgentBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "foci.toml")
+	content := `[[agents]]
+id = "alpha"
+model = "sonnet"
+
+[[agents]]
+id = "beta"
+model = "haiku"
+`
+	os.WriteFile(path, []byte(content), 0o644)
+
+	val, err := GetValueFromFile(path, SetTarget{Section: "agents", AgentID: "beta", Key: "model"})
+	if err != nil {
+		t.Fatalf("GetValueFromFile: %v", err)
+	}
+	if val != `"haiku"` {
+		t.Errorf("value = %q, want %q", val, `"haiku"`)
+	}
+}
+
 func TestFormatTOMLValue(t *testing.T) {
 	// Proves that FormatTOMLValue correctly formats values for string, int, float,
 	// bool (including yes/no/1/0 aliases), and duration field types, and returns
