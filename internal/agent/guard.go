@@ -55,7 +55,7 @@ func (a *Agent) providerAwareDefaultAlias(turnModel string) string {
 	dev, _ := config.SplitDeveloperModel(turnModel)
 	switch dev {
 	case "google":
-		return "flash"
+		return "gemini-flash"
 	case "openai":
 		return "gpt4o"
 	}

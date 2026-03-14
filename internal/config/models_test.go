@@ -12,8 +12,8 @@ func TestResolveModel(t *testing.T) {
 		"opus":     "anthropic/claude-opus-4-6",
 		"sonnet":   "anthropic/claude-sonnet-4-6",
 		"haiku":    "anthropic/claude-haiku-4-5",
-		"flash":    "google/gemini-2.5-flash",
-		"pro":      "google/gemini-2.5-pro",
+		"gemini-flash": "google/gemini-2.5-flash",
+		"gemini-pro":   "google/gemini-2.5-pro",
 		"gpt4o":    "openai/gpt-4o",
 		"deepseek": "deepseek/deepseek-chat",
 	}
@@ -42,8 +42,8 @@ func TestResolveModel(t *testing.T) {
 			wantEndpoint:  "anthropic",
 		},
 		{
-			name:          "alias flash",
-			input:         "flash",
+			name:          "alias gemini-flash",
+			input:         "gemini-flash",
 			endpoint:      "",
 			aliases:       aliases,
 			wantDeveloper: "google",

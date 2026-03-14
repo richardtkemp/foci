@@ -639,7 +639,7 @@ func resolveExploreModel(parentModel string, aliases map[string]string) (*config
 	_, parentModelID := config.SplitDeveloperModel(parentModel)
 	exploreAlias := "haiku"
 	if strings.HasPrefix(parentModelID, "gemini-") {
-		exploreAlias = "flash"
+		exploreAlias = "gemini-flash"
 	}
 	resolved, err := config.ResolveModel(exploreAlias, "", aliases)
 	if err != nil {

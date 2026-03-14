@@ -482,7 +482,7 @@ func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaul
 	cheapAlias := "haiku"
 	_, bareModelID := config.SplitDeveloperModel(cc.AgentConfig.Model)
 	if strings.HasPrefix(bareModelID, "gemini-") {
-		cheapAlias = "flash"
+		cheapAlias = "gemini-flash"
 	}
 
 	var diffClient provider.Client

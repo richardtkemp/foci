@@ -35,7 +35,7 @@ func TestResolveAnthropicAliases(t *testing.T) {
 		"haiku":  "anthropic/claude-haiku-4-5",
 		"sonnet": "anthropic/claude-sonnet-4-6",
 		"opus":   "anthropic/claude-opus-4-6",
-		"flash":  "google/gemini-2.5-flash",
+		"gemini-flash": "google/gemini-2.5-flash",
 	}
 
 	resolveAnthropicAliases(mock, aliases)
@@ -52,8 +52,8 @@ func TestResolveAnthropicAliases(t *testing.T) {
 	}
 
 	// Non-Anthropic aliases should be untouched
-	if got := aliases["flash"]; got != "google/gemini-2.5-flash" {
-		t.Errorf("flash = %q, want google/gemini-2.5-flash", got)
+	if got := aliases["gemini-flash"]; got != "google/gemini-2.5-flash" {
+		t.Errorf("gemini-flash = %q, want google/gemini-2.5-flash", got)
 	}
 }
 
@@ -116,14 +116,14 @@ func TestResolveAnthropicAliasesNoAnthropicAliases(t *testing.T) {
 	}
 
 	aliases := map[string]string{
-		"flash": "google/gemini-2.5-flash",
+		"gemini-flash": "google/gemini-2.5-flash",
 	}
 
 	resolveAnthropicAliases(mock, aliases)
 
 	// Should not call API or modify anything (no anthropic aliases present)
-	if got := aliases["flash"]; got != "google/gemini-2.5-flash" {
-		t.Errorf("flash = %q, want google/gemini-2.5-flash", got)
+	if got := aliases["gemini-flash"]; got != "google/gemini-2.5-flash" {
+		t.Errorf("gemini-flash = %q, want google/gemini-2.5-flash", got)
 	}
 }
 
@@ -234,7 +234,7 @@ func TestResolveOpenAIAliasesNoOpenAIAliases(t *testing.T) {
 
 	aliases := map[string]string{
 		"haiku": "anthropic/claude-haiku-4-5",
-		"flash": "google/gemini-2.5-flash",
+		"gemini-flash": "google/gemini-2.5-flash",
 	}
 
 	resolveOpenAIAliases(context.Background(), mock, aliases)
@@ -243,8 +243,8 @@ func TestResolveOpenAIAliasesNoOpenAIAliases(t *testing.T) {
 	if got := aliases["haiku"]; got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("haiku = %q, want anthropic/claude-haiku-4-5", got)
 	}
-	if got := aliases["flash"]; got != "google/gemini-2.5-flash" {
-		t.Errorf("flash = %q, want google/gemini-2.5-flash", got)
+	if got := aliases["gemini-flash"]; got != "google/gemini-2.5-flash" {
+		t.Errorf("gemini-flash = %q, want google/gemini-2.5-flash", got)
 	}
 }
 
