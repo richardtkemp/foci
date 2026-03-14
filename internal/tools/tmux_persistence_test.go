@@ -93,10 +93,21 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 
 func TestTmuxPersistOnKill(t *testing.T) {
 	// Verifies that killing a session removes it from the persisted state, ensuring the state store stays in sync with actual session existence.
-	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
+	// Create an isolated tmux server so the kill path's maybeKillTmuxServer
+	// can't race with other parallel tests on the shared server.
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "tmux.sock")
+	exec.Command("tmux", "-S", sock, "start-server").Run()
+	t.Cleanup(func() {
+		exec.Command("tmux", "-S", sock, "kill-server").Run()
+	})
+
+	orig := tmuxSocketPath
+	tmuxSocketPath = sock
+
+	stateFile := filepath.Join(dir, "state.json")
 	store := state.New(stateFile)
 	if err := store.Load(); err != nil {
 		t.Fatalf("load state: %v", err)
@@ -104,8 +115,10 @@ func TestTmuxPersistOnKill(t *testing.T) {
 
 	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
+	tmuxSocketPath = orig
+	t.Parallel()
+
 	name := "foci-test-persistkill"
-	tmuxSetupWithSentinel(t, name)
 
 	// Start a session
 	params, _ := json.Marshal(map[string]interface{}{

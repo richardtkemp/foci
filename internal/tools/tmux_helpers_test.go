@@ -61,3 +61,10 @@ func tmuxSetupWithSentinel(t *testing.T, names ...string) {
 	tmuxSetup(t, allNames...)
 	exec.Command("tmux", "-S", tmuxSocketPath, "new-session", "-d", "-s", sentinel, "sleep", "3600").Run()
 }
+
+// testTmuxInstance returns a minimal tmuxInstance using the global test socket.
+// Used by tests that call methods like tmuxSessionPIDs or maybeKillTmuxServer
+// directly (outside of a full NewTmuxTool).
+func testTmuxInstance() *tmuxInstance {
+	return &tmuxInstance{socketPath: tmuxSocketPath}
+}

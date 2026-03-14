@@ -176,6 +176,8 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				filesCreated := listCreatedFiles(tempDir)
 				if filesCreated != "" {
 					result += "\n\n---\nFiles created in " + tempDir + "/:\n" + filesCreated
+				} else {
+					_ = os.Remove(tempDir) // clean up empty spawn dir
 				}
 				return TextResult(result), nil
 

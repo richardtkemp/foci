@@ -14,12 +14,12 @@ import (
 
 // killSessionWithChildren kills a tmux session and terminates any child
 // processes that survive SIGHUP. Returns the number of child processes killed.
-func killSessionWithChildren(ctx context.Context, name string) (childrenKilled int, err error) {
-	pids := tmuxSessionPIDs(name)
+func (inst *tmuxInstance) killSessionWithChildren(ctx context.Context, name string) (childrenKilled int, err error) {
+	pids := inst.tmuxSessionPIDs(name)
 	children := collectDescendants(pids)
 	allPIDs := append(pids, children...)
 
-	out, err := runTmux(ctx, "kill-session", "-t", name)
+	out, err := inst.runTmux(ctx, "kill-session", "-t", name)
 	if err != nil {
 		return 0, fmt.Errorf("tmux kill-session: %s %w", strings.TrimSpace(out), err)
 	}
@@ -29,8 +29,8 @@ func killSessionWithChildren(ctx context.Context, name string) (childrenKilled i
 
 // maybeKillTmuxServer kills the tmux server if no sessions remain.
 // Returns true if the server was killed.
-func maybeKillTmuxServer(ctx context.Context) bool {
-	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}")
+func (inst *tmuxInstance) maybeKillTmuxServer(ctx context.Context) bool {
+	out, err := inst.runTmux(ctx, "list-sessions", "-F", "#{session_name}")
 	if err != nil {
 		return false // server gone or unknown error — leave it alone
 	}
@@ -40,15 +40,15 @@ func maybeKillTmuxServer(ctx context.Context) bool {
 		}
 	}
 	// No sessions remain — kill the server.
-	if _, err := runTmux(ctx, "kill-server"); err == nil {
+	if _, err := inst.runTmux(ctx, "kill-server"); err == nil {
 		return true
 	}
 	return false
 }
 
 // tmuxSessionPIDs returns the PID of each pane's shell in the given tmux session.
-func tmuxSessionPIDs(session string) []int {
-	out, err := runTmux(context.Background(), "list-panes", "-t", session, "-F", "#{pane_pid}")
+func (inst *tmuxInstance) tmuxSessionPIDs(session string) []int {
+	out, err := inst.runTmux(context.Background(), "list-panes", "-t", session, "-F", "#{pane_pid}")
 	if err != nil {
 		return nil
 	}

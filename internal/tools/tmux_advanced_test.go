@@ -166,6 +166,7 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 		lastSend:          make(map[string]time.Time),
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        100 * time.Millisecond,
+		socketPath:        tmuxSocketPath,
 	}
 
 	// Create a real tmux session
@@ -210,6 +211,7 @@ func TestTmuxReapPreservesActiveSession(t *testing.T) {
 		lastSend:          make(map[string]time.Time),
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        1 * time.Hour,
+		socketPath:        tmuxSocketPath,
 	}
 
 	// Create a real tmux session
