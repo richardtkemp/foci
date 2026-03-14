@@ -150,11 +150,11 @@ func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey stri
 		return &RateLimitedError{Until: resetTime}
 	}
 	if apiErr.IsOverloaded() {
-		return fmt.Errorf("API is overloaded — try again shortly")
+		return fmt.Errorf("API is overloaded (HTTP %d) — try again shortly", apiErr.StatusCode)
 	}
 	if apiErr.IsRetryable() {
 		a.logger().Debugf("session=%s server error detail: %s", sessionKey, err)
-		return fmt.Errorf("API is temporarily unavailable, try again in a few minutes")
+		return fmt.Errorf("API is temporarily unavailable (HTTP %d), try again in a few minutes", apiErr.StatusCode)
 	}
 	return fmt.Errorf("send message: %w", err)
 }
