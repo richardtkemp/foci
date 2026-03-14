@@ -240,7 +240,7 @@ func TestLoadMultiAgent(t *testing.T) {
 [[agents]]
 id = "clutch"
 model = "anthropic/claude-sonnet-4-6"
-workspace = "/home/rich/workspace1"
+workspace = "/tmp/foci/workspace1"
 
 [agents.platforms.telegram]
 bot = "primary"
@@ -248,7 +248,7 @@ multiball_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
-workspace = "/home/rich/workspace2"
+workspace = "/tmp/foci/workspace2"
 
 [agents.platforms.telegram]
 bot = "scout"

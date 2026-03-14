@@ -254,8 +254,8 @@ func TestShortPathComparison(t *testing.T) {
 	}{
 		{
 			"relative shorter",
-			"/home/rich/workspace/test/SKILL.md",
-			"/home/rich/workspace",
+			"/tmp/foci/workspace/test/SKILL.md",
+			"/tmp/foci/workspace",
 			true, // rel would be "test/SKILL.md"
 		},
 		{
