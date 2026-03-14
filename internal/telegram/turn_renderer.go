@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"strings"
-	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -21,33 +20,25 @@ type TurnRenderer struct {
 	thinking strings.Builder
 }
 
-// newTurnRenderer creates a TurnRenderer with a tool call tracker and (if
-// streaming is enabled) a stream writer.
+// newTurnRenderer creates a TurnRenderer with a tool call tracker and a stream
+// writer. The stream writer is always present but only sends messages when
+// streaming is enabled (live mode).
 func newTurnRenderer(bot *Bot, msg *gotgbot.Message) *TurnRenderer {
 	d := bot.resolveDisplay()
-	r := &TurnRenderer{
+	return &TurnRenderer{
 		bot:     bot,
 		msg:     msg,
 		chatID:  msg.Chat.Id,
 		display: d,
+		sw:      newStreamWriter(bot.client, msg.Chat.Id, bot.streamInterval(), d.renderOpts, d.streamOutput),
 		tracker: &toolCallTracker{bot: bot, chatID: msg.Chat.Id, display: d},
 	}
-	if d.streamOutput {
-		interval := bot.streamUpdateInterval
-		if interval == 0 {
-			interval = 250 * time.Millisecond
-		}
-		r.sw = newStreamWriter(bot.client, msg.Chat.Id, interval, d.renderOpts)
-	}
-	return r
 }
 
 // Cleanup finishes the stream writer if it hasn't been finished yet.
 // Safe to call from defer — Finish is idempotent.
 func (r *TurnRenderer) Cleanup() {
-	if r.sw != nil {
-		r.sw.Finish()
-	}
+	r.sw.Finish()
 }
 
 // onReply handles intermediate text delivery (ReplyFunc callback).
@@ -55,28 +46,23 @@ func (r *TurnRenderer) Cleanup() {
 // writer. Finalize that message so the next API call's text goes to a fresh
 // Telegram message (no duplicate send).
 func (r *TurnRenderer) onReply(text string) {
-	if r.sw != nil {
-		msgID := r.sw.Finish()
-		if msgID != 0 {
-			content := r.sw.Content()
-			if strings.TrimSpace(content) != "" {
-				html := ConvertToTelegramHTML(content, r.display.renderOpts)
-				_, _, _ = r.bot.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
-					ChatId:    r.chatID,
-					MessageId: msgID,
-					ParseMode: "HTML",
-				})
-			}
+	msgID := r.sw.Finish()
+	if msgID != 0 {
+		content := r.sw.Content()
+		if strings.TrimSpace(content) != "" {
+			html := ConvertToTelegramHTML(content, r.display.renderOpts)
+			_, _, _ = r.bot.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
+				ChatId:    r.chatID,
+				MessageId: msgID,
+				ParseMode: "HTML",
+			})
 		}
-		interval := r.bot.streamUpdateInterval
-		if interval == 0 {
-			interval = 250 * time.Millisecond
-		}
-		r.sw = newStreamWriter(r.bot.client, r.chatID, interval, r.display.renderOpts)
-		return
+	} else if !r.display.streamOutput {
+		r.bot.sendReply(r.msg, text)
+		r.tracker.resetMsgID()
 	}
-	r.bot.sendReply(r.msg, text)
-	r.tracker.resetMsgID()
+	// Fresh stream writer for the next segment.
+	r.sw = newStreamWriter(r.bot.client, r.chatID, r.bot.streamInterval(), r.display.renderOpts, r.display.streamOutput)
 }
 
 // onThinking accumulates thinking blocks (gated by showThinking config).
@@ -94,9 +80,7 @@ func (r *TurnRenderer) onThinking(thinking string) {
 // onTextDelta handles streaming delta callbacks: updates the stream writer
 // and refreshes the typing indicator.
 func (r *TurnRenderer) onTextDelta(delta string) {
-	if r.sw != nil {
-		r.sw.OnDelta(delta)
-	}
+	r.sw.OnDelta(delta)
 	_, _ = r.bot.client.SendChatAction(r.chatID, "typing", nil)
 }
 
@@ -120,12 +104,9 @@ func (r *TurnRenderer) Finalize(response string) {
 	// The agent loop's return value only contains text from the *last* API
 	// call. When response is empty but the stream has content, use the
 	// stream's buffer so the message gets properly HTML-finalized.
-	var streamMsgID int64
-	if r.sw != nil {
-		streamMsgID = r.sw.Finish()
-		if streamContent := r.sw.Content(); strings.TrimSpace(response) == "" && strings.TrimSpace(streamContent) != "" {
-			response = streamContent
-		}
+	streamMsgID := r.sw.Finish()
+	if streamContent := r.sw.Content(); strings.TrimSpace(response) == "" && strings.TrimSpace(streamContent) != "" {
+		response = streamContent
 	}
 
 	// Guard against empty responses.
