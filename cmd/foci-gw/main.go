@@ -109,6 +109,7 @@ Subcommands:
 		defer sec.cleanup()
 	}
 	warnMissingSecrets(cfg, sec.store)
+	warnStreamOutputWithoutStreaming(cfg)
 
 	// ========== Shared clients ==========
 	ctx, cancel := context.WithCancel(context.Background())
