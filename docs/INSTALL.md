@@ -51,7 +51,7 @@ cd foci
 The setup script creates a system user, builds binaries, sets up systemd, and launches the `foci setup` wizard for interactive configuration:
 
 ```bash
-sudo ./setup.sh -u foci
+./setup.sh
 ```
 
 The wizard prompts for:
@@ -79,7 +79,7 @@ FOCI_TELEGRAM_USER="5970082313" \
 FOCI_AUTH_METHOD="apikey" \
 FOCI_AUTH_TOKEN="sk-ant-..." \
 FOCI_AGENT_ID="myagent" \
-sudo ./setup.sh -u foci
+./setup.sh
 ```
 
 Available env vars:
@@ -99,7 +99,7 @@ Available env vars:
 Preview what setup would do without making changes:
 
 ```bash
-sudo ./setup.sh -u foci --dry-run
+./setup.sh --dry-run
 ```
 
 ### Re-running the wizard
@@ -130,7 +130,7 @@ Pull and re-run setup. It's idempotent — safe to run repeatedly:
 ```bash
 cd /path/to/foci
 git pull
-sudo ./setup.sh -u foci
+./setup.sh
 ```
 
 On update, setup generates a changelog (`WELCOME.md`) that the agent summarises and sends to you via Telegram.

@@ -105,7 +105,7 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for a full list of suggested sy
 ## Quick Start
 
 ```bash
-git clone https://github.com/richardtkemp/foci.git && cd foci && sudo ./setup.sh -u foci
+git clone https://github.com/richardtkemp/foci.git && cd foci && ./setup.sh
 ```
 
 <img src="assets/qr-repo.png" width="128" alt="QR code linking to the foci repository" />
