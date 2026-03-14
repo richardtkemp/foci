@@ -439,6 +439,33 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+// Verifies CompactRelativeTime returns short labels without " ago" suffix,
+// suitable for tight table columns.
+func TestCompactRelativeTime(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		t    time.Time
+		want string
+	}{
+		{"now", now.Add(-10 * time.Second), "now"},
+		{"1m", now.Add(-90 * time.Second), "1m"},
+		{"5m", now.Add(-5 * time.Minute), "5m"},
+		{"1h", now.Add(-90 * time.Minute), "1h"},
+		{"3h", now.Add(-3 * time.Hour), "3h"},
+		{"1d", now.Add(-36 * time.Hour), "1d"},
+		{"3d", now.Add(-72 * time.Hour), "3d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CompactRelativeTime(tt.t)
+			if got != tt.want {
+				t.Errorf("CompactRelativeTime() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRelativeTime(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
