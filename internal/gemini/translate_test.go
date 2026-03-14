@@ -533,26 +533,6 @@ func TestJSONSchemaToGenai(t *testing.T) {
 	}
 }
 
-func TestContextLimit(t *testing.T) {
-	// Proves that each known Gemini model variant returns the correct context window size, and that unknown models fall back to the default limit.
-	tests := []struct {
-		model string
-		want  int
-	}{
-		{"gemini-2.5-pro", 1_000_000},
-		{"gemini-2.5-flash", 1_000_000},
-		{"gemini-2.0-flash", 1_000_000},
-		{"gemini-1.5-pro", 2_000_000},
-		{"unknown-model", 1_000_000},
-	}
-
-	for _, tt := range tests {
-		if got := contextLimit(tt.model); got != tt.want {
-			t.Errorf("contextLimit(%q) = %d, want %d", tt.model, got, tt.want)
-		}
-	}
-}
-
 // Compile-time check: *Client implements provider.Client.
 var _ provider.Client = (*Client)(nil)
 

@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"foci/internal/provider"
 
@@ -366,19 +365,4 @@ func toolResultName(msgs []provider.Message, toolUseID string) string {
 		}
 	}
 	return ""
-}
-
-// contextLimit returns the context window size for a Gemini model.
-func contextLimit(model string) int {
-	switch {
-	case strings.Contains(model, "gemini-2.5-pro"),
-		strings.Contains(model, "gemini-2.5-flash"):
-		return 1_000_000
-	case strings.Contains(model, "gemini-2.0"):
-		return 1_000_000
-	case strings.Contains(model, "gemini-1.5"):
-		return 2_000_000
-	default:
-		return 1_000_000
-	}
 }
