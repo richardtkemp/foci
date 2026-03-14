@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"foci/internal/command"
@@ -17,8 +18,15 @@ func makeButtons(n int) []gotgbot.InlineKeyboardButton {
 	return btns
 }
 
+// makeLongButtons creates n buttons where at least one label exceeds 14 characters.
+func makeLongButtons(n int) []gotgbot.InlineKeyboardButton {
+	btns := makeButtons(n)
+	btns[0].Text = "this is a long label"
+	return btns
+}
+
 func TestLayoutButtons_SmallCounts(t *testing.T) {
-	// Verifies that 1–3 buttons stay on one row.
+	// Verifies that 1–3 short-label buttons stay on one row.
 	for n := 1; n <= 3; n++ {
 		rows := layoutButtons(makeButtons(n))
 		if len(rows) != 1 {
@@ -31,8 +39,7 @@ func TestLayoutButtons_SmallCounts(t *testing.T) {
 }
 
 func TestLayoutButtons_SplitsAt3(t *testing.T) {
-	// Verifies that 4–12 buttons are split into rows
-	// of at most 3, respecting the 4-row maximum.
+	// Verifies that short-label buttons are split into rows of at most 3.
 	tests := []struct {
 		n       int
 		wantMax int // max buttons per row
@@ -41,7 +48,8 @@ func TestLayoutButtons_SplitsAt3(t *testing.T) {
 		{4, 3, 1},  // [3, 1]
 		{6, 3, 3},  // [3, 3]
 		{8, 3, 2},  // [3, 3, 2]
-		{12, 3, 3}, // [3, 3, 3, 3] — exactly 4 rows
+		{12, 3, 3}, // [3, 3, 3, 3]
+		{20, 3, 2}, // [3, 3, 3, 3, 3, 3, 2] — no row limit
 	}
 	for _, tt := range tests {
 		rows := layoutButtons(makeButtons(tt.n))
@@ -61,34 +69,65 @@ func TestLayoutButtons_SplitsAt3(t *testing.T) {
 	}
 }
 
-func TestLayoutButtons_PacksWhenTooManyRows(t *testing.T) {
-	// Verifies that when 3-per-row would
-	// exceed 4 rows, buttons are packed more densely.
+func TestLayoutButtons_LongLabelsLimit2PerRow(t *testing.T) {
+	// Verifies that when any button label exceeds 14 characters,
+	// the layout drops to 2 buttons per row for readability.
 	tests := []struct {
-		n          int
-		wantRows   int
-		wantPerRow int // expected per-row count (ceiling)
+		n        int
+		wantRows int
 	}{
-		{13, 4, 4}, // ceil(13/4)=4 per row → [4, 4, 4, 1]
-		{16, 4, 4}, // [4, 4, 4, 4]
-		{20, 4, 5}, // [5, 5, 5, 5]
+		{3, 2},  // [2, 1]
+		{4, 2},  // [2, 2]
+		{5, 3},  // [2, 2, 1]
+		{7, 4},  // [2, 2, 2, 1]
 	}
 	for _, tt := range tests {
-		rows := layoutButtons(makeButtons(tt.n))
-		if len(rows) > tt.wantRows {
-			t.Errorf("n=%d: got %d rows, want at most %d", tt.n, len(rows), tt.wantRows)
+		rows := layoutButtons(makeLongButtons(tt.n))
+		if len(rows) != tt.wantRows {
+			t.Errorf("n=%d: got %d rows, want %d", tt.n, len(rows), tt.wantRows)
 		}
 		for _, row := range rows {
-			if len(row) > tt.wantPerRow {
-				t.Errorf("n=%d: row has %d buttons, want at most %d", tt.n, len(row), tt.wantPerRow)
+			if len(row) > 2 {
+				t.Errorf("n=%d: row has %d buttons, want at most 2 with long labels", tt.n, len(row))
 			}
 		}
 	}
 }
 
+func TestLayoutButtons_LongLabels2ButtonsFitOnOneRow(t *testing.T) {
+	// Verifies that 2 buttons with long labels stay on a single row.
+	btns := []gotgbot.InlineKeyboardButton{
+		{Text: "fifteen chars!!"},
+		{Text: "short"},
+	}
+	rows := layoutButtons(btns)
+	if len(rows) != 1 {
+		t.Errorf("got %d rows, want 1", len(rows))
+	}
+}
+
+func TestLayoutButtons_Exactly14CharsStaysAt3(t *testing.T) {
+	// Verifies that a 14-character label does NOT trigger the 2-per-row limit
+	// (only labels exceeding 14 characters do).
+	btns := []gotgbot.InlineKeyboardButton{
+		{Text: strings.Repeat("x", 14)},
+		{Text: "A"},
+		{Text: "B"},
+		{Text: "C"},
+	}
+	rows := layoutButtons(btns)
+	// 4 short buttons → [3, 1]
+	if len(rows) != 2 {
+		t.Errorf("got %d rows, want 2", len(rows))
+	}
+	if len(rows[0]) != 3 {
+		t.Errorf("first row has %d buttons, want 3", len(rows[0]))
+	}
+}
+
 func TestBuildCommandKeyboard_ExplicitRows(t *testing.T) {
-	// Verifies that buttons with different
-	// explicit Row values are kept in separate rows (not merged or reordered).
+	// Verifies that buttons with different explicit Row values
+	// are kept in separate rows (not merged or reordered).
 	opts := []command.KeyboardOption{
 		{Label: "A", Data: "a", Row: 0},
 		{Label: "B", Data: "b", Row: 0},
@@ -108,8 +147,8 @@ func TestBuildCommandKeyboard_ExplicitRows(t *testing.T) {
 }
 
 func TestBuildCommandKeyboard_AutoLayoutDefaultRow(t *testing.T) {
-	// Verifies that 8 buttons all
-	// on row 0 get auto-split into rows of 3.
+	// Verifies that 8 short-label buttons all on row 0 get auto-split
+	// into rows of 3.
 	opts := make([]command.KeyboardOption, 8)
 	for i := range opts {
 		opts[i] = command.KeyboardOption{
@@ -131,9 +170,8 @@ func TestBuildCommandKeyboard_AutoLayoutDefaultRow(t *testing.T) {
 }
 
 func TestBuildCommandKeyboard_MixedExplicitAndLargeRow(t *testing.T) {
-	// Verifies that auto-layout
-	// applies per-row: explicit rows with few buttons stay as-is, while a large
-	// default row gets split.
+	// Verifies that auto-layout applies per-row: explicit rows with few
+	// buttons stay as-is, while a large default row gets split.
 	opts := []command.KeyboardOption{
 		{Label: "A", Data: "a", Row: 0},
 		{Label: "B", Data: "b", Row: 0},
@@ -150,8 +188,7 @@ func TestBuildCommandKeyboard_MixedExplicitAndLargeRow(t *testing.T) {
 }
 
 func TestBuildCommandKeyboard_CallbackDataFormat(t *testing.T) {
-	// Verifies callback data is
-	// correctly formatted after auto-layout.
+	// Verifies callback data is correctly formatted after auto-layout.
 	opts := []command.KeyboardOption{
 		{Label: "X", Data: "val1"},
 		{Label: "Y", Data: "val2"},
@@ -176,4 +213,3 @@ func TestBuildCommandKeyboard_CallbackDataFormat(t *testing.T) {
 		}
 	}
 }
-
