@@ -143,13 +143,66 @@ func FormatTodoLine(item memory.TodoItem) string {
 	return line
 }
 
-// FormatTodoLines formats a slice of todo items, one per line.
+// FormatTodoLines formats a slice of todo items as a markdown table.
 func FormatTodoLines(items []memory.TodoItem) string {
-	lines := make([]string, len(items))
-	for i, item := range items {
-		lines[i] = FormatTodoLine(item)
+	// Check if any items have tags.
+	hasTags := false
+	for _, item := range items {
+		if item.Tags != "" {
+			hasTags = true
+			break
+		}
 	}
-	return strings.Join(lines, "\n")
+
+	cols := []display.Column{
+		{Header: "#", Align: display.AlignRight},
+		{Header: ""},
+		{Header: "Pri"},
+	}
+	if hasTags {
+		cols = append(cols, display.Column{Header: "Tags"})
+	}
+	cols = append(cols, display.Column{Header: "Text"}, display.Column{Header: "Age"})
+
+	rows := make([][]string, len(items))
+	for i, item := range items {
+		marker := "[ ]"
+		switch item.Status {
+		case "in_progress":
+			marker = "[>]"
+		case "done":
+			marker = "[x]"
+		case "dropped":
+			marker = "[-]"
+		}
+		text := item.Text
+		if (item.Status == "done" || item.Status == "dropped") && item.CloseReason != "" {
+			text += " — " + item.CloseReason
+		}
+		row := []string{
+			fmt.Sprintf("%d", item.ID),
+			marker,
+			item.Priority,
+		}
+		if hasTags {
+			tags := strings.ReplaceAll(item.Tags, ",", ", ")
+			row = append(row, tags)
+		}
+		row = append(row, text, formatCompactAge(item))
+		rows[i] = row
+	}
+	return display.MarkdownTable(cols, rows)
+}
+
+// formatCompactAge returns a compact age string for a todo item.
+func formatCompactAge(item memory.TodoItem) string {
+	if (item.Status == "done" || item.Status == "dropped") && item.CompletedAt != nil {
+		return display.CompactRelativeTime(*item.CompletedAt)
+	}
+	if !item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() && !item.UpdatedAt.Equal(item.CreatedAt) {
+		return display.CompactRelativeTime(item.UpdatedAt)
+	}
+	return display.CompactRelativeTime(item.CreatedAt)
 }
 
 func todoAdd(store *memory.TodoStore, agentID, text, priority, tag string) (ToolResult, error) {
