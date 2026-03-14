@@ -4,6 +4,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"foci/internal/display"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -16,9 +19,10 @@ const streamMaxChars = 3900
 // started on the first delta, so no resources are wasted if streaming is disabled
 // or the agent returns no text.
 type streamWriter struct {
-	client   botClient
-	chatID   int64
-	interval time.Duration
+	client    botClient
+	chatID    int64
+	interval  time.Duration
+	tableOpts display.RenderOpts
 
 	mu      sync.Mutex
 	buf     strings.Builder
@@ -31,13 +35,14 @@ type streamWriter struct {
 }
 
 // newStreamWriter creates a stream writer. No goroutines are started until OnDelta is called.
-func newStreamWriter(client botClient, chatID int64, interval time.Duration) *streamWriter {
+func newStreamWriter(client botClient, chatID int64, interval time.Duration, tableOpts display.RenderOpts) *streamWriter {
 	return &streamWriter{
-		client:   client,
-		chatID:   chatID,
-		interval: interval,
-		stop:     make(chan struct{}),
-		done:     make(chan struct{}),
+		client:    client,
+		chatID:    chatID,
+		interval:  interval,
+		tableOpts: tableOpts,
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 }
 
@@ -62,12 +67,26 @@ func (sw *streamWriter) OnDelta(delta string) {
 	}
 }
 
+// formatForStream converts raw buffer text to Telegram HTML for streaming.
+// Closes partial markdown delimiters, then converts to HTML.
+func (sw *streamWriter) formatForStream(raw string) string {
+	closed := closePartialMarkdown(raw)
+	return ConvertToTelegramHTML(closed, sw.tableOpts)
+}
+
 // sendInitial sends the first message with accumulated text. Called under lock.
 func (sw *streamWriter) sendInitial() {
-	text := sw.truncated()
-	msg, err := sw.client.SendMessage(sw.chatID, text, nil) // plain text, no parse mode
+	raw := sw.truncated()
+	html := sw.formatForStream(raw)
+	msg, err := sw.client.SendMessage(sw.chatID, html, &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
+	})
 	if err != nil {
-		return
+		// Fallback: send as plain text (malformed HTML or API error).
+		msg, err = sw.client.SendMessage(sw.chatID, raw, nil)
+		if err != nil {
+			return
+		}
 	}
 	sw.msgID = msg.MessageId
 	sw.dirty = false
@@ -89,7 +108,7 @@ func (sw *streamWriter) editLoop() {
 			sw.mu.Unlock()
 			continue
 		}
-		text := sw.truncated()
+		raw := sw.truncated()
 		msgID := sw.msgID
 		sw.dirty = false
 		sw.mu.Unlock()
@@ -98,21 +117,37 @@ func (sw *streamWriter) editLoop() {
 			continue
 		}
 
+		// Convert to HTML with partial-markdown handling.
+		html := sw.formatForStream(raw)
+
 		// Edit outside the lock to avoid holding during network I/O.
-		// Ignore "message is not modified" errors.
-		_, _, _ = sw.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+		_, _, err := sw.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
 			ChatId:    sw.chatID,
 			MessageId: msgID,
+			ParseMode: "HTML",
 		})
+		if err != nil {
+			// Fallback: edit as plain text. Ignore "message is not modified" errors.
+			_, _, _ = sw.client.EditMessageText(raw, &gotgbot.EditMessageTextOpts{
+				ChatId:    sw.chatID,
+				MessageId: msgID,
+			})
+		}
 	}
 }
 
 // truncated returns the buffer contents, truncated to streamMaxChars with "..." appended.
+// Truncation is rune-safe to avoid splitting multi-byte UTF-8 characters.
 // Called under lock.
 func (sw *streamWriter) truncated() string {
 	s := sw.buf.String()
 	if len(s) > streamMaxChars {
-		return s[:streamMaxChars] + "..."
+		// Find the last valid rune boundary at or before streamMaxChars.
+		end := streamMaxChars
+		for end > 0 && !utf8.RuneStart(s[end]) {
+			end--
+		}
+		return s[:end] + "..."
 	}
 	return s
 }

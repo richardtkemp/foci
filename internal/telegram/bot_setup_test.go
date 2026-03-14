@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
+
+// errTestHTML is a sentinel error for simulating Telegram HTML parse failures in tests.
+var errTestHTML = errors.New("Bad Request: can't parse entities")
 
 // mockClient implements botClient for testing.
 type mockClient struct {

@@ -769,15 +769,16 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 When `stream_output = true` and `streaming = true`, model output is shown in Telegram in real-time as tokens arrive, rather than waiting for the full response.
 
 **Lifecycle:**
-1. `processAgentMessage` creates a `streamWriter` (no goroutines started yet)
-2. On the first `TextDeltaObserver` delta, the stream writer sends an initial plain-text message and starts a ticker goroutine
-3. Each tick, if new text has accumulated, the message is edited with the latest buffer contents
+1. `processAgentMessage` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet)
+2. On the first `TextDeltaObserver` delta, the stream writer sends an initial HTML-formatted message and starts a ticker goroutine
+3. Each tick, if new text has accumulated, the buffer is processed through `closePartialMarkdown` → `ConvertToTelegramHTML` and the message is edited with HTML formatting
 4. When `HandleMessage` returns, `Finish()` stops the ticker and returns the message ID
 5. The final HTML-formatted response is edited into the stream message (or sent as a new message if too long/has thinking)
 
 **Key design decisions:**
-- **Plain text during streaming:** No `ParseMode` — partial markdown/HTML is often invalid (unclosed tags, broken code blocks). The final edit uses proper HTML formatting.
-- **Truncation at 3900 chars:** Buffer is truncated with `"..."` to stay within Telegram's 4096-char limit. The final response uses the normal chunking path if it exceeds 4096.
+- **HTML formatting during streaming:** Each stream update runs through `closePartialMarkdown` (strips unmatched `**`, `` ` ``, `` ``` ``, `~~`, `__`, `*`, `_`) then `ConvertToTelegramHTML` with `ParseMode: "HTML"`. If the HTML edit fails (malformed output), the stream writer falls back to plain text for that tick.
+- **Partial markdown handling:** `closePartialMarkdown` detects unmatched delimiters by parity counting and strips the trailing unmatched instance. For code fences, everything from the unmatched fence onward is removed. This is lightweight (string counting, no regex) and runs on every tick.
+- **Truncation at 3900 chars:** Buffer is truncated with `"..."` to stay within Telegram's 4096-char limit (with headroom for HTML tag expansion). Truncation is rune-safe to avoid splitting multi-byte UTF-8 characters. The final response uses the normal chunking path if it exceeds 4096.
 - **Lazy start:** No goroutine or message until the first delta. If the agent returns no text (e.g. pure tool calls), the stream writer does nothing.
 - **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
 

@@ -398,3 +398,171 @@ func TestConvertToTelegramHTMLTableWrapping(t *testing.T) {
 		})
 	}
 }
+
+func TestClosePartialMarkdown(t *testing.T) {
+	// Verifies that closePartialMarkdown strips or closes unmatched markdown
+	// delimiters so that partial streaming text can be safely converted to HTML.
+	// Each case simulates a mid-stream buffer state with incomplete syntax.
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "no markdown passthrough",
+			in:   "plain text",
+			want: "plain text",
+		},
+		{
+			name: "complete bold unchanged",
+			in:   "**bold**",
+			want: "**bold**",
+		},
+		{
+			name: "unmatched bold stripped",
+			in:   "**Bold tex",
+			want: "Bold tex",
+		},
+		{
+			name: "unmatched bold at start with text after",
+			in:   "hello **world",
+			want: "hello world",
+		},
+		{
+			name: "complete italic unchanged",
+			in:   "*italic*",
+			want: "*italic*",
+		},
+		{
+			name: "unmatched italic star stripped",
+			in:   "hello *world",
+			want: "hello world",
+		},
+		{
+			name: "unmatched italic underscore stripped",
+			in:   "hello _world",
+			want: "hello world",
+		},
+		{
+			name: "complete strikethrough unchanged",
+			in:   "~~deleted~~",
+			want: "~~deleted~~",
+		},
+		{
+			name: "unmatched strikethrough stripped",
+			in:   "hello ~~deleted",
+			want: "hello deleted",
+		},
+		{
+			name: "complete underline unchanged",
+			in:   "__underline__",
+			want: "__underline__",
+		},
+		{
+			name: "unmatched underline stripped",
+			in:   "hello __under",
+			want: "hello under",
+		},
+		{
+			name: "complete code fence unchanged",
+			in:   "```\ncode\n```",
+			want: "```\ncode\n```",
+		},
+		{
+			name: "unclosed code fence stripped",
+			in:   "before\n```\nsome code",
+			want: "before\n",
+		},
+		{
+			name: "unclosed code fence at start",
+			in:   "```\ncode here",
+			want: "",
+		},
+		{
+			name: "complete inline code unchanged",
+			in:   "use `code` here",
+			want: "use `code` here",
+		},
+		{
+			name: "unmatched backtick stripped",
+			in:   "use `code",
+			want: "use code",
+		},
+		{
+			name: "mixed complete and partial",
+			in:   "**bold** and *ital",
+			want: "**bold** and ital",
+		},
+		{
+			name: "bold with italic inside complete",
+			in:   "**bold *italic***",
+			// The lone * inside the ** pair is stripped since it's unmatched
+			want: "**bold italic***",
+		},
+		{
+			name: "empty string",
+			in:   "",
+			want: "",
+		},
+		{
+			name: "multiple complete delimiters",
+			in:   "**a** and ~~b~~ and `c`",
+			want: "**a** and ~~b~~ and `c`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := closePartialMarkdown(tt.in)
+			if got != tt.want {
+				t.Errorf("closePartialMarkdown(%q)\n  got  = %q\n  want = %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClosePartialMarkdown_ThenConvert(t *testing.T) {
+	// Verifies the full pipeline: closePartialMarkdown followed by
+	// ConvertToTelegramHTML produces valid output for streaming scenarios.
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "partial bold becomes plain text",
+			in:   "**Bold tex",
+			want: "Bold tex",
+		},
+		{
+			name: "complete bold becomes HTML",
+			in:   "**Bold text**",
+			want: "<b>Bold text</b>",
+		},
+		{
+			name: "partial code fence stripped",
+			in:   "before\n```\ncode",
+			want: "before\n",
+		},
+		{
+			name: "complete code fence becomes pre",
+			in:   "before\n```\ncode\n```",
+			want: "before\n<pre><code>code</code></pre>",
+		},
+		{
+			name: "partial inline code stripped",
+			in:   "use `func",
+			want: "use func",  // backtick removed, text preserved
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			closed := closePartialMarkdown(tt.in)
+			got := ConvertToTelegramHTML(closed)
+			if got != tt.want {
+				t.Errorf("pipeline(%q)\n  closed = %q\n  got    = %q\n  want   = %q", tt.in, closed, got, tt.want)
+			}
+		})
+	}
+}
