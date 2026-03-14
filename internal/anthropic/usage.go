@@ -37,6 +37,10 @@ type UsageClient struct {
 	lastErr    error
 	lastErrAt  time.Time
 	errBackoff time.Duration
+
+	// postFetch is called after a successful API fetch, e.g. to check token
+	// expiry and trigger a proactive refresh.
+	postFetch func()
 }
 
 // NewUsageClient creates a new usage API client with a static OAuth token.
@@ -69,6 +73,12 @@ func (c *UsageClient) SetCacheTTL(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cacheTTL = d
+}
+
+// SetPostFetchHook sets a function called after each successful API fetch.
+// Used to trigger proactive token refresh when credentials are near expiry.
+func (c *UsageClient) SetPostFetchHook(fn func()) {
+	c.postFetch = fn
 }
 
 // Invalidate clears the cached usage response and error backoff state, forcing
@@ -140,6 +150,11 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 	c.lastErr = nil
 	c.errBackoff = 0
 	c.mu.Unlock()
+
+	// After successful fetch, trigger any post-fetch hook (e.g. token expiry check).
+	if c.postFetch != nil {
+		c.postFetch()
+	}
 
 	return resp, nil
 }

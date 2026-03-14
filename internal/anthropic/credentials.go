@@ -48,8 +48,6 @@ func (h *tokenHolder) Set(token string) {
 type AnthropicResolver struct {
 	store         SecretsStore
 	ccSrc         *CCTokenSource
-	ccStartOnce   sync.Once
-	ctx           context.Context
 	credHolders   map[string]*tokenHolder
 	mu            sync.Mutex
 	httpTimeout   time.Duration
@@ -58,8 +56,8 @@ type AnthropicResolver struct {
 }
 
 // NewResolver creates and initializes an AnthropicResolver.
-// Initializes the shared CCTokenSource and sets up expiry callback to trigger token refresh.
-// The store is captured and used for all subsequent credential resolution calls.
+// Initializes the shared CCTokenSource and sets up the refresh callback
+// for proactive token renewal.
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
 	httpTimeout, err := time.ParseDuration(anthropicCfg.HTTPTimeout)
 	if err != nil {
@@ -73,28 +71,29 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 		usageCacheTTL = 10 * time.Minute
 	}
 
-	ccPollInterval, err := time.ParseDuration(anthropicCfg.CCCredentialsPollInterval)
+	ccExpiryThreshold, err := time.ParseDuration(anthropicCfg.CCExpiryThreshold)
 	if err != nil {
-		log.Warnf("anthropic", "invalid cc_credentials_poll_interval, using default: %v", err)
-		ccPollInterval = 30 * time.Second
+		log.Warnf("anthropic", "invalid cc_expiry_threshold, using default: %v", err)
+		ccExpiryThreshold = defaultExpiryThreshold
 	}
 
 	const ccCredsFile = "~/.claude/.credentials.json"
 
 	var ccSrc *CCTokenSource
-	if src, err := NewCCTokenSource(ccCredsFile, ccPollInterval); err == nil {
-		src.OnExpired(func() {
-			log.Warnf("anthropic", "CC credentials expired — starting claude to refresh")
-			go startClaudeForRefresh()
+	if src, err := NewCCTokenSource(ccCredsFile); err == nil {
+		src.SetRefreshFunc(func() {
+			log.Warnf("anthropic", "CC credentials near expiry — starting claude to refresh")
+			startClaudeForRefresh()
 		})
+		src.SetExpiryThreshold(ccExpiryThreshold)
 		ccSrc = src
-		log.Infof("anthropic", "CC token source configured (%s, poll %s)", ccCredsFile, ccPollInterval)
+		log.Infof("anthropic", "CC token source configured (%s, lazy reads, expiry threshold %s)",
+			ccCredsFile, ccExpiryThreshold)
 	}
 
 	return &AnthropicResolver{
 		store:         store,
 		ccSrc:         ccSrc,
-		ctx:           ctx,
 		credHolders:   make(map[string]*tokenHolder),
 		httpTimeout:   httpTimeout,
 		usageCacheTTL: usageCacheTTL,
@@ -102,23 +101,9 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 	}, nil
 }
 
-// ensureCCStarted starts the CCTokenSource background poller on first use.
-func (r *AnthropicResolver) ensureCCStarted() {
-	if r.ccSrc == nil {
-		return
-	}
-	r.ccStartOnce.Do(func() {
-		r.ccSrc.Start(r.ctx)
-		log.Infof("anthropic", "CC token source started (lazy)")
-	})
-}
-
-// Close stops the CCTokenSource background poller.
-func (r *AnthropicResolver) Close() {
-	if r.ccSrc != nil {
-		r.ccSrc.Stop()
-	}
-}
+// Close is a no-op retained for interface compatibility. The lazy token source
+// has no background goroutines to stop.
+func (r *AnthropicResolver) Close() {}
 
 // ResolveClient implements provider.CredentialResolver.
 // Priority: (1) setup-token, (2) api_key, (3) Claude Code credentials.
@@ -155,10 +140,9 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		return c, nil
 	}
 
-	// Priority 3: Claude Code credentials
-	r.ensureCCStarted()
+	// Priority 3: Claude Code credentials (lazy disk reads, no polling)
 	if r.ccSrc != nil {
-		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, passive)", endpointName)
+		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
 		c := NewClientWithTokenFunc(r.ccSrc.Token, r.httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
@@ -176,11 +160,12 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 // OAuth scopes and will be rejected by the usage endpoint.
 func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (provider.UsageClient, error) {
 	// Usage API requires OAuth with user:profile scope — only CC credentials work.
-	r.ensureCCStarted()
 	if r.ccSrc != nil {
 		client := NewUsageClientWithFunc(r.ccSrc.Token)
 		client.SetCacheTTL(r.usageCacheTTL)
-		log.Infof("anthropic", "created usage client for %q (via CC credentials)", endpointName)
+		// After each successful usage fetch, check if the token needs proactive refresh.
+		client.SetPostFetchHook(r.ccSrc.CheckRefresh)
+		log.Infof("anthropic", "created usage client for %q (via CC credentials, lazy)", endpointName)
 		return client, nil
 	}
 
@@ -249,4 +234,3 @@ func startClaudeForRefresh() {
 		log.Infof("anthropic", "claude token refresh completed")
 	}
 }
-

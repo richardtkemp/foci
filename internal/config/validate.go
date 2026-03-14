@@ -261,7 +261,7 @@ func validate(cfg *Config) error {
 		{"anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout},
 		{"anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout},
 		{"anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL},
-		{"anthropic", "cc_credentials_poll_interval", cfg.Anthropic.CCCredentialsPollInterval},
+		{"anthropic", "cc_expiry_threshold", cfg.Anthropic.CCExpiryThreshold},
 		{"gemini", "http_timeout", cfg.Gemini.HTTPTimeout},
 		{"openai", "http_timeout", cfg.OpenAI.HTTPTimeout},
 		{"tools", "tmux_command_timeout", cfg.Tools.TmuxCommandTimeout},
