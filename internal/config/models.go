@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"foci/internal/modelinfo"
 )
 
 // ResolvedModel holds the canonical resolution of a model string.
@@ -123,20 +125,6 @@ type ModelCaps struct {
 // Accepts both bare model IDs ("claude-haiku-4-5") and developer-prefixed
 // ("anthropic/claude-haiku-4-5").
 func ModelCapabilities(model string) ModelCaps {
-	modelID := strings.ToLower(StripDeveloperPrefix(model))
-
-	// Anthropic models: Haiku supports neither effort nor thinking.
-	// Sonnet and Opus support both.
-	if strings.Contains(modelID, "claude") {
-		if strings.Contains(modelID, "haiku") {
-			return ModelCaps{Effort: false, Thinking: false, Speed: false}
-		}
-		if strings.Contains(modelID, "opus") {
-			return ModelCaps{Effort: true, Thinking: true, Speed: true}
-		}
-		return ModelCaps{Effort: true, Thinking: true, Speed: false}
-	}
-
-	// Non-Anthropic models: effort and thinking are Anthropic-specific.
-	return ModelCaps{Effort: false, Thinking: false}
+	effort, thinking, speed := modelinfo.Capabilities(model)
+	return ModelCaps{Effort: effort, Thinking: thinking, Speed: speed}
 }

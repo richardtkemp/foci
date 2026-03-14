@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/modelinfo"
 	"foci/internal/tools"
 	"foci/prompts"
 	"foci/internal/provider"
@@ -86,26 +87,12 @@ func (c *Compactor) checkConfig() {
 // contextLimit returns the approximate context window for a model.
 // Accepts both bare ("claude-opus-4-6") and full ("anthropic/claude-opus-4-6") model IDs.
 func contextLimit(model string) int {
-	switch {
-	case strings.Contains(model, "claude-"):
-		return 200_000
-	case strings.Contains(model, "gemini-2.5-pro"),
-		strings.Contains(model, "gemini-2.5-flash"):
-		return 1_000_000
-	case strings.Contains(model, "gemini-2.0"):
-		return 1_000_000
-	case strings.Contains(model, "gemini-1.5"):
-		return 2_000_000
-	case strings.Contains(model, "gemini-"):
-		return 1_000_000
-	default:
-		return 200_000
-	}
+	return modelinfo.ContextWindow(model)
 }
 
 // ContextLimit returns the approximate context window for a model (exported).
 func ContextLimit(model string) int {
-	return contextLimit(model)
+	return modelinfo.ContextWindow(model)
 }
 
 // Threshold returns the base compaction threshold.

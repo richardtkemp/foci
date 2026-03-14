@@ -126,9 +126,9 @@ DiagnoseRestart(stateStore, startTime, logsDir)
 
 ```
 main
- ├── config        → table
+ ├── config        → table, modelinfo
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
- ├── log           → sqlite
+ ├── log           → sqlite, modelinfo
  ├── table         (no deps)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
@@ -144,11 +144,12 @@ main
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
  ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → provider, platform, log, memory, secrets, tempdir, voice
+ ├── tools         → provider, platform, log, memory, modelinfo, secrets, tempdir, voice
  ├── workspace     → provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
  ├── prompts       → log (embedded .md files + BuildBranchOrientation, ResolveOrientPath helpers)
- ├── compaction    → provider, prompts, session, log
+ ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
+ ├── compaction    → provider, prompts, session, log, modelinfo
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
  ├── command       → agent, compaction, config, display, mana, prompts, provider, provision, session, skills, state, tempdir, tools, workspace
@@ -160,7 +161,7 @@ main
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `tempdir`, `mana`, `warnings` are leaf packages. `platform` depends on leaf packages only (config, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo` are leaf packages. `platform` depends on leaf packages only (config, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
