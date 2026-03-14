@@ -142,31 +142,43 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	}
 
 	// Autopilot: auto-watch after send if not already watched
-	if inst.autopilot && inst.notifier != nil {
-		inst.mu.Lock()
-		alreadyWatched := false
-		prefix := name + ":"
-		for key := range inst.watched {
-			if strings.HasPrefix(key, prefix) {
-				alreadyWatched = true
-				break
-			}
-		}
-		inst.mu.Unlock()
-
-		if !alreadyWatched {
-			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, false)
-			if watchErr != nil {
-				log.Warnf("tmux", "autopilot: session=%s auto-watch failed for %s: %v", sessionKey, name, watchErr)
-			} else {
-				log.Debugf("tmux", "autopilot: session=%s auto-watching %s after send", sessionKey, name)
-				result += "\n" + watchRes.Text
-			}
-		}
-	}
+	result += inst.autopilotWatch(ctx, sessionKey, name, false)
 
 	LogSendExit(true, "")
 	return TextResult(result), nil
+}
+
+// autopilotWatch starts a watch on the named pane if autopilot is enabled and
+// the pane isn't already watched. Returns text to append to the result (empty
+// string if no watch was started). The conditional flag controls whether the
+// watch requires activity-then-inactivity (true) or fires unconditionally (false).
+func (inst *tmuxInstance) autopilotWatch(ctx context.Context, sessionKey, name string, conditional bool) string {
+	if !inst.autopilot || inst.notifier == nil {
+		return ""
+	}
+
+	inst.mu.Lock()
+	alreadyWatched := false
+	prefix := name + ":"
+	for key := range inst.watched {
+		if strings.HasPrefix(key, prefix) {
+			alreadyWatched = true
+			break
+		}
+	}
+	inst.mu.Unlock()
+
+	if alreadyWatched {
+		return ""
+	}
+
+	watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, conditional)
+	if watchErr != nil {
+		log.Warnf("tmux", "autopilot: session=%s auto-watch failed for %s: %v", sessionKey, name, watchErr)
+		return ""
+	}
+	log.Debugf("tmux", "autopilot: session=%s auto-watching %s (conditional=%v)", sessionKey, name, conditional)
+	return "\n" + watchRes.Text
 }
 
 // lettersOnly strips everything except ASCII and Unicode letters from s.
@@ -258,28 +270,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 	// Autopilot: set conditional watch after read if not already watched.
 	// A conditional watch only fires after activity-then-inactivity, so it
 	// won't alert if the session stays idle (nothing new to report).
-	if inst.autopilot && inst.notifier != nil {
-		inst.mu.Lock()
-		alreadyWatched := false
-		prefix := name + ":"
-		for key := range inst.watched {
-			if strings.HasPrefix(key, prefix) {
-				alreadyWatched = true
-				break
-			}
-		}
-		inst.mu.Unlock()
-
-		if !alreadyWatched {
-			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, true)
-			if watchErr != nil {
-				log.Warnf("tmux", "autopilot: session=%s conditional watch failed for %s: %v", sessionKey, name, watchErr)
-			} else {
-				log.Debugf("tmux", "autopilot: session=%s conditional watch on %s after read", sessionKey, name)
-				result += "\n" + watchRes.Text
-			}
-		}
-	}
+	result += inst.autopilotWatch(ctx, sessionKey, name, true)
 
 	return TextResult(result), nil
 }
