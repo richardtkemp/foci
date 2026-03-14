@@ -379,16 +379,6 @@ func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidt
 	return b.effectiveShowToolCalls(), b.effectiveShowThinking(), b.effectiveDisplayWidth(), b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
 }
 
-// NewBotForTest creates a Bot without connecting to the Telegram API.
-// For use in tests outside the telegram package.
-func NewBotForTest() *Bot {
-	return &Bot{
-		log:             log.NewComponentLogger("telegram:test"),
-		queue:           make(chan queuedMessage, 64),
-		chatSessionKeys: make(map[int64]string),
-	}
-}
-
 // SetStateStore configures persistent state for this bot.
 // key is used as the prefix for state keys (e.g. "bot:mybot").
 func (b *Bot) SetStateStore(store *state.Store, key string) {

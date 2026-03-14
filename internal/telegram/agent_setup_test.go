@@ -4,14 +4,24 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/log"
 )
 
 func ptr[T any](v T) *T { return &v }
 
+// newBotForTest creates a Bot without connecting to the Telegram API.
+func newBotForTest() *Bot {
+	return &Bot{
+		log:             log.NewComponentLogger("telegram:test"),
+		queue:           make(chan queuedMessage, 64),
+		chatSessionKeys: make(map[int64]string),
+	}
+}
+
 func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	// Verifies that per-agent
 	// display settings take precedence over global defaults.
-	bot := NewBotForTest()
+	bot := newBotForTest()
 	acfg := config.AgentConfig{
 		ShowToolCalls: ptr(config.ToolCallFull),
 		ShowThinking:  ptr(config.ShowThinkingCompact),
@@ -56,7 +66,7 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 	// Verifies that when no
 	// agent-level settings are set, global defaults are used.
-	bot := NewBotForTest()
+	bot := newBotForTest()
 	acfg := config.AgentConfig{} // all nil/zero — should fall back to telegram
 	cfg := &config.Config{
 		Telegram: config.TelegramConfig{
@@ -93,7 +103,7 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	// Verifies that a
 	// pre-existing ReceivedFilesDir is not overwritten when both agent and global are empty.
-	bot := NewBotForTest()
+	bot := newBotForTest()
 	// Pre-set a value to verify it's NOT overwritten when both are empty
 	bot.SetReceivedFilesDir("/pre-existing")
 
@@ -149,7 +159,7 @@ func TestDisplayOverrideFn_UsesTurnSessionKey(t *testing.T) {
 func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	// Verifies that partial agent
 	// overrides work correctly with defaults filling the gaps.
-	bot := NewBotForTest()
+	bot := newBotForTest()
 	// Only override ShowToolCalls; rest falls back to telegram
 	acfg := config.AgentConfig{
 		ShowToolCalls: ptr(config.ToolCallFull),
