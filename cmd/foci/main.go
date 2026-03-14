@@ -128,6 +128,13 @@ func main() {
 		}
 		return
 	}
+	if os.Args[1] == "debug" {
+		if err := cmdDebug(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "debug: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Parse --addr and --api-key from global args (before command)
 	allArgs := os.Args[1:]
@@ -203,6 +210,7 @@ Commands:
   eval <command>       Ask the agent to run a shell command
   command </cmd>       Dispatch a slash command (e.g. /ping, /cache)
   ping                 Shorthand for 'command /ping'
+  debug session <key>  Tail a session file with formatted output
   version              Print version information
 
 Flags:
