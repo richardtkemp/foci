@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"foci/internal/agent"
@@ -404,6 +405,30 @@ func runCompaction(ctx context.Context, cc CommandContext, dryRun bool) (int, er
 	return mc, nil
 }
 
+// restartFunc is the function used to trigger a restart. Overridable for testing.
+var restartFunc = doRestart
+
+// doRestart attempts to restart the service via systemctl, falling back to
+// SIGTERM (relying on a process supervisor or Docker restart policy).
+func doRestart() (string, error) {
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		cmd := exec.Command("systemctl", "restart", "foci")
+		if err := cmd.Start(); err != nil {
+			return "", fmt.Errorf("systemctl restart failed: %w", err)
+		}
+		return "Restarting via systemctl...", nil
+	}
+
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		return "", fmt.Errorf("restart failed: cannot find own process: %w", err)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		return "", fmt.Errorf("restart failed: cannot send SIGTERM: %w", err)
+	}
+	return "Sent SIGTERM — waiting for process supervisor to restart...", nil
+}
+
 // RestartCommand creates a /restart command that restarts the foci service.
 func RestartCommand() *Command {
 	return &Command{
@@ -411,11 +436,11 @@ func RestartCommand() *Command {
 		Description: "Restart the foci service",
 		Category:    "operations",
 		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
-			cmd := exec.Command("systemctl", "restart", "foci")
-			if err := cmd.Start(); err != nil {
-				return Response{}, fmt.Errorf("restart failed: %w", err)
+			text, err := restartFunc()
+			if err != nil {
+				return Response{}, err
 			}
-			return Response{Text: "Restarting..."}, nil
+			return Response{Text: text}, nil
 		},
 	}
 }
