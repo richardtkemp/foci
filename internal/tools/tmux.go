@@ -30,6 +30,7 @@ type watchedSession struct {
 	notifier        *AsyncNotifier
 	agentSessionKey string // agent session that started the watch (for async delivery)
 	autopilot       bool   // auto-unwatch after inactivity notification
+	conditional     bool   // wait for activity before starting inactivity timer
 	ctx             context.Context
 	cancel          context.CancelFunc
 	done            chan struct{}
@@ -41,6 +42,7 @@ type persistedWatch struct {
 	Window          int    `json:"window"`
 	ThresholdSecs   int    `json:"threshold_secs"`
 	AgentSessionKey string `json:"agent_session_key"`
+	Conditional     bool   `json:"conditional,omitempty"`
 }
 
 // sendMinGap is the minimum time between consecutive sends to the same session.
@@ -139,6 +141,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 					notifier:        notifier,
 					agentSessionKey: pw.AgentSessionKey,
 					autopilot:       autopilot,
+					conditional:     pw.Conditional,
 					ctx:             monCtx,
 					cancel:          cancel,
 					done:            make(chan struct{}),
@@ -278,7 +281,7 @@ func (inst *tmuxInstance) execute(ctx context.Context, params json.RawMessage) (
 	case "kill":
 		return inst.kill(ctx, p.Name)
 	case "watch":
-		return inst.watch(ctx, p.Name, intDefault(p.Window, 0), intDefault(p.ThresholdSeconds, 30))
+		return inst.watch(ctx, p.Name, intDefault(p.Window, 0), intDefault(p.ThresholdSeconds, 30), false)
 	case "unwatch":
 		return inst.unwatch(ctx, p.Name)
 	default:
@@ -341,6 +344,7 @@ func (inst *tmuxInstance) persistWatches() {
 			Window:          ws.window,
 			ThresholdSecs:   int(ws.threshold / time.Second),
 			AgentSessionKey: ws.agentSessionKey,
+			Conditional:     ws.conditional,
 		})
 	}
 	if err := inst.stateStore.Set(inst.watchStateKey, watches); err != nil {

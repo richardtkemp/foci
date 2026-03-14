@@ -63,7 +63,7 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 
 	// Auto-watch for inactivity if requested and notifier is available
 	if watch && inst.notifier != nil {
-		watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
+		watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, false)
 		if watchErr != nil {
 			log.Warnf("tmux", "auto-watch failed for %s: session=%s %v", name, sessionKey, watchErr)
 		} else {
@@ -155,7 +155,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 		inst.mu.Unlock()
 
 		if !alreadyWatched {
-			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec)
+			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, false)
 			if watchErr != nil {
 				log.Warnf("tmux", "autopilot: session=%s auto-watch failed for %s: %v", sessionKey, name, watchErr)
 			} else {
@@ -246,15 +246,42 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 	}
 	content := strings.TrimRight(out, "\n")
 
+	var result string
 	if raw {
-		return TextResult(content), nil
+		result = content
+	} else if agent := detectTUIAgent(content); agent != "" {
+		result = cleanTUIOutput(content, agent)
+	} else {
+		result = content
 	}
 
-	agent := detectTUIAgent(content)
-	if agent == "" {
-		return TextResult(content), nil
+	// Autopilot: set conditional watch after read if not already watched.
+	// A conditional watch only fires after activity-then-inactivity, so it
+	// won't alert if the session stays idle (nothing new to report).
+	if inst.autopilot && inst.notifier != nil {
+		inst.mu.Lock()
+		alreadyWatched := false
+		prefix := name + ":"
+		for key := range inst.watched {
+			if strings.HasPrefix(key, prefix) {
+				alreadyWatched = true
+				break
+			}
+		}
+		inst.mu.Unlock()
+
+		if !alreadyWatched {
+			watchRes, watchErr := inst.watch(ctx, name, 0, inst.watchThresholdSec, true)
+			if watchErr != nil {
+				log.Warnf("tmux", "autopilot: session=%s conditional watch failed for %s: %v", sessionKey, name, watchErr)
+			} else {
+				log.Debugf("tmux", "autopilot: session=%s conditional watch on %s after read", sessionKey, name)
+				result += "\n" + watchRes.Text
+			}
+		}
 	}
-	return TextResult(cleanTUIOutput(content, agent)), nil
+
+	return TextResult(result), nil
 }
 
 func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
@@ -319,7 +346,11 @@ func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
 		watchInfo := "-"
 		for _, ws := range watched {
 			if ws.session == name {
-				watchInfo = fmt.Sprintf("w%d: %s", ws.window, ws.threshold.Round(time.Second))
+				if ws.conditional {
+					watchInfo = fmt.Sprintf("w%d: %s (cond)", ws.window, ws.threshold.Round(time.Second))
+				} else {
+					watchInfo = fmt.Sprintf("w%d: %s", ws.window, ws.threshold.Round(time.Second))
+				}
 				break
 			}
 		}
