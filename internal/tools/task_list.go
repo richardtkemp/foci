@@ -59,7 +59,7 @@ type TaskNotifyFunc func(string, string)
 func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNotifyFunc) *Tool {
 	return &Tool{
 		Name:        "task_list",
-		Description: "Track tasks for the current work. Survives compaction. Use create/get/update/list to manage tasks.",
+		Description: "Track tasks for the current work. Survives compaction. Use create/get/update/list to manage tasks. For batch create, put one task per line in subject. When all tasks are completed, the list is automatically cleared.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -74,7 +74,7 @@ func NewTaskListTool(store *memory.TaskListStore, agentID string, notify TaskNot
 				},
 				"subject": {
 					"type": "string",
-					"description": "Task title (required for 'create'; optional for 'update')"
+					"description": "Task title (required for 'create'; optional for 'update'). For batch create, put one task per line — each line becomes a separate task."
 				},
 				"description": {
 					"type": "string",
@@ -122,14 +122,41 @@ func taskCreate(store *memory.TaskListStore, agentID, subject, description, sk s
 	if subject == "" {
 		return ToolResult{}, fmt.Errorf("subject is required for create")
 	}
-	id, err := store.Create(agentID, subject, description)
-	if err != nil {
-		return ToolResult{}, fmt.Errorf("create task: %w", err)
+
+	// Split by newlines for batch create.
+	lines := strings.Split(subject, "\n")
+	var subjects []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			subjects = append(subjects, line)
+		}
+	}
+
+	if len(subjects) == 1 {
+		id, err := store.Create(agentID, subjects[0], description)
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("create task: %w", err)
+		}
+		if notify != nil && sk != "" {
+			notify(sk, fmt.Sprintf("📋 Created #%d: %s", id, subjects[0]))
+		}
+		return TextResult(fmt.Sprintf("Created task #%d: %s", id, subjects[0])), nil
+	}
+
+	// Batch create — one task per non-empty line, description ignored.
+	var b strings.Builder
+	for _, subj := range subjects {
+		id, err := store.Create(agentID, subj, "")
+		if err != nil {
+			return ToolResult{}, fmt.Errorf("create task %q: %w", subj, err)
+		}
+		fmt.Fprintf(&b, "Created task #%d: %s\n", id, subj)
 	}
 	if notify != nil && sk != "" {
-		notify(sk, fmt.Sprintf("📋 Created #%d: %s", id, subject))
+		notify(sk, fmt.Sprintf("📋 Created %d tasks", len(subjects)))
 	}
-	return TextResult(fmt.Sprintf("Created task #%d: %s", id, subject)), nil
+	return TextResult(strings.TrimRight(b.String(), "\n")), nil
 }
 
 func taskGet(store *memory.TaskListStore, agentID string, id int) (ToolResult, error) {
@@ -164,7 +191,31 @@ func taskUpdate(store *memory.TaskListStore, agentID string, id int, subject, de
 	if notify != nil && sk != "" && status != "" {
 		notify(sk, taskNotifyMessage(store, agentID, task))
 	}
+
+	// Auto-clear: if all tasks are now completed, wipe the list.
+	if status == "completed" {
+		if cleared := taskAutoClear(store, agentID); cleared {
+			return TextResult(FormatTask(task) + "\n\nAll tasks completed — list cleared."), nil
+		}
+	}
+
 	return TextResult(FormatTask(task)), nil
+}
+
+// taskAutoClear clears the task list if every task is completed.
+// Returns true if the list was cleared.
+func taskAutoClear(store *memory.TaskListStore, agentID string) bool {
+	tasks, err := store.List(agentID)
+	if err != nil || len(tasks) == 0 {
+		return false
+	}
+	for _, t := range tasks {
+		if t.Status != "completed" {
+			return false
+		}
+	}
+	_ = store.Clear(agentID)
+	return true
 }
 
 // taskNotifyMessage builds a notification string for a task status change,
