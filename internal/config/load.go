@@ -259,7 +259,7 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
-	setBoolDefaultDefined(&cfg.Defaults.EnableStartupNotify, true, md.IsDefined("defaults", "enable_startup_notify"))
+	// Note: defaults.enable_startup_notify is a legacy location — migrated to telegram below.
 	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
 
 	// Apply [defaults] to all agents (agent value > global default > hardcoded).
@@ -503,11 +503,15 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
-	setBoolDefaultDefined(&cfg.Telegram.EnableStartupNotify, true, md.IsDefined("telegram", "enable_startup_notify"))
-	// Migrate: if user set enable_startup_notify in [telegram] but not [defaults], copy it.
-	if md.IsDefined("telegram", "enable_startup_notify") && !md.IsDefined("defaults", "enable_startup_notify") {
-		cfg.Defaults.EnableStartupNotify = cfg.Telegram.EnableStartupNotify
+	// Backward compat: [telegram] enable_startup_notify → startup_notify.
+	if md.IsDefined("telegram", "enable_startup_notify") && !md.IsDefined("telegram", "startup_notify") {
+		cfg.Telegram.StartupNotify = cfg.Telegram.EnableStartupNotify
 	}
+	// Backward compat: [defaults] enable_startup_notify → [telegram] startup_notify.
+	if md.IsDefined("defaults", "enable_startup_notify") && !md.IsDefined("telegram", "startup_notify") && !md.IsDefined("telegram", "enable_startup_notify") {
+		cfg.Telegram.StartupNotify = cfg.Defaults.EnableStartupNotify
+	}
+	setBoolDefaultDefined(&cfg.Telegram.StartupNotify, true, md.IsDefined("telegram", "startup_notify") || md.IsDefined("telegram", "enable_startup_notify") || md.IsDefined("defaults", "enable_startup_notify"))
 
 	// Keepalive/background defaults
 	setStringDefault(&cfg.Keepalive.Interval, "55m")

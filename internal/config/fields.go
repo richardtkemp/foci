@@ -146,7 +146,7 @@ var configFields = []ConfigField{
 	{"sessions", "max_system_prompt_chars_total", FieldInt, "total system prompt char warning threshold"},
 
 	// telegram
-	{"telegram", "enable_startup_notify", FieldBool, "send notification on startup"},
+	{"telegram", "startup_notify", FieldBool, "send notification on startup"},
 	{"telegram", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
 	{"telegram", "multiball_session_ttl", FieldDuration, "idle TTL before multiball reclaim"},
 	{"telegram", "message_queue_size", FieldInt, "outbound message queue buffer size"},

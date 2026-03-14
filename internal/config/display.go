@@ -137,7 +137,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("telegram", "stop_aliases", cfg.Telegram.StopAliases)
 	}
 	add("telegram", "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
-	add("telegram", "enable_startup_notify", cfg.Telegram.EnableStartupNotify)
+	add("telegram", "startup_notify", cfg.Telegram.StartupNotify)
 	add("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
 	add("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
 	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
@@ -505,7 +505,7 @@ type displayTelegram struct {
 	MultiballBots       []string `toml:"multiball_bots,omitempty"`
 	StopAliases         []string `toml:"stop_aliases,omitempty"`
 	EnableStopAliases   bool     `toml:"enable_stop_aliases"`
-	EnableStartupNotify bool     `toml:"enable_startup_notify"`
+	StartupNotify       bool     `toml:"startup_notify"`
 	MultiballSessionTTL string   `toml:"multiball_session_ttl"`
 	MessageQueueSize    int      `toml:"message_queue_size"`
 	LongPollTimeout     string   `toml:"long_poll_timeout"`
@@ -531,7 +531,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 			MultiballBots:       cfg.Telegram.MultiballBots,
 			StopAliases:         cfg.Telegram.StopAliases,
 			EnableStopAliases:   cfg.Telegram.EnableStopAliases,
-			EnableStartupNotify: cfg.Telegram.EnableStartupNotify,
+			StartupNotify:       cfg.Telegram.StartupNotify,
 			MultiballSessionTTL: cfg.Telegram.MultiballSessionTTL,
 			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
 			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
