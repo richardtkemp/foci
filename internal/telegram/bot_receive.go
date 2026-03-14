@@ -40,11 +40,25 @@ func formatUserInfo(user *gotgbot.User) string {
 }
 
 func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
+	qm, ok := b.buildReceivedMessage(ctx, msg)
+	if !ok {
+		return
+	}
+	if b.tryIntercept(ctx, &qm) {
+		return
+	}
+	b.enqueue(qm)
+}
+
+// buildReceivedMessage performs auth, text extraction, and attachment downloading.
+// Returns a populated queuedMessage and true, or zero value and false if the
+// message should be silently dropped (unauthorized, empty, or failed voice).
+func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (queuedMessage, bool) {
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
 	if !b.allowedUsers[userID] {
 		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.From))
-		return
+		return queuedMessage{}, false
 	}
 
 	// Remember chat ID for notifications (cache bust alerts, etc.)
@@ -112,14 +126,14 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 			if err != nil {
 				b.logger().Errorf("transcribe voice: %v", err)
 				b.sendReply(msg, "Could not transcribe voice note.")
-				return
+				return queuedMessage{}, false
 			}
 			b.logger().Infof("voice transcription from %s: %s", formatUserInfo(msg.From), truncate(transcript, 100))
 			text = "[voice] " + transcript
 		}
 	} else if msg.Voice != nil && b.transcriber == nil {
 		b.sendReply(msg, "Voice notes require an STT provider. Set groq.api_key in secrets.toml or configure [voice] stt_endpoint.")
-		return
+		return queuedMessage{}, false
 	}
 
 	// Download attachments from photos or documents
@@ -181,7 +195,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 
 	// Drop messages with no text and no attachments
 	if text == "" && len(attachments) == 0 {
-		return
+		return queuedMessage{}, false
 	}
 
 	logText := text
@@ -194,42 +208,50 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 		b.logger().Debugf("message from %s", formatUserInfo(msg.From))
 	}
 
+	return queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments}, true
+}
+
+// tryIntercept handles local consumption of a message: wizard intercept,
+// last-message recording, stale command drops, command dispatch, message
+// transforms, and secondary bot idle drops. Returns true if the message
+// was consumed and should not be enqueued.
+func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	// Wizard intercept — route all messages to active wizard before normal dispatch
-	if text != "" {
-		if result, ok := b.commands.HandleMessage(text); ok {
-			b.sendReply(msg, result)
-			return
+	if qm.text != "" {
+		if result, ok := b.commands.HandleMessage(qm.text); ok {
+			b.sendReply(qm.msg, result)
+			return true
 		}
 	}
 
 	// Record the message for // (repeat) command
-	if text != "" && !strings.HasPrefix(text, "/") {
-		b.lastMsgStore.Record(userID, text)
+	if qm.text != "" && !strings.HasPrefix(qm.text, "/") {
+		b.lastMsgStore.Record(qm.userID, qm.text)
 	}
 
 	// Drop stale slash commands (e.g. /restart replayed from the update
 	// queue after a crash). Agent messages are still delivered since the
 	// agent can reason about timeliness, but slash commands execute
 	// unconditionally so stale ones must be dropped.
-	if text != "" && strings.HasPrefix(text, "/") {
-		if age := time.Since(time.Unix(int64(msg.Date), 0)); age > 30*time.Second {
-			b.logger().Warnf("dropping stale command %q (age=%s)", strings.ToLower(text), age.Truncate(time.Second))
-			return
+	if qm.text != "" && strings.HasPrefix(qm.text, "/") {
+		if age := time.Since(time.Unix(int64(qm.msg.Date), 0)); age > 30*time.Second {
+			b.logger().Warnf("dropping stale command %q (age=%s)", strings.ToLower(qm.text), age.Truncate(time.Second))
+			return true
 		}
 	}
 
 	// Try dispatching the original message as a command (slash or dot-prefix).
-	if b.tryDispatchCommand(ctx, msg, text) {
-		return
+	if b.tryDispatchCommand(ctx, qm.msg, qm.text) {
+		return true
 	}
 
 	// Apply message transforms to non-command messages.
 	// Transforms may produce a command (e.g. "m" → "/mana").
 	if b.handler != nil {
-		if transformed := b.handler.TransformMessage(text); transformed != text {
-			text = transformed
-			if b.tryDispatchCommand(ctx, msg, text) {
-				return
+		if transformed := b.handler.TransformMessage(qm.text); transformed != qm.text {
+			qm.text = transformed
+			if b.tryDispatchCommand(ctx, qm.msg, qm.text) {
+				return true
 			}
 		}
 	}
@@ -238,27 +260,33 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// Replying would cause spurious "idle" messages on restart when stale
 	// Telegram updates are replayed.
 	if b.isSecondary && b.SessionKey() == "" {
-		b.logger().Debugf("dropping message to idle secondary bot from %s", formatUserInfo(msg.From))
-		return
+		b.logger().Debugf("dropping message to idle secondary bot from %s", formatUserInfo(qm.msg.From))
+		return true
 	}
 
+	return false
+}
+
+// enqueue delivers the message to the steer buffer (if a turn is active and
+// steer mode is on) or to the main message queue.
+func (b *Bot) enqueue(qm queuedMessage) {
 	// Steer mode: if a turn is active, route text to the steer buffer
 	// so it gets injected between tool calls instead of queuing behind the turn lock.
-	if b.steerMode && text != "" && len(attachments) == 0 {
+	if b.steerMode && qm.text != "" && len(qm.attachments) == 0 {
 		b.turnMu.Lock()
 		active := b.turnCancel != nil
 		b.turnMu.Unlock()
 		if active {
-			b.appendSteer(text)
-			b.logger().Infof("steer: buffered message from %s", formatUserInfo(msg.From))
+			b.appendSteer(qm.text)
+			b.logger().Infof("steer: buffered message from %s", formatUserInfo(qm.msg.From))
 			return
 		}
 	}
 
 	select {
-	case b.queue <- queuedMessage{msg: msg, userID: userID, text: text, attachments: attachments}:
+	case b.queue <- qm:
 	default:
-		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(msg.From))
-		b.sendReply(msg, "Busy — message queue is full. Try again shortly.")
+		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(qm.msg.From))
+		b.sendReply(qm.msg, "Busy — message queue is full. Try again shortly.")
 	}
 }
