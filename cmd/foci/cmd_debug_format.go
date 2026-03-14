@@ -215,11 +215,24 @@ func prettyJSON(raw json.RawMessage) string {
 	}
 
 	truncateStrings(v, maxStringValueLen)
-	out, err := json.MarshalIndent(v, "    ", "  ")
+	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return string(raw)
 	}
-	return string(out)
+
+	// Strip outer braces/brackets and de-indent one level for compact display.
+	lines := strings.Split(string(out), "\n")
+	if len(lines) >= 2 {
+		first := strings.TrimSpace(lines[0])
+		last := strings.TrimSpace(lines[len(lines)-1])
+		if (first == "{" && last == "}") || (first == "[" && last == "]") {
+			lines = lines[1 : len(lines)-1]
+			for i, line := range lines {
+				lines[i] = strings.TrimPrefix(line, "  ")
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // truncateStrings walks a JSON value and truncates any string longer than max.
