@@ -32,7 +32,6 @@ func handleWelcomeAndFirstRun(
 					return
 				}
 				restartCtx := agent.WithTrigger(ctx, "restart")
-				inst.ag.SetSessionNoCompact(sk, true)
 				msg := prompts.FormatInjectedMessage("SYSTEM UPDATE", time.Now(), content)
 				if _, err := inst.ag.HandleMessage(restartCtx, sk, msg); err != nil {
 					log.Errorf("main", "restart turn failed: %v", err)
