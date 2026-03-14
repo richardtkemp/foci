@@ -366,8 +366,9 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 	})
 }
 
-// TestLookupChainKeyboard verifies chain keyboards fire for bare subcommands but not
-// when full args are provided, for bare commands, or for commands without ChainKeyboard.
+// TestLookupChainKeyboard verifies chain keyboards fire when ChainKeyboard returns
+// options, and don't fire for bare commands, missing commands, or when ChainKeyboard
+// returns nil. Full args are passed to ChainKeyboard, which decides whether to chain.
 func TestLookupChainKeyboard(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&Command{
@@ -415,10 +416,10 @@ func TestLookupChainKeyboard(t *testing.T) {
 		t.Error("should not chain for /tmux list (ChainKeyboard returns nil)")
 	}
 
-	// Full args (already has parameter) → no chain
+	// Multi-word args → ChainKeyboard receives full string, returns nil for unrecognised → no chain
 	_, _, ok = r.LookupChainKeyboard(ctx, "/tmux kill mysession", cc)
 	if ok {
-		t.Error("should not chain when full args provided")
+		t.Error("should not chain when ChainKeyboard returns nil for multi-word args")
 	}
 
 	// Bare command (no subcommand) → no chain
@@ -437,6 +438,58 @@ func TestLookupChainKeyboard(t *testing.T) {
 	_, _, ok = r.LookupChainKeyboard(ctx, "regular message", cc)
 	if ok {
 		t.Error("should not chain for non-command")
+	}
+}
+
+// TestLookupChainKeyboardDeepChaining verifies that ChainKeyboard receives
+// multi-word args and can return options at deeper levels (e.g. "set defaults").
+func TestLookupChainKeyboardDeepChaining(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name: "config",
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+			return Response{}, nil
+		},
+		ChainKeyboard: func(_ context.Context, subcommand string, _ CommandContext) []KeyboardOption {
+			switch subcommand {
+			case "set":
+				return []KeyboardOption{{Label: "defaults", Data: "set defaults"}}
+			case "set defaults":
+				return []KeyboardOption{
+					{Label: "model", Data: "set defaults model"},
+					{Label: "effort", Data: "set defaults effort"},
+				}
+			default:
+				return nil
+			}
+		},
+	})
+
+	ctx := context.Background()
+	cc := CommandContext{}
+
+	// Level 1: "set" → section buttons
+	_, opts, ok := r.LookupChainKeyboard(ctx, "/config set", cc)
+	if !ok {
+		t.Fatal("expected chain for /config set")
+	}
+	if len(opts) != 1 || opts[0].Label != "defaults" {
+		t.Errorf("opts = %v", opts)
+	}
+
+	// Level 2: "set defaults" → key buttons
+	_, opts, ok = r.LookupChainKeyboard(ctx, "/config set defaults", cc)
+	if !ok {
+		t.Fatal("expected chain for /config set defaults")
+	}
+	if len(opts) != 2 {
+		t.Fatalf("got %d options, want 2", len(opts))
+	}
+
+	// Level 3: "set defaults model" → no further chaining
+	_, _, ok = r.LookupChainKeyboard(ctx, "/config set defaults model", cc)
+	if ok {
+		t.Error("should not chain for /config set defaults model")
 	}
 }
 

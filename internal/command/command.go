@@ -104,8 +104,9 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandCo
 }
 
 // LookupChainKeyboard checks if a command callback text (e.g. "/tmux kill") needs
-// a second keyboard to select a parameter. Returns (command_name, options, true)
-// if chaining should occur, or ("", nil, false) otherwise.
+// a follow-up keyboard to select a parameter. The full args string is passed to
+// ChainKeyboard, which decides whether to chain at any depth. Returns
+// (command_name, options, true) if chaining should occur, or ("", nil, false) otherwise.
 func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc CommandContext) (string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
@@ -117,13 +118,8 @@ func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc Comm
 	name = strings.ToLower(name)
 	args = strings.TrimSpace(args)
 
-	// Chain only fires for a bare subcommand (exactly one word, no further args)
 	if args == "" {
 		return "", nil, false
-	}
-	sub, extra, _ := strings.Cut(args, " ")
-	if strings.TrimSpace(extra) != "" {
-		return "", nil, false // already has full args
 	}
 
 	cmd := r.commands[name]
@@ -131,7 +127,7 @@ func (r *Registry) LookupChainKeyboard(ctx context.Context, text string, cc Comm
 		return "", nil, false
 	}
 
-	opts := cmd.ChainKeyboard(ctx, sub, cc)
+	opts := cmd.ChainKeyboard(ctx, args, cc)
 	if len(opts) == 0 {
 		return "", nil, false
 	}

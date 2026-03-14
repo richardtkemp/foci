@@ -124,15 +124,43 @@ func ConfigCommand() *Command {
 			}
 		},
 		ChainKeyboard: func(_ context.Context, subcommand string, cc CommandContext) []KeyboardOption {
-			if subcommand != "set" || cc.ConfigSetDeps == nil {
+			if cc.ConfigSetDeps == nil {
 				return nil
 			}
-			sections := cc.ConfigSetDeps.SectionsFn()
-			opts := make([]KeyboardOption, len(sections))
-			for i, s := range sections {
-				opts[i] = KeyboardOption{Label: s, Data: "set " + s}
+			parts := strings.Fields(subcommand)
+			if len(parts) == 0 || parts[0] != "set" {
+				return nil
 			}
-			return opts
+			switch len(parts) {
+			case 1: // "set" → section buttons
+				sections := cc.ConfigSetDeps.SectionsFn()
+				opts := make([]KeyboardOption, len(sections))
+				for i, s := range sections {
+					opts[i] = KeyboardOption{Label: s, Data: "set " + s}
+				}
+				return opts
+			case 2: // "set <section>" → key buttons
+				fields := cc.ConfigSetDeps.FieldsInSection(parts[1])
+				if len(fields) == 0 {
+					return nil
+				}
+				opts := make([]KeyboardOption, len(fields))
+				for i, f := range fields {
+					opts[i] = KeyboardOption{Label: f.Key, Data: "set " + parts[1] + " " + f.Key}
+				}
+				return opts
+			case 3: // "set <section> <key>" → bool fields get true/false buttons
+				field, ok := cc.ConfigSetDeps.LookupFn(parts[1] + "." + parts[2])
+				if !ok || field.Type != config.FieldBool {
+					return nil
+				}
+				return []KeyboardOption{
+					{Label: "true", Data: "set " + parts[1] + " " + parts[2] + " true"},
+					{Label: "false", Data: "set " + parts[1] + " " + parts[2] + " false"},
+				}
+			default:
+				return nil
+			}
 		},
 	}
 }
@@ -143,6 +171,13 @@ func configSet(deps *ConfigSetDeps, args string) (string, error) {
 		return ConfigSetDirect(*deps, args)
 	}
 
+	parts := strings.Fields(args)
+
+	// "section key value" → direct set (from boolean keyboard button).
+	if len(parts) == 3 {
+		return ConfigSetDirect(*deps, parts[0]+"."+parts[1]+"="+parts[2])
+	}
+
 	if deps.Registry == nil {
 		return "Config set wizard is not available.", nil
 	}
@@ -150,7 +185,21 @@ func configSet(deps *ConfigSetDeps, args string) (string, error) {
 	w := newConfigSetWizard(*deps)
 	deps.Registry.SetWizard(w)
 
-	// If a section name was provided, feed it directly to the wizard.
+	// "section key" → skip to value prompt (from key keyboard button).
+	if len(parts) == 2 {
+		resp, done := w.Handle(parts[0])
+		if done {
+			deps.Registry.ClearWizard()
+			return resp, nil
+		}
+		resp, done = w.Handle(parts[1])
+		if done {
+			deps.Registry.ClearWizard()
+		}
+		return resp, nil
+	}
+
+	// Single arg = section name.
 	if args != "" {
 		resp, done := w.Handle(args)
 		if done {
