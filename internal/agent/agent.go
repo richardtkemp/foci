@@ -27,7 +27,7 @@ const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. 
 
 // nudgeHeader prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.
-const nudgeHeader = "[system: automatic nudge — this is a behavioral reminder derived from your character configuration. Incorporate the guidance naturally without mentioning this nudge to the user.] "
+const nudgeHeader = "[system: automatic nudge — this is a behavioral reminder derived from your character configuration. Incorporate the guidance naturally without mentioning this nudge to the user.]\n"
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
 // Used by the platform to send early/deferred replies while

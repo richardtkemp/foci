@@ -37,9 +37,14 @@ Trigger types (pick the most appropriate):
 - {"type": "after_error"} — remind when a tool call returns an error
 - {"type": "match", "pattern": "regex"} — remind when the user's message matches this pattern
 
-Use your judgment on trigger type and frequency. High-priority rules that address
-common failure modes should trigger more often (lower N). Rules about edge cases
-can have higher N or more specific triggers.
+Use your judgment on trigger type and frequency. For periodic rules, keep N high —
+every 15 tool calls is already quite frequent. Only the most critical rules should
+fire that often; most should use N=25 or higher. Rules about edge cases can have
+even higher N or more specific triggers.
+
+Limit: return at most ONE rule for "pre_answer" and at most ONE rule for "after_error".
+If multiple rules would use the same trigger type, synthesize them into a single
+combined nudge that covers all the key points. Keep the combined text under 50 words.
 
 For "match" triggers: the regex is tested against the user's message with
 re.MatchString (substring match, not full-string match). Be careful that what
