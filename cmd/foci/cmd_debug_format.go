@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	maxThinkingLines  = 10
-	maxToolResultLen  = 500
-	maxToolInputLen   = 200
+	maxThinkingLines   = 10
+	maxToolResultLen   = 500
+	maxStringValueLen  = 200
 )
 
 // ANSI color codes
@@ -162,11 +162,15 @@ func formatThinking(b *strings.Builder, thinking string) {
 	}
 }
 
-// formatToolUse renders a tool_use block with tool name and compact input.
+// formatToolUse renders a tool_use block with tool name and pretty-printed input.
 func formatToolUse(b *strings.Builder, block provider.ContentBlock) {
-	input := compactJSON(block.Input, maxToolInputLen)
-	fmt.Fprintf(b, "  %s→ %s%s(%s)%s\n",
-		colorYellow, colorBold, block.Name, colorReset+input, colorReset)
+	fmt.Fprintf(b, "  %s→ %s%s%s\n", colorYellow, colorBold, block.Name, colorReset)
+	input := prettyJSON(block.Input)
+	if input != "" {
+		for _, line := range strings.Split(input, "\n") {
+			fmt.Fprintf(b, "%s    %s%s\n", colorDim, line, colorReset)
+		}
+	}
 }
 
 // formatToolResult renders a tool_result block.
@@ -199,25 +203,43 @@ func formatToolResult(b *strings.Builder, block provider.ContentBlock) {
 	}
 }
 
-// compactJSON formats JSON input compactly, truncating if too long.
-func compactJSON(raw json.RawMessage, maxLen int) string {
+// prettyJSON pretty-prints JSON input, truncating long string values.
+func prettyJSON(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
 
-	// Try to pretty-format small inputs
 	var v interface{}
 	if json.Unmarshal(raw, &v) != nil {
-		s := string(raw)
-		if len(s) > maxLen {
-			return s[:maxLen] + "…"
-		}
-		return s
+		return string(raw)
 	}
 
-	s := string(raw)
-	if len(s) > maxLen {
-		return s[:maxLen] + "…"
+	truncateStrings(v, maxStringValueLen)
+	out, err := json.MarshalIndent(v, "    ", "  ")
+	if err != nil {
+		return string(raw)
 	}
-	return s
+	return string(out)
+}
+
+// truncateStrings walks a JSON value and truncates any string longer than max.
+func truncateStrings(v interface{}, max int) {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		for k, elem := range val {
+			if s, ok := elem.(string); ok && len(s) > max {
+				val[k] = s[:max] + "…"
+			} else {
+				truncateStrings(elem, max)
+			}
+		}
+	case []interface{}:
+		for i, elem := range val {
+			if s, ok := elem.(string); ok && len(s) > max {
+				val[i] = s[:max] + "…"
+			} else {
+				truncateStrings(elem, max)
+			}
+		}
+	}
 }

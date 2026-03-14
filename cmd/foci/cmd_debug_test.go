@@ -199,6 +199,58 @@ func TestFormatLine_ThinkingTruncation(t *testing.T) {
 	}
 }
 
+// Tests that tool_use blocks pretty-print their JSON input with indentation.
+func TestFormatLine_ToolUsePrettyPrint(t *testing.T) {
+	msg := provider.Message{
+		Role: "assistant",
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_01X", Name: "send_message", Input: json.RawMessage(`{"text":"hello","channel":"general"}`)},
+		},
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	out := formatLine(data)
+	if !strings.Contains(out, "send_message") {
+		t.Errorf("expected tool name, got: %s", out)
+	}
+	// Should have indented JSON, not single-line
+	if !strings.Contains(out, "\"text\": \"hello\"") {
+		t.Errorf("expected pretty-printed JSON with key on own line, got: %s", out)
+	}
+	if !strings.Contains(out, "\"channel\": \"general\"") {
+		t.Errorf("expected pretty-printed JSON with key on own line, got: %s", out)
+	}
+}
+
+// Tests that pretty-printed JSON truncates long string values.
+func TestFormatLine_ToolUseTruncatesLongStrings(t *testing.T) {
+	longStr := strings.Repeat("x", 300)
+	input := `{"text":"` + longStr + `"}`
+	msg := provider.Message{
+		Role: "assistant",
+		Content: []provider.ContentBlock{
+			{Type: "tool_use", ID: "toolu_01X", Name: "send_message", Input: json.RawMessage(input)},
+		},
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	out := formatLine(data)
+	// Should contain the truncation marker
+	if !strings.Contains(out, "…") {
+		t.Errorf("expected truncation marker for long string, got: %s", out)
+	}
+	// Should NOT contain the full 300-char string
+	if strings.Contains(out, longStr) {
+		t.Errorf("expected truncated string, but found full string in output")
+	}
+}
+
 // Tests that empty lines return empty string.
 func TestFormatLine_EmptyLine(t *testing.T) {
 	out := formatLine([]byte(""))
