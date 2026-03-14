@@ -56,7 +56,7 @@ for svcfile in /etc/systemd/system/foci*.service; do
             echo ""
             echo "## Instructions"
             echo ""
-            echo "Tell your user what just changed. Summarise the updates above in a brief, friendly message — highlight the most impactful changes and anything they'll notice. Send it via Telegram."
+            echo "Tell your user what just changed. Summarise the updates above in a brief, friendly message — highlight the most impactful changes and anything they'll notice."
         } > "$SVC_HOME/data/WELCOME.md"
         chown "$SVC_USER:$SVC_USER" "$SVC_HOME/data/WELCOME.md"
         echo "  $(basename "$svcfile" .service): changelog staged ($OLD_COMMIT → $NEW_COMMIT)"
