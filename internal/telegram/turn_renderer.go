@@ -15,6 +15,7 @@ type TurnRenderer struct {
 	bot      *Bot
 	msg      *gotgbot.Message
 	chatID   int64
+	display  turnDisplay
 	sw       *streamWriter
 	tracker  *toolCallTracker
 	thinking strings.Builder
@@ -23,18 +24,20 @@ type TurnRenderer struct {
 // newTurnRenderer creates a TurnRenderer with a tool call tracker and (if
 // streaming is enabled) a stream writer.
 func newTurnRenderer(bot *Bot, msg *gotgbot.Message) *TurnRenderer {
+	d := bot.resolveDisplay()
 	r := &TurnRenderer{
 		bot:     bot,
 		msg:     msg,
 		chatID:  msg.Chat.Id,
-		tracker: &toolCallTracker{bot: bot, chatID: msg.Chat.Id},
+		display: d,
+		tracker: &toolCallTracker{bot: bot, chatID: msg.Chat.Id, display: d},
 	}
-	if bot.effectiveStreamOutput() {
+	if d.streamOutput {
 		interval := bot.streamUpdateInterval
 		if interval == 0 {
 			interval = 250 * time.Millisecond
 		}
-		r.sw = newStreamWriter(bot.client, msg.Chat.Id, interval, bot.tableOpts())
+		r.sw = newStreamWriter(bot.client, msg.Chat.Id, interval, d.renderOpts)
 	}
 	return r
 }
@@ -57,7 +60,7 @@ func (r *TurnRenderer) onReply(text string) {
 		if msgID != 0 {
 			content := r.sw.Content()
 			if strings.TrimSpace(content) != "" {
-				html := ConvertToTelegramHTML(content, r.bot.tableOpts())
+				html := ConvertToTelegramHTML(content, r.display.renderOpts)
 				_, _, _ = r.bot.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
 					ChatId:    r.chatID,
 					MessageId: msgID,
@@ -69,7 +72,7 @@ func (r *TurnRenderer) onReply(text string) {
 		if interval == 0 {
 			interval = 250 * time.Millisecond
 		}
-		r.sw = newStreamWriter(r.bot.client, r.chatID, interval, r.bot.tableOpts())
+		r.sw = newStreamWriter(r.bot.client, r.chatID, interval, r.display.renderOpts)
 		return
 	}
 	r.bot.sendReply(r.msg, text)
@@ -78,7 +81,7 @@ func (r *TurnRenderer) onReply(text string) {
 
 // onThinking accumulates thinking blocks (gated by showThinking config).
 func (r *TurnRenderer) onThinking(thinking string) {
-	mode := r.bot.effectiveShowThinking()
+	mode := r.display.showThinking
 	if mode == "off" || mode == "" {
 		return
 	}
@@ -132,7 +135,7 @@ func (r *TurnRenderer) Finalize(response string) {
 	}
 
 	thinkingText := r.thinking.String()
-	showThinkMode := r.bot.effectiveShowThinking()
+	showThinkMode := r.display.showThinking
 	hasThinking := thinkingText != "" && showThinkMode != "off" && showThinkMode != ""
 
 	// Stream finalization: edit the stream message in-place when possible.
@@ -170,7 +173,7 @@ func (r *TurnRenderer) finalizeStreamShort(streamMsgID int64, response, thinking
 	case hasThinking && showThinkMode == "true":
 		r.editStreamWithFullThinking(streamMsgID, response, thinkingText)
 	default:
-		htmlResp := ConvertToTelegramHTML(response, r.bot.tableOpts())
+		htmlResp := ConvertToTelegramHTML(response, r.display.renderOpts)
 		_, _, editErr := r.bot.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 			ChatId:    r.chatID,
 			MessageId: streamMsgID,
@@ -199,10 +202,10 @@ func (r *TurnRenderer) sendWithThinkingMode(response, thinkingText, showThinkMod
 // final response. Returns true if successful.
 func (r *TurnRenderer) tryEditToolPreview(response string, hasThinking bool) bool {
 	editID := r.tracker.lastMsgID()
-	if editID == 0 || r.bot.effectiveShowToolCalls() != "preview" || hasThinking || len(response) > 4096 {
+	if editID == 0 || r.display.showToolCalls != "preview" || hasThinking || len(response) > 4096 {
 		return false
 	}
-	htmlResp := ConvertToTelegramHTML(response, r.bot.tableOpts())
+	htmlResp := ConvertToTelegramHTML(response, r.display.renderOpts)
 	_, _, editErr := r.bot.client.EditMessageText(htmlResp, &gotgbot.EditMessageTextOpts{
 		ChatId:    r.chatID,
 		MessageId: editID,
@@ -234,14 +237,14 @@ func (r *TurnRenderer) editStreamPreview(streamMsgID int64, response string) {
 // sendWithFullThinking sends thinking (italic) + divider + response as a single message.
 func (r *TurnRenderer) sendWithFullThinking(response, thinkingText string) {
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
-	responseHTML := ConvertToTelegramHTML(response, r.bot.tableOpts())
-	divider := "\n" + strings.Repeat("—", r.bot.effectiveDisplayWidth()) + "\n\n"
+	responseHTML := ConvertToTelegramHTML(response, r.display.renderOpts)
+	divider := "\n" + strings.Repeat("—", r.display.displayWidth) + "\n\n"
 	r.bot.sendHTMLChunks(r.chatID, thinkingHTML+divider+responseHTML)
 }
 
 // sendWithCompactThinking sends a response with a "Show thinking" inline keyboard button.
 func (r *TurnRenderer) sendWithCompactThinking(response, thinkingText string) {
-	responseHTML := ConvertToTelegramHTML(response, r.bot.tableOpts())
+	responseHTML := ConvertToTelegramHTML(response, r.display.renderOpts)
 
 	sendOpts := &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
@@ -269,7 +272,7 @@ func (r *TurnRenderer) sendWithCompactThinking(response, thinkingText string) {
 // editStreamWithThinking edits the stream message in-place with the final HTML
 // response and a "Show thinking" inline keyboard button.
 func (r *TurnRenderer) editStreamWithThinking(msgID int64, response, thinkingText string) {
-	responseHTML := ConvertToTelegramHTML(response, r.bot.tableOpts())
+	responseHTML := ConvertToTelegramHTML(response, r.display.renderOpts)
 	kb := singleButtonKeyboard("Show thinking", "th:show")
 	_, _, err := r.bot.client.EditMessageText(responseHTML, &gotgbot.EditMessageTextOpts{
 		ChatId:      r.chatID,
@@ -291,8 +294,8 @@ func (r *TurnRenderer) editStreamWithThinking(msgID int64, response, thinkingTex
 // (italic) + divider + response HTML.
 func (r *TurnRenderer) editStreamWithFullThinking(msgID int64, response, thinkingText string) {
 	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
-	responseHTML := ConvertToTelegramHTML(response, r.bot.tableOpts())
-	divider := "\n" + strings.Repeat("—", r.bot.effectiveDisplayWidth()) + "\n\n"
+	responseHTML := ConvertToTelegramHTML(response, r.display.renderOpts)
+	divider := "\n" + strings.Repeat("—", r.display.displayWidth) + "\n\n"
 	combined := thinkingHTML + divider + responseHTML
 	_, _, err := r.bot.client.EditMessageText(combined, &gotgbot.EditMessageTextOpts{
 		ChatId:    r.chatID,

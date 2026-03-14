@@ -125,6 +125,27 @@ type Bot struct {
 	displayOverrideFn DisplayOverrideFn // per-session display override callback; nil = use bot defaults
 }
 
+// turnDisplay holds resolved display settings for a single turn.
+// Resolved once at turn start to avoid repeated override lookups.
+type turnDisplay struct {
+	showToolCalls string
+	showThinking  string
+	streamOutput  bool
+	displayWidth  int
+	renderOpts    display.RenderOpts
+}
+
+// resolveDisplay snapshots all display settings for the current turn.
+func (b *Bot) resolveDisplay() turnDisplay {
+	return turnDisplay{
+		showToolCalls: b.effectiveShowToolCalls(),
+		showThinking:  b.effectiveShowThinking(),
+		streamOutput:  b.effectiveStreamOutput(),
+		displayWidth:  b.effectiveDisplayWidth(),
+		renderOpts:    b.tableOpts(),
+	}
+}
+
 // DisplayOverrides holds per-session overrides for display settings.
 // Empty strings / zero values mean "not overridden, use bot default".
 type DisplayOverrides struct {

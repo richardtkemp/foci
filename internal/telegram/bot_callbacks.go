@@ -274,8 +274,9 @@ func truncateHTMLSafe(s string, maxLen int) string {
 // It encapsulates the mutable state shared between ToolCallObserver and
 // ToolResultObserver callbacks (message ID, text snapshots, mutex).
 type toolCallTracker struct {
-	bot    *Bot
-	chatID int64
+	bot     *Bot
+	chatID  int64
+	display turnDisplay
 
 	mu         sync.Mutex
 	msgID      int64            // Telegram message ID of the current tool-call message
@@ -301,7 +302,7 @@ func (t *toolCallTracker) resetMsgID() {
 
 // observeToolCall handles tool call visibility via send+edit pattern.
 func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessage) {
-	mode := t.bot.effectiveShowToolCalls()
+	mode := t.display.showToolCalls
 	if mode == "off" || mode == "" {
 		return
 	}
@@ -372,7 +373,7 @@ func (t *toolCallTracker) cleanupPreview() {
 	id := t.msgID
 	t.msgID = 0
 	t.mu.Unlock()
-	if id == 0 || t.bot.effectiveShowToolCalls() != "preview" {
+	if id == 0 || t.display.showToolCalls != "preview" {
 		return
 	}
 	_, _ = t.bot.client.DeleteMessage(t.chatID, id, nil)
@@ -382,7 +383,7 @@ func (t *toolCallTracker) cleanupPreview() {
 // When a result hint is available, the compact notification is updated inline
 // (e.g. "☑️ todo: add" becomes "☑️ todo: add → #542").
 func (t *toolCallTracker) observeToolResult(toolName string, result string, isError bool) {
-	if t.bot.effectiveShowToolCalls() != "full" {
+	if t.display.showToolCalls != "full" {
 		return
 	}
 	t.mu.Lock()
