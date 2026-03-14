@@ -127,6 +127,9 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 func convertTables(text string, codeBlocks *[]string, opts display.RenderOpts) string {
 	lines := strings.Split(text, "\n")
 	blocks := display.DetectTables(text)
+	// Degrade markdown in table cells (bold → Unicode bold, etc.)
+	// since HTML tags don't render inside <pre> blocks.
+	opts.CellTransform = display.DegradeMarkdown
 	// Process blocks in reverse order to preserve line indices
 	for i := len(blocks) - 1; i >= 0; i-- {
 		rendered := display.RenderTable(blocks[i].Lines, opts)

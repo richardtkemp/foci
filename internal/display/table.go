@@ -28,9 +28,10 @@ type Column struct {
 
 // RenderOpts controls table rendering.
 type RenderOpts struct {
-	MaxWidth  int    // max display columns (0 = no constraint)
-	WrapLines int    // max wrapped lines per cell (0 = truncate)
-	Style     string // "pretty" (default) or "markdown"
+	MaxWidth      int                // max display columns (0 = no constraint)
+	WrapLines     int                // max wrapped lines per cell (0 = truncate)
+	Style         string             // "pretty" (default) or "markdown"
+	CellTransform func(string) string // optional transform applied to each cell (e.g. DegradeMarkdown)
 }
 
 // TableBlock represents a detected table in markdown text.
@@ -173,6 +174,11 @@ func RenderTable(lines []string, opts RenderOpts) string {
 	for _, line := range lines {
 		isSep := sepRe.MatchString(strings.TrimSpace(line))
 		cells := ParseCells(line)
+		if !isSep && opts.CellTransform != nil {
+			for j, cell := range cells {
+				cells[j] = opts.CellTransform(cell)
+			}
+		}
 		if len(cells) > maxCols {
 			maxCols = len(cells)
 		}
