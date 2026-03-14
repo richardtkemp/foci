@@ -167,6 +167,7 @@ type LifecycleEvent int
 const (
 	OnUserMessage  LifecycleEvent = iota
 	OnTurnComplete
+	OnTurnEnd // fires after turn's final message is sent and cleanup is done
 )
 
 // ToolDetailStore is the interface for platform-specific tool detail persistence.

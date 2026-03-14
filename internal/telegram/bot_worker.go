@@ -63,6 +63,10 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		b.turnCancel = nil
 		b.turnMu.Unlock()
 		cancel()
+		b.drainPendingNotifications()
+		if b.OnTurnEnd != nil {
+			b.OnTurnEnd()
+		}
 	}()
 
 	// Send typing indicator and keep it alive throughout the agent turn.

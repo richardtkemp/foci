@@ -201,6 +201,15 @@ func setupWakeScheduler(
 					log.Warnf("remind", "no default session for agent %s, skipping", agentID)
 					return
 				}
+				// Wait for any active agent turn to finish before injecting.
+				for getAgent().IsProcessing() {
+					select {
+					case <-time.After(2 * time.Second):
+					case <-wakeCtx.Done():
+						_ = reminderStore.Dismiss(id)
+						return
+					}
+				}
 				resp, err := getAgent().HandleMessage(agent.WithTrigger(ctx, "scheduled_wake"), sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
 				if err != nil {
 					log.Errorf("remind", "error: %v", err)

@@ -21,6 +21,7 @@ type DispatcherConfig struct {
 	InactiveInterval      time.Duration
 	ActivityThreshold     time.Duration
 	LastUserMessageTimeFn func() time.Time
+	IsProcessingFn        func() bool // if non-nil and returns true, defer dispatch until turn ends
 }
 
 // Dispatcher checks for pending warnings and dispatches them proactively
@@ -35,6 +36,7 @@ type Dispatcher struct {
 	inactiveInterval      time.Duration
 	activityThreshold     time.Duration
 	lastUserMessageTimeFn func() time.Time
+	isProcessingFn        func() bool
 
 	mu            sync.Mutex
 	lastDispatch  time.Time
@@ -52,16 +54,24 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 		inactiveInterval:      cfg.InactiveInterval,
 		activityThreshold:     cfg.ActivityThreshold,
 		lastUserMessageTimeFn: cfg.LastUserMessageTimeFn,
+		isProcessingFn:        cfg.IsProcessingFn,
 	}
 }
 
 // MaybeFire checks for pending warnings and dispatches them if the rate limit allows.
+// If IsProcessingFn is set and returns true, dispatch is deferred — warnings stay
+// in the queue and will be flushed via FlushPending after the turn ends.
 func (d *Dispatcher) MaybeFire() {
 	if d.queue == nil || d.dispatchFn == nil {
 		return
 	}
 
 	if !d.queue.Pending() {
+		return
+	}
+
+	// Defer dispatch while an agent turn is active.
+	if d.isProcessingFn != nil && d.isProcessingFn() {
 		return
 	}
 
@@ -87,7 +97,32 @@ func (d *Dispatcher) MaybeFire() {
 		return
 	}
 
-	// Drain and format
+	d.dispatchDrained()
+}
+
+// FlushPending dispatches any pending warnings without rate-limit checks.
+// Called after an agent turn ends to flush warnings that were deferred.
+func (d *Dispatcher) FlushPending() {
+	if d.queue == nil || d.dispatchFn == nil {
+		return
+	}
+	if !d.queue.Pending() {
+		return
+	}
+
+	d.mu.Lock()
+	dispatching := d.dispatching
+	d.mu.Unlock()
+	if dispatching {
+		return
+	}
+
+	d.dispatchDrained()
+}
+
+// dispatchDrained drains the warning queue, formats the result, and launches
+// a goroutine to dispatch the formatted text.
+func (d *Dispatcher) dispatchDrained() {
 	warnings := d.queue.Drain()
 	if len(warnings) == 0 {
 		return
