@@ -447,7 +447,7 @@ func todoStatsCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respo
 		for _, t := range tags {
 			tagRows = append(tagRows, []string{t, strconv.Itoa(tagCounts[t])})
 		}
-		sb.WriteString("\n")
+		sb.WriteString("\n\n")
 		sb.WriteString(display.MarkdownTable(tagCols, tagRows))
 	}
 
