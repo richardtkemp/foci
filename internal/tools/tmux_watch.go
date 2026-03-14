@@ -12,7 +12,7 @@ import (
 	"foci/prompts"
 )
 
-func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresholdSeconds int) (ToolResult, error) {
+func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresholdSeconds int, conditional bool) (ToolResult, error) {
 	if name == "" {
 		return ToolResult{}, fmt.Errorf("name is required for watch")
 	}
@@ -20,7 +20,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		thresholdSeconds = 30
 	}
 
-	log.Debugf("tmux", "session=%s watch: name=%s window=%d threshold=%ds", SessionKeyFromContext(ctx), name, window, thresholdSeconds)
+	log.Debugf("tmux", "session=%s watch: name=%s window=%d threshold=%ds conditional=%v", SessionKeyFromContext(ctx), name, window, thresholdSeconds, conditional)
 
 	inst.mu.Lock()
 	inst.lastAccess[name] = time.Now()
@@ -48,6 +48,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 		notifier:        inst.notifier,
 		agentSessionKey: SessionKeyFromContext(ctx),
 		autopilot:       inst.autopilot,
+		conditional:     conditional,
 		ctx:             monCtx,
 		cancel:          cancel,
 		done:            make(chan struct{}),
@@ -59,7 +60,11 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	// Start monitoring goroutine
 	go tmuxWatchMonitor(ws, inst, key)
 
-	return TextResult(fmt.Sprintf("Watching session %s (window %d) for inactivity (threshold: %ds)", name, window, thresholdSeconds)), nil
+	label := "Watching"
+	if conditional {
+		label = "Conditionally watching"
+	}
+	return TextResult(fmt.Sprintf("%s session %s (window %d) for inactivity (threshold: %ds)", label, name, window, thresholdSeconds)), nil
 }
 
 func (inst *tmuxInstance) unwatch(ctx context.Context, name string) (ToolResult, error) {
@@ -145,9 +150,14 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 			// Check if content changed
 			if hash != ws.lastContent {
 				ws.lastContent = hash
+				if ws.conditional {
+					// First activity detected — convert to normal watch
+					log.Debugf("tmux", "watch: conditional watch on %s:%d converted to normal (activity detected)", ws.session, ws.window)
+					ws.conditional = false
+				}
 				ws.lastActivity = time.Now()
-			} else {
-				// Content unchanged; check if threshold exceeded
+			} else if !ws.conditional {
+				// Content unchanged and not conditional; check if threshold exceeded
 				if time.Since(ws.lastActivity) > ws.threshold {
 					log.Infof("tmux", "watch: inactivity detected on %s:%d (threshold %v exceeded)", ws.session, ws.window, ws.threshold)
 					msg := prompts.FormatInjectedMessage("TMUX WATCH",
