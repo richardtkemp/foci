@@ -10,14 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 )
 
 func TestSummaryTool_MissingParams(t *testing.T) {
 	// Proves that missing required parameters (file or prompt) are each rejected with a descriptive error.
 	t.Parallel()
-	client := anthropic.NewClientWithBase("http://unused", "test-key")
+	client := newTestAnthropicClient("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	tests := []struct {
@@ -47,7 +46,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 func TestSummaryTool_FileNotFound(t *testing.T) {
 	// Proves that a non-existent file path returns a "read file" error before any API call.
 	t.Parallel()
-	client := anthropic.NewClientWithBase("http://unused", "test-key")
+	client := newTestAnthropicClient("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -70,7 +69,7 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "empty.txt")
 	os.WriteFile(tmp, []byte{}, 0644)
 
-	client := anthropic.NewClientWithBase("http://unused", "test-key")
+	client := newTestAnthropicClient("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -95,7 +94,7 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 	data := []byte("some text\x00more binary data")
 	os.WriteFile(tmp, data, 0644)
 
-	client := anthropic.NewClientWithBase("http://unused", "test-key")
+	client := newTestAnthropicClient("http://unused", "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -144,7 +143,7 @@ func TestSummaryTool_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	aliases := map[string]string{"haiku": "anthropic/claude-haiku-4-5"}
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", aliases)
 
@@ -209,7 +208,7 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 	aliases := map[string]string{
 		"haiku": "anthropic/claude-haiku-4-5-custom",
 	}
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	tool := NewSummaryTool(client, nil, "anthropic/claude-haiku-4-5", "", aliases)
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})

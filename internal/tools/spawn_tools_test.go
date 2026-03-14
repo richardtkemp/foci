@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 )
 
@@ -52,7 +51,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 		},
 	})
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -210,7 +209,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 		})
 	}
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 

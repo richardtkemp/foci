@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -19,7 +18,7 @@ func TestCompactPreserveMessages(t *testing.T) {
 	server := mockCompactionServer("Summary of conversation.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -96,7 +95,7 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 	server := mockCompactionServer("Summary of conversation.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -133,7 +132,7 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 	server := mockCompactionServer("Summary.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -169,7 +168,7 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 	server := mockCompactionServer("Summary.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 
 	t.Run("preserved_starts_user", func(t *testing.T) {
 		// Even preserve count from even total → preserved[0] is user

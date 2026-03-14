@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -259,7 +258,7 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 	server := mockCompactionServer("Summary of tool conversation.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -323,7 +322,7 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	server := mockCompactionServer("Summary of corrupt session.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -366,7 +365,7 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -428,7 +427,7 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 

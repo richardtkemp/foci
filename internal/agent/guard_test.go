@@ -13,6 +13,18 @@ import (
 	"foci/internal/tools"
 )
 
+// setMissingQueryToolsForTest overrides the cached missing-tools set.
+// Returns a cleanup function that restores the original state.
+func setMissingQueryToolsForTest(missing map[string]bool) func() {
+	orig := missingQueryTools
+	missingQueryTools = missing
+	// Ensure the Once has fired so getMissingQueryTools returns our override.
+	missingQueryToolsOnce.Do(func() {})
+	return func() {
+		missingQueryTools = orig
+	}
+}
+
 func TestGuardToolResult_UnderLimit(t *testing.T) {
 	// Proves that results within MaxResultChars are returned unmodified.
 	a := &Agent{MaxResultChars: 100}

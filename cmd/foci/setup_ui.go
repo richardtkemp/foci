@@ -97,7 +97,7 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 
 	fmt.Printf("  Querying Anthropic API for latest %s model... ", family)
 
-	client := anthropic.NewClientWithTimeout(token, 5*time.Second)
+	client := anthropic.NewClient(anthropic.StaticToken(token), 5*time.Second)
 	models, err := client.ListModels()
 	if err != nil {
 		fmt.Printf("(using default: %s)\n", fallback)

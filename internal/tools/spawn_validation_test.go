@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 )
 
@@ -39,7 +38,7 @@ func TestSpawnInvalidContext(t *testing.T) {
 	server := mockModelServer(okResponse("ok"))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
 	tool := NewSpawnTool(deps, nil)
 
@@ -124,7 +123,7 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	server := mockModelServer(okResponse("ok"))
 	defer server.Close()
 
-	deps.Client = anthropic.NewClientWithBase(server.URL, "test-token")
+	deps.Client = newTestAnthropicClient(server.URL, "test-token")
 	tool = NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
 	params, _ = json.Marshal(map[string]string{
@@ -223,7 +222,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 			}
 		})
 
-		client := anthropic.NewClientWithBase(server.URL, "test-token")
+		client := newTestAnthropicClient(server.URL, "test-token")
 		deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
@@ -258,7 +257,7 @@ func TestSpawnModelDefault(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Model: "anthropic/claude-sonnet-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -289,7 +288,7 @@ func TestSpawnTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 

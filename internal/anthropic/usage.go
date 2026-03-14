@@ -33,8 +33,7 @@ const (
 
 // UsageClient is a client for the Anthropic usage API (requires OAuth token)
 type UsageClient struct {
-	oauthToken string
-	tokenFunc  func() (string, error) // dynamic token source (overrides oauthToken)
+	tokenFunc  func() (string, error) // returns the current OAuth token
 	httpClient *http.Client
 	baseURL    string
 
@@ -54,18 +53,10 @@ type UsageClient struct {
 	postFetch func()
 }
 
-// NewUsageClient creates a new usage API client with a static OAuth token.
-func NewUsageClient(oauthToken string) *UsageClient {
-	return &UsageClient{
-		oauthToken: oauthToken,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		baseURL:    "https://api.anthropic.com",
-		cacheTTL:   defaultCacheTTL,
-	}
-}
-
-// NewUsageClientWithFunc creates a usage client that calls tokenFunc for each request.
-func NewUsageClientWithFunc(tokenFunc func() (string, error)) *UsageClient {
+// NewUsageClient creates a new usage API client.
+// tokenFunc is called on each request to get the current OAuth token.
+// Use StaticToken to wrap a fixed token.
+func NewUsageClient(tokenFunc func() (string, error)) *UsageClient {
 	return &UsageClient{
 		tokenFunc:  tokenFunc,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
@@ -74,8 +65,8 @@ func NewUsageClientWithFunc(tokenFunc func() (string, error)) *UsageClient {
 	}
 }
 
-// SetBaseURLForTest overrides the base URL. Test-only.
-func (c *UsageClient) SetBaseURLForTest(url string) {
+// SetBaseURL overrides the API base URL.
+func (c *UsageClient) SetBaseURL(url string) {
 	c.baseURL = url
 }
 
@@ -106,19 +97,12 @@ func (c *UsageClient) Invalidate() {
 // resolveToken returns the token to use for usage API requests.
 // Errors are wrapped as tokenResolutionError to distinguish them from API errors.
 func (c *UsageClient) resolveToken() (string, error) {
-	if c.tokenFunc != nil {
-		tok, err := c.tokenFunc()
-		if err != nil {
-			return "", &tokenResolutionError{err}
-		}
-		log.KeySuffix("anthropic-usage", tok)
-		return tok, nil
+	tok, err := c.tokenFunc()
+	if err != nil {
+		return "", &tokenResolutionError{err}
 	}
-	if c.oauthToken == "" {
-		return "", &tokenResolutionError{fmt.Errorf("OAuth token not configured")}
-	}
-	log.KeySuffix("anthropic-usage", c.oauthToken)
-	return c.oauthToken, nil
+	log.KeySuffix("anthropic-usage", tok)
+	return tok, nil
 }
 
 // GetUsage retrieves the current usage from the Anthropic API.

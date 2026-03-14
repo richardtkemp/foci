@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/anthropic"
 	"foci/internal/log"
@@ -50,7 +51,7 @@ func TestBranchCacheSharing(t *testing.T) {
 	}()
 
 	// Create components
-	client := anthropic.NewClient(apiKey)
+	client := anthropic.NewClient(anthropic.StaticToken(apiKey), 60*time.Second)
 	sessions := session.NewStore(sessionsDir)
 	bootstrap := workspace.NewBootstrap(workspaceDir, nil)
 	registry := tools.NewRegistry()

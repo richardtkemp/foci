@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/provider"
@@ -24,7 +23,7 @@ func TestCompactBasic(t *testing.T) {
 	server := mockCompactionServer("Summary of conversation: user said hello, we discussed Go testing.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -84,7 +83,7 @@ func TestCompactDryRun(t *testing.T) {
 	server := mockCompactionServer("Dry-run summary of conversation.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -150,7 +149,7 @@ func TestCompactWithScratchpad(t *testing.T) {
 	server := mockCompactionServer("Summary: testing scratchpad.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -205,7 +204,7 @@ func TestCompactEmptyScratchpad(t *testing.T) {
 	server := mockCompactionServer("Summary: empty scratchpad.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -249,7 +248,7 @@ func TestCompactAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -281,7 +280,7 @@ func TestCompactStreaming(t *testing.T) {
 	server := mockStreamingCompactionServer("Streamed summary of conversation.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	client.SetUseSDK(true)
 
 	store := session.NewStore(t.TempDir())
@@ -361,7 +360,7 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 	server := mockCompactionServer("Summary.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -396,7 +395,7 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	server := mockCompactionServer("Summary after walk-back.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -431,7 +430,7 @@ func TestCompactScratchpadError(t *testing.T) {
 	server := mockCompactionServer("Summary with scratchpad error.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -467,7 +466,7 @@ func TestCompactReplaceError(t *testing.T) {
 	server := mockCompactionServer("Summary.")
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	dir := t.TempDir()
 	store := session.NewStore(dir)
 	sessionKey := "test/imain/1000000000"
