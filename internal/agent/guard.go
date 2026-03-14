@@ -49,18 +49,6 @@ func getMissingQueryTools() map[string]bool {
 	return missingQueryTools
 }
 
-// setMissingQueryToolsForTest overrides the cached missing-tools set.
-// Returns a cleanup function that restores the original state.
-// Must only be used in tests.
-func setMissingQueryToolsForTest(missing map[string]bool) func() {
-	orig := missingQueryTools
-	missingQueryTools = missing
-	// Ensure the Once has fired so getMissingQueryTools returns our override.
-	missingQueryToolsOnce.Do(func() {})
-	return func() {
-		missingQueryTools = orig
-	}
-}
 
 // providerAwareDefaultAlias returns the cheap-model alias based on the turn model's developer.
 func (a *Agent) providerAwareDefaultAlias(turnModel string) string {

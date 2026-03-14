@@ -36,7 +36,7 @@ func TestGetUsageSuccess(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "test-oauth-token",
+		tokenFunc: StaticToken("test-oauth-token"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   defaultCacheTTL,
@@ -54,10 +54,10 @@ func TestGetUsageSuccess(t *testing.T) {
 	}
 }
 
-func TestGetUsageEmptyToken(t *testing.T) {
-	// Proves that GetUsage returns a descriptive error when no OAuth token is configured, rather than sending an unauthenticated request.
+func TestGetUsageTokenError(t *testing.T) {
+	// Proves that GetUsage returns the tokenFunc error when the token source fails.
 	client := &UsageClient{
-		oauthToken: "",
+		tokenFunc:  func() (string, error) { return "", fmt.Errorf("no credentials") },
 		httpClient: http.DefaultClient,
 		baseURL:    "http://localhost",
 		cacheTTL:   defaultCacheTTL,
@@ -65,9 +65,9 @@ func TestGetUsageEmptyToken(t *testing.T) {
 
 	_, err := client.GetUsage(context.Background())
 	if err == nil {
-		t.Fatal("expected error for empty token")
+		t.Fatal("expected error for failing token func")
 	}
-	if !strings.Contains(err.Error(), "OAuth token not configured") {
+	if !strings.Contains(err.Error(), "no credentials") {
 		t.Errorf("error = %q", err.Error())
 	}
 }
@@ -81,7 +81,7 @@ func TestGetUsageAPIError(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "bad-token",
+		tokenFunc: StaticToken("bad-token"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   defaultCacheTTL,
@@ -110,7 +110,7 @@ func TestGetUsageCacheHit(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "tok",
+		tokenFunc: StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -155,7 +155,7 @@ func TestGetUsageCacheExpiry(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "tok",
+		tokenFunc: StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   1 * time.Millisecond,
@@ -197,7 +197,7 @@ func TestInvalidateForcesFetch(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "tok",
+		tokenFunc: StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -231,7 +231,7 @@ func TestErrorBackoff(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "tok",
+		tokenFunc: StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   100 * time.Millisecond, // short for testing
@@ -292,7 +292,7 @@ func TestErrorBackoffResetsOnSuccess(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "tok",
+		tokenFunc: StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   1 * time.Millisecond,
@@ -346,7 +346,7 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		oauthToken: "tok",
+		tokenFunc: StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -382,7 +382,7 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 
 func TestSetCacheTTL(t *testing.T) {
 	// Proves that SetCacheTTL updates the cache TTL field and that NewUsageClient initialises it to the default TTL.
-	client := NewUsageClient("tok")
+	client := NewUsageClient(StaticToken("tok"))
 	if client.cacheTTL != defaultCacheTTL {
 		t.Fatalf("default cacheTTL = %v, want %v", client.cacheTTL, defaultCacheTTL)
 	}

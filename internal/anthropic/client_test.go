@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSendMessageSuccess(t *testing.T) {
@@ -31,7 +32,7 @@ func TestSendMessageSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "sk-ant-oat01-test-token")
+	client := newTestClientWithBase(server.URL, "sk-ant-oat01-test-token")
 
 	resp, err := client.SendMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -97,7 +98,7 @@ func TestSendMessageHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-api-key")
+	client := newTestClientWithBase(server.URL, "test-api-key")
 	client.SendMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
 		MaxTokens: 256,
@@ -138,7 +139,7 @@ func TestSendMessageAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 
 	_, err := client.SendMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -178,7 +179,7 @@ func TestSendMessageRateLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 
 	_, err := client.SendMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -211,7 +212,7 @@ func TestSendMessageRateLimit(t *testing.T) {
 
 func TestSignalRecoveryNoOp(t *testing.T) {
 	// Proves that signalRecovery is safe to call when no recovery channel has been configured — it should be a no-op that does not panic.
-	client := NewClient("test-key")
+	client := NewClient(StaticToken("test-key"), 60*time.Second)
 	client.signalRecovery() // no-op, no panic
 }
 
@@ -224,7 +225,7 @@ func TestSendMessageInvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 
 	_, err := client.SendMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -256,7 +257,7 @@ func TestCountTokensSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 
 	count, err := client.CountTokens(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -289,7 +290,7 @@ func TestCountTokensAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 
 	_, err := client.CountTokens(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -317,7 +318,7 @@ func TestCountTokensInvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 
 	_, err := client.CountTokens(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -333,19 +334,20 @@ func TestCountTokensInvalidJSON(t *testing.T) {
 }
 
 func TestNewClientDefaults(t *testing.T) {
-	// Proves that NewClient sets the production Anthropic API base URL and stores the provided API key.
-	client := NewClient("my-key")
+	// Proves that NewClient sets the production Anthropic API base URL and SDK enabled.
+	client := NewClient(StaticToken("my-key"), 60*time.Second)
 	if client.baseURL != "https://api.anthropic.com" {
 		t.Errorf("baseURL = %q", client.baseURL)
 	}
-	if client.apiKey != "my-key" {
-		t.Errorf("apiKey = %q", client.apiKey)
+	if !client.useSDK {
+		t.Error("useSDK should default to true")
 	}
 }
 
-func TestNewClientWithBase(t *testing.T) {
-	// Proves that NewClientWithBase overrides the base URL, enabling tests to point the client at a local mock server.
-	client := NewClientWithBase("http://localhost:8080", "test-key")
+func TestSetBaseURL(t *testing.T) {
+	// Proves that SetBaseURL overrides the base URL, enabling tests to point the client at a local mock server.
+	client := NewClient(StaticToken("test-key"), 60*time.Second)
+	client.SetBaseURL("http://localhost:8080")
 	if client.baseURL != "http://localhost:8080" {
 		t.Errorf("baseURL = %q", client.baseURL)
 	}

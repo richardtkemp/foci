@@ -636,8 +636,8 @@ func TestMonitor_IsGoodFor_WithServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewUsageClient("test-token")
-	client.SetBaseURLForTest(server.URL)
+	client := anthropic.NewUsageClient(anthropic.StaticToken("test-token"))
+	client.SetBaseURL(server.URL)
 
 	m := NewMonitor(client)
 
@@ -672,8 +672,8 @@ func TestManaAndReset_WithServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewUsageClient("test-token")
-	client.SetBaseURLForTest(server.URL)
+	client := anthropic.NewUsageClient(anthropic.StaticToken("test-token"))
+	client.SetBaseURL(server.URL)
 
 	pct, reset, _ := ManaAndReset(client, 30*time.Minute)
 	if pct != "75%" {

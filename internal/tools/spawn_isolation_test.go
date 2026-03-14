@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 )
 
@@ -24,7 +23,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -73,7 +72,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(NewWriteTool(nil, "", nil))
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -137,7 +136,7 @@ func TestSpawnRawIsolationBlocksAbsolutePath(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(NewWriteTool(nil, "", nil))
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -183,7 +182,7 @@ func TestSpawnRawIsolationBlocksTraversal(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(NewWriteTool(nil, "", nil))
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
@@ -239,7 +238,7 @@ func TestSpawnRawFileListMultiple(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register(NewWriteTool(nil, "", nil))
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 

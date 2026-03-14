@@ -13,8 +13,8 @@ import (
 
 func TestStreamMessageRequiresSDK(t *testing.T) {
 	// Proves that StreamMessage returns a clear error when useSDK is false, guarding against misconfigured clients accidentally calling the streaming path.
-	client := NewClientWithBase("http://localhost", "test-key")
-	// NewClientWithBase sets useSDK=false
+	client := newTestClientWithBase("http://localhost", "test-key")
+	// newTestClientWithBase sets useSDK=false
 
 	_, err := client.StreamMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",
@@ -67,7 +67,7 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 	client.useSDK = true
 
 	var textDeltas []string
@@ -148,7 +148,7 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 	client.useSDK = true
 
 	var thinkingDeltas []string
@@ -222,7 +222,7 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := NewClientWithBase(server.URL, "test-key")
+	client := newTestClientWithBase(server.URL, "test-key")
 	client.useSDK = true
 
 	resp, err := client.StreamMessage(context.Background(), &MessageRequest{

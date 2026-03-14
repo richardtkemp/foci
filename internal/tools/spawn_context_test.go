@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 )
 
@@ -28,7 +27,7 @@ func TestSpawnContextRaw(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -84,7 +83,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 	})
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -259,7 +258,7 @@ func TestSpawnExploreMode(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 	})
 
-	client := anthropic.NewClientWithBase(server.URL, "test-token")
+	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,

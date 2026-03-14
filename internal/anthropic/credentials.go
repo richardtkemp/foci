@@ -14,7 +14,7 @@ import (
 )
 
 // tokenHolder is a thread-safe, swappable credential string.
-// Used with NewClientWithTokenFunc so credentials can be hot-reloaded
+// Used with NewClient so credentials can be hot-reloaded
 // without restarting.
 type tokenHolder struct {
 	mu    sync.RWMutex
@@ -116,7 +116,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		r.mu.Lock()
 		r.credHolders[endpointName] = holder
 		r.mu.Unlock()
-		c := NewClientWithTokenFunc(holder.Get, r.httpTimeout)
+		c := NewClient(holder.Get, r.httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
@@ -132,7 +132,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		r.mu.Lock()
 		r.credHolders[endpointName] = holder
 		r.mu.Unlock()
-		c := NewClientWithTokenFunc(holder.Get, r.httpTimeout)
+		c := NewClient(holder.Get, r.httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
@@ -143,7 +143,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 	// Priority 3: Claude Code credentials (lazy disk reads, no polling)
 	if r.ccSrc != nil {
 		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
-		c := NewClientWithTokenFunc(r.ccSrc.Token, r.httpTimeout)
+		c := NewClient(r.ccSrc.Token, r.httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
@@ -161,7 +161,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (provider.UsageClient, error) {
 	// Usage API requires OAuth with user:profile scope — only CC credentials work.
 	if r.ccSrc != nil {
-		client := NewUsageClientWithFunc(r.ccSrc.Token)
+		client := NewUsageClient(r.ccSrc.Token)
 		client.SetCacheTTL(r.usageCacheTTL)
 		// After each successful usage fetch, check if the token needs proactive refresh.
 		client.SetPostFetchHook(r.ccSrc.CheckRefresh)

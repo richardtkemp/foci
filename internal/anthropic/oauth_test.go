@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -121,29 +119,6 @@ func TestClientTokenFuncError(t *testing.T) {
 
 // --- Credential format parsing ---
 
-func TestReadCredentials(t *testing.T) {
-	// Proves that ReadCredentials correctly parses the Claude Code credential file format and returns the access token, refresh token, and expiry timestamp as separate values.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "credentials.json")
-
-	creds := `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-test123","refreshToken":"sk-ant-ort01-test456","expiresAt":1771770729992}}`
-	os.WriteFile(path, []byte(creds), 0644)
-
-	access, refresh, expiresAt, err := ReadCredentials(path)
-	if err != nil {
-		t.Fatalf("ReadCredentials: %v", err)
-	}
-	if access != "sk-ant-oat01-test123" {
-		t.Errorf("access = %q", access)
-	}
-	if refresh != "sk-ant-ort01-test456" {
-		t.Errorf("refresh = %q", refresh)
-	}
-	if expiresAt != 1771770729992 {
-		t.Errorf("expiresAt = %d", expiresAt)
-	}
-}
-
 func TestParseCredentialsNativeFormat(t *testing.T) {
 	// Proves that parseCredentials handles foci's native flat JSON format, mapping top-level access_token, refresh_token, and expires_at to the OAuthCredentials struct.
 	data := `{"access_token":"native-at","refresh_token":"native-rt","expires_at":1234567890}`
@@ -186,7 +161,7 @@ func TestParseCredentialsInvalid(t *testing.T) {
 }
 
 func TestUsageClientWithFunc(t *testing.T) {
-	// Proves that NewUsageClientWithFunc creates a usage client that calls the provided tokenFunc and sends it as the Bearer token on usage API requests.
+	// Proves that NewUsageClient creates a usage client that calls the provided tokenFunc and sends it as the Bearer token on usage API requests.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if auth := r.Header.Get("Authorization"); auth != "Bearer func-token" {
 			t.Errorf("Authorization = %q", auth)
@@ -199,7 +174,7 @@ func TestUsageClientWithFunc(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewUsageClientWithFunc(func() (string, error) {
+	client := NewUsageClient(func() (string, error) {
 		return "func-token", nil
 	})
 	client.baseURL = server.URL

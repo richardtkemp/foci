@@ -27,8 +27,7 @@ type CountTokensResponse struct {
 
 // Client is an Anthropic API client with prompt caching support.
 type Client struct {
-	apiKey         string
-	tokenFunc      func() (string, error) // dynamic token source (overrides apiKey)
+	tokenFunc      func() (string, error) // returns the current Bearer token
 	httpClient     *http.Client
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for server error retries; 0 = default 2s
@@ -42,59 +41,29 @@ type Client struct {
 	sdkClient *sdk.Client
 }
 
+// StaticToken wraps a fixed API key as a token function for NewClient.
+func StaticToken(key string) func() (string, error) {
+	return func() (string, error) { return key, nil }
+}
+
 // resolveToken returns the token to use for API requests.
-// If tokenFunc is set, it calls the function; otherwise returns the static apiKey.
 func (c *Client) resolveToken() (string, error) {
-	if c.tokenFunc != nil {
-		tok, err := c.tokenFunc()
-		if err == nil {
-			log.KeySuffix("anthropic", tok)
-		}
-		return tok, err
+	tok, err := c.tokenFunc()
+	if err == nil {
+		log.KeySuffix("anthropic", tok)
 	}
-	log.KeySuffix("anthropic", c.apiKey)
-	return c.apiKey, nil
+	return tok, err
 }
 
 // NewClient creates a new Anthropic API client.
-func NewClient(apiKey string) *Client {
-	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
-		baseURL:    "https://api.anthropic.com",
-		useSDK:     true,
-	}
-}
-
-// NewClientWithTimeout creates a client with a custom HTTP timeout.
-func NewClientWithTimeout(apiKey string, timeout time.Duration) *Client {
-	return &Client{
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: timeout},
-		baseURL:    "https://api.anthropic.com",
-		useSDK:     true,
-	}
-}
-
-// NewClientWithTokenFunc creates a client that calls tokenFunc for each request
-// to get the current Bearer token. Used with CCTokenSource for auto-refreshing tokens.
-func NewClientWithTokenFunc(tokenFunc func() (string, error), timeout time.Duration) *Client {
+// tokenFunc is called on each request to get the current Bearer token.
+// Use StaticToken to wrap a fixed API key.
+func NewClient(tokenFunc func() (string, error), timeout time.Duration) *Client {
 	return &Client{
 		tokenFunc:  tokenFunc,
 		httpClient: &http.Client{Timeout: timeout},
 		baseURL:    "https://api.anthropic.com",
 		useSDK:     true,
-	}
-}
-
-// NewClientWithBase creates a client with a custom base URL (for testing).
-func NewClientWithBase(baseURL, apiKey string) *Client {
-	return &Client{
-		apiKey:         apiKey,
-		httpClient:     &http.Client{Timeout: 120 * time.Second},
-		baseURL:        baseURL,
-		retryBaseDelay: time.Millisecond, // fast retries for tests
-		useSDK:         false,            // tests use mock HTTP server
 	}
 }
 

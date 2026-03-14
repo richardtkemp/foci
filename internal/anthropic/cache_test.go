@@ -1,12 +1,14 @@
 package anthropic_test
 
 import (
-	"foci/internal/anthropic"
 	"context"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"foci/internal/anthropic"
 )
 
 func TestCacheSharing(t *testing.T) {
@@ -23,7 +25,7 @@ func TestCacheSharing(t *testing.T) {
 		t.Skip("ANTHROPIC_API_KEY not set")
 	}
 
-	client := anthropic.NewClient(apiKey)
+	client := anthropic.NewClient(anthropic.StaticToken(apiKey), 60*time.Second)
 	ctx := context.Background()
 
 	// Build a large system prompt. Haiku requires >= 2048 tokens for caching.

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/anthropic"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -94,7 +93,7 @@ func TestCompactCustomPrompts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
@@ -145,7 +144,7 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := anthropic.NewClientWithBase(server.URL, "test-key")
+	client := newTestAnthropicClient(server.URL, "test-key")
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
