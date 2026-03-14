@@ -154,12 +154,18 @@ func (sw *streamWriter) truncated() string {
 
 // Finish stops the edit loop and returns the message ID (0 if no deltas arrived).
 // Does NOT do a final flush — the caller handles the final edit with proper HTML formatting.
+// Idempotent: safe to call multiple times (e.g. Finalize then deferred Cleanup).
 func (sw *streamWriter) Finish() int64 {
 	sw.mu.Lock()
+	alreadyStopped := sw.stopped
 	sw.stopped = true
 	ticker := sw.ticker
 	msgID := sw.msgID
 	sw.mu.Unlock()
+
+	if alreadyStopped {
+		return msgID
+	}
 
 	if ticker != nil {
 		ticker.Stop()

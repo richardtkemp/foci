@@ -10,6 +10,21 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
+// testRenderer creates a TurnRenderer backed by a test bot for unit testing
+// rendering methods in isolation.
+func testRenderer(b *Bot, chatID int64) *TurnRenderer {
+	msg := &gotgbot.Message{
+		Chat: gotgbot.Chat{Id: chatID},
+		From: &gotgbot.User{Id: 1},
+	}
+	return &TurnRenderer{
+		bot:     b,
+		msg:     msg,
+		chatID:  chatID,
+		tracker: &toolCallTracker{bot: b, chatID: chatID},
+	}
+}
+
 func TestEditStreamNoThinking_EditInPlace(t *testing.T) {
 	// Verifies that when streaming completes with no thinking, the stream
 	// message is edited in-place with the final HTML and no new message is sent.
@@ -51,8 +66,9 @@ func TestEditStreamWithThinking_CompactMode(t *testing.T) {
 	// Verifies that editStreamWithThinking edits the stream message in-place
 	// with an inline keyboard button and stores thinking data for later toggle.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	r := testRenderer(b, 12345)
 
-	b.editStreamWithThinking(100, 12345, "Response text", "I thought about this")
+	r.editStreamWithThinking(100, "Response text", "I thought about this")
 
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0 (should edit, not send)", mock.sentCount())
@@ -91,8 +107,9 @@ func TestEditStreamWithFullThinking(t *testing.T) {
 	// in-place with italic thinking + divider + response HTML.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.displayWidth = 40
+	r := testRenderer(b, 12345)
 
-	b.editStreamWithFullThinking(100, 12345, "Response text", "Deep thoughts")
+	r.editStreamWithFullThinking(100, "Response text", "Deep thoughts")
 
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0 (should edit, not send)", mock.sentCount())
@@ -118,14 +135,14 @@ func TestStreamLongResponse_SendsNewAndPreview(t *testing.T) {
 	// sends a new message and edits the stream message to a truncated preview.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	msg := makeMsg(111, "111", "test")
+	r := testRenderer(b, msg.Chat.Id)
 
 	longResponse := strings.Repeat("x", 4097)
 
 	// Simulate: streamMsgID=100, no thinking, response > 4096
-	// We call the helper methods directly to test the branch logic.
 	// The long-response path sends a reply then edits stream to preview.
 	b.sendReply(msg, longResponse)
-	b.editStreamPreview(100, msg.Chat.Id, longResponse)
+	r.editStreamPreview(100, longResponse)
 
 	if mock.sentCount() == 0 {
 		t.Error("expected at least one send for long response")
@@ -142,8 +159,9 @@ func TestStreamLongResponse_SendsNewAndPreview(t *testing.T) {
 func TestEditStreamPreview_SkipsWhenNoStreamMsg(t *testing.T) {
 	// Verifies that editStreamPreview is a no-op when streamMsgID is 0.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	r := testRenderer(b, 12345)
 
-	b.editStreamPreview(0, 12345, "some response")
+	r.editStreamPreview(0, "some response")
 
 	if mock.editCount() != 0 {
 		t.Errorf("editCount = %d, want 0 (no stream message to edit)", mock.editCount())
@@ -168,8 +186,9 @@ func TestStreamCompactThinking_NoNewMessage(t *testing.T) {
 	// End-to-end verification: with streamMsgID set and compact thinking,
 	// editStreamWithThinking produces exactly 1 edit and 0 sends.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	r := testRenderer(b, 12345)
 
-	b.editStreamWithThinking(200, 12345, "short reply", "thinking content")
+	r.editStreamWithThinking(200, "short reply", "thinking content")
 
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0", mock.sentCount())
@@ -185,8 +204,9 @@ func TestStreamFullThinking_NoNewMessage(t *testing.T) {
 	// editStreamWithFullThinking produces exactly 1 edit and 0 sends.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.displayWidth = 40
+	r := testRenderer(b, 12345)
 
-	b.editStreamWithFullThinking(200, 12345, "short reply", "thinking content")
+	r.editStreamWithFullThinking(200, "short reply", "thinking content")
 
 	if mock.sentCount() != 0 {
 		t.Errorf("sentCount = %d, want 0", mock.sentCount())
@@ -201,8 +221,9 @@ func TestEditStreamWithThinking_EditError(t *testing.T) {
 	// (since the button won't be visible to the user).
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	mock.editErr = fmt.Errorf("Bad Request: message too long")
+	r := testRenderer(b, 12345)
 
-	b.editStreamWithThinking(100, 12345, "Response", "Thinking")
+	r.editStreamWithThinking(100, "Response", "Thinking")
 
 	if mock.editCount() != 1 {
 		t.Errorf("editCount = %d, want 1", mock.editCount())
