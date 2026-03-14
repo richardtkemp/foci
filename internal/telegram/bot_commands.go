@@ -36,15 +36,21 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, text
 
 // tryDispatchViaDispatcher uses the platform-aware Dispatcher.
 func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message, text string) bool {
+	// Normalize dot-commands to slash form for keyboard lookups.
+	lookupText := text
+	if len(text) > 1 && text[0] == '.' && text[1] >= 'a' && text[1] <= 'z' {
+		lookupText = "/" + text[1:]
+	}
+
 	// Check for keyboard display before dispatch so commands with keyboards
 	// don't execute their bare form (which is typically just usage text).
-	if name, opts, ok := b.dispatcher.LookupKeyboard(ctx, text); ok {
+	if name, opts, ok := b.dispatcher.LookupKeyboard(ctx, lookupText); ok {
 		b.sendCommandKeyboard(msg.Chat.Id, name, opts)
 		return true
 	}
 
 	// Check for chain keyboard (e.g. /config set → section buttons).
-	if name, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, text); ok {
+	if name, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText); ok {
 		label := text + ":"
 		_, _ = b.client.SendMessage(msg.Chat.Id, label, &gotgbot.SendMessageOpts{
 			ReplyMarkup: buildCommandKeyboard(name, opts),
