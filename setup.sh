@@ -91,25 +91,85 @@ COMMIT_FILE="$FOCI_HOME/data/.foci-commit"
 
 info "Target user: $FOCI_USER (home: $FOCI_HOME)"
 
-# ---------- Check Go ----------
+# ---------- Check / download Go ----------
+MIN_GO_VERSION="1.24"
+MIN_GO_MINOR=24
+LOCAL_GO_DIR="$SCRIPT_DIR/.go"
+
 info "Checking Go installation"
-if ! command -v go &>/dev/null; then
-    error "Go not found. Install Go 1.23+ first."
-    error "Run: sudo ./prerequisites.sh"
-    error "Or download from https://go.dev/dl/"
-    exit 1
+NEED_GO_DOWNLOAD=false
+
+if command -v go &>/dev/null; then
+    # Run from /tmp to avoid go.mod toolchain auto-download inflating the version
+    GO_VERSION=$(cd /tmp && go version | grep -oP 'go\K[0-9]+\.[0-9]+')
+    GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
+    GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
+    if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt "$MIN_GO_MINOR" ]]; then
+        warn "Go $GO_VERSION found, but Go ${MIN_GO_VERSION}+ required"
+        NEED_GO_DOWNLOAD=true
+    else
+        info "  Go $GO_VERSION — OK"
+    fi
+else
+    info "  Go not found"
+    NEED_GO_DOWNLOAD=true
 fi
 
-GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
-GO_MAJOR=$(echo "$GO_VERSION" | cut -d. -f1)
-GO_MINOR=$(echo "$GO_VERSION" | cut -d. -f2)
-if [[ "$GO_MAJOR" -lt 1 ]] || [[ "$GO_MAJOR" -eq 1 && "$GO_MINOR" -lt 23 ]]; then
-    error "Go $GO_VERSION found, but Go 1.23+ is required (go.mod declares go 1.23)."
-    error "Run: sudo ./prerequisites.sh"
-    error "Or download from https://go.dev/dl/"
-    exit 1
+if $NEED_GO_DOWNLOAD; then
+    # Reuse existing local download if present and valid
+    if [[ -x "$LOCAL_GO_DIR/go/bin/go" ]]; then
+        LOCAL_VER=$(cd /tmp && "$LOCAL_GO_DIR/go/bin/go" version | grep -oP 'go\K[0-9]+\.[0-9]+')
+        LOCAL_MINOR=$(echo "$LOCAL_VER" | cut -d. -f2)
+        if [[ "$(echo "$LOCAL_VER" | cut -d. -f1)" -eq 1 && "$LOCAL_MINOR" -ge "$MIN_GO_MINOR" ]]; then
+            info "  Reusing local Go $LOCAL_VER from $LOCAL_GO_DIR"
+            export PATH="$LOCAL_GO_DIR/go/bin:$PATH"
+            NEED_GO_DOWNLOAD=false
+        fi
+    fi
 fi
-info "  Go $GO_VERSION — OK"
+
+if $NEED_GO_DOWNLOAD; then
+    # Determine architecture
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)        GO_ARCH="amd64" ;;
+        aarch64|arm64) GO_ARCH="arm64" ;;
+        armv6l)        GO_ARCH="armv6l" ;;
+        armv7l)        GO_ARCH="armv7l" ;;
+        i386|i686)     GO_ARCH="386" ;;
+        *) error "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+
+    OS_NAME="linux"
+    [[ "$OSTYPE" == "darwin"* ]] && OS_NAME="darwin"
+
+    GO_TARBALL="go${MIN_GO_VERSION}.0.${OS_NAME}-${GO_ARCH}.tar.gz"
+    GO_URL="https://go.dev/dl/$GO_TARBALL"
+
+    if ! $DRY_RUN; then
+        # Need curl or wget to download
+        if command -v curl &>/dev/null; then
+            DL_CMD="curl -fsSL -o"
+        elif command -v wget &>/dev/null; then
+            DL_CMD="wget -q -O"
+        else
+            error "Cannot download Go — neither curl nor wget is available."
+            error "Install one of them, or install Go ${MIN_GO_VERSION}+ manually."
+            exit 1
+        fi
+
+        info "  Downloading Go ${MIN_GO_VERSION} from go.dev..."
+        rm -rf "$LOCAL_GO_DIR"
+        mkdir -p "$LOCAL_GO_DIR"
+        $DL_CMD "/tmp/$GO_TARBALL" "$GO_URL"
+        tar -C "$LOCAL_GO_DIR" -xzf "/tmp/$GO_TARBALL"
+        rm -f "/tmp/$GO_TARBALL"
+        export PATH="$LOCAL_GO_DIR/go/bin:$PATH"
+        info "  Go ${MIN_GO_VERSION} installed to $LOCAL_GO_DIR"
+    else
+        info "  (dry-run) Would download Go ${MIN_GO_VERSION} from $GO_URL to $LOCAL_GO_DIR"
+    fi
+fi
 
 # ---------- Detect update ----------
 OLD_COMMIT=""
@@ -288,17 +348,19 @@ if $IS_SELF && ! $DRY_RUN; then
     # Create directories (no chown needed — we own them)
     mkdir -p "$FOCI_HOME/config" "$FOCI_HOME/data"
 
+    # Copy shared directory (defaults, docs, skills) — must happen before wizard
+    mkdir -p "$FOCI_HOME/shared"
+    cp -r "$SCRIPT_DIR/shared/"* "$FOCI_HOME/shared/"
+    mkdir -p "$FOCI_HOME/shared/docs"
+    cp -r "$SCRIPT_DIR/docs/"* "$FOCI_HOME/shared/docs/"
+    info "  Shared files copied to $FOCI_HOME/shared/"
+
     # Config wizard
     if ! $HAS_CONFIG; then
         info "  Launching setup wizard..."
         eval "\"$SCRIPT_DIR/bin/foci\" setup $SETUP_WIZARD_ARGS"
         info "  Config written by foci setup"
     fi
-
-    # Copy docs to shared directory
-    mkdir -p "$FOCI_HOME/shared/docs"
-    cp -r "$SCRIPT_DIR/docs/"* "$FOCI_HOME/shared/docs/"
-    info "  Docs copied to $FOCI_HOME/shared/docs/"
 
     # Commit file + changelog
     mkdir -p "$(dirname "$COMMIT_FILE")"
@@ -369,10 +431,20 @@ if $NEED_DIRS; then
     emit "chown \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/config\" \"$FOCI_HOME/data\""
 fi
 
+# --- Copy shared files (defaults, docs) — must happen before wizard ---
+emit_comment "Copy shared files (defaults, docs, skills)"
+emit "mkdir -p \"$FOCI_HOME/shared\""
+emit "cp -r \"$SCRIPT_DIR/shared/\"* \"$FOCI_HOME/shared/\""
+emit "mkdir -p \"$FOCI_HOME/shared/docs\""
+emit "cp -r \"$SCRIPT_DIR/docs/\"* \"$FOCI_HOME/shared/docs/\""
+if ! $IS_SELF; then
+    emit "chown -R \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/shared\""
+fi
+
 # --- Config wizard (only if no config and not self-mode) ---
 if ! $HAS_CONFIG && ! $IS_SELF; then
-    emit_comment "Run config wizard"
-    emit "sudo -u \"$FOCI_USER\" \"$INSTALL_DIR/foci\" setup $SETUP_WIZARD_ARGS"
+    emit_comment "Run config wizard (runuser instead of sudo — always available, no PAM/sudoers needed)"
+    emit "runuser -u \"$FOCI_USER\" -- \"$INSTALL_DIR/foci\" setup $SETUP_WIZARD_ARGS"
     # Wizard may create secrets.toml — harden it if so
     emit "[ -f \"$SECRETS_FILE\" ] && chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\" && chmod 0660 \"$SECRETS_FILE\""
 fi
@@ -382,14 +454,6 @@ if $NEED_SECRETS_HARDEN; then
     emit_comment "Harden secrets.toml — root-owned, group-readable so gateway can access but agent subprocesses cannot"
     emit "chown \"root:$SECRETS_GROUP\" \"$SECRETS_FILE\""
     emit "chmod 0660 \"$SECRETS_FILE\""
-fi
-
-# --- Copy docs to shared directory ---
-emit_comment "Copy docs to shared directory"
-emit "mkdir -p \"$FOCI_HOME/shared/docs\""
-emit "cp -r \"$SCRIPT_DIR/docs/\"* \"$FOCI_HOME/shared/docs/\""
-if ! $IS_SELF; then
-    emit "chown -R \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/shared/docs\""
 fi
 
 # --- Commit file + changelog (only if not self-mode) ---
@@ -508,9 +572,15 @@ elif $DRY_RUN; then
     rm -f "$INSTALL_SCRIPT"
 elif $DO_INSTALL; then
     echo ""
-    info "Running install script via sudo..."
-    echo ""
-    sudo bash "$INSTALL_SCRIPT"
+    if [[ $EUID -eq 0 ]]; then
+        info "Running install script (already root)..."
+        echo ""
+        bash "$INSTALL_SCRIPT"
+    else
+        info "Running install script via sudo..."
+        echo ""
+        sudo bash "$INSTALL_SCRIPT"
+    fi
     rm -f "$INSTALL_SCRIPT" "$SCRIPT_DIR/.staged-WELCOME.md" 2>/dev/null || true
     echo ""
     info "Done."

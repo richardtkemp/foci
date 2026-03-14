@@ -5,18 +5,25 @@ Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 mi
 ## Prerequisites
 
 Install these before running setup:
-TODO these are platform-specific! Just list the tools, don't mention apt, name specific package names only as per-distro hints. OR, give complete commands for various distros
-TODO tmux jq are technically optional
+
+- **Go 1.24+** — downloaded automatically by `setup.sh` if not available (requires `curl` or `wget`)
+- **git** — for cloning the repo
+- **gcc / build-essential** — C compiler (needed for SQLite CGO)
+- **make** — build tool
+- **tmux** — terminal multiplexing (optional but recommended)
+- **jq** — JSON processing (optional but recommended)
+- **sqlite3** — database CLI (optional, for debugging)
+
+On Debian/Ubuntu:
 
 ```bash
-# Go 1.22+ (for building from source)
-sudo apt install golang-go
+sudo apt install git build-essential make curl tmux jq sqlite3
+```
 
-# Required tools
-sudo apt install tmux jq git
+Or run the prerequisites script which handles all distros:
 
-# Optional but recommended
-pip install yq                 # TOML/YAML/XML querying (used by query skill)
+```bash
+sudo ./prerequisites.sh --install
 ```
 
 ## 1. Clone the Repository
@@ -49,7 +56,7 @@ sudo ./setup.sh -u foci
 
 The wizard prompts for:
 - **Bot token** — paste the token from @BotFather
-- **Authentication** — setup token (recommended, uses Claude Code subscription), API key, or skip
+- **Authentication** — API key (for Anthropic), setup token (uses Claude Code subscription), or skip. If you're not using Anthropic, choose **skip** and configure your endpoint manually in `foci.toml` after setup (see [CONFIG.md](CONFIG.md))
 - **User ID** — auto-detected by messaging your bot, or entered manually
 - **Agent ID** — a short name for your agent (default: `main`)
 - **Character files** — use default templates or import from an existing directory
@@ -166,7 +173,7 @@ sudo chmod 660 /home/foci/config/secrets.toml
 ```
 
 ### Build errors
-Ensure Go 1.22+: `go version`. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
+Ensure Go 1.24+: `go version`. Setup downloads Go automatically if needed. Foci uses go module caching at `/var/cache/go` and `/var/cache/go-build`.
 
 ### "unknown command: setup"
 Make sure you're running the updated `foci` binary from `/usr/local/bin/foci`. Re-run `setup.sh` to rebuild.

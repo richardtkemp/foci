@@ -20,7 +20,7 @@
 set -euo pipefail
 
 # Minimum Go version required (from go.mod)
-MIN_GO_VERSION="1.23"
+MIN_GO_VERSION="1.24"
 
 # Default mode
 DRY_RUN=true
@@ -233,7 +233,7 @@ for pkg_type in git gcc make curl jq sqlite; do
     if [[ "$DRY_RUN" == "false" ]]; then
         case "$PKG_MANAGER" in
             apt)
-                if dpkg -l | grep -q "^ii.*$pkg_name" 2>/dev/null; then
+                if dpkg-query -W -f='${Status}' "$pkg_name" 2>/dev/null | grep -q "install ok installed"; then
                     ALREADY_INSTALLED=true
                 fi
                 ;;
@@ -286,7 +286,8 @@ GO_VERSION=""
 NEED_GO_INSTALL=true
 
 if command -v go &>/dev/null; then
-    GO_VERSION=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+' || echo "unknown")
+    # Run from /tmp to avoid go.mod toolchain auto-download inflating the version
+    GO_VERSION=$(cd /tmp && go version | grep -oP 'go\K[0-9]+\.[0-9]+' || echo "unknown")
     GO_INSTALLED=true
 
     if [[ "$GO_VERSION" != "unknown" ]]; then

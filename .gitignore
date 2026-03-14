@@ -21,7 +21,9 @@ todo-*.db-wal
 todo-*.db-shm
 .gocache/
 .gopath/
+.go/
 .setup-install.sh
+.env.test
 .staged-WELCOME.md
 .claude
 .claude/
