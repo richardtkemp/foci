@@ -340,7 +340,7 @@ Subcommands:
 	}
 	for _, id := range agentOrder {
 		inst := agents[id]
-		enabled := cfg.Defaults.EnableStartupNotify
+		enabled := cfg.Telegram.StartupNotify
 		if inst.agentCfg.StartupNotify != nil {
 			enabled = *inst.agentCfg.StartupNotify
 		}

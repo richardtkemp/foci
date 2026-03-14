@@ -41,8 +41,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
 	}
 	// Only show agent override options when the global fallback isn't covering them.
-	if agent.StartupNotify == nil && !cfg.Defaults.EnableStartupNotify {
-		opts = append(opts, availableOption{"agent", "startup_notify", "(global)", "send startup notification (nil = use global)"})
+	if agent.StartupNotify == nil && !cfg.Telegram.StartupNotify {
+		opts = append(opts, availableOption{"agent", "startup_notify", "(telegram)", "send startup notification (nil = use telegram)"})
 	}
 	if agent.ShowToolCalls == nil && cfg.Telegram.ShowToolCalls != nil && *cfg.Telegram.ShowToolCalls == ToolCallOff {
 		opts = append(opts, availableOption{"agent", "show_tool_calls", "(telegram)", "tool call display mode: off, preview, full (nil = use telegram)"})

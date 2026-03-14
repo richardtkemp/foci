@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoadTelegramToggleDefaults(t *testing.T) {
-	// Proves that enable_stop_aliases and enable_startup_notify both default to
+	// Proves that enable_stop_aliases and startup_notify both default to
 	// true when not set in the config file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -27,13 +27,13 @@ id = "test"
 	if !cfg.Telegram.EnableStopAliases {
 		t.Error("EnableStopAliases should default to true")
 	}
-	if !cfg.Telegram.EnableStartupNotify {
-		t.Error("EnableStartupNotify should default to true")
+	if !cfg.Telegram.StartupNotify {
+		t.Error("StartupNotify should default to true")
 	}
 }
 
 func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
-	// Proves that explicitly setting enable_stop_aliases and enable_startup_notify
+	// Proves that explicitly setting enable_stop_aliases and startup_notify
 	// to false in the [telegram] section correctly disables both toggles.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -43,7 +43,7 @@ id = "test"
 
 [telegram]
 enable_stop_aliases = false
-enable_startup_notify = false
+startup_notify = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -54,9 +54,74 @@ enable_startup_notify = false
 	if cfg.Telegram.EnableStopAliases {
 		t.Error("EnableStopAliases should be false when explicitly set")
 	}
-	if cfg.Telegram.EnableStartupNotify {
-		t.Error("EnableStartupNotify should be false when explicitly set")
+	if cfg.Telegram.StartupNotify {
+		t.Error("StartupNotify should be false when explicitly set")
 	}
+}
+
+func TestLoadTelegramStartupNotifyLegacyKeys(t *testing.T) {
+	// Proves backward compatibility: the legacy key enable_startup_notify in
+	// [telegram] and [defaults] both migrate to [telegram] startup_notify.
+	t.Run("legacy telegram key", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+
+[telegram]
+enable_startup_notify = false
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Telegram.StartupNotify {
+			t.Error("StartupNotify should be false (migrated from legacy enable_startup_notify)")
+		}
+	})
+
+	t.Run("legacy defaults key", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+
+[defaults]
+enable_startup_notify = false
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Telegram.StartupNotify {
+			t.Error("StartupNotify should be false (migrated from legacy defaults.enable_startup_notify)")
+		}
+	})
+
+	t.Run("new key takes precedence over legacy", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "foci.toml")
+		os.WriteFile(path, []byte(`
+[[agents]]
+id = "test"
+
+[telegram]
+startup_notify = true
+enable_startup_notify = false
+`), 0644)
+
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.Telegram.StartupNotify {
+			t.Error("StartupNotify should be true (new key takes precedence over legacy)")
+		}
+	})
 }
 
 func TestAgentStartupNotification(t *testing.T) {
@@ -362,7 +427,7 @@ func TestBoolStringConfigLoad(t *testing.T) {
 	os.WriteFile(path, []byte(`
 [telegram]
 enable_stop_aliases = "on"
-enable_startup_notify = "off"
+startup_notify = "off"
 
 [environment]
 enabled = "true"
@@ -377,8 +442,8 @@ log_rotation = "false"
 	if !cfg.Telegram.EnableStopAliases {
 		t.Error("EnableStopAliases should be true (from \"on\")")
 	}
-	if cfg.Telegram.EnableStartupNotify {
-		t.Error("EnableStartupNotify should be false (from \"off\")")
+	if cfg.Telegram.StartupNotify {
+		t.Error("StartupNotify should be false (from \"off\")")
 	}
 	if !cfg.Environment.Enabled {
 		t.Error("Environment.Enabled should be true (from \"true\")")

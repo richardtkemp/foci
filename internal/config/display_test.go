@@ -16,7 +16,7 @@ func testConfig() (*Config, AgentConfig) {
 		Telegram: TelegramConfig{
 			AllowedUsers:        []string{"alice"},
 			EnableStopAliases:   true,
-			EnableStartupNotify: true,
+			StartupNotify:       true,
 			MultiballSessionTTL: "60m",
 			MessageQueueSize:    64,
 			LongPollTimeout:     "65s",

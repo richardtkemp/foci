@@ -117,7 +117,7 @@ type AgentConfig struct {
 	STTReplacements  map[string]string `toml:"stt_replacements"`  // per-agent STT word replacements (merged with [[stt]] entry replacements)
 
 	InjectAgentWarnings bool  `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
-	StartupNotify       *bool `toml:"startup_notify"`        // send startup notification (nil = use global defaults.enable_startup_notify)
+	StartupNotify       *bool `toml:"startup_notify"`        // send startup notification (nil = use global telegram.startup_notify)
 	ShowToolCalls *ToolCallDisplay `toml:"show_tool_calls"` // show tool call messages (nil = use global/default)
 	ShowThinking  *ShowThinking   `toml:"show_thinking"`  // show thinking blocks (nil = use global/default)
 	MessagesInLog *bool           `toml:"messages_in_log"` // log user message content to event log (nil = use global logging.messages_in_log)
@@ -209,7 +209,8 @@ type TelegramConfig struct {
 	MultiballBots       []string `toml:"multiball_bots"`        // shared multiball pool: bot names (tokens via "telegram.<name>" secrets)
 	StopAliases         []string `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases   bool     `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
-	EnableStartupNotify bool     `toml:"enable_startup_notify"` // send notification on startup (default true)
+	StartupNotify       bool     `toml:"startup_notify"`        // send notification on startup (default true)
+	EnableStartupNotify bool     `toml:"enable_startup_notify"` // DEPRECATED: legacy alias for startup_notify
 	MultiballSessionTTL string   `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string   `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
@@ -522,7 +523,7 @@ type DefaultsConfig struct {
 	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
 	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
 	SteerMode           bool   `toml:"steer_mode"`            // default steer_mode (default: true)
-	EnableStartupNotify  bool   `toml:"enable_startup_notify"`  // send notification on startup (default true)
+	EnableStartupNotify  bool   `toml:"enable_startup_notify"`  // DEPRECATED: legacy alias, migrates to [telegram] startup_notify
 	MultiballNoCompact   *bool  `toml:"multiball_no_compact"`   // set no_compact on multiball sessions (nil = true)
 	CacheTTL             string `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 
