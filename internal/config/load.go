@@ -438,7 +438,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
 	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
 	setStringDefault(&cfg.Anthropic.UsageCacheTTL, "10m")
-	setStringDefault(&cfg.Anthropic.CCCredentialsPollInterval, "30s")
+	setStringDefault(&cfg.Anthropic.CCExpiryThreshold, "5m")
 	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
 	setStringDefault(&cfg.Anthropic.Effort, "low")
 	setStringDefault(&cfg.Anthropic.Thinking, "adaptive")

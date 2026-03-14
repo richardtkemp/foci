@@ -206,7 +206,7 @@ thinking = "adaptive"                     # adaptive (default), off — Anthropi
 # http_timeout = "600s"                   # HTTP timeout for API calls
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
 # usage_cache_ttl = "10m"                # cache TTL for usage API responses
-# cc_credentials_poll_interval = "30s"  # how often to re-read CC credentials file
+# cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
 # use_sdk = true                         # use SDK transport (false = raw HTTP fallback)
 # streaming = false                      # use streaming API (requires use_sdk)
 

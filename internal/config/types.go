@@ -196,7 +196,7 @@ type AnthropicConfig struct {
 	HTTPTimeout               string `toml:"http_timeout"`                 // HTTP timeout for API calls (default "600s")
 	UsageAPITimeout           string `toml:"usage_api_timeout"`            // HTTP timeout for usage API calls (default "10s")
 	UsageCacheTTL             string `toml:"usage_cache_ttl"`              // cache TTL for usage API responses (default "10m")
-	CCCredentialsPollInterval string `toml:"cc_credentials_poll_interval"` // how often to re-read CC credentials file (default "30s")
+	CCExpiryThreshold string `toml:"cc_expiry_threshold"` // how far before expiry to trigger proactive token refresh (default "5m")
 	UseSDK                    bool   `toml:"use_sdk"`                      // use SDK transport (default true; false = raw HTTP)
 	Streaming                 bool   `toml:"streaming"`                    // use streaming API (default false; requires use_sdk)
 	Effort                    string `toml:"effort"`                       // effort level: "low" (default), "medium", "high"

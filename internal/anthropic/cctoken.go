@@ -1,9 +1,9 @@
-// CCTokenSource reads Claude Code credentials from disk on a polling interval.
-// It never refreshes tokens itself — it only reads what CC writes.
+// CCTokenSource reads Claude Code credentials from disk on demand.
+// It never refreshes tokens itself — it reads what CC writes and triggers
+// a refresh via refreshFunc when the token is near expiry or expired.
 package anthropic
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -12,24 +12,27 @@ import (
 	"foci/internal/log"
 )
 
-// CCTokenSource polls a credentials file (typically ~/.claude/.credentials.json)
-// and provides the current access token via Token(). It never performs OAuth
-// refreshes — it only reads tokens that Claude Code has written to disk.
+// defaultExpiryThreshold is the default time before expiry at which a
+// background refresh is triggered.
+const defaultExpiryThreshold = 5 * time.Minute
+
+// CCTokenSource reads a credentials file (typically ~/.claude/.credentials.json)
+// and provides the current access token via Token(). It reads from disk on each
+// Token() call — no background polling. When tokens are near expiry, it triggers
+// a refresh callback.
 type CCTokenSource struct {
-	mu           sync.RWMutex
-	path         string
-	token        string
-	expiresAt    time.Time
-	lastRead     time.Time
-	pollInterval time.Duration
-	onExpired    func()
-	expiredFired bool
-	stop         context.CancelFunc
+	mu              sync.Mutex
+	path            string
+	token           string    // last successfully read token
+	expiresAt       time.Time // expiry of last read token
+	refreshing      bool      // prevents concurrent refresh triggers
+	expiryThreshold time.Duration
+	refreshFunc     func() // called to trigger token refresh (e.g. run claude)
 }
 
 // NewCCTokenSource creates a token source that reads CC credentials from path.
 // Returns an error if the file cannot be read or parsed on first attempt.
-func NewCCTokenSource(path string, pollInterval time.Duration) (*CCTokenSource, error) {
+func NewCCTokenSource(path string) (*CCTokenSource, error) {
 	path = expandHome(path)
 
 	creds, err := readCCCredentials(path)
@@ -37,133 +40,98 @@ func NewCCTokenSource(path string, pollInterval time.Duration) (*CCTokenSource, 
 		return nil, fmt.Errorf("CC credentials: %w", err)
 	}
 
-	src := &CCTokenSource{
-		path:         path,
-		token:        creds.AccessToken,
-		expiresAt:    time.UnixMilli(creds.ExpiresAt),
-		lastRead:     time.Now(),
-		pollInterval: pollInterval,
-	}
-	return src, nil
+	return &CCTokenSource{
+		path:            path,
+		token:           creds.AccessToken,
+		expiresAt:       time.UnixMilli(creds.ExpiresAt),
+		expiryThreshold: defaultExpiryThreshold,
+	}, nil
 }
 
-// OnExpired sets a callback that fires once when token expiry is detected.
-// The callback resets when fresh tokens are subsequently read from disk.
-func (s *CCTokenSource) OnExpired(fn func()) {
+// SetRefreshFunc sets the function called to trigger a token refresh (e.g.
+// running claude to force an OAuth refresh). The function is called in a
+// new goroutine.
+func (s *CCTokenSource) SetRefreshFunc(fn func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.onExpired = fn
+	s.refreshFunc = fn
 }
 
-// Token returns the current access token. It re-reads the file if the poll
-// interval has elapsed. Never returns an error for expired tokens — returns
-// the last known (possibly stale) token instead.
+// SetExpiryThreshold sets how far before expiry to trigger a proactive refresh.
+func (s *CCTokenSource) SetExpiryThreshold(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expiryThreshold = d
+}
+
+// Token reads credentials from disk and returns the access token.
+// If the file cannot be read, returns the last known token (resilient to
+// temporary file rewrites). If the token is expired, triggers a background
+// refresh and returns an error.
 func (s *CCTokenSource) Token() (string, error) {
-	s.mu.RLock()
-	token := s.token
-	elapsed := time.Since(s.lastRead)
-	interval := s.pollInterval
-	s.mu.RUnlock()
-
-	if elapsed < interval {
-		if token == "" {
-			return "", fmt.Errorf("no CC token available")
-		}
-		return token, nil
-	}
-
-	// Poll interval elapsed — re-read file.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Double-check under write lock (another goroutine may have refreshed).
-	if time.Since(s.lastRead) < s.pollInterval {
+	creds, err := readCCCredentials(s.path)
+	if err != nil {
+		log.Warnf("cctoken", "read %s: %v (using last known token)", s.path, err)
 		if s.token == "" {
-			return "", fmt.Errorf("no CC token available")
+			return "", fmt.Errorf("no CC token available: %w", err)
+		}
+		// Check if the cached token is expired.
+		if time.Now().After(s.expiresAt) {
+			s.triggerRefresh()
+			return "", fmt.Errorf("CC token expired at %s, refresh triggered",
+				s.expiresAt.Format(time.RFC3339))
 		}
 		return s.token, nil
 	}
 
-	s.reload()
-
-	if s.token == "" {
-		return "", fmt.Errorf("no CC token available")
+	// Update cached state.
+	if creds.AccessToken != s.token {
+		log.Infof("cctoken", "token updated from %s (expires %s)",
+			s.path, time.UnixMilli(creds.ExpiresAt).Format(time.RFC3339))
+		// Fresh token arrived — allow future refresh triggers.
+		s.refreshing = false
 	}
+	s.token = creds.AccessToken
+	s.expiresAt = time.UnixMilli(creds.ExpiresAt)
+
+	if time.Now().After(s.expiresAt) {
+		s.triggerRefresh()
+		return "", fmt.Errorf("CC token expired at %s, refresh triggered",
+			s.expiresAt.Format(time.RFC3339))
+	}
+
 	return s.token, nil
 }
 
-// Start begins background polling. The token source also polls lazily on
-// Token() calls, but Start ensures timely expiry detection even when Token()
-// isn't called frequently.
-func (s *CCTokenSource) Start(ctx context.Context) {
-	ctx, s.stop = context.WithCancel(ctx)
-	go s.pollLoop(ctx)
-}
+// CheckRefresh checks whether the token is near expiry and triggers a
+// background refresh if so. Should be called after a successful API call
+// to proactively refresh before the next cache miss.
+func (s *CCTokenSource) CheckRefresh() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-// Stop cancels background polling.
-func (s *CCTokenSource) Stop() {
-	if s.stop != nil {
-		s.stop()
-	}
-}
-
-// pollLoop runs in the background, re-reading credentials on each tick.
-func (s *CCTokenSource) pollLoop(ctx context.Context) {
-	ticker := time.NewTicker(s.pollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.mu.Lock()
-			s.reload()
-			s.mu.Unlock()
-		}
-	}
-}
-
-// reload re-reads credentials from disk. Caller must hold s.mu write lock.
-func (s *CCTokenSource) reload() {
-	s.lastRead = time.Now()
-
-	creds, err := readCCCredentials(s.path)
-	if err != nil {
-		log.Warnf("cctoken", "re-read %s: %v (using last known token)", s.path, err)
-		s.checkExpiry()
+	if s.expiresAt.IsZero() {
 		return
 	}
-
-	// Token changed — update cache.
-	if creds.AccessToken != s.token {
-		s.token = creds.AccessToken
-		s.expiresAt = time.UnixMilli(creds.ExpiresAt)
-		// Fresh token detected — reset expiredFired so callback can fire again.
-		if time.Now().Before(s.expiresAt) {
-			s.expiredFired = false
-		}
-		log.Infof("cctoken", "token updated from %s (expires %s)",
-			s.path, s.expiresAt.Format(time.RFC3339))
-	} else {
-		// Same token, but expiry may have changed (unlikely but possible).
-		s.expiresAt = time.UnixMilli(creds.ExpiresAt)
+	if time.Until(s.expiresAt) < s.expiryThreshold {
+		log.Infof("cctoken", "token expires in %s (threshold %s), triggering proactive refresh",
+			time.Until(s.expiresAt).Round(time.Second), s.expiryThreshold)
+		s.triggerRefresh()
 	}
-
-	s.checkExpiry()
 }
 
-// checkExpiry fires the onExpired callback once if the token has expired.
-// Caller must hold s.mu write lock.
-func (s *CCTokenSource) checkExpiry() {
-	if s.expiredFired || s.onExpired == nil {
+// triggerRefresh starts a background refresh if one isn't already in flight.
+// Caller must hold s.mu.
+func (s *CCTokenSource) triggerRefresh() {
+	if s.refreshing || s.refreshFunc == nil {
 		return
 	}
-	if time.Now().After(s.expiresAt) {
-		s.expiredFired = true
-		fn := s.onExpired
-		// Fire callback outside the lock to avoid deadlocks.
-		go fn()
-	}
+	s.refreshing = true
+	fn := s.refreshFunc
+	go fn()
 }
 
 // readCCCredentials reads and parses a CC credentials file.

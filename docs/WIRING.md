@@ -513,10 +513,10 @@ Three clients (two token types — see [docs/AUTH.md](AUTH.md)):
    - Returns utilization for 5-hour window, 7-day limits, extra usage billing
 
 3. **CCTokenSource** (`cctoken.go`) — Claude Code credential reader
-   - Polls `~/.claude/.credentials.json` on a configurable interval (default 30s)
-   - Started lazily on first use via `sync.Once` (not at boot)
+   - Reads `~/.claude/.credentials.json` lazily on each `Token()` call (no polling)
    - Never refreshes tokens itself — only reads what Claude Code writes
-   - Fires `OnExpired` callback once when token expiry detected; resets on fresh token
+   - If token is expired on read, triggers background refresh (runs `claude`) and returns error
+   - `CheckRefresh()` called by UsageClient after successful API fetch — triggers proactive refresh when token is within `cc_expiry_threshold` (default 5m) of expiry
    - Provides `Token()` func used by both Client and UsageClient via tokenFunc
 
 ## Gemini API Client (`gemini/`)
