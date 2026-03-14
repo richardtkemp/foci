@@ -389,3 +389,77 @@ func TestRepairDuplicateToolIDs_EmptyMessages(t *testing.T) {
 		t.Error("expected nil for nil input")
 	}
 }
+
+func TestStripUnmatchedToolUse_MidBatch(t *testing.T) {
+	// Proves that when only some tool_use blocks have matching tool_results,
+	// the unmatched ones are stripped while thinking and text blocks are kept.
+	content := []provider.ContentBlock{
+		{Type: "thinking", Thinking: "let me run both tools"},
+		{Type: "tool_use", ID: "tu_1", Name: "read", Input: json.RawMessage(`{}`)},
+		{Type: "tool_use", ID: "tu_2", Name: "write", Input: json.RawMessage(`{}`)},
+	}
+	results := []provider.ContentBlock{
+		provider.ToolResultBlock("tu_1", "ok", false),
+		// tu_2 has no result — it was skipped by steer
+	}
+
+	filtered, stripped := stripUnmatchedToolUse(content, results)
+	if !stripped {
+		t.Fatal("expected stripped=true")
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("got %d blocks, want 2 (thinking + tu_1)", len(filtered))
+	}
+	if filtered[0].Type != "thinking" {
+		t.Errorf("filtered[0].Type = %q, want thinking", filtered[0].Type)
+	}
+	if filtered[1].Type != "tool_use" || filtered[1].ID != "tu_1" {
+		t.Errorf("filtered[1]: type=%q id=%q, want tool_use tu_1", filtered[1].Type, filtered[1].ID)
+	}
+}
+
+func TestStripUnmatchedToolUse_AllStripped(t *testing.T) {
+	// Proves that when no tool_use blocks have matching results (steer before
+	// first tool), all are stripped and an "(interrupted)" placeholder is inserted.
+	content := []provider.ContentBlock{
+		{Type: "tool_use", ID: "tu_1", Name: "read", Input: json.RawMessage(`{}`)},
+		{Type: "tool_use", ID: "tu_2", Name: "write", Input: json.RawMessage(`{}`)},
+	}
+	// No tool_results at all — only a steer text block
+	results := []provider.ContentBlock{
+		{Type: "text", Text: "[user] abort"},
+	}
+
+	filtered, stripped := stripUnmatchedToolUse(content, results)
+	if !stripped {
+		t.Fatal("expected stripped=true")
+	}
+	if len(filtered) != 1 {
+		t.Fatalf("got %d blocks, want 1 (placeholder)", len(filtered))
+	}
+	if filtered[0].Type != "text" || filtered[0].Text != "(interrupted)" {
+		t.Errorf("placeholder: type=%q text=%q", filtered[0].Type, filtered[0].Text)
+	}
+}
+
+func TestStripUnmatchedToolUse_NoneStripped(t *testing.T) {
+	// Proves that when all tool_use blocks have matching results, the content
+	// is returned unchanged with stripped=false.
+	content := []provider.ContentBlock{
+		{Type: "text", Text: "I'll use two tools"},
+		{Type: "tool_use", ID: "tu_1", Name: "read", Input: json.RawMessage(`{}`)},
+		{Type: "tool_use", ID: "tu_2", Name: "write", Input: json.RawMessage(`{}`)},
+	}
+	results := []provider.ContentBlock{
+		provider.ToolResultBlock("tu_1", "ok", false),
+		provider.ToolResultBlock("tu_2", "done", false),
+	}
+
+	filtered, stripped := stripUnmatchedToolUse(content, results)
+	if stripped {
+		t.Fatal("expected stripped=false when all matched")
+	}
+	if len(filtered) != 3 {
+		t.Fatalf("got %d blocks, want 3 (original)", len(filtered))
+	}
+}
