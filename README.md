@@ -108,6 +108,8 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for a full list of suggested sy
 git clone https://github.com/richardtkemp/foci.git && cd foci && sudo ./setup.sh -u foci
 ```
 
+<img src="assets/qr-repo.png" width="128" alt="QR code linking to the foci repository" />
+
 See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next steps.
 
 ## Documentation
