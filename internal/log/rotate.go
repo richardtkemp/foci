@@ -179,6 +179,9 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	// with the source unchanged on failure, causing repeated re-archival of
 	// the same lines.
 	_ = tmpFile.Close()
+	// os.CreateTemp creates files with 0600; match the 0644 used in log.go Init
+	// so group/world read access isn't lost on rotation.
+	_ = os.Chmod(tmpPath, 0640) // #nosec G302 - log file, group-readable for debugging
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp to %s: %w", path, err)
 	}

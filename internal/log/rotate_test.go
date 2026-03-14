@@ -293,6 +293,39 @@ func TestRotateFileEventLog(t *testing.T) {
 	}
 }
 
+func TestRotateFile_PreservesPermissions(t *testing.T) {
+	// Verifies that after rotation the active log file has 0640 permissions,
+	// not 0600 (the default from os.CreateTemp). This ensures group-read
+	// access survives rotation.
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "foci.log")
+
+	now := time.Now().UTC()
+	old := now.Add(-72 * time.Hour).Format(time.RFC3339)
+	recent := now.Add(-1 * time.Hour).Format(time.RFC3339)
+
+	lines := []string{
+		old + " INFO  [main] old message",
+		recent + " WARN  [main] new message",
+	}
+	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0640)
+
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat after rotation: %v", err)
+	}
+	perm := info.Mode().Perm()
+	if perm != 0640 {
+		t.Errorf("permissions after rotation = %o, want 0640", perm)
+	}
+}
+
 func TestStartRotationStop(t *testing.T) {
 	// Verifies that StartRotation launches a background goroutine
 	// that can be cleanly stopped via the returned stop function within a reasonable timeout.
