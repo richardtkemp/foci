@@ -57,9 +57,12 @@ while [[ $# -gt 0 ]]; do
             echo "interactively unless env vars are set for non-interactive mode:"
             echo "  FOCI_TELEGRAM_TOKEN   Telegram bot token"
             echo "  FOCI_TELEGRAM_USER    Telegram user ID for allowed_users"
-            echo "  FOCI_AUTH_METHOD      Auth method: oauth, apikey, skip"
-            echo "  FOCI_AUTH_TOKEN       API key (for apikey auth method)"
+            echo "  FOCI_AUTH_METHOD      Auth method: setup-token, apikey, skip"
+            echo "  FOCI_AUTH_TOKEN       Auth credential (setup token or API key)"
             echo "  FOCI_AGENT_ID         Agent ID (default: main)"
+            echo "  FOCI_CHAR_MODE        Character mode: defaults, openclaw, import, blank"
+            echo "  FOCI_CHAR_IMPORT_DIR  Directory to import character .md files from"
+            echo "  FOCI_MEMORY_IMPORT_DIR  Directory to import memory .md files from"
             echo ""
             echo "If env vars are not set, setup prompts interactively (requires TTY)."
             exit 0
@@ -314,6 +317,9 @@ TELEGRAM_USER="${FOCI_TELEGRAM_USER:-}"
 AUTH_METHOD="${FOCI_AUTH_METHOD:-}"
 AUTH_TOKEN="${FOCI_AUTH_TOKEN:-}"
 AGENT_ID="${FOCI_AGENT_ID:-}"
+CHAR_MODE="${FOCI_CHAR_MODE:-}"
+CHAR_IMPORT_DIR="${FOCI_CHAR_IMPORT_DIR:-}"
+MEMORY_IMPORT_DIR="${FOCI_MEMORY_IMPORT_DIR:-}"
 
 if [[ -n "$TELEGRAM_TOKEN" && -n "$TELEGRAM_USER" ]]; then
     SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --non-interactive"
@@ -322,6 +328,9 @@ if [[ -n "$TELEGRAM_TOKEN" && -n "$TELEGRAM_USER" ]]; then
     [[ -n "$AUTH_METHOD" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --auth-method \"$AUTH_METHOD\""
     [[ -n "$AUTH_TOKEN" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --auth-token \"$AUTH_TOKEN\""
     [[ -n "$AGENT_ID" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --agent-id \"$AGENT_ID\""
+    [[ -n "$CHAR_MODE" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --char-mode \"$CHAR_MODE\""
+    [[ -n "$CHAR_IMPORT_DIR" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --char-import-dir \"$CHAR_IMPORT_DIR\""
+    [[ -n "$MEMORY_IMPORT_DIR" ]] && SETUP_WIZARD_ARGS="$SETUP_WIZARD_ARGS --memory-import-dir \"$MEMORY_IMPORT_DIR\""
     WIZARD_MODE="non-interactive"
 elif [[ -t 0 ]]; then
     WIZARD_MODE="interactive"
@@ -333,11 +342,14 @@ fi
 if ! $HAS_CONFIG && [[ "$WIZARD_MODE" == "no-tty" ]]; then
     error "No config found and stdin is not a terminal."
     error "Set credentials via environment variables and re-run:"
-    error "  FOCI_TELEGRAM_TOKEN   — Telegram bot token (required)"
-    error "  FOCI_TELEGRAM_USER    — Telegram user ID (required)"
-    error "  FOCI_AUTH_METHOD      — Auth method: oauth, apikey, skip (default: skip)"
-    error "  FOCI_AUTH_TOKEN       — API key (required if auth method is apikey)"
-    error "  FOCI_AGENT_ID         — Agent ID (default: main)"
+    error "  FOCI_TELEGRAM_TOKEN      — Telegram bot token (required)"
+    error "  FOCI_TELEGRAM_USER       — Telegram user ID (required)"
+    error "  FOCI_AUTH_METHOD         — Auth method: setup-token, apikey, skip (default: skip)"
+    error "  FOCI_AUTH_TOKEN          — Auth credential (required if auth method is setup-token or apikey)"
+    error "  FOCI_AGENT_ID            — Agent ID (default: main)"
+    error "  FOCI_CHAR_MODE           — Character mode: defaults, openclaw, import, blank (default: defaults)"
+    error "  FOCI_CHAR_IMPORT_DIR     — Directory to import character .md files from"
+    error "  FOCI_MEMORY_IMPORT_DIR   — Directory to import memory .md files from"
     exit 1
 fi
 

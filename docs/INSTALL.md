@@ -88,8 +88,11 @@ Available env vars:
 | `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `FOCI_TELEGRAM_USER` | Yes | Your Telegram user ID |
 | `FOCI_AUTH_METHOD` | No | `setup-token`, `apikey`, or `skip` (default: `skip`) |
-| `FOCI_AUTH_TOKEN` | If apikey | Anthropic API key |
+| `FOCI_AUTH_TOKEN` | If auth | Setup token or API key (per `FOCI_AUTH_METHOD`) |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
+| `FOCI_CHAR_MODE` | No | Character mode: `defaults`, `openclaw`, `import`, `blank` (default: `defaults`) |
+| `FOCI_CHAR_IMPORT_DIR` | If import | Directory to import character `.md` files from |
+| `FOCI_MEMORY_IMPORT_DIR` | No | Directory to import memory `.md` files from |
 
 ### Dry run
 

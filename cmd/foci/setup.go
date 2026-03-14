@@ -26,6 +26,8 @@ type setupFlags struct {
 	model           string // model alias or full ID
 	authMethod      string // "setup-token", "apikey", "skip"
 	authToken       string // setup token or API key (interpretation depends on authMethod)
+	charMode        string // "defaults", "openclaw", "import", "blank"
+	charImportDir   string // source directory when charMode=="import"
 	memoryImportDir string // directory to import memory .md files from
 	// Provider-contributed flags are stored here by name.
 	providerFlags map[string]string
@@ -57,6 +59,8 @@ Flags:
   --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
   --auth-method <method> Auth method: setup-token, apikey, skip (default: interactive prompt)
   --auth-token <token>   Auth credential (setup token or API key, per --auth-method)
+  --char-mode <mode>     Character mode: defaults, openclaw, import, blank (default: defaults)
+  --char-import-dir <path>  Directory to import character .md files from (requires --char-mode import)
   --memory-import-dir <path>  Directory to import memory .md files from
 `)
 	// Print provider-contributed flags
@@ -140,6 +144,16 @@ func parseSetupFlags(args []string) setupFlags {
 				f.authToken = args[i+1]
 				i++
 			}
+		case "--char-mode":
+			if i+1 < len(args) {
+				f.charMode = args[i+1]
+				i++
+			}
+		case "--char-import-dir":
+			if i+1 < len(args) {
+				f.charImportDir = args[i+1]
+				i++
+			}
 		case "--memory-import-dir":
 			if i+1 < len(args) {
 				f.memoryImportDir = args[i+1]
@@ -175,6 +189,9 @@ func parseSetupFlags(args []string) setupFlags {
 		} else {
 			f.homeDir = "."
 		}
+	}
+	if f.charMode == "" {
+		f.charMode = "defaults"
 	}
 	if f.agentID == "" {
 		f.agentID = "main"
@@ -253,6 +270,11 @@ func runSetupNonInteractive(f setupFlags) error {
 		}
 	}
 
+	// Validate char-import-dir requirement
+	if f.charMode == "import" && f.charImportDir == "" {
+		return fmt.Errorf("--char-import-dir is required when --char-mode is import")
+	}
+
 	// Provision the agent workspace
 	defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
 	spec := provision.AgentSpec{
@@ -261,12 +283,20 @@ func runSetupNonInteractive(f setupFlags) error {
 		DisplayName: displayName,
 		HomeDir:     f.homeDir,
 		DefaultsDir: defaultsDir,
-		CharMode:    "defaults",
+		CharMode:    f.charMode,
 	}
 
 	result, err := provision.Provision(spec)
 	if err != nil {
 		return fmt.Errorf("provision agent: %w", err)
+	}
+
+	// Copy character files if --char-mode import
+	if f.charMode == "import" {
+		charDir := filepath.Join(result.Workspace, "character")
+		if err := copyMDFiles(f.charImportDir, charDir); err != nil {
+			return fmt.Errorf("import character files: %w", err)
+		}
 	}
 
 	// Copy memory files if --memory-import-dir was specified
