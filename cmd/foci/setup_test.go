@@ -24,6 +24,8 @@ func TestParseSetupFlags(t *testing.T) {
 		"--model", "opus",
 		"--auth-method", "setup-token",
 		"--auth-token", "stp_test123",
+		"--char-mode", "import",
+		"--char-import-dir", "/home/foci/old-agent/character",
 		"--memory-import-dir", "/home/foci/old-agent/memory",
 	}
 
@@ -56,6 +58,12 @@ func TestParseSetupFlags(t *testing.T) {
 	if f.authToken != "stp_test123" {
 		t.Errorf("authToken = %q, want stp_test123", f.authToken)
 	}
+	if f.charMode != "import" {
+		t.Errorf("charMode = %q, want import", f.charMode)
+	}
+	if f.charImportDir != "/home/foci/old-agent/character" {
+		t.Errorf("charImportDir = %q, want /home/foci/old-agent/character", f.charImportDir)
+	}
 	if f.memoryImportDir != "/home/foci/old-agent/memory" {
 		t.Errorf("memoryImportDir = %q, want /home/foci/old-agent/memory", f.memoryImportDir)
 	}
@@ -78,6 +86,9 @@ func TestParseSetupFlagsDefaults(t *testing.T) {
 	}
 	if f.nonInteractive {
 		t.Error("default nonInteractive should be false")
+	}
+	if f.charMode != "defaults" {
+		t.Errorf("default charMode = %q, want defaults", f.charMode)
 	}
 }
 
