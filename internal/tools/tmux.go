@@ -66,6 +66,7 @@ type tmuxInstance struct {
 	lastAccess        map[string]time.Time // tmux session name → last interaction time
 	sessionTTL        time.Duration        // auto-kill idle tmux sessions (0 = disabled)
 	reaperCancel      context.CancelFunc   // cancels the TTL reaper goroutine
+	socketPath        string               // tmux socket path (empty = default)
 }
 
 // NewTmuxTool creates a tmux tool. cols and rows set the default window size
@@ -96,6 +97,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		lastSend:          make(map[string]time.Time),
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        sessionTTL,
+		socketPath:        tmuxSocketPath,
 	}
 
 	// Restore owned sessions from persistent state
@@ -117,7 +119,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 			var restored int
 			for _, pw := range watches {
 				// Verify the tmux session still exists
-				_, err := runTmux(context.Background(), "has-session", "-t", pw.Session)
+				_, err := inst.runTmux(context.Background(), "has-session", "-t", pw.Session)
 				if err != nil {
 					continue // stale — session no longer exists
 				}
@@ -126,7 +128,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 
 				// Capture initial content hash to avoid false activity reset on first poll.
 				var initialHash [md5.Size]byte
-				if initOut, initErr := runTmux(context.Background(), "capture-pane", "-t",
+				if initOut, initErr := inst.runTmux(context.Background(), "capture-pane", "-t",
 					fmt.Sprintf("%s:%d", pw.Session, pw.Window), "-p"); initErr == nil {
 					initialHash = md5.Sum([]byte(normalizePaneContent(initOut))) // #nosec G401
 				}
@@ -375,14 +377,13 @@ func (inst *tmuxInstance) cancelWatchesForSession(name string) {
 	}
 }
 
-func runTmux(ctx context.Context, args ...string) (string, error) {
-	// Use a fresh background context (not agent turn context) so tmux sessions persist.
-	// Only apply a timeout for the command execution itself.
+// runTmuxWithSocket executes a tmux command using the given socket path.
+func runTmuxWithSocket(ctx context.Context, socket string, args ...string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if tmuxSocketPath != "" {
-		args = append([]string{"-S", tmuxSocketPath}, args...)
+	if socket != "" {
+		args = append([]string{"-S", socket}, args...)
 	}
 	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
 	// Setsid puts the tmux process in its own session so it (and the tmux
@@ -391,4 +392,15 @@ func runTmux(ctx context.Context, args ...string) (string, error) {
 	cmd.SysProcAttr = ChildSysProcAttrSetsid()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// runTmux executes a tmux command using the global socket path.
+// Used by free functions (memory monitor) and test helpers.
+func runTmux(ctx context.Context, args ...string) (string, error) {
+	return runTmuxWithSocket(ctx, tmuxSocketPath, args...)
+}
+
+// runTmux executes a tmux command using the instance's socket path.
+func (inst *tmuxInstance) runTmux(ctx context.Context, args ...string) (string, error) {
+	return runTmuxWithSocket(ctx, inst.socketPath, args...)
 }

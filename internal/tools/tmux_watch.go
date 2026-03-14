@@ -33,7 +33,7 @@ func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresh
 	// Capture initial pane content so the first poll doesn't reset the
 	// activity timer by seeing a "changed" hash (zero-value → real hash).
 	var initialHash [md5.Size]byte
-	if out, err := runTmux(context.Background(), "capture-pane", "-t",
+	if out, err := inst.runTmux(context.Background(), "capture-pane", "-t",
 		fmt.Sprintf("%s:%d", name, window), "-p"); err == nil {
 		initialHash = md5.Sum([]byte(normalizePaneContent(out))) // #nosec G401
 	}
@@ -130,7 +130,7 @@ func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 		select {
 		case <-ticker.C:
 			// Read pane content
-			out, err := runTmux(context.Background(), "capture-pane", "-t",
+			out, err := inst.runTmux(context.Background(), "capture-pane", "-t",
 				fmt.Sprintf("%s:%d", ws.session, ws.window), "-p")
 			if err != nil {
 				// Session exited — clean up the watch (debug log is sufficient)

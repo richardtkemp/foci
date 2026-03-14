@@ -35,7 +35,7 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Get the pane PID before killing
-	pids := tmuxSessionPIDs(name)
+	pids := testTmuxInstance().tmuxSessionPIDs(name)
 	if len(pids) == 0 {
 		t.Fatal("no pane PIDs found before kill")
 	}
@@ -159,7 +159,7 @@ func TestMaybeKillTmuxServer_WithSessions(t *testing.T) {
 	}
 
 	// maybeKillTmuxServer should NOT kill because sessions exist.
-	if maybeKillTmuxServer(context.Background()) {
+	if testTmuxInstance().maybeKillTmuxServer(context.Background()) {
 		t.Error("maybeKillTmuxServer killed server while sessions exist")
 	}
 
@@ -191,7 +191,7 @@ func TestMaybeKillTmuxServer_NoSessions(t *testing.T) {
 
 	// Server may have exited already (exit-empty on), or it may linger.
 	// maybeKillTmuxServer should handle both cases gracefully.
-	maybeKillTmuxServer(context.Background())
+	testTmuxInstance().maybeKillTmuxServer(context.Background())
 
 	// After this, the server should not be running. Verify by listing.
 	out, err := runTmux(context.Background(), "list-sessions", "-F", "#{session_name}")
@@ -263,7 +263,7 @@ func TestTmuxSessionPIDs(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	pids := tmuxSessionPIDs(name)
+	pids := testTmuxInstance().tmuxSessionPIDs(name)
 	if len(pids) == 0 {
 		t.Error("expected at least 1 pane PID")
 	}

@@ -40,14 +40,14 @@ func (inst *tmuxInstance) start(ctx context.Context, name, command, workdir, key
 		args = append(args, finalCommand)
 	}
 
-	out, err := runTmux(ctx, args...)
+	out, err := inst.runTmux(ctx, args...)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("tmux new-session: %s %w", strings.TrimSpace(out), err)
 	}
 
 	// Resize window so output isn't truncated to a small default terminal size.
 	if inst.cols > 0 && inst.rows > 0 {
-		out, err = runTmux(ctx, "resize-window", "-t", name, "-x", fmt.Sprintf("%d", inst.cols), "-y", fmt.Sprintf("%d", inst.rows))
+		out, err = inst.runTmux(ctx, "resize-window", "-t", name, "-x", fmt.Sprintf("%d", inst.cols), "-y", fmt.Sprintf("%d", inst.rows))
 		if err != nil {
 			log.Warnf("tmux", "resize-window: session=%s %s %v", sessionKey, strings.TrimSpace(out), err)
 		}
@@ -113,7 +113,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 	var err error
 	if keys != "" {
 		LogSendSendKeys(len(keys))
-		out, err = runTmux(ctx, "send-keys", "-t", name, "-l", keys)
+		out, err = inst.runTmux(ctx, "send-keys", "-t", name, "-l", keys)
 		if err != nil {
 			LogSendExit(false, err.Error())
 			return ToolResult{}, fmt.Errorf("tmux send-keys: %s %w", strings.TrimSpace(out), err)
@@ -124,7 +124,7 @@ func (inst *tmuxInstance) send(ctx context.Context, name, keys string, enter boo
 		// the pasted input before receiving Enter (#26b).
 		time.Sleep(200 * time.Millisecond)
 		LogSendSendEnter()
-		out, err = runTmux(ctx, "send-keys", "-t", name, "Enter")
+		out, err = inst.runTmux(ctx, "send-keys", "-t", name, "Enter")
 		if err != nil {
 			LogSendExit(false, err.Error())
 			return ToolResult{}, fmt.Errorf("tmux send-keys Enter: %s %w", strings.TrimSpace(out), err)
@@ -216,7 +216,7 @@ func (inst *tmuxInstance) verifyKeysInPane(ctx context.Context, name, keys strin
 		select {
 		case <-ticker.C:
 			// Capture pane content
-			out, err := runTmux(ctx, "capture-pane", "-t", name, "-p")
+			out, err := inst.runTmux(ctx, "capture-pane", "-t", name, "-p")
 			if err != nil {
 				log.Debugf("tmux", "verifyKeysInPane: capture failed: %v", err)
 				return false
@@ -252,7 +252,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 
 	log.Debugf("tmux", "read: session=%s name=%s lines=%d raw=%v", sessionKey, name, lines, raw)
 
-	out, err := runTmux(ctx, "capture-pane", "-t", name, "-p", fmt.Sprintf("-S-%d", lines))
+	out, err := inst.runTmux(ctx, "capture-pane", "-t", name, "-p", fmt.Sprintf("-S-%d", lines))
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("tmux capture-pane: %s %w", strings.TrimSpace(out), err)
 	}
@@ -276,7 +276,7 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 }
 
 func (inst *tmuxInstance) list(ctx context.Context) (ToolResult, error) {
-	out, err := runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
+	out, err := inst.runTmux(ctx, "list-sessions", "-F", "#{session_name}|#{session_windows}|#{session_created}")
 	if err != nil {
 		if strings.Contains(out, "no server running") || strings.Contains(out, "no current") || strings.Contains(out, "No such file or directory") {
 			inst.clearStaleOwned()
@@ -383,14 +383,14 @@ func (inst *tmuxInstance) kill(ctx context.Context, name string) (ToolResult, er
 	inst.cancelWatchesForSession(name)
 
 	// Kill the tmux session and clean up child processes that survived SIGHUP
-	killed, err := killSessionWithChildren(ctx, name)
+	killed, err := inst.killSessionWithChildren(ctx, name)
 	if err != nil {
 		return ToolResult{}, err
 	}
 
 	// If no sessions remain, kill the server to avoid an orphaned tmux
 	// server process. This is safe: we only kill when the server is empty.
-	serverKilled := maybeKillTmuxServer(ctx)
+	serverKilled := inst.maybeKillTmuxServer(ctx)
 
 	inst.mu.Lock()
 	delete(inst.owned, name)

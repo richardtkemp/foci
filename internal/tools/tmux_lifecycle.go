@@ -79,7 +79,7 @@ func (inst *tmuxInstance) reapExpiredSessions() {
 	for _, name := range expired {
 		inst.cancelWatchesForSession(name)
 
-		killed, err := killSessionWithChildren(context.Background(), name)
+		killed, err := inst.killSessionWithChildren(context.Background(), name)
 		if err != nil {
 			log.Debugf("tmux", "ttl reaper: %s: %v", name, err)
 			continue
@@ -96,5 +96,5 @@ func (inst *tmuxInstance) reapExpiredSessions() {
 	}
 	inst.sendMu.Unlock()
 
-	maybeKillTmuxServer(context.Background())
+	inst.maybeKillTmuxServer(context.Background())
 }
