@@ -70,7 +70,9 @@ func execPreamble() string {
 // are available as shell functions inside exec commands.
 // spillThreshold is the byte count kept in memory before overflowing to disk
 // (0 = use default 15000). spillTempDir is the directory for overflow files.
-func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry, spillThreshold int, spillTempDir string) *Tool {
+// extraEnv is a list of additional KEY=VALUE environment variables injected
+// into every child process (e.g. FOCI_ADDR, FOCI_API_KEY).
+func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry, spillThreshold int, spillTempDir string, extraEnv []string) *Tool {
 	st := int64(spillThreshold)
 	if st <= 0 {
 		st = defaultSpillThreshold
@@ -102,12 +104,12 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 			"required": ["command"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry, st, spillTempDir)
+			return execCommand(ctx, params, store, bwStore, autoBackgroundSecs, notifier, workDir, registry, st, spillTempDir, extraEnv)
 		},
 	}
 }
 
-func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry, spillThreshold int64, spillTempDir string) (ToolResult, error) {
+func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundSecs int, notifier *AsyncNotifier, workDir string, registry *Registry, spillThreshold int64, spillTempDir string, extraEnv []string) (ToolResult, error) {
 	var p struct {
 		Command    string `json:"command"`
 		Timeout    int    `json:"timeout"`
@@ -156,21 +158,21 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 
 	// For explicit background mode, use the original direct approach (no bridge)
 	if p.Background {
-		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil, p.OutputMode, spillThreshold, spillTempDir)
+		return execDirect(ctx, cmd, p.Command, timeout, true, store, bwStore, workDir, nil, p.OutputMode, spillThreshold, spillTempDir, extraEnv)
 	}
 
 	// Auto-background: if threshold is set and notifier is available,
 	// start the command and wait with a timer
 	if autoBackgroundSecs > 0 && notifier != nil {
 		sk := SessionKeyFromContext(ctx)
-		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry, p.OutputMode, spillThreshold, spillTempDir)
+		return execWithAutoBackground(ctx, cmd, p.Command, timeout, store, bwStore, autoBackgroundSecs, notifier, sk, workDir, registry, p.OutputMode, spillThreshold, spillTempDir, extraEnv)
 	}
 
-	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry, p.OutputMode, spillThreshold, spillTempDir)
+	return execDirect(ctx, cmd, p.Command, timeout, false, store, bwStore, workDir, registry, p.OutputMode, spillThreshold, spillTempDir, extraEnv)
 }
 
 // execDirect runs a command and waits for completion (original behavior).
-func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string, spillThreshold int64, spillTempDir string) (ToolResult, error) {
+func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Duration, background bool, store *secrets.Store, bwStore *bitwarden.Store, workDir string, registry *Registry, outputMode string, spillThreshold int64, spillTempDir string, extraEnv []string) (ToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -190,9 +192,12 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	proc := exec.CommandContext(ctx, execShell(), "-c", cmd)
 	proc.Dir = workDir
 
-	// Inject FOCI_SOCK for exec bridge
-	if bridge != nil {
-		proc.Env = append(os.Environ(), "FOCI_SOCK="+bridge.SockPath())
+	// Inject extra env vars (FOCI_ADDR, FOCI_API_KEY, etc.) and FOCI_SOCK
+	if len(extraEnv) > 0 || bridge != nil {
+		proc.Env = append(os.Environ(), extraEnv...)
+		if bridge != nil {
+			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
+		}
 	}
 
 	if background {
@@ -239,7 +244,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 
 // execWithAutoBackground starts a command and returns early if it exceeds the threshold.
 // The command continues running and results are delivered via notifier to the originating session.
-func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string, spillThreshold int64, spillTempDir string) (ToolResult, error) {
+func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout time.Duration, store *secrets.Store, bwStore *bitwarden.Store, thresholdSecs int, notifier *AsyncNotifier, sessionKey, workDir string, registry *Registry, outputMode string, spillThreshold int64, spillTempDir string, extraEnv []string) (ToolResult, error) {
 	// Use a separate context for tracking (not for killing the process)
 	cmdCtx, cmdCancel := context.WithTimeout(context.Background(), timeout)
 
@@ -262,9 +267,12 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	proc := exec.Command(execShell(), "-c", cmd)
 	proc.Dir = workDir
 
-	// Inject FOCI_SOCK for exec bridge
-	if bridge != nil {
-		proc.Env = append(os.Environ(), "FOCI_SOCK="+bridge.SockPath())
+	// Inject extra env vars (FOCI_ADDR, FOCI_API_KEY, etc.) and FOCI_SOCK
+	if len(extraEnv) > 0 || bridge != nil {
+		proc.Env = append(os.Environ(), extraEnv...)
+		if bridge != nil {
+			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
+		}
 	}
 	proc.SysProcAttr = ChildSysProcAttr()
 	// Don't set proc.Cancel — let the command run to completion

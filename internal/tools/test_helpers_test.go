@@ -8,9 +8,9 @@ import (
 )
 
 // newTestExecTool creates an ExecTool with all-zero/nil defaults.
-// Use this instead of NewExecTool(nil, nil, 0, nil, "", nil, 0, "").
+// Use this instead of NewExecTool(nil, nil, 0, nil, "", nil, 0, "", nil).
 func newTestExecTool() *Tool {
-	return NewExecTool(nil, nil, 0, nil, "", nil, 0, "")
+	return NewExecTool(nil, nil, 0, nil, "", nil, 0, "", nil)
 }
 
 // execCommand marshals a command string into exec params and executes it.

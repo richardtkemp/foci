@@ -66,6 +66,7 @@ type setupParams struct {
 	ttsMap              map[string]voice.TTS
 	sttMap              map[string]voice.STT
 	braveKey            string
+	httpAPIKey          string
 
 	startTime       time.Time
 	ctx             context.Context

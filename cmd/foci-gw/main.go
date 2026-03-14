@@ -258,6 +258,7 @@ Subcommands:
 			ttsMap:              ttsMap,
 			sttMap:              sttMap,
 			braveKey:            braveKey,
+			httpAPIKey:          sec.httpAPIKey,
 			startTime:           startTime,
 			ctx:                 ctx,
 			agentListFn:         agentListFn,

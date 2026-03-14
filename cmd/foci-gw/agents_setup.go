@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,22 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
 	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
 	spillThreshold := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
-	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir))
+
+	// Inject FOCI_ADDR and FOCI_API_KEY so agents can run foci CLI commands
+	// (send, branch, ping, etc.) without sourcing vars manually.
+	var execExtraEnv []string
+	if p.cfg.HTTP.Port > 0 {
+		bind := p.cfg.HTTP.Bind
+		if bind == "" || bind == "0.0.0.0" {
+			bind = "127.0.0.1"
+		}
+		execExtraEnv = append(execExtraEnv, fmt.Sprintf("FOCI_ADDR=%s:%d", bind, p.cfg.HTTP.Port))
+	}
+	if p.httpAPIKey != "" {
+		execExtraEnv = append(execExtraEnv, "FOCI_API_KEY="+p.httpAPIKey)
+	}
+
+	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir, execExtraEnv))
 
 	var result coreToolsResult
 
