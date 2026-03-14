@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"strings"
 	"time"
 
@@ -116,6 +117,13 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		mux.HandleFunc("/-/reload-credentials", handleReloadCredentials(d))
 		endpointList += ", /-/reload-credentials"
 	}
+
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	endpointList += ", /debug/pprof/*"
 
 	log.Infof("http", "registered endpoints: %s", endpointList)
 }
