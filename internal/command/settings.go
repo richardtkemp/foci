@@ -41,7 +41,7 @@ func ModelCommand() *Command {
 				cc.Agent.SetSessionModel(req.SessionKey, model, endpoint, format, nil)
 			}
 			display := model
-			if endpoint != "" {
+			if endpoint != "" && endpoint != resolved.Developer {
 				display = endpoint + ":" + model
 			}
 			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil
