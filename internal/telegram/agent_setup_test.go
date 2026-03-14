@@ -110,6 +110,42 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	}
 }
 
+// TestDisplayOverrideFn_UsesTurnSessionKey verifies that the display override
+// closure reads the turn-scoped session key rather than the bot's default
+// SessionKey(). This ensures multi-chat bots resolve overrides for the chat
+// that is actually being served, not the first chat that ever messaged.
+func TestDisplayOverrideFn_UsesTurnSessionKey(t *testing.T) {
+	bot := NewBotForTest()
+	bot.SetShowToolCalls("off") // bot default
+
+	// Simulate a display override function that returns "full" for sk-turn
+	// and nothing for any other key.
+	bot.SetDisplayOverrideFn(func() DisplayOverrides {
+		sk := bot.turnSessionKey
+		if sk == "sk-turn" {
+			return DisplayOverrides{ShowToolCalls: "full"}
+		}
+		return DisplayOverrides{}
+	})
+
+	// Without turnSessionKey set, should fall back to bot default.
+	if got := bot.effectiveShowToolCalls(); got != "off" {
+		t.Errorf("without turnSessionKey: got %q, want %q", got, "off")
+	}
+
+	// With turnSessionKey set, should resolve the override.
+	bot.turnSessionKey = "sk-turn"
+	if got := bot.effectiveShowToolCalls(); got != "full" {
+		t.Errorf("with turnSessionKey: got %q, want %q", got, "full")
+	}
+
+	// Clear it, should go back to default.
+	bot.turnSessionKey = ""
+	if got := bot.effectiveShowToolCalls(); got != "off" {
+		t.Errorf("after clearing turnSessionKey: got %q, want %q", got, "off")
+	}
+}
+
 func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	// Verifies that partial agent
 	// overrides work correctly with defaults filling the gaps.

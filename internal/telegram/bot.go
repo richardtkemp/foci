@@ -84,10 +84,11 @@ type Bot struct {
 	stopAliases       []string  // aliases for /stop command
 	enableStopAliases bool      // whether to use stop aliases (default true)
 
-	queue      chan queuedMessage // receiver → agent worker
-	turnCancel context.CancelFunc // cancel the current agent turn
-	turnMu     sync.Mutex         // protects turnCancel
-	chatID     int64              // last known chat ID (for notifications)
+	queue          chan queuedMessage // receiver → agent worker
+	turnCancel     context.CancelFunc // cancel the current agent turn
+	turnMu         sync.Mutex         // protects turnCancel
+	turnSessionKey string             // session key for the active turn; set/cleared by processAgentMessage
+	chatID         int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
 
 	chatSessionKeys map[int64]string      // cache of chat ID → session key (prevents regenerating keys on every message)
