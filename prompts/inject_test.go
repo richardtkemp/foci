@@ -51,8 +51,8 @@ func TestFormatInjectedMessageEmptyBody(t *testing.T) {
 	if !strings.Contains(result, "[SYSTEM RESTART @ 2026-03-01T12:00:00Z]") {
 		t.Errorf("missing header, got:\n%s", result)
 	}
-	// Should NOT have a blank line between header and context note
-	if strings.Contains(result, "Z]\n\n\n") {
+	// Should NOT have extra blank lines when body is empty
+	if strings.Contains(result, "\n\n\n") {
 		t.Error("empty body should not produce extra blank lines")
 	}
 	if !strings.Contains(result, "SYSTEM INJECTION") {
