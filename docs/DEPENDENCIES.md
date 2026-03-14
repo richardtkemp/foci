@@ -1,11 +1,12 @@
 # Suggested System Tools
 
-Tools that foci agents can use via the `exec` tool or that foci integrates with directly. None are strictly required — install what your agents need.
+Tools that foci agents can use via the `exec` tool or that foci integrates with directly. Systemd is required for secrets isolation; the rest are optional — install what your agents need.
 
 ## Core
 
 | Tool | Purpose | Install |
 |------|---------|---------|
+| **systemd** | Service management — required for secrets isolation (CAP_SETGID lets the gateway drop group privileges before spawning agents, keeping secrets.toml unreadable by agent subprocesses) | Pre-installed on most Linux distros |
 | **tmux** | Session management for coding agents | `apt install tmux` |
 | **jq** | JSON processing — essential for JSONL logs and API responses | `apt install jq` |
 | **trash-cli** | Safe file deletion (`trash` > `rm`) | `apt install trash-cli` |
