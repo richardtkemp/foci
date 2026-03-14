@@ -47,6 +47,10 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		return // no session assigned (idle secondary bot)
 	}
 
+	// Set the turn session key so display overrides resolve correctly.
+	b.turnSessionKey = sk
+	defer func() { b.turnSessionKey = "" }()
+
 	// Create a cancellable context for this turn
 	turnCtx, cancel := context.WithCancel(ctx)
 

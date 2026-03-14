@@ -158,7 +158,10 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	if p.DisplayOverrideFn != nil {
 		overrideFn := p.DisplayOverrideFn
 		primaryBot.SetDisplayOverrideFn(func() DisplayOverrides {
-			sk := primaryBot.SessionKey()
+			sk := primaryBot.turnSessionKey
+			if sk == "" {
+				sk = primaryBot.SessionKey()
+			}
 			ds := overrideFn(sk)
 			var dwi int
 			if ds.DisplayWidth != "" {
