@@ -15,43 +15,6 @@ type SetTarget struct {
 	Key     string // TOML key within the section
 }
 
-// GetValueFromFile reads a config value from a TOML file without modifying it.
-// Returns the raw TOML value string, or "" if the key is not set.
-func GetValueFromFile(path string, target SetTarget) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read config: %w", err)
-	}
-
-	lines := strings.Split(string(data), "\n")
-
-	if target.Section == "agents" {
-		start, end := findAgentBlock(lines, target.AgentID)
-		if start < 0 {
-			return "", nil
-		}
-		return findKeyValue(lines, start+1, end, target.Key), nil
-	}
-
-	start, end := findSectionBounds(lines, target.Section)
-	if start < 0 {
-		return "", nil
-	}
-	return findKeyValue(lines, start+1, end, target.Key), nil
-}
-
-// findKeyValue searches for an active (uncommented) key within lines[from:to]
-// and returns its TOML value string, or "" if not found.
-func findKeyValue(lines []string, from, to int, key string) string {
-	re := keyLineRe(key)
-	for i := from; i < to; i++ {
-		if re.MatchString(lines[i]) {
-			return extractValue(lines[i])
-		}
-	}
-	return ""
-}
-
 // SetInFile performs a surgical edit of a TOML config file, preserving
 // comments and formatting. It finds the target section, then either
 // updates an existing key or inserts a new one at the end of the section.

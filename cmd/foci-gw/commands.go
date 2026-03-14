@@ -79,8 +79,10 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		SectionsFn:      config.FieldSections,
 		FieldsInSection: config.FieldsInSection,
 		LookupFn:        config.LookupField,
-		SetInFileFn:     config.SetInFile,
-		GetValueFn:      config.GetValueFromFile,
+		SetInFileFn: config.SetInFile,
+		EffectiveValueFn: func(section, key string) string {
+			return config.LookupValue(p.cfg, p.acfg, section, key)
+		},
 	}
 
 	// Build AgentNewDeps

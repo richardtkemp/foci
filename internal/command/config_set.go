@@ -15,8 +15,8 @@ type ConfigSetDeps struct {
 	SectionsFn      func() []string
 	FieldsInSection func(section string) []config.ConfigField
 	LookupFn        func(sectionKey string) (config.ConfigField, bool)
-	SetInFileFn     func(path string, target config.SetTarget, value string) (string, error)
-	GetValueFn      func(path string, target config.SetTarget) (string, error)
+	SetInFileFn      func(path string, target config.SetTarget, value string) (string, error)
+	EffectiveValueFn func(section, key string) string // returns the running value (includes defaults)
 }
 
 // configSetWizard implements WizardHandler for interactive config editing.
@@ -104,10 +104,10 @@ func (w *configSetWizard) handleKey(text string) (string, bool) {
 
 	typeHint := fieldTypeHint(field.Type)
 
-	// Look up current value from the config file.
+	// Look up the effective (running) value, which includes defaults.
 	currentHint := "not set"
-	if w.deps.GetValueFn != nil {
-		if v, err := w.deps.GetValueFn(w.deps.ConfigPath, w.target); err == nil && v != "" {
+	if w.deps.EffectiveValueFn != nil {
+		if v := w.deps.EffectiveValueFn(w.section, w.key); v != "" {
 			currentHint = v
 		}
 	}
