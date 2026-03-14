@@ -82,6 +82,11 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 			contentBlocks = append(contentBlocks, provider.ImageBlock(mediaType, encoded))
 		}
 	}
+	// First-run onboarding: prepend as a separate content block, then clear.
+	if frm, ok := a.FirstRunMessage.Load().(string); ok && frm != "" {
+		a.FirstRunMessage.Store("")
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: frm})
+	}
 	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: annotatedMessage})
 
 	return provider.Message{

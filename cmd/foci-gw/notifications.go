@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -40,30 +41,23 @@ func handleWelcomeAndFirstRun(
 		}
 	}
 
-	// First-run onboarding — inject prompt for new agents.
-	// The default session key becomes available after the first inbound
-	// platform message. If no message has been received yet, first-run
-	// is skipped and will fire on the next restart.
+	// First-run onboarding — store the prompt so it gets prepended to the
+	// first inbound message as a separate content block. The agent clears it
+	// after consumption, and we mark first_run_completed via OnActivity.
 	for _, agentID := range agentOrder {
 		inst := agents[agentID]
 		if msg := checkFirstRun(stateStore, inst.agentCfg); msg != "" {
+			inst.ag.FirstRunMessage.Store(msg)
 			agentID := agentID
-			go func() {
-				sk := inst.defaultSessionKey()
-				if sk == "" {
-					log.Warnf("main", "no default session for first-run on %s, skipping", agentID)
-					return
-				}
-				firstRunCtx := agent.WithTrigger(ctx, "first_run")
-				if _, err := inst.ag.HandleMessage(firstRunCtx, sk, msg); err != nil {
-					log.Errorf("main", "first-run turn for %s failed: %v", agentID, err)
-					return
-				}
-				if err := stateStore.Set("agent/"+agentID+"/first_run_completed", true); err != nil {
-					log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
-				}
-				log.Infof("main", "first-run onboarding completed for %s", agentID)
-			}()
+			var once sync.Once
+			inst.ag.OnActivity.Add(func(_ string) {
+				once.Do(func() {
+					if err := stateStore.Set("agent/"+agentID+"/first_run_completed", true); err != nil {
+						log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
+					}
+					log.Infof("main", "first-run onboarding completed for %s", agentID)
+				})
+			})
 		}
 	}
 }

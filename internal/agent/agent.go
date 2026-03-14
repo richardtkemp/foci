@@ -118,6 +118,7 @@ type Agent struct {
 	NudgePreAnswerGate            bool                         // enable pre-answer verification gate
 	NudgePreAnswerMinTools        int                          // min tool calls before gate fires (default 2)
 	NudgeReloadFunc               func()                       // called after bootstrap reload to refresh nudge rules; nil disables
+	FirstRunMessage               atomic.Value                 // string; prepended as separate content block on first HandleMessage, then cleared
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
 	Effort                        string                       // effort level for API requests (empty = omit from request)
 	Thinking                      string                       // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
