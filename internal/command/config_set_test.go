@@ -298,3 +298,49 @@ func TestConfigSetDirectShowsOldValue(t *testing.T) {
 		t.Errorf("expected old value quoted, got %q", resp)
 	}
 }
+
+// TestConfigSetSectionKey verifies the "section key" form (from keyboard button
+// selection) feeds both values into the wizard and returns the value prompt,
+// skipping the section listing and key listing steps.
+func TestConfigSetSectionKey(t *testing.T) {
+	registry := NewRegistry()
+	deps := testConfigSetDeps(nil)
+	deps.Registry = registry
+
+	text, err := configSet(&deps, "llm model")
+	if err != nil {
+		t.Fatalf("configSet: %v", err)
+	}
+	if !strings.Contains(text, "New value") {
+		t.Errorf("expected value prompt, got %q", text)
+	}
+	if !strings.Contains(text, "llm") {
+		t.Errorf("expected section in prompt, got %q", text)
+	}
+}
+
+// TestConfigSetSectionKeyValue verifies the "section key value" form (from
+// boolean keyboard button) performs a direct set without starting a wizard.
+func TestConfigSetSectionKeyValue(t *testing.T) {
+	var captured config.SetTarget
+	var capturedValue string
+	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
+		captured = target
+		capturedValue = value
+		return "", nil
+	})
+
+	text, err := configSet(&deps, "logging messages_in_log true")
+	if err != nil {
+		t.Fatalf("configSet: %v", err)
+	}
+	if !strings.Contains(text, "Set logging.messages_in_log") {
+		t.Errorf("expected confirmation, got %q", text)
+	}
+	if captured.Section != "logging" || captured.Key != "messages_in_log" {
+		t.Errorf("target = %+v", captured)
+	}
+	if capturedValue != "true" {
+		t.Errorf("value = %q, want 'true'", capturedValue)
+	}
+}
