@@ -77,7 +77,7 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 - **Auth:** Setup token (from `claude setup-token`), API key, or Claude Code credentials fallback. See [docs/AUTH.md](docs/AUTH.md).
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** Two cache breakpoints per API request (system prompt + conversation history). See [docs/CACHING.md](docs/CACHING.md).
-- **Streaming:** Server-sent events for responses
+- **Streaming:** Server-sent events for responses. Telegram streaming shows HTML-formatted output in real-time — partial markdown delimiters are stripped before conversion so incomplete syntax doesn't break rendering.
 
 ### Telegram Bot
 

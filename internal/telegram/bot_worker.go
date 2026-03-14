@@ -87,7 +87,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		if interval == 0 {
 			interval = 250 * time.Millisecond
 		}
-		sw = newStreamWriter(b.client, qm.msg.Chat.Id, interval)
+		sw = newStreamWriter(b.client, qm.msg.Chat.Id, interval, b.tableOpts())
 	}
 
 	// Accumulate thinking blocks for the turn
