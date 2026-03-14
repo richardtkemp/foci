@@ -94,7 +94,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	if len(sysFiles) == 0 {
 		sysFiles = workspace.DefaultFileOrder
 	}
-	b.WriteString("Character files (in order): ")
+	b.WriteString("Character files (in order, relative to workspace): ")
 	b.WriteString(strings.Join(sysFiles, ", "))
 	b.WriteString("\n")
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
