@@ -76,6 +76,7 @@ gh codeql query run query.ql --database=codeql-db
 - If you add a new feature, **check if it's appropriate to update `docs/COMPARISON.md`**, searching for additional info if required.
 - No backward compatibility is required, the project has not been released yet. Breaking changes and major refactors are fine!! Don't leave ANYTHING hanging around as 'deprecated'
 - If you are on a git worktree, then commit your changes when complete, before presenting your final summary
+- **Never ignore lint warnings.** Run `make lint` before committing. Warnings indicate your change is incomplete — fix them, don't suppress or ignore them.
 
 ## Key Constraints
 
