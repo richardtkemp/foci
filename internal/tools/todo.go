@@ -179,14 +179,28 @@ func FormatTodoLines(items []memory.TodoItem) string {
 		if (item.Status == "done" || item.Status == "dropped") && item.CloseReason != "" {
 			text += " — " + item.CloseReason
 		}
+		pri := item.Priority
+		if pri == "medium" {
+			pri = "med"
+		}
 		row := []string{
 			fmt.Sprintf("%d", item.ID),
 			marker,
-			item.Priority,
+			pri,
 		}
 		if hasTags {
-			tags := strings.ReplaceAll(item.Tags, ",", ", ")
-			row = append(row, tags)
+			var parts []string
+			for _, t := range strings.Split(item.Tags, ",") {
+				t = strings.TrimSpace(t)
+				if t == "" {
+					continue
+				}
+				if len(t) > 8 {
+					t = t[:8]
+				}
+				parts = append(parts, t)
+			}
+			row = append(row, strings.Join(parts, " "))
 		}
 		row = append(row, text, formatCompactAge(item))
 		rows[i] = row
