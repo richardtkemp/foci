@@ -68,20 +68,20 @@ func (s *Scheduler) StartTurn(userMessage string) {
 }
 
 // CheckAfterTools evaluates triggers after a tool batch and returns up to
-// maxPerBatch reminder texts (joined by newline). Returns "" if nothing fires.
+// maxPerBatch reminder texts. Returns nil if nothing fires.
 //
 // toolCallIndex is the loop counter (0-based), sameToolStreak is the count of
 // consecutive calls to the same tool, and lastToolError indicates the most
 // recent tool call returned an error.
-func (s *Scheduler) CheckAfterTools(toolCallIndex, sameToolStreak int, lastToolError bool) string {
+func (s *Scheduler) CheckAfterTools(toolCallIndex, sameToolStreak int, lastToolError bool) []string {
 	if s == nil {
-		return ""
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.toolCount = toolCallIndex + 1
 
-	var result string
+	var result []string
 	fired := 0
 	for i, r := range s.rules {
 		if fired >= s.maxPerBatch {
@@ -91,10 +91,7 @@ func (s *Scheduler) CheckAfterTools(toolCallIndex, sameToolStreak int, lastToolE
 			continue
 		}
 		s.lastFired[i] = s.toolCount
-		if result != "" {
-			result += "\n"
-		}
-		result += r.Text
+		result = append(result, r.Text)
 		fired++
 	}
 	return result
@@ -125,14 +122,14 @@ func (s *Scheduler) CheckPreAnswer() string {
 // CheckMatch returns the text of match rules that matched the user message
 // but haven't fired yet. Ensures match triggers fire even on turns without
 // tool calls, where CheckAfterTools is never reached.
-func (s *Scheduler) CheckMatch() string {
+func (s *Scheduler) CheckMatch() []string {
 	if s == nil {
-		return ""
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	var result string
+	var result []string
 	for i, r := range s.rules {
 		if r.Trigger.Type != "match" {
 			continue
@@ -144,10 +141,7 @@ func (s *Scheduler) CheckMatch() string {
 			continue
 		}
 		s.lastFired[i] = s.toolCount
-		if result != "" {
-			result += "\n"
-		}
-		result += r.Text
+		result = append(result, r.Text)
 	}
 	return result
 }

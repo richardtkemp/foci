@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -12,32 +13,23 @@ import (
 	"foci/internal/workspace"
 )
 
-func TestNudgeMatchDoesNotDropReply(t *testing.T) {
-	// Proves that when a match nudge fires on a non-tool-use response, the original
-	// reply is delivered via ReplyFunc before the nudge loop continues, so no text is lost.
+func TestNudgeMatchPrependedToUserMessage(t *testing.T) {
+	// Proves that match nudges are prepended as ContentBlocks to the user message
+	// rather than injected as standalone messages. Only one API call is made, and
+	// the nudge blocks appear before the user text in the request.
 	var callCount atomic.Int32
+	var capturedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
-		n := callCount.Add(1)
-		if n == 1 {
-			// First response: the agent's actual answer (end_turn, no tools)
-			return &provider.MessageResponse{
-				ID:         "msg_1",
-				Type:       "message",
-				Role:       "assistant",
-				Content:    provider.TextContent("Here is the answer to your question."),
-				StopReason: "end_turn",
-				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
-			}
-		}
-		// Second response: after match nudge injection
+		callCount.Add(1)
+		capturedReq = req
 		return &provider.MessageResponse{
-			ID:         "msg_2",
+			ID:         "msg_1",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    provider.TextContent("Acknowledged the nudge."),
+			Content:    provider.TextContent("Here is the answer to your question."),
 			StopReason: "end_turn",
-			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
+			Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 
@@ -65,36 +57,41 @@ func TestNudgeMatchDoesNotDropReply(t *testing.T) {
 		Nudger:    sched,
 	}
 
-	// Track intermediate replies.
-	var intermediateReplies []string
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
-			intermediateReplies = append(intermediateReplies, text)
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
-
+	ctx := context.Background()
 	finalResp, err := ag.HandleMessage(ctx, "test/inudge-match/1000000000", "Please debug this issue")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	// The original answer must have been sent as an intermediate reply.
-	if len(intermediateReplies) != 1 {
-		t.Fatalf("expected 1 intermediate reply, got %d: %v", len(intermediateReplies), intermediateReplies)
-	}
-	if intermediateReplies[0] != "Here is the answer to your question." {
-		t.Errorf("intermediate reply = %q, want original answer", intermediateReplies[0])
+	// Only one API call — no standalone nudge message loop.
+	if got := callCount.Load(); got != 1 {
+		t.Errorf("API call count = %d, want 1", got)
 	}
 
-	// The final return value is the nudge-response text.
-	if finalResp != "Acknowledged the nudge." {
-		t.Errorf("final response = %q, want nudge acknowledgement", finalResp)
+	// Final response is the direct answer (no second call needed).
+	if finalResp != "Here is the answer to your question." {
+		t.Errorf("final response = %q, want direct answer", finalResp)
 	}
 
-	// Two API calls should have been made.
-	if got := callCount.Load(); got != 2 {
-		t.Errorf("API call count = %d, want 2", got)
+	// Verify nudge block appears before user text in the user message.
+	if capturedReq == nil {
+		t.Fatal("no API request captured")
+	}
+	lastMsg := capturedReq.Messages[len(capturedReq.Messages)-1]
+	if len(lastMsg.Content) < 2 {
+		t.Fatalf("expected at least 2 content blocks, got %d", len(lastMsg.Content))
+	}
+	// First block: nudge
+	if lastMsg.Content[0].Type != "text" || lastMsg.Content[0].Text == "" {
+		t.Errorf("first block should be nudge text, got type=%q text=%q", lastMsg.Content[0].Type, lastMsg.Content[0].Text)
+	}
+	if !strings.Contains(lastMsg.Content[0].Text, "match-debug-reminder") {
+		t.Errorf("nudge block should contain reminder text, got %q", lastMsg.Content[0].Text)
+	}
+	// Last block: user text (may have [meta] prefix from prepareUserMessage)
+	lastBlock := lastMsg.Content[len(lastMsg.Content)-1]
+	if lastBlock.Type != "text" || !strings.Contains(lastBlock.Text, "Please debug this issue") {
+		t.Errorf("last block should contain user text, got type=%q text=%q", lastBlock.Type, lastBlock.Text)
 	}
 }
 
@@ -180,29 +177,20 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 }
 
 func TestNudgeMatchBatchMode(t *testing.T) {
-	// Proves that with BatchPartialAssistantMessages enabled, a match-nudge turn
-	// accumulates all text into the final return value rather than calling ReplyFunc.
+	// Proves that with BatchPartialAssistantMessages enabled, match nudges are
+	// prepended to the user message (not standalone messages). Only one API call,
+	// single direct response returned.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
-		n := callCount.Add(1)
-		if n == 1 {
-			return &provider.MessageResponse{
-				ID:         "msg_1",
-				Type:       "message",
-				Role:       "assistant",
-				Content:    provider.TextContent("Batched original."),
-				StopReason: "end_turn",
-				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
-			}
-		}
+		callCount.Add(1)
 		return &provider.MessageResponse{
-			ID:         "msg_2",
+			ID:         "msg_1",
 			Type:       "message",
 			Role:       "assistant",
-			Content:    provider.TextContent("Batched nudge reply."),
+			Content:    provider.TextContent("Batched original."),
 			StopReason: "end_turn",
-			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
+			Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
 		}
 	})
 
@@ -221,37 +209,29 @@ func TestNudgeMatchBatchMode(t *testing.T) {
 	sched := nudge.NewScheduler(rs, 5, 1)
 
 	ag := &Agent{
-		Client:                      client,
-		Sessions:                    store,
-		Tools:                       registry,
-		Bootstrap:                   bootstrap,
-		Model:                       "claude-haiku-4-5",
-		Nudger:                      sched,
+		Client:                        client,
+		Sessions:                      store,
+		Tools:                         registry,
+		Bootstrap:                     bootstrap,
+		Model:                         "claude-haiku-4-5",
+		Nudger:                        sched,
 		BatchPartialAssistantMessages: true,
-		BatchPartialJoiner:          "\n\n",
+		BatchPartialJoiner:            "\n\n",
 	}
 
-	// In batch mode, ReplyFunc should NOT be called.
-	replyCalled := false
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
-			replyCalled = true
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
-
+	ctx := context.Background()
 	finalResp, err := ag.HandleMessage(ctx, "test/inudge-batch/1000000000", "debug this")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	if replyCalled {
-		t.Error("ReplyFunc should not be called in batch mode")
+	// Only one API call — nudge prepended, no extra loop.
+	if got := callCount.Load(); got != 1 {
+		t.Errorf("API call count = %d, want 1", got)
 	}
 
-	// Final response should contain both texts joined.
-	want := "Batched original.\n\nBatched nudge reply."
-	if finalResp != want {
-		t.Errorf("final response = %q, want %q", finalResp, want)
+	// Final response is the direct answer.
+	if finalResp != "Batched original." {
+		t.Errorf("final response = %q, want %q", finalResp, "Batched original.")
 	}
 }
