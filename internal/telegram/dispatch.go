@@ -63,7 +63,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, msg *gotgbot.Message) Dispatc
 	return DispatchResult{}
 }
 
-func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
+func (d *Dispatcher) dispatchDotCommand(ctx context.Context, msg *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
 	dotText := strings.TrimSpace(text)[1:]
 	cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
 
@@ -76,6 +76,7 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, _ *gotgbot.Message,
 		Args:       extractArgs(dotText),
 		SessionKey: sessionKey,
 		UserID:     userID,
+		ChatID:     msg.Chat.Id,
 	}
 
 	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
