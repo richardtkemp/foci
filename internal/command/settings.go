@@ -47,22 +47,30 @@ func ModelCommand() *Command {
 			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil
 		},
 		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
-			if len(cc.ModelAliases) > 0 {
-				names := make([]string, 0, len(cc.ModelAliases))
-				for alias := range cc.ModelAliases {
-					names = append(names, alias)
-				}
-				sort.Strings(names)
-				var opts []KeyboardOption
-				for _, alias := range names {
-					opts = append(opts, KeyboardOption{Label: alias, Data: alias})
-				}
-				return opts
+			if len(cc.ModelAliases) == 0 {
+				return nil
 			}
-			models := []string{"haiku", "sonnet", "opus"}
-			var opts []KeyboardOption
-			for _, m := range models {
-				opts = append(opts, KeyboardOption{Label: m, Data: m})
+			names := make([]string, 0, len(cc.ModelAliases))
+			for alias := range cc.ModelAliases {
+				resolved, err := config.ResolveModel(alias, "", cc.ModelAliases)
+				if err != nil {
+					continue
+				}
+				// Only show models whose endpoint is configured.
+				if cc.Config != nil && cc.Config.Endpoints != nil {
+					if _, ok := cc.Config.Endpoints[resolved.Endpoint]; !ok {
+						continue
+					}
+				}
+				names = append(names, alias)
+			}
+			if len(names) == 0 {
+				return nil
+			}
+			sort.Strings(names)
+			opts := make([]KeyboardOption, len(names))
+			for i, alias := range names {
+				opts[i] = KeyboardOption{Label: alias, Data: alias}
 			}
 			return opts
 		},

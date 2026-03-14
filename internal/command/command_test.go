@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"foci/internal/config"
 )
 
 // TestRegistryDispatch verifies basic command dispatch, argument passing, unknown command
@@ -293,11 +295,18 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 	t.Run("model_with_aliases", func(t *testing.T) {
 		cmd := ModelCommand()
 		aliases := map[string]string{
-			"haiku":  "claude-haiku-4-5",
-			"sonnet": "claude-sonnet-4-6",
-			"opus":   "claude-opus-4-6",
+			"haiku":  "anthropic/claude-haiku-4-5",
+			"sonnet": "anthropic/claude-sonnet-4-6",
+			"opus":   "anthropic/claude-opus-4-6",
 		}
-		ccAliased := CommandContext{ModelAliases: aliases}
+		ccAliased := CommandContext{
+			ModelAliases: aliases,
+			Config: &config.Config{
+				Endpoints: map[string]config.EndpointConfig{
+					"anthropic": {Format: "anthropic"},
+				},
+			},
+		}
 		if cmd.KeyboardOptions == nil {
 			t.Fatal("model command should have KeyboardOptions")
 		}
@@ -310,8 +319,8 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 	t.Run("model_no_aliases", func(t *testing.T) {
 		cmd := ModelCommand()
 		opts := cmd.KeyboardOptions(context.Background(), cc)
-		if len(opts) != 3 {
-			t.Fatalf("got %d options, want 3", len(opts))
+		if opts != nil {
+			t.Fatalf("got %d options, want nil (no aliases)", len(opts))
 		}
 	})
 

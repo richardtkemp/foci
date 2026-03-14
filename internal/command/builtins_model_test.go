@@ -19,6 +19,92 @@ func modelCC(ag *agent.Agent, aliases map[string]string) CommandContext {
 	}
 }
 
+// TestModelKeyboardOptionsFiltersUnconfiguredEndpoints proves that /model only shows
+// aliases whose resolved endpoint exists in the config, hiding models that would fail.
+func TestModelKeyboardOptionsFiltersUnconfiguredEndpoints(t *testing.T) {
+	ag := &agent.Agent{}
+	aliases := map[string]string{
+		"opus":     "anthropic/claude-opus-4-6",
+		"sonnet":   "anthropic/claude-sonnet-4-6",
+		"haiku":    "anthropic/claude-haiku-4-5-20251001",
+		"flash":    "google/gemini-2.5-flash",
+		"deepseek": "deepseek/deepseek-chat",
+	}
+	// Only anthropic endpoint is configured.
+	cc := CommandContext{
+		Agent:        ag,
+		AgentConfig:  config.AgentConfig{},
+		ModelAliases: aliases,
+		Config: &config.Config{
+			Endpoints: map[string]config.EndpointConfig{
+				"anthropic": {Format: "anthropic", APIKey: "anthropic.api_key"},
+			},
+		},
+	}
+	cmd := ModelCommand()
+	opts := cmd.KeyboardOptions(context.Background(), cc)
+
+	got := make(map[string]bool)
+	for _, o := range opts {
+		got[o.Label] = true
+	}
+	// Anthropic aliases should appear.
+	for _, want := range []string{"opus", "sonnet", "haiku"} {
+		if !got[want] {
+			t.Errorf("expected alias %q in keyboard options", want)
+		}
+	}
+	// Non-anthropic aliases should be filtered out.
+	for _, unwanted := range []string{"flash", "deepseek"} {
+		if got[unwanted] {
+			t.Errorf("alias %q should not appear (endpoint not configured)", unwanted)
+		}
+	}
+}
+
+// TestModelKeyboardOptionsAllEndpoints proves that when multiple endpoints are
+// configured, aliases for all of them appear.
+func TestModelKeyboardOptionsAllEndpoints(t *testing.T) {
+	ag := &agent.Agent{}
+	aliases := map[string]string{
+		"opus":  "anthropic/claude-opus-4-6",
+		"flash": "google/gemini-2.5-flash",
+	}
+	cc := CommandContext{
+		Agent:        ag,
+		AgentConfig:  config.AgentConfig{},
+		ModelAliases: aliases,
+		Config: &config.Config{
+			Endpoints: map[string]config.EndpointConfig{
+				"anthropic": {Format: "anthropic"},
+				"gemini":    {Format: "gemini"},
+			},
+		},
+	}
+	cmd := ModelCommand()
+	opts := cmd.KeyboardOptions(context.Background(), cc)
+	if len(opts) != 2 {
+		t.Fatalf("expected 2 options, got %d", len(opts))
+	}
+}
+
+// TestModelKeyboardOptionsNoAliases proves that when no aliases are configured,
+// nil is returned instead of hardcoded defaults.
+func TestModelKeyboardOptionsNoAliases(t *testing.T) {
+	ag := &agent.Agent{}
+	cc := CommandContext{
+		Agent:        ag,
+		AgentConfig:  config.AgentConfig{},
+		Config:       &config.Config{},
+		ModelAliases: nil,
+	}
+	cmd := ModelCommand()
+	opts := cmd.KeyboardOptions(context.Background(), cc)
+	if opts != nil {
+		t.Errorf("expected nil options when no aliases, got %d", len(opts))
+	}
+}
+
 // TestModelCommand verifies model can be switched between options and short names are resolved.
 func TestModelCommand(t *testing.T) {
 	ag := &agent.Agent{Model: "claude-haiku-4-5"}
