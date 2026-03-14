@@ -404,13 +404,24 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 	braindeadWarningThreshold := a.BraindeadWarningThreshold
 	braindeadWarned := false
-	verified := false    // pre-answer gate: true after one verification pass
-	matchChecked := false // match triggers: true after one check on no-tools path
+	verified := false // pre-answer gate: true after one verification pass
 	var sameToolStreak int
 	var lastToolName string
 	var lastToolError bool
 	if a.Nudger != nil {
 		a.Nudger.StartTurn(userMessage)
+		// Prepend match nudges as ContentBlocks before the user's text/attachment blocks.
+		if matchNudges := a.Nudger.CheckMatch(); len(matchNudges) > 0 {
+			var nudgeBlocks []provider.ContentBlock
+			for _, r := range matchNudges {
+				nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+			}
+			userMsg.Content = append(nudgeBlocks, userMsg.Content...)
+			// Update the already-appended message in messages and newMessages slices.
+			messages[len(messages)-1] = userMsg
+			newMessages[len(newMessages)-1] = userMsg
+			a.logger().Infof("nudge: %d match trigger(s) prepended to user message for session %s", len(matchNudges), sessionKey)
+		}
 	}
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true
 
@@ -564,22 +575,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 
 		if resp.StopReason != "tool_use" {
-			// Match triggers: if any match rules matched the user message
-			// but haven't fired (no tool calls happened), inject them now.
-			if !matchChecked && a.Nudger != nil {
-				if reminder := a.Nudger.CheckMatch(); reminder != "" {
-					matchMsg := provider.Message{
-						Role:    "user",
-						Content: provider.TextContent(nudgeHeader + reminder),
-					}
-					messages = append(messages, matchMsg)
-					newMessages = append(newMessages, matchMsg)
-					matchChecked = true
-					a.logger().Infof("nudge: match trigger fired at loop %d for session %s", i, sessionKey)
-					sendOrBatchText(*resp)
-					continue
-				}
-			}
 			// Pre-answer verification gate: if the model wants to end the
 			// turn and pre_answer rules exist, inject a reminder and let
 			// it reconsider once.
@@ -703,9 +698,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 		// Nudge reminders: inject behavioral reminders from character file rules.
 		if a.Nudger != nil {
-			if reminder := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); reminder != "" {
-				toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: nudgeHeader + reminder})
-				a.logger().Debugf("nudge: injected reminder at loop %d for session %s", i, sessionKey)
+			if reminders := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); len(reminders) > 0 {
+				for _, r := range reminders {
+					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+				}
+				a.logger().Debugf("nudge: injected %d reminder(s) at loop %d for session %s", len(reminders), i, sessionKey)
 			}
 		}
 

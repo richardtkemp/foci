@@ -221,6 +221,7 @@ The core of the system. Two entry points:
 2. buildMetaPrefix() + prepend to user message text
 3. build content blocks: image/document block(s) first, then text block (with metadata)
 4. append user message
+4b. nudge StartTurn + prepend match nudge ContentBlocks to user message (if any patterns match)
 5. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
    prepend EnvironmentBlock if set        ← runtime context block
    append ExtraSystemBlocks               ← skills, etc.
@@ -232,7 +233,6 @@ The core of the system. Two entry points:
    d. notify observers for server_tool_use / web_search_tool_result / web_fetch_tool_result blocks
    e. if stop_reason == "pause_turn" → append assistant msg, continue loop (server will resume)
    f. if stop_reason == "end_turn":
-      - if unfired match nudge triggers exist → inject [system] reminder, continue loop (once)
       - if nudge pre-answer gate enabled and not yet verified → inject [system] reminder, continue loop
       - otherwise → save & check compaction & return text
    g. if stop_reason == "tool_use":
@@ -1027,7 +1027,7 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 
 ### Injection
 
-All nudge reminders are injected as `[system]` prefixed text blocks in user messages — either appended to tool result batches (tools path) or as standalone user messages that continue the loop (match/pre_answer on no-tools path). Each injection is one-shot per trigger type per turn to prevent infinite loops.
+Nudge reminders are injected as text ContentBlocks in user messages. After-tools nudges (periodic, after_streak, after_error, match) are appended as individual blocks to tool result messages. Match nudges on no-tools turns are prepended as ContentBlocks to the user message before the first API call. Pre_answer nudges are injected as standalone user messages that continue the loop. Each injection is one-shot per trigger type per turn to prevent infinite loops.
 
 ### Configuration
 
