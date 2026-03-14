@@ -166,7 +166,7 @@ func TestMessagingNilSafe(t *testing.T) {
 	m.RestoreMultiballSessions(RestoreParams{})
 	m.SetLifecycleCallback("x", OnUserMessage, func() {})
 	m.NotifyAgent("x", "text")
-	m.NotifyAgentDoc("x", "/tmp/doc")
+	m.notifyAgentDoc("x", "/tmp/doc")
 	if warns := m.AgentPreFlight("x"); warns != nil {
 		t.Errorf("AgentPreFlight on nil = %v, want nil", warns)
 	}
@@ -174,7 +174,7 @@ func TestMessagingNilSafe(t *testing.T) {
 		t.Error("ToolDetailStore on nil should return nil")
 	}
 	m.StartAll(context.Background())
-	m.Wait()
+	m.wait()
 	if err := m.Close(); err != nil {
 		t.Errorf("Close on nil = %v, want nil", err)
 	}

@@ -14,8 +14,8 @@ func TestConversationLog(t *testing.T) {
 	// and can be queried back with correct fields.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 
-	if err := InitConversation(dbPath); err != nil {
-		t.Fatalf("InitConversation: %v", err)
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
 	}
 	defer CloseConversation()
 
@@ -152,8 +152,8 @@ func TestConversationBusyTimeout(t *testing.T) {
 	// correct busy_timeout PRAGMA set.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
 
-	if err := InitConversation(dbPath); err != nil {
-		t.Fatalf("InitConversation: %v", err)
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
 	}
 	defer CloseConversation()
 
@@ -189,8 +189,8 @@ func TestAgentFromSession(t *testing.T) {
 func TestConversationHook(t *testing.T) {
 	// Verifies that ConversationHook is called for non-empty text entries.
 	dbPath := filepath.Join(t.TempDir(), "test_conv.db")
-	if err := InitConversation(dbPath); err != nil {
-		t.Fatalf("InitConversation: %v", err)
+	if err := initConversation(dbPath); err != nil {
+		t.Fatalf("initConversation: %v", err)
 	}
 	defer CloseConversation()
 
@@ -282,8 +282,8 @@ func TestInitPerAgentConversationError(t *testing.T) {
 }
 
 func TestInitConversationError(t *testing.T) {
-	// Verifies InitConversation returns an error for a bad path.
-	err := InitConversation("/nonexistent/dir/conv.db")
+	// Verifies initConversation returns an error for a bad path.
+	err := initConversation("/nonexistent/dir/conv.db")
 	if err == nil {
 		CloseConversation()
 		t.Fatal("expected error for bad path")

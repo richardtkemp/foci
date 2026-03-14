@@ -59,17 +59,17 @@ func newTestServer(ctx context.Context, t *testing.T) (*mcp.InMemoryTransport, *
 }
 
 func TestNewManager_NoServers(t *testing.T) {
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
-	if err := m.Connect(context.Background(), nil); err != nil {
+	if err := m.connect(context.Background(), nil); err != nil {
 		t.Fatalf("Connect with no servers: %v", err)
 	}
-	if m.ServerCount() != 0 {
-		t.Errorf("ServerCount = %d, want 0", m.ServerCount())
+	if m.serverCount() != 0 {
+		t.Errorf("ServerCount = %d, want 0", m.serverCount())
 	}
-	if m.ToolCount() != 0 {
-		t.Errorf("ToolCount = %d, want 0", m.ToolCount())
+	if m.toolCount() != 0 {
+		t.Errorf("ToolCount = %d, want 0", m.toolCount())
 	}
 	if tool := m.Tool(); tool != nil {
 		t.Error("Tool() should be nil with no servers")
@@ -82,7 +82,7 @@ func TestConnect_EndToEnd(t *testing.T) {
 
 	_, clientTransport := newTestServer(ctx, t)
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	err := m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
@@ -92,11 +92,11 @@ func TestConnect_EndToEnd(t *testing.T) {
 		t.Fatalf("Connect: %v", err)
 	}
 
-	if m.ServerCount() != 1 {
-		t.Fatalf("ServerCount = %d, want 1", m.ServerCount())
+	if m.serverCount() != 1 {
+		t.Fatalf("ServerCount = %d, want 1", m.serverCount())
 	}
-	if m.ToolCount() != 1 {
-		t.Fatalf("ToolCount = %d, want 1", m.ToolCount())
+	if m.toolCount() != 1 {
+		t.Fatalf("ToolCount = %d, want 1", m.toolCount())
 	}
 
 	tool := m.Tool()
@@ -114,7 +114,7 @@ func TestToolCall_Success(t *testing.T) {
 
 	_, clientTransport := newTestServer(ctx, t)
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
@@ -147,7 +147,7 @@ func TestToolCall_UnknownServer(t *testing.T) {
 
 	_, clientTransport := newTestServer(ctx, t)
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
@@ -175,7 +175,7 @@ func TestToolCall_UnknownTool(t *testing.T) {
 
 	_, clientTransport := newTestServer(ctx, t)
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
@@ -218,7 +218,7 @@ func TestToolCall_ServerError(t *testing.T) {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go server.Connect(ctx, serverTransport, nil)
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	m.connectWith(ctx, []ServerConfig{{Name: "err"}}, func(cfg ServerConfig) (mcp.Transport, error) {
@@ -249,22 +249,22 @@ func TestClose(t *testing.T) {
 
 	_, clientTransport := newTestServer(ctx, t)
 
-	m := NewManager()
+	m := newManager()
 
 	m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
 		return clientTransport, nil
 	})
 
-	if m.ServerCount() != 1 {
-		t.Fatalf("ServerCount = %d, want 1", m.ServerCount())
+	if m.serverCount() != 1 {
+		t.Fatalf("ServerCount = %d, want 1", m.serverCount())
 	}
 
 	if err := m.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if m.ServerCount() != 0 {
-		t.Errorf("ServerCount after Close = %d, want 0", m.ServerCount())
+	if m.serverCount() != 0 {
+		t.Errorf("ServerCount after Close = %d, want 0", m.serverCount())
 	}
 }
 
@@ -274,7 +274,7 @@ func TestDescription_IncludesServerAndToolInfo(t *testing.T) {
 
 	_, clientTransport := newTestServer(ctx, t)
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	m.connectWith(ctx, []ServerConfig{{Name: "myserver"}}, func(cfg ServerConfig) (mcp.Transport, error) {
@@ -328,7 +328,7 @@ func TestMultipleServers(t *testing.T) {
 		"server2": ct2,
 	}
 
-	m := NewManager()
+	m := newManager()
 	defer m.Close()
 
 	m.connectWith(ctx, []ServerConfig{
@@ -342,11 +342,11 @@ func TestMultipleServers(t *testing.T) {
 		return t, nil
 	})
 
-	if m.ServerCount() != 2 {
-		t.Fatalf("ServerCount = %d, want 2", m.ServerCount())
+	if m.serverCount() != 2 {
+		t.Fatalf("ServerCount = %d, want 2", m.serverCount())
 	}
-	if m.ToolCount() != 2 {
-		t.Fatalf("ToolCount = %d, want 2", m.ToolCount())
+	if m.toolCount() != 2 {
+		t.Fatalf("ToolCount = %d, want 2", m.toolCount())
 	}
 
 	tool := m.Tool()
@@ -540,20 +540,20 @@ command = "echo"
 	// refreshServers should detect the change and connect.
 	m.refreshServers(ctx)
 
-	if m.ServerCount() != 1 {
-		t.Fatalf("after refresh: ServerCount = %d, want 1", m.ServerCount())
+	if m.serverCount() != 1 {
+		t.Fatalf("after refresh: ServerCount = %d, want 1", m.serverCount())
 	}
 
 	// Calling refreshServers again with same config should be a no-op.
 	m.refreshServers(ctx)
-	if m.ServerCount() != 1 {
-		t.Fatalf("after second refresh: ServerCount = %d, want 1", m.ServerCount())
+	if m.serverCount() != 1 {
+		t.Fatalf("after second refresh: ServerCount = %d, want 1", m.serverCount())
 	}
 
 	// Remove mcp.toml — should disconnect.
 	os.Remove(filepath.Join(dir, "mcp.toml"))
 	m.refreshServers(ctx)
-	if m.ServerCount() != 0 {
-		t.Fatalf("after remove: ServerCount = %d, want 0", m.ServerCount())
+	if m.serverCount() != 0 {
+		t.Fatalf("after remove: ServerCount = %d, want 0", m.serverCount())
 	}
 }

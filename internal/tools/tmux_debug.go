@@ -102,13 +102,3 @@ func LogSendExit(success bool, errMsg string) {
 		logDebugf("send", "EXIT: failed (%s)", errMsg)
 	}
 }
-
-// CloseDebugLog closes the debug log file.
-func CloseDebugLog() error {
-	if debugLog == nil || debugLog.file == nil {
-		return nil
-	}
-	debugLog.mu.Lock()
-	defer debugLog.mu.Unlock()
-	return debugLog.file.Close()
-}

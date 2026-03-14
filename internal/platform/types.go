@@ -442,16 +442,6 @@ func (m *Messaging) NotifyAgent(agentID string, text string) {
 	}
 }
 
-// NotifyAgentDoc sends a document to ALL connections for an agent.
-func (m *Messaging) NotifyAgentDoc(agentID string, path string) {
-	if m == nil {
-		return
-	}
-	for _, conn := range m.connMgr.AllForAgent(agentID) {
-		_ = conn.SendDocument(path)
-	}
-}
-
 // AgentPreFlight collects pre-flight warnings from all providers for a new agent.
 func (m *Messaging) AgentPreFlight(agentID string) []string {
 	if m == nil {
@@ -483,15 +473,6 @@ func (m *Messaging) StartAll(ctx context.Context) {
 	}
 	for _, p := range m.providers {
 		p.ConnectionManager().StartAll(ctx)
-	}
-}
-
-func (m *Messaging) Wait() {
-	if m == nil {
-		return
-	}
-	for _, p := range m.providers {
-		p.ConnectionManager().Wait()
 	}
 }
 

@@ -57,17 +57,17 @@ func TestLevelStringUnknown(t *testing.T) {
 }
 
 func TestGetLevel(t *testing.T) {
-	// Verifies GetLevel returns the current log level accurately after SetLevel calls.
-	SetLevel(WARN)
-	defer SetLevel(INFO)
+	// Verifies getLevel returns the current log level accurately after setLevel calls.
+	setLevel(WARN)
+	defer setLevel(INFO)
 
-	if got := GetLevel(); got != WARN {
-		t.Errorf("GetLevel() = %v, want WARN", got)
+	if got := getLevel(); got != WARN {
+		t.Errorf("getLevel() = %v, want WARN", got)
 	}
 
-	SetLevel(DEBUG)
-	if got := GetLevel(); got != DEBUG {
-		t.Errorf("GetLevel() = %v, want DEBUG", got)
+	setLevel(DEBUG)
+	if got := getLevel(); got != DEBUG {
+		t.Errorf("getLevel() = %v, want DEBUG", got)
 	}
 }
 

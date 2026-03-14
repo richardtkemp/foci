@@ -2,9 +2,49 @@ package log
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"testing"
 )
+
+// setLevel changes the log level at runtime (test-only).
+func setLevel(level Level) {
+	std.mu.Lock()
+	std.level = level
+	std.mu.Unlock()
+}
+
+// getLevel returns the current log level (test-only).
+func getLevel() Level {
+	std.mu.Lock()
+	defer std.mu.Unlock()
+	return std.level
+}
+
+// setOutput replaces the event output writer (test-only).
+func setOutput(w io.Writer) {
+	std.mu.Lock()
+	std.eventOut = w
+	std.mu.Unlock()
+}
+
+// filePaths returns the configured log file paths (test-only).
+func filePaths() (event, api, payload string) {
+	std.mu.Lock()
+	defer std.mu.Unlock()
+	return std.eventPath, std.apiPath, std.payloadPath
+}
+
+// initConversation opens a single conversation log (test-only).
+func initConversation(path string) error {
+	cl, err := openConversationLog(path)
+	if err != nil {
+		return err
+	}
+	convLogs = map[string]*ConversationLog{"": cl}
+	convFallback = cl
+	return nil
+}
 
 // resetGlobal restores the global logger to its initial state for test isolation.
 func resetGlobal() {
@@ -22,16 +62,16 @@ func resetGlobal() {
 func captureOutput(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
-	SetOutput(&buf)
-	t.Cleanup(func() { SetOutput(os.Stderr) })
+	setOutput(&buf)
+	t.Cleanup(func() { setOutput(os.Stderr) })
 	return &buf
 }
 
 // withDebugLevel sets the log level to DEBUG and registers cleanup to restore INFO.
 func withDebugLevel(t *testing.T) {
 	t.Helper()
-	SetLevel(DEBUG)
-	t.Cleanup(func() { SetLevel(INFO) })
+	setLevel(DEBUG)
+	t.Cleanup(func() { setLevel(INFO) })
 }
 
 // openAPIWriter opens a file as the API JSONL writer and registers cleanup.

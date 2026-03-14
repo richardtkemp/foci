@@ -22,12 +22,6 @@ func isImageMIME(mime string) bool {
 	return false
 }
 
-// isConvertibleDocMIME returns true if the MIME type is a document format
-// that can be converted to text for LLM consumption (docx, xlsx, pptx, HTML, CSV, plain text).
-func isConvertibleDocMIME(mime string) bool {
-	return platform.IsConvertibleDocMIME(mime)
-}
-
 // splitMessage splits text into chunks of at most maxLen bytes.
 // It prefers splitting at newline boundaries and preserves HTML formatting
 // by closing open tags at split points and reopening them in the next chunk.

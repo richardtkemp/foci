@@ -58,17 +58,6 @@ func openConversationLog(path string) (*ConversationLog, error) {
 	return &ConversationLog{db: db}, nil
 }
 
-// InitConversation opens a single conversation log (used by tests and single-agent setups).
-func InitConversation(path string) error {
-	cl, err := openConversationLog(path)
-	if err != nil {
-		return err
-	}
-	convLogs = map[string]*ConversationLog{"": cl}
-	convFallback = cl
-	return nil
-}
-
 // InitPerAgentConversation opens per-agent conversation log databases.
 // pathFn maps each agent ID to its database path.
 func InitPerAgentConversation(agentIDs []string, pathFn func(string) string) error {
