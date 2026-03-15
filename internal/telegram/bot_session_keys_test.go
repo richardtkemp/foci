@@ -319,6 +319,46 @@ func TestSetSessionKeyDirect_DoesNotFireCallback(t *testing.T) {
 	}
 }
 
+func TestDispatchSessionKey_SecondaryUsesOverride(t *testing.T) {
+	// Verifies that command dispatch for secondary bots uses the override
+	// session key (branch key) rather than resolving from chatID.
+	// This ensures /status shows the correct session in facet chats.
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.isSecondary = true
+	b.SetSessionKey("agent/c12345/1000000000/b1111111111")
+
+	got := b.dispatchSessionKey(12345)
+	if got != "agent/c12345/1000000000/b1111111111" {
+		t.Errorf("dispatchSessionKey() = %q, want override branch key", got)
+	}
+}
+
+func TestDispatchSessionKey_SecondaryIdleFallsBack(t *testing.T) {
+	// Verifies that an idle secondary bot (no override key) falls back
+	// to chat-based session key resolution.
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.isSecondary = true
+	b.SetSessionKey("") // idle — no session assigned
+
+	got := b.dispatchSessionKey(12345)
+	if !strings.HasPrefix(got, "test-agent/c12345/") {
+		t.Errorf("dispatchSessionKey() = %q, want prefix test-agent/c12345/", got)
+	}
+}
+
+func TestDispatchSessionKey_PrimaryUsesChat(t *testing.T) {
+	// Verifies that primary bots resolve session keys from chatID
+	// (not affected by the secondary-bot override logic).
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+
+	got := b.dispatchSessionKey(12345)
+	if !strings.HasPrefix(got, "test-agent/c12345/") {
+		t.Errorf("dispatchSessionKey() = %q, want prefix test-agent/c12345/", got)
+	}
+}
+
 func TestUsername_NilSafe(t *testing.T) {
 	// Verifies that the bot handles nil API without panicking.
 	b, _ := testBot([]string{}, command.NewRegistry())
