@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/messages"
 	"foci/internal/modelinfo"
 	"foci/internal/tools"
 	"foci/prompts"
@@ -180,36 +181,13 @@ func parsePressureStart(s string, fallback float64) float64 {
 }
 
 // hasToolUse returns true if the message contains any tool_use content blocks.
-func hasToolUse(msg provider.Message) bool {
-	for _, b := range msg.Content {
-		if b.Type == "tool_use" {
-			return true
-		}
-	}
-	return false
-}
+func hasToolUse(msg provider.Message) bool { return messages.HasToolUse(msg) }
 
 // toolUseIDs returns the IDs of all tool_use blocks in the message.
-func toolUseIDs(msg provider.Message) []string {
-	var ids []string
-	for _, b := range msg.Content {
-		if b.Type == "tool_use" {
-			ids = append(ids, b.ID)
-		}
-	}
-	return ids
-}
+func toolUseIDs(msg provider.Message) []string { return messages.ToolUseIDs(msg) }
 
 // toolResultIDs returns the tool_use_id values of all tool_result blocks in the message.
-func toolResultIDs(msg provider.Message) map[string]bool {
-	ids := make(map[string]bool)
-	for _, b := range msg.Content {
-		if b.Type == "tool_result" {
-			ids[b.ToolUseID] = true
-		}
-	}
-	return ids
-}
+func toolResultIDs(msg provider.Message) map[string]bool { return messages.ToolResultIDs(msg) }
 
 // safeSplitPoint adjusts splitIdx backward (up to maxWalkBack steps) so that
 // tool_use/tool_result pairs are not broken across the split boundary.

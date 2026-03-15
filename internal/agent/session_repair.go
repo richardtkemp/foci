@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 
+	msgutil "foci/internal/messages"
 	"foci/internal/provider"
 )
 
@@ -20,12 +21,7 @@ func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 		return nil
 	}
 
-	var toolUseIDs []string
-	for _, block := range last.Content {
-		if block.Type == "tool_use" {
-			toolUseIDs = append(toolUseIDs, block.ID)
-		}
-	}
+	toolUseIDs := msgutil.ToolUseIDs(last)
 	if len(toolUseIDs) == 0 {
 		return nil
 	}

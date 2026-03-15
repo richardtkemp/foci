@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/messages"
 	"foci/internal/provider"
 
 	"github.com/openai/openai-go/v3"
@@ -281,11 +282,4 @@ func mapFinishReason(reason string) string {
 }
 
 // hasToolUse checks if any content blocks are tool_use.
-func hasToolUse(blocks []provider.ContentBlock) bool {
-	for _, b := range blocks {
-		if b.Type == "tool_use" {
-			return true
-		}
-	}
-	return false
-}
+func hasToolUse(blocks []provider.ContentBlock) bool { return messages.BlocksHaveToolUse(blocks) }
