@@ -92,6 +92,22 @@ func TestParseSetupFlagsDefaults(t *testing.T) {
 	}
 }
 
+// Verifies that --char-import-dir without --char-mode infers charMode="import".
+// This is the Docker scenario: entrypoint detects import files and passes
+// --char-import-dir but not --char-mode.
+func TestParseSetupFlagsInfersImportMode(t *testing.T) {
+	f := parseSetupFlags([]string{
+		"--char-import-dir", "/opt/foci-import/character",
+	})
+
+	if f.charMode != "import" {
+		t.Errorf("charMode = %q, want import (should be inferred from --char-import-dir)", f.charMode)
+	}
+	if f.charImportDir != "/opt/foci-import/character" {
+		t.Errorf("charImportDir = %q, want /opt/foci-import/character", f.charImportDir)
+	}
+}
+
 // Verifies provision.IsValidAgentID works correctly through the setup code path.
 func TestValidationFunctions(t *testing.T) {
 	if !provision.IsValidAgentID("my-agent") {

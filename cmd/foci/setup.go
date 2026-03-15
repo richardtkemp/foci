@@ -191,7 +191,11 @@ func parseSetupFlags(args []string) setupFlags {
 		}
 	}
 	if f.charMode == "" {
-		f.charMode = "defaults"
+		if f.charImportDir != "" {
+			f.charMode = "import"
+		} else {
+			f.charMode = "defaults"
+		}
 	}
 	if f.agentID == "" {
 		f.agentID = "main"
