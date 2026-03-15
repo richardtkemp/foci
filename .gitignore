@@ -25,6 +25,8 @@ todo-*.db-shm
 .setup-install.sh
 .env.test
 docker/.env
+docker/character/*.md
+docker/memory/*.md
 .staged-WELCOME.md
 .claude
 .claude/

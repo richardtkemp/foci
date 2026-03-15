@@ -111,7 +111,7 @@ Required on first startup only, to seed the config file.
 
 To seed your agent with character or memory files on first run, place `.md` files in:
 
-- `docker/characters/` — character definition files
+- `docker/character/` — character definition files
 - `docker/memory/` — memory files
 
 These are baked into the image at build time and imported during setup. Only used on first run (when no config exists yet).
