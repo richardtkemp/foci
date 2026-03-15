@@ -1,0 +1,482 @@
+package main
+
+import (
+	"context"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"foci/internal/agent"
+	"foci/internal/command"
+	"foci/internal/compaction"
+	"foci/internal/config"
+	"foci/internal/log"
+	mcpkg "foci/internal/mcp"
+	"foci/internal/nudge"
+	"foci/internal/platform"
+	"foci/internal/provider"
+	"foci/internal/secrets"
+	"foci/internal/session"
+	"foci/internal/skills"
+	"foci/internal/tools"
+	"foci/internal/voice"
+	"foci/internal/warnings"
+	"foci/internal/workspace"
+	"foci/prompts"
+)
+
+// coreToolsResult holds the side-products of core tool registration.
+type coreToolsResult struct {
+	tmuxTool       *tools.Tool
+	tmuxClearAll   func()
+	tmuxWatchCount func() int
+}
+
+// registerCoreTools registers exec, tmux, browser, file I/O, summary, and HTTP tools.
+func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secrets.Store, notifier *tools.AsyncNotifier) coreToolsResult {
+	acfg := p.acfg
+
+	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
+	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
+	spillThreshold := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir))
+
+	var result coreToolsResult
+
+	// Only register tmux tool if tmux is available in PATH
+	if _, err := exec.LookPath("tmux"); err == nil {
+		tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
+		tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
+		tmuxWatchThresholdSec := 30
+		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
+			tmuxWatchThresholdSec = int(d.Seconds())
+		}
+		tmuxSessionTTLStr := resolveString(acfg.TmuxSessionTTL, p.cfg.Tools.TmuxSessionTTL)
+		var tmuxSessionTTL time.Duration
+		if tmuxSessionTTLStr != "0" {
+			if d, err := time.ParseDuration(tmuxSessionTTLStr); err == nil {
+				tmuxSessionTTL = d
+			}
+		}
+		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
+		registry.Register(result.tmuxTool)
+	}
+
+	// Only register browser tool if enabled
+	browserEnabled := resolveBoolPtr(acfg.BrowserEnabled, p.cfg.Tools.Browser.Enabled)
+	if browserEnabled {
+		browserMgr := tools.NewBrowserManager(&p.cfg.Tools.Browser)
+		registry.Register(tools.NewBrowserTool(browserMgr))
+	}
+
+	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
+	if len(blockedPaths) > 0 {
+		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
+	}
+	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
+	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths))
+	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths))
+	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, acfg.Model, acfg.Workspace, p.cfg.Models.Aliases))
+	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
+
+	return result
+}
+
+// registerWebTools registers web search and fetch tools.
+// Returns server-side tool definitions for provider-hosted tools.
+func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDef {
+	acfg := p.acfg
+	var serverTools []provider.ToolDef
+
+	searchProvider := resolveString(acfg.SearchProvider, p.cfg.Tools.SearchProvider)
+	if searchProvider == "anthropic" {
+		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
+			p.cfg.Tools.WebSearchMaxUses, p.cfg.Tools.WebSearchAllowedDomains, p.cfg.Tools.WebSearchBlockedDomains))
+	} else if searchProvider == "brave" && p.braveKey != "" {
+		registry.Register(tools.NewWebSearchTool(p.braveKey))
+	}
+
+	fetchProvider := resolveString(acfg.FetchProvider, p.cfg.Tools.FetchProvider)
+	if fetchProvider == "anthropic" {
+		serverTools = append(serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
+			p.cfg.Tools.WebFetchMaxUses, p.cfg.Tools.WebFetchAllowedDomains, p.cfg.Tools.WebFetchBlockedDomains))
+	} else {
+		registry.Register(tools.NewWebFetchTool())
+	}
+
+	return serverTools
+}
+
+// registerMemoryAndExtTools registers memory, scratchpad, todo, task list,
+// bitwarden, and MCP tools. Returns the MCP manager.
+func registerMemoryAndExtTools(registry *tools.Registry, p setupParams, agLazy func() *agent.Agent) *mcpkg.Manager {
+	acfg := p.acfg
+
+	if len(p.memBackends) > 0 {
+		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.cfg.Memory.SearchBackends))
+	}
+	if p.scratchpadStore != nil {
+		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))
+	}
+	if p.todoStore != nil {
+		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
+	}
+	if p.taskListStore != nil {
+		registry.Register(tools.NewTaskListTool(p.taskListStore, acfg.ID, func(sk, msg string) {
+			ag := agLazy()
+			for _, fn := range ag.TaskListNotifyFunc {
+				fn(sk, msg)
+			}
+		}))
+	}
+
+	// Bitwarden tools (if enabled)
+	if p.bwStore != nil {
+		registry.Register(tools.NewBitwardenSearchTool(p.bwStore))
+		registry.Register(tools.NewBitwardenUnlockTool(p.bwStore))
+	}
+
+	// MCP servers (dynamic — re-reads mcp.toml on each tool call)
+	mcpMgr := mcpkg.NewManagerForAgent(filepath.Dir(p.configPath), acfg.ID)
+	if tool := mcpMgr.Tool(); tool != nil {
+		registry.Register(tool)
+	}
+
+	return mcpMgr
+}
+
+// bootstrapResult holds the output of setupBootstrapAndSkills.
+type bootstrapResult struct {
+	bootstrap         *workspace.Bootstrap
+	skillRegistry     *skills.Registry
+	extraSystemBlocks []provider.SystemBlock
+	skillsDirs        []string
+}
+
+// setupBootstrapAndSkills loads the workspace bootstrap and skill registry.
+func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrapResult {
+	acfg := p.acfg
+
+	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
+	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
+	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
+
+	skillsDirs := p.cfg.Skills.Dirs
+	if len(acfg.SkillsDirs) > 0 {
+		skillsDirs = acfg.SkillsDirs
+	}
+	skillRegistry := skills.Load(skillsDirs)
+	var extraSystemBlocks []provider.SystemBlock
+	if skillRegistry.Len() > 0 {
+		extraSystemBlocks = []provider.SystemBlock{
+			{Type: "text", Text: skillRegistry.SystemBlock(acfg.Workspace)},
+		}
+		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
+	}
+	maxRC := p.cfg.Tools.MaxResultChars
+	if len(acfg.SkillsDirs) > 0 {
+		maxRC = resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	}
+	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
+
+	return bootstrapResult{
+		bootstrap:         bootstrap,
+		skillRegistry:     skillRegistry,
+		extraSystemBlocks: extraSystemBlocks,
+		skillsDirs:        skillsDirs,
+	}
+}
+
+// buildCompactor creates a Compactor configured for this agent.
+// Returns the compactor and the resolved compaction threshold.
+func buildCompactor(p setupParams, defaultFormat string) (*compaction.Compactor, float64) {
+	acfg := p.acfg
+	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
+	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
+	compactor := compaction.NewCompactor(p.sessions, acfg.Model, compactionThreshold)
+	compactor.WithConfig(
+		p.cfg.Sessions.CompactionMaxTokens,
+		p.cfg.Sessions.CompactionMinMessages,
+		preserveMessages,
+	)
+	if acfg.CompactionEffort != "" {
+		compactor.WithEffort(acfg.CompactionEffort)
+	}
+	compactor.WithFormat(defaultFormat)
+	compactor.Scratchpad = p.scratchpadStore
+	compactor.TaskListStore = p.taskListStore
+	compactor.AgentID = acfg.ID
+
+	return compactor, compactionThreshold
+}
+
+// registerSessionTools registers send_message_to_user and send_to_session tools.
+// Returns the resolved agent TTS and TTS replacements for reuse in platform setup.
+func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platform.ConnectionManager, notifier *tools.AsyncNotifier) (voice.TTS, map[string]string) {
+	acfg := p.acfg
+
+	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.TTSReplacements)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls)
+	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
+		if conn == nil {
+			return nil
+		}
+		return conn
+	}, agentTTS))
+
+	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
+	var resolveKeyFn tools.SessionKeyResolverFn
+	if p.sessionIndex != nil {
+		resolveKeyFn = p.sessionIndex.ResolvePartialKey
+	}
+	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
+
+	return agentTTS, ttsRepls
+}
+
+// setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKey func() string) {
+	if !acfg.NudgeEnable {
+		return
+	}
+
+	rulesPath := nudge.RulesPath(acfg.Workspace)
+	rs, err := nudge.LoadRules(rulesPath)
+	if err != nil {
+		log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
+	}
+	if rs != nil && len(rs.Rules) > 0 {
+		ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
+		log.Infof("main", "agent %s: loaded %d nudge rules", acfg.ID, len(rs.Rules))
+	}
+	ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
+	ag.NudgePreAnswerMinTools = acfg.NudgePreAnswerMinTools
+	if ag.NudgePreAnswerMinTools <= 0 {
+		ag.NudgePreAnswerMinTools = 2
+	}
+
+	// NudgeReloadFunc: on bootstrap reload, optionally extract new rules
+	// from character files (if nudge_auto_extract), then refresh from disk.
+	fileOrder := acfg.SystemFiles
+	if len(fileOrder) == 0 {
+		fileOrder = workspace.DefaultFileOrder
+	}
+	nudgeCooldown := acfg.NudgeCooldown
+	nudgeMaxPerBatch := acfg.NudgeMaxPerBatch
+	autoExtract := acfg.NudgeAutoExtract
+	nudgeReloadFromDisk := func() {
+		rs, err := nudge.LoadRules(rulesPath)
+		if err != nil {
+			log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
+			return
+		}
+		if rs != nil && len(rs.Rules) > 0 {
+			ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
+		}
+	}
+
+	ag.NudgeReloadFunc = func() {
+		if !autoExtract {
+			nudgeReloadFromDisk()
+			return
+		}
+		extractor := nudge.NewExtractor(acfg.Workspace, fileOrder)
+		_, needed := extractor.NeedsExtraction()
+		if needed {
+			go func() {
+				ctx := context.Background()
+				parentKey := defaultSessionKey()
+				if parentKey == "" {
+					log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
+					return
+				}
+				branchKey, err := session.BranchFromSession(parentKey)
+				if err != nil {
+					log.Warnf("nudge", "agent %s: create branch key: %v", acfg.ID, err)
+					return
+				}
+				ag.SetSessionNoCompact(branchKey, true)
+				if err := extractor.Extract(ctx, ag, branchKey); err != nil {
+					log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
+					return
+				}
+				nudgeReloadFromDisk()
+				log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)
+			}()
+		} else {
+			nudgeReloadFromDisk()
+		}
+	}
+}
+
+// setupRedaction configures secret redaction on the agent.
+func setupRedaction(ag *agent.Agent, p setupParams, agentStore *secrets.Store) {
+	if p.store != nil && p.bwStore != nil {
+		ag.Redact = func(text string) string {
+			text = agentStore.Redact(text)
+			return p.bwStore.Redact(text)
+		}
+	} else if p.store != nil {
+		ag.Redact = agentStore.Redact
+	} else if p.bwStore != nil {
+		ag.Redact = p.bwStore.Redact
+	}
+}
+
+// setupWarningQueue configures the warning injection queue on the agent.
+func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Config) {
+	if !acfg.InjectAgentWarnings {
+		return
+	}
+	warningWindow, err := time.ParseDuration(cfg.Logging.WarningWindowDuration)
+	if err != nil {
+		warningWindow = 5 * time.Minute
+	}
+	ag.WarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
+}
+
+// setupManaWatcher configures mana threshold warnings on the agent.
+func setupManaWatcher(ag *agent.Agent, p setupParams) {
+	acfg := p.acfg
+	manaThresholds := p.cfg.ManaWarnings.Thresholds
+	if len(acfg.UsageWarnings.Thresholds) > 0 {
+		manaThresholds = acfg.UsageWarnings.Thresholds
+	}
+	if len(manaThresholds) == 0 {
+		return
+	}
+
+	ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
+	ag.ManaWatcher.SetStore(p.stateStore)
+	ag.ManaWatcher.Restore()
+	restoreThreshold := p.cfg.ManaWarnings.RestoreThreshold
+	if acfg.UsageWarnings.RestoreThreshold != nil {
+		restoreThreshold = *acfg.UsageWarnings.RestoreThreshold
+	}
+	ag.ManaWatcher.SetRestoreThreshold(restoreThreshold)
+}
+
+// registerSpawnTool registers the spawn tool for forking sub-agents.
+func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool)) {
+	acfg := p.acfg
+
+	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	spawnDeps := tools.SpawnDeps{
+		Client:          p.client,
+		ClientProvider:  p.clientProvider,
+		Bootstrap:       bootstrap,
+		Registry:        registry,
+		Sessions:        &sessionBranchAdapter{store: p.sessions},
+		AgentID:         acfg.ID,
+		Model:           acfg.Model,
+		ModelAliases:    p.cfg.Models.Aliases,
+		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
+		MaxToolLoops:    acfg.MaxToolLoops,
+		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
+		Notifier:        notifier,
+		OrientationBuilder: func(branchKey, parentKey string) string {
+			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
+		},
+		SetNoCompact: setNoCompact,
+	}
+	registry.Register(tools.NewSpawnTool(spawnDeps, agLazy))
+}
+
+// platformConnectionResult holds the callbacks wired by platform connection setup.
+type platformConnectionResult struct {
+	defaultSessionKeyFn func() string
+	configureFacetFn    func(platform.Connection)
+	displayDefaultsFn   func() platform.DisplaySettings
+}
+
+// setupPlatformConnections creates and registers platform connections for the agent.
+func setupPlatformConnections(
+	ag *agent.Agent,
+	p setupParams,
+	cmds *command.Registry,
+	cc command.CommandContext,
+	lastMsgStore *command.LastMessageStore,
+	ttsRepls map[string]string,
+	promptSearchDirs []string,
+) platformConnectionResult {
+	acfg := p.acfg
+	var result platformConnectionResult
+
+	reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	reclaimMfCfg := acfg.MemoryFormation
+	reclaimSearchDirs := promptSearchDirs
+
+	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
+		AgentID:        acfg.ID,
+		Handler:        ag,
+		Commands:       cmds,
+		CommandContext: cc,
+		LastMsgStore:   lastMsgStore,
+		AgentConfig:    acfg,
+		STT:            resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
+		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
+		ReclaimHook: func(sessionKey string) {
+			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
+				return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
+			}, reclaimSearchDirs, p.ctx, false)
+		},
+		DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
+			return platform.DisplaySettings{
+				ShowToolCalls: ag.SessionShowToolCalls(sessionKey),
+				ShowThinking:  ag.SessionDisplayShowThinking(sessionKey),
+				StreamOutput:  ag.SessionStreamOutput(sessionKey),
+				DisplayWidth:  ag.SessionDisplayWidth(sessionKey),
+			}
+		},
+	})
+	for _, r := range results {
+		if r.DefaultSessionKeyFn != nil {
+			result.defaultSessionKeyFn = r.DefaultSessionKeyFn
+		}
+		if r.ConfigureFacetConn != nil {
+			result.configureFacetFn = r.ConfigureFacetConn
+		}
+		if r.DisplayDefaultsFn != nil {
+			result.displayDefaultsFn = r.DisplayDefaultsFn
+		}
+	}
+
+	wireAgentPlatformCallbacks(ag, acfg, p.cfg, p.plat, p.connMgr, p.sessionIndex)
+
+	return result
+}
+
+// logRegisteredTools logs the names of all registered client and server tools.
+func logRegisteredTools(registry *tools.Registry, serverTools []provider.ToolDef, agentID string) {
+	allTools := registry.All()
+	toolNames := make([]string, len(allTools))
+	for i, t := range allTools {
+		toolNames[i] = t.Name
+	}
+	log.Infof("main", "agent %q: registered %d tools: [%s]", agentID, len(toolNames), strings.Join(toolNames, ", "))
+	if len(serverTools) > 0 {
+		stNames := make([]string, len(serverTools))
+		for i, st := range serverTools {
+			stNames[i] = st.Name()
+		}
+		log.Infof("main", "agent %q: server tools: [%s]", agentID, strings.Join(stNames, ", "))
+	}
+}
+
+// mergeWebhooks merges global and per-agent webhook maps.
+// Per-agent entries override global entries with the same key.
+func mergeWebhooks(globalWebhooks, agentWebhooks map[string]string) map[string]string {
+	if len(globalWebhooks) == 0 && len(agentWebhooks) == 0 {
+		return nil
+	}
+	webhooks := make(map[string]string, len(globalWebhooks)+len(agentWebhooks))
+	for k, v := range globalWebhooks {
+		webhooks[k] = v
+	}
+	for k, v := range agentWebhooks {
+		webhooks[k] = v
+	}
+	return webhooks
+}
