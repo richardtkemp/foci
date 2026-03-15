@@ -1,9 +1,6 @@
 package log
 
 import (
-	"crypto/sha256"
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"foci/internal/modelinfo"
-	"foci/internal/sqlite"
 )
 
 // Level represents a log severity level.
@@ -70,38 +64,6 @@ func ParseLevel(s string) Level {
 	}
 }
 
-// APIEntry is a structured record for one API request.
-type APIEntry struct {
-	Timestamp   time.Time `json:"ts"`
-	Provider    string    `json:"provider,omitempty"` // "anthropic" or "gemini" (empty = anthropic for backwards compat)
-	Session     string    `json:"session"`
-	Model       string    `json:"model"`
-	Input       int       `json:"input"`
-	Output      int       `json:"output"`
-	CacheRead   int       `json:"cache_read"`
-	CacheWrite  int       `json:"cache_write"`
-	CostUSD     float64   `json:"cost_usd"`
-	DurationMS  int64     `json:"duration_ms"`
-	StopReason  string    `json:"stop_reason"`
-	CallType    string    `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
-	SessionFile string    `json:"session_file,omitempty"` // path to session JSONL file
-	SessionLine int       `json:"session_line,omitempty"` // line number in session file (conversation calls)
-	PreMessages int       `json:"pre_messages,omitempty"` // message count before compaction
-	NewSession  string    `json:"new_session,omitempty"`  // new session key after compaction rotation
-}
-
-// PayloadEntry is a full API request/response record.
-type PayloadEntry struct {
-	Timestamp  time.Time       `json:"ts"`
-	Session    string          `json:"session"`
-	SeqNum     int             `json:"seq"`
-	Model      string          `json:"model"`
-	SystemHash string          `json:"system_hash"`
-	Request    json.RawMessage `json:"request"`
-	Response   json.RawMessage `json:"response"`
-	DurationMS int64           `json:"duration_ms"`
-}
-
 // Logger writes event log lines and structured API log entries.
 type Logger struct {
 	level       Level
@@ -116,16 +78,6 @@ type Logger struct {
 	initialized bool      // true after Init completes
 	mu          sync.Mutex
 }
-
-// apiDB is the SQLite API call log (separate from the main Logger to
-// match the conversation.go pattern — independent init/close lifecycle).
-type apiDB struct {
-	db   *sql.DB
-	stmt *sql.Stmt
-	mu   sync.Mutex
-}
-
-var apiLog *apiDB
 
 // std is the global logger instance.
 var std = &Logger{level: INFO, eventOut: os.Stderr}
@@ -214,59 +166,6 @@ func Init(cfg Config) error {
 	std.mu.Unlock()
 
 	return nil
-}
-
-// InitAPIDB opens (or creates) the SQLite API call log.
-func InitAPIDB(path string) error {
-	db, err := sqlite.OpenInit(path,
-		`CREATE TABLE IF NOT EXISTS api_calls (
-			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-			ts                 DATETIME NOT NULL,
-			session            TEXT NOT NULL,
-			model              TEXT NOT NULL,
-			input_tokens       INTEGER,
-			output_tokens      INTEGER,
-			cache_read_tokens  INTEGER,
-			cache_write_tokens INTEGER,
-			cost_usd           REAL,
-			duration_ms        INTEGER,
-			stop_reason        TEXT,
-			call_type          TEXT NOT NULL,
-			session_file       TEXT,
-			session_line       INTEGER
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`,
-		`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`,
-	)
-	if err != nil {
-		return err
-	}
-
-	// Migrations for existing DBs (ALTER TABLE is a no-op if column exists).
-	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN provider TEXT DEFAULT ''`)
-	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN pre_messages INTEGER`)
-	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN new_session TEXT`)
-
-	stmt, err := db.Prepare(`INSERT INTO api_calls
-		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages, new_session)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		_ = db.Close()
-		return fmt.Errorf("prepare insert: %w", err)
-	}
-
-	apiLog = &apiDB{db: db, stmt: stmt}
-	return nil
-}
-
-// CloseAPIDB closes the SQLite API call log.
-func CloseAPIDB() {
-	if apiLog != nil {
-		_ = apiLog.stmt.Close()
-		_ = apiLog.db.Close()
-		apiLog = nil
-	}
 }
 
 // Close closes log files.
@@ -394,85 +293,6 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	}
 }
 
-// api writes a structured API log entry to JSONL and SQLite.
-func (l *Logger) api(entry APIEntry) {
-	if entry.CallType == "" {
-		entry.CallType = "conversation"
-	}
-
-	// JSONL (backward compatible)
-	l.mu.Lock()
-	if l.apiFile != nil {
-		if data, err := json.Marshal(entry); err == nil {
-			_, _ = l.apiFile.Write(append(data, '\n'))
-		}
-	}
-	l.mu.Unlock()
-
-	// SQLite
-	if apiLog != nil {
-		apiLog.insert(entry)
-	}
-}
-
-func (a *apiDB) insert(entry APIEntry) {
-	ts := entry.Timestamp.UTC().Format(time.RFC3339)
-
-	var sessionFile *string
-	if entry.SessionFile != "" {
-		sessionFile = &entry.SessionFile
-	}
-	var sessionLine *int
-	if entry.SessionLine > 0 {
-		sessionLine = &entry.SessionLine
-	}
-	var preMessages *int
-	if entry.PreMessages > 0 {
-		preMessages = &entry.PreMessages
-	}
-	var newSession *string
-	if entry.NewSession != "" {
-		newSession = &entry.NewSession
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_, err := a.stmt.Exec(
-		ts, entry.Provider, entry.Session, entry.Model,
-		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
-		entry.CostUSD, entry.DurationMS, entry.StopReason,
-		entry.CallType, sessionFile, sessionLine,
-		preMessages, newSession,
-	)
-	if err != nil {
-		std.event(ERROR, "api_db", "insert error: %v", err)
-	}
-}
-
-// payload writes a full API request/response record.
-func (l *Logger) payload(entry PayloadEntry) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.payloadFile == nil {
-		return
-	}
-
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
-	_, _ = l.payloadFile.Write(append(data, '\n'))
-}
-
-// PayloadEnabled returns true if full payload logging is active.
-func PayloadEnabled() bool {
-	std.mu.Lock()
-	defer std.mu.Unlock()
-	return std.payloadFile != nil
-}
-
 // ComponentLogger carries a fixed component prefix for structured logging.
 type ComponentLogger struct {
 	component string
@@ -514,52 +334,8 @@ func Errorf(component string, format string, args ...interface{}) {
 	std.event(ERROR, component, format, args...)
 }
 
-func API(entry APIEntry) {
-	// Auto-infer provider from model name when not explicitly set.
-	if entry.Provider == "" {
-		if strings.HasPrefix(entry.Model, "gemini-") {
-			entry.Provider = "gemini"
-		} else if modelinfo.IsOpenAI(entry.Model) {
-			entry.Provider = "openai"
-		} else if strings.HasPrefix(entry.Model, "claude-") {
-			entry.Provider = "anthropic"
-		}
-	}
-	std.api(entry)
-}
-
-func Payload(entry PayloadEntry) {
-	std.payload(entry)
-}
-
-// SystemHash computes a truncated SHA-256 hash (16 hex chars) of concatenated
-// system block texts. Returns an empty string for nil/empty blocks.
-func SystemHash(texts []string) string {
-	if len(texts) == 0 {
-		return ""
-	}
-	h := sha256.New()
-	for _, t := range texts {
-		h.Write([]byte(t))
-	}
-	return fmt.Sprintf("%x", h.Sum(nil)[:8])
-}
-
 // Fatalf logs at ERROR level and exits.
 func Fatalf(component string, format string, args ...interface{}) {
 	std.event(ERROR, component, format, args...)
 	os.Exit(1)
-}
-
-// SetAPIWriter replaces the API log file (for testing).
-// Exported for cross-package test use (agent/integration_test.go).
-func SetAPIWriter(f *os.File) {
-	std.mu.Lock()
-	std.apiFile = f
-	std.mu.Unlock()
-}
-
-// CalculateCost returns the estimated cost in USD for an API request.
-func CalculateCost(model string, input, output, cacheRead, cacheWrite int) float64 {
-	return modelinfo.Cost(model, input, output, cacheRead, cacheWrite)
 }
