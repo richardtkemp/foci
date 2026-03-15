@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"foci/internal/platform"
@@ -185,7 +187,7 @@ func emojiForTool(name string) string {
 // formatToolCall formats a tool call for display in Telegram.
 // showMode controls truncation: "full" shows everything, other modes truncate.
 func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode string) string {
-	maxChars := b.toolCallPreviewChars
+	maxChars := b.display.ToolCallPreviewChars
 	if maxChars == 0 {
 		maxChars = 450
 	}
@@ -201,9 +203,9 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode s
 	// Unescape literal \n and \t within JSON string values so they render
 	// as actual newlines/tabs in the Telegram <pre> block.
 	paramStr = unescapeJSONStringLiterals(paramStr)
-	paramStr = htmlEscapeBot(paramStr)
+	paramStr = htmlEscape(paramStr)
 	emoji := emojiForTool(toolName)
-	return fmt.Sprintf("%s <b>%s</b>\n<pre>%s</pre>", emoji, htmlEscapeBot(toolName), paramStr)
+	return fmt.Sprintf("%s <b>%s</b>\n<pre>%s</pre>", emoji, htmlEscape(toolName), paramStr)
 }
 
 // formatToolCallCompact returns a compact one-line summary for "full" mode.
@@ -212,14 +214,14 @@ func formatToolCallCompact(toolName string, params json.RawMessage) string {
 	emoji := emojiForTool(toolName)
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(params, &m); err != nil {
-		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscapeBot(toolName))
+		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))
 	}
 
 	summary := compactSummary(toolName, m)
 	if summary == "" {
-		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscapeBot(toolName))
+		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))
 	}
-	return fmt.Sprintf("%s <b>%s</b>: %s", emoji, htmlEscapeBot(toolName), htmlEscapeBot(summary))
+	return fmt.Sprintf("%s <b>%s</b>: %s", emoji, htmlEscape(toolName), htmlEscape(summary))
 }
 
 // compactSummary extracts the most meaningful param values for a compact display.
@@ -393,17 +395,7 @@ func spawnResultHint(result string) string {
 
 // sortedKeys returns map keys in sorted order for deterministic fallback.
 func sortedKeys(m map[string]json.RawMessage) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	// sort inline to avoid import — simple insertion sort for small maps
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
-		}
-	}
-	return keys
+	return slices.Sorted(maps.Keys(m))
 }
 
 // unescapeUnicodeSequences converts unicode escape sequences like \u003e back to
@@ -451,8 +443,8 @@ func unescapeJSONStringLiterals(s string) string {
 	return s
 }
 
-// htmlEscapeBot escapes HTML special characters for Telegram messages.
-func htmlEscapeBot(s string) string {
+// htmlEscape escapes HTML special characters for Telegram messages.
+func htmlEscape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")

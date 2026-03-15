@@ -63,7 +63,11 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 		return false
 	}
 
-	if result.Response.Text != "" {
+	if len(result.Response.Parts) > 0 {
+		for _, part := range result.Response.Parts {
+			b.sendReply(msg, part)
+		}
+	} else if result.Response.Text != "" {
 		b.sendReply(msg, result.Response.Text)
 	}
 	if result.Response.DocPath != "" {

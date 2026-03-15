@@ -202,7 +202,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	if len(attachments) > 0 {
 		logText = fmt.Sprintf("[%d attachment(s)] %s", len(attachments), text)
 	}
-	if b.messagesInLog {
+	if b.display.MessagesInLog {
 		b.logger().Infof("message from %s: %s", formatUserInfo(msg.From), truncate(logText, 100))
 	} else {
 		b.logger().Debugf("message from %s", formatUserInfo(msg.From))
@@ -272,7 +272,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 func (b *Bot) enqueue(qm queuedMessage) {
 	// Steer mode: if a turn is active, route text to the steer buffer
 	// so it gets injected between tool calls instead of queuing behind the turn lock.
-	if b.steerMode && qm.text != "" && len(qm.attachments) == 0 {
+	if b.display.SteerMode && qm.text != "" && len(qm.attachments) == 0 {
 		b.turnMu.Lock()
 		active := b.turnCancel != nil
 		b.turnMu.Unlock()

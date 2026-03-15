@@ -108,7 +108,7 @@ func ConfigCommand() *Command {
 			case "toml":
 				return Response{Text: config.FormatConfigTOML(cc.Config, cc.AgentConfig)}, nil
 			case "table":
-				return Response{Text: strings.Join(config.FormatConfigGrouped(cc.Config, cc.AgentConfig), "\x00")}, nil
+				return Response{Parts: config.FormatConfigGrouped(cc.Config, cc.AgentConfig)}, nil
 			case "available":
 				return Response{Text: config.FormatAvailable(cc.Config, cc.AgentConfig)}, nil
 			default:

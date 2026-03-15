@@ -13,58 +13,21 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-func (b *Bot) SendDocument(filePath string) error {
+// sendToLastChat resolves the last known chat ID and calls fn with it.
+func (b *Bot) sendToLastChat(fn func(int64, string) error, filePath string) error {
 	chatID, err := b.lastChatID()
 	if err != nil {
 		return err
 	}
-	return b.SendDocumentToChat(chatID, filePath)
+	return fn(chatID, filePath)
 }
 
-// SendVoice sends a voice note from a file to the last known chat.
-func (b *Bot) SendVoice(filePath string) error {
-	chatID, err := b.lastChatID()
-	if err != nil {
-		return err
-	}
-	return b.SendVoiceToChat(chatID, filePath)
-}
-
-// SendVideo sends a video file to the last known chat.
-func (b *Bot) SendVideo(filePath string) error {
-	chatID, err := b.lastChatID()
-	if err != nil {
-		return err
-	}
-	return b.SendVideoToChat(chatID, filePath)
-}
-
-// SendPhoto sends a photo to the last known chat.
-func (b *Bot) SendPhoto(filePath string) error {
-	chatID, err := b.lastChatID()
-	if err != nil {
-		return err
-	}
-	return b.SendPhotoToChat(chatID, filePath)
-}
-
-// SendAudio sends an audio file to the last known chat.
-func (b *Bot) SendAudio(filePath string) error {
-	chatID, err := b.lastChatID()
-	if err != nil {
-		return err
-	}
-	return b.SendAudioToChat(chatID, filePath)
-}
-
-// SendAnimation sends an animation (GIF) to the last known chat.
-func (b *Bot) SendAnimation(filePath string) error {
-	chatID, err := b.lastChatID()
-	if err != nil {
-		return err
-	}
-	return b.SendAnimationToChat(chatID, filePath)
-}
+func (b *Bot) SendDocument(filePath string) error  { return b.sendToLastChat(b.SendDocumentToChat, filePath) }
+func (b *Bot) SendVoice(filePath string) error     { return b.sendToLastChat(b.SendVoiceToChat, filePath) }
+func (b *Bot) SendVideo(filePath string) error     { return b.sendToLastChat(b.SendVideoToChat, filePath) }
+func (b *Bot) SendPhoto(filePath string) error     { return b.sendToLastChat(b.SendPhotoToChat, filePath) }
+func (b *Bot) SendAudio(filePath string) error     { return b.sendToLastChat(b.SendAudioToChat, filePath) }
+func (b *Bot) SendAnimation(filePath string) error { return b.sendToLastChat(b.SendAnimationToChat, filePath) }
 
 // SendVoiceData sends audio bytes as a Telegram voice note to the last known chat.
 func (b *Bot) SendVoiceData(audioData []byte) error {
@@ -104,8 +67,8 @@ func (b *Bot) SendTextToChat(chatID int64, text string) error {
 // SendInjectedToChat sends an injected/system text message to a specific chat ID.
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
-	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.injectedMessageHeader + "\n" + text
+	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
+		text = b.display.InjectedMessageHeader + "\n" + text
 	}
 	return b.SendTextToChat(chatID, text)
 }
@@ -300,7 +263,7 @@ func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType stri
 		return "", &fileTooLargeError{size: fileSize}
 	}
 
-	if b.receivedFilesDir == "" {
+	if b.display.ReceivedFilesDir == "" {
 		return "", fmt.Errorf("media save directory not configured")
 	}
 
@@ -314,11 +277,11 @@ func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType stri
 
 // saveMedia writes media data to disk and returns the saved file path.
 func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string) (string, error) {
-	if err := os.MkdirAll(b.receivedFilesDir, 0o755); err != nil {
+	if err := os.MkdirAll(b.display.ReceivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
 	filename := fmt.Sprintf("%s_%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), mediaType, chatID, ext)
-	path := filepath.Join(b.receivedFilesDir, filename)
+	path := filepath.Join(b.display.ReceivedFilesDir, filename)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return "", fmt.Errorf("write media: %w", err)
 	}
@@ -337,7 +300,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachm
 		return attachment{}, false
 	}
 	att := attachment{data: data, mediaType: mimeType}
-	if b.receivedFilesDir != "" {
+	if b.display.ReceivedFilesDir != "" {
 		ext := extForMediaType(mimeType)
 		if ext == ".bin" {
 			ext = extForMIME(mimeType)

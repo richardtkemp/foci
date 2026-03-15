@@ -6,16 +6,16 @@ import (
 )
 
 func TestHTMLEscape(t *testing.T) {
-	// Verifies that htmlEscape correctly escapes all HTML special characters
-	// (<, >, &, ") while leaving safe text unchanged.
+	// Verifies that htmlEscape correctly escapes HTML special characters
+	// (&, <, >) while leaving safe text and quotes unchanged.
 	tests := []struct {
 		in, want string
 	}{
 		{"hello", "hello"},
 		{"<b>bold</b>", "&lt;b&gt;bold&lt;/b&gt;"},
 		{"a & b", "a &amp; b"},
-		{`say "hi"`, "say &quot;hi&quot;"},
-		{"<>&\"", "&lt;&gt;&amp;&quot;"},
+		{`say "hi"`, `say "hi"`},
+		{"<>&\"", "&lt;&gt;&amp;\""},
 	}
 	for _, tt := range tests {
 		got := htmlEscape(tt.in)
@@ -73,7 +73,7 @@ func TestConvertToTelegramHTML(t *testing.T) {
 		{
 			name: "code block",
 			in:   "```go\nfmt.Println(\"hi\")\n```",
-			want: "<pre><code>fmt.Println(&quot;hi&quot;)</code></pre>",
+			want: "<pre><code>fmt.Println(\"hi\")</code></pre>",
 		},
 		{
 			name: "code block HTML escaping",

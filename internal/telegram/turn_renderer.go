@@ -208,7 +208,7 @@ func (r *TurnRenderer) editStreamPreview(streamMsgID int64, response string) {
 	}
 	preview := truncate(response, 200)
 	_, _, _ = r.bot.client.EditMessageText(
-		htmlEscapeBot(preview)+"\n\n<i>(full response below)</i>",
+		htmlEscape(preview)+"\n\n<i>(full response below)</i>",
 		&gotgbot.EditMessageTextOpts{
 			ChatId:    r.chatID,
 			MessageId: streamMsgID,
@@ -216,12 +216,17 @@ func (r *TurnRenderer) editStreamPreview(streamMsgID int64, response string) {
 		})
 }
 
+// buildThinkingHTML builds a combined thinking + divider + response HTML string.
+func buildThinkingHTML(responseHTML, thinkingText string, displayWidth int) string {
+	thinkingHTML := "<i>" + htmlEscape(thinkingText) + "</i>"
+	divider := "\n" + strings.Repeat("—", displayWidth) + "\n\n"
+	return thinkingHTML + divider + responseHTML
+}
+
 // sendWithFullThinking sends thinking (italic) + divider + response as a single message.
 func (r *TurnRenderer) sendWithFullThinking(response, thinkingText string) {
-	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
 	responseHTML := ConvertToTelegramHTML(response, r.display.renderOpts)
-	divider := "\n" + strings.Repeat("—", r.display.displayWidth) + "\n\n"
-	r.bot.sendHTMLChunks(r.chatID, thinkingHTML+divider+responseHTML)
+	r.bot.sendHTMLChunks(r.chatID, buildThinkingHTML(responseHTML, thinkingText, r.display.displayWidth))
 }
 
 // sendWithCompactThinking sends a response with a "Show thinking" inline keyboard button.
@@ -275,10 +280,8 @@ func (r *TurnRenderer) editStreamWithThinking(msgID int64, response, thinkingTex
 // editStreamWithFullThinking edits the stream message in-place with thinking
 // (italic) + divider + response HTML.
 func (r *TurnRenderer) editStreamWithFullThinking(msgID int64, response, thinkingText string) {
-	thinkingHTML := "<i>" + htmlEscapeBot(thinkingText) + "</i>"
 	responseHTML := ConvertToTelegramHTML(response, r.display.renderOpts)
-	divider := "\n" + strings.Repeat("—", r.display.displayWidth) + "\n\n"
-	combined := thinkingHTML + divider + responseHTML
+	combined := buildThinkingHTML(responseHTML, thinkingText, r.display.displayWidth)
 	_, _, err := r.bot.client.EditMessageText(combined, &gotgbot.EditMessageTextOpts{
 		ChatId:    r.chatID,
 		MessageId: msgID,

@@ -14,7 +14,7 @@ func TestSaveAttachment(t *testing.T) {
 	// content and filename pattern.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 
 	data := []byte("fake-jpeg-data")
 	path, err := b.saveMedia(data, "attachment", 12345, ".jpg")
@@ -46,7 +46,7 @@ func TestSaveAttachmentDisabled(t *testing.T) {
 	// receivedFilesDir is set.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	// receivedFilesDir not set — verify it's empty by default
-	if b.receivedFilesDir != "" {
+	if b.display.ReceivedFilesDir != "" {
 		t.Error("expected empty receivedFilesDir by default")
 	}
 
@@ -62,7 +62,7 @@ func TestSaveAttachmentPNG(t *testing.T) {
 	// extension and content.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 
 	data := []byte("fake-png-data")
 	path, err := b.saveMedia(data, "attachment", 99999, ".png")
@@ -89,7 +89,7 @@ func TestSaveAttachmentCreatesDir(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "subdir", "files")
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 
 	path, err := b.saveMedia([]byte("data"), "attachment", 1, ".jpg")
 	if err != nil {

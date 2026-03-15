@@ -17,7 +17,7 @@ func TestToolCallFull_InlineKeyboard(t *testing.T) {
 	// Verifies that inline keyboards are properly
 	// generated for tool calls in full mode.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	b.showToolCalls = "full"
+	b.display.ShowToolCalls = "full"
 
 	// Simulate the ToolCallObserver closure from processAgentMessage.
 	var toolMsgMu sync.Mutex
@@ -275,7 +275,7 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 	// Verifies that tool results are stored
 	// for later display.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.showToolCalls = "full"
+	b.display.ShowToolCalls = "full"
 
 	// Simulate what the ToolResultObserver closure does.
 	var toolMsgID int64 = 99
@@ -284,7 +284,7 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 	var toolMsgMu sync.Mutex
 
 	observer := func(toolName string, result string, isError bool) {
-		if b.showToolCalls != "full" {
+		if b.display.ShowToolCalls != "full" {
 			return
 		}
 		toolMsgMu.Lock()
@@ -403,7 +403,7 @@ func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
 	// Verifies that when steer mode is
 	// enabled and a turn is active, text messages go to the steer buffer.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.SetSteerMode(true)
+	b.display.SteerMode = true
 
 	// Simulate active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -455,7 +455,7 @@ func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
 	// Verifies that when steer
 	// mode is enabled but no turn is active, messages go to the normal queue.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.SetSteerMode(true)
+	b.display.SteerMode = true
 
 	// No active turn (turnCancel is nil)
 	msg := makeMsg(111, "owner", "hello")
@@ -472,15 +472,15 @@ func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
 func TestSetSteerMode(t *testing.T) {
 	// Verifies that SetSteerMode toggles the flag.
 	b, _ := testBot([]string{}, command.NewRegistry())
-	if b.steerMode {
+	if b.display.SteerMode {
 		t.Error("steerMode should default to false")
 	}
-	b.SetSteerMode(true)
-	if !b.steerMode {
+	b.display.SteerMode = true
+	if !b.display.SteerMode {
 		t.Error("steerMode should be true after SetSteerMode(true)")
 	}
-	b.SetSteerMode(false)
-	if b.steerMode {
+	b.display.SteerMode = false
+	if b.display.SteerMode {
 		t.Error("steerMode should be false after SetSteerMode(false)")
 	}
 }

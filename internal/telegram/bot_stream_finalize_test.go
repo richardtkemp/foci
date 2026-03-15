@@ -108,7 +108,7 @@ func TestEditStreamWithFullThinking(t *testing.T) {
 	// Verifies that editStreamWithFullThinking edits the stream message
 	// in-place with italic thinking + divider + response HTML.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	b.displayWidth = 40
+	b.display.DisplayWidth = 40
 	r := testRenderer(b, 12345)
 
 	r.editStreamWithFullThinking(100, "Response text", "Deep thoughts")
@@ -205,7 +205,7 @@ func TestStreamFullThinking_NoNewMessage(t *testing.T) {
 	// End-to-end verification: with streamMsgID set and full thinking,
 	// editStreamWithFullThinking produces exactly 1 edit and 0 sends.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	b.displayWidth = 40
+	b.display.DisplayWidth = 40
 	r := testRenderer(b, 12345)
 
 	r.editStreamWithFullThinking(200, "short reply", "thinking content")
@@ -240,7 +240,7 @@ func TestNoStream_ToolCallPreviewEdit(t *testing.T) {
 	// Verifies that without streaming, tool call preview messages are still
 	// edited in-place when show_tool_calls=preview and response fits.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	b.showToolCalls = "preview"
+	b.display.ShowToolCalls = "preview"
 	msg := makeMsg(111, "111", "test")
 
 	// Simulate tool call preview edit path

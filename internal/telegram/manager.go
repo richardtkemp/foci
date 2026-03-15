@@ -88,30 +88,29 @@ func (m *BotManager) BotForSession(sessionKey string) *Bot {
 	defer m.mu.RUnlock()
 
 	for _, pool := range m.pools {
-		var found *Bot
-		pool.ForEach(func(b *Bot) {
-			if b.SessionKey() == sessionKey {
-				found = b
-			}
-		})
-		if found != nil {
-			return found
+		if b := findInPool(pool, sessionKey); b != nil {
+			return b
 		}
 	}
 
 	if m.shared != nil {
-		var found *Bot
-		m.shared.ForEach(func(b *Bot) {
-			if b.SessionKey() == sessionKey {
-				found = b
-			}
-		})
-		if found != nil {
-			return found
+		if b := findInPool(m.shared, sessionKey); b != nil {
+			return b
 		}
 	}
 
 	return nil
+}
+
+// findInPool searches a pool for a bot whose SessionKey matches the given key.
+func findInPool(pool *Pool, sessionKey string) *Bot {
+	var found *Bot
+	pool.ForEach(func(b *Bot) {
+		if b.SessionKey() == sessionKey {
+			found = b
+		}
+	})
+	return found
 }
 
 // BotForSessionOrPrimary returns the multiball bot owning sessionKey if any
