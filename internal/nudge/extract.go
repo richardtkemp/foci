@@ -54,7 +54,9 @@ you write will actually do what you intend:
 - Test mentally: what common messages would this match? Would the nudge be useful there?
 - If a rule can't be meaningfully scoped by regex, use a different trigger type
 
-Return a JSON array. If no extractable rules exist, return [].`
+Return a JSON array. If no extractable rules exist, return [].
+
+Respond with ONLY the JSON array. No explanation, no preamble, no markdown formatting.`
 
 // Extractor handles LLM-based rule extraction from character files.
 type Extractor struct {
@@ -132,26 +134,48 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 }
 
 // ParseExtractionResponse parses the LLM response into rules.
-// Handles both raw JSON arrays and JSON embedded in markdown code blocks.
+// Handles raw JSON arrays, JSON in markdown code blocks, and JSON preceded
+// by arbitrary preamble text. Returns empty rules (no error) for empty or
+// truncated responses.
 func ParseExtractionResponse(response string) ([]Rule, error) {
 	text := strings.TrimSpace(response)
 
-	// Strip markdown code fences if present
-	if strings.HasPrefix(text, "```") {
-		lines := strings.Split(text, "\n")
-		// Remove first line (```json or ```) and last line (```)
+	// Empty response — model hit max_tokens or returned nothing.
+	if text == "" {
+		log.Warnf("nudge", "empty extraction response, returning no rules")
+		return nil, nil
+	}
+
+	// Strip markdown code fences if present (possibly after preamble text).
+	if start := strings.Index(text, "```"); start >= 0 {
+		inner := text[start:]
+		lines := strings.Split(inner, "\n")
 		if len(lines) >= 2 {
-			start := 1
-			end := len(lines)
-			for end > start && strings.TrimSpace(lines[end-1]) == "```" {
-				end--
+			fenceStart := 1
+			fenceEnd := len(lines)
+			for fenceEnd > fenceStart && strings.TrimSpace(lines[fenceEnd-1]) == "```" {
+				fenceEnd--
 				break
 			}
-			text = strings.Join(lines[start:end], "\n")
+			text = strings.Join(lines[fenceStart:fenceEnd], "\n")
 		}
 	}
 
+	// Find JSON array boundaries — handles preamble text before the array.
 	text = strings.TrimSpace(text)
+	openIdx := strings.Index(text, "[")
+	if openIdx < 0 {
+		log.Warnf("nudge", "no JSON array found in extraction response (%.200s)", text)
+		return nil, nil
+	}
+	closeIdx := strings.LastIndex(text, "]")
+	if closeIdx < 0 || closeIdx < openIdx {
+		// Opening bracket but no closing — truncated JSON.
+		log.Warnf("nudge", "truncated JSON array in extraction response, returning no rules")
+		return nil, nil
+	}
+	text = text[openIdx : closeIdx+1]
+
 	var rules []Rule
 	if err := json.Unmarshal([]byte(text), &rules); err != nil {
 		return nil, fmt.Errorf("unmarshal rules: %w (response: %.200s)", err, text)
