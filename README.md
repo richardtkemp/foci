@@ -6,7 +6,7 @@
 
 **One binary. ~35 MB idle. No framework.**
 
-AI agents on Telegram, written in Go from scratch.
+AI agents on Telegram, written in Go.
 
 [Quick Start](#quick-start) · [Design](#design) · [Docs](#documentation)
 
@@ -14,7 +14,7 @@ AI agents on Telegram, written in Go from scratch.
 
 ---
 
-A ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw) in Go — single binary, cache-first, with OS-level secret isolation. Session branching, tool piping, and coding agent orchestration go well beyond the original. Built for Anthropic, but any OpenAI-compatible endpoint works.
+Built on lessons learned from running [OpenClaw](https://github.com/claw-project/openclaw) in production. Same problem space — connecting language models to tools and long-running sessions — but different architectural choices: the prompt cache as a first-class structural boundary, secrets isolated at the OS level so they never enter agent context, and a single Go binary you can hold in your head. Built for Anthropic, but any OpenAI-compatible endpoint works.
 
 ## Quick Start
 
@@ -26,7 +26,7 @@ See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next step
 
 ## Background
 
-Ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw). Same concept, different philosophy. See [docs/COMPARISON.md](docs/COMPARISON.md) for a detailed feature comparison.
+OpenClaw is the established, full-featured choice in this space — broad provider support, native apps on every platform, a marketplace of 13,000+ skills, and a large community. Foci makes different bets. Where OpenClaw optimizes for breadth, foci optimizes for depth: cache-aware prompt architecture, OS-level secret isolation, and a codebase small enough that one person can audit the whole thing. See [docs/COMPARISON.md](docs/COMPARISON.md) for a detailed feature comparison.
 
 | | OpenClaw | Foci |
 |---|---|---|
@@ -35,9 +35,9 @@ Ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw). Same 
 | Dependencies | ~1,200 packages (5.4GB) | **15 direct modules** |
 | Startup | Seconds (transpile + boot) | **Instant** |
 | Config | YAML + env + scattered files | **One TOML file** |
-| Cache strategy | Bolted on | **Day-zero architectural** |
+| Cache strategy | Not cache-aware | **Day-zero architectural** |
 
-The rewrite wasn't about performance. It was about **owning every line** — understanding what the system does, why, and being able to change it without fighting abstractions. And about **bulletproof secret management** — OS-level isolation, domain-locked credentials, redaction at every layer — designed in from the start rather than patched on.
+Fewer moving parts means fewer surprises. Secret management follows the same principle: OS-level isolation, domain-locked credentials, redaction at every layer — protection that doesn't depend on trusting the model.
 
 ## Design
 
@@ -50,6 +50,8 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Tool result guard** — Large tool outputs are truncated *before* entering context, with full results saved to disk. Cache stays intact, context window stays clean.
 
+**Tool piping** — Tools are exposed as shell functions, composable with Unix pipes. `foci_web_search "latest golang release" | foci_spawn "summarize" --model haiku | foci_send_message_to_user` — three tools, one shell call, no intermediate data in context. [→ docs](docs/TOOLS.md#tool-piping-exec-bridge)
+
 **Facet** — `/facet` forks your session to a second Telegram bot — same agent, same context, parallel thread. Both share the cached prefix, so the fork is cheap. [→ docs](docs/FACET.md)
 
 </td><td width="50%" valign="top">
@@ -60,10 +62,28 @@ The rewrite wasn't about performance. It was about **owning every line** — und
 
 **Compaction that preserves personality** — Context compression keeps goals, reasoning, corrections, emotional tone, and technical state — not just a generic summary. Configurable per-agent. [→ docs](docs/DEFAULTS.md)
 
+**Mid-turn nudges** — Behavioral reminders extracted from character files by the LLM and injected mid-conversation. Five trigger types keep the agent on-character without busting the cache. [→ docs](docs/NUDGE.md)
+
 **Memory out of the box** — Daily markdown files + curated MEMORY.md. No vector DB, no embeddings. The agent reads, writes, and prunes its own memory. [→ docs](docs/MEMORY.md)
 
 </td></tr>
 </table>
+
+## Who foci is for
+
+- You run agents in production and care about cost per conversation
+- You want to audit exactly what your agent can access — and prove secrets never reach the model
+- You prefer a small, focused system with sensible defaults over a comprehensive one you have to configure
+- You're comfortable with Telegram or API-level interaction
+
+## Who should use OpenClaw instead
+
+- You need native apps on macOS, iOS, or Android
+- You want a built-in skill marketplace for discovery and install (foci can run OpenClaw skills — they're text files — but has no marketplace)
+- You need broad provider failover across many LLM backends
+- You want a large community and established support ecosystem
+
+[OpenClaw](https://github.com/claw-project/openclaw) is good software. If those are your priorities, use it.
 
 ## Requirements
 
