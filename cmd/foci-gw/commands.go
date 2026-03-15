@@ -85,6 +85,12 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		},
 	}
 
+	// Build SecretsDeps (needs registry reference for wizard activation)
+	secretsDeps := &command.SecretsDeps{
+		Registry: cmds,
+		Store:    p.store,
+	}
+
 	// Build AgentNewDeps
 	aliases := p.cfg.Models.Aliases
 	agentNewDeps := &command.AgentNewDeps{
@@ -145,6 +151,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		TodoStore:           p.todoStore,
 		ConfigSetDeps:       configSetDeps,
 		AgentNewDeps:        agentNewDeps,
+		SecretsDeps:         secretsDeps,
 		SkillsDirs:          p.skillsDirs,
 		TokenCountCache:     command.NewTokenCountCache(),
 		ConfigureFacet:  p.configureFacet,

@@ -109,6 +109,7 @@ type CommandContext struct {
 	// Wizard support
 	ConfigSetDeps *ConfigSetDeps
 	AgentNewDeps  *AgentNewDeps
+	SecretsDeps   *SecretsDeps
 
 	// Todo store (for /todo command)
 	TodoStore *memory.TodoStore
