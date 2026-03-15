@@ -6,7 +6,7 @@ A minimal, maintainable agent platform in Go. One binary, no framework, no bloat
 
 - **Simple over powerful.** If a feature needs complex config, rethink the feature.
 - **Explicit over clever.** No plugin architectures, no hook systems, no middleware chains.
-- **Own every line.** No 5.4GB node_modules. Dependencies are standard library + a few well-chosen packages.
+- **Own every line.** No 594MB node_modules. Dependencies are standard library + a few well-chosen packages.
 - **Cache-aware from day zero.** Anthropic prompt caching drives architectural decisions.
 
 ## Sessions & State

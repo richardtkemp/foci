@@ -32,7 +32,7 @@ OpenClaw is the established, full-featured choice in this space — broad provid
 |---|---|---|
 | Runtime | Node.js + TypeScript | Go, single binary |
 | Memory | ~500MB+ idle | **~35 MB** |
-| Dependencies | ~1,200 packages (5.4GB) | **15 direct modules** |
+| Dependencies | ~560 packages (594MB) | **15 direct modules** |
 | Startup | Seconds (transpile + boot) | **Instant** |
 | Config | YAML + env + scattered files | **One TOML file** |
 | Cache strategy | Not cache-aware | **Day-zero architectural** |
