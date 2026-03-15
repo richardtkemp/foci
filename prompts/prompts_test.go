@@ -38,6 +38,8 @@ func TestEmbeddedFilesLoadNonEmpty(t *testing.T) {
 		{"MemoryFormation", MemoryFormation},
 		{"MemoryConsolidation", MemoryConsolidation},
 		{"FirstRun", FirstRun},
+		{"KeepaliveCron", KeepaliveCron},
+		{"WeeklyCharacterReview", WeeklyCharacterReview},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

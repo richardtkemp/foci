@@ -102,9 +102,9 @@ func TestValidationFunctions(t *testing.T) {
 	}
 }
 
-// Verifies findRepoDefaults doesn't panic regardless of working directory.
-func TestFindRepoDefaults(t *testing.T) {
-	_ = findRepoDefaults()
+// Verifies findRepoShared doesn't panic regardless of working directory.
+func TestFindRepoShared(t *testing.T) {
+	_ = findRepoShared()
 }
 
 // Verifies importMDFiles copies selected .md files from src to dest.

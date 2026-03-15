@@ -310,10 +310,8 @@ func TestCreateWorkspace(t *testing.T) {
 	// Set up defaults directory
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
-	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("- **Name:** <!-- your name -->\n"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft content"), 0644)
-	os.WriteFile(filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md"), []byte("keepalive"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "crontab.template"), []byte("*/30 * * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log\n"), 0644)
 
 	configPath := filepath.Join(tmpDir, "foci.toml")
@@ -359,15 +357,6 @@ func TestCreateWorkspace(t *testing.T) {
 	soulContent := string(data)
 	if !strings.Contains(soulContent, "**Name:** Test Agent") {
 		t.Errorf("SOUL.md name not substituted: %q", soulContent)
-	}
-
-	// Check keepalive prompt was copied
-	data, err = os.ReadFile(filepath.Join(workspace, "prompts", "KEEPALIVE.md"))
-	if err != nil {
-		t.Fatalf("read KEEPALIVE.md: %v", err)
-	}
-	if string(data) != "keepalive" {
-		t.Errorf("KEEPALIVE.md = %q", string(data))
 	}
 
 	// Check config was appended

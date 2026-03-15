@@ -35,7 +35,7 @@ type AgentSpec struct {
 	Model       string // developer/model_id: "anthropic/claude-sonnet-4-6"
 	DisplayName string // "Greek Tutor" (optional)
 	HomeDir     string // workspace parent: /home/foci
-	DefaultsDir string // shared/defaults/ root (in repo or on disk)
+	DefaultsDir string // shared/ root (in repo or on disk)
 	CharMode    string // "defaults", "openclaw", "copy", "import", "blank"
 	CopyFrom    string // source agent ID when CharMode=="copy"
 	SystemFiles []string // nil → DefaultSystemFiles
@@ -122,26 +122,14 @@ func Provision(spec AgentSpec) (*Result, error) {
 	}, nil
 }
 
-// copyDefaultFiles copies default character and prompt files to a new workspace.
+// copyDefaultFiles copies default character files to a new workspace.
 func copyDefaultFiles(defaultsDir, workspace string) error {
 	charSrc := filepath.Join(defaultsDir, "character")
 	charDst := filepath.Join(workspace, "character")
-
-	if err := copyDir(charSrc, charDst); err != nil {
-		return err
-	}
-
-	// Copy keepalive prompt if it exists
-	keepaliveSrc := filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md")
-	keepaliveDst := filepath.Join(workspace, "prompts", "KEEPALIVE.md")
-	if _, err := os.Stat(keepaliveSrc); err == nil {
-		return copyFile(keepaliveSrc, keepaliveDst)
-	}
-
-	return nil
+	return copyDir(charSrc, charDst)
 }
 
-// SeedDefaults copies the shared/defaults directory tree from the repo to
+// SeedDefaults copies the shared/ directory tree from the repo to
 // a target directory on disk, creating it if needed. Skips files that already exist.
 func SeedDefaults(repoDefaultsDir, targetDefaultsDir string) error {
 	return filepath.Walk(repoDefaultsDir, func(path string, info os.FileInfo, err error) error {

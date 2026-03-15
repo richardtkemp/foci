@@ -53,6 +53,12 @@ func MemoryConsolidation() string { return read("memory-consolidation.md") }
 // FirstRun returns the onboarding prompt injected on an agent's first session.
 func FirstRun() string { return read("first-run.md") }
 
+// KeepaliveCron returns the default cron keepalive prompt for autonomous check-ins.
+func KeepaliveCron() string { return read("keepalive-cron.md") }
+
+// WeeklyCharacterReview returns the default weekly character review prompt.
+func WeeklyCharacterReview() string { return read("weekly-character-review.md") }
+
 // ResolvePrompt implements prompt resolution with directory search:
 //
 //   - path absent/unset ("" or "default"): searches searchDirs for filename,

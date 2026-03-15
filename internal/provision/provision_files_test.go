@@ -140,49 +140,28 @@ func TestTemplateSoulFileReadError(t *testing.T) {
 	}
 }
 
-func TestCopyDefaultFilesWithKeepalive(t *testing.T) {
-	// Tests copyDefaultFiles with keepalive file.
+func TestCopyDefaultFiles(t *testing.T) {
+	// Tests copyDefaultFiles copies character files to workspace.
 	tmpDir := t.TempDir()
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
-	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("soul"), 0644)
-	os.WriteFile(filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md"), []byte("keepalive"), 0644)
+	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft"), 0644)
 
 	workspace := filepath.Join(tmpDir, "workspace")
 	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
-	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
 
 	if err := copyDefaultFiles(defaultsDir, workspace); err != nil {
 		t.Fatalf("copyDefaultFiles: %v", err)
 	}
 
-	// Verify KEEPALIVE.md was copied
-	data, _ := os.ReadFile(filepath.Join(workspace, "prompts", "KEEPALIVE.md"))
-	if string(data) != "keepalive" {
-		t.Errorf("KEEPALIVE.md = %q, want keepalive", data)
+	data, _ := os.ReadFile(filepath.Join(workspace, "character", "SOUL.md"))
+	if string(data) != "soul" {
+		t.Errorf("SOUL.md = %q, want soul", data)
 	}
-}
-
-func TestCopyDefaultFilesNoKeepalive(t *testing.T) {
-	// Verifies copyDefaultFiles returns nil when no KEEPALIVE.md exists.
-	tmpDir := t.TempDir()
-	defaultsDir := filepath.Join(tmpDir, "defaults")
-	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
-	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("soul"), 0644)
-	// No prompts/KEEPALIVE.md
-
-	workspace := filepath.Join(tmpDir, "workspace")
-	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
-	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
-
-	if err := copyDefaultFiles(defaultsDir, workspace); err != nil {
-		t.Fatalf("copyDefaultFiles: %v", err)
-	}
-
-	// KEEPALIVE.md should not exist in workspace
-	if _, err := os.Stat(filepath.Join(workspace, "prompts", "KEEPALIVE.md")); !os.IsNotExist(err) {
-		t.Errorf("expected no KEEPALIVE.md, but it exists or stat returned unexpected error: %v", err)
+	data, _ = os.ReadFile(filepath.Join(workspace, "character", "CRAFT.md"))
+	if string(data) != "craft" {
+		t.Errorf("CRAFT.md = %q, want craft", data)
 	}
 }
 

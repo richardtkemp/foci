@@ -83,11 +83,11 @@ func cmdSetup(args []string) error {
 
 	flags := parseSetupFlags(args)
 
-	// Seed shared/defaults/ from repo to disk if not already present
-	repoDefaultsDir := findRepoDefaults()
-	if repoDefaultsDir != "" {
-		targetDefaultsDir := filepath.Join(flags.homeDir, "shared", "defaults")
-		if err := provision.SeedDefaults(repoDefaultsDir, targetDefaultsDir); err != nil {
+	// Seed shared/ from repo to disk if not already present
+	repoSharedDir := findRepoShared()
+	if repoSharedDir != "" {
+		targetSharedDir := filepath.Join(flags.homeDir, "shared")
+		if err := provision.SeedDefaults(repoSharedDir, targetSharedDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not seed defaults: %v\n", err)
 		}
 	}
@@ -200,19 +200,19 @@ func parseSetupFlags(args []string) setupFlags {
 	return f
 }
 
-// findRepoDefaults tries to locate the shared/defaults/ directory relative to
+// findRepoShared tries to locate the shared/ directory relative to
 // the running binary or the current working directory.
-func findRepoDefaults() string {
+func findRepoShared() string {
 	// Try relative to the executable
 	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "shared", "defaults")
+		candidate := filepath.Join(filepath.Dir(exe), "shared")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
 	}
 	// Try current working directory
 	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, "shared", "defaults")
+		candidate := filepath.Join(cwd, "shared")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}
@@ -276,7 +276,7 @@ func runSetupNonInteractive(f setupFlags) error {
 	}
 
 	// Provision the agent workspace
-	defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
+	defaultsDir := filepath.Join(f.homeDir, "shared")
 	spec := provision.AgentSpec{
 		ID:          f.agentID,
 		Model:       model,
@@ -451,7 +451,7 @@ func runSetupInteractive(f setupFlags) error {
 
 			// We have everything — finalize.
 			// Provision the agent workspace
-			defaultsDir := filepath.Join(f.homeDir, "shared", "defaults")
+			defaultsDir := filepath.Join(f.homeDir, "shared")
 			spec := provision.AgentSpec{
 				ID:          state.agentID,
 				Model:       state.model,

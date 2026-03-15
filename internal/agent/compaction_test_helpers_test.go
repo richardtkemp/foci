@@ -15,13 +15,13 @@ import (
 )
 
 // compactionTestClient creates a test client that returns a canned summary for
-// compaction requests (detected by "provide continuity" in the last message)
+// compaction requests (detected by "continue seamlessly" in the last message)
 // and normal end_turn responses otherwise. Turn highTokenTurn gets
 // InputTokens=170000 to exceed the 160k threshold (0.8 * 200k).
 func compactionTestClient(turnCount *atomic.Int32, highTokenTurn int32) *testClient {
 	return newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		lastMsg := req.Messages[len(req.Messages)-1]
-		if strings.Contains(provider.TextOf(lastMsg.Content), "provide continuity") {
+		if strings.Contains(provider.TextOf(lastMsg.Content), "continue seamlessly") {
 			return &provider.MessageResponse{
 				ID:         "msg_summary",
 				Type:       "message",

@@ -20,6 +20,8 @@ func seedDefaultPrompts(dir string) {
 		"compaction-handoff.md":           prompts.CompactionHandoff,
 		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless,
 		"branch-orientation-multiball.md": prompts.BranchOrientationMultiball,
+		"keepalive-cron.md":              prompts.KeepaliveCron,
+		"weekly-character-review.md":     prompts.WeeklyCharacterReview,
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
