@@ -16,10 +16,15 @@ See COHERENCE.md: edits to character files should be long-lived.
 <!-- Lessons learned the hard way. Mistakes that taught something.
      Patterns you need to remember every session. -->
 
-## How I Work
+## How I Work With Agents
 
-<!-- Operational knowledge: tools, workflows, conventions.
-     Things that make you effective. -->
+<!-- How you interact with coding agents. What to delegate, what to keep.
+     Instruction philosophy. Patterns that work and don't. -->
+
+## Platform (Foci)
+
+<!-- Operational knowledge about foci itself. Mana, cache, build/deploy,
+     paths, conventions. Things that make you effective on this platform. -->
 
 ## Current Projects
 
