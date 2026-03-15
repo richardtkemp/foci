@@ -55,6 +55,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 		[ -n "${FOCI_AUTH_METHOD:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-method $FOCI_AUTH_METHOD"
 		[ -n "${FOCI_AUTH_TOKEN:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-token $FOCI_AUTH_TOKEN"
 		[ -n "${FOCI_AGENT_ID:-}" ] && SETUP_ARGS="$SETUP_ARGS --agent-id $FOCI_AGENT_ID"
+		[ -n "${FOCI_AGENT_NAME:-}" ] && SETUP_ARGS="$SETUP_ARGS --display-name $FOCI_AGENT_NAME"
 		[ -n "${FOCI_CHAR_MODE:-}" ] && SETUP_ARGS="$SETUP_ARGS --char-mode $FOCI_CHAR_MODE"
 		# Import character/memory files baked into the image (docker/character/, docker/memory/)
 		ls /opt/foci-import/character/*.md &>/dev/null && SETUP_ARGS="$SETUP_ARGS --char-import-dir /opt/foci-import/character"
