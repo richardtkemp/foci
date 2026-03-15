@@ -44,11 +44,14 @@ func (r *TurnRenderer) Cleanup() {
 
 // onReply handles intermediate text delivery (ReplyFunc callback).
 // When streaming is active, the text was already delivered via the stream
-// writer. Finalize that message so the next API call's text goes to a fresh
-// Telegram message (no duplicate send).
+// writer — finalize that message and clean up any tool call preview (since the
+// reply content is in the stream message). When not streaming, overwrite the
+// tool call preview with the reply text (preview mode) or send a new message.
 func (r *TurnRenderer) onReply(text string) {
 	msgID := r.sw.Finish()
 	if msgID != 0 {
+		// Streaming: reply content is in the stream message. Finalize it
+		// and delete any lingering tool call preview.
 		content := r.sw.Content()
 		if strings.TrimSpace(content) != "" {
 			html := ConvertToTelegramHTML(content, r.display.renderOpts)
@@ -58,12 +61,43 @@ func (r *TurnRenderer) onReply(text string) {
 				ParseMode: "HTML",
 			})
 		}
+		r.tracker.cleanupPreview()
 	} else if !r.display.streamOutput {
-		r.bot.sendReply(r.msg, text)
+		// Non-streaming: if there's a tool call preview, overwrite it with
+		// the reply text. Otherwise send a new message.
+		if !r.editToolPreviewWithReply(text) {
+			r.bot.sendReply(r.msg, text)
+		}
 		r.tracker.resetMsgID()
 	}
 	// Fresh stream writer for the next segment.
 	r.sw = newStreamWriter(r.bot.client, r.chatID, r.bot.streamInterval(), r.display.renderOpts, r.display.streamOutput)
+}
+
+// editToolPreviewWithReply edits the tool call preview message with intermediate
+// reply text, replacing the tool call indicator with the actual reply content.
+// Returns true if the edit succeeded. Falls back to false when there's no
+// preview, the mode isn't "preview", or the text is too long to edit in-place.
+func (r *TurnRenderer) editToolPreviewWithReply(text string) bool {
+	editID := r.tracker.lastMsgID()
+	if editID == 0 || r.display.showToolCalls != "preview" {
+		return false
+	}
+	if strings.TrimSpace(text) == "" || len(text) > 4096 {
+		r.tracker.cleanupPreview()
+		return false
+	}
+	html := ConvertToTelegramHTML(text, r.display.renderOpts)
+	_, _, err := r.bot.client.EditMessageText(html, &gotgbot.EditMessageTextOpts{
+		ChatId:    r.chatID,
+		MessageId: editID,
+		ParseMode: "HTML",
+	})
+	if err != nil {
+		r.bot.logger().Debugf("edit tool preview with reply: %v", err)
+		return false
+	}
+	return true
 }
 
 // onThinking accumulates thinking blocks (gated by showThinking config).
