@@ -239,7 +239,7 @@ workspace = "/tmp/foci/workspace1"
 
 [agents.platforms.telegram]
 bot = "primary"
-multiball_bots = ["secondary"]
+facet_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
@@ -274,8 +274,8 @@ allowed_users = ["111"]
 	if tg0 == nil || tg0.Bot != "primary" {
 		t.Errorf("Agents[0] telegram bot = %v", tg0)
 	}
-	if len(tg0.MultiballBots) != 1 || tg0.MultiballBots[0] != "secondary" {
-		t.Errorf("Agents[0].MultiballBots = %v, want [secondary]", tg0.MultiballBots)
+	if len(tg0.FacetBots) != 1 || tg0.FacetBots[0] != "secondary" {
+		t.Errorf("Agents[0].FacetBots = %v, want [secondary]", tg0.FacetBots)
 	}
 
 	// Second agent — defaults applied
@@ -289,8 +289,8 @@ allowed_users = ["111"]
 	if tg1 == nil || tg1.Bot != "scout" {
 		t.Errorf("Agents[1] telegram bot = %v", tg1)
 	}
-	if tg1 != nil && len(tg1.MultiballBots) != 0 {
-		t.Errorf("Agents[1].MultiballBots = %v, want empty", tg1.MultiballBots)
+	if tg1 != nil && len(tg1.FacetBots) != 0 {
+		t.Errorf("Agents[1].FacetBots = %v, want empty", tg1.FacetBots)
 	}
 
 }
@@ -434,7 +434,7 @@ show_tool_calls = "preview"
 [agents.platforms.telegram]
 bot = "my_bot"
 bot_secret = "custom.secret"
-multiball_bots = ["extra1", "extra2"]
+facet_bots = ["extra1", "extra2"]
 allowed_users = ["123", "456"]
 
 [telegram]
@@ -468,8 +468,8 @@ allowed_users = ["789"]
 	if tg.BotSecret != "custom.secret" {
 		t.Errorf("Platforms.Telegram.BotSecret = %q, want %q", tg.BotSecret, "custom.secret")
 	}
-	if len(tg.MultiballBots) != 2 || tg.MultiballBots[0] != "extra1" {
-		t.Errorf("Platforms.Telegram.MultiballBots = %v, want [extra1 extra2]", tg.MultiballBots)
+	if len(tg.FacetBots) != 2 || tg.FacetBots[0] != "extra1" {
+		t.Errorf("Platforms.Telegram.FacetBots = %v, want [extra1 extra2]", tg.FacetBots)
 	}
 	if len(tg.AllowedUsers) != 2 || tg.AllowedUsers[0] != "123" {
 		t.Errorf("Platforms.Telegram.AllowedUsers = %v, want [123 456]", tg.AllowedUsers)

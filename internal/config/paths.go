@@ -90,8 +90,8 @@ func (c *Config) ResolveAllPaths() {
 	} else {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
-	if c.Sessions.BranchOrientationMultiballPrompt != "" {
-		c.Sessions.BranchOrientationMultiballPrompt = ResolvePath(c.Sessions.BranchOrientationMultiballPrompt)
+	if c.Sessions.BranchOrientationFacetPrompt != "" {
+		c.Sessions.BranchOrientationFacetPrompt = ResolvePath(c.Sessions.BranchOrientationFacetPrompt)
 	}
 	if c.Sessions.BranchOrientationHeadlessPrompt != "" {
 		c.Sessions.BranchOrientationHeadlessPrompt = ResolvePath(c.Sessions.BranchOrientationHeadlessPrompt)

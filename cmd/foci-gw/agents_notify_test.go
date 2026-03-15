@@ -16,8 +16,8 @@ func (s stubConnMgr) Primary(string) platform.Connection                    { re
 func (s stubConnMgr) AllForAgent(string) []platform.Connection              { return nil }
 func (s stubConnMgr) ForSession(string) platform.Connection                 { return nil }
 func (s stubConnMgr) ForSessionOrPrimary(string, string) platform.Connection { return nil }
-func (s stubConnMgr) AcquireMultiball(string) (platform.Connection, bool)   { return nil, false }
-func (s stubConnMgr) HasMultiball(string) bool                              { return false }
+func (s stubConnMgr) AcquireFacet(string) (platform.Connection, bool)   { return nil, false }
+func (s stubConnMgr) HasFacet(string) bool                              { return false }
 func (s stubConnMgr) StartAll(context.Context)                              {}
 func (s stubConnMgr) Wait()                                                 {}
 

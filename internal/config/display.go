@@ -79,8 +79,8 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Defaults.InjectAgentWarnings {
 		add("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
 	}
-	if cfg.Defaults.MultiballNoCompact != nil {
-		add("defaults", "multiball_no_compact", *cfg.Defaults.MultiballNoCompact)
+	if cfg.Defaults.FacetNoCompact != nil {
+		add("defaults", "facet_no_compact", *cfg.Defaults.FacetNoCompact)
 	}
 	if cfg.Telegram.ShowToolCalls != nil {
 		add("telegram", "show_tool_calls", string(*cfg.Telegram.ShowToolCalls))
@@ -122,15 +122,15 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if len(cfg.Telegram.AllowedUsers) > 0 {
 		add("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
 	}
-	if len(cfg.Telegram.MultiballBots) > 0 {
-		add("telegram", "multiball_bots", cfg.Telegram.MultiballBots)
+	if len(cfg.Telegram.FacetBots) > 0 {
+		add("telegram", "facet_bots", cfg.Telegram.FacetBots)
 	}
 	if len(cfg.Telegram.StopAliases) > 0 {
 		add("telegram", "stop_aliases", cfg.Telegram.StopAliases)
 	}
 	add("telegram", "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
 	add("telegram", "startup_notify", cfg.Telegram.StartupNotify)
-	add("telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL)
+	add("telegram", "facet_session_ttl", cfg.Telegram.FacetSessionTTL)
 	add("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
 	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
 	if cfg.Telegram.ReceivedFilesDir != "" {
@@ -163,8 +163,8 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
-	if cfg.Sessions.BranchOrientationMultiballPrompt != "" {
-		add("sessions", "branch_orientation_multiball_prompt", cfg.Sessions.BranchOrientationMultiballPrompt)
+	if cfg.Sessions.BranchOrientationFacetPrompt != "" {
+		add("sessions", "branch_orientation_facet_prompt", cfg.Sessions.BranchOrientationFacetPrompt)
 	}
 	if cfg.Sessions.BranchOrientationHeadlessPrompt != "" {
 		add("sessions", "branch_orientation_headless_prompt", cfg.Sessions.BranchOrientationHeadlessPrompt)
@@ -327,8 +327,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 		add("system_files", agent.SystemFiles)
 	}
 	add("duplicate_messages", agent.DuplicateMessages)
-	if agent.BranchOrientationMultiballPrompt != "" {
-		add("branch_orientation_multiball_prompt", agent.BranchOrientationMultiballPrompt)
+	if agent.BranchOrientationFacetPrompt != "" {
+		add("branch_orientation_facet_prompt", agent.BranchOrientationFacetPrompt)
 	}
 	if agent.BranchOrientationHeadlessPrompt != "" {
 		add("branch_orientation_headless_prompt", agent.BranchOrientationHeadlessPrompt)
@@ -337,8 +337,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if tg != nil && tg.Bot != "" {
 		add("platforms.telegram.bot", tg.Bot)
 	}
-	if tg != nil && len(tg.MultiballBots) > 0 {
-		add("multiball_bots", tg.MultiballBots)
+	if tg != nil && len(tg.FacetBots) > 0 {
+		add("facet_bots", tg.FacetBots)
 	}
 	add("max_tool_loops", agent.MaxToolLoops)
 	add("max_output_tokens", agent.MaxOutputTokens)
@@ -359,8 +359,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.StartupNotify != nil {
 		add("startup_notify", *agent.StartupNotify)
 	}
-	if agent.MultiballNoCompact != nil {
-		add("multiball_no_compact", *agent.MultiballNoCompact)
+	if agent.FacetNoCompact != nil {
+		add("facet_no_compact", *agent.FacetNoCompact)
 	}
 	if agent.ShowToolCalls != nil {
 		add("show_tool_calls", string(*agent.ShowToolCalls))
@@ -494,11 +494,11 @@ type displayConfig struct {
 
 type displayTelegram struct {
 	AllowedUsers        []string `toml:"allowed_users,omitempty"`
-	MultiballBots       []string `toml:"multiball_bots,omitempty"`
+	FacetBots       []string `toml:"facet_bots,omitempty"`
 	StopAliases         []string `toml:"stop_aliases,omitempty"`
 	EnableStopAliases   bool     `toml:"enable_stop_aliases"`
 	StartupNotify       bool     `toml:"startup_notify"`
-	MultiballSessionTTL string   `toml:"multiball_session_ttl"`
+	FacetSessionTTL string   `toml:"facet_session_ttl"`
 	MessageQueueSize    int      `toml:"message_queue_size"`
 	LongPollTimeout     string   `toml:"long_poll_timeout"`
 	ReceivedFilesDir    string   `toml:"received_files_dir,omitempty"`
@@ -520,11 +520,11 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Agent: agent,
 		Telegram: displayTelegram{
 			AllowedUsers:        cfg.Telegram.AllowedUsers,
-			MultiballBots:       cfg.Telegram.MultiballBots,
+			FacetBots:       cfg.Telegram.FacetBots,
 			StopAliases:         cfg.Telegram.StopAliases,
 			EnableStopAliases:   cfg.Telegram.EnableStopAliases,
 			StartupNotify:       cfg.Telegram.StartupNotify,
-			MultiballSessionTTL: cfg.Telegram.MultiballSessionTTL,
+			FacetSessionTTL: cfg.Telegram.FacetSessionTTL,
 			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
 			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
 			ReceivedFilesDir:    cfg.Telegram.ReceivedFilesDir,

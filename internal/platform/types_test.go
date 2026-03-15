@@ -92,8 +92,8 @@ func (p *mockProvider) IsConfigured(*config.Config) bool                        
 func (p *mockProvider) Init(ProviderDeps) error                                 { return nil }
 func (p *mockProvider) ConnectionManager() ConnectionManager                    { return &noopConnMgr{} }
 func (p *mockProvider) SetupAgentConnection(AgentConnectionParams) *SetupResult { return nil }
-func (p *mockProvider) SetupSharedMultiball(SharedMultiballParams)              {}
-func (p *mockProvider) RestoreMultiballSessions(RestoreParams)                  {}
+func (p *mockProvider) SetupSharedFacet(SharedFacetParams)              {}
+func (p *mockProvider) RestoreFacetSessions(RestoreParams)                  {}
 func (p *mockProvider) SetLifecycleCallback(string, LifecycleEvent, func())    {}
 func (p *mockProvider) ToolDetailStore() ToolDetailStore                        { return nil }
 func (p *mockProvider) AgentPreFlight(string) []string                          { return nil }
@@ -162,8 +162,8 @@ func TestMessagingNilSafe(t *testing.T) {
 	if results := m.SetupAgentConnection(AgentConnectionParams{}); results != nil {
 		t.Errorf("SetupAgentConnection on nil = %v, want nil", results)
 	}
-	m.SetupSharedMultiball(SharedMultiballParams{})
-	m.RestoreMultiballSessions(RestoreParams{})
+	m.SetupSharedFacet(SharedFacetParams{})
+	m.RestoreFacetSessions(RestoreParams{})
 	m.SetLifecycleCallback("x", OnUserMessage, func() {})
 	m.NotifyAgent("x", "text")
 	m.notifyAgentDoc("x", "/tmp/doc")
@@ -195,11 +195,11 @@ func TestNoopConnMgr(t *testing.T) {
 	if n.ForSessionOrPrimary("x", "y") != nil {
 		t.Error("ForSessionOrPrimary should return nil")
 	}
-	if _, ok := n.AcquireMultiball("x"); ok {
-		t.Error("AcquireMultiball should return false")
+	if _, ok := n.AcquireFacet("x"); ok {
+		t.Error("AcquireFacet should return false")
 	}
-	if n.HasMultiball("x") {
-		t.Error("HasMultiball should return false")
+	if n.HasFacet("x") {
+		t.Error("HasFacet should return false")
 	}
 	// These should not panic
 	n.StartAll(context.Background())
@@ -219,11 +219,11 @@ func TestAggregatingConnMgr(t *testing.T) {
 	if mgr.ForSessionOrPrimary("x", "y") != nil {
 		t.Error("ForSessionOrPrimary with no managers should return nil")
 	}
-	if _, ok := mgr.AcquireMultiball("x"); ok {
-		t.Error("AcquireMultiball with no managers should return false")
+	if _, ok := mgr.AcquireFacet("x"); ok {
+		t.Error("AcquireFacet with no managers should return false")
 	}
-	if mgr.HasMultiball("x") {
-		t.Error("HasMultiball with no managers should return false")
+	if mgr.HasFacet("x") {
+		t.Error("HasFacet with no managers should return false")
 	}
 	if conns := mgr.AllForAgent("x"); len(conns) != 0 {
 		t.Errorf("AllForAgent with no managers = %d conns, want 0", len(conns))

@@ -45,7 +45,7 @@ func TestPool_AcquireRelease(t *testing.T) {
 
 	// Bot should not be idle anymore — it has no session key set by Acquire,
 	// but the caller sets it. Let's simulate that.
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	if pool.Available() != 0 {
 		t.Fatalf("available = %d, want 0", pool.Available())
@@ -142,7 +142,7 @@ func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 	if !ok {
 		t.Fatal("acquire failed")
 	}
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	// All bots busy, no TTL configured — should fail
 	_, ok = pool.Acquire()
@@ -154,7 +154,7 @@ func TestPool_TTLReclaimsStaleBot(t *testing.T) {
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": staleTime,
+			"agent:main:facet:f-1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -181,13 +181,13 @@ func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 	if !ok {
 		t.Fatal("acquire failed")
 	}
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	// Configure TTL with an active session (last activity 5 minutes ago)
 	recentTime := time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": recentTime,
+			"agent:main:facet:f-1": recentTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -199,7 +199,7 @@ func TestPool_TTLDoesNotReclaimActiveBot(t *testing.T) {
 	}
 
 	// Bot should still have its session
-	if bot1.SessionKey() != "agent:main:multiball:mb-1" {
+	if bot1.SessionKey() != "agent:main:facet:f-1" {
 		t.Fatalf("session key should be unchanged, got %q", bot1.SessionKey())
 	}
 }
@@ -215,7 +215,7 @@ func TestPool_TTLReclaimsPhantomSession(t *testing.T) {
 	if !ok {
 		t.Fatal("acquire failed")
 	}
-	b.SetSessionKey("agent:main:multiball:mb-gone")
+	b.SetSessionKey("agent:main:facet:f-gone")
 
 	// Session doesn't exist in the store (returns "n/a")
 	checker := &mockSessionChecker{
@@ -244,16 +244,16 @@ func TestPool_AllBotsBusyWithTTL(t *testing.T) {
 
 	// Acquire both
 	b1, _ := pool.Acquire()
-	b1.SetSessionKey("agent:main:multiball:mb-1")
+	b1.SetSessionKey("agent:main:facet:f-1")
 	b2, _ := pool.Acquire()
-	b2.SetSessionKey("agent:main:multiball:mb-2")
+	b2.SetSessionKey("agent:main:facet:f-2")
 
 	// Both sessions are active (recent activity)
 	recentTime := time.Now().Add(-10 * time.Minute).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": recentTime,
-			"agent:main:multiball:mb-2": recentTime,
+			"agent:main:facet:f-1": recentTime,
+			"agent:main:facet:f-2": recentTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -273,13 +273,13 @@ func TestPool_ZeroTTLDisablesReclaim(t *testing.T) {
 	pool.Add(bot1)
 
 	b, _ := pool.Acquire()
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	// TTL=0 means no auto-reclaim even with a checker
 	staleTime := time.Now().Add(-24 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": staleTime,
+			"agent:main:facet:f-1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(0, checker) // disabled
@@ -301,15 +301,15 @@ func TestPool_MixedStaleAndActive(t *testing.T) {
 
 	// Acquire both
 	b1, _ := pool.Acquire()
-	b1.SetSessionKey("agent:main:multiball:mb-1")
+	b1.SetSessionKey("agent:main:facet:f-1")
 	b2, _ := pool.Acquire()
-	b2.SetSessionKey("agent:main:multiball:mb-2")
+	b2.SetSessionKey("agent:main:facet:f-2")
 
 	// bot1's session is stale, bot2's is active
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z"),
-			"agent:main:multiball:mb-2": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z"),
+			"agent:main:facet:f-1": time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z"),
+			"agent:main:facet:f-2": time.Now().Add(-5 * time.Minute).UTC().Format("2006-01-02T15:04:05Z"),
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -332,12 +332,12 @@ func TestPool_ReclaimHookFires(t *testing.T) {
 	pool.Add(bot1)
 
 	b, _ := pool.Acquire()
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": staleTime,
+			"agent:main:facet:f-1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -355,8 +355,8 @@ func TestPool_ReclaimHookFires(t *testing.T) {
 	if b2 != bot1 {
 		t.Fatal("should return the reclaimed bot")
 	}
-	if len(hookedKeys) != 1 || hookedKeys[0] != "agent:main:multiball:mb-1" {
-		t.Errorf("hook called with %v, want [agent:main:multiball:mb-1]", hookedKeys)
+	if len(hookedKeys) != 1 || hookedKeys[0] != "agent:main:facet:f-1" {
+		t.Errorf("hook called with %v, want [agent:main:facet:f-1]", hookedKeys)
 	}
 }
 
@@ -368,12 +368,12 @@ func TestPool_ReclaimHookNil(t *testing.T) {
 	pool.Add(bot1)
 
 	b, _ := pool.Acquire()
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": staleTime,
+			"agent:main:facet:f-1": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)
@@ -434,15 +434,15 @@ func TestPool_ReclaimHookMultipleBots(t *testing.T) {
 	pool.Add(bot2)
 
 	b1, _ := pool.Acquire()
-	b1.SetSessionKey("agent:main:multiball:mb-1")
+	b1.SetSessionKey("agent:main:facet:f-1")
 	b2, _ := pool.Acquire()
-	b2.SetSessionKey("agent:main:multiball:mb-2")
+	b2.SetSessionKey("agent:main:facet:f-2")
 
 	staleTime := time.Now().Add(-2 * time.Hour).UTC().Format("2006-01-02T15:04:05Z")
 	checker := &mockSessionChecker{
 		activities: map[string]string{
-			"agent:main:multiball:mb-1": staleTime,
-			"agent:main:multiball:mb-2": staleTime,
+			"agent:main:facet:f-1": staleTime,
+			"agent:main:facet:f-2": staleTime,
 		},
 	}
 	pool.SetSessionTTL(1*time.Hour, checker)

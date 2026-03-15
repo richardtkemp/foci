@@ -198,7 +198,7 @@ Formation runs in three modes, each independently configurable:
 2. There's been user activity since the last formation
 3. The user has been active within the interval window
 
-**Session-end** — runs asynchronously on `/reset` and multiball reclaim. Creates a branch from the expiring session (preserving conversation history) so the caller doesn't block.
+**Session-end** — runs asynchronously on `/reset` and facet reclaim. Creates a branch from the expiring session (preserving conversation history) so the caller doesn't block.
 
 **Consolidation** — curates `MEMORY.md` from recent daily files (covered in next section).
 
@@ -220,7 +220,7 @@ consolidation_interval = "20h"
 | `interval_enabled` | bool | `true` | Enable periodic memory capture on timer. |
 | `interval` | string | `"1h"` | Time between interval captures. |
 | `interval_prompt` | string | `""` | Prompt override. `""` = embedded default, `"none"` = disabled, file path = custom prompt. |
-| `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and multiball reclaim. |
+| `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and facet reclaim. |
 | `session_end_prompt` | string | `""` | Prompt override (same 3-state resolution). |
 | `consolidation_enabled` | bool | `true` | Enable periodic MEMORY.md curation. |
 | `consolidation_interval` | string | `"20h"` | Minimum time between consolidation runs. Persisted across restarts. |

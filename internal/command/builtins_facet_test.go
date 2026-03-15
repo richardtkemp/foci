@@ -12,10 +12,10 @@ import (
 	"foci/internal/config"
 )
 
-// TestMultiballCommand verifies multiball calls ConfigureMultiball and ConnMgr.
-// Note: full multiball testing requires platform integration; this tests the command shell.
-func TestMultiballCommand(t *testing.T) {
-	cmd := MultiballCommand()
+// TestFacetCommand verifies facet calls ConfigureFacet and ConnMgr.
+// Note: full facet testing requires platform integration; this tests the command shell.
+func TestFacetCommand(t *testing.T) {
+	cmd := FacetCommand()
 	// Without ConnMgr, the command should fail
 	cc := CommandContext{
 		Agent:       &agent.Agent{},

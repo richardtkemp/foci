@@ -63,7 +63,7 @@ type cmdRegParams struct {
 	// Platform
 	plat               *platform.Messaging
 	connMgr            platform.ConnectionManager
-	configureMultiball func(platform.Connection)
+	configureFacet func(platform.Connection)
 	displayDefaultsFn  func() platform.DisplaySettings
 }
 
@@ -147,7 +147,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		AgentNewDeps:        agentNewDeps,
 		SkillsDirs:          p.skillsDirs,
 		TokenCountCache:     command.NewTokenCountCache(),
-		ConfigureMultiball:  p.configureMultiball,
+		ConfigureFacet:  p.configureFacet,
 		UsageClientProvider: p.usageClientProvider,
 	}
 
@@ -186,13 +186,8 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		cmds.Register(command.TmuxCommand())
 	}
 
-	// Multiball and alias
-	cmds.Register(command.MultiballCommand())
-	cmds.Register(&command.Command{
-		Name: "mb", Description: "Fork session to a secondary bot (alias for /multiball)",
-		Category: "session", Hidden: true,
-		Execute: command.MultiballCommand().Execute,
-	})
+	// Facet
+	cmds.Register(command.FacetCommand())
 
 	// Dynamic mana command — only register if the provider supports usage tracking.
 	if p.ag.UsageClient != nil {

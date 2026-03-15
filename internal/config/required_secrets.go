@@ -132,18 +132,18 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 			})
 		}
 		if tg != nil {
-			for _, bot := range tg.MultiballBots {
+			for _, bot := range tg.FacetBots {
 				refs = append(refs, SecretRef{
 					Key:     "telegram." + bot,
-					Context: fmt.Sprintf("agent %q multiball bot %q", agent.ID, bot),
+					Context: fmt.Sprintf("agent %q facet bot %q", agent.ID, bot),
 				})
 			}
 		}
 	}
-	for _, bot := range cfg.Telegram.MultiballBots {
+	for _, bot := range cfg.Telegram.FacetBots {
 		refs = append(refs, SecretRef{
 			Key:     "telegram." + bot,
-			Context: fmt.Sprintf("global multiball bot %q", bot),
+			Context: fmt.Sprintf("global facet bot %q", bot),
 		})
 	}
 

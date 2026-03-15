@@ -34,7 +34,7 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 	pool.Add(b)
 
 	// Simulate active session
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
@@ -72,7 +72,7 @@ func TestReceiveMessage_SecondaryBotWithSession(t *testing.T) {
 	// with an active session queue messages normally.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
-	b.SetSessionKey("agent:main:multiball:mb-1")
+	b.SetSessionKey("agent:main:facet:f-1")
 
 	msg := makeMsg(111, "owner", "hello")
 	b.receiveMessage(context.Background(), msg)

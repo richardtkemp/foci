@@ -56,7 +56,7 @@ config.Load(path)                                        ← validates values; l
      → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, ...}
      → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
      → plat.SetupAgentConnection(AgentConnectionParams)     ← creates platform connections (bots) for all active providers
-       → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureMultiballConn
+       → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureFacetConn
      → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
        → ag.AddPlatform() for each connection
        → wires CacheBustAlert, ManaWarnFunc, RateLimitFunc, etc. using plat.NotifyAgent()
@@ -64,13 +64,13 @@ config.Load(path)                                        ← validates values; l
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
   → setupKeepalive(inst, acfg, params)                    ← keepalive_setup.go (per-agent)
-  → plat.SetupSharedMultiball(...)                         ← shared multiball bots (via messaging facade)
+  → plat.SetupSharedFacet(...)                         ← shared facet bots (via messaging facade)
   → setupWarningHooks(agents, cfg)                         ← post_agent_setup.go
   → setupTmuxMemoryMonitor(...)                            ← post_agent_setup.go
   → setupMemoryGuard(...)                                  ← post_agent_setup.go
 
   → signal.Notify(SIGINT, SIGTERM)
-  → plat.RestoreMultiballSessions(...)                     ← restore bot→session mappings from state store
+  → plat.RestoreFacetSessions(...)                     ← restore bot→session mappings from state store
   → plat.StartAll(ctx)                                     ← starts all provider connections
   → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
@@ -614,7 +614,7 @@ Each tool is a `Tool` struct with `Execute func(ctx, params) (ToolResult, error)
 | `find` | explore.go | Search for files in a directory hierarchy. Dangerous predicates (`-exec`, `-delete`, etc.) blocked. Internal to `explore` spawn mode. |
 | `grep` | explore.go | Search file contents using the best available binary (rg > ack > ag > grep). Flags are validated and translated to the active binary's dialect. Internal to `explore` spawn mode. |
 | `send_message_to_user` | telegram.go | Send proactive Telegram messages (text, documents, voice notes). With `send_as="voice"` and text (no file_path), synthesizes speech via TTS. Routes to the chat extracted from the session key (`X/cCHATID/{versionTS}`) so per-chat sessions get messages to the correct user. Falls back to bot's default chat when no chat ID in session key. |
-| `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. multiball branches talking to main). |
+| `send_to_session` | session_send.go | Inject a user-role message into another session. Tags the message with `[Message from session ...]` origin header. Appends to session store and triggers processing via `AsyncNotifier`. Used for cross-session communication (e.g. facet branches talking to main). |
 | `todo` | todo.go | Per-agent task list (add, list, complete, remove). SQLite backend with priority ordering (high/medium/low). Scoped by `agent_id`. |
 | `bitwarden_search` | bitwarden.go | Search Bitwarden vault items by name, URI, folder, username. Returns metadata only (never passwords). Max 5 results. Only registered when `[bitwarden] enabled = true`. |
 | `bitwarden_unlock` | bitwarden.go | Unlock a vault item by ID. Calls `sudo -u bitwarden bw get password` via aisudo — blocks until Telegram approval or denial. Caches value for `secret_ttl`. Never returns the actual password. |
@@ -674,7 +674,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/multiball` (alias `/mb`)
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`
    - `/mana` — check quota remaining (`/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
@@ -707,7 +707,7 @@ workspace = "/home/rich/workspace1"
 
 [agents.platforms.telegram]
 bot = "primary"
-multiball_bots = ["clutchling"]       # per-agent pool
+facet_bots = ["clutchling"]       # per-agent pool
 
 [[agents]]
 id = "scout"
@@ -718,7 +718,7 @@ bot = "scout"
 
 [telegram]
 allowed_users = ["5970082313"]
-multiball_bots = ["spare1"]           # shared pool (any agent)
+facet_bots = ["spare1"]           # shared pool (any agent)
 ```
 
 **Legacy format (still works):**
@@ -726,7 +726,7 @@ multiball_bots = ["spare1"]           # shared pool (any agent)
 [[agents]]
 id = "clutch"
 telegram_bot = "primary"
-multiball_bots = ["clutchling"]
+facet_bots = ["clutchling"]
 ```
 
 With `secrets.toml`:
@@ -842,23 +842,23 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 
 **Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → defaults → agent, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
-## Multiball (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
+## Facet (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
-Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix. See [MULTIBALL.md](MULTIBALL.md) for user-facing docs (bot pool config, session lifecycle, use cases).
+Fork the current session to a secondary Telegram bot for parallel conversations. Each fork shares the parent's cache prefix. See [FACET.md](FACET.md) for user-facing docs (bot pool config, session lifecycle, use cases).
 
 **Config** (`foci.toml`):
 ```toml
 [[agents]]
 id = "clutch"
-multiball_bots = ["clutchling"]      # per-agent pool
+facet_bots = ["clutchling"]      # per-agent pool
 
 [telegram]
-multiball_bots = ["spare1"]          # shared pool (fallback)
+facet_bots = ["spare1"]          # shared pool (fallback)
 ```
 
 **Flow:**
 ```
-/multiball → botMgr.AcquireMultiball(agentID)
+/facet → botMgr.AcquireFacet(agentID)
                → try per-agent pool first (pool.Acquire())
                → if busy/empty, try shared pool (shared.Acquire())
            → bot.SetHandlerAndCommands(handler, cmds)  // re-wire shared bots
@@ -876,16 +876,16 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 **Bot changes** (`telegram/bot.go`):
 - Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `ID/cCHATID/{versionTS}`
 - `SessionKey()` — returns override key (secondary bots) or default chat session (primary bots)
-- `SetSessionKey()` — thread-safe override (multiball fork/done)
+- `SetSessionKey()` — thread-safe override (facet fork/done)
 - `Bot.SessionKeyForChat(chatID)` — stable cached session key for a chat. On first call for a chat, checks session index for persisted key before generating new one. New keys are persisted to `chat_metadata` table in session index under key `session_key`. This ensures the same session is resumed after restart instead of creating a new timestamped session.
 - `NewSessionKeyForChat(agentID, chatID)` — creates a NEW session key with current timestamp (uncached, unpersisted)
 - Default chat: first message sets the default; persisted in state store as `agent/ID/default_chat`
 - Username recording: persisted per chat for `/sessions list` display
 - `isSecondary` flag — enables `/done` handling, idle message rejection
 - `/done` handled as special case alongside `/stop` (bypasses command registry)
-- Idle secondary bots respond with "This bot is idle. Use /multiball..." to non-command messages
+- Idle secondary bots respond with "This bot is idle. Use /facet..." to non-command messages
 
-**Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<bot_username>` (the bot's Telegram username). Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `agent_setup.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetHandlerAndCommands` and gets the primary bot's chat ID for notifications.
+**Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `facet:<bot_username>` (the bot's Telegram username). Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `agent_setup.go`) that writes or deletes the mapping. On startup, `restoreFacetSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetHandlerAndCommands` and gets the primary bot's chat ID for notifications.
 
 **Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort/<sessionKey>`, `thinking/<sessionKey>`, `model/<sessionKey>`, `model_endpoint/<sessionKey>`, `model_format/<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all five — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern under `voice/<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
 
@@ -921,7 +921,7 @@ Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints fo
 
 ## Session-End Memory Formation
 
-Before a session is cleared (`/reset` or multiball TTL reclaim), the agent captures memories asynchronously. Configured via `[memory_formation]` section (replaces `session_reset_prompt`).
+Before a session is cleared (`/reset` or facet TTL reclaim), the agent captures memories asynchronously. Configured via `[memory_formation]` section (replaces `session_reset_prompt`).
 
 Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
 1. Check `memory_formation.session_end_enabled` (nil = true, explicit false skips)

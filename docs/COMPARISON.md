@@ -61,9 +61,9 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| Session branching | ✅ cron/spawn/multiball | ❌ | ❌ |
+| Session branching | ✅ cron/spawn/facet | ❌ | ❌ |
 | Crash recovery | ✅ orphan repair on startup | ❌ | ❌ |
-| Parallel conversations | ✅ multiball bot pool | ❌ | ❌ |
+| Parallel conversations | ✅ facet bot pool | ❌ | ❌ |
 
 ## Context Management
 

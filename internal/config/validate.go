@@ -269,7 +269,7 @@ func validate(cfg *Config) error {
 		{"tools", "web_search_timeout", cfg.Tools.WebSearchTimeout},
 		{"resources", "memory_guard_interval", cfg.Resources.MemoryGuardInterval},
 		{"telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout},
-		{"telegram", "multiball_session_ttl", cfg.Telegram.MultiballSessionTTL},
+		{"telegram", "facet_session_ttl", cfg.Telegram.FacetSessionTTL},
 		{"http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout},
 		{"sessions", "archive_after", cfg.Sessions.ArchiveAfter},
 	}

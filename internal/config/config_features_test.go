@@ -388,8 +388,8 @@ log_rotation = "false"
 	}
 }
 
-func TestLoadMultiballBotsPlural(t *testing.T) {
-	// Proves that a per-agent multiball_bots list is correctly loaded with all
+func TestLoadFacetBotsPlural(t *testing.T) {
+	// Proves that a per-agent facet_bots list is correctly loaded with all
 	// configured bot names in order.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -399,7 +399,7 @@ id = "clutch"
 
 [agents.platforms.telegram]
 bot = "primary"
-multiball_bots = ["mb1", "mb2"]
+facet_bots = ["mb1", "mb2"]
 
 [telegram]
 allowed_users = ["111"]
@@ -415,16 +415,16 @@ allowed_users = ["111"]
 	if tg == nil {
 		t.Fatal("GetTelegramPlatform() = nil")
 	}
-	if len(tg.MultiballBots) != 2 {
-		t.Fatalf("MultiballBots len = %d, want 2", len(tg.MultiballBots))
+	if len(tg.FacetBots) != 2 {
+		t.Fatalf("FacetBots len = %d, want 2", len(tg.FacetBots))
 	}
-	if tg.MultiballBots[0] != "mb1" || tg.MultiballBots[1] != "mb2" {
-		t.Errorf("MultiballBots = %v, want [mb1 mb2]", tg.MultiballBots)
+	if tg.FacetBots[0] != "mb1" || tg.FacetBots[1] != "mb2" {
+		t.Errorf("FacetBots = %v, want [mb1 mb2]", tg.FacetBots)
 	}
 }
 
-func TestLoadSharedMultiballBots(t *testing.T) {
-	// Proves that the global [telegram] multiball_bots list is correctly loaded
+func TestLoadSharedFacetBots(t *testing.T) {
+	// Proves that the global [telegram] facet_bots list is correctly loaded
 	// into the TelegramConfig and made available for shared cross-agent routing.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -437,7 +437,7 @@ bot = "primary"
 
 [telegram]
 allowed_users = ["111"]
-multiball_bots = ["spare1", "spare2"]
+facet_bots = ["spare1", "spare2"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
 
@@ -446,11 +446,11 @@ multiball_bots = ["spare1", "spare2"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	if len(cfg.Telegram.MultiballBots) != 2 {
-		t.Fatalf("Telegram.MultiballBots len = %d, want 2", len(cfg.Telegram.MultiballBots))
+	if len(cfg.Telegram.FacetBots) != 2 {
+		t.Fatalf("Telegram.FacetBots len = %d, want 2", len(cfg.Telegram.FacetBots))
 	}
-	if cfg.Telegram.MultiballBots[0] != "spare1" || cfg.Telegram.MultiballBots[1] != "spare2" {
-		t.Errorf("Telegram.MultiballBots = %v, want [spare1 spare2]", cfg.Telegram.MultiballBots)
+	if cfg.Telegram.FacetBots[0] != "spare1" || cfg.Telegram.FacetBots[1] != "spare2" {
+		t.Errorf("Telegram.FacetBots = %v, want [spare1 spare2]", cfg.Telegram.FacetBots)
 	}
 }
 
@@ -671,8 +671,8 @@ id = "a"
 	})
 }
 
-func TestMultiballNoCompactConfig(t *testing.T) {
-	// Proves that multiball_no_compact is nil when unset (semantically true), and
+func TestFacetNoCompactConfig(t *testing.T) {
+	// Proves that facet_no_compact is nil when unset (semantically true), and
 	// stores an explicit non-nil pointer when set to true or false in the config.
 	t.Run("defaults to nil", func(t *testing.T) {
 		dir := t.TempDir()
@@ -686,8 +686,8 @@ id = "test"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].MultiballNoCompact != nil {
-			t.Error("MultiballNoCompact should default to nil (treated as true)")
+		if cfg.Agents[0].FacetNoCompact != nil {
+			t.Error("FacetNoCompact should default to nil (treated as true)")
 		}
 	})
 
@@ -697,15 +697,15 @@ id = "test"
 		os.WriteFile(path, []byte(`
 [[agents]]
 id = "test"
-multiball_no_compact = true
+facet_no_compact = true
 `), 0644)
 
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].MultiballNoCompact == nil || !*cfg.Agents[0].MultiballNoCompact {
-			t.Error("MultiballNoCompact should be true")
+		if cfg.Agents[0].FacetNoCompact == nil || !*cfg.Agents[0].FacetNoCompact {
+			t.Error("FacetNoCompact should be true")
 		}
 	})
 
@@ -715,33 +715,33 @@ multiball_no_compact = true
 		os.WriteFile(path, []byte(`
 [[agents]]
 id = "test"
-multiball_no_compact = false
+facet_no_compact = false
 `), 0644)
 
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].MultiballNoCompact == nil || *cfg.Agents[0].MultiballNoCompact {
-			t.Error("MultiballNoCompact should be false")
+		if cfg.Agents[0].FacetNoCompact == nil || *cfg.Agents[0].FacetNoCompact {
+			t.Error("FacetNoCompact should be false")
 		}
 	})
 
 	t.Run("inherited from defaults", func(t *testing.T) {
-		// Verifies that [defaults] multiball_no_compact propagates to agents
+		// Verifies that [defaults] facet_no_compact propagates to agents
 		// that don't set it explicitly.
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
 [defaults]
-multiball_no_compact = false
+facet_no_compact = false
 
 [[agents]]
 id = "inherits"
 
 [[agents]]
 id = "overrides"
-multiball_no_compact = true
+facet_no_compact = true
 `), 0644)
 
 		cfg, err := Load(path)
@@ -749,11 +749,11 @@ multiball_no_compact = true
 			t.Fatalf("Load: %v", err)
 		}
 		// Agent without explicit value should inherit false from defaults
-		if cfg.Agents[0].MultiballNoCompact == nil || *cfg.Agents[0].MultiballNoCompact {
+		if cfg.Agents[0].FacetNoCompact == nil || *cfg.Agents[0].FacetNoCompact {
 			t.Error("inherits agent should get false from defaults")
 		}
 		// Agent with explicit true should keep its own value
-		if cfg.Agents[1].MultiballNoCompact == nil || !*cfg.Agents[1].MultiballNoCompact {
+		if cfg.Agents[1].FacetNoCompact == nil || !*cfg.Agents[1].FacetNoCompact {
 			t.Error("overrides agent should keep true")
 		}
 	})

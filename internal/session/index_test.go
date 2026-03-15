@@ -241,7 +241,7 @@ func TestClassifySessionKey(t *testing.T) {
 		want SessionType
 	}{
 		{"bot/c123/1000000000", SessionTypeChat},
-		{"bot/i123/123", SessionTypeUnknown},                // independent — can't distinguish multiball/spawn/cron from key alone
+		{"bot/i123/123", SessionTypeUnknown},                // independent — can't distinguish facet/spawn/cron from key alone
 		{"bot/c123/1000000000/b456", SessionTypeBranch},     // branch child type
 		{"bot/i123/1000000000/b456", SessionTypeBranch},     // branch from independent parent
 		{"bot/c123/1000000000/i456", SessionTypeUnknown},    // independent spawn child

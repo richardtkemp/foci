@@ -127,8 +127,8 @@ type CommandContext struct {
 	// When nil, buildPromptsData is used.
 	PromptsDataFn func(cc CommandContext) PromptsData
 
-	// Multiball configuration callback
-	ConfigureMultiball func(platform.Connection)
+	// Facet configuration callback
+	ConfigureFacet func(platform.Connection)
 
 	// Usage client provider (for mana command)
 	UsageClientProvider provider.UsageClientProvider

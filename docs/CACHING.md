@@ -85,7 +85,7 @@ Character files are loaded into memory at startup and rebuilt from disk only on 
 ### Session branching (cache sharing)
 Branch sessions copy the parent's system prompt + message history at a point in time. Because the prefix is byte-identical, the API hits cache (read pricing) instead of re-tokenizing (write pricing).
 
-### Multiball forking
+### Facet forking
 Forked sessions share the parent's system prompt prefix. Since the prefix is identical, the fork benefits from the existing cache immediately.
 
 ### Tool result guard

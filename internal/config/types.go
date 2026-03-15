@@ -93,7 +93,7 @@ type AgentConfig struct {
 	BatchPartialAssistantMessages bool     `toml:"batch_partial_assistant_messages"` // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
 	BatchPartialJoiner            string   `toml:"batch_partial_joiner"`             // separator between batched partial messages (default: "")
 
-	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
+	BranchOrientationFacetPrompt string `toml:"branch_orientation_facet_prompt"` // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 
 	Memory    AgentMemoryConfig `toml:"memory"`    // per-agent memory sources (combined with global [memory])
@@ -108,7 +108,7 @@ type AgentConfig struct {
 	Thinking              string `toml:"thinking"`                 // thinking mode: "adaptive" (default) or "off"
 	Speed                 string `toml:"speed"`                    // speed mode: "standard" (default) or "fast" (Opus only, 6x pricing)
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
-	MultiballNoCompact    *bool  `toml:"multiball_no_compact"`     // set no_compact on multiball sessions (nil = true)
+	FacetNoCompact    *bool  `toml:"facet_no_compact"`     // set no_compact on facet sessions (nil = true)
 
 	TTS              string            `toml:"tts"`               // per-agent TTS provider id (empty = default [[tts]] entry)
 	STT              string            `toml:"stt"`               // per-agent STT provider id (empty = default [[stt]] entry)
@@ -206,11 +206,11 @@ type AnthropicConfig struct {
 
 type TelegramConfig struct {
 	AllowedUsers        []string `toml:"allowed_users"`
-	MultiballBots       []string `toml:"multiball_bots"`        // shared multiball pool: bot names (tokens via "telegram.<name>" secrets)
+	FacetBots       []string `toml:"facet_bots"`        // shared facet pool: bot names (tokens via "telegram.<name>" secrets)
 	StopAliases         []string `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases   bool     `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
 	StartupNotify       bool     `toml:"startup_notify"`        // send notification on startup (default true)
-	MultiballSessionTTL string   `toml:"multiball_session_ttl"` // idle TTL before a multiball bot can be reclaimed (default "60m", "0" disables)
+	FacetSessionTTL string   `toml:"facet_session_ttl"` // idle TTL before a facet bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
 	LongPollTimeout     string   `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
 	ReceivedFilesDir    string   `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
@@ -227,7 +227,7 @@ type TelegramConfig struct {
 type TelegramPlatformConfig struct {
 	Bot              string           `toml:"bot"`                // bot name; token resolved via "telegram.<bot>" secret
 	BotSecret        string           `toml:"bot_secret"`         // override secret key for bot token (default: "telegram.<bot>")
-	MultiballBots    []string         `toml:"multiball_bots"`     // additional bot names for multiball (optional)
+	FacetBots    []string         `toml:"facet_bots"`     // additional bot names for facet (optional)
 	AllowedUsers     []string         `toml:"allowed_users"`      // per-agent allowed Telegram user IDs (empty = use global)
 	ShowToolCalls    *ToolCallDisplay `toml:"show_tool_calls"`    // show tool call messages (nil = use global/default)
 	ShowThinking     *ShowThinking    `toml:"show_thinking"`      // show thinking blocks (nil = use global/default)
@@ -274,7 +274,7 @@ type SessionsConfig struct {
 	CompactionManaRefreshThreshold string  `toml:"compaction_mana_refresh_threshold"` // trigger mana-refresh compact when reset this soon (default "15m")
 	CompactionManaRefreshPreserve  *int    `toml:"compaction_mana_refresh_preserve"`  // messages to preserve in refresh mode (nil = ALL)
 
-	BranchOrientationMultiballPrompt string `toml:"branch_orientation_multiball_prompt"` // path to prompt file for user-attached multiball branches
+	BranchOrientationFacetPrompt string `toml:"branch_orientation_facet_prompt"` // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
 
 	ArchiveAfter string `toml:"archive_after"` // gzip idle sessions after this duration (default "24h")
@@ -521,7 +521,7 @@ type DefaultsConfig struct {
 	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
 	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
 	SteerMode           bool   `toml:"steer_mode"`            // default steer_mode (default: true)
-	MultiballNoCompact   *bool  `toml:"multiball_no_compact"`   // set no_compact on multiball sessions (nil = true)
+	FacetNoCompact   *bool  `toml:"facet_no_compact"`   // set no_compact on facet sessions (nil = true)
 	CacheTTL             string `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 
 	// Nudge system: mid-turn behavioral reminders extracted from character files

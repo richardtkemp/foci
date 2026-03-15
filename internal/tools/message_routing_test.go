@@ -161,7 +161,7 @@ func TestChatIDFromSessionKey(t *testing.T) {
 		{"test/c-1001234567890/1000", -1001234567890}, // group chat
 		{"test/ispawn-123456/1000", 0},                // independent session
 		{"test/i0/0", 0},                              // independent session
-		{"test/imb-123/1000", 0},                      // multiball (independent)
+		{"test/if-123/1000", 0},                      // facet (independent)
 		{"", 0},
 		{"fotini/c99887766/1000/b2000", 99887766},            // branch preserves chat ID
 		{"test/c-1001234567890/1000/b2000", -1001234567890},  // branch — group chat
@@ -175,14 +175,14 @@ func TestChatIDFromSessionKey(t *testing.T) {
 }
 
 func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
-	// Verifies that regular chat sessions use the primary bot's sender even when a multiball callback is registered, preventing misrouting.
+	// Verifies that regular chat sessions use the primary bot's sender even when a facet callback is registered, preventing misrouting.
 	t.Parallel()
-	multiballMock := &mockSender{}
+	facetMock := &mockSender{}
 	primaryMock := &mockSender{}
 
 	tool := NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
-		if strings.Contains(sessionKey, "/imb-") {
-			return multiballMock
+		if strings.Contains(sessionKey, "/if-") {
+			return facetMock
 		}
 		return primaryMock
 	}, nil)
@@ -199,8 +199,8 @@ func TestSendMessageToUserChatSessionUsesPrimary(t *testing.T) {
 	if len(primaryMock.chatTextCalls) != 1 || primaryMock.chatTextCalls[0].chatID != 99887766 {
 		t.Errorf("primary chatTextCalls = %v", primaryMock.chatTextCalls)
 	}
-	if len(multiballMock.textCalls) != 0 && len(multiballMock.chatTextCalls) != 0 {
-		t.Errorf("multiball should not be called for chat session")
+	if len(facetMock.textCalls) != 0 && len(facetMock.chatTextCalls) != 0 {
+		t.Errorf("facet should not be called for chat session")
 	}
 }
 
@@ -277,23 +277,23 @@ func TestSendMessageToUserCrossSessionNoHeaderWhenBotSessionEmpty(t *testing.T) 
 	}
 }
 
-func TestSendMessageToUserMultiballRouting(t *testing.T) {
-	// Verifies that multiball session keys are passed to the getSender callback so the correct per-bot sender is resolved rather than the primary one.
+func TestSendMessageToUserFacetRouting(t *testing.T) {
+	// Verifies that facet session keys are passed to the getSender callback so the correct per-bot sender is resolved rather than the primary one.
 	t.Parallel()
-	multiballMock := &mockSender{}
+	facetMock := &mockSender{}
 	primaryMock := &mockSender{}
 
 	tool := NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
-		if strings.Contains(sessionKey, "/imb-") {
-			return multiballMock
+		if strings.Contains(sessionKey, "/if-") {
+			return facetMock
 		}
 		return primaryMock
 	}, nil)
 
-	// Multiball session — should use multiball sender
-	ctx := WithSessionKey(context.Background(), "clutch/imb-123/1000")
+	// Facet session — should use facet sender
+	ctx := WithSessionKey(context.Background(), "clutch/if-123/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"text": "multiball message",
+		"text": "facet message",
 	})
 
 	result, err := tool.Execute(ctx, params)
@@ -303,10 +303,10 @@ func TestSendMessageToUserMultiballRouting(t *testing.T) {
 	if result.Text != "Sent: text" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(multiballMock.textCalls) != 1 || multiballMock.textCalls[0] != "multiball message" {
-		t.Errorf("multiball textCalls = %v", multiballMock.textCalls)
+	if len(facetMock.textCalls) != 1 || facetMock.textCalls[0] != "facet message" {
+		t.Errorf("facet textCalls = %v", facetMock.textCalls)
 	}
 	if len(primaryMock.textCalls) != 0 {
-		t.Errorf("primary should not be called for multiball session")
+		t.Errorf("primary should not be called for facet session")
 	}
 }

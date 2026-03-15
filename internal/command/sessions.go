@@ -59,7 +59,7 @@ func SessionsCommand() *Command {
 					"  default <chat_id> Set the default session (used by keepalive, cron)\n" +
 					"  info              Show details for the current chat's session\n" +
 					"  index [filters]   Query session index (all agents)\n\n" +
-					"Index filters: type (chat/spawn/cron/multiball/branch),\n" +
+					"Index filters: type (chat/spawn/cron/facet/branch),\n" +
 					"  status (active/compacted/archived/cleared/all), duration (3d/4h),\n" +
 					"  count (5/20) — show only the N most recent (default: 10)"}, nil
 
@@ -118,7 +118,7 @@ var knownSessionTypes = map[string]bool{
 	"chat":      true,
 	"spawn":     true,
 	"cron":      true,
-	"multiball": true,
+	"facet": true,
 	"branch":    true,
 }
 

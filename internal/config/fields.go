@@ -209,7 +209,7 @@ var configFields = []ConfigField{
 	{"defaults", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"defaults", "search_provider", FieldString, "web search: brave or anthropic"},
 	{"defaults", "fetch_provider", FieldString, "web fetch: anthropic or builtin"},
-	{"defaults", "multiball_no_compact", FieldBool, "set no_compact on multiball sessions (default true)"},
+	{"defaults", "facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
 
 	// agent — per-agent fields (written to [[agents]] block)
 	{"agent", "model", FieldString, "model for this agent"},
@@ -234,7 +234,7 @@ var configFields = []ConfigField{
 	{"agent", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"agent", "search_provider", FieldString, "web search: brave or anthropic"},
 	{"agent", "fetch_provider", FieldString, "web fetch: anthropic or builtin"},
-	{"agent", "multiball_no_compact", FieldBool, "set no_compact on multiball sessions (default true)"},
+	{"agent", "facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
 	{"agent", "tts", FieldString, "TTS provider id"},
 	{"agent", "stt", FieldString, "STT provider id"},
 	{"agent", "tts_rate", FieldFloat, "TTS speech rate multiplier"},
@@ -267,7 +267,7 @@ var configFields = []ConfigField{
 	// telegram
 	{"telegram", "startup_notify", FieldBool, "send notification on startup"},
 	{"telegram", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
-	{"telegram", "multiball_session_ttl", FieldDuration, "idle TTL before multiball reclaim"},
+	{"telegram", "facet_session_ttl", FieldDuration, "idle TTL before facet reclaim"},
 	{"telegram", "message_queue_size", FieldInt, "outbound message queue buffer size"},
 	{"telegram", "display_width", FieldInt, "display width for dividers"},
 	{"telegram", "table_wrap_lines", FieldInt, "max wrapped lines per table cell"},

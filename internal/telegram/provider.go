@@ -77,9 +77,9 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 	})
 }
 
-func (p *telegramProvider) SetupSharedMultiball(params platform.SharedMultiballParams) {
+func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 	cfg := p.deps.Config
-	if len(cfg.Telegram.MultiballBots) == 0 || len(params.AgentOrder) == 0 {
+	if len(cfg.Telegram.FacetBots) == 0 || len(params.AgentOrder) == 0 {
 		return
 	}
 
@@ -88,19 +88,19 @@ func (p *telegramProvider) SetupSharedMultiball(params platform.SharedMultiballP
 	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, firstACfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, firstACfg.STTReplacements))
 	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, firstACfg.TTS, firstACfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, firstACfg.TTSReplacements))
 
-	for _, botName := range cfg.Telegram.MultiballBots {
-		mbToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)
-		if mbToken == "" {
-			log.Errorf("telegram", "shared multiball bot %q: token not found", botName)
+	for _, botName := range cfg.Telegram.FacetBots {
+		facetToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)
+		if facetToken == "" {
+			log.Errorf("telegram", "shared facet bot %q: token not found", botName)
 			continue
 		}
-		mbBot, err := NewBot(mbToken, cfg.Telegram.AllowedUsers,
+		facetBot, err := NewBot(facetToken, cfg.Telegram.AllowedUsers,
 			params.FirstHandler, cmds, command.NewLastMessageStore(), "")
 		if err != nil {
-			log.Errorf("telegram", "shared multiball bot %q: create: %v", botName, err)
+			log.Errorf("telegram", "shared facet bot %q: create: %v", botName, err)
 			continue
 		}
-		ConfigureMultiballBot(mbBot, MultiballBotConfig{
+		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     sharedSTT,
 			TTSProvider:     sharedTTS,
 			StopAliases:     cfg.Telegram.StopAliases,
@@ -110,26 +110,26 @@ func (p *telegramProvider) SetupSharedMultiball(params platform.SharedMultiballP
 			ToolDetailStore: p.toolDetailStore,
 			StateStore:      p.deps.StateStore,
 		})
-		p.mgr.AddSharedMultiball(mbBot)
+		p.mgr.AddSharedFacet(facetBot)
 	}
 
 	if pool := p.mgr.SharedPool(); pool != nil && pool.Size() > 0 {
-		sessionTTL, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
+		sessionTTL, _ := time.ParseDuration(cfg.Telegram.FacetSessionTTL)
 		if sessionTTL > 0 {
 			pool.SetSessionTTL(sessionTTL, p.deps.Sessions)
 		}
 		if params.ReclaimHook != nil {
 			pool.ReclaimHook = params.ReclaimHook
 		}
-		log.Infof("telegram", "%d shared multiball bots ready", pool.Size())
+		log.Infof("telegram", "%d shared facet bots ready", pool.Size())
 	}
 }
 
-func (p *telegramProvider) RestoreMultiballSessions(params platform.RestoreParams) {
+func (p *telegramProvider) RestoreFacetSessions(params platform.RestoreParams) {
 	if p.deps.StateStore == nil {
 		return
 	}
-	restoreMultiballSessions(p.mgr, p.deps.StateStore, p.deps.Sessions, p.deps.Config, params)
+	restoreFacetSessions(p.mgr, p.deps.StateStore, p.deps.Sessions, p.deps.Config, params)
 }
 
 func (p *telegramProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
@@ -173,8 +173,8 @@ func (p *telegramProvider) Close() error {
 	return nil
 }
 
-// restoreMultiballSessions restores persisted multiball session mappings after restart.
-func restoreMultiballSessions(
+// restoreFacetSessions restores persisted facet session mappings after restart.
+func restoreFacetSessions(
 	mgr *BotManager,
 	stateStore *state.Store,
 	sessions *session.Store,
@@ -203,13 +203,13 @@ func restoreMultiballSessions(
 				return
 			}
 			var savedKey string
-			if !stateStore.Get("multiball:"+username, &savedKey) || savedKey == "" {
+			if !stateStore.Get("facet:"+username, &savedKey) || savedKey == "" {
 				return
 			}
 
 			if sessions.LastActivity(savedKey) == "n/a" {
-				log.Infof("telegram", "multiball restore: @%s session %s no longer exists, cleaning up", username, savedKey)
-				_ = stateStore.Delete("multiball:" + username)
+				log.Infof("telegram", "facet restore: @%s session %s no longer exists, cleaning up", username, savedKey)
+				_ = stateStore.Delete("facet:" + username)
 				return
 			}
 
@@ -234,11 +234,11 @@ func restoreMultiballSessions(
 			}
 
 			restored++
-			log.Infof("telegram", "multiball restore: @%s → %s", username, savedKey)
+			log.Infof("telegram", "facet restore: @%s → %s", username, savedKey)
 		})
 	}
 	if restored > 0 {
-		log.Infof("telegram", "restored %d multiball session(s) from state", restored)
+		log.Infof("telegram", "restored %d facet session(s) from state", restored)
 	}
 }
 

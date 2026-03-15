@@ -481,9 +481,9 @@ func setupAgent(p setupParams) *agentInstance {
 	setupWakeScheduler(func() *agent.Agent { return ag }, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Per-agent slash commands
-	// configureMultiball is set later by setupPlatform but captured
-	// by the closure below, which is only called at runtime (forkMultiball).
-	var configureMultiball func(platform.Connection)
+	// configureFacet is set later by setupPlatform but captured
+	// by the closure below, which is only called at runtime (forkFacet).
+	var configureFacet func(platform.Connection)
 
 	// displayDefaultsFn is set after platform setup — provides resolved
 	// display defaults from the platform (lazy-forward pattern).
@@ -516,9 +516,9 @@ func setupAgent(p setupParams) *agentInstance {
 		agentListFn:         p.agentListFn,
 		plat:                p.plat,
 		connMgr:             connMgr,
-		configureMultiball: func(conn platform.Connection) {
-			if configureMultiball != nil {
-				configureMultiball(conn)
+		configureFacet: func(conn platform.Connection) {
+			if configureFacet != nil {
+				configureFacet(conn)
 			}
 		},
 		displayDefaultsFn: func() platform.DisplaySettings {
@@ -580,8 +580,8 @@ func setupAgent(p setupParams) *agentInstance {
 			if result.DefaultSessionKeyFn != nil {
 				defaultSessionKeyFn = result.DefaultSessionKeyFn
 			}
-			if result.ConfigureMultiballConn != nil {
-				configureMultiball = result.ConfigureMultiballConn
+			if result.ConfigureFacetConn != nil {
+				configureFacet = result.ConfigureFacetConn
 			}
 			if result.DisplayDefaultsFn != nil {
 				displayDefaultsFn = result.DisplayDefaultsFn

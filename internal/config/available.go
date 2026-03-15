@@ -24,8 +24,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if len(agent.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
-	if agent.BranchOrientationMultiballPrompt == "" && cfg.Sessions.BranchOrientationMultiballPrompt == "" {
-		opts = append(opts, availableOption{"agent", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
+	if agent.BranchOrientationFacetPrompt == "" && cfg.Sessions.BranchOrientationFacetPrompt == "" {
+		opts = append(opts, availableOption{"agent", "branch_orientation_facet_prompt", "\"\"", "prompt file for user-attached facet branches"})
 	}
 	if agent.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationHeadlessPrompt == "" {
 		opts = append(opts, availableOption{"agent", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
@@ -34,8 +34,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if tg == nil || tg.Bot == "" {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
 	}
-	if tg == nil || len(tg.MultiballBots) == 0 {
-		opts = append(opts, availableOption{"agent.platforms.telegram", "multiball_bots", "[]", "additional bot names for multiball"})
+	if tg == nil || len(tg.FacetBots) == 0 {
+		opts = append(opts, availableOption{"agent.platforms.telegram", "facet_bots", "[]", "additional bot names for facet"})
 	}
 	if agent.TTSRate == 0 {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
@@ -103,8 +103,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if cfg.Sessions.CompactionPreserveMessages == 0 {
 		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
 	}
-	if cfg.Sessions.BranchOrientationMultiballPrompt == "" {
-		opts = append(opts, availableOption{"sessions", "branch_orientation_multiball_prompt", "\"\"", "prompt file for user-attached multiball branches"})
+	if cfg.Sessions.BranchOrientationFacetPrompt == "" {
+		opts = append(opts, availableOption{"sessions", "branch_orientation_facet_prompt", "\"\"", "prompt file for user-attached facet branches"})
 	}
 	if cfg.Sessions.BranchOrientationHeadlessPrompt == "" {
 		opts = append(opts, availableOption{"sessions", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})

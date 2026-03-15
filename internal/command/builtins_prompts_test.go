@@ -582,7 +582,7 @@ func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
 		{"compaction_summary", "compaction_summary"},
 		{"compaction-summary.md", "compaction_summary"},
 		{"keepalive.md", "keepalive"},
-		{"branch-orientation-multiball", "branch_orient_multiball"},
+		{"branch-orientation-facet", "branch_orient_facet"},
 		{"braindead", "braindead_warning"},
 	}
 
@@ -590,25 +590,25 @@ func TestPromptsCommandDiffFuzzyMatch(t *testing.T) {
 		Prompts: []PromptInfo{
 			{Label: "compaction_summary"},
 			{Label: "keepalive"},
-			{Label: "branch_orient_multiball"},
+			{Label: "branch_orient_facet"},
 			{Label: "braindead_warning"},
 		},
 		ResolvedTexts: map[string]string{
 			"compaction_summary":      "text",
 			"keepalive":               "keepalive text",
-			"branch_orient_multiball": "multiball text",
+			"branch_orient_facet": "facet text",
 			"braindead_warning":       "braindead text",
 		},
 		DefaultTexts: map[string]string{
 			"compaction_summary":      "compaction default",
 			"keepalive":               "keepalive default",
-			"branch_orient_multiball": "multiball default",
+			"branch_orient_facet": "facet default",
 			"braindead_warning":       "",
 		},
 		EmbeddedPrompts: map[string]string{
 			"compaction-summary.md":           "compaction default",
 			"keepalive.md":                    "keepalive default",
-			"branch-orientation-multiball.md": "multiball default",
+			"branch-orientation-facet.md": "facet default",
 		},
 	}
 

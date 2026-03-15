@@ -85,7 +85,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	}
 
 	// Record last real user activity (for --if-active gating on CLI commands).
-	// Only primary bots track this — secondary (multiball) bots don't count.
+	// Only primary bots track this — secondary (facet) bots don't count.
 	if !b.isSecondary && b.agentID != "" && b.stateStore != nil {
 		_ = b.stateStore.Set("agent/"+b.agentID+"/last_user_activity", time.Now().Unix())
 	}

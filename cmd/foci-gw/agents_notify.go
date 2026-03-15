@@ -79,7 +79,7 @@ func newAsyncNotifier(
 			// Otherwise use existing behavior (display to target's chat)
 			conn := connMgr.ForSessionOrPrimary(target, agentID)
 
-			// Branch sessions without their own multiball connection should not
+			// Branch sessions without their own facet connection should not
 			// deliver replies to chat — they'd leak into the parent's chat.
 			// The response still gets written to the branch JSONL via HandleMessage.
 			sk, parseErr := session.ParseSessionKey(target)

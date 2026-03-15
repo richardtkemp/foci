@@ -18,7 +18,7 @@ Format: `{agentID}/{type}{id}/{versionTS}` — see [docs/SESSION_KEYS.md](docs/S
 - `fotini/c123456789/1709590000` — per-chat DM session (keyed by Telegram chat ID)
 - `main/i0/0/b1709123456` — cron-triggered branch (child of default independent session)
 - `main/c123/1709590000/b1709123456` — sub-agent branch
-- `main/c123/1709590000/b1709123456` — multiball fork
+- `main/c123/1709590000/b1709123456` — facet fork
 - `clutch/i1709123456/1709123456` — WebSocket voice session (ephemeral, one per connection)
 
 Each Telegram DM gets its own session, keyed by chat ID. One session is designated as the "default" — this is what cron (`foci send`/`foci branch`) and proactive features target. If no default is set, the first chat session created becomes the default. The default can be changed via `/sessions default <chat_id>`.
@@ -44,11 +44,11 @@ messages: [only messages after branch point]
 
 API payload assembly: system prompt + parent.messages[:branch_point] + branch.messages
 
-**Branch orientation:** All branches (multiball, cron/wake, spawn) receive an orientation message as their first user message. The orientation tells the branch its type, keys, and communication rules:
+**Branch orientation:** All branches (facet, cron/wake, spawn) receive an orientation message as their first user message. The orientation tells the branch its type, keys, and communication rules:
 - **Headless** (cron, spawn, keepalive — `direct_chat=false`): must NEVER use `send_message_to_user`; reports significant work or errors to parent via `send_to_session`; stays silent when nothing happened.
-- **Multiball** (`direct_chat=true`): has its own Telegram bot for direct user replies; keeps the main session informed of visible work via `send_to_session`; sends a completion summary before going idle.
+- **Facet** (`direct_chat=true`): has its own Telegram bot for direct user replies; keeps the main session informed of visible work via `send_to_session`; sends a completion summary before going idle.
 
-Default orientation text is embedded in `prompts/branch-orientation-headless.md` and `prompts/branch-orientation-multiball.md`. Config override via `branch_orientation_prompt` (per-agent or global) takes precedence. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.
+Default orientation text is embedded in `prompts/branch-orientation-headless.md` and `prompts/branch-orientation-facet.md`. Config override via `branch_orientation_prompt` (per-agent or global) takes precedence. Template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}` are replaced at branch creation time.
 
 ### Compaction
 
@@ -68,7 +68,7 @@ All compaction parameters are configurable per-agent or globally: threshold, max
 
 ### Session Metadata Index
 
-A SQLite index (`session_index.db`) tracks all session files with metadata: session key, file path, created timestamp, parent session key (for branches), session type (chat/multiball/spawn/cron/branch), and status (active/compacted/cleared). Rebuilt from disk on startup by scanning all non-archive `.jsonl` files. Updated in real-time via lifecycle hooks on the session store (create, compact, clear). Queryable via `/sessions index [type] [status]`.
+A SQLite index (`session_index.db`) tracks all session files with metadata: session key, file path, created timestamp, parent session key (for branches), session type (chat/facet/spawn/cron/branch), and status (active/compacted/cleared). Rebuilt from disk on startup by scanning all non-archive `.jsonl` files. Updated in real-time via lifecycle hooks on the session store (create, compact, clear). Queryable via `/sessions index [type] [status]`.
 
 ## Communication
 
@@ -89,11 +89,11 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 - Startup notification: sends "botname restarted at HH:MM:SS" to the last active chat. Controlled by global `[telegram] startup_notify` (default true) with per-agent override via `startup_notify`. Set to `false` for silent bots (e.g., cron-only agents).
 - Crash/reboot detection: on startup, classifies restart as clean/crash/reboot by comparing last shutdown timestamp with system uptime. Unexpected restarts include diagnostic findings (ERROR/FATAL lines from logs) in the notification. Clean shutdown timestamp recorded on graceful exit via signal handler.
 
-### Multi-Bot Sessions (/multiball)
+### Multi-Bot Sessions (/facet)
 
-`/multiball` forks a session to a secondary Telegram bot — same agent, same context snapshot, parallel thread. Bots can be per-agent or shared pool. See [docs/MULTIBALL.md](docs/MULTIBALL.md) for bot pool config, session lifecycle, routing, and use cases.
+`/facet` forks a session to a secondary Telegram bot — same agent, same context snapshot, parallel thread. Bots can be per-agent or shared pool. See [docs/FACET.md](docs/FACET.md) for bot pool config, session lifecycle, routing, and use cases.
 
-Per-agent multiball pools are configured in the agent's `multiball_bots` list. A shared fallback pool is configured globally under `[telegram]`. See [CONFIG.md](CONFIG.md).
+Per-agent facet pools are configured in the agent's `facet_bots` list. A shared fallback pool is configured globally under `[telegram]`. See [CONFIG.md](CONFIG.md).
 
 **Acquisition priority:** per-agent pool first, shared pool as fallback. Released bots return to whichever pool they came from.
 
@@ -638,7 +638,7 @@ No tool call should prevent the system from responding to interrupts. If it does
 
 `/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — foci has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
 
-**Session-end memory formation:** Before clearing the session, memory formation fires asynchronously — creating a branch from the expiring session to preserve conversation history. Configured via `[memory_formation]` section (`session_end_enabled`, `session_end_prompt`). The branch has a 120-second timeout and is non-fatal — if it fails, the reset has already proceeded. Branch sessions can opt out via `NoResetHook` in their branch metadata. The same hook fires on multiball TTL reclaim.
+**Session-end memory formation:** Before clearing the session, memory formation fires asynchronously — creating a branch from the expiring session to preserve conversation history. Configured via `[memory_formation]` section (`session_end_enabled`, `session_end_prompt`). The branch has a 120-second timeout and is non-fatal — if it fails, the reset has already proceeded. Branch sessions can opt out via `NoResetHook` in their branch metadata. The same hook fires on facet TTL reclaim.
 
 If automatic resets are added later: never reset an active session. A session is "active" if the agent is processing a turn OR the last message was received less than N minutes ago. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow — that's the failure to avoid.
 
@@ -722,7 +722,7 @@ Messages starting with `/` are intercepted before reaching the agent. They execu
 - `/sessions` or `/sessions list` — list all per-chat sessions for this agent. Shows chat ID, username, message count, last active time, and which is the default (★).
 - `/sessions default <chat_id>` — set a specific chat as the default session (used by heartbeats, cron, proactive features).
 - `/sessions info` — show details for the current chat's session (chat ID, default status, message count, username).
-- `/sessions index [type] [status]` — query the session metadata index (all agents). Optional filters: type (chat/multiball/spawn/cron/branch), status (active/compacted/cleared). Shows session key, type, status, created time, and parent session.
+- `/sessions index [type] [status]` — query the session metadata index (all agents). Optional filters: type (chat/facet/spawn/cron/branch), status (active/compacted/cleared). Shows session key, type, status, created time, and parent session.
 
 **Agents:**
 - `/agents` - list active agent sessions with status, model, and message counts
@@ -772,7 +772,7 @@ Single TOML file. Flat, commented, no deep nesting. Supports single-agent (`[age
 ## Testing Priority
 
 **✅ PASSED: Session branching cache sharing.**
-Confirmed working — wake/cron branches read ~63k cached tokens on first request with zero cold starts. Multiball branches also share parent cache prefix.
+Confirmed working — wake/cron branches read ~63k cached tokens on first request with zero cold starts. Facet branches also share parent cache prefix.
 6. Send another request on parent → observe parent cache still works (branch didn't bust it)
 
 If step 5 shows a full cache write instead of a read, the branching architecture doesn't work and we need to rethink.

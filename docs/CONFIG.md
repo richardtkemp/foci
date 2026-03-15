@@ -95,8 +95,8 @@ Telegram bot configuration. Fields `allowed_users` and `received_files_dir` can 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `multiball_bots` | string[] | `[]` | Shared multiball pool: bot names whose tokens are resolved via `"telegram.<name>"` secret convention. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
-| `multiball_session_ttl` | string | `"60m"` | Idle TTL before a multiball bot can be reclaimed by a new `/multiball` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. `"0"` disables auto-reclaim. Go duration format. Applies to both per-agent and shared pools. |
+| `facet_bots` | string[] | `[]` | Shared facet pool: bot names whose tokens are resolved via `"telegram.<name>"` secret convention. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
+| `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet bot can be reclaimed by a new `/facet` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. `"0"` disables auto-reclaim. Go duration format. Applies to both per-agent and shared pools. |
 | `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
 | `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
 | `display_width` | int | `44` | Character width for table width constraint. Tables in `<pre>` blocks are shrunk to fit this width and cells are wrapped or truncated. Overridable per-agent. |
@@ -189,11 +189,11 @@ Session storage. Compaction and prompt fields that can be overridden per-agent a
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
-All prompt fields (`compaction_summary_prompt`, `branch_orientation_multiball_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
+All prompt fields (`compaction_summary_prompt`, `branch_orientation_facet_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
 When no config override is set, embedded defaults from `prompts/` are used:
 - `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
-- `prompts/branch-orientation-multiball.md` — user-attached multiball branches
+- `prompts/branch-orientation-facet.md` — user-attached facet branches
 - `prompts/compaction-summary.md` — compaction summary prompt
 - `prompts/compaction-handoff.md` — post-compaction handoff message
 - `prompts/keepalive.md` — keepalive ping prompt
@@ -720,7 +720,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_mana_refresh_threshold` | string | `"15m"` | Trigger special high-fidelity mana-refresh compaction when mana reset is this soon. Format: Go duration string. `"0"` disables. |
 | `compaction_mana_refresh_preserve` | int | unset | Messages to preserve during mana-refresh compaction. Unset (nil) preserves ALL messages (special high-fidelity mode). `0` uses normal preservation count. |
 | `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
-| `branch_orientation_multiball_prompt` | string | `""` | Path to prompt file for user-attached multiball branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-multiball.md`. |
+| `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
 
 #### Idle-Aware Compaction
@@ -780,7 +780,7 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
 | `stream_output` | bool | `false` | `[telegram]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time with HTML formatting. A message is created on the first text delta and edited periodically as more tokens arrive. Each update strips incomplete markdown delimiters and converts to Telegram HTML, so formatting renders throughout streaming (not just on the final message). Falls back to plain text if HTML parsing fails. Requires `streaming = true` for API-level delta callbacks. Set globally in `[telegram]` or per-agent in platform config. |
 | `stream_update_interval` | string | `"250ms"` | `[telegram]` / `[agents.platforms.telegram]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. Per-agent override via `stream_interval` in platform config. |
-| `multiball_no_compact` | bool | `true` | `[defaults]` | Set `no_compact` on multiball sessions. Multiball sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want multiball sessions to compact normally. |
+| `facet_no_compact` | bool | `true` | `[defaults]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 
 ### Telegram Overrides
 
@@ -848,7 +848,7 @@ Automatic memory capture and MEMORY.md consolidation. All three sub-features def
 | `consolidation_enabled` | bool | `true` | Enable periodic MEMORY.md curation. |
 | `consolidation_interval` | string | `"20h"` | Minimum time between consolidation runs. Persisted across restarts. |
 | `consolidation_prompt` | string | `""` | Prompt override. `""` = embedded `memory-consolidation.md`, `"none"` = disabled, `/path` = custom file. |
-| `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and multiball reclaim. |
+| `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and facet reclaim. |
 | `session_end_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
 
 All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
@@ -860,7 +860,7 @@ All prompt fields use 3-state resolution: `""` or `"default"` → embedded defau
 
 **Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Only fires when there's been user activity within the last hour.
 
-**Session-end** fires asynchronously on `/reset` and multiball reclaim. Creates a branch from the expiring session (preserving conversation history) so the caller doesn't block.
+**Session-end** fires asynchronously on `/reset` and facet reclaim. Creates a branch from the expiring session (preserving conversation history) so the caller doesn't block.
 
 ### Usage Warnings (`[[agents.usage_warnings]]`)
 
@@ -920,7 +920,7 @@ id = "myagent"
 [agents.platforms.telegram]
 bot = "myagent"                 # bot name; token via "telegram.<bot>" secret
 bot_secret = ""                 # override secret key (default: "telegram.<bot>")
-multiball_bots = []             # additional bot names for multiball
+facet_bots = []             # additional bot names for facet
 allowed_users = []              # per-agent allowed users (empty = use global)
 show_tool_calls = "preview"     # off, preview, full
 show_thinking = "off"           # off, compact, true
@@ -936,7 +936,7 @@ received_files_dir = ""
 |-----|------|---------|-------------|
 | `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"telegram.<bot>"`. |
 | `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"telegram.<bot>"`. |
-| `multiball_bots` | string[] | `[]` | Per-agent multiball bot pool. Tokens resolved via `"telegram.<name>"` secret. |
+| `facet_bots` | string[] | `[]` | Per-agent facet bot pool. Tokens resolved via `"telegram.<name>"` secret. |
 | `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. Empty uses global `[telegram] allowed_users`. |
 | `show_tool_calls` | string | `[telegram]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
 | `show_thinking` | string | `[telegram]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
@@ -976,9 +976,9 @@ name = "shared"
 dir = "/home/foci/shared/memory"
 weight = 1.0
 
-# Shared multiball pool (fallback for any agent)
+# Shared facet pool (fallback for any agent)
 [telegram]
-multiball_bots = ["spare1"]
+facet_bots = ["spare1"]
 
 [[agents]]
 id = "main"
@@ -987,7 +987,7 @@ workspace = "/home/foci/character"
 
 [agents.platforms.telegram]
 bot = "primary"
-multiball_bots = ["mainling"]  # per-agent multiball pool
+facet_bots = ["mainling"]  # per-agent facet pool
 
 [[agents.memory.sources]]
 name = "workspace"
@@ -1001,7 +1001,7 @@ workspace = "/home/foci/character"
 
 [agents.platforms.telegram]
 bot = "secondary"
-# no multiball_bots — uses shared pool only
+# no facet_bots — uses shared pool only
 
 [[agents.memory.sources]]
 name = "workspace"
@@ -1009,7 +1009,7 @@ dir = "/home/foci/scout/memory"
 weight = 1.0
 ```
 
-**Multiball acquisition priority:** When `/multiball` is invoked, per-agent pool is tried first. If all per-agent bots are busy (or none configured), the shared pool is used as fallback. Released bots return to whichever pool they came from.
+**Facet acquisition priority:** When `/facet` is invoked, per-agent pool is tried first. If all per-agent bots are busy (or none configured), the shared pool is used as fallback. Released bots return to whichever pool they came from.
 
 ---
 

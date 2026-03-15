@@ -285,7 +285,7 @@ Subcommands:
 	// ========== Post-agent setup ==========
 	if len(agentOrder) > 0 {
 		firstInst := agents[agentOrder[0]]
-		plat.SetupSharedMultiball(platform.SharedMultiballParams{
+		plat.SetupSharedFacet(platform.SharedFacetParams{
 			FirstHandler:     firstInst.ag,
 			FirstCommands:    firstInst.cmds,
 			FirstAgentConfig: firstInst.agentCfg,
@@ -321,7 +321,7 @@ Subcommands:
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	plat.RestoreMultiballSessions(platform.RestoreParams{
+	plat.RestoreFacetSessions(platform.RestoreParams{
 		AgentOrder: agentOrder,
 		Resolver: func(agentID string) (platform.MessageHandler, any, any, config.AgentConfig, bool) {
 			inst, found := agents[agentID]

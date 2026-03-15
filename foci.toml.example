@@ -56,7 +56,7 @@ model = "claude-sonnet-4-20250514"
 #   [agents.platforms.telegram]
 #   bot = "myagent"               # bot name; token via "telegram.<bot>" secret
 #   bot_secret = "custom.key"     # override secret key (default: "telegram.<bot>")
-#   multiball_bots = ["bot2", "bot3"]  # additional bots for multiball
+#   facet_bots = ["bot2", "bot3"]  # additional bots for facet
 #   allowed_users = ["12345"]     # per-agent Telegram user filter
 #   show_tool_calls = "preview"   # off, preview, full
 #   show_thinking = "off"         # off, compact, true
@@ -68,7 +68,7 @@ model = "claude-sonnet-4-20250514"
 # Legacy format (still works, deprecated):
 #   telegram_bot = "myagent"
 #   bot_secret = "custom.key"
-#   multiball_bots = ["bot2", "bot3"]
+#   facet_bots = ["bot2", "bot3"]
 #   allowed_users = ["12345"]
 #
 # At config load time, legacy fields are migrated to the new platform config.
@@ -92,8 +92,8 @@ id = "myagent"
 # startup_notify = true                   # send startup notification (nil = use global)
 # tts_rate = 0.0
 # messages_in_log = false                 # log user message content (privacy)
-# branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
-# branch_orientation_multiball_prompt = "prompts/orient-multiball.md"  # prompt for user-attached multiball branches
+# branch_orientation_prompt = ""                                  # deprecated: sets both facet and headless
+# branch_orientation_facet_prompt = "prompts/orient-facet.md"  # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"   # prompt for headless branches (cron, spawn, keepalive)
 # skills_dirs = ["skills"]                # per-agent skill directories
 # compaction_effort = "high"              # effort for compaction API calls
@@ -122,7 +122,7 @@ system_files = [
 # [agents.platforms.telegram]
 # bot = "myagent"                         # bot name (token from "telegram.myagent" secret)
 # bot_secret = ""                         # override secret key
-# multiball_bots = []                     # additional bot names for multiball
+# facet_bots = []                     # additional bot names for facet
 # allowed_users = []                      # per-agent allowed users (empty = use global)
 # show_tool_calls = "preview"             # off, preview, full
 # show_thinking = "off"                   # off, compact, true
@@ -139,7 +139,7 @@ system_files = [
 #
 # telegram_bot = "myagent"               # DEPRECATED: use platforms.telegram.bot
 # bot_secret = "custom.key"              # DEPRECATED: use platforms.telegram.bot_secret
-# multiball_bots = ["bot2", "bot3"]      # DEPRECATED: use platforms.telegram.multiball_bots
+# facet_bots = ["bot2", "bot3"]      # DEPRECATED: use platforms.telegram.facet_bots
 # allowed_users = ["12345"]              # DEPRECATED: use platforms.telegram.allowed_users
 # show_tool_calls = "preview"            # DEPRECATED: use platforms.telegram.show_tool_calls
 # show_thinking = "off"                  # DEPRECATED: use platforms.telegram.show_thinking
@@ -227,10 +227,10 @@ thinking = "adaptive"                     # adaptive (default), off — Anthropi
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
-# multiball_bots = ["bot2", "bot3"]       # shared multiball bot pool
+# facet_bots = ["bot2", "bot3"]       # shared facet bot pool
 # stop_aliases = ["stop", "wait"]
 # enable_stop_aliases = true
-# multiball_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
+# facet_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
 # message_queue_size = 64
 # long_poll_timeout = "65s"
 # received_files_dir = ""                 # save received files (per-agent overrides)
@@ -248,8 +248,8 @@ compaction_threshold = 0.8
 # compaction_preserve_messages = 25
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
-# branch_orientation_prompt = ""                                  # deprecated: sets both multiball and headless
-# branch_orientation_multiball_prompt = ""                        # prompt for user-attached multiball branches
+# branch_orientation_prompt = ""                                  # deprecated: sets both facet and headless
+# branch_orientation_facet_prompt = ""                        # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = ""                         # prompt for headless branches (cron, spawn, keepalive)
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
 

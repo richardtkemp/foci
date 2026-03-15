@@ -90,15 +90,15 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	assertMissingKey(t, refs, "telegram.scout_bot")
 }
 
-func TestConventionMultiballBots(t *testing.T) {
-	// Proves that both per-agent and global [telegram] multiball_bots entries
+func TestConventionFacetBots(t *testing.T) {
+	// Proves that both per-agent and global [telegram] facet_bots entries
 	// produce "telegram.<name>" convention secret references.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{MultiballBots: []string{"extra1"}}}},
+			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{FacetBots: []string{"extra1"}}}},
 		},
 		Telegram: TelegramConfig{
-			MultiballBots: []string{"shared1", "shared2"},
+			FacetBots: []string{"shared1", "shared2"},
 		},
 	}
 

@@ -17,7 +17,7 @@ func testConfig() (*Config, AgentConfig) {
 			AllowedUsers:        []string{"alice"},
 			EnableStopAliases:   true,
 			StartupNotify:       true,
-			MultiballSessionTTL: "60m",
+			FacetSessionTTL: "60m",
 			MessageQueueSize:    64,
 			LongPollTimeout:     "65s",
 			ShowToolCalls:       func() *ToolCallDisplay { v := ToolCallPreview; return &v }(),
@@ -136,8 +136,8 @@ func TestFormatAvailable(t *testing.T) {
 	result := FormatAvailable(cfg, agent)
 
 	// Unset fields should appear
-	if !strings.Contains(result, "branch_orientation_multiball_prompt") {
-		t.Error("expected branch_orientation_multiball_prompt in available options")
+	if !strings.Contains(result, "branch_orientation_facet_prompt") {
+		t.Error("expected branch_orientation_facet_prompt in available options")
 	}
 	if !strings.Contains(result, "branch_orientation_headless_prompt") {
 		t.Error("expected branch_orientation_headless_prompt in available options")
@@ -161,14 +161,14 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg, agent := testConfig()
 	// Set all optional agent fields
 	agent.SystemFiles = []string{"IDENTITY.md"}
-	agent.BranchOrientationMultiballPrompt = "/tmp/orientation-multiball.md"
+	agent.BranchOrientationFacetPrompt = "/tmp/orientation-facet.md"
 	agent.BranchOrientationHeadlessPrompt = "/tmp/orientation-headless.md"
 	displayWidth := 44
 	tableWrapLines := 5
 	tableStyle := "pretty"
 	agent.Platforms = &PlatformsConfig{Telegram: &TelegramPlatformConfig{
 		Bot:              "primary",
-		MultiballBots:    []string{"mb1"},
+		FacetBots:    []string{"mb1"},
 		DisplayWidth:     &displayWidth,
 		TableWrapLines:   &tableWrapLines,
 		TableStyle:       &tableStyle,
@@ -190,7 +190,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
-	cfg.Sessions.BranchOrientationMultiballPrompt = "/tmp/orient-multiball.md"
+	cfg.Sessions.BranchOrientationFacetPrompt = "/tmp/orient-facet.md"
 	cfg.Sessions.BranchOrientationHeadlessPrompt = "/tmp/orient-headless.md"
 	cfg.Sessions.CompactionPreserveMessages = 25
 	cfg.Memory.ReindexDebounce = "2s"
@@ -366,9 +366,9 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	// sessions sections, showing each option only once in the output.
 	cfg, agent := testConfig()
 	// Ensure both agent and sessions have orientation prompts unset
-	agent.BranchOrientationMultiballPrompt = ""
+	agent.BranchOrientationFacetPrompt = ""
 	agent.BranchOrientationHeadlessPrompt = ""
-	cfg.Sessions.BranchOrientationMultiballPrompt = ""
+	cfg.Sessions.BranchOrientationFacetPrompt = ""
 	cfg.Sessions.BranchOrientationHeadlessPrompt = ""
 	// Ensure both agent and defaults have system_files unset
 	agent.SystemFiles = nil
@@ -376,11 +376,11 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 
 	result := FormatAvailable(cfg, agent)
 
-	// branch_orientation_multiball_prompt appears in both agent and sessions sections,
+	// branch_orientation_facet_prompt appears in both agent and sessions sections,
 	// but after deduplication only the sessions entry should remain.
-	multiballCount := strings.Count(result, "branch_orientation_multiball_prompt")
-	if multiballCount > 1 {
-		t.Errorf("branch_orientation_multiball_prompt appears %d times, expected 1 after dedup", multiballCount)
+	facetCount := strings.Count(result, "branch_orientation_facet_prompt")
+	if facetCount > 1 {
+		t.Errorf("branch_orientation_facet_prompt appears %d times, expected 1 after dedup", facetCount)
 	}
 }
 

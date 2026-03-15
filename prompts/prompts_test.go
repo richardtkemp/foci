@@ -30,7 +30,7 @@ func TestEmbeddedFilesLoadNonEmpty(t *testing.T) {
 		fn   func() string
 	}{
 		{"BranchOrientationHeadless", BranchOrientationHeadless},
-		{"BranchOrientationMultiball", BranchOrientationMultiball},
+		{"BranchOrientationFacet", BranchOrientationFacet},
 		{"CompactionSummary", CompactionSummary},
 		{"CompactionHandoff", CompactionHandoff},
 		{"Keepalive", Keepalive},
@@ -60,11 +60,11 @@ func TestBranchOrientationHeadlessHasVars(t *testing.T) {
 	}
 }
 
-func TestBranchOrientationMultiballHasVars(t *testing.T) {
-	text := BranchOrientationMultiball()
+func TestBranchOrientationFacetHasVars(t *testing.T) {
+	text := BranchOrientationFacet()
 	for _, v := range []string{"{branch_type}", "{branch_key}", "{parent_key}"} {
 		if !strings.Contains(text, v) {
-			t.Errorf("multiball orientation missing template var %s", v)
+			t.Errorf("facet orientation missing template var %s", v)
 		}
 	}
 }
