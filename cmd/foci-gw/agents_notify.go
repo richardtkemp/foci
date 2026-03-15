@@ -171,6 +171,42 @@ func newSessionNotifyFn(
 	})
 }
 
+// deliverInjectedTurn runs a HandleMessage turn and delivers the response
+// to the user's platform connection. Used by all system-initiated injections
+// (restart changelog, scheduled wakes, proactive warnings).
+func deliverInjectedTurn(
+	ag *agent.Agent,
+	ctx context.Context,
+	trigger string,
+	connMgr platform.ConnectionManager,
+	agentID string,
+	sessionKey string,
+	message string,
+) {
+	conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+	triggerCtx := agent.WithTrigger(ctx, trigger)
+	if conn != nil {
+		triggerCtx = agent.WithTurnCallbacks(triggerCtx, &agent.TurnCallbacks{
+			ReplyFunc: func(text string) {
+				if err := conn.SendToSession(sessionKey, text); err != nil {
+					log.Errorf(trigger, "intermediate platform delivery: %v", err)
+				}
+			},
+		})
+	}
+	resp, err := ag.HandleMessage(triggerCtx, sessionKey, message)
+	if err != nil {
+		log.Errorf(trigger, "error: %v", err)
+		return
+	}
+	if resp == "" || conn == nil {
+		return
+	}
+	if err := conn.SendToSession(sessionKey, resp); err != nil {
+		log.Errorf(trigger, "platform delivery: %v", err)
+	}
+}
+
 // setupWakeScheduler creates the wake scheduling function and registers the remind tool.
 // It also restores any pending wakes from the database.
 // Returns the wakeScheduleFn for use by other components.
@@ -181,6 +217,7 @@ func setupWakeScheduler(
 	reminderStore *memory.ReminderStore,
 	agentID string,
 	ctx context.Context,
+	connMgr platform.ConnectionManager,
 ) {
 	if reminderStore == nil {
 		return
@@ -210,12 +247,7 @@ func setupWakeScheduler(
 						return
 					}
 				}
-				resp, err := getAgent().HandleMessage(agent.WithTrigger(ctx, "scheduled_wake"), sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
-				if err != nil {
-					log.Errorf("remind", "error: %v", err)
-				} else {
-					log.Debugf("remind", "response: %s", resp)
-				}
+				deliverInjectedTurn(getAgent(), ctx, "scheduled_wake", connMgr, agentID, sk, prompts.FormatInjectedMessage("SCHEDULED WAKE", time.Now(), message))
 				wakesMu.Lock()
 				delete(wakes, id)
 				wakesMu.Unlock()

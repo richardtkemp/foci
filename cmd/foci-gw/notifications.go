@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/state"
 	"foci/prompts"
@@ -21,6 +21,7 @@ func handleWelcomeAndFirstRun(
 	stateStore *state.Store,
 	cfg *config.Config,
 	ctx context.Context,
+	connMgr platform.ConnectionManager,
 ) {
 	// Welcome file (written by setup.sh on update)
 	if len(agentOrder) > 0 {
@@ -32,11 +33,8 @@ func handleWelcomeAndFirstRun(
 					log.Warnf("main", "no default session for welcome file injection, skipping")
 					return
 				}
-				restartCtx := agent.WithTrigger(ctx, "restart")
 				msg := prompts.FormatInjectedMessage("SYSTEM UPDATE", time.Now(), content)
-				if _, err := inst.ag.HandleMessage(restartCtx, sk, msg); err != nil {
-					log.Errorf("main", "restart turn failed: %v", err)
-				}
+				deliverInjectedTurn(inst.ag, ctx, "restart", connMgr, agentOrder[0], sk, msg)
 			}()
 		}
 	}
