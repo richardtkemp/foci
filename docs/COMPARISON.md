@@ -15,7 +15,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Anthropic Claude | ✅ | ✅ | ✅ |
-| Other popular platforms | ❌ | ✅ | ✅ |
+| Other popular platforms | ✅ Gemini, OpenAI-compatible (OpenRouter, DeepSeek, etc.) | ✅ | ✅ |
 | Model failover chain | ❌ | ✅ ordered fallbacks | ❌ |
 | Model aliasing | ✅ | ✅ | ✅ |
 | Per-session model switch | ✅ | ✅ | ❌ |
@@ -43,7 +43,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | Web fetch | ✅ | ✅ | ✅ |
 | Low-cost summarization | ✅ Haiku-powered | ❌ | ❌ |
 | Tmux integration | ✅ full lifecycle, autopilot | ❌ | ❌ |
-| Browser automation | 🔜 coming soon | ✅ full CDP control | ❌ |
+| Browser automation | ✅ full CDP via go-rod | ✅ full CDP control | ❌ |
 | Reminders / alarms | ✅ time/duration/date | ❌ | ❌ |
 | Scratchpad | ✅ survives compaction | ❌ | ❌ |
 | Todo / task list | ✅ priority + tags | ❌ | ❌ |
@@ -51,7 +51,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | Sub-agent spawning | ✅ 3 context modes | ✅ `sessions_spawn` | ✅ background |
 | [Bitwarden vault access](SECRETS.md) | ✅ approval-gated | ❌ | ❌ |
 | Canvas / visual workspace | ❌ | ✅ A2UI, HTML/CSS/JS | ❌ |
-| PDF analysis | ❌ | ✅ | ❌ |
+| PDF analysis | ✅ native document blocks | ✅ | ❌ |
 | Tool result guard | ✅ auto-summarize large output to preserve meaningful context while conserving tokens | ❌ | ✅ truncation at 500 chars |
 | [Tool piping](TOOLS.md#tool-piping-exec-bridge) | ✅ tools ↔ shell ↔ each other | ❌ | ❌ |
 | Loop detection | ✅ configurable threshold | ✅ pattern-based detectors | ❌ |
@@ -172,7 +172,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | HEARTBEAT.md | ✅ | ✅ | ✅ |
 | COHERENCE.md | ✅ | ❌ | ❌ |
 | Configurable file order | ✅ cache-optimal ordering | ❌ | ❌ |
-| Blank file skipping | ❌ always loaded | ✅ | ❌ |
+| Blank file skipping | ✅ | ✅ | ❌ |
 
 ## Scheduling & Automation
 
@@ -188,9 +188,9 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
-| MCP client (consume tools) | ❌ | ✅ via mcporter | ✅ stdio + HTTP |
+| MCP client (consume tools) | ✅ via mcp.toml | ✅ via mcporter | ✅ stdio + HTTP |
 | MCP server (expose agents) | ❌ | ❌ | ❌ |
-| MCP ecosystem access | ❌ | ✅ 13k+ servers | ✅ |
+| MCP ecosystem access | ✅ via mcp.toml | ✅ 13k+ servers | ✅ |
 
 ## Skills & Plugins
 
@@ -219,7 +219,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Single binary | ✅ | ❌ Node.js runtime | ❌ Python runtime |
 | systemd integration | ✅ setup.sh | ✅ `openclaw onboard` | ✅ user service |
-| Docker | ❌ | ✅ Compose + sandbox | ✅ Compose |
+| Docker | ✅ Dockerfile + Compose | ✅ Compose + sandbox | ✅ Compose |
 | Nix | ❌ | ✅ | ❌ |
 | Native apps (macOS/iOS/Android) | 🔜 Android coming soon | ✅ all three | ❌ |
 | Idempotent setup script | ✅ | ✅ | ✅ |
