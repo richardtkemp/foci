@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/tempdir"
 	"foci/internal/display"
 	"foci/internal/provider"
+	"foci/internal/tempdir"
 	"foci/prompts"
 )
 
@@ -41,6 +43,7 @@ type PromptsData struct {
 	Files               []PromptFile       // files found on disk
 	KnownFilenames      map[string]bool    // recognised prompt filenames (embedded + first-run)
 	WorkspacePromptsDir string             // {workspace}/prompts/ — target for reinstall
+	SharedPromptsDir    string             // {workspace}/../shared/prompts/ — alternate target
 	EmbeddedPrompts     map[string]string  // filename → embedded text (for reinstall)
 	ResolvedTexts       map[string]string  // label → resolved text (for diff)
 	DefaultTexts        map[string]string  // label → embedded default text (for diff)
@@ -84,8 +87,7 @@ func PromptsCommand() *Command {
 			case "list":
 				return Response{Text: promptsDisplay(data)}, nil
 			case "reinstall":
-				text, err := promptsReinstall(data)
-				return Response{Text: text}, err
+				return promptsReinstall(data, strings.Join(parts[1:], " "))
 			case "diff":
 				if len(parts) < 2 {
 					return Response{Text: "Usage: /prompts diff <name>"}, nil
@@ -234,6 +236,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		Files:               files,
 		KnownFilenames:      knownFilenames,
 		WorkspacePromptsDir: filepath.Join(acfg.Workspace, "prompts"),
+		SharedPromptsDir:    sharedDir,
 		EmbeddedPrompts:     embedded,
 		ResolvedTexts:       resolvedTexts,
 		DefaultTexts:        defaultTexts,
@@ -380,31 +383,122 @@ func promptsDisplay(data PromptsData) string {
 	return sb.String()
 }
 
-func promptsReinstall(data PromptsData) (string, error) {
-	dir := data.WorkspacePromptsDir
-	if dir == "" {
-		return "", fmt.Errorf("workspace prompts directory not configured")
+// sortedPromptNames returns embedded prompt filenames in sorted order for deterministic iteration.
+func sortedPromptNames(embedded map[string]string) []string {
+	names := make([]string, 0, len(embedded))
+	for name := range embedded {
+		names = append(names, name)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create prompts dir: %w", err)
-	}
+	sort.Strings(names)
+	return names
+}
 
-	wrote, matched := 0, 0
-	total := len(data.EmbeddedPrompts)
-	for name, content := range data.EmbeddedPrompts {
-		path := filepath.Join(dir, name)
-		existing, err := os.ReadFile(path)
-		// #nosec G401 - content comparison only, not security
-		if err == nil && md5.Sum(existing) == md5.Sum([]byte(content)) {
-			matched++
+// promptFileStatus checks whether a prompt file exists and is modified (differs from embedded default)
+// in both workspace and shared directories. Returns the directory where a modified version was found
+// (empty string if unmodified or not present).
+func promptFileStatus(name, embedded, wsDir, sharedDir string) string {
+	for _, dir := range []string{wsDir, sharedDir} {
+		if dir == "" {
 			continue
 		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			return "", fmt.Errorf("write %s: %w", name, err)
+		existing, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
 		}
-		wrote++
+		// #nosec G401 - content comparison only, not security
+		if md5.Sum(existing) != md5.Sum([]byte(embedded)) {
+			return dir
+		}
 	}
-	return fmt.Sprintf("Wrote %d of %d prompts to %s (%d already match defaults)", wrote, total, dir, matched), nil
+	return ""
+}
+
+// promptsReinstall implements the interactive reinstall flow.
+// With no extra args, it starts from index 0. Callback args encode state as:
+//
+//	"<idx> <action>" where action is "agent", "shared", or "skip".
+func promptsReinstall(data PromptsData, args string) (Response, error) {
+	wsDir := data.WorkspacePromptsDir
+	if wsDir == "" {
+		return Response{}, fmt.Errorf("workspace prompts directory not configured")
+	}
+
+	names := sortedPromptNames(data.EmbeddedPrompts)
+	if len(names) == 0 {
+		return Response{Text: "No embedded prompts to reinstall."}, nil
+	}
+
+	// Parse state from args: "<idx> <action>" or just start at 0.
+	startIdx := 0
+	var actionMsg string
+
+	fields := strings.Fields(args)
+	if len(fields) >= 2 {
+		idx, err := strconv.Atoi(fields[0])
+		if err == nil && idx >= 0 && idx < len(names) {
+			action := fields[1]
+			name := names[idx]
+			content := data.EmbeddedPrompts[name]
+
+			switch action {
+			case "agent":
+				if err := os.MkdirAll(wsDir, 0o755); err != nil {
+					return Response{}, fmt.Errorf("create prompts dir: %w", err)
+				}
+				if err := os.WriteFile(filepath.Join(wsDir, name), []byte(content), 0o644); err != nil {
+					return Response{}, fmt.Errorf("write %s: %w", name, err)
+				}
+				actionMsg = fmt.Sprintf("Wrote %s → agent dir", name)
+			case "shared":
+				sharedDir := data.SharedPromptsDir
+				if sharedDir == "" {
+					return Response{}, fmt.Errorf("shared prompts directory not configured")
+				}
+				if err := os.MkdirAll(sharedDir, 0o755); err != nil {
+					return Response{}, fmt.Errorf("create shared prompts dir: %w", err)
+				}
+				if err := os.WriteFile(filepath.Join(sharedDir, name), []byte(content), 0o644); err != nil {
+					return Response{}, fmt.Errorf("write %s: %w", name, err)
+				}
+				actionMsg = fmt.Sprintf("Wrote %s → shared dir", name)
+			case "skip":
+				actionMsg = fmt.Sprintf("Skipped %s", name)
+			}
+			startIdx = idx + 1
+		}
+	}
+
+	// Walk from startIdx, reporting unmodified prompts and stopping at the next modified one.
+	var sb strings.Builder
+	if actionMsg != "" {
+		sb.WriteString(actionMsg)
+		sb.WriteString("\n\n")
+	}
+
+	for i := startIdx; i < len(names); i++ {
+		name := names[i]
+		modDir := promptFileStatus(name, data.EmbeddedPrompts[name], wsDir, data.SharedPromptsDir)
+		if modDir == "" {
+			// Unmodified or not present — auto-skip and report.
+			fmt.Fprintf(&sb, "✅ %s — default\n", name)
+			continue
+		}
+
+		// Found a modified prompt — present it with buttons.
+		fmt.Fprintf(&sb, "\n✏️ %s — modified in %s", name, relPath(modDir))
+		return Response{
+			Text: sb.String(),
+			Keyboard: []KeyboardOption{
+				{Label: "agent", Data: fmt.Sprintf("reinstall %d agent", i)},
+				{Label: "shared", Data: fmt.Sprintf("reinstall %d shared", i)},
+				{Label: "skip", Data: fmt.Sprintf("reinstall %d skip", i)},
+			},
+		}, nil
+	}
+
+	// All prompts reviewed.
+	sb.WriteString("\nAll prompts reviewed.")
+	return Response{Text: sb.String()}, nil
 }
 
 func promptsDiff(ctx context.Context, data PromptsData, name string, cc CommandContext) (Response, error) {
