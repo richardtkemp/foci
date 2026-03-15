@@ -369,7 +369,7 @@ Developer and debugging knobs. All off by default.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `log_api_key_suffix` | bool | `false` | Log the last 4 characters of API keys at DEBUG level on each provider API call. Applies to all providers (Anthropic, OpenAI, Gemini, voice) and secrets used in `http_request` tool calls. Useful for diagnosing which credential is being used when multiple keys are configured. |
-| `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. **Moved from `[sessions]`.** For backward compatibility, `sessions.compaction_debug` is still accepted; the `[debug]` value takes precedence. |
+| `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 
 ### `[database]`
 
@@ -712,7 +712,6 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
 | `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
 | `task_list_notify` | bool | `true` | Send Telegram notifications when task list entries are created, started, or completed. Shows progress like "✅ 3/5: Fixed token counting". |
-| `compaction_debug` | bool | `false` | **Deprecated** — moved to `[debug]` section. Still accepted here for backward compatibility; `debug.compaction_debug` takes precedence. |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
 | `compaction_idle_threshold` | string | `"45m"` | Idle duration before idle pressure starts lowering the compaction threshold. `"0"` disables idle-aware compaction. Format: Go duration string (e.g., `"30m"`, `"1h"`). |
@@ -720,7 +719,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_idle_pressure_max` | float | `0.15` | Maximum threshold reduction from idle pressure. With default base threshold of 0.8, this allows reduction to 0.65. Range: 0.0–1.0. |
 | `compaction_mana_refresh_threshold` | string | `"15m"` | Trigger special high-fidelity mana-refresh compaction when mana reset is this soon. Format: Go duration string. `"0"` disables. |
 | `compaction_mana_refresh_preserve` | int | unset | Messages to preserve during mana-refresh compaction. Unset (nil) preserves ALL messages (special high-fidelity mode). `0` uses normal preservation count. |
-| `branch_orientation_prompt` | string | `""` | **Deprecated.** Sets both multiball and headless if the specific fields below are empty. |
+| `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
 | `branch_orientation_multiball_prompt` | string | `""` | Path to prompt file for user-attached multiball branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-multiball.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
 
@@ -775,7 +774,7 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `startup_notify` | bool | `true` | `[telegram] startup_notify` | Send a startup notification when the service starts. `false` for silent bots (e.g. cron-only agents). Legacy keys `[telegram] enable_startup_notify` and `[defaults] enable_startup_notify` are accepted for backward compatibility. |
+| `startup_notify` | bool | `true` | `[telegram] startup_notify` | Send a startup notification when the service starts. `false` for silent bots (e.g. cron-only agents). |
 | `inject_agent_warnings` | bool | `false` | `[defaults]` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
@@ -912,7 +911,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 
 ### Platform Configuration (`[agents.platforms.telegram]`) — NEW
 
-Per-agent platform settings are now configured in the `[agents.platforms.telegram]` section. This is the preferred way to configure Telegram-specific settings; the old top-level `telegram_bot`, `allowed_users`, etc. fields are deprecated and will be migrated at load time.
+Per-agent platform settings are configured in the `[agents.platforms.telegram]` section.
 
 ```toml
 [[agents]]
@@ -947,8 +946,6 @@ received_files_dir = ""
 | `stream_output` | bool | `[telegram]` | Stream model output to Telegram in real-time. |
 | `stream_interval` | duration | `[defaults]` | Duration between message edits during streaming. |
 | `received_files_dir` | string | `[telegram]` | Save received files to this directory. |
-
-**Backward compatibility:** The old top-level fields (`telegram_bot`, `bot_secret`, `multiball_bots`, `allowed_users`, `show_tool_calls`, `show_thinking`, `display_width`, `received_files_dir`) are deprecated but still work. At config load time, they are migrated to the new platform config structure.
 
 ### Memory (`[[agents.memory.sources]]`)
 

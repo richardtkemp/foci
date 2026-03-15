@@ -32,7 +32,6 @@ var boolKeys = map[string]bool{
 	"tmux_autopilot":        true,
 	"auto_refresh":          true,
 	"enable_stop_aliases":   true,
-	"enable_startup_notify": true,
 	"full_payload":          true,
 	"cache_bust_detect":     true,
 	"log_rotation":          true,
@@ -259,7 +258,6 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
-	// Note: defaults.enable_startup_notify is a legacy location — migrated to telegram below.
 	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
 
 	// Apply [defaults] to all agents (agent value > global default > hardcoded).
@@ -291,14 +289,6 @@ func Load(path string) (*Config, error) {
 		// =========================================================================
 		syncDisplayFields(&cfg.Agents[i])
 	}
-
-	// Keep cfg.Agent in sync (points to first agent for legacy code paths)
-	if len(cfg.Agents) > 0 {
-		cfg.Agent = cfg.Agents[0]
-	}
-
-	// Legacy agent defaults (in case nothing is configured at all)
-	setStringDefault(&cfg.Agent.Model, cfg.LLM.Model)
 
 	// Model aliases defaults (if not configured) — use developer/model_id format
 	if len(cfg.Models.Aliases) == 0 {
@@ -360,11 +350,6 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "15m")
 	// CompactionManaRefreshPreserve: nil = special "preserve ALL" mode
 
-	// Backward compat: [sessions] compaction_debug → [debug] compaction_debug.
-	// If user set sessions.compaction_debug but not debug.compaction_debug, migrate it.
-	if cfg.Sessions.CompactionDebug && !md.IsDefined("debug", "compaction_debug") {
-		cfg.Debug.CompactionDebug = true
-	}
 	// Apply debug.log_api_key_suffix to the log package global.
 	log.DebugLogKeySuffix = cfg.Debug.LogAPIKeySuffix
 
@@ -503,15 +488,7 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
 	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
-	// Backward compat: [telegram] enable_startup_notify → startup_notify.
-	if md.IsDefined("telegram", "enable_startup_notify") && !md.IsDefined("telegram", "startup_notify") {
-		cfg.Telegram.StartupNotify = cfg.Telegram.EnableStartupNotify
-	}
-	// Backward compat: [defaults] enable_startup_notify → [telegram] startup_notify.
-	if md.IsDefined("defaults", "enable_startup_notify") && !md.IsDefined("telegram", "startup_notify") && !md.IsDefined("telegram", "enable_startup_notify") {
-		cfg.Telegram.StartupNotify = cfg.Defaults.EnableStartupNotify
-	}
-	setBoolDefaultDefined(&cfg.Telegram.StartupNotify, true, md.IsDefined("telegram", "startup_notify") || md.IsDefined("telegram", "enable_startup_notify") || md.IsDefined("defaults", "enable_startup_notify"))
+	setBoolDefaultDefined(&cfg.Telegram.StartupNotify, true, md.IsDefined("telegram", "startup_notify"))
 
 	// Keepalive/background defaults
 	setStringDefault(&cfg.Keepalive.Interval, "55m")

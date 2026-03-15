@@ -56,11 +56,11 @@ web_search_timeout = "20s"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.MaxToolLoops != 50 {
-		t.Errorf("Agent.MaxToolLoops = %d, want 50", cfg.Agent.MaxToolLoops)
+	if cfg.Agents[0].MaxToolLoops != 50 {
+		t.Errorf("Agent.MaxToolLoops = %d, want 50", cfg.Agents[0].MaxToolLoops)
 	}
-	if cfg.Agent.MaxOutputTokens != 16384 {
-		t.Errorf("Agent.MaxOutputTokens = %d, want 16384", cfg.Agent.MaxOutputTokens)
+	if cfg.Agents[0].MaxOutputTokens != 16384 {
+		t.Errorf("Agent.MaxOutputTokens = %d, want 16384", cfg.Agents[0].MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "180s" {
 		t.Errorf("Anthropic.HTTPTimeout = %q, want 180s", cfg.Anthropic.HTTPTimeout)
@@ -120,11 +120,11 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.MaxToolLoops != 25 {
-		t.Errorf("default Agent.MaxToolLoops = %d, want 25", cfg.Agent.MaxToolLoops)
+	if cfg.Agents[0].MaxToolLoops != 25 {
+		t.Errorf("default Agent.MaxToolLoops = %d, want 25", cfg.Agents[0].MaxToolLoops)
 	}
-	if cfg.Agent.MaxOutputTokens != 8192 {
-		t.Errorf("default Agent.MaxOutputTokens = %d, want 8192", cfg.Agent.MaxOutputTokens)
+	if cfg.Agents[0].MaxOutputTokens != 8192 {
+		t.Errorf("default Agent.MaxOutputTokens = %d, want 8192", cfg.Agents[0].MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "600s" {
 		t.Errorf("default Anthropic.HTTPTimeout = %q, want 600s", cfg.Anthropic.HTTPTimeout)

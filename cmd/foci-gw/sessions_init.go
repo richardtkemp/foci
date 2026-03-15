@@ -182,17 +182,6 @@ func cleanupLegacyStateKeys(stateStore *state.Store, sessions *session.Store) {
 	var toDelete []string
 
 	for _, k := range keys {
-		// Migrate colon-separated agent keys: "agent:X:Y" → "agent/X/Y"
-		if strings.HasPrefix(k, "agent:") {
-			newKey := strings.ReplaceAll(k, ":", "/")
-			var val interface{}
-			if stateStore.Get(k, &val) {
-				_ = stateStore.Set(newKey, val)
-			}
-			toDelete = append(toDelete, k)
-			continue
-		}
-
 		// Remove stale no_compact entries for branch/spawn sessions whose
 		// session files no longer exist on disk.
 		if strings.HasPrefix(k, "no_compact/") {

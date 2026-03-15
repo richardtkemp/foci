@@ -45,14 +45,14 @@ api_file = "/tmp/api.jsonl"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.ID != "main" {
-		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
+	if cfg.Agents[0].ID != "main" {
+		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
 	}
-	if cfg.Agent.Model != "anthropic/claude-haiku-4-5" {
-		t.Errorf("Agent.Model = %q, want %q", cfg.Agent.Model, "anthropic/claude-haiku-4-5")
+	if cfg.Agents[0].Model != "anthropic/claude-haiku-4-5" {
+		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-haiku-4-5")
 	}
-	if cfg.Agent.Workspace != "/tmp/workspace" {
-		t.Errorf("Agent.Workspace = %q", cfg.Agent.Workspace)
+	if cfg.Agents[0].Workspace != "/tmp/workspace" {
+		t.Errorf("Agents[0].Workspace = %q", cfg.Agents[0].Workspace)
 	}
 	if len(cfg.Telegram.AllowedUsers) != 2 || cfg.Telegram.AllowedUsers[0] != "111" {
 		t.Errorf("Telegram.AllowedUsers = %v", cfg.Telegram.AllowedUsers)
@@ -99,8 +99,8 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agent.Model != "anthropic/claude-haiku-4-5-20251001" {
-		t.Errorf("default Model = %q, want %q", cfg.Agent.Model, "anthropic/claude-haiku-4-5-20251001")
+	if cfg.Agents[0].Model != "anthropic/claude-haiku-4-5-20251001" {
+		t.Errorf("default Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-haiku-4-5-20251001")
 	}
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
@@ -198,7 +198,7 @@ timeout = 30
 }
 
 func TestLoadSingleAgent(t *testing.T) {
-	// Proves that a single [[agents]] entry is loaded and cfg.Agent mirrors it.
+	// Proves that a single [[agents]] entry is loaded into cfg.Agents.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -224,16 +224,11 @@ workspace = "/tmp/workspace"
 		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-sonnet-4-6")
 	}
 
-	// cfg.Agent should mirror first agent
-	if cfg.Agent.ID != "main" {
-		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "main")
-	}
 }
 
 func TestLoadMultiAgent(t *testing.T) {
 	// Proves that multiple [[agents]] entries are loaded into the Agents slice with
-	// correct per-agent values, that defaults are applied to agents missing fields,
-	// and that cfg.Agent mirrors the first agent.
+	// correct per-agent values, and that defaults are applied to agents missing fields.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -298,10 +293,6 @@ allowed_users = ["111"]
 		t.Errorf("Agents[1].MultiballBots = %v, want empty", tg1.MultiballBots)
 	}
 
-	// cfg.Agent should mirror first agent
-	if cfg.Agent.ID != "clutch" {
-		t.Errorf("Agent.ID = %q, want %q", cfg.Agent.ID, "clutch")
-	}
 }
 
 func TestLoadPerAgentUsageWarnings(t *testing.T) {

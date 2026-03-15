@@ -59,71 +59,6 @@ startup_notify = false
 	}
 }
 
-func TestLoadTelegramStartupNotifyLegacyKeys(t *testing.T) {
-	// Proves backward compatibility: the legacy key enable_startup_notify in
-	// [telegram] and [defaults] both migrate to [telegram] startup_notify.
-	t.Run("legacy telegram key", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`
-[[agents]]
-id = "test"
-
-[telegram]
-enable_startup_notify = false
-`), 0644)
-
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.Telegram.StartupNotify {
-			t.Error("StartupNotify should be false (migrated from legacy enable_startup_notify)")
-		}
-	})
-
-	t.Run("legacy defaults key", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`
-[[agents]]
-id = "test"
-
-[defaults]
-enable_startup_notify = false
-`), 0644)
-
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.Telegram.StartupNotify {
-			t.Error("StartupNotify should be false (migrated from legacy defaults.enable_startup_notify)")
-		}
-	})
-
-	t.Run("new key takes precedence over legacy", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`
-[[agents]]
-id = "test"
-
-[telegram]
-startup_notify = true
-enable_startup_notify = false
-`), 0644)
-
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if !cfg.Telegram.StartupNotify {
-			t.Error("StartupNotify should be true (new key takes precedence over legacy)")
-		}
-	})
-}
-
 func TestAgentStartupNotification(t *testing.T) {
 	// Proves that per-agent startup_notify is nil when unset (falls back to global),
 	// and correctly stores true or false as a non-nil pointer when explicitly configured.
@@ -713,47 +648,6 @@ compaction_debug = true
 		}
 		if !cfg.Debug.CompactionDebug {
 			t.Error("expected compaction_debug = true")
-		}
-	})
-
-	// Test backward compat: sessions.compaction_debug migrates to debug.compaction_debug.
-	t.Run("backward_compat_from_sessions", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
-[[agents]]
-id = "a"
-
-[sessions]
-compaction_debug = true
-`), 0644)
-		cfg, err := Load(filepath.Join(dir, "foci.toml"))
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if !cfg.Debug.CompactionDebug {
-			t.Error("expected compaction_debug migrated from [sessions] to [debug]")
-		}
-	})
-
-	// Test that [debug] takes precedence over [sessions] backward compat.
-	t.Run("debug_overrides_sessions", func(t *testing.T) {
-		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
-[[agents]]
-id = "a"
-
-[sessions]
-compaction_debug = true
-
-[debug]
-compaction_debug = false
-`), 0644)
-		cfg, err := Load(filepath.Join(dir, "foci.toml"))
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.Debug.CompactionDebug {
-			t.Error("expected [debug] compaction_debug=false to override [sessions] compaction_debug=true")
 		}
 	})
 
