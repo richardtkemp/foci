@@ -68,7 +68,7 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 
-		text := b.formatToolCall(toolName, params)
+		text := b.formatToolCall(toolName, params, b.showToolCalls)
 		if toolMsgID == 0 {
 			sent, err := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			if err != nil {
@@ -123,7 +123,7 @@ func TestShowToolCalls_Preview(t *testing.T) {
 		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
-		text := b.formatToolCall(toolName, params)
+		text := b.formatToolCall(toolName, params, b.showToolCalls)
 		if toolMsgID == 0 {
 			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
@@ -159,7 +159,7 @@ func TestShowToolCalls_Off(t *testing.T) {
 		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
-		text := b.formatToolCall(toolName, params)
+		text := b.formatToolCall(toolName, params, b.showToolCalls)
 		if toolMsgID == 0 {
 			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
@@ -205,7 +205,7 @@ func TestShowToolCalls_Full(t *testing.T) {
 			return
 		}
 
-		text := b.formatToolCall(toolName, params)
+		text := b.formatToolCall(toolName, params, b.showToolCalls)
 		if toolMsgID == 0 {
 			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
@@ -249,7 +249,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 	// message exists.
 	mock := &mockClient{}
 	b := &Bot{client: mock, showToolCalls: "preview"}
-	tracker := &toolCallTracker{bot: b, chatID: 12345, display: b.resolveDisplay()}
+	tracker := &toolCallTracker{bot: b, chatID: 12345, display: b.resolveDisplay("")}
 
 	// No message → no delete.
 	tracker.cleanupPreview()
@@ -274,7 +274,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 
 	// In "full" mode, cleanupPreview should not delete.
 	b.showToolCalls = "full"
-	tracker.display = b.resolveDisplay()
+	tracker.display = b.resolveDisplay("")
 	tracker.mu.Lock()
 	tracker.msgID = 99
 	tracker.mu.Unlock()
@@ -288,7 +288,7 @@ func TestFormatToolCall(t *testing.T) {
 	// Verifies that formatToolCall produces properly formatted
 	// tool call messages.
 	b := &Bot{}
-	text := b.formatToolCall("shell", json.RawMessage(`{"command":"ls -la"}`))
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"ls -la"}`), "preview")
 	if !strings.Contains(text, "▶️") {
 		t.Error("missing tool emoji")
 	}
@@ -304,7 +304,7 @@ func TestFormatToolCall_HTMLEscape(t *testing.T) {
 	// Verifies that HTML is properly escaped in
 	// tool call messages.
 	b := &Bot{}
-	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo <script>"}`))
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo <script>"}`), "preview")
 	if strings.Contains(text, "<script>") {
 		t.Errorf("HTML not escaped in %q", text)
 	}
@@ -317,7 +317,7 @@ func TestFormatToolCall_LongParams(t *testing.T) {
 	// Verifies that long parameters are truncated.
 	b := &Bot{}
 	longVal := strings.Repeat("x", 500)
-	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)))
+	text := b.formatToolCall("shell", json.RawMessage(fmt.Sprintf(`{"command":"%s"}`, longVal)), "preview")
 	// Long params should be truncated and contain "..."
 	if !strings.Contains(text, "...") {
 		t.Errorf("long params should be truncated: %q", text)
@@ -329,7 +329,7 @@ func TestFormatToolCall_UnescapesNewlinesAndTabs(t *testing.T) {
 	// and tabs in JSON are properly displayed.
 	b := &Bot{}
 	// Simulate a tool call where the JSON string value contains literal \n and \t
-	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo\nline2"}`))
+	text := b.formatToolCall("shell", json.RawMessage(`{"command":"echo\nline2"}`), "preview")
 	// The unescaping should make newlines visible without the literal \n
 	if strings.Contains(text, "\\n") && !strings.Contains(text, "\n") {
 		t.Errorf("should unescape newlines: %q", text)
@@ -341,7 +341,7 @@ func TestFormatToolCall_UnescapesUnicodeSequences(t *testing.T) {
 	// sequences are properly displayed.
 	b := &Bot{}
 	// Emoji or other Unicode escape sequences should be unescaped
-	text := b.formatToolCall("notify", json.RawMessage(`{"msg":"hello \\u2764"}`))
+	text := b.formatToolCall("notify", json.RawMessage(`{"msg":"hello \\u2764"}`), "preview")
 	// The Unicode escape should be decoded to the actual character
 	if strings.Contains(text, "\\u") {
 		t.Errorf("should unescape unicode: %q", text)

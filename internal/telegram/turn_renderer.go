@@ -22,9 +22,10 @@ type TurnRenderer struct {
 
 // newTurnRenderer creates a TurnRenderer with a tool call tracker and a stream
 // writer. The stream writer is always present but only sends messages when
-// streaming is enabled (live mode).
-func newTurnRenderer(bot *Bot, msg *gotgbot.Message) *TurnRenderer {
-	d := bot.resolveDisplay()
+// streaming is enabled (live mode). The session key is used to resolve
+// per-session display overrides.
+func newTurnRenderer(bot *Bot, msg *gotgbot.Message, sessionKey string) *TurnRenderer {
+	d := bot.resolveDisplay(sessionKey)
 	return &TurnRenderer{
 		bot:     bot,
 		msg:     msg,

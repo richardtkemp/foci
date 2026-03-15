@@ -89,7 +89,6 @@ type Bot struct {
 	queue          chan queuedMessage // receiver → agent worker
 	turnCancel     context.CancelFunc // cancel the current agent turn
 	turnMu         sync.Mutex         // protects turnCancel
-	turnSessionKey string             // session key for the active turn; set/cleared by processAgentMessage
 	chatID         int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
 
@@ -135,14 +134,15 @@ type turnDisplay struct {
 	renderOpts    display.RenderOpts
 }
 
-// resolveDisplay snapshots all display settings for the current turn.
-func (b *Bot) resolveDisplay() turnDisplay {
+// resolveDisplay snapshots all display settings for a turn with the given session key.
+func (b *Bot) resolveDisplay(sessionKey string) turnDisplay {
+	dw := b.effectiveDisplayWidth(sessionKey)
 	return turnDisplay{
-		showToolCalls: b.effectiveShowToolCalls(),
-		showThinking:  b.effectiveShowThinking(),
-		streamOutput:  b.effectiveStreamOutput(),
-		displayWidth:  b.effectiveDisplayWidth(),
-		renderOpts:    b.tableOpts(),
+		showToolCalls: b.effectiveShowToolCalls(sessionKey),
+		showThinking:  b.effectiveShowThinking(sessionKey),
+		streamOutput:  b.effectiveStreamOutput(sessionKey),
+		displayWidth:  dw,
+		renderOpts:    display.RenderOpts{MaxWidth: dw, WrapLines: b.tableWrapLines, Style: b.tableStyle},
 	}
 }
 
@@ -155,8 +155,8 @@ type DisplayOverrides struct {
 	DisplayWidth  int    // 0 = not overridden
 }
 
-// DisplayOverrideFn returns per-session display overrides.
-type DisplayOverrideFn func() DisplayOverrides
+// DisplayOverrideFn returns per-session display overrides for the given session key.
+type DisplayOverrideFn func(sessionKey string) DisplayOverrides
 
 // defaultLogger is used when a Bot is constructed without a ComponentLogger
 // (e.g. in tests that build the struct literal directly).
@@ -261,9 +261,10 @@ func (b *Bot) SetTableStyle(style string) {
 	b.tableStyle = style
 }
 
-// tableOpts returns the RenderOpts for this bot's display settings.
+// tableOpts returns the RenderOpts using the bot's default display settings.
+// For turn-aware rendering with per-session overrides, use resolveDisplay().renderOpts.
 func (b *Bot) tableOpts() display.RenderOpts {
-	return display.RenderOpts{MaxWidth: b.effectiveDisplayWidth(), WrapLines: b.tableWrapLines, Style: b.tableStyle}
+	return display.RenderOpts{MaxWidth: b.displayWidth, WrapLines: b.tableWrapLines, Style: b.tableStyle}
 }
 
 // SetMessagesInLog controls whether user message content is logged to the event log.
@@ -294,9 +295,9 @@ func (b *Bot) SetSteerMode(enabled bool) {
 func (b *Bot) SetDisplayOverrideFn(fn DisplayOverrideFn) { b.displayOverrideFn = fn }
 
 // effectiveShowToolCalls returns the show_tool_calls mode, checking per-session overrides first.
-func (b *Bot) effectiveShowToolCalls() string {
+func (b *Bot) effectiveShowToolCalls(sessionKey string) string {
 	if b.displayOverrideFn != nil {
-		if v := b.displayOverrideFn().ShowToolCalls; v != "" {
+		if v := b.displayOverrideFn(sessionKey).ShowToolCalls; v != "" {
 			return v
 		}
 	}
@@ -304,9 +305,9 @@ func (b *Bot) effectiveShowToolCalls() string {
 }
 
 // effectiveShowThinking returns the show_thinking mode, checking per-session overrides first.
-func (b *Bot) effectiveShowThinking() string {
+func (b *Bot) effectiveShowThinking(sessionKey string) string {
 	if b.displayOverrideFn != nil {
-		if v := b.displayOverrideFn().ShowThinking; v != "" {
+		if v := b.displayOverrideFn(sessionKey).ShowThinking; v != "" {
 			return v
 		}
 	}
@@ -314,9 +315,9 @@ func (b *Bot) effectiveShowThinking() string {
 }
 
 // effectiveDisplayWidth returns the display width, checking per-session overrides first.
-func (b *Bot) effectiveDisplayWidth() int {
+func (b *Bot) effectiveDisplayWidth(sessionKey string) int {
 	if b.displayOverrideFn != nil {
-		if v := b.displayOverrideFn().DisplayWidth; v > 0 {
+		if v := b.displayOverrideFn(sessionKey).DisplayWidth; v > 0 {
 			return v
 		}
 	}
@@ -324,9 +325,9 @@ func (b *Bot) effectiveDisplayWidth() int {
 }
 
 // effectiveStreamOutput returns the stream_output setting, checking per-session overrides first.
-func (b *Bot) effectiveStreamOutput() bool {
+func (b *Bot) effectiveStreamOutput(sessionKey string) bool {
 	if b.displayOverrideFn != nil {
-		switch b.displayOverrideFn().StreamOutput {
+		switch b.displayOverrideFn(sessionKey).StreamOutput {
 		case "true":
 			return true
 		case "false":
@@ -408,9 +409,9 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 	b.dispatcher.SetSessionKeyFunc(b.sessionKeyForMsg)
 }
 
-// DisplaySettings returns the current display settings for inspection/testing.
+// DisplaySettings returns the bot's default display settings for inspection/testing.
 func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string, injectedMessageHeader string) {
-	return b.effectiveShowToolCalls(), b.effectiveShowThinking(), b.effectiveDisplayWidth(), b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
+	return b.showToolCalls, b.showThinking, b.displayWidth, b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
 }
 
 // SetStateStore configures persistent state for this bot.

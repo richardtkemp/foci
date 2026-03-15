@@ -183,7 +183,8 @@ func emojiForTool(name string) string {
 }
 
 // formatToolCall formats a tool call for display in Telegram.
-func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
+// showMode controls truncation: "full" shows everything, other modes truncate.
+func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode string) string {
 	maxChars := b.toolCallPreviewChars
 	if maxChars == 0 {
 		maxChars = 450
@@ -194,7 +195,7 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage) string {
 	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
 		paramStr = pretty.String()
 	}
-	if b.effectiveShowToolCalls() != "full" && len(paramStr) > maxChars {
+	if showMode != "full" && len(paramStr) > maxChars {
 		paramStr = paramStr[:maxChars] + "..."
 	}
 	// Unescape literal \n and \t within JSON string values so they render

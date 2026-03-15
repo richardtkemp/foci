@@ -17,7 +17,7 @@ func testRenderer(b *Bot, chatID int64) *TurnRenderer {
 		Chat: gotgbot.Chat{Id: chatID},
 		From: &gotgbot.User{Id: 1},
 	}
-	d := b.resolveDisplay()
+	d := b.resolveDisplay("")
 	return &TurnRenderer{
 		bot:     b,
 		msg:     msg,
