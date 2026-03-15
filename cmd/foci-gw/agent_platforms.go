@@ -140,7 +140,7 @@ func wireAgentPlatformCallbacks(
 		if chatID == 0 {
 			return
 		}
-		if conn := connMgr.ForSession(oldKey); conn != nil {
+		if conn := connMgr.ForSessionOrPrimary(oldKey, acfg.ID); conn != nil {
 			conn.UpdateChatSessionKey(chatID, newKey)
 		}
 	})

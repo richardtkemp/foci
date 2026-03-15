@@ -210,6 +210,33 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 	}
 }
 
+func TestUpdateChatSessionKey_ChangesDefaultSessionKey(t *testing.T) {
+	// Verifies that UpdateChatSessionKey updates the cached session key
+	// so that subsequent DefaultSessionKey calls return the new key.
+	// This is the mechanism used by /reset to rotate session keys.
+	ss := state.New(t.TempDir() + "/state.json")
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+	b.agentID = "test-agent"
+	b.SetStateStore(ss, "bot:test")
+	b.setDefaultChat(12345)
+
+	oldKey := b.DefaultSessionKey()
+	if oldKey == "" {
+		t.Fatal("expected non-empty default session key")
+	}
+
+	newKey := "test-agent/c12345/9999999999"
+	b.UpdateChatSessionKey(12345, newKey)
+
+	got := b.DefaultSessionKey()
+	if got != newKey {
+		t.Errorf("DefaultSessionKey() after UpdateChatSessionKey = %q, want %q", got, newKey)
+	}
+	if got == oldKey {
+		t.Error("DefaultSessionKey() should have changed after UpdateChatSessionKey")
+	}
+}
+
 func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 	// Verifies that secondary bots use
 	// the configured session key override.
