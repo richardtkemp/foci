@@ -5,98 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"foci/internal/config"
 	"foci/internal/session"
 	"foci/internal/state"
 )
 
-// TestCheckFirstRun_LegacyKeyMigration proves that checkFirstRun detects
-// colon-separated legacy keys, migrates them to slash format, and returns
-// empty (no first-run prompt needed).
-func TestCheckFirstRun_LegacyKeyMigration(t *testing.T) {
-	dir := t.TempDir()
-	stateStore := state.New(filepath.Join(dir, "state.json"))
-
-	// Set legacy colon-separated key (as old code would have written)
-	stateStore.Set("agent:fotini:first_run_completed", true)
-
-	acfg := config.AgentConfig{ID: "fotini"}
-	result := checkFirstRun(stateStore, acfg)
-	if result != "" {
-		t.Errorf("checkFirstRun returned %q, want empty (legacy key should be detected)", result)
-	}
-
-	// Verify migration: new slash key should exist
-	var completed bool
-	if !stateStore.Get("agent/fotini/first_run_completed", &completed) || !completed {
-		t.Error("slash-separated key should exist after migration")
-	}
-
-	// Verify cleanup: legacy key should be deleted
-	if stateStore.Get("agent:fotini:first_run_completed", &completed) {
-		t.Error("colon-separated key should be deleted after migration")
-	}
-}
-
-// TestCheckFirstRun_SlashKeyTakesPrecedence proves that when the slash key
-// already exists, the legacy key check is never reached.
-func TestCheckFirstRun_SlashKeyTakesPrecedence(t *testing.T) {
-	dir := t.TempDir()
-	stateStore := state.New(filepath.Join(dir, "state.json"))
-
-	// Both keys exist (as happens for agents that completed first-run under new code)
-	stateStore.Set("agent/test/first_run_completed", true)
-	stateStore.Set("agent:test:first_run_completed", true)
-
-	acfg := config.AgentConfig{ID: "test"}
-	result := checkFirstRun(stateStore, acfg)
-	if result != "" {
-		t.Errorf("checkFirstRun returned %q, want empty", result)
-	}
-
-	// Legacy key should still exist (wasn't touched since slash key was found first)
-	var completed bool
-	if !stateStore.Get("agent:test:first_run_completed", &completed) {
-		t.Error("legacy key should be untouched when slash key exists")
-	}
-}
-
-// TestCleanupLegacyStateKeys_MigratesColonKeys proves that colon-separated
-// agent keys are migrated to slash format and the old keys deleted.
-func TestCleanupLegacyStateKeys_MigratesColonKeys(t *testing.T) {
-	dir := t.TempDir()
-	stateStore := state.New(filepath.Join(dir, "state.json"))
-	sessions := session.NewStore(filepath.Join(dir, "sessions"))
-
-	stateStore.Set("agent:fotini:first_run_completed", true)
-	stateStore.Set("agent:scout:first_run_completed", true)
-	stateStore.Set("unrelated_key", "keep")
-
-	cleanupLegacyStateKeys(stateStore, sessions)
-
-	// Migrated keys should exist under slash format
-	var completed bool
-	if !stateStore.Get("agent/fotini/first_run_completed", &completed) || !completed {
-		t.Error("fotini key not migrated to slash format")
-	}
-	if !stateStore.Get("agent/scout/first_run_completed", &completed) || !completed {
-		t.Error("scout key not migrated to slash format")
-	}
-
-	// Old colon keys should be deleted
-	if stateStore.Get("agent:fotini:first_run_completed", &completed) {
-		t.Error("fotini colon key should be deleted")
-	}
-	if stateStore.Get("agent:scout:first_run_completed", &completed) {
-		t.Error("scout colon key should be deleted")
-	}
-
-	// Unrelated keys should be untouched
-	var val string
-	if !stateStore.Get("unrelated_key", &val) || val != "keep" {
-		t.Error("unrelated key should be untouched")
-	}
-}
 
 // TestCleanupLegacyStateKeys_RemovesStaleNoCompact proves that no_compact
 // entries for sessions whose files no longer exist are removed.

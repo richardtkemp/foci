@@ -230,7 +230,6 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # multiball_bots = ["bot2", "bot3"]       # shared multiball bot pool
 # stop_aliases = ["stop", "wait"]
 # enable_stop_aliases = true
-# enable_startup_notify = true
 # multiball_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
 # message_queue_size = 64
 # long_poll_timeout = "65s"
