@@ -77,153 +77,161 @@ func ModelCommand() *Command {
 	}
 }
 
+// settingChoice defines one valid option for a session setting command.
+type settingChoice struct {
+	Label    string   // keyboard button label and canonical name
+	Aliases  []string // additional accepted inputs (e.g. numeric shortcuts, synonyms)
+	SetValue string   // value passed to setter
+	Response string   // response text returned on success
+	Hidden   bool     // if true, not shown in keyboard options (but still accepted as input)
+}
+
+// sessionSettingDef configures a session setting command built by newSessionSettingCommand.
+type sessionSettingDef struct {
+	Name        string
+	Description string
+	OptionsHint string                        // shown below current value (e.g. "Options: 1) low  2) medium  3) high")
+	Capability  func(config.ModelCaps) bool   // model capability check for Visible (nil = always visible)
+	GateExecute bool                          // also reject in Execute when capability is false
+	GateMsg     string                        // rejection message format (%s = model name)
+	EmptyShow   string                        // display when getter returns "" and no args (e.g. "not set (using API default)")
+	DefaultShow string                        // display when getter returns "" or matches this value (e.g. "off", "standard")
+	InvalidName string                        // noun for error messages (e.g. "effort level", "thinking mode")
+	Get         func(CommandContext, string) string
+	Set         func(CommandContext, string, string)
+	Choices     []settingChoice
+}
+
+// newSessionSettingCommand builds a Command from a sessionSettingDef, eliminating
+// the boilerplate shared by /effort, /thinking, /speed, and similar commands.
+func newSessionSettingCommand(def sessionSettingDef) *Command {
+	// Build input→choice lookup for O(1) matching.
+	choiceMap := make(map[string]*settingChoice, len(def.Choices)*2)
+	for i := range def.Choices {
+		c := &def.Choices[i]
+		choiceMap[c.Label] = c
+		for _, alias := range c.Aliases {
+			choiceMap[alias] = c
+		}
+	}
+
+	cmd := &Command{
+		Name:        def.Name,
+		Description: def.Description,
+		Category:    "operations",
+	}
+
+	if def.Capability != nil {
+		cmd.Visible = func(_ context.Context, req Request, cc CommandContext) bool {
+			return def.Capability(config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)))
+		}
+	}
+
+	cmd.Execute = func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+		// Gate: reject if current model doesn't support this setting.
+		if def.GateExecute && def.Capability != nil {
+			m := cc.Agent.SessionModel(req.SessionKey)
+			if !def.Capability(config.ModelCapabilities(m)) {
+				return Response{Text: fmt.Sprintf(def.GateMsg, m)}, nil
+			}
+		}
+
+		// No args: show current value.
+		if req.Args == "" {
+			current := def.Get(cc, req.SessionKey)
+			display := current
+			if current == "" {
+				if def.EmptyShow != "" {
+					display = def.EmptyShow
+				} else {
+					display = def.DefaultShow
+				}
+			} else if current == def.DefaultShow {
+				display = def.DefaultShow
+			}
+			title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
+			return Response{Text: fmt.Sprintf("%s: %s\n%s", title, display, def.OptionsHint)}, nil
+		}
+
+		// Normalize and match input.
+		arg := strings.ToLower(strings.TrimSpace(req.Args))
+		if c, ok := choiceMap[arg]; ok {
+			def.Set(cc, req.SessionKey, c.SetValue)
+			return Response{Text: c.Response}, nil
+		}
+
+		return Response{Text: fmt.Sprintf("Invalid %s: %q\n%s", def.InvalidName, req.Args, def.OptionsHint)}, nil
+	}
+
+	cmd.KeyboardOptions = func(_ context.Context, _ CommandContext) []KeyboardOption {
+		opts := make([]KeyboardOption, 0, len(def.Choices))
+		for _, c := range def.Choices {
+			if !c.Hidden {
+				opts = append(opts, KeyboardOption{Label: c.Label, Data: c.Label})
+			}
+		}
+		return opts
+	}
+
+	return cmd
+}
+
 // EffortCommand returns a /effort command to show or set the effort level.
-// Visible is set to hide the command when the current model doesn't support effort.
 func EffortCommand() *Command {
-	return &Command{
+	return newSessionSettingCommand(sessionSettingDef{
 		Name:        "effort",
 		Description: "Show or set effort level (low/medium/high)",
-		Category:    "operations",
-		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
-			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Effort
+		OptionsHint: "Options: 1) low  2) medium  3) high",
+		Capability:  func(c config.ModelCaps) bool { return c.Effort },
+		EmptyShow:   "not set (using API default)",
+		InvalidName: "effort level",
+		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
+		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		Choices: []settingChoice{
+			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
+			{Label: "medium", Aliases: []string{"2"}, SetValue: "medium", Response: "Effort set to: medium"},
+			{Label: "high", Aliases: []string{"3"}, SetValue: "high", Response: "Effort set to: high"},
+			{Label: "none", Aliases: []string{"off", ""}, SetValue: "", Response: "Effort cleared (using API default)", Hidden: true},
 		},
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			const optionsLine = "Options: 1) low  2) medium  3) high"
-			if req.Args == "" {
-				e := cc.Agent.SessionEffort(req.SessionKey)
-				if e == "" {
-					return Response{Text: "Effort: not set (using API default)\n" + optionsLine}, nil
-				}
-				return Response{Text: fmt.Sprintf("Effort: %s\n%s", e, optionsLine)}, nil
-			}
-			arg := strings.ToLower(strings.TrimSpace(req.Args))
-			switch arg {
-			case "1":
-				arg = "low"
-			case "2":
-				arg = "medium"
-			case "3":
-				arg = "high"
-			}
-			switch arg {
-			case "low", "medium", "high":
-				cc.Agent.SetSessionEffort(req.SessionKey, arg)
-				return Response{Text: fmt.Sprintf("Effort set to: %s", arg)}, nil
-			case "none", "off", "":
-				cc.Agent.SetSessionEffort(req.SessionKey, "")
-				return Response{Text: "Effort cleared (using API default)"}, nil
-			default:
-				return Response{Text: fmt.Sprintf("Invalid effort level: %q\n%s", req.Args, optionsLine)}, nil
-			}
-		},
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			levels := []string{"low", "medium", "high"}
-			opts := make([]KeyboardOption, len(levels))
-			for i, l := range levels {
-				opts[i] = KeyboardOption{Label: l, Data: l}
-			}
-			return opts
-		},
-	}
+	})
 }
 
 // ThinkingCommand returns a /thinking command to show or set the thinking mode.
-// Visible is set to hide the command when the current model doesn't support thinking.
 func ThinkingCommand() *Command {
-	return &Command{
+	return newSessionSettingCommand(sessionSettingDef{
 		Name:        "thinking",
 		Description: "Show or set thinking mode (off/adaptive)",
-		Category:    "operations",
-		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
-			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Thinking
+		OptionsHint: "Options: 0) off  1) adaptive",
+		Capability:  func(c config.ModelCaps) bool { return c.Thinking },
+		DefaultShow: "off",
+		InvalidName: "thinking mode",
+		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
+		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionThinking(sk, v) },
+		Choices: []settingChoice{
+			{Label: "off", Aliases: []string{"0", "none"}, SetValue: "off", Response: "Thinking: off"},
+			{Label: "adaptive", Aliases: []string{"1"}, SetValue: "adaptive", Response: "Thinking: adaptive"},
 		},
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			const optionsLine = "Options: 0) off  1) adaptive"
-			if req.Args == "" {
-				t := cc.Agent.SessionThinking(req.SessionKey)
-				if t == "" || t == "off" {
-					return Response{Text: "Thinking: off\n" + optionsLine}, nil
-				}
-				return Response{Text: fmt.Sprintf("Thinking: %s\n%s", t, optionsLine)}, nil
-			}
-			arg := strings.ToLower(strings.TrimSpace(req.Args))
-			switch arg {
-			case "0":
-				arg = "off"
-			case "1":
-				arg = "adaptive"
-			}
-			switch arg {
-			case "off", "none":
-				cc.Agent.SetSessionThinking(req.SessionKey, "off")
-				return Response{Text: "Thinking: off"}, nil
-			case "adaptive":
-				cc.Agent.SetSessionThinking(req.SessionKey, "adaptive")
-				return Response{Text: "Thinking: adaptive"}, nil
-			default:
-				return Response{Text: fmt.Sprintf("Invalid thinking mode: %q\n%s", req.Args, optionsLine)}, nil
-			}
-		},
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "off", Data: "off"},
-				{Label: "adaptive", Data: "adaptive"},
-			}
-		},
-	}
+	})
 }
 
 // SpeedCommand returns a /speed command to show or set Anthropic fast mode.
-// Visible is set to hide the command when the current model doesn't support speed.
 func SpeedCommand() *Command {
-	return &Command{
+	return newSessionSettingCommand(sessionSettingDef{
 		Name:        "speed",
 		Description: "Show or set speed mode (standard/fast)",
-		Category:    "operations",
-		Visible: func(_ context.Context, req Request, cc CommandContext) bool {
-			return config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)).Speed
+		OptionsHint: "Options: 0) standard  1) fast",
+		Capability:  func(c config.ModelCaps) bool { return c.Speed },
+		GateExecute: true,
+		GateMsg:     "Speed is not supported by %s (Opus only)",
+		DefaultShow: "standard",
+		InvalidName: "speed mode",
+		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionSpeed(sk) },
+		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionSpeed(sk, v) },
+		Choices: []settingChoice{
+			{Label: "standard", Aliases: []string{"0", "off", "none"}, SetValue: "", Response: "Speed: standard"},
+			{Label: "fast", Aliases: []string{"1"}, SetValue: "fast", Response: "Speed: fast (6x pricing, separate prompt cache)"},
 		},
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			const optionsLine = "Options: 0) standard  1) fast"
-
-			// Gate: reject if current model doesn't support speed
-			m := cc.Agent.SessionModel(req.SessionKey)
-			if !config.ModelCapabilities(m).Speed {
-				return Response{Text: fmt.Sprintf("Speed is not supported by %s (Opus only)", m)}, nil
-			}
-
-			if req.Args == "" {
-				s := cc.Agent.SessionSpeed(req.SessionKey)
-				if s == "" || s == "standard" {
-					return Response{Text: "Speed: standard\n" + optionsLine}, nil
-				}
-				return Response{Text: fmt.Sprintf("Speed: %s\n%s", s, optionsLine)}, nil
-			}
-			arg := strings.ToLower(strings.TrimSpace(req.Args))
-			switch arg {
-			case "0":
-				arg = "standard"
-			case "1":
-				arg = "fast"
-			}
-			switch arg {
-			case "standard", "off", "none":
-				cc.Agent.SetSessionSpeed(req.SessionKey, "")
-				return Response{Text: "Speed: standard"}, nil
-			case "fast":
-				cc.Agent.SetSessionSpeed(req.SessionKey, "fast")
-				return Response{Text: "Speed: fast (6x pricing, separate prompt cache)"}, nil
-			default:
-				return Response{Text: fmt.Sprintf("Invalid speed mode: %q\n%s", req.Args, optionsLine)}, nil
-			}
-		},
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "standard", Data: "standard"},
-				{Label: "fast", Data: "fast"},
-			}
-		},
-	}
+	})
 }
 
 // DisplayField represents one display setting with its effective value and override status.
