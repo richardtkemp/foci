@@ -1,6 +1,6 @@
 # Feature Comparison: Foci vs OpenClaw vs Nanobot
 
-Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://github.com/HKUDS/nanobot) are self-hosted AI agent platforms. This table compares their capabilities as of March 2026.
+Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://github.com/HKUDS/nanobot) are self-hosted AI agent platforms. OpenClaw is the established, broadly-featured choice. Foci makes different architectural bets — trading breadth of platform and provider support for depth in cache architecture, secret isolation, and operational simplicity. Nanobot is a lightweight Python alternative.
 
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
