@@ -9,43 +9,64 @@ All registered slash commands are also available to the agent as tools (without 
 ## Observability
 
 ### `/status`
-Dashboard overview — session info, uptime, model, context usage, cost.
+Dashboard overview — agent ID, model, session key, message count, busy/idle status, session created/active times, uptime, context usage percentage, tokens remaining until compaction, session cost.
 
-### `/cache`
-Last 5 API calls with cache token breakdown (input, output, cache read, cache write).
+### `/cache [N]`
+Last N API calls with cache token breakdown (input, cache read, cache write, cost, cache hit %). Default: 5.
 
-### `/last`
-Details of the last API request.
+### `/last [agent]`
+Most recent API call per agent — time, model, tokens, cost, session. Optionally filter to a single agent.
 
-### `/cost`
-Cumulative API cost summary.
+### `/cost <period>`
+API cost summary for a time period.
+- `/cost today` — today's costs by session
+- `/cost 24h` — last 24 hours with category breakdown (cache reads/writes, input, output)
+- `/cost week` — 7-day summary with daily breakdown
+- `/cost <N>` — total for last N days
 
 ### `/context`
-Context window breakdown — system prompt size, conversation size, compaction status.
+Context window breakdown — total vs limit, compaction threshold, tokens until compaction, system prompt breakdown by section (environment, workspace files, skills), tool token count, conversation breakdown (user/assistant/tool results), last API call token breakdown.
 
 ### `/mana`
-Check current mana/quota remaining. The command name is configurable via `mana_command_name` in config (e.g. `/juice`, `/credits`). `/usage` is a hidden alias.
+Check current mana/quota remaining (percentage remaining + reset time). The command name is configurable via `mana_command_name` in config (e.g. `/juice`, `/credits`). Hidden aliases: `/usage`, `/m`. Only available when the provider supports usage tracking.
 
-### `/todo [search <query> | all]`
-List open todo items.
-- `/todo` — show open items (excludes background-tagged)
-- `/todo all` — show all open items including background-tagged
-- `/todo search <query>` — search todos by text
+### `/todo [subcommand] [args]`
+Manage todo items.
+- `/todo` — list open items sorted by priority (limit 15)
+- `/todo new <text> [p:PRIORITY] [t:TAG]` — create a new todo
+- `/todo done <id> [id...]` — mark as done
+- `/todo start <id> [id...]` — mark as in progress
+- `/todo drop <id> [id...]` — mark as dropped
+- `/todo reopen <id> [id...]` — reopen to "open"
+- `/todo edit <id> [p:PRIORITY] [t:TAG] [new text]` — edit fields
+- `/todo show <id>` — full detail for one todo
+- `/todo search <query>` — full-text search
+- `/todo rm <id> [id...]` — hard-delete
+- `/todo stats [filters]` — counts by status and tag
+- List filters: `open`, `done`, `all`, `active`, `in_progress`, `dropped`; `t:TAG`, `p:PRIORITY`; sort by `created`/`updated`/`priority`; `reverse`; `<N>` limit
+
+### `/tmux <subcommand>`
+Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivalent). Only available when the tmux tool is registered.
+- `/tmux list` — list owned/watched sessions
+- `/tmux start <name> [command] [--no-watch]` — start a session (auto-watches by default)
+- `/tmux send <name> <keys...>` — send keystrokes
+- `/tmux read <name> [lines]` — read pane output
+- `/tmux kill <name>` — kill a session
+- `/tmux watch <name> [threshold_secs]` — monitor for inactivity
+- `/tmux unwatch <name>` — stop monitoring
 
 ---
 
 ## Operations
 
-### `/reset`
-Clear session history. Fires session-end memory formation (async) before clearing.
-
-### `/model [name]`
+### `/model [alias-or-id]`
 Show or switch the model for the current session.
 - `/model` — show current model
 - `/model haiku` — switch to haiku (supports aliases from `[models.aliases]` config)
+- `/model gemini:flash` — switch with explicit endpoint via `endpoint:alias` syntax
 
 ### `/effort [level]`
-Show or set the effort/budget level.
+Show or set the thinking effort level. Only visible when the current model supports effort.
 - `/effort` — show current level
 - `/effort low` — set to low (alias: `1`)
 - `/effort medium` — set to medium (alias: `2`)
@@ -53,29 +74,49 @@ Show or set the effort/budget level.
 - `/effort none` or `/effort off` — clear override
 
 ### `/thinking [mode]`
-Show or set extended thinking mode.
+Show or set extended thinking mode. Only visible when the current model supports thinking.
 - `/thinking` — show current mode
 - `/thinking off` — disable (alias: `0`)
 - `/thinking adaptive` — enable adaptive thinking (alias: `1`)
 
+### `/speed [mode]`
+Show or set speed mode (Anthropic fast mode — 6x pricing, separate prompt cache). Only visible for supported models.
+- `/speed` — show current mode
+- `/speed standard` — standard mode (alias: `0`)
+- `/speed fast` — fast mode (alias: `1`)
+
+### `/display [key] [value]`
+Show or set per-session display options.
+- `/display` — show all current display settings
+- `/display show_tool_calls off|preview|full` — tool call visibility
+- `/display show_thinking off|compact|true` — thinking block visibility
+- `/display stream_output on|off` — streaming output (alias: `stream`)
+- `/display display_width <20-200>` — output width in characters (alias: `width`)
+- `/display reset` — clear all per-session display overrides
+
 ### `/voice`
 Toggle voice mode — when on, all agent replies are sent as voice notes via TTS.
 
-### `/reload`
-Reload config, skills, and system prompt from disk. **CLI-only** — not available to the agent as a tool.
+### `/reset`
+Clear session history. Fires session-end memory formation (async) before clearing, rotates the session key, reloads bootstrap. Refuses if the agent is currently processing.
 
-### `/compact`
+### `/compact [dry-run]`
 Trigger manual context compaction.
+- `/compact` — compact now
+- `/compact dry-run` — show what would happen and send the summary as a document without compacting
+
+### `/reload`
+Reload workspace files (system prompt) and skills from disk. **CLI-only**. Config file (`foci.toml`) changes still require a full service restart.
 
 ### `/restart`
-Restart the foci service via `systemctl restart foci`.
+Restart the foci service. Tries `systemctl restart foci`; falls back to SIGTERM (relies on process supervisor or Docker restart policy).
 
 ### `/multiball`
-Fork the current session to a secondary Telegram bot for parallel conversation. Alias: `/mb`. See [MULTIBALL.md](MULTIBALL.md).
+Fork the current session to a secondary Telegram bot for parallel conversation. Hidden alias: `/mb`. See [MULTIBALL.md](MULTIBALL.md).
 
 ### `/secrets <subcommand>`
 Manage secrets. **CLI-only**.
-- `/secrets list` — show all secret names grouped by section (values never displayed)
+- `/secrets list` — show all secrets grouped by section/key with allowed hosts (values never displayed)
 - `/secrets set <section.key> <value>` — add or update a secret
 - `/secrets remove <section.key>` — delete a secret
 - `/secrets hosts <section>` — show allowed hosts for a section
@@ -85,44 +126,34 @@ Manage secrets. **CLI-only**.
 
 ### `/bitwarden <subcommand>`
 Bitwarden vault integration. **CLI-only**.
-- `/bitwarden setup` — check prerequisites (bw CLI, bitwarden user, login status)
+- `/bitwarden setup` — check prerequisites (bw CLI, bitwarden system user), attempt to create user if missing
 - `/bitwarden status` — show current state: enabled/disabled, item count, cache age, unlocked secrets
-
-### `/tmux <operation>`
-Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivalent).
-- `/tmux list` — list active sessions owned by the current agent (shows session ID in OWNER column)
-- `/tmux start [name] [command]` — start a session (auto-watches by default; `--no-watch` to disable)
-- `/tmux send <name> <keys>` — send keystrokes to a pane
-- `/tmux read <name> [lines]` — read pane output
-- `/tmux kill <name>` — kill a session
-- `/tmux watch <name> [threshold_secs]` — monitor for inactivity
-- `/tmux unwatch <name>` — stop monitoring
 
 ---
 
 ## Diagnostics
 
 ### `/log [N]`
-Show recent event log lines. Default: 20 lines.
+Show recent event log lines. Default: 20.
 
 ### `/errors [N]`
-Show recent error/warning log lines. Default: 10 lines.
+Show recent error/warning log lines. Default: 10.
 
-### `/config [subcommand]`
-Show running configuration.
-- `/config` — summary view
-- `/config toml` — full config as TOML
-- `/config table` — config as formatted table
-- `/config available` — all available config keys with types and defaults
+### `/config <subcommand>`
+Show or edit configuration.
+- `/config toml` — raw TOML of the running config (secrets redacted)
+- `/config table` — formatted grouped table of all current values
+- `/config available` — unset options with their defaults
+- `/config set [section.key=value]` — edit the config file (direct mode with `=`, or interactive wizard)
 
-### `/prompts [subcommand]`
+### `/prompts <subcommand>`
 Show configured prompts and prompt files on disk.
-- `/prompts` — show all prompts with default/custom status and files on disk
-- `/prompts reinstall` — write all embedded default prompts to `{workspace}/prompts/`, skipping files that already match
-- `/prompts diff <name>` — generate a unified diff between the current (resolved) prompt and the embedded default, with an AI summary, sent as a Telegram document. Name matching is fuzzy: accepts labels (`compaction_summary`), filenames (`compaction-summary.md`), or partial matches (`keepalive`)
+- `/prompts list` — all prompts with default/custom/disabled status and file paths
+- `/prompts reinstall` — write all embedded default prompts to `{workspace}/prompts/`
+- `/prompts diff <name>` — unified diff between the resolved prompt and the embedded default, with an AI-generated summary. Name matching is fuzzy: accepts labels (`compaction_summary`), filenames (`compaction-summary.md`), or partial matches (`keepalive`)
 
 ### `/version`
-Build version info (version, commit, build date, Go version).
+Build version info — version, commit, build date, Go version.
 
 ---
 
@@ -133,21 +164,21 @@ Liveness check — returns "pong" with timestamp.
 
 ### `/sessions <subcommand>`
 List and manage per-chat sessions.
-- `/sessions list` — list all chat sessions for this agent
+- `/sessions list` — all chat sessions for this agent (chat ID, user, message count, last active, current/default flags)
 - `/sessions default <chat_id>` — set the default session (used by keepalive, cron)
-- `/sessions info` — show details for the current chat's session
-- `/sessions index [type] [status]` — query the session metadata index (all agents)
+- `/sessions info` — details for the current chat's session
+- `/sessions index [filters...]` — query the session metadata index across all agents. Filters: type (`chat`/`spawn`/`cron`/`multiball`/`branch`), status (`active`/`compacted`/`archived`/`cleared`/`all`), duration (e.g. `3d`, `4h`), count (e.g. `10`)
 
 ### `/agents [new]`
 List active agent sessions.
-- `/agents` — show all agents with session info
-- `/agents new` — launch the interactive agent creation wizard
+- `/agents` — all agents with ID, session key, status, model, message count
+- `/agents new` — interactive 3-step wizard to create a new agent (name → model → character files), appends to `foci.toml` and sets up workspace
 
 ### `/tools`
-List all registered tools.
+List all registered tools (name and description).
 
 ### `/help`
-List available commands grouped by category.
+List available commands grouped by category. Commands whose features aren't supported by the current model (e.g. `/effort`, `/thinking`, `/speed`) are hidden automatically.
 
 ---
 
@@ -172,7 +203,7 @@ timeout = "5s"
 ```
 
 ### Skill commands
-Skills with `command` and `script` in their frontmatter are registered as slash commands automatically.
+Skills with `command` and `script` in their frontmatter are registered as slash commands automatically (30-second timeout).
 
 ---
 
