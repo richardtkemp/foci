@@ -1,43 +1,39 @@
 package main
 
 import (
-	"embed"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"foci/internal/log"
+	skills "foci/shared/skills"
 )
-
-//go:embed all:skills
-var skillsFS embed.FS
 
 // seedDefaultSkills walks the embedded skills/ tree and copies files to dir
 // that don't already exist. Each skill is a subdirectory containing at least
-// SKILL.md, plus optional references/ and scripts/ subdirectories.
+// SKILL.md, plus optional references/ subdirectories.
 // Users can edit seeded copies — files are never overwritten.
 func seedDefaultSkills(dir string) {
-	_ = fs.WalkDir(skillsFS, "skills", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	_ = fs.WalkDir(skills.FS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == "." {
 			return nil
 		}
-		// Strip the "skills/" prefix to get the relative path within the output dir
-		rel, _ := filepath.Rel("skills", path)
-		if rel == "." {
+		// Skip the embed.go file itself
+		if filepath.Base(path) == "embed.go" {
 			return nil
 		}
-		dest := filepath.Join(dir, rel)
-
 		if d.IsDir() {
-			return nil // directories are created when we write files
+			return nil
 		}
+
+		dest := filepath.Join(dir, path)
 
 		// Skip if file already exists
 		if _, err := os.Stat(dest); err == nil {
 			return nil
 		}
 
-		data, err := skillsFS.ReadFile(path)
+		data, err := skills.FS.ReadFile(path)
 		if err != nil {
 			log.Warnf("main", "seed skills: read embedded %s: %v", path, err)
 			return nil
