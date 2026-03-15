@@ -273,8 +273,8 @@ func Load(path string) (*Config, error) {
 		}
 		applyDefaultsToAgent(&cfg.Agents[i], &cfg, defined)
 
-		if cfg.Agents[i].BranchOrientationMultiballPrompt != "" {
-			cfg.Agents[i].BranchOrientationMultiballPrompt = ResolvePath(cfg.Agents[i].BranchOrientationMultiballPrompt)
+		if cfg.Agents[i].BranchOrientationFacetPrompt != "" {
+			cfg.Agents[i].BranchOrientationFacetPrompt = ResolvePath(cfg.Agents[i].BranchOrientationFacetPrompt)
 		}
 		if cfg.Agents[i].BranchOrientationHeadlessPrompt != "" {
 			cfg.Agents[i].BranchOrientationHeadlessPrompt = ResolvePath(cfg.Agents[i].BranchOrientationHeadlessPrompt)
@@ -467,7 +467,7 @@ func Load(path string) (*Config, error) {
 	// Telegram defaults
 	setIntDefault(&cfg.Telegram.MessageQueueSize, 64)
 	setStringDefault(&cfg.Telegram.LongPollTimeout, "65s")
-	setStringDefault(&cfg.Telegram.MultiballSessionTTL, "60m")
+	setStringDefault(&cfg.Telegram.FacetSessionTTL, "60m")
 	if cfg.Telegram.DisplayWidth == nil {
 		v := 44
 		cfg.Telegram.DisplayWidth = &v

@@ -511,7 +511,7 @@ func (s *Store) fireEvent(e SessionEvent) {
 
 // ClassifySessionKey determines the SessionType from a session key.
 // With the new format, chat vs independent is structural, and branch is
-// identifiable by child type. Semantic subtypes (spawn, multiball, cron)
+// identifiable by child type. Semantic subtypes (spawn, facet, cron)
 // are metadata and cannot be distinguished from the key alone.
 func ClassifySessionKey(key string) SessionType {
 	k, err := ParseSessionKey(key)

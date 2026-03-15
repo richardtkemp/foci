@@ -42,8 +42,8 @@ Secrets are readable only by a dedicated group. Child processes have that group 
 **Tool result guard.**
 Large tool outputs are truncated *before* entering context, with full results saved to disk. Cache stays intact, context window stays clean.
 
-**Multiball.**
-`/multiball` forks your session to a second Telegram bot — same agent, same context, parallel thread. Both share the cached prefix, so the fork is cheap. See [docs/MULTIBALL.md](docs/MULTIBALL.md).
+**Facet.**
+`/facet` forks your session to a second Telegram bot — same agent, same context, parallel thread. Both share the cached prefix, so the fork is cheap. See [docs/FACET.md](docs/FACET.md).
 
 **Multi-agent, single process.**
 Multiple agents share one binary with separate workspaces, identities, and Telegram bots. No containers, no orchestration. One TOML file.
@@ -92,7 +92,7 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for a full list of suggested sy
 - [docs/BITWARDEN.md](docs/BITWARDEN.md) — Bitwarden vault integration
 - [docs/CACHING.md](docs/CACHING.md) — Cache architecture and preservation
 - [docs/MEMORY.md](docs/MEMORY.md) — Memory system (search, formation, consolidation)
-- [docs/MULTIBALL.md](docs/MULTIBALL.md) — Parallel conversations (session forking)
+- [docs/FACET.md](docs/FACET.md) — Parallel conversations (session forking)
 - [docs/SESSION_KEYS.md](docs/SESSION_KEYS.md) — Session key format and lifecycle
 - [docs/NUDGE.md](docs/NUDGE.md) — Mid-turn behavioral reminders
 - [docs/HEARTBEAT.md](docs/HEARTBEAT.md) — Keepalive and background work

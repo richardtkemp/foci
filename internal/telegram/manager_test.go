@@ -34,19 +34,19 @@ func TestBotManagerPrimary(t *testing.T) {
 	}
 }
 
-func TestBotManagerMultiball(t *testing.T) {
-	// Verifies that AddMultiball adds bots to the per-agent pool, marks them as
+func TestBotManagerFacet(t *testing.T) {
+	// Verifies that AddFacet adds bots to the per-agent pool, marks them as
 	// secondary, and that Pool() returns the correct pool with the right size.
 	mgr := NewBotManager()
 
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	// Add two multiball bots for clutch
+	// Add two facet bots for clutch
 	mb1, _ := testBot(nil, command.NewRegistry())
 	mb2, _ := testBot(nil, command.NewRegistry())
-	mgr.AddMultiball("clutch", mb1)
-	mgr.AddMultiball("clutch", mb2)
+	mgr.AddFacet("clutch", mb1)
+	mgr.AddFacet("clutch", mb2)
 
 	pool := mgr.Pool("clutch")
 	if pool == nil {
@@ -64,29 +64,29 @@ func TestBotManagerMultiball(t *testing.T) {
 		t.Error("mb2 not marked secondary")
 	}
 
-	// Scout has no multiball
+	// Scout has no facet
 	if got := mgr.Pool("scout"); got != nil {
 		t.Errorf("Pool(scout) = %v, want nil", got)
 	}
 }
 
 func TestBotManagerIsolation(t *testing.T) {
-	// Verifies that multiball pools are per-agent and completely isolated:
+	// Verifies that facet pools are per-agent and completely isolated:
 	// acquiring from one agent's pool does not affect another agent's pool.
 	mgr := NewBotManager()
 
-	// Two agents, each with their own multiball bot
+	// Two agents, each with their own facet bot
 	clutchPrimary, _ := testBot(nil, command.NewRegistry())
 	scoutPrimary, _ := testBot(nil, command.NewRegistry())
 	clutchMB, _ := testBot(nil, command.NewRegistry())
-	clutchMB.SetSessionKey("") // multiball bots start idle
+	clutchMB.SetSessionKey("") // facet bots start idle
 	scoutMB, _ := testBot(nil, command.NewRegistry())
-	scoutMB.SetSessionKey("") // multiball bots start idle
+	scoutMB.SetSessionKey("") // facet bots start idle
 
 	mgr.AddPrimary("clutch", clutchPrimary)
 	mgr.AddPrimary("scout", scoutPrimary)
-	mgr.AddMultiball("clutch", clutchMB)
-	mgr.AddMultiball("scout", scoutMB)
+	mgr.AddFacet("clutch", clutchMB)
+	mgr.AddFacet("scout", scoutMB)
 
 	// Each agent has its own pool
 	clutchPool := mgr.Pool("clutch")
@@ -107,7 +107,7 @@ func TestBotManagerIsolation(t *testing.T) {
 	if !ok {
 		t.Fatal("failed to acquire from clutch pool")
 	}
-	acquired.SetSessionKey("agent:clutch:multiball:mb-1")
+	acquired.SetSessionKey("agent:clutch:facet:f-1")
 
 	if scoutPool.Available() != 1 {
 		t.Errorf("scout pool available = %d after clutch acquire, want 1", scoutPool.Available())
@@ -115,7 +115,7 @@ func TestBotManagerIsolation(t *testing.T) {
 }
 
 func TestBotManagerSharedPool(t *testing.T) {
-	// Verifies that AddSharedMultiball populates the shared pool, marks bots
+	// Verifies that AddSharedFacet populates the shared pool, marks bots
 	// as secondary, and that SharedPool() returns the pool with the correct size.
 	mgr := NewBotManager()
 
@@ -127,8 +127,8 @@ func TestBotManagerSharedPool(t *testing.T) {
 	// Add shared bots
 	shared1, _ := testBot(nil, command.NewRegistry())
 	shared2, _ := testBot(nil, command.NewRegistry())
-	mgr.AddSharedMultiball(shared1)
-	mgr.AddSharedMultiball(shared2)
+	mgr.AddSharedFacet(shared1)
+	mgr.AddSharedFacet(shared2)
 
 	pool := mgr.SharedPool()
 	if pool == nil {
@@ -145,28 +145,28 @@ func TestBotManagerSharedPool(t *testing.T) {
 	}
 }
 
-func TestAcquireMultiball_PerAgentOnly(t *testing.T) {
-	// Verifies that AcquireMultiball returns a bot from the per-agent pool when
+func TestAcquireFacet_PerAgentOnly(t *testing.T) {
+	// Verifies that AcquireFacet returns a bot from the per-agent pool when
 	// one is available, without touching the shared pool.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
 	// Should acquire from per-agent pool
-	bot, ok := mgr.AcquireMultiball("clutch")
+	bot, ok := mgr.AcquireFacet("clutch")
 	if !ok {
-		t.Fatal("AcquireMultiball failed")
+		t.Fatal("AcquireFacet failed")
 	}
-	if bot != mb {
+	if bot != fb {
 		t.Error("expected per-agent bot")
 	}
 }
 
-func TestAcquireMultiball_SharedFallback(t *testing.T) {
-	// Verifies that AcquireMultiball falls back to the shared pool when no
+func TestAcquireFacet_SharedFallback(t *testing.T) {
+	// Verifies that AcquireFacet falls back to the shared pool when no
 	// per-agent bots are configured for the requested agent.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -174,19 +174,19 @@ func TestAcquireMultiball_SharedFallback(t *testing.T) {
 
 	// No per-agent bots, only shared
 	shared := testSecondaryBot("shared1")
-	mgr.AddSharedMultiball(shared)
+	mgr.AddSharedFacet(shared)
 
-	bot, ok := mgr.AcquireMultiball("clutch")
+	bot, ok := mgr.AcquireFacet("clutch")
 	if !ok {
-		t.Fatal("AcquireMultiball should fall back to shared pool")
+		t.Fatal("AcquireFacet should fall back to shared pool")
 	}
 	if bot != shared {
 		t.Error("expected shared pool bot")
 	}
 }
 
-func TestAcquireMultiball_PerAgentBusyFallsToShared(t *testing.T) {
-	// Verifies that when all per-agent bots are busy, AcquireMultiball falls back
+func TestAcquireFacet_PerAgentBusyFallsToShared(t *testing.T) {
+	// Verifies that when all per-agent bots are busy, AcquireFacet falls back
 	// to the shared pool rather than failing immediately.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -194,29 +194,29 @@ func TestAcquireMultiball_PerAgentBusyFallsToShared(t *testing.T) {
 
 	// Per-agent bot — acquire and make busy
 	perAgent := testSecondaryBot("pa1")
-	mgr.AddMultiball("clutch", perAgent)
-	bot1, ok := mgr.AcquireMultiball("clutch")
+	mgr.AddFacet("clutch", perAgent)
+	bot1, ok := mgr.AcquireFacet("clutch")
 	if !ok {
 		t.Fatal("initial acquire failed")
 	}
-	bot1.SetSessionKey("agent:clutch:multiball:mb-1")
+	bot1.SetSessionKey("agent:clutch:facet:f-1")
 
 	// Add shared bot
 	shared := testSecondaryBot("shared1")
-	mgr.AddSharedMultiball(shared)
+	mgr.AddSharedFacet(shared)
 
 	// Should fall back to shared since per-agent is busy
-	bot2, ok := mgr.AcquireMultiball("clutch")
+	bot2, ok := mgr.AcquireFacet("clutch")
 	if !ok {
-		t.Fatal("AcquireMultiball should fall back to shared when per-agent is busy")
+		t.Fatal("AcquireFacet should fall back to shared when per-agent is busy")
 	}
 	if bot2 != shared {
 		t.Error("expected shared pool bot as fallback")
 	}
 }
 
-func TestAcquireMultiball_BothExhausted(t *testing.T) {
-	// Verifies that AcquireMultiball returns false when both the per-agent pool
+func TestAcquireFacet_BothExhausted(t *testing.T) {
+	// Verifies that AcquireFacet returns false when both the per-agent pool
 	// and shared pool are fully occupied.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
@@ -224,65 +224,65 @@ func TestAcquireMultiball_BothExhausted(t *testing.T) {
 
 	// Per-agent bot — make busy
 	perAgent := testSecondaryBot("pa1")
-	mgr.AddMultiball("clutch", perAgent)
-	bot1, _ := mgr.AcquireMultiball("clutch")
-	bot1.SetSessionKey("agent:clutch:multiball:mb-1")
+	mgr.AddFacet("clutch", perAgent)
+	bot1, _ := mgr.AcquireFacet("clutch")
+	bot1.SetSessionKey("agent:clutch:facet:f-1")
 
 	// Shared bot — make busy
 	shared := testSecondaryBot("shared1")
-	mgr.AddSharedMultiball(shared)
-	bot2, _ := mgr.AcquireMultiball("clutch")
-	bot2.SetSessionKey("agent:clutch:multiball:mb-2")
+	mgr.AddSharedFacet(shared)
+	bot2, _ := mgr.AcquireFacet("clutch")
+	bot2.SetSessionKey("agent:clutch:facet:f-2")
 
 	// Both exhausted
-	_, ok := mgr.AcquireMultiball("clutch")
+	_, ok := mgr.AcquireFacet("clutch")
 	if ok {
-		t.Fatal("AcquireMultiball should fail when both pools are exhausted")
+		t.Fatal("AcquireFacet should fail when both pools are exhausted")
 	}
 }
 
-func TestAcquireMultiball_NoPools(t *testing.T) {
-	// Verifies that AcquireMultiball returns false when no pools are configured
+func TestAcquireFacet_NoPools(t *testing.T) {
+	// Verifies that AcquireFacet returns false when no pools are configured
 	// at all for the agent.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
 	// No pools at all
-	_, ok := mgr.AcquireMultiball("clutch")
+	_, ok := mgr.AcquireFacet("clutch")
 	if ok {
-		t.Fatal("AcquireMultiball should fail with no pools")
+		t.Fatal("AcquireFacet should fail with no pools")
 	}
 }
 
-func TestHasMultiball(t *testing.T) {
-	// Verifies that HasMultiball correctly reports whether an agent has any
-	// available multiball bots, including when only the shared pool is present.
+func TestHasFacet(t *testing.T) {
+	// Verifies that HasFacet correctly reports whether an agent has any
+	// available facet bots, including when only the shared pool is present.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
 	// No bots configured
-	if mgr.HasMultiball("clutch") {
-		t.Error("HasMultiball should be false with no pools")
+	if mgr.HasFacet("clutch") {
+		t.Error("HasFacet should be false with no pools")
 	}
 
 	// Add per-agent bot
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
-	if !mgr.HasMultiball("clutch") {
-		t.Error("HasMultiball should be true with per-agent bot")
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
+	if !mgr.HasFacet("clutch") {
+		t.Error("HasFacet should be true with per-agent bot")
 	}
 
 	// Scout has no per-agent, but shared pool exists
 	shared := testSecondaryBot("shared1")
-	mgr.AddSharedMultiball(shared)
-	if !mgr.HasMultiball("scout") {
-		t.Error("HasMultiball should be true for any agent when shared pool exists")
+	mgr.AddSharedFacet(shared)
+	if !mgr.HasFacet("scout") {
+		t.Error("HasFacet should be true for any agent when shared pool exists")
 	}
 }
 
-func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
+func TestAcquireFacet_ReleaseToCorrectPool(t *testing.T) {
 	// Verifies that bots released via their respective pool objects (per-agent and
 	// shared) return to the correct pool and become available there, not in the other.
 	mgr := NewBotManager()
@@ -291,17 +291,17 @@ func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
 
 	// Per-agent and shared bots
 	perAgent := testSecondaryBot("pa1")
-	mgr.AddMultiball("clutch", perAgent)
+	mgr.AddFacet("clutch", perAgent)
 
 	shared := testSecondaryBot("shared1")
-	mgr.AddSharedMultiball(shared)
+	mgr.AddSharedFacet(shared)
 
 	// Acquire per-agent
-	bot1, _ := mgr.AcquireMultiball("clutch")
-	bot1.SetSessionKey("agent:clutch:multiball:mb-1")
+	bot1, _ := mgr.AcquireFacet("clutch")
+	bot1.SetSessionKey("agent:clutch:facet:f-1")
 
 	// Acquire shared (per-agent still has one available, but let's exhaust per-agent first)
-	bot1b, _ := mgr.AcquireMultiball("clutch") // gets shared (per-agent pool was just acquired from)
+	bot1b, _ := mgr.AcquireFacet("clutch") // gets shared (per-agent pool was just acquired from)
 	_ = bot1b
 
 	// Actually, let's redo this test more carefully
@@ -309,12 +309,12 @@ func TestAcquireMultiball_ReleaseToCorrectPool(t *testing.T) {
 	mgr.Pool("clutch").Release(bot1)
 
 	// Acquire per-agent (it's idle again)
-	b1, _ := mgr.AcquireMultiball("clutch")
-	b1.SetSessionKey("agent:clutch:multiball:mb-1")
+	b1, _ := mgr.AcquireFacet("clutch")
+	b1.SetSessionKey("agent:clutch:facet:f-1")
 
 	// Per-agent is now busy, next acquire gets shared
-	b2, _ := mgr.AcquireMultiball("clutch")
-	b2.SetSessionKey("agent:clutch:multiball:mb-2")
+	b2, _ := mgr.AcquireFacet("clutch")
+	b2.SetSessionKey("agent:clutch:facet:f-2")
 
 	// Release per-agent bot — should return to per-agent pool
 	mgr.Pool("clutch").Release(b1)
@@ -341,16 +341,16 @@ func TestBotForSession_PerAgentPool(t *testing.T) {
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
 	// Acquire and assign a session key
 	bot, _ := mgr.Pool("clutch").Acquire()
-	bot.SetSessionKey("agent:clutch:multiball:mb-100")
+	bot.SetSessionKey("agent:clutch:facet:f-100")
 
-	found := mgr.BotForSession("agent:clutch:multiball:mb-100")
+	found := mgr.BotForSession("agent:clutch:facet:f-100")
 	if found != bot {
-		t.Errorf("BotForSession should find per-agent multiball bot")
+		t.Errorf("BotForSession should find per-agent facet bot")
 	}
 }
 
@@ -362,15 +362,15 @@ func TestBotForSession_SharedPool(t *testing.T) {
 	mgr.AddPrimary("clutch", primary)
 
 	shared := testSecondaryBot("shared1")
-	mgr.AddSharedMultiball(shared)
+	mgr.AddSharedFacet(shared)
 
 	// Acquire and assign a session key
 	bot, _ := mgr.SharedPool().Acquire()
-	bot.SetSessionKey("agent:clutch:multiball:mb-200")
+	bot.SetSessionKey("agent:clutch:facet:f-200")
 
-	found := mgr.BotForSession("agent:clutch:multiball:mb-200")
+	found := mgr.BotForSession("agent:clutch:facet:f-200")
 	if found != bot {
-		t.Errorf("BotForSession should find shared multiball bot")
+		t.Errorf("BotForSession should find shared facet bot")
 	}
 }
 
@@ -381,10 +381,10 @@ func TestBotForSession_NotFound(t *testing.T) {
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
-	found := mgr.BotForSession("agent:clutch:multiball:mb-nonexistent")
+	found := mgr.BotForSession("agent:clutch:facet:f-nonexistent")
 	if found != nil {
 		t.Errorf("BotForSession should return nil for unknown session key, got %v", found)
 	}
@@ -402,7 +402,7 @@ func TestBotForSession_EmptyKey(t *testing.T) {
 
 // --- OnSessionKeyChange persistence integration ---
 
-func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {
+func TestFacet_SessionKeyCallbackIntegration(t *testing.T) {
 	// Verifies that SetSessionKey fires the OnSessionKeyChange callback and
 	// that the callback can persist and clean up session assignments, mirroring
 	// the real wiring in main.go where state is persisted to a store.
@@ -410,13 +410,13 @@ func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
 	// Simulate the callback wiring from main.go
 	persisted := map[string]string{} // key → value
-	mb.OnSessionKeyChange = func(username, sessionKey string) {
-		key := "multiball:" + username
+	fb.OnSessionKeyChange = func(username, sessionKey string) {
+		key := "facet:" + username
 		if sessionKey == "" {
 			delete(persisted, key)
 		} else {
@@ -425,56 +425,56 @@ func TestMultiball_SessionKeyCallbackIntegration(t *testing.T) {
 	}
 
 	// Fork: set session key
-	mb.SetSessionKey("agent:clutch:multiball:mb-123")
-	if v, ok := persisted["multiball:"]; !ok || v != "agent:clutch:multiball:mb-123" {
-		t.Errorf("persisted = %v, want multiball: → agent:clutch:multiball:mb-123", persisted)
+	fb.SetSessionKey("agent:clutch:facet:f-123")
+	if v, ok := persisted["facet:"]; !ok || v != "agent:clutch:facet:f-123" {
+		t.Errorf("persisted = %v, want facet: → agent:clutch:facet:f-123", persisted)
 	}
 
 	// Done: clear session key
-	mb.SetSessionKey("")
-	if _, ok := persisted["multiball:"]; ok {
+	fb.SetSessionKey("")
+	if _, ok := persisted["facet:"]; ok {
 		t.Error("persisted should be cleaned up after clear")
 	}
 }
 
-func TestMultiball_SetSessionKeyDirectSkipsCallback(t *testing.T) {
+func TestFacet_SetSessionKeyDirectSkipsCallback(t *testing.T) {
 	// Verifies that SetSessionKeyDirect sets the session key without firing
 	// OnSessionKeyChange, which is used during state restoration at startup.
-	mb := testSecondaryBot("mb1")
+	fb := testSecondaryBot("mb1")
 	called := false
-	mb.OnSessionKeyChange = func(username, sessionKey string) {
+	fb.OnSessionKeyChange = func(username, sessionKey string) {
 		called = true
 	}
 
 	// Restoration path — should NOT fire callback
-	mb.SetSessionKeyDirect("agent:clutch:multiball:mb-456")
+	fb.SetSessionKeyDirect("agent:clutch:facet:f-456")
 	if called {
 		t.Error("SetSessionKeyDirect should not fire OnSessionKeyChange")
 	}
-	if sk := mb.SessionKey(); sk != "agent:clutch:multiball:mb-456" {
-		t.Errorf("session key = %q, want agent:clutch:multiball:mb-456", sk)
+	if sk := fb.SessionKey(); sk != "agent:clutch:facet:f-456" {
+		t.Errorf("session key = %q, want agent:clutch:facet:f-456", sk)
 	}
 }
 
 // --- BotForSessionOrPrimary routing tests ---
 
-func TestBotForSessionOrPrimary_MultiballSessionUsesMultiballBot(t *testing.T) {
+func TestBotForSessionOrPrimary_FacetSessionUsesFacetBot(t *testing.T) {
 	// Verifies that
-	// BotForSessionOrPrimary returns the multiball bot when it holds the session key.
+	// BotForSessionOrPrimary returns the facet bot when it holds the session key.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
-	sessionKey := "agent:clutch:multiball:mb-100"
+	sessionKey := "agent:clutch:facet:f-100"
 	acquired, _ := mgr.Pool("clutch").Acquire()
 	acquired.SetSessionKey(sessionKey)
 
 	bot := mgr.BotForSessionOrPrimary(sessionKey, "clutch")
 	if bot != acquired {
-		t.Errorf("BotForSessionOrPrimary should find multiball bot for its session key")
+		t.Errorf("BotForSessionOrPrimary should find facet bot for its session key")
 	}
 }
 
@@ -485,30 +485,30 @@ func TestBotForSessionOrPrimary_UnassignedSessionFallsBackToPrimary(t *testing.T
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
-	bot := mgr.BotForSessionOrPrimary("agent:clutch:multiball:mb-unassigned", "clutch")
+	bot := mgr.BotForSessionOrPrimary("agent:clutch:facet:f-unassigned", "clutch")
 	if bot != primary {
-		t.Errorf("BotForSessionOrPrimary should fall back to primary when multiball bot not found")
+		t.Errorf("BotForSessionOrPrimary should fall back to primary when facet bot not found")
 	}
 }
 
-func TestBotForSessionOrPrimary_NonMultiballSessionUsesPrimary(t *testing.T) {
+func TestBotForSessionOrPrimary_NonFacetSessionUsesPrimary(t *testing.T) {
 	// Verifies that
-	// a regular (non-multiball) session key routes to the primary bot.
+	// a regular (non-facet) session key routes to the primary bot.
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 	acquired, _ := mgr.Pool("clutch").Acquire()
-	acquired.SetSessionKey("agent:clutch:multiball:mb-100")
+	acquired.SetSessionKey("agent:clutch:facet:f-100")
 
 	bot := mgr.BotForSessionOrPrimary("agent:clutch:main", "clutch")
 	if bot != primary {
-		t.Errorf("BotForSessionOrPrimary should use primary for non-multiball session key")
+		t.Errorf("BotForSessionOrPrimary should use primary for non-facet session key")
 	}
 }
 
@@ -523,39 +523,39 @@ func TestBotForSessionOrPrimary_NoPrimaryReturnsNil(t *testing.T) {
 	}
 }
 
-func TestBotForSessionOrPrimary_MultiballNoPrimaryReturnsNil(t *testing.T) {
+func TestBotForSessionOrPrimary_FacetNoPrimaryReturnsNil(t *testing.T) {
 	// Verifies nil when
-	// multiball exists but no bot holds the key and no primary is registered.
+	// facet exists but no bot holds the key and no primary is registered.
 	mgr := NewBotManager()
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
-	bot := mgr.BotForSessionOrPrimary("agent:clutch:multiball:mb-unassigned", "clutch")
+	bot := mgr.BotForSessionOrPrimary("agent:clutch:facet:f-unassigned", "clutch")
 	if bot != nil {
-		t.Errorf("BotForSessionOrPrimary should return nil when multiball not found and no primary exists")
+		t.Errorf("BotForSessionOrPrimary should return nil when facet not found and no primary exists")
 	}
 }
 
 func TestBotForSessionOrPrimary_NewFormatBranchKey(t *testing.T) {
 	// Verifies that new slash-separated
-	// branch keys (which don't contain ":multiball:") still find the secondary bot
+	// branch keys (which don't contain ":facet:") still find the secondary bot
 	// when it holds that session key. This was broken when BotForSessionOrPrimary
-	// gated the lookup on strings.Contains(":multiball:").
+	// gated the lookup on strings.Contains(":facet:").
 	mgr := NewBotManager()
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
-	// New-format branch key assigned to multiball bot
+	// New-format branch key assigned to facet bot
 	sessionKey := "clutch/c12345/1709590000/b1709596800"
 	acquired, _ := mgr.Pool("clutch").Acquire()
 	acquired.SetSessionKey(sessionKey)
 
 	bot := mgr.BotForSessionOrPrimary(sessionKey, "clutch")
 	if bot != acquired {
-		t.Errorf("BotForSessionOrPrimary should find multiball bot for new-format branch key")
+		t.Errorf("BotForSessionOrPrimary should find facet bot for new-format branch key")
 	}
 }
 
@@ -566,8 +566,8 @@ func TestBotForSessionOrPrimary_NewFormatChatKey(t *testing.T) {
 	primary, _ := testBot(nil, command.NewRegistry())
 	mgr.AddPrimary("clutch", primary)
 
-	mb := testSecondaryBot("mb1")
-	mgr.AddMultiball("clutch", mb)
+	fb := testSecondaryBot("mb1")
+	mgr.AddFacet("clutch", fb)
 
 	bot := mgr.BotForSessionOrPrimary("clutch/c12345/1709590000", "clutch")
 	if bot != primary {

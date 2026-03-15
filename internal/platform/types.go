@@ -124,14 +124,14 @@ type Connection interface {
 	SendNotification(text string)
 }
 
-// ConnectionManager manages platform connection instances and multiball pools.
+// ConnectionManager manages platform connection instances and facet pools.
 type ConnectionManager interface {
 	Primary(agentID string) Connection
 	AllForAgent(agentID string) []Connection
 	ForSession(sessionKey string) Connection
 	ForSessionOrPrimary(sessionKey, agentID string) Connection
-	AcquireMultiball(agentID string) (Connection, bool)
-	HasMultiball(agentID string) bool
+	AcquireFacet(agentID string) (Connection, bool)
+	HasFacet(agentID string) bool
 	StartAll(ctx context.Context)
 	Wait()
 }
@@ -142,10 +142,10 @@ type SetupResult struct {
 	// Returns "" if no message has been received yet.
 	DefaultSessionKeyFn func() string
 
-	// ConfigureMultiballConn applies platform-specific configuration to
-	// a newly acquired multiball connection (handler, commands, display settings).
-	// May be nil if multiball is not supported.
-	ConfigureMultiballConn func(Connection)
+	// ConfigureFacetConn applies platform-specific configuration to
+	// a newly acquired facet connection (handler, commands, display settings).
+	// May be nil if facet is not supported.
+	ConfigureFacetConn func(Connection)
 
 	// DisplayDefaultsFn returns the platform's resolved display defaults.
 	// Called lazily at query time by the /display command.
@@ -189,8 +189,8 @@ type MessagingProvider interface {
 	Init(deps ProviderDeps) error
 	ConnectionManager() ConnectionManager
 	SetupAgentConnection(params AgentConnectionParams) *SetupResult
-	SetupSharedMultiball(params SharedMultiballParams)
-	RestoreMultiballSessions(params RestoreParams)
+	SetupSharedFacet(params SharedFacetParams)
+	RestoreFacetSessions(params RestoreParams)
 	SetLifecycleCallback(agentID string, event LifecycleEvent, fn func())
 	ToolDetailStore() ToolDetailStore // may return nil
 	AgentPreFlight(agentID string) []string // warnings for /agents new wizard
@@ -244,9 +244,9 @@ type AgentConnectionParams struct {
 	DisplayOverrideFn func(sessionKey string) DisplaySettings
 }
 
-// SharedMultiballParams holds parameters for setting up shared multiball bots.
+// SharedFacetParams holds parameters for setting up shared facet bots.
 // SessionTTL is resolved by each provider from its own config section.
-type SharedMultiballParams struct {
+type SharedFacetParams struct {
 	FirstHandler     MessageHandler
 	FirstCommands    any // *command.Registry
 	FirstAgentConfig config.AgentConfig
@@ -254,11 +254,11 @@ type SharedMultiballParams struct {
 	ReclaimHook      func(sessionKey string)
 }
 
-// RestoreParams holds parameters for restoring multiball sessions after restart.
+// RestoreParams holds parameters for restoring facet sessions after restart.
 type RestoreParams struct {
 	AgentOrder []string
 	// Resolver returns the handler, commands, command context, and config for a given agent.
-	// Used to reconfigure multiball bots with the correct agent after restart.
+	// Used to reconfigure facet bots with the correct agent after restart.
 	// handler: platform.MessageHandler, commands: any (*command.Registry),
 	// commandContext: any (command.CommandContext), config: config.AgentConfig
 	Resolver func(agentID string) (handler MessageHandler, commands any, commandContext any, agentCfg config.AgentConfig, ok bool)
@@ -406,21 +406,21 @@ func (m *Messaging) SetupAgentConnection(params AgentConnectionParams) []*SetupR
 	return results
 }
 
-func (m *Messaging) SetupSharedMultiball(params SharedMultiballParams) {
+func (m *Messaging) SetupSharedFacet(params SharedFacetParams) {
 	if m == nil {
 		return
 	}
 	for _, p := range m.providers {
-		p.SetupSharedMultiball(params)
+		p.SetupSharedFacet(params)
 	}
 }
 
-func (m *Messaging) RestoreMultiballSessions(params RestoreParams) {
+func (m *Messaging) RestoreFacetSessions(params RestoreParams) {
 	if m == nil {
 		return
 	}
 	for _, p := range m.providers {
-		p.RestoreMultiballSessions(params)
+		p.RestoreFacetSessions(params)
 	}
 }
 
@@ -537,18 +537,18 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 	return a.Primary(agentID)
 }
 
-func (a *aggregatingConnMgr) AcquireMultiball(agentID string) (Connection, bool) {
+func (a *aggregatingConnMgr) AcquireFacet(agentID string) (Connection, bool) {
 	for _, m := range a.managers {
-		if c, ok := m.AcquireMultiball(agentID); ok {
+		if c, ok := m.AcquireFacet(agentID); ok {
 			return c, true
 		}
 	}
 	return nil, false
 }
 
-func (a *aggregatingConnMgr) HasMultiball(agentID string) bool {
+func (a *aggregatingConnMgr) HasFacet(agentID string) bool {
 	for _, m := range a.managers {
-		if m.HasMultiball(agentID) {
+		if m.HasFacet(agentID) {
 			return true
 		}
 	}
@@ -575,7 +575,7 @@ func (n *noopConnMgr) Primary(string) Connection                          { retu
 func (n *noopConnMgr) AllForAgent(string) []Connection                    { return nil }
 func (n *noopConnMgr) ForSession(string) Connection                       { return nil }
 func (n *noopConnMgr) ForSessionOrPrimary(string, string) Connection      { return nil }
-func (n *noopConnMgr) AcquireMultiball(string) (Connection, bool)         { return nil, false }
-func (n *noopConnMgr) HasMultiball(string) bool                           { return false }
+func (n *noopConnMgr) AcquireFacet(string) (Connection, bool)         { return nil, false }
+func (n *noopConnMgr) HasFacet(string) bool                           { return false }
 func (n *noopConnMgr) StartAll(context.Context)                           {}
 func (n *noopConnMgr) Wait()                                              {}

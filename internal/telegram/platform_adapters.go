@@ -50,8 +50,8 @@ func (a *ConnectionManagerAdapter) ForSessionOrPrimary(sessionKey, agentID strin
 	return b
 }
 
-func (a *ConnectionManagerAdapter) AcquireMultiball(agentID string) (platform.Connection, bool) {
-	b, ok := a.BotManager.AcquireMultiball(agentID)
+func (a *ConnectionManagerAdapter) AcquireFacet(agentID string) (platform.Connection, bool) {
+	b, ok := a.BotManager.AcquireFacet(agentID)
 	if b == nil {
 		return nil, ok
 	}
@@ -66,6 +66,6 @@ func (a *ConnectionManagerAdapter) Wait() {
 	a.BotManager.Wait()
 }
 
-func (a *ConnectionManagerAdapter) HasMultiball(agentID string) bool {
-	return a.BotManager.HasMultiball(agentID)
+func (a *ConnectionManagerAdapter) HasFacet(agentID string) bool {
+	return a.BotManager.HasFacet(agentID)
 }

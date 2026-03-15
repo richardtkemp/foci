@@ -19,7 +19,7 @@ type botEntry struct {
 	lastUsed time.Time
 }
 
-// Pool manages a set of secondary Telegram bots for multiball sessions.
+// Pool manages a set of secondary Telegram bots for facet sessions.
 type Pool struct {
 	bots        []*botEntry
 	mu          sync.Mutex
@@ -33,7 +33,7 @@ func NewPool() *Pool {
 	return &Pool{}
 }
 
-// SetSessionTTL configures TTL-based auto-reclaim of stale multiball sessions.
+// SetSessionTTL configures TTL-based auto-reclaim of stale facet sessions.
 // If a bot's session has had no activity for longer than ttl, it is auto-released
 // during the next Acquire call. Zero disables auto-reclaim.
 func (p *Pool) SetSessionTTL(ttl time.Duration, sessions SessionActivityChecker) {
@@ -114,7 +114,7 @@ func (p *Pool) collectStaleLocked() []reclaimTarget {
 
 		lastStr := p.sessions.LastActivity(sk)
 		if lastStr == "n/a" {
-			log.Infof("telegram", "reclaiming multiball bot (session %s not found)", sk)
+			log.Infof("telegram", "reclaiming facet bot (session %s not found)", sk)
 			targets = append(targets, reclaimTarget{bot: e.bot, key: sk})
 			continue
 		}
@@ -125,7 +125,7 @@ func (p *Pool) collectStaleLocked() []reclaimTarget {
 		}
 
 		if now.Sub(lastTime) > p.sessionTTL {
-			log.Infof("telegram", "reclaiming multiball bot (session %s idle for %v, TTL %v)",
+			log.Infof("telegram", "reclaiming facet bot (session %s idle for %v, TTL %v)",
 				sk, now.Sub(lastTime).Round(time.Second), p.sessionTTL)
 			targets = append(targets, reclaimTarget{bot: e.bot, key: sk})
 		}

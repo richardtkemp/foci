@@ -57,7 +57,7 @@ func TestResolveBotToken(t *testing.T) {
 func TestMultiAgentSessionKeys(t *testing.T) {
 	// Proves that a multi-agent config produces distinct session key namespaces per
 	// agent, and that bot token resolution maps each agent's telegram_bot to a unique
-	// secret, including multiball bots resolving independently.
+	// secret, including facet bots resolving independently.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -68,7 +68,7 @@ workspace = "/tmp/ws1"
 
 [agents.platforms.telegram]
 bot = "primary"
-multiball_bots = ["secondary"]
+facet_bots = ["secondary"]
 
 [[agents]]
 id = "scout"
@@ -91,7 +91,7 @@ allowed_users = ["111"]
 	for _, acfg := range cfg.Agents {
 		mainKey := acfg.ID + "/i0/0"
 		wakeKey := acfg.ID + "/icron-wake-12345/0"
-		mbKey := acfg.ID + "/imb-12345/0"
+		facetKey := acfg.ID + "/if-12345/0"
 
 		// Ensure agent IDs produce distinct namespaces
 		if acfg.ID == "clutch" {
@@ -101,15 +101,15 @@ allowed_users = ["111"]
 			if wakeKey != "clutch/icron-wake-12345/0" {
 				t.Errorf("clutch wakeKey = %q", wakeKey)
 			}
-			if mbKey != "clutch/imb-12345/0" {
-				t.Errorf("clutch mbKey = %q", mbKey)
+			if facetKey != "clutch/if-12345/0" {
+				t.Errorf("clutch facetKey = %q", facetKey)
 			}
 			tg := acfg.GetTelegramPlatform()
 			if tg == nil {
 				t.Fatal("clutch: GetTelegramPlatform() = nil")
 			}
-			if len(tg.MultiballBots) != 1 || tg.MultiballBots[0] != "secondary" {
-				t.Errorf("clutch MultiballBots = %v, want [secondary]", tg.MultiballBots)
+			if len(tg.FacetBots) != 1 || tg.FacetBots[0] != "secondary" {
+				t.Errorf("clutch FacetBots = %v, want [secondary]", tg.FacetBots)
 			}
 		}
 		if acfg.ID == "scout" {
@@ -117,8 +117,8 @@ allowed_users = ["111"]
 				t.Errorf("scout mainKey = %q", mainKey)
 			}
 			tg := acfg.GetTelegramPlatform()
-			if tg != nil && len(tg.MultiballBots) != 0 {
-				t.Errorf("scout MultiballBots = %v, want empty", tg.MultiballBots)
+			if tg != nil && len(tg.FacetBots) != 0 {
+				t.Errorf("scout FacetBots = %v, want empty", tg.FacetBots)
 			}
 		}
 	}
@@ -146,10 +146,10 @@ allowed_users = ["111"]
 		t.Errorf("scout token = %q, want token-scout", scoutToken)
 	}
 
-	// Multiball bot should resolve differently from primary
-	mbToken := ResolveBotToken(tg0.MultiballBots[0], "", secrets)
-	if mbToken != "token-secondary" {
-		t.Errorf("multiball token = %q, want token-secondary", mbToken)
+	// Facet bot should resolve differently from primary
+	facetToken := ResolveBotToken(tg0.FacetBots[0], "", secrets)
+	if facetToken != "token-secondary" {
+		t.Errorf("facet token = %q, want token-secondary", facetToken)
 	}
 }
 

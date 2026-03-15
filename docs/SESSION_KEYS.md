@@ -52,7 +52,7 @@ All derived sessions (branches, spawns) are children of a parent session.
 
 Inherits parent's message history. Used for:
 - Clone spawns
-- Multiball (forked interactive sessions)
+- Facet (forked interactive sessions)
 - Session-end memory
 - Cron/keepalive tasks
 

@@ -7,7 +7,7 @@ Foci ships embedded prompt files in the binary. These provide sensible defaults 
 | File | Accessor | Used by |
 |------|----------|---------|
 | `prompts/branch-orientation-headless.md` | `BranchOrientationHeadless()` | Headless branch sessions (cron, spawn, keepalive) |
-| `prompts/branch-orientation-multiball.md` | `BranchOrientationMultiball()` | User-attached multiball branch sessions |
+| `prompts/branch-orientation-facet.md` | `BranchOrientationFacet()` | User-attached facet branch sessions |
 | `prompts/compaction-summary.md` | `CompactionSummary()` | Compaction summary generation |
 | `prompts/compaction-handoff.md` | `CompactionHandoff()` | Post-compaction handoff message |
 | `prompts/keepalive.md` | `Keepalive()` | Cache keepalive pings |

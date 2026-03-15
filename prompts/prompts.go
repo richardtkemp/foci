@@ -28,9 +28,9 @@ func read(name string) string {
 // (heartbeat, cron, spawn). Template vars: {branch_key}, {parent_key}, {branch_type}.
 func BranchOrientationHeadless() string { return read("branch-orientation-headless.md") }
 
-// BranchOrientationMultiball returns the default orientation for user-attached
-// multiball branches. Template vars: {branch_key}, {parent_key}, {branch_type}.
-func BranchOrientationMultiball() string { return read("branch-orientation-multiball.md") }
+// BranchOrientationFacet returns the default orientation for user-attached
+// facet branches. Template vars: {branch_key}, {parent_key}, {branch_type}.
+func BranchOrientationFacet() string { return read("branch-orientation-facet.md") }
 
 // CompactionSummary returns the default compaction summary prompt.
 func CompactionSummary() string { return read("compaction-summary.md") }
@@ -99,8 +99,8 @@ func ResolvePrompt(path, filename, embeddedDefault string, searchDirs ...string)
 func BuildBranchOrientation(promptPath, branchKey, parentKey, branchType string, directChat bool, searchDirs []string) string {
 	var filename, embedded string
 	if directChat {
-		filename = "branch-orientation-multiball.md"
-		embedded = BranchOrientationMultiball()
+		filename = "branch-orientation-facet.md"
+		embedded = BranchOrientationFacet()
 	} else {
 		filename = "branch-orientation-headless.md"
 		embedded = BranchOrientationHeadless()

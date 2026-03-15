@@ -9,8 +9,8 @@ import (
 
 type BotManager struct {
 	primary map[string]*Bot  // agentID → primary bot
-	pools   map[string]*Pool // agentID → per-agent multiball pool
-	shared  *Pool            // shared multiball pool (fallback for any agent)
+	pools   map[string]*Pool // agentID → per-agent facet pool
+	shared  *Pool            // shared facet pool (fallback for any agent)
 	all     []*Bot           // all bots for iteration
 	mu      sync.RWMutex
 	wg      sync.WaitGroup // tracks running bot goroutines for graceful shutdown
@@ -32,9 +32,9 @@ func (m *BotManager) AddPrimary(agentID string, bot *Bot) {
 	m.all = append(m.all, bot)
 }
 
-// AddMultiball registers a multiball bot for an agent.
+// AddFacet registers a facet bot for an agent.
 // Creates the pool for the agent if it doesn't exist.
-func (m *BotManager) AddMultiball(agentID string, bot *Bot) {
+func (m *BotManager) AddFacet(agentID string, bot *Bot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	pool, ok := m.pools[agentID]
@@ -54,16 +54,16 @@ func (m *BotManager) PrimaryBot(agentID string) *Bot {
 	return m.primary[agentID]
 }
 
-// Pool returns the per-agent multiball pool for an agent, or nil if not configured.
+// Pool returns the per-agent facet pool for an agent, or nil if not configured.
 func (m *BotManager) Pool(agentID string) *Pool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.pools[agentID]
 }
 
-// AddSharedMultiball registers a bot in the shared multiball pool.
+// AddSharedFacet registers a bot in the shared facet pool.
 // Creates the shared pool if it doesn't exist.
-func (m *BotManager) AddSharedMultiball(bot *Bot) {
+func (m *BotManager) AddSharedFacet(bot *Bot) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.shared == nil {
@@ -74,7 +74,7 @@ func (m *BotManager) AddSharedMultiball(bot *Bot) {
 	m.all = append(m.all, bot)
 }
 
-// SharedPool returns the shared multiball pool, or nil if not configured.
+// SharedPool returns the shared facet pool, or nil if not configured.
 func (m *BotManager) SharedPool() *Pool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -113,20 +113,20 @@ func findInPool(pool *Pool, sessionKey string) *Bot {
 	return found
 }
 
-// BotForSessionOrPrimary returns the multiball bot owning sessionKey if any
+// BotForSessionOrPrimary returns the facet bot owning sessionKey if any
 // secondary bot holds it, otherwise the agent's primary bot. Returns nil if
 // neither is available.
 func (m *BotManager) BotForSessionOrPrimary(sessionKey, agentID string) *Bot {
-	if mb := m.BotForSession(sessionKey); mb != nil {
-		return mb
+	if fb := m.BotForSession(sessionKey); fb != nil {
+		return fb
 	}
 	return m.PrimaryBot(agentID)
 }
 
-// AcquireMultiball tries to acquire a multiball bot for the given agent.
+// AcquireFacet tries to acquire a facet bot for the given agent.
 // Priority: per-agent pool first, then shared pool as fallback.
 // Returns the bot and true on success, or nil and false if no bots available.
-func (m *BotManager) AcquireMultiball(agentID string) (*Bot, bool) {
+func (m *BotManager) AcquireFacet(agentID string) (*Bot, bool) {
 	m.mu.RLock()
 	pool := m.pools[agentID]
 	shared := m.shared
@@ -149,9 +149,9 @@ func (m *BotManager) AcquireMultiball(agentID string) (*Bot, bool) {
 	return nil, false
 }
 
-// HasMultiball returns true if the agent has any multiball bots available
+// HasFacet returns true if the agent has any facet bots available
 // (either per-agent or shared).
-func (m *BotManager) HasMultiball(agentID string) bool {
+func (m *BotManager) HasFacet(agentID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if pool, ok := m.pools[agentID]; ok && pool.Size() > 0 {

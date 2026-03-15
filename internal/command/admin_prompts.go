@@ -118,9 +118,9 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		resolvePromptInfo("compaction_summary",
 			resolveString(acfg.CompactionSummaryPrompt, cfg.Sessions.CompactionSummaryPrompt),
 			"compaction-summary.md", prompts.CompactionSummary(), dirs),
-		resolvePromptInfo("branch_orient_multiball",
-			prompts.ResolveOrientPath(acfg.BranchOrientationMultiballPrompt, cfg.Sessions.BranchOrientationMultiballPrompt),
-			"branch-orientation-multiball.md", prompts.BranchOrientationMultiball(), dirs),
+		resolvePromptInfo("branch_orient_facet",
+			prompts.ResolveOrientPath(acfg.BranchOrientationFacetPrompt, cfg.Sessions.BranchOrientationFacetPrompt),
+			"branch-orientation-facet.md", prompts.BranchOrientationFacet(), dirs),
 		resolvePromptInfo("branch_orient_headless",
 			prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt),
 			"branch-orientation-headless.md", prompts.BranchOrientationHeadless(), dirs),
@@ -152,7 +152,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	embedded := map[string]string{
 		"compaction-summary.md":           prompts.CompactionSummary(),
 		"compaction-handoff.md":           prompts.CompactionHandoff(),
-		"branch-orientation-multiball.md": prompts.BranchOrientationMultiball(),
+		"branch-orientation-facet.md": prompts.BranchOrientationFacet(),
 		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless(),
 		"keepalive.md":                    prompts.Keepalive(),
 		"background.md":                   prompts.Background(),
@@ -166,7 +166,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	}
 	fileDefs := []promptDef{
 		{"compaction_summary", resolveString(acfg.CompactionSummaryPrompt, cfg.Sessions.CompactionSummaryPrompt), "compaction-summary.md", prompts.CompactionSummary()},
-		{"branch_orient_multiball", prompts.ResolveOrientPath(acfg.BranchOrientationMultiballPrompt, cfg.Sessions.BranchOrientationMultiballPrompt), "branch-orientation-multiball.md", prompts.BranchOrientationMultiball()},
+		{"branch_orient_facet", prompts.ResolveOrientPath(acfg.BranchOrientationFacetPrompt, cfg.Sessions.BranchOrientationFacetPrompt), "branch-orientation-facet.md", prompts.BranchOrientationFacet()},
 		{"branch_orient_headless", prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
 		{"keepalive", acfg.Keepalive.Prompt, "keepalive.md", prompts.Keepalive()},
 		{"background", acfg.Background.Prompt, "background.md", prompts.Background()},

@@ -86,14 +86,14 @@ func RepeatCommand() *Command {
 	}
 }
 
-// MultiballCommand returns a /multiball command that forks the current session to a secondary bot.
-func MultiballCommand() *Command {
+// FacetCommand returns a /facet command that forks the current session to a secondary bot.
+func FacetCommand() *Command {
 	return &Command{
-		Name:        "multiball",
+		Name:        "facet",
 		Description: "Fork session to a secondary bot",
 		Category:    "session",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			text, err := forkMultiball(ctx, req, cc)
+			text, err := forkFacet(ctx, req, cc)
 			if err != nil {
 				return Response{}, err
 			}

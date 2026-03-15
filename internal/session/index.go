@@ -16,7 +16,7 @@ type SessionType string
 
 const (
 	SessionTypeChat       SessionType = "chat"
-	SessionTypeMultiball  SessionType = "multiball"
+	SessionTypeFacet  SessionType = "facet"
 	SessionTypeSpawn      SessionType = "spawn"
 	SessionTypeCron       SessionType = "cron"
 	SessionTypeBranch     SessionType = "branch"

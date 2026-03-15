@@ -111,8 +111,8 @@ Reload workspace files (system prompt) and skills from disk. **CLI-only**. Confi
 ### `/restart`
 Restart the foci service. Tries `systemctl restart foci`; falls back to SIGTERM (relies on process supervisor or Docker restart policy).
 
-### `/multiball`
-Fork the current session to a secondary Telegram bot for parallel conversation. Hidden alias: `/mb`. See [MULTIBALL.md](MULTIBALL.md).
+### `/facet`
+Fork the current session to a secondary Telegram bot for parallel conversation. See [FACET.md](FACET.md).
 
 ### `/secrets <subcommand>`
 Manage secrets. **CLI-only**.
@@ -167,7 +167,7 @@ List and manage per-chat sessions.
 - `/sessions list` — all chat sessions for this agent (chat ID, user, message count, last active, current/default flags)
 - `/sessions default <chat_id>` — set the default session (used by keepalive, cron)
 - `/sessions info` — details for the current chat's session
-- `/sessions index [filters...]` — query the session metadata index across all agents. Filters: type (`chat`/`spawn`/`cron`/`multiball`/`branch`), status (`active`/`compacted`/`archived`/`cleared`/`all`), duration (e.g. `3d`, `4h`), count (e.g. `10`)
+- `/sessions index [filters...]` — query the session metadata index across all agents. Filters: type (`chat`/`spawn`/`cron`/`facet`/`branch`), status (`active`/`compacted`/`archived`/`cleared`/`all`), duration (e.g. `3d`, `4h`), count (e.g. `10`)
 
 ### `/agents [new]`
 List active agent sessions.
@@ -212,4 +212,4 @@ Skills with `command` and `script` in their frontmatter are registered as slash 
 These are handled directly by the Telegram bot layer, not the command registry:
 
 - **`/stop`** — cancel the current agent turn (works on both primary and secondary bots)
-- **`/done`** — detach a multiball secondary bot and return it to the pool
+- **`/done`** — detach a facet secondary bot and return it to the pool

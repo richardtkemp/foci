@@ -215,9 +215,9 @@ func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 	// the configured session key override.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.isSecondary = true
-	b.SetSessionKey("agent:test:multiball:mb-123")
+	b.SetSessionKey("agent:test:facet:f-123")
 
-	if sk := b.SessionKey(); sk != "agent:test:multiball:mb-123" {
+	if sk := b.SessionKey(); sk != "agent:test:facet:f-123" {
 		t.Errorf("expected override key, got %q", sk)
 	}
 }

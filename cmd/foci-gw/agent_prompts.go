@@ -19,7 +19,7 @@ func seedDefaultPrompts(dir string) {
 		"compaction-summary.md":           prompts.CompactionSummary,
 		"compaction-handoff.md":           prompts.CompactionHandoff,
 		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless,
-		"branch-orientation-multiball.md": prompts.BranchOrientationMultiball,
+		"branch-orientation-facet.md": prompts.BranchOrientationFacet,
 		"keepalive-cron.md":              prompts.KeepaliveCron,
 		"weekly-character-review.md":     prompts.WeeklyCharacterReview,
 	}

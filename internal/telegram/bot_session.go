@@ -8,7 +8,7 @@ import (
 
 // SessionKey returns the current session key (thread-safe).
 // For primary bots, this returns the session key for the default chat.
-// For secondary bots, this returns the override session key (set by multiball).
+// For secondary bots, this returns the override session key (set by facet).
 func (b *Bot) SessionKey() string {
 	b.sessionMu.RLock()
 	defer b.sessionMu.RUnlock()
@@ -95,7 +95,7 @@ func (b *Bot) UpdateChatSessionKey(chatID int64, newKey string) {
 	}
 }
 
-// SetSessionKey changes the override session key (used for multiball fork/done).
+// SetSessionKey changes the override session key (used for facet fork/done).
 // If OnSessionKeyChange is set, fires it outside the lock with the bot's username and new key.
 func (b *Bot) SetSessionKey(key string) {
 	b.sessionMu.Lock()
@@ -183,7 +183,7 @@ func (b *Bot) ChatID() int64 {
 	return b.chatID
 }
 
-// SetChatID sets the chat ID (used for multiball notification delivery).
+// SetChatID sets the chat ID (used for facet notification delivery).
 func (b *Bot) SetChatID(id int64) {
 	b.chatMu.Lock()
 	b.chatID = id

@@ -71,9 +71,9 @@ type Bot struct {
 	lastMsgStore       *command.LastMessageStore // for // repeat command
 	allowedUsers       map[string]bool
 	agentID            string                            // agent ID for session key derivation
-	sessionKey         string                            // override session key (multiball secondary bots only)
+	sessionKey         string                            // override session key (facet secondary bots only)
 	sessionMu          sync.RWMutex                      // protects sessionKey (mutable for secondary bots)
-	isSecondary        bool                              // true for secondary bots (multiball)
+	isSecondary        bool                              // true for secondary bots (facet)
 	pool               *Pool                             // back-reference to pool (secondary bots only)
 	OnSessionKeyChange func(username, sessionKey string) // fires after SetSessionKey (fork/release)
 	OnUserMessage      func()                            // fires on each inbound user message (for keepalive interaction tracking)
@@ -198,7 +198,7 @@ func (b *Bot) logger() *log.ComponentLogger {
 
 // NewBot creates a new Telegram bot.
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
-// For secondary (multiball) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
+// For secondary (facet) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
 func NewBot(token string, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) (*Bot, error) {
 	// Use a transport with enough connections for concurrent API calls.
 	// The default http.Transport has MaxIdleConnsPerHost=2 which is too low:

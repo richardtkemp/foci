@@ -34,7 +34,7 @@ type AgentSetupParams struct {
 	TTSMap          map[string]voice.TTS
 	Ctx             context.Context //nolint:containedctx
 
-	// ReclaimHook is called when a multiball session is reclaimed.
+	// ReclaimHook is called when a facet session is reclaimed.
 	ReclaimHook func(sessionKey string)
 
 	// DisplayOverrideFn returns per-session display overrides.
@@ -67,7 +67,7 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	}
 	return &platform.SetupResult{
 		DefaultSessionKeyFn: bot.DefaultSessionKey,
-		ConfigureMultiballConn: func(conn platform.Connection) {
+		ConfigureFacetConn: func(conn platform.Connection) {
 			tBot, ok := conn.(*Bot)
 			if !ok {
 				return
@@ -174,23 +174,23 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	mgr.AddPrimary(acfg.ID, primaryBot)
 
-	// Per-agent multiball bots
-	var multiballBots []string
-	if len(tg.MultiballBots) > 0 {
-		multiballBots = tg.MultiballBots
+	// Per-agent facet bots
+	var facetBots []string
+	if len(tg.FacetBots) > 0 {
+		facetBots = tg.FacetBots
 	}
-	for _, mbName := range multiballBots {
-		mbToken := config.ResolveBotToken(mbName, "", p.SecretStore)
-		if mbToken == "" {
-			log.Errorf("telegram", "agent %q: multiball bot %q: token not found", acfg.ID, mbName)
+	for _, facetName := range facetBots {
+		facetToken := config.ResolveBotToken(facetName, "", p.SecretStore)
+		if facetToken == "" {
+			log.Errorf("telegram", "agent %q: facet bot %q: token not found", acfg.ID, facetName)
 			continue
 		}
-		mbBot, err := NewBot(mbToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "")
+		facetBot, err := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "")
 		if err != nil {
-			log.Errorf("telegram", "agent %q: create multiball bot %q: %v", acfg.ID, mbName, err)
+			log.Errorf("telegram", "agent %q: create facet bot %q: %v", acfg.ID, facetName, err)
 			continue
 		}
-		ConfigureMultiballBot(mbBot, MultiballBotConfig{
+		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, acfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, acfg.STTReplacements)),
 			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, acfg.TTS, acfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, acfg.TTSReplacements)),
 			StopAliases:     cfg.Telegram.StopAliases,
@@ -200,18 +200,18 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			ToolDetailStore: p.ToolDetailStore,
 			StateStore:      p.StateStore,
 		})
-		mgr.AddMultiball(acfg.ID, mbBot)
+		mgr.AddFacet(acfg.ID, facetBot)
 	}
 	if pool := mgr.Pool(acfg.ID); pool != nil && pool.Size() > 0 {
-		log.Infof("telegram", "agent %q: %d per-agent multiball bots ready", acfg.ID, pool.Size())
+		log.Infof("telegram", "agent %q: %d per-agent facet bots ready", acfg.ID, pool.Size())
 	}
 
-	// Configure session TTL for per-agent multiball pool
+	// Configure session TTL for per-agent facet pool
 	if pool := mgr.Pool(acfg.ID); pool != nil {
-		ttl, _ := time.ParseDuration(cfg.Telegram.MultiballSessionTTL)
+		ttl, _ := time.ParseDuration(cfg.Telegram.FacetSessionTTL)
 		if ttl > 0 {
 			pool.SetSessionTTL(ttl, p.Sessions)
-			log.Infof("telegram", "agent %q: multiball session TTL = %v", acfg.ID, ttl)
+			log.Infof("telegram", "agent %q: facet session TTL = %v", acfg.ID, ttl)
 		}
 		if p.ReclaimHook != nil {
 			pool.ReclaimHook = p.ReclaimHook
@@ -219,8 +219,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 }
 
-// MultiballBotConfig holds common settings applied to every multiball bot.
-type MultiballBotConfig struct {
+// FacetBotConfig holds common settings applied to every facet bot.
+type FacetBotConfig struct {
 	STTProvider     voice.STT
 	TTSProvider     voice.TTS
 	StopAliases     []string
@@ -231,8 +231,8 @@ type MultiballBotConfig struct {
 	StateStore      *state.Store
 }
 
-// ConfigureMultiballBot applies the standard multiball bot settings.
-func ConfigureMultiballBot(bot *Bot, mc MultiballBotConfig) {
+// ConfigureFacetBot applies the standard facet bot settings.
+func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.STTProvider != nil {
 		bot.SetTranscriber(mc.STTProvider)
 	}
@@ -247,7 +247,7 @@ func ConfigureMultiballBot(bot *Bot, mc MultiballBotConfig) {
 	if mc.StateStore != nil {
 		ss := mc.StateStore
 		bot.OnSessionKeyChange = func(username, sessionKey string) {
-			key := "multiball:" + username
+			key := "facet:" + username
 			if sessionKey == "" {
 				_ = ss.Delete(key)
 			} else {

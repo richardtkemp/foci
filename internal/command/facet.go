@@ -8,18 +8,18 @@ import (
 	"foci/prompts"
 )
 
-// forkMultiball forks the current session to a secondary multiball connection.
-func forkMultiball(_ context.Context, req Request, cc CommandContext) (string, error) {
-	if cc.ConnMgr == nil || !cc.ConnMgr.HasMultiball(cc.AgentConfig.ID) {
-		return "", fmt.Errorf("no multiball bots configured")
+// forkFacet forks the current session to a secondary facet connection.
+func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error) {
+	if cc.ConnMgr == nil || !cc.ConnMgr.HasFacet(cc.AgentConfig.ID) {
+		return "", fmt.Errorf("no facet bots configured")
 	}
-	secConn, ok := cc.ConnMgr.AcquireMultiball(cc.AgentConfig.ID)
+	secConn, ok := cc.ConnMgr.AcquireFacet(cc.AgentConfig.ID)
 	if !ok {
-		return "", fmt.Errorf("all multiball bots are busy")
+		return "", fmt.Errorf("all facet bots are busy")
 	}
 
-	if cc.ConfigureMultiball != nil {
-		cc.ConfigureMultiball(secConn)
+	if cc.ConfigureFacet != nil {
+		cc.ConfigureFacet(secConn)
 	}
 
 	parentKey := cc.DefaultSessionKey()
@@ -38,13 +38,13 @@ func forkMultiball(_ context.Context, req Request, cc CommandContext) (string, e
 	branchKey, err := session.BranchFromSession(parentKey)
 	if err != nil {
 		secConn.SetSessionKey("")
-		return "", fmt.Errorf("create multiball key: %w", err)
+		return "", fmt.Errorf("create facet key: %w", err)
 	}
 
 	orientPath := prompts.ResolveOrientPath(
-		cc.AgentConfig.BranchOrientationMultiballPrompt, cc.Config.Sessions.BranchOrientationMultiballPrompt,
+		cc.AgentConfig.BranchOrientationFacetPrompt, cc.Config.Sessions.BranchOrientationFacetPrompt,
 	)
-	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "multiball", true, cc.PromptSearchDirs)
+	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "facet", true, cc.PromptSearchDirs)
 	if err := cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		OrientationMessage: orientText,
 	}); err != nil {
@@ -52,8 +52,8 @@ func forkMultiball(_ context.Context, req Request, cc CommandContext) (string, e
 		return "", fmt.Errorf("create branch: %w", err)
 	}
 
-	// Multiball sessions default to no_compact=true (short-lived, shouldn't trigger compaction).
-	if cc.AgentConfig.MultiballNoCompact == nil || *cc.AgentConfig.MultiballNoCompact {
+	// Facet sessions default to no_compact=true (short-lived, shouldn't trigger compaction).
+	if cc.AgentConfig.FacetNoCompact == nil || *cc.AgentConfig.FacetNoCompact {
 		cc.Agent.SetSessionNoCompact(branchKey, true)
 	}
 
