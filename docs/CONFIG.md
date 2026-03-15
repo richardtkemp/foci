@@ -67,7 +67,7 @@ Google Gemini API configuration.
 | `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
 | `thinking` | string | `"adaptive"` | Thinking mode for Gemini models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
 
-Requires `gemini.api_key` in `secrets.toml`. Use `model = "gemini:gemini-2.5-flash"` in `[defaults]` or per-agent to use.
+Requires `gemini.api_key` in `secrets.toml`. Use `model = "gemini/gemini-2.5-flash"` in `[defaults]` or per-agent to use.
 
 ### `[openai]`
 
@@ -78,7 +78,7 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 | `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
 | `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
 
-Requires `openai.api_key` in `secrets.toml`. Use `model = "openai:gpt-4o"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
+Requires `openai.api_key` in `secrets.toml`. Use `model = "openai/gpt-4o"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
 ### `[cache]`
 
@@ -383,28 +383,28 @@ SQLite database settings.
 
 Model aliases and related configuration.
 
-The `aliases` map allows shorthand names to be resolved to full `endpoint:model` identifiers in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
+The `aliases` map allows shorthand names to be resolved to full `developer/model_id` identifiers in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `aliases` | map | see below | Shorthand → `endpoint:model_id` mapping. |
+| `aliases` | map | see below | Shorthand → `developer/model_id` mapping. |
 
 Default aliases (used when `[models]` section is not configured):
-- `opus` → `anthropic:claude-opus-4-6`
-- `sonnet` → `anthropic:claude-sonnet-4-6`
-- `haiku` → `anthropic:claude-haiku-4-5`
-- `flash` → `gemini:gemini-2.5-flash`
-- `pro` → `gemini:gemini-2.5-pro`
-- `gpt4o` → `openai:gpt-4o`
-- `o3` → `openai:o3`
-- `o4mini` → `openai:o4-mini`
+- `opus` → `anthropic/claude-opus-4-6`
+- `sonnet` → `anthropic/claude-sonnet-4-6`
+- `haiku` → `anthropic/claude-haiku-4-5`
+- `flash` → `gemini/gemini-2.5-flash`
+- `pro` → `gemini/gemini-2.5-pro`
+- `gpt4o` → `openai/gpt-4o`
+- `o3` → `openai/o3`
+- `o4mini` → `openai/o4-mini`
 
 Example with custom model aliases:
 ```toml
 [models.aliases]
-opus = "anthropic:claude-opus-5-0"
-sonnet = "anthropic:claude-sonnet-5-0"
-local = "local:my-fine-tuned-model"
+opus = "anthropic/claude-opus-5-0"
+sonnet = "anthropic/claude-sonnet-5-0"
+local = "local/my-fine-tuned-model"
 ```
 
 ### `[endpoints]`
@@ -445,7 +445,7 @@ url = "http://localhost:8080/v1"
 api_key = "local.api_key"
 ```
 
-Then use it: `model = "local:my-fine-tuned-model"`.
+Then use it: `model = "local/my-fine-tuned-model"`.
 
 Clients are lazy-initialized on first use — endpoints that are never referenced don't create connections.
 
@@ -599,7 +599,7 @@ Fields that can be set globally and overridden per-agent in `[[agents]]`. Each f
 Set global defaults in `[defaults]`:
 ```toml
 [defaults]
-model = "anthropic:claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 max_tool_loops = 50
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
@@ -610,7 +610,7 @@ Override per-agent in `[[agents]]`:
 ```toml
 [[agents]]
 id = "research"
-model = "gemini:gemini-2.5-flash"
+model = "gemini/gemini-2.5-flash"
 max_tool_loops = 25
 effort = "high"
 ```
@@ -621,7 +621,7 @@ effort = "high"
 
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
-| `model` | string | `"anthropic:claude-haiku-4-5"` | `[llm]` | Model in `endpoint:model_id` format. The endpoint prefix selects which API endpoint to use (e.g. `"gemini:gemini-2.5-flash"`, `"openrouter:claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `:` are auto-migrated with an inferred endpoint. |
+| `model` | string | `"anthropic/claude-haiku-4-5"` | `[llm]` | Model in `developer/model_id` format. The developer prefix selects which API endpoint to use (e.g. `"gemini/gemini-2.5-flash"`, `"openrouter/claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `/` are auto-migrated with an inferred developer. |
 | `max_output_tokens` | int | `8192` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
@@ -1213,7 +1213,7 @@ Per-agent scoping applies to: exec `{{secret:NAME}}` templates, `http_request` s
 ```toml
 [agent]
 id = "main"
-model = "anthropic:claude-haiku-4-5"
+model = "anthropic/claude-haiku-4-5"
 workspace = "/home/foci/character"
 
 [telegram]
@@ -1245,7 +1245,7 @@ bot_token = "123456:ABC..."
 ```toml
 [agent]
 id = "main"
-model = "anthropic:claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/foci/character"
 system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "KEEPALIVE.md"]
 
