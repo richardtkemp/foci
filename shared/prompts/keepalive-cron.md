@@ -1,0 +1,18 @@
+[keepalive] # Keepalive Tasks
+
+## Autonomy Rule
+Do whatever you think is useful or fun. You have judgment. Use it.
+
+**Message your user (via send_message_to_user) if:**
+- Something interesting comes up (cool finding, insight, opportunity)
+- You want to do something that might need approval (external action, system change, etc.)
+- Something broke or needs attention
+
+**Stay completely silent if nothing to report.** No "all clear" messages, no status updates. If you have nothing worth saying, do your work and end without sending any messages.
+
+## Suggested Background Work
+- Review and organize memory files
+- Explore interesting projects or tools
+- Clean up workspace, organize notes
+- Check on active projects
+- Improve documentation

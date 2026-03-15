@@ -16,10 +16,8 @@ func TestProvisionDefaults(t *testing.T) {
 	// Set up defaults directory
 	defaultsDir := filepath.Join(tmpDir, "defaults")
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
-	os.MkdirAll(filepath.Join(defaultsDir, "prompts"), 0755)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("- **Name:** <!-- your name -->\n"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft content"), 0644)
-	os.WriteFile(filepath.Join(defaultsDir, "prompts", "KEEPALIVE.md"), []byte("keepalive"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "crontab.template"), []byte("0 4 * * * foci branch -a AGENT_NAME\n"), 0644)
 
 	homeDir := filepath.Join(tmpDir, "home")
@@ -48,12 +46,6 @@ func TestProvisionDefaults(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(result.Workspace, "character", "SOUL.md"))
 	if !strings.Contains(string(data), "**Name:** Test Agent") {
 		t.Errorf("SOUL.md not templated: %s", data)
-	}
-
-	// Check keepalive was copied
-	data, _ = os.ReadFile(filepath.Join(result.Workspace, "prompts", "KEEPALIVE.md"))
-	if string(data) != "keepalive" {
-		t.Errorf("KEEPALIVE.md = %q", data)
 	}
 
 	// Check config block

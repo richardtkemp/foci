@@ -12,7 +12,7 @@ import (
 // AgentNewDeps holds dependencies for the /agents new wizard.
 type AgentNewDeps struct {
 	ConfigPath   string // path to foci.toml
-	DefaultsDir  string // path to shared/defaults/
+	DefaultsDir  string // path to shared/
 	HomeDir      string // base dir for workspaces (e.g. /home/foci)
 	ListFn       func() []AgentInfo
 	PreFlightFn  func(agentID string) []string // platform pre-flight warnings

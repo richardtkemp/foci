@@ -720,7 +720,6 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_idle_pressure_max` | float | `0.15` | Maximum threshold reduction from idle pressure. With default base threshold of 0.8, this allows reduction to 0.65. Range: 0.0–1.0. |
 | `compaction_mana_refresh_threshold` | string | `"15m"` | Trigger special high-fidelity mana-refresh compaction when mana reset is this soon. Format: Go duration string. `"0"` disables. |
 | `compaction_mana_refresh_preserve` | int | unset | Messages to preserve during mana-refresh compaction. Unset (nil) preserves ALL messages (special high-fidelity mode). `0` uses normal preservation count. |
-| `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
 | `branch_orientation_prompt` | string | `""` | **Deprecated.** Sets both multiball and headless if the specific fields below are empty. |
 | `branch_orientation_multiball_prompt` | string | `""` | Path to prompt file for user-attached multiball branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-multiball.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |

@@ -13,10 +13,10 @@
 */30 * * * * foci branch --oneshot --if-active 30m -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log
 
 # Keepalive: autonomous check-in (every 45 min, only if inactive for 45m+)
-*/45 * * * * foci branch --oneshot --if-inactive 45m -a AGENT_NAME -mf WORKSPACE/prompts/KEEPALIVE.md 2>&1 >> HOMEDIR/logs/cron.log
+*/45 * * * * foci branch --oneshot --if-inactive 45m -a AGENT_NAME -mf HOMEDIR/shared/prompts/keepalive-cron.md 2>&1 >> HOMEDIR/logs/cron.log
 
 # Daily 04:00: review and curate MEMORY.md (only if active in last 24h)
-0 4 * * * foci branch --oneshot --if-active 24h -a AGENT_NAME -mf HOMEDIR/shared/prompts/daily-memory-review.md 2>&1 >> HOMEDIR/logs/cron.log
+0 4 * * * foci branch --oneshot --if-active 24h -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-consolidation.md 2>&1 >> HOMEDIR/logs/cron.log
 
 # Weekly Mon 02:40: character review
 40 2 * * 1 foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/weekly-character-review.md 2>&1 >> HOMEDIR/logs/cron.log

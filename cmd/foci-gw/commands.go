@@ -90,7 +90,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	agentNewDeps := &command.AgentNewDeps{
 		Registry:    cmds,
 		ConfigPath:  p.configPath,
-		DefaultsDir: filepath.Join(filepath.Dir(p.acfg.Workspace), "shared", "defaults"),
+		DefaultsDir: filepath.Join(filepath.Dir(p.acfg.Workspace), "shared"),
 		HomeDir:     filepath.Dir(p.acfg.Workspace),
 		ListFn:      p.agentListFn,
 		PreFlightFn: func(agentID string) []string {
