@@ -63,7 +63,17 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 		return false
 	}
 
-	if len(result.Response.Parts) > 0 {
+	// If the response includes a keyboard, send with keyboard markup.
+	if len(result.Response.Keyboard) > 0 {
+		text := result.Response.Text
+		if len(result.Response.Parts) > 0 {
+			text = strings.Join(result.Response.Parts, "\n\n")
+		}
+		cmdName, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(lookupText), "/"), " ")
+		_, _ = b.client.SendMessage(msg.Chat.Id, text, &gotgbot.SendMessageOpts{
+			ReplyMarkup: buildCommandKeyboard(cmdName, result.Response.Keyboard),
+		})
+	} else if len(result.Response.Parts) > 0 {
 		for _, part := range result.Response.Parts {
 			b.sendReply(msg, part)
 		}

@@ -45,9 +45,10 @@ func RequestFromText(text, sessionKey, userID string, chatID int64) Request {
 // When Parts is non-empty, each element is sent as a separate message
 // (replacing the legacy \x00-separated text convention).
 type Response struct {
-	Text    string
-	Parts   []string // when set, each part is sent as a separate message
-	DocPath string
+	Text     string
+	Parts    []string         // when set, each part is sent as a separate message
+	DocPath  string
+	Keyboard []KeyboardOption // optional inline keyboard to show with the response
 }
 
 // CommandContext bundles all per-agent dependencies that slash commands need.

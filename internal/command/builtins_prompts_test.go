@@ -253,8 +253,9 @@ func TestPromptsCommandChainKeyboardDiff(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandReinstall verifies embedded prompts are written to workspace directory.
-func TestPromptsCommandReinstall(t *testing.T) {
+// TestPromptsCommandReinstallNoModified verifies that when no prompts are modified on disk,
+// reinstall auto-skips everything and reports "All prompts reviewed" with no keyboard.
+func TestPromptsCommandReinstallNoModified(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "prompts")
 
 	cmd := PromptsCommand()
@@ -271,52 +272,274 @@ func TestPromptsCommandReinstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute reinstall: %v", err)
 	}
-	if !strings.Contains(result.Text, "Wrote 2 of 2") {
-		t.Errorf("expected 'Wrote 2 of 2' in: %s", result.Text)
+	if !strings.Contains(result.Text, "All prompts reviewed") {
+		t.Errorf("expected 'All prompts reviewed' in: %s", result.Text)
 	}
-	if !strings.Contains(result.Text, dir) {
-		t.Errorf("expected dir path in: %s", result.Text)
+	// Both should show as default
+	if !strings.Contains(result.Text, "✅ compaction-summary.md — default") {
+		t.Errorf("expected compaction-summary.md default marker in: %s", result.Text)
 	}
-
-	data, err := os.ReadFile(filepath.Join(dir, "keepalive.md"))
-	if err != nil {
-		t.Fatalf("read keepalive.md: %v", err)
+	if !strings.Contains(result.Text, "✅ keepalive.md — default") {
+		t.Errorf("expected keepalive.md default marker in: %s", result.Text)
 	}
-	if string(data) != "keepalive default text" {
-		t.Errorf("keepalive.md content = %q", string(data))
+	if len(result.Keyboard) != 0 {
+		t.Errorf("expected no keyboard, got %d options", len(result.Keyboard))
 	}
 }
 
-// TestPromptsCommandReinstallIdempotent verifies reinstall is idempotent when files match.
-func TestPromptsCommandReinstallIdempotent(t *testing.T) {
+// TestPromptsCommandReinstallModifiedStops verifies that reinstall stops at the first modified
+// prompt, shows the modification info, and returns keyboard buttons for agent/shared/skip.
+func TestPromptsCommandReinstallModifiedStops(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "prompts")
+	// Write a modified version of keepalive.md to disk
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keepalive.md"), []byte("custom keepalive"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := PromptsCommand()
 	cc := promptsCC(PromptsData{
 		AgentID:             "test",
 		WorkspacePromptsDir: dir,
 		EmbeddedPrompts: map[string]string{
-			"keepalive.md":          "keepalive default text",
 			"compaction-summary.md": "compaction default text",
+			"keepalive.md":          "keepalive default text",
 		},
 	})
 
-	// First run
-	_, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
-	if err != nil {
-		t.Fatalf("first reinstall: %v", err)
-	}
-
-	// Second run — all should match
 	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
 	if err != nil {
-		t.Fatalf("second reinstall: %v", err)
+		t.Fatalf("Execute reinstall: %v", err)
 	}
-	if !strings.Contains(result.Text, "Wrote 0 of 2") {
-		t.Errorf("expected 'Wrote 0 of 2' in: %s", result.Text)
+
+	// compaction-summary.md is alphabetically first and unmodified
+	if !strings.Contains(result.Text, "✅ compaction-summary.md — default") {
+		t.Errorf("expected compaction-summary.md default marker in: %s", result.Text)
 	}
-	if !strings.Contains(result.Text, "2 already match") {
-		t.Errorf("expected '2 already match' in: %s", result.Text)
+	// keepalive.md is modified
+	if !strings.Contains(result.Text, "✏️ keepalive.md — modified") {
+		t.Errorf("expected keepalive.md modified marker in: %s", result.Text)
+	}
+	// Should have 3 keyboard buttons
+	if len(result.Keyboard) != 3 {
+		t.Fatalf("expected 3 keyboard options, got %d", len(result.Keyboard))
+	}
+	labels := []string{result.Keyboard[0].Label, result.Keyboard[1].Label, result.Keyboard[2].Label}
+	if labels[0] != "agent" || labels[1] != "shared" || labels[2] != "skip" {
+		t.Errorf("unexpected keyboard labels: %v", labels)
+	}
+}
+
+// TestPromptsCommandReinstallAgentAction verifies the "agent" action writes the prompt to the
+// workspace prompts directory and advances to the next prompt.
+func TestPromptsCommandReinstallAgentAction(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "prompts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write modified versions of both prompts
+	if err := os.WriteFile(filepath.Join(dir, "background.md"), []byte("custom bg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keepalive.md"), []byte("custom ka"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:             "test",
+		WorkspacePromptsDir: dir,
+		EmbeddedPrompts: map[string]string{
+			"background.md": "bg default",
+			"keepalive.md":  "ka default",
+		},
+	})
+
+	// First call stops at background.md (index 0)
+	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Keyboard) == 0 {
+		t.Fatal("expected keyboard for modified prompt")
+	}
+
+	// Choose "agent" for background.md (index 0)
+	result, err = cmd.Execute(context.Background(), Request{Args: "reinstall 0 agent"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "Wrote background.md → agent dir") {
+		t.Errorf("expected write confirmation in: %s", result.Text)
+	}
+
+	// Verify file was overwritten with default
+	data, err := os.ReadFile(filepath.Join(dir, "background.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "bg default" {
+		t.Errorf("background.md content = %q, want %q", data, "bg default")
+	}
+
+	// Should now be showing keepalive.md as next modified prompt
+	if !strings.Contains(result.Text, "✏️ keepalive.md — modified") {
+		t.Errorf("expected keepalive.md modified marker in: %s", result.Text)
+	}
+}
+
+// TestPromptsCommandReinstallSharedAction verifies the "shared" action writes to the shared
+// prompts directory.
+func TestPromptsCommandReinstallSharedAction(t *testing.T) {
+	wsDir := filepath.Join(t.TempDir(), "agent", "prompts")
+	sharedDir := filepath.Join(t.TempDir(), "shared", "prompts")
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a modified version in workspace dir
+	if err := os.WriteFile(filepath.Join(wsDir, "keepalive.md"), []byte("custom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:             "test",
+		WorkspacePromptsDir: wsDir,
+		SharedPromptsDir:    sharedDir,
+		EmbeddedPrompts: map[string]string{
+			"keepalive.md": "ka default",
+		},
+	})
+
+	// Choose "shared" for keepalive.md (index 0)
+	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall 0 shared"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "Wrote keepalive.md → shared dir") {
+		t.Errorf("expected shared write confirmation in: %s", result.Text)
+	}
+
+	// Verify file was written to shared dir
+	data, err := os.ReadFile(filepath.Join(sharedDir, "keepalive.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "ka default" {
+		t.Errorf("keepalive.md content = %q, want %q", data, "ka default")
+	}
+}
+
+// TestPromptsCommandReinstallSkipAction verifies the "skip" action skips the prompt without
+// writing anything.
+func TestPromptsCommandReinstallSkipAction(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "prompts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "keepalive.md"), []byte("custom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:             "test",
+		WorkspacePromptsDir: dir,
+		EmbeddedPrompts: map[string]string{
+			"keepalive.md": "ka default",
+		},
+	})
+
+	// Skip keepalive.md (index 0)
+	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall 0 skip"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "Skipped keepalive.md") {
+		t.Errorf("expected skip confirmation in: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "All prompts reviewed") {
+		t.Errorf("expected completion message in: %s", result.Text)
+	}
+
+	// Verify file was NOT overwritten
+	data, err := os.ReadFile(filepath.Join(dir, "keepalive.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "custom" {
+		t.Errorf("keepalive.md should still be custom, got %q", data)
+	}
+}
+
+// TestPromptsCommandReinstallSequentialProgression verifies that the interactive reinstall flow
+// progresses through all modified prompts in alphabetical order, handling each action correctly.
+func TestPromptsCommandReinstallSequentialProgression(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "prompts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write modified versions of a.md and c.md; b.md is default
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("custom a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "c.md"), []byte("custom c"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		AgentID:             "test",
+		WorkspacePromptsDir: dir,
+		EmbeddedPrompts: map[string]string{
+			"a.md": "default a",
+			"b.md": "default b",
+			"c.md": "default c",
+		},
+	})
+
+	// Step 1: Start — a.md is first modified prompt (b.md is not on disk so default)
+	result, err := cmd.Execute(context.Background(), Request{Args: "reinstall"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "✏️ a.md — modified") {
+		t.Errorf("step 1: expected a.md modified, got: %s", result.Text)
+	}
+	if len(result.Keyboard) != 3 {
+		t.Fatalf("step 1: expected 3 keyboard options, got %d", len(result.Keyboard))
+	}
+
+	// Step 2: Skip a.md — b.md is unmodified, c.md is next modified
+	result, err = cmd.Execute(context.Background(), Request{Args: "reinstall 0 skip"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "Skipped a.md") {
+		t.Errorf("step 2: expected skip confirmation, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "✅ b.md — default") {
+		t.Errorf("step 2: expected b.md default marker, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "✏️ c.md — modified") {
+		t.Errorf("step 2: expected c.md modified, got: %s", result.Text)
+	}
+
+	// Step 3: Write c.md to agent — done
+	result, err = cmd.Execute(context.Background(), Request{Args: "reinstall 2 agent"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "Wrote c.md → agent dir") {
+		t.Errorf("step 3: expected write confirmation, got: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "All prompts reviewed") {
+		t.Errorf("step 3: expected completion message, got: %s", result.Text)
+	}
+	if len(result.Keyboard) != 0 {
+		t.Errorf("step 3: expected no keyboard, got %d options", len(result.Keyboard))
 	}
 }
 

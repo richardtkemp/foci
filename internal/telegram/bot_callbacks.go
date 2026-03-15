@@ -143,6 +143,27 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 
 	b.logger().Debugf("command callback %q dispatched", cmdText)
 
+	// If the response includes a keyboard, edit with both text and keyboard.
+	if len(dr.Response.Keyboard) > 0 {
+		cmdName, _, _ := strings.Cut(strings.TrimPrefix(cmdText, "/"), " ")
+		kb := buildCommandKeyboard(cmdName, dr.Response.Keyboard)
+		_, _, err := b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
+			ChatId:      chatID,
+			MessageId:   msgID,
+			ParseMode:   "HTML",
+			ReplyMarkup: kb,
+		})
+		if err != nil {
+			b.logger().Debugf("command callback HTML+keyboard edit failed: %v, retrying as plain text", err)
+			_, _, _ = b.client.EditMessageText(result, &gotgbot.EditMessageTextOpts{
+				ChatId:      chatID,
+				MessageId:   msgID,
+				ReplyMarkup: kb,
+			})
+		}
+		return
+	}
+
 	_, _, err := b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 		ChatId:    chatID,
 		MessageId: msgID,
