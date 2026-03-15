@@ -9,7 +9,8 @@ IMAGE_COMMIT_FILE="/opt/foci-shared/.foci-commit"
 
 # ── Helper: run a command as the foci user ──
 run_as_foci() {
-	setpriv --reuid=foci --regid=foci --init-groups -- "$@"
+	HOME=/home/foci setpriv --reuid=foci --regid=foci --init-groups \
+		--ambient-caps=+setgid -- "$@"
 }
 
 # Sync shared files (docs, skills, defaults) from the image into the
@@ -55,8 +56,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
 		[ -n "${FOCI_AUTH_TOKEN:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-token $FOCI_AUTH_TOKEN"
 		[ -n "${FOCI_AGENT_ID:-}" ] && SETUP_ARGS="$SETUP_ARGS --agent-id $FOCI_AGENT_ID"
 		[ -n "${FOCI_CHAR_MODE:-}" ] && SETUP_ARGS="$SETUP_ARGS --char-mode $FOCI_CHAR_MODE"
-		# Import character/memory files baked into the image (docker/characters/, docker/memory/)
-		ls /opt/foci-import/characters/*.md &>/dev/null && SETUP_ARGS="$SETUP_ARGS --char-import-dir /opt/foci-import/characters"
+		# Import character/memory files baked into the image (docker/character/, docker/memory/)
+		ls /opt/foci-import/character/*.md &>/dev/null && SETUP_ARGS="$SETUP_ARGS --char-import-dir /opt/foci-import/character"
 		ls /opt/foci-import/memory/*.md &>/dev/null && SETUP_ARGS="$SETUP_ARGS --memory-import-dir /opt/foci-import/memory"
 	else
 		echo "[foci] ERROR: FOCI_TELEGRAM_TOKEN and FOCI_TELEGRAM_USER must be set."
