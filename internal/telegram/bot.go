@@ -326,7 +326,22 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 // SetCommandContext configures the command dispatcher with the unified CommandContext.
 func (b *Bot) SetCommandContext(cc command.CommandContext) {
 	b.dispatcher = NewDispatcher(b.commands, cc, b.agentID)
-	b.dispatcher.SetSessionKeyFunc(b.sessionKeyForMsg)
+	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
+}
+
+// dispatchSessionKey resolves the session key for command dispatch.
+// Secondary bots with an override session key use it directly;
+// primary bots resolve per-chat keys as usual.
+func (b *Bot) dispatchSessionKey(chatID int64) string {
+	if b.isSecondary {
+		b.sessionMu.RLock()
+		sk := b.sessionKey
+		b.sessionMu.RUnlock()
+		if sk != "" {
+			return sk
+		}
+	}
+	return b.sessionKeyForMsg(chatID)
 }
 
 // DisplaySettings returns the bot's default display settings for inspection/testing.
