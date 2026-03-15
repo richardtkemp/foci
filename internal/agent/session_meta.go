@@ -36,6 +36,81 @@ type sessionMeta struct {
 	displayWidth       string // numeric string (e.g. "80")
 }
 
+// sessionStringSetting describes a string field in sessionMeta for table-driven access.
+type sessionStringSetting struct {
+	prefix       string                     // state store key prefix
+	getter       func(*sessionMeta) string  // read field value
+	setter       func(*sessionMeta, string) // write field value
+	agentDefault func(*Agent) string        // agent-level default (nil = returns "")
+}
+
+var (
+	settingEffort = sessionStringSetting{
+		prefix: "effort",
+		getter: func(sm *sessionMeta) string { return sm.effort },
+		setter: func(sm *sessionMeta, v string) { sm.effort = v },
+		agentDefault: func(a *Agent) string { return a.Effort },
+	}
+	settingThinking = sessionStringSetting{
+		prefix: "thinking",
+		getter: func(sm *sessionMeta) string { return sm.thinking },
+		setter: func(sm *sessionMeta, v string) { sm.thinking = v },
+		agentDefault: func(a *Agent) string { return a.Thinking },
+	}
+	settingSpeed = sessionStringSetting{
+		prefix: "speed",
+		getter: func(sm *sessionMeta) string { return sm.speed },
+		setter: func(sm *sessionMeta, v string) { sm.speed = v },
+		agentDefault: func(a *Agent) string { return a.Speed },
+	}
+	settingModel = sessionStringSetting{
+		prefix: "model",
+		getter: func(sm *sessionMeta) string { return sm.model },
+		setter: func(sm *sessionMeta, v string) { sm.model = v },
+		agentDefault: func(a *Agent) string { return a.Model },
+	}
+	settingModelEndpoint = sessionStringSetting{
+		prefix: "model_endpoint",
+		getter: func(sm *sessionMeta) string { return sm.modelEndpoint },
+		setter: func(sm *sessionMeta, v string) { sm.modelEndpoint = v },
+	}
+	settingModelFormat = sessionStringSetting{
+		prefix: "model_format",
+		getter: func(sm *sessionMeta) string { return sm.modelFormat },
+		setter: func(sm *sessionMeta, v string) { sm.modelFormat = v },
+		agentDefault: func(a *Agent) string { return a.Format },
+	}
+	settingShowToolCalls = sessionStringSetting{
+		prefix: "show_tool_calls",
+		getter: func(sm *sessionMeta) string { return sm.showToolCalls },
+		setter: func(sm *sessionMeta, v string) { sm.showToolCalls = v },
+	}
+	settingDisplayShowThinking = sessionStringSetting{
+		prefix: "display_show_thinking",
+		getter: func(sm *sessionMeta) string { return sm.displayShowThink },
+		setter: func(sm *sessionMeta, v string) { sm.displayShowThink = v },
+	}
+	settingStreamOutput = sessionStringSetting{
+		prefix: "stream_output",
+		getter: func(sm *sessionMeta) string { return sm.streamOutput },
+		setter: func(sm *sessionMeta, v string) { sm.streamOutput = v },
+	}
+	settingDisplayWidth = sessionStringSetting{
+		prefix: "display_width",
+		getter: func(sm *sessionMeta) string { return sm.displayWidth },
+		setter: func(sm *sessionMeta, v string) { sm.displayWidth = v },
+	}
+)
+
+// allSessionStringSettings lists every string-based session setting.
+// Used by RestoreSessionOverrides and RotateSession to iterate without hardcoded prefix lists.
+var allSessionStringSettings = []sessionStringSetting{
+	settingEffort, settingThinking, settingSpeed,
+	settingModel, settingModelEndpoint, settingModelFormat,
+	settingShowToolCalls, settingDisplayShowThinking,
+	settingStreamOutput, settingDisplayWidth,
+}
+
 // sessionStringWithDefault returns a session-specific override
 // or the agent-wide default if the override is empty.
 func (a *Agent) sessionStringWithDefault(sessionKey string, getter func(*sessionMeta) string, defaultVal string) string {
@@ -55,40 +130,40 @@ func (a *Agent) setSessionString(sessionKey, prefix, value string, setter func(*
 	a.persistSessionString(sessionKey, prefix, value)
 }
 
-// SessionEffort returns the effective effort for the session.
-func (a *Agent) SessionEffort(sessionKey string) string {
-	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.effort }, a.Effort)
+// getStringSetting returns the session-specific value for a setting, falling back to the agent default.
+func (a *Agent) getStringSetting(sessionKey string, s sessionStringSetting) string {
+	def := ""
+	if s.agentDefault != nil {
+		def = s.agentDefault(a)
+	}
+	return a.sessionStringWithDefault(sessionKey, s.getter, def)
 }
+
+// setStringSetting sets a per-session string setting and persists it.
+func (a *Agent) setStringSetting(sessionKey, value string, s sessionStringSetting) {
+	a.setSessionString(sessionKey, s.prefix, value, s.setter)
+}
+
+// SessionEffort returns the effective effort for the session.
+func (a *Agent) SessionEffort(sessionKey string) string { return a.getStringSetting(sessionKey, settingEffort) }
 
 // SetSessionEffort sets the per-session effort override and persists it.
-func (a *Agent) SetSessionEffort(sessionKey, value string) {
-	a.setSessionString(sessionKey, "effort", value, func(sm *sessionMeta, v string) { sm.effort = v })
-}
+func (a *Agent) SetSessionEffort(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingEffort) }
 
 // SessionThinking returns the effective thinking mode for the session.
-func (a *Agent) SessionThinking(sessionKey string) string {
-	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.thinking }, a.Thinking)
-}
+func (a *Agent) SessionThinking(sessionKey string) string { return a.getStringSetting(sessionKey, settingThinking) }
 
 // SetSessionThinking sets the per-session thinking override and persists it.
-func (a *Agent) SetSessionThinking(sessionKey, value string) {
-	a.setSessionString(sessionKey, "thinking", value, func(sm *sessionMeta, v string) { sm.thinking = v })
-}
+func (a *Agent) SetSessionThinking(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingThinking) }
 
 // SessionSpeed returns the effective speed mode for the session.
-func (a *Agent) SessionSpeed(sessionKey string) string {
-	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.speed }, a.Speed)
-}
+func (a *Agent) SessionSpeed(sessionKey string) string { return a.getStringSetting(sessionKey, settingSpeed) }
 
 // SetSessionSpeed sets the per-session speed override and persists it.
-func (a *Agent) SetSessionSpeed(sessionKey, value string) {
-	a.setSessionString(sessionKey, "speed", value, func(sm *sessionMeta, v string) { sm.speed = v })
-}
+func (a *Agent) SetSessionSpeed(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingSpeed) }
 
 // SessionModel returns the effective model for the session.
-func (a *Agent) SessionModel(sessionKey string) string {
-	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.model }, a.Model)
-}
+func (a *Agent) SessionModel(sessionKey string) string { return a.getStringSetting(sessionKey, settingModel) }
 
 // SetSessionModel sets the per-session model, endpoint, format, and client override and persists it.
 // client may be nil to fall back to the agent's default client.
@@ -129,9 +204,7 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 }
 
 // SessionFormat returns the effective wire format for the session.
-func (a *Agent) SessionFormat(sessionKey string) string {
-	return a.sessionStringWithDefault(sessionKey, func(sm *sessionMeta) string { return sm.modelFormat }, a.Format)
-}
+func (a *Agent) SessionFormat(sessionKey string) string { return a.getStringSetting(sessionKey, settingModelFormat) }
 
 // SessionClient returns the effective client for the session.
 // Returns the per-session client override if set, otherwise the agent-wide default.
@@ -178,56 +251,28 @@ func (a *Agent) SetSessionNoCompact(sessionKey string, value bool) {
 }
 
 // SessionShowToolCalls returns the per-session show_tool_calls override (empty = not overridden).
-func (a *Agent) SessionShowToolCalls(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.showToolCalls
-}
+func (a *Agent) SessionShowToolCalls(sessionKey string) string { return a.getStringSetting(sessionKey, settingShowToolCalls) }
 
 // SetSessionShowToolCalls sets the per-session show_tool_calls override and persists it.
-func (a *Agent) SetSessionShowToolCalls(sessionKey, value string) {
-	a.setSessionString(sessionKey, "show_tool_calls", value, func(sm *sessionMeta, v string) { sm.showToolCalls = v })
-}
+func (a *Agent) SetSessionShowToolCalls(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingShowToolCalls) }
 
 // SessionDisplayShowThinking returns the per-session display show_thinking override (empty = not overridden).
-func (a *Agent) SessionDisplayShowThinking(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.displayShowThink
-}
+func (a *Agent) SessionDisplayShowThinking(sessionKey string) string { return a.getStringSetting(sessionKey, settingDisplayShowThinking) }
 
 // SetSessionDisplayShowThinking sets the per-session display show_thinking override and persists it.
-func (a *Agent) SetSessionDisplayShowThinking(sessionKey, value string) {
-	a.setSessionString(sessionKey, "display_show_thinking", value, func(sm *sessionMeta, v string) { sm.displayShowThink = v })
-}
+func (a *Agent) SetSessionDisplayShowThinking(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingDisplayShowThinking) }
 
 // SessionStreamOutput returns the per-session stream_output override (empty = not overridden).
-func (a *Agent) SessionStreamOutput(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.streamOutput
-}
+func (a *Agent) SessionStreamOutput(sessionKey string) string { return a.getStringSetting(sessionKey, settingStreamOutput) }
 
 // SetSessionStreamOutput sets the per-session stream_output override and persists it.
-func (a *Agent) SetSessionStreamOutput(sessionKey, value string) {
-	a.setSessionString(sessionKey, "stream_output", value, func(sm *sessionMeta, v string) { sm.streamOutput = v })
-}
+func (a *Agent) SetSessionStreamOutput(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingStreamOutput) }
 
 // SessionDisplayWidth returns the per-session display_width override (empty = not overridden).
-func (a *Agent) SessionDisplayWidth(sessionKey string) string {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	defer a.metaMu.Unlock()
-	return sm.displayWidth
-}
+func (a *Agent) SessionDisplayWidth(sessionKey string) string { return a.getStringSetting(sessionKey, settingDisplayWidth) }
 
 // SetSessionDisplayWidth sets the per-session display_width override and persists it.
-func (a *Agent) SetSessionDisplayWidth(sessionKey, value string) {
-	a.setSessionString(sessionKey, "display_width", value, func(sm *sessionMeta, v string) { sm.displayWidth = v })
-}
+func (a *Agent) SetSessionDisplayWidth(sessionKey, value string) { a.setStringSetting(sessionKey, value, settingDisplayWidth) }
 
 // ClearSessionDisplayOverrides removes all per-session display overrides.
 func (a *Agent) ClearSessionDisplayOverrides(sessionKey string) {
@@ -245,46 +290,27 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	var restored []string
 	var val string
 
-	// Restore effort
-	if a.StateStore.Get("effort/"+sessionKey, &val) && val != "" {
-		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.effort = val })
-		restored = append(restored, "effort="+val)
-	}
-
-	// Restore thinking
-	if a.StateStore.Get("thinking/"+sessionKey, &val) && val != "" {
-		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.thinking = val })
-		restored = append(restored, "thinking="+val)
-	}
-
-	// Restore speed
-	if a.StateStore.Get("speed/"+sessionKey, &val) && val != "" {
-		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.speed = val })
-		restored = append(restored, "speed="+val)
-	}
-
-	// Restore model, endpoint, format, and resolve the matching client
-	if a.StateStore.Get("model/"+sessionKey, &val) && val != "" {
-		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.model = val })
-		restored = append(restored, "model="+val)
-
-		var ep, format string
-		if a.StateStore.Get("model_endpoint/"+sessionKey, &ep) && ep != "" {
-			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelEndpoint = ep })
-			restored = append(restored, "endpoint="+ep)
+	// Restore all string settings from state store.
+	for _, s := range allSessionStringSettings {
+		setter := s.setter
+		if a.StateStore.Get(s.prefix+"/"+sessionKey, &val) && val != "" {
+			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { setter(sm, val) })
+			restored = append(restored, s.prefix+"="+val)
 		}
-		if a.StateStore.Get("model_format/"+sessionKey, &format) && format != "" {
-			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.modelFormat = format })
-			restored = append(restored, "format="+format)
-		}
+	}
 
+	// Resolve client for restored model+endpoint+format.
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	model, ep, format := sm.model, sm.modelEndpoint, sm.modelFormat
+	a.metaMu.Unlock()
+
+	if model != "" {
 		if ep != "" && format != "" && a.ClientProvider != nil {
 			if c := a.ClientProvider.GetClient(ep, format); c != nil {
 				a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 			}
 		}
-
-		// Restore usage client for the endpoint
 		if ep != "" && a.UsageClientProvider != nil {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
 				sm.usageClient = a.UsageClientProvider.GetUsageClient(ep)
@@ -292,27 +318,10 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 		}
 	}
 
-	// Restore no_compact
+	// Restore no_compact (bool, not string).
 	if a.StateStore.Get("no_compact/"+sessionKey, &val) && val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.noCompact = (val == "true") })
 		restored = append(restored, "no_compact")
-	}
-
-	// Restore display overrides
-	for _, pair := range []struct {
-		prefix string
-		setter func(*sessionMeta, string)
-	}{
-		{"show_tool_calls", func(sm *sessionMeta, v string) { sm.showToolCalls = v }},
-		{"display_show_thinking", func(sm *sessionMeta, v string) { sm.displayShowThink = v }},
-		{"stream_output", func(sm *sessionMeta, v string) { sm.streamOutput = v }},
-		{"display_width", func(sm *sessionMeta, v string) { sm.displayWidth = v }},
-	} {
-		if a.StateStore.Get(pair.prefix+"/"+sessionKey, &val) && val != "" {
-			setter := pair.setter
-			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { setter(sm, val) })
-			restored = append(restored, pair.prefix+"="+val)
-		}
 	}
 
 	if len(restored) > 0 {
@@ -357,6 +366,17 @@ func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
 	}
 }
 
+// sessionStringSettingPrefixes returns all state store prefixes for string settings plus no_compact.
+// Used by RotateSession to migrate all persisted session state.
+func sessionStringSettingPrefixes() []string {
+	prefixes := make([]string, 0, len(allSessionStringSettings)+1)
+	for _, s := range allSessionStringSettings {
+		prefixes = append(prefixes, s.prefix)
+	}
+	prefixes = append(prefixes, "no_compact")
+	return prefixes
+}
+
 // RotateSession migrates all per-session state from oldKey to newKey.
 // This includes the meta map, state store keys, turn locks, and fires
 // SessionKeyRotatedFunc callbacks.
@@ -377,7 +397,7 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 
 	// Migrate StateStore keys
 	if a.StateStore != nil {
-		for _, prefix := range []string{"effort", "thinking", "speed", "model", "model_endpoint", "model_format", "no_compact", "show_tool_calls", "display_show_thinking", "stream_output", "display_width"} {
+		for _, prefix := range sessionStringSettingPrefixes() {
 			oldStoreKey := prefix + "/" + oldKey
 			newStoreKey := prefix + "/" + newKey
 			var val string
@@ -496,4 +516,3 @@ func (a *Agent) LastUserMessageTime(sessionKey string) time.Time {
 	defer a.metaMu.Unlock()
 	return sm.lastMessageTime
 }
-
