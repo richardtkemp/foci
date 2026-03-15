@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"foci/internal/log"
 	"foci/internal/tempdir"
@@ -192,7 +191,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		bodyReader = strings.NewReader(resolved.body)
 	}
 
-	timeout := validateAndLimitTimeout(p.Timeout)
+	timeout := ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 30, MaxSec: 300})
 
 	req, err := http.NewRequestWithContext(ctx, p.Method, reqURL, bodyReader)
 	if err != nil {
@@ -340,17 +339,6 @@ func normalizeContentType(ct string) string {
 	return ct
 }
 
-// validateAndLimitTimeout enforces timeout bounds (30s default, 300s max).
-func validateAndLimitTimeout(seconds int) time.Duration {
-	timeout := 30 * time.Second
-	if seconds > 0 {
-		timeout = time.Duration(seconds) * time.Second
-		if timeout > 300*time.Second {
-			timeout = 300 * time.Second
-		}
-	}
-	return timeout
-}
 
 // getResponseBodyLimit determines the max response body size based on content type and options.
 func getResponseBodyLimit(contentType, saveTo string, maxResponseBytes int64) int64 {

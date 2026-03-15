@@ -123,10 +123,7 @@ func (m *BrowserManager) getPage() (*rod.Page, error) {
 
 // Timeout returns the configured browser timeout.
 func (m *BrowserManager) Timeout() time.Duration {
-	if m.config.TimeoutSec <= 0 {
-		return 30 * time.Second
-	}
-	return time.Duration(m.config.TimeoutSec) * time.Second
+	return ResolveTimeout(m.config.TimeoutSec, TimeoutConfig{DefaultSec: 30})
 }
 
 func (m *BrowserManager) withTimeout(page *rod.Page, timeoutMs int) *rod.Page {
