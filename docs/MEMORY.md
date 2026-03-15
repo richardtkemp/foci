@@ -226,7 +226,17 @@ consolidation_interval = "20h"
 | `consolidation_interval` | string | `"20h"` | Minimum time between consolidation runs. Persisted across restarts. |
 | `consolidation_prompt` | string | `""` | Prompt override (same 3-state resolution). |
 
-**Prompt resolution** (3-state): `""` or `"default"` → embedded prompt from `prompts/`, `"none"` → feature disabled, `/path/to/file.md` → custom file with embedded fallback on read error.
+### Prompt Customization
+
+Each formation trigger has its own prompt field (`interval_prompt`, `session_end_prompt`, `consolidation_prompt`). All use the same 3-state resolution:
+
+| Value | Behavior |
+|-------|----------|
+| `""` or `"default"` | Use the embedded prompt from the `prompts/` directory. |
+| `"none"` | Disable this trigger entirely. |
+| `/path/to/file.md` | Use the custom file as the prompt. Falls back to the embedded prompt on read error. |
+
+Source: `internal/periodic/keepalive.go` (`prompts.ResolvePrompt`).
 
 ---
 
@@ -293,8 +303,8 @@ These stores live alongside memory but serve distinct purposes:
 | Store | Tool | Description |
 |-------|------|-------------|
 | **Scratchpad** | `scratchpad` | Key-value working notes that survive compaction. Per-agent. |
-| **Todo** | `todo` | Task list with priority, status tracking, and FTS search (via Bleve). Per-agent with sequential IDs. |
-| **Reminders** | `remind` | Deferred thoughts surfaced when due. Supports passive (injected when due) and wake (actively wakes session) modes. |
+| **Todo** | `todo` | Task list with priority, status tracking, and full-text search. Per-agent with sequential IDs. When Bleve is enabled, todo search uses Bleve instead of the embedded FTS5 index (see `TodoStore.SetSearchIndex()`). |
+| **Reminders** | `remind` | Deferred thoughts surfaced when due. Two modes: **passive** (default) — injected as context when due, dismissed in batch; **wake** — actively wakes the session at the scheduled time, dismissed individually by ID (see `ReminderStore.AddWake()`). |
 | **Task List** | n/a | Collaborative task tracking across sessions. |
 
 See [TOOLS.md](TOOLS.md) for tool interface details.
