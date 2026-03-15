@@ -96,6 +96,8 @@ Your config and data persist across rebuilds.
 
 ## Environment Variables
 
+Required on first startup only, to seed the config file.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token from @BotFather |
@@ -104,6 +106,26 @@ Your config and data persist across rebuilds.
 | `FOCI_AUTH_TOKEN` | Conditional | API key or setup token (required if auth method is not `skip`) |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 | `FOCI_CHAR_MODE` | No | Character mode: `defaults`, `openclaw`, `import`, `blank` |
+
+## Importing Character and Memory Files
+
+To seed your agent with character or memory files on first run, place `.md` files in:
+
+- `docker/characters/` — character definition files
+- `docker/memory/` — memory files
+
+These are baked into the image at build time and imported during setup. Only used on first run (when no config exists yet).
+
+## Security
+
+The Docker deployment replicates the same OS-level secrets protection used by the systemd setup. The entrypoint starts as root, hardens `secrets.toml` (owned by `root:foci-secrets`, mode `0660`), then drops to the `foci` user via `setpriv` with:
+
+- `--init-groups` — gives foci-gw the `foci-secrets` supplementary group (can read secrets)
+- `--ambient-caps=+setgid` — allows foci-gw to drop `foci-secrets` from child processes
+
+This means agent-spawned subprocesses (shell commands, tmux, scripts) cannot read `secrets.toml` — the kernel denies access. See `docs/SECRETS.md` for details.
+
+The `cap_add: [SETGID]` in `compose.yml` is required to make this work.
 
 ## Troubleshooting
 

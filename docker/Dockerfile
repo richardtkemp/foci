@@ -3,7 +3,7 @@
 FROM golang:1.24-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-	gcc libc6-dev make git upx-ucl \
+	gcc libc6-dev make git \
 	&& rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -20,8 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates sqlite3 tmux jq curl \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Create foci user
-RUN useradd --system --home-dir /home/foci --create-home --shell /bin/bash foci
+# Create foci user and secrets group
+RUN useradd --system --home-dir /home/foci --create-home --shell /bin/bash foci \
+	&& groupadd foci-secrets \
+	&& usermod -aG foci-secrets foci
 
 # Install binaries
 COPY --from=builder /src/bin/foci-gw /usr/local/bin/foci-gw
@@ -33,6 +35,10 @@ COPY --from=builder /src/bin/foci-call /usr/local/bin/foci-call
 COPY --from=builder /src/shared/ /opt/foci-shared/
 COPY --from=builder /src/docs/ /opt/foci-shared/docs/
 
+# Stage import directories (place .md files in docker/characters/ or docker/memory/)
+COPY docker/characters/ /opt/foci-import/characters/
+COPY docker/memory/ /opt/foci-import/memory/
+
 # Copy entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -41,7 +47,8 @@ RUN chmod +x /entrypoint.sh
 ARG GIT_COMMIT=unknown
 RUN echo "${GIT_COMMIT}" > /opt/foci-shared/.foci-commit
 
-USER foci
+# Entrypoint runs as root, then drops to foci via setpriv
+# (replicates systemd SupplementaryGroups + AmbientCapabilities)
 WORKDIR /home/foci
 
 ENTRYPOINT ["/entrypoint.sh"]
