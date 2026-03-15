@@ -1,0 +1,20 @@
+services:
+  foci:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: foci
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist all state: config, sessions, memory, character files.
+      # First run triggers the setup wizard; subsequent runs start normally.
+      - foci-home:/home/foci
+    # No ports needed — foci communicates via Telegram bot API (outbound only).
+    # Uncomment if you enable the HTTP API:
+    # ports:
+    #   - "8080:8080"
+
+volumes:
+  foci-home:

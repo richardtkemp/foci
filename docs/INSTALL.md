@@ -2,6 +2,25 @@
 
 Step-by-step setup for foci on a Linux server (Debian/Ubuntu). Takes about 10 minutes.
 
+## Docker (Quickest)
+
+If you have Docker with Compose v2+, see [`docker/README.md`](../docker/README.md) for a one-command deployment:
+
+```bash
+cd docker
+cp .env.example .env
+# Edit .env with your Telegram token, user ID, and API key
+docker compose up -d
+```
+
+No Go toolchain, no system user creation, no systemd — just fill in env vars and run.
+
+---
+
+## Bare Metal
+
+The rest of this guide covers the traditional bare-metal install with systemd.
+
 ## Prerequisites
 
 Install these before running setup:
