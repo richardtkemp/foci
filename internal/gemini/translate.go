@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"foci/internal/messages"
 	"foci/internal/provider"
 
 	"google.golang.org/genai"
@@ -344,14 +345,7 @@ func mapFinishReason(reason genai.FinishReason) string {
 }
 
 // hasToolUse reports whether any content block is a tool_use.
-func hasToolUse(blocks []provider.ContentBlock) bool {
-	for _, b := range blocks {
-		if b.Type == "tool_use" {
-			return true
-		}
-	}
-	return false
-}
+func hasToolUse(blocks []provider.ContentBlock) bool { return messages.BlocksHaveToolUse(blocks) }
 
 // toolResultName looks up the tool name for a tool_result block by finding
 // the matching tool_use in previous messages. Gemini needs function names

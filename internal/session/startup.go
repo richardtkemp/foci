@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/messages"
 	"foci/internal/provider"
 	"foci/prompts"
 )
@@ -56,12 +57,7 @@ func (s *Store) RepairOrphans() (int, error) {
 			return nil
 		}
 
-		var toolUseIDs []string
-		for _, block := range last.Content {
-			if block.Type == "tool_use" {
-				toolUseIDs = append(toolUseIDs, block.ID)
-			}
-		}
+		toolUseIDs := messages.ToolUseIDs(last)
 		if len(toolUseIDs) == 0 {
 			return nil
 		}
