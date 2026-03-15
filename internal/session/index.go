@@ -339,82 +339,95 @@ func nullableString(s string) interface{} {
 	return s
 }
 
+// metadataTable holds precomputed SQL for a metadata table's CRUD operations.
+type metadataTable struct {
+	upsertSQL string
+	selectSQL string
+	deleteSQL string
+}
+
+var (
+	agentMetaTable = metadataTable{
+		upsertSQL: `INSERT INTO agent_metadata (agent_id, key, value) VALUES (?, ?, ?) ON CONFLICT(agent_id, key) DO UPDATE SET value = excluded.value`,
+		selectSQL: `SELECT value FROM agent_metadata WHERE agent_id = ? AND key = ?`,
+		deleteSQL: `DELETE FROM agent_metadata WHERE agent_id = ? AND key = ?`,
+	}
+	chatMetaTable = metadataTable{
+		upsertSQL: `INSERT INTO chat_metadata (agent_id, chat_id, key, value) VALUES (?, ?, ?, ?) ON CONFLICT(agent_id, chat_id, key) DO UPDATE SET value = excluded.value`,
+		selectSQL: `SELECT value FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ?`,
+		deleteSQL: `DELETE FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ?`,
+	}
+	sessionMetaTable = metadataTable{
+		upsertSQL: `INSERT INTO session_metadata (session_key, key, value) VALUES (?, ?, ?) ON CONFLICT(session_key, key) DO UPDATE SET value = excluded.value`,
+		selectSQL: `SELECT value FROM session_metadata WHERE session_key = ? AND key = ?`,
+		deleteSQL: `DELETE FROM session_metadata WHERE session_key = ? AND key = ?`,
+	}
+	systemStateTable = metadataTable{
+		upsertSQL: `INSERT INTO system_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		selectSQL: `SELECT value FROM system_state WHERE key = ?`,
+		deleteSQL: `DELETE FROM system_state WHERE key = ?`,
+	}
+)
+
+// metaSet executes an upsert for a metadata table.
+// The value must be the last element of args.
+func (idx *SessionIndex) metaSet(mt metadataTable, args ...interface{}) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	_, err := idx.db.Exec(mt.upsertSQL, args...)
+	return err
+}
+
+// metaGet retrieves a single value from a metadata table.
+// Returns empty string if the key is not found.
+func (idx *SessionIndex) metaGet(mt metadataTable, args ...interface{}) (string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var value string
+	err := idx.db.QueryRow(mt.selectSQL, args...).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+// metaDelete removes a row from a metadata table.
+func (idx *SessionIndex) metaDelete(mt metadataTable, args ...interface{}) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	_, err := idx.db.Exec(mt.deleteSQL, args...)
+	return err
+}
+
 // Agent Metadata Methods
-// These replace state.json storage for agent-level metadata.
 
 // SetAgentMetadata stores a metadata value for an agent.
 func (idx *SessionIndex) SetAgentMetadata(agentID, key, value string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`INSERT INTO agent_metadata (agent_id, key, value) VALUES (?, ?, ?)
-		 ON CONFLICT(agent_id, key) DO UPDATE SET value = excluded.value`,
-		agentID, key, value,
-	)
-	return err
+	return idx.metaSet(agentMetaTable, agentID, key, value)
 }
 
 // GetAgentMetadata retrieves a metadata value for an agent.
 // Returns empty string if not found.
 func (idx *SessionIndex) GetAgentMetadata(agentID, key string) (string, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	var value string
-	err := idx.db.QueryRow(
-		`SELECT value FROM agent_metadata WHERE agent_id = ? AND key = ?`,
-		agentID, key,
-	).Scan(&value)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return value, err
+	return idx.metaGet(agentMetaTable, agentID, key)
 }
 
 // DeleteAgentMetadata removes a metadata key for an agent.
 func (idx *SessionIndex) DeleteAgentMetadata(agentID, key string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`DELETE FROM agent_metadata WHERE agent_id = ? AND key = ?`,
-		agentID, key,
-	)
-	return err
+	return idx.metaDelete(agentMetaTable, agentID, key)
 }
 
 // Chat Metadata Methods
-// These replace state.json storage for chat-level metadata.
 
 // SetChatMetadata stores a metadata value for a chat.
 func (idx *SessionIndex) SetChatMetadata(agentID string, chatID int64, key, value string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`INSERT INTO chat_metadata (agent_id, chat_id, key, value) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(agent_id, chat_id, key) DO UPDATE SET value = excluded.value`,
-		agentID, chatID, key, value,
-	)
-	return err
+	return idx.metaSet(chatMetaTable, agentID, chatID, key, value)
 }
 
 // GetChatMetadata retrieves a metadata value for a chat.
 // Returns empty string if not found.
 func (idx *SessionIndex) GetChatMetadata(agentID string, chatID int64, key string) (string, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	var value string
-	err := idx.db.QueryRow(
-		`SELECT value FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ?`,
-		agentID, chatID, key,
-	).Scan(&value)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return value, err
+	return idx.metaGet(chatMetaTable, agentID, chatID, key)
 }
 
 // CurrentSessionKeys returns the set of session keys that are the active/current
@@ -444,104 +457,43 @@ func (idx *SessionIndex) CurrentSessionKeys() (map[string]bool, error) {
 
 // DeleteChatMetadata removes a metadata key for a chat.
 func (idx *SessionIndex) DeleteChatMetadata(agentID string, chatID int64, key string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`DELETE FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ?`,
-		agentID, chatID, key,
-	)
-	return err
+	return idx.metaDelete(chatMetaTable, agentID, chatID, key)
 }
 
 // Session Metadata Methods
-// These replace state.json storage for session-level settings.
 
 // SetSessionMetadata stores a metadata value for a session.
 func (idx *SessionIndex) SetSessionMetadata(sessionKey, key, value string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`INSERT INTO session_metadata (session_key, key, value) VALUES (?, ?, ?)
-		 ON CONFLICT(session_key, key) DO UPDATE SET value = excluded.value`,
-		sessionKey, key, value,
-	)
-	return err
+	return idx.metaSet(sessionMetaTable, sessionKey, key, value)
 }
 
 // GetSessionMetadata retrieves a metadata value for a session.
 // Returns empty string if not found.
 func (idx *SessionIndex) GetSessionMetadata(sessionKey, key string) (string, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	var value string
-	err := idx.db.QueryRow(
-		`SELECT value FROM session_metadata WHERE session_key = ? AND key = ?`,
-		sessionKey, key,
-	).Scan(&value)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return value, err
+	return idx.metaGet(sessionMetaTable, sessionKey, key)
 }
 
 // DeleteSessionMetadata removes a metadata key for a session.
 func (idx *SessionIndex) DeleteSessionMetadata(sessionKey, key string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`DELETE FROM session_metadata WHERE session_key = ? AND key = ?`,
-		sessionKey, key,
-	)
-	return err
+	return idx.metaDelete(sessionMetaTable, sessionKey, key)
 }
 
 // System State Methods
-// These replace state.json storage for system-level state.
 
 // SetSystemState stores a system state value.
 func (idx *SessionIndex) SetSystemState(key, value string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`INSERT INTO system_state (key, value) VALUES (?, ?)
-		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-		key, value,
-	)
-	return err
+	return idx.metaSet(systemStateTable, key, value)
 }
 
 // GetSystemState retrieves a system state value.
 // Returns empty string if not found.
 func (idx *SessionIndex) GetSystemState(key string) (string, error) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	var value string
-	err := idx.db.QueryRow(
-		`SELECT value FROM system_state WHERE key = ?`,
-		key,
-	).Scan(&value)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return value, err
+	return idx.metaGet(systemStateTable, key)
 }
 
 // DeleteSystemState removes a system state key.
 func (idx *SessionIndex) DeleteSystemState(key string) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	_, err := idx.db.Exec(
-		`DELETE FROM system_state WHERE key = ?`,
-		key,
-	)
-	return err
+	return idx.metaDelete(systemStateTable, key)
 }
 
 // DefaultSessionKeyForAgent resolves the most recently active session key for
