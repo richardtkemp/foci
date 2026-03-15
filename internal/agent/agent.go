@@ -124,6 +124,7 @@ type Agent struct {
 	Effort                        string                       // effort level for API requests (empty = omit from request)
 	Thinking                      string                       // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
 	Speed                         string                       // speed mode: "fast" for Anthropic fast mode (Opus only, empty = standard)
+	ShowToolCalls                 string                       // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
 	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
@@ -406,7 +407,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 	braindeadWarningThreshold := a.BraindeadWarningThreshold
 	braindeadWarned := false
-	verified := false // pre-answer gate: true after one verification pass
+	displayNoted := false // true after injecting tool_display note
+	verified := false     // pre-answer gate: true after one verification pass
 	var sameToolStreak int
 	var lastToolName string
 	var lastToolError bool
@@ -698,6 +700,12 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			a.logger().Infof("braindead warning injected at loop %d for session %s", i+1, sessionKey)
 		}
 
+		// Tool display note: tell the agent once per turn whether the user can see tool results.
+		if !displayNoted {
+			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: toolDisplayNote(a.SessionShowToolCalls(sessionKey))})
+			displayNoted = true
+		}
+
 		// Nudge reminders: inject behavioral reminders from character file rules.
 		if a.Nudger != nil {
 			if reminders := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); len(reminders) > 0 {
@@ -741,6 +749,18 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		sessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
 
 	return "Max tool call depth reached.", nil
+}
+
+// toolDisplayNote returns a short system note describing whether the user can see tool results.
+func toolDisplayNote(mode string) string {
+	switch mode {
+	case "full":
+		return "[display] tool_results=visible — the user can see your tool calls, inputs, and outputs."
+	case "preview":
+		return "[display] tool_results=preview — the user sees tool names but not inputs or outputs."
+	default:
+		return "[display] tool_results=hidden — the user cannot see tool calls or results. Narrate important actions and findings in your replies."
+	}
 }
 
 // logConversationSent logs an outbound conversation entry with the turn's metadata.

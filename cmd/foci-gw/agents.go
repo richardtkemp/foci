@@ -197,6 +197,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Effort:                         acfg.Effort,
 		Thinking:                       acfg.Thinking,
 		Speed:                          acfg.Speed,
+		ShowToolCalls:                  resolveShowToolCalls(acfg, p.cfg),
 		CacheTTL:                       resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
 		Streaming:                      resolveStreamingConfig(acfg, p.cfg),
 		ManaInvestInterval:             parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),

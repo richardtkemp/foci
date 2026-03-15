@@ -293,3 +293,139 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 	}
 }
 
+func TestDisplayNoteInjectedOnce(t *testing.T) {
+	// Proves that a [display] tool_results note is injected exactly once per turn
+	// (on the first tool batch), reflecting the effective ShowToolCalls mode.
+	var callCount atomic.Int32
+	totalLoops := 4
+
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		n := int(callCount.Add(1))
+		if n <= totalLoops {
+			return &provider.MessageResponse{
+				ID:   fmt.Sprintf("msg_%d", n),
+				Role: "assistant",
+				Content: []provider.ContentBlock{
+					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &provider.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", n),
+			Role:       "assistant",
+			Content:    provider.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "noop",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+	})
+
+	ag := &Agent{
+		Client:        client,
+		Sessions:      store,
+		Tools:         registry,
+		Bootstrap:     workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:         "claude-haiku-4-5",
+		ShowToolCalls: "full",
+	}
+
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	msgs, _ := store.Load("test/imain/1000000000")
+	count := 0
+	for _, m := range msgs {
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "text" && strings.Contains(b.Text, "[display]") {
+				count++
+				if !strings.Contains(b.Text, "visible") {
+					t.Errorf("display note should say visible for full mode, got: %s", b.Text)
+				}
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("display notes = %d, want exactly 1", count)
+	}
+}
+
+func TestDisplayNoteReflectsSessionOverride(t *testing.T) {
+	// Proves that the display note reflects per-session overrides, not just the agent default.
+	var callCount atomic.Int32
+
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		n := int(callCount.Add(1))
+		if n <= 1 {
+			return &provider.MessageResponse{
+				ID:   fmt.Sprintf("msg_%d", n),
+				Role: "assistant",
+				Content: []provider.ContentBlock{
+					{Type: "tool_use", ID: fmt.Sprintf("tu_%d", n), Name: "noop", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: "tool_use",
+				Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+			}
+		}
+		return &provider.MessageResponse{
+			ID:         fmt.Sprintf("msg_%d", n),
+			Role:       "assistant",
+			Content:    provider.TextContent("done"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	store := session.NewStore(t.TempDir())
+	registry := tools.NewRegistry()
+	registry.Register(&tools.Tool{
+		Name:       "noop",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
+	})
+
+	sk := "test/imain/1000000000"
+	ag := &Agent{
+		Client:        client,
+		Sessions:      store,
+		Tools:         registry,
+		Bootstrap:     workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:         "claude-haiku-4-5",
+		ShowToolCalls: "off", // agent default
+	}
+	// Per-session override to preview
+	ag.SetSessionShowToolCalls(sk, "preview")
+
+	_, err := ag.HandleMessage(context.Background(), sk, "go")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
+	}
+
+	msgs, _ := store.Load(sk)
+	for _, m := range msgs {
+		if m.Role != "user" {
+			continue
+		}
+		for _, b := range m.Content {
+			if b.Type == "text" && strings.Contains(b.Text, "[display]") {
+				if !strings.Contains(b.Text, "preview") {
+					t.Errorf("display note should reflect session override 'preview', got: %s", b.Text)
+				}
+				return
+			}
+		}
+	}
+	t.Error("no [display] note found in tool results")
+}
+
