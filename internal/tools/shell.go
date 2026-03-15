@@ -150,10 +150,7 @@ func execCommand(ctx context.Context, params json.RawMessage, store *secrets.Sto
 		cmd = resolved
 	}
 
-	timeout := 30 * time.Second
-	if p.Timeout > 0 {
-		timeout = time.Duration(p.Timeout) * time.Second
-	}
+	timeout := ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 30})
 
 	log.Debugf("exec", "session=%s running: %s (timeout=%s background=%v)", SessionKeyFromContext(ctx), truncateCmd(p.Command, 200), timeout, p.Background)
 
