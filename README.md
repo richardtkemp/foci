@@ -4,7 +4,7 @@ A minimal agent platform in Go. One binary, ~32MB RAM, no framework.
 
 ## What It Is
 
-Foci runs AI agents on Telegram. Each agent has its own identity (character files), memory (daily logs + curated long-term), and tools. Character files are fully configurable — use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention, or define whatever combination suits your agent. They're just markdown files in a directory.
+Foci runs AI agents on Telegram. Each agent has its own identity (character files), memory (daily logs + curated long-term), and tools. Character files are fully configurable — use the defaults (SOUL, CRAFT, COHERENCE, USER, MEMORY), follow OpenClaw's convention, or define whatever combination suits your agent. They're just markdown files in a directory. See [docs/DEFAULTS.md](docs/DEFAULTS.md) for all embedded prompts.
 
 Built for Anthropic and battle-tested there, but any OpenAI-compatible endpoint works — the only Anthropic-specific feature is subscription allowance tracking (mana).
 
@@ -18,7 +18,7 @@ See [docs/INSTALL.md](docs/INSTALL.md) for prerequisites, options, and next step
 
 ## Why Rewrite
 
-Ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw). Same concept, different philosophy. OpenClaw worked but fought its own weight:
+Ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw). Same concept, different philosophy. See [docs/COMPARISON.md](docs/COMPARISON.md) for a detailed feature comparison. OpenClaw worked but became hard to maintain and customise:
 
 | | OpenClaw | Foci |
 |---|---|---|
@@ -55,7 +55,7 @@ Tmux management and coding agent orchestration are structured tool calls, not CL
 Context compression preserves goals, reasoning, corrections, emotional tone, and technical state — not just a generic summary. Configurable per-agent as a markdown file on disk.
 
 **Memory that works out of the box.**
-Daily markdown files + curated MEMORY.md. No vector database, no embeddings. Ships with defaults for memory formation, daily review, and weekly character evolution. The agent reads, writes, and prunes its own memory.
+Daily markdown files + curated MEMORY.md. No vector database, no embeddings. Ships with defaults for memory formation, daily review, and weekly character evolution. The agent reads, writes, and prunes its own memory. See [docs/MEMORY.md](docs/MEMORY.md).
 
 **Message metadata injection.**
 Every inbound message gets a `[meta]` header — time, gap since last message, model, cost breakdown, mana remaining. The agent always knows what's going on without touching the system prompt.
@@ -76,19 +76,27 @@ Every inbound message gets a `[meta]` header — time, gap since last message, m
 | **Groq API key** | Voice input (speech-to-text) | Free tier, fast Whisper transcription |
 | **Brave Search API key** | `web_search` tool | Free tier available |
 | **edge-tts + ffmpeg** | Voice output (text-to-speech) | `pip install edge-tts`, `apt install ffmpeg` |
-| **Bitwarden CLI** | Dynamic secret management | Approval-gated via Telegram |
+| **Bitwarden CLI** | Dynamic secret management | Approval-gated via Telegram. See [docs/BITWARDEN.md](docs/BITWARDEN.md) |
 
 See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for a full list of suggested system tools.
 
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) — Full specification (source of truth)
+- [docs/COMPARISON.md](docs/COMPARISON.md) — Feature comparison with OpenClaw and Nanobot
 - [docs/INSTALL.md](docs/INSTALL.md) — End-to-end installation guide
 - [docs/CONFIG.md](docs/CONFIG.md) — Configuration reference
+- [docs/DEFAULTS.md](docs/DEFAULTS.md) — Embedded prompt defaults
 - [docs/AUTH.md](docs/AUTH.md) — Authentication and OAuth setup
-- [docs/SECRETS.md](docs/SECRETS.md) — Secret management and Bitwarden integration
+- [docs/SECRETS.md](docs/SECRETS.md) — Secret management
+- [docs/BITWARDEN.md](docs/BITWARDEN.md) — Bitwarden vault integration
 - [docs/CACHING.md](docs/CACHING.md) — Cache architecture and preservation
+- [docs/MEMORY.md](docs/MEMORY.md) — Memory system (search, formation, consolidation)
 - [docs/MULTIBALL.md](docs/MULTIBALL.md) — Parallel conversations (session forking)
+- [docs/SESSION_KEYS.md](docs/SESSION_KEYS.md) — Session key format and lifecycle
+- [docs/NUDGE.md](docs/NUDGE.md) — Mid-turn behavioral reminders
+- [docs/HEARTBEAT.md](docs/HEARTBEAT.md) — Keepalive and background work
+- [docs/WEBHOOKS.md](docs/WEBHOOKS.md) — Webhook-triggered agent turns
 - [docs/WIRING.md](docs/WIRING.md) — Internal architecture and wiring
 - [docs/CLI.md](docs/CLI.md) — CLI reference
 - [docs/TOOLS.md](docs/TOOLS.md) — Tool reference and shell function piping
