@@ -384,11 +384,11 @@ func runCompaction(ctx context.Context, cc CommandContext, dryRun bool) (int, er
 		return 0, fmt.Errorf("too few messages to compact (%d)", mc)
 	}
 	if dryRun {
-		for _, fn := range cc.Agent.CompactionNotifyFunc {
+		for _, fn := range cc.Agent.CompactionStartFunc {
 			fn(sk, "⏳ Running compaction dry-run...")
 		}
 	} else {
-		for _, fn := range cc.Agent.CompactionNotifyFunc {
+		for _, fn := range cc.Agent.CompactionStartFunc {
 			fn(sk, "⏳ Compacting context...")
 		}
 	}

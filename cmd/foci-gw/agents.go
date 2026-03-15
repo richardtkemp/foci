@@ -405,6 +405,7 @@ func setupAgent(p setupParams) *agentInstance {
 						log.Warnf("nudge", "agent %s: create branch key: %v", acfg.ID, err)
 						return
 					}
+					ag.SetSessionNoCompact(branchKey, true)
 					if err := extractor.Extract(ctx, ag, branchKey); err != nil {
 						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
 						return
@@ -474,6 +475,7 @@ func setupAgent(p setupParams) *agentInstance {
 		OrientationBuilder: func(branchKey, parentKey string) string {
 			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
 		},
+		SetNoCompact: func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) },
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
 

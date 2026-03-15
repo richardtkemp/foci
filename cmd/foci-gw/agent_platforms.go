@@ -73,16 +73,29 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
-	// Compaction notify — session-specific connection, falls back to all
+	// Compaction notify — session-specific connection, falls back to all.
+	// Start notifications use SendNotificationDirect to bypass turn buffering
+	// so ⏳ arrives before the compaction completes (not batched with ✅).
 	compactNotify := cfg.Sessions.CompactionNotify
 	if acfg.CompactionNotify != nil {
 		compactNotify = acfg.CompactionNotify
 	}
 	if compactNotify == nil || *compactNotify {
+		ag.CompactionStartFunc.Add(func(sk, msg string) {
+			if c := connMgr.ForSession(sk); c != nil {
+				c.SendNotificationDirect(msg)
+			} else {
+				for _, conn := range connMgr.AllForAgent(acfg.ID) {
+					conn.SendNotificationDirect(msg)
+				}
+			}
+		})
 		ag.CompactionNotifyFunc.Add(func(sk, msg string) {
 			if c := connMgr.ForSession(sk); c != nil {
+				log.Debugf("agent", "compaction notify session=%s → session-specific connection", sk)
 				c.SendNotification(msg)
 			} else {
+				log.Debugf("agent", "compaction notify session=%s → agent broadcast (%s)", sk, acfg.ID)
 				plat.NotifyAgent(acfg.ID, msg)
 			}
 		})

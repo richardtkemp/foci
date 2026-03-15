@@ -437,18 +437,19 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{
-		Timestamp:  start.UTC(),
-		Provider:   c.format,
-		Session:    sessionKey,
-		Model:      c.model,
-		Input:      resp.Usage.InputTokens,
-		Output:     resp.Usage.OutputTokens,
-		CacheRead:  resp.Usage.CacheReadInputTokens,
-		CacheWrite: resp.Usage.CacheCreationInputTokens,
-		CostUSD:    cost,
-		DurationMS: duration.Milliseconds(),
-		StopReason: resp.StopReason,
-		CallType:   "compaction",
+		Timestamp:   start.UTC(),
+		Provider:    c.format,
+		Session:     sessionKey,
+		Model:       c.model,
+		Input:       resp.Usage.InputTokens,
+		Output:      resp.Usage.OutputTokens,
+		CacheRead:   resp.Usage.CacheReadInputTokens,
+		CacheWrite:  resp.Usage.CacheCreationInputTokens,
+		CostUSD:     cost,
+		DurationMS:  duration.Milliseconds(),
+		StopReason:  resp.StopReason,
+		CallType:    "compaction",
+		PreMessages: len(messages),
 	})
 
 	summary := provider.TextOf(resp.Content)

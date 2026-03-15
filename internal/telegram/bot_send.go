@@ -56,6 +56,16 @@ func (b *Bot) SendNotification(text string) {
 	b.sendNotificationImmediate(text)
 }
 
+// SendNotificationDirect sends a notification immediately, bypassing the
+// turn-active buffer. Use for time-sensitive notifications (e.g. compaction start)
+// that must arrive before the turn ends.
+func (b *Bot) SendNotificationDirect(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	b.sendNotificationImmediate(text)
+}
+
 // sendNotificationImmediate sends a notification directly to the default chat.
 func (b *Bot) sendNotificationImmediate(text string) {
 	chatID := b.defaultChatID()

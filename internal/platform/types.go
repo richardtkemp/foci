@@ -122,6 +122,7 @@ type Connection interface {
 	SendInjectedMessage(sessionKey, text string) error // sends with system injection header
 	SendToSession(sessionKey, text string) error       // sends without header (for agent replies)
 	SendNotification(text string)
+	SendNotificationDirect(text string) // sends immediately, bypassing turn buffering
 }
 
 // ConnectionManager manages platform connection instances and facet pools.
