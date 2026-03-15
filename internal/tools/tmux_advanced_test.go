@@ -3,8 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -156,22 +154,11 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 
 func TestTmuxReapExpiredSessions(t *testing.T) {
 	// Verifies that the reaper removes sessions whose lastAccess time is past the TTL, killing both the internal tracking state and the actual tmux session.
+	t.Parallel()
 	tmuxAvailable(t)
 
-	// Isolated tmux server: reapExpiredSessions calls maybeKillTmuxServer
-	// which kills the server when no sessions remain. Using the shared
-	// server would race with other parallel tests.
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "tmux.sock")
-	exec.Command("tmux", "-S", sock, "start-server").Run()
-	t.Cleanup(func() {
-		exec.Command("tmux", "-S", sock, "kill-server").Run()
-	})
-
-	orig := tmuxSocketPath
-	tmuxSocketPath = sock
-
 	name := "foci-test-reap"
+	tmuxSetup(t, name)
 
 	inst := &tmuxInstance{
 		watched:           make(map[string]*watchedSession),
@@ -179,17 +166,14 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 		lastSend:          make(map[string]time.Time),
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        100 * time.Millisecond,
-		socketPath:        sock,
+		socketPath:        tmuxSocketPath,
 	}
 
 	// Create a real tmux session
-	_, err := runTmuxWithSocket(context.Background(), sock, "new-session", "-d", "-s", name, "sleep", "60")
+	_, err := runTmux(context.Background(), "new-session", "-d", "-s", name, "sleep", "60")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-
-	tmuxSocketPath = orig
-	t.Parallel()
 
 	// Register it as owned with an old lastAccess time
 	inst.owned[name] = ""
@@ -207,7 +191,7 @@ func TestTmuxReapExpiredSessions(t *testing.T) {
 	}
 
 	// Verify tmux session was killed
-	_, err = runTmuxWithSocket(context.Background(), sock, "has-session", "-t", name)
+	_, err = runTmux(context.Background(), "has-session", "-t", name)
 	if err == nil {
 		t.Error("tmux session should have been killed by reaper")
 	}
