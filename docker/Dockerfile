@@ -35,9 +35,10 @@ COPY --from=builder /src/bin/foci-call /usr/local/bin/foci-call
 COPY --from=builder /src/shared/ /opt/foci-shared/
 COPY --from=builder /src/docs/ /opt/foci-shared/docs/
 
-# Stage import directories (place .md files in docker/character/ or docker/memory/)
-COPY docker/character/ /opt/foci-import/character/
-COPY docker/memory/ /opt/foci-import/memory/
+# Stage import directories — source paths configured via .env
+# (FOCI_CHAR_IMPORT_DIR / FOCI_MEMORY_IMPORT_DIR, defaults to docker/character/ and docker/memory/)
+COPY --from=char-import . /opt/foci-import/character/
+COPY --from=memory-import . /opt/foci-import/memory/
 
 # Copy entrypoint
 COPY docker/entrypoint.sh /entrypoint.sh
