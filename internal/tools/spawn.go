@@ -554,29 +554,34 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 			return ToolResult{}, ctx.Err()
 		}
 
-		deps.Notifier.MarkPending(parentSession)
+		var spawnResult string
+		var spawnErr error
+		signal := make(chan struct{})
 		go func() {
-			defer func() { <-sem }()
-			defer deps.Notifier.MarkDone(parentSession)
-
 			spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
 			defer cancel()
-
-			result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
-			if err != nil {
-				msg := fmt.Sprintf("[SPAWN RESULT] Branch %s failed:\n\n%v", branchKey, err)
-				deps.Notifier.InjectToAgent(parentSession, msg, "", "async_notify")
-				return
-			}
-			if result == "" {
-				result = "(empty response)"
-			}
-			msg := fmt.Sprintf("[SPAWN RESULT] Branch %s completed:\n\n%s", branchKey, result)
-			deps.Notifier.InjectToAgent(parentSession, msg, "", "async_notify")
+			spawnResult, spawnErr = agent.HandleMessage(spawnCtx, branchKey, prompt)
+			close(signal)
 		}()
 
 		promptPreview := truncatePromptPreview(prompt)
-		return TextResult(fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview)), nil
+		return RunInBackground(ctx, BackgroundParams{
+			SessionKey:    parentSession,
+			Notifier:      deps.Notifier,
+			ThresholdSecs: 0, // always async
+			Done:          signal,
+			NotifyMessage: func() string {
+				if spawnErr != nil {
+					return fmt.Sprintf("[SPAWN RESULT] Branch %s failed:\n\n%v", branchKey, spawnErr)
+				}
+				if spawnResult == "" {
+					spawnResult = "(empty response)"
+				}
+				return fmt.Sprintf("[SPAWN RESULT] Branch %s completed:\n\n%s", branchKey, spawnResult)
+			},
+			Cleanup:       func() { <-sem },
+			PendingResult: TextResult(fmt.Sprintf("Spawn started in background.\nBranch: %s\nPrompt: %s\nResults will be delivered when complete.", branchKey, promptPreview)),
+		})
 	}
 
 	// Synchronous fallback (nil notifier — for tests).
