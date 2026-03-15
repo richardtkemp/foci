@@ -239,7 +239,7 @@ func Load(path string) (*Config, error) {
 	// All defaults must be set BEFORE applyDefaultsToAgent so the reflection-based
 	// copier propagates them to agents automatically — no manual fallback needed.
 	setStringDefault(&cfg.LLM.Model, "anthropic/claude-haiku-4-5-20251001")
-	setIntDefault(&cfg.LLM.MaxOutputTokens, 8192)
+	setIntDefault(&cfg.LLM.MaxOutputTokens, 16384)
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
 	setIntDefaultDefined(&cfg.Defaults.NudgeCooldown, 5, md.IsDefined("defaults", "nudge_cooldown"))

@@ -100,7 +100,7 @@ type AgentConfig struct {
 	Platforms *PlatformsConfig  `toml:"platforms"` // per-agent platform configurations (telegram, discord, etc.)
 
 	MaxToolLoops          int    `toml:"max_tool_loops"`           // max tool iterations per turn (default 25)
-	MaxOutputTokens       int    `toml:"max_output_tokens"`        // max tokens in model response (default 8192)
+	MaxOutputTokens       int    `toml:"max_output_tokens"`        // max tokens in model response (default 16384)
 	BraindeadThreshold    int    `toml:"braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
 	BraindeadPrompt       string `toml:"braindead_prompt"`         // warning text injected as user message
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
@@ -483,7 +483,7 @@ type CommandConfig struct {
 // Per-agent overrides use the matching fields on AgentConfig.
 type LLMConfig struct {
 	Model           string `toml:"model"`            // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
-	MaxOutputTokens int    `toml:"max_output_tokens"` // default max_output_tokens (default: 8192)
+	MaxOutputTokens int    `toml:"max_output_tokens"` // default max_output_tokens (default: 16384)
 	SummaryModel    string `toml:"summary_model"`     // default summary model: alias or developer/model_id (empty = provider-aware default)
 	SummaryEndpoint string `toml:"summary_endpoint"`  // default summary endpoint override (empty = auto-select)
 }

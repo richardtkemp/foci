@@ -111,7 +111,7 @@ type Agent struct {
 	CompactionHandoffMsg          string                       // inline handoff message; empty resolves from search dirs or embedded default
 	PromptSearchDirs              []string                     // directories to search for prompt files (agent workspace, shared)
 	MaxToolLoops                  int                          // max tool iterations per turn (default 25)
-	MaxOutputTokens               int                          // max tokens in model response (default 8192)
+	MaxOutputTokens               int                          // max tokens in model response (default 16384)
 	BraindeadWarningEnable        bool                         // enable braindead warning (default true)
 	BraindeadWarningThreshold     int                          // consecutive tool loops before warning (0 = disabled)
 	BraindeadWarningPrompt        string                       // warning text (empty = hardcoded default)
@@ -402,7 +402,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	}
 	maxOutput := a.MaxOutputTokens
 	if maxOutput <= 0 {
-		maxOutput = 8192 // default
+		maxOutput = 16384 // default
 	}
 	braindeadWarningThreshold := a.BraindeadWarningThreshold
 	braindeadWarned := false
