@@ -266,6 +266,9 @@ func TestTaskListNotifications(t *testing.T) {
 	if !strings.Contains(last, "✅ 1/2: Review cache") {
 		t.Errorf("unexpected completed notification: %q", last)
 	}
+	if !strings.Contains(last, "up next: 2/2 Write tests") {
+		t.Errorf("expected 'up next' in completed notification: %q", last)
+	}
 
 	// Update without status change — should NOT fire
 	countBefore := len(notifications)
@@ -275,6 +278,107 @@ func TestTaskListNotifications(t *testing.T) {
 	}
 	if len(notifications) != countBefore {
 		t.Errorf("subject-only update should not fire notification")
+	}
+}
+
+func TestTaskListBatchNotifyListsTasks(t *testing.T) {
+	// Verifies batch create notification lists each task subject (not just a count).
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "tasklist.db")
+	s, err := memory.NewTaskListStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTaskListStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var notifications []string
+	notify := func(_, msg string) { notifications = append(notifications, msg) }
+	tool := NewTaskListTool(s, "test", notify)
+
+	ctx := WithSessionKey(context.Background(), "agent:chat:1:v1")
+	data, _ := json.Marshal(map[string]any{
+		"action": "create",
+		"tasks": []map[string]any{
+			{"subject": "Alpha"},
+			{"subject": "Beta"},
+			{"subject": "Gamma"},
+		},
+	})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("batch create: %v", err)
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("expected 1 notification, got %d", len(notifications))
+	}
+	n := notifications[0]
+	if !strings.Contains(n, "Created 3 tasks") {
+		t.Errorf("missing count header: %q", n)
+	}
+	for _, subj := range []string{"Alpha", "Beta", "Gamma"} {
+		if !strings.Contains(n, subj) {
+			t.Errorf("missing subject %q in notification: %q", subj, n)
+		}
+	}
+}
+
+func TestTaskListCompletedUpNext(t *testing.T) {
+	// Verifies completed notification shows the next pending task.
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "tasklist.db")
+	s, err := memory.NewTaskListStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewTaskListStore: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	var notifications []string
+	notify := func(_, msg string) { notifications = append(notifications, msg) }
+	tool := NewTaskListTool(s, "test", notify)
+
+	ctx := WithSessionKey(context.Background(), "agent:chat:1:v1")
+
+	// Create 3 tasks.
+	data, _ := json.Marshal(map[string]any{
+		"action": "create",
+		"tasks": []map[string]any{
+			{"subject": "First"},
+			{"subject": "Second"},
+			{"subject": "Third"},
+		},
+	})
+	tool.Execute(ctx, data)
+
+	// Complete task #1 — should show "up next: 2/3 Second".
+	data, _ = json.Marshal(map[string]any{"action": "update", "id": 1, "status": "completed"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	last := notifications[len(notifications)-1]
+	if !strings.Contains(last, "✅ 1/3: First") {
+		t.Errorf("unexpected completed notification: %q", last)
+	}
+	if !strings.Contains(last, "up next: 2/3 Second") {
+		t.Errorf("expected 'up next' line: %q", last)
+	}
+
+	// Complete task #2 — should show "up next: 3/3 Third".
+	data, _ = json.Marshal(map[string]any{"action": "update", "id": 2, "status": "completed"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	last = notifications[len(notifications)-1]
+	if !strings.Contains(last, "up next: 3/3 Third") {
+		t.Errorf("expected 'up next: 3/3 Third': %q", last)
+	}
+
+	// Complete task #3 — no more pending, no "up next".
+	data, _ = json.Marshal(map[string]any{"action": "update", "id": 3, "status": "completed"})
+	if _, err := tool.Execute(ctx, data); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	last = notifications[len(notifications)-1]
+	if strings.Contains(last, "up next") {
+		t.Errorf("should not have 'up next' when no pending tasks: %q", last)
 	}
 }
 
