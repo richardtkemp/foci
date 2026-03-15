@@ -1,4 +1,4 @@
-# Session File Lifecycle
+# Session Storage
 
 How and when JSONL session files are created, rotated, and archived on disk.
 
@@ -54,7 +54,7 @@ Branch keys are derived from the parent: `parentKey.Branch()` → appends `/b{ti
 
 ### 3. Compaction: ReplaceAndRotate creates new file + archives old
 
-**Trigger:** Compactor calls `writer.ReplaceAndRotate(oldKey, compactedMessages)` in `compact.go:544`.
+**Trigger:** Compactor calls `writer.ReplaceAndRotate(oldKey, compactedMessages)` in `compact.go:531`.
 
 **Code path:** `archive.go:ReplaceAndRotate` (line 158)
 
@@ -91,7 +91,7 @@ The new key is propagated to the bot via `SessionKeyRotatedFunc` → `UpdateChat
 
 ### 5. Replace (in-place compaction for branches)
 
-**Trigger:** `replaceInternal(key, msgs)` in `archive.go:253`.
+**Trigger:** `replaceInternal(key, msgs)` in `archive.go:256`.
 
 ```
 1. os.Rename(path, nextArchivePath(path))   ← archive old
