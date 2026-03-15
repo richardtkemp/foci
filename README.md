@@ -14,9 +14,7 @@ AI agents on Telegram, written in Go from scratch.
 
 ---
 
-Foci gives each agent its own identity (character files), memory (daily logs + curated long-term), and tools. Character files are fully configurable — use the defaults, follow [OpenClaw](https://github.com/claw-project/openclaw)'s convention, or define whatever combination suits your agent. They're just markdown files in a directory.
-
-Built for Anthropic and battle-tested there, but any OpenAI-compatible endpoint works.
+A ground-up rewrite of [OpenClaw](https://github.com/claw-project/openclaw) in Go — single binary, cache-first, with OS-level secret isolation. Session branching, tool piping, and coding agent orchestration go well beyond the original. Built for Anthropic, but any OpenAI-compatible endpoint works.
 
 ## Quick Start
 
