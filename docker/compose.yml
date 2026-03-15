@@ -5,6 +5,8 @@ services:
       dockerfile: docker/Dockerfile
     container_name: foci
     restart: unless-stopped
+    cap_add:
+      - SETGID  # allows foci-gw to drop foci-secrets group from child processes
     env_file:
       - .env
     volumes:

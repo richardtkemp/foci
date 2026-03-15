@@ -9,7 +9,7 @@ If you have Docker with Compose v2+, see [`docker/README.md`](../docker/README.m
 ```bash
 cd docker
 cp .env.example .env
-# Edit .env with your Telegram token, user ID, and API key
+# Edit .env with your Telegram token, user ID, auth method, and API key
 docker compose up -d
 ```
 
