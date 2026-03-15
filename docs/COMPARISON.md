@@ -5,9 +5,9 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Language | Go | Node.js/TypeScript | Python |
-| Binary size / runtime | ~15 MB static binary | Node 22+, ~500 MB+ | Python 3.11+, pip |
-| Typical RAM | ~30 MB | ~500 MB+ | ~45 MB |
-| Core LOC | ~35k | ~250k+ | ~4k |
+| Binary size / runtime | ~50 MB static binary | Node 22+, ~500 MB+ | Python 3.11+, pip |
+| Typical RAM | ~35 MB | ~500 MB+ | ~45 MB |
+| Core LOC | ~53k | ~250k+ | ~4k |
 | License | Proprietary | MIT | MIT |
 
 ## Security
