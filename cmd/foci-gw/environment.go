@@ -108,16 +108,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
 
 	// Visibility: resolve effective show_tool_calls and show_thinking.
-	// Agent-level fields are populated by config migration from platform-specific
-	// settings, so they always reflect the effective value without needing
-	// platform-specific access here.
-	toolCalls := config.ToolCallOff
-	switch {
-	case acfg.ShowToolCalls != nil:
-		toolCalls = *acfg.ShowToolCalls
-	case cfg.Telegram.ShowToolCalls != nil:
-		toolCalls = *cfg.Telegram.ShowToolCalls
-	}
+	toolCalls := config.ToolCallDisplay(resolveShowToolCalls(acfg, cfg))
 	thinking := config.ShowThinkingOff
 	switch {
 	case acfg.ShowThinking != nil:

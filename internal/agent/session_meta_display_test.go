@@ -2,6 +2,7 @@ package agent
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/state"
@@ -85,6 +86,53 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 	}
 	if v := ag2.SessionDisplayWidth(sk); v != "60" {
 		t.Errorf("restored display_width = %q, want 60", v)
+	}
+}
+
+func TestSessionShowToolCalls_AgentDefault(t *testing.T) {
+	// Proves that SessionShowToolCalls returns the agent-level ShowToolCalls default
+	// when no per-session override is set, and that a per-session override takes precedence.
+	ag := &Agent{ShowToolCalls: "preview", AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	sk := "bot/c100/1000000000"
+
+	// No per-session override → agent default
+	if v := ag.SessionShowToolCalls(sk); v != "preview" {
+		t.Errorf("agent default: SessionShowToolCalls = %q, want preview", v)
+	}
+
+	// Per-session override takes precedence
+	ag.SetSessionShowToolCalls(sk, "full")
+	if v := ag.SessionShowToolCalls(sk); v != "full" {
+		t.Errorf("with override: SessionShowToolCalls = %q, want full", v)
+	}
+
+	// Clear override → back to agent default
+	ag.SetSessionShowToolCalls(sk, "")
+	if v := ag.SessionShowToolCalls(sk); v != "preview" {
+		t.Errorf("after clear: SessionShowToolCalls = %q, want preview", v)
+	}
+}
+
+func TestToolDisplayNote(t *testing.T) {
+	// Proves that toolDisplayNote returns correct descriptions for each display mode.
+	tests := []struct {
+		mode     string
+		contains string
+	}{
+		{"off", "hidden"},
+		{"", "hidden"},
+		{"preview", "preview"},
+		{"full", "visible"},
+	}
+	for _, tt := range tests {
+		note := toolDisplayNote(tt.mode)
+		if !strings.Contains(note, tt.contains) {
+			t.Errorf("toolDisplayNote(%q) = %q, want to contain %q", tt.mode, note, tt.contains)
+		}
+		// All notes start with [display]
+		if !strings.Contains(note, "[display]") {
+			t.Errorf("toolDisplayNote(%q) missing [display] prefix", tt.mode)
+		}
 	}
 }
 

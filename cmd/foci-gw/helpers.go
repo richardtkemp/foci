@@ -80,6 +80,19 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 	return d
 }
 
+// resolveShowToolCalls resolves the effective show_tool_calls value:
+// per-agent → global telegram → "off".
+func resolveShowToolCalls(acfg config.AgentConfig, cfg *config.Config) string {
+	switch {
+	case acfg.ShowToolCalls != nil:
+		return string(*acfg.ShowToolCalls)
+	case cfg.Telegram.ShowToolCalls != nil:
+		return string(*cfg.Telegram.ShowToolCalls)
+	default:
+		return string(config.ToolCallOff)
+	}
+}
+
 // resolveStreamingConfig resolves the streaming setting for an agent.
 // Per-agent *bool overrides defaults *bool which overrides global anthropic.streaming.
 // Streaming is forced off when use_sdk is false.
