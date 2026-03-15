@@ -77,6 +77,75 @@ func TestParseExtractionResponseEmpty(t *testing.T) {
 	}
 }
 
+func TestParseExtractionResponsePreambleWithFences(t *testing.T) {
+	// Handles preamble text before code-fenced JSON.
+	t.Parallel()
+
+	input := "Looking through the character files, here are the rules I found:\n\n```json\n" +
+		`[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]` +
+		"\n```"
+
+	rules, err := ParseExtractionResponse(input)
+	if err != nil {
+		t.Fatalf("ParseExtractionResponse: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Text != "test" {
+		t.Errorf("rule text: %q", rules[0].Text)
+	}
+}
+
+func TestParseExtractionResponsePreambleRawJSON(t *testing.T) {
+	// Handles preamble text before raw JSON (no code fences).
+	t.Parallel()
+
+	input := "Here are the rules:\n" +
+		`[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]`
+
+	rules, err := ParseExtractionResponse(input)
+	if err != nil {
+		t.Fatalf("ParseExtractionResponse: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Text != "test" {
+		t.Errorf("rule text: %q", rules[0].Text)
+	}
+}
+
+func TestParseExtractionResponseEmptyResponse(t *testing.T) {
+	// Returns empty rules for empty or whitespace-only response.
+	t.Parallel()
+
+	for _, input := range []string{"", "  ", "\n\t\n"} {
+		rules, err := ParseExtractionResponse(input)
+		if err != nil {
+			t.Fatalf("ParseExtractionResponse(%q): %v", input, err)
+		}
+		if len(rules) != 0 {
+			t.Errorf("expected 0 rules for %q, got %d", input, len(rules))
+		}
+	}
+}
+
+func TestParseExtractionResponseTruncatedJSON(t *testing.T) {
+	// Returns empty rules for truncated JSON (opening bracket, no closing).
+	t.Parallel()
+
+	input := `[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "per`
+
+	rules, err := ParseExtractionResponse(input)
+	if err != nil {
+		t.Fatalf("ParseExtractionResponse: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules for truncated JSON, got %d", len(rules))
+	}
+}
+
 func TestNeedsExtraction(t *testing.T) {
 	// Verifies hash comparison logic.
 	t.Parallel()
