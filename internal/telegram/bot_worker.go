@@ -44,10 +44,6 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		return // no session assigned (idle secondary bot)
 	}
 
-	// Set the turn session key so display overrides resolve correctly.
-	b.turnSessionKey = sk
-	defer func() { b.turnSessionKey = "" }()
-
 	// Create a cancellable context for this turn
 	turnCtx, cancel := context.WithCancel(ctx)
 
@@ -82,7 +78,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}()
 	defer typingTicker.Stop()
 
-	renderer := newTurnRenderer(b, qm.msg)
+	renderer := newTurnRenderer(b, qm.msg, sk)
 	defer renderer.Cleanup()
 
 	cb := &agent.TurnCallbacks{

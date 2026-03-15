@@ -120,39 +120,34 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	}
 }
 
-// TestDisplayOverrideFn_UsesTurnSessionKey verifies that the display override
-// closure reads the turn-scoped session key rather than the bot's default
-// SessionKey(). This ensures multi-chat bots resolve overrides for the chat
-// that is actually being served, not the first chat that ever messaged.
-func TestDisplayOverrideFn_UsesTurnSessionKey(t *testing.T) {
+// TestDisplayOverrideFn_UsesSessionKey verifies that the display override
+// function receives the session key as a parameter. This ensures multi-chat
+// bots resolve overrides for the chat being served.
+func TestDisplayOverrideFn_UsesSessionKey(t *testing.T) {
 	bot := newBotForTest()
 	bot.SetShowToolCalls("off") // bot default
 
-	// Simulate a display override function that returns "full" for sk-turn
-	// and nothing for any other key.
-	bot.SetDisplayOverrideFn(func() DisplayOverrides {
-		sk := bot.turnSessionKey
+	// Override function returns "full" for sk-turn, nothing for other keys.
+	bot.SetDisplayOverrideFn(func(sk string) DisplayOverrides {
 		if sk == "sk-turn" {
 			return DisplayOverrides{ShowToolCalls: "full"}
 		}
 		return DisplayOverrides{}
 	})
 
-	// Without turnSessionKey set, should fall back to bot default.
-	if got := bot.effectiveShowToolCalls(); got != "off" {
-		t.Errorf("without turnSessionKey: got %q, want %q", got, "off")
+	// With a different session key, should fall back to bot default.
+	if got := bot.effectiveShowToolCalls("sk-other"); got != "off" {
+		t.Errorf("with sk-other: got %q, want %q", got, "off")
 	}
 
-	// With turnSessionKey set, should resolve the override.
-	bot.turnSessionKey = "sk-turn"
-	if got := bot.effectiveShowToolCalls(); got != "full" {
-		t.Errorf("with turnSessionKey: got %q, want %q", got, "full")
+	// With the matching session key, should resolve the override.
+	if got := bot.effectiveShowToolCalls("sk-turn"); got != "full" {
+		t.Errorf("with sk-turn: got %q, want %q", got, "full")
 	}
 
-	// Clear it, should go back to default.
-	bot.turnSessionKey = ""
-	if got := bot.effectiveShowToolCalls(); got != "off" {
-		t.Errorf("after clearing turnSessionKey: got %q, want %q", got, "off")
+	// Empty session key, should fall back to bot default.
+	if got := bot.effectiveShowToolCalls(""); got != "off" {
+		t.Errorf("with empty sk: got %q, want %q", got, "off")
 	}
 }
 

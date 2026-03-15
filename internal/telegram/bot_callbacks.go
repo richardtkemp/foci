@@ -217,7 +217,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.effectiveDisplayWidth())
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.effectiveDisplayWidth(b.sessionKeyForMsg(chatID)))
 		kb := singleButtonKeyboard("Hide thinking", "th:hide")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
@@ -319,7 +319,7 @@ func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessag
 // sendFullModeToolCall sends a compact summary with a "Show full" button.
 func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawMessage) {
 	compact := formatToolCallCompact(toolName, params)
-	full := t.bot.formatToolCall(toolName, params)
+	full := t.bot.formatToolCall(toolName, params, t.display.showToolCalls)
 	kb := singleButtonKeyboard("Show full", "tc:show")
 	sent, err := t.bot.client.SendMessage(t.chatID, compact, &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
@@ -342,7 +342,7 @@ func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawM
 
 // sendPreviewModeToolCall sends or edits a tool call message (overwriting previous).
 func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.RawMessage) {
-	text := t.bot.formatToolCall(toolName, params)
+	text := t.bot.formatToolCall(toolName, params, t.display.showToolCalls)
 	sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
 	if t.msgID == 0 {
 		sent, err := t.bot.client.SendMessage(t.chatID, text, sendOpts)
