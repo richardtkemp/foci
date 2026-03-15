@@ -169,7 +169,7 @@ func taskCreate(store *memory.TaskListStore, agentID string, tasks []taskInput, 
 		fmt.Fprintf(&b, "Created task #%d: %s\n", id, t.Subject)
 	}
 	if notify != nil && sk != "" {
-		notify(sk, fmt.Sprintf("📋 Created %d tasks", len(tasks)))
+		notify(sk, taskBatchNotify(tasks))
 	}
 	return TextResult(strings.TrimRight(b.String(), "\n")), nil
 }
@@ -233,8 +233,27 @@ func taskAutoClear(store *memory.TaskListStore, agentID string) bool {
 	return true
 }
 
+// taskBatchNotify builds a notification for batch task creation,
+// listing each task subject (limit 15).
+func taskBatchNotify(tasks []taskInput) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "📋 Created %d tasks", len(tasks))
+	limit := len(tasks)
+	if limit > 15 {
+		limit = 15
+	}
+	for i := 0; i < limit; i++ {
+		fmt.Fprintf(&b, "\n  %d. %s", i+1, tasks[i].Subject)
+	}
+	if len(tasks) > 15 {
+		fmt.Fprintf(&b, "\n  … and %d more", len(tasks)-15)
+	}
+	return b.String()
+}
+
 // taskNotifyMessage builds a notification string for a task status change,
 // including progress counts (e.g. "✅ 3/5: Fixed token counting").
+// When a task is completed, it also shows the next pending task.
 func taskNotifyMessage(store *memory.TaskListStore, agentID string, t *memory.Task) string {
 	prefix := "📋"
 	switch t.Status {
@@ -248,12 +267,19 @@ func taskNotifyMessage(store *memory.TaskListStore, agentID string, t *memory.Ta
 	tasks, err := store.List(agentID)
 	if err == nil && len(tasks) > 0 {
 		completed := 0
-		for _, task := range tasks {
-			if task.Status == "completed" {
+		var nextPending *memory.Task
+		for i := range tasks {
+			if tasks[i].Status == "completed" {
 				completed++
+			} else if nextPending == nil && tasks[i].ID != t.ID && tasks[i].Status == "pending" {
+				nextPending = &tasks[i]
 			}
 		}
-		return fmt.Sprintf("%s %d/%d: %s", prefix, completed, len(tasks), t.Subject)
+		msg := fmt.Sprintf("%s %d/%d: %s", prefix, completed, len(tasks), t.Subject)
+		if t.Status == "completed" && nextPending != nil {
+			msg += fmt.Sprintf("\nup next: %d/%d %s", nextPending.ID, len(tasks), nextPending.Subject)
+		}
+		return msg
 	}
 
 	return fmt.Sprintf("%s %s", prefix, t.Subject)
