@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.svg" width="80" alt="Foci logo" />
+<a href="assets/qr-repo.png"><img src="assets/logo.svg" width="80" alt="Foci logo" /></a>
 
 # Foci
 
