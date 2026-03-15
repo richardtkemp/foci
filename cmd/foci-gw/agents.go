@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,10 +10,8 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
-	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/nudge"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
 	"foci/internal/periodic"
@@ -23,11 +20,9 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/session"
-	"foci/internal/skills"
 	"foci/internal/state"
 	"foci/internal/tools"
 	"foci/internal/voice"
-	"foci/internal/warnings"
 	"foci/internal/workspace"
 	"foci/prompts"
 )
@@ -93,7 +88,6 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Prompt search directories: agent workspace first, then shared.
-	// Used by ResolvePrompt when no explicit path is configured.
 	promptSearchDirs := []string{
 		filepath.Join(acfg.Workspace, "prompts"),
 		filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts"),
@@ -104,7 +98,6 @@ func setupAgent(p setupParams) *agentInstance {
 	// After the first message, it returns {id}/c{chatID}/{versionTS}.
 	// The resolver is set to use the primary connection's DefaultSessionKey once wired.
 	var defaultSessionKeyFn func() string
-
 	defaultSessionKey := func() string {
 		if defaultSessionKeyFn != nil {
 			return defaultSessionKeyFn()
@@ -117,166 +110,26 @@ func setupAgent(p setupParams) *agentInstance {
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
 	// Assigned later in this function.
 	var ag *agent.Agent
+	agLazy := func() *agent.Agent { return ag }
 
-	// Per-agent tool registry
+	// Per-agent tool registry and supporting services
 	registry := tools.NewRegistry()
-
-	// Async notifier: delivers results from auto-backgrounded exec commands
-	// and tmux watch inactivity alerts to the agent session.
-	notifier := newAsyncNotifier(func() *agent.Agent { return ag }, defaultSessionKey, acfg.ID, p.ctx, p.sessions, connMgr)
-	// Per-agent secrets view: agent-specific values overlay globals
+	notifier := newAsyncNotifier(agLazy, defaultSessionKey, acfg.ID, p.ctx, p.sessions, connMgr)
 	agentStore := p.store.ForAgent(acfg.ID)
 
-	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
-	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
-	spillThreshold := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
-	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir))
+	// Register tools by category
+	coreResult := registerCoreTools(registry, p, agentStore, notifier)
+	serverTools := registerWebTools(registry, p)
+	mcpMgr := registerMemoryAndExtTools(registry, p, agLazy)
 
-	// Only register tmux tool if tmux is available in PATH
-	var tmuxTool *tools.Tool
-	var tmuxClearAll func()
-	var tmuxWatchCount func() int
-	if _, err := exec.LookPath("tmux"); err == nil {
-		tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
-		tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
-		tmuxWatchThresholdSec := 30
-		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
-			tmuxWatchThresholdSec = int(d.Seconds())
-		}
-		tmuxSessionTTLStr := resolveString(acfg.TmuxSessionTTL, p.cfg.Tools.TmuxSessionTTL)
-		var tmuxSessionTTL time.Duration
-		if tmuxSessionTTLStr != "0" {
-			if d, err := time.ParseDuration(tmuxSessionTTLStr); err == nil {
-				tmuxSessionTTL = d
-			}
-		}
-		tmuxWatchCount, tmuxTool, tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
-		registry.Register(tmuxTool)
-	}
-	// Only register browser tool if enabled
-	browserEnabled := resolveBoolPtr(acfg.BrowserEnabled, p.cfg.Tools.Browser.Enabled)
-	if browserEnabled {
-		browserMgr := tools.NewBrowserManager(&p.cfg.Tools.Browser)
-		registry.Register(tools.NewBrowserTool(browserMgr))
-	}
+	// Bootstrap and skills
+	bs := setupBootstrapAndSkills(p, agentStore)
 
-	blockedPaths := resolveBlockedPaths(acfg, p.cfg)
-	if len(blockedPaths) > 0 {
-		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
-	}
-	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
-	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths))
-	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, acfg.Model, acfg.Workspace, p.cfg.Models.Aliases))
-	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
+	// Compaction
+	compactor, compactionThreshold := buildCompactor(p, defaultFormat)
 
-	// Web search/fetch: server-side (Anthropic) or client-side (Brave/builtin) based on config.
-	var serverTools []provider.ToolDef
-
-	searchProvider := resolveString(acfg.SearchProvider, p.cfg.Tools.SearchProvider)
-	if searchProvider == "anthropic" {
-		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
-			p.cfg.Tools.WebSearchMaxUses, p.cfg.Tools.WebSearchAllowedDomains, p.cfg.Tools.WebSearchBlockedDomains))
-	} else if searchProvider == "brave" && p.braveKey != "" {
-		registry.Register(tools.NewWebSearchTool(p.braveKey))
-	}
-
-	fetchProvider := resolveString(acfg.FetchProvider, p.cfg.Tools.FetchProvider)
-	if fetchProvider == "anthropic" {
-		serverTools = append(serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
-			p.cfg.Tools.WebFetchMaxUses, p.cfg.Tools.WebFetchAllowedDomains, p.cfg.Tools.WebFetchBlockedDomains))
-	} else {
-		registry.Register(tools.NewWebFetchTool())
-	}
-
-	// Memory tools (shared stores, registered per-agent)
-	if len(p.memBackends) > 0 {
-		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.cfg.Memory.SearchBackends))
-	}
-	if p.scratchpadStore != nil {
-		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))
-	}
-	if p.todoStore != nil {
-		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
-	}
-	if p.taskListStore != nil {
-		registry.Register(tools.NewTaskListTool(p.taskListStore, acfg.ID, func(sk, msg string) {
-			for _, fn := range ag.TaskListNotifyFunc {
-				fn(sk, msg)
-			}
-		}))
-	}
-
-	// Bitwarden tools (if enabled)
-	if p.bwStore != nil {
-		registry.Register(tools.NewBitwardenSearchTool(p.bwStore))
-		registry.Register(tools.NewBitwardenUnlockTool(p.bwStore))
-	}
-
-	// MCP servers (dynamic — re-reads mcp.toml on each tool call)
-	mcpMgr := mcpkg.NewManagerForAgent(filepath.Dir(p.configPath), acfg.ID)
-	if tool := mcpMgr.Tool(); tool != nil {
-		registry.Register(tool)
-	}
-
-	// Per-agent workspace bootstrap
-	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
-	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
-	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
-
-	// Per-agent skills (per-agent dirs override global)
-	skillsDirs := p.cfg.Skills.Dirs
-	if len(acfg.SkillsDirs) > 0 {
-		skillsDirs = acfg.SkillsDirs
-	}
-	skillRegistry := skills.Load(skillsDirs)
-	var extraSystemBlocks []provider.SystemBlock
-	if skillRegistry.Len() > 0 {
-		extraSystemBlocks = []provider.SystemBlock{
-			{Type: "text", Text: skillRegistry.SystemBlock(acfg.Workspace)},
-		}
-		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
-	}
-	maxRC := p.cfg.Tools.MaxResultChars
-	if len(acfg.SkillsDirs) > 0 {
-		maxRC = resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
-	}
-	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
-
-	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
-	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
-	compactor := compaction.NewCompactor(p.sessions, acfg.Model, compactionThreshold)
-	compactor.WithConfig(
-		p.cfg.Sessions.CompactionMaxTokens,
-		p.cfg.Sessions.CompactionMinMessages,
-		preserveMessages,
-	)
-	if acfg.CompactionEffort != "" {
-		compactor.WithEffort(acfg.CompactionEffort)
-	}
-	compactor.WithFormat(defaultFormat)
-	compactor.Scratchpad = p.scratchpadStore
-	compactor.TaskListStore = p.taskListStore
-	compactor.AgentID = acfg.ID
-
-	// Per-agent send_message_to_user tool (closure captures this agent's bot)
-	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.TTSReplacements)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls)
-	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
-		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
-		if conn == nil {
-			return nil
-		}
-		return conn
-	}, agentTTS))
-
-	// send_to_session tool — inject messages into other sessions.
-	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
-	var resolveKeyFn tools.SessionKeyResolverFn
-	if p.sessionIndex != nil {
-		resolveKeyFn = p.sessionIndex.ResolvePartialKey
-	}
-	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
+	// Session messaging tools (send_message_to_user, send_to_session)
+	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
 
 	// Per-agent environment block
 	var envBlock string
@@ -287,47 +140,47 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	ag = &agent.Agent{
-		Log:                           log.NewComponentLogger("agent/" + acfg.ID),
-		Client:                        p.client,
-		ClientProvider:                p.clientProvider,
-		Sessions:                      p.sessions,
-		Tools:                         registry,
-		ServerTools:                   serverTools,
-		EnvironmentBlock:              envBlock,
-		Bootstrap:                     bootstrap,
-		Compactor:                     compactor,
-		AsyncNotifier:                 notifier,
-		Reminders:                     p.reminderStore,
-		TaskListStore:                 p.taskListStore,
-		TodoStore:                     p.todoStore,
-		ScratchpadStore:               p.scratchpadStore,
-		DefaultSessionKey:             defaultSessionKey,
-		AgentID:                       acfg.ID,
-		Model:                         acfg.Model,
-		Format:                        defaultFormat,
-		Endpoint:                      defaultEndpoint,
-		ExtraSystemBlocks:             extraSystemBlocks,
-		CacheStrategy:                 p.cfg.Cache.Strategy,
-		CacheBustDetect:               p.cfg.Logging.CacheBustDetect,
-		CacheBustIdleThreshold:        time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
-		DuplicateMessages:             acfg.DuplicateMessages,
-		BatchPartialAssistantMessages: acfg.BatchPartialAssistantMessages,
-		BatchPartialJoiner:            acfg.BatchPartialJoiner,
-		MaxResultChars:                resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
-		ToolResultTempDir:             p.cfg.Tools.TempDir,
-		ModelAliases:                  p.cfg.Models.Aliases,
-		SummaryContextTurns:           resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
-		SummaryContextChars:           resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
-		MaxSummaryChars:               resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
-		MaxSummaryInputChars:          resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
-		SummaryModel:                  resolveString(acfg.SummaryModel, p.cfg.Tools.SummaryModel),
-		SummaryEndpoint:               resolveString(acfg.SummaryEndpoint, p.cfg.Tools.SummaryEndpoint),
-		MaxImagePixels:                resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
-		AutoSummarise:                 resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
-		StateStore:                    p.stateStore,
-		UsageClient:                   p.usageClientProvider.GetUsageClient(defaultEndpoint),
-		UsageClientProvider:           p.usageClientProvider,
-		MessageTransforms:             agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
+		Log:                            log.NewComponentLogger("agent/" + acfg.ID),
+		Client:                         p.client,
+		ClientProvider:                 p.clientProvider,
+		Sessions:                       p.sessions,
+		Tools:                          registry,
+		ServerTools:                    serverTools,
+		EnvironmentBlock:               envBlock,
+		Bootstrap:                      bs.bootstrap,
+		Compactor:                      compactor,
+		AsyncNotifier:                  notifier,
+		Reminders:                      p.reminderStore,
+		TaskListStore:                  p.taskListStore,
+		TodoStore:                      p.todoStore,
+		ScratchpadStore:                p.scratchpadStore,
+		DefaultSessionKey:              defaultSessionKey,
+		AgentID:                        acfg.ID,
+		Model:                          acfg.Model,
+		Format:                         defaultFormat,
+		Endpoint:                       defaultEndpoint,
+		ExtraSystemBlocks:              bs.extraSystemBlocks,
+		CacheStrategy:                  p.cfg.Cache.Strategy,
+		CacheBustDetect:                p.cfg.Logging.CacheBustDetect,
+		CacheBustIdleThreshold:         time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
+		DuplicateMessages:              acfg.DuplicateMessages,
+		BatchPartialAssistantMessages:  acfg.BatchPartialAssistantMessages,
+		BatchPartialJoiner:             acfg.BatchPartialJoiner,
+		MaxResultChars:                 resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
+		ToolResultTempDir:              p.cfg.Tools.TempDir,
+		ModelAliases:                   p.cfg.Models.Aliases,
+		SummaryContextTurns:            resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
+		SummaryContextChars:            resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
+		MaxSummaryChars:                resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
+		MaxSummaryInputChars:           resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
+		SummaryModel:                   resolveString(acfg.SummaryModel, p.cfg.Tools.SummaryModel),
+		SummaryEndpoint:                resolveString(acfg.SummaryEndpoint, p.cfg.Tools.SummaryEndpoint),
+		MaxImagePixels:                 resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
+		AutoSummarise:                  resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
+		StateStore:                     p.stateStore,
+		UsageClient:                    p.usageClientProvider.GetUsageClient(defaultEndpoint),
+		UsageClientProvider:            p.usageClientProvider,
+		MessageTransforms:              agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
 		CompactionSummaryPromptPath:    resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
 		CompactionHandoffMsg:           resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
 		CompactionIdleThreshold:        resolveString(acfg.CompactionIdleThreshold, p.cfg.Sessions.CompactionIdleThreshold),
@@ -335,152 +188,29 @@ func setupAgent(p setupParams) *agentInstance {
 		CompactionIdlePressureMax:      resolveFloat64Ptr(acfg.CompactionIdlePressureMax, p.cfg.Sessions.CompactionIdlePressureMax),
 		CompactionManaRefreshThreshold: resolveString(acfg.CompactionManaRefreshThreshold, p.cfg.Sessions.CompactionManaRefreshThreshold),
 		CompactionManaRefreshPreserve:  resolveIdlePreserve(acfg.CompactionManaRefreshPreserve, p.cfg.Sessions.CompactionManaRefreshPreserve),
-		PromptSearchDirs:              promptSearchDirs,
-		MaxToolLoops:                  acfg.MaxToolLoops,
-		MaxOutputTokens:               acfg.MaxOutputTokens,
-		BraindeadWarningThreshold:     acfg.BraindeadThreshold,
-		BraindeadWarningPrompt:        acfg.BraindeadPrompt,
-		TurnLockWarnThreshold:         parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
-		Effort:                        acfg.Effort,
-		Thinking:                      acfg.Thinking,
-		Speed:                         acfg.Speed,
-		CacheTTL:                      resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
-		Streaming:                     resolveStreamingConfig(acfg, p.cfg),
-		ManaInvestInterval:            parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
-	}
-	// Nudge system: load rules and create scheduler
-	if acfg.NudgeEnable {
-		rulesPath := nudge.RulesPath(acfg.Workspace)
-		rs, err := nudge.LoadRules(rulesPath)
-		if err != nil {
-			log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
-		}
-		if rs != nil && len(rs.Rules) > 0 {
-			ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
-			log.Infof("main", "agent %s: loaded %d nudge rules", acfg.ID, len(rs.Rules))
-		}
-		ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
-		ag.NudgePreAnswerMinTools = acfg.NudgePreAnswerMinTools
-		if ag.NudgePreAnswerMinTools <= 0 {
-			ag.NudgePreAnswerMinTools = 2
-		}
-
-		// NudgeReloadFunc: on bootstrap reload, optionally extract new rules
-		// from character files (if nudge_auto_extract), then refresh from disk.
-		fileOrder := acfg.SystemFiles
-		if len(fileOrder) == 0 {
-			fileOrder = workspace.DefaultFileOrder
-		}
-		nudgeCooldown := acfg.NudgeCooldown
-		nudgeMaxPerBatch := acfg.NudgeMaxPerBatch
-		autoExtract := acfg.NudgeAutoExtract
-		nudgeReloadFromDisk := func() {
-			rs, err := nudge.LoadRules(rulesPath)
-			if err != nil {
-				log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
-				return
-			}
-			if rs != nil && len(rs.Rules) > 0 {
-				ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
-			}
-		}
-
-		ag.NudgeReloadFunc = func() {
-			if !autoExtract {
-				nudgeReloadFromDisk()
-				return
-			}
-			extractor := nudge.NewExtractor(acfg.Workspace, fileOrder)
-			_, needed := extractor.NeedsExtraction()
-			if needed {
-				go func() {
-					ctx := context.Background()
-					parentKey := defaultSessionKey()
-					if parentKey == "" {
-						log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
-						return
-					}
-					branchKey, err := session.BranchFromSession(parentKey)
-					if err != nil {
-						log.Warnf("nudge", "agent %s: create branch key: %v", acfg.ID, err)
-						return
-					}
-					ag.SetSessionNoCompact(branchKey, true)
-					if err := extractor.Extract(ctx, ag, branchKey); err != nil {
-						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
-						return
-					}
-					nudgeReloadFromDisk()
-					log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)
-				}()
-			} else {
-				nudgeReloadFromDisk()
-			}
-		}
+		PromptSearchDirs:               promptSearchDirs,
+		MaxToolLoops:                   acfg.MaxToolLoops,
+		MaxOutputTokens:                acfg.MaxOutputTokens,
+		BraindeadWarningThreshold:      acfg.BraindeadThreshold,
+		BraindeadWarningPrompt:         acfg.BraindeadPrompt,
+		TurnLockWarnThreshold:          parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
+		Effort:                         acfg.Effort,
+		Thinking:                       acfg.Thinking,
+		Speed:                          acfg.Speed,
+		CacheTTL:                       resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
+		Streaming:                      resolveStreamingConfig(acfg, p.cfg),
+		ManaInvestInterval:             parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}
 
-	if p.store != nil && p.bwStore != nil {
-		ag.Redact = func(text string) string {
-			text = agentStore.Redact(text)
-			return p.bwStore.Redact(text)
-		}
-	} else if p.store != nil {
-		ag.Redact = agentStore.Redact
-	} else if p.bwStore != nil {
-		ag.Redact = p.bwStore.Redact
-	}
+	// Post-creation agent configuration
+	setupNudgeSystem(ag, acfg, defaultSessionKey)
+	setupRedaction(ag, p, agentStore)
+	setupWarningQueue(ag, acfg, p.cfg)
+	setupManaWatcher(ag, p)
 
-	// Warning injection queue (if enabled per-agent)
-	if acfg.InjectAgentWarnings {
-		warningWindow, err := time.ParseDuration(p.cfg.Logging.WarningWindowDuration)
-		if err != nil {
-			warningWindow = 5 * time.Minute
-		}
-		ag.WarningQueue = warnings.NewQueue(p.cfg.Logging.WarningMaxPerWindow, warningWindow)
-	}
-
-	// Mana threshold warnings (per-agent thresholds override global)
-	manaThresholds := p.cfg.ManaWarnings.Thresholds
-	if len(acfg.UsageWarnings.Thresholds) > 0 {
-		manaThresholds = acfg.UsageWarnings.Thresholds
-	}
-	if len(manaThresholds) > 0 {
-		ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
-		ag.ManaWatcher.SetStore(p.stateStore)
-		ag.ManaWatcher.Restore()
-		// Mana restore notification: per-agent overrides global
-		restoreThreshold := p.cfg.ManaWarnings.RestoreThreshold
-		if acfg.UsageWarnings.RestoreThreshold != nil {
-			restoreThreshold = *acfg.UsageWarnings.RestoreThreshold
-		}
-		ag.ManaWatcher.SetRestoreThreshold(restoreThreshold)
-	}
-
-	// Spawn tool — replaces request_model, adds inherit (self-fork) mode.
-	// Uses lazy getter for agent since ag is assigned later in this function.
-	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
-	spawnDeps := tools.SpawnDeps{
-		Client:          p.client,
-		ClientProvider:  p.clientProvider,
-		Bootstrap:       bootstrap,
-		Registry:        registry,
-		Sessions:        &sessionBranchAdapter{store: p.sessions},
-		AgentID:         acfg.ID,
-		Model:           acfg.Model,
-		ModelAliases:    p.cfg.Models.Aliases,
-		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
-		MaxToolLoops:    acfg.MaxToolLoops,
-		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
-		Notifier:        notifier,
-		OrientationBuilder: func(branchKey, parentKey string) string {
-			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
-		},
-		SetNoCompact: func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) },
-	}
-	registry.Register(tools.NewSpawnTool(spawnDeps, func() tools.SpawnAgent { return ag }))
-
-	// Per-agent scheduled wakes
-	setupWakeScheduler(func() *agent.Agent { return ag }, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
+	// Spawn and wake tools (registered after agent creation for lazy capture)
+	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) })
+	setupWakeScheduler(agLazy, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Per-agent slash commands
 	// configureFacet is set later by setupPlatform but captured
@@ -496,7 +226,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ag:                  ag,
 		acfg:                acfg,
 		defaultSessionKey:   defaultSessionKey,
-		bootstrap:           bootstrap,
+		bootstrap:           bs.bootstrap,
 		promptSearchDirs:    promptSearchDirs,
 		compactionThreshold: compactionThreshold,
 		cfg:                 p.cfg,
@@ -512,9 +242,9 @@ func setupAgent(p setupParams) *agentInstance {
 		startTime:           p.startTime,
 		todoStore:           p.todoStore,
 		registry:            registry,
-		tmuxTool:            tmuxTool,
-		skillsDirs:          skillsDirs,
-		skillRegistry:       skillRegistry,
+		tmuxTool:            coreResult.tmuxTool,
+		skillsDirs:          bs.skillsDirs,
+		skillRegistry:       bs.skillRegistry,
 		agentListFn:         p.agentListFn,
 		plat:                p.plat,
 		connMgr:             connMgr,
@@ -531,66 +261,16 @@ func setupAgent(p setupParams) *agentInstance {
 		},
 	}, lastMsgStore)
 
-	// Finalize shell tool description with dynamically-generated shell function list.
+	// Finalize tools and log
 	registry.FinalizeShellDescription()
+	logRegisteredTools(registry, serverTools, acfg.ID)
 
-	// Log registered tools
-	allTools := registry.All()
-	toolNames := make([]string, len(allTools))
-	for i, t := range allTools {
-		toolNames[i] = t.Name
-	}
-	log.Infof("main", "agent %q: registered %d tools: [%s]", acfg.ID, len(toolNames), strings.Join(toolNames, ", "))
-	if len(serverTools) > 0 {
-		stNames := make([]string, len(serverTools))
-		for i, st := range serverTools {
-			stNames[i] = st.Name()
-		}
-		log.Infof("main", "agent %q: server tools: [%s]", acfg.ID, strings.Join(stNames, ", "))
-	}
-
-	// Create and register platform connections (allowed users resolved by each provider)
+	// Platform connections
 	if p.plat != nil {
-		reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
-		reclaimMfCfg := acfg.MemoryFormation
-		reclaimSearchDirs := promptSearchDirs
-
-		results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
-			AgentID:        acfg.ID,
-			Handler:        ag,
-			Commands:       cmds,
-			CommandContext: cc,
-			LastMsgStore:   lastMsgStore,
-			AgentConfig:  acfg,
-			STT:          resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
-			TTS:          resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
-			ReclaimHook: func(sessionKey string) {
-				agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-					return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
-				}, reclaimSearchDirs, p.ctx, false)
-			},
-			DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
-				return platform.DisplaySettings{
-					ShowToolCalls: ag.SessionShowToolCalls(sessionKey),
-					ShowThinking:  ag.SessionDisplayShowThinking(sessionKey),
-					StreamOutput:  ag.SessionStreamOutput(sessionKey),
-					DisplayWidth:  ag.SessionDisplayWidth(sessionKey),
-				}
-			},
-		})
-		for _, result := range results {
-			if result.DefaultSessionKeyFn != nil {
-				defaultSessionKeyFn = result.DefaultSessionKeyFn
-			}
-			if result.ConfigureFacetConn != nil {
-				configureFacet = result.ConfigureFacetConn
-			}
-			if result.DisplayDefaultsFn != nil {
-				displayDefaultsFn = result.DisplayDefaultsFn
-			}
-		}
-
-		wireAgentPlatformCallbacks(ag, acfg, p.cfg, p.plat, connMgr, p.sessionIndex)
+		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, ttsRepls, promptSearchDirs)
+		defaultSessionKeyFn = platResult.defaultSessionKeyFn
+		configureFacet = platResult.configureFacetFn
+		displayDefaultsFn = platResult.displayDefaultsFn
 	}
 
 	// Nudge: trigger initial extraction on first message.
@@ -603,32 +283,19 @@ func setupAgent(p setupParams) *agentInstance {
 		})
 	}
 
-	// Merge webhooks: global defaults, then per-agent overlay.
-	// Per-agent entries override global entries with the same key.
-	var webhooks map[string]string
-	if len(p.cfg.Defaults.Webhooks) > 0 || len(acfg.Webhooks) > 0 {
-		webhooks = make(map[string]string, len(p.cfg.Defaults.Webhooks)+len(acfg.Webhooks))
-		for k, v := range p.cfg.Defaults.Webhooks {
-			webhooks[k] = v
-		}
-		for k, v := range acfg.Webhooks {
-			webhooks[k] = v
-		}
-	}
-
 	return &agentInstance{
 		id:                acfg.ID,
 		ag:                ag,
 		cmds:              cmds,
 		cc:                cc,
 		registry:          registry,
-		bootstrap:         bootstrap,
+		bootstrap:         bs.bootstrap,
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
-		webhooks:          webhooks,
-		tmuxClearAll:      tmuxClearAll,
-		tmuxWatchCount:    tmuxWatchCount,
+		webhooks:          mergeWebhooks(p.cfg.Defaults.Webhooks, acfg.Webhooks),
+		tmuxClearAll:      coreResult.tmuxClearAll,
+		tmuxWatchCount:    coreResult.tmuxWatchCount,
 		mcpManager:        mcpMgr,
 	}
 }
