@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	"foci/internal/log"
 )
 
 // runHTTPBackground handles both explicit and auto-background HTTP execution modes.
@@ -22,75 +20,58 @@ func runHTTPBackground(
 ) (ToolResult, error, bool) {
 	sk := SessionKeyFromContext(ctx)
 
-	// Explicit background mode: fire immediately
+	// Determine effective threshold: explicit background = 0 (always async),
+	// auto-background = configured threshold.
+	thresholdSecs := 0
 	if explicitBackground && notifier != nil {
-		bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
-		notifier.MarkPending(sk)
-		go func() {
-			defer bgCancel()
-			defer notifier.MarkDone(sk)
-			result, err := doAndProcess(bgCtx)
-			var msg string
-			if err != nil {
-				msg = fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, err)
-			} else {
-				msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, result.Text)
-			}
-			notifier.InjectToAgent(sk, msg, "", "async_notify")
-		}()
-		return TextResult(fmt.Sprintf("Request running in background. Results will be delivered when complete.\n%s", displayURL)), nil, true
+		// thresholdSecs stays 0 — always background immediately.
+	} else if autoBackgroundSecs > 0 && notifier != nil {
+		thresholdSecs = autoBackgroundSecs
+	} else {
+		// No background mode — caller should execute directly.
+		return ToolResult{}, nil, false
 	}
 
-	// Auto-background: start the request and wait with a timer
-	if autoBackgroundSecs > 0 && notifier != nil {
-		bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
+	bgCtx, bgCancel := context.WithTimeout(context.Background(), timeout)
 
-		type httpResult struct {
-			output ToolResult
-			err    error
+	var hr struct {
+		output ToolResult
+		err    error
+	}
+	signal := make(chan struct{})
+	go func() {
+		hr.output, hr.err = doAndProcess(bgCtx)
+		close(signal)
+	}()
+
+	formatHTTPNotify := func() string {
+		if hr.err != nil {
+			return fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, hr.err)
 		}
-		done := make(chan httpResult, 1)
-		go func() {
-			out, err := doAndProcess(bgCtx)
-			done <- httpResult{out, err}
-		}()
+		return fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, hr.output.Text)
+	}
 
-		threshold := time.Duration(autoBackgroundSecs) * time.Second
-		select {
-		case r := <-done:
+	pendingMsg := fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL)
+	if explicitBackground {
+		pendingMsg = fmt.Sprintf("Request running in background. Results will be delivered when complete.\n%s", displayURL)
+	}
+
+	result, err := RunInBackground(ctx, BackgroundParams{
+		SessionKey:    sk,
+		Notifier:      notifier,
+		ThresholdSecs: thresholdSecs,
+		Done:          signal,
+		SyncResult: func() (ToolResult, error) {
 			bgCancel()
-			if r.err != nil {
-				return ToolResult{}, r.err, true
+			if hr.err != nil {
+				return ToolResult{}, hr.err
 			}
-			return r.output, nil, true
-
-		case <-time.After(threshold):
-			log.Infof("http_request", "session=%s auto-backgrounding after %v: %s", sk, threshold, displayURL)
-			notifier.MarkPending(sk)
-			go func() {
-				defer bgCancel()
-				defer notifier.MarkDone(sk)
-				r := <-done
-				var msg string
-				if r.err != nil {
-					msg = fmt.Sprintf("[HTTP RESULT] Request failed:\n%s\n\nError: %s", displayURL, r.err)
-				} else {
-					msg = fmt.Sprintf("[HTTP RESULT] Request completed:\n%s\n\n%s", displayURL, r.output.Text)
-				}
-				notifier.InjectToAgent(sk, msg, "", "async_notify")
-			}()
-			return TextResult(fmt.Sprintf("Request still running (exceeded %ds threshold). Results will be delivered when complete.\n%s", autoBackgroundSecs, displayURL)), nil, true
-
-		case <-ctx.Done():
-			// Agent turn cancelled — let the request continue in background
-			go func() {
-				defer bgCancel()
-				<-done
-			}()
-			return ToolResult{}, ctx.Err(), true
-		}
-	}
-
-	// No background mode — caller should execute directly
-	return ToolResult{}, nil, false
+			return hr.output, nil
+		},
+		NotifyMessage:  formatHTTPNotify,
+		Cleanup:        func() { bgCancel() },
+		PendingResult:  TextResult(pendingMsg),
+		NotifyOnCancel: false,
+	})
+	return result, err, true
 }

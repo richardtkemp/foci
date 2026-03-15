@@ -290,47 +290,52 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	stdoutSpill, stderrSpill, combinedSpill, doneRead := startPipeReaders(stdout, stderr, outputMode, spillThreshold, spillTempDir)
 
 	// Wait for process exit and reap leaked children (same as execDirect).
-	done := make(chan error, 1)
+	var cmdErr error
+	signal := make(chan struct{})
 	go func() {
-		done <- waitAndReap(proc, doneRead, stdout, stderr)
+		cmdErr = waitAndReap(proc, doneRead, stdout, stderr)
+		close(signal)
 	}()
 
-	threshold := time.Duration(thresholdSecs) * time.Second
-	select {
-	case err := <-done:
-		// Command finished before threshold; reads already complete (done goroutine waited).
-		cmdCancel()
-		if bridge != nil {
-			bridge.Close()
-		}
+	formatExecResult := func() ToolResult {
 		if outputMode == "separated" {
-			result := TextResult(formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore))
+			result := TextResult(formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), cmdErr, store, bwStore))
 			applySpillResult(&result, stdoutSpill, stderrSpill, nil)
-			return result, nil
+			return result
 		}
-		result := TextResult(formatResult(combinedSpill.String(), err, cmdCtx, timeout, displayCmd, store, bwStore))
+		result := TextResult(formatResult(combinedSpill.String(), cmdErr, cmdCtx, timeout, displayCmd, store, bwStore))
 		applySpillResult(&result, nil, nil, combinedSpill)
-		return result, nil
-
-	case <-time.After(threshold):
-		// Threshold exceeded — auto-background
-		log.Infof("exec", "session=%s auto-backgrounding after %v: %s", sessionKey, threshold, truncateCmd(displayCmd, 100))
-		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
-			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
-
-		return TextResult(fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd)), nil
-
-	case <-ctx.Done():
-		// Agent turn cancelled — deliver results asynchronously like the
-		// threshold path. Without this, command output is silently lost.
-		// NOTE: async results live only in goroutine memory and are lost
-		// on process restart. Persisting them (e.g. to a spool file)
-		// would require plumbing a workspace path here; left as future work.
-		log.Infof("exec", "session=%s turn cancelled, backgrounding: %s", sessionKey, truncateCmd(displayCmd, 100))
-		bgDeliverResult(notifier, sessionKey, done, cmdCancel, bridge,
-			stdoutSpill, stderrSpill, combinedSpill, outputMode, cmdCtx, timeout, displayCmd, store, bwStore)
-		return ToolResult{}, ctx.Err()
+		return result
 	}
+
+	return RunInBackground(ctx, BackgroundParams{
+		SessionKey:    sessionKey,
+		Notifier:      notifier,
+		ThresholdSecs: thresholdSecs,
+		Done:          signal,
+		SyncResult: func() (ToolResult, error) {
+			cmdCancel()
+			if bridge != nil {
+				bridge.Close()
+			}
+			return formatExecResult(), nil
+		},
+		NotifyMessage: func() string {
+			result := formatExecResult()
+			return fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result.Text)
+		},
+		Cleanup: func() {
+			cmdCancel()
+			if bridge != nil {
+				bridge.Close()
+			}
+			stdoutSpill.Cleanup()
+			stderrSpill.Cleanup()
+			combinedSpill.Cleanup()
+		},
+		PendingResult:  TextResult(fmt.Sprintf("Command still running (exceeded %ds threshold). Results will be delivered when complete.\n$ %s", thresholdSecs, displayCmd)),
+		NotifyOnCancel: true,
+	})
 }
 
 // pipeReapGrace is how long to wait for pipe readers after the main process
@@ -447,36 +452,6 @@ func applySpillResult(result *ToolResult, stdoutSpill, stderrSpill, combinedSpil
 		result.ResultFile = stderrSpill.FilePath()
 		result.ResultSize = stderrSpill.Total()
 	}
-}
-
-// bgDeliverResult waits for a backgrounded command to complete and delivers
-// its results via the notifier. Used by both the threshold-exceeded and
-// ctx.Done() paths in execWithAutoBackground.
-func bgDeliverResult(notifier *AsyncNotifier, sessionKey string, done <-chan error, cmdCancel context.CancelFunc, bridge *ExecBridge,
-	stdoutSpill, stderrSpill, combinedSpill *spillWriter, outputMode string, cmdCtx context.Context, timeout time.Duration, displayCmd string, store *secrets.Store, bwStore *bitwarden.Store) {
-	notifier.MarkPending(sessionKey)
-	go func() {
-		defer cmdCancel()
-		defer notifier.MarkDone(sessionKey)
-		if bridge != nil {
-			defer bridge.Close()
-		}
-		// Clean up spill temp files after delivering results
-		defer func() {
-			stdoutSpill.Cleanup()
-			stderrSpill.Cleanup()
-			combinedSpill.Cleanup()
-		}()
-		err := <-done // reads already complete (done goroutine waited)
-		var result string
-		if outputMode == "separated" {
-			result = formatSeparatedResult(stdoutSpill.String(), stderrSpill.String(), err, store, bwStore)
-		} else {
-			result = formatResult(combinedSpill.String(), err, cmdCtx, timeout, displayCmd, store, bwStore)
-		}
-		msg := fmt.Sprintf("[EXEC RESULT] Command completed:\n$ %s\n\n%s", displayCmd, result)
-		notifier.InjectToAgent(sessionKey, msg, "", "async_notify")
-	}()
 }
 
 // redactSecrets removes sensitive information from output using available stores.
