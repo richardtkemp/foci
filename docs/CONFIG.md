@@ -622,7 +622,7 @@ effort = "high"
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
 | `model` | string | `"anthropic/claude-haiku-4-5"` | `[llm]` | Model in `developer/model_id` format. The developer prefix selects which API endpoint to use (e.g. `"gemini/gemini-2.5-flash"`, `"openrouter/claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `/` are auto-migrated with an inferred developer. |
-| `max_output_tokens` | int | `8192` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
+| `max_output_tokens` | int | `16384` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults come from provider sections (`[anthropic] thinking`, `[gemini] thinking`). Only applied for Anthropic and Gemini models — silently skipped for other providers. Overridable at runtime via `/thinking`. |

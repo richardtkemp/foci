@@ -77,7 +77,7 @@ func testConfig() (*Config, AgentConfig) {
 		Workspace: "/home/user/workspace",
 
 		MaxToolLoops:    25,
-		MaxOutputTokens: 8192,
+		MaxOutputTokens: 16384,
 	}
 	return cfg, agent
 }
@@ -221,7 +221,7 @@ func TestFormatConfigGrouped(t *testing.T) {
 		Workspace: "/home/user/workspace2",
 
 		MaxToolLoops:    25,
-		MaxOutputTokens: 8192,
+		MaxOutputTokens: 16384,
 	}}
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -270,7 +270,7 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// Set defaults as Load() would.
 	cfg.LLM = LLMConfig{
 		Model:           "claude-haiku-4-5",
-		MaxOutputTokens: 8192,
+		MaxOutputTokens: 16384,
 	}
 	cfg.Defaults = DefaultsConfig{
 		MaxToolLoops: 25,
@@ -282,7 +282,7 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 		Workspace: "/home/user/workspace",
 
 		MaxToolLoops:    25,
-		MaxOutputTokens: 8192,
+		MaxOutputTokens: 16384,
 	}
 	cfg.Agents = []AgentConfig{agent}
 
