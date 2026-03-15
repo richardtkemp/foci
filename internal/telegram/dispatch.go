@@ -63,6 +63,22 @@ func (d *Dispatcher) Dispatch(ctx context.Context, msg *gotgbot.Message) Dispatc
 	return DispatchResult{}
 }
 
+// dispatchRequest dispatches a command request and wraps the result.
+func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey, userID string, chatID int64) DispatchResult {
+	req := command.Request{
+		Name:       name,
+		Args:       args,
+		SessionKey: sessionKey,
+		UserID:     userID,
+		ChatID:     chatID,
+	}
+	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
+	if err != nil {
+		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
+	}
+	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
+}
+
 func (d *Dispatcher) dispatchDotCommand(ctx context.Context, msg *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
 	dotText := strings.TrimSpace(text)[1:]
 	cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
@@ -71,19 +87,7 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, msg *gotgbot.Messag
 		return DispatchResult{}
 	}
 
-	req := command.Request{
-		Name:       cmdName,
-		Args:       extractArgs(dotText),
-		SessionKey: sessionKey,
-		UserID:     userID,
-		ChatID:     msg.Chat.Id,
-	}
-
-	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
-	if err != nil {
-		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
-	}
-	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
+	return d.dispatchRequest(ctx, cmdName, extractArgs(dotText), sessionKey, userID, msg.Chat.Id)
 }
 
 func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, msg *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
@@ -98,19 +102,7 @@ func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, msg *gotgbot.Mess
 	name = strings.ToLower(strings.TrimSpace(name))
 	args = strings.TrimSpace(args)
 
-	req := command.Request{
-		Name:       name,
-		Args:       args,
-		SessionKey: sessionKey,
-		UserID:     userID,
-		ChatID:     msg.Chat.Id,
-	}
-
-	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
-	if err != nil {
-		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
-	}
-	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
+	return d.dispatchRequest(ctx, name, args, sessionKey, userID, msg.Chat.Id)
 }
 
 func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText string) DispatchResult {
@@ -119,21 +111,7 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 	name = strings.ToLower(strings.TrimSpace(name))
 	args = strings.TrimSpace(args)
 
-	sessionKey := d.sessionKeyForChat(chatID)
-
-	req := command.Request{
-		Name:       name,
-		Args:       args,
-		SessionKey: sessionKey,
-		UserID:     "",
-		ChatID:     chatID,
-	}
-
-	resp, handled, err := d.registry.Dispatch(ctx, req, d.cc)
-	if err != nil {
-		return DispatchResult{Handled: true, Response: command.Response{Text: "Error: " + err.Error()}}
-	}
-	return DispatchResult{Handled: handled, Response: resp, SessionKey: sessionKey}
+	return d.dispatchRequest(ctx, name, args, d.sessionKeyForChat(chatID), "", chatID)
 }
 
 func (d *Dispatcher) sessionKeyForChat(chatID int64) string {

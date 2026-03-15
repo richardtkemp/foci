@@ -7,6 +7,27 @@ import (
 	"strings"
 )
 
+// Precompiled regexes for markdown → HTML conversion.
+// These are called ~4/s during streaming; compiling once avoids repeated work.
+var (
+	reCodeBlock    = regexp.MustCompile("(?m)^```(?:[a-z]+)?\n([\\s\\S]*?)\n```")
+	reInlineCode   = regexp.MustCompile("`([^`]+)`")
+	reLink         = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`)
+	reSpoiler      = regexp.MustCompile(`\|\|([^\|]+)\|\|`)
+	reBold         = regexp.MustCompile(`\*\*([^\*]+)\*\*`)
+	reStrikethrough = regexp.MustCompile(`~~([^~]+)~~`)
+	reUnderline    = regexp.MustCompile(`__([^_]+)__`)
+	reItalicStar   = regexp.MustCompile(`\*([^\*\n]+)\*`)
+	reItalicUnderscore = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`)
+	reHRule        = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`)
+	reBulletList   = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`)
+	reOrderedList  = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`)
+	reH1           = regexp.MustCompile(`(?m)^#\s+(.+)$`)
+	reH2           = regexp.MustCompile(`(?m)^##\s+(.+)$`)
+	reH3Plus       = regexp.MustCompile(`(?m)^###+ (.+)$`)
+	reBlockquote   = regexp.MustCompile(`^> ?(.*)$`)
+)
+
 // ConvertToTelegramHTML converts standard markdown to Telegram's HTML format.
 // HTML is simpler and safer than MarkdownV2 (no escaping hell).
 //
@@ -29,11 +50,10 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 	// Convert markdown formatting in order of precedence
 	// Code blocks first (preserve everything inside)
 	var codeBlocks []string
-	codeBlockRe := regexp.MustCompile("(?m)^```(?:[a-z]+)?\n([\\s\\S]*?)\n```")
-	text = codeBlockRe.ReplaceAllStringFunc(text, func(match string) string {
+	text = reCodeBlock.ReplaceAllStringFunc(text, func(match string) string {
 		idx := len(codeBlocks)
 		// Extract code (everything between ``` markers)
-		parts := codeBlockRe.FindStringSubmatch(match)
+		parts := reCodeBlock.FindStringSubmatch(match)
 		if len(parts) < 2 {
 			return match
 		}
@@ -52,10 +72,9 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 
 	// Inline code (extract early to protect content)
 	var inlineCodes []string
-	inlineCodeRe := regexp.MustCompile("`([^`]+)`")
-	text = inlineCodeRe.ReplaceAllStringFunc(text, func(match string) string {
+	text = reInlineCode.ReplaceAllStringFunc(text, func(match string) string {
 		idx := len(inlineCodes)
-		parts := inlineCodeRe.FindStringSubmatch(match)
+		parts := reInlineCode.FindStringSubmatch(match)
 		if len(parts) < 2 {
 			return match
 		}
@@ -74,39 +93,39 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 	text = strings.ReplaceAll(text, "<", "&lt;")
 
 	// Links: [text](url)
-	text = regexp.MustCompile(`\[([^\]]+)\]\(([^\)]+)\)`).ReplaceAllString(text, "<a href=\"$2\">$1</a>")
+	text = reLink.ReplaceAllString(text, "<a href=\"$2\">$1</a>")
 
 	// Spoilers: ||text||
-	text = regexp.MustCompile(`\|\|([^\|]+)\|\|`).ReplaceAllString(text, "<tg-spoiler>$1</tg-spoiler>")
+	text = reSpoiler.ReplaceAllString(text, "<tg-spoiler>$1</tg-spoiler>")
 
 	// Bold: **text**
-	text = regexp.MustCompile(`\*\*([^\*]+)\*\*`).ReplaceAllString(text, "<b>$1</b>")
+	text = reBold.ReplaceAllString(text, "<b>$1</b>")
 
 	// Strikethrough: ~~text~~
-	text = regexp.MustCompile(`~~([^~]+)~~`).ReplaceAllString(text, "<s>$1</s>")
+	text = reStrikethrough.ReplaceAllString(text, "<s>$1</s>")
 
 	// Underline: __text__
-	text = regexp.MustCompile(`__([^_]+)__`).ReplaceAllString(text, "<u>$1</u>")
+	text = reUnderline.ReplaceAllString(text, "<u>$1</u>")
 
 	// Italic: *text* (avoid bold markers which are **)
-	text = regexp.MustCompile(`\*([^\*\n]+)\*`).ReplaceAllString(text, "<i>$1</i>")
+	text = reItalicStar.ReplaceAllString(text, "<i>$1</i>")
 
 	// Italic: _text_ (but not when part of snake_case identifiers like word_word_word)
 	// Only matches single-word content between underscores (no additional underscores inside)
 	// Uses capture groups to preserve surrounding characters
-	text = regexp.MustCompile(`(^|[^a-z0-9])_([^_\n]+?)_([^a-z0-9]|$)`).ReplaceAllString(text, "$1<i>$2</i>$3")
+	text = reItalicUnderscore.ReplaceAllString(text, "$1<i>$2</i>$3")
 
 	// Headings: relative hierarchy rendering based on levels actually used
 	text = convertHeadings(text)
 
 	// Horizontal rules: ---, ***, ___ (3+ chars on a line by themselves)
-	text = regexp.MustCompile(`(?m)^[-*_]{3,}\s*$`).ReplaceAllString(text, "————————————————")
+	text = reHRule.ReplaceAllString(text, "————————————————")
 
 	// Bullet lists: - item or * item at start of line
-	text = regexp.MustCompile(`(?m)^[-*]\s+(.+)$`).ReplaceAllString(text, "  • $1")
+	text = reBulletList.ReplaceAllString(text, "  • $1")
 
 	// Ordered lists: 1. item — indent to align with bullets
-	text = regexp.MustCompile(`(?m)^(\d+)\.\s+(.+)$`).ReplaceAllString(text, "  $1. $2")
+	text = reOrderedList.ReplaceAllString(text, "  $1. $2")
 
 	// Multiline blockquotes: consecutive > lines merged into single <blockquote>
 	text = convertBlockquotes(text)
@@ -157,13 +176,9 @@ const (
 // - 3 levels: triple-line + double-line + bold
 // - 4+ levels: triple-line + double-line + bold, extras all bold
 func convertHeadings(text string) string {
-	h1Re := regexp.MustCompile(`(?m)^#\s+(.+)$`)
-	h2Re := regexp.MustCompile(`(?m)^##\s+(.+)$`)
-	h3PlusRe := regexp.MustCompile(`(?m)^###+ (.+)$`)
-
-	hasH1 := h1Re.MatchString(text)
-	hasH2 := h2Re.MatchString(text)
-	hasH3Plus := h3PlusRe.MatchString(text)
+	hasH1 := reH1.MatchString(text)
+	hasH2 := reH2.MatchString(text)
+	hasH3Plus := reH3Plus.MatchString(text)
 
 	levels := 0
 	if hasH1 {
@@ -192,22 +207,22 @@ func convertHeadings(text string) string {
 		h3Style = headingBold
 	}
 
-	text = h1Re.ReplaceAllStringFunc(text, func(m string) string {
-		parts := h1Re.FindStringSubmatch(m)
+	text = reH1.ReplaceAllStringFunc(text, func(m string) string {
+		parts := reH1.FindStringSubmatch(m)
 		if len(parts) < 2 {
 			return m
 		}
 		return formatHeading(parts[1], h1Style)
 	})
-	text = h2Re.ReplaceAllStringFunc(text, func(m string) string {
-		parts := h2Re.FindStringSubmatch(m)
+	text = reH2.ReplaceAllStringFunc(text, func(m string) string {
+		parts := reH2.FindStringSubmatch(m)
 		if len(parts) < 2 {
 			return m
 		}
 		return formatHeading(parts[1], h2Style)
 	})
-	text = h3PlusRe.ReplaceAllStringFunc(text, func(m string) string {
-		parts := h3PlusRe.FindStringSubmatch(m)
+	text = reH3Plus.ReplaceAllStringFunc(text, func(m string) string {
+		parts := reH3Plus.FindStringSubmatch(m)
 		if len(parts) < 2 {
 			return m
 		}
@@ -231,16 +246,15 @@ func formatHeading(title string, style headingStyle) string {
 // convertBlockquotes merges consecutive > lines into single <blockquote> tags.
 func convertBlockquotes(text string) string {
 	lines := strings.Split(text, "\n")
-	bqRe := regexp.MustCompile(`^> ?(.*)$`)
 
 	var result []string
 	i := 0
 	for i < len(lines) {
-		if m := bqRe.FindStringSubmatch(lines[i]); m != nil {
+		if m := reBlockquote.FindStringSubmatch(lines[i]); m != nil {
 			// Start of a blockquote — collect consecutive > lines
 			var bqLines []string
 			for i < len(lines) {
-				if m := bqRe.FindStringSubmatch(lines[i]); m != nil {
+				if m := reBlockquote.FindStringSubmatch(lines[i]); m != nil {
 					bqLines = append(bqLines, m[1])
 					i++
 				} else {
@@ -322,14 +336,5 @@ func stripUnmatchedSingle(text string, ch byte) string {
 	if count%2 != 0 && lastPos >= 0 {
 		text = text[:lastPos] + text[lastPos+1:]
 	}
-	return text
-}
-
-// htmlEscape escapes HTML special characters
-func htmlEscape(text string) string {
-	text = strings.ReplaceAll(text, "&", "&amp;")
-	text = strings.ReplaceAll(text, "<", "&lt;")
-	text = strings.ReplaceAll(text, ">", "&gt;")
-	text = strings.ReplaceAll(text, "\"", "&quot;")
 	return text
 }

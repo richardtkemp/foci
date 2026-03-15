@@ -68,7 +68,7 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 
-		text := b.formatToolCall(toolName, params, b.showToolCalls)
+		text := b.formatToolCall(toolName, params, b.display.ShowToolCalls)
 		if toolMsgID == 0 {
 			sent, err := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			if err != nil {
@@ -112,18 +112,18 @@ func TestToolCallObserverResetsAfterReply(t *testing.T) {
 func TestShowToolCalls_Preview(t *testing.T) {
 	// When showToolCalls is "preview", tool call observer should send messages.
 	mock := &mockClient{}
-	b := &Bot{client: mock, showToolCalls: "preview"}
+	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "preview"}}
 
 	var toolMsgID int64
 	var toolMsgMu sync.Mutex
 
 	observer := func(toolName string, params json.RawMessage) {
-		if b.showToolCalls == "off" || b.showToolCalls == "" {
+		if b.display.ShowToolCalls == "off" || b.display.ShowToolCalls == "" {
 			return
 		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
-		text := b.formatToolCall(toolName, params, b.showToolCalls)
+		text := b.formatToolCall(toolName, params, b.display.ShowToolCalls)
 		if toolMsgID == 0 {
 			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
@@ -148,18 +148,18 @@ func TestShowToolCalls_Preview(t *testing.T) {
 func TestShowToolCalls_Off(t *testing.T) {
 	// When showToolCalls is "off", tool call observer should be a no-op.
 	mock := &mockClient{}
-	b := &Bot{client: mock, showToolCalls: "off"}
+	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "off"}}
 
 	var toolMsgID int64
 	var toolMsgMu sync.Mutex
 
 	observer := func(toolName string, params json.RawMessage) {
-		if b.showToolCalls == "off" || b.showToolCalls == "" {
+		if b.display.ShowToolCalls == "off" || b.display.ShowToolCalls == "" {
 			return
 		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
-		text := b.formatToolCall(toolName, params, b.showToolCalls)
+		text := b.formatToolCall(toolName, params, b.display.ShowToolCalls)
 		if toolMsgID == 0 {
 			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
@@ -185,27 +185,27 @@ func TestShowToolCalls_Full(t *testing.T) {
 	// When showToolCalls is "full", every tool call gets its own persistent
 	// message with compact summary. The final response goes via sendReply.
 	mock := &mockClient{}
-	b := &Bot{client: mock, showToolCalls: "full"}
+	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "full"}}
 
 	var toolMsgID int64
 	var toolMsgMu sync.Mutex
 
 	// This mirrors the ToolCallObserver closure in processMessage.
 	observer := func(toolName string, params json.RawMessage) {
-		if b.showToolCalls == "off" || b.showToolCalls == "" {
+		if b.display.ShowToolCalls == "off" || b.display.ShowToolCalls == "" {
 			return
 		}
 		toolMsgMu.Lock()
 		defer toolMsgMu.Unlock()
 
-		if b.showToolCalls == "full" {
+		if b.display.ShowToolCalls == "full" {
 			compact := formatToolCallCompact(toolName, params)
 			sent, _ := b.client.SendMessage(12345, compact, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
 			return
 		}
 
-		text := b.formatToolCall(toolName, params, b.showToolCalls)
+		text := b.formatToolCall(toolName, params, b.display.ShowToolCalls)
 		if toolMsgID == 0 {
 			sent, _ := b.client.SendMessage(12345, text, &gotgbot.SendMessageOpts{ParseMode: "HTML"})
 			toolMsgID = sent.MessageId
@@ -238,7 +238,7 @@ func TestShowToolCalls_Full(t *testing.T) {
 	toolMsgMu.Lock()
 	editID := toolMsgID
 	toolMsgMu.Unlock()
-	if editID != 0 && b.showToolCalls == "preview" {
+	if editID != 0 && b.display.ShowToolCalls == "preview" {
 		t.Error("should not enter preview branch for full mode")
 	}
 }
@@ -248,7 +248,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 	// when in preview mode, and does nothing in other modes or when no
 	// message exists.
 	mock := &mockClient{}
-	b := &Bot{client: mock, showToolCalls: "preview"}
+	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "preview"}}
 	tracker := &toolCallTracker{bot: b, chatID: 12345, display: b.resolveDisplay("")}
 
 	// No message → no delete.
@@ -273,7 +273,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 	}
 
 	// In "full" mode, cleanupPreview should not delete.
-	b.showToolCalls = "full"
+	b.display.ShowToolCalls = "full"
 	tracker.display = b.resolveDisplay("")
 	tracker.mu.Lock()
 	tracker.msgID = 99

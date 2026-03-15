@@ -126,13 +126,15 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 	}
 
 	dr := b.dispatcher.DispatchCallback(ctx, chatID, cmdText)
-	result := dr.Response.Text
+	var result string
+	if len(dr.Response.Parts) > 0 {
+		result = strings.Join(dr.Response.Parts, "\n\n")
+	} else {
+		result = dr.Response.Text
+	}
 	if !dr.Handled {
 		result = "Unknown command: " + cmdText
 	}
-
-	// Strip multi-message separators for edit (edit replaces single message)
-	result = strings.ReplaceAll(result, "\x00", "\n\n")
 
 	display := ConvertToTelegramHTML(result, b.tableOpts())
 	if len(display) > 4096 {
@@ -217,7 +219,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.effectiveDisplayWidth(b.sessionKeyForMsg(chatID)))
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.resolveDisplay(b.sessionKeyForMsg(chatID)).displayWidth)
 		kb := singleButtonKeyboard("Hide thinking", "th:hide")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
@@ -238,16 +240,15 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 // formatThinkingExpanded prepends thinking text above a separator, with the response below.
 func formatThinkingExpanded(thinkingText, responseHTML string, displayWidth int) string {
-	escaped := htmlEscapeBot(thinkingText)
-	divider := "\n" + strings.Repeat("—", displayWidth) + "\n"
-	result := "<i>" + escaped + "</i>" + divider + responseHTML
+	result := buildThinkingHTML(responseHTML, thinkingText, displayWidth)
 	// Telegram messages are limited to 4096 characters; truncate thinking if needed.
 	if len(result) > 4096 {
+		divider := "\n" + strings.Repeat("—", displayWidth) + "\n\n"
 		budget := 4096 - len(responseHTML) - len(divider) - len("<i>") - len("</i>") - len("\n... (truncated)")
 		if budget < 100 {
 			budget = 100
 		}
-		escaped = truncateHTMLSafe(escaped, budget) + "\n... (truncated)"
+		escaped := truncateHTMLSafe(htmlEscape(thinkingText), budget) + "\n... (truncated)"
 		result = "<i>" + escaped + "</i>" + divider + responseHTML
 	}
 	return result
@@ -399,7 +400,7 @@ func (t *toolCallTracker) observeToolResult(toolName string, result string, isEr
 	// Generate a result hint to append to the compact notification.
 	hint := compactResultHint(toolName, params, result)
 	if hint != "" {
-		compact = compact + " → " + htmlEscapeBot(hint)
+		compact = compact + " → " + htmlEscape(hint)
 	}
 
 	var wasExpanded bool
@@ -517,7 +518,7 @@ func formatToolCallWithResult(toolText, result string) string {
 		return toolText
 	}
 
-	escapedResult := htmlEscapeBot(result)
+	escapedResult := htmlEscape(result)
 	available := maxLen - overhead
 	if len(escapedResult) > available {
 		escapedResult = escapedResult[:available-3] + "..."

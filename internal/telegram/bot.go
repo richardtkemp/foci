@@ -96,32 +96,38 @@ type Bot struct {
 	chatKeysMu      sync.RWMutex          // protects chatSessionKeys
 	sessionIndex    sessionIndexInterface // nil = no session key persistence across restarts
 
-	stateStore            *state.Store     // nil = no persistence
-	stateKey              string           // state key prefix (e.g. "bot:mybot")
-	toolCallPreviewChars  int              // max chars for tool call preview (default 450)
-	showToolCalls         string           // tool call display mode: "off", "preview", "full"
-	showThinking          string           // thinking display mode: "off", "compact", "true"
-	displayWidth          int              // character width for dividers (default 44)
-	tableWrapLines        int              // max wrapped lines per table cell (default 5)
-	tableStyle            string           // table style: "pretty" (default) or "markdown"
-	messagesInLog         bool             // log user message content to event log (default false for privacy)
-	receivedFilesDir      string           // if non-empty, save received files to this directory
-	injectedMessageHeader string           // prepended to injected (system) messages; empty disables
-	toolResults           sync.Map         // message ID (int64) → toolResultEntry; for inline keyboard expansion
-	thinkingStore         sync.Map         // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
-	toolDetailStore       *ToolDetailStore // nil = no persistence; write-through to SQLite
+	stateStore  *state.Store // nil = no persistence
+	stateKey    string       // state key prefix (e.g. "bot:mybot")
+	display     BotDisplayConfig
+	toolResults sync.Map         // message ID (int64) → toolResultEntry; for inline keyboard expansion
+	thinkingStore sync.Map       // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
+	toolDetailStore *ToolDetailStore // nil = no persistence; write-through to SQLite
 
-	steerMode  bool       // steer mode enabled: user messages route to buffer during active turns
 	steerMu    sync.Mutex // protects steerParts
 	steerParts []string   // pending steer messages; drained atomically
 
 	pendingNotifsMu sync.Mutex // protects pendingNotifs
 	pendingNotifs   []string   // notifications buffered during active turns; drained after turn ends
 
-	streamOutput         bool          // stream model output to Telegram in real-time
-	streamUpdateInterval time.Duration // duration between Telegram message edits during streaming
-
 	displayOverrideFn DisplayOverrideFn // per-session display override callback; nil = use bot defaults
+}
+
+// BotDisplayConfig groups all display-related settings. Write-once at startup
+// via ApplyAgentDisplaySettings; never mutated after. Per-session overrides
+// are handled separately via DisplayOverrideFn.
+type BotDisplayConfig struct {
+	ShowToolCalls         string        // "off", "preview", "full"
+	ShowThinking          string        // "off", "compact", "true"
+	StreamOutput          bool          // stream model output to Telegram in real-time
+	StreamUpdateInterval  time.Duration // duration between Telegram message edits during streaming
+	DisplayWidth          int           // character width for dividers (default 44)
+	TableWrapLines        int           // max wrapped lines per table cell (default 5)
+	TableStyle            string        // "pretty" (default) or "markdown"
+	ToolCallPreviewChars  int           // max chars for tool call preview (default 450)
+	MessagesInLog         bool          // log user message content to event log
+	ReceivedFilesDir      string        // if non-empty, save received files to this directory
+	InjectedMessageHeader string        // prepended to injected (system) messages; empty disables
+	SteerMode             bool          // user messages route to buffer during active turns
 }
 
 // turnDisplay holds resolved display settings for a single turn.
@@ -135,14 +141,33 @@ type turnDisplay struct {
 }
 
 // resolveDisplay snapshots all display settings for a turn with the given session key.
+// Applies per-session overrides from displayOverrideFn on top of bot defaults.
 func (b *Bot) resolveDisplay(sessionKey string) turnDisplay {
-	dw := b.effectiveDisplayWidth(sessionKey)
+	d := b.display
+	if b.displayOverrideFn != nil {
+		ov := b.displayOverrideFn(sessionKey)
+		if ov.ShowToolCalls != "" {
+			d.ShowToolCalls = ov.ShowToolCalls
+		}
+		if ov.ShowThinking != "" {
+			d.ShowThinking = ov.ShowThinking
+		}
+		if ov.DisplayWidth > 0 {
+			d.DisplayWidth = ov.DisplayWidth
+		}
+		switch ov.StreamOutput {
+		case "true":
+			d.StreamOutput = true
+		case "false":
+			d.StreamOutput = false
+		}
+	}
 	return turnDisplay{
-		showToolCalls: b.effectiveShowToolCalls(sessionKey),
-		showThinking:  b.effectiveShowThinking(sessionKey),
-		streamOutput:  b.effectiveStreamOutput(sessionKey),
-		displayWidth:  dw,
-		renderOpts:    display.RenderOpts{MaxWidth: dw, WrapLines: b.tableWrapLines, Style: b.tableStyle},
+		showToolCalls: d.ShowToolCalls,
+		showThinking:  d.ShowThinking,
+		streamOutput:  d.StreamOutput,
+		displayWidth:  d.DisplayWidth,
+		renderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth, WrapLines: d.TableWrapLines, Style: d.TableStyle},
 	}
 }
 
@@ -229,136 +254,31 @@ func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
 	b.enableStopAliases = enabled
 }
 
-// SetToolCallPreviewChars sets the max characters for tool call param preview.
-func (b *Bot) SetToolCallPreviewChars(n int) {
-	b.toolCallPreviewChars = n
-}
+// SetDisplayOverrideFn sets the callback that provides per-session display overrides.
+func (b *Bot) SetDisplayOverrideFn(fn DisplayOverrideFn) { b.displayOverrideFn = fn }
 
-// SetShowToolCalls controls how tool call messages are displayed in Telegram.
-// Accepts "off", "preview", or "full".
-func (b *Bot) SetShowToolCalls(mode string) {
-	b.showToolCalls = mode
-}
+// ShowToolCallsDefault returns the bot's configured show_tool_calls default.
+func (b *Bot) ShowToolCallsDefault() string { return b.display.ShowToolCalls }
 
-// SetShowThinking controls how thinking blocks are displayed in Telegram.
-// Accepts "off", "compact", or "true".
-func (b *Bot) SetShowThinking(mode string) {
-	b.showThinking = mode
-}
+// ShowThinkingDefault returns the bot's configured show_thinking default.
+func (b *Bot) ShowThinkingDefault() string { return b.display.ShowThinking }
 
-// SetDisplayWidth sets the character width used for divider lines.
-func (b *Bot) SetDisplayWidth(width int) {
-	b.displayWidth = width
-}
+// StreamOutputDefault returns the bot's configured stream_output default.
+func (b *Bot) StreamOutputDefault() bool { return b.display.StreamOutput }
 
-// SetTableWrapLines sets the max wrapped lines per table cell.
-func (b *Bot) SetTableWrapLines(n int) {
-	b.tableWrapLines = n
-}
-
-// SetTableStyle sets the table rendering style ("pretty" or "markdown").
-func (b *Bot) SetTableStyle(style string) {
-	b.tableStyle = style
-}
+// DisplayWidthDefault returns the bot's configured display_width default.
+func (b *Bot) DisplayWidthDefault() int { return b.display.DisplayWidth }
 
 // tableOpts returns the RenderOpts using the bot's default display settings.
 // For turn-aware rendering with per-session overrides, use resolveDisplay().renderOpts.
 func (b *Bot) tableOpts() display.RenderOpts {
-	return display.RenderOpts{MaxWidth: b.displayWidth, WrapLines: b.tableWrapLines, Style: b.tableStyle}
+	return display.RenderOpts{MaxWidth: b.display.DisplayWidth, WrapLines: b.display.TableWrapLines, Style: b.display.TableStyle}
 }
-
-// SetMessagesInLog controls whether user message content is logged to the event log.
-func (b *Bot) SetMessagesInLog(v bool) {
-	b.messagesInLog = v
-}
-
-// SetReceivedFilesDir configures auto-saving of received files to disk.
-// Empty string disables saving.
-func (b *Bot) SetReceivedFilesDir(dir string) {
-	b.receivedFilesDir = dir
-}
-
-// SetInjectedMessageHeader sets the header prepended to injected (system) messages.
-// Empty string disables the header.
-func (b *Bot) SetInjectedMessageHeader(s string) {
-	b.injectedMessageHeader = s
-}
-
-// SetSteerMode enables or disables steer mode.
-// When enabled, user messages route to the steer buffer during active turns
-// instead of queuing behind the turn lock.
-func (b *Bot) SetSteerMode(enabled bool) {
-	b.steerMode = enabled
-}
-
-// SetDisplayOverrideFn sets the callback that provides per-session display overrides.
-func (b *Bot) SetDisplayOverrideFn(fn DisplayOverrideFn) { b.displayOverrideFn = fn }
-
-// effectiveShowToolCalls returns the show_tool_calls mode, checking per-session overrides first.
-func (b *Bot) effectiveShowToolCalls(sessionKey string) string {
-	if b.displayOverrideFn != nil {
-		if v := b.displayOverrideFn(sessionKey).ShowToolCalls; v != "" {
-			return v
-		}
-	}
-	return b.showToolCalls
-}
-
-// effectiveShowThinking returns the show_thinking mode, checking per-session overrides first.
-func (b *Bot) effectiveShowThinking(sessionKey string) string {
-	if b.displayOverrideFn != nil {
-		if v := b.displayOverrideFn(sessionKey).ShowThinking; v != "" {
-			return v
-		}
-	}
-	return b.showThinking
-}
-
-// effectiveDisplayWidth returns the display width, checking per-session overrides first.
-func (b *Bot) effectiveDisplayWidth(sessionKey string) int {
-	if b.displayOverrideFn != nil {
-		if v := b.displayOverrideFn(sessionKey).DisplayWidth; v > 0 {
-			return v
-		}
-	}
-	return b.displayWidth
-}
-
-// effectiveStreamOutput returns the stream_output setting, checking per-session overrides first.
-func (b *Bot) effectiveStreamOutput(sessionKey string) bool {
-	if b.displayOverrideFn != nil {
-		switch b.displayOverrideFn(sessionKey).StreamOutput {
-		case "true":
-			return true
-		case "false":
-			return false
-		}
-	}
-	return b.streamOutput
-}
-
-// ShowToolCallsDefault returns the bot's configured show_tool_calls default.
-func (b *Bot) ShowToolCallsDefault() string { return b.showToolCalls }
-
-// ShowThinkingDefault returns the bot's configured show_thinking default.
-func (b *Bot) ShowThinkingDefault() string { return b.showThinking }
-
-// StreamOutputDefault returns the bot's configured stream_output default.
-func (b *Bot) StreamOutputDefault() bool { return b.streamOutput }
-
-// DisplayWidthDefault returns the bot's configured display_width default.
-func (b *Bot) DisplayWidthDefault() int { return b.displayWidth }
-
-// SetStreamOutput enables or disables real-time streaming of model output to Telegram.
-func (b *Bot) SetStreamOutput(enabled bool) { b.streamOutput = enabled }
-
-// SetStreamUpdateInterval sets the duration between Telegram message edits during streaming.
-func (b *Bot) SetStreamUpdateInterval(d time.Duration) { b.streamUpdateInterval = d }
 
 // streamInterval returns the configured stream update interval, defaulting to 250ms.
 func (b *Bot) streamInterval() time.Duration {
-	if b.streamUpdateInterval > 0 {
-		return b.streamUpdateInterval
+	if b.display.StreamUpdateInterval > 0 {
+		return b.display.StreamUpdateInterval
 	}
 	return 250 * time.Millisecond
 }
@@ -411,7 +331,8 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 
 // DisplaySettings returns the bot's default display settings for inspection/testing.
 func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string, injectedMessageHeader string) {
-	return b.showToolCalls, b.showThinking, b.displayWidth, b.messagesInLog, b.receivedFilesDir, b.injectedMessageHeader
+	d := b.display
+	return d.ShowToolCalls, d.ShowThinking, d.DisplayWidth, d.MessagesInLog, d.ReceivedFilesDir, d.InjectedMessageHeader
 }
 
 // SetStateStore configures persistent state for this bot.

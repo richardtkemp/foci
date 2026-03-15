@@ -48,7 +48,7 @@ func TestUnescapeJSONStringLiterals(t *testing.T) {
 	}
 }
 
-func TestHtmlEscapeBot(t *testing.T) {
+func TestHtmlEscape(t *testing.T) {
 	// Verifies that HTML special characters are properly
 	// escaped.
 	tests := []struct {
@@ -60,11 +60,12 @@ func TestHtmlEscapeBot(t *testing.T) {
 		{"safe text", "safe text"},
 		{"a & <b> end", "a &amp; &lt;b&gt; end"},
 		{"", ""},
+		{`say "hi"`, `say "hi"`},
 	}
 	for _, tt := range tests {
-		got := htmlEscapeBot(tt.in)
+		got := htmlEscape(tt.in)
 		if got != tt.want {
-			t.Errorf("htmlEscapeBot(%q) = %q, want %q", tt.in, got, tt.want)
+			t.Errorf("htmlEscape(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }

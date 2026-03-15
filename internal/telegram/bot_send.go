@@ -25,17 +25,11 @@ func (b *Bot) sendHTMLChunks(chatID int64, html string) {
 // sendReply sends a response back to the user, splitting long messages and
 // falling back to plain text if HTML formatting fails.
 func (b *Bot) sendReply(msg *gotgbot.Message, response string) {
-	parts := []string{response}
-	if strings.Contains(response, "\x00") {
-		parts = strings.Split(response, "\x00")
+	response = strings.TrimSpace(response)
+	if response == "" {
+		return
 	}
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(part, b.tableOpts()))
-	}
+	b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(response, b.tableOpts()))
 }
 
 // SendNotification sends a plain text notification to the default chat.
@@ -166,8 +160,8 @@ func (b *Bot) SendText(text string) error {
 // Prefer SendToSession when a session key is available — it routes to the
 // correct chat for chat-based sessions.
 func (b *Bot) SendInjected(text string) error {
-	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.injectedMessageHeader + "\n" + text
+	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
+		text = b.display.InjectedMessageHeader + "\n" + text
 	}
 	return b.SendText(text)
 }
@@ -177,8 +171,8 @@ func (b *Bot) SendInjected(text string) error {
 // if the session key doesn't contain a chat ID (e.g. independent sessions).
 // Prepends the configured InjectedMessageHeader (if non-empty).
 func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
-	if b.injectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.injectedMessageHeader + "\n" + text
+	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
+		text = b.display.InjectedMessageHeader + "\n" + text
 	}
 	return b.SendToSession(sessionKey, text)
 }

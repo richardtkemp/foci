@@ -280,10 +280,10 @@ func TestConfigCommand(t *testing.T) {
 	if result.Text == "" {
 		t.Error("toml result should not be empty")
 	}
-	// table subcommand
+	// table subcommand (returns Parts, not Text)
 	result, _ = cmd.Execute(context.Background(), Request{Args: "table"}, cc)
-	if result.Text == "" {
-		t.Error("table result should not be empty")
+	if len(result.Parts) == 0 {
+		t.Error("table result should have parts")
 	}
 	// available subcommand
 	result, _ = cmd.Execute(context.Background(), Request{Args: "available"}, cc)

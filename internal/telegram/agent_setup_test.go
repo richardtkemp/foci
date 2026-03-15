@@ -105,7 +105,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	// pre-existing ReceivedFilesDir is not overwritten when both agent and global are empty.
 	bot := newBotForTest()
 	// Pre-set a value to verify it's NOT overwritten when both are empty
-	bot.SetReceivedFilesDir("/pre-existing")
+	bot.display.ReceivedFilesDir = "/pre-existing"
 
 	acfg := config.AgentConfig{}
 	cfg := &config.Config{
@@ -125,7 +125,7 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 // bots resolve overrides for the chat being served.
 func TestDisplayOverrideFn_UsesSessionKey(t *testing.T) {
 	bot := newBotForTest()
-	bot.SetShowToolCalls("off") // bot default
+	bot.display.ShowToolCalls = "off" // bot default
 
 	// Override function returns "full" for sk-turn, nothing for other keys.
 	bot.SetDisplayOverrideFn(func(sk string) DisplayOverrides {
@@ -136,17 +136,17 @@ func TestDisplayOverrideFn_UsesSessionKey(t *testing.T) {
 	})
 
 	// With a different session key, should fall back to bot default.
-	if got := bot.effectiveShowToolCalls("sk-other"); got != "off" {
+	if got := bot.resolveDisplay("sk-other").showToolCalls; got != "off" {
 		t.Errorf("with sk-other: got %q, want %q", got, "off")
 	}
 
 	// With the matching session key, should resolve the override.
-	if got := bot.effectiveShowToolCalls("sk-turn"); got != "full" {
+	if got := bot.resolveDisplay("sk-turn").showToolCalls; got != "full" {
 		t.Errorf("with sk-turn: got %q, want %q", got, "full")
 	}
 
 	// Empty session key, should fall back to bot default.
-	if got := bot.effectiveShowToolCalls(""); got != "off" {
+	if got := bot.resolveDisplay("").showToolCalls; got != "off" {
 		t.Errorf("with empty sk: got %q, want %q", got, "off")
 	}
 }

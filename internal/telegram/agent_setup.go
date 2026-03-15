@@ -152,7 +152,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		primaryBot.SetTTS(p.TTS)
 	}
 	primaryBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
-	primaryBot.SetToolCallPreviewChars(cfg.Tools.ToolCallPreviewChars)
+	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
 	ApplyAgentDisplaySettings(primaryBot, acfg, cfg)
 
 	if p.DisplayOverrideFn != nil {
@@ -261,63 +261,64 @@ func ConfigureMultiballBot(bot *Bot, mc MultiballBotConfig) {
 // falling back to global config when the agent field is nil/empty.
 func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Config) {
 	tg := acfg.GetTelegramPlatform()
+	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
 	switch {
 	case tg != nil && tg.ShowToolCalls != nil:
-		bot.SetShowToolCalls(string(*tg.ShowToolCalls))
+		d.ShowToolCalls = string(*tg.ShowToolCalls)
 	case acfg.ShowToolCalls != nil:
-		bot.SetShowToolCalls(string(*acfg.ShowToolCalls))
+		d.ShowToolCalls = string(*acfg.ShowToolCalls)
 	case cfg.Telegram.ShowToolCalls != nil:
-		bot.SetShowToolCalls(string(*cfg.Telegram.ShowToolCalls))
+		d.ShowToolCalls = string(*cfg.Telegram.ShowToolCalls)
 	}
 	switch {
 	case tg != nil && tg.ShowThinking != nil:
-		bot.SetShowThinking(string(*tg.ShowThinking))
+		d.ShowThinking = string(*tg.ShowThinking)
 	case acfg.ShowThinking != nil:
-		bot.SetShowThinking(string(*acfg.ShowThinking))
+		d.ShowThinking = string(*acfg.ShowThinking)
 	case cfg.Telegram.ShowThinking != nil:
-		bot.SetShowThinking(string(*cfg.Telegram.ShowThinking))
+		d.ShowThinking = string(*cfg.Telegram.ShowThinking)
 	}
 	switch {
 	case tg != nil && tg.DisplayWidth != nil:
-		bot.SetDisplayWidth(*tg.DisplayWidth)
+		d.DisplayWidth = *tg.DisplayWidth
 	case cfg.Telegram.DisplayWidth != nil:
-		bot.SetDisplayWidth(*cfg.Telegram.DisplayWidth)
+		d.DisplayWidth = *cfg.Telegram.DisplayWidth
 	}
 	switch {
 	case tg != nil && tg.TableWrapLines != nil:
-		bot.SetTableWrapLines(*tg.TableWrapLines)
+		d.TableWrapLines = *tg.TableWrapLines
 	case cfg.Telegram.TableWrapLines != nil:
-		bot.SetTableWrapLines(*cfg.Telegram.TableWrapLines)
+		d.TableWrapLines = *cfg.Telegram.TableWrapLines
 	}
 	switch {
 	case tg != nil && tg.TableStyle != nil:
-		bot.SetTableStyle(*tg.TableStyle)
+		d.TableStyle = *tg.TableStyle
 	case cfg.Telegram.TableStyle != nil:
-		bot.SetTableStyle(*cfg.Telegram.TableStyle)
+		d.TableStyle = *cfg.Telegram.TableStyle
 	}
 	if acfg.MessagesInLog != nil {
-		bot.SetMessagesInLog(*acfg.MessagesInLog)
+		d.MessagesInLog = *acfg.MessagesInLog
 	} else {
-		bot.SetMessagesInLog(cfg.Logging.MessagesInLog)
+		d.MessagesInLog = cfg.Logging.MessagesInLog
 	}
 	switch {
 	case tg != nil && tg.ReceivedFilesDir != "":
-		bot.SetReceivedFilesDir(tg.ReceivedFilesDir)
+		d.ReceivedFilesDir = tg.ReceivedFilesDir
 	case cfg.Telegram.ReceivedFilesDir != "":
-		bot.SetReceivedFilesDir(cfg.Telegram.ReceivedFilesDir)
+		d.ReceivedFilesDir = cfg.Telegram.ReceivedFilesDir
 	}
 	if acfg.InjectedMessageHeader != "" {
-		bot.SetInjectedMessageHeader(acfg.InjectedMessageHeader)
+		d.InjectedMessageHeader = acfg.InjectedMessageHeader
 	} else {
-		bot.SetInjectedMessageHeader(cfg.Defaults.InjectedMessageHeader)
+		d.InjectedMessageHeader = cfg.Defaults.InjectedMessageHeader
 	}
-	bot.SetSteerMode(acfg.SteerMode)
+	d.SteerMode = acfg.SteerMode
 	switch {
 	case tg != nil && tg.StreamOutput != nil:
-		bot.SetStreamOutput(*tg.StreamOutput)
+		d.StreamOutput = *tg.StreamOutput
 	default:
-		bot.SetStreamOutput(cfg.Telegram.StreamOutput)
+		d.StreamOutput = cfg.Telegram.StreamOutput
 	}
 	streamInterval := ""
 	if tg != nil && tg.StreamInterval != "" {
@@ -325,9 +326,11 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	} else {
 		streamInterval = cfg.Telegram.StreamUpdateInterval
 	}
-	if d, err := time.ParseDuration(streamInterval); err == nil && d > 0 {
-		bot.SetStreamUpdateInterval(d)
+	if dur, err := time.ParseDuration(streamInterval); err == nil && dur > 0 {
+		d.StreamUpdateInterval = dur
 	}
+
+	bot.display = d
 }
 
 // extractAgentID extracts the agent ID from a session key string.

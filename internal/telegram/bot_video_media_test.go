@@ -67,7 +67,7 @@ func TestReceiveMessage_VideoQueuedWithSavedPath(t *testing.T) {
 	// are queued with saved file paths.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Small video (under 20MB)
@@ -89,7 +89,7 @@ func TestReceiveMessage_VideoTooLarge(t *testing.T) {
 	// Verifies that oversized videos are flagged
 	// without download attempts.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = t.TempDir()
+	b.display.ReceivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
 
 	// Large video (over 20MB)
@@ -110,7 +110,7 @@ func TestReceiveMessage_VideoWithoutCaption(t *testing.T) {
 	// and failed downloads are dropped.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Video with no caption - when download fails, message is dropped (no text, no images)
@@ -128,7 +128,7 @@ func TestReceiveMessage_VideoNoteQueuedWithSavedPath(t *testing.T) {
 	// are queued with saved paths.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Video note with text caption
@@ -150,7 +150,7 @@ func TestReceiveMessage_VideoNoteTooLarge(t *testing.T) {
 	// Verifies that oversized video notes
 	// are queued with size warnings.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = t.TempDir()
+	b.display.ReceivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
 
 	msg := makeMsgWithVideoNote(111, "owner", 25*1024*1024)
@@ -171,7 +171,7 @@ func TestReceiveMessage_NonImageDocumentSaved(t *testing.T) {
 	// are queued with captions.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 	b.botToken = "test-token"
 
 	// Document with caption
@@ -193,7 +193,7 @@ func TestReceiveMessage_NonImageDocumentTooLarge(t *testing.T) {
 	// Verifies that oversized documents
 	// are flagged.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = t.TempDir()
+	b.display.ReceivedFilesDir = t.TempDir()
 	b.botToken = "test-token"
 
 	// Document with caption
@@ -310,7 +310,7 @@ func TestSaveMedia(t *testing.T) {
 	// Verifies that saveMedia saves files with correct metadata.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 
 	data := []byte("fake-mp4-data")
 	path, err := b.saveMedia(data, "video", 12345, ".mp4")
@@ -339,7 +339,7 @@ func TestSaveMediaDocument(t *testing.T) {
 	// Verifies that saveMedia correctly saves documents.
 	dir := t.TempDir()
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.receivedFilesDir = dir
+	b.display.ReceivedFilesDir = dir
 
 	data := []byte("document content")
 	path, err := b.saveMedia(data, "document", 12345, ".pdf")
