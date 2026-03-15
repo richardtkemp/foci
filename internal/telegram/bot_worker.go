@@ -19,8 +19,9 @@ func (b *Bot) agentWorker(ctx context.Context) {
 			b.processAgentMessage(ctx, qm)
 			// Drain steer messages that arrived after the turn completed.
 			// Process them as normal follow-up turns so the user's redirection
-			// isn't silently dropped.
-			if orphan := b.drainSteer(); orphan != "" {
+			// isn't silently dropped. Loop because a new steer can arrive
+			// during orphan processing itself.
+			for orphan := b.drainSteer(); orphan != ""; orphan = b.drainSteer() {
 				b.logger().Infof("steer: processing orphaned steer message as follow-up turn")
 				b.processAgentMessage(ctx, queuedMessage{msg: qm.msg, userID: qm.userID, text: orphan})
 			}
