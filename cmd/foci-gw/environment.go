@@ -82,7 +82,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("- **time** — UTC timestamp\n")
 	b.WriteString("- **gap** — time since last message\n")
 	b.WriteString("- **model** — current model\n")
-	b.WriteString("- **via** — which transport delivered this message: `telegram` (Telegram chat), `android` (Android app), `api` (HTTP /send endpoint — replies are already delivered), `cron` (system-initiated — keepalive, scheduled wake, etc.; use send_message_to_user to reach the human)\n")
+	b.WriteString("- **via** — which transport delivered this message: `telegram` (Telegram chat), `android` (Android app), `api` (HTTP /send endpoint — replies are already delivered), `cron` (system-initiated — keepalive, scheduled wake, etc.; replies are auto-delivered to the user's platform)\n")
 	b.WriteString("- **prev_cost** — USD equivalent cost of previous turn\n")
 	b.WriteString("- **prev_tokens** — token breakdown: in (new input), out (output), cR (cache read), cW (cache write)\n")
 	b.WriteString("- **mana** — remaining API quota percentage, followed by 🟢 (above invest threshold — safe for heavy work) or 🔴 (low — conserve, avoid expensive operations)\n")

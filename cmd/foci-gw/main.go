@@ -427,7 +427,7 @@ Subcommands:
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// ========== Welcome & first-run ==========
-	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, cfg, ctx)
+	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, cfg, ctx, connMgr)
 
 	// ========== Wait for signal & shutdown ==========
 	<-sigCh

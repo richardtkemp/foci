@@ -87,19 +87,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 					log.Warnf("warning", "[%s] no default session for proactive warning dispatch", agentID)
 					return
 				}
-				resp, err := inst.ag.HandleMessage(agent.WithTrigger(p.ctx, "proactive_warning"), sk, warningText)
-				if err != nil {
-					log.Errorf("warning", "[%s] session=%s proactive warning turn error: %v", agentID, sk, err)
-					return
-				}
-				if resp == "" {
-					return
-				}
-				if conn := p.connMgr.ForSessionOrPrimary(sk, agentID); conn != nil {
-					if err := conn.SendToSession(sk, resp); err != nil {
-						log.Errorf("warning", "[%s] proactive warning platform delivery: %v", agentID, err)
-					}
-				}
+				deliverInjectedTurn(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText)
 			},
 			ActiveInterval:    warningActiveInterval,
 			InactiveInterval:  warningInactiveInterval,
