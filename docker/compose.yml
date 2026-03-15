@@ -3,6 +3,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      additional_contexts:
+        char-import: ${FOCI_CHAR_IMPORT_DIR:-./character}
+        memory-import: ${FOCI_MEMORY_IMPORT_DIR:-./memory}
     container_name: foci
     restart: unless-stopped
     cap_add:

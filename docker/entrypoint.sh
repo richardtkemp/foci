@@ -87,6 +87,6 @@ fi
 #   --ambient-caps=+setgid: grants CAP_SETGID so procattr.go can drop
 #                           foci-secrets from child processes
 echo "[foci] Starting foci-gw..."
-exec setpriv --reuid=foci --regid=foci --init-groups \
+exec env HOME=/home/foci setpriv --reuid=foci --regid=foci --init-groups \
 	--ambient-caps=+setgid \
 	-- foci-gw -config "$CONFIG_FILE"
