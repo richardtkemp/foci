@@ -4,7 +4,7 @@ How the pieces connect. Read this before touching the code.
 
 ## Startup Flow (`main.go`)
 
-Each phase is extracted into its own file. `main()` is a ~100-line orchestrator.
+Each phase is extracted into its own file. `main()` is a ~400-line orchestrator.
 
 ```
 config.Load(path)                                        ← validates values; logs to stderr + buffer
@@ -19,7 +19,7 @@ config.Load(path)                                        ← validates values; l
   → seedDefaultPrompts (per-agent)
   → returns secretsResult{store, bwStore, httpAPIKey, cleanup}
 
-→ newClientRegistry(cfg, store, anthropicClient, ctx)   ← clients.go
+→ newClientRegistry(cfg, store, ctx)                    ← clients.go
   → Lazy client registry: clients created on first use per endpoint:format pair (sync.Once)
   →   GetClient(endpoint, format) — lazy-init, returns provider.Client
   →   PeekClient(endpoint, format) — no-init check, returns nil if not yet created
@@ -126,48 +126,49 @@ DiagnoseRestart(stateStore, startTime, logsDir)
 
 ```
 main
- ├── config        → table, modelinfo
+ ├── config        → display, modelinfo
  ├── sqlite        → modernc.org/sqlite (shared Open, AgentPath, MigrateFile utilities)
  ├── log           → sqlite, modelinfo
- ├── table         (no deps)
+ ├── display       (no deps — table rendering with Unicode display-width handling)
  ├── secrets       → BurntSushi/toml
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
- ├── platform      → config, secrets, session, state, voice, warnings
+ ├── platform      → config, log, secrets, session, state, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade)
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
  ├── session       → provider, log, sqlite
  ├── memory        → sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
- ├── voice         → log, tempdir, gorilla/websocket
+ ├── voice         → config, log, session, tempdir, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
+ ├── resources     → log (goroutine monitor, memory guard)
  ├── mcp           → provider, log, tools, BurntSushi/toml, go-sdk/mcp
- ├── tools         → provider, platform, log, memory, modelinfo, secrets, tempdir, voice
- ├── workspace     → provider
+ ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, tools/browserjs, voice
+ ├── workspace     → log, provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       → log (embedded .md files + BuildBranchOrientation, ResolveOrientPath helpers)
+ ├── prompts       (top-level package, not internal) → log (embedded .md files + BuildBranchOrientation, ResolveOrientPath helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
- ├── compaction    → provider, prompts, session, log, modelinfo
+ ├── compaction    → log, memory, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
  ├── provision     (no deps — stdlib-only leaf package for agent creation)
- ├── command       → agent, compaction, config, display, mana, prompts, provider, provision, session, skills, state, tempdir, tools, workspace
- ├── mana          → anthropic, log (leaf-ish — pure mana budget logic)
+ ├── command       → agent, compaction, config, display, log, mana, memory, platform, provider, provision, session, skills, state, tempdir, tools, workspace
+ ├── mana          → anthropic, log, provider (mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
- ├── agent         → provider, anthropic, compaction, mana, warnings, nudge, session, tools, workspace, log
- ├── periodic     → mana, warnings, config, log, memory, prompts, state (NO agent, NO session)
- └── telegram      → agent, command, platform, log, sqlite, table, voice
+ ├── agent         → compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
+ ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
+ └── telegram      → agent, command, config, display, log, platform, secrets, session, sqlite, state, voice
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `table`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo` are leaf packages. `platform` depends on leaf packages only (config, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
 **`platform` package:** Defines platform-agnostic messaging types (`Message`, `Attachment`), the `Connection`/`ConnectionManager` interfaces, the `MessagingProvider` interface for platform implementations, and the `Messaging` facade that manages all active providers. Providers register via `RegisterMessagingProvider()` (called from `init()`) and are activated at startup via `InitMessaging()`. An aggregating `ConnectionManager` merges connections from all providers — `AllForAgent()` returns connections across all platforms, enabling multi-platform fan-out for notifications. `cmd/foci-gw/` uses only the facade; zero platform-specific type references. Also defines the `SetupWizard` interface (optionally implemented by `MessagingProvider`) for contributing interactive setup steps to `foci setup`. `SetupProviders()` returns all registered providers that implement `SetupWizard`. Types: `SetupFlag` (CLI flag definition), `WizardResult` (config TOML fragment + secrets), `SetupUI` (console interaction primitives).
 
-Most packages depend on `provider` for types; only `main.go`, `agent`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
+Most packages depend on `provider` for types; only `main.go`, `tools`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
 **`provision` package:** Shared agent creation logic used by both `cmd/foci/setup.go` (first-run wizard) and `command/agents_new.go` (`/agents new` runtime command). Stdlib-only, no imports from other foci packages. Provides `AgentSpec` + `Provision()` (workspace creation, character file copying, SOUL.md templating), validation (`IsValidAgentID`), model alias resolution (`ResolveModelAlias`), config block generation (`GenerateAgentBlock`), and crontab templating (`GenerateCrontab`, `AppendCrontab`). Platform-specific validators (e.g. `IsValidBotToken`, `IsValidUserID`) live in their respective platform packages (e.g. `internal/telegram/validate.go`).
 
@@ -693,13 +694,11 @@ Single `foci.toml` parsed with BurntSushi/toml. Defaults applied for missing fie
 
 When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
 
-`cfg.Agent` always mirrors `cfg.Agents[0]` so legacy code paths work unchanged.
-
-**Platform configuration (NEW):** Per-agent platform settings are now in `[agents.platforms.telegram]`. The old top-level fields (`telegram_bot`, `allowed_users`, etc.) are deprecated but still work — they're migrated to the new structure at load time by `migrateAgentTelegramFields()`.
+**Platform configuration:** Per-agent platform settings live in `[agents.platforms.telegram]`. The old top-level fields (`telegram_bot`, `allowed_users`, etc.) are migrated to the new structure at load time. Display fields (`show_tool_calls`, `show_thinking`) are synced between agent-level and platform-level by `syncDisplayFields()`.
 
 **Telegram bot token resolution:** Bot tokens are resolved by convention: `config.ResolveBotToken(botName, botSecret, secrets)` looks up `"telegram.<botName>"` in the secrets store (or uses `botSecret` as the key if non-empty). No explicit `[telegram.bots]` map is needed.
 
-**Example multi-agent config (new format):**
+**Example multi-agent config:**
 ```toml
 [[agents]]
 id = "clutch"
@@ -862,7 +861,7 @@ multiball_bots = ["spare1"]          # shared pool (fallback)
 /multiball → botMgr.AcquireMultiball(agentID)
                → try per-agent pool first (pool.Acquire())
                → if busy/empty, try shared pool (shared.Acquire())
-           → bot.SetAgentAndCommands(ag, cmds)  // re-wire shared bots
+           → bot.SetHandlerAndCommands(handler, cmds)  // re-wire shared bots
            → sessions.CreateBranch(parent) → parent/b{TIMESTAMP}
            → bot.SetSessionKey(branchKey)
            → bot.SendNotification("🎱 Forked from main.")
@@ -872,7 +871,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 
 **Bot pool** (`telegram/pool.go`): Tracks secondary bots, acquires LRU idle bot, releases on `/done`.
 
-**Shared pool** (`telegram/manager.go`): `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetAgentAndCommands` at fork time.
+**Shared pool** (`telegram/manager.go`): `BotManager.shared` is a fallback pool available to any agent. Shared bots are re-wired to the acquiring agent via `SetHandlerAndCommands` at fork time.
 
 **Bot changes** (`telegram/bot.go`):
 - Per-chat session routing: primary bots derive session key from `msg.Chat.Id` → `ID/cCHATID/{versionTS}`
@@ -886,7 +885,7 @@ Messages to the secondary bot route to the forked session. `/done` on the second
 - `/done` handled as special case alongside `/stop` (bypasses command registry)
 - Idle secondary bots respond with "This bot is idle. Use /multiball..." to non-command messages
 
-**Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<telegram_username>`. Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `main.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetAgentAndCommands` and gets the primary bot's chat ID for notifications.
+**Session persistence across restarts:** The `bot → session_key` mapping is persisted in the state store (JSON key-value file) under `multiball:<bot_username>` (the bot's Telegram username). Each `SetSessionKey` call fires an `OnSessionKeyChange` callback (wired in `agent_setup.go`) that writes or deletes the mapping. On startup, `restoreMultiballSessions()` iterates all pool bots via `Pool.ForEach`, looks up saved keys, validates the session file still exists via `LastActivity`, and restores via `SetSessionKeyDirect` (bypasses callback). The bot is also re-wired to the correct agent via `SetHandlerAndCommands` and gets the primary bot's chat ID for notifications.
 
 **Per-session override persistence:** Slash command overrides (`/effort`, `/thinking`, `/model`) are stored per-session in the state store under keys `effort/<sessionKey>`, `thinking/<sessionKey>`, `model/<sessionKey>`, `model_endpoint/<sessionKey>`, `model_format/<sessionKey>`. On startup, `RestoreSessionOverrides(sessionKey)` restores all five — for model overrides, it reads the endpoint and format and calls `GetClient(endpoint, format)` to restore the correct client. The `/voice` mode follows the same pattern under `voice/<sessionKey>`. Overrides reset naturally when a new session starts (no state stored for the new key).
 
@@ -987,7 +986,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 
 **Async-pending guard:** Compaction is skipped when the session has pending async tool results (`AsyncNotifier.HasPending()`). Tools call `MarkPending()` before dispatching async work (spawn clone, auto-backgrounded exec/http) and `MarkDone()` when the result is delivered via `Notify()`. This prevents compacting away the context that the pending result relates to — compaction fires naturally on a later turn once all results have been delivered.
 
-**Context warning for no_compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, a warning is injected into the warning queue: "Context at ~X% capacity. This session cannot compact. Consider wrapping up." The agent sees this via `warnings.Dispatcher.MaybeFire()` on the next keepalive tick and can gracefully conclude rather than hitting the context limit unexpectedly.
+**No-compact sessions:** When a session with `no_compact` flag (oneshot, wake branches) exceeds the compaction threshold, the context percentage is logged but no compaction or warning occurs. These sessions are expected to be short-lived.
 
 
 **Branch compaction:** When `Replace()` is called on a branch session (e.g., during compaction), it preserves the `branch_meta` header with `branch_point=0`. The compacted messages are self-contained (the summary includes parent context), so subsequent `LoadFull()` loads `parent[:0] + compacted_msgs` = just the compacted messages.
