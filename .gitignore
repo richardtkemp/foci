@@ -24,6 +24,7 @@ todo-*.db-shm
 .go/
 .setup-install.sh
 .env.test
+docker/.env
 .staged-WELCOME.md
 .claude
 .claude/

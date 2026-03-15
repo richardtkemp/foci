@@ -1,0 +1,11 @@
+bin/
+.go/
+.gocache/
+.gopath/
+codeql-db/
+.env.test
+docker/.env
+.claude/
+*.log
+*.out
+coverage.*
