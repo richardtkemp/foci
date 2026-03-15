@@ -107,7 +107,7 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	}
 
 	oldCount := len(messages)
-	for _, fn := range a.CompactionNotifyFunc {
+	for _, fn := range a.CompactionStartFunc {
 		fn(sessionKey, "⏳ Compacting context...")
 	}
 	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
@@ -121,6 +121,7 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	} else {
 		if newKey != "" {
 			a.RotateSession(sessionKey, newKey)
+			a.logger().Infof("session=%s compaction rotated → %s (pre_messages=%d)", sessionKey, newKey, oldCount)
 		}
 		for _, fn := range a.CompactionNotifyFunc {
 			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))

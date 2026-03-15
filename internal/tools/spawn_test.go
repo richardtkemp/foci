@@ -140,6 +140,47 @@ func extractTempDir(result string) string {
 	return result[start : start+end]
 }
 
+func TestSpawnInheritSetsNoCompact(t *testing.T) {
+	// Proves that spawnInherit calls SetNoCompact with the branch key after
+	// creating the branch, preventing branch sessions from compacting
+	// independently and sending notifications to the main chat.
+	t.Parallel()
+
+	var noCompactKey string
+	var noCompactValue bool
+	brancher := &mockSessionBrancher{}
+	agent := &mockSpawnAgent{response: "done"}
+
+	deps := SpawnDeps{
+		Sessions:   brancher,
+		MaxInherit: 2,
+		SetNoCompact: func(sk string, v bool) {
+			noCompactKey = sk
+			noCompactValue = v
+		},
+	}
+	sem := make(chan struct{}, 2)
+
+	ctx := WithSessionKey(context.Background(), "test/c123/456")
+
+	result, err := spawnInherit(ctx, deps, func() SpawnAgent { return agent }, sem, "test prompt", 5*time.Second)
+	if err != nil {
+		t.Fatalf("spawnInherit: %v", err)
+	}
+	if result.Text == "" {
+		t.Fatal("expected non-empty result")
+	}
+	if noCompactKey == "" {
+		t.Fatal("SetNoCompact was not called")
+	}
+	if !strings.Contains(noCompactKey, "/b") {
+		t.Errorf("SetNoCompact key = %q, want branch key containing '/b'", noCompactKey)
+	}
+	if !noCompactValue {
+		t.Error("SetNoCompact value = false, want true")
+	}
+}
+
 func TestSpawnGuardResult(t *testing.T) {
 	// Proves that small results pass through unchanged while large results are written to a temp file
 	// and replaced with a "Result too large" guard message pointing to the file.

@@ -86,7 +86,8 @@ type APIEntry struct {
 	CallType    string    `json:"call_type"`              // "conversation", "compaction", "summary", "spawn"
 	SessionFile string    `json:"session_file,omitempty"` // path to session JSONL file
 	SessionLine int       `json:"session_line,omitempty"` // line number in session file (conversation calls)
-
+	PreMessages int       `json:"pre_messages,omitempty"` // message count before compaction
+	NewSession  string    `json:"new_session,omitempty"`  // new session key after compaction rotation
 }
 
 // PayloadEntry is a full API request/response record.
@@ -241,13 +242,15 @@ func InitAPIDB(path string) error {
 		return err
 	}
 
-	// Add provider column if it doesn't exist (migration for existing DBs).
+	// Migrations for existing DBs (ALTER TABLE is a no-op if column exists).
 	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN provider TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN pre_messages INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE api_calls ADD COLUMN new_session TEXT`)
 
 	stmt, err := db.Prepare(`INSERT INTO api_calls
 		(ts, provider, session, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 cost_usd, duration_ms, stop_reason, call_type, session_file, session_line, pre_messages, new_session)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = db.Close()
 		return fmt.Errorf("prepare insert: %w", err)
@@ -423,6 +426,14 @@ func (a *apiDB) insert(entry APIEntry) {
 	if entry.SessionLine > 0 {
 		sessionLine = &entry.SessionLine
 	}
+	var preMessages *int
+	if entry.PreMessages > 0 {
+		preMessages = &entry.PreMessages
+	}
+	var newSession *string
+	if entry.NewSession != "" {
+		newSession = &entry.NewSession
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -432,6 +443,7 @@ func (a *apiDB) insert(entry APIEntry) {
 		entry.Input, entry.Output, entry.CacheRead, entry.CacheWrite,
 		entry.CostUSD, entry.DurationMS, entry.StopReason,
 		entry.CallType, sessionFile, sessionLine,
+		preMessages, newSession,
 	)
 	if err != nil {
 		std.event(ERROR, "api_db", "insert error: %v", err)

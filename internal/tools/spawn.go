@@ -94,6 +94,7 @@ type SpawnDeps struct {
 	ExploreMaxDepth    int                                      // max tool loops for explore spawns
 	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
 	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
+	SetNoCompact       func(sessionKey string, value bool)      // marks branch sessions as no_compact (prevents compaction)
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.
@@ -535,6 +536,12 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		OrientationMessage: orientText,
 	}); err != nil {
 		return ToolResult{}, fmt.Errorf("spawn inherit: create branch: %w", err)
+	}
+
+	// Prevent compaction on branch sessions — they're short-lived and should
+	// never compact independently or send notifications to the main chat.
+	if deps.SetNoCompact != nil {
+		deps.SetNoCompact(branchKey, true)
 	}
 
 	agent := agentFn()

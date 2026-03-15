@@ -97,6 +97,7 @@ type Agent struct {
 	CompactionManaRefreshThreshold string                                 // trigger mana-refresh when reset this soon (e.g. "15m")
 	CompactionManaRefreshPreserve  *int                                   // messages to preserve in refresh mode (nil = ALL)
 	TaskListNotifyFunc            HookList[func(string, string)]         // callbacks for task list changes (session key, message)
+	CompactionStartFunc           HookList[func(string, string)]         // callbacks for compaction start (session key, message) — sent immediately, not buffered
 	CompactionNotifyFunc          HookList[func(string, string)]         // callbacks for compaction notifications (session key, message)
 	CompactionDebugFunc           HookList[func(string, string)]         // callbacks for compaction debug (session key, summary text)
 	SessionKeyRotatedFunc         HookList[func(string, string)]         // callbacks when session key rotates (oldKey, newKey)

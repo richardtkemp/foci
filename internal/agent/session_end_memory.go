@@ -56,6 +56,8 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		return
 	}
 
+	ag.SetSessionNoCompact(branchKey, true)
+
 	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, branchKey)
 
 	go func() {

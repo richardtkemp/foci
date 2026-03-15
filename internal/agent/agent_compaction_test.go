@@ -203,14 +203,19 @@ func TestAgentCompactionIntegration(t *testing.T) {
 	})
 
 	t.Run("notify", func(t *testing.T) {
-		// Proves that CompactionNotifyFunc is called exactly twice per compaction:
-		// once at the start ("Compacting...") and once at the end with a message count.
+		// Proves that CompactionStartFunc fires at the start ("Compacting...") and
+		// CompactionNotifyFunc fires at the end with a message count. They are split
+		// so the start notification can bypass turn buffering on the platform.
 		var turnCount atomic.Int32
 		env := newCompactionTestEnv(t, &turnCount, 5)
 
-		var notified []string
+		var startNotifs []string
+		env.ag.CompactionStartFunc.Add(func(session string, msg string) {
+			startNotifs = append(startNotifs, msg)
+		})
+		var endNotifs []string
 		env.ag.CompactionNotifyFunc.Add(func(session string, msg string) {
-			notified = append(notified, msg)
+			endNotifs = append(endNotifs, msg)
 		})
 
 		sessionKey := "test/icompactnotify/1000000000"
@@ -218,14 +223,17 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		// 4 turns, then turn 5 triggers compaction
 		env.runTurns(t, sessionKey, 1, 5)
 
-		if len(notified) != 2 {
-			t.Fatalf("expected 2 notifications (start + end), got %d", len(notified))
+		if len(startNotifs) != 1 {
+			t.Fatalf("expected 1 start notification, got %d", len(startNotifs))
 		}
-		if !strings.Contains(notified[0], "Compacting") {
-			t.Errorf("start notification = %q, want to contain 'Compacting'", notified[0])
+		if !strings.Contains(startNotifs[0], "Compacting") {
+			t.Errorf("start notification = %q, want to contain 'Compacting'", startNotifs[0])
 		}
-		if !strings.Contains(notified[1], "10 messages") {
-			t.Errorf("end notification = %q, want to contain '10 messages'", notified[1])
+		if len(endNotifs) != 1 {
+			t.Fatalf("expected 1 end notification, got %d", len(endNotifs))
+		}
+		if !strings.Contains(endNotifs[0], "10 messages") {
+			t.Errorf("end notification = %q, want to contain '10 messages'", endNotifs[0])
 		}
 	})
 
