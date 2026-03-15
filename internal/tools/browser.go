@@ -191,35 +191,7 @@ func (m *BrowserManager) ResetSnapshot() {
 
 // NewBrowserTool creates the browser tool definition using snapshot/ref paradigm.
 func NewBrowserTool(mgr *BrowserManager) *Tool {
-	description := `Control a browser using accessibility tree snapshots and element refs.
-
-The browser renders pages and captures an accessibility tree snapshot as YAML.
-Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
-
-Workflow:
-1. navigate to a URL → auto-returns snapshot
-2. Read the snapshot to find element refs
-3. Use click/fill/select with the ref to interact
-4. Each action auto-returns a fresh snapshot
-
-Actions:
-- snapshot: Capture current page accessibility tree
-- navigate: Go to URL (params: url). Auto-snapshot.
-- click: Click element (params: ref, element). Auto-snapshot.
-- fill: Fill input (params: ref, element, value, submit). Or fill multiple: (params: fields [{ref,value},...], submit). Auto-snapshot scoped to form context.
-- select: Select option(s) (params: ref, element, values). Auto-snapshot.
-- press: Press keyboard key (params: key)
-- go_back: Browser back. Auto-snapshot.
-- go_forward: Browser forward. Auto-snapshot.
-- reload: Reload page. Auto-snapshot.
-- screenshot: Capture screenshot (params: fullPage, returnPath)
-- pdf: Save page as PDF
-- evaluate: Run JavaScript (params: script)
-- wait: Wait for page state (params: waitType: load|idle)
-- close: Close browser
-
-The "element" param is a human description (e.g., "Login button") — for logging only.
-The "ref" param is the [ref=...] value from the snapshot — this is the actual locator.`
+	description := `Control a headless browser via accessibility snapshots and element refs. Navigate to URLs, read the snapshot YAML to find [ref=...] locators, then use click/fill/select/press with refs to interact. Each action auto-returns a fresh snapshot. Read the browser skill (SKILL.md) for the full action and parameter reference.`
 
 	return &Tool{
 		Name:        "browser",

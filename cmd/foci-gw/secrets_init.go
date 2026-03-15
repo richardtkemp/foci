@@ -23,9 +23,11 @@ type secretsResult struct {
 // initSecrets loads secrets.toml, runs security checks, generates the HTTP API key,
 // sets up bitwarden (if enabled), and seeds default prompt files.
 func initSecrets(configPath string, cfg *config.Config) secretsResult {
-	// Seed default prompts to ~/shared/prompts/ for user customisation
+	// Seed default prompts and skills to ~/shared/ for user customisation
 	if home, err := os.UserHomeDir(); err == nil {
-		seedDefaultPrompts(filepath.Join(home, "shared", "prompts"))
+		shared := filepath.Join(home, "shared")
+		seedDefaultPrompts(filepath.Join(shared, "prompts"))
+		seedDefaultSkills(filepath.Join(shared, "skills"))
 	}
 
 	// Load secrets (from secrets.toml alongside config file)
