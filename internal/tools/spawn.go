@@ -146,9 +146,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			if p.Context == "" {
 				p.Context = "clone"
 			}
-			if p.Timeout <= 0 {
-				p.Timeout = 120
-			}
+			timeout := ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 120})
 
 			resolved, err := resolveSpawnModel(p.Model, deps.Model, deps.ModelAliases)
 			if err != nil {
@@ -159,8 +157,6 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 
 			// Use bare model ID for API calls
 			model := resolved.ModelID
-
-			timeout := time.Duration(p.Timeout) * time.Second
 
 			switch p.Context {
 			case "raw":
