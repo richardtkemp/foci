@@ -589,7 +589,7 @@ func TestSecretsCommand(t *testing.T) {
 		t.Fatal("secrets command should have KeyboardOptions")
 	}
 	opts := cmd.KeyboardOptions(context.Background(), cc)
-	wantLabels := []string{"list", "set", "remove"}
+	wantLabels := []string{"list", "set", "remove", "hosts"}
 	if len(opts) != len(wantLabels) {
 		t.Fatalf("got %d keyboard options, want %d", len(opts), len(wantLabels))
 	}
