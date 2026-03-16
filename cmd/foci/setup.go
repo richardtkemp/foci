@@ -84,6 +84,27 @@ func cmdSetup(args []string) error {
 
 	flags := parseSetupFlags(args)
 
+	// Warn if config already exists — first-run is not designed for reconfiguration.
+	configPath := filepath.Join(flags.configDir, "foci.toml")
+	if _, err := os.Stat(configPath); err == nil {
+		if flags.nonInteractive {
+			fmt.Fprintf(os.Stderr, "Warning: %s already exists. It will be backed up before overwriting.\n", configPath)
+		} else {
+			fmt.Println()
+			fmt.Printf("  Warning: %s already exists.\n", configPath)
+			fmt.Println("  Running first-run will overwrite it (a backup will be created).")
+			fmt.Println()
+			fmt.Print("  Continue? [y/N] ")
+			reader := bufio.NewReader(os.Stdin)
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(strings.ToLower(line))
+			if line != "y" && line != "yes" {
+				fmt.Println("  Aborted.")
+				return nil
+			}
+		}
+	}
+
 	// Seed shared/ from repo to disk if not already present
 	repoSharedDir := findRepoShared()
 	if repoSharedDir != "" {
