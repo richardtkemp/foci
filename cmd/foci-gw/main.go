@@ -95,12 +95,21 @@ Subcommands:
 
 	configPath := config.ParseFlags()
 
+	// Early log init: open the default event log file so that config parse
+	// errors are captured on disk, not just stderr/journal.
+	if err := log.Init(log.Config{
+		EventFile: config.ResolvePath("logs/foci.log"),
+	}); err != nil {
+		log.Fatalf("main", "early log init: %v", err)
+	}
+
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		log.Fatalf("main", "load config: %v", err)
 	}
 
 	// ========== Logging ==========
+	// Re-init with full config (level, API log, payload log, etc.).
 	logCleanup := initLogging(cfg)
 	defer logCleanup()
 

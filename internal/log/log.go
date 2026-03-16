@@ -90,8 +90,9 @@ type Config struct {
 	PayloadFile string // path to api-payload.jsonl (empty = disabled)
 }
 
-// Init initializes the global logger. Call once at startup.
-// Any events logged before Init are replayed to the event file so that
+// Init initializes the global logger. Safe to call more than once — any
+// previously opened file handles are closed before replacement. Events
+// logged before the first Init are replayed to the event file so that
 // early messages (e.g. config warnings) appear in the log.
 func Init(cfg Config) error {
 	// HACK: SetAPIWriter is only used by cross-package tests
@@ -146,6 +147,17 @@ func Init(cfg Config) error {
 	}
 
 	std.mu.Lock()
+	// Close any previously opened file handles (safe to call Init twice,
+	// e.g. early init with defaults then full init after config load).
+	if std.eventFile != nil {
+		_ = std.eventFile.Close()
+	}
+	if std.apiFile != nil {
+		_ = std.apiFile.Close()
+	}
+	if std.payloadFile != nil {
+		_ = std.payloadFile.Close()
+	}
 	// Replay buffered pre-Init events to the event file (not stderr —
 	// they were already written there when originally logged).
 	if eventFile != nil && len(std.buffer) > 0 {
