@@ -336,14 +336,12 @@ func TestSteerBuffer_AppendAndDrain(t *testing.T) {
 	b.appendSteer("message2")
 
 	got := b.drainSteer()
-	// appendSteer adds newlines between messages
-	expected := "message1\nmessage2"
-	if got != expected {
-		t.Errorf("drainSteer = %q, want %q", got, expected)
+	if len(got) != 2 || got[0] != "message1" || got[1] != "message2" {
+		t.Errorf("drainSteer = %v, want [message1 message2]", got)
 	}
 
 	// After drain, should be empty
-	if b.drainSteer() != "" {
+	if b.drainSteer() != nil {
 		t.Error("buffer should be empty after drain")
 	}
 }
@@ -353,8 +351,8 @@ func TestSteerBuffer_DrainEmpty(t *testing.T) {
 	// empty string.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	if got := b.drainSteer(); got != "" {
-		t.Errorf("drainSteer on empty = %q, want empty", got)
+	if got := b.drainSteer(); got != nil {
+		t.Errorf("drainSteer on empty = %v, want nil", got)
 	}
 }
 
@@ -376,14 +374,14 @@ func TestSteerBuffer_Concurrent(t *testing.T) {
 	// Drain periodically until writer is done and buffer is empty
 	var collected []string
 	for {
-		if text := b.drainSteer(); text != "" {
-			collected = append(collected, text)
+		if parts := b.drainSteer(); len(parts) > 0 {
+			collected = append(collected, parts...)
 		}
 		select {
 		case <-done:
 			// Writer finished — drain remaining
-			if text := b.drainSteer(); text != "" {
-				collected = append(collected, text)
+			if parts := b.drainSteer(); len(parts) > 0 {
+				collected = append(collected, parts...)
 			}
 			// Verify we got all messages
 			joined := strings.Join(collected, "\n")
@@ -422,8 +420,8 @@ func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
 
 	// Should be in steer buffer
 	got := b.drainSteer()
-	if got != "change direction" {
-		t.Errorf("steer buffer = %q, want %q", got, "change direction")
+	if len(got) != 1 || got[0] != "change direction" {
+		t.Errorf("steer buffer = %v, want [change direction]", got)
 	}
 }
 
@@ -446,8 +444,8 @@ func TestReceiveMessage_SteerDisabledQueuesNormally(t *testing.T) {
 	if len(b.queue) != 1 {
 		t.Errorf("queue length = %d, want 1", len(b.queue))
 	}
-	if got := b.drainSteer(); got != "" {
-		t.Errorf("steer buffer should be empty, got %q", got)
+	if got := b.drainSteer(); got != nil {
+		t.Errorf("steer buffer should be empty, got %v", got)
 	}
 }
 
@@ -464,8 +462,8 @@ func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
 	if len(b.queue) != 1 {
 		t.Errorf("queue length = %d, want 1", len(b.queue))
 	}
-	if got := b.drainSteer(); got != "" {
-		t.Errorf("steer buffer should be empty, got %q", got)
+	if got := b.drainSteer(); got != nil {
+		t.Errorf("steer buffer should be empty, got %v", got)
 	}
 }
 

@@ -76,7 +76,7 @@ type mockHandler struct{}
 func (m *mockHandler) HandleMessage(ctx context.Context, sessionKey, text string) (string, error) {
 	return "", nil
 }
-func (m *mockHandler) HandleMessageWithAttachments(ctx context.Context, sessionKey, text string, attachments []Attachment) (string, error) {
+func (m *mockHandler) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) (string, error) {
 	return "", nil
 }
 func (m *mockHandler) IsProcessing() bool                  { return false }

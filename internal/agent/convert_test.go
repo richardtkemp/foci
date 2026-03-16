@@ -321,7 +321,7 @@ func TestHandleMessageWithCSVAttachment(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: mimeCSV, Data: []byte("name,value\nfoo,42"), SavedPath: "/tmp/data.csv"},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/csv/1000000000", "Analyze this data", attachments)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/csv/1000000000", []string{"Analyze this data"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -333,29 +333,23 @@ func TestHandleMessageWithCSVAttachment(t *testing.T) {
 		t.Fatal("no request received")
 	}
 
-	// Check: should have a text block for the converted CSV + a text block for the user message
+	// Check: should have a text block for the converted CSV, a meta block, and a user text block
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	if len(userMsg.Content) != 2 {
-		t.Fatalf("expected 2 content blocks, got %d", len(userMsg.Content))
-	}
 
-	// First block should be converted CSV text
-	if userMsg.Content[0].Type != "text" {
-		t.Errorf("content[0].Type = %q, want text", userMsg.Content[0].Type)
+	var hasCSV, hasUserText bool
+	for _, b := range userMsg.Content {
+		if b.Type == "text" && strings.Contains(b.Text, "name,value") && strings.Contains(b.Text, "[CSV document") {
+			hasCSV = true
+		}
+		if b.Type == "text" && strings.Contains(b.Text, "Analyze this data") {
+			hasUserText = true
+		}
 	}
-	if !strings.Contains(userMsg.Content[0].Text, "name,value") {
-		t.Errorf("content[0] should contain CSV data: %q", userMsg.Content[0].Text)
+	if !hasCSV {
+		t.Error("missing CSV content block")
 	}
-	if !strings.Contains(userMsg.Content[0].Text, "[CSV document") {
-		t.Errorf("content[0] should have CSV header: %q", userMsg.Content[0].Text)
-	}
-
-	// Second block should be the annotated user message
-	if userMsg.Content[1].Type != "text" {
-		t.Errorf("content[1].Type = %q, want text", userMsg.Content[1].Type)
-	}
-	if !strings.Contains(userMsg.Content[1].Text, "Analyze this data") {
-		t.Errorf("content[1] missing user text: %q", userMsg.Content[1].Text)
+	if !hasUserText {
+		t.Error("missing user text block")
 	}
 }
 
@@ -390,7 +384,7 @@ func TestHandleMessageWithHTMLAttachment(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: mimeHTML, Data: html, SavedPath: "/tmp/page.html"},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/html/1000000000", "What does this say?", attachments)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/html/1000000000", []string{"What does this say?"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -399,12 +393,15 @@ func TestHandleMessageWithHTMLAttachment(t *testing.T) {
 	}
 
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	if len(userMsg.Content) != 2 {
-		t.Fatalf("expected 2 content blocks, got %d", len(userMsg.Content))
-	}
 
-	// First block should be converted HTML
-	if !strings.Contains(userMsg.Content[0].Text, "[HTML document") {
-		t.Errorf("content[0] should have HTML header: %q", userMsg.Content[0].Text)
+	// Should have an HTML content block among the text blocks
+	var hasHTML bool
+	for _, b := range userMsg.Content {
+		if b.Type == "text" && strings.Contains(b.Text, "[HTML document") {
+			hasHTML = true
+		}
+	}
+	if !hasHTML {
+		t.Error("missing HTML content block")
 	}
 }

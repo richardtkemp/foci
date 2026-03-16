@@ -9,35 +9,59 @@ import (
 	"foci/internal/platform"
 )
 
-// agentWorker processes queued messages one at a time.
+// agentWorker processes queued messages, batching any that arrive while busy.
 func (b *Bot) agentWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case qm := <-b.queue:
-			b.processAgentMessage(ctx, qm)
-			// Drain steer messages that arrived after the turn completed.
-			// Process them as normal follow-up turns so the user's redirection
-			// isn't silently dropped. Loop because a new steer can arrive
-			// during orphan processing itself.
-			for orphan := b.drainSteer(); orphan != ""; orphan = b.drainSteer() {
-				b.logger().Infof("steer: processing orphaned steer message as follow-up turn")
-				b.processAgentMessage(ctx, queuedMessage{msg: qm.msg, userID: qm.userID, text: orphan})
+			// Batch with any other immediately-available messages.
+			batch := append([]queuedMessage{qm}, b.drainQueue()...)
+			b.processAgentMessage(ctx, batch)
+
+			// After the turn: drain orphan steers + any newly queued messages.
+			// Loop because new steers/messages can arrive during processing.
+			for {
+				orphans := b.drainSteer()
+				extras := b.drainQueue()
+				if len(orphans) == 0 && len(extras) == 0 {
+					break
+				}
+				var followUp []queuedMessage
+				for _, s := range orphans {
+					followUp = append(followUp, queuedMessage{msg: qm.msg, userID: qm.userID, text: s})
+				}
+				followUp = append(followUp, extras...)
+				b.logger().Infof("steer: processing %d orphan(s) + %d queued as follow-up turn", len(orphans), len(extras))
+				b.processAgentMessage(ctx, followUp)
 			}
 		}
 	}
 }
 
-// processAgentMessage handles a single agent turn with a cancellable context.
-func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
+// drainQueue non-blocking drains all immediately available messages from the queue.
+func (b *Bot) drainQueue() []queuedMessage {
+	var msgs []queuedMessage
+	for {
+		select {
+		case qm := <-b.queue:
+			msgs = append(msgs, qm)
+		default:
+			return msgs
+		}
+	}
+}
+
+// processAgentMessage handles a batched agent turn with a cancellable context.
+// Session key, typing indicator, and renderer are derived from batch[0].
+func (b *Bot) processAgentMessage(ctx context.Context, batch []queuedMessage) {
+	first := batch[0]
 	var sk string
 	if b.isSecondary {
-		// Secondary bots use their override session key
 		sk = b.SessionKey()
 	} else if b.agentID != "" {
-		// Primary bots derive session key from the message's chat ID
-		sk = b.sessionKeyForMsg(qm.msg.Chat.Id)
+		sk = b.sessionKeyForMsg(first.msg.Chat.Id)
 	} else {
 		sk = b.SessionKey()
 	}
@@ -65,13 +89,13 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 
 	// Send typing indicator and keep it alive throughout the agent turn.
 	// Telegram typing expires after ~5s, so we re-send every 4s.
-	_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+	_, _ = b.client.SendChatAction(first.msg.Chat.Id, "typing", nil)
 	typingTicker := time.NewTicker(4 * time.Second)
 	go func() {
 		for {
 			select {
 			case <-typingTicker.C:
-				_, _ = b.client.SendChatAction(qm.msg.Chat.Id, "typing", nil)
+				_, _ = b.client.SendChatAction(first.msg.Chat.Id, "typing", nil)
 			case <-turnCtx.Done():
 				return
 			}
@@ -79,7 +103,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	}()
 	defer typingTicker.Stop()
 
-	renderer := newTurnRenderer(b, qm.msg, sk)
+	renderer := newTurnRenderer(b, first.msg, sk)
 	defer renderer.Cleanup()
 
 	cb := &agent.TurnCallbacks{
@@ -96,23 +120,26 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
 	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
-		UserID:   qm.userID,
-		Username: qm.msg.From.Username,
-		ChatID:   qm.msg.Chat.Id,
+		UserID:   first.userID,
+		Username: first.msg.From.Username,
+		ChatID:   first.msg.Chat.Id,
 	})
 
-	var response string
-	var err error
-	if len(qm.attachments) > 0 {
-		// Convert telegram attachments to platform attachment data
-		platformAttachments := make([]platform.Attachment, len(qm.attachments))
-		for i, att := range qm.attachments {
-			platformAttachments[i] = platform.Attachment{MimeType: att.mediaType, Data: att.data, SavedPath: att.savedPath}
+	// Collect texts and attachments across the batch.
+	var texts []string
+	var allAttachments []platform.Attachment
+	for _, qm := range batch {
+		texts = append(texts, qm.text)
+		for _, att := range qm.attachments {
+			allAttachments = append(allAttachments, platform.Attachment{
+				MimeType:  att.mediaType,
+				Data:      att.data,
+				SavedPath: att.savedPath,
+			})
 		}
-		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, qm.text, platformAttachments)
-	} else {
-		response, err = b.handler.HandleMessage(turnCtx, sk, qm.text)
 	}
+
+	response, err := b.handler.HandleMessageWithAttachments(turnCtx, sk, texts, allAttachments)
 	if err != nil {
 		if turnCtx.Err() != nil {
 			b.logger().Infof("agent turn cancelled")

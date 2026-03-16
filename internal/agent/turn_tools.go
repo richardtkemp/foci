@@ -83,9 +83,9 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 		// Don't create synthetic "Skipped" tool_results — the caller will
 		// strip the unexecuted tool_use blocks from the assistant message
 		// so the model never sees tools it didn't run.
-		if steer := steerCheckFromCtx(ctx); steer != "" {
+		if blocks := steerBlocks(ctx); len(blocks) > 0 {
 			a.logger().Infof("steer: user redirected conversation, skipping remaining tools in session %s", sessionKey)
-			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[user] " + steer})
+			toolResults = append(toolResults, blocks...)
 			return toolResults, nil
 		}
 
