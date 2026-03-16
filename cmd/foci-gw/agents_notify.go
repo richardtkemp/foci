@@ -87,6 +87,8 @@ func newAsyncNotifier(
 
 			notifyCtx := agent.WithTrigger(ctx, trigger)
 			if conn != nil && !isBranchWithoutConn {
+				defer startTypingTicker(ctx, conn)()
+
 				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
 						// Intermediate replies are agent output — use SendToSession
@@ -94,6 +96,9 @@ func newAsyncNotifier(
 						if err := conn.SendToSession(target, text); err != nil {
 							log.Errorf(trigger, "intermediate platform delivery: %v", err)
 						}
+					},
+					ActivityFunc: func() {
+						conn.SendTyping()
 					},
 				})
 			}
@@ -171,6 +176,28 @@ func newSessionNotifyFn(
 	})
 }
 
+// startTypingTicker sends an initial typing indicator and keeps it alive
+// every 4 seconds until the returned cancel function is called.
+func startTypingTicker(ctx context.Context, conn platform.Connection) (cancel func()) {
+	conn.SendTyping()
+	typingCtx, typingCancel := context.WithCancel(ctx)
+	typingTicker := time.NewTicker(4 * time.Second)
+	go func() {
+		for {
+			select {
+			case <-typingTicker.C:
+				conn.SendTyping()
+			case <-typingCtx.Done():
+				return
+			}
+		}
+	}()
+	return func() {
+		typingTicker.Stop()
+		typingCancel()
+	}
+}
+
 // deliverInjectedTurn runs a HandleMessage turn and delivers the response
 // to the user's platform connection. Used by all system-initiated injections
 // (restart changelog, scheduled wakes, proactive warnings).
@@ -186,11 +213,16 @@ func deliverInjectedTurn(
 	conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 	triggerCtx := agent.WithTrigger(ctx, trigger)
 	if conn != nil {
+		defer startTypingTicker(ctx, conn)()
+
 		triggerCtx = agent.WithTurnCallbacks(triggerCtx, &agent.TurnCallbacks{
 			ReplyFunc: func(text string) {
 				if err := conn.SendToSession(sessionKey, text); err != nil {
 					log.Errorf(trigger, "intermediate platform delivery: %v", err)
 				}
+			},
+			ActivityFunc: func() {
+				conn.SendTyping()
 			},
 		})
 	}
