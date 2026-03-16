@@ -77,6 +77,11 @@ func NewClient(ctx context.Context, apiKey string, opts ...Option) (*Client, err
 	return c, nil
 }
 
+// Endpoint returns a human-readable name for this client's API endpoint.
+func (c *Client) Endpoint() string {
+	return "Gemini API"
+}
+
 // SendMessage sends a message to the Gemini API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 	log.KeySuffix("gemini", c.apiKey)

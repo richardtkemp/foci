@@ -18,8 +18,9 @@ import (
 
 // Client wraps the OpenAI SDK to implement provider.Client.
 type Client struct {
-	client *openai.Client
-	apiKey string // kept for debug key-suffix logging
+	client  *openai.Client
+	apiKey  string // kept for debug key-suffix logging
+	baseURL string // stored for Endpoint() identification
 }
 
 // Option configures a Client.
@@ -59,7 +60,15 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	}
 
 	client := openai.NewClient(sdkOpts...)
-	return &Client{client: &client, apiKey: apiKey}
+	return &Client{client: &client, apiKey: apiKey, baseURL: cfg.baseURL}
+}
+
+// Endpoint returns a human-readable name for this client's API endpoint.
+func (c *Client) Endpoint() string {
+	if c.baseURL == "" {
+		return "OpenAI API"
+	}
+	return provider.EndpointNameFromURL(c.baseURL)
 }
 
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.

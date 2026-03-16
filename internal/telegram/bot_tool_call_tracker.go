@@ -3,7 +3,6 @@ package telegram
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -184,17 +183,7 @@ func (t *toolCallTracker) notifyRetry(endpoint string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Parse endpoint to extract a readable name
-	endpointName := endpoint
-	if strings.Contains(endpoint, "anthropic.com") {
-		endpointName = "Anthropic API"
-	} else if strings.Contains(endpoint, "openrouter") {
-		endpointName = "OpenRouter"
-	} else if strings.Contains(endpoint, "generativelanguage.googleapis.com") {
-		endpointName = "Gemini API"
-	}
-
-	text := fmt.Sprintf("⏳ <i>%s is busy right now, retrying...</i>", endpointName)
+	text := fmt.Sprintf("⏳ <i>%s is busy right now, retrying...</i>", endpoint)
 	sent, err := t.bot.client.SendMessage(t.chatID, text, &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
 	})
