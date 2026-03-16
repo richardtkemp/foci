@@ -514,7 +514,11 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		resp, err = provider.Send(ctx, turnClient, req, handler)
 
 		duration := time.Since(start)
-		a.logger().Debugf("api_call_done session=%s duration=%s err=%v", sessionKey, duration, err)
+		keySuffix := ""
+		if resp != nil {
+			keySuffix = resp.KeySuffix
+		}
+		a.logger().Debugf("api_call_done session=%s duration=%s key=%s err=%v", sessionKey, duration, keySuffix, err)
 
 		// Error-and-retry: if a 400 suggests unsupported thinking/effort,
 		// strip the offending params and retry once.

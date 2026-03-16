@@ -71,19 +71,25 @@ func TestGetLevel(t *testing.T) {
 	}
 }
 
-func TestKeySuffix(t *testing.T) {
-	// Verifies KeySuffix only logs when DebugLogKeySuffix is true
-	// and the key has at least 4 characters; short keys are silently ignored.
+func TestFormatKeySuffix(t *testing.T) {
+	// Verifies FormatKeySuffix returns a suffix only when DebugLogKeySuffix
+	// is true and the key has at least 4 characters.
 	orig := DebugLogKeySuffix
 	defer func() { DebugLogKeySuffix = orig }()
 
-	// Should not panic with short key or disabled flag.
 	DebugLogKeySuffix = false
-	KeySuffix("test", "abc") // short key, disabled — no-op
-	KeySuffix("test", "abcd") // enough chars but disabled — no-op
+	if got := FormatKeySuffix("abcd"); got != "" {
+		t.Errorf("disabled: got %q, want empty", got)
+	}
 
 	DebugLogKeySuffix = true
-	KeySuffix("test", "ab")     // too short — no-op
-	KeySuffix("test", "")       // empty — no-op
-	KeySuffix("test", "sk-1234") // long enough and enabled — logs (no crash)
+	if got := FormatKeySuffix("ab"); got != "" {
+		t.Errorf("short key: got %q, want empty", got)
+	}
+	if got := FormatKeySuffix(""); got != "" {
+		t.Errorf("empty key: got %q, want empty", got)
+	}
+	if got := FormatKeySuffix("sk-1234"); got != "...1234" {
+		t.Errorf("valid key: got %q, want %q", got, "...1234")
+	}
 }

@@ -50,11 +50,7 @@ func StaticToken(key string) func() (string, error) {
 
 // resolveToken returns the token to use for API requests.
 func (c *Client) resolveToken() (string, error) {
-	tok, err := c.tokenFunc()
-	if err == nil {
-		log.KeySuffix("anthropic", tok)
-	}
-	return tok, err
+	return c.tokenFunc()
 }
 
 // NewClient creates a new Anthropic API client.
@@ -208,6 +204,7 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 
 	resp := responseFromSDK(msg)
 	resp.WireRequest = wireReq
+	resp.KeySuffix = log.FormatKeySuffix(token)
 	return resp, nil
 }
 
@@ -266,6 +263,7 @@ func (c *Client) sendOnceRaw(ctx context.Context, body []byte, speed string) (*M
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
+	resp.KeySuffix = log.FormatKeySuffix(token)
 	return &resp, nil
 }
 

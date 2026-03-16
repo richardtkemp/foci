@@ -92,8 +92,7 @@ type OpenAISTT struct {
 }
 
 func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
-	log.KeySuffix("voice-stt", w.APIKey)
-	log.Debugf("voice", "stt audio=%d bytes model=%s", len(audioData), w.Model)
+	log.Debugf("voice", "stt audio=%d bytes model=%s key=%s", len(audioData), w.Model, log.FormatKeySuffix(w.APIKey))
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 
@@ -220,8 +219,7 @@ type ttsRequest struct {
 }
 
 func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
-	log.KeySuffix("voice-tts", o.APIKey)
-	log.Debugf("voice", "tts openai text=%d chars model=%s", len(text), o.Model)
+	log.Debugf("voice", "tts openai text=%d chars model=%s key=%s", len(text), o.Model, log.FormatKeySuffix(o.APIKey))
 	voice := o.Voice
 	if voice == "" {
 		voice = "alloy"
