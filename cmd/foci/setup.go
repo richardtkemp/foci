@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"foci/internal/config"
 	"foci/internal/platform"
@@ -518,7 +519,22 @@ func runSetupInteractive(f setupFlags) error {
 	return nil
 }
 
+// backupIfExists renames path to path.old.<timestamp> if it exists.
+// Returns the backup path (for display) or "" if no backup was needed.
+func backupIfExists(path string) (string, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return "", nil
+	}
+	ts := time.Now().Format("20060102-150405")
+	backup := path + ".old." + ts
+	if err := os.Rename(path, backup); err != nil {
+		return "", fmt.Errorf("backup %s: %w", path, err)
+	}
+	return backup, nil
+}
+
 // writeSetupFiles writes foci.toml, secrets.toml, and ensures workspace directories exist.
+// Existing files are backed up to *.old.<timestamp> before overwriting.
 func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts config.SecretsOptions, store *secrets.Store, provResult *provision.Result, providerConfigFragments []string, providerSecrets map[string]string) error {
 	// Ensure config directory exists
 	if err := os.MkdirAll(f.configDir, 0755); err != nil {
@@ -527,6 +543,13 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts c
 
 	// Write foci.toml — generic config + provider fragments
 	configPath := filepath.Join(f.configDir, "foci.toml")
+
+	if backup, err := backupIfExists(configPath); err != nil {
+		return err
+	} else if backup != "" {
+		fmt.Printf("  → backed up %s\n", backup)
+	}
+
 	configContent := config.GenerateConfig(configOpts)
 	for _, fragment := range providerConfigFragments {
 		configContent += fragment
