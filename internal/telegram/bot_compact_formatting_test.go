@@ -98,8 +98,8 @@ func TestCompactResultHint(t *testing.T) {
 	}{
 		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "Added #542 (medium)", "#542"},
 		{"todo add high", "todo", `{"action":"add","text":"urgent"}`, "Added #1 (high)", "#1"},
-		{"todo list items", "todo", `{"action":"list"}`, "#1 [ ] [medium] buy milk\n#2 [ ] [high] fix bug", "2 items"},
-		{"todo list single", "todo", `{"action":"list"}`, "#1 [ ] [medium] buy milk", "1 item"},
+		{"todo list items", "todo", `{"action":"list"}`, "- **#1** [ ] buy milk `med`\n- **#2** [ ] fix bug `high`", "2 items"},
+		{"todo list single", "todo", `{"action":"list"}`, "- **#1** [ ] buy milk `med`", "1 item"},
 		{"todo list empty", "todo", `{"action":"list"}`, "No active todos.", "0 items"},
 		{"todo search empty", "todo", `{"action":"search","query":"x"}`, "No todos matching \"x\".", "0 items"},
 		{"todo transition", "todo", `{"action":"transition","id":5,"state":"done"}`, "#5: done", "done"},

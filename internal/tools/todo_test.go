@@ -204,10 +204,10 @@ func TestTodoToolGet(t *testing.T) {
 	if !strings.Contains(result, "#") || !strings.Contains(result, "Test task") {
 		t.Errorf("result should contain id and text, got: %s", result)
 	}
-	if !strings.Contains(result, "[high]") {
+	if !strings.Contains(result, "`high`") {
 		t.Errorf("result should contain priority, got: %s", result)
 	}
-	if !strings.Contains(result, "{urgent}") {
+	if !strings.Contains(result, "`urgent`") {
 		t.Errorf("result should contain tag, got: %s", result)
 	}
 }
