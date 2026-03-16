@@ -104,13 +104,24 @@ func parseListArgs(a *todoArgs, tokens []string) {
 	for _, tok := range tokens {
 		lower := strings.ToLower(tok)
 
-		// t:TAG
+		// Negated tag: -t:TAG or !t:TAG → store as "!TAG"
+		if strings.HasPrefix(lower, "-t:") || strings.HasPrefix(lower, "!t:") {
+			a.tag = "!" + tok[3:]
+			a.setTag = true
+			continue
+		}
+		// Negated priority: -p:PRIO or !p:PRIO → store as "!PRIO"
+		if strings.HasPrefix(lower, "-p:") || strings.HasPrefix(lower, "!p:") {
+			a.priority = "!" + strings.ToLower(tok[3:])
+			continue
+		}
+		// t:TAG (including t:!TAG which naturally stores "!TAG")
 		if strings.HasPrefix(lower, "t:") {
 			a.tag = tok[2:]
 			a.setTag = true
 			continue
 		}
-		// p:PRIORITY
+		// p:PRIORITY (including p:!PRIO which naturally stores "!PRIO")
 		if strings.HasPrefix(lower, "p:") {
 			a.priority = strings.ToLower(tok[2:])
 			continue
@@ -223,6 +234,17 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 	for _, tok := range tokens {
 		lower := strings.ToLower(tok)
 
+		// Negated tag: -t:TAG or !t:TAG → store as "!TAG"
+		if strings.HasPrefix(lower, "-t:") || strings.HasPrefix(lower, "!t:") {
+			a.tag = "!" + tok[3:]
+			a.setTag = true
+			continue
+		}
+		// Negated priority: -p:PRIO or !p:PRIO → store as "!PRIO"
+		if strings.HasPrefix(lower, "-p:") || strings.HasPrefix(lower, "!p:") {
+			a.priority = "!" + strings.ToLower(tok[3:])
+			continue
+		}
 		if strings.HasPrefix(lower, "t:") {
 			a.tag = tok[2:]
 			a.setTag = true

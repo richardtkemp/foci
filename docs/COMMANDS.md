@@ -58,7 +58,9 @@ Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15)
 | `dropped` | Only dropped items |
 | `all` | All statuses |
 | `t:TAG` | Only items with this tag |
+| `-t:TAG` / `!t:TAG` / `t:!TAG` | Exclude items with this tag |
 | `p:PRIORITY` | Only items with this priority (`high`, `medium`, `low`) |
+| `-p:PRIO` / `!p:PRIO` / `p:!PRIO` | Exclude items with this priority |
 | `created` | Sort by creation time |
 | `updated` | Sort by last update time |
 | `priority` | Sort by priority (default) |

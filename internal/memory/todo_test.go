@@ -410,6 +410,101 @@ func TestTodoCountOpenByTag(t *testing.T) {
 	}
 }
 
+func TestTodoListNegatedTag(t *testing.T) {
+	// Verifies that List with a "!"-prefixed tag filter excludes items with that tag
+	// while including items with other tags or no tags.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Check email", "medium", "background")
+	store.Add("agent1", "Review PRs", "high", "background,daily")
+	store.Add("agent1", "Regular task", "low", "")
+	store.Add("agent1", "Work task", "medium", "work")
+
+	items, err := store.List("agent1", "", "!background", "", "", false, 0)
+	if err != nil {
+		t.Fatalf("List with negated tag: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 non-background items, got %d", len(items))
+	}
+	for _, item := range items {
+		if item.Tags == "background" || item.Tags == "background,daily" {
+			t.Errorf("should not include item with background tag: %q", item.Tags)
+		}
+	}
+}
+
+func TestTodoListNegatedPriority(t *testing.T) {
+	// Verifies that List with a "!"-prefixed priority filter excludes items with that
+	// priority while returning all others.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "High task", "high", "")
+	store.Add("agent1", "Medium task", "medium", "")
+	store.Add("agent1", "Low task", "low", "")
+
+	items, err := store.List("agent1", "", "", "!low", "", false, 0)
+	if err != nil {
+		t.Fatalf("List with negated priority: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 non-low items, got %d", len(items))
+	}
+	for _, item := range items {
+		if item.Priority == "low" {
+			t.Errorf("should not include low-priority item: %q", item.Text)
+		}
+	}
+}
+
+func TestMatchesTagFilterNegated(t *testing.T) {
+	// Verifies that matchesTagFilter with a "!"-prefixed filter correctly negates:
+	// items with the tag are rejected, items without it are accepted.
+	tests := []struct {
+		tags   string
+		filter string
+		want   bool
+	}{
+		{"background", "!background", false},
+		{"work", "!background", true},
+		{"background,daily", "!background", false},
+		{"", "!background", true},
+		{"daily", "!background", true},
+		{"background", "background", true},
+		{"work", "background", false},
+		{"", "", true},
+	}
+	for _, tt := range tests {
+		got := matchesTagFilter(tt.tags, tt.filter)
+		if got != tt.want {
+			t.Errorf("matchesTagFilter(%q, %q) = %v, want %v", tt.tags, tt.filter, got, tt.want)
+		}
+	}
+}
+
+func TestMatchesPriorityFilterNegated(t *testing.T) {
+	// Verifies that matchesPriorityFilter with a "!"-prefixed filter correctly negates:
+	// items with that priority are rejected, others are accepted.
+	tests := []struct {
+		priority string
+		filter   string
+		want     bool
+	}{
+		{"low", "!low", false},
+		{"high", "!low", true},
+		{"medium", "!low", true},
+		{"low", "low", true},
+		{"high", "low", false},
+		{"high", "", true},
+	}
+	for _, tt := range tests {
+		got := matchesPriorityFilter(tt.priority, tt.filter)
+		if got != tt.want {
+			t.Errorf("matchesPriorityFilter(%q, %q) = %v, want %v", tt.priority, tt.filter, got, tt.want)
+		}
+	}
+}
+
 func TestFormatTags(t *testing.T) {
 	// Verifies that FormatTags normalises whitespace, formats tags as " {tag1,tag2}", and returns empty string for no tags.
 	tests := []struct {

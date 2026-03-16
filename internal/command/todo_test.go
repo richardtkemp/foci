@@ -118,6 +118,37 @@ func TestParseTodoArgs(t *testing.T) {
 			raw:  "created all p:high t:work",
 			want: todoArgs{status: "", sort: "created", limit: 15, priority: "high", tag: "work", setTag: true},
 		},
+		// Negated filters
+		{
+			name: "negated tag with dash prefix",
+			raw:  "-t:background",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true},
+		},
+		{
+			name: "negated tag with bang prefix",
+			raw:  "!t:background",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true},
+		},
+		{
+			name: "negated tag with bang inside value",
+			raw:  "t:!background",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true},
+		},
+		{
+			name: "negated priority with dash prefix",
+			raw:  "-p:low",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, priority: "!low"},
+		},
+		{
+			name: "negated priority with bang prefix",
+			raw:  "!p:low",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, priority: "!low"},
+		},
+		{
+			name: "negated priority with bang inside value",
+			raw:  "p:!low",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, priority: "!low"},
+		},
 		// Subcommands
 		{
 			name: "new basic",
@@ -368,6 +399,55 @@ func TestTodoListWithTagFilter(t *testing.T) {
 	}
 	if contains(resp.Text, "untagged item") {
 		t.Errorf("should not contain untagged item: %s", resp.Text)
+	}
+}
+
+// TestTodoListWithNegatedTagFilter verifies that -t:TAG excludes items with
+// that tag, returning only items without it.
+func TestTodoListWithNegatedTagFilter(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "background task", "medium", "background")
+	store.Add(testAgent, "foreground task", "medium", "work")
+	store.Add(testAgent, "untagged task", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "-t:background"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(resp.Text, "background task") {
+		t.Errorf("should exclude background-tagged item: %s", resp.Text)
+	}
+	if !contains(resp.Text, "foreground task") {
+		t.Errorf("should include non-background items: %s", resp.Text)
+	}
+	if !contains(resp.Text, "untagged task") {
+		t.Errorf("should include untagged items: %s", resp.Text)
+	}
+}
+
+// TestTodoListWithNegatedPriorityFilter verifies that -p:PRIO excludes items
+// with that priority.
+func TestTodoListWithNegatedPriorityFilter(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "high item", "high", "")
+	store.Add(testAgent, "medium item", "medium", "")
+	store.Add(testAgent, "low item", "low", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "-p:low"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(resp.Text, "low item") {
+		t.Errorf("should exclude low-priority item: %s", resp.Text)
+	}
+	if !contains(resp.Text, "high item") || !contains(resp.Text, "medium item") {
+		t.Errorf("should include non-low items: %s", resp.Text)
 	}
 }
 
@@ -822,6 +902,27 @@ func TestParseGetArgs(t *testing.T) {
 			name: "empty get (no args)",
 			raw:  "get",
 			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15},
+		},
+		// Negated filters in get
+		{
+			name: "get negated tag with dash",
+			raw:  "get -t:background deploy",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true, text: "deploy"},
+		},
+		{
+			name: "get negated tag with bang",
+			raw:  "get !t:background deploy",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true, text: "deploy"},
+		},
+		{
+			name: "get negated priority with dash",
+			raw:  "get -p:low server",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, priority: "!low", text: "server"},
+		},
+		{
+			name: "get negated priority with bang",
+			raw:  "get !p:low server",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, priority: "!low", text: "server"},
 		},
 	}
 

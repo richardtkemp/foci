@@ -183,13 +183,24 @@ func (s *TodoStore) List(agentID, status, tag, priority, sort string, reverse bo
 		args = append(args, status)
 	}
 	if tag != "" {
-		// Match tag as whole word in comma-separated list
-		query += ` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`
-		args = append(args, tag)
+		if negated, val := isNegated(tag); negated {
+			// Exclude items with this tag
+			query += ` AND (',' || tags || ',' NOT LIKE '%,' || ? || ',%')`
+			args = append(args, val)
+		} else {
+			// Match tag as whole word in comma-separated list
+			query += ` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`
+			args = append(args, tag)
+		}
 	}
 	if priority != "" {
-		query += ` AND priority = ?`
-		args = append(args, priority)
+		if negated, val := isNegated(priority); negated {
+			query += ` AND priority != ?`
+			args = append(args, val)
+		} else {
+			query += ` AND priority = ?`
+			args = append(args, priority)
+		}
 	}
 
 	// Apply sort order. Default direction is descending (newest/highest first);
@@ -462,7 +473,7 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 		if !matchesTagFilter(item.Tags, opts.Tag) {
 			continue
 		}
-		if opts.Priority != "" && item.Priority != opts.Priority {
+		if !matchesPriorityFilter(item.Priority, opts.Priority) {
 			continue
 		}
 		items = append(items, *item)
@@ -484,17 +495,41 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 	return items, nil
 }
 
+// isNegated checks whether a filter value has a "!" prefix indicating negation.
+// Returns the negation flag and the bare value.
+func isNegated(v string) (bool, string) {
+	if strings.HasPrefix(v, "!") {
+		return true, v[1:]
+	}
+	return false, v
+}
+
 // matchesTagFilter checks whether a todo's comma-separated tags contain the filter tag.
+// A "!"-prefixed filter negates: the item must NOT contain the tag.
 func matchesTagFilter(tags, filter string) bool {
 	if filter == "" {
 		return true
 	}
+	negated, val := isNegated(filter)
 	for _, t := range strings.Split(tags, ",") {
-		if strings.TrimSpace(t) == filter {
-			return true
+		if strings.TrimSpace(t) == val {
+			return !negated // found: positive match → true, negated → false
 		}
 	}
-	return false
+	return negated // not found: positive match → false, negated → true
+}
+
+// matchesPriorityFilter checks whether a todo's priority matches the filter.
+// A "!"-prefixed filter negates: the item must NOT have this priority.
+func matchesPriorityFilter(priority, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	negated, val := isNegated(filter)
+	if negated {
+		return priority != val
+	}
+	return priority == val
 }
 
 // matchesStatusFilter checks whether a todo's status passes the filter.
