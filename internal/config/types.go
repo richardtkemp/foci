@@ -160,6 +160,7 @@ type AgentConfig struct {
 	MaxImagePixels        int    `toml:"max_image_pixels"`        // max pixels (w*h) before downscaling images (0 = use global)
 	SearchProvider        string `toml:"search_provider"`         // "anthropic" or "brave" (empty = use global)
 	FetchProvider         string `toml:"fetch_provider"`          // "anthropic" or "builtin" (empty = use global)
+	TodoFormat            string `toml:"todo_format"`             // "lines" or "table" (empty = use global, default: lines)
 	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected messages (empty = use default)
 	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
@@ -515,6 +516,7 @@ type DefaultsConfig struct {
 
 	SearchProvider        string `toml:"search_provider"`         // default search provider: "brave" (default) or "anthropic"
 	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "anthropic" (default) or "builtin"
+	TodoFormat            string `toml:"todo_format"`             // default todo list format: "lines" (default) or "table"
 	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
 
 	TTS                  string            `toml:"tts"`                    // default TTS provider id

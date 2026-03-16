@@ -61,6 +61,7 @@ var fieldConstraints = map[string]Constraint{
 	"telegram.table_style":     {Choices: []string{"pretty", "markdown"}},
 	"defaults.search_provider": {Choices: []string{"brave", "anthropic"}},
 	"defaults.fetch_provider":  {Choices: []string{"anthropic", "builtin"}},
+	"defaults.todo_format":     {Choices: []string{"lines", "table"}},
 	"defaults.compaction_effort": {Choices: []string{"low", "medium", "high"}},
 	"anthropic.effort":         {Choices: []string{"low", "medium", "high"}},
 	"anthropic.thinking":       {Choices: []string{"adaptive", "off"}},
@@ -72,6 +73,7 @@ var fieldConstraints = map[string]Constraint{
 	"agent.compaction_effort":  {Choices: []string{"low", "medium", "high"}},
 	"agent.search_provider":    {Choices: []string{"brave", "anthropic"}},
 	"agent.fetch_provider":     {Choices: []string{"anthropic", "builtin"}},
+	"agent.todo_format":        {Choices: []string{"lines", "table"}},
 	"tools.search_provider":    {Choices: []string{"brave", "anthropic"}},
 	"tools.fetch_provider":     {Choices: []string{"anthropic", "builtin"}},
 }
@@ -210,6 +212,7 @@ var configFields = []ConfigField{
 	{"defaults", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"defaults", "search_provider", FieldString, "web search: brave or anthropic"},
 	{"defaults", "fetch_provider", FieldString, "web fetch: anthropic or builtin"},
+	{"defaults", "todo_format", FieldString, "todo list format: lines or table"},
 	{"defaults", "facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
 
 	// agent — per-agent fields (written to [[agents]] block)
@@ -235,6 +238,7 @@ var configFields = []ConfigField{
 	{"agent", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"agent", "search_provider", FieldString, "web search: brave or anthropic"},
 	{"agent", "fetch_provider", FieldString, "web fetch: anthropic or builtin"},
+	{"agent", "todo_format", FieldString, "todo list format: lines or table"},
 	{"agent", "facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
 	{"agent", "tts", FieldString, "TTS provider id"},
 	{"agent", "stt", FieldString, "STT provider id"},

@@ -268,11 +268,65 @@ func TestTodoListWithItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(resp.Text, "| 1 |") || !contains(resp.Text, "| 2 |") {
+	if !contains(resp.Text, "#1") || !contains(resp.Text, "#2") {
 		t.Errorf("expected both items in output: %s", resp.Text)
 	}
 	if !contains(resp.Text, "buy milk") || !contains(resp.Text, "buy bread") {
 		t.Errorf("expected item text in output: %s", resp.Text)
+	}
+}
+
+// TestTodoListTableFormat verifies that setting todo_format=table produces a markdown table.
+func TestTodoListTableFormat(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cc.AgentConfig.TodoFormat = "table"
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "buy milk", "high", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "| 1 |") {
+		t.Errorf("expected table format with pipe-delimited columns: %s", resp.Text)
+	}
+}
+
+// TestTodoListDefaultFormat verifies that the default format (no config) uses lines.
+func TestTodoListDefaultFormat(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "buy milk", "high", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "#1 [ ] [high] buy milk") {
+		t.Errorf("expected lines format: %s", resp.Text)
+	}
+}
+
+// TestTodoListGlobalFormat verifies that defaults.todo_format is used when per-agent is unset.
+func TestTodoListGlobalFormat(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cc.Config = &config.Config{}
+	cc.Config.Defaults.TodoFormat = "table"
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "buy milk", "high", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: ""}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "| 1 |") {
+		t.Errorf("expected table format from global default: %s", resp.Text)
 	}
 }
 
