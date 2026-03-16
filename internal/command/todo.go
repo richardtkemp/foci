@@ -18,7 +18,7 @@ type todoArgs struct {
 	subcommand string   // "", "new", "done", "start", "drop", "reopen", "edit", "show", "search", "rm", "stats"
 	ids        []int64  // target IDs for transitions/edit/show/rm
 	text       string   // free text (new item text, search query, edit text)
-	tag        string   // t:TAG value
+	tags       []string // t:TAG values (multiple for AND filtering)
 	setTag     bool     // true if t: was explicitly provided (allows clearing)
 	priority   string   // p:PRIORITY value
 	status     string   // status filter for list mode
@@ -106,7 +106,7 @@ func parseListArgs(a *todoArgs, tokens []string) {
 
 		// Negated tag: -t:TAG or !t:TAG → store as "!TAG"
 		if strings.HasPrefix(lower, "-t:") || strings.HasPrefix(lower, "!t:") {
-			a.tag = "!" + tok[3:]
+			a.tags = append(a.tags, "!"+tok[3:])
 			a.setTag = true
 			continue
 		}
@@ -117,7 +117,7 @@ func parseListArgs(a *todoArgs, tokens []string) {
 		}
 		// t:TAG (including t:!TAG which naturally stores "!TAG")
 		if strings.HasPrefix(lower, "t:") {
-			a.tag = tok[2:]
+			a.tags = append(a.tags, tok[2:])
 			a.setTag = true
 			continue
 		}
@@ -169,7 +169,7 @@ func parseNewArgs(a *todoArgs, tokens []string) {
 	for _, tok := range tokens {
 		lower := strings.ToLower(tok)
 		if strings.HasPrefix(lower, "t:") {
-			a.tag = tok[2:]
+			a.tags = append(a.tags, tok[2:])
 			a.setTag = true
 			continue
 		}
@@ -195,7 +195,7 @@ func parseEditArgs(a *todoArgs, tokens []string) {
 	for _, tok := range tokens[1:] {
 		lower := strings.ToLower(tok)
 		if strings.HasPrefix(lower, "t:") {
-			a.tag = tok[2:]
+			a.tags = append(a.tags, tok[2:])
 			a.setTag = true
 			continue
 		}
@@ -236,7 +236,7 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 
 		// Negated tag: -t:TAG or !t:TAG → store as "!TAG"
 		if strings.HasPrefix(lower, "-t:") || strings.HasPrefix(lower, "!t:") {
-			a.tag = "!" + tok[3:]
+			a.tags = append(a.tags, "!"+tok[3:])
 			a.setTag = true
 			continue
 		}
@@ -246,7 +246,7 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 			continue
 		}
 		if strings.HasPrefix(lower, "t:") {
-			a.tag = tok[2:]
+			a.tags = append(a.tags, tok[2:])
 			a.setTag = true
 			continue
 		}
@@ -281,6 +281,15 @@ func parseIDs(tokens []string) []int64 {
 		}
 	}
 	return ids
+}
+
+// lastTag returns the last element of a tags slice, or "" if empty.
+// Used by new/edit commands which set a single tag value.
+func lastTag(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	return tags[len(tags)-1]
 }
 
 // allIntegers returns true if all tokens parse as integers.
@@ -370,7 +379,7 @@ func formatTodoList(items []memory.TodoItem, format string) string {
 
 // todoListCmd lists todos with the given filters.
 func todoListCmd(store *memory.TodoStore, agentID string, args todoArgs, format string) (Response, error) {
-	items, err := store.List(agentID, args.status, args.tag, args.priority, args.sort, args.reverse, args.limit)
+	items, err := store.List(agentID, args.status, args.tags, args.priority, args.sort, args.reverse, args.limit)
 	if err != nil {
 		return Response{}, fmt.Errorf("list todos: %w", err)
 	}
@@ -395,7 +404,7 @@ func todoNewCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respons
 	if args.text == "" {
 		return Response{Text: "Usage: /todo new <text>"}, nil
 	}
-	id, err := store.Add(agentID, args.text, args.priority, args.tag)
+	id, err := store.Add(agentID, args.text, args.priority, lastTag(args.tags))
 	if err != nil {
 		return Response{}, fmt.Errorf("add todo: %w", err)
 	}
@@ -432,7 +441,7 @@ func todoEditCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 	if args.text == "" && args.priority == "" && !args.setTag {
 		return Response{Text: "Nothing to change. Use p:PRIORITY, t:TAG, or provide new text."}, nil
 	}
-	item, err := store.Edit(agentID, id, args.text, args.priority, args.tag, args.setTag)
+	item, err := store.Edit(agentID, id, args.text, args.priority, lastTag(args.tags), args.setTag)
 	if err != nil {
 		return Response{}, fmt.Errorf("edit todo: %w", err)
 	}
@@ -479,7 +488,7 @@ func todoGetCmd(store *memory.TodoStore, agentID string, args todoArgs, format s
 			Sort:     args.sort,
 			Reverse:  args.reverse,
 			Limit:    args.limit,
-			Tag:      args.tag,
+			Tags:     args.tags,
 			Priority: args.priority,
 		})
 		if err != nil {
@@ -516,7 +525,7 @@ func todoRmCmd(store *memory.TodoStore, agentID string, ids []int64) (Response, 
 // Use "/todo stats all" to include done/dropped in tag counts.
 func todoStatsCmd(store *memory.TodoStore, agentID string, args todoArgs) (Response, error) {
 	// Always fetch all items for the status breakdown.
-	items, err := store.List(agentID, "", args.tag, args.priority, "priority", false, 0)
+	items, err := store.List(agentID, "", args.tags, args.priority, "priority", false, 0)
 	if err != nil {
 		return Response{}, fmt.Errorf("list todos: %w", err)
 	}

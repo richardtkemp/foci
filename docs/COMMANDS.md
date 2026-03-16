@@ -57,8 +57,8 @@ Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15)
 | `in_progress` | Only in-progress items |
 | `dropped` | Only dropped items |
 | `all` | All statuses |
-| `t:TAG` | Only items with this tag |
-| `-t:TAG` / `!t:TAG` / `t:!TAG` | Exclude items with this tag |
+| `t:TAG` | Only items with this tag (multiple `t:` filters use AND logic) |
+| `-t:TAG` / `!t:TAG` / `t:!TAG` | Exclude items with this tag (combinable with other `t:` filters) |
 | `p:PRIORITY` | Only items with this priority (`high`, `medium`, `low`) |
 | `-p:PRIO` / `!p:PRIO` / `p:!PRIO` | Exclude items with this priority |
 | `created` | Sort by creation time |
@@ -73,6 +73,8 @@ Bridges list filters and full-text search. Recognised filter tokens are extracte
 
 ```
 /todo get t:work deploy              # tag filter + search "deploy"
+/todo get t:foci t:bug               # AND: items must have both tags
+/todo get t:work -t:background       # items with "work" but not "background"
 /todo get p:high created server      # priority filter, sort by created, search "server"
 /todo get t:daily                    # pure filter (no search → falls back to list)
 /todo get running                    # pure search for "running"

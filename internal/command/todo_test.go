@@ -101,7 +101,7 @@ func TestParseTodoArgs(t *testing.T) {
 		{
 			name: "tag filter",
 			raw:  "t:shopping",
-			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "shopping", setTag: true},
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"shopping"}, setTag: true},
 		},
 		{
 			name: "priority filter",
@@ -116,23 +116,23 @@ func TestParseTodoArgs(t *testing.T) {
 		{
 			name: "combined tag and priority",
 			raw:  "created all p:high t:work",
-			want: todoArgs{status: "", sort: "created", limit: 15, priority: "high", tag: "work", setTag: true},
+			want: todoArgs{status: "", sort: "created", limit: 15, priority: "high", tags: []string{"work"}, setTag: true},
 		},
 		// Negated filters
 		{
 			name: "negated tag with dash prefix",
 			raw:  "-t:background",
-			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true},
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"!background"}, setTag: true},
 		},
 		{
 			name: "negated tag with bang prefix",
 			raw:  "!t:background",
-			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true},
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"!background"}, setTag: true},
 		},
 		{
 			name: "negated tag with bang inside value",
 			raw:  "t:!background",
-			want: todoArgs{status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true},
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"!background"}, setTag: true},
 		},
 		{
 			name: "negated priority with dash prefix",
@@ -149,6 +149,22 @@ func TestParseTodoArgs(t *testing.T) {
 			raw:  "p:!low",
 			want: todoArgs{status: "active", sort: "priority", limit: 15, priority: "!low"},
 		},
+		// Multi-tag filters
+		{
+			name: "multiple positive tags",
+			raw:  "t:foci t:bug",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"foci", "bug"}, setTag: true},
+		},
+		{
+			name: "positive and negated tags",
+			raw:  "t:work -t:background",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"work", "!background"}, setTag: true},
+		},
+		{
+			name: "multiple negated tags",
+			raw:  "-t:background -t:daily",
+			want: todoArgs{status: "active", sort: "priority", limit: 15, tags: []string{"!background", "!daily"}, setTag: true},
+		},
 		// Subcommands
 		{
 			name: "new basic",
@@ -158,7 +174,7 @@ func TestParseTodoArgs(t *testing.T) {
 		{
 			name: "new with tag and priority",
 			raw:  "new t:shopping p:high bread",
-			want: todoArgs{subcommand: "new", status: "active", sort: "priority", limit: 15, text: "bread", tag: "shopping", setTag: true, priority: "high"},
+			want: todoArgs{subcommand: "new", status: "active", sort: "priority", limit: 15, text: "bread", tags: []string{"shopping"}, setTag: true, priority: "high"},
 		},
 		{
 			name: "done transition single ID",
@@ -173,7 +189,7 @@ func TestParseTodoArgs(t *testing.T) {
 		{
 			name: "done with non-integer is list filter",
 			raw:  "done t:shopping",
-			want: todoArgs{status: "done", sort: "priority", limit: 15, tag: "shopping", setTag: true},
+			want: todoArgs{status: "done", sort: "priority", limit: 15, tags: []string{"shopping"}, setTag: true},
 		},
 		{
 			name: "start",
@@ -198,7 +214,7 @@ func TestParseTodoArgs(t *testing.T) {
 		{
 			name: "edit with tag and text",
 			raw:  "edit 5 t:urgent new text here",
-			want: todoArgs{subcommand: "edit", status: "active", sort: "priority", limit: 15, ids: []int64{5}, tag: "urgent", setTag: true, text: "new text here"},
+			want: todoArgs{subcommand: "edit", status: "active", sort: "priority", limit: 15, ids: []int64{5}, tags: []string{"urgent"}, setTag: true, text: "new text here"},
 		},
 		{
 			name: "show",
@@ -247,8 +263,14 @@ func assertTodoArgs(t *testing.T, want, got todoArgs) {
 	if got.limit != want.limit {
 		t.Errorf("limit: got %d, want %d", got.limit, want.limit)
 	}
-	if got.tag != want.tag {
-		t.Errorf("tag: got %q, want %q", got.tag, want.tag)
+	if len(got.tags) != len(want.tags) {
+		t.Errorf("tags: got %v, want %v", got.tags, want.tags)
+	} else {
+		for i := range want.tags {
+			if got.tags[i] != want.tags[i] {
+				t.Errorf("tags[%d]: got %q, want %q", i, got.tags[i], want.tags[i])
+			}
+		}
 	}
 	if got.setTag != want.setTag {
 		t.Errorf("setTag: got %v, want %v", got.setTag, want.setTag)
@@ -425,6 +447,59 @@ func TestTodoListWithNegatedTagFilter(t *testing.T) {
 	}
 	if !contains(resp.Text, "untagged task") {
 		t.Errorf("should include untagged items: %s", resp.Text)
+	}
+}
+
+// TestTodoListWithMultipleTagFilters verifies that multiple t:TAG filters use
+// AND logic: only items matching all tags are returned.
+func TestTodoListWithMultipleTagFilters(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "foci bug", "medium", "foci,bug")
+	store.Add(testAgent, "foci feature", "medium", "foci,feature")
+	store.Add(testAgent, "other bug", "medium", "other,bug")
+	store.Add(testAgent, "untagged", "medium", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "t:foci t:bug"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "foci bug") {
+		t.Errorf("expected item with both tags: %s", resp.Text)
+	}
+	if contains(resp.Text, "foci feature") {
+		t.Errorf("should exclude item missing 'bug' tag: %s", resp.Text)
+	}
+	if contains(resp.Text, "other bug") {
+		t.Errorf("should exclude item missing 'foci' tag: %s", resp.Text)
+	}
+}
+
+// TestTodoListWithMixedTagFilters verifies that positive and negated tag
+// filters can be combined (AND logic).
+func TestTodoListWithMixedTagFilters(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "work task", "medium", "work")
+	store.Add(testAgent, "work bg task", "medium", "work,background")
+	store.Add(testAgent, "personal task", "medium", "personal")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "t:work -t:background"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "work task") {
+		t.Errorf("expected work item without background: %s", resp.Text)
+	}
+	if contains(resp.Text, "work bg task") {
+		t.Errorf("should exclude work+background item: %s", resp.Text)
+	}
+	if contains(resp.Text, "personal task") {
+		t.Errorf("should exclude non-work item: %s", resp.Text)
 	}
 }
 
@@ -861,7 +936,7 @@ func TestParseGetArgs(t *testing.T) {
 		{
 			name: "filters only (tag)",
 			raw:  "get t:daily",
-			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "daily", setTag: true},
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"daily"}, setTag: true},
 		},
 		{
 			name: "filters only (priority and sort)",
@@ -871,7 +946,7 @@ func TestParseGetArgs(t *testing.T) {
 		{
 			name: "tag with search",
 			raw:  "get t:work deploy",
-			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "work", setTag: true, text: "deploy"},
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"work"}, setTag: true, text: "deploy"},
 		},
 		{
 			name: "priority sort and search",
@@ -881,12 +956,12 @@ func TestParseGetArgs(t *testing.T) {
 		{
 			name: "explicit delimiter",
 			raw:  "get t:work / deploy server",
-			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "work", setTag: true, text: "deploy server"},
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"work"}, setTag: true, text: "deploy server"},
 		},
 		{
 			name: "delimiter with status filter",
 			raw:  "get all t:work / deploy -old",
-			want: todoArgs{subcommand: "get", status: "", sort: "priority", limit: 15, tag: "work", setTag: true, text: "deploy -old"},
+			want: todoArgs{subcommand: "get", status: "", sort: "priority", limit: 15, tags: []string{"work"}, setTag: true, text: "deploy -old"},
 		},
 		{
 			name: "status and reverse with search",
@@ -907,12 +982,12 @@ func TestParseGetArgs(t *testing.T) {
 		{
 			name: "get negated tag with dash",
 			raw:  "get -t:background deploy",
-			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true, text: "deploy"},
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"!background"}, setTag: true, text: "deploy"},
 		},
 		{
 			name: "get negated tag with bang",
 			raw:  "get !t:background deploy",
-			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "!background", setTag: true, text: "deploy"},
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"!background"}, setTag: true, text: "deploy"},
 		},
 		{
 			name: "get negated priority with dash",
@@ -923,6 +998,16 @@ func TestParseGetArgs(t *testing.T) {
 			name: "get negated priority with bang",
 			raw:  "get !p:low server",
 			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, priority: "!low", text: "server"},
+		},
+		{
+			name: "get multiple tags with search",
+			raw:  "get t:foci t:bug deploy",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"foci", "bug"}, setTag: true, text: "deploy"},
+		},
+		{
+			name: "get multiple tags via delimiter",
+			raw:  "get t:foci t:bug / deploy server",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tags: []string{"foci", "bug"}, setTag: true, text: "deploy server"},
 		},
 	}
 

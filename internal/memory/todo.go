@@ -164,11 +164,12 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	return nextID, nil
 }
 
-// List returns todo items for an agent, optionally filtered by status, tag, and/or priority.
+// List returns todo items for an agent, optionally filtered by status, tags, and/or priority.
 // sort can be "created", "updated", "closed", or "priority".
 // Default direction is descending (newest/highest first); reverse=true flips it.
 // limit caps the number of results (0 = no limit).
-func (s *TodoStore) List(agentID, status, tag, priority, sort string, reverse bool, limit int) ([]TodoItem, error) {
+// Multiple tags use AND logic: items must match all specified tag filters.
+func (s *TodoStore) List(agentID, status string, tags []string, priority, sort string, reverse bool, limit int) ([]TodoItem, error) {
 	query := `SELECT id, text, status, priority, tags, close_reason, agent_id, created_at, updated_at, completed_at FROM todos WHERE agent_id = ?`
 	args := []any{agentID}
 
@@ -182,13 +183,11 @@ func (s *TodoStore) List(agentID, status, tag, priority, sort string, reverse bo
 		query += ` AND status = ?`
 		args = append(args, status)
 	}
-	if tag != "" {
+	for _, tag := range tags {
 		if negated, val := isNegated(tag); negated {
-			// Exclude items with this tag
 			query += ` AND (',' || tags || ',' NOT LIKE '%,' || ? || ',%')`
 			args = append(args, val)
 		} else {
-			// Match tag as whole word in comma-separated list
 			query += ` AND (',' || tags || ',' LIKE '%,' || ? || ',%')`
 			args = append(args, tag)
 		}
@@ -399,12 +398,12 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 
 // TodoSearchOpts controls filtering, sorting, and limiting of search results.
 type TodoSearchOpts struct {
-	Status   string // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
-	Sort     string // "relevance" (default), "created", "updated", "closed", "priority"
-	Reverse  bool   // reverse sort direction (default false = descending/highest first)
-	Limit    int    // max results (0 = default 10)
-	Tag      string // filter by tag (comma-separated containment)
-	Priority string // filter by exact priority ("high", "medium", "low")
+	Status   string   // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
+	Sort     string   // "relevance" (default), "created", "updated", "closed", "priority"
+	Reverse  bool     // reverse sort direction (default false = descending/highest first)
+	Limit    int      // max results (0 = default 10)
+	Tags     []string // filter by tags (AND logic, comma-separated containment; "!tag" negates)
+	Priority string   // filter by exact priority ("high", "medium", "low")
 }
 
 // Search returns todo items matching the query using full-text search
@@ -433,7 +432,7 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 	// For sorts bleve can't do (priority, closed), or when post-filtering,
 	// overfetch and post-sort.
 	needsPostSort := opts.Sort == "priority" || opts.Sort == "closed"
-	needsPostFilter := opts.Status != "" || opts.Tag != "" || opts.Priority != ""
+	needsPostFilter := opts.Status != "" || len(opts.Tags) > 0 || opts.Priority != ""
 	if needsPostFilter || needsPostSort {
 		bleveLimit *= 5
 		if bleveLimit < 50 {
@@ -470,7 +469,7 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 		if !matchesStatusFilter(item.Status, opts.Status) {
 			continue
 		}
-		if !matchesTagFilter(item.Tags, opts.Tag) {
+		if !matchesTagFilters(item.Tags, opts.Tags) {
 			continue
 		}
 		if !matchesPriorityFilter(item.Priority, opts.Priority) {
@@ -504,19 +503,23 @@ func isNegated(v string) (bool, string) {
 	return false, v
 }
 
-// matchesTagFilter checks whether a todo's comma-separated tags contain the filter tag.
-// A "!"-prefixed filter negates: the item must NOT contain the tag.
-func matchesTagFilter(tags, filter string) bool {
-	if filter == "" {
-		return true
-	}
-	negated, val := isNegated(filter)
-	for _, t := range strings.Split(tags, ",") {
-		if strings.TrimSpace(t) == val {
-			return !negated // found: positive match → true, negated → false
+// matchesTagFilters checks whether a todo's comma-separated tags satisfy all
+// filter tags (AND logic). Each filter may be "!"-prefixed to negate.
+func matchesTagFilters(tags string, filters []string) bool {
+	for _, filter := range filters {
+		negated, val := isNegated(filter)
+		found := false
+		for _, t := range strings.Split(tags, ",") {
+			if strings.TrimSpace(t) == val {
+				found = true
+				break
+			}
+		}
+		if found == negated {
+			return false // positive filter not found, or negated filter found
 		}
 	}
-	return negated // not found: positive match → false, negated → true
+	return true
 }
 
 // matchesPriorityFilter checks whether a todo's priority matches the filter.

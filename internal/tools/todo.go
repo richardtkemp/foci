@@ -298,7 +298,11 @@ func todoList(store *memory.TodoStore, agentID, status, tag, priority, sort stri
 	if limit == 0 {
 		limit = 10
 	}
-	items, err := store.List(agentID, status, tag, priority, sort, reverse, limit)
+	var tags []string
+	if tag != "" {
+		tags = []string{tag}
+	}
+	items, err := store.List(agentID, status, tags, priority, sort, reverse, limit)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("list todos: %w", err)
 	}

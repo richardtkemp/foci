@@ -35,7 +35,7 @@ func TestTodoToolBatchTransitionDone(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "", "", "", false, 0)
+	items, _ := store.List("agent1", "done", nil, "", "", false, 0)
 	if len(items) != 3 {
 		t.Errorf("expected 3 done items, got %d", len(items))
 	}
@@ -64,7 +64,7 @@ func TestTodoToolBatchEdit(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "", "", "", "", false, 0)
+	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	for _, item := range items {
 		if item.Priority != "high" {
 			t.Errorf("item %d priority = %q, want high", item.ID, item.Priority)
@@ -94,7 +94,7 @@ func TestTodoToolBatchRemove(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "", "", "", "", false, 0)
+	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	if len(items) != 1 {
 		t.Errorf("expected 1 remaining item, got %d", len(items))
 	}
@@ -147,7 +147,7 @@ func TestTodoToolBatchPartialFailure(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "", "", "", false, 0)
+	items, _ := store.List("agent1", "done", nil, "", "", false, 0)
 	if len(items) != 2 {
 		t.Errorf("expected 2 done items (valid ones), got %d", len(items))
 	}
@@ -175,7 +175,7 @@ func TestTodoToolSingleIdStillWorks(t *testing.T) {
 		t.Error("expected non-empty result")
 	}
 
-	items, _ := store.List("agent1", "done", "", "", "", false, 0)
+	items, _ := store.List("agent1", "done", nil, "", "", false, 0)
 	if len(items) != 1 {
 		t.Errorf("expected 1 done item, got %d", len(items))
 	}
@@ -308,7 +308,7 @@ func TestTodoToolTransitionDropped(t *testing.T) {
 		t.Errorf("expected 'dropped' in result, got: %s", result)
 	}
 
-	items, _ := store.List("agent1", "dropped", "", "", "", false, 0)
+	items, _ := store.List("agent1", "dropped", nil, "", "", false, 0)
 	if len(items) != 1 {
 		t.Errorf("expected 1 dropped item, got %d", len(items))
 	}
