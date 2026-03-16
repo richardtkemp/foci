@@ -339,13 +339,18 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 
 	c.log.Infof("compacting session %s (%d messages)", sessionKey, len(messages))
 
-	// Determine how many messages to preserve through compaction.
-	// Preserved messages are appended verbatim after the summary.
+	// Split messages into two groups:
+	//   toSummarise: older messages sent to the summary model (only these go to the API)
+	//   preserved:   recent messages appended verbatim after the summary
+	//
+	// The split point is: splitIdx = len(messages) - preserveN
+	// Messages [0..splitIdx) are summarised; messages [splitIdx..] are preserved.
 	preserveN := c.preserveMessages
 	if preserveN > len(messages) {
 		preserveN = len(messages)
 	}
-	// Ensure we still have at least minMessages to summarize
+	// Ensure we still have at least minMessages to summarize — without enough
+	// messages, the summary model can't produce a useful result.
 	if len(messages)-preserveN < c.minMessages {
 		preserveN = len(messages) - c.minMessages
 	}
@@ -355,22 +360,32 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	if preserveN > 0 {
 		splitIdx := len(messages) - preserveN
 
-		// Walk the split backward (bounded) to avoid breaking tool_use/tool_result pairs.
-		maxWalkBack := c.preserveMessages
+		// Walk the split backward to avoid breaking tool_use/tool_result pairs.
+		// Cap walk-back at 10 steps — tool pairs are never more than a few messages
+		// apart, and unbounded walk-back (e.g. preserveN=185) can push the split
+		// all the way to the start, triggering the minMessages guard unnecessarily.
+		maxWalkBack := preserveN
+		if maxWalkBack > 10 {
+			maxWalkBack = 10
+		}
+		originalSplit := splitIdx
 		safeSplit := safeSplitPoint(messages, splitIdx, maxWalkBack)
 		if safeSplit != splitIdx {
 			c.log.Infof("split adjusted from %d to %d to preserve tool_use pairs", splitIdx, safeSplit)
 		}
-		splitIdx = safeSplit
 
-		// Re-check minMessages constraint after adjustment.
-		if splitIdx < c.minMessages {
-			c.log.Infof("walk-back pushed split below minMessages (%d < %d), preserving nothing", splitIdx, c.minMessages)
-			splitIdx = len(messages)
-			preserveN = 0
+		// If walk-back would leave too few messages to summarize, revert to the
+		// original split. Any orphaned tool_use/tool_result pairs at the boundary
+		// will be repaired by repairOrphanedToolUse below. This is far better than
+		// the alternative of preserving nothing and summarising the entire session.
+		if safeSplit < c.minMessages {
+			c.log.Warnf("walk-back would push split below minMessages (%d < %d), keeping original split at %d",
+				safeSplit, c.minMessages, originalSplit)
+			splitIdx = originalSplit
 		} else {
-			preserveN = len(messages) - splitIdx
+			splitIdx = safeSplit
 		}
+		preserveN = len(messages) - splitIdx
 
 		if preserveN > 0 {
 			toSummarise = messages[:splitIdx]
@@ -380,7 +395,8 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	// Repair any orphaned tool_use blocks in toSummarise before sending to API.
-	// This handles mid-session data corruption (missing tool_results).
+	// Handles both mid-session data corruption and boundary splits where walk-back
+	// was reverted (see above).
 	repairedSummary := repairOrphanedToolUse(toSummarise)
 
 	// Ask model to summarize the conversation

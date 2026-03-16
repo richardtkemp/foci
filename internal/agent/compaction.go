@@ -93,16 +93,30 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 			sessionKey, idleDuration.Round(time.Minute), adjustedThreshold*100, totalTokens, contextLimit)
 	}
 
-	// Special handling for mana-refresh mode: preserve more messages
+	// Mana-refresh mode: preserve more messages than normal compaction.
+	// Normal compaction preserves a fixed count (default 25). Mana-refresh preserves
+	// a larger fraction of messages because it triggers proactively (at ~40% context
+	// fill), not under pressure — the goal is context reduction while retaining more
+	// recent conversation.
+	//
+	// Priority: explicit *int count > percentage-based > normal preserve count.
 	if isManaRefresh {
 		oldPreserve := a.Compactor.PreserveMessages()
 		defer a.Compactor.SetPreserveMessages(oldPreserve)
 
 		if a.CompactionManaRefreshPreserve != nil {
+			// Explicit message count configured — use it directly.
 			a.Compactor.SetPreserveMessages(*a.CompactionManaRefreshPreserve)
 		} else {
-			// nil = preserve ALL messages (special mode)
-			a.Compactor.SetPreserveMessages(len(messages))
+			// Percentage-based: preserve CompactionManaRefreshPreservePct of messages
+			// (default 0.5 = 50%). This ensures meaningful summarisation of older messages
+			// while keeping the recent half of the conversation intact.
+			pct := a.CompactionManaRefreshPreservePct
+			if pct <= 0 || pct > 1.0 {
+				pct = 0.5
+			}
+			preserveN := int(float64(len(messages)) * pct)
+			a.Compactor.SetPreserveMessages(preserveN)
 		}
 	}
 

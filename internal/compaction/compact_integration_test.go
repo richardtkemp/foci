@@ -388,10 +388,11 @@ func TestCompactPreserveNegativeClamped(t *testing.T) {
 }
 
 func TestCompactWalkBackBelowMinMessages(t *testing.T) {
-	// Verifies that when safeSplitPoint walks back past
-	// a tool pair and the resulting split point leaves fewer than minMessages for
-	// summarisation, the entire preservation is dropped rather than producing an invalid
-	// compact with too little history summarised.
+	// Verifies that when safeSplitPoint walk-back would push the split below
+	// minMessages, the original (pre-walk-back) split is kept instead of dropping
+	// all preservation. The orphaned tool_use at the boundary is repaired by
+	// repairOrphanedToolUse. This prevents the "preserve-all → preserve-nothing"
+	// cliff that caused the double-compaction bug.
 	server := mockCompactionServer("Summary after walk-back.")
 	defer server.Close()
 
@@ -399,6 +400,7 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"
 
+	// 8 messages: [u0, a0, u1, tool_use_A, tool_result_A, tool_use_B, tool_result_B, done]
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u0")})
 	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a0")})
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u1")})
@@ -411,15 +413,24 @@ func TestCompactWalkBackBelowMinMessages(t *testing.T) {
 	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
 	c.WithConfig(4096, 6, 3) // minMessages=6, preserve=3
 
+	// With preserve=3, minMessages=6: preserveN clamped to 2 (8-6), splitIdx=6.
+	// Walk-back: msgs[5]=tool_use_B → walks to 5, but 5 < minMessages=6 →
+	// reverts to original splitIdx=6. preserveN stays at 2.
 	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
 
-	// Walk-back should have pushed split below minMessages, so nothing is preserved.
+	// New behavior: keeps original split, preserves 2 messages (tool_result_B, done).
+	// preserved[0]=user (tool_result) → handoff folded: 2 header + 2 preserved = 4.
 	msgs, _ := store.Load(newKey)
-	if len(msgs) != 3 {
-		t.Fatalf("after compact: %d messages, want 3 (walk-back dropped preservation)", len(msgs))
+	if len(msgs) != 4 {
+		t.Fatalf("after compact: %d messages, want 4 (walk-back reverted, preserved 2)", len(msgs))
+	}
+
+	// Last message should be preserved "done"
+	if provider.TextOf(msgs[len(msgs)-1].Content) != "done" {
+		t.Errorf("last message = %q, want 'done'", provider.TextOf(msgs[len(msgs)-1].Content))
 	}
 }
 

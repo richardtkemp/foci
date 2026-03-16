@@ -348,7 +348,8 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Sessions.CompactionIdlePressureStart, "70%")
 	setFloatDefault(&cfg.Sessions.CompactionIdlePressureMax, 0.15)
 	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "15m")
-	// CompactionManaRefreshPreserve: nil = special "preserve ALL" mode
+	// CompactionManaRefreshPreserve: nil = use percentage-based default
+	// CompactionManaRefreshPreservePct: nil = default 0.5 (50% of messages)
 
 	// Apply debug.log_api_key_suffix to the log package global.
 	log.DebugLogKeySuffix = cfg.Debug.LogAPIKeySuffix

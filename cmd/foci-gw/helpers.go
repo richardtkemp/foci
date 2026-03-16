@@ -68,6 +68,17 @@ func resolveIntPtrPtr(perAgent, global *int) *int {
 // resolveIdlePreserve is an alias for resolveIntPtrPtr for idle-preserve config.
 var resolveIdlePreserve = resolveIntPtrPtr
 
+// resolveFloat64PtrDefault returns *perAgent if non-nil, *global if non-nil, otherwise fallback.
+func resolveFloat64PtrDefault(perAgent, global *float64, fallback float64) float64 {
+	if perAgent != nil {
+		return *perAgent
+	}
+	if global != nil {
+		return *global
+	}
+	return fallback
+}
+
 // parseDurationDefault parses a Go duration string, returning fallback on error or empty.
 func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 	if s == "" {

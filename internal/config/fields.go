@@ -39,7 +39,8 @@ func fptr(v float64) *float64 { return &v }
 // Fields not in this map accept any value that passes type parsing.
 var fieldConstraints = map[string]Constraint{
 	// Float [0,1]
-	"sessions.compaction_threshold": {Min: fptr(0), Max: fptr(1)},
+	"sessions.compaction_threshold":                    {Min: fptr(0), Max: fptr(1)},
+	"sessions.compaction_mana_refresh_preserve_pct":    {Min: fptr(0), Max: fptr(1)},
 	"memory.conversation_weight":   {Min: fptr(0), Max: fptr(1)},
 
 	// Int ranges
@@ -261,6 +262,7 @@ var configFields = []ConfigField{
 	{"sessions", "compaction_max_tokens", FieldInt, "max output tokens for summary"},
 	{"sessions", "compaction_min_messages", FieldInt, "min messages before compacting"},
 	{"sessions", "compaction_preserve_messages", FieldInt, "preserve last N messages through compaction"},
+	{"sessions", "compaction_mana_refresh_preserve_pct", FieldFloat, "fraction of messages to preserve in mana-refresh mode (0.0-1.0)"},
 	{"sessions", "max_system_prompt_chars_file", FieldInt, "per-file char warning threshold"},
 	{"sessions", "max_system_prompt_chars_total", FieldInt, "total system prompt char warning threshold"},
 
