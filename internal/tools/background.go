@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"time"
+
+	"foci/internal/secrets"
 )
 
 // BackgroundParams configures RunInBackground.
@@ -68,6 +70,15 @@ func RunInBackground(ctx context.Context, p BackgroundParams) (ToolResult, error
 				return ToolResult{}, ctx.Err()
 			}
 			// Fall through to background delivery (same as threshold path).
+		}
+	}
+
+	// Generate a 3-word ID to correlate the pending result with the later notification.
+	if bgID, err := secrets.GeneratePassphrase(3); err == nil && bgID != "" {
+		p.PendingResult.Text += "\nBackground ID: " + bgID
+		origNotify := p.NotifyMessage
+		p.NotifyMessage = func() string {
+			return "[Background ID: " + bgID + "]\n" + origNotify()
 		}
 	}
 

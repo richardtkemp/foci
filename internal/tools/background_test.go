@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -105,13 +106,13 @@ func TestRunInBackgroundAlwaysAsync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "backgrounded" {
-		t.Errorf("result = %q, want %q", result.Text, "backgrounded")
+	if !strings.HasPrefix(result.Text, "backgrounded\nBackground ID: ") {
+		t.Errorf("result = %q, want prefix %q", result.Text, "backgrounded\nBackground ID: ")
 	}
 
 	select {
 	case msg := <-completeCh:
-		if msg != "test-async:[TEST] completed" {
+		if !strings.HasPrefix(msg, "test-async:[Background ID: ") || !strings.Contains(msg, "[TEST] completed") {
 			t.Errorf("notification = %q", msg)
 		}
 	case <-time.After(5 * time.Second):
@@ -153,7 +154,7 @@ func TestRunInBackgroundCtxCancelledWithNotify(t *testing.T) {
 
 	select {
 	case msg := <-completeCh:
-		if msg != "[TEST] delivered after cancel" {
+		if !strings.HasPrefix(msg, "[Background ID: ") || !strings.Contains(msg, "[TEST] delivered after cancel") {
 			t.Errorf("notification = %q", msg)
 		}
 	case <-time.After(5 * time.Second):
@@ -229,8 +230,8 @@ func TestRunInBackgroundCleanupCalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "backgrounded" {
-		t.Errorf("result = %q", result.Text)
+	if !strings.HasPrefix(result.Text, "backgrounded\nBackground ID: ") {
+		t.Errorf("result = %q, want prefix %q", result.Text, "backgrounded\nBackground ID: ")
 	}
 
 	select {
@@ -273,5 +274,91 @@ func TestRunInBackgroundPendingCount(t *testing.T) {
 
 	if notifier.HasPending("test-pending") {
 		t.Error("expected pending count = 0 after delivery")
+	}
+}
+
+func TestRunInBackgroundID(t *testing.T) {
+	// Proves that backgrounded calls get a 3-word ID that appears in both
+	// the immediate PendingResult and the later async notification, allowing
+	// the model to correlate them.
+	t.Parallel()
+
+	completeCh := make(chan string, 1)
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
+		completeCh <- msg
+	})
+
+	signal := make(chan struct{})
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		close(signal)
+	}()
+
+	result, err := RunInBackground(context.Background(), BackgroundParams{
+		SessionKey:    "test-bgid",
+		Notifier:      notifier,
+		ThresholdSecs: 0, // always async
+		Done:          signal,
+		NotifyMessage: func() string { return "[TEST] done" },
+		PendingResult: TextResult("pending"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Extract the ID from the pending result.
+	const prefix = "pending\nBackground ID: "
+	if !strings.HasPrefix(result.Text, prefix) {
+		t.Fatalf("result = %q, missing background ID", result.Text)
+	}
+	bgID := strings.TrimPrefix(result.Text, prefix)
+
+	// Should be 3 hyphen-separated words.
+	words := strings.Split(bgID, "-")
+	if len(words) != 3 {
+		t.Errorf("background ID = %q, want 3 hyphen-separated words", bgID)
+	}
+
+	// The same ID must appear in the notification.
+	select {
+	case msg := <-completeCh:
+		wantPrefix := "[Background ID: " + bgID + "]\n[TEST] done"
+		if msg != wantPrefix {
+			t.Errorf("notification = %q, want %q", msg, wantPrefix)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for notification")
+	}
+}
+
+func TestRunInBackgroundSyncNoID(t *testing.T) {
+	// Proves that synchronous completions (before threshold) do NOT get a
+	// background ID — the ID is only added when actually backgrounding.
+	t.Parallel()
+
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+
+	signal := make(chan struct{})
+	close(signal) // already done
+
+	result, err := RunInBackground(context.Background(), BackgroundParams{
+		SessionKey:    "test-sync-noid",
+		Notifier:      notifier,
+		ThresholdSecs: 5,
+		Done:          signal,
+		SyncResult: func() (ToolResult, error) {
+			return TextResult("sync result"), nil
+		},
+		NotifyMessage: func() string { return "unused" },
+		PendingResult: TextResult("pending"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "sync result" {
+		t.Errorf("result = %q, want %q", result.Text, "sync result")
+	}
+	if strings.Contains(result.Text, "Background ID") {
+		t.Error("sync result should not contain a background ID")
 	}
 }
