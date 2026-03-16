@@ -297,6 +297,8 @@ func compactResultHint(toolName string, params json.RawMessage, result string) s
 		return editResultHint(result)
 	case "spawn":
 		return spawnResultHint(result)
+	case "tmux":
+		return tmuxResultHint(params, result)
 	}
 	return ""
 }
@@ -391,6 +393,30 @@ func spawnResultHint(result string) string {
 		return truncate(firstLine, 30)
 	}
 	return ""
+}
+
+// tmuxResultHint extracts a short hint from a tmux tool result.
+func tmuxResultHint(params json.RawMessage, result string) string {
+	var p struct {
+		Operation string `json:"operation"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return ""
+	}
+	switch p.Operation {
+	case "read":
+		if strings.TrimSpace(result) == "" {
+			return "(empty)"
+		}
+		lines := strings.Count(result, "\n") + 1
+		if lines == 1 {
+			return "1 line"
+		}
+		return fmt.Sprintf("%d lines", lines)
+	default:
+		firstLine, _, _ := strings.Cut(result, "\n")
+		return truncate(firstLine, 30)
+	}
 }
 
 // sortedKeys returns map keys in sorted order for deterministic fallback.
