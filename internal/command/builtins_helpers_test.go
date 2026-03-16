@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"foci/internal/log"
 	"foci/internal/tools"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 // writeAPILog is a helper that creates a temporary API log file with the given entries.
-func writeAPILog(t *testing.T, entries []apiEntry) string {
+func writeAPILog(t *testing.T, entries []log.APIEntry) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.jsonl")
 	f, err := os.Create(path)

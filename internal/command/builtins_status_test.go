@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -18,7 +19,7 @@ import (
 func TestStatusCommand(t *testing.T) {
 	now := time.Now().UTC()
 	sk := "main/c1/100"
-	path := writeAPILog(t, []apiEntry{
+	path := writeAPILog(t, []log.APIEntry{
 		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001},
 		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CostUSD: 0.002},
 		{Timestamp: now, Session: "other/c2/200", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005},
@@ -101,9 +102,9 @@ func TestStatusCommandBusy(t *testing.T) {
 // TestCacheCommand verifies cache hit rates and token usage are calculated and displayed correctly.
 func TestCacheCommand(t *testing.T) {
 	now := time.Now().UTC()
-	entries := make([]apiEntry, 7)
+	entries := make([]log.APIEntry, 7)
 	for i := range entries {
-		entries[i] = apiEntry{
+		entries[i] = log.APIEntry{
 			Timestamp:  now.Add(time.Duration(i) * time.Minute),
 			Input:      100,
 			CacheRead:  50,
@@ -178,7 +179,7 @@ func TestCacheCommandEmpty(t *testing.T) {
 // as a table, and supports filtering by agent name.
 func TestLastCommand(t *testing.T) {
 	now := time.Now().UTC()
-	path := writeAPILog(t, []apiEntry{
+	path := writeAPILog(t, []log.APIEntry{
 		{Timestamp: now, Session: "main/c1/100", Model: "claude-haiku-4-5", Input: 100, Output: 50, CostUSD: 0.001},
 		{Timestamp: now.Add(time.Minute), Session: "main/c1/100", Model: "claude-haiku-4-5", Input: 200, Output: 100, CostUSD: 0.002},
 		{Timestamp: now.Add(2 * time.Minute), Session: "helper/c2/200", Model: "claude-sonnet-4-5", Input: 300, Output: 150, CostUSD: 0.005},
