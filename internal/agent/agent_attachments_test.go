@@ -41,7 +41,7 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 	images := []platform.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake-jpeg-data")},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimg/1000000000", "What is this?", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimg/1000000000", []string{"What is this?"}, images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -53,11 +53,8 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 		t.Fatal("no request received")
 	}
 
-	// Check the user message has image + text blocks
+	// Check the user message has image block, meta block, and user text block
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	if len(userMsg.Content) != 2 {
-		t.Fatalf("expected 2 content blocks, got %d", len(userMsg.Content))
-	}
 
 	// First block should be image
 	if userMsg.Content[0].Type != "image" {
@@ -70,15 +67,21 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 		t.Errorf("content[0].Source.MimeType = %q", userMsg.Content[0].Source.MimeType)
 	}
 
-	// Second block should be text with metadata + user text
-	if userMsg.Content[1].Type != "text" {
-		t.Errorf("content[1].Type = %q, want text", userMsg.Content[1].Type)
+	// Should have a meta block and a user text block among the text blocks
+	var hasMeta, hasUserText bool
+	for _, b := range userMsg.Content {
+		if b.Type == "text" && strings.Contains(b.Text, "[meta]") {
+			hasMeta = true
+		}
+		if b.Type == "text" && strings.Contains(b.Text, "What is this?") {
+			hasUserText = true
+		}
 	}
-	if !strings.Contains(userMsg.Content[1].Text, "What is this?") {
-		t.Errorf("content[1].Text missing user text: %q", userMsg.Content[1].Text)
+	if !hasMeta {
+		t.Error("missing [meta] text block")
 	}
-	if !strings.Contains(userMsg.Content[1].Text, "[meta]") {
-		t.Errorf("content[1].Text missing [meta]: %q", userMsg.Content[1].Text)
+	if !hasUserText {
+		t.Error("missing user text block")
 	}
 }
 
@@ -111,7 +114,7 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: "application/pdf", Data: []byte("%PDF-1.4 fake")},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdf/1000000000", "Read this PDF", attachments)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdf/1000000000", []string{"Read this PDF"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -123,11 +126,8 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 		t.Fatal("no request received")
 	}
 
-	// Check the user message has document + text blocks
+	// Check the user message has document block
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	if len(userMsg.Content) != 2 {
-		t.Fatalf("expected 2 content blocks, got %d", len(userMsg.Content))
-	}
 
 	// First block should be document (not image)
 	if userMsg.Content[0].Type != "document" {
@@ -170,7 +170,7 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: "application/pdf", Data: []byte("%PDF-1.4"), SavedPath: "/tmp/docs/report.pdf"},
 	}
-	_, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdfsaved/1000000000", "Check this", attachments)
+	_, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdfsaved/1000000000", []string{"Check this"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 		{MimeType: "image/png", Data: []byte("fake-png-data")},
 	}
 	// Empty text — image only
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimgonly/1000000000", "", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimgonly/1000000000", []string{""}, images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -246,13 +246,16 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 
 	ag.HandleMessage(context.Background(), "test/idelegate/1000000000", "Hello")
 
-	// Text-only message should have exactly 1 content block (text)
+	// Text-only message should have meta block + user text block
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	if len(userMsg.Content) != 1 {
-		t.Fatalf("expected 1 content block, got %d", len(userMsg.Content))
+	if len(userMsg.Content) < 2 {
+		t.Fatalf("expected at least 2 content blocks, got %d", len(userMsg.Content))
 	}
-	if userMsg.Content[0].Type != "text" {
-		t.Errorf("content[0].Type = %q, want text", userMsg.Content[0].Type)
+	// All blocks should be text
+	for i, b := range userMsg.Content {
+		if b.Type != "text" {
+			t.Errorf("content[%d].Type = %q, want text", i, b.Type)
+		}
 	}
 }
 
@@ -285,7 +288,7 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 	images := []platform.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/isavepath/1000000000", "What is this?", images)
+	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/isavepath/1000000000", []string{"What is this?"}, images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -333,7 +336,7 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	images := []platform.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake")},
 	}
-	ag.HandleMessageWithAttachments(context.Background(), "test/inosaved/1000000000", "Look", images)
+	ag.HandleMessageWithAttachments(context.Background(), "test/inosaved/1000000000", []string{"Look"}, images)
 
 	// Text block should NOT contain [Image saved to:] when SavedPath is empty
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]

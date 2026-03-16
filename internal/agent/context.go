@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+
+	"foci/internal/provider"
 )
 
 // turnCallbacksKey is the context key for TurnCallbacks.
@@ -95,7 +97,7 @@ type TurnCallbacks struct {
 	ActivityFunc         func()
 	TextDeltaObserver    func(delta string)
 	ThinkingDeltaObserver func(delta string)
-	SteerCheckFunc       func() string // non-blocking; returns "" if no pending steer
+	SteerCheckFunc       func() []string // non-blocking; returns nil if no pending steer
 	RetryNotifyFunc      func(endpoint string) // called on first API retry; endpoint is the base URL being retried
 	RetrySuccessFunc     func() // called when a retry succeeds (to clear/overwrite retry message)
 }
@@ -161,12 +163,25 @@ func notifyThinkingDeltaCtx(ctx context.Context, delta string) {
 }
 
 // steerCheckFromCtx calls the steer check function via context.
-// Returns "" if no steer callback is set or no steer text is pending.
-func steerCheckFromCtx(ctx context.Context) string {
+// Returns nil if no steer callback is set or no steer text is pending.
+func steerCheckFromCtx(ctx context.Context) []string {
 	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.SteerCheckFunc != nil {
 		return cb.SteerCheckFunc()
 	}
-	return ""
+	return nil
+}
+
+// steerBlocks drains pending steer messages and returns them as [user] content blocks.
+func steerBlocks(ctx context.Context) []provider.ContentBlock {
+	steers := steerCheckFromCtx(ctx)
+	if len(steers) == 0 {
+		return nil
+	}
+	blocks := make([]provider.ContentBlock, len(steers))
+	for i, s := range steers {
+		blocks[i] = provider.ContentBlock{Type: "text", Text: "[user] " + s}
+	}
+	return blocks
 }
 
 // notifyRetryCtx calls the retry notification callback via context.

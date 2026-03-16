@@ -14,30 +14,30 @@ import (
 )
 
 func TestSteerCheckFromCtx_NilCallbacks(t *testing.T) {
-	// Proves that steerCheckFromCtx returns an empty string and does not panic when there are no TurnCallbacks in the context.
+	// Proves that steerCheckFromCtx returns nil and does not panic when there are no TurnCallbacks in the context.
 	got := steerCheckFromCtx(context.Background())
-	if got != "" {
-		t.Errorf("expected empty string from bare context, got %q", got)
+	if got != nil {
+		t.Errorf("expected nil from bare context, got %v", got)
 	}
 }
 
 func TestSteerCheckFromCtx_NilFunc(t *testing.T) {
-	// Proves that steerCheckFromCtx returns an empty string without panicking when TurnCallbacks is present but SteerCheckFunc is nil.
+	// Proves that steerCheckFromCtx returns nil without panicking when TurnCallbacks is present but SteerCheckFunc is nil.
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
 	got := steerCheckFromCtx(ctx)
-	if got != "" {
-		t.Errorf("expected empty string with nil SteerCheckFunc, got %q", got)
+	if got != nil {
+		t.Errorf("expected nil with nil SteerCheckFunc, got %v", got)
 	}
 }
 
 func TestSteerCheckFromCtx_ReturnsText(t *testing.T) {
 	// Proves that steerCheckFromCtx correctly invokes and returns the result of a registered SteerCheckFunc.
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() string { return "change direction" },
+		SteerCheckFunc: func() []string { return []string{"change direction"} },
 	})
 	got := steerCheckFromCtx(ctx)
-	if got != "change direction" {
-		t.Errorf("got %q, want %q", got, "change direction")
+	if len(got) != 1 || got[0] != "change direction" {
+		t.Errorf("got %v, want [change direction]", got)
 	}
 }
 
@@ -60,12 +60,12 @@ func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
 	// Steer fires on the second check (after first tool executes)
 	var checkCount int
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() string {
+		SteerCheckFunc: func() []string {
 			checkCount++
 			if checkCount >= 2 {
-				return "stop and do something else"
+				return []string{"stop and do something else"}
 			}
-			return ""
+			return nil
 		},
 	})
 
@@ -121,7 +121,7 @@ func TestExecuteToolCalls_NoSteer(t *testing.T) {
 	ag := &Agent{Tools: registry}
 
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() string { return "" },
+		SteerCheckFunc: func() []string { return nil },
 	})
 
 	blocks := []provider.ContentBlock{
@@ -168,7 +168,7 @@ func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
 
 	// Steer fires immediately
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() string { return "abort" },
+		SteerCheckFunc: func() []string { return []string{"abort"} },
 	})
 
 	blocks := []provider.ContentBlock{
@@ -267,14 +267,14 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 	// at the post-batch check.
 	var checkCount int
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() string {
+		SteerCheckFunc: func() []string {
 			checkCount++
 			// The first check is inside executeToolCalls (before the tool).
 			// The second check is the post-batch check in agent.go.
 			if checkCount == 2 {
-				return "new direction please"
+				return []string{"new direction please"}
 			}
-			return ""
+			return nil
 		},
 	})
 
@@ -286,7 +286,7 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/1000000000", "Do something", nil)
+	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/1000000000", []string{"Do something"}, nil)
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -383,12 +383,12 @@ func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
 	// Steer fires after the first tool executes (second steer check).
 	var checkCount int
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() string {
+		SteerCheckFunc: func() []string {
 			checkCount++
 			if checkCount == 2 {
-				return "stop everything"
+				return []string{"stop everything"}
 			}
-			return ""
+			return nil
 		},
 	})
 
@@ -400,7 +400,7 @@ func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/2000000000", "Run three tools", nil)
+	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/2000000000", []string{"Run three tools"}, nil)
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

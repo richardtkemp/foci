@@ -13,12 +13,16 @@ import (
 	"foci/internal/provider"
 )
 
-// prepareUserMessage builds the annotated user message with mana warnings,
-// attachment path annotations, metadata prefix, reminders, and content blocks.
-func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage, turnModel string, attachments []platform.Attachment, duplicateMessages bool) provider.Message {
+// prepareUserMessage builds the user message with separate content blocks for
+// metadata, reminders, state dashboard, attachments, and user text.
+// Multiple texts produce separate content blocks: texts[0] gets the full
+// annotation treatment; texts[1:] each become a "[follow-up]" block.
+func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts []string, turnModel string, attachments []platform.Attachment, duplicateMessages bool) provider.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
+
+	userMessage := texts[0]
 
 	// Check mana thresholds and notify user for active conversations only
 	var manaRestoreNote string
@@ -48,14 +52,8 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 	metaPrefix := buildMetaPrefix(now, turnModel, plat, manaStr, manaGood, sm)
 	reminderBlock := a.collectReminders(sessionKey)
 	stateBlock := a.collectStateDashboard(sessionKey)
-	userText := userMessage
-	if duplicateMessages && isUserTrigger(trigger) {
-		userText = userMessage + "\n\n" + userMessage
-	}
-	msgBody := manaRestoreNote + attachmentPaths + userText
-	annotatedMessage := metaPrefix + reminderBlock + stateBlock + "\n" + msgBody
 
-	// Build content blocks: attachments first, then text
+	// Build content blocks: binary attachments first
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
 	var contentBlocks []provider.ContentBlock
 	for _, att := range attachments {
@@ -82,12 +80,34 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey, userMessage,
 			contentBlocks = append(contentBlocks, provider.ImageBlock(mediaType, encoded))
 		}
 	}
+
 	// First-run onboarding: prepend as a separate content block, then clear.
 	if frm, ok := a.FirstRunMessage.Load().(string); ok && frm != "" {
 		a.FirstRunMessage.Store("")
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: frm})
 	}
-	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: annotatedMessage})
+
+	// Metadata, reminders, and state dashboard as separate content blocks.
+	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: metaPrefix})
+	if reminderBlock != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: reminderBlock})
+	}
+	if stateBlock != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: stateBlock})
+	}
+
+	// Primary user text with annotations
+	userText := userMessage
+	if duplicateMessages && isUserTrigger(trigger) {
+		userText = userMessage + "\n\n" + userMessage
+	}
+	msgBody := manaRestoreNote + attachmentPaths + userText
+	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: msgBody})
+
+	// Follow-up texts from batched messages
+	for _, t := range texts[1:] {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: "[follow-up] " + t})
+	}
 
 	return provider.Message{
 		Role:    "user",

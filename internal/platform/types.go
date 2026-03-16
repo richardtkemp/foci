@@ -157,7 +157,7 @@ type SetupResult struct {
 
 type MessageHandler interface {
 	HandleMessage(ctx context.Context, sessionKey, text string) (string, error)
-	HandleMessageWithAttachments(ctx context.Context, sessionKey, text string, attachments []Attachment) (string, error)
+	HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) (string, error)
 	IsProcessing() bool
 	TransformMessage(text string) string
 	Warnings() *warnings.Queue

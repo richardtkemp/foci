@@ -244,12 +244,13 @@ func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 
 // HandleMessage processes a text-only user message. Delegates to HandleMessageWithAttachments.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
-	return a.HandleMessageWithAttachments(ctx, sessionKey, userMessage, nil)
+	return a.HandleMessageWithAttachments(ctx, sessionKey, []string{userMessage}, nil)
 }
 
-// HandleMessageWithAttachments processes a user message with optional attachments
+// HandleMessageWithAttachments processes one or more user messages with optional attachments
 // (images, PDFs, or convertible documents like docx/xlsx/pptx/HTML/CSV).
-func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, userMessage string, attachments []platform.Attachment) (string, error) {
+// Multiple texts are batched into a single turn with separate content blocks.
+func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
 	// Gate check: resolve session's endpoint and check its gate.
 	// Only that endpoint's sessions are blocked when rate-limited.
 	sm := a.getSessionMeta(sessionKey)
@@ -263,7 +264,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	gate := a.getOrCreateRateLimitGate(endpoint)
 	if limited, until := gate.IsLimited(); limited {
 		trigger := TriggerFromContext(ctx)
-		gate.Enqueue(sessionKey, userMessage, trigger)
+		gate.Enqueue(sessionKey, texts[0], trigger)
 		a.logger().Infof("rate limit gate (%s): queued message for session=%s trigger=%s (resets %s)", endpoint, sessionKey, trigger, until.Format(time.Kitchen))
 		return "", &RateLimitedError{Until: until}
 	}
@@ -313,7 +314,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		UserID:    meta.UserID,
 		Username:  meta.Username,
 		ChatID:    convChatID,
-		Text:      userMessage,
+		Text:      strings.Join(texts, "\n"),
 		Session:   sessionKey,
 	})
 
@@ -373,7 +374,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	now := time.Now()
 	sm = a.getSessionMeta(sessionKey)
 
-	userMsg := a.prepareUserMessage(ctx, sessionKey, userMessage, turnModel, attachments, effectiveDuplicate)
+	userMsg := a.prepareUserMessage(ctx, sessionKey, texts, turnModel, attachments, effectiveDuplicate)
 	messages = append(messages, userMsg)
 
 	// Track new messages to save. The defer flushes unsaved messages on
@@ -414,7 +415,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	var lastToolName string
 	var lastToolError bool
 	if a.Nudger != nil {
-		a.Nudger.StartTurn(userMessage)
+		a.Nudger.StartTurn(texts[0])
 		// Prepend match nudges as ContentBlocks before the user's text/attachment blocks.
 		if matchNudges := a.Nudger.CheckMatch(); len(matchNudges) > 0 {
 			var nudgeBlocks []provider.ContentBlock
@@ -719,9 +720,9 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 		// Steer check: catch messages that arrive after all tools in a batch
 		// finish but before the next API call. Saves one full round-trip.
-		if steer := steerCheckFromCtx(ctx); steer != "" {
-			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[user] " + steer})
-			a.logger().Infof("steer: injected user message after tool batch for session %s", sessionKey)
+		if blocks := steerBlocks(ctx); len(blocks) > 0 {
+			toolResults = append(toolResults, blocks...)
+			a.logger().Infof("steer: injected %d user message(s) after tool batch for session %s", len(blocks), sessionKey)
 		}
 
 		// Append tool results as user message
