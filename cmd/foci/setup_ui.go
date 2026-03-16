@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,58 @@ func (c *consoleUI) Menu(prompt string, options []string) (index int, back bool)
 			return idx - 1, false
 		}
 		fmt.Printf("  Enter a number between 1 and %d.\n", len(options))
+	}
+}
+
+func (c *consoleUI) MultiSelect(prompt string, options []string) (selected []int, back bool) {
+	if prompt != "" {
+		fmt.Printf("  %s\n", prompt)
+	}
+	for i, opt := range options {
+		fmt.Printf("  [%d] %s\n", i+1, opt)
+	}
+	fmt.Println()
+	fmt.Println("  Enter numbers separated by commas (e.g. 1,2), 'all' for all, or blank for none.")
+
+	for {
+		fmt.Print("> ")
+		line, _ := c.reader.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "back" {
+			return nil, true
+		}
+		if line == "" {
+			return nil, false
+		}
+		if line == "all" {
+			sel := make([]int, len(options))
+			for i := range options {
+				sel[i] = i
+			}
+			return sel, false
+		}
+
+		parts := strings.Split(line, ",")
+		var sel []int
+		valid := true
+		seen := map[int]bool{}
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			n, err := strconv.Atoi(p)
+			if err != nil || n < 1 || n > len(options) {
+				valid = false
+				break
+			}
+			idx := n - 1
+			if !seen[idx] {
+				seen[idx] = true
+				sel = append(sel, idx)
+			}
+		}
+		if valid && len(sel) > 0 {
+			return sel, false
+		}
+		fmt.Printf("  Enter numbers between 1 and %d separated by commas.\n", len(options))
 	}
 }
 

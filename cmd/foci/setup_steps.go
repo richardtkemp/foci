@@ -310,19 +310,42 @@ func suggestMemoryDir(importDir string) string {
 	return ""
 }
 
-// runProviderSetups runs each provider's interactive setup and collects results.
+// runProviderSetups lets the user choose which platforms to configure, then
+// runs each selected provider's interactive setup and collects results.
 func runProviderSetups(ui platform.SetupUI, flags map[string]string, total int) (configFragments []string, providerSecrets map[string]string, back bool, err error) {
-	wizards := platform.SetupProviders()
-	if len(wizards) == 0 {
+	namedWizards := platform.SetupProviders()
+	if len(namedWizards) == 0 {
 		return nil, nil, false, nil
 	}
 
 	fmt.Println()
 	fmt.Printf("Step %d/%d: Platform Configuration\n", total, total)
 
+	// Determine which providers to run.
+	var selected []platform.NamedSetupWizard
+	if len(namedWizards) == 1 {
+		selected = namedWizards
+	} else {
+		names := make([]string, len(namedWizards))
+		for i, nw := range namedWizards {
+			names[i] = nw.Name
+		}
+		indices, b := ui.MultiSelect("Which platforms do you want to configure?", names)
+		if b {
+			return nil, nil, true, nil
+		}
+		if len(indices) == 0 {
+			// User chose none — skip platform step.
+			return nil, nil, false, nil
+		}
+		for _, i := range indices {
+			selected = append(selected, namedWizards[i])
+		}
+	}
+
 	providerSecrets = map[string]string{}
-	for _, w := range wizards {
-		result, err := w.RunSetup(ui, flags, false)
+	for _, nw := range selected {
+		result, err := nw.Wizard.RunSetup(ui, flags, false)
 		if err == platform.ErrSetupBack {
 			return nil, nil, true, nil
 		}

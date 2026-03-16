@@ -50,8 +50,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
 	# If env vars are set, run non-interactively
 	if [ -n "${FOCI_TELEGRAM_TOKEN:-}" ] && [ -n "${FOCI_TELEGRAM_USER:-}" ]; then
 		SETUP_ARGS="$SETUP_ARGS --non-interactive"
-		SETUP_ARGS="$SETUP_ARGS --bot-token $FOCI_TELEGRAM_TOKEN"
-		SETUP_ARGS="$SETUP_ARGS --user-id $FOCI_TELEGRAM_USER"
+		SETUP_ARGS="$SETUP_ARGS --telegram-bot-token $FOCI_TELEGRAM_TOKEN"
+		SETUP_ARGS="$SETUP_ARGS --telegram-user-id $FOCI_TELEGRAM_USER"
 		[ -n "${FOCI_AUTH_METHOD:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-method $FOCI_AUTH_METHOD"
 		[ -n "${FOCI_AUTH_TOKEN:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-token $FOCI_AUTH_TOKEN"
 		[ -n "${FOCI_AGENT_ID:-}" ] && SETUP_ARGS="$SETUP_ARGS --agent-id $FOCI_AGENT_ID"

@@ -29,8 +29,8 @@ func IsValidUserID(id string) bool {
 // SetupFlags returns CLI flag definitions for the discord provider.
 func (p *discordProvider) SetupFlags() []platform.SetupFlag {
 	return []platform.SetupFlag{
-		{Name: "bot-token", Usage: "Discord bot token", Required: true},
-		{Name: "user-id", Usage: "Discord user ID", Required: true},
+		{Name: "discord-bot-token", Usage: "Discord bot token", Required: true},
+		{Name: "discord-user-id", Usage: "Discord user ID", Required: true},
 	}
 }
 
@@ -43,14 +43,14 @@ func (p *discordProvider) RunSetup(ui platform.SetupUI, flags map[string]string,
 }
 
 func (p *discordProvider) runSetupNonInteractive(flags map[string]string) (*platform.WizardResult, error) {
-	botToken := flags["bot-token"]
-	userID := flags["user-id"]
+	botToken := flags["discord-bot-token"]
+	userID := flags["discord-user-id"]
 
 	if botToken == "" {
-		return nil, fmt.Errorf("--bot-token is required")
+		return nil, fmt.Errorf("--discord-bot-token is required")
 	}
 	if userID == "" {
-		return nil, fmt.Errorf("--user-id is required")
+		return nil, fmt.Errorf("--discord-user-id is required")
 	}
 	if !IsValidBotToken(botToken) {
 		return nil, fmt.Errorf("invalid bot token format")

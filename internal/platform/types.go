@@ -299,12 +299,19 @@ type WizardResult struct {
 type SetupUI interface {
 	Prompt(prompt string, current string) (input string, back bool)
 	Menu(prompt string, options []string) (index int, back bool)
+	MultiSelect(prompt string, options []string) (selected []int, back bool)
 	Print(text string)
+}
+
+// NamedSetupWizard pairs a provider's registry name with its SetupWizard.
+type NamedSetupWizard struct {
+	Name   string
+	Wizard SetupWizard
 }
 
 // SetupProviders returns all registered providers that implement SetupWizard,
 // sorted by provider name for deterministic ordering.
-func SetupProviders() []SetupWizard {
+func SetupProviders() []NamedSetupWizard {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
@@ -315,10 +322,10 @@ func SetupProviders() []SetupWizard {
 	}
 	sort.Strings(names)
 
-	var wizards []SetupWizard
+	var wizards []NamedSetupWizard
 	for _, name := range names {
 		if w, ok := providers[name].(SetupWizard); ok {
-			wizards = append(wizards, w)
+			wizards = append(wizards, NamedSetupWizard{Name: name, Wizard: w})
 		}
 	}
 	return wizards
