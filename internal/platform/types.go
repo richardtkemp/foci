@@ -123,6 +123,7 @@ type Connection interface {
 	SendToSession(sessionKey, text string) error       // sends without header (for agent replies)
 	SendNotification(text string)
 	SendNotificationDirect(text string) // sends immediately, bypassing turn buffering
+	SendTyping()                        // sends a "typing" indicator to the user
 }
 
 // ConnectionManager manages platform connection instances and facet pools.

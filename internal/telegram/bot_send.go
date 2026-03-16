@@ -56,6 +56,11 @@ func (b *Bot) SendNotification(text string) {
 	b.sendNotificationImmediate(text)
 }
 
+// SendTyping sends a "typing" chat action to the bot's default chat.
+func (b *Bot) SendTyping() {
+	_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+}
+
 // SendNotificationDirect sends a notification immediately, bypassing the
 // turn-active buffer. Use for time-sensitive notifications (e.g. compaction start)
 // that must arrive before the turn ends.
