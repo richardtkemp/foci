@@ -5,8 +5,9 @@ Run foci with a single command using Docker Compose.
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) with Compose v2+
-- A Telegram bot token (from [@BotFather](https://t.me/BotFather))
-- Your Telegram user ID
+- At least one messaging platform:
+  - **Telegram:** A bot token from [@BotFather](https://t.me/BotFather) + your Telegram user ID
+  - **Discord:** A bot token from the [Developer Portal](https://discord.com/developers/applications) + your Discord user ID
 - An API key or setup token for LLM access
 
 ## Quick Start
@@ -17,14 +18,14 @@ cd docker
 # 1. Create your .env file
 cp .env.example .env
 
-# 2. Edit .env — fill in your Telegram token, user ID, and API key
+# 2. Edit .env — fill in credentials for Telegram and/or Discord
 nano .env
 
 # 3. Launch
 docker compose up -d
 ```
 
-That's it. On first run, foci runs its setup wizard automatically using your `.env` values, then starts the gateway. Message your bot on Telegram — it will introduce itself.
+That's it. On first run, foci runs its setup wizard automatically using your `.env` values, then starts the gateway. Message your bot on whichever platform you configured — it will introduce itself.
 
 ## What Happens
 
@@ -96,12 +97,14 @@ Your config and data persist across rebuilds.
 
 ## Environment Variables
 
-Required on first startup only, to seed the config file.
+Required on first startup only, to seed the config file. At least one platform (Telegram or Discord) must be configured. You can configure both to run simultaneously.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token from @BotFather |
-| `FOCI_TELEGRAM_USER` | Yes | Your Telegram user ID |
+| `FOCI_TELEGRAM_TOKEN` | Platform | Telegram bot token from @BotFather |
+| `FOCI_TELEGRAM_USER` | Platform | Your Telegram user ID |
+| `FOCI_DISCORD_TOKEN` | Platform | Discord bot token from the Developer Portal |
+| `FOCI_DISCORD_USER` | Platform | Your Discord user ID |
 | `FOCI_AUTH_METHOD` | No | `apikey`, `setup-token`, or `skip` (default: `skip`) |
 | `FOCI_AUTH_TOKEN` | Conditional | API key or setup token (required if auth method is not `skip`) |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
@@ -131,8 +134,9 @@ The `cap_add: [SETGID]` in `compose.yml` is required to make this work.
 
 **Bot doesn't respond:**
 1. Check logs: `docker compose logs -f`
-2. Verify your Telegram user ID and bot token in `.env`
+2. Verify your platform credentials (token + user ID) in `.env`
 3. Ensure the container is running: `docker compose ps`
+4. For Discord, ensure your bot has the required intents enabled (see `docs/DISCORD.md`)
 
 **Want to re-run setup from scratch:**
 ```bash

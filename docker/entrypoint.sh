@@ -47,11 +47,24 @@ if [ ! -f "$CONFIG_FILE" ]; then
 
 	SETUP_ARGS="--config-dir $CONFIG_DIR"
 
-	# If env vars are set, run non-interactively
-	if [ -n "${FOCI_TELEGRAM_TOKEN:-}" ] && [ -n "${FOCI_TELEGRAM_USER:-}" ]; then
+	# At least one platform must be configured
+	HAS_TELEGRAM=false
+	HAS_DISCORD=false
+	[ -n "${FOCI_TELEGRAM_TOKEN:-}" ] && [ -n "${FOCI_TELEGRAM_USER:-}" ] && HAS_TELEGRAM=true
+	[ -n "${FOCI_DISCORD_TOKEN:-}" ] && [ -n "${FOCI_DISCORD_USER:-}" ] && HAS_DISCORD=true
+
+	if [ "$HAS_TELEGRAM" = true ] || [ "$HAS_DISCORD" = true ]; then
 		SETUP_ARGS="$SETUP_ARGS --non-interactive"
-		SETUP_ARGS="$SETUP_ARGS --telegram-bot-token $FOCI_TELEGRAM_TOKEN"
-		SETUP_ARGS="$SETUP_ARGS --telegram-user-id $FOCI_TELEGRAM_USER"
+		# Telegram credentials
+		if [ "$HAS_TELEGRAM" = true ]; then
+			SETUP_ARGS="$SETUP_ARGS --telegram-bot-token $FOCI_TELEGRAM_TOKEN"
+			SETUP_ARGS="$SETUP_ARGS --telegram-user-id $FOCI_TELEGRAM_USER"
+		fi
+		# Discord credentials
+		if [ "$HAS_DISCORD" = true ]; then
+			SETUP_ARGS="$SETUP_ARGS --discord-bot-token $FOCI_DISCORD_TOKEN"
+			SETUP_ARGS="$SETUP_ARGS --discord-user-id $FOCI_DISCORD_USER"
+		fi
 		[ -n "${FOCI_AUTH_METHOD:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-method $FOCI_AUTH_METHOD"
 		[ -n "${FOCI_AUTH_TOKEN:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-token $FOCI_AUTH_TOKEN"
 		[ -n "${FOCI_AGENT_ID:-}" ] && SETUP_ARGS="$SETUP_ARGS --agent-id $FOCI_AGENT_ID"
@@ -61,7 +74,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
 		ls /opt/foci-import/character/*.md &>/dev/null && SETUP_ARGS="$SETUP_ARGS --char-import-dir /opt/foci-import/character"
 		ls /opt/foci-import/memory/*.md &>/dev/null && SETUP_ARGS="$SETUP_ARGS --memory-import-dir /opt/foci-import/memory"
 	else
-		echo "[foci] ERROR: FOCI_TELEGRAM_TOKEN and FOCI_TELEGRAM_USER must be set."
+		echo "[foci] ERROR: At least one platform must be configured."
+		echo "[foci] Set FOCI_TELEGRAM_TOKEN + FOCI_TELEGRAM_USER for Telegram,"
+		echo "[foci] and/or FOCI_DISCORD_TOKEN + FOCI_DISCORD_USER for Discord."
 		echo "[foci] Copy docker/.env.example to docker/.env and fill in the values."
 		exit 1
 	fi
