@@ -306,7 +306,7 @@ func TestTodoListDefaultFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(resp.Text, "#1 [ ] [high] buy milk") {
+	if !contains(resp.Text, "**#1** [ ] buy milk `high`") {
 		t.Errorf("expected lines format: %s", resp.Text)
 	}
 }

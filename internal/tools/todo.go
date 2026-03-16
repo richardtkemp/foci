@@ -124,7 +124,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	}
 }
 
-// FormatTodoLine formats a single todo item for display.
+// FormatTodoLine formats a single todo item as a markdown list entry.
 func FormatTodoLine(item memory.TodoItem) string {
 	marker := "[ ]"
 	switch item.Status {
@@ -135,10 +135,26 @@ func FormatTodoLine(item memory.TodoItem) string {
 	case "dropped":
 		marker = "[-]"
 	}
-	tags := memory.FormatTags(item.Tags)
-	line := fmt.Sprintf("#%d %s [%s]%s %s %s", item.ID, marker, item.Priority, tags, item.Text, FormatTodoTimestamp(item))
+	pri := item.Priority
+	if pri == "medium" {
+		pri = "med"
+	}
+	var parts []string
+	parts = append(parts, fmt.Sprintf("- **#%d** %s %s `%s`", item.ID, marker, item.Text, pri))
+	if item.Tags != "" {
+		for _, t := range strings.Split(item.Tags, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				parts = append(parts, fmt.Sprintf("`%s`", t))
+			}
+		}
+	}
+	line := strings.Join(parts, " ")
+	ts := formatTodoAge(item)
 	if (item.Status == "done" || item.Status == "dropped") && item.CloseReason != "" {
-		line += fmt.Sprintf(" — %s", item.CloseReason)
+		line += fmt.Sprintf(" — *%s — %s*", ts, item.CloseReason)
+	} else {
+		line += fmt.Sprintf(" — *%s*", ts)
 	}
 	return line
 }
@@ -445,15 +461,15 @@ func todoRemove(store *memory.TodoStore, agentID string, id int64, ids []int64) 
 	return TextResult(strings.Join(results, "\n")), nil
 }
 
-// FormatTodoTimestamp formats a todo item's timestamp for display.
-func FormatTodoTimestamp(item memory.TodoItem) string {
+// formatTodoAge returns a concise age string for a todo item (no parens/formatting).
+func formatTodoAge(item memory.TodoItem) string {
 	if (item.Status == "done" || item.Status == "dropped") && item.CompletedAt != nil {
-		return "(" + item.Status + " " + display.RelativeTime(*item.CompletedAt) + ")"
+		return item.Status + " " + display.RelativeTime(*item.CompletedAt)
 	}
 	if !item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() && !item.UpdatedAt.Equal(item.CreatedAt) {
-		return "(updated " + display.RelativeTime(item.UpdatedAt) + ")"
+		return "updated " + display.RelativeTime(item.UpdatedAt)
 	}
-	return "(created " + display.RelativeTime(item.CreatedAt) + ")"
+	return display.RelativeTime(item.CreatedAt)
 }
 
 
