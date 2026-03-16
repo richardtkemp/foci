@@ -18,7 +18,8 @@ Discord support for Foci. One WebSocket gateway per bot token, Markdown pass-thr
 
 Go to **OAuth2 → URL Generator**:
 - **Scopes:** `bot`, `applications.commands`
-- **Bot Permissions:** `Send Messages`, `Send Messages in Threads`, `Create Public Threads`, `Create Private Threads`, `Manage Threads`, `Embed Links`, `Attach Files`, `Read Message History`, `Use Slash Commands`, `Add Reactions`
+- **Bot Permissions:** `Send Messages`, `Send Messages in Threads`, `Manage Messages`, `Create Public Threads`, `Create Private Threads`, `Manage Threads`, `Embed Links`, `Attach Files`, `Read Message History`, `Use Slash Commands`, `Add Reactions`
+- **Integration type:** `Guild Install` (the bot uses threads, guild channels, and guild-level intents)
 
 Copy the generated URL and open it in your browser to invite the bot.
 
