@@ -238,17 +238,17 @@ func (b *Bot) appendSteer(text string) {
 	b.steerMu.Unlock()
 }
 
-// drainSteer returns all pending steer text joined with newlines and clears the buffer.
-// Called by the agent loop via SteerCheckFunc. Returns "" if no messages are pending.
-func (b *Bot) drainSteer() string {
+// drainSteer returns all pending steer parts and clears the buffer.
+// Called by the agent loop via SteerCheckFunc. Returns nil if no messages are pending.
+func (b *Bot) drainSteer() []string {
 	b.steerMu.Lock()
 	defer b.steerMu.Unlock()
 	if len(b.steerParts) == 0 {
-		return ""
+		return nil
 	}
-	text := strings.Join(b.steerParts, "\n")
+	parts := b.steerParts
 	b.steerParts = nil
-	return text
+	return parts
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.
