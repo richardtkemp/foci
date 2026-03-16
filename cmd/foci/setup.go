@@ -64,8 +64,8 @@ Flags:
   --memory-import-dir <path>  Directory to import memory .md files from
 `)
 	// Print provider-contributed flags
-	for _, w := range platform.SetupProviders() {
-		for _, f := range w.SetupFlags() {
+	for _, nw := range platform.SetupProviders() {
+		for _, f := range nw.Wizard.SetupFlags() {
 			req := ""
 			if f.Required {
 				req = " (required for non-interactive)"
@@ -104,8 +104,8 @@ func parseSetupFlags(args []string) setupFlags {
 
 	// Collect all known provider flag names for dynamic parsing.
 	providerFlagNames := map[string]bool{}
-	for _, w := range platform.SetupProviders() {
-		for _, pf := range w.SetupFlags() {
+	for _, nw := range platform.SetupProviders() {
+		for _, pf := range nw.Wizard.SetupFlags() {
 			providerFlagNames[pf.Name] = true
 		}
 	}
@@ -160,7 +160,7 @@ func parseSetupFlags(args []string) setupFlags {
 				i++
 			}
 		default:
-			// Check if this is a provider-contributed flag (--bot-token, --user-id, etc.)
+			// Check if this is a provider-contributed flag (--telegram-bot-token, etc.)
 			if strings.HasPrefix(args[i], "--") && i+1 < len(args) {
 				name := strings.TrimPrefix(args[i], "--")
 				if providerFlagNames[name] {
@@ -261,8 +261,20 @@ func runSetupNonInteractive(f setupFlags) error {
 
 	var providerConfigFragments []string
 	providerSecrets := map[string]string{}
-	for _, w := range platform.SetupProviders() {
-		result, err := w.RunSetup(nil, provFlags, true)
+	for _, nw := range platform.SetupProviders() {
+		// Skip providers whose flags aren't present.
+		hasFlag := false
+		for _, sf := range nw.Wizard.SetupFlags() {
+			if _, ok := provFlags[sf.Name]; ok {
+				hasFlag = true
+				break
+			}
+		}
+		if !hasFlag {
+			continue
+		}
+
+		result, err := nw.Wizard.RunSetup(nil, provFlags, true)
 		if err != nil {
 			return err
 		}

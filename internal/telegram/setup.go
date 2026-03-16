@@ -12,8 +12,8 @@ import (
 // SetupFlags returns CLI flag definitions for the telegram provider.
 func (p *telegramProvider) SetupFlags() []platform.SetupFlag {
 	return []platform.SetupFlag{
-		{Name: "bot-token", Usage: "Telegram bot token", Required: true},
-		{Name: "user-id", Usage: "Telegram user ID", Required: true},
+		{Name: "telegram-bot-token", Usage: "Telegram bot token", Required: true},
+		{Name: "telegram-user-id", Usage: "Telegram user ID", Required: true},
 	}
 }
 
@@ -26,14 +26,14 @@ func (p *telegramProvider) RunSetup(ui platform.SetupUI, flags map[string]string
 }
 
 func (p *telegramProvider) runSetupNonInteractive(flags map[string]string) (*platform.WizardResult, error) {
-	botToken := flags["bot-token"]
-	userID := flags["user-id"]
+	botToken := flags["telegram-bot-token"]
+	userID := flags["telegram-user-id"]
 
 	if botToken == "" {
-		return nil, fmt.Errorf("--bot-token is required")
+		return nil, fmt.Errorf("--telegram-bot-token is required")
 	}
 	if userID == "" {
-		return nil, fmt.Errorf("--user-id is required")
+		return nil, fmt.Errorf("--telegram-user-id is required")
 	}
 	if !IsValidBotToken(botToken) {
 		return nil, fmt.Errorf("invalid bot token format")

@@ -60,6 +60,19 @@ func (b *Bot) SendNotification(text string) {
 	b.sendNotificationImmediate(text)
 }
 
+// SendTyping sends a typing indicator to the current channel.
+func (b *Bot) SendTyping() {
+	channelID := b.defaultChannelID()
+	if channelID == 0 {
+		b.channelMu.Lock()
+		channelID = b.channelID
+		b.channelMu.Unlock()
+	}
+	if channelID != 0 {
+		_ = b.session.ChannelTyping(fmt.Sprintf("%d", channelID))
+	}
+}
+
 // SendNotificationDirect sends a notification immediately, bypassing the
 // turn-active buffer. Use for time-sensitive notifications (e.g. compaction start)
 // that must arrive before the turn ends.

@@ -142,11 +142,17 @@ func TestSetupProviders(t *testing.T) {
 		t.Fatalf("got %d wizards, want 2", len(wizards))
 	}
 	// Should be sorted: beta before zebra
-	if wizards[0].SetupFlags()[0].Name != "b-flag" {
-		t.Errorf("first wizard flag = %q, want b-flag", wizards[0].SetupFlags()[0].Name)
+	if wizards[0].Name != "beta" {
+		t.Errorf("first wizard name = %q, want beta", wizards[0].Name)
 	}
-	if wizards[1].SetupFlags()[0].Name != "z-flag" {
-		t.Errorf("second wizard flag = %q, want z-flag", wizards[1].SetupFlags()[0].Name)
+	if wizards[0].Wizard.SetupFlags()[0].Name != "b-flag" {
+		t.Errorf("first wizard flag = %q, want b-flag", wizards[0].Wizard.SetupFlags()[0].Name)
+	}
+	if wizards[1].Name != "zebra" {
+		t.Errorf("second wizard name = %q, want zebra", wizards[1].Name)
+	}
+	if wizards[1].Wizard.SetupFlags()[0].Name != "z-flag" {
+		t.Errorf("second wizard flag = %q, want z-flag", wizards[1].Wizard.SetupFlags()[0].Name)
 	}
 }
 

@@ -55,10 +55,10 @@ bot_secret = "custom.secret.key" # or use a custom key entirely
 ### 5. Interactive Setup (Alternative)
 
 ```bash
-foci setup --discord
+foci setup
 ```
 
-The wizard prompts for bot token and user ID, then writes the config.
+The setup wizard includes a Discord step that prompts for bot token and user ID, then writes the config. Auto-detect mode connects the bot and waits for you to send it a DM to capture your user ID.
 
 ---
 

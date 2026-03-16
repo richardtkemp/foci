@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/provision"
 
+	_ "foci/internal/discord"  // register provider for SetupProviders
 	_ "foci/internal/telegram" // register provider for SetupProviders
 )
 
@@ -17,8 +18,8 @@ func TestParseSetupFlags(t *testing.T) {
 	args := []string{
 		"--config-dir", "/home/foci/config",
 		"--non-interactive",
-		"--bot-token", "123:ABC-test",
-		"--user-id", "12345678",
+		"--telegram-bot-token", "123:ABC-test",
+		"--telegram-user-id", "12345678",
 		"--agent-id", "fotini",
 		"--display-name", "Fotini",
 		"--model", "opus",
@@ -37,11 +38,11 @@ func TestParseSetupFlags(t *testing.T) {
 	if !f.nonInteractive {
 		t.Error("nonInteractive should be true")
 	}
-	if f.providerFlags["bot-token"] != "123:ABC-test" {
-		t.Errorf("providerFlags[bot-token] = %q, want 123:ABC-test", f.providerFlags["bot-token"])
+	if f.providerFlags["telegram-bot-token"] != "123:ABC-test" {
+		t.Errorf("providerFlags[telegram-bot-token] = %q, want 123:ABC-test", f.providerFlags["telegram-bot-token"])
 	}
-	if f.providerFlags["user-id"] != "12345678" {
-		t.Errorf("providerFlags[user-id] = %q, want 12345678", f.providerFlags["user-id"])
+	if f.providerFlags["telegram-user-id"] != "12345678" {
+		t.Errorf("providerFlags[telegram-user-id] = %q, want 12345678", f.providerFlags["telegram-user-id"])
 	}
 	if f.agentID != "fotini" {
 		t.Errorf("agentID = %q, want fotini", f.agentID)
@@ -66,6 +67,24 @@ func TestParseSetupFlags(t *testing.T) {
 	}
 	if f.memoryImportDir != "/home/foci/old-agent/memory" {
 		t.Errorf("memoryImportDir = %q, want /home/foci/old-agent/memory", f.memoryImportDir)
+	}
+}
+
+// Verifies parseSetupFlags correctly parses namespaced Discord flags.
+func TestParseSetupFlagsDiscord(t *testing.T) {
+	args := []string{
+		"--non-interactive",
+		"--discord-bot-token", "NTk5MTIz.Xh4abc.abcdefghijklmnopqrstuvwxyz012",
+		"--discord-user-id", "123456789012345678",
+	}
+
+	f := parseSetupFlags(args)
+
+	if f.providerFlags["discord-bot-token"] != "NTk5MTIz.Xh4abc.abcdefghijklmnopqrstuvwxyz012" {
+		t.Errorf("providerFlags[discord-bot-token] = %q, want token value", f.providerFlags["discord-bot-token"])
+	}
+	if f.providerFlags["discord-user-id"] != "123456789012345678" {
+		t.Errorf("providerFlags[discord-user-id] = %q, want 123456789012345678", f.providerFlags["discord-user-id"])
 	}
 }
 
