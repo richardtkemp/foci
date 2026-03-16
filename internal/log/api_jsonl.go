@@ -1,6 +1,7 @@
 package log
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -123,6 +124,25 @@ func SystemHash(texts []string) string {
 // CalculateCost returns the estimated cost in USD for an API request.
 func CalculateCost(model string, input, output, cacheRead, cacheWrite int) float64 {
 	return modelinfo.Cost(model, input, output, cacheRead, cacheWrite)
+}
+
+// ReadAPILog reads a JSONL API log file and returns all entries.
+func ReadAPILog(path string) []APIEntry {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+
+	var entries []APIEntry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var e APIEntry
+		if json.Unmarshal(scanner.Bytes(), &e) == nil {
+			entries = append(entries, e)
+		}
+	}
+	return entries
 }
 
 // SetAPIWriter replaces the API log file (for testing).

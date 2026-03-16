@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/log"
 )
 
 // costUsage returns the help text for /cost subcommands.
@@ -16,9 +17,9 @@ func costUsage() string {
 }
 
 // costToday shows today's total with per-session breakdown.
-func costToday(entries []apiEntry) string {
+func costToday(entries []log.APIEntry) string {
 	today := time.Now().UTC().Format("2006-01-02")
-	filtered := filterEntries(entries, func(e apiEntry) bool {
+	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return e.Timestamp.Format("2006-01-02") == today
 	})
 	total, count := sumCosts(filtered)
@@ -78,9 +79,9 @@ func costToday(entries []apiEntry) string {
 }
 
 // cost24h shows the last 24 hours with category breakdown.
-func cost24h(entries []apiEntry) string {
+func cost24h(entries []log.APIEntry) string {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	filtered := filterEntries(entries, func(e apiEntry) bool {
+	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return e.Timestamp.After(cutoff)
 	})
 	total, _ := sumCosts(filtered)
@@ -106,11 +107,11 @@ func cost24h(entries []apiEntry) string {
 }
 
 // costWeek shows a 7-day summary with daily breakdown.
-func costWeek(entries []apiEntry) string {
+func costWeek(entries []log.APIEntry) string {
 	now := time.Now().UTC()
 	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	cutoff := startOfToday.AddDate(0, 0, -6)
-	filtered := filterEntries(entries, func(e apiEntry) bool {
+	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return !e.Timestamp.Before(cutoff)
 	})
 
@@ -143,13 +144,13 @@ func costWeek(entries []apiEntry) string {
 }
 
 // costDays shows the total cost for the last N days.
-func costDays(entries []apiEntry, scope string) string {
+func costDays(entries []log.APIEntry, scope string) string {
 	days, err := strconv.Atoi(scope)
 	if err != nil {
 		return "Usage: /cost [today|24h|week|<days>]"
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days)
-	filtered := filterEntries(entries, func(e apiEntry) bool {
+	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return e.Timestamp.After(cutoff)
 	})
 	total, count := sumCosts(filtered)
@@ -157,8 +158,8 @@ func costDays(entries []apiEntry, scope string) string {
 }
 
 // filterEntries returns entries matching the predicate.
-func filterEntries(entries []apiEntry, pred func(apiEntry) bool) []apiEntry {
-	var result []apiEntry
+func filterEntries(entries []log.APIEntry, pred func(log.APIEntry) bool) []log.APIEntry {
+	var result []log.APIEntry
 	for _, e := range entries {
 		if pred(e) {
 			result = append(result, e)
@@ -168,7 +169,7 @@ func filterEntries(entries []apiEntry, pred func(apiEntry) bool) []apiEntry {
 }
 
 // sumCosts returns total cost and call count.
-func sumCosts(entries []apiEntry) (total float64, count int) {
+func sumCosts(entries []log.APIEntry) (total float64, count int) {
 	for _, e := range entries {
 		total += e.CostUSD
 		count++
