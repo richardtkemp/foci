@@ -22,9 +22,11 @@ func (b *Bot) agentWorker(ctx context.Context) {
 			// Process them as normal follow-up turns so the user's redirection
 			// isn't silently dropped. Loop because a new steer can arrive
 			// during orphan processing itself.
-			for orphan := b.drainSteer(); orphan != ""; orphan = b.drainSteer() {
-				b.logger().Infof("steer: processing orphaned steer message as follow-up turn")
-				b.processAgentMessage(ctx, queuedMessage{msg: qm.msg, userID: qm.userID, text: orphan})
+			for orphans := b.drainSteer(); len(orphans) > 0; orphans = b.drainSteer() {
+				b.logger().Infof("steer: processing %d orphan(s) as follow-up turn", len(orphans))
+				for _, s := range orphans {
+					b.processAgentMessage(ctx, queuedMessage{msg: qm.msg, userID: qm.userID, text: s})
+				}
 			}
 		}
 	}
@@ -112,7 +114,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, qm queuedMessage) {
 		for i, att := range qm.attachments {
 			platformAttachments[i] = platform.Attachment{MimeType: att.mediaType, Data: att.data, SavedPath: att.savedPath}
 		}
-		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, qm.text, platformAttachments)
+		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, []string{qm.text}, platformAttachments)
 	} else {
 		response, err = b.handler.HandleMessage(turnCtx, sk, qm.text)
 	}
