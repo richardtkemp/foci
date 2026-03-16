@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -760,6 +761,191 @@ func TestTodoKeyboardOptions(t *testing.T) {
 	if len(opts) != 5 {
 		t.Errorf("expected 5 keyboard options, got %d", len(opts))
 	}
+}
+
+// --- parseGetArgs Tests ---
+
+// TestParseGetArgs verifies the get subcommand parser handles filter-only,
+// search-only, combined, and explicit "/" delimiter cases.
+func TestParseGetArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want todoArgs
+	}{
+		{
+			name: "search only",
+			raw:  "get deploy server",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, text: "deploy server"},
+		},
+		{
+			name: "filters only (tag)",
+			raw:  "get t:daily",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "daily", setTag: true},
+		},
+		{
+			name: "filters only (priority and sort)",
+			raw:  "get p:high created",
+			want: todoArgs{subcommand: "get", status: "active", sort: "created", limit: 15, priority: "high"},
+		},
+		{
+			name: "tag with search",
+			raw:  "get t:work deploy",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "work", setTag: true, text: "deploy"},
+		},
+		{
+			name: "priority sort and search",
+			raw:  "get p:high created server database",
+			want: todoArgs{subcommand: "get", status: "active", sort: "created", limit: 15, priority: "high", text: "server database"},
+		},
+		{
+			name: "explicit delimiter",
+			raw:  "get t:work / deploy server",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15, tag: "work", setTag: true, text: "deploy server"},
+		},
+		{
+			name: "delimiter with status filter",
+			raw:  "get all t:work / deploy -old",
+			want: todoArgs{subcommand: "get", status: "", sort: "priority", limit: 15, tag: "work", setTag: true, text: "deploy -old"},
+		},
+		{
+			name: "status and reverse with search",
+			raw:  "get done reverse deploy",
+			want: todoArgs{subcommand: "get", status: "done", sort: "priority", limit: 15, reverse: true, text: "deploy"},
+		},
+		{
+			name: "limit with search",
+			raw:  "get 5 deploy",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 5, text: "deploy"},
+		},
+		{
+			name: "empty get (no args)",
+			raw:  "get",
+			want: todoArgs{subcommand: "get", status: "active", sort: "priority", limit: 15},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseTodoArgs(tt.raw)
+			assertTodoArgs(t, tt.want, got)
+		})
+	}
+}
+
+// TestTodoGetFilterOnly verifies that get with only filters (no search text)
+// falls back to List behavior.
+func TestTodoGetFilterOnly(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "daily standup", "medium", "daily")
+	store.Add(testAgent, "deploy app", "high", "work")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "get t:daily"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "daily standup") {
+		t.Errorf("expected daily standup: %s", resp.Text)
+	}
+	if contains(resp.Text, "deploy app") {
+		t.Errorf("should not contain non-daily items: %s", resp.Text)
+	}
+}
+
+// TestTodoGetWithSearch verifies that get with both filters and search text
+// uses full-text search with post-filtering. Requires bleve index.
+func TestTodoGetWithSearch(t *testing.T) {
+	store, idx := newTestTodoStoreWithSearch(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "deploy backend server", "high", "work")
+	store.Add(testAgent, "deploy frontend app", "medium", "work")
+	store.Add(testAgent, "deploy staging server", "low", "personal")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "get t:work server"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "deploy backend server") {
+		t.Errorf("expected backend server: %s", resp.Text)
+	}
+	if contains(resp.Text, "frontend") {
+		t.Errorf("should not contain non-matching search term: %s", resp.Text)
+	}
+	if contains(resp.Text, "staging") {
+		t.Errorf("should not contain non-work items: %s", resp.Text)
+	}
+
+	_ = idx // keep reference
+}
+
+// TestTodoGetPriorityFilter verifies that get filters by priority in search mode.
+func TestTodoGetPriorityFilter(t *testing.T) {
+	store, idx := newTestTodoStoreWithSearch(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "deploy production server", "high", "")
+	store.Add(testAgent, "deploy staging server", "low", "")
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "get p:high server"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "production") {
+		t.Errorf("expected high-priority item: %s", resp.Text)
+	}
+	if contains(resp.Text, "staging") {
+		t.Errorf("should not contain low-priority item: %s", resp.Text)
+	}
+
+	_ = idx
+}
+
+// TestTodoGetNoSearchIndex verifies get returns an error when there's no
+// search index and a search query is provided.
+func TestTodoGetNoSearchIndex(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "some item", "medium", "")
+
+	_, err := cmd.Execute(context.Background(), Request{Args: "get deploy"}, cc)
+	if err == nil {
+		t.Error("expected error when no search index is configured")
+	}
+}
+
+// newTestTodoStoreWithSearch creates a TodoStore with a bleve search index.
+func newTestTodoStoreWithSearch(t *testing.T) (*memory.TodoStore, *memory.BleveIndex) {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := memory.NewTodoStore(filepath.Join(dir, "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+
+	memDir := filepath.Join(dir, "memory")
+	if err := os.MkdirAll(memDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	sources := map[string]memory.SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, err := memory.NewBleveIndex(filepath.Join(dir, "search.bleve"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+
+	store.SetSearchIndex(idx)
+	t.Cleanup(func() {
+		_ = store.Close()
+		_ = idx.Close()
+	})
+	return store, idx
 }
 
 func contains(s, substr string) bool {

@@ -388,10 +388,12 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 
 // TodoSearchOpts controls filtering, sorting, and limiting of search results.
 type TodoSearchOpts struct {
-	Status  string // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
-	Sort    string // "relevance" (default), "created", "updated", "closed", "priority"
-	Reverse bool   // reverse sort direction (default false = descending/highest first)
-	Limit   int    // max results (0 = default 10)
+	Status   string // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
+	Sort     string // "relevance" (default), "created", "updated", "closed", "priority"
+	Reverse  bool   // reverse sort direction (default false = descending/highest first)
+	Limit    int    // max results (0 = default 10)
+	Tag      string // filter by tag (comma-separated containment)
+	Priority string // filter by exact priority ("high", "medium", "low")
 }
 
 // Search returns todo items matching the query using full-text search
@@ -417,10 +419,11 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 	if bleveLimit <= 0 {
 		bleveLimit = 10
 	}
-	// For sorts bleve can't do (priority, closed), or when status filtering,
+	// For sorts bleve can't do (priority, closed), or when post-filtering,
 	// overfetch and post-sort.
 	needsPostSort := opts.Sort == "priority" || opts.Sort == "closed"
-	if opts.Status != "" || needsPostSort {
+	needsPostFilter := opts.Status != "" || opts.Tag != "" || opts.Priority != ""
+	if needsPostFilter || needsPostSort {
 		bleveLimit *= 5
 		if bleveLimit < 50 {
 			bleveLimit = 50
@@ -446,7 +449,7 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 	}
 
 	// Load full items from SQLite by ID, maintaining bleve's order.
-	// Filter by status during load.
+	// Filter by status, tag, and priority during load.
 	items := make([]TodoItem, 0, len(hits))
 	for _, hit := range hits {
 		item, err := s.Get(agentID, hit.TodoID)
@@ -454,6 +457,12 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 			continue // deleted between search and load
 		}
 		if !matchesStatusFilter(item.Status, opts.Status) {
+			continue
+		}
+		if !matchesTagFilter(item.Tags, opts.Tag) {
+			continue
+		}
+		if opts.Priority != "" && item.Priority != opts.Priority {
 			continue
 		}
 		items = append(items, *item)
@@ -473,6 +482,19 @@ func (s *TodoStore) searchBleve(agentID, query string, opts *TodoSearchOpts) ([]
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+// matchesTagFilter checks whether a todo's comma-separated tags contain the filter tag.
+func matchesTagFilter(tags, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	for _, t := range strings.Split(tags, ",") {
+		if strings.TrimSpace(t) == filter {
+			return true
+		}
+	}
+	return false
 }
 
 // matchesStatusFilter checks whether a todo's status passes the filter.

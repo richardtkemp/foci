@@ -31,19 +31,69 @@ Context window breakdown — total vs limit, compaction threshold, tokens until 
 Check current mana/quota remaining (percentage remaining + reset time). The command name is configurable via `mana_command_name` in config (e.g. `/juice`, `/credits`). Hidden aliases: `/usage`, `/m`. Only available when the provider supports usage tracking.
 
 ### `/todo [subcommand] [args]`
-Manage todo items.
-- `/todo` — list open items sorted by priority (limit 15)
+Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15).
+
+**Subcommands:**
+
 - `/todo new <text> [p:PRIORITY] [t:TAG]` — create a new todo
-- `/todo done <id> [id...]` — mark as done
+- `/todo done <id> [id...]` — mark as done (ambiguity: `done` alone lists done items, `done 5` transitions)
 - `/todo start <id> [id...]` — mark as in progress
 - `/todo drop <id> [id...]` — mark as dropped
 - `/todo reopen <id> [id...]` — reopen to "open"
 - `/todo edit <id> [p:PRIORITY] [t:TAG] [new text]` — edit fields
 - `/todo show <id>` — full detail for one todo
-- `/todo search <query>` — full-text search
+- `/todo search <query>` — full-text search (bleve, porter stemming)
+- `/todo get [filters] [search terms]` — combined filter + search (see below)
 - `/todo rm <id> [id...]` — hard-delete
 - `/todo stats [filters]` — counts by status and tag
-- List filters: `open`, `done`, `all`, `active`, `in_progress`, `dropped`; `t:TAG`, `p:PRIORITY`; sort by `created`/`updated`/`priority`; `reverse`; `<N>` limit
+
+**List filters** (apply to bare `/todo`, `/todo stats`, and the filter side of `/todo get`):
+
+| Filter | Effect |
+|---|---|
+| `open` | Only open items |
+| `done` / `closed` | Only done items |
+| `active` | Open + in_progress (default) |
+| `in_progress` | Only in-progress items |
+| `dropped` | Only dropped items |
+| `all` | All statuses |
+| `t:TAG` | Only items with this tag |
+| `p:PRIORITY` | Only items with this priority (`high`, `medium`, `low`) |
+| `created` | Sort by creation time |
+| `updated` | Sort by last update time |
+| `priority` | Sort by priority (default) |
+| `reverse` | Flip sort direction (default is descending/newest/highest first) |
+| `<N>` | Limit results (e.g. `5`) |
+
+**`/todo get` — combined filter + search:**
+
+Bridges list filters and full-text search. Recognised filter tokens are extracted; remaining tokens become the search query.
+
+```
+/todo get t:work deploy              # tag filter + search "deploy"
+/todo get p:high created server      # priority filter, sort by created, search "server"
+/todo get t:daily                    # pure filter (no search → falls back to list)
+/todo get running                    # pure search for "running"
+```
+
+Use `/` as an explicit delimiter when search terms collide with filter keywords:
+
+```
+/todo get t:work / deploy server -old    # "deploy server -old" is the search query
+/todo get all / open questions           # "all" is a status filter, "open questions" is search
+```
+
+**Search query syntax** (bleve query string):
+
+| Syntax | Effect |
+|---|---|
+| `deploy server` | Match either term (OR) |
+| `+deploy +server` | Both terms required (AND) |
+| `"deploy server"` | Exact phrase match |
+| `-database` | Exclude term |
+| `deploy*` | Prefix match |
+
+Porter stemming is active: "running" matches "run", "deployed" matches "deploy".
 
 ### `/tmux <subcommand>`
 Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivalent). Only available when the tmux tool is registered.

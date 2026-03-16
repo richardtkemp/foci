@@ -67,6 +67,10 @@ func parseTodoArgs(raw string) todoArgs {
 		a.subcommand = "show"
 		a.ids = parseIDs(rest)
 		return a
+	case "get":
+		a.subcommand = "get"
+		parseGetArgs(&a, rest)
+		return a
 	case "search":
 		a.subcommand = "search"
 		a.text = strings.Join(rest, " ")
@@ -193,6 +197,59 @@ func parseEditArgs(a *todoArgs, tokens []string) {
 	a.text = strings.Join(textParts, " ")
 }
 
+// parseGetArgs parses tokens for the "get" subcommand, which combines
+// filters and full-text search. If "/" is present, the left side is parsed
+// for filters and the right side is the search query. Without "/", recognised
+// filter tokens are extracted and remaining tokens become the search query.
+func parseGetArgs(a *todoArgs, tokens []string) {
+	// Check for explicit "/" delimiter.
+	slashIdx := -1
+	for i, tok := range tokens {
+		if tok == "/" {
+			slashIdx = i
+			break
+		}
+	}
+
+	if slashIdx >= 0 {
+		parseListArgs(a, tokens[:slashIdx])
+		a.text = strings.Join(tokens[slashIdx+1:], " ")
+		return
+	}
+
+	// No delimiter — greedy-match recognised filter tokens, collect the rest
+	// as search terms.
+	var searchParts []string
+	for _, tok := range tokens {
+		lower := strings.ToLower(tok)
+
+		if strings.HasPrefix(lower, "t:") {
+			a.tag = tok[2:]
+			a.setTag = true
+			continue
+		}
+		if strings.HasPrefix(lower, "p:") {
+			a.priority = strings.ToLower(tok[2:])
+			continue
+		}
+
+		switch lower {
+		case "open", "done", "closed", "all", "active", "dropped", "in_progress",
+			"created", "updated", "priority",
+			"reverse":
+			// Re-use parseListArgs logic for this single token.
+			parseListArgs(a, []string{tok})
+		default:
+			if n, err := strconv.Atoi(tok); err == nil && n > 0 {
+				a.limit = n
+			} else {
+				searchParts = append(searchParts, tok)
+			}
+		}
+	}
+	a.text = strings.Join(searchParts, " ")
+}
+
 // parseIDs extracts all integer tokens from the list.
 func parseIDs(tokens []string) []int64 {
 	var ids []int64
@@ -243,6 +300,8 @@ func TodoCommand() *Command {
 				return todoEditCmd(cc.TodoStore, agentID, args)
 			case "show":
 				return todoShowCmd(cc.TodoStore, agentID, args)
+			case "get":
+				return todoGetCmd(cc.TodoStore, agentID, args, format)
 			case "search":
 				return todoSearchCmd(cc.TodoStore, agentID, args, format)
 			case "rm":
@@ -386,6 +445,32 @@ func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs, forma
 		return Response{Text: fmt.Sprintf("No todos matching %q.", args.text)}, nil
 	}
 	return Response{Text: fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))}, nil
+}
+
+// todoGetCmd combines structured filters with optional full-text search.
+// If a search query is present, uses Search with tag/priority/status/sort opts.
+// If no search query, falls back to List (pure filter mode).
+func todoGetCmd(store *memory.TodoStore, agentID string, args todoArgs, format string) (Response, error) {
+	if args.text != "" {
+		items, err := store.Search(agentID, args.text, &memory.TodoSearchOpts{
+			Status:   args.status,
+			Sort:     args.sort,
+			Reverse:  args.reverse,
+			Limit:    args.limit,
+			Tag:      args.tag,
+			Priority: args.priority,
+		})
+		if err != nil {
+			return Response{}, fmt.Errorf("get todos: %w", err)
+		}
+		if len(items) == 0 {
+			return Response{Text: fmt.Sprintf("No todos matching %q.", args.text)}, nil
+		}
+		return Response{Text: fmt.Sprintf("Get: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))}, nil
+	}
+
+	// No search query — pure filter mode via List.
+	return todoListCmd(store, agentID, args, format)
 }
 
 // todoRmCmd hard-deletes one or more todos.
