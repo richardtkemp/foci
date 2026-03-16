@@ -28,7 +28,7 @@ That's it. On first run, foci runs its setup wizard automatically using your `.e
 
 ## What Happens
 
-**First run:** The entrypoint detects no config exists, runs `foci setup` with your env vars to generate `foci.toml` and `secrets.toml`, then starts `foci-gw`.
+**First run:** The entrypoint detects no config exists, runs `foci first-run` with your env vars to generate `foci.toml` and `secrets.toml`, then starts `foci-gw`.
 
 **Subsequent runs:** Config already exists in the persistent volume, so foci starts immediately.
 

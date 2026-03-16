@@ -1,5 +1,5 @@
 // Package provision implements shared agent creation logic used by both
-// foci setup (first-run wizard) and /agents new (runtime command).
+// foci first-run (first-run wizard) and /agents new (runtime command).
 // It is a leaf package with no dependencies beyond the standard library.
 package provision
 

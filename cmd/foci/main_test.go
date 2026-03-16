@@ -346,7 +346,7 @@ func TestSubcommandHelp(t *testing.T) {
 		fn   func([]string) error
 	}{
 		{"auth", cmdAuth},
-		{"setup", cmdSetup},
+		{"first-run", cmdSetup},
 		{"secrets", cmdSecrets},
 	}
 

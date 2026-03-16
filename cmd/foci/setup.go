@@ -46,7 +46,7 @@ type setupState struct {
 }
 
 func setupUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci setup [flags]
+	fmt.Fprintf(os.Stderr, `Usage: foci first-run [flags]
 
 Interactive setup wizard for first-run configuration.
 Generates foci.toml, secrets.toml, and seeds character files.
