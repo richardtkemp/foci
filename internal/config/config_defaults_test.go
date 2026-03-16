@@ -32,6 +32,10 @@ usage_api_timeout = "15s"
 message_queue_size = 128
 long_poll_timeout = "70s"
 
+[discord]
+message_queue_size = 32
+facet_session_ttl = "30m"
+
 [http]
 graceful_shutdown_timeout = "10s"
 
@@ -73,6 +77,12 @@ web_search_timeout = "20s"
 	}
 	if cfg.Telegram.LongPollTimeout != "70s" {
 		t.Errorf("Telegram.LongPollTimeout = %q, want 70s", cfg.Telegram.LongPollTimeout)
+	}
+	if cfg.Discord.MessageQueueSize != 32 {
+		t.Errorf("Discord.MessageQueueSize = %d, want 32", cfg.Discord.MessageQueueSize)
+	}
+	if cfg.Discord.FacetSessionTTL != "30m" {
+		t.Errorf("Discord.FacetSessionTTL = %q, want 30m", cfg.Discord.FacetSessionTTL)
 	}
 	if cfg.HTTP.GracefulShutdownTimeout != "10s" {
 		t.Errorf("HTTP.GracefulShutdownTimeout = %q, want 10s", cfg.HTTP.GracefulShutdownTimeout)
@@ -137,6 +147,24 @@ id = "test"
 	}
 	if cfg.Telegram.LongPollTimeout != "65s" {
 		t.Errorf("default Telegram.LongPollTimeout = %q, want 65s", cfg.Telegram.LongPollTimeout)
+	}
+	if cfg.Discord.MessageQueueSize != 64 {
+		t.Errorf("default Discord.MessageQueueSize = %d, want 64", cfg.Discord.MessageQueueSize)
+	}
+	if cfg.Discord.FacetSessionTTL != "60m" {
+		t.Errorf("default Discord.FacetSessionTTL = %q, want 60m", cfg.Discord.FacetSessionTTL)
+	}
+	if cfg.Discord.StreamUpdateInterval != "1200ms" {
+		t.Errorf("default Discord.StreamUpdateInterval = %q, want 1200ms", cfg.Discord.StreamUpdateInterval)
+	}
+	if !cfg.Discord.RequireMention {
+		t.Error("default Discord.RequireMention should be true")
+	}
+	if !cfg.Discord.AutoThread {
+		t.Error("default Discord.AutoThread should be true")
+	}
+	if !cfg.Discord.StartupNotify {
+		t.Error("default Discord.StartupNotify should be true")
 	}
 	if cfg.HTTP.GracefulShutdownTimeout != "30s" {
 		t.Errorf("default HTTP.GracefulShutdownTimeout = %q, want 30s", cfg.HTTP.GracefulShutdownTimeout)

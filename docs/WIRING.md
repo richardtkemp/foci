@@ -39,7 +39,7 @@ config.Load(path)                                        ← validates values; l
   → memory backends (FTS5 and/or bleve)                  ← shared OR per-agent
 
    Shared resources (created once in main.go):
-   → platform.InitMessaging(cfg, deps)                      ← initialises all registered providers (e.g. telegram via blank import)
+   → platform.InitMessaging(cfg, deps)                      ← initialises all registered providers (telegram, discord via blank imports)
      → each provider.Init(deps) creates its own bot manager, tool detail store, etc.
      → returns *platform.Messaging facade wrapping all active providers
    → voice STT/TTS providers                              ← shared across agents
@@ -158,7 +158,9 @@ main
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
- └── telegram      → agent, command, config, display, log, platform, secrets, session, sqlite, state, voice
+ ├── telegram      → agent, command, config, display, log, platform, secrets, session, sqlite, state, voice
+ │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
+ └── discord       → agent, command, config, display, log, platform, secrets, session, sqlite, state, voice
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
@@ -176,7 +178,7 @@ Most packages depend on `provider` for types; only `main.go`, `tools`, and `mana
 
 Slash commands (`/ping`, `/model`, etc.) are dispatched through a two-layer architecture:
 
-1. **Platform layer** (`telegram/dispatch.go`): Parses platform-specific command syntax (e.g., `/cmd args` for Telegram, `!cmd args` for Discord) and builds a platform-agnostic `Request` struct with `Name`, `Args`, `SessionKey`, `UserID`, and `ChatID`.
+1. **Platform layer** (`telegram/dispatch.go`, `discord/dispatch.go`): Parses platform-specific command syntax (e.g., `/cmd args` for Telegram, `.cmd args` or `/cmd args` for Discord) and builds a platform-agnostic `Request` struct with `Name`, `Args`, `SessionKey`, `UserID`, and `ChatID`.
 
 2. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
 
@@ -203,7 +205,7 @@ All commands use a unified signature: `Execute(ctx context.Context, req Request,
 - `command.CommandContext`: Platform-agnostic dependencies struct (Agent, Sessions, Config, client references, stores, paths, etc.)
 - `command.Registry.Dispatch()`: Executes commands using `(ctx, Request, CommandContext)`
 
-**Why this split:** Telegram owns the parsing of `/cmd args` format. The command layer owns what commands do. This enables other platforms (Discord, Matrix) to use the same command logic with different syntax.
+**Why this split:** Each platform owns the parsing of its command syntax (Telegram: `/cmd args`, Discord: `.cmd args` or `/cmd args`). The command layer owns what commands do. This enables any platform to use the same command logic with different syntax.
 
 ## The Agent Loop (`agent/agent.go`)
 
@@ -272,7 +274,7 @@ Each user message then gets a metadata line prepended (NOT in system prompt — 
 - `time` — current UTC timestamp
 - `gap` — human-readable time since previous message ("3h12m", "2d4h", "38s", "none")
 - `model` — current model name (e.g., "claude-haiku-4-5", "claude-opus-4-6")
-- `via` — transport that delivered the message. Derived from the context trigger via `triggerToPlatform()` in `context.go`. Values: `telegram` (Telegram/voice), `android` (Android app), `api` (HTTP /send), `cron` (system-initiated: keepalive, wake, scheduled, etc.)
+- `via` — transport that delivered the message. Derived from the context trigger via `triggerToPlatform()` in `context.go`. Values: `telegram` (Telegram/voice), `discord` (Discord), `android` (Android app), `api` (HTTP /send), `cron` (system-initiated: keepalive, wake, scheduled, etc.)
 - `prev_cost` / `prev_tokens` — cost and token breakdown of the previous turn (omitted on first message)
 
 Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The metadata goes past the cache breakpoint, so it doesn't affect prompt caching.
@@ -694,9 +696,9 @@ Single `foci.toml` parsed with BurntSushi/toml. Defaults applied for missing fie
 
 When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
 
-**Platform configuration:** Per-agent platform settings live in `[agents.platforms.telegram]`. The old top-level fields (`telegram_bot`, `allowed_users`, etc.) are migrated to the new structure at load time. Display fields (`show_tool_calls`, `show_thinking`) are synced between agent-level and platform-level by `syncDisplayFields()`.
+**Platform configuration:** Per-agent platform settings live in `[agents.platforms.telegram]` and `[agents.platforms.discord]`. The old top-level Telegram fields (`telegram_bot`, `allowed_users`, etc.) are migrated to the new structure at load time. Display fields (`show_tool_calls`, `show_thinking`) are synced between agent-level and platform-level by `syncDisplayFields()`.
 
-**Telegram bot token resolution:** Bot tokens are resolved by convention: `config.ResolveBotToken(botName, botSecret, secrets)` looks up `"telegram.<botName>"` in the secrets store (or uses `botSecret` as the key if non-empty). No explicit `[telegram.bots]` map is needed.
+**Bot token resolution:** Telegram: `config.ResolveBotToken(botName, botSecret, secrets)` looks up `"telegram.<botName>"`. Discord: `config.ResolveDiscordToken(botName, botSecret, secrets)` looks up `"discord.<botName>"`. Convention-based — no explicit bot map needed.
 
 **Example multi-agent config:**
 ```toml
@@ -783,6 +785,26 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 - **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
 
 **Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[defaults]`, or `stream_output` and `stream_interval` in `[agents.platforms.telegram]`.
+
+## Discord Bot (`discord/`)
+
+Same two-goroutine architecture as Telegram (receiver + agent worker), connected via a single WebSocket gateway instead of HTTP long-polling.
+
+**Key differences from Telegram:**
+- **Gateway:** Single `discordgo.Session` WebSocket connection shared across all agents, vs one HTTP poller per Telegram bot.
+- **Message limit:** 2000 chars (vs 4096). `splitMessage` handles Markdown-aware splitting with code fence close/reopen.
+- **Formatting:** Discord speaks Markdown natively — no HTML conversion needed. Pass-through from agent output.
+- **Streaming:** Default edit interval 1200ms (vs 250ms) due to stricter rate limits. Max 1900 chars per edit.
+- **Attachments:** Direct CDN URL download (vs Telegram file API with file ID → download URL).
+- **Interactive UI:** Discord message components (buttons) vs Telegram inline keyboards. Same callback data format (`tc:show`, `tc:hide`, `th:show`, `th:hide`, `cmd:/name`).
+- **Facets:** Thread-based (vs separate bot tokens). `auto_thread = true` creates private threads for facet sessions.
+- **Routing:** `onMessageCreate` routes to correct agent's `Bot` based on channel/DM/user. `onInteractionCreate` handles button callbacks and slash commands.
+
+**Bot token resolution:** `config.ResolveDiscordToken(botName, botSecret, secrets)` looks up `"discord.<botName>"` in the secrets store.
+
+**Session keys:** Same format as Telegram: `agentID/c{channelID}/{versionTS}`. Discord snowflake channel IDs are int64.
+
+**Config:** `[discord]` for global settings, `[agents.platforms.discord]` for per-agent overrides. See [CONFIG.md](CONFIG.md).
 
 ## Voice (`voice/`, `telegram/bot.go`)
 

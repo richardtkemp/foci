@@ -147,6 +147,19 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		})
 	}
 
+	// --- Discord bot tokens ---
+	// Convention: agent with discord bot="scout" and no bot_secret override
+	// needs secret "discord.scout".
+	for _, agent := range cfg.Agents {
+		dc := agent.GetDiscordPlatform()
+		if dc != nil && dc.Bot != "" && dc.BotSecret == "" {
+			refs = append(refs, SecretRef{
+				Key:     "discord." + dc.Bot,
+				Context: fmt.Sprintf("agent %q discord bot %q", agent.ID, dc.Bot),
+			})
+		}
+	}
+
 	// --- Endpoint API keys ---
 	// Convention: endpoint "openrouter" with no api_key field needs "openrouter.api_key".
 	// Skip "anthropic" — it has its own 3-way credential resolution (setup_token, api_key, CC creds).

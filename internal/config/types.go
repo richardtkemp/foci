@@ -206,6 +206,22 @@ type AnthropicConfig struct {
 	Speed                     string `toml:"speed"`                        // speed mode: "standard" (default) or "fast" (Opus only, 6x pricing)
 }
 
+type DiscordConfig struct {
+	AllowedUsers         []string         `toml:"allowed_users"`          // Discord user ID snowflakes
+	GuildID              string           `toml:"guild_id"`               // optional restriction to a single guild
+	RequireMention       bool             `toml:"require_mention"`        // require @mention in guild channels (default true)
+	AutoThread           bool             `toml:"auto_thread"`            // create threads for facet sessions (default true)
+	StartupNotify        bool             `toml:"startup_notify"`         // send notification on startup (default true)
+	FacetSessionTTL      string           `toml:"facet_session_ttl"`      // idle TTL before a facet thread can be reclaimed (default "60m")
+	MessageQueueSize     int              `toml:"message_queue_size"`     // inbound message queue buffer size (default 64)
+	ReceivedFilesDir     string           `toml:"received_files_dir"`     // save received files to this directory (empty = disabled)
+	ShowToolCalls        *ToolCallDisplay `toml:"show_tool_calls"`        // default show_tool_calls (default: "off")
+	ShowThinking         *ShowThinking    `toml:"show_thinking"`          // default show_thinking (default: "off")
+	StreamOutput         bool             `toml:"stream_output"`          // default stream_output (default: false)
+	StreamUpdateInterval string           `toml:"stream_update_interval"` // default stream_update_interval (default: "1200ms")
+	DisplayWidth         *int             `toml:"display_width"`          // display width for dividers (default 60)
+}
+
 type TelegramConfig struct {
 	AllowedUsers        []string `toml:"allowed_users"`
 	FacetBots       []string `toml:"facet_bots"`        // shared facet pool: bot names (tokens via "telegram.<name>" secrets)
@@ -241,12 +257,37 @@ type TelegramPlatformConfig struct {
 	StreamInterval   string           `toml:"stream_interval"`    // duration between Telegram message edits during streaming
 }
 
+func (t *TelegramPlatformConfig) getShowToolCalls() *ToolCallDisplay { return t.ShowToolCalls }
+func (t *TelegramPlatformConfig) setShowToolCalls(v *ToolCallDisplay) { t.ShowToolCalls = v }
+func (t *TelegramPlatformConfig) getShowThinking() *ShowThinking      { return t.ShowThinking }
+func (t *TelegramPlatformConfig) setShowThinking(v *ShowThinking)     { t.ShowThinking = v }
+
+// DiscordPlatformConfig holds per-agent Discord platform settings.
+type DiscordPlatformConfig struct {
+	Bot            string           `toml:"bot"`              // bot name; token resolved via "discord.<bot>" secret
+	BotSecret      string           `toml:"bot_secret"`       // override secret key for bot token (default: "discord.<bot>")
+	AllowedUsers   []string         `toml:"allowed_users"`    // per-agent allowed Discord user IDs (empty = use global)
+	GuildID        string           `toml:"guild_id"`         // restrict to this guild (empty = all guilds)
+	ShowToolCalls  *ToolCallDisplay `toml:"show_tool_calls"`  // show tool call messages (nil = use global/default)
+	ShowThinking   *ShowThinking    `toml:"show_thinking"`    // show thinking blocks (nil = use global/default)
+	DisplayWidth   *int             `toml:"display_width"`    // display width for dividers (nil = use global)
+	StreamOutput   *bool            `toml:"stream_output"`    // stream model output in real-time (nil = use default)
+	StreamInterval string           `toml:"stream_interval"`  // duration between Discord message edits during streaming
+	RequireMention *bool            `toml:"require_mention"`  // require @mention in guild channels (nil = use global, default true)
+	AutoThread     *bool            `toml:"auto_thread"`      // create threads for facet sessions (nil = use global, default true)
+	ReceivedFilesDir string         `toml:"received_files_dir"` // save received files to this directory (empty = disabled)
+}
+
+func (d *DiscordPlatformConfig) getShowToolCalls() *ToolCallDisplay { return d.ShowToolCalls }
+func (d *DiscordPlatformConfig) setShowToolCalls(v *ToolCallDisplay) { d.ShowToolCalls = v }
+func (d *DiscordPlatformConfig) getShowThinking() *ShowThinking      { return d.ShowThinking }
+func (d *DiscordPlatformConfig) setShowThinking(v *ShowThinking)     { d.ShowThinking = v }
+
 // PlatformsConfig holds per-agent platform configurations.
 // Each platform (telegram, discord, etc.) has its own config section.
 type PlatformsConfig struct {
 	Telegram *TelegramPlatformConfig `toml:"telegram"`
-	// Future platforms would be added here:
-	// Discord *DiscordPlatformConfig `toml:"discord"`
+	Discord  *DiscordPlatformConfig  `toml:"discord"`
 }
 
 // GetTelegramPlatform returns the Telegram platform config for this agent, or nil.
@@ -255,6 +296,14 @@ func (a *AgentConfig) GetTelegramPlatform() *TelegramPlatformConfig {
 		return nil
 	}
 	return a.Platforms.Telegram
+}
+
+// GetDiscordPlatform returns the Discord platform config for this agent, or nil.
+func (a *AgentConfig) GetDiscordPlatform() *DiscordPlatformConfig {
+	if a.Platforms == nil {
+		return nil
+	}
+	return a.Platforms.Discord
 }
 
 type SessionsConfig struct {
@@ -640,6 +689,7 @@ type Config struct {
 	Gemini             GeminiConfig              `toml:"gemini"`
 	OpenAI             OpenAIConfig              `toml:"openai"`
 	Telegram           TelegramConfig            `toml:"telegram"`
+	Discord            DiscordConfig             `toml:"discord"`
 	Sessions           SessionsConfig            `toml:"sessions"`
 	Memory             MemoryConfig              `toml:"memory"`
 	Database           DatabaseConfig            `toml:"database"`

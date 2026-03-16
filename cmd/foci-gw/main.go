@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	_ "foci/internal/discord"  // register discord messaging provider
 	_ "foci/internal/telegram" // register telegram messaging provider
 
 	"foci/internal/agent"

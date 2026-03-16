@@ -116,6 +116,34 @@ primary = "123456:ABC..."
 secondary = "789012:DEF..."
 ```
 
+### `[discord]`
+
+Discord bot configuration. Fields `allowed_users`, `guild_id`, and `received_files_dir` can be overridden per-agent — see [Global-or-Agent: Discord](#discord-overrides).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `allowed_users` | string[] | `[]` | Discord user ID snowflakes allowed to interact with the bot. |
+| `guild_id` | string | `""` | Restrict to a single guild. Empty allows all guilds. |
+| `require_mention` | bool | `true` | Require @mention in guild channels. DMs are always processed. |
+| `auto_thread` | bool | `true` | Create threads for facet sessions. |
+| `startup_notify` | bool | `true` | Send notification on startup. |
+| `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet thread can be reclaimed. `"0"` disables auto-reclaim. Go duration format. |
+| `message_queue_size` | int | `64` | Inbound message queue buffer size. |
+| `display_width` | int | `60` | Character width for dividers in Discord messages. Overridable per-agent. |
+| `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. Overridable per-agent. |
+
+#### Bot token resolution
+
+Bot tokens are resolved by convention: `"discord.<botname>"` in `secrets.toml`. No explicit bot map is needed.
+
+For example, an agent with `bot = "primary"` in `[agents.platforms.discord]` resolves its token from the secret key `discord.primary`. To override the convention, set `bot_secret` on the agent.
+
+`secrets.toml`:
+```toml
+[discord]
+primary = "MTIzNDU2Nzg5..."
+```
+
 ### `[http]`
 
 HTTP API server.
@@ -793,6 +821,19 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `table_wrap_lines` | int | `5` | `[telegram]` | Per-agent override for `[telegram] table_wrap_lines`. |
 | `table_style` | string | `"pretty"` | `[telegram]` | Per-agent override for `[telegram] table_style`. |
 
+### Discord Overrides
+
+Set in `[discord]`, overridable per-agent via `[agents.platforms.discord]`.
+
+| Key | Type | Default | Inherits from | Description |
+|-----|------|---------|---------------|-------------|
+| `allowed_users` | string[] | `[]` | `[discord]` | Discord user IDs allowed to interact with bots. `[]` falls back to global `[discord] allowed_users`. |
+| `guild_id` | string | `""` | `[discord]` | Restrict to this guild. Empty uses global. |
+| `require_mention` | bool | `true` | `[discord]` | Require @mention in guild channels. |
+| `auto_thread` | bool | `true` | `[discord]` | Create threads for facet sessions. |
+| `display_width` | int | `60` | `[discord]` | Per-agent override for `[discord] display_width`. |
+| `received_files_dir` | string | `""` | `[discord]` | Per-agent directory for saving received files. |
+
 ### Voice
 
 | Key | Type | Default | Global location | Description |
@@ -947,6 +988,44 @@ received_files_dir = ""
 | `stream_output` | bool | `[telegram]` | Stream model output to Telegram in real-time. |
 | `stream_interval` | duration | `[defaults]` | Duration between message edits during streaming. |
 | `received_files_dir` | string | `[telegram]` | Save received files to this directory. |
+
+### Platform Configuration (`[agents.platforms.discord]`)
+
+Per-agent Discord platform settings.
+
+```toml
+[[agents]]
+id = "myagent"
+
+[agents.platforms.discord]
+bot = "myagent"                 # bot name; token via "discord.<bot>" secret
+bot_secret = ""                 # override secret key (default: "discord.<bot>")
+allowed_users = ["12345"]       # per-agent allowed Discord user IDs
+guild_id = ""                   # restrict to this guild
+show_tool_calls = "off"         # off, preview, full
+show_thinking = "off"           # off, compact, true
+display_width = 60
+stream_output = false
+stream_interval = "1200ms"
+require_mention = true
+auto_thread = true
+received_files_dir = "received"
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"discord.<bot>"`. |
+| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"discord.<bot>"`. |
+| `allowed_users` | string[] | `[]` | Per-agent allowed Discord user IDs. Empty uses global `[discord] allowed_users`. |
+| `guild_id` | string | `""` | Restrict to this guild. Empty uses global. |
+| `show_tool_calls` | string | `[discord]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
+| `show_thinking` | string | `[discord]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
+| `display_width` | int | `[discord]` | Display width for dividers in Discord messages. |
+| `stream_output` | bool | `[discord]` | Stream model output to Discord in real-time. |
+| `stream_interval` | string | `[discord]` | Duration between Discord message edits during streaming. Default `1200ms`. |
+| `require_mention` | bool | `[discord]` | Require @mention in guild channels. |
+| `auto_thread` | bool | `[discord]` | Create threads for facet sessions. |
+| `received_files_dir` | string | `[discord]` | Save received files to this directory. |
 
 ### Memory (`[[agents.memory.sources]]`)
 

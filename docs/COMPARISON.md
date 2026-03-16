@@ -207,6 +207,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Telegram | ✅ | ✅ | ✅ |
+| Discord | ✅ | ❌ | ❌ |
 | Other popular platforms | ❌ | ✅ | ✅ |
 | Android app | 🔜 coming soon | 🔜 coming soon | ❌ |
 | WebChat UI | ❌ | ✅ Control UI | ❌ |
