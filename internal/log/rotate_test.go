@@ -116,9 +116,9 @@ func TestParseEventTimestamp(t *testing.T) {
 }
 
 func TestRotateFile(t *testing.T) {
-	// Verifies the core rotation logic: old lines are moved to a
-	// gzip archive, recent lines stay in the active file, and corrupt (unparseable)
-	// lines are retained in the active file rather than dropped.
+	// Verifies the core rotation logic: old lines are moved to a gzip archive,
+	// recent lines stay in the active file, and unparseable lines before any
+	// recent content are archived (they predate the retention window).
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
 	logPath := filepath.Join(dir, "test.jsonl")
@@ -142,28 +142,26 @@ func TestRotateFile(t *testing.T) {
 		t.Fatalf("rotateFile: %v", err)
 	}
 
-	// Check active file: should have corrupt line + 2 recent lines.
+	// Check active file: should have 2 recent lines only.
+	// The corrupt line appears before any recent content, so it's archived.
 	data, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read active: %v", err)
 	}
 	kept := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(kept) != 3 {
-		t.Fatalf("kept %d lines, want 3: %v", len(kept), kept)
-	}
-	if kept[0] != corrupt {
-		t.Errorf("kept[0] = %q, want corrupt line", kept[0])
+	if len(kept) != 2 {
+		t.Fatalf("kept %d lines, want 2: %v", len(kept), kept)
 	}
 
-	// Check archive exists and contains 2 old lines.
+	// Check archive contains 2 old lines + 1 corrupt line.
 	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.jsonl.gz"))
 	if len(archives) != 1 {
 		t.Fatalf("expected 1 archive, got %d", len(archives))
 	}
 	archived := readGzip(t, archives[0])
 	archivedLines := strings.Split(strings.TrimSpace(archived), "\n")
-	if len(archivedLines) != 2 {
-		t.Fatalf("archived %d lines, want 2", len(archivedLines))
+	if len(archivedLines) != 3 {
+		t.Fatalf("archived %d lines, want 3", len(archivedLines))
 	}
 }
 
@@ -510,8 +508,9 @@ func TestStartRotationRunsImmediately(t *testing.T) {
 }
 
 func TestRotateFileAllUnparseable(t *testing.T) {
-	// Verifies that when all lines have no parseable
-	// timestamp, nothing is archived and the active file is unchanged.
+	// Verifies that when all lines have no parseable timestamp, they are
+	// archived (since no recent content has been seen, they predate the
+	// retention window) and the active file is left empty.
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
 	logPath := filepath.Join(dir, "test.jsonl")
@@ -524,10 +523,99 @@ func TestRotateFileAllUnparseable(t *testing.T) {
 		t.Fatalf("rotateFile: %v", err)
 	}
 
-	// File should be unchanged — unparseable lines are kept
+	// Active file should be empty — all unparseable lines archived.
 	data, _ := os.ReadFile(logPath)
-	if string(data) != content {
-		t.Errorf("file was modified when all lines are unparseable")
+	if strings.TrimSpace(string(data)) != "" {
+		t.Errorf("active file should be empty, got %q", string(data))
+	}
+
+	// Archive should contain both lines.
+	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.jsonl.gz"))
+	if len(archives) != 1 {
+		t.Fatalf("expected 1 archive, got %d", len(archives))
+	}
+	archived := readGzip(t, archives[0])
+	archivedLines := strings.Split(strings.TrimSpace(archived), "\n")
+	if len(archivedLines) != 2 {
+		t.Fatalf("archived %d lines, want 2", len(archivedLines))
+	}
+}
+
+func TestRotateFileUnparseablePrefixRecentContent(t *testing.T) {
+	// Verifies the production scenario: unparseable lines (tool output,
+	// diagnostics) at the top of the file, followed by recent timestamped
+	// lines. The unparseable prefix is archived while recent lines are kept.
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "foci.log")
+
+	recent := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+
+	lines := []string{
+		`echo "=== Identity ==="`,
+		`whoami`,
+		`id`,
+		recent + " INFO  [main] started",
+		recent + " DEBUG [main] running",
+	}
+	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	// Active file should have only the 2 recent timestamped lines.
+	data, _ := os.ReadFile(logPath)
+	kept := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(kept) != 2 {
+		t.Fatalf("kept %d lines, want 2: %v", len(kept), kept)
+	}
+
+	// Archive should contain the 3 unparseable lines.
+	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.log.gz"))
+	if len(archives) != 1 {
+		t.Fatalf("expected 1 archive, got %d", len(archives))
+	}
+	archived := readGzip(t, archives[0])
+	archivedLines := strings.Split(strings.TrimSpace(archived), "\n")
+	if len(archivedLines) != 3 {
+		t.Fatalf("archived %d lines, want 3: %v", len(archivedLines), archivedLines)
+	}
+}
+
+func TestRotateFileUnparseableAfterRecent(t *testing.T) {
+	// Verifies that unparseable lines AFTER recent content are kept (they
+	// could be multi-line output from recent tool execution).
+	dir := t.TempDir()
+	archiveDir := filepath.Join(dir, "archive")
+	logPath := filepath.Join(dir, "foci.log")
+
+	recent := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339)
+
+	lines := []string{
+		recent + " INFO  [main] started",
+		"some tool output after recent log",
+		recent + " DEBUG [main] running",
+	}
+	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	if err != nil {
+		t.Fatalf("rotateFile: %v", err)
+	}
+
+	// All lines should be kept — unparseable line follows recent content.
+	data, _ := os.ReadFile(logPath)
+	kept := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(kept) != 3 {
+		t.Fatalf("kept %d lines, want 3: %v", len(kept), kept)
+	}
+
+	// No archive should exist.
+	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.log.gz"))
+	if len(archives) != 0 {
+		t.Errorf("unexpected archives: %v", archives)
 	}
 }
 
