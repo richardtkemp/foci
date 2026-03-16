@@ -175,11 +175,16 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
 
-	// Check the text block contains PDF-specific saved path annotation
+	// Check that a text block contains PDF-specific saved path annotation
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	textBlock := userMsg.Content[len(userMsg.Content)-1]
-	if !strings.Contains(textBlock.Text, "[PDF saved to: /tmp/docs/report.pdf]") {
-		t.Errorf("text block should have PDF saved path annotation, got: %q", textBlock.Text)
+	var found bool
+	for _, b := range userMsg.Content {
+		if b.Type == "text" && strings.Contains(b.Text, "[PDF saved to: /tmp/docs/report.pdf]") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no text block with PDF saved path annotation")
 	}
 }
 
@@ -296,14 +301,22 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 		t.Errorf("response = %q", resp)
 	}
 
-	// Check the text block contains the saved path annotation
+	// Check for saved path annotation and user text in separate blocks
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	textBlock := userMsg.Content[len(userMsg.Content)-1]
-	if !strings.Contains(textBlock.Text, "[Image saved to: /tmp/images/test.jpg]") {
-		t.Errorf("text block missing saved path annotation: %q", textBlock.Text)
+	var hasSavedPath, hasUserText bool
+	for _, b := range userMsg.Content {
+		if b.Type == "text" && strings.Contains(b.Text, "[Image saved to: /tmp/images/test.jpg]") {
+			hasSavedPath = true
+		}
+		if b.Type == "text" && strings.Contains(b.Text, "What is this?") {
+			hasUserText = true
+		}
 	}
-	if !strings.Contains(textBlock.Text, "What is this?") {
-		t.Errorf("text block missing user text: %q", textBlock.Text)
+	if !hasSavedPath {
+		t.Error("missing saved path annotation block")
+	}
+	if !hasUserText {
+		t.Error("missing user text block")
 	}
 }
 
@@ -338,11 +351,12 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	}
 	ag.HandleMessageWithAttachments(context.Background(), "test/inosaved/1000000000", []string{"Look"}, images)
 
-	// Text block should NOT contain [Image saved to:] when SavedPath is empty
+	// No block should contain [Image saved to:] when SavedPath is empty
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
-	textBlock := userMsg.Content[len(userMsg.Content)-1]
-	if strings.Contains(textBlock.Text, "[Image saved to:") {
-		t.Errorf("text block should not have saved path annotation when SavedPath is empty: %q", textBlock.Text)
+	for i, b := range userMsg.Content {
+		if b.Type == "text" && strings.Contains(b.Text, "[Image saved to:") {
+			t.Errorf("content[%d] should not have saved path annotation when SavedPath is empty: %q", i, b.Text)
+		}
 	}
 }
 
