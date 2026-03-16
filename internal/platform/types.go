@@ -272,7 +272,7 @@ type RestoreParams struct {
 var ErrSetupBack = errors.New("setup: navigated back")
 
 // SetupWizard is optionally implemented by MessagingProvider to contribute
-// interactive setup steps to `foci setup`.
+// interactive setup steps to `foci first-run`.
 type SetupWizard interface {
 	// SetupFlags returns CLI flag definitions for non-interactive mode.
 	SetupFlags() []SetupFlag

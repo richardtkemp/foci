@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
             echo "Only the install step (user creation, systemd, file ownership)"
             echo "requires root, and you can review the commands before running them."
             echo ""
-            echo "Configuration is handled by the 'foci setup' wizard, which runs"
+            echo "Configuration is handled by the 'foci first-run' wizard, which runs"
             echo "interactively unless env vars are set for non-interactive mode:"
             echo "  FOCI_TELEGRAM_TOKEN   Telegram bot token"
             echo "  FOCI_TELEGRAM_USER    Telegram user ID for allowed_users"
@@ -370,8 +370,8 @@ if $IS_SELF && ! $DRY_RUN; then
     # Config wizard
     if ! $HAS_CONFIG; then
         info "  Launching setup wizard..."
-        eval "\"$SCRIPT_DIR/bin/foci\" setup $SETUP_WIZARD_ARGS"
-        info "  Config written by foci setup"
+        eval "\"$SCRIPT_DIR/bin/foci\" first-run $SETUP_WIZARD_ARGS"
+        info "  Config written by foci first-run"
     fi
 
     # Commit file + changelog

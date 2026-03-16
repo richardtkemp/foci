@@ -40,9 +40,9 @@ fi
 
 run_as_foci cp "$IMAGE_COMMIT_FILE" "$COMMIT_FILE"
 
-# First run: run the setup wizard to generate config
+# First run: run the first-run wizard to generate config
 if [ ! -f "$CONFIG_FILE" ]; then
-	echo "[foci] First run detected — launching setup wizard..."
+	echo "[foci] First run detected — launching first-run wizard..."
 	run_as_foci mkdir -p "$CONFIG_DIR"
 
 	SETUP_ARGS="--config-dir $CONFIG_DIR"
@@ -66,10 +66,10 @@ if [ ! -f "$CONFIG_FILE" ]; then
 		exit 1
 	fi
 
-	echo "[foci] Running: foci setup $SETUP_ARGS"
+	echo "[foci] Running: foci first-run $SETUP_ARGS"
 	# shellcheck disable=SC2086
-	run_as_foci foci setup $SETUP_ARGS
-	echo "[foci] Setup complete — config written to $CONFIG_FILE"
+	run_as_foci foci first-run $SETUP_ARGS
+	echo "[foci] First-run complete — config written to $CONFIG_FILE"
 fi
 
 # ── Harden secrets.toml ──

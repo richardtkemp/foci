@@ -67,7 +67,7 @@ cd foci
 
 ## 3. Run Setup
 
-The setup script creates a system user, builds binaries, sets up systemd, and launches the `foci setup` wizard for interactive configuration:
+The setup script creates a system user, builds binaries, sets up systemd, and launches the `foci first-run` wizard for interactive configuration:
 
 ```bash
 ./setup.sh
@@ -126,7 +126,7 @@ Preview what setup would do without making changes:
 To re-run the setup wizard after initial install (e.g. to reconfigure):
 
 ```bash
-sudo -u foci -g foci-secrets foci setup \
+sudo -u foci -g foci-secrets foci first-run \
     --config-dir /home/foci/config
 ```
 
