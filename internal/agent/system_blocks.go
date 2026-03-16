@@ -86,7 +86,7 @@ func (a *Agent) collectStateDashboard(sessionKey string) string {
 
 	// Todos: "2 open (1 high)"
 	if a.TodoStore != nil {
-		if items, err := a.TodoStore.List(a.AgentID, "open", "", "", "", false, 0); err != nil {
+		if items, err := a.TodoStore.List(a.AgentID, "open", nil, "", "", false, 0); err != nil {
 			a.logger().Warnf("session=%s state dashboard: todos: %v", sessionKey, err)
 		} else if len(items) > 0 {
 			highCount := 0

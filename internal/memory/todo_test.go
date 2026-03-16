@@ -20,7 +20,7 @@ func TestTodoAddAndList(t *testing.T) {
 		t.Errorf("expected id 1, got %d", id)
 	}
 
-	items, err := store.List("agent1", "", "", "", "", false, 0)
+	items, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestTodoDefaultPriority(t *testing.T) {
 
 	store.Add("agent1", "Task with default priority", "", "")
 
-	items, err := store.List("agent1", "", "", "", "", false, 0)
+	items, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestTodoComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	items, err := store.List("agent1", "done", "", "", "", false, 0)
+	items, err := store.List("agent1", "done", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestTodoRemove(t *testing.T) {
 		t.Fatalf("Remove: %v", err)
 	}
 
-	items, err := store.List("agent1", "", "", "", "", false, 0)
+	items, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -122,8 +122,8 @@ func TestTodoAgentIsolation(t *testing.T) {
 	store.Add("agent1", "Agent 1 task", "high", "")
 	store.Add("agent2", "Agent 2 task", "low", "")
 
-	items1, _ := store.List("agent1", "", "", "", "", false, 0)
-	items2, _ := store.List("agent2", "", "", "", "", false, 0)
+	items1, _ := store.List("agent1", "", nil, "", "", false, 0)
+	items2, _ := store.List("agent2", "", nil, "", "", false, 0)
 
 	if len(items1) != 1 || items1[0].Text != "Agent 1 task" {
 		t.Errorf("agent1 items = %v, want 1 item", items1)
@@ -175,9 +175,9 @@ func TestTodoListFilterByStatus(t *testing.T) {
 	_ = id1
 	store.Complete("agent1", id2, "finished")
 
-	open, _ := store.List("agent1", "open", "", "", "", false, 0)
-	done, _ := store.List("agent1", "done", "", "", "", false, 0)
-	all, _ := store.List("agent1", "", "", "", "", false, 0)
+	open, _ := store.List("agent1", "open", nil, "", "", false, 0)
+	done, _ := store.List("agent1", "done", nil, "", "", false, 0)
+	all, _ := store.List("agent1", "", nil, "", "", false, 0)
 
 	if len(open) != 1 {
 		t.Errorf("expected 1 open, got %d", len(open))
@@ -203,7 +203,7 @@ func TestTodoListFilterActive(t *testing.T) {
 	store.Transition("agent1", id3, "dropped", "not needed")
 	store.Transition("agent1", id4, "in_progress", "")
 
-	active, err := store.List("agent1", "active", "", "", "", false, 0)
+	active, err := store.List("agent1", "active", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List active: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestTodoListFilterByPriority(t *testing.T) {
 	store.Add("agent1", "Low task", "low", "")
 
 	// Filter by priority
-	items, err := store.List("agent1", "", "", "high", "", false, 0)
+	items, err := store.List("agent1", "", nil, "high", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with priority: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestTodoListFilterByPriority(t *testing.T) {
 
 	// Filter by priority + status
 	store.Complete("agent1", items[0].ID, "done")
-	open, err := store.List("agent1", "open", "", "high", "", false, 0)
+	open, err := store.List("agent1", "open", nil, "high", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with priority+status: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestTodoListFilterByPriority(t *testing.T) {
 	}
 
 	// No priority filter shows all
-	all, err := store.List("agent1", "", "", "", "", false, 0)
+	all, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestTodoListLimit(t *testing.T) {
 	store.Add("agent1", "Task 3", "low", "")
 	store.Add("agent1", "Task 4", "medium", "")
 
-	items, err := store.List("agent1", "", "", "", "", false, 2)
+	items, err := store.List("agent1", "", nil, "", "", false, 2)
 	if err != nil {
 		t.Fatalf("List with limit: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestTodoListLimit(t *testing.T) {
 		t.Errorf("expected 2 items with limit=2, got %d", len(items))
 	}
 
-	all, err := store.List("agent1", "", "", "", "", false, 0)
+	all, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List without limit: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestTodoPriorityOrdering(t *testing.T) {
 	store.Add("agent1", "High task", "high", "")
 	store.Add("agent1", "Medium task", "medium", "")
 
-	items, _ := store.List("agent1", "open", "", "", "", false, 0)
+	items, _ := store.List("agent1", "open", nil, "", "", false, 0)
 	if len(items) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(items))
 	}
@@ -356,7 +356,7 @@ func TestTodoTags(t *testing.T) {
 	store.Add("agent1", "Regular task", "low", "")
 
 	// Filter by tag
-	items, err := store.List("agent1", "", "background", "", "", false, 0)
+	items, err := store.List("agent1", "", []string{"background"}, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with tag: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestTodoTags(t *testing.T) {
 	}
 
 	// Filter by tag + status
-	items, err = store.List("agent1", "open", "daily", "", "", false, 0)
+	items, err = store.List("agent1", "open", []string{"daily"}, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with tag+status: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestTodoTags(t *testing.T) {
 	}
 
 	// No tag filter shows all
-	items, err = store.List("agent1", "", "", "", "", false, 0)
+	items, err = store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List all: %v", err)
 	}
@@ -420,7 +420,7 @@ func TestTodoListNegatedTag(t *testing.T) {
 	store.Add("agent1", "Regular task", "low", "")
 	store.Add("agent1", "Work task", "medium", "work")
 
-	items, err := store.List("agent1", "", "!background", "", "", false, 0)
+	items, err := store.List("agent1", "", []string{"!background"}, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with negated tag: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestTodoListNegatedPriority(t *testing.T) {
 	store.Add("agent1", "Medium task", "medium", "")
 	store.Add("agent1", "Low task", "low", "")
 
-	items, err := store.List("agent1", "", "", "!low", "", false, 0)
+	items, err := store.List("agent1", "", nil, "!low", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with negated priority: %v", err)
 	}
@@ -457,28 +457,84 @@ func TestTodoListNegatedPriority(t *testing.T) {
 	}
 }
 
-func TestMatchesTagFilterNegated(t *testing.T) {
-	// Verifies that matchesTagFilter with a "!"-prefixed filter correctly negates:
-	// items with the tag are rejected, items without it are accepted.
+func TestMatchesTagFilters(t *testing.T) {
+	// Verifies that matchesTagFilters with single and multiple filters correctly
+	// applies AND logic: all filters must pass for the item to match.
 	tests := []struct {
-		tags   string
-		filter string
-		want   bool
+		tags    string
+		filters []string
+		want    bool
 	}{
-		{"background", "!background", false},
-		{"work", "!background", true},
-		{"background,daily", "!background", false},
-		{"", "!background", true},
-		{"daily", "!background", true},
-		{"background", "background", true},
-		{"work", "background", false},
-		{"", "", true},
+		{"background", []string{"!background"}, false},
+		{"work", []string{"!background"}, true},
+		{"background,daily", []string{"!background"}, false},
+		{"", []string{"!background"}, true},
+		{"daily", []string{"!background"}, true},
+		{"background", []string{"background"}, true},
+		{"work", []string{"background"}, false},
+		{"", nil, true},
+		// Multi-tag AND logic
+		{"foci,bug", []string{"foci", "bug"}, true},
+		{"foci,feature", []string{"foci", "bug"}, false},
+		{"bug", []string{"foci", "bug"}, false},
+		{"foci,bug,daily", []string{"foci", "bug"}, true},
+		// Mixed positive + negated
+		{"work,daily", []string{"work", "!background"}, true},
+		{"work,background", []string{"work", "!background"}, false},
+		// Multiple negated
+		{"daily", []string{"!background", "!work"}, true},
+		{"background", []string{"!background", "!work"}, false},
+		{"work", []string{"!background", "!work"}, false},
 	}
 	for _, tt := range tests {
-		got := matchesTagFilter(tt.tags, tt.filter)
+		got := matchesTagFilters(tt.tags, tt.filters)
 		if got != tt.want {
-			t.Errorf("matchesTagFilter(%q, %q) = %v, want %v", tt.tags, tt.filter, got, tt.want)
+			t.Errorf("matchesTagFilters(%q, %v) = %v, want %v", tt.tags, tt.filters, got, tt.want)
 		}
+	}
+}
+
+func TestTodoListMultipleTags(t *testing.T) {
+	// Verifies that List with multiple tag filters uses AND logic: only items
+	// matching all specified tags are returned.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Both tags", "medium", "foci,bug")
+	store.Add("agent1", "Only foci", "medium", "foci,feature")
+	store.Add("agent1", "Only bug", "medium", "other,bug")
+	store.Add("agent1", "Neither", "medium", "other")
+
+	items, err := store.List("agent1", "", []string{"foci", "bug"}, "", "", false, 0)
+	if err != nil {
+		t.Fatalf("List with multiple tags: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item with both tags, got %d", len(items))
+	}
+	if items[0].Text != "Both tags" {
+		t.Errorf("expected 'Both tags', got %q", items[0].Text)
+	}
+}
+
+func TestTodoListMixedNegatedTags(t *testing.T) {
+	// Verifies that List with a mix of positive and negated tag filters works:
+	// item must have the positive tag AND must not have the negated tag.
+	store := newTestTodoStore(t)
+
+	store.Add("agent1", "Work only", "medium", "work")
+	store.Add("agent1", "Work+BG", "medium", "work,background")
+	store.Add("agent1", "BG only", "medium", "background")
+	store.Add("agent1", "Neither", "medium", "")
+
+	items, err := store.List("agent1", "", []string{"work", "!background"}, "", "", false, 0)
+	if err != nil {
+		t.Fatalf("List with mixed tags: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Text != "Work only" {
+		t.Errorf("expected 'Work only', got %q", items[0].Text)
 	}
 }
 
@@ -647,7 +703,7 @@ func TestTodoUpdatedAtOnAdd(t *testing.T) {
 	id, _ := store.Add("agent1", "Task", "medium", "")
 	after := time.Now().UTC().Truncate(time.Second).Add(time.Second)
 
-	items, _ := store.List("agent1", "", "", "", "", false, 0)
+	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -674,7 +730,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Original", "medium", "")
-	items, _ := store.List("agent1", "", "", "", "", false, 0)
+	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
 
 	time.Sleep(1100 * time.Millisecond)
@@ -684,7 +740,7 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 		t.Fatalf("Edit: %v", err)
 	}
 
-	items, _ = store.List("agent1", "", "", "", "", false, 0)
+	items, _ = store.List("agent1", "", nil, "", "", false, 0)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
@@ -701,7 +757,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Task", "medium", "")
-	items, _ := store.List("agent1", "", "", "", "", false, 0)
+	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
 
 	time.Sleep(1100 * time.Millisecond)
@@ -711,7 +767,7 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	items, _ = store.List("agent1", "done", "", "", "", false, 0)
+	items, _ = store.List("agent1", "done", nil, "", "", false, 0)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 done item, got %d", len(items))
 	}
@@ -783,7 +839,7 @@ func TestTodoSortOrderInProgress(t *testing.T) {
 
 	store.Transition("agent1", id2, "in_progress", "")
 
-	items, err := store.List("agent1", "", "", "", "", false, 0)
+	items, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -810,7 +866,7 @@ func TestTodoSortByCreated(t *testing.T) {
 	id3, _ := store.Add("agent1", "Third task", "high", "")
 
 	// Default: newest first
-	items, err := store.List("agent1", "", "", "", "created", false, 0)
+	items, err := store.List("agent1", "", nil, "", "created", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=created: %v", err)
 	}
@@ -828,7 +884,7 @@ func TestTodoSortByCreated(t *testing.T) {
 	}
 
 	// reverse=true: oldest first
-	items, err = store.List("agent1", "", "", "", "created", true, 0)
+	items, err = store.List("agent1", "", nil, "", "created", true, 0)
 	if err != nil {
 		t.Fatalf("List with sort=created reverse: %v", err)
 	}
@@ -855,7 +911,7 @@ func TestTodoSortByUpdated(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	store.Edit("agent1", id1, "Updated task 1", "", "", false)
 
-	items, err := store.List("agent1", "", "", "", "updated", false, 0)
+	items, err := store.List("agent1", "", nil, "", "updated", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=updated: %v", err)
 	}
@@ -883,7 +939,7 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 	store.Add("agent1", "Medium task", "medium", "")
 
 	// Empty sort parameter should use priority sort
-	items, err := store.List("agent1", "open", "", "", "", false, 0)
+	items, err := store.List("agent1", "open", nil, "", "", false, 0)
 	if err != nil {
 		t.Fatalf("List with empty sort: %v", err)
 	}
@@ -901,7 +957,7 @@ func TestTodoSortByPriorityDefault(t *testing.T) {
 	}
 
 	// Explicit priority sort should also work
-	items2, err := store.List("agent1", "open", "", "", "priority", false, 0)
+	items2, err := store.List("agent1", "open", nil, "", "priority", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=priority: %v", err)
 	}
@@ -929,7 +985,7 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 	id4, _ := store.Add("agent1", "Fourth task", "high", "")
 
 	// sort=created, default direction = newest first
-	items, err := store.List("agent1", "", "", "", "created", false, 0)
+	items, err := store.List("agent1", "", nil, "", "created", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=created: %v", err)
 	}
@@ -969,7 +1025,7 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	store.Edit("agent1", id1, "Updated task 1", "", "", false)
 
 	// List with sort=updated should ignore status and sort purely by updated time (newest first)
-	items, err := store.List("agent1", "", "", "", "updated", false, 0)
+	items, err := store.List("agent1", "", nil, "", "updated", false, 0)
 	if err != nil {
 		t.Fatalf("List with sort=updated: %v", err)
 	}
