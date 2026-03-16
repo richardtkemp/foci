@@ -6,6 +6,7 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,56 @@ import (
 	"strings"
 	"time"
 )
+
+// MarshalRaw marshals v to JSON without HTML-escaping characters like >, <, &.
+// Go's json.Marshal escapes these for HTML safety, but tool call parameters
+// displayed in Discord/Telegram code blocks should show the raw characters.
+func MarshalRaw(v any) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	// Encode appends a newline; trim it for RawMessage compatibility.
+	b := buf.Bytes()
+	return json.RawMessage(bytes.TrimRight(b, "\n")), nil
+}
+
+// UnescapeUnicodeJSON converts JSON unicode escape sequences like \u003e back
+// to their literal characters. Handles the case where json.Marshal has escaped
+// HTML-sensitive characters (>, <, &) that appear in tool call parameters.
+func UnescapeUnicodeJSON(s string) string {
+	var result strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i+5 < len(s) && s[i] == '\\' && s[i+1] == 'u' {
+			hexStr := s[i+2 : i+6]
+			if isHexString(hexStr) {
+				var cp int64
+				if _, err := fmt.Sscanf(hexStr, "%x", &cp); err == nil {
+					result.WriteRune(rune(cp))
+					i += 5
+					continue
+				}
+			}
+		}
+		result.WriteByte(s[i])
+	}
+	return result.String()
+}
+
+// isHexString returns true if s is exactly 4 hex digits.
+func isHexString(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
 
 // ModelInfo holds metadata about an available model from any provider.
 type ModelInfo struct {

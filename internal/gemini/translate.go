@@ -285,7 +285,7 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 		for _, part := range candidate.Content.Parts {
 			if part.FunctionCall != nil {
 				fc := part.FunctionCall
-				inputJSON, _ := json.Marshal(fc.Args)
+				inputJSON, _ := provider.MarshalRaw(fc.Args)
 				id := fc.ID
 				if id == "" {
 					id = randomToolID(fc.Name)
