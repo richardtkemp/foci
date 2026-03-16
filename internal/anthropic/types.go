@@ -33,4 +33,5 @@ var (
 	TextOf        = provider.TextOf
 	NewCustomTool = provider.NewCustomTool
 	NewServerTool = provider.NewServerTool
+	MarshalRaw    = provider.MarshalRaw
 )

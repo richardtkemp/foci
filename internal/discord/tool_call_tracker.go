@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"foci/internal/provider"
+
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -267,9 +269,11 @@ func formatToolCallFull(toolName string, params json.RawMessage, showMode string
 	if maxChars == 0 {
 		maxChars = 450
 	}
-	paramStr := string(params)
+	// Unescape JSON unicode sequences (e.g. \u003e → >) so tool parameters
+	// render cleanly in Discord code blocks.
+	paramStr := provider.UnescapeUnicodeJSON(string(params))
 	var pretty bytes.Buffer
-	if json.Indent(&pretty, params, "", "  ") == nil {
+	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
 		paramStr = pretty.String()
 	}
 	if showMode != "full" && len(paramStr) > maxChars {

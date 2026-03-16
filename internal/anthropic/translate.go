@@ -159,8 +159,9 @@ func contentBlockFromSDK(block sdk.ContentBlockUnion) ContentBlock {
 		}
 	case sdk.ServerToolUseBlock:
 		// Server tool blocks: reconstruct raw JSON for passthrough.
-		raw, _ := json.Marshal(block)
-		inputRaw, _ := json.Marshal(v.Input)
+		// Use MarshalRaw to avoid HTML-escaping >, <, & in tool parameters.
+		raw, _ := MarshalRaw(block)
+		inputRaw, _ := MarshalRaw(v.Input)
 		return ContentBlock{
 			Type:  block.Type,
 			ID:    v.ID,
@@ -170,7 +171,7 @@ func contentBlockFromSDK(block sdk.ContentBlockUnion) ContentBlock {
 		}
 	default:
 		// Unknown block types: preserve as raw JSON for passthrough.
-		raw, _ := json.Marshal(block)
+		raw, _ := MarshalRaw(block)
 		cb := ContentBlock{
 			Type: block.Type,
 			Raw:  raw,

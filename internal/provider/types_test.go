@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -585,6 +586,42 @@ func TestComputeSessionStats_MixedBlocks(t *testing.T) {
 	// 29 / 4 = 7
 	if s.ApproxTokens() != 7 {
 		t.Errorf("ApproxTokens = %d, want 7", s.ApproxTokens())
+	}
+}
+
+func TestMarshalRaw_NoHTMLEscape(t *testing.T) {
+	// Proves that MarshalRaw does not escape HTML-sensitive characters (>, <, &)
+	// unlike json.Marshal which converts them to unicode escape sequences.
+	v := map[string]string{"command": "cat file 2>/dev/null"}
+	raw, err := MarshalRaw(v)
+	if err != nil {
+		t.Fatalf("MarshalRaw: %v", err)
+	}
+	got := string(raw)
+	if strings.Contains(got, `\u003e`) {
+		t.Errorf("MarshalRaw escaped >: %s", got)
+	}
+	if !strings.Contains(got, `>`) {
+		t.Errorf("MarshalRaw missing literal >: %s", got)
+	}
+}
+
+func TestUnescapeUnicodeJSON(t *testing.T) {
+	// Proves that UnescapeUnicodeJSON converts \u003e → >, \u003c → <, \u0026 → &
+	// while leaving other content untouched.
+	tests := []struct {
+		in, want string
+	}{
+		{`cat 2\u003e/dev/null`, `cat 2>/dev/null`},
+		{`\u003chtml\u003e`, `<html>`},
+		{`foo \u0026 bar`, `foo & bar`},
+		{`no escapes here`, `no escapes here`},
+		{`\u00`, `\u00`}, // incomplete sequence left alone
+	}
+	for _, tc := range tests {
+		if got := UnescapeUnicodeJSON(tc.in); got != tc.want {
+			t.Errorf("UnescapeUnicodeJSON(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 

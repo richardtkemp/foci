@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"foci/internal/platform"
+	"foci/internal/provider"
 )
 
 func isPDFMIME(mime string) bool {
@@ -192,7 +193,7 @@ func (b *Bot) formatToolCall(toolName string, params json.RawMessage, showMode s
 		maxChars = 450
 	}
 	// Pretty-print params; truncate only in preview mode
-	paramStr := unescapeUnicodeSequences(string(params))
+	paramStr := provider.UnescapeUnicodeJSON(string(params))
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
 		paramStr = pretty.String()
@@ -422,42 +423,6 @@ func tmuxResultHint(params json.RawMessage, result string) string {
 // sortedKeys returns map keys in sorted order for deterministic fallback.
 func sortedKeys(m map[string]json.RawMessage) []string {
 	return slices.Sorted(maps.Keys(m))
-}
-
-// unescapeUnicodeSequences converts unicode escape sequences like \u003e back to
-// their actual characters. This handles the case where the API returns escaped
-// unicode sequences (e.g., for HTML-sensitive characters like >, &, <).
-func unescapeUnicodeSequences(s string) string {
-	var result strings.Builder
-	for i := 0; i < len(s); i++ {
-		if i+5 < len(s) && s[i:i+2] == `\u` {
-			// Try to parse the 4 hex digits
-			hexStr := s[i+2 : i+6]
-			if isHexString(hexStr) {
-				var codepoint int64
-				if _, err := fmt.Sscanf(hexStr, "%x", &codepoint); err == nil {
-					result.WriteRune(rune(codepoint))
-					i += 5
-					continue
-				}
-			}
-		}
-		result.WriteByte(s[i])
-	}
-	return result.String()
-}
-
-// isHexString returns true if the string contains only valid hex digits.
-func isHexString(s string) bool {
-	if len(s) != 4 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
 }
 
 // unescapeJSONStringLiterals replaces literal \n and \t sequences (as they
