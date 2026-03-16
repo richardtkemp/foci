@@ -21,7 +21,15 @@ Copy the generated URL and open it in your browser to invite the bot.
 
 ## 3. Get Your Discord User ID
 
-Enable **Developer Mode** in Discord (Settings → Advanced → Developer Mode). Right-click your name in any chat and click **Copy User ID**.
+Discord user IDs are numeric snowflakes (e.g. `651783976884895746`), not usernames. Using a username like `"my_name"` instead of the numeric ID will silently reject all messages.
+
+To find your numeric ID:
+
+1. Enable **Developer Mode** in Discord: Settings → Advanced → Developer Mode
+2. Right-click your name in any chat or member list
+3. Click **Copy User ID**
+
+Alternatively, type `\@YourName` in any Discord chat — the escaped mention shows the numeric ID.
 
 ## 4. Configure Foci
 
