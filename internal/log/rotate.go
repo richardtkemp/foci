@@ -127,6 +127,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 
 	archivedLines := 0
 	var archiveFirst, archiveLast time.Time
+	seenRecent := false // have we encountered a line that's within retention?
 	scanner = bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, maxLineSize), maxLineSize)
 
@@ -144,8 +145,19 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 			if ts.After(archiveLast) {
 				archiveLast = ts
 			}
+		} else if !ok && !seenRecent {
+			// Unparseable line before any recent content → archive with old lines.
+			// These are typically non-log output (tool commands, diagnostics) that
+			// predate the current retention window and would otherwise accumulate
+			// permanently since they have no timestamp to age out.
+			_, _ = gzw.Write(line)
+			_, _ = gzw.Write([]byte("\n"))
+			archivedLines++
 		} else {
-			// Recent or unparseable → keep
+			// Recent timestamped line, or unparseable line after recent content → keep
+			if ok {
+				seenRecent = true
+			}
 			_, _ = tmpFile.Write(line)
 			_, _ = tmpFile.Write([]byte("\n"))
 		}
@@ -170,6 +182,13 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	if archivedLines == 0 {
 		_ = os.Remove(tmpArchivePath)
 		return nil
+	}
+
+	// If all archived lines were unparseable (no timestamps), use cutoff
+	// as a reasonable fallback for the archive filename.
+	if archiveFirst.IsZero() {
+		archiveFirst = cutoff
+		archiveLast = cutoff
 	}
 
 	// Replace the source file BEFORE committing the archive. If the source
