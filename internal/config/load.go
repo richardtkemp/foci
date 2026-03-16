@@ -108,27 +108,46 @@ func agentDefinedFields(md toml.MetaData) []map[string]bool {
 	return result
 }
 
-// syncDisplayFields copies agent-level display fields (ShowToolCalls, ShowThinking)
-// to/from Platforms.Telegram so both levels stay in sync.
-func syncDisplayFields(acfg *AgentConfig) {
-	if acfg.Platforms == nil || acfg.Platforms.Telegram == nil {
+// platformDisplayFields is implemented by platform configs that carry display overrides.
+type platformDisplayFields interface {
+	getShowToolCalls() *ToolCallDisplay
+	setShowToolCalls(*ToolCallDisplay)
+	getShowThinking() *ShowThinking
+	setShowThinking(*ShowThinking)
+}
+
+// syncPlatformDisplayFields copies agent-level display fields (ShowToolCalls, ShowThinking)
+// to/from a platform config so both levels stay in sync.
+func syncPlatformDisplayFields(acfg *AgentConfig, pf platformDisplayFields) {
+	if pf == nil {
 		return
 	}
-	tg := acfg.Platforms.Telegram
+	// Forward: agent -> platform (so the bot inherits agent display prefs).
+	if acfg.ShowToolCalls != nil && pf.getShowToolCalls() == nil {
+		pf.setShowToolCalls(acfg.ShowToolCalls)
+	}
+	if acfg.ShowThinking != nil && pf.getShowThinking() == nil {
+		pf.setShowThinking(acfg.ShowThinking)
+	}
+	// Reverse: platform -> agent (so generic code sees platform overrides).
+	if pf.getShowToolCalls() != nil && acfg.ShowToolCalls == nil {
+		acfg.ShowToolCalls = pf.getShowToolCalls()
+	}
+	if pf.getShowThinking() != nil && acfg.ShowThinking == nil {
+		acfg.ShowThinking = pf.getShowThinking()
+	}
+}
 
-	// Forward: agent → platform (so telegram bot inherits agent display prefs).
-	if acfg.ShowToolCalls != nil && tg.ShowToolCalls == nil {
-		tg.ShowToolCalls = acfg.ShowToolCalls
+// syncDisplayFields syncs agent-level display fields with all platform configs.
+func syncDisplayFields(acfg *AgentConfig) {
+	if acfg.Platforms == nil {
+		return
 	}
-	if acfg.ShowThinking != nil && tg.ShowThinking == nil {
-		tg.ShowThinking = acfg.ShowThinking
+	if acfg.Platforms.Telegram != nil {
+		syncPlatformDisplayFields(acfg, acfg.Platforms.Telegram)
 	}
-	// Reverse: platform → agent (so generic code sees platform overrides).
-	if tg.ShowToolCalls != nil && acfg.ShowToolCalls == nil {
-		acfg.ShowToolCalls = tg.ShowToolCalls
-	}
-	if tg.ShowThinking != nil && acfg.ShowThinking == nil {
-		acfg.ShowThinking = tg.ShowThinking
+	if acfg.Platforms.Discord != nil {
+		syncPlatformDisplayFields(acfg, acfg.Platforms.Discord)
 	}
 }
 
@@ -259,6 +278,26 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
 	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
+
+	// Discord global defaults
+	if cfg.Discord.ShowToolCalls == nil {
+		v := ToolCallOff
+		cfg.Discord.ShowToolCalls = &v
+	}
+	if cfg.Discord.ShowThinking == nil {
+		v := ShowThinkingOff
+		cfg.Discord.ShowThinking = &v
+	}
+	setStringDefault(&cfg.Discord.StreamUpdateInterval, "1200ms")
+	setStringDefault(&cfg.Discord.FacetSessionTTL, "60m")
+	setIntDefault(&cfg.Discord.MessageQueueSize, 64)
+	if cfg.Discord.DisplayWidth == nil {
+		v := 60
+		cfg.Discord.DisplayWidth = &v
+	}
+	setBoolDefaultDefined(&cfg.Discord.RequireMention, true, md.IsDefined("discord", "require_mention"))
+	setBoolDefaultDefined(&cfg.Discord.AutoThread, true, md.IsDefined("discord", "auto_thread"))
+	setBoolDefaultDefined(&cfg.Discord.StartupNotify, true, md.IsDefined("discord", "startup_notify"))
 
 	// Apply [defaults] to all agents (agent value > global default > hardcoded).
 	// Uses reflect to iterate DefaultsConfig fields and copy to matching
@@ -534,6 +573,20 @@ func Load(path string) (*Config, error) {
 		if tg.ReceivedFilesDir == "" {
 			tg.ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
 		}
+		// Discord defaults: initialize Platforms.Discord only if discord is configured globally.
+		if len(cfg.Discord.AllowedUsers) > 0 {
+			if cfg.Agents[i].Platforms.Discord == nil {
+				cfg.Agents[i].Platforms.Discord = &DiscordPlatformConfig{}
+			}
+			dc := cfg.Agents[i].Platforms.Discord
+			if dc.Bot == "" {
+				dc.Bot = cfg.Agents[i].ID
+			}
+			if dc.ReceivedFilesDir == "" {
+				dc.ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
+			}
+		}
+
 		// Name default: capitalised ID (e.g. "clutch" → "Clutch")
 		if cfg.Agents[i].Name == "" && cfg.Agents[i].ID != "" {
 			r := []rune(cfg.Agents[i].ID)

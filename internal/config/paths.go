@@ -37,6 +37,25 @@ func ResolveBotToken(botName, botSecret string, secrets SecretGetter) string {
 	return v
 }
 
+// ResolveDiscordToken resolves a Discord bot token by convention.
+// If botSecret is non-empty it is used as the secret key; otherwise "discord.<botName>".
+// Returns "" if botName is empty or the secret is not found.
+func ResolveDiscordToken(botName, botSecret string, secrets SecretGetter) string {
+	if botName == "" {
+		return ""
+	}
+	key := botSecret
+	if key == "" {
+		key = "discord." + botName
+	}
+	v, ok := secrets.Get(key)
+	if !ok {
+		log.Warnf("config", "ResolveDiscordToken(%q): secret %q not found in secrets store", botName, key)
+		return ""
+	}
+	return v
+}
+
 // ResolvePath resolves a path. Absolute paths are returned as-is.
 // Relative paths are resolved against os.UserHomeDir().
 func ResolvePath(p string) string {
@@ -107,10 +126,17 @@ func (c *Config) ResolveAllPaths() {
 	if c.Telegram.ReceivedFilesDir != "" {
 		c.Telegram.ReceivedFilesDir = ResolvePath(c.Telegram.ReceivedFilesDir)
 	}
+	if c.Discord.ReceivedFilesDir != "" {
+		c.Discord.ReceivedFilesDir = ResolvePath(c.Discord.ReceivedFilesDir)
+	}
 	for i := range c.Agents {
 		tg := c.Agents[i].GetTelegramPlatform()
 		if tg != nil && tg.ReceivedFilesDir != "" {
 			tg.ReceivedFilesDir = ResolvePath(tg.ReceivedFilesDir)
+		}
+		dc := c.Agents[i].GetDiscordPlatform()
+		if dc != nil && dc.ReceivedFilesDir != "" {
+			dc.ReceivedFilesDir = ResolvePath(dc.ReceivedFilesDir)
 		}
 	}
 }
