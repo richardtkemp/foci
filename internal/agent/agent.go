@@ -95,7 +95,8 @@ type Agent struct {
 	CompactionIdlePressureStart    string                                 // context % to start ramping (e.g. "70%")
 	CompactionIdlePressureMax      float64                                // max threshold reduction (e.g. 0.15)
 	CompactionManaRefreshThreshold string                                 // trigger mana-refresh when reset this soon (e.g. "15m")
-	CompactionManaRefreshPreserve  *int                                   // messages to preserve in refresh mode (nil = ALL)
+	CompactionManaRefreshPreserve    *int                                 // messages to preserve in refresh mode (nil = use percentage)
+	CompactionManaRefreshPreservePct float64                              // fraction of messages to preserve in refresh mode (0 = default 0.5)
 	TaskListNotifyFunc            HookList[func(string, string)]         // callbacks for task list changes (session key, message)
 	CompactionStartFunc           HookList[func(string, string)]         // callbacks for compaction start (session key, message) — sent immediately, not buffered
 	CompactionNotifyFunc          HookList[func(string, string)]         // callbacks for compaction notifications (session key, message)
