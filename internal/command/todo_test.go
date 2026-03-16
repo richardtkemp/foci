@@ -1092,6 +1092,35 @@ func TestTodoGetPriorityFilter(t *testing.T) {
 	_ = idx
 }
 
+// TestTodoGetNegatedSearch verifies that an all-negated search query like
+// "-android" excludes matching items instead of returning nothing.
+func TestTodoGetNegatedSearch(t *testing.T) {
+	store, idx := newTestTodoStoreWithSearch(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	store.Add(testAgent, "fix login bug in auth", "high", "foci,bug")
+	store.Add(testAgent, "android app crash on start", "medium", "foci,bug")
+	store.Add(testAgent, "update server config", "low", "foci,bug")
+
+	// "-android" should exclude the android item
+	resp, err := cmd.Execute(context.Background(), Request{Args: "get t:foci t:bug / -android"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(resp.Text, "android app") {
+		t.Errorf("should exclude android item: %s", resp.Text)
+	}
+	if !contains(resp.Text, "login bug") {
+		t.Errorf("expected login bug item: %s", resp.Text)
+	}
+	if !contains(resp.Text, "server config") {
+		t.Errorf("expected server config item: %s", resp.Text)
+	}
+
+	_ = idx
+}
+
 // TestTodoGetNoSearchIndex verifies get returns an error when there's no
 // search index and a search query is provided.
 func TestTodoGetNoSearchIndex(t *testing.T) {

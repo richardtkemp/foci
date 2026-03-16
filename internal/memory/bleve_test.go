@@ -743,6 +743,74 @@ func TestBleveTodoEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestBleveTodoAllNegatedQuery(t *testing.T) {
+	// Verifies that an all-negated query like "-android" returns items that
+	// do NOT contain the negated term, instead of returning nothing.
+	idx, _ := testBleveIndex(t)
+
+	now := float64(time.Now().Unix())
+	idx.IndexTodo("agent1", 1, "Fix login bug in auth module", now)
+	idx.IndexTodo("agent1", 2, "Deploy android app to store", now)
+	idx.IndexTodo("agent1", 3, "Update server config", now)
+
+	// "-android" should return items 1 and 3 (not containing "android")
+	hits, err := idx.SearchTodos("agent1", "-android", "", 10)
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("expected 2 hits for -android, got %d", len(hits))
+	}
+	ids := map[int64]bool{}
+	for _, h := range hits {
+		ids[h.TodoID] = true
+	}
+	if ids[2] {
+		t.Error("should exclude todo #2 containing 'android'")
+	}
+	if !ids[1] || !ids[3] {
+		t.Errorf("expected todos #1 and #3, got IDs %v", ids)
+	}
+
+	// Multiple negated terms: "-android -login" should return only item 3
+	hits, err = idx.SearchTodos("agent1", "-android -login", "", 10)
+	if err != nil {
+		t.Fatalf("SearchTodos: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("expected 1 hit for '-android -login', got %d", len(hits))
+	}
+	if hits[0].TodoID != 3 {
+		t.Errorf("expected todo #3, got #%d", hits[0].TodoID)
+	}
+}
+
+func TestAllNegatedTerms(t *testing.T) {
+	// Verifies the allNegatedTerms helper correctly identifies all-negated
+	// queries vs mixed/positive queries.
+	tests := []struct {
+		query string
+		neg   bool
+		terms []string
+	}{
+		{"-android", true, []string{"android"}},
+		{"-foo -bar", true, []string{"foo", "bar"}},
+		{"deploy -android", false, nil},
+		{"deploy", false, nil},
+		{"", false, nil},
+		{"-", false, nil}, // single dash, len < 2
+	}
+	for _, tt := range tests {
+		neg, terms := allNegatedTerms(tt.query)
+		if neg != tt.neg {
+			t.Errorf("allNegatedTerms(%q) neg = %v, want %v", tt.query, neg, tt.neg)
+		}
+		if neg && len(terms) != len(tt.terms) {
+			t.Errorf("allNegatedTerms(%q) terms = %v, want %v", tt.query, terms, tt.terms)
+		}
+	}
+}
+
 func TestBleveTodoSearchIntegration(t *testing.T) {
 	// Create bleve index
 	dir := t.TempDir()

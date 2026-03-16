@@ -390,8 +390,23 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Text query with porter stemming (BM25 handles multi-term boosting)
-	textQuery := bleve.NewQueryStringQuery(queryStr)
+	// Build the text query. If all terms are negated (e.g. "-android"),
+	// bleve's QueryStringQuery returns nothing because there are no positive
+	// terms to match against. Detect this and use MatchAll + BooleanQuery
+	// must-not instead.
+	var textQuery query.Query
+	if neg, terms := allNegatedTerms(queryStr); neg {
+		bq := bleve.NewBooleanQuery()
+		bq.AddMust(bleve.NewMatchAllQuery())
+		for _, term := range terms {
+			mq := bleve.NewMatchQuery(term)
+			mq.SetField("content")
+			bq.AddMustNot(mq)
+		}
+		textQuery = bq
+	} else {
+		textQuery = bleve.NewQueryStringQuery(queryStr)
+	}
 
 	// Filter: source = "todo"
 	sourceQuery := query.NewTermQuery("todo")
@@ -430,6 +445,24 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int)
 		})
 	}
 	return hits, nil
+}
+
+// allNegatedTerms checks whether a query string consists entirely of negated
+// terms (e.g. "-android", "-foo -bar"). Returns true and the bare terms
+// (without "-") if so. Mixed queries like "deploy -android" return false.
+func allNegatedTerms(q string) (bool, []string) {
+	fields := strings.Fields(q)
+	if len(fields) == 0 {
+		return false, nil
+	}
+	var terms []string
+	for _, f := range fields {
+		if !strings.HasPrefix(f, "-") || len(f) < 2 {
+			return false, nil
+		}
+		terms = append(terms, f[1:])
+	}
+	return true, terms
 }
 
 // Search queries the bleve index. sort controls result ordering:
