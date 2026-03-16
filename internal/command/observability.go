@@ -1,52 +1,26 @@
 package command
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"foci/internal/compaction"
 	"foci/internal/display"
+	"foci/internal/log"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
-type apiEntry struct {
-	Timestamp  time.Time `json:"ts"`
-	Session    string    `json:"session"`
-	Model      string    `json:"model"`
-	Input      int       `json:"input"`
-	Output     int       `json:"output"`
-	CacheRead  int       `json:"cache_read"`
-	CacheWrite int       `json:"cache_write"`
-	CostUSD    float64   `json:"cost_usd"`
-	DurationMS int64     `json:"duration_ms"`
-	StopReason string    `json:"stop_reason"`
-	CallType   string    `json:"call_type"`
-}
-
-// categoryCosts computes per-category cost breakdown from API log entries.
-func categoryCosts(entries []apiEntry) (cacheRead, cacheWrite, input, output float64) {
-	type pricing struct{ input, output, cacheRead, cacheWrite float64 }
-	prices := map[string]pricing{
-		"claude-haiku-4-5":  {1.00, 5.00, 0.10, 1.25},
-		"claude-sonnet-4-5": {3.00, 15.00, 0.30, 3.75},
-		"claude-opus-4-6":   {15.00, 75.00, 1.50, 18.75},
-	}
-	mtok := 1_000_000.0
+// categoryCosts computes per-category cost breakdown from API log entries,
+// delegating pricing to modelinfo.Cost.
+func categoryCosts(entries []log.APIEntry) (cacheRead, cacheWrite, input, output float64) {
 	for _, e := range entries {
-		p := prices[e.Model]
-		if p == (pricing{}) {
-			p = prices["claude-haiku-4-5"]
-		}
-		cacheRead += float64(e.CacheRead) / mtok * p.cacheRead
-		cacheWrite += float64(e.CacheWrite) / mtok * p.cacheWrite
-		input += float64(e.Input) / mtok * p.input
-		output += float64(e.Output) / mtok * p.output
+		cacheRead += modelinfo.Cost(e.Model, 0, 0, e.CacheRead, 0)
+		cacheWrite += modelinfo.Cost(e.Model, 0, 0, 0, e.CacheWrite)
+		input += modelinfo.Cost(e.Model, e.Input, 0, 0, 0)
+		output += modelinfo.Cost(e.Model, 0, e.Output, 0, 0)
 	}
 	return
 }
@@ -64,7 +38,7 @@ func CacheCommand() *Command {
 					n = parsed
 				}
 			}
-			entries := readAPILog(cc.APILogPath)
+			entries := log.ReadAPILog(cc.APILogPath)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
@@ -152,14 +126,14 @@ func LastCommand() *Command {
 		Description: "Last API call per agent (or /last <agent>)",
 		Category:    "observability",
 		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			entries := readAPILog(cc.APILogPath)
+			entries := log.ReadAPILog(cc.APILogPath)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
 
 			filter := strings.TrimSpace(req.Args)
 
-			latest := make(map[string]apiEntry)
+			latest := make(map[string]log.APIEntry)
 			var order []string
 			for i := len(entries) - 1; i >= 0; i-- {
 				agent := agentFromSession(entries[i].Session)
@@ -227,7 +201,7 @@ func CostCommand() *Command {
 			}
 		},
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			entries := readAPILog(cc.APILogPath)
+			entries := log.ReadAPILog(cc.APILogPath)
 			if len(entries) == 0 {
 				return Response{Text: "No API calls logged yet."}, nil
 			}
@@ -305,7 +279,7 @@ func ContextCommand() *Command {
 			}
 			info := infoFn(cc)
 
-			entries := readAPILog(cc.APILogPath)
+			entries := log.ReadAPILog(cc.APILogPath)
 			var lastInput, lastCacheRead, lastCacheWrite, lastOutput int
 			for i := len(entries) - 1; i >= 0; i-- {
 				if entries[i].Session == info.SessionKey {
@@ -620,20 +594,3 @@ func countContextTokens(ctx context.Context, cc CommandContext, sk, model string
 	}, nil
 }
 
-func readAPILog(path string) []apiEntry {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = f.Close() }()
-
-	var entries []apiEntry
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var e apiEntry
-		if json.Unmarshal(scanner.Bytes(), &e) == nil {
-			entries = append(entries, e)
-		}
-	}
-	return entries
-}

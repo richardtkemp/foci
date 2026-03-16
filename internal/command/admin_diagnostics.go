@@ -85,7 +85,7 @@ func StatusCommand() *Command {
 				status = "processing"
 			}
 
-			entries := readAPILog(cc.APILogPath)
+			entries := log.ReadAPILog(cc.APILogPath)
 			var sessionCost float64
 			var sessionCalls int
 			var contextTokens int
