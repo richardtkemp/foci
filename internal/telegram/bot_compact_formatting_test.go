@@ -111,6 +111,11 @@ func TestCompactResultHint(t *testing.T) {
 		{"write", "write", `{"path":"f.go","content":"x"}`, "Wrote 42 bytes to f.go", "42 bytes"},
 		{"edit applied", "edit", `{"path":"f.go"}`, "Applied 1 edit to f.go", "Applied 1 edit to f.go"},
 		{"unknown tool", "web_fetch", `{"url":"x"}`, "some content", ""},
+		{"tmux read lines", "tmux", `{"operation":"read","name":"cc-main"}`, "line1\nline2\nline3", "3 lines"},
+		{"tmux read single", "tmux", `{"operation":"read","name":"cc-main"}`, "single line", "1 line"},
+		{"tmux read empty", "tmux", `{"operation":"read","name":"cc-main"}`, "", "(empty)"},
+		{"tmux start", "tmux", `{"operation":"start","name":"cc-main"}`, "Session started: cc-main", "Session started: cc-main"},
+		{"tmux kill", "tmux", `{"operation":"kill","name":"cc-main"}`, "Session killed: cc-main", "Session killed: cc-main"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

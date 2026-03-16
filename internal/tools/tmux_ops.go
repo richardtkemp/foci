@@ -263,6 +263,15 @@ func (inst *tmuxInstance) read(ctx context.Context, name string, lines int, raw 
 		result = content
 	} else if agent := detectTUIAgent(content); agent != "" {
 		result = cleanTUIOutput(content, agent)
+		if strings.TrimSpace(result) == "" {
+			// TUI is likely mid-render — retry once after a brief pause.
+			time.Sleep(100 * time.Millisecond)
+			out, err = inst.runTmux(ctx, "capture-pane", "-t", name, "-p", fmt.Sprintf("-S-%d", lines))
+			if err == nil {
+				content = strings.TrimRight(out, "\n")
+				result = cleanTUIOutput(content, agent)
+			}
+		}
 	} else {
 		result = content
 	}

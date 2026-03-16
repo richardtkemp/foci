@@ -401,6 +401,32 @@ func TestCleanTUIOutput_NoAgent(t *testing.T) {
 	}
 }
 
+func TestCleanTUIOutput_PureChromeEmpty(t *testing.T) {
+	// Verifies that a pane containing only CC TUI chrome (version line,
+	// box-drawing, decorative symbols, status hints) produces an empty
+	// result from cleanTUIOutput. This is the precondition that triggers
+	// the retry path in read().
+	t.Parallel()
+	input := strings.Join([]string{
+		"Claude Code v1.2.3",
+		"╭──────────────────────────╮",
+		"│                          │",
+		"╰──────────────────────────╯",
+		"─────────────────────────",
+		"✻",
+		"▟█▙",
+		"⏵⏵ bypass",
+		"shift+tab to accept",
+		"",
+		"",
+	}, "\n")
+
+	got := cleanTUIOutput(input, "cc")
+	if got != "" {
+		t.Errorf("expected empty result for pure-chrome pane, got:\n%q", got)
+	}
+}
+
 func TestTmuxReadRaw(t *testing.T) {
 	// Verifies that raw=true bypasses TUI cleaning and preserves all content including CC markers, while raw=false (default) applies the cleaning pipeline.
 	t.Parallel()
