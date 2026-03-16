@@ -226,6 +226,7 @@ func TodoCommand() *Command {
 			}
 			args := parseTodoArgs(req.Args)
 			agentID := cc.AgentConfig.ID
+			format := resolveTodoFormat(cc)
 
 			switch args.subcommand {
 			case "new":
@@ -243,13 +244,13 @@ func TodoCommand() *Command {
 			case "show":
 				return todoShowCmd(cc.TodoStore, agentID, args)
 			case "search":
-				return todoSearchCmd(cc.TodoStore, agentID, args)
+				return todoSearchCmd(cc.TodoStore, agentID, args, format)
 			case "rm":
 				return todoRmCmd(cc.TodoStore, agentID, args.ids)
 			case "stats":
 				return todoStatsCmd(cc.TodoStore, agentID, args)
 			default:
-				return todoListCmd(cc.TodoStore, agentID, args)
+				return todoListCmd(cc.TodoStore, agentID, args, format)
 			}
 		},
 		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
@@ -264,8 +265,30 @@ func TodoCommand() *Command {
 	}
 }
 
+// resolveTodoFormat returns the effective todo list format: "table" or "lines".
+// Per-agent overrides global; defaults to "lines".
+func resolveTodoFormat(cc CommandContext) string {
+	if f := cc.AgentConfig.TodoFormat; f != "" {
+		return f
+	}
+	if cc.Config != nil {
+		if f := cc.Config.Defaults.TodoFormat; f != "" {
+			return f
+		}
+	}
+	return "lines"
+}
+
+// formatTodoList formats todo items using the configured format.
+func formatTodoList(items []memory.TodoItem, format string) string {
+	if format == "table" {
+		return tools.FormatTodoTable(items)
+	}
+	return tools.FormatTodoLines(items)
+}
+
 // todoListCmd lists todos with the given filters.
-func todoListCmd(store *memory.TodoStore, agentID string, args todoArgs) (Response, error) {
+func todoListCmd(store *memory.TodoStore, agentID string, args todoArgs, format string) (Response, error) {
 	items, err := store.List(agentID, args.status, args.tag, args.priority, args.sort, args.reverse, args.limit)
 	if err != nil {
 		return Response{}, fmt.Errorf("list todos: %w", err)
@@ -283,7 +306,7 @@ func todoListCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 		return Response{Text: fmt.Sprintf("No %s todos.", label)}, nil
 	}
 	header := fmt.Sprintf("Todos (%d)", len(items))
-	return Response{Text: header + "\n\n" + tools.FormatTodoTable(items)}, nil
+	return Response{Text: header + "\n\n" + formatTodoList(items, format)}, nil
 }
 
 // todoNewCmd creates a new todo item.
@@ -349,7 +372,7 @@ func todoShowCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 }
 
 // todoSearchCmd searches todos by text.
-func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs) (Response, error) {
+func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs, format string) (Response, error) {
 	if args.text == "" {
 		return Response{Text: "Usage: /todo search <query>"}, nil
 	}
@@ -362,7 +385,7 @@ func todoSearchCmd(store *memory.TodoStore, agentID string, args todoArgs) (Resp
 	if len(items) == 0 {
 		return Response{Text: fmt.Sprintf("No todos matching %q.", args.text)}, nil
 	}
-	return Response{Text: fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), tools.FormatTodoTable(items))}, nil
+	return Response{Text: fmt.Sprintf("Search: %q (%d)\n\n%s", args.text, len(items), formatTodoList(items, format))}, nil
 }
 
 // todoRmCmd hard-deletes one or more todos.
