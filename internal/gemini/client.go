@@ -84,7 +84,6 @@ func (c *Client) Endpoint() string {
 
 // SendMessage sends a message to the Gemini API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
-	log.KeySuffix("gemini", c.apiKey)
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
 	modelID := config.StripDeveloperPrefix(req.Model)
 
@@ -107,7 +106,12 @@ func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) 
 		return nil, classifyError(err)
 	}
 
-	return responseFromGenai(resp, modelID)
+	result, err := responseFromGenai(resp, modelID)
+	if err != nil {
+		return nil, err
+	}
+	result.KeySuffix = log.FormatKeySuffix(c.apiKey)
+	return result, nil
 }
 
 // Close releases resources held by the client, including any active caches.
@@ -125,7 +129,6 @@ func (c *Client) HandlesOwnRetries() bool {
 
 // CountTokens returns the input token count for a request.
 func (c *Client) CountTokens(ctx context.Context, req *provider.MessageRequest) (int, error) {
-	log.KeySuffix("gemini", c.apiKey)
 	// Strip developer prefix (e.g., "google/gemini-2.5-flash" → "gemini-2.5-flash")
 	modelID := config.StripDeveloperPrefix(req.Model)
 

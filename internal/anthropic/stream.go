@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"foci/internal/log"
 	"foci/internal/provider"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -86,5 +87,6 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 
 	resp := responseFromSDK(&msg)
 	resp.WireRequest = wireReq
+	resp.KeySuffix = log.FormatKeySuffix(token)
 	return resp, nil
 }

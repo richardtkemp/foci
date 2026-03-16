@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"foci/internal/log"
 )
 
 // tokenResolutionError wraps token resolution failures. These errors should
@@ -101,7 +99,6 @@ func (c *UsageClient) resolveToken() (string, error) {
 	if err != nil {
 		return "", &tokenResolutionError{err}
 	}
-	log.KeySuffix("anthropic-usage", tok)
 	return tok, nil
 }
 

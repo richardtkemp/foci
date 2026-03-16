@@ -73,7 +73,6 @@ func (c *Client) Endpoint() string {
 
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
-	log.KeySuffix("openai", c.apiKey)
 	params := buildParams(req)
 
 	resp, err := c.client.Chat.Completions.New(ctx, params)
@@ -81,7 +80,12 @@ func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) 
 		return nil, classifyError(err)
 	}
 
-	return responseFromOpenAI(resp, req.Model)
+	result, err := responseFromOpenAI(resp, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	result.KeySuffix = log.FormatKeySuffix(c.apiKey)
+	return result, nil
 }
 
 // CountTokens returns an error — OpenAI has no free token counting endpoint.

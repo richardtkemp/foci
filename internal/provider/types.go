@@ -301,6 +301,10 @@ type MessageResponse struct {
 	// WireRequest holds the serialized SDK-level request body (with cache markers).
 	// Populated by transport layer for payload logging. Never persisted.
 	WireRequest json.RawMessage `json:"-"`
+
+	// KeySuffix holds the last 4 chars of the API key used (e.g. "...agAA").
+	// Set by providers when log.DebugLogKeySuffix is true. Never persisted.
+	KeySuffix string `json:"-"`
 }
 
 // TextContent creates a single text content block.
