@@ -181,16 +181,7 @@ func (t *toolCallTracker) notifyRetry(endpoint string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	endpointName := endpoint
-	if strings.Contains(endpoint, "anthropic.com") {
-		endpointName = "Anthropic API"
-	} else if strings.Contains(endpoint, "openrouter") {
-		endpointName = "OpenRouter"
-	} else if strings.Contains(endpoint, "generativelanguage.googleapis.com") {
-		endpointName = "Gemini API"
-	}
-
-	text := fmt.Sprintf("*%s is busy right now, retrying...*", endpointName)
+	text := fmt.Sprintf("*%s is busy right now, retrying...*", endpoint)
 	sent, err := t.bot.session.ChannelMessageSend(t.channelID, text)
 	if err != nil {
 		t.bot.logger().Debugf("send retry notification: %v", err)

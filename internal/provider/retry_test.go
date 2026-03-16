@@ -287,6 +287,40 @@ func TestRetryStreamingClient(t *testing.T) {
 	}
 }
 
+func TestEndpointNameFromURL(t *testing.T) {
+	// Verifies that EndpointNameFromURL extracts a readable name from
+	// various API base URL formats.
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"https://api.openrouter.ai/v1", "Openrouter"},
+		{"https://api.together.xyz/v1", "Together"},
+		{"https://api.groq.com/v1", "Groq"},
+		{"https://generativelanguage.googleapis.com", "Googleapis"},
+		{"https://localhost:8080", "localhost:8080"},
+		{"not-a-url", "not-a-url"},
+	}
+	for _, tt := range tests {
+		got := EndpointNameFromURL(tt.url)
+		if got != tt.want {
+			t.Errorf("EndpointNameFromURL(%q) = %q, want %q", tt.url, got, tt.want)
+		}
+	}
+}
+
+func TestEndpointFromClientFallback(t *testing.T) {
+	// Verifies that endpointFromClient falls back to "API" for clients
+	// that don't implement endpointDescriber.
+	client := &retryMockClient{
+		attempts: &atomic.Int32{},
+	}
+	got := endpointFromClient(client)
+	if got != "API" {
+		t.Errorf("endpointFromClient = %q, want %q", got, "API")
+	}
+}
+
 func TestRetry500DoesNotExtendTo529(t *testing.T) {
 	// Verifies that 500 errors don't trigger phase 2.
 	attempts := &atomic.Int32{}

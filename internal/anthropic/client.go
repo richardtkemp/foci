@@ -8,11 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/provider"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -75,6 +77,14 @@ func (c *Client) SetUseSDK(useSDK bool) {
 // SetBaseURL overrides the API base URL. Must be called before any API requests.
 func (c *Client) SetBaseURL(url string) {
 	c.baseURL = url
+}
+
+// Endpoint returns a human-readable name for this client's API endpoint.
+func (c *Client) Endpoint() string {
+	if strings.Contains(c.baseURL, "anthropic.com") {
+		return "Anthropic API"
+	}
+	return provider.EndpointNameFromURL(c.baseURL)
 }
 
 // ensureSDKClient lazily initializes the SDK client.

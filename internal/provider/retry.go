@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -84,6 +86,37 @@ func notifySuccess(ctx context.Context) {
 	}
 }
 
+// endpointDescriber is an optional interface for clients that can identify
+// their API endpoint by name (e.g. "Anthropic API", "OpenRouter").
+// Used to display which API is busy during retry notifications.
+type endpointDescriber interface {
+	Endpoint() string
+}
+
+// endpointFromClient returns a human-readable endpoint name from a client.
+// Falls back to "API" if the client doesn't implement endpointDescriber.
+func endpointFromClient(client Client) string {
+	if ed, ok := client.(endpointDescriber); ok {
+		return ed.Endpoint()
+	}
+	return "API"
+}
+
+// EndpointNameFromURL extracts a human-readable name from an API base URL.
+// Uses the penultimate domain label: "api.openrouter.ai" -> "Openrouter".
+func EndpointNameFromURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return rawURL
+	}
+	parts := strings.Split(u.Hostname(), ".")
+	if len(parts) >= 2 {
+		name := parts[len(parts)-2]
+		return strings.ToUpper(name[:1]) + name[1:]
+	}
+	return u.Host
+}
+
 // retryableClient is a type-assertion interface for clients that support
 // extended overload retry logic (currently only Anthropic).
 type retryableClient interface {
@@ -107,7 +140,7 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 
 	var lastErr error
 	loopStart := time.Now()
-	endpoint := "API" // generic endpoint name (clients could expose baseURL if needed)
+	endpoint := endpointFromClient(client)
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
@@ -163,7 +196,7 @@ func retryWithOverload(ctx context.Context, rc retryableClient, req *MessageRequ
 	overloadStart := time.Now()
 	recoverCh := rc.WaitForRecovery()
 	var lastErr error
-	endpoint := "API"
+	endpoint := endpointFromClient(rc.(Client))
 
 	for time.Since(overloadStart) < maxDuration {
 		// Notify on first retry only (across all retry phases)
