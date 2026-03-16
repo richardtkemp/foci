@@ -31,6 +31,7 @@ type coreToolsResult struct {
 	tmuxTool       *tools.Tool
 	tmuxClearAll   func()
 	tmuxWatchCount func() int
+	tmuxMigrateKey func(string, string)
 }
 
 // registerCoreTools registers exec, tmux, browser, file I/O, summary, and HTTP tools.
@@ -59,7 +60,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 				tmuxSessionTTL = d
 			}
 		}
-		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
+		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
 		registry.Register(result.tmuxTool)
 	}
 
@@ -400,6 +401,7 @@ func setupPlatformConnections(
 	lastMsgStore *command.LastMessageStore,
 	ttsRepls map[string]string,
 	promptSearchDirs []string,
+	tmuxMigrateKey func(string, string),
 ) platformConnectionResult {
 	acfg := p.acfg
 	var result platformConnectionResult
@@ -443,7 +445,7 @@ func setupPlatformConnections(
 		}
 	}
 
-	wireAgentPlatformCallbacks(ag, acfg, p.cfg, p.plat, p.connMgr, p.sessionIndex)
+	wireAgentPlatformCallbacks(ag, acfg, p.cfg, p.plat, p.connMgr, p.sessionIndex, tmuxMigrateKey)
 
 	return result
 }

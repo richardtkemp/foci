@@ -24,6 +24,7 @@ func wireAgentPlatformCallbacks(
 	plat *platform.Messaging,
 	connMgr platform.ConnectionManager,
 	sessionIndex *session.SessionIndex,
+	tmuxMigrateKey func(string, string),
 ) {
 	// Register ALL platform connections with agent
 	for i, conn := range connMgr.AllForAgent(acfg.ID) {
@@ -134,8 +135,11 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
-	// Session key rotation — update platform caches
+	// Session key rotation — update platform caches and tmux ownership
 	ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
+		if tmuxMigrateKey != nil {
+			tmuxMigrateKey(oldKey, newKey)
+		}
 		chatID := session.ChatIDFromKey(oldKey)
 		if chatID == 0 {
 			return

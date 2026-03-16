@@ -244,6 +244,31 @@ func TestChatIDFromKey(t *testing.T) {
 	}
 }
 
+func TestSessionKeyBase(t *testing.T) {
+	// Proves that SessionKeyBase extracts the stable {agentID}/{type}{id} prefix
+	// regardless of version timestamp, branch suffix, or collision counter.
+	tests := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{name: "root key", key: "main/c123/1700000000", want: "main/c123"},
+		{name: "rotated key", key: "main/c123/1700100000", want: "main/c123"},
+		{name: "branch key", key: "main/c123/1700000000/b1700050000", want: "main/c123"},
+		{name: "independent", key: "main/i1700000000/1700000000", want: "main/i1700000000"},
+		{name: "collision", key: "main/c123/1700000000/b1700050000.1", want: "main/c123"},
+		{name: "empty", key: "", want: ""},
+		{name: "single segment", key: "main", want: "main"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := SessionKeyBase(tt.key); got != tt.want {
+				t.Errorf("SessionKeyBase(%q) = %q, want %q", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChatID(t *testing.T) {
 	// Proves that ChatID() returns the numeric chat ID for 'c'-type sessions and
 	// zero for independent ('i'-type) sessions.
