@@ -431,7 +431,7 @@ func TestTmuxReadRaw(t *testing.T) {
 	// Verifies that raw=true bypasses TUI cleaning and preserves all content including CC markers, while raw=false (default) applies the cleaning pipeline.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-readraw"
 	tmuxSetup(t, name)

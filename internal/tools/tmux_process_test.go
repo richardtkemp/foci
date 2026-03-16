@@ -28,7 +28,7 @@ func TestTmuxKillCleansUpChildProcesses(t *testing.T) {
 
 	orig := tmuxSocketPath
 	tmuxSocketPath = sock
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 	tmuxSocketPath = orig
 
 	t.Parallel()
@@ -244,7 +244,7 @@ func TestTmuxKillCleansUpServer(t *testing.T) {
 
 	orig := tmuxSocketPath
 	tmuxSocketPath = sock
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 	tmuxSocketPath = orig
 
 	t.Parallel()

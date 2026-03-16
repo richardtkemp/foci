@@ -25,7 +25,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist"
 	tmuxSetup(t, name)
@@ -78,7 +78,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with state store - should restore owned sessions
-	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -113,7 +113,7 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	tmuxSocketPath = orig
 	t.Parallel()
@@ -185,7 +185,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("load state: %v", err)
 	}
 
-	_, tool, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
 
 	tmuxSocketPath = orig
 	t.Parallel()
@@ -215,7 +215,7 @@ func TestTmuxNoStateStore(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Create tool without state store (nil)
-	_, tool, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-nostate"
 	tmuxSetup(t, name)
@@ -256,7 +256,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state1: %v", err)
 	}
 
-	_, tool1, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30, 0)
+	_, tool1, _, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-roundtrip"
 	tmuxSetup(t, name)
@@ -288,7 +288,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("load state2: %v", err)
 	}
 
-	_, tool2, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30, 0)
+	_, tool2, _, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30, 0)
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -313,7 +313,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-persist-watch"
 	tmuxSetup(t, name)
@@ -394,7 +394,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, _, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, _, cleanup, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -457,7 +457,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-unwatch-persist"
 	tmuxSetup(t, name)
@@ -519,7 +519,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, cleanup := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, cleanup, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 
 	name := "foci-test-clearall-watch"
 	tmuxSetup(t, name)
@@ -563,6 +563,173 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 }
 
+func TestTmuxOwnsAfterRotation(t *testing.T) {
+	// Proves that owns() returns true when the stored session key has a different
+	// version timestamp (simulating compaction rotation) but the same base key
+	// (agentID/typeID).
+	t.Parallel()
+	tmuxAvailable(t)
+
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+
+	name := "foci-test-owns-rotation"
+	tmuxSetup(t, name)
+
+	oldKey := "agent1/c123/1700000000"
+	newKey := "agent1/c123/1700100000"
+	ctxOld := WithSessionKey(context.Background(), oldKey)
+
+	// Start session with old key
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(ctxOld, params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Read with rotated key should succeed (same base key)
+	ctxNew := WithSessionKey(context.Background(), newKey)
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "read",
+		"name":      name,
+	})
+	if _, err := tool.Execute(ctxNew, params); err != nil {
+		t.Errorf("read with rotated key should succeed: %v", err)
+	}
+
+	// Send with rotated key should succeed
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "send",
+		"name":      name,
+		"keys":      "echo hello",
+	})
+	if _, err := tool.Execute(ctxNew, params); err != nil {
+		t.Errorf("send with rotated key should succeed: %v", err)
+	}
+
+	// Kill with rotated key should succeed
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "kill",
+		"name":      name,
+	})
+	if _, err := tool.Execute(ctxNew, params); err != nil {
+		t.Errorf("kill with rotated key should succeed: %v", err)
+	}
+}
+
+func TestTmuxListAfterRotation(t *testing.T) {
+	// Proves that list shows sessions owned by a previous version of the same
+	// session key (same base, different version timestamp) and marks them as
+	// "(prev session)" in the OWNER column.
+	t.Parallel()
+	tmuxAvailable(t)
+
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+
+	name := "foci-test-list-rotation"
+	tmuxSetup(t, name)
+
+	oldKey := "agent1/c456/1700000000"
+	newKey := "agent1/c456/1700100000"
+	ctxOld := WithSessionKey(context.Background(), oldKey)
+
+	// Start session with old key
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+	})
+	if _, err := tool.Execute(ctxOld, params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// List with rotated key should show the session
+	ctxNew := WithSessionKey(context.Background(), newKey)
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation": "list",
+	})
+	result, err := tool.Execute(ctxNew, params)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(result.Text, name) {
+		t.Errorf("list should show session %s, got: %s", name, result.Text)
+	}
+	if !strings.Contains(result.Text, "prev session") {
+		t.Errorf("list should show '(prev session)' indicator, got: %s", result.Text)
+	}
+}
+
+func TestTmuxMigrateSessionKey(t *testing.T) {
+	// Proves that MigrateSessionKey updates both owned and watched maps,
+	// persisting the changes so they survive restart.
+	t.Parallel()
+	tmuxAvailable(t)
+
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	store := state.New(stateFile)
+	if err := store.Load(); err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+
+	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
+	_, tool, _, migrate := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+
+	name := "foci-test-migrate"
+	tmuxSetup(t, name)
+
+	oldKey := "agent1/c789/1700000000"
+	newKey := "agent1/c789/1700100000"
+	ctxOld := WithSessionKey(context.Background(), oldKey)
+
+	// Start session with old key, then add a watch
+	params, _ := json.Marshal(map[string]interface{}{
+		"operation": "start",
+		"name":      name,
+		"command":   "sleep 60",
+		"watch":     false,
+	})
+	if _, err := tool.Execute(ctxOld, params); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	params, _ = json.Marshal(map[string]interface{}{
+		"operation":         "watch",
+		"name":              name,
+		"threshold_seconds": 30,
+	})
+	if _, err := tool.Execute(ctxOld, params); err != nil {
+		t.Fatalf("watch: %v", err)
+	}
+
+	// Migrate session key
+	migrate(oldKey, newKey)
+
+	// Verify owned map updated
+	var owned map[string]string
+	if !store.Get("tmux:test-agent", &owned) {
+		t.Fatal("owned sessions not found in state")
+	}
+	if owned[name] != newKey {
+		t.Errorf("owned[%s] = %q, want %q", name, owned[name], newKey)
+	}
+
+	// Verify watches updated
+	var watches []persistedWatch
+	if !store.Get("tmux:test-agent:watches", &watches) {
+		t.Fatal("watches not found in state")
+	}
+	if len(watches) != 1 {
+		t.Fatalf("watches = %d, want 1", len(watches))
+	}
+	if watches[0].AgentSessionKey != newKey {
+		t.Errorf("watch agent_session_key = %q, want %q", watches[0].AgentSessionKey, newKey)
+	}
+}
+
 func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	// Verifies that after unwatching and restarting, the session is not restored into the new instance's watch set, confirming the unwatch is durable.
 	t.Parallel()
@@ -575,7 +742,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool1, cleanup1 := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
@@ -625,7 +792,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("reload state: %v", err)
 	}
 
-	_, tool2, cleanup2 := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30, 0)
+	_, tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30, 0)
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch

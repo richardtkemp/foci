@@ -38,8 +38,9 @@ type agentInstance struct {
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
 	promptSearchDirs  []string         // directories to search for prompt files
-	tmuxClearAll      func()           // clears tmux tool state (watches, owned sessions)
-	tmuxWatchCount    func() int       // returns number of active tmux watches
+	tmuxClearAll      func()               // clears tmux tool state (watches, owned sessions)
+	tmuxWatchCount    func() int           // returns number of active tmux watches
+	tmuxMigrateKey    func(string, string) // updates tmux owned/watched maps on session key rotation
 	webhooks          map[string]string // hook ID → prompt path (merged from global + per-agent)
 	kaRunner          *periodic.Runner  // keepalive & background work timer (nil if disabled)
 	mcpManager        *mcpkg.Manager    // nil if no MCP servers configured
@@ -269,7 +270,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Platform connections
 	if p.plat != nil {
-		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, ttsRepls, promptSearchDirs)
+		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, ttsRepls, promptSearchDirs, coreResult.tmuxMigrateKey)
 		defaultSessionKeyFn = platResult.defaultSessionKeyFn
 		configureFacet = platResult.configureFacetFn
 		displayDefaultsFn = platResult.displayDefaultsFn
@@ -298,6 +299,7 @@ func setupAgent(p setupParams) *agentInstance {
 		webhooks:          mergeWebhooks(p.cfg.Defaults.Webhooks, acfg.Webhooks),
 		tmuxClearAll:      coreResult.tmuxClearAll,
 		tmuxWatchCount:    coreResult.tmuxWatchCount,
+		tmuxMigrateKey:    coreResult.tmuxMigrateKey,
 		mcpManager:        mcpMgr,
 	}
 }

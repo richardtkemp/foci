@@ -203,6 +203,17 @@ func ChatIDFromKey(key string) int64 {
 	return 0
 }
 
+// SessionKeyBase extracts the stable {agentID}/{type}{id} prefix from a session
+// key string. This portion is invariant across compaction (version rotation) and
+// branching, making it suitable for ownership comparisons.
+func SessionKeyBase(key string) string {
+	parts := strings.SplitN(key, "/", 3)
+	if len(parts) < 2 {
+		return key
+	}
+	return parts[0] + "/" + parts[1]
+}
+
 // BranchFromSession creates a branch child key from a parent session key string.
 func BranchFromSession(parentKey string) (string, error) {
 	parent, err := ParseSessionKey(parentKey)

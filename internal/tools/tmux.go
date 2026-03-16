@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/session"
 	"foci/internal/state"
 )
 
@@ -79,7 +80,7 @@ type tmuxInstance struct {
 // sessionTTL sets the auto-kill TTL for idle tmux sessions (0 disables).
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (func() int, *Tool, func()) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (func() int, *Tool, func(), func(string, string)) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
 	}
@@ -227,7 +228,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			return inst.execute(ctx, params)
 		},
-	}, inst.ClearAll
+	}, inst.ClearAll, inst.MigrateSessionKey
 }
 
 // WatchCount returns the number of actively watched tmux sessions.
@@ -302,7 +303,35 @@ func (inst *tmuxInstance) owns(name, sessionKey string) bool {
 	if storedKey == "" && sessionKey == "" {
 		return true
 	}
-	return storedKey == sessionKey
+	return session.SessionKeyBase(storedKey) == session.SessionKeyBase(sessionKey)
+}
+
+// MigrateSessionKey updates all owned and watched entries that reference oldKey
+// to newKey. Called when compaction rotates the session key so that ownership
+// and watch delivery stay current.
+func (inst *tmuxInstance) MigrateSessionKey(oldKey, newKey string) {
+	inst.mu.Lock()
+	defer inst.mu.Unlock()
+	ownedChanged := false
+	for name, sk := range inst.owned {
+		if sk == oldKey {
+			inst.owned[name] = newKey
+			ownedChanged = true
+		}
+	}
+	if ownedChanged {
+		inst.persistOwned()
+	}
+	watchChanged := false
+	for _, ws := range inst.watched {
+		if ws.agentSessionKey == oldKey {
+			ws.agentSessionKey = newKey
+			watchChanged = true
+		}
+	}
+	if watchChanged {
+		inst.persistWatches()
+	}
 }
 
 // persistOwned saves the owned sessions map to the state store.
