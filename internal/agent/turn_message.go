@@ -96,13 +96,20 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: stateBlock})
 	}
 
-	// Primary user text with annotations
+	// Mana restore notification and attachment paths as separate blocks.
+	if manaRestoreNote != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: manaRestoreNote})
+	}
+	if attachmentPaths != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: attachmentPaths})
+	}
+
+	// Primary user text
 	userText := userMessage
 	if duplicateMessages && isUserTrigger(trigger) {
 		userText = userMessage + "\n\n" + userMessage
 	}
-	msgBody := manaRestoreNote + attachmentPaths + userText
-	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: msgBody})
+	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: userText})
 
 	// Follow-up texts from batched messages
 	for _, t := range texts[1:] {
