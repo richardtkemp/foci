@@ -292,3 +292,49 @@ func TestSuggestMemoryDir(t *testing.T) {
 		t.Errorf("suggestMemoryDir(\"\") = %q, want empty", got)
 	}
 }
+
+// Verifies backupIfExists renames an existing file to *.old.<timestamp>
+// and returns "" for non-existent files.
+func TestBackupIfExists(t *testing.T) {
+	dir := t.TempDir()
+
+	// Non-existent file: no backup, no error.
+	backup, err := backupIfExists(filepath.Join(dir, "missing.toml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if backup != "" {
+		t.Errorf("expected empty backup path, got %q", backup)
+	}
+
+	// Existing file: should be renamed.
+	path := filepath.Join(dir, "foci.toml")
+	if err := os.WriteFile(path, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	backup, err = backupIfExists(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if backup == "" {
+		t.Fatal("expected non-empty backup path")
+	}
+	if !strings.Contains(backup, ".old.") {
+		t.Errorf("backup path %q missing .old. segment", backup)
+	}
+
+	// Original path should no longer exist.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("original file should not exist after backup")
+	}
+
+	// Backup file should contain original content.
+	data, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(data) != "original" {
+		t.Errorf("backup content = %q, want original", data)
+	}
+}
