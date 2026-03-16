@@ -323,11 +323,11 @@ func todoResultHint(params json.RawMessage, result string) string {
 			return firstLine[i:]
 		}
 	case "list", "search":
-		// Count items by counting lines (each item is one line)
+		// Count items by counting dividers (items separated by \n---\n)
 		if strings.HasPrefix(firstLine, "No ") {
 			return "0 items"
 		}
-		n := strings.Count(result, "\n") + 1
+		n := strings.Count(result, "\n---\n") + 1
 		if n == 1 {
 			return "1 item"
 		}

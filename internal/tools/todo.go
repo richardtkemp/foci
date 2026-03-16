@@ -124,48 +124,79 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	}
 }
 
-// FormatTodoLine formats a single todo item as a markdown list entry.
+// FormatTodoLine formats a single todo item as a markdown line.
 func FormatTodoLine(item memory.TodoItem) string {
-	marker := "[ ]"
-	switch item.Status {
-	case "in_progress":
-		marker = "[>]"
-	case "done":
-		marker = "[x]"
-	case "dropped":
-		marker = "[-]"
-	}
+	return formatTodoLineOpts(item, true)
+}
+
+func formatTodoLineOpts(item memory.TodoItem, showMarker bool) string {
 	pri := item.Priority
 	if pri == "medium" {
 		pri = "med"
 	}
-	var parts []string
-	parts = append(parts, fmt.Sprintf("- **#%d** %s %s `%s`", item.ID, marker, item.Text, pri))
+	// First line: metadata (ID, marker, priority, tags, age).
+	var meta []string
+	if showMarker {
+		marker := "[ ]"
+		switch item.Status {
+		case "in_progress":
+			marker = "[>]"
+		case "done":
+			marker = "[x]"
+		case "dropped":
+			marker = "[-]"
+		}
+		meta = append(meta, fmt.Sprintf("**#%d** %s `%s`", item.ID, marker, pri))
+	} else {
+		meta = append(meta, fmt.Sprintf("**#%d** `%s`", item.ID, pri))
+	}
 	if item.Tags != "" {
+		var tags []string
 		for _, t := range strings.Split(item.Tags, ",") {
 			t = strings.TrimSpace(t)
 			if t != "" {
-				parts = append(parts, fmt.Sprintf("`%s`", t))
+				tags = append(tags, t)
 			}
 		}
+		if len(tags) > 0 {
+			meta = append(meta, fmt.Sprintf("`%s`", strings.Join(tags, "/")))
+		}
 	}
-	line := strings.Join(parts, " ")
+	line := strings.Join(meta, " ")
 	ts := formatTodoAge(item)
 	if (item.Status == "done" || item.Status == "dropped") && item.CloseReason != "" {
 		line += fmt.Sprintf(" — *%s — %s*", ts, item.CloseReason)
 	} else {
 		line += fmt.Sprintf(" — *%s*", ts)
 	}
+	// Second line: description text.
+	line += "\n" + item.Text
 	return line
 }
 
-// FormatTodoLines formats a slice of todo items, one per line.
+// FormatTodoLines formats a slice of todo items, separated by divider lines.
+// Status markers are omitted when all items share the same status.
 func FormatTodoLines(items []memory.TodoItem) string {
+	showMarker := !allSameStatus(items)
 	lines := make([]string, len(items))
 	for i, item := range items {
-		lines[i] = FormatTodoLine(item)
+		lines[i] = formatTodoLineOpts(item, showMarker)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n---\n")
+}
+
+// allSameStatus returns true if all items have the same status.
+func allSameStatus(items []memory.TodoItem) bool {
+	if len(items) <= 1 {
+		return true
+	}
+	s := items[0].Status
+	for _, item := range items[1:] {
+		if item.Status != s {
+			return false
+		}
+	}
+	return true
 }
 
 // FormatTodoTable formats a slice of todo items as a markdown table.
