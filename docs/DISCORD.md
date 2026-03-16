@@ -28,9 +28,6 @@ To find your numeric ID:
 1. Enable **Developer Mode** in Discord: Settings → Advanced → Developer Mode
 2. Right-click your name in any chat or member list
 3. Click **Copy User ID**
-
-Alternatively, type `\@YourName` in any Discord chat — the escaped mention shows the numeric ID.
-
 ## 4. Configure Foci
 
 Add to `foci.toml`:
