@@ -449,6 +449,121 @@ func TestBrowserFillNoRefOrFields(t *testing.T) {
 	}
 }
 
+func TestBrowserFillPreservesFullSnapshotRefs(t *testing.T) {
+	// Verifies that after a fill (which triggers a scoped snapshot), refs from
+	// the prior full snapshot remain valid and can be used for subsequent actions
+	// like click. This is the core DOM-stamped-refs guarantee.
+	skipIfNoBrowser(t)
+
+	srv := testHTMLServer(t, `<html><body>
+		<form>
+			<label for="name">Name</label>
+			<input id="name" type="text" />
+			<button type="button" onclick="document.getElementById('out').textContent='clicked'">Submit</button>
+		</form>
+		<div id="out"></div>
+	</body></html>`)
+
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	// Navigate — produces a full snapshot with stamped refs
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// Capture the button ref from the full snapshot
+	buttonRef := extractRef(t, result.Text, "button")
+	if buttonRef == "" {
+		t.Fatal("could not find button ref in full snapshot")
+	}
+	textboxRef := extractRef(t, result.Text, "textbox")
+	if textboxRef == "" {
+		t.Fatal("could not find textbox ref in full snapshot")
+	}
+
+	// Fill the textbox — triggers scoped snapshot (should NOT invalidate refs)
+	params = marshalParams(t, map[string]any{
+		"action": "fill", "ref": textboxRef, "value": "Alice",
+	})
+	_, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+
+	// Click the button using the original full-snapshot ref
+	params = marshalParams(t, map[string]any{
+		"action": "click", "ref": buttonRef, "element": "Submit button",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("click: %v", err)
+	}
+
+	// The click should succeed (not "Error") and the onclick should fire
+	if strings.Contains(result.Text, "Error") {
+		t.Errorf("click with pre-fill ref failed: %s", result.Text)
+	}
+	if !strings.Contains(result.Text, "clicked") {
+		t.Error("button onclick did not fire — ref from full snapshot was not resolved")
+	}
+}
+
+func TestBrowserScopedSnapshotShowsOriginalRefs(t *testing.T) {
+	// Verifies that the scoped snapshot returned after a fill action shows
+	// refs from the original full snapshot generation (e.g. s1e*), not a new
+	// generation (s2e*). This confirms DOM-stamped refs are read, not generated.
+	skipIfNoBrowser(t)
+
+	srv := testHTMLServer(t, `<html><body>
+		<form>
+			<label for="email">Email</label>
+			<input id="email" type="text" />
+			<button type="submit">Go</button>
+		</form>
+	</body></html>`)
+
+	mgr := testBrowserManager(t)
+	tool := NewBrowserTool(mgr)
+
+	// Navigate — full snapshot, generation 1
+	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("navigate: %v", err)
+	}
+
+	// All refs should be s1e*
+	if !strings.Contains(result.Text, "s1e") {
+		t.Fatalf("expected s1e refs in full snapshot, got:\n%s", result.Text)
+	}
+
+	textboxRef := extractRef(t, result.Text, "textbox")
+	if textboxRef == "" {
+		t.Fatal("could not find textbox ref")
+	}
+
+	// Fill — triggers scoped snapshot
+	params = marshalParams(t, map[string]any{
+		"action": "fill", "ref": textboxRef, "value": "test@example.com",
+	})
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("fill: %v", err)
+	}
+
+	// Scoped snapshot should still show s1e* refs (stamped by full snapshot)
+	if !strings.Contains(result.Text, "s1e") {
+		t.Errorf("scoped snapshot should contain s1e refs, got:\n%s", result.Text)
+	}
+	// Should NOT contain s2e* refs (would indicate a new generation)
+	if strings.Contains(result.Text, "s2e") {
+		t.Errorf("scoped snapshot should NOT contain s2e refs (new generation), got:\n%s", result.Text)
+	}
+}
+
 // extractAllRefs finds all ref strings in the snapshot text near a given
 // role keyword. Returns all matching refs.
 func extractAllRefs(t *testing.T, snapshot, roleKeyword string) []string {

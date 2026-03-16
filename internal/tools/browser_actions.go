@@ -59,7 +59,7 @@ func withScopedSnapshot(mgr *BrowserManager, result string, refs []string) ToolR
 		return withAutoSnapshot(mgr, result)
 	}
 
-	scopedText, err := buildScopedSnapshot(page, el, mgr)
+	scopedText, err := buildScopedSnapshot(page, el)
 	if err != nil {
 		return withAutoSnapshot(mgr, result)
 	}
@@ -68,26 +68,22 @@ func withScopedSnapshot(mgr *BrowserManager, result string, refs []string) ToolR
 }
 
 // buildScopedSnapshot captures an ARIA snapshot rooted at the closest <form>
-// ancestor of el. If no form is found, walks up 3 levels as a fallback.
-// Returns the formatted snapshot text.
-func buildScopedSnapshot(page *rod.Page, el *rod.Element, mgr *BrowserManager) (string, error) {
-	// Inject snapshot JS and capture scoped snapshot
+// ancestor of el, reading DOM-stamped refs from the prior full snapshot instead
+// of generating new positional IDs. This preserves ref stability — the agent
+// can keep using refs from the full snapshot after a scoped fill.
+// If no form is found, walks up 3 levels as a fallback.
+func buildScopedSnapshot(page *rod.Page, el *rod.Element) (string, error) {
 	if err := injectSnapshotJS(page); err != nil {
 		return "", fmt.Errorf("inject snapshot JS: %w", err)
 	}
 
 	// Find the closest <form> ancestor (or walk up 3 levels) and store
-	// it on window so AriaSnapshot can reference it.
+	// it on window so ScopedAriaSnapshot can reference it.
 	if _, err := el.Eval(storeScopeRootJS); err != nil {
 		return "", fmt.Errorf("store scope root: %w", err)
 	}
 
-	mgr.mu.Lock()
-	mgr.generation++
-	gen := mgr.generation
-	mgr.mu.Unlock()
-
-	snapResult, err := page.Eval(browserjs.AriaSnapshot, "window.__fociScopeRoot", "({ref: true})")
+	snapResult, err := page.Eval(browserjs.ScopedAriaSnapshot, "window.__fociScopeRoot", "({ref: true})")
 	if err != nil {
 		return "", fmt.Errorf("capture scoped snapshot: %w", err)
 	}
@@ -107,11 +103,6 @@ func buildScopedSnapshot(page *rod.Page, el *rod.Element, mgr *BrowserManager) (
 		return "", fmt.Errorf("get page info: %w", err)
 	}
 
-	// Store as the latest snapshot so refs from it can be used
-	snap := &Snapshot{
-		frames:     []*rod.Page{page},
-		generation: gen,
-	}
 	lang := snapshotLang(page, yamlBytes)
 
 	var b strings.Builder
@@ -122,13 +113,7 @@ func buildScopedSnapshot(page *rod.Page, el *rod.Element, mgr *BrowserManager) (
 	b.WriteString(strings.TrimSpace(string(yamlBytes)))
 	b.WriteString("\n```\n")
 
-	snap.text = b.String()
-
-	mgr.mu.Lock()
-	mgr.snapshot = snap
-	mgr.mu.Unlock()
-
-	return snap.text, nil
+	return b.String(), nil
 }
 
 // storeScopeRootJS finds the closest <form> ancestor of the element (or walks
