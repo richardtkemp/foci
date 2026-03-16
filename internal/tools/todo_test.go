@@ -207,7 +207,7 @@ func TestTodoToolGet(t *testing.T) {
 	if !strings.Contains(result, "`high`") {
 		t.Errorf("result should contain priority, got: %s", result)
 	}
-	if !strings.Contains(result, "`urgent`") {
+	if !strings.Contains(result, "urgent") {
 		t.Errorf("result should contain tag, got: %s", result)
 	}
 }
@@ -543,13 +543,13 @@ func TestTodoToolListWithSort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list with sort=created: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) < 1 {
-		t.Fatal("expected at least one line in result")
+	items := strings.Split(strings.TrimSpace(result), "\n---\n")
+	if len(items) < 1 {
+		t.Fatal("expected at least one item in result")
 	}
-	// First line should be the newest (Third).
-	if !strings.Contains(lines[0], "Third") {
-		t.Errorf("first line should contain Third (newest), got: %s", lines[0])
+	// First item should be the newest (Third).
+	if !strings.Contains(items[0], "Third") {
+		t.Errorf("first item should contain Third (newest), got: %s", items[0])
 	}
 
 	// Test sort by created with reverse=true (oldest first)
@@ -562,9 +562,9 @@ func TestTodoToolListWithSort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list with sort=created reverse: %v", err)
 	}
-	lines = strings.Split(strings.TrimSpace(result), "\n")
-	if !strings.Contains(lines[0], "First") {
-		t.Errorf("first line should contain First (oldest), got: %s", lines[0])
+	items = strings.Split(strings.TrimSpace(result), "\n---\n")
+	if !strings.Contains(items[0], "First") {
+		t.Errorf("first item should contain First (oldest), got: %s", items[0])
 	}
 
 	// Test sort by updated (edit one task to make it most recent)
@@ -578,13 +578,13 @@ func TestTodoToolListWithSort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list with sort=updated: %v", err)
 	}
-	lines = strings.Split(strings.TrimSpace(result), "\n")
-	if len(lines) < 1 {
-		t.Fatal("expected at least one line in result")
+	items = strings.Split(strings.TrimSpace(result), "\n---\n")
+	if len(items) < 1 {
+		t.Fatal("expected at least one item in result")
 	}
-	// First line should contain the updated task (newest)
-	if !strings.Contains(lines[0], "Updated First") {
-		t.Errorf("first line should contain Updated First (newest), got: %s", lines[0])
+	// First item should contain the updated task (newest)
+	if !strings.Contains(items[0], "Updated First") {
+		t.Errorf("first item should contain Updated First (newest), got: %s", items[0])
 	}
 }
 
