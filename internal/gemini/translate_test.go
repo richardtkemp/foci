@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -472,6 +473,66 @@ func TestResponseFromGenai_Thinking(t *testing.T) {
 	}
 	if result.Content[1].Type != "text" {
 		t.Errorf("type[1] = %q, want text", result.Content[1].Type)
+	}
+}
+
+func TestThoughtSignatureRoundTrip(t *testing.T) {
+	// Proves that ThoughtSignature on thinking and function call parts is preserved
+	// through response→provider→request conversion. Gemini requires this signature
+	// to be replayed on subsequent turns; missing it causes a 400 error.
+	sig := []byte("opaque-signature-bytes-from-gemini")
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	// Simulate a Gemini response with ThoughtSignature on both thinking and tool_use parts.
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{
+						{Text: "thinking...", Thought: true, ThoughtSignature: sig},
+						{FunctionCall: &genai.FunctionCall{
+							Name: "todo",
+							Args: map[string]any{"task": "test"},
+							ID:   "call_1",
+						}, ThoughtSignature: sig},
+					},
+				},
+				FinishReason: genai.FinishReasonStop,
+			},
+		},
+	}
+
+	result, err := responseFromGenai(resp, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("responseFromGenai error: %v", err)
+	}
+
+	// Verify signatures captured on provider blocks.
+	if result.Content[0].Signature != sigB64 {
+		t.Errorf("thinking signature = %q, want %q", result.Content[0].Signature, sigB64)
+	}
+	if result.Content[1].Signature != sigB64 {
+		t.Errorf("tool_use signature = %q, want %q", result.Content[1].Signature, sigB64)
+	}
+
+	// Round-trip: convert provider blocks back to Gemini parts.
+	msgs := []provider.Message{
+		{Role: "assistant", Content: result.Content},
+	}
+	contents := messagesToGenai(msgs)
+	if len(contents) != 1 {
+		t.Fatalf("contents = %d, want 1", len(contents))
+	}
+
+	parts := contents[0].Parts
+	if len(parts) != 2 {
+		t.Fatalf("parts = %d, want 2", len(parts))
+	}
+	if string(parts[0].ThoughtSignature) != string(sig) {
+		t.Errorf("thinking ThoughtSignature = %v, want %v", parts[0].ThoughtSignature, sig)
+	}
+	if string(parts[1].ThoughtSignature) != string(sig) {
+		t.Errorf("tool_use ThoughtSignature = %v, want %v", parts[1].ThoughtSignature, sig)
 	}
 }
 

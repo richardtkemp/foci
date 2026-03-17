@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -55,23 +56,31 @@ func messagesToGenai(msgs []provider.Message) []*genai.Content {
 				parts = append(parts, &genai.Part{Text: block.Text})
 
 			case "thinking":
-				parts = append(parts, &genai.Part{
+				p := &genai.Part{
 					Text:    block.Thinking,
 					Thought: true,
-				})
+				}
+				if block.Signature != "" {
+					p.ThoughtSignature, _ = base64.StdEncoding.DecodeString(block.Signature)
+				}
+				parts = append(parts, p)
 
 			case "tool_use":
 				args := make(map[string]any)
 				if len(block.Input) > 0 {
 					_ = json.Unmarshal(block.Input, &args) // best effort parsing, empty args on failure
 				}
-				parts = append(parts, &genai.Part{
+				p := &genai.Part{
 					FunctionCall: &genai.FunctionCall{
 						Name: block.Name,
 						Args: args,
 						ID:   block.ID,
 					},
-				})
+				}
+				if block.Signature != "" {
+					p.ThoughtSignature, _ = base64.StdEncoding.DecodeString(block.Signature)
+				}
+				parts = append(parts, p)
 
 			case "tool_result":
 				resp := map[string]any{"output": block.Content}
@@ -290,17 +299,25 @@ func responseFromGenai(resp *genai.GenerateContentResponse, model string) (*prov
 				if id == "" {
 					id = randomToolID(fc.Name)
 				}
-				result.Content = append(result.Content, provider.ContentBlock{
+				cb := provider.ContentBlock{
 					Type:  "tool_use",
 					ID:    id,
 					Name:  fc.Name,
 					Input: inputJSON,
-				})
+				}
+				if len(part.ThoughtSignature) > 0 {
+					cb.Signature = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
+				}
+				result.Content = append(result.Content, cb)
 			} else if part.Thought {
-				result.Content = append(result.Content, provider.ContentBlock{
+				cb := provider.ContentBlock{
 					Type:     "thinking",
 					Thinking: part.Text,
-				})
+				}
+				if len(part.ThoughtSignature) > 0 {
+					cb.Signature = base64.StdEncoding.EncodeToString(part.ThoughtSignature)
+				}
+				result.Content = append(result.Content, cb)
 			} else if part.Text != "" {
 				result.Content = append(result.Content, provider.ContentBlock{
 					Type: "text",
