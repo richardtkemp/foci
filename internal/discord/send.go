@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,16 @@ const discordMaxChars = 2000
 func (b *Bot) sendMarkdownChunks(channelID string, text string) {
 	for _, chunk := range splitMessage(text, discordMaxChars) {
 		if _, err := b.session.ChannelMessageSend(channelID, chunk); err != nil {
-			b.logger().Errorf("send error: %s", b.sanitizeError(err))
+			var callers [4]string
+			for i := range callers {
+				_, file, line, ok := runtime.Caller(i + 1)
+				if !ok {
+					break
+				}
+				callers[i] = fmt.Sprintf("%s:%d", filepath.Base(file), line)
+			}
+			b.logger().Errorf("send error (channel=%s callers=%s): %s",
+				channelID, strings.Join(callers[:], " <- "), b.sanitizeError(err))
 		}
 	}
 }

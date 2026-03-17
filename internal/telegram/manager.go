@@ -81,8 +81,10 @@ func (m *BotManager) SharedPool() *Pool {
 	return m.shared
 }
 
-// BotForSession returns the bot whose SessionKey() matches the given key,
-// searching all per-agent pools and the shared pool. Returns nil if no match.
+// BotForSession returns the bot that owns the given session key.
+// Checks facet pools first (exact SessionKey match), then primary bots
+// (chat ID ownership via cached chat-to-session mappings). Returns nil if
+// no bot on this platform owns the session.
 func (m *BotManager) BotForSession(sessionKey string) *Bot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -95,6 +97,15 @@ func (m *BotManager) BotForSession(sessionKey string) *Bot {
 
 	if m.shared != nil {
 		if b := findInPool(m.shared, sessionKey); b != nil {
+			return b
+		}
+	}
+
+	// Check primary bots: return the first one whose chat-to-session cache
+	// contains the session key's chat ID. This ensures cross-platform
+	// routing (e.g. Discord session keys don't resolve to Telegram bots).
+	for _, b := range m.primary {
+		if b.ownsSession(sessionKey) {
 			return b
 		}
 	}
