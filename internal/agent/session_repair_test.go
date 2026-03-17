@@ -442,6 +442,127 @@ func TestStripUnmatchedToolUse_AllStripped(t *testing.T) {
 	}
 }
 
+func TestRepairMissingAssistantMessages_ConsecutiveUsers(t *testing.T) {
+	// Proves that two consecutive user messages get a synthetic assistant inserted between them.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: provider.TextContent("hi")},
+		{Role: "user", Content: provider.TextContent("first")},
+		{Role: "user", Content: provider.TextContent("second")}, // consecutive!
+		{Role: "assistant", Content: provider.TextContent("ok")},
+	}
+
+	result, n := repairMissingAssistantMessages(msgs)
+	if n != 1 {
+		t.Fatalf("expected 1 repair, got %d", n)
+	}
+	if len(result) != 6 {
+		t.Fatalf("expected 6 messages (1 inserted), got %d", len(result))
+	}
+	// Inserted assistant should be at index 3 (between the two user messages)
+	if result[3].Role != "assistant" {
+		t.Errorf("expected assistant at index 3, got %s", result[3].Role)
+	}
+	if result[3].Content[0].Text != "(no response recorded)" {
+		t.Errorf("unexpected placeholder text: %s", result[3].Content[0].Text)
+	}
+	// Original messages should be preserved in order
+	if result[2].Content[0].Text != "first" || result[4].Content[0].Text != "second" {
+		t.Error("original user messages not preserved correctly")
+	}
+}
+
+func TestRepairMissingAssistantMessages_EmptyAssistant(t *testing.T) {
+	// Proves that an assistant message with zero content blocks gets a placeholder.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: nil}, // empty!
+		{Role: "user", Content: provider.TextContent("still here?")},
+		{Role: "assistant", Content: provider.TextContent("yes")},
+	}
+
+	result, n := repairMissingAssistantMessages(msgs)
+	if n != 1 {
+		t.Fatalf("expected 1 repair, got %d", n)
+	}
+	if len(result) != 4 {
+		t.Fatalf("expected 4 messages (no insertions), got %d", len(result))
+	}
+	if result[1].Content[0].Text != "(empty response)" {
+		t.Errorf("unexpected placeholder: %s", result[1].Content[0].Text)
+	}
+}
+
+func TestRepairMissingAssistantMessages_MultipleConsecutive(t *testing.T) {
+	// Proves that three consecutive user messages get two synthetic assistants inserted.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("a")},
+		{Role: "user", Content: provider.TextContent("b")},
+		{Role: "user", Content: provider.TextContent("c")},
+		{Role: "assistant", Content: provider.TextContent("finally")},
+	}
+
+	result, n := repairMissingAssistantMessages(msgs)
+	if n != 2 {
+		t.Fatalf("expected 2 repairs, got %d", n)
+	}
+	if len(result) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(result))
+	}
+	// Check alternation: user, assistant, user, assistant, user, assistant
+	expected := []string{"user", "assistant", "user", "assistant", "user", "assistant"}
+	for i, want := range expected {
+		if result[i].Role != want {
+			t.Errorf("message %d: role=%s, want %s", i, result[i].Role, want)
+		}
+	}
+}
+
+func TestRepairMissingAssistantMessages_CleanSession(t *testing.T) {
+	// Proves that a well-formed session with proper alternation is returned unchanged.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: provider.TextContent("hi")},
+		{Role: "user", Content: provider.TextContent("bye")},
+		{Role: "assistant", Content: provider.TextContent("goodbye")},
+	}
+
+	result, n := repairMissingAssistantMessages(msgs)
+	if n != 0 {
+		t.Fatalf("expected 0 repairs, got %d", n)
+	}
+	if &result[0] != &msgs[0] {
+		t.Error("expected same slice returned for clean session")
+	}
+}
+
+func TestRepairMissingAssistantMessages_MixedCorruption(t *testing.T) {
+	// Proves that both consecutive users and empty assistant content are repaired in one pass.
+	msgs := []provider.Message{
+		{Role: "user", Content: provider.TextContent("hello")},
+		{Role: "assistant", Content: nil},                       // empty!
+		{Role: "user", Content: provider.TextContent("retry")},
+		{Role: "user", Content: provider.TextContent("again")}, // consecutive!
+		{Role: "assistant", Content: provider.TextContent("ok")},
+	}
+
+	result, n := repairMissingAssistantMessages(msgs)
+	if n != 2 {
+		t.Fatalf("expected 2 repairs, got %d", n)
+	}
+	if len(result) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(result))
+	}
+	// Empty assistant should be repaired
+	if result[1].Content[0].Text != "(empty response)" {
+		t.Errorf("empty assistant not repaired: %s", result[1].Content[0].Text)
+	}
+	// Synthetic assistant should be inserted between consecutive users
+	if result[3].Role != "assistant" || result[3].Content[0].Text != "(no response recorded)" {
+		t.Errorf("synthetic assistant not inserted: role=%s", result[3].Role)
+	}
+}
+
 func TestStripUnmatchedToolUse_NoneStripped(t *testing.T) {
 	// Proves that when all tool_use blocks have matching results, the content
 	// is returned unchanged with stripped=false.

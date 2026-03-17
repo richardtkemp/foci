@@ -232,6 +232,60 @@ func stripUnmatchedToolUse(assistantContent []provider.ContentBlock, toolResults
 	return filtered, true
 }
 
+// repairMissingAssistantMessages fixes two classes of role-alternation corruption:
+//
+//  1. Consecutive user messages (no assistant between them): inserts a synthetic
+//     assistant message with placeholder text. This happens when an API error
+//     causes the turn to return early but the defer safety-net flushes the user
+//     message without a matching assistant response.
+//
+//  2. Assistant messages with zero content blocks: replaces content with a
+//     placeholder so the API doesn't reject empty assistant messages.
+//
+// Returns the repaired slice and the number of repairs made.
+// O(n) scan, not persisted — runs on every load like repairDuplicateToolIDs.
+func repairMissingAssistantMessages(messages []provider.Message) ([]provider.Message, int) {
+	repairs := 0
+	var result []provider.Message
+
+	for i, msg := range messages {
+		// Fix empty assistant content blocks.
+		if msg.Role == "assistant" && len(msg.Content) == 0 {
+			msg.Content = provider.TextContent("(empty response)")
+			if result == nil {
+				result = make([]provider.Message, i, len(messages)+4)
+				copy(result, messages[:i])
+			}
+			result = append(result, msg)
+			repairs++
+			continue
+		}
+
+		// Check for consecutive user messages.
+		if i > 0 && msg.Role == "user" && messages[i-1].Role == "user" {
+			if result == nil {
+				result = make([]provider.Message, i, len(messages)+4)
+				copy(result, messages[:i])
+			}
+			// Insert synthetic assistant message before this user message.
+			result = append(result, provider.Message{
+				Role:    "assistant",
+				Content: provider.TextContent("(no response recorded)"),
+			})
+			repairs++
+		}
+
+		if result != nil {
+			result = append(result, msg)
+		}
+	}
+
+	if result == nil {
+		return messages, 0
+	}
+	return result, repairs
+}
+
 // sanitizeEmptyTextBlocks removes empty text content blocks from messages.
 // Both Anthropic and Gemini APIs reject requests containing text blocks with empty text.
 // This can happen from corrupted sessions or API responses that returned empty content.
