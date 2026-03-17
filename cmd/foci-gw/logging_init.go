@@ -38,6 +38,16 @@ func initLogging(cfg *config.Config) func() {
 				files = append(files, p)
 			}
 		}
+
+		// Archive all existing log content on startup so each process
+		// lifetime begins with a clean log file.
+		log.RotateOnce(log.RotationConfig{
+			Retention:   0, // archive everything
+			MaxLineSize: maxLineSize,
+			ArchiveDir:  archiveDir,
+			Files:       files,
+		})
+
 		stopRotation := log.StartRotation(log.RotationConfig{
 			Period:      rotPeriod,
 			Retention:   retPeriod,
