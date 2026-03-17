@@ -40,7 +40,8 @@ type PayloadEntry struct {
 	Model      string          `json:"model"`
 	SystemHash string          `json:"system_hash"`
 	Request    json.RawMessage `json:"request"`
-	Response   json.RawMessage `json:"response"`
+	Response   json.RawMessage `json:"response,omitempty"`
+	Error      string          `json:"error,omitempty"`
 	DurationMS int64           `json:"duration_ms"`
 }
 

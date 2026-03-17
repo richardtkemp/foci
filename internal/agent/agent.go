@@ -557,6 +557,9 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				}
 			}
 			if err != nil {
+				// Log the failed request payload for debugging.
+				a.logErrorPayload(sessionKey, turnModel, start, duration, req, err)
+
 				// Append a synthetic assistant error message so the session
 				// maintains role alternation (user→assistant). Without this,
 				// the defer safety-net flushes only the user message, causing
