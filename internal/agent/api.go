@@ -87,7 +87,6 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 	}
 	reqJSON, _ := json.Marshal(req)
 
-
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	sm.apiSeqNum++
@@ -99,7 +98,7 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 		sysTexts[i] = b.Text
 	}
 
-	log.Payload(log.PayloadEntry{
+	entry := log.PayloadEntry{
 		Timestamp:  start.UTC(),
 		Session:    sessionKey,
 		SeqNum:     seqNum,
@@ -108,7 +107,16 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 		Request:    reqJSON,
 		Error:      apiErr.Error(),
 		DurationMS: duration.Milliseconds(),
-	})
+	}
+
+	var perr *provider.APIError
+	if errors.As(apiErr, &perr) {
+		entry.StatusCode = perr.StatusCode
+		entry.ResponseBody = json.RawMessage(perr.Body)
+		entry.RequestID = perr.RequestID()
+	}
+
+	log.Payload(entry)
 }
 
 // classifyAPIError maps API errors to user-friendly messages, notifying
