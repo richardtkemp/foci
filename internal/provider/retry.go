@@ -3,11 +3,12 @@ package provider
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"foci/internal/log"
 )
 
 // retryCallbacksKey is the context key for retry notification callbacks.
@@ -118,13 +119,14 @@ func EndpointNameFromURL(rawURL string) string {
 }
 
 // retryableClient is a type-assertion interface for clients that support
-// extended overload retry logic (currently only Anthropic).
+// extended retry logic (currently only Anthropic).
 type retryableClient interface {
 	OnRetrySuccess()
 	WaitForRecovery() <-chan struct{}
-	RetryBaseDelay() time.Duration       // base delay for phase 1 retries
-	OverloadBaseDelay() time.Duration    // base delay for phase 2 retries
-	OverloadMaxDuration() time.Duration  // max duration for phase 2 retries
+	RetryBaseDelay() time.Duration            // base delay for phase 1 retries
+	OverloadBaseDelay() time.Duration         // base delay for phase 2 retries
+	OverloadMaxDuration() time.Duration       // max duration for phase 2 overload (529) retries
+	ServerErrorMaxDuration() time.Duration    // max duration for phase 2 server error (5xx) retries
 }
 
 // retryWithBackoff performs standard exponential backoff retries for retryable errors.
@@ -147,7 +149,7 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 			// Notify on first retry only (across all retry phases)
 			notifyFirstRetry(ctx, endpoint)
 
-			slog.Warn("provider: retry after error", "attempt", attempt, "status", lastErr.Error(), "backoff", backoff.String())
+			log.Warnf("provider", "retry after error: attempt=%d status=%s backoff=%s", attempt, lastErr.Error(), backoff.String())
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -156,12 +158,12 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 			backoff *= 2
 		}
 
-		slog.Debug("provider: attempt_start", "attempt", attempt, "elapsed_total", time.Since(loopStart))
+		log.Debugf("provider", "attempt_start: attempt=%d elapsed_total=%s", attempt, time.Since(loopStart))
 		attemptStart := time.Now()
 		resp, err := sendOnce(ctx, client, req, handler)
 		attemptDur := time.Since(attemptStart)
 		if err == nil {
-			slog.Debug("provider: attempt_ok", "attempt", attempt, "duration", attemptDur, "elapsed_total", time.Since(loopStart))
+			log.Debugf("provider", "attempt_ok: attempt=%d duration=%s elapsed_total=%s", attempt, attemptDur, time.Since(loopStart))
 			// Signal recovery if client supports it (Anthropic)
 			if rc, ok := client.(retryableClient); ok {
 				rc.OnRetrySuccess()
@@ -171,7 +173,7 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 			return resp, nil
 		}
 		lastErr = err
-		slog.Debug("provider: attempt_fail", "attempt", attempt, "duration", attemptDur, "error", err, "elapsed_total", time.Since(loopStart))
+		log.Debugf("provider", "attempt_fail: attempt=%d duration=%s error=%v elapsed_total=%s", attempt, attemptDur, err, time.Since(loopStart))
 
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) {
@@ -183,16 +185,15 @@ func retryWithBackoff(ctx context.Context, client Client, req *MessageRequest, h
 		}
 	}
 
-	slog.Debug("provider: exhausted_retries", "elapsed_total", time.Since(loopStart), "last_error", lastErr)
+	log.Debugf("provider", "exhausted_retries: elapsed_total=%s last_error=%v", time.Since(loopStart), lastErr)
 	return nil, lastErr
 }
 
-// retryWithOverload handles extended overload retry logic for Anthropic's 529 errors.
+// retryExtended handles extended retry logic for retryable server errors.
+// Used for both 529 overload (long duration) and 5xx server errors (shorter duration).
 // This function is only called for retryableClient implementations (type-asserted from Client).
-func retryWithOverload(ctx context.Context, rc retryableClient, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
-	// Extended overload retry: ~2h production, scaled in tests
+func retryExtended(ctx context.Context, rc retryableClient, req *MessageRequest, handler *StreamHandler, maxDuration time.Duration) (*MessageResponse, error) {
 	overloadBackoff := rc.OverloadBaseDelay()
-	maxDuration := rc.OverloadMaxDuration()
 	overloadStart := time.Now()
 	recoverCh := rc.WaitForRecovery()
 	var lastErr error
@@ -202,20 +203,20 @@ func retryWithOverload(ctx context.Context, rc retryableClient, req *MessageRequ
 		// Notify on first retry only (across all retry phases)
 		notifyFirstRetry(ctx, endpoint)
 
-		slog.Warn("provider: overload retry", "backoff", overloadBackoff.String(), "elapsed", time.Since(overloadStart).String(), "max", maxDuration.String())
+		log.Warnf("provider", "extended retry: backoff=%s elapsed=%s max=%s", overloadBackoff.String(), time.Since(overloadStart).String(), maxDuration.String())
 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-time.After(overloadBackoff):
 		case <-recoverCh:
-			slog.Info("provider: recovery signal received, retrying immediately")
+			log.Infof("provider", "recovery signal received, retrying immediately")
 			recoverCh = rc.WaitForRecovery() // re-acquire for next iteration
 		}
 
 		resp, err := sendOnce(ctx, rc.(Client), req, handler)
 		if err == nil {
-			slog.Info("provider: recovered from overload", "elapsed", time.Since(overloadStart).String())
+			log.Infof("provider", "recovered from extended retry: elapsed=%s", time.Since(overloadStart).String())
 			rc.OnRetrySuccess()
 			// Notify success if we retried
 			notifySuccess(ctx)
@@ -231,7 +232,7 @@ func retryWithOverload(ctx context.Context, rc retryableClient, req *MessageRequ
 		overloadBackoff *= 2
 	}
 
-	slog.Warn("provider: overload retries exhausted", "elapsed", time.Since(overloadStart).String())
+	log.Warnf("provider", "extended retries exhausted: elapsed=%s", time.Since(overloadStart).String())
 	return nil, lastErr
 }
 

@@ -17,9 +17,22 @@ linters:
     # Code quality
     - dupl           # duplicate code detection
 
+    # Import restrictions
+    - depguard       # forbid stdlib log packages
+
 linters-settings:
   dupl:
     threshold: 100   # minimum tokens for duplication (lower = stricter)
+
+  depguard:
+    rules:
+      prevent_stdlib_logging:
+        list-mode: lax
+        deny:
+          - pkg: "log/slog"
+            desc: "Use foci/internal/log instead of log/slog"
+          - pkg: "log$"
+            desc: "Use foci/internal/log instead of stdlib log"
 
   errcheck:
     exclude-functions:

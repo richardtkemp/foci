@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -153,7 +152,16 @@ func (c *Client) OverloadMaxDuration() time.Duration {
 	return c.overloadMaxDuration()
 }
 
-// overloadBaseDelay returns the initial backoff for the extended 529 retry loop.
+// ServerErrorMaxDuration returns the maximum duration for extended server error (5xx) retries.
+// Production: 5min. Test mode (retryBaseDelay < 1s): retryBaseDelay * 100.
+func (c *Client) ServerErrorMaxDuration() time.Duration {
+	if c.retryBaseDelay > 0 && c.retryBaseDelay < time.Second {
+		return c.retryBaseDelay * 100
+	}
+	return 5 * time.Minute
+}
+
+// overloadBaseDelay returns the initial backoff for the extended retry loop.
 // Production: 5s. Test mode (retryBaseDelay < 1s): retryBaseDelay * 5.
 func (c *Client) overloadBaseDelay() time.Duration {
 	if c.retryBaseDelay > 0 && c.retryBaseDelay < time.Second {
@@ -190,17 +198,17 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 	wireReq, _ := json.Marshal(params)
 	sc := c.ensureSDKClient()
 
-	slog.Debug("anthropic: sdk_call_start", "model", req.Model)
+	log.Debugf("anthropic", "sdk_call_start: model=%s", req.Model)
 	callStart := time.Now()
 
 	msg, err := sc.Messages.New(ctx, params, sdkRequestOptions(token, req.Speed)...)
 
 	callDur := time.Since(callStart)
 	if err != nil {
-		slog.Debug("anthropic: sdk_call_error", "duration", callDur, "error", err)
+		log.Debugf("anthropic", "sdk_call_error: duration=%s error=%v", callDur, err)
 		return nil, classifySDKError(err)
 	}
-	slog.Debug("anthropic: sdk_call_done", "duration", callDur, "stop_reason", msg.StopReason)
+	log.Debugf("anthropic", "sdk_call_done: duration=%s stop_reason=%s", callDur, msg.StopReason)
 
 	resp := responseFromSDK(msg)
 	resp.WireRequest = wireReq
@@ -232,18 +240,18 @@ func (c *Client) sendOnceRaw(ctx context.Context, body []byte, speed string) (*M
 
 	deadline, hasDeadline := ctx.Deadline()
 	httpTimeout := c.httpClient.Timeout
-	slog.Debug("anthropic: http_call_start", "url", c.baseURL+"/v1/messages", "http_timeout", httpTimeout, "ctx_has_deadline", hasDeadline, "ctx_deadline", deadline, "body_bytes", len(body))
+	log.Debugf("anthropic", "http_call_start: url=%s http_timeout=%s ctx_has_deadline=%v ctx_deadline=%v body_bytes=%d", c.baseURL+"/v1/messages", httpTimeout, hasDeadline, deadline, len(body))
 	callStart := time.Now()
 
 	httpResp, err := c.httpClient.Do(httpReq)
 
 	callDur := time.Since(callStart)
 	if err != nil {
-		slog.Debug("anthropic: http_call_error", "duration", callDur, "error", err, "ctx_err", ctx.Err())
+		log.Debugf("anthropic", "http_call_error: duration=%s error=%v ctx_err=%v", callDur, err, ctx.Err())
 		return nil, fmt.Errorf("send request: %w", err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
-	slog.Debug("anthropic: http_call_done", "duration", callDur, "status", httpResp.StatusCode)
+	log.Debugf("anthropic", "http_call_done: duration=%s status=%d", callDur, httpResp.StatusCode)
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {

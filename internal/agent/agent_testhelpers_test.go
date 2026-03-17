@@ -43,9 +43,14 @@ func (c *testClient) CountTokens(_ context.Context, _ *provider.MessageRequest) 
 
 func (c *testClient) IsCachingAvailable() bool { return true }
 
-// RetryBaseDelay satisfies the provider.retryableClient interface (structural typing)
-// so that provider.Send uses 1ms backoff instead of 2s.
-func (c *testClient) RetryBaseDelay() time.Duration { return time.Millisecond }
+// The following methods satisfy the provider.retryableClient interface (structural typing)
+// so that provider.Send uses 1ms backoff instead of 2s in tests.
+func (c *testClient) RetryBaseDelay() time.Duration         { return time.Millisecond }
+func (c *testClient) OverloadBaseDelay() time.Duration      { return 5 * time.Millisecond }
+func (c *testClient) OverloadMaxDuration() time.Duration    { return 500 * time.Millisecond }
+func (c *testClient) ServerErrorMaxDuration() time.Duration { return 100 * time.Millisecond }
+func (c *testClient) OnRetrySuccess()                       {}
+func (c *testClient) WaitForRecovery() <-chan struct{}      { return make(chan struct{}) }
 
 // newTestClient creates a test client from a response handler (success path).
 func newTestClient(handler func(req *provider.MessageRequest) *provider.MessageResponse) *testClient {

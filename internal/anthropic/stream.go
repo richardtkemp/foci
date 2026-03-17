@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"foci/internal/log"
 	"foci/internal/provider"
@@ -45,7 +44,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 	wireReq, _ := json.Marshal(params)
 	sc := c.ensureSDKClient()
 
-	slog.Debug("anthropic: stream_call_start", "model", req.Model)
+	log.Debugf("anthropic", "stream_call_start: model=%s", req.Model)
 
 	stream := sc.Messages.NewStreaming(ctx, params, sdkRequestOptions(token, req.Speed)...)
 
@@ -55,7 +54,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 	for stream.Next() {
 		event := stream.Current()
 		if err := msg.Accumulate(event); err != nil {
-			slog.Warn("anthropic: stream accumulate error", "error", err)
+			log.Warnf("anthropic", "stream accumulate error: %v", err)
 		}
 
 		// Fire delta callbacks.
