@@ -37,7 +37,9 @@ type selfRetryingClient interface {
 // - Clients implementing selfRetryingClient.HandlesOwnRetries() == true use SDK retries (e.g., Gemini)
 // - Other clients get provider-level retry:
 //   - Phase 1: Standard exponential backoff (3 retries, 2s→4s→8s) for all retryable errors
-//   - Phase 2: Extended overload retry (~2h) for 529 errors (Anthropic only)
+//   - Phase 2: Extended retry for retryableClient implementations:
+//     - 529 overload: up to ~2h (configurable via OverloadMaxDuration)
+//     - 5xx server errors: up to ~5min (configurable via ServerErrorMaxDuration)
 func Send(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
 	// Check if client handles its own retries (e.g., Gemini SDK has built-in retry)
 	if src, ok := client.(selfRetryingClient); ok && src.HandlesOwnRetries() {
@@ -51,12 +53,15 @@ func Send(ctx context.Context, client Client, req *MessageRequest, handler *Stre
 		return resp, nil
 	}
 
-	// Phase 2: Extended overload retry (Anthropic only, via type assertion)
+	// Phase 2: Extended retry (retryableClient implementations only, e.g. Anthropic)
 	var apiErr *APIError
-	if errors.As(lastErr, &apiErr) && apiErr.IsOverloaded() {
-		// Type-assert to retryableClient (currently only Anthropic implements this)
+	if errors.As(lastErr, &apiErr) && apiErr.IsRetryable() {
 		if rc, ok := client.(retryableClient); ok {
-			return retryWithOverload(ctx, rc, req, handler)
+			maxDuration := rc.ServerErrorMaxDuration()
+			if apiErr.IsOverloaded() {
+				maxDuration = rc.OverloadMaxDuration()
+			}
+			return retryExtended(ctx, rc, req, handler, maxDuration)
 		}
 	}
 

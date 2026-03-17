@@ -71,6 +71,10 @@ func (m *retryMockRetryableClient) OverloadMaxDuration() time.Duration {
 	return 500 * time.Millisecond // short max duration for tests
 }
 
+func (m *retryMockRetryableClient) ServerErrorMaxDuration() time.Duration {
+	return 100 * time.Millisecond // short max duration for tests
+}
+
 func TestRetryCallbacks(t *testing.T) {
 	// Verifies that retry callbacks are called exactly once per
 	// retry sequence, and success callback is called when retry succeeds.
@@ -321,30 +325,72 @@ func TestEndpointFromClientFallback(t *testing.T) {
 	}
 }
 
-func TestRetry500DoesNotExtendTo529(t *testing.T) {
-	// Verifies that 500 errors don't trigger phase 2.
+func TestRetry500ExtendsWithShorterDuration(t *testing.T) {
+	// Verifies that 500 errors trigger phase 2 extended retry
+	// (with shorter ServerErrorMaxDuration, not the longer OverloadMaxDuration).
 	attempts := &atomic.Int32{}
 	client := &retryMockRetryableClient{
 		retryMockClient: retryMockClient{
 			attempts:  attempts,
-			failUntil: 10, // always fail
+			failUntil: 100, // always fail
 			failWith: &APIError{
-				StatusCode: 500, // retryable but not overloaded
+				StatusCode: 500,
 				Body:       "internal server error",
 			},
 		},
 	}
 
+	start := time.Now()
 	_, err := Send(context.Background(), client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)
 
+	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	// Should only do phase 1 (4 attempts), not phase 2
-	if int(attempts.Load()) != 4 {
-		t.Errorf("attempts = %d, want 4 (phase 1 only)", attempts.Load())
+	// Should do phase 1 (4 attempts) + phase 2 extended retry (with 100ms max)
+	if int(attempts.Load()) <= 4 {
+		t.Errorf("attempts = %d, want > 4 (phase 2 should fire for 500s)", attempts.Load())
+	}
+	// Should NOT run as long as overload retry (500ms), should be bounded by ServerErrorMaxDuration (100ms)
+	// Allow generous headroom for CI but ensure we didn't use the overload duration.
+	if elapsed > 400*time.Millisecond {
+		t.Errorf("elapsed = %s, want < 400ms (should use ServerErrorMaxDuration, not OverloadMaxDuration)", elapsed)
+	}
+}
+
+func TestRetry500Recovery(t *testing.T) {
+	// Verifies that a 500 error recovers after retries in phase 2.
+	attempts := &atomic.Int32{}
+	client := &retryMockRetryableClient{
+		retryMockClient: retryMockClient{
+			attempts:  attempts,
+			failUntil: 6, // fail first 6 (4 phase 1 + 2 phase 2), succeed on 7th
+			failWith: &APIError{
+				StatusCode: 500,
+				Body:       "internal server error",
+			},
+			successResp: &MessageResponse{
+				ID:      "msg_recovered",
+				Content: []ContentBlock{{Type: "text", Text: "recovered"}},
+			},
+		},
+	}
+
+	resp, err := Send(context.Background(), client, &MessageRequest{
+		Model:     "test-model",
+		MaxTokens: 256,
+	}, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ID != "msg_recovered" {
+		t.Errorf("resp.ID = %q, want msg_recovered", resp.ID)
+	}
+	if int(attempts.Load()) != 7 {
+		t.Errorf("attempts = %d, want 7", attempts.Load())
 	}
 }
