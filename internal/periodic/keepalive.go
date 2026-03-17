@@ -16,6 +16,7 @@ package periodic
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -210,9 +211,16 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
+	skip := ""
+	defer func() {
+		if skip != "" {
+			r.log.Debugf("skip keepalive: %s", skip)
+		}
+	}()
+
 	// Check if caching is still available (handles dynamic state changes like Gemini free-tier detection)
 	if r.client != nil && !r.client.IsCachingAvailable() {
-		r.log.Debugf("skipping keepalive - caching not available for agent %s", r.agentID)
+		skip = "caching not available"
 		return
 	}
 
@@ -226,7 +234,12 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	running := r.keepaliveRunning
 	r.mu.Unlock()
 
-	if elapsed < interval || running {
+	if running {
+		skip = "already running"
+		return
+	}
+	if elapsed < interval {
+		skip = fmt.Sprintf("cache age %s < interval %s", elapsed.Round(time.Second), interval)
 		return
 	}
 
@@ -254,6 +267,13 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
+	skip := ""
+	defer func() {
+		if skip != "" {
+			r.log.Debugf("skip background: %s", skip)
+		}
+	}()
+
 	interval, ok := r.parseDuration("background interval", r.bgCfg.Interval)
 	if !ok {
 		return
@@ -267,19 +287,19 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	r.mu.Unlock()
 
 	if running {
-		r.log.Debugf("skipping background work for agent %s: already running", r.agentID)
+		skip = "already running"
 		return
 	}
 
 	if r.hasActiveWorkFn != nil {
 		if n := r.hasActiveWorkFn(); n > 0 {
-			r.log.Debugf("skipping background work for agent %s: %d active tmux watches", r.agentID, n)
+			skip = fmt.Sprintf("%d active tmux watches", n)
 			return
 		}
 	}
 
 	if elapsed < interval {
-		r.log.Debugf("skipping background work for agent %s: idle %s < interval %s", r.agentID, elapsed.Round(time.Second), interval)
+		skip = fmt.Sprintf("idle %s < interval %s", elapsed.Round(time.Second), interval)
 		return
 	}
 
@@ -288,7 +308,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	// self-chaining where each completed session immediately triggers the next,
 	// accumulating orphaned child processes (e.g. coding agents in tmux).
 	if !lastBgEndZero && sinceLastBgEnd < interval {
-		r.log.Debugf("skipping background work for agent %s: cooldown %s < interval %s", r.agentID, sinceLastBgEnd.Round(time.Second), interval)
+		skip = fmt.Sprintf("cooldown %s < interval %s", sinceLastBgEnd.Round(time.Second), interval)
 		return
 	}
 
@@ -300,7 +320,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 			return
 		}
 		if count == 0 {
-			r.log.Debugf("skipping background work for agent %s: no open background todos", r.agentID)
+			skip = "no open background todos"
 			return
 		}
 	}
@@ -310,7 +330,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		sessionKey := r.sessionKeyFn()
 		canFire, reason := r.canFireFn(ctx, sessionKey)
 		if !canFire {
-			r.log.Debugf("skipping background work for agent %s: %s", r.agentID, reason)
+			skip = reason
 			return
 		}
 	}
@@ -340,6 +360,13 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
+	skip := ""
+	defer func() {
+		if skip != "" {
+			r.log.Debugf("skip memory-formation: %s", skip)
+		}
+	}()
+
 	interval, ok := r.parseDuration("memory formation interval", r.mfCfg.Interval)
 	if !ok {
 		return
@@ -355,11 +382,21 @@ func (r *Runner) maybeMemoryFormation() {
 	r.mu.Unlock()
 
 	nextFire := lastFormation.Truncate(interval).Add(interval)
-	if now.Before(nextFire) || running || !hasActivity {
+	if running {
+		skip = "already running"
+		return
+	}
+	if now.Before(nextFire) {
+		skip = fmt.Sprintf("too soon (next at %s)", nextFire.Format("15:04:05"))
+		return
+	}
+	if !hasActivity {
+		skip = "no activity since last formation"
 		return
 	}
 
 	if sinceLastInteraction > interval {
+		skip = fmt.Sprintf("idle %s > interval %s", sinceLastInteraction.Round(time.Second), interval)
 		return
 	}
 
@@ -368,7 +405,7 @@ func (r *Runner) maybeMemoryFormation() {
 		sessionKey := r.sessionKeyFn()
 		canFire, reason := r.canFireFn(context.Background(), sessionKey)
 		if !canFire {
-			r.log.Debugf("skipping memory formation for agent %s: %s", r.agentID, reason)
+			skip = reason
 			return
 		}
 	}
@@ -400,6 +437,13 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
+	skip := ""
+	defer func() {
+		if skip != "" {
+			r.log.Debugf("skip consolidation: %s", skip)
+		}
+	}()
+
 	interval, ok := r.parseDuration("consolidation interval", r.mfCfg.ConsolidationInterval)
 	if !ok {
 		return
@@ -414,11 +458,17 @@ func (r *Runner) maybeConsolidation() {
 	r.mu.Unlock()
 
 	nextFire := lastConsolidation.Truncate(interval).Add(interval)
-	if now.Before(nextFire) || running {
+	if running {
+		skip = "already running"
+		return
+	}
+	if now.Before(nextFire) {
+		skip = fmt.Sprintf("too soon (next at %s)", nextFire.Format("15:04:05"))
 		return
 	}
 
 	if sinceLastInteraction > time.Hour {
+		skip = fmt.Sprintf("idle %s > 1h", sinceLastInteraction.Round(time.Second))
 		return
 	}
 
@@ -427,7 +477,7 @@ func (r *Runner) maybeConsolidation() {
 		sessionKey := r.sessionKeyFn()
 		canFire, reason := r.canFireFn(context.Background(), sessionKey)
 		if !canFire {
-			r.log.Debugf("skipping consolidation for agent %s: %s", r.agentID, reason)
+			skip = reason
 			return
 		}
 	}
