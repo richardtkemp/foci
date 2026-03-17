@@ -322,7 +322,7 @@ Subcommands:
 	if stop := setupMemoryGuard(agents, cfg, ctx); stop != nil {
 		defer stop()
 	}
-	if stop := setupGoroutineMonitor(cfg, ctx); stop != nil {
+	if stop := setupGoroutineMonitor(cfg, len(agents), ctx); stop != nil {
 		defer stop()
 	}
 	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, ctx)

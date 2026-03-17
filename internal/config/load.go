@@ -424,7 +424,7 @@ func Load(path string) (*Config, error) {
 	setIntDefaultDefined(&cfg.Resources.MemoryKillPercent, 40, md.IsDefined("resources", "memory_kill_percent"))
 	setFloatDefaultDefined(&cfg.Resources.MemoryPressureThreshold, 10.0, md.IsDefined("resources", "memory_pressure_threshold"))
 	setStringDefault(&cfg.Resources.GoroutineMonitorInterval, "60s")
-	setIntDefaultDefined(&cfg.Resources.GoroutineMonitorThreshold, 150, md.IsDefined("resources", "goroutine_monitor_threshold"))
+	// GoroutineMonitorThreshold: 0 means auto (35 × agent count), computed at startup.
 	// Bitwarden defaults
 	setStringDefault(&cfg.Bitwarden.SessionFile, "/home/bitwarden/.bw_session")
 	setStringDefault(&cfg.Bitwarden.RefreshInterval, "15m")
