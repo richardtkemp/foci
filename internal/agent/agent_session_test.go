@@ -1,12 +1,12 @@
 package agent
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/state"
 )
 
 func TestSessionEffort(t *testing.T) {
@@ -148,18 +148,19 @@ func TestSessionModel(t *testing.T) {
 }
 
 func TestRestoreSessionOverrides(t *testing.T) {
-	// Proves that session overrides (effort, thinking, speed, model, format, no_compact) survive an agent restart by persisting to and reloading from the state store.
+	// Proves that session overrides (effort, thinking, speed, model, format, no_compact) survive an agent restart by persisting to and reloading from the session index.
 	dir := t.TempDir()
-	ss := state.New(dir + "/state.json")
-	if err := ss.Load(); err != nil {
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer idx.Close()
 
 	ag := &Agent{
-		Model:      "claude-haiku-4-5",
-		Effort:     "low",
-		Thinking:   "off",
-		StateStore: ss,
+		Model:        "claude-haiku-4-5",
+		Effort:       "low",
+		Thinking:     "off",
+		SessionIndex: idx,
 	}
 
 	// Persist values via setters
@@ -169,12 +170,12 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	ag.SetSessionModel("s1", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
 	ag.SetSessionNoCompact("s1", true)
 
-	// Create a fresh agent (simulating restart) with the same state store
+	// Create a fresh agent (simulating restart) with the same session index
 	ag2 := &Agent{
-		Model:      "claude-haiku-4-5",
-		Effort:     "low",
-		Thinking:   "off",
-		StateStore: ss,
+		Model:        "claude-haiku-4-5",
+		Effort:       "low",
+		Thinking:     "off",
+		SessionIndex: idx,
 	}
 
 	// Before restore: should fall back to defaults
@@ -211,15 +212,15 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	}
 }
 
-func TestRestoreSessionOverrides_NilStateStore(t *testing.T) {
-	// Proves that RestoreSessionOverrides is safe to call with a nil state store — it is a no-op that does not panic.
-	ag := &Agent{Model: "test", Effort: "low"}
+func TestRestoreSessionOverrides_NilSessionIndex(t *testing.T) {
+	// Proves that RestoreSessionOverrides is safe to call with a nil SessionIndex — it is a no-op that does not panic.
+	ag := &Agent{Model: "test", Effort: "low", SessionIndex: nil}
 
-	// Should not panic with nil state store
+	// Should not panic with nil SessionIndex
 	ag.RestoreSessionOverrides("s1")
 
 	if got := ag.SessionEffort("s1"); got != "low" {
-		t.Errorf("effort with nil store = %q, want %q", got, "low")
+		t.Errorf("effort with nil SessionIndex = %q, want %q", got, "low")
 	}
 }
 

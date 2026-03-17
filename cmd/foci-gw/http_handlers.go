@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,11 +36,15 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, activityChecker) {
 	}
 
 	isAgentActive := func(agentID string, within time.Duration) bool {
-		if d.stateStore == nil {
+		if d.sessionIndex == nil {
 			return true
 		}
-		var ts int64
-		if !d.stateStore.Get("agent/"+agentID+"/last_user_activity", &ts) {
+		raw, err := d.sessionIndex.GetAgentMetadata(agentID, "last_user_activity")
+		if err != nil || raw == "" {
+			return false
+		}
+		ts, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
 			return false
 		}
 		return time.Since(time.Unix(ts, 0)) <= within

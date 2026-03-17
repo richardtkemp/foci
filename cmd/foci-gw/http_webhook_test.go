@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
@@ -320,10 +320,14 @@ func TestWebhook_IfInactive(t *testing.T) {
 	webhooks := map[string]string{"test": "test.md"}
 	d, _ := webhookTestSetup(t, dir, "", webhooks)
 
-	// Simulate recent activity via state store.
-	ss := state.New(filepath.Join(t.TempDir(), "state.json"))
-	ss.Set("agent/test-agent/last_user_activity", time.Now().Unix())
-	d.stateStore = ss
+	// Simulate recent activity via session index.
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	idx.SetAgentMetadata("test-agent", "last_user_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	d.sessionIndex = idx
 
 	mux := newWebhookMux(d)
 

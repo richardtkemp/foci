@@ -20,7 +20,7 @@ description: Debug and investigate foci platform internals. API logs, payload lo
 ## Data Sources
 
 There are two scopes for data:
-- **Global** (`~/data/` by default, configurable via `data_dir`): `api.db`, `state.db`, `state.json`, sessions
+- **Global** (`~/data/` by default, configurable via `data_dir`): `api.db`, `state.db`, sessions
 - **Per-agent** (`<workspace>/.data/`): `conversation.db`, `todo.db`, `scratchpad.db`, `reminders.db`, `tasklist.db`, `memory.db`, `search.bleve`, `tool_details.db`
 
 ### API Call Log (SQLite)
@@ -71,9 +71,6 @@ tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | select(.type=
 # All content (not just text)
 tail -5 /path/to/root.jsonl | jq -r '.role + ": " + (.content[]? | tostring)'
 ```
-
-### State Store
-Runtime state as JSON: `~/data/state.json`
 
 ### Global SQLite Databases (`~/data/`)
 

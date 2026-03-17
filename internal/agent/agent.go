@@ -17,7 +17,6 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/tools"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
@@ -104,7 +103,7 @@ type Agent struct {
 	SessionKeyRotatedFunc         HookList[func(string, string)]         // callbacks when session key rotates (oldKey, newKey)
 	OnActivity                    HookList[func(string)]                 // callbacks when a session has activity (session key)
 	Redact                        func(string) string          // redact secrets from tool output; nil disables
-	StateStore                    *state.Store                 // nil disables state persistence
+	SessionIndex                  *session.SessionIndex        // nil disables state persistence
 	UsageClient                   provider.UsageClient         // nil disables mana metadata
 	UsageClientProvider           provider.UsageClientProvider // per-endpoint usage client resolution (nil = use default UsageClient)
 	MessageTransforms             []CompiledTransform          // compiled regex rules for inbound message transformation

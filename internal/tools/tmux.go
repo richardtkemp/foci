@@ -12,7 +12,6 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/session"
-	"foci/internal/state"
 )
 
 var tmuxCounter uint64
@@ -59,9 +58,8 @@ type tmuxInstance struct {
 	rows              int
 	autopilot         bool // auto-unwatch on inactivity, auto-watch on send
 	watchThresholdSec int  // default watch threshold in seconds from config
-	stateStore        *state.Store // nil = no persistence
-	stateKey          string       // key prefix for persisted owned sessions
-	watchStateKey     string       // key for persisted watches (stateKey + ":watches")
+	sessionIndex      *session.SessionIndex // nil = no persistence
+	agentID           string                // agent ID for metadata keys
 	sendMu            sync.Mutex
 	lastSend          map[string]time.Time // session name → last send timestamp
 	lastAccess        map[string]time.Time // tmux session name → last interaction time
@@ -74,13 +72,13 @@ type tmuxInstance struct {
 // applied via resize-window after session creation. notifier delivers messages
 // when a watched session exceeds its inactivity threshold (nil disables).
 // Each call returns an independent tool instance with its own session tracking.
-// stateStore and stateKey enable persistence of owned sessions across restarts.
+// sessionIndex and agentID enable persistence of owned sessions across restarts.
 // autopilot enables auto-unwatch on inactivity and auto-watch on send.
 // watchThresholdSec sets the default watch threshold in seconds.
 // sessionTTL sets the auto-kill TTL for idle tmux sessions (0 disables).
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Store, stateKey string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (func() int, *Tool, func(), func(string, string)) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, sessionIndex *session.SessionIndex, agentID string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (func() int, *Tool, func(), func(string, string)) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
 	}
@@ -92,9 +90,8 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 		rows:              rows,
 		autopilot:         autopilot,
 		watchThresholdSec: watchThresholdSec,
-		stateStore:        stateStore,
-		stateKey:          stateKey,
-		watchStateKey:     stateKey + ":watches",
+		sessionIndex:      sessionIndex,
+		agentID:           agentID,
 		lastSend:          make(map[string]time.Time),
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        sessionTTL,
@@ -102,63 +99,69 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, stateStore *state.Stor
 	}
 
 	// Restore owned sessions from persistent state
-	if stateStore != nil {
-		var ownedMap map[string]string
-		if stateStore.Get(stateKey, &ownedMap) {
-			for name, sk := range ownedMap {
-				inst.owned[name] = sk
-				inst.lastAccess[name] = time.Now() // conservative: full TTL window after restart
-			}
-			if len(ownedMap) > 0 {
-				log.Debugf("tmux", "restored %d owned session(s) from state", len(ownedMap))
+	if sessionIndex != nil {
+		raw, err := sessionIndex.GetAgentMetadata(agentID, "tmux_owned")
+		if err == nil && raw != "" {
+			var ownedMap map[string]string
+			if err := json.Unmarshal([]byte(raw), &ownedMap); err == nil {
+				for name, sk := range ownedMap {
+					inst.owned[name] = sk
+					inst.lastAccess[name] = time.Now() // conservative: full TTL window after restart
+				}
+				if len(ownedMap) > 0 {
+					log.Debugf("tmux", "restored %d owned session(s) from state", len(ownedMap))
+				}
 			}
 		}
 
 		// Restore watches from persistent state
-		var watches []persistedWatch
-		if stateStore.Get(inst.watchStateKey, &watches) && len(watches) > 0 && notifier != nil {
-			var restored int
-			for _, pw := range watches {
-				// Verify the tmux session still exists
-				_, err := inst.runTmux(context.Background(), "has-session", "-t", pw.Session)
-				if err != nil {
-					continue // stale — session no longer exists
-				}
+		rawW, errW := sessionIndex.GetAgentMetadata(agentID, "tmux_watches")
+		if errW == nil && rawW != "" && notifier != nil {
+			var watches []persistedWatch
+			if err := json.Unmarshal([]byte(rawW), &watches); err == nil && len(watches) > 0 {
+				var restored int
+				for _, pw := range watches {
+					// Verify the tmux session still exists
+					_, err := inst.runTmux(context.Background(), "has-session", "-t", pw.Session)
+					if err != nil {
+						continue // stale — session no longer exists
+					}
 
-				key := fmt.Sprintf("%s:%d", pw.Session, pw.Window)
+					key := fmt.Sprintf("%s:%d", pw.Session, pw.Window)
 
-				// Capture initial content hash to avoid false activity reset on first poll.
-				var initialHash [md5.Size]byte
-				if initOut, initErr := inst.runTmux(context.Background(), "capture-pane", "-t",
-					fmt.Sprintf("%s:%d", pw.Session, pw.Window), "-p"); initErr == nil {
-					initialHash = md5.Sum([]byte(normalizePaneContent(initOut))) // #nosec G401
-				}
+					// Capture initial content hash to avoid false activity reset on first poll.
+					var initialHash [md5.Size]byte
+					if initOut, initErr := inst.runTmux(context.Background(), "capture-pane", "-t",
+						fmt.Sprintf("%s:%d", pw.Session, pw.Window), "-p"); initErr == nil {
+						initialHash = md5.Sum([]byte(normalizePaneContent(initOut))) // #nosec G401
+					}
 
-				monCtx, cancel := context.WithCancel(context.Background())
-				ws := &watchedSession{
-					session:         pw.Session,
-					window:          pw.Window,
-					threshold:       time.Duration(pw.ThresholdSecs) * time.Second,
-					lastActivity:    time.Now(),
-					lastContent:     initialHash,
-					notifier:        notifier,
-					agentSessionKey: pw.AgentSessionKey,
-					autopilot:       autopilot,
-					conditional:     pw.Conditional,
-					ctx:             monCtx,
-					cancel:          cancel,
-					done:            make(chan struct{}),
+					monCtx, cancel := context.WithCancel(context.Background())
+					ws := &watchedSession{
+						session:         pw.Session,
+						window:          pw.Window,
+						threshold:       time.Duration(pw.ThresholdSecs) * time.Second,
+						lastActivity:    time.Now(),
+						lastContent:     initialHash,
+						notifier:        notifier,
+						agentSessionKey: pw.AgentSessionKey,
+						autopilot:       autopilot,
+						conditional:     pw.Conditional,
+						ctx:             monCtx,
+						cancel:          cancel,
+						done:            make(chan struct{}),
+					}
+					inst.watched[key] = ws
+					go tmuxWatchMonitor(ws, inst, key)
+					restored++
 				}
-				inst.watched[key] = ws
-				go tmuxWatchMonitor(ws, inst, key)
-				restored++
-			}
-			// Re-persist to remove stale entries
-			if restored != len(watches) {
-				inst.persistWatches()
-			}
-			if restored > 0 {
-				log.Debugf("tmux", "restored %d watch(es) from state", restored)
+				// Re-persist to remove stale entries
+				if restored != len(watches) {
+					inst.persistWatches()
+				}
+				if restored > 0 {
+					log.Debugf("tmux", "restored %d watch(es) from state", restored)
+				}
 			}
 		}
 	}
@@ -334,17 +337,22 @@ func (inst *tmuxInstance) MigrateSessionKey(oldKey, newKey string) {
 	}
 }
 
-// persistOwned saves the owned sessions map to the state store.
+// persistOwned saves the owned sessions map to the session index.
 // Must be called with inst.mu held.
 func (inst *tmuxInstance) persistOwned() {
-	if inst.stateStore == nil {
+	if inst.sessionIndex == nil {
 		return
 	}
 	owned := make(map[string]string, len(inst.owned))
 	for name, sk := range inst.owned {
 		owned[name] = sk
 	}
-	if err := inst.stateStore.Set(inst.stateKey, owned); err != nil {
+	data, err := json.Marshal(owned)
+	if err != nil {
+		log.Warnf("tmux", "marshal owned sessions: %v", err)
+		return
+	}
+	if err := inst.sessionIndex.SetAgentMetadata(inst.agentID, "tmux_owned", string(data)); err != nil {
 		log.Warnf("tmux", "persist owned sessions: %v", err)
 	}
 }
@@ -362,10 +370,10 @@ func (inst *tmuxInstance) clearStaleOwned() {
 	inst.persistOwned()
 }
 
-// persistWatches saves the watched sessions map to the state store.
+// persistWatches saves the watched sessions map to the session index.
 // Must be called with inst.mu held.
 func (inst *tmuxInstance) persistWatches() {
-	if inst.stateStore == nil {
+	if inst.sessionIndex == nil {
 		return
 	}
 	watches := make([]persistedWatch, 0, len(inst.watched))
@@ -378,7 +386,12 @@ func (inst *tmuxInstance) persistWatches() {
 			Conditional:     ws.conditional,
 		})
 	}
-	if err := inst.stateStore.Set(inst.watchStateKey, watches); err != nil {
+	data, err := json.Marshal(watches)
+	if err != nil {
+		log.Warnf("tmux", "marshal watches: %v", err)
+		return
+	}
+	if err := inst.sessionIndex.SetAgentMetadata(inst.agentID, "tmux_watches", string(data)); err != nil {
 		log.Warnf("tmux", "persist watches: %v", err)
 	}
 }

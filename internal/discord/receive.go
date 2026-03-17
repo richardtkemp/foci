@@ -51,8 +51,8 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 	b.channelID = channelID
 	b.channelMu.Unlock()
 
-	if changed && b.stateStore != nil {
-		if err := b.stateStore.Set(b.stateKey+":channelid", channelID); err != nil {
+	if changed && b.sessionIndex != nil && b.agentID != "" {
+		if err := b.sessionIndex.SetAgentMetadata(b.agentID, "bot_channel_id", fmt.Sprintf("%d", channelID)); err != nil {
 			b.logger().Errorf("persist channel ID: %v", err)
 		}
 	}
@@ -69,8 +69,8 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 	}
 
 	// Record last real user activity (for --if-active gating on CLI commands).
-	if !b.isSecondary && b.agentID != "" && b.stateStore != nil {
-		_ = b.stateStore.Set("agent/"+b.agentID+"/last_user_activity", time.Now().Unix())
+	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
+		_ = b.sessionIndex.SetAgentMetadata(b.agentID, "last_user_activity", fmt.Sprintf("%d", time.Now().Unix()))
 	}
 	if b.OnUserMessage != nil {
 		b.OnUserMessage()

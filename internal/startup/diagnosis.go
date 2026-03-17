@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"foci/internal/log"
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 const (
-	StateKeyLastCleanShutdown = "system:last_clean_shutdown"
-	cleanShutdownWindow       = 5 * time.Minute
-	maxDiagnosticLines        = 10
+	systemStateKeyLastCleanShutdown = "last_clean_shutdown"
+	cleanShutdownWindow             = 5 * time.Minute
+	maxDiagnosticLines              = 10
 )
 
 type RestartClass string
@@ -39,9 +39,16 @@ type DiagnosisResult struct {
 // GetSystemUptime returns the system uptime. Replaceable for testing.
 var GetSystemUptime = getSystemUptime
 
-func DiagnoseRestart(st *state.Store, startTime time.Time, logsDir string) *DiagnosisResult {
+func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir string) *DiagnosisResult {
 	var shutdownUnix int64
-	hasShutdown := st.Get(StateKeyLastCleanShutdown, &shutdownUnix)
+	hasShutdown := false
+	raw, err := idx.GetSystemState(systemStateKeyLastCleanShutdown)
+	if err == nil && raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			shutdownUnix = v
+			hasShutdown = true
+		}
+	}
 
 	systemUptime, err := GetSystemUptime()
 	if err != nil {
@@ -85,8 +92,8 @@ func DiagnoseRestart(st *state.Store, startTime time.Time, logsDir string) *Diag
 	return result
 }
 
-func RecordCleanShutdown(st *state.Store) error {
-	return st.Set(StateKeyLastCleanShutdown, time.Now().Unix())
+func RecordCleanShutdown(idx *session.SessionIndex) error {
+	return idx.SetSystemState(systemStateKeyLastCleanShutdown, strconv.FormatInt(time.Now().Unix(), 10))
 }
 
 func getSystemUptime() (time.Duration, error) {

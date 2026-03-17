@@ -153,7 +153,6 @@ Subcommands:
 		Config:       cfg,
 		SecretStore:  sec.store,
 		Sessions:     si.sessions,
-		StateStore:   si.stateStore,
 		SessionIndex: si.sessionIndex,
 		STTMap:       sttMap,
 		TTSMap:       ttsMap,
@@ -250,7 +249,6 @@ Subcommands:
 			sessions:            si.sessions,
 			store:               sec.store,
 			bwStore:             sec.bwStore,
-			stateStore:          si.stateStore,
 			memBackends:         agentBackends,
 			reminderStore:       mem.reminderStores[acfg.ID],
 			scratchpadStore:     mem.scratchpadStores[acfg.ID],
@@ -292,7 +290,7 @@ Subcommands:
 			sessions:              si.sessions,
 			usageClientReg:        usageClients,
 			connMgr:               connMgr,
-			stateStore:            si.stateStore,
+			sessionIndex:          si.sessionIndex,
 			todoStore:             mem.todoStores[acfg.ID],
 			ctx:                   ctx,
 			resolveEndpointClient: clients.ResolveEndpointClient,
@@ -367,7 +365,7 @@ Subcommands:
 	if logsDir == "" || logsDir == "." {
 		logsDir = ""
 	}
-	diagnosis := startup.DiagnoseRestart(si.stateStore, startTime, logsDir)
+	diagnosis := startup.DiagnoseRestart(si.sessionIndex, startTime, logsDir)
 	if diagnosis.Class != startup.ClassClean && diagnosis.Class != startup.ClassUnknown {
 		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
 	}
@@ -408,7 +406,7 @@ Subcommands:
 	registerHTTPHandlers(mux, httpHandlerDeps{
 		agents:            agents,
 		agentOrder:        agentOrder,
-		stateStore:        si.stateStore,
+		sessionIndex:      si.sessionIndex,
 		sessions:          si.sessions,
 		cfg:               cfg,
 		ctx:               ctx,
@@ -456,7 +454,7 @@ Subcommands:
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 
 	// ========== Welcome & first-run ==========
-	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, cfg, ctx, connMgr)
+	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.sessionIndex, cfg, ctx, connMgr)
 
 	// ========== Wait for signal & shutdown ==========
 	sig := <-sigCh
@@ -466,6 +464,6 @@ Subcommands:
 	if shutdownTimeout == 0 {
 		shutdownTimeout = 30 * time.Second
 	}
-	runShutdown(agents, httpServer, &httpMu, connMgr, clients, si.stateStore,
+	runShutdown(agents, httpServer, &httpMu, connMgr, clients, si.sessionIndex,
 		shutdownConfig{gracefulTimeout: shutdownTimeout, ctx: ctx}, cancel)
 }

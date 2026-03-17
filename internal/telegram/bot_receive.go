@@ -67,8 +67,8 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	b.chatID = msg.Chat.Id
 	b.chatMu.Unlock()
 
-	if changed && b.stateStore != nil {
-		if err := b.stateStore.Set(b.stateKey+":chatid", msg.Chat.Id); err != nil {
+	if changed && b.sessionIndex != nil && b.agentID != "" {
+		if err := b.sessionIndex.SetAgentMetadata(b.agentID, "bot_chat_id", fmt.Sprintf("%d", msg.Chat.Id)); err != nil {
 			b.logger().Errorf("persist chat ID: %v", err)
 		}
 	}
@@ -86,8 +86,8 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 
 	// Record last real user activity (for --if-active gating on CLI commands).
 	// Only primary bots track this — secondary (facet) bots don't count.
-	if !b.isSecondary && b.agentID != "" && b.stateStore != nil {
-		_ = b.stateStore.Set("agent/"+b.agentID+"/last_user_activity", time.Now().Unix())
+	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
+		_ = b.sessionIndex.SetAgentMetadata(b.agentID, "last_user_activity", fmt.Sprintf("%d", time.Now().Unix()))
 	}
 	if b.OnUserMessage != nil {
 		b.OnUserMessage()

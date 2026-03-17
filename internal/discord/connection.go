@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -10,7 +11,6 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/platform"
-	"foci/internal/state"
 	"foci/internal/voice"
 
 	"github.com/bwmarrin/discordgo"
@@ -22,6 +22,9 @@ var _ platform.Sender = (*Bot)(nil)
 type sessionIndexInterface interface {
 	GetChatMetadata(agentID string, chatID int64, key string) (string, error)
 	SetChatMetadata(agentID string, chatID int64, key, value string) error
+	GetAgentMetadata(agentID, key string) (string, error)
+	SetAgentMetadata(agentID, key, value string) error
+	DeleteAgentMetadata(agentID, key string) error
 }
 
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
@@ -72,8 +75,6 @@ type Bot struct {
 	chatKeysMu      sync.RWMutex
 	sessionIndex    sessionIndexInterface
 
-	stateStore      *state.Store
-	stateKey        string
 	display         BotDisplayConfig
 	toolResults     sync.Map         // message ID (int64) -> toolResultEntry; for button expansion
 	thinkingStore   sync.Map         // message ID (int64) -> thinkingEntry; ephemeral
@@ -292,25 +293,25 @@ func (b *Bot) dispatchSessionKey(chatID int64) string {
 	return b.sessionKeyForMsg(chatID)
 }
 
-// SetStateStore configures persistent state for this bot.
-// key is used as the prefix for state keys (e.g. "bot:mybot").
-func (b *Bot) SetStateStore(store *state.Store, key string) {
-	b.stateStore = store
-	b.stateKey = key
+// RestoreState restores bot state (channelID, default channel) from the session index.
+// Must be called after SetSessionIndex.
+func (b *Bot) RestoreState() {
+	if b.sessionIndex == nil || b.agentID == "" {
+		return
+	}
 
 	// Restore channelID from persisted state
-	var channelID int64
-	if store.Get(key+":channelid", &channelID) && channelID != 0 {
-		b.SetChatID(channelID)
-		b.logger().Infof("restored channel ID %d from state", channelID)
+	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "bot_channel_id"); err == nil && raw != "" {
+		var channelID int64
+		if _, err := fmt.Sscanf(raw, "%d", &channelID); err == nil && channelID != 0 {
+			b.SetChatID(channelID)
+			b.logger().Infof("restored channel ID %d from state", channelID)
+		}
 	}
 
 	// Restore default channel from persisted state (for per-chat session routing)
-	if b.agentID != "" {
-		var defaultChannel int64
-		if store.Get("agent/"+b.agentID+"/default_channel", &defaultChannel) && defaultChannel != 0 {
-			b.logger().Infof("restored default channel %d for agent %s", defaultChannel, b.agentID)
-		}
+	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "default_channel"); err == nil && raw != "" {
+		b.logger().Infof("restored default channel for agent %s", b.agentID)
 	}
 }
 

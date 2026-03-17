@@ -11,7 +11,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/state"
+
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
@@ -59,7 +59,6 @@ type CommandContext struct {
 	Agent        *agent.Agent
 	Sessions     *session.Store
 	Bootstrap    *workspace.Bootstrap
-	StateStore   *state.Store
 	SessionIndex *session.SessionIndex
 	Config       *config.Config
 	AgentConfig  config.AgentConfig

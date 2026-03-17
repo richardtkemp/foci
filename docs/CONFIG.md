@@ -1134,7 +1134,7 @@ Per-agent databases are automatically migrated from the old shared `data_dir` la
 data_dir = "/opt/foci/data"
 ```
 
-All data files (`*.db`, `state.json`, `sessions/`) resolve under `/opt/foci/data/`. Log files are unaffected — they use their own paths.
+All data files (`*.db`, `sessions/`) resolve under `/opt/foci/data/`. Log files are unaffected — they use their own paths.
 
 A relative `data_dir` resolves against `$HOME`:
 

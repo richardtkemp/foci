@@ -166,7 +166,7 @@ After setup, the foci user's home looks like:
   data/
     sessions/              ← session JSONL files
     conversation.db        ← Telegram message log
-    state.json             ← persistent state
+    state.db               ← persistent state (SQLite)
     memory.db              ← memory FTS index
     todo.db                ← todo store
     reminders.db           ← reminder store

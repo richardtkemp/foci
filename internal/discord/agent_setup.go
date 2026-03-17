@@ -11,7 +11,6 @@ import (
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/voice"
 
 	"github.com/bwmarrin/discordgo"
@@ -27,7 +26,6 @@ type AgentSetupParams struct {
 	GlobalConfig   *config.Config
 	SecretStore    *secrets.Store
 	Sessions       *session.Store
-	StateStore     *state.Store
 	SessionIndex   *session.SessionIndex
 	ToolDetailStore *ToolDetailStore
 	STT            voice.STT
@@ -167,15 +165,9 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	primaryBot.SetCommandContext(p.CommandContext)
 
-	if p.StateStore != nil {
-		botKey := "discord_bot:" + botName
-		if botKey == "discord_bot:" {
-			botKey = "discord_bot:" + acfg.ID
-		}
-		primaryBot.SetStateStore(p.StateStore, botKey)
-	}
 	if p.SessionIndex != nil {
 		primaryBot.SetSessionIndex(p.SessionIndex)
+		primaryBot.RestoreState()
 	}
 	if p.ToolDetailStore != nil {
 		primaryBot.SetToolDetailStore(p.ToolDetailStore)

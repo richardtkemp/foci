@@ -11,7 +11,6 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/platform"
-	"foci/internal/state"
 	"foci/internal/voice"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -40,6 +39,9 @@ type botClient interface {
 type sessionIndexInterface interface {
 	GetChatMetadata(agentID string, chatID int64, key string) (string, error)
 	SetChatMetadata(agentID string, chatID int64, key, value string) error
+	GetAgentMetadata(agentID, key string) (string, error)
+	SetAgentMetadata(agentID, key, value string) error
+	DeleteAgentMetadata(agentID, key string) error
 }
 
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
@@ -95,8 +97,6 @@ type Bot struct {
 	chatKeysMu      sync.RWMutex          // protects chatSessionKeys
 	sessionIndex    sessionIndexInterface // nil = no session key persistence across restarts
 
-	stateStore  *state.Store // nil = no persistence
-	stateKey    string       // state key prefix (e.g. "bot:mybot")
 	display     BotDisplayConfig
 	toolResults sync.Map         // message ID (int64) → toolResultEntry; for inline keyboard expansion
 	thinkingStore sync.Map       // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
@@ -349,25 +349,25 @@ func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidt
 	return d.ShowToolCalls, d.ShowThinking, d.DisplayWidth, d.MessagesInLog, d.ReceivedFilesDir, d.InjectedMessageHeader
 }
 
-// SetStateStore configures persistent state for this bot.
-// key is used as the prefix for state keys (e.g. "bot:mybot").
-func (b *Bot) SetStateStore(store *state.Store, key string) {
-	b.stateStore = store
-	b.stateKey = key
+// RestoreState restores bot state (chatID, default chat) from the session index.
+// Must be called after SetSessionIndex.
+func (b *Bot) RestoreState() {
+	if b.sessionIndex == nil || b.agentID == "" {
+		return
+	}
 
 	// Restore chatID from persisted state
-	var chatID int64
-	if store.Get(key+":chatid", &chatID) && chatID != 0 {
-		b.SetChatID(chatID)
-		b.logger().Infof("restored chat ID %d from state", chatID)
+	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "bot_chat_id"); err == nil && raw != "" {
+		var chatID int64
+		if _, err := fmt.Sscanf(raw, "%d", &chatID); err == nil && chatID != 0 {
+			b.SetChatID(chatID)
+			b.logger().Infof("restored chat ID %d from state", chatID)
+		}
 	}
 
 	// Restore default chat from persisted state (for per-chat session routing)
-	if b.agentID != "" {
-		var defaultChat int64
-		if store.Get("agent/"+b.agentID+"/default_chat", &defaultChat) && defaultChat != 0 {
-			b.logger().Infof("restored default chat %d for agent %s", defaultChat, b.agentID)
-		}
+	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "default_chat"); err == nil && raw != "" {
+		b.logger().Infof("restored default chat for agent %s", b.agentID)
 	}
 }
 

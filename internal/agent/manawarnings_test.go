@@ -1,11 +1,12 @@
 package agent
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 func TestManaWatcherNewNilForEmpty(t *testing.T) {
@@ -246,13 +247,16 @@ func TestManaWatcherEmptyResetTime(t *testing.T) {
 }
 
 func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
-	// Proves that fired thresholds are written to the state store so they survive a restart.
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	store := state.New(statePath)
+	// Proves that fired thresholds are written to the session index so they survive a restart.
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
 
 	mw := NewManaWatcher("mana", []int{50})
-	mw.SetStore(store)
+	mw.SetSessionIndex(idx, "test")
 
 	var warned bool
 	mw.CheckAndWarn("25%", "in 2h", func(w string) { warned = true })
@@ -261,14 +265,18 @@ func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
 		t.Fatal("expected warning to fire")
 	}
 
-	store2 := state.New(statePath)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	// Read back from the same index to verify persistence
+	raw, err := idx.GetAgentMetadata("test", "mana:mana")
+	if err != nil {
+		t.Fatalf("get agent metadata: %v", err)
+	}
+	if raw == "" {
+		t.Fatal("expected state to be saved")
 	}
 
 	var savedState manaWatcherState
-	if !store2.Get("mana:mana", &savedState) {
-		t.Fatal("expected state to be saved")
+	if err := json.Unmarshal([]byte(raw), &savedState); err != nil {
+		t.Fatalf("unmarshal saved state: %v", err)
 	}
 
 	if !savedState.FiredToday[50] {
@@ -278,26 +286,28 @@ func TestManaWatcherPersistenceSavesFiredThreshold(t *testing.T) {
 
 func TestManaWatcherRestoreLoadsFiredThreshold(t *testing.T) {
 	// Proves that Restore() loads previously fired thresholds so they don't re-fire the same day.
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	store := state.New(statePath)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
 
 	today := time.Now().Truncate(24 * time.Hour)
 	initialState := manaWatcherState{
 		FiredToday: map[int]bool{50: true, 25: true},
 		LastReset:  today,
 	}
-	if err := store.Set("mana:mana", initialState); err != nil {
+	data, err := json.Marshal(initialState)
+	if err != nil {
+		t.Fatalf("marshal initial state: %v", err)
+	}
+	if err := idx.SetAgentMetadata("test", "mana:mana", string(data)); err != nil {
 		t.Fatalf("set initial state: %v", err)
 	}
 
-	store2 := state.New(statePath)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-
 	mw := NewManaWatcher("mana", []int{50, 25})
-	mw.SetStore(store2)
+	mw.SetSessionIndex(idx, "test")
 	mw.Restore()
 
 	var firedCount int
@@ -310,26 +320,28 @@ func TestManaWatcherRestoreLoadsFiredThreshold(t *testing.T) {
 
 func TestManaWatcherRestoreIgnoresStaleState(t *testing.T) {
 	// Proves that persisted state from a previous day is discarded rather than blocking new warnings.
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	store := state.New(statePath)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
 
 	yesterday := time.Now().Add(-24 * time.Hour).Truncate(24 * time.Hour)
 	staleState := manaWatcherState{
 		FiredToday: map[int]bool{50: true},
 		LastReset:  yesterday,
 	}
-	if err := store.Set("mana:mana", staleState); err != nil {
+	data, err := json.Marshal(staleState)
+	if err != nil {
+		t.Fatalf("marshal stale state: %v", err)
+	}
+	if err := idx.SetAgentMetadata("test", "mana:mana", string(data)); err != nil {
 		t.Fatalf("set stale state: %v", err)
 	}
 
-	store2 := state.New(statePath)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-
 	mw := NewManaWatcher("mana", []int{50})
-	mw.SetStore(store2)
+	mw.SetSessionIndex(idx, "test")
 	mw.Restore()
 
 	var warned bool
@@ -342,21 +354,27 @@ func TestManaWatcherRestoreIgnoresStaleState(t *testing.T) {
 
 func TestManaWatcherPersistenceAfterRestart(t *testing.T) {
 	// Proves that a simulated restart preserves fired thresholds while allowing unfired ones to still trigger.
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
 
-	store1 := state.New(statePath)
+	idx1, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	mw1 := NewManaWatcher("mana", []int{50, 25})
-	mw1.SetStore(store1)
+	mw1.SetSessionIndex(idx1, "test")
 
 	mw1.CheckAndWarn("30%", "in 2h", func(w string) {})
+	idx1.Close()
 
-	store2 := state.New(statePath)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	// Simulate restart: open a new SessionIndex from the same db
+	idx2, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatalf("reopen session index: %v", err)
 	}
+	defer idx2.Close()
 	mw2 := NewManaWatcher("mana", []int{50, 25})
-	mw2.SetStore(store2)
+	mw2.SetSessionIndex(idx2, "test")
 	mw2.Restore()
 
 	var warned bool
@@ -471,26 +489,32 @@ func TestManaRestoreResetsAtMidnight(t *testing.T) {
 
 func TestManaRestorePersistence(t *testing.T) {
 	// Proves that the firedRestore flag is persisted so a restart does not re-send the restore notification.
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	store := state.New(statePath)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
+
+	idx, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mw := NewManaWatcher("mana", []int{50})
-	mw.SetStore(store)
+	mw.SetSessionIndex(idx, "test")
 	mw.SetRestoreThreshold(40)
 
 	// Drop below threshold and restore
 	mw.CheckAndWarn("30%", "", func(w string) {})
 	mw.CheckRestore("100%")
+	idx.Close()
 
 	// Load in new instance
-	store2 := state.New(statePath)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	idx2, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatalf("reopen session index: %v", err)
 	}
+	defer idx2.Close()
 
 	mw2 := NewManaWatcher("mana", []int{50})
-	mw2.SetStore(store2)
+	mw2.SetSessionIndex(idx2, "test")
 	mw2.SetRestoreThreshold(40)
 	mw2.Restore()
 
@@ -502,22 +526,23 @@ func TestManaRestorePersistence(t *testing.T) {
 
 func TestManaWatcherPersistenceCustomName(t *testing.T) {
 	// Proves that state is stored under a key that includes the custom watcher name.
-	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	store := state.New(statePath)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
 
 	mw := NewManaWatcher("juice", []int{50})
-	mw.SetStore(store)
+	mw.SetSessionIndex(idx, "test")
 
 	mw.CheckAndWarn("25%", "in 2h", func(w string) {})
 
-	store2 := state.New(statePath)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	raw, err := idx.GetAgentMetadata("test", "mana:juice")
+	if err != nil {
+		t.Fatalf("get agent metadata: %v", err)
 	}
-
-	var savedState manaWatcherState
-	if !store2.Get("mana:juice", &savedState) {
+	if raw == "" {
 		t.Fatal("expected state to be saved with custom name key")
 	}
 }

@@ -4,14 +4,18 @@ import (
 	"path/filepath"
 	"testing"
 
-	"foci/internal/state"
+	"foci/internal/session"
 	"foci/internal/tools"
 )
 
 func TestRotateSession(t *testing.T) {
-	// Proves that RotateSession atomically moves all session state (effort, no_compact, state store keys, turn lock) from the old key to the new one and fires the registered rotation callback.
-	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
-	ag := &Agent{StateStore: stateStore}
+	// Proves that RotateSession atomically moves all session state (effort, no_compact, session metadata, turn lock) from the old key to the new one and fires the registered rotation callback.
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	ag := &Agent{SessionIndex: idx}
 
 	oldKey := "bot/c100/1000000000"
 	newKey := "bot/c100/2000000000"
@@ -47,13 +51,20 @@ func TestRotateSession(t *testing.T) {
 		t.Errorf("old key should return agent default effort, got %q", ag.SessionEffort(oldKey))
 	}
 
-	// Verify StateStore keys migrated
-	var val string
-	if stateStore.Get("effort:"+newKey, &val) && val != "high" {
-		t.Errorf("effort StateStore key not migrated: %q", val)
+	// Verify session metadata keys migrated
+	val, err := idx.GetSessionMetadata(newKey, "effort")
+	if err != nil {
+		t.Fatalf("get effort for new key: %v", err)
 	}
-	if stateStore.Get("effort:"+oldKey, &val) && val != "" {
-		t.Error("old effort StateStore key should be deleted")
+	if val != "high" {
+		t.Errorf("effort session metadata not migrated: %q", val)
+	}
+	oldVal, err := idx.GetSessionMetadata(oldKey, "effort")
+	if err != nil {
+		t.Fatalf("get effort for old key: %v", err)
+	}
+	if oldVal != "" {
+		t.Error("old effort session metadata key should be deleted")
 	}
 
 	// Verify turn lock migrated

@@ -20,7 +20,7 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/session"
-	"foci/internal/state"
+
 	"foci/internal/tools"
 	"foci/internal/voice"
 	"foci/internal/workspace"
@@ -57,7 +57,6 @@ type setupParams struct {
 	sessions            *session.Store
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
-	stateStore          *state.Store
 	memBackends         map[string]memory.Searcher
 	reminderStore       *memory.ReminderStore
 	scratchpadStore     *memory.Scratchpad
@@ -178,7 +177,7 @@ func setupAgent(p setupParams) *agentInstance {
 		SummaryEndpoint:                resolveString(acfg.SummaryEndpoint, p.cfg.Tools.SummaryEndpoint),
 		MaxImagePixels:                 resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
 		AutoSummarise:                  resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
-		StateStore:                     p.stateStore,
+		SessionIndex:                   p.sessionIndex,
 		UsageClient:                    p.usageClientProvider.GetUsageClient(defaultEndpoint),
 		UsageClientProvider:            p.usageClientProvider,
 		MessageTransforms:              agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
@@ -235,7 +234,6 @@ func setupAgent(p setupParams) *agentInstance {
 		cfg:                 p.cfg,
 		configPath:          p.configPath,
 		sessions:            p.sessions,
-		stateStore:          p.stateStore,
 		sessionIndex:        p.sessionIndex,
 		client:              p.client,
 		clientProvider:      p.clientProvider,
@@ -306,17 +304,15 @@ func setupAgent(p setupParams) *agentInstance {
 
 // checkFirstRun determines whether a first-run onboarding prompt should be
 // injected for an agent. Returns the prompt message if injection is needed,
-// empty string otherwise. Uses state.json to track completion.
-func checkFirstRun(stateStore *state.Store, acfg config.AgentConfig) string {
-	if stateStore == nil {
+// empty string otherwise. Uses session index agent_metadata to track completion.
+func checkFirstRun(idx *session.SessionIndex, acfg config.AgentConfig) string {
+	if idx == nil {
 		return ""
 	}
 
-	key := "agent/" + acfg.ID + "/first_run_completed"
-
 	// Already completed — nothing to do
-	var completed bool
-	if stateStore.Get(key, &completed) && completed {
+	val, err := idx.GetAgentMetadata(acfg.ID, "first_run_completed")
+	if err == nil && val == "true" {
 		return ""
 	}
 

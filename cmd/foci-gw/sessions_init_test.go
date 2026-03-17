@@ -6,57 +6,72 @@ import (
 	"testing"
 
 	"foci/internal/session"
-	"foci/internal/state"
 )
 
-
-// TestCleanupLegacyStateKeys_RemovesStaleNoCompact proves that no_compact
+// TestCleanupStaleSessionMetadata_RemovesStaleNoCompact proves that no_compact
 // entries for sessions whose files no longer exist are removed.
-func TestCleanupLegacyStateKeys_RemovesStaleNoCompact(t *testing.T) {
+func TestCleanupStaleSessionMetadata_RemovesStaleNoCompact(t *testing.T) {
 	dir := t.TempDir()
-	stateStore := state.New(filepath.Join(dir, "state.json"))
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+
 	sessDir := filepath.Join(dir, "sessions")
 	sessions := session.NewStore(sessDir)
 
 	// Create a no_compact entry for a branch session that doesn't exist on disk
-	stateStore.Set("no_compact/fotini/c123/1710000000/b1710000001", "true")
+	idx.SetSessionMetadata("fotini/c123/1710000000/b1710000001", "no_compact", "true")
 
 	// Create a no_compact entry for a session that DOES exist on disk
 	existingKey := "fotini/c456/1710000000"
 	existingPath := filepath.Join(sessDir, existingKey, "root.jsonl")
 	os.MkdirAll(filepath.Dir(existingPath), 0o755)
 	os.WriteFile(existingPath, []byte("{}"), 0o644)
-	stateStore.Set("no_compact/"+existingKey, "true")
+	idx.SetSessionMetadata(existingKey, "no_compact", "true")
 
-	cleanupLegacyStateKeys(stateStore, sessions)
+	cleanupStaleSessionMetadata(idx, sessions)
 
 	// Stale entry should be removed
-	var val string
-	if stateStore.Get("no_compact/fotini/c123/1710000000/b1710000001", &val) {
+	val, _ := idx.GetSessionMetadata("fotini/c123/1710000000/b1710000001", "no_compact")
+	if val != "" {
 		t.Error("stale no_compact entry should be removed")
 	}
 
 	// Existing session's no_compact should be kept
-	if !stateStore.Get("no_compact/"+existingKey, &val) {
+	val, _ = idx.GetSessionMetadata(existingKey, "no_compact")
+	if val != "true" {
 		t.Error("no_compact for existing session should be kept")
 	}
 }
 
-// TestCleanupLegacyStateKeys_NoopWhenClean proves cleanup is a no-op
-// when there are no legacy keys.
-func TestCleanupLegacyStateKeys_NoopWhenClean(t *testing.T) {
+// TestCleanupStaleSessionMetadata_PreservesOtherMetadata proves that cleanup
+// only affects no_compact metadata and leaves other metadata untouched.
+func TestCleanupStaleSessionMetadata_PreservesOtherMetadata(t *testing.T) {
 	dir := t.TempDir()
-	stateStore := state.New(filepath.Join(dir, "state.json"))
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+
 	sessions := session.NewStore(filepath.Join(dir, "sessions"))
 
-	stateStore.Set("agent/fotini/first_run_completed", true)
-	stateStore.Set("some_other_key", "value")
+	// Set non-no_compact metadata that should not be affected
+	idx.SetAgentMetadata("fotini", "first_run_completed", "true")
+	idx.SetAgentMetadata("fotini", "default_chat", "12345")
 
-	cleanupLegacyStateKeys(stateStore, sessions)
+	cleanupStaleSessionMetadata(idx, sessions)
 
-	// All keys should remain
-	keys := stateStore.AllKeys()
-	if len(keys) != 2 {
-		t.Errorf("expected 2 keys, got %d: %v", len(keys), keys)
+	// All metadata should remain
+	val, err := idx.GetAgentMetadata("fotini", "first_run_completed")
+	if err != nil || val != "true" {
+		t.Errorf("expected first_run_completed=true, got %q (err=%v)", val, err)
+	}
+
+	val, err = idx.GetAgentMetadata("fotini", "default_chat")
+	if err != nil || val != "12345" {
+		t.Errorf("expected default_chat=12345, got %q (err=%v)", val, err)
 	}
 }

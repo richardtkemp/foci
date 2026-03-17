@@ -14,7 +14,6 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/voice"
 )
 
@@ -22,7 +21,7 @@ import (
 type httpHandlerDeps struct {
 	agents            map[string]*agentInstance
 	agentOrder        []string
-	stateStore        *state.Store
+	sessionIndex      *session.SessionIndex
 	sessions          *session.Store
 	cfg               *config.Config
 	ctx               context.Context

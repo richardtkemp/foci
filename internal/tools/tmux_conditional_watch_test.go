@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
@@ -26,14 +26,14 @@ func TestTmuxConditionalWatchNoActivityNoFire(t *testing.T) {
 		fired.Add(1)
 	})
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-cond-nofire", true, 2, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-nofire", true, 2, 0)
 
 	name := "foci-test-cond-nofire"
 	tmuxSetup(t, name)
@@ -94,14 +94,14 @@ func TestTmuxConditionalWatchActivityThenFire(t *testing.T) {
 		mu.Unlock()
 	})
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=true, threshold=2s
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-cond-fire", true, 2, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-fire", true, 2, 0)
 
 	name := "foci-test-cond-fire"
 	tmuxSetup(t, name)
@@ -169,14 +169,14 @@ func TestTmuxReadNoConditionalWatchWithoutAutopilot(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=false
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-cond", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-cond", false, 30, 0)
 
 	name := "foci-test-no-cond"
 	tmuxSetup(t, name)
@@ -214,14 +214,14 @@ func TestTmuxReadNoConditionalWatchIfAlreadyWatched(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=true
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-cond-dup", true, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-dup", true, 30, 0)
 
 	name := "foci-test-cond-dup"
 	tmuxSetup(t, name)
@@ -270,14 +270,14 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=true
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-cond-persist", true, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-cond-persist", true, 30, 0)
 
 	name := "foci-test-cond-persist"
 	tmuxSetup(t, name)
@@ -309,9 +309,13 @@ func TestTmuxConditionalWatchPersistence(t *testing.T) {
 	}
 
 	// Verify persisted watch has conditional flag
-	var watches []persistedWatch
-	if !store.Get("tmux:test-cond-persist:watches", &watches) {
+	rawW, errW := idx.GetAgentMetadata("test-cond-persist", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches not persisted")
+	}
+	var watches []persistedWatch
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 1 {
 		t.Fatalf("persisted watches = %d, want 1", len(watches))

@@ -5,14 +5,18 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/state"
+	"foci/internal/session"
 	"foci/internal/tools"
 )
 
 func TestSessionDisplayOverrides(t *testing.T) {
 	// Proves that all four per-session display settings start empty, can be set to specific values, and are all cleared together by ClearSessionDisplayOverrides.
-	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
-	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 	sk := "bot/c100/1000000000"
 
 	// Initially empty
@@ -61,9 +65,12 @@ func TestSessionDisplayOverrides(t *testing.T) {
 
 func TestSessionDisplayOverrides_Restore(t *testing.T) {
 	// Proves that display overrides survive an agent restart by writing to and reading from the shared state store via RestoreSessionOverrides.
-	statePath := filepath.Join(t.TempDir(), "state.json")
-	stateStore := state.New(statePath)
-	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 	sk := "bot/c100/1000000000"
 
 	ag.SetSessionShowToolCalls(sk, "preview")
@@ -71,8 +78,8 @@ func TestSessionDisplayOverrides_Restore(t *testing.T) {
 	ag.SetSessionStreamOutput(sk, "false")
 	ag.SetSessionDisplayWidth(sk, "60")
 
-	// Simulate restart: new Agent, same state store
-	ag2 := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	// Simulate restart: new Agent, same session index
+	ag2 := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 	ag2.RestoreSessionOverrides(sk)
 
 	if v := ag2.SessionShowToolCalls(sk); v != "preview" {
@@ -138,8 +145,12 @@ func TestToolDisplayNote(t *testing.T) {
 
 func TestSessionDisplayOverrides_Rotate(t *testing.T) {
 	// Proves that display overrides move from the old session key to the new one after RotateSession, and that the state store reflects the new key with the old key's values removed.
-	stateStore := state.New(filepath.Join(t.TempDir(), "state.json"))
-	ag := &Agent{StateStore: stateStore, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	ag := &Agent{SessionIndex: idx, AsyncNotifier: tools.NewAsyncNotifier(func(_, _, _, _ string) {})}
 
 	oldKey := "bot/c100/1000000000"
 	newKey := "bot/c100/2000000000"
@@ -161,9 +172,12 @@ func TestSessionDisplayOverrides_Rotate(t *testing.T) {
 		t.Errorf("old key show_tool_calls = %q, want empty", v)
 	}
 
-	// Verify state store has the new key
-	var restored string
-	if !stateStore.Get("show_tool_calls/"+newKey, &restored) || restored != "full" {
-		t.Errorf("state store show_tool_calls/%s = %q, want full", newKey, restored)
+	// Verify session metadata has the new key
+	val, err := idx.GetSessionMetadata(newKey, "show_tool_calls")
+	if err != nil {
+		t.Fatalf("get show_tool_calls for new key: %v", err)
+	}
+	if val != "full" {
+		t.Errorf("session metadata show_tool_calls for %s = %q, want full", newKey, val)
 	}
 }

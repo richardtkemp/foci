@@ -11,8 +11,8 @@ import (
 	"foci/internal/gemini"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/session"
 	"foci/internal/startup"
-	"foci/internal/state"
 )
 
 // runShutdown performs the graceful shutdown sequence after a signal is received.
@@ -22,12 +22,12 @@ func runShutdown(
 	httpMu *sync.Mutex,
 	connMgr platform.ConnectionManager,
 	clients *clientRegistry,
-	stateStore *state.Store,
+	sessionIndex *session.SessionIndex,
 	cfg shutdownConfig,
 	cancel func(),
 ) {
 	// Record clean shutdown immediately
-	if err := startup.RecordCleanShutdown(stateStore); err != nil {
+	if err := startup.RecordCleanShutdown(sessionIndex); err != nil {
 		log.Warnf("main", "record clean shutdown: %v", err)
 	}
 

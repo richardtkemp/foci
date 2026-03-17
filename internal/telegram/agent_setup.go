@@ -11,7 +11,6 @@ import (
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/voice"
 )
 
@@ -25,7 +24,6 @@ type AgentSetupParams struct {
 	GlobalConfig    *config.Config
 	SecretStore     *secrets.Store
 	Sessions        *session.Store
-	StateStore      *state.Store
 	SessionIndex    *session.SessionIndex
 	ToolDetailStore *ToolDetailStore
 	STT             voice.STT
@@ -131,15 +129,9 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	primaryBot.SetCommandContext(p.CommandContext)
 
-	if p.StateStore != nil {
-		botKey := "bot:" + botName
-		if botKey == "bot:" {
-			botKey = "bot:" + acfg.ID
-		}
-		primaryBot.SetStateStore(p.StateStore, botKey)
-	}
 	if p.SessionIndex != nil {
 		primaryBot.SetSessionIndex(p.SessionIndex)
+		primaryBot.RestoreState()
 	}
 	if p.ToolDetailStore != nil {
 		primaryBot.SetToolDetailStore(p.ToolDetailStore)
@@ -198,7 +190,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			ToolDetailStore: p.ToolDetailStore,
-			StateStore:      p.StateStore,
+			SessionIndex:    p.SessionIndex,
 		})
 		mgr.AddFacet(acfg.ID, facetBot)
 	}
@@ -228,7 +220,7 @@ type FacetBotConfig struct {
 	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
 	ToolDetailStore *ToolDetailStore
-	StateStore      *state.Store
+	SessionIndex    *session.SessionIndex
 }
 
 // ConfigureFacetBot applies the standard facet bot settings.
@@ -244,14 +236,14 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.ToolDetailStore != nil {
 		bot.SetToolDetailStore(mc.ToolDetailStore)
 	}
-	if mc.StateStore != nil {
-		ss := mc.StateStore
+	if mc.SessionIndex != nil {
+		idx := mc.SessionIndex
 		bot.OnSessionKeyChange = func(username, sessionKey string) {
 			key := "facet:" + username
 			if sessionKey == "" {
-				_ = ss.Delete(key)
+				_ = idx.DeleteAgentMetadata("_system", key)
 			} else {
-				_ = ss.Set(key, sessionKey)
+				_ = idx.SetAgentMetadata("_system", key, sessionKey)
 			}
 		}
 	}

@@ -147,35 +147,38 @@ func (b *Bot) DefaultChatID() int64 {
 	return b.defaultChannelID()
 }
 
-// defaultChannelID reads the default channel from the state store.
+// defaultChannelID reads the default channel from the session index.
 func (b *Bot) defaultChannelID() int64 {
-	if b.stateStore == nil || b.agentID == "" {
+	if b.sessionIndex == nil || b.agentID == "" {
+		return 0
+	}
+	raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "default_channel")
+	if err != nil || raw == "" {
 		return 0
 	}
 	var channelID int64
-	if b.stateStore.Get("agent/"+b.agentID+"/default_channel", &channelID) {
-		return channelID
+	if _, err := fmt.Sscanf(raw, "%d", &channelID); err != nil {
+		return 0
 	}
-	return 0
+	return channelID
 }
 
 // setDefaultChannel persists the default channel ID for this agent.
 func (b *Bot) setDefaultChannel(channelID int64) {
-	if b.stateStore == nil || b.agentID == "" {
+	if b.sessionIndex == nil || b.agentID == "" {
 		return
 	}
-	if err := b.stateStore.Set("agent/"+b.agentID+"/default_channel", channelID); err != nil {
+	if err := b.sessionIndex.SetAgentMetadata(b.agentID, "default_channel", fmt.Sprintf("%d", channelID)); err != nil {
 		b.logger().Errorf("persist default channel: %v", err)
 	}
 }
 
 // recordChannelUsername persists the username for a channel ID (for /sessions display).
 func (b *Bot) recordChannelUsername(channelID int64, username string) {
-	if b.stateStore == nil || b.agentID == "" || username == "" {
+	if b.sessionIndex == nil || b.agentID == "" || username == "" {
 		return
 	}
-	key := fmt.Sprintf("agent/%s/chat/%d/username", b.agentID, channelID)
-	if err := b.stateStore.Set(key, username); err != nil {
+	if err := b.sessionIndex.SetChatMetadata(b.agentID, channelID, "username", username); err != nil {
 		b.logger().Errorf("persist channel username: %v", err)
 	}
 }

@@ -181,22 +181,22 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	}
 	a.metaMu.Unlock()
 
-	if a.StateStore != nil {
+	if a.SessionIndex != nil {
 		if value == "" {
-			_ = a.StateStore.Delete("model/" + sessionKey)
-			_ = a.StateStore.Delete("model_endpoint/" + sessionKey)
-			_ = a.StateStore.Delete("model_format/" + sessionKey)
+			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, "model")
+			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, "model_endpoint")
+			_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, "model_format")
 		} else {
-			if err := a.StateStore.Set("model/"+sessionKey, value); err != nil {
+			if err := a.SessionIndex.SetSessionMetadata(sessionKey, "model", value); err != nil {
 				a.logger().Errorf("session=%s persist model: %v", sessionKey, err)
 			}
 			if endpoint != "" {
-				if err := a.StateStore.Set("model_endpoint/"+sessionKey, endpoint); err != nil {
+				if err := a.SessionIndex.SetSessionMetadata(sessionKey, "model_endpoint", endpoint); err != nil {
 					a.logger().Errorf("session=%s persist model_endpoint: %v", sessionKey, err)
 				}
 			}
 			if format != "" {
-				if err := a.StateStore.Set("model_format/"+sessionKey, format); err != nil {
+				if err := a.SessionIndex.SetSessionMetadata(sessionKey, "model_format", format); err != nil {
 					a.logger().Errorf("session=%s persist model_format: %v", sessionKey, err)
 				}
 			}
@@ -283,18 +283,22 @@ func (a *Agent) ClearSessionDisplayOverrides(sessionKey string) {
 	a.SetSessionDisplayWidth(sessionKey, "")
 }
 
-// RestoreSessionOverrides loads per-session effort/thinking/model/no_compact from state store.
+// RestoreSessionOverrides loads per-session effort/thinking/model/no_compact from session metadata.
 func (a *Agent) RestoreSessionOverrides(sessionKey string) {
-	if a.StateStore == nil {
+	if a.SessionIndex == nil {
 		return
 	}
 	var restored []string
-	var val string
 
-	// Restore all string settings from state store.
+	// Restore all string settings from session metadata.
 	for _, s := range allSessionStringSettings {
 		setter := s.setter
-		if a.StateStore.Get(s.prefix+"/"+sessionKey, &val) && val != "" {
+		val, err := a.SessionIndex.GetSessionMetadata(sessionKey, s.prefix)
+		if err != nil {
+			a.logger().Warnf("session=%s restore %s: %v", sessionKey, s.prefix, err)
+			continue
+		}
+		if val != "" {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) { setter(sm, val) })
 			restored = append(restored, s.prefix+"="+val)
 		}
@@ -320,7 +324,11 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	}
 
 	// Restore no_compact (bool, not string).
-	if a.StateStore.Get("no_compact/"+sessionKey, &val) && val != "" {
+	val, err := a.SessionIndex.GetSessionMetadata(sessionKey, "no_compact")
+	if err != nil {
+		a.logger().Warnf("session=%s restore no_compact: %v", sessionKey, err)
+	}
+	if val != "" {
 		a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.noCompact = (val == "true") })
 		restored = append(restored, "no_compact")
 	}
@@ -353,29 +361,17 @@ func (a *Agent) setMetaLocked(sessionKey string, setter func(*sessionMeta)) {
 	a.metaMu.Unlock()
 }
 
-// persistSessionString persists a string key-value pair to StateStore.
+// persistSessionString persists a string key-value pair to SessionIndex.
 // Deletes the key if value is empty.
 func (a *Agent) persistSessionString(sessionKey, prefix, value string) {
-	if a.StateStore == nil {
+	if a.SessionIndex == nil {
 		return
 	}
-	key := prefix + "/" + sessionKey
 	if value == "" {
-		_ = a.StateStore.Delete(key)
-	} else if err := a.StateStore.Set(key, value); err != nil {
+		_ = a.SessionIndex.DeleteSessionMetadata(sessionKey, prefix)
+	} else if err := a.SessionIndex.SetSessionMetadata(sessionKey, prefix, value); err != nil {
 		a.logger().Errorf("session=%s persist %s: %v", sessionKey, prefix, err)
 	}
-}
-
-// sessionStringSettingPrefixes returns all state store prefixes for string settings plus no_compact.
-// Used by RotateSession to migrate all persisted session state.
-func sessionStringSettingPrefixes() []string {
-	prefixes := make([]string, 0, len(allSessionStringSettings)+1)
-	for _, s := range allSessionStringSettings {
-		prefixes = append(prefixes, s.prefix)
-	}
-	prefixes = append(prefixes, "no_compact")
-	return prefixes
 }
 
 // RotateSession migrates all per-session state from oldKey to newKey.
@@ -396,16 +392,10 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 	}
 	a.metaMu.Unlock()
 
-	// Migrate StateStore keys
-	if a.StateStore != nil {
-		for _, prefix := range sessionStringSettingPrefixes() {
-			oldStoreKey := prefix + "/" + oldKey
-			newStoreKey := prefix + "/" + newKey
-			var val string
-			if a.StateStore.Get(oldStoreKey, &val) && val != "" {
-				_ = a.StateStore.Set(newStoreKey, val)
-				_ = a.StateStore.Delete(oldStoreKey)
-			}
+	// Migrate session metadata keys (single SQL UPDATE)
+	if a.SessionIndex != nil {
+		if err := a.SessionIndex.RenameSessionMetadata(oldKey, newKey); err != nil {
+			a.logger().Errorf("rename session metadata %s → %s: %v", oldKey, newKey, err)
 		}
 	}
 

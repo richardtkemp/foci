@@ -25,9 +25,9 @@ import (
 
 	"foci/internal/memory"
 	"foci/internal/provider"
-	"foci/prompts"
-	"foci/internal/state"
+	"foci/internal/session"
 	"foci/internal/warnings"
+	"foci/prompts"
 )
 
 const (
@@ -60,7 +60,7 @@ type Runner struct {
 	manaInvestInterval string // mana invest interval (Go duration string)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
-	stateStore         *state.Store
+	sessionIndex       *session.SessionIndex
 	branchFn           BranchFunc
 
 	warningDispatcher  *warnings.Dispatcher
@@ -98,7 +98,7 @@ type RunnerConfig struct {
 	ManaInvestInterval string                // mana invest interval (Go duration string, default: "30m")
 	PromptSearchDirs   []string              // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
-	StateStore         *state.Store
+	SessionIndex       *session.SessionIndex
 	BranchFunc         BranchFunc
 
 	WarningDispatcher  *warnings.Dispatcher
@@ -123,7 +123,7 @@ func New(cfg RunnerConfig) *Runner {
 		manaInvestInterval: cfg.ManaInvestInterval,
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
-		stateStore:         cfg.StateStore,
+		sessionIndex:       cfg.SessionIndex,
 		branchFn:           cfg.BranchFunc,
 
 		warningDispatcher:  cfg.WarningDispatcher,
@@ -137,10 +137,11 @@ func New(cfg RunnerConfig) *Runner {
 		done:               make(chan struct{}),
 	}
 	// Restore consolidation timestamp from persistent state
-	if cfg.StateStore != nil {
-		var ts time.Time
-		if cfg.StateStore.Get("consolidation_last:"+cfg.AgentID, &ts) {
-			r.lastConsolidation = ts
+	if cfg.SessionIndex != nil {
+		if raw, err := cfg.SessionIndex.GetAgentMetadata(cfg.AgentID, "consolidation_last"); err == nil && raw != "" {
+			if ts, err := time.Parse(time.RFC3339, raw); err == nil {
+				r.lastConsolidation = ts
+			}
 		}
 	}
 	return r
@@ -499,8 +500,8 @@ func (r *Runner) maybeConsolidation() {
 			r.mu.Lock()
 			r.consolidationRunning = false
 			r.mu.Unlock()
-			if r.stateStore != nil {
-				if err := r.stateStore.Set("consolidation_last:"+r.agentID, time.Now()); err != nil {
+			if r.sessionIndex != nil {
+				if err := r.sessionIndex.SetAgentMetadata(r.agentID, "consolidation_last", time.Now().Format(time.RFC3339)); err != nil {
 					r.log.Warnf("persist consolidation timestamp: %v", err)
 				}
 			}
