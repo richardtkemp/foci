@@ -190,6 +190,20 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		cmds.Register(command.TmuxCommand())
 	}
 
+	// Stop / done
+	cmds.Register(command.StopCommand())
+	cmds.Register(command.DoneCommand())
+
+	// Stop aliases (e.g. "wait" → same as "stop")
+	if p.acfg.EnableStopAliases {
+		stopCmd := cmds.Get("stop")
+		for _, alias := range p.acfg.StopAliases {
+			if alias != "stop" {
+				cmds.Register(&command.Command{Name: alias, Hidden: true, Execute: stopCmd.Execute})
+			}
+		}
+	}
+
 	// Facet
 	cmds.Register(command.FacetCommand())
 

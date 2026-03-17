@@ -13,28 +13,9 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, text
 	if text == "" {
 		return false
 	}
-
-	// /stop and /done are handled locally (not dispatched to command registry).
-	// Normalize dot-prefix to slash so .stop and .done work identically.
-	cmd := strings.ToLower(strings.TrimSpace(text))
-	if strings.HasPrefix(cmd, ".") {
-		cmd = "/" + cmd[1:]
-	}
-	if strings.HasPrefix(cmd, "/") {
-		if b.isStopCommand(cmd) {
-			b.cancelTurn()
-			b.sendReply(msg, "Stopped.")
-			return true
-		}
-		if cmd == "/done" {
-			return b.handleDoneCommand(msg)
-		}
-	}
-
 	if b.dispatcher == nil {
 		return false
 	}
-
 	return b.tryDispatchViaDispatcher(ctx, msg, text)
 }
 
@@ -90,22 +71,3 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 	return true
 }
 
-// handleDoneCommand handles the /done command for secondary bots.
-func (b *Bot) handleDoneCommand(msg *gotgbot.Message) bool {
-	if !b.isSecondary {
-		b.sendReply(msg, "Nothing to detach — this is the main session.")
-		return true
-	}
-	sk := b.SessionKey()
-	if sk == "" {
-		b.sendReply(msg, "Already idle.")
-		return true
-	}
-	b.cancelTurn()
-	if b.pool != nil {
-		b.pool.Release(b)
-	}
-	b.sendReply(msg, "Session ended.")
-	b.logger().Infof("secondary bot detached from %s", sk)
-	return true
-}

@@ -29,10 +29,6 @@ func (b *Bot) RegisterCommands() {
 		})
 	}
 
-	// Add special commands not in the registry
-	cmds = append(cmds, gotgbot.BotCommand{Command: "stop", Description: "Cancel the current agent turn"})
-	cmds = append(cmds, gotgbot.BotCommand{Command: "done", Description: "Detach a secondary bot from its session"})
-
 	if _, err := b.client.SetMyCommands(cmds, nil); err != nil {
 		b.logger().Warnf("setMyCommands: %s", b.sanitizeError(err))
 		return

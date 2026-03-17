@@ -101,8 +101,6 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     sharedSTT,
 			TTSProvider:     sharedTTS,
-			StopAliases:     cfg.Telegram.StopAliases,
-			EnableStopAlias: cfg.Telegram.EnableStopAliases,
 			AgentConfig:     firstACfg,
 			GlobalConfig:    cfg,
 			ToolDetailStore: p.toolDetailStore,

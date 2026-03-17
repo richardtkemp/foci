@@ -274,6 +274,16 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 
 // SetCommandContext configures the command dispatcher with the unified CommandContext.
 func (b *Bot) SetCommandContext(cc command.CommandContext) {
+	cc.StopFunc = b.cancelTurn
+	cc.IsSecondaryBot = b.isSecondary
+	if b.isSecondary {
+		cc.ReleaseFunc = func() {
+			if b.pool != nil {
+				b.pool.Release(b)
+			}
+			b.logger().Infof("secondary bot released")
+		}
+	}
 	b.dispatcher = NewDispatcher(b.commands, cc, b.agentID)
 	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
 }

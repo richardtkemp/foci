@@ -91,12 +91,6 @@ func (d *Dispatcher) dispatchDotCommand(ctx context.Context, msg *gotgbot.Messag
 }
 
 func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, msg *gotgbot.Message, text, sessionKey, userID string) DispatchResult {
-	cmd := strings.ToLower(strings.TrimSpace(text))
-
-	if cmd == "/stop" || cmd == "/done" {
-		return DispatchResult{}
-	}
-
 	stripped := text[1:]
 	name, args, _ := strings.Cut(stripped, " ")
 	name = strings.ToLower(strings.TrimSpace(name))

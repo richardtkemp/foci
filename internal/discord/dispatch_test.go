@@ -90,10 +90,10 @@ func TestDispatchSlashCommand(t *testing.T) {
 	}
 }
 
-// TestDispatchSlashStopNotHandled verifies that /stop is NOT handled by the dispatcher
-// (it's handled locally by the bot's command handler).
-func TestDispatchSlashStopNotHandled(t *testing.T) {
+// TestDispatchSlashStopHandled verifies that /stop IS dispatched via the registry.
+func TestDispatchSlashStopHandled(t *testing.T) {
 	reg := command.NewRegistry()
+	reg.Register(command.StopCommand())
 	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
 
 	msg := &discordgo.Message{
@@ -103,14 +103,18 @@ func TestDispatchSlashStopNotHandled(t *testing.T) {
 	}
 
 	result := d.Dispatch(context.Background(), msg)
-	if result.Handled {
-		t.Error("expected /stop to not be handled by dispatcher")
+	if !result.Handled {
+		t.Error("expected /stop to be handled by dispatcher")
+	}
+	if result.Response.Text != "Stopped." {
+		t.Errorf("unexpected response: %q", result.Response.Text)
 	}
 }
 
-// TestDispatchSlashDoneNotHandled verifies that /done is NOT handled by the dispatcher.
-func TestDispatchSlashDoneNotHandled(t *testing.T) {
+// TestDispatchSlashDoneHandled verifies that /done IS dispatched via the registry.
+func TestDispatchSlashDoneHandled(t *testing.T) {
 	reg := command.NewRegistry()
+	reg.Register(command.DoneCommand())
 	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
 
 	msg := &discordgo.Message{
@@ -120,8 +124,12 @@ func TestDispatchSlashDoneNotHandled(t *testing.T) {
 	}
 
 	result := d.Dispatch(context.Background(), msg)
-	if result.Handled {
-		t.Error("expected /done to not be handled by dispatcher")
+	if !result.Handled {
+		t.Error("expected /done to be handled by dispatcher")
+	}
+	// Primary bot → "Nothing to detach"
+	if result.Response.Text != "Nothing to detach — this is the main session." {
+		t.Errorf("unexpected response: %q", result.Response.Text)
 	}
 }
 

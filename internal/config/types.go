@@ -180,6 +180,9 @@ type AgentConfig struct {
 
 	CacheTTL string `toml:"cache_ttl"` // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 
+	StopAliases       []string `toml:"stop_aliases"`        // per-agent stop aliases (empty = use global)
+	EnableStopAliases bool     `toml:"enable_stop_aliases"` // per-agent enable stop aliases (inherited from defaults)
+
 	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
 }
 
@@ -225,8 +228,6 @@ type DiscordConfig struct {
 type TelegramConfig struct {
 	AllowedUsers        []string `toml:"allowed_users"`
 	FacetBots       []string `toml:"facet_bots"`        // shared facet pool: bot names (tokens via "telegram.<name>" secrets)
-	StopAliases         []string `toml:"stop_aliases"`          // aliases for /stop command (e.g., ["stop", "wait"])
-	EnableStopAliases   bool     `toml:"enable_stop_aliases"`   // enable stop command aliases (default true)
 	StartupNotify       bool     `toml:"startup_notify"`        // send notification on startup (default true)
 	FacetSessionTTL string   `toml:"facet_session_ttl"` // idle TTL before a facet bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
@@ -584,6 +585,9 @@ type DefaultsConfig struct {
 	NudgeMaxPerBatch       int  `toml:"nudge_max_per_batch"`       // max reminders injected per tool batch (default 1)
 	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
 	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
+
+	StopAliases       []string `toml:"stop_aliases"`        // aliases for /stop command (e.g., ["stop", "wait"])
+	EnableStopAliases bool     `toml:"enable_stop_aliases"` // enable stop command aliases (default true)
 
 	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
 }

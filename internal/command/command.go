@@ -238,7 +238,7 @@ func (r *Registry) HandleMessage(text string) (string, bool) {
 	}
 
 	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "/cancel" || lower == "/stop" {
+	if lower == "/cancel" || lower == "/stop" || lower == ".cancel" || lower == ".stop" {
 		r.wizard = nil
 		return "Wizard cancelled.", true
 	}

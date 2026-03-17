@@ -12,22 +12,6 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// isStopCommand returns true if the command matches /stop or any configured alias.
-func (b *Bot) isStopCommand(cmd string) bool {
-	if cmd == "/stop" {
-		return true
-	}
-	if !b.enableStopAliases {
-		return false
-	}
-	for _, alias := range b.stopAliases {
-		if cmd == "/"+alias {
-			return true
-		}
-	}
-	return false
-}
-
 func formatUserInfo(user *gotgbot.User) string {
 	id := fmt.Sprintf("%d", user.Id)
 	if user.Username != "" {

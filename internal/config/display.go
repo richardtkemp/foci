@@ -125,10 +125,10 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if len(cfg.Telegram.FacetBots) > 0 {
 		add("telegram", "facet_bots", cfg.Telegram.FacetBots)
 	}
-	if len(cfg.Telegram.StopAliases) > 0 {
-		add("telegram", "stop_aliases", cfg.Telegram.StopAliases)
+	if len(cfg.Defaults.StopAliases) > 0 {
+		add("defaults", "stop_aliases", cfg.Defaults.StopAliases)
 	}
-	add("telegram", "enable_stop_aliases", cfg.Telegram.EnableStopAliases)
+	add("defaults", "enable_stop_aliases", cfg.Defaults.EnableStopAliases)
 	add("telegram", "startup_notify", cfg.Telegram.StartupNotify)
 	add("telegram", "facet_session_ttl", cfg.Telegram.FacetSessionTTL)
 	add("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
@@ -495,8 +495,6 @@ type displayConfig struct {
 type displayTelegram struct {
 	AllowedUsers        []string `toml:"allowed_users,omitempty"`
 	FacetBots       []string `toml:"facet_bots,omitempty"`
-	StopAliases         []string `toml:"stop_aliases,omitempty"`
-	EnableStopAliases   bool     `toml:"enable_stop_aliases"`
 	StartupNotify       bool     `toml:"startup_notify"`
 	FacetSessionTTL string   `toml:"facet_session_ttl"`
 	MessageQueueSize    int      `toml:"message_queue_size"`
@@ -521,8 +519,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Telegram: displayTelegram{
 			AllowedUsers:        cfg.Telegram.AllowedUsers,
 			FacetBots:       cfg.Telegram.FacetBots,
-			StopAliases:         cfg.Telegram.StopAliases,
-			EnableStopAliases:   cfg.Telegram.EnableStopAliases,
 			StartupNotify:       cfg.Telegram.StartupNotify,
 			FacetSessionTTL: cfg.Telegram.FacetSessionTTL,
 			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
