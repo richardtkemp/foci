@@ -432,6 +432,18 @@ func (e *APIError) IsAuthError() bool {
 	return e.StatusCode == http.StatusUnauthorized
 }
 
+// RequestID extracts the request_id from the JSON error body.
+// Returns an empty string if not present or unparseable.
+func (e *APIError) RequestID() string {
+	var parsed struct {
+		RequestID string `json:"request_id"`
+	}
+	if json.Unmarshal([]byte(e.Body), &parsed) == nil {
+		return parsed.RequestID
+	}
+	return ""
+}
+
 // RetryAfterSeconds parses the retry-after header as seconds.
 // Returns 0 if not present or unparseable.
 func (e *APIError) RetryAfterSeconds() int {
