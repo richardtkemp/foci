@@ -196,7 +196,11 @@ func (b *ExecBridge) exportedToolCount() int {
 //
 // This prevents false positives when a single positional arg happens to
 // look like JSON (e.g. searching for a JSON string).
-const jsonPassthroughHelper = `# JSON passthrough: if the sole arg is a JSON object with valid param keys, use it directly.
+const jsonPassthroughHelper = `# Trace helper: logs to stderr when FOCI_TRACE is set.
+_foci_trace() { [ -n "${FOCI_TRACE:-}" ] && echo "FOCI_TRACE[$1]: ${*:2}" >&2; return 0; }
+export -f _foci_trace
+
+# JSON passthrough: if the sole arg is a JSON object with valid param keys, use it directly.
 _foci_json() {
   local tool="$1" valid_keys="$2"; shift 2
   [ $# -eq 1 ] || return 1
@@ -355,6 +359,7 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
   local text="" file_path="" send_as="" read_stdin=false
+  _foci_trace "send" "args=$# tty=$([ -t 0 ] && echo yes || echo no)"
   while [ $# -gt 0 ]; do
     case "$1" in
       --file) file_path="$2"; shift 2 ;;
@@ -370,7 +375,9 @@ func generateShellFunc(t *Tool) string {
   text="${text# }"
   if [ "$read_stdin" = true ] || ([ -z "$text" ] && [ -z "$file_path" ]); then
     if [ ! -t 0 ]; then
+      _foci_trace "send" "reading stdin..."
       text="$(cat)"
+      _foci_trace "send" "stdin read ${#text} bytes"
     fi
   fi
   if [ -z "$text" ] && [ -z "$file_path" ]; then
@@ -389,6 +396,7 @@ func generateShellFunc(t *Tool) string {
   if [ -n "$send_as" ]; then
     params="$(echo "$params" | jq --arg s "$send_as" '. + {send_as: $s}')"
   fi
+  _foci_trace "send" "calling foci-call text=${#text}b file=$file_path"
   foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_message_to_user","params":$p}')"
 }
 `, name, guard, name, name, name)
