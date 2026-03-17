@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/log"
 )
 
 // resolveZeroable returns the per-agent value if non-zero, otherwise global.
@@ -115,4 +118,22 @@ func resolveStreamingConfig(acfg config.AgentConfig, cfg *config.Config) bool {
 		return *acfg.Streaming
 	}
 	return cfg.Anthropic.Streaming
+}
+
+// buildBotConflictSkipSet returns a map of agent IDs that should be skipped
+// because they share a bot token with an earlier agent.  It also logs a loud
+// banner for each conflict so operators notice immediately.
+func buildBotConflictSkipSet(conflicts []config.BotTokenConflict) map[string]string {
+	skip := make(map[string]string)
+	for _, c := range conflicts {
+		ids := strings.Join(c.AgentIDs, ", ")
+		log.Errorf("main", "==============================================================")
+		log.Errorf("main", "  DUPLICATE BOT TOKEN: %s bot %q used by agents: %s", c.Platform, c.BotName, ids)
+		log.Errorf("main", "  Only agent %q will be started. Others skipped.", c.AgentIDs[0])
+		log.Errorf("main", "==============================================================")
+		for _, id := range c.AgentIDs[1:] {
+			skip[id] = fmt.Sprintf("duplicate %s bot %q (already used by agent %q)", c.Platform, c.BotName, c.AgentIDs[0])
+		}
+	}
+	return skip
 }

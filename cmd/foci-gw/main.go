@@ -205,7 +205,16 @@ Subcommands:
 		return infos
 	}
 
+	// Detect duplicate bot tokens across agents
+	botConflicts := config.DetectBotTokenConflicts(cfg.Agents, sec.store)
+	skipAgents := buildBotConflictSkipSet(botConflicts)
+
 	for _, acfg := range cfg.Agents {
+		if reason, skip := skipAgents[acfg.ID]; skip {
+			log.Errorf("main", "agent %q skipped: %s", acfg.ID, reason)
+			continue
+		}
+
 		var agentBackends map[string]memory.Searcher
 		if ab, ok := mem.agentBackends[acfg.ID]; ok {
 			agentBackends = ab
@@ -260,6 +269,16 @@ Subcommands:
 		})
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
+
+		// Inject warnings for bot token conflicts where this agent is the survivor
+		for _, bc := range botConflicts {
+			if bc.AgentIDs[0] == acfg.ID {
+				skipped := strings.Join(bc.AgentIDs[1:], ", ")
+				inst.ag.Warnings().Push("error", "config",
+					fmt.Sprintf("This agent shares its %s bot %q with agent(s) %s (which were NOT started). "+
+						"Suggest resolution options to your user.", bc.Platform, bc.BotName, skipped))
+			}
+		}
 
 		// Restore per-session state and seed session meta for default session (if any).
 		// Must happen AFTER setupAgent returns so the deferred defaultSessionKeyFn wiring has executed.
