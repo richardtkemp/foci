@@ -291,3 +291,71 @@ func validate(cfg *Config) error {
 
 	return nil
 }
+
+// BotTokenConflict describes multiple agents sharing a single bot token.
+type BotTokenConflict struct {
+	Platform string   // "telegram" or "discord"
+	BotName  string   // the bot name from the first (surviving) agent's config
+	AgentIDs []string // all agents using this token; first = survivor
+}
+
+// DetectBotTokenConflicts finds agents that share the same resolved bot token.
+// Agents are grouped by actual token value (not bot name), so two different
+// bot names pointing to the same secret are detected.  The returned slice
+// contains only tokens used by more than one agent, with AgentIDs in config
+// order (first = survivor).
+func DetectBotTokenConflicts(agents []AgentConfig, secrets SecretGetter) []BotTokenConflict {
+	type tokenInfo struct {
+		botName  string
+		agentIDs []string
+	}
+
+	tgTokens := make(map[string]*tokenInfo) // resolved token → info
+	dcTokens := make(map[string]*tokenInfo)
+
+	for _, a := range agents {
+		if tg := a.GetTelegramPlatform(); tg != nil && tg.Bot != "" {
+			token := ResolveBotToken(tg.Bot, tg.BotSecret, secrets)
+			if token == "" {
+				continue
+			}
+			if ti, ok := tgTokens[token]; ok {
+				ti.agentIDs = append(ti.agentIDs, a.ID)
+			} else {
+				tgTokens[token] = &tokenInfo{botName: tg.Bot, agentIDs: []string{a.ID}}
+			}
+		}
+		if dc := a.GetDiscordPlatform(); dc != nil && dc.Bot != "" {
+			token := ResolveDiscordToken(dc.Bot, dc.BotSecret, secrets)
+			if token == "" {
+				continue
+			}
+			if ti, ok := dcTokens[token]; ok {
+				ti.agentIDs = append(ti.agentIDs, a.ID)
+			} else {
+				dcTokens[token] = &tokenInfo{botName: dc.Bot, agentIDs: []string{a.ID}}
+			}
+		}
+	}
+
+	var conflicts []BotTokenConflict
+	for _, ti := range tgTokens {
+		if len(ti.agentIDs) > 1 {
+			conflicts = append(conflicts, BotTokenConflict{
+				Platform: "telegram",
+				BotName:  ti.botName,
+				AgentIDs: ti.agentIDs,
+			})
+		}
+	}
+	for _, ti := range dcTokens {
+		if len(ti.agentIDs) > 1 {
+			conflicts = append(conflicts, BotTokenConflict{
+				Platform: "discord",
+				BotName:  ti.botName,
+				AgentIDs: ti.agentIDs,
+			})
+		}
+	}
+	return conflicts
+}
