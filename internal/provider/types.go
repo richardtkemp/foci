@@ -391,9 +391,10 @@ func TextOf(blocks []ContentBlock) string {
 // APIError is returned when an LLM API responds with a non-200 status code.
 // Use errors.As to check for this type and inspect StatusCode or RetryAfter.
 type APIError struct {
-	StatusCode int    // HTTP status code
-	Body       string // response body
-	RetryAfter string // retry-after header value (seconds or date), empty if not present
+	StatusCode  int              // HTTP status code
+	Body        string           // response body
+	RetryAfter  string           // retry-after header value (seconds or date), empty if not present
+	WireRequest json.RawMessage  // SDK-serialized request body (for error payload logging)
 }
 
 // Anthropic-specific HTTP status code for overloaded service.

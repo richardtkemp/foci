@@ -85,7 +85,14 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 	if !log.PayloadEnabled() {
 		return
 	}
-	reqJSON, _ := json.Marshal(req)
+	// Prefer wire request (SDK-serialized) over internal request.
+	var reqJSON json.RawMessage
+	var perr *provider.APIError
+	if errors.As(apiErr, &perr) && perr.WireRequest != nil {
+		reqJSON = perr.WireRequest
+	} else {
+		reqJSON, _ = json.Marshal(req)
+	}
 
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
@@ -109,8 +116,7 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 		DurationMS: duration.Milliseconds(),
 	}
 
-	var perr *provider.APIError
-	if errors.As(apiErr, &perr) {
+	if perr != nil {
 		entry.StatusCode = perr.StatusCode
 		entry.ResponseBody = json.RawMessage(perr.Body)
 		entry.RequestID = perr.RequestID()
