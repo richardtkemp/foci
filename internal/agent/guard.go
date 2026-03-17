@@ -50,18 +50,6 @@ func getMissingQueryTools() map[string]bool {
 }
 
 
-// providerAwareDefaultAlias returns the cheap-model alias based on the turn model's developer.
-func (a *Agent) providerAwareDefaultAlias(turnModel string) string {
-	dev, _ := config.SplitDeveloperModel(turnModel)
-	switch dev {
-	case "google":
-		return "gemini-flash"
-	case "openai":
-		return "gpt4o"
-	}
-	return "haiku"
-}
-
 func detectContentExtension(content string) string {
 	trimmed := strings.TrimSpace(content)
 	if len(trimmed) > 0 {
@@ -129,37 +117,8 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 
 // summariseToolResult calls a cheap model to produce a summary of an oversized tool result.
 // Returns the formatted summary string, or empty string on failure (caller falls back).
-func (a *Agent) summariseToolResult(ctx context.Context, client provider.Client, sessionKey, toolName, turnModel, result string, messages []provider.Message, savedPath string) string {
-	// Resolve summary model: config override → provider-aware default
-	summaryModel := a.SummaryModel
-	if summaryModel == "" {
-		summaryModel = a.providerAwareDefaultAlias(turnModel)
-	}
-
-	summaryEndpoint := a.SummaryEndpoint
-
-	// Resolve through config system (handles aliases and developer/model_id)
-	resolved, err := config.ResolveModel(summaryModel, summaryEndpoint, a.ModelAliases)
-	if err != nil {
-		a.logger().Warnf("session=%s failed to resolve summary model %q: %v, using provider fallback", sessionKey, summaryModel, err)
-		// Try provider-aware fallback
-		summaryModel = a.providerAwareDefaultAlias(turnModel)
-		resolved, err = config.ResolveModel(summaryModel, "", a.ModelAliases)
-		if err != nil {
-			a.logger().Warnf("session=%s provider fallback also failed: %v", sessionKey, err)
-			return ""
-		}
-	}
-
-	// Get client for the resolved endpoint
-	summaryClient := client
-	if a.ClientProvider != nil && resolved.Endpoint != "" {
-		if c := a.ClientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
-			summaryClient = c
-		}
-	}
-
-	model := resolved.ModelID
+func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sessionKey, toolName, _ string, result string, messages []provider.Message, savedPath string) string {
+	summaryClient, model, _ := a.ResolveCallSite(config.CallSummarizeTool, sessionKey)
 
 	convContext := recentContext(messages, a.SummaryContextTurns, a.SummaryContextChars)
 

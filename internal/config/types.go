@@ -155,8 +155,6 @@ type AgentConfig struct {
 	SummaryContextTurns   int    `toml:"summary_context_turns"`   // recent turns for auto-summary context (0 = use global)
 	SummaryContextChars   int    `toml:"summary_context_chars"`   // max chars of context for auto-summary (0 = use global)
 	MaxSummaryInputChars  int    `toml:"max_summary_input_chars"` // max chars embedded in summary prompt (0 = use global)
-	SummaryModel          string `toml:"summary_model"`           // model for auto-summarisation: alias or developer/model_id (empty = provider-aware default)
-	SummaryEndpoint       string `toml:"summary_endpoint"`        // endpoint override for summary requests (empty = auto-select)
 	MaxImagePixels        int    `toml:"max_image_pixels"`        // max pixels (w*h) before downscaling images (0 = use global)
 	SearchProvider        string `toml:"search_provider"`         // "anthropic" or "brave" (empty = use global)
 	FetchProvider         string `toml:"fetch_provider"`          // "anthropic" or "builtin" (empty = use global)
@@ -499,8 +497,6 @@ type ToolsConfig struct {
 	SummaryContextTurns     int      `toml:"summary_context_turns"`      // recent turns for auto-summary context (default 5)
 	SummaryContextChars     int      `toml:"summary_context_chars"`      // max chars of context for auto-summary (default 6000)
 	MaxSummaryInputChars    int      `toml:"max_summary_input_chars"`    // max chars of tool result embedded in summary prompt (default 100000)
-	SummaryModel            string   `toml:"summary_model"`              // model for auto-summarisation: alias or developer/model_id (empty = provider-aware default)
-	SummaryEndpoint         string   `toml:"summary_endpoint"`           // endpoint override for summary requests (empty = auto-select)
 	MaxImagePixels          int      `toml:"max_image_pixels"`           // max pixels (w*h) before downscaling images (default 2073600)
 	SearchProvider          string   `toml:"search_provider"`            // "brave" (default) or "anthropic"
 	FetchProvider           string   `toml:"fetch_provider"`             // "anthropic" (default) or "builtin"
@@ -537,8 +533,6 @@ type CommandConfig struct {
 type LLMConfig struct {
 	Model           string `toml:"model"`            // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
 	MaxOutputTokens int    `toml:"max_output_tokens"` // default max_output_tokens (default: 16384)
-	SummaryModel    string `toml:"summary_model"`     // default summary model: alias or developer/model_id (empty = provider-aware default)
-	SummaryEndpoint string `toml:"summary_endpoint"`  // default summary endpoint override (empty = auto-select)
 }
 
 type DefaultsConfig struct {
@@ -594,7 +588,11 @@ type DefaultsConfig struct {
 
 // ModelsConfig holds model-related configuration.
 type ModelsConfig struct {
-	Aliases map[string]string `toml:"aliases"` // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
+	Aliases  map[string]string `toml:"aliases"`  // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
+	Powerful string            `toml:"powerful"` // model for the powerful group (enables group mode when set)
+	Fast     string            `toml:"fast"`     // model for the fast group (defaults to powerful if unset)
+	Cheap    string            `toml:"cheap"`    // model for the cheap group (defaults to powerful if unset)
+	Calls    map[string]string `toml:"calls"`    // call site overrides: call name → group name
 }
 
 // EndpointConfig describes a model API endpoint.

@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"foci/internal/compaction"
+	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/prompts"
 )
 
 // maybeCompact checks whether context compaction is needed and performs it.
 // Supports idle-aware pressure and mana-refresh compaction modes.
-func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
+func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
 	if a.Compactor == nil {
 		return
 	}
@@ -124,12 +125,13 @@ func (a *Agent) maybeCompact(ctx context.Context, client provider.Client, sessio
 	for _, fn := range a.CompactionStartFunc {
 		fn(sessionKey, "⏳ Compacting context...")
 	}
+	compactClient, compactModel, compactFormat := a.ResolveCallSite(config.CallCompaction, sessionKey)
 	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
 	handoffMsg := a.CompactionHandoffMsg
 	if handoffMsg == "" {
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
 	}
-	summary, newKey, err := a.Compactor.Compact(ctx, client, sessionKey, system, summaryPrompt, handoffMsg, false)
+	summary, newKey, err := a.Compactor.Compact(ctx, compactClient, sessionKey, compactModel, compactFormat, system, summaryPrompt, handoffMsg, false)
 	if err != nil {
 		a.logger().Errorf("session=%s compaction failed: %v", sessionKey, err)
 	} else {

@@ -15,7 +15,7 @@ import (
 func TestSpawnEmptyPrompt(t *testing.T) {
 	// Proves that an empty prompt is rejected with a descriptive error before any API call is made.
 	t.Parallel()
-	deps := SpawnDeps{Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
+	deps := SpawnDeps{FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic"}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -39,7 +39,7 @@ func TestSpawnInvalidContext(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases()}
+	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic"}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -64,10 +64,11 @@ func TestSpawnInheritNoParentSession(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -94,11 +95,12 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:     mockSessions,
-		AgentID:      "test",
-		Model:        "anthropic/claude-haiku-4-5",
-		MaxInherit:   3,
-		MaxToolLoops: 10,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
+		MaxToolLoops:   10,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -160,10 +162,11 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 
 	var builderBranch, builderParent string
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
 		OrientationBuilder: func(branchKey, parentKey string) string {
 			builderBranch = branchKey
 			builderParent = parentKey
@@ -223,7 +226,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 		})
 
 		client := newTestAnthropicClient(server.URL, "test-token")
-		deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
+		deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
 		params, _ := json.Marshal(map[string]string{
@@ -258,7 +261,7 @@ func TestSpawnModelDefault(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "anthropic/claude-sonnet-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	// No model specified — should use parent's default
@@ -289,7 +292,7 @@ func TestSpawnTimeout(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{

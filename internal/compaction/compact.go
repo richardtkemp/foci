@@ -21,8 +21,6 @@ import (
 type Compactor struct {
 	log              *log.ComponentLogger
 	sessions         *session.Store
-	model            string
-	format           string  // wire format ("anthropic", "gemini", "openai") for API log provider field
 	threshold        float64 // fraction of context window (e.g. 0.8)
 	maxTokens        int
 	minMessages      int
@@ -34,11 +32,10 @@ type Compactor struct {
 }
 
 // NewCompactor creates a new Compactor with defaults.
-func NewCompactor(sessions *session.Store, model string, threshold float64) *Compactor {
+func NewCompactor(sessions *session.Store, threshold float64) *Compactor {
 	return &Compactor{
 		log:         log.NewComponentLogger("compaction"),
 		sessions:    sessions,
-		model:       model,
 		threshold:   threshold,
 		maxTokens:   4096,
 		minMessages: 4,
@@ -56,7 +53,6 @@ func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Co
 	if preserveMessages >= 0 {
 		c.preserveMessages = preserveMessages
 	}
-	c.checkConfig()
 	return c
 }
 
@@ -66,24 +62,8 @@ func (c *Compactor) WithEffort(effort string) *Compactor {
 	return c
 }
 
-// WithFormat sets the wire format for API log provider attribution.
-func (c *Compactor) WithFormat(format string) *Compactor {
-	c.format = format
-	return c
-}
-
 // SetLogger replaces the component logger (e.g. after AgentID is known).
 func (c *Compactor) SetLogger(l *log.ComponentLogger) { c.log = l }
-
-// checkConfig warns if compaction settings could exceed the context window.
-func (c *Compactor) checkConfig() {
-	limit := contextLimit(c.model)
-	triggerPoint := int(float64(limit) * c.threshold)
-	if triggerPoint+c.maxTokens > limit {
-		c.log.Warnf("compaction_max_tokens (%d) + threshold trigger point (%d) exceeds context window (%d) — summary may not fit",
-			c.maxTokens, triggerPoint, limit)
-	}
-}
 
 // contextLimit returns the approximate context window for a model.
 // Accepts both bare ("claude-opus-4-6") and full ("anthropic/claude-opus-4-6") model IDs.
@@ -282,10 +262,10 @@ func estimateTokens(messages []provider.Message) int {
 }
 
 // ShouldCompact returns true if the session likely exceeds the threshold.
-// Uses the compactor's model for context limit. Use ShouldCompactWithLimit
-// to supply an explicit limit (e.g. when session model differs from agent default).
-func (c *Compactor) ShouldCompact(sessionKey string, messages []provider.Message, lastUsage *provider.Usage) bool {
-	return c.ShouldCompactWithLimit(sessionKey, messages, lastUsage, contextLimit(c.model))
+// model is used to determine context window size. Use ShouldCompactWithLimit
+// to supply an explicit limit instead.
+func (c *Compactor) ShouldCompact(model, sessionKey string, messages []provider.Message, lastUsage *provider.Usage) bool {
+	return c.ShouldCompactWithLimit(sessionKey, messages, lastUsage, contextLimit(model))
 }
 
 // ShouldCompactWithLimit returns true if the session likely exceeds the threshold,
@@ -315,12 +295,13 @@ func (c *Compactor) ShouldCompactWithLimit(sessionKey string, messages []provide
 var DefaultHandoffMessage = prompts.CompactionHandoff()
 
 // Compact summarizes a session's history and replaces it with a rotated key.
+// model and format specify the compaction model (e.g. from GroupResolver).
 // summaryPrompt is read from a file at call time; if empty, compaction uses a
 // minimal fallback. handoffMessage uses DefaultHandoffMessage if empty.
 // When dryRun is true, the full pipeline runs (API call, summary generation)
 // but the session is left unchanged — returns ("summary", "", nil).
 // On success, returns (summary, newKey, nil) where newKey is the rotated session key.
-func (c *Compactor) Compact(ctx context.Context, client provider.Client, sessionKey string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, string, error) {
+func (c *Compactor) Compact(ctx context.Context, client provider.Client, sessionKey, model, format string, system []provider.SystemBlock, summaryPrompt, handoffMessage string, dryRun bool) (string, string, error) {
 	if summaryPrompt == "" {
 		summaryPrompt = prompts.CompactionSummary()
 	}
@@ -407,10 +388,10 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		Content: provider.TextContent(summaryPrompt),
 	})
 
-	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s", c.model, c.maxTokens, len(summaryMessages), c.effort)
+	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s", model, c.maxTokens, len(summaryMessages), c.effort)
 	start := time.Now()
 	req := &provider.MessageRequest{
-		Model:     c.model,
+		Model:     model,
 		MaxTokens: c.maxTokens,
 		System:    system,
 		Messages:  summaryMessages,
@@ -427,14 +408,14 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 	}
 
 	duration := time.Since(start)
-	cost := log.CalculateCost(c.model,
+	cost := log.CalculateCost(model,
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{
 		Timestamp:   start.UTC(),
-		Provider:    c.format,
+		Provider:    format,
 		Session:     sessionKey,
-		Model:       c.model,
+		Model:       model,
 		Input:       resp.Usage.InputTokens,
 		Output:      resp.Usage.OutputTokens,
 		CacheRead:   resp.Usage.CacheReadInputTokens,

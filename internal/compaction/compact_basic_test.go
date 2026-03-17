@@ -83,17 +83,17 @@ func TestShouldCompactWithUsage(t *testing.T) {
 	// Verifies that ShouldCompact returns true only when the
 	// total token count (input + cache read) exceeds the threshold, and that both token
 	// types are correctly summed before comparison — testing under, at, and over the limit.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, 0.8)
 
 	// Under threshold (160k = 200k * 0.8)
 	usage := &provider.Usage{InputTokens: 100_000}
-	if c.ShouldCompact("test/session", nil, usage) {
+	if c.ShouldCompact("claude-haiku-4-5", "test/session", nil, usage) {
 		t.Error("should not compact at 100k tokens")
 	}
 
 	// Over threshold
 	usage = &provider.Usage{InputTokens: 170_000}
-	if !c.ShouldCompact("test/session", nil, usage) {
+	if !c.ShouldCompact("claude-haiku-4-5", "test/session", nil, usage) {
 		t.Error("should compact at 170k tokens")
 	}
 
@@ -102,7 +102,7 @@ func TestShouldCompactWithUsage(t *testing.T) {
 		InputTokens:          50_000,
 		CacheReadInputTokens: 120_000,
 	}
-	if !c.ShouldCompact("test/session", nil, usage) {
+	if !c.ShouldCompact("claude-haiku-4-5", "test/session", nil, usage) {
 		t.Error("should compact when cache_read + input > threshold")
 	}
 }
@@ -111,14 +111,14 @@ func TestShouldCompactWithEstimate(t *testing.T) {
 	// Verifies that when no usage stats are provided,
 	// ShouldCompact falls back to the character-based token estimate and correctly rejects
 	// a tiny conversation that is well under any reasonable compaction threshold.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, 0.8)
 
 	// Small conversation — should not compact
 	small := []provider.Message{
 		{Role: "user", Content: provider.TextContent("hello")},
 		{Role: "assistant", Content: provider.TextContent("hi")},
 	}
-	if c.ShouldCompact("test/session", small, nil) {
+	if c.ShouldCompact("claude-haiku-4-5", "test/session", small, nil) {
 		t.Error("should not compact small conversation")
 	}
 }
@@ -127,17 +127,17 @@ func TestShouldCompactExactThreshold(t *testing.T) {
 	// Verifies the boundary condition: exactly at the
 	// threshold is not a trigger (uses strict greater-than), while one token over the
 	// threshold is, confirming the comparison operator is correct.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, 0.8)
 
 	// Exactly at threshold (200k * 0.8 = 160k)
 	usage := &provider.Usage{InputTokens: 160_000}
-	if c.ShouldCompact("test/session", nil, usage) {
+	if c.ShouldCompact("claude-haiku-4-5", "test/session", nil, usage) {
 		t.Error("should not compact at exact threshold (> not >=)")
 	}
 
 	// One over
 	usage = &provider.Usage{InputTokens: 160_001}
-	if !c.ShouldCompact("test/session", nil, usage) {
+	if !c.ShouldCompact("claude-haiku-4-5", "test/session", nil, usage) {
 		t.Error("should compact one above threshold")
 	}
 }

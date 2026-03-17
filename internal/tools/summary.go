@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -18,37 +16,46 @@ import (
 // via a fast, cheap model call without loading the full content into the agent's context.
 // defaultClient is the agent's default provider client.
 // clientProvider provides access to clients for different endpoint:format pairs.
-// agentModel is the agent's configured model (developer/model_id format), used to pick
-// the right lightweight model for the summary call (e.g. haiku for Anthropic, flash for Gemini).
-// modelAliases maps short names (e.g. "haiku") to full model IDs (with endpoint prefix);
-// used to resolve the model for the API call. May be nil (falls back to "claude-haiku-4-5").
-func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, agentModel, workspace string, modelAliases map[string]string) *Tool {
-	// Parse the agent's model to get the bare model ID
-	// agentModel is now in developer/model_id format
-	_, agentModelID := splitDeveloperModel(agentModel)
-
-	// Pick the cheapest model alias for the agent's provider.
-	summaryAlias := "haiku"
-	defaultFormat := "anthropic"
-	if strings.HasPrefix(agentModelID, "gemini-") {
-		summaryAlias = "gemini-flash"
-		defaultFormat = "gemini"
-	} else if modelinfo.IsOpenAI(agentModelID) {
-		summaryAlias = "gpt4o"
-		defaultFormat = "openai"
-	}
-
-	// Resolve which client to use based on the summary model.
-	resolveClient := func() provider.Client {
-		// Use config.ResolveModel to handle the summary alias
-		resolved, err := resolveModelForSummary(summaryAlias, modelAliases)
-		if err != nil || clientProvider == nil {
-			return defaultClient
+// groupResolver resolves the call site to the appropriate model/client.
+// When groupResolver is nil or single-model, falls back to the session model.
+func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, agentModel, workspace string, modelAliases map[string]string) *Tool {
+	resolveForCall := func() (provider.Client, string, string) {
+		// Try group resolver first
+		if groupResolver != nil && !groupResolver.IsSingleModel() {
+			if resolved := groupResolver.ResolveCall(config.CallSummarizeFile); resolved != nil {
+				client := defaultClient
+				if clientProvider != nil {
+					if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+						client = c
+					}
+				}
+				return client, resolved.ModelID, resolved.Format
+			}
 		}
-		if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
-			return c
+
+		// Fallback: resolve cheap model from aliases based on agent's developer
+		dev, _ := config.SplitDeveloperModel(agentModel)
+		cheapAlias := "haiku"
+		defaultFormat := "anthropic"
+		switch dev {
+		case "google":
+			cheapAlias = "gemini-flash"
+			defaultFormat = "gemini"
+		case "openai":
+			cheapAlias = "gpt4o"
+			defaultFormat = "openai"
 		}
-		return defaultClient
+		resolved, err := config.ResolveModel(cheapAlias, "", modelAliases)
+		if err != nil {
+			return defaultClient, cheapAlias, defaultFormat
+		}
+		client := defaultClient
+		if clientProvider != nil {
+			if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+				client = c
+			}
+		}
+		return client, resolved.ModelID, resolved.Format
 	}
 
 	return &Tool{
@@ -70,26 +77,13 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, resolveClient(), summaryAlias, workspace, modelAliases, defaultFormat)
+			client, model, format := resolveForCall()
+			return summaryExecute(ctx, params, client, model, workspace, format)
 		},
 	}
 }
 
-// resolveModelForSummary is a helper to resolve a model alias for summary tool.
-func resolveModelForSummary(alias string, aliases map[string]string) (*config.ResolvedModel, error) {
-	// Use empty endpoint to get auto-selection
-	return config.ResolveModel(alias, "", aliases)
-}
-
-// splitDeveloperModel splits "developer/model_id" into parts.
-func splitDeveloperModel(model string) (developer, modelID string) {
-	if i := strings.IndexByte(model, '/'); i > 0 {
-		return model[:i], model[i+1:]
-	}
-	return "", model
-}
-
-func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, summaryAlias, workspace string, modelAliases map[string]string, defaultFormat string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, model, workspace, format string) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -126,12 +120,6 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		}
 	}
 
-	// Use config.ResolveModel to get the model ID
-	resolved, err := config.ResolveModel(summaryAlias, "", modelAliases)
-	if err != nil {
-		return ToolResult{}, fmt.Errorf("resolve model: %w", err)
-	}
-	model := resolved.ModelID
 	start := time.Now()
 
 	req := &provider.MessageRequest{
@@ -163,11 +151,9 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 	log.Infof("summary", "session=%s model=%s input=%d output=%d cost=$%.4f duration=%s",
 		SessionKeyFromContext(ctx), model, resp.Usage.InputTokens, resp.Usage.OutputTokens, cost, duration.Round(time.Millisecond))
 
-	// Use the resolved model's format for provider attribution,
-	// falling back to the default format from the parent agent.
-	providerFormat := resolved.Format
+	providerFormat := format
 	if providerFormat == "" {
-		providerFormat = defaultFormat
+		providerFormat = "anthropic"
 	}
 	log.API(log.APIEntry{
 		Timestamp:  start.UTC(),

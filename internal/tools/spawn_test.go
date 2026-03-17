@@ -14,16 +14,6 @@ import (
 	"foci/internal/provider"
 )
 
-// testModelAliases returns standard model aliases for tests
-func testModelAliases() map[string]string {
-	return map[string]string{
-		"opus":   "anthropic/claude-opus-4-6",
-		"sonnet": "anthropic/claude-sonnet-4-6",
-		"haiku":  "anthropic/claude-haiku-4-5",
-		"gemini-flash": "google/gemini-2.5-flash",
-	}
-}
-
 // mockBootstrap implements SystemBlocksProvider for tests.
 type mockBootstrap struct {
 	blocks []provider.SystemBlock

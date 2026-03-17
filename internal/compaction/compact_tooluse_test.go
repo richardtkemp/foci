@@ -274,10 +274,10 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 
 	// preserve=3 would split between tool_use[11] and tool_result[12].
 	// safeSplitPoint should adjust to 11, making preserve=3.
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 3)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -335,11 +335,11 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("u2")})
 	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("a2")})
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 0) // no preservation — all messages summarized
 
 	// This should not fail — repairOrphanedToolUse should inject synthetic results.
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with orphaned tool_use: %v", err)
 	}
@@ -375,9 +375,9 @@ func TestCompactWithEffortOverride(t *testing.T) {
 	}
 
 	// Sonnet supports effort — should be included
-	c := NewCompactor(store, "claude-sonnet-4-6", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithEffort("high")
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-sonnet-4-6", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -396,9 +396,9 @@ func TestCompactWithEffortOverride(t *testing.T) {
 		store2.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
 		store2.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
-	c2 := NewCompactor(store2, "claude-haiku-4-5", 0.8)
+	c2 := NewCompactor(store2, 0.8)
 	c2.WithEffort("high")
-	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with haiku: %v", err)
 	}
@@ -436,9 +436,9 @@ func TestCompactWithoutEffortOverride(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	// Not setting effort — should omit from request
-	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

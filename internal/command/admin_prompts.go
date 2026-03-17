@@ -573,21 +573,34 @@ func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaul
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cheapAlias := "haiku"
-	_, bareModelID := config.SplitDeveloperModel(cc.AgentConfig.Model)
-	if strings.HasPrefix(bareModelID, "gemini-") {
-		cheapAlias = "gemini-flash"
-	}
-
 	var diffClient provider.Client
 	var cheapModel string
-	if resolved, err := config.ResolveModel(cheapAlias, "", cc.ModelAliases); err == nil && cc.ClientProvider != nil {
-		diffClient = cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
-		cheapModel = resolved.Developer + "/" + resolved.ModelID
+
+	// Try group resolver first
+	if cc.GroupResolver != nil && !cc.GroupResolver.IsSingleModel() {
+		if resolved := cc.GroupResolver.ResolveCall(config.CallPromptDiff); resolved != nil {
+			cheapModel = resolved.ModelID
+			if cc.ClientProvider != nil {
+				diffClient = cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+			}
+		}
 	}
+
+	// Fallback: provider-aware cheap alias
 	if diffClient == nil {
-		diffClient = cc.Client
-		cheapModel = cheapAlias
+		cheapAlias := "haiku"
+		_, bareModelID := config.SplitDeveloperModel(cc.AgentConfig.Model)
+		if strings.HasPrefix(bareModelID, "gemini-") {
+			cheapAlias = "gemini-flash"
+		}
+		if resolved, err := config.ResolveModel(cheapAlias, "", cc.ModelAliases); err == nil && cc.ClientProvider != nil {
+			diffClient = cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+			cheapModel = resolved.Developer + "/" + resolved.ModelID
+		}
+		if diffClient == nil {
+			diffClient = cc.Client
+			cheapModel = cheapAlias
+		}
 	}
 
 	prompt := fmt.Sprintf("Below are two versions of the %q prompt. These prompts are injected into AI agent sessions to guide agent behaviour during specific operations (compaction, keepalive, memory formation, etc).\n\n--- DEFAULT (embedded) ---\n%s\n\n--- CURRENT (resolved from config) ---\n%s\n\nConcisely summarise: 1) what the default version instructs the agent to do, 2) what the current version instructs, 3) key differences.", name, defaultText, customText)

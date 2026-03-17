@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"foci/internal/agent"
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/tempdir"
 	"foci/prompts"
@@ -141,7 +142,8 @@ func runCompaction(ctx context.Context, cc CommandContext, dryRun bool) (int, er
 		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), cc.PromptSearchDirs...)
 	}
 
-	summary, newKey, err := cc.Agent.Compactor.Compact(ctx, cc.Agent.SessionClient(sk), sk, system, summaryPrompt, handoffMsg, dryRun)
+	compactClient, compactModel, compactFormat := cc.Agent.ResolveCallSite(config.CallCompaction, sk)
+	summary, newKey, err := cc.Agent.Compactor.Compact(ctx, compactClient, sk, compactModel, compactFormat, system, summaryPrompt, handoffMsg, dryRun)
 	if err != nil {
 		return 0, fmt.Errorf("compaction failed: %w", err)
 	}
