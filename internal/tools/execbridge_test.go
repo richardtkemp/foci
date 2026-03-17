@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	osexec "os/exec"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -934,6 +936,109 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 				t.Errorf("%s error message should mention valid flag %s", funcName, flag)
 			}
 		}
+	}
+}
+
+func TestExecBridgePipeFunctions(t *testing.T) {
+	// Verifies that piping between generated shell functions works end-to-end:
+	// foci_todo get 1 | foci_send_message_to_user
+	// The left side outputs todo text via foci-call, the right side reads stdin
+	// via $(cat) and sends it via foci-call. This is the exact scenario that
+	// was reported broken in production.
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	// Build foci-call binary to a temp directory
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	// Register mock tools — use realistic todo output with markdown, newlines, special chars
+	const todoText = "**#573** [ ] `med` `work`\nBuy milk & eggs (\"organic\" if possible)\nDue: tomorrow"
+	var captured string
+	var mu sync.Mutex
+
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"id":{"type":"integer"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			return TextResult(todoText), nil
+		},
+	})
+	r.Register(&Tool{
+		Name:       "send_message_to_user",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			var p struct {
+				Text string `json:"text"`
+			}
+			json.Unmarshal(params, &p)
+			mu.Lock()
+			captured = p.Text
+			mu.Unlock()
+			return TextResult("sent"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	// Run the pipe through real bash with the same shell options as production
+	// (execPreamble sets pipefail, nounset, failglob).
+	script := fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo get 1 | foci_send_message_to_user",
+		bridge.FuncsPath(),
+	)
+	cmd := osexec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(),
+		"FOCI_SOCK="+bridge.SockPath(),
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash pipe failed: %v\noutput: %s", err, out)
+	}
+
+	mu.Lock()
+	got := captured
+	mu.Unlock()
+	if got != todoText {
+		t.Errorf("captured text = %q, want %q\nbash output: %s", got, todoText, out)
+	}
+}
+
+// findModuleRoot walks up from the test's directory to find the go.mod file.
+func findModuleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(dir + "/go.mod"); err == nil {
+			return dir
+		}
+		parent := dir[:strings.LastIndex(dir, "/")]
+		if parent == dir {
+			t.Fatal("could not find go.mod")
+		}
+		dir = parent
 	}
 }
 
