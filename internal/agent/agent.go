@@ -357,6 +357,14 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		a.logger().Warnf("session=%s "+format, append([]any{sessionKey}, args...)...)
 	})
 
+	// Repair missing assistant messages (consecutive user messages or empty
+	// assistant content). Caused by API errors where the defer safety-net
+	// flushed the user message without a matching assistant response.
+	if repaired, n := repairMissingAssistantMessages(messages); n > 0 {
+		messages = repaired
+		a.logger().Warnf("session=%s repaired %d missing/empty assistant messages", sessionKey, n)
+	}
+
 	turnModel := a.SessionModel(sessionKey)
 	turnClient := a.SessionClient(sessionKey)
 	turnEffort := a.SessionEffort(sessionKey)
@@ -550,6 +558,17 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				}
 			}
 			if err != nil {
+				// Append a synthetic assistant error message so the session
+				// maintains role alternation (user→assistant). Without this,
+				// the defer safety-net flushes only the user message, causing
+				// consecutive user messages on the next turn — which the API
+				// rejects with 400, creating a permanent cascade.
+				errMsg := provider.Message{
+					Role:    "assistant",
+					Content: provider.TextContent("(API error — response unavailable)"),
+				}
+				newMessages = append(newMessages, errMsg)
+
 				// Resolve endpoint for error classification
 				a.metaMu.Lock()
 				endpoint := sm.modelEndpoint
@@ -563,6 +582,12 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 		// Check for cancellation after API call
 		if ctx.Err() != nil {
+			// Synthetic assistant message for role alternation (same as API error above).
+			errMsg := provider.Message{
+				Role:    "assistant",
+				Content: provider.TextContent("(API error — response unavailable)"),
+			}
+			newMessages = append(newMessages, errMsg)
 			return "", ctx.Err()
 		}
 
