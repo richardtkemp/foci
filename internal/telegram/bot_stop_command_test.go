@@ -8,8 +8,17 @@ import (
 )
 
 func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
-	// Verifies that /stop cancels an active turn.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	// Verifies that /stop cancels an active turn via the command registry.
+	cmds := command.NewRegistry()
+	cmds.Register(command.StopCommand())
+
+	b, mock := testBot([]string{"111"}, cmds)
+
+	// Wire StopFunc via SetCommandContext
+	cc := command.CommandContext{
+		StopFunc: b.cancelTurn,
+	}
+	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
 
 	// Simulate an active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -29,14 +38,19 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 sent message for /stop, got %d", mock.sentCount())
 	}
-
-	// turnCancel should have been called (verified by checking context is done)
-	// We can't directly check this, but the cancel function was called
 }
 
 func TestReceiveMessage_DotStopCancelsTurn(t *testing.T) {
-	// Verifies that .stop works identically to /stop.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	// Verifies that .stop works identically to /stop via the registry.
+	cmds := command.NewRegistry()
+	cmds.Register(command.StopCommand())
+
+	b, mock := testBot([]string{"111"}, cmds)
+
+	cc := command.CommandContext{
+		StopFunc: b.cancelTurn,
+	}
+	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
 
 	_, cancel := context.WithCancel(context.Background())
 	b.turnMu.Lock()
@@ -55,12 +69,19 @@ func TestReceiveMessage_DotStopCancelsTurn(t *testing.T) {
 }
 
 func TestReceiveMessage_StopAlias(t *testing.T) {
-	// Verifies that stop aliases like /wait work
-	// when enabled.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	// Verifies that stop aliases like /wait work via the command registry.
+	cmds := command.NewRegistry()
+	stopCmd := command.StopCommand()
+	cmds.Register(stopCmd)
+	// Register "wait" as an alias for "stop"
+	cmds.Register(&command.Command{Name: "wait", Hidden: true, Execute: stopCmd.Execute})
 
-	// Set stop aliases with enabled=true
-	b.SetStopAliases([]string{"stop", "wait", "hold"}, true)
+	b, mock := testBot([]string{"111"}, cmds)
+
+	cc := command.CommandContext{
+		StopFunc: b.cancelTurn,
+	}
+	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
 
 	// Simulate an active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -81,12 +102,18 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 }
 
 func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
-	// Verifies that aliases don't work
-	// when disabled.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	// Verifies that /wait without an alias registration
+	// is treated as an unknown command.
+	cmds := command.NewRegistry()
+	cmds.Register(command.StopCommand())
+	// No "wait" alias registered
 
-	// Aliases disabled — even with aliases configured, they shouldn't work
-	b.SetStopAliases([]string{"wait", "hold"}, false)
+	b, mock := testBot([]string{"111"}, cmds)
+
+	cc := command.CommandContext{
+		StopFunc: b.cancelTurn,
+	}
+	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
 
 	// Simulate an active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -94,7 +121,7 @@ func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
 	b.turnCancel = cancel
 	b.turnMu.Unlock()
 
-	// /wait should NOT trigger stop when aliases are disabled
+	// /wait should NOT trigger stop — it's not registered
 	msg := makeMsg(111, "owner", "/wait")
 	b.receiveMessage(context.Background(), msg)
 

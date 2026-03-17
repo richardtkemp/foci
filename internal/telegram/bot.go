@@ -82,10 +82,8 @@ type Bot struct {
 	OnTurnEnd          func()                            // fires after turn's final message is sent and cleanup is done
 	botToken           string                            // for building file download URLs
 
-	transcriber       voice.STT // nil = voice notes not supported
-	tts               voice.TTS // nil = TTS not available
-	stopAliases       []string  // aliases for /stop command
-	enableStopAliases bool      // whether to use stop aliases (default true)
+	transcriber voice.STT // nil = voice notes not supported
+	tts         voice.TTS // nil = TTS not available
 
 	queue          chan queuedMessage // receiver → agent worker
 	turnCancel     context.CancelFunc // cancel the current agent turn
@@ -247,12 +245,6 @@ func (b *Bot) SetTTS(t voice.TTS) {
 	b.tts = t
 }
 
-// SetStopAliases sets the aliases for the /stop command and whether to enable them.
-func (b *Bot) SetStopAliases(aliases []string, enabled bool) {
-	b.stopAliases = aliases
-	b.enableStopAliases = enabled
-}
-
 // SetDisplayOverrideFn sets the callback that provides per-session display overrides.
 func (b *Bot) SetDisplayOverrideFn(fn DisplayOverrideFn) { b.displayOverrideFn = fn }
 
@@ -324,6 +316,16 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 
 // SetCommandContext configures the command dispatcher with the unified CommandContext.
 func (b *Bot) SetCommandContext(cc command.CommandContext) {
+	cc.StopFunc = b.cancelTurn
+	cc.IsSecondaryBot = b.isSecondary
+	if b.isSecondary {
+		cc.ReleaseFunc = func() {
+			if b.pool != nil {
+				b.pool.Release(b)
+			}
+			b.logger().Infof("secondary bot released")
+		}
+	}
 	b.dispatcher = NewDispatcher(b.commands, cc, b.agentID)
 	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
 }

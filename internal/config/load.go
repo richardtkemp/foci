@@ -445,8 +445,8 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Tools.TmuxSessionTTL, "24h")
 	setStringDefault(&cfg.Tools.SearchProvider, "brave")
 	setStringDefault(&cfg.Tools.FetchProvider, "builtin")
-	if len(cfg.Telegram.StopAliases) == 0 {
-		cfg.Telegram.StopAliases = []string{"stop", "wait"}
+	if len(cfg.Defaults.StopAliases) == 0 {
+		cfg.Defaults.StopAliases = []string{"stop", "wait"}
 	}
 	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
 	if len(cfg.Memory.SearchBackends) == 0 {
@@ -527,7 +527,7 @@ func Load(path string) (*Config, error) {
 	// Bool defaults: default to true unless explicitly set to false in config.
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
-	setBoolDefaultDefined(&cfg.Telegram.EnableStopAliases, true, md.IsDefined("telegram", "enable_stop_aliases"))
+	setBoolDefaultDefined(&cfg.Defaults.EnableStopAliases, true, md.IsDefined("defaults", "enable_stop_aliases"))
 	setBoolDefaultDefined(&cfg.Telegram.StartupNotify, true, md.IsDefined("telegram", "startup_notify"))
 
 	// Keepalive/background defaults

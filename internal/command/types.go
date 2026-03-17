@@ -130,6 +130,11 @@ type CommandContext struct {
 	// Facet configuration callback
 	ConfigureFacet func(platform.Connection)
 
+	// Turn cancellation (injected by platform bot)
+	StopFunc       func() // cancels the current agent turn; nil = no-op
+	ReleaseFunc    func() // releases a secondary bot back to its pool; nil = no-op
+	IsSecondaryBot bool   // true for facet/secondary bots
+
 	// Usage client provider (for mana command)
 	UsageClientProvider provider.UsageClientProvider
 }

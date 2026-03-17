@@ -763,6 +763,45 @@ func TestHandleMessageWizardStop(t *testing.T) {
 	}
 }
 
+// TestHandleMessageWizardDotStop verifies .stop clears the wizard (dot-prefix).
+func TestHandleMessageWizardDotStop(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{responses: map[string]string{}}
+	reg.SetWizard(wizard)
+
+	resp, handled := reg.HandleMessage(".stop")
+	if !handled {
+		t.Error("HandleMessage should handle .stop")
+	}
+	if !strings.Contains(resp, "cancelled") {
+		t.Errorf("response = %q, want 'cancelled'", resp)
+	}
+	// Wizard should be cleared
+	_, handled = reg.HandleMessage("test")
+	if handled {
+		t.Error("wizard should be cleared after .stop")
+	}
+}
+
+// TestHandleMessageWizardDotCancel verifies .cancel clears the wizard (dot-prefix).
+func TestHandleMessageWizardDotCancel(t *testing.T) {
+	reg := NewRegistry()
+	wizard := &mockWizard{responses: map[string]string{}}
+	reg.SetWizard(wizard)
+
+	resp, handled := reg.HandleMessage(".cancel")
+	if !handled {
+		t.Error("HandleMessage should handle .cancel")
+	}
+	if !strings.Contains(resp, "cancelled") {
+		t.Errorf("response = %q, want 'cancelled'", resp)
+	}
+	_, handled = reg.HandleMessage("test")
+	if handled {
+		t.Error("wizard should be cleared after .cancel")
+	}
+}
+
 // TestHandleMessageWizardDone verifies wizard auto-clears when it returns done=true.
 func TestHandleMessageWizardDone(t *testing.T) {
 	reg := NewRegistry()

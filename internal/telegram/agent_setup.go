@@ -143,7 +143,6 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	if p.TTS != nil {
 		primaryBot.SetTTS(p.TTS)
 	}
-	primaryBot.SetStopAliases(cfg.Telegram.StopAliases, cfg.Telegram.EnableStopAliases)
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
 	ApplyAgentDisplaySettings(primaryBot, acfg, cfg)
 
@@ -185,8 +184,6 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		ConfigureFacetBot(facetBot, FacetBotConfig{
 			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, acfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, acfg.STTReplacements)),
 			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, acfg.TTS, acfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, acfg.TTSReplacements)),
-			StopAliases:     cfg.Telegram.StopAliases,
-			EnableStopAlias: cfg.Telegram.EnableStopAliases,
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			ToolDetailStore: p.ToolDetailStore,
@@ -215,8 +212,6 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 type FacetBotConfig struct {
 	STTProvider     voice.STT
 	TTSProvider     voice.TTS
-	StopAliases     []string
-	EnableStopAlias bool
 	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
 	ToolDetailStore *ToolDetailStore
@@ -231,7 +226,6 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.TTSProvider != nil {
 		bot.SetTTS(mc.TTSProvider)
 	}
-	bot.SetStopAliases(mc.StopAliases, mc.EnableStopAlias)
 	ApplyAgentDisplaySettings(bot, mc.AgentConfig, mc.GlobalConfig)
 	if mc.ToolDetailStore != nil {
 		bot.SetToolDetailStore(mc.ToolDetailStore)

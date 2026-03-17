@@ -10,8 +10,8 @@ import (
 )
 
 func TestLoadTelegramToggleDefaults(t *testing.T) {
-	// Proves that enable_stop_aliases and startup_notify both default to
-	// true when not set in the config file.
+	// Proves that enable_stop_aliases (in defaults) and startup_notify (in telegram)
+	// both default to true when not set in the config file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -24,7 +24,7 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Telegram.EnableStopAliases {
+	if !cfg.Defaults.EnableStopAliases {
 		t.Error("EnableStopAliases should default to true")
 	}
 	if !cfg.Telegram.StartupNotify {
@@ -33,16 +33,18 @@ id = "test"
 }
 
 func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
-	// Proves that explicitly setting enable_stop_aliases and startup_notify
-	// to false in the [telegram] section correctly disables both toggles.
+	// Proves that explicitly setting enable_stop_aliases (in defaults) and
+	// startup_notify (in telegram) to false correctly disables both toggles.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
 [[agents]]
 id = "test"
 
-[telegram]
+[defaults]
 enable_stop_aliases = false
+
+[telegram]
 startup_notify = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -51,7 +53,7 @@ startup_notify = false
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Telegram.EnableStopAliases {
+	if cfg.Defaults.EnableStopAliases {
 		t.Error("EnableStopAliases should be false when explicitly set")
 	}
 	if cfg.Telegram.StartupNotify {
@@ -360,8 +362,10 @@ func TestBoolStringConfigLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[telegram]
+[defaults]
 enable_stop_aliases = "on"
+
+[telegram]
 startup_notify = "off"
 
 [environment]
@@ -374,7 +378,7 @@ log_rotation = "false"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Telegram.EnableStopAliases {
+	if !cfg.Defaults.EnableStopAliases {
 		t.Error("EnableStopAliases should be true (from \"on\")")
 	}
 	if cfg.Telegram.StartupNotify {

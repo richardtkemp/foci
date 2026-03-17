@@ -15,7 +15,6 @@ func testConfig() (*Config, AgentConfig) {
 		},
 		Telegram: TelegramConfig{
 			AllowedUsers:        []string{"alice"},
-			EnableStopAliases:   true,
 			StartupNotify:       true,
 			FacetSessionTTL: "60m",
 			MessageQueueSize:    64,

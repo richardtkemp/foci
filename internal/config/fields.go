@@ -272,7 +272,9 @@ var configFields = []ConfigField{
 
 	// telegram
 	{"telegram", "startup_notify", FieldBool, "send notification on startup"},
-	{"telegram", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
+
+	// defaults — stop aliases
+	{"defaults", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
 	{"telegram", "facet_session_ttl", FieldDuration, "idle TTL before facet reclaim"},
 	{"telegram", "message_queue_size", FieldInt, "outbound message queue buffer size"},
 	{"telegram", "display_width", FieldInt, "display width for dividers"},

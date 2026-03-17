@@ -12,6 +12,47 @@ import (
 	"foci/prompts"
 )
 
+// StopCommand returns a /stop command that cancels the current agent turn.
+func StopCommand() *Command {
+	return &Command{
+		Name:        "stop",
+		Description: "Cancel the current agent turn",
+		Category:    "operations",
+		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+			if cc.StopFunc != nil {
+				cc.StopFunc()
+			}
+			return Response{Text: "Stopped."}, nil
+		},
+	}
+}
+
+// DoneCommand returns a /done command that detaches a secondary bot from its session.
+func DoneCommand() *Command {
+	return &Command{
+		Name:        "done",
+		Description: "Detach a secondary bot from its session",
+		Category:    "operations",
+		Hidden:      true,
+		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+			if !cc.IsSecondaryBot {
+				return Response{Text: "Nothing to detach — this is the main session."}, nil
+			}
+			sk := cc.DefaultSessionKey()
+			if sk == "" {
+				return Response{Text: "Already idle."}, nil
+			}
+			if cc.StopFunc != nil {
+				cc.StopFunc()
+			}
+			if cc.ReleaseFunc != nil {
+				cc.ReleaseFunc()
+			}
+			return Response{Text: "Session ended."}, nil
+		},
+	}
+}
+
 // ResetCommand returns a /reset command that clears session history with memory formation.
 func ResetCommand() *Command {
 	return &Command{

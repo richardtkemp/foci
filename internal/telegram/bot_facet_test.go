@@ -10,7 +10,15 @@ import (
 func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 	// Verifies that /done on the primary bot
 	// returns a "nothing to detach" message.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	cmds := command.NewRegistry()
+	cmds.Register(command.DoneCommand())
+	b, mock := testBot([]string{"111"}, cmds)
+
+	cc := command.CommandContext{
+		StopFunc:       b.cancelTurn,
+		IsSecondaryBot: false,
+	}
+	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
 
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
@@ -27,7 +35,9 @@ func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 	// Verifies that /done on a secondary bot
 	// with an active session detaches the session.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	cmds := command.NewRegistry()
+	cmds.Register(command.DoneCommand())
+	b, mock := testBot([]string{"111"}, cmds)
 	pool := NewPool()
 	b.isSecondary = true
 	b.pool = pool
@@ -35,6 +45,17 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 
 	// Simulate active session
 	b.SetSessionKey("agent:main:facet:f-1")
+
+	// Wire CC with secondary bot state — mirrors SetCommandContext logic
+	cc := command.CommandContext{
+		StopFunc:          b.cancelTurn,
+		IsSecondaryBot:    true,
+		DefaultSessionKey: b.SessionKey,
+		ReleaseFunc: func() {
+			pool.Release(b)
+		},
+	}
+	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
 
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
