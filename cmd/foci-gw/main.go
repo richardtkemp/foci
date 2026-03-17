@@ -440,7 +440,8 @@ Subcommands:
 	handleWelcomeAndFirstRun(agents, agentOrder, si.sessions, si.stateStore, cfg, ctx, connMgr)
 
 	// ========== Wait for signal & shutdown ==========
-	<-sigCh
+	sig := <-sigCh
+	log.Infof("main", "received %s, starting shutdown", sig)
 
 	shutdownTimeout, _ := time.ParseDuration(cfg.HTTP.GracefulShutdownTimeout)
 	if shutdownTimeout == 0 {

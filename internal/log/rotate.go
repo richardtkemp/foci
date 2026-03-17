@@ -20,6 +20,12 @@ type RotationConfig struct {
 	Files       []string      // absolute paths of log files to rotate
 }
 
+// RotateOnce performs a single rotation pass with the given config.
+// Use Retention: 0 to archive all existing content (e.g. on startup).
+func RotateOnce(cfg RotationConfig) {
+	rotateAll(cfg)
+}
+
 // StartRotation starts a background goroutine that periodically rotates log files.
 // It runs immediately on first call, then every cfg.Period thereafter.
 // Returns a stop function that cancels the goroutine.
