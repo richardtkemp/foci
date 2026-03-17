@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	"path/filepath"
+
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 func TestMaybeKeepalive_Disabled(t *testing.T) {
@@ -489,19 +491,23 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestNew_WithStateStore(t *testing.T) {
-	// Verifies that New loads lastConsolidation from a persistent state store on startup,
+func TestNew_WithSessionIndex(t *testing.T) {
+	// Verifies that New loads lastConsolidation from the session index on startup,
 	// so that consolidation timing survives process restarts.
-	// Create a temporary state store file
-	tmpfile := t.TempDir() + "/state.json"
-	ss := state.New(tmpfile)
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
 	consolidationTime := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
-	ss.Set("consolidation_last:test-agent", consolidationTime)
+	if err := idx.SetAgentMetadata("test-agent", "consolidation_last", consolidationTime.Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := RunnerConfig{
-		AgentID:    "test-agent",
-		StateStore: ss,
-		BranchFunc: func(branchType, promptText string, noCompact bool) {},
+		AgentID:      "test-agent",
+		SessionIndex: idx,
+		BranchFunc:   func(branchType, promptText string, noCompact bool) {},
 	}
 
 	r := New(cfg)

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 func TestTmuxStartAutoWatch(t *testing.T) {
@@ -18,13 +18,13 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autowatch", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autowatch", false, 30, 0)
 
 	name := "foci-test-autowatch"
 	tmuxSetup(t, name)
@@ -47,9 +47,13 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 	}
 
 	// Verify watch was persisted
-	var watches []persistedWatch
-	if !store.Get("tmux:test-autowatch:watches", &watches) {
+	rawW, errW := idx.GetAgentMetadata("test-autowatch", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches not persisted after auto-watch")
+	}
+	var watches []persistedWatch
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 1 {
 		t.Fatalf("persisted watches = %d, want 1", len(watches))
@@ -75,13 +79,13 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-nowatch", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-nowatch", false, 30, 0)
 
 	name := "foci-test-nowatch"
 	tmuxSetup(t, name)
@@ -105,9 +109,12 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 	}
 
 	// Verify no watches persisted
-	var watches []persistedWatch
-	if store.Get("tmux:test-nowatch:watches", &watches) && len(watches) != 0 {
-		t.Errorf("persisted watches = %d, want 0 when watch=false", len(watches))
+	rawW, _ := idx.GetAgentMetadata("test-nowatch", "tmux_watches")
+	if rawW != "" {
+		var watches []persistedWatch
+		if err := json.Unmarshal([]byte(rawW), &watches); err == nil && len(watches) != 0 {
+			t.Errorf("persisted watches = %d, want 0 when watch=false", len(watches))
+		}
 	}
 }
 
@@ -152,14 +159,14 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 		mu.Unlock()
 	})
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-unwatch", true, 2, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-unwatch", true, 2, 0)
 
 	name := "foci-test-ap-unwatch"
 	tmuxSetup(t, name)
@@ -208,14 +215,14 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=true
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-autopilot-send", true, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-send", true, 30, 0)
 
 	name := "foci-test-ap-send"
 	tmuxSetup(t, name)
@@ -227,7 +234,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 		"command":   "cat",
 		"watch":     false,
 	})
-	_, err := tool.Execute(context.Background(), params)
+	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -276,14 +283,14 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	tmuxAvailable(t)
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// autopilot=false
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-no-autopilot", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-autopilot", false, 30, 0)
 
 	name := "foci-test-no-ap"
 	tmuxSetup(t, name)
@@ -295,7 +302,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 		"command":   "cat",
 		"watch":     false,
 	})
-	_, err := tool.Execute(context.Background(), params)
+	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}

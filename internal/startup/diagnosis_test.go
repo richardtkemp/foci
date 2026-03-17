@@ -3,27 +3,39 @@ package startup
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
-	"foci/internal/state"
+	"foci/internal/session"
 )
+
+func newTestIndex(t *testing.T, dir string) *session.SessionIndex {
+	t.Helper()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("create session index: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	return idx
+}
+
+func setShutdownTime(t *testing.T, idx *session.SessionIndex, ts int64) {
+	t.Helper()
+	if err := idx.SetSystemState("last_clean_shutdown", strconv.FormatInt(ts, 10)); err != nil {
+		t.Fatalf("set shutdown time: %v", err)
+	}
+}
 
 func TestDiagnoseRestart_CleanShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
 	startTime := time.Now()
 	shutdownTime := startTime.Add(-30 * time.Second)
-	if err := st.Set(StateKeyLastCleanShutdown, shutdownTime.Unix()); err != nil {
-		t.Fatalf("set shutdown time: %v", err)
-	}
+	setShutdownTime(t, idx, shutdownTime.Unix())
 
-	result := DiagnoseRestart(st, startTime, tmpDir)
+	result := DiagnoseRestart(idx, startTime, tmpDir)
 
 	if result.Class != ClassClean {
 		t.Errorf("expected ClassClean, got %s", result.Class)
@@ -35,17 +47,11 @@ func TestDiagnoseRestart_CleanShutdown(t *testing.T) {
 
 func TestDiagnoseRestart_Crash(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
 	startTime := time.Now()
 	shutdownTime := startTime.Add(-10 * time.Minute)
-	if err := st.Set(StateKeyLastCleanShutdown, shutdownTime.Unix()); err != nil {
-		t.Fatalf("set shutdown time: %v", err)
-	}
+	setShutdownTime(t, idx, shutdownTime.Unix())
 
 	logFile := filepath.Join(tmpDir, "foci.log")
 	shutdownStr := shutdownTime.UTC().Format("2006-01-02T15:04:05Z")
@@ -57,7 +63,7 @@ func TestDiagnoseRestart_Crash(t *testing.T) {
 		t.Fatalf("write log file: %v", err)
 	}
 
-	result := DiagnoseRestart(st, startTime, tmpDir)
+	result := DiagnoseRestart(idx, startTime, tmpDir)
 
 	if result.Class != ClassCrash {
 		t.Errorf("expected ClassCrash, got %s", result.Class)
@@ -69,13 +75,9 @@ func TestDiagnoseRestart_Crash(t *testing.T) {
 
 func TestDiagnoseRestart_NoPriorRecord(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
-	result := DiagnoseRestart(st, time.Now(), tmpDir)
+	result := DiagnoseRestart(idx, time.Now(), tmpDir)
 
 	if result.Class != ClassUnknown {
 		t.Errorf("expected ClassUnknown, got %s", result.Class)
@@ -84,19 +86,13 @@ func TestDiagnoseRestart_NoPriorRecord(t *testing.T) {
 
 func TestDiagnoseRestart_FutureShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
 	startTime := time.Now()
 	shutdownTime := startTime.Add(5 * time.Minute)
-	if err := st.Set(StateKeyLastCleanShutdown, shutdownTime.Unix()); err != nil {
-		t.Fatalf("set shutdown time: %v", err)
-	}
+	setShutdownTime(t, idx, shutdownTime.Unix())
 
-	result := DiagnoseRestart(st, startTime, tmpDir)
+	result := DiagnoseRestart(idx, startTime, tmpDir)
 
 	if result.Class != ClassUnknown {
 		t.Errorf("expected ClassUnknown for future shutdown, got %s", result.Class)
@@ -105,18 +101,12 @@ func TestDiagnoseRestart_FutureShutdown(t *testing.T) {
 
 func TestDiagnoseRestart_Reboot(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
 	startTime := time.Now()
 	// Shutdown was 1 hour ago
 	shutdownTime := startTime.Add(-1 * time.Hour)
-	if err := st.Set(StateKeyLastCleanShutdown, shutdownTime.Unix()); err != nil {
-		t.Fatalf("set shutdown time: %v", err)
-	}
+	setShutdownTime(t, idx, shutdownTime.Unix())
 
 	// Inject uptime shorter than the gap (simulates reboot)
 	orig := GetSystemUptime
@@ -125,7 +115,7 @@ func TestDiagnoseRestart_Reboot(t *testing.T) {
 	}
 	defer func() { GetSystemUptime = orig }()
 
-	result := DiagnoseRestart(st, startTime, tmpDir)
+	result := DiagnoseRestart(idx, startTime, tmpDir)
 
 	if result.Class != ClassReboot {
 		t.Errorf("expected ClassReboot, got %s (summary: %s)", result.Class, result.Summary)
@@ -134,20 +124,16 @@ func TestDiagnoseRestart_Reboot(t *testing.T) {
 
 func TestDiagnoseRestart_RebootNoRecord(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
-	// No prior shutdown record + very short uptime → reboot
+	// No prior shutdown record + very short uptime -> reboot
 	orig := GetSystemUptime
 	GetSystemUptime = func() (time.Duration, error) {
 		return 2 * time.Minute, nil
 	}
 	defer func() { GetSystemUptime = orig }()
 
-	result := DiagnoseRestart(st, time.Now(), tmpDir)
+	result := DiagnoseRestart(idx, time.Now(), tmpDir)
 
 	if result.Class != ClassReboot {
 		t.Errorf("expected ClassReboot, got %s (summary: %s)", result.Class, result.Summary)
@@ -156,21 +142,22 @@ func TestDiagnoseRestart_RebootNoRecord(t *testing.T) {
 
 func TestRecordCleanShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
 	before := time.Now().Truncate(time.Second)
-	if err := RecordCleanShutdown(st); err != nil {
+	if err := RecordCleanShutdown(idx); err != nil {
 		t.Fatalf("record clean shutdown: %v", err)
 	}
 	after := time.Now().Truncate(time.Second).Add(time.Second)
 
-	var shutdownUnix int64
-	if !st.Get(StateKeyLastCleanShutdown, &shutdownUnix) {
+	raw, err := idx.GetSystemState("last_clean_shutdown")
+	if err != nil || raw == "" {
 		t.Fatal("shutdown timestamp not set")
+	}
+
+	shutdownUnix, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		t.Fatalf("parse shutdown timestamp: %v", err)
 	}
 
 	shutdownTime := time.Unix(shutdownUnix, 0)
@@ -429,17 +416,11 @@ func TestGatherDiagnostics_TruncateLongLines(t *testing.T) {
 // TestDiagnoseRestart_UpimeReadError tests handling when uptime read fails
 func TestDiagnoseRestart_UptimeReadError(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
 	startTime := time.Now()
 	shutdownTime := startTime.Add(-30 * time.Second)
-	if err := st.Set(StateKeyLastCleanShutdown, shutdownTime.Unix()); err != nil {
-		t.Fatalf("set shutdown time: %v", err)
-	}
+	setShutdownTime(t, idx, shutdownTime.Unix())
 
 	// Mock uptime read to fail
 	orig := GetSystemUptime
@@ -448,7 +429,7 @@ func TestDiagnoseRestart_UptimeReadError(t *testing.T) {
 	}
 	defer func() { GetSystemUptime = orig }()
 
-	result := DiagnoseRestart(st, startTime, tmpDir)
+	result := DiagnoseRestart(idx, startTime, tmpDir)
 
 	// Should still classify as ClassClean even if uptime read fails
 	if result.Class != ClassClean {
@@ -459,20 +440,16 @@ func TestDiagnoseRestart_UptimeReadError(t *testing.T) {
 // TestDiagnoseRestart_RebootNoRecordNoUptime tests reboot detection without uptime
 func TestDiagnoseRestart_RebootNoRecordNoUptime(t *testing.T) {
 	tmpDir := t.TempDir()
-	statePath := filepath.Join(tmpDir, "state.json")
-	st := state.New(statePath)
-	if err := st.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
+	idx := newTestIndex(t, tmpDir)
 
-	// No prior shutdown record + uptime read fails → unknown
+	// No prior shutdown record + uptime read fails -> unknown
 	orig := GetSystemUptime
 	GetSystemUptime = func() (time.Duration, error) {
 		return 0, os.ErrNotExist
 	}
 	defer func() { GetSystemUptime = orig }()
 
-	result := DiagnoseRestart(st, time.Now(), tmpDir)
+	result := DiagnoseRestart(idx, time.Now(), tmpDir)
 
 	if result.Class != ClassUnknown {
 		t.Errorf("expected ClassUnknown when uptime unavailable, got %s", result.Class)

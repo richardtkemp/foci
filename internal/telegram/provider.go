@@ -9,7 +9,6 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/voice"
 )
 
@@ -62,7 +61,6 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 		GlobalConfig:    p.deps.Config,
 		SecretStore:     p.deps.SecretStore,
 		Sessions:        p.deps.Sessions,
-		StateStore:      p.deps.StateStore,
 		SessionIndex:    p.deps.SessionIndex,
 		ToolDetailStore: p.toolDetailStore,
 		STT:             params.STT,
@@ -108,7 +106,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			AgentConfig:     firstACfg,
 			GlobalConfig:    cfg,
 			ToolDetailStore: p.toolDetailStore,
-			StateStore:      p.deps.StateStore,
+			SessionIndex:    p.deps.SessionIndex,
 		})
 		p.mgr.AddSharedFacet(facetBot)
 	}
@@ -126,10 +124,10 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 }
 
 func (p *telegramProvider) RestoreFacetSessions(params platform.RestoreParams) {
-	if p.deps.StateStore == nil {
+	if p.deps.SessionIndex == nil {
 		return
 	}
-	restoreFacetSessions(p.mgr, p.deps.StateStore, p.deps.Sessions, p.deps.Config, params)
+	restoreFacetSessions(p.mgr, p.deps.SessionIndex, p.deps.Sessions, p.deps.Config, params)
 }
 
 func (p *telegramProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
@@ -176,11 +174,21 @@ func (p *telegramProvider) Close() error {
 // restoreFacetSessions restores persisted facet session mappings after restart.
 func restoreFacetSessions(
 	mgr *BotManager,
-	stateStore *state.Store,
+	idx *session.SessionIndex,
 	sessions *session.Store,
 	cfg *config.Config,
 	params platform.RestoreParams,
 ) {
+	// Load all facet mappings at once
+	facetMap, err := idx.AgentMetadataByPrefix("_system", "facet:")
+	if err != nil {
+		log.Errorf("telegram", "load facet sessions: %v", err)
+		return
+	}
+	if len(facetMap) == 0 {
+		return
+	}
+
 	type poolInfo struct {
 		pool *Pool
 		name string
@@ -202,14 +210,14 @@ func restoreFacetSessions(
 			if username == "" {
 				return
 			}
-			var savedKey string
-			if !stateStore.Get("facet:"+username, &savedKey) || savedKey == "" {
+			savedKey, ok := facetMap["facet:"+username]
+			if !ok || savedKey == "" {
 				return
 			}
 
 			if sessions.LastActivity(savedKey) == "n/a" {
 				log.Infof("telegram", "facet restore: @%s session %s no longer exists, cleaning up", username, savedKey)
-				_ = stateStore.Delete("facet:" + username)
+				_ = idx.DeleteAgentMetadata("_system", "facet:"+username)
 				return
 			}
 

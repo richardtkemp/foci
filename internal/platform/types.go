@@ -13,7 +13,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/secrets"
 	"foci/internal/session"
-	"foci/internal/state"
+
 	"foci/internal/voice"
 	"foci/internal/warnings"
 )
@@ -204,7 +204,6 @@ type ProviderDeps struct {
 	Config       *config.Config
 	SecretStore  *secrets.Store
 	Sessions     *session.Store
-	StateStore   *state.Store
 	SessionIndex *session.SessionIndex
 	STTMap       map[string]voice.STT
 	TTSMap       map[string]voice.TTS

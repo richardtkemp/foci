@@ -182,8 +182,10 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 	}
 
 	var defaultChat int64
-	if cc.StateStore != nil {
-		cc.StateStore.Get("agent/"+cc.AgentConfig.ID+"/default_chat", &defaultChat)
+	if cc.SessionIndex != nil {
+		if raw, err := cc.SessionIndex.GetAgentMetadata(cc.AgentConfig.ID, "default_chat"); err == nil && raw != "" {
+			_, _ = fmt.Sscanf(raw, "%d", &defaultChat)
+		}
 	}
 
 	type row struct {
@@ -195,11 +197,9 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 			chatID: strconv.FormatInt(cs.ChatID, 10),
 			msgs:   strconv.Itoa(cs.MessageCount),
 		}
-		// Resolve username from state store
-		if cc.StateStore != nil {
-			var username string
-			key := fmt.Sprintf("agent/%s/chat/%d/username", cc.AgentConfig.ID, cs.ChatID)
-			if cc.StateStore.Get(key, &username) {
+		// Resolve username from session index
+		if cc.SessionIndex != nil {
+			if username, err := cc.SessionIndex.GetChatMetadata(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
 				r.username = "@" + username
 			} else {
 				r.username = "—"
@@ -254,10 +254,10 @@ func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
 		return fmt.Sprintf("No session found for chat ID %d.", chatID), nil
 	}
 
-	if cc.StateStore == nil {
-		return "", fmt.Errorf("no state store configured")
+	if cc.SessionIndex == nil {
+		return "", fmt.Errorf("no session index configured")
 	}
-	if err := cc.StateStore.Set("agent/"+cc.AgentConfig.ID+"/default_chat", chatID); err != nil {
+	if err := cc.SessionIndex.SetAgentMetadata(cc.AgentConfig.ID, "default_chat", fmt.Sprintf("%d", chatID)); err != nil {
 		return "", fmt.Errorf("set default: %w", err)
 	}
 	return fmt.Sprintf("Default session set to chat %d.", chatID), nil
@@ -269,8 +269,10 @@ func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
 	}
 
 	var defaultChat int64
-	if cc.StateStore != nil {
-		cc.StateStore.Get("agent/"+cc.AgentConfig.ID+"/default_chat", &defaultChat)
+	if cc.SessionIndex != nil {
+		if raw, err := cc.SessionIndex.GetAgentMetadata(cc.AgentConfig.ID, "default_chat"); err == nil && raw != "" {
+			_, _ = fmt.Sscanf(raw, "%d", &defaultChat)
+		}
 	}
 
 	chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID)
@@ -293,10 +295,8 @@ func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
 				fmt.Fprintf(&sb, "Last active: %s\n", cs.LastActivity.Format(time.RFC3339))
 			}
 			// Resolve username
-			if cc.StateStore != nil {
-				var username string
-				key := fmt.Sprintf("agent/%s/chat/%d/username", cc.AgentConfig.ID, cs.ChatID)
-				if cc.StateStore.Get(key, &username) && username != "" {
+			if cc.SessionIndex != nil {
+				if username, err := cc.SessionIndex.GetChatMetadata(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
 					fmt.Fprintf(&sb, "User: @%s\n", username)
 				}
 			}

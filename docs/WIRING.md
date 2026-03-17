@@ -31,8 +31,8 @@ config.Load(path)                                        ← validates values; l
   → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
   → session.NewSessionIndex(session_index.db)             ← SQLite index; rebuilt on startup
   → sessions.OnSessionEvent(→ sessionIndex)               ← lifecycle hook: create/compact/clear → update index
-  → state.NewStore (state.json)
-  → returns sessionInfra{sessions, sessionIndex, stateStore, cleanup}
+  → migrateStateJSON(state.json → SQLite)             ← one-time migration, renames to state.json.migrated
+  → returns sessionInfra{sessions, sessionIndex, cleanup}
 
 → initMemorySystem(cfg)                                  ← memory_init.go
   → memory: ReminderStore + Scratchpad + TodoStore + TaskListStore   ← always created; all per-agent (e.g. reminders-main.db)
@@ -106,8 +106,8 @@ SIGTERM/SIGINT received
 On startup, classifies the restart type and includes diagnostics in the startup notification:
 
 ```
-DiagnoseRestart(stateStore, startTime, logsDir)
-  → read system:last_clean_shutdown from state store
+DiagnoseRestart(sessionIndex, startTime, logsDir)
+  → read last_clean_shutdown from system_state table
   → read /proc/uptime for system uptime
   → classify:
      - clean: shutdown < 5 min before startup

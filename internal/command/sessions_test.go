@@ -11,22 +11,24 @@ import (
 	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/state"
 )
 
 // sessionsTestCC builds a CommandContext for sessions tests using a real
-// session.Store backed by a temp directory, and optionally a state.Store
-// and session.SessionIndex.
-func sessionsTestCC(t *testing.T, agentID string) (CommandContext, *session.Store, *state.Store) {
+// session.Store backed by a temp directory, and a session.SessionIndex.
+func sessionsTestCC(t *testing.T, agentID string) (CommandContext, *session.Store, *session.SessionIndex) {
 	t.Helper()
 	dir := t.TempDir()
 	store := session.NewStore(dir)
-	ss := state.New(filepath.Join(dir, "state.json"))
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
 	return CommandContext{
-		Sessions:    store,
-		StateStore:  ss,
-		AgentConfig: config.AgentConfig{ID: agentID},
-	}, store, ss
+		Sessions:     store,
+		SessionIndex: idx,
+		AgentConfig:  config.AgentConfig{ID: agentID},
+	}, store, idx
 }
 
 // addChatSession writes messages for an agent/chat into the session store
@@ -44,19 +46,18 @@ func addChatSession(t *testing.T, store *session.Store, agentID string, chatID i
 	return key
 }
 
-// setUsername stores a username in the state store for a given agent+chat.
-func setUsername(t *testing.T, ss *state.Store, agentID string, chatID int64, username string) {
+// setUsername stores a username in the session index for a given agent+chat.
+func setUsername(t *testing.T, ss *session.SessionIndex, agentID string, chatID int64, username string) {
 	t.Helper()
-	key := fmt.Sprintf("agent/%s/chat/%d/username", agentID, chatID)
-	if err := ss.Set(key, username); err != nil {
+	if err := ss.SetChatMetadata(agentID, chatID, "username", username); err != nil {
 		t.Fatalf("set username: %v", err)
 	}
 }
 
-// setDefaultChat stores the default chat ID in the state store.
-func setDefaultChat(t *testing.T, ss *state.Store, agentID string, chatID int64) {
+// setDefaultChat stores the default chat ID in the session index.
+func setDefaultChat(t *testing.T, ss *session.SessionIndex, agentID string, chatID int64) {
 	t.Helper()
-	if err := ss.Set("agent/"+agentID+"/default_chat", chatID); err != nil {
+	if err := ss.SetAgentMetadata(agentID, "default_chat", fmt.Sprintf("%d", chatID)); err != nil {
 		t.Fatalf("set default chat: %v", err)
 	}
 }
@@ -142,13 +143,13 @@ func TestSessionsDefaultValid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify the state store was updated
-	var got int64
-	if !ss.Get("agent/test-agent/default_chat", &got) {
-		t.Error("expected default_chat to be set in state store")
+	// Verify the session index was updated
+	raw, err2 := ss.GetAgentMetadata("test-agent", "default_chat")
+	if err2 != nil || raw == "" {
+		t.Error("expected default_chat to be set in session index")
 	}
-	if got != 987654321 {
-		t.Errorf("expected default_chat=987654321, got %d", got)
+	if raw != "987654321" {
+		t.Errorf("expected default_chat=987654321, got %s", raw)
 	}
 	if !strings.Contains(result.Text, "987654321") {
 		t.Errorf("expected confirmation with chat ID, got %q", result.Text)
@@ -414,7 +415,7 @@ func TestSessionsIndexEmpty(t *testing.T) {
 func TestSessionsIndexNotAvailable(t *testing.T) {
 	// Verifies that /sessions index with no SessionIndex returns a "not available" message.
 	cc, _, _ := sessionsTestCC(t, "test-agent")
-	// cc.SessionIndex is nil
+	cc.SessionIndex = nil
 
 	cmd := SessionsCommand()
 	result, err := cmd.Execute(context.Background(), Request{Args: "index"}, cc)
@@ -453,7 +454,7 @@ func TestSessionsKeyboardIncludesIndex(t *testing.T) {
 func TestSessionsKeyboardExcludesIndexWhenNil(t *testing.T) {
 	// Verifies that keyboard options exclude "index" when SessionIndex is nil.
 	cc, _, _ := sessionsTestCC(t, "test-agent")
-	// cc.SessionIndex is nil
+	cc.SessionIndex = nil
 
 	cmd := SessionsCommand()
 	opts := cmd.KeyboardOptions(context.Background(), cc)
@@ -722,24 +723,21 @@ func TestParseIndexArgsCount(t *testing.T) {
 }
 
 // TestSessionsListError verifies that the "default" subcommand propagates
-// errors when the StateStore is nil. By setting cc.StateStore to nil after
-// creating a valid session, the test triggers the error path in the state
-// persistence logic and confirms the error is returned to the caller.
+// errors when the SessionIndex is nil. By setting cc.SessionIndex to nil after
+// creating a valid session, the test triggers the error path in the session
+// index persistence logic and confirms the error is returned to the caller.
 func TestSessionsListError(t *testing.T) {
-	// Verifies that errors from the session store are propagated.
-	// Use a store backed by a non-existent path to trigger list errors.
-	// Actually, ListChatSessions returns nil for missing dirs, so we test
-	// by using a broken state store write path for the default subcommand error.
-	// Instead, we verify the error path via a bad default set on non-existing session.
+	// Verifies that errors from the session index are propagated.
+	// Setting SessionIndex to nil triggers the error path in sessionsDefaultCmd.
 	cc, store, ss := sessionsTestCC(t, "test")
 	addChatSession(t, store, "test", 111, 1)
 	setDefaultChat(t, ss, "test", 111)
 
-	// Removing StateStore triggers error in sessionsDefaultCmd.
-	cc.StateStore = nil
+	// Removing SessionIndex triggers error in sessionsDefaultCmd.
+	cc.SessionIndex = nil
 	cmd := SessionsCommand()
 	_, err := cmd.Execute(context.Background(), Request{Args: "default 111"}, cc)
 	if err == nil {
-		t.Fatal("expected error when StateStore is nil for set default")
+		t.Fatal("expected error when SessionIndex is nil for set default")
 	}
 }

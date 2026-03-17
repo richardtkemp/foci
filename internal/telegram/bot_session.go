@@ -147,35 +147,38 @@ func (b *Bot) DefaultChatID() int64 {
 	return b.defaultChatID()
 }
 
-// defaultChatID reads the default chat from the state store.
+// defaultChatID reads the default chat from the session index.
 func (b *Bot) defaultChatID() int64 {
-	if b.stateStore == nil || b.agentID == "" {
+	if b.sessionIndex == nil || b.agentID == "" {
+		return 0
+	}
+	raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "default_chat")
+	if err != nil || raw == "" {
 		return 0
 	}
 	var chatID int64
-	if b.stateStore.Get("agent/"+b.agentID+"/default_chat", &chatID) {
-		return chatID
+	if _, err := fmt.Sscanf(raw, "%d", &chatID); err != nil {
+		return 0
 	}
-	return 0
+	return chatID
 }
 
 // setDefaultChat persists the default chat ID for this agent.
 func (b *Bot) setDefaultChat(chatID int64) {
-	if b.stateStore == nil || b.agentID == "" {
+	if b.sessionIndex == nil || b.agentID == "" {
 		return
 	}
-	if err := b.stateStore.Set("agent/"+b.agentID+"/default_chat", chatID); err != nil {
+	if err := b.sessionIndex.SetAgentMetadata(b.agentID, "default_chat", fmt.Sprintf("%d", chatID)); err != nil {
 		b.logger().Errorf("persist default chat: %v", err)
 	}
 }
 
 // recordChatUsername persists the username for a chat ID (for /sessions display).
 func (b *Bot) recordChatUsername(chatID int64, username string) {
-	if b.stateStore == nil || b.agentID == "" || username == "" {
+	if b.sessionIndex == nil || b.agentID == "" || username == "" {
 		return
 	}
-	key := fmt.Sprintf("agent/%s/chat/%d/username", b.agentID, chatID)
-	if err := b.stateStore.Set(key, username); err != nil {
+	if err := b.sessionIndex.SetChatMetadata(b.agentID, chatID, "username", username); err != nil {
 		b.logger().Errorf("persist chat username: %v", err)
 	}
 }

@@ -60,7 +60,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 				tmuxSessionTTL = d
 			}
 		}
-		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.stateStore, "tmux:"+acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
+		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.sessionIndex, acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
 		registry.Register(result.tmuxTool)
 	}
 
@@ -350,7 +350,7 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 	}
 
 	ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
-	ag.ManaWatcher.SetStore(p.stateStore)
+	ag.ManaWatcher.SetSessionIndex(p.sessionIndex, acfg.ID)
 	ag.ManaWatcher.Restore()
 	restoreThreshold := p.cfg.ManaWarnings.RestoreThreshold
 	if acfg.UsageWarnings.RestoreThreshold != nil {

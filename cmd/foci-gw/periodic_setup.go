@@ -12,7 +12,6 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/internal/warnings"
 	"foci/prompts"
 )
@@ -22,7 +21,7 @@ type periodicParams struct {
 	sessions              *session.Store
 	usageClientReg        *usageClientRegistry
 	connMgr               platform.ConnectionManager
-	stateStore            *state.Store
+	sessionIndex          *session.SessionIndex
 	todoStore             *memory.TodoStore
 	ctx                   context.Context
 	resolveEndpointClient func(endpoint, format string) provider.Client
@@ -113,7 +112,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		ManaInvestInterval: p.cfg.Mana.InvestInterval,
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,
-		StateStore:         p.stateStore,
+		SessionIndex:       p.sessionIndex,
 		BranchFunc:         branchFn,
 
 		WarningDispatcher:  warningDispatcher,

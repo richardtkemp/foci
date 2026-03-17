@@ -8,7 +8,6 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
-	"foci/internal/state"
 )
 
 // discordProvider implements platform.MessagingProvider for Discord.
@@ -60,7 +59,6 @@ func (p *discordProvider) SetupAgentConnection(params platform.AgentConnectionPa
 		GlobalConfig:      p.deps.Config,
 		SecretStore:       p.deps.SecretStore,
 		Sessions:          p.deps.Sessions,
-		StateStore:        p.deps.StateStore,
 		SessionIndex:      p.deps.SessionIndex,
 		ToolDetailStore:   p.toolDetailStore,
 		STT:               params.STT,
@@ -81,10 +79,10 @@ func (p *discordProvider) SetupSharedFacet(_ platform.SharedFacetParams) {
 }
 
 func (p *discordProvider) RestoreFacetSessions(params platform.RestoreParams) {
-	if p.deps.StateStore == nil {
+	if p.deps.SessionIndex == nil {
 		return
 	}
-	restoreFacetSessions(p.mgr, p.deps.StateStore, p.deps.Sessions, p.deps.Config, params)
+	restoreFacetSessions(p.mgr, p.deps.SessionIndex, p.deps.Sessions, p.deps.Config, params)
 }
 
 func (p *discordProvider) SetLifecycleCallback(agentID string, event platform.LifecycleEvent, fn func()) {
@@ -131,11 +129,21 @@ func (p *discordProvider) Close() error {
 // restoreFacetSessions restores persisted facet session mappings after restart.
 func restoreFacetSessions(
 	mgr *BotManager,
-	stateStore *state.Store,
+	idx *session.SessionIndex,
 	sessions *session.Store,
 	cfg *config.Config,
 	params platform.RestoreParams,
 ) {
+	// Load all discord_facet mappings at once
+	facetMap, err := idx.AgentMetadataByPrefix("_system", "discord_facet:")
+	if err != nil {
+		log.Errorf("discord", "load facet sessions: %v", err)
+		return
+	}
+	if len(facetMap) == 0 {
+		return
+	}
+
 	type poolInfo struct {
 		pool *Pool
 		name string
@@ -157,14 +165,14 @@ func restoreFacetSessions(
 			if botID == "" {
 				return
 			}
-			var savedKey string
-			if !stateStore.Get("discord_facet:"+botID, &savedKey) || savedKey == "" {
+			savedKey, ok := facetMap["discord_facet:"+botID]
+			if !ok || savedKey == "" {
 				return
 			}
 
 			if sessions.LastActivity(savedKey) == "n/a" {
 				log.Infof("discord", "facet restore: %s session %s no longer exists, cleaning up", botID, savedKey)
-				_ = stateStore.Delete("discord_facet:" + botID)
+				_ = idx.DeleteAgentMetadata("_system", "discord_facet:"+botID)
 				return
 			}
 

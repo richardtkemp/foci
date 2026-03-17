@@ -20,7 +20,6 @@ import (
 	"foci/internal/secrets/bitwarden"
 	"foci/internal/session"
 	"foci/internal/skills"
-	"foci/internal/state"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
@@ -39,7 +38,6 @@ type cmdRegParams struct {
 	cfg                 *config.Config
 	configPath          string
 	sessions            *session.Store
-	stateStore          *state.Store
 	sessionIndex        *session.SessionIndex
 	client              provider.Client
 	clientProvider      provider.ClientProvider
@@ -119,7 +117,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		Agent:               p.ag,
 		Sessions:            p.sessions,
 		Bootstrap:           p.bootstrap,
-		StateStore:          p.stateStore,
 		SessionIndex:        p.sessionIndex,
 		Config:              p.cfg,
 		AgentConfig:         p.acfg,

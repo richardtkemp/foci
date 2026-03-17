@@ -32,8 +32,8 @@ predicate isKnownEphemeralStruct(StructType st) {
   st.getName() = "BotManager" or
   // Tool/command registries - rebuilt on startup
   st.getName() = "Registry" or
-  // State store itself - this IS the persistence layer
-  st.hasQualifiedName("foci/internal/state", "Store")
+  // Session index - this IS the persistence layer
+  st.hasQualifiedName("foci/internal/session", "SessionIndex")
 }
 
 from Field mapField, StructType st

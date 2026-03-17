@@ -3,29 +3,28 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 func TestTmuxPersistOwnedSessions(t *testing.T) {
-	// Verifies that starting a session writes the session name to the state store under the agent key, so ownership survives process restart.
+	// Verifies that starting a session writes the session name to the session index under the agent key, so ownership survives process restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
-	// Create a temp file for state persistence
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	// Create a temp DB for state persistence
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
 
 	name := "foci-test-persist"
 	tmuxSetup(t, name)
@@ -40,10 +39,14 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Verify state was persisted (new format: map[string]string)
-	var owned map[string]string
-	if !store.Get("tmux:test-agent", &owned) {
+	// Verify state was persisted (new format: map[string]string as JSON)
+	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
 		t.Fatal("owned sessions not persisted")
+	}
+	var owned map[string]string
+	if err := json.Unmarshal([]byte(raw), &owned); err != nil {
+		t.Fatalf("unmarshal owned: %v", err)
 	}
 	if len(owned) != 1 {
 		t.Errorf("persisted sessions = %v, want 1 entry", owned)
@@ -58,11 +61,15 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Pre-populate state with an owned session
-	if err := store.Set("tmux:test-agent", map[string]string{"foci-test-restore": ""}); err != nil {
+	ownedJSON, _ := json.Marshal(map[string]string{"foci-test-restore": ""})
+	if err := idx.SetAgentMetadata("test-agent", "tmux_owned", string(ownedJSON)); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
@@ -72,27 +79,22 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 		t.Fatalf("create tmux session: %v", err)
 	}
 
-	// Load state
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-
-	// Create tool with state store - should restore owned sessions
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	// Create tool with session index - should restore owned sessions
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "read",
 		"name":      "foci-test-restore",
 	})
-	_, err := tool.Execute(context.Background(), params)
+	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Errorf("read on restored session should succeed, got: %v", err)
 	}
 }
 
 func TestTmuxPersistOnKill(t *testing.T) {
-	// Verifies that killing a session removes it from the persisted state, ensuring the state store stays in sync with actual session existence.
+	// Verifies that killing a session removes it from the persisted state, ensuring the session index stays in sync with actual session existence.
 	tmuxAvailable(t)
 
 	// Create an isolated tmux server so the kill path's maybeKillTmuxServer
@@ -107,13 +109,12 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	orig := tmuxSocketPath
 	tmuxSocketPath = sock
 
-	stateFile := filepath.Join(dir, "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
 
 	tmuxSocketPath = orig
 	t.Parallel()
@@ -131,9 +132,13 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	}
 
 	// Verify persisted
-	var owned map[string]string
-	if !store.Get("tmux:test-agent", &owned) {
+	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
 		t.Fatal("owned sessions not persisted after start")
+	}
+	var owned map[string]string
+	if err := json.Unmarshal([]byte(raw), &owned); err != nil {
+		t.Fatalf("unmarshal owned: %v", err)
 	}
 	if len(owned) != 1 {
 		t.Errorf("persisted sessions = %v, want 1 session", owned)
@@ -149,9 +154,13 @@ func TestTmuxPersistOnKill(t *testing.T) {
 	}
 
 	// Verify removed from persisted state
-	var ownedAfter map[string]string
-	if !store.Get("tmux:test-agent", &ownedAfter) {
+	raw, err = idx.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
 		t.Fatal("owned sessions key should still exist")
+	}
+	var ownedAfter map[string]string
+	if err := json.Unmarshal([]byte(raw), &ownedAfter); err != nil {
+		t.Fatalf("unmarshal owned after: %v", err)
 	}
 	if len(ownedAfter) != 0 {
 		t.Errorf("persisted sessions after kill = %v, want empty", ownedAfter)
@@ -173,19 +182,18 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	orig := tmuxSocketPath
 	tmuxSocketPath = sock
 
-	stateFile := filepath.Join(dir, "state.json")
-	store := state.New(stateFile)
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Pre-populate state with sessions that no longer exist
-	if err := store.Set("tmux:test-agent", map[string]string{"foci-test-stale1": "", "foci-test-stale2": ""}); err != nil {
+	ownedJSON, _ := json.Marshal(map[string]string{"foci-test-stale1": "", "foci-test-stale2": ""})
+	if err := idx.SetAgentMetadata("test-agent", "tmux_owned", string(ownedJSON)); err != nil {
 		t.Fatalf("set state: %v", err)
 	}
 
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
 
 	tmuxSocketPath = orig
 	t.Parallel()
@@ -194,27 +202,31 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "list",
 	})
-	_, err := tool.Execute(context.Background(), params)
+	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
 
 	// Verify persisted state was cleared
-	var owned map[string]string
-	if !store.Get("tmux:test-agent", &owned) {
+	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
 		t.Fatal("owned sessions key should still exist")
+	}
+	var owned map[string]string
+	if err := json.Unmarshal([]byte(raw), &owned); err != nil {
+		t.Fatalf("unmarshal owned: %v", err)
 	}
 	if len(owned) != 0 {
 		t.Errorf("persisted sessions after list = %v, want empty", owned)
 	}
 }
 
-func TestTmuxNoStateStore(t *testing.T) {
-	// Verifies that the tool operates correctly when no state store is configured, allowing stateless use without persistence.
+func TestTmuxNoSessionIndex(t *testing.T) {
+	// Verifies that the tool operates correctly when no session index is configured, allowing stateless use without persistence.
 	t.Parallel()
 	tmuxAvailable(t)
 
-	// Create tool without state store (nil)
+	// Create tool without session index (nil)
 	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
 
 	name := "foci-test-nostate"
@@ -244,19 +256,19 @@ func TestTmuxNoStateStore(t *testing.T) {
 }
 
 func TestTmuxStateFileRoundTrip(t *testing.T) {
-	// Verifies end-to-end persistence: a session started by one instance is accessible from a new instance that reads from the same state file.
+	// Verifies end-to-end persistence: a session started by one instance is accessible from a new instance that reads from the same DB.
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
+	dbPath := filepath.Join(t.TempDir(), "state.db")
 
 	// First instance: start session and persist
-	store1 := state.New(stateFile)
-	if err := store1.Load(); err != nil {
-		t.Fatalf("load state1: %v", err)
+	idx1, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, tool1, _, _ := NewTmuxTool(300, 30, nil, store1, "tmux:test-agent", false, 30, 0)
+	_, tool1, _, _ := NewTmuxTool(300, 30, nil, idx1, "test-agent", false, 30, 0)
 
 	name := "foci-test-roundtrip"
 	tmuxSetup(t, name)
@@ -270,25 +282,22 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Read the persisted file directly to verify it was written
-	data, err := os.ReadFile(stateFile)
+	// Verify metadata was written
+	raw, err := idx1.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
+		t.Fatal("session index does not contain tmux_owned metadata")
+	}
+	if !strings.Contains(raw, name) {
+		t.Errorf("metadata does not contain session name %q: %s", name, raw)
+	}
+
+	// Second instance: open same DB and verify session is accessible
+	idx2, err := session.NewSessionIndex(dbPath)
 	if err != nil {
-		t.Fatalf("read state file: %v", err)
-	}
-	if !strings.Contains(string(data), "tmux:test-agent") {
-		t.Errorf("state file does not contain key 'tmux:test-agent': %s", string(data))
-	}
-	if !strings.Contains(string(data), name) {
-		t.Errorf("state file does not contain session name %q: %s", name, string(data))
+		t.Fatal(err)
 	}
 
-	// Second instance: reload state and verify session is accessible
-	store2 := state.New(stateFile)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("load state2: %v", err)
-	}
-
-	_, tool2, _, _ := NewTmuxTool(300, 30, nil, store2, "tmux:test-agent", false, 30, 0)
+	_, tool2, _, _ := NewTmuxTool(300, 30, nil, idx2, "test-agent", false, 30, 0)
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -302,18 +311,18 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 }
 
 func TestTmuxPersistWatches(t *testing.T) {
-	// Verifies that adding a watch writes the session name and threshold to the persistent state store, enabling watch restoration after restart.
+	// Verifies that adding a watch writes the session name and threshold to the persistent session index, enabling watch restoration after restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 
 	name := "foci-test-persist-watch"
 	tmuxSetup(t, name)
@@ -341,9 +350,13 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	// Verify watches were persisted
-	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) {
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches not persisted")
+	}
+	var watches []persistedWatch
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 1 {
 		t.Fatalf("persisted watches = %d, want 1", len(watches))
@@ -368,8 +381,11 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	name := "foci-test-restore-watch"
 	tmuxSetup(t, name)
@@ -380,27 +396,29 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	// Pre-populate state with owned session and watch
-	if err := store.Set("tmux:test-agent", map[string]string{name: ""}); err != nil {
+	ownedJSON, _ := json.Marshal(map[string]string{name: ""})
+	if err := idx.SetAgentMetadata("test-agent", "tmux_owned", string(ownedJSON)); err != nil {
 		t.Fatalf("set owned state: %v", err)
 	}
-	if err := store.Set("tmux:test-agent:watches", []persistedWatch{
+	watchesJSON, _ := json.Marshal([]persistedWatch{
 		{Session: name, Window: 0, ThresholdSecs: 30, AgentSessionKey: "test-session"},
-	}); err != nil {
+	})
+	if err := idx.SetAgentMetadata("test-agent", "tmux_watches", string(watchesJSON)); err != nil {
 		t.Fatalf("set watch state: %v", err)
 	}
 
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, _, cleanup, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, _, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
-	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) {
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches should still be in state")
+	}
+	var watches []persistedWatch
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 1 {
 		t.Fatalf("restored watches = %d, want 1", len(watches))
@@ -418,27 +436,31 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Pre-populate with a watch for a non-existent session
-	if err := store.Set("tmux:test-agent:watches", []persistedWatch{
+	watchesJSON, _ := json.Marshal([]persistedWatch{
 		{Session: "foci-test-stale-watch-xyz", Window: 0, ThresholdSecs: 30, AgentSessionKey: "test-session"},
-	}); err != nil {
+	})
+	if err := idx.SetAgentMetadata("test-agent", "tmux_watches", string(watchesJSON)); err != nil {
 		t.Fatalf("set watch state: %v", err)
 	}
 
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
-	}
-
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 
 	// Stale watch should have been cleaned from state
-	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) {
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches key should still exist")
+	}
+	var watches []persistedWatch
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 0 {
 		t.Errorf("persisted watches after stale cleanup = %d, want 0", len(watches))
@@ -446,18 +468,18 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 }
 
 func TestTmuxUnwatchPersists(t *testing.T) {
-	// Verifies that calling unwatch removes the watch entry from the state store, so the watch is not erroneously restored after a restart.
+	// Verifies that calling unwatch removes the watch entry from the session index, so the watch is not erroneously restored after a restart.
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 
 	name := "foci-test-unwatch-persist"
 	tmuxSetup(t, name)
@@ -484,8 +506,15 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	// Verify watch is persisted
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
+		t.Fatal("watch should be persisted")
+	}
 	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) || len(watches) != 1 {
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
+	}
+	if len(watches) != 1 {
 		t.Fatal("watch should be persisted")
 	}
 
@@ -499,8 +528,12 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	// Verify watches state is now empty
-	if !store.Get("tmux:test-agent:watches", &watches) {
+	rawW, errW = idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches key should still exist")
+	}
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 0 {
 		t.Errorf("persisted watches after unwatch = %d, want 0", len(watches))
@@ -508,18 +541,18 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 }
 
 func TestTmuxClearAllPersistsWatches(t *testing.T) {
-	// Verifies that the ClearAll cleanup function removes all watches from the state store, ensuring no stale watches survive shutdown.
+	// Verifies that the ClearAll cleanup function removes all watches from the session index, ensuring no stale watches survive shutdown.
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, cleanup, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 
 	name := "foci-test-clearall-watch"
 	tmuxSetup(t, name)
@@ -546,8 +579,15 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	// Verify watch is persisted
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
+		t.Fatal("watch should be persisted before ClearAll")
+	}
 	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) || len(watches) != 1 {
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
+	}
+	if len(watches) != 1 {
 		t.Fatal("watch should be persisted before ClearAll")
 	}
 
@@ -555,8 +595,12 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	cleanup()
 
 	// Verify watches state is cleared
-	if !store.Get("tmux:test-agent:watches", &watches) {
+	rawW, errW = idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches key should still exist")
+	}
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 0 {
 		t.Errorf("persisted watches after ClearAll = %d, want 0", len(watches))
@@ -668,14 +712,14 @@ func TestTmuxMigrateSessionKey(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dir := t.TempDir()
+	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, migrate := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool, _, migrate := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 
 	name := "foci-test-migrate"
 	tmuxSetup(t, name)
@@ -709,18 +753,26 @@ func TestTmuxMigrateSessionKey(t *testing.T) {
 	migrate(oldKey, newKey)
 
 	// Verify owned map updated
-	var owned map[string]string
-	if !store.Get("tmux:test-agent", &owned) {
+	raw, err := idx.GetAgentMetadata("test-agent", "tmux_owned")
+	if err != nil || raw == "" {
 		t.Fatal("owned sessions not found in state")
+	}
+	var owned map[string]string
+	if err := json.Unmarshal([]byte(raw), &owned); err != nil {
+		t.Fatalf("unmarshal owned: %v", err)
 	}
 	if owned[name] != newKey {
 		t.Errorf("owned[%s] = %q, want %q", name, owned[name], newKey)
 	}
 
 	// Verify watches updated
-	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) {
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
 		t.Fatal("watches not found in state")
+	}
+	var watches []persistedWatch
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
 	}
 	if len(watches) != 1 {
 		t.Fatalf("watches = %d, want 1", len(watches))
@@ -735,14 +787,14 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	stateFile := filepath.Join(t.TempDir(), "state.json")
-	store := state.New(stateFile)
-	if err := store.Load(); err != nil {
-		t.Fatalf("load state: %v", err)
+	dbPath := filepath.Join(t.TempDir(), "state.db")
+	idx, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, store, "tmux:test-agent", false, 30, 0)
+	_, tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
@@ -771,8 +823,15 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	// Verify watch is persisted
+	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
+	if errW != nil || rawW == "" {
+		t.Fatal("watch should be persisted")
+	}
 	var watches []persistedWatch
-	if !store.Get("tmux:test-agent:watches", &watches) || len(watches) != 1 {
+	if err := json.Unmarshal([]byte(rawW), &watches); err != nil {
+		t.Fatalf("unmarshal watches: %v", err)
+	}
+	if len(watches) != 1 {
 		t.Fatal("watch should be persisted")
 	}
 
@@ -785,14 +844,13 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatalf("unwatch: %v", err)
 	}
 
-	// Simulate restart: create a new tool instance from the same state store
-	// (reload state from disk to mimic fresh process start)
-	store2 := state.New(stateFile)
-	if err := store2.Load(); err != nil {
-		t.Fatalf("reload state: %v", err)
+	// Simulate restart: create a new tool instance from the same DB
+	idx2, err := session.NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	_, tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, store2, "tmux:test-agent", false, 30, 0)
+	_, tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, idx2, "test-agent", false, 30, 0)
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch
@@ -800,14 +858,17 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		"operation": "unwatch",
 		"name":      name,
 	})
-	_, err := tool2.Execute(context.Background(), params)
+	_, err = tool2.Execute(context.Background(), params)
 	if err == nil {
 		t.Error("expected error unwatching session that should not have been restored")
 	}
 
 	// Verify no watches in persisted state
-	var watches2 []persistedWatch
-	if store2.Get("tmux:test-agent:watches", &watches2) && len(watches2) != 0 {
-		t.Errorf("watches in state after restart = %d, want 0", len(watches2))
+	rawW2, _ := idx2.GetAgentMetadata("test-agent", "tmux_watches")
+	if rawW2 != "" {
+		var watches2 []persistedWatch
+		if err := json.Unmarshal([]byte(rawW2), &watches2); err == nil && len(watches2) != 0 {
+			t.Errorf("watches in state after restart = %d, want 0", len(watches2))
+		}
 	}
 }

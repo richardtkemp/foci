@@ -1,21 +1,21 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
-	"foci/internal/state"
 )
 
 type sessionInfra struct {
 	sessions     *session.Store
 	sessionIndex *session.SessionIndex
-	stateStore   *state.Store
 	cleanup      func()
 }
 
@@ -154,19 +154,15 @@ func initSessions(cfg *config.Config) sessionInfra {
 		}
 	}
 
-	// State persistence (JSON file in data dir)
-	statePath := cfg.DataPath("state.json")
-	stateStore := state.New(statePath)
-	if err := stateStore.Load(); err != nil {
-		log.Errorf("main", "load state: %v", err)
-	}
+	// Migrate state.json → SQLite if it exists
+	migrateStateJSON(cfg.DataPath("state.json"), sessionIndex)
 
-	cleanupLegacyStateKeys(stateStore, sessions)
+	// Clean up stale session metadata
+	cleanupStaleSessionMetadata(sessionIndex, sessions)
 
 	return sessionInfra{
 		sessions:     sessions,
 		sessionIndex: sessionIndex,
-		stateStore:   stateStore,
 		cleanup: func() {
 			for i := len(cleanups) - 1; i >= 0; i-- {
 				cleanups[i]()
@@ -175,33 +171,178 @@ func initSessions(cfg *config.Config) sessionInfra {
 	}
 }
 
-// cleanupLegacyStateKeys migrates colon-separated agent keys to slash format
-// and removes stale no_compact entries for branch sessions that no longer exist.
-func cleanupLegacyStateKeys(stateStore *state.Store, sessions *session.Store) {
-	keys := stateStore.AllKeys()
-	var toDelete []string
-
-	for _, k := range keys {
-		// Remove stale no_compact entries for branch/spawn sessions whose
-		// session files no longer exist on disk.
-		if strings.HasPrefix(k, "no_compact/") {
-			sessionKey := strings.TrimPrefix(k, "no_compact/")
-			path, err := sessions.SessionPath(sessionKey)
-			if err != nil {
-				toDelete = append(toDelete, k)
-				continue
-			}
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				toDelete = append(toDelete, k)
-			}
-		}
+// migrateStateJSON performs a one-time migration of state.json key-value data
+// into the SQLite session index tables. After migration, renames state.json to
+// state.json.migrated. Does NOT import internal/state — reads raw JSON directly.
+func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
+	if idx == nil {
+		return
+	}
+	data, err := os.ReadFile(jsonPath)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		log.Warnf("main", "migrate state.json: read: %v", err)
+		return
 	}
 
-	if len(toDelete) > 0 {
-		if err := stateStore.DeleteKeys(toDelete); err != nil {
-			log.Warnf("main", "cleanup legacy state keys: %v", err)
-		} else {
-			log.Infof("main", "cleaned up %d stale state key(s)", len(toDelete))
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		log.Warnf("main", "migrate state.json: parse: %v", err)
+		return
+	}
+
+	var migrated int
+	for key, val := range raw {
+		var strVal string
+		// Try to unmarshal as string first; if that fails, use the raw JSON.
+		if err := json.Unmarshal(val, &strVal); err != nil {
+			strVal = string(val)
 		}
+
+		switch {
+		case key == "system:last_clean_shutdown":
+			_ = idx.SetSystemState("last_clean_shutdown", strVal)
+
+		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/first_run_completed"):
+			// agent/<id>/first_run_completed
+			parts := strings.SplitN(key, "/", 3)
+			if len(parts) == 3 {
+				_ = idx.SetAgentMetadata(parts[1], "first_run_completed", "true")
+			}
+
+		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/last_user_activity"):
+			// agent/<id>/last_user_activity — value is a unix timestamp (int64)
+			parts := strings.SplitN(key, "/", 3)
+			if len(parts) == 3 {
+				_ = idx.SetAgentMetadata(parts[1], "last_user_activity", strVal)
+			}
+
+		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/default_chat"):
+			parts := strings.SplitN(key, "/", 3)
+			if len(parts) == 3 {
+				_ = idx.SetAgentMetadata(parts[1], "default_chat", strVal)
+			}
+
+		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/default_channel"):
+			parts := strings.SplitN(key, "/", 3)
+			if len(parts) == 3 {
+				_ = idx.SetAgentMetadata(parts[1], "default_channel", strVal)
+			}
+
+		case strings.HasPrefix(key, "agent/") && strings.Contains(key, "/chat/") && strings.HasSuffix(key, "/username"):
+			// agent/<id>/chat/<cid>/username
+			parts := strings.SplitN(key, "/", 5) // agent, <id>, chat, <cid>, username
+			if len(parts) == 5 {
+				cid, err := strconv.ParseInt(parts[3], 10, 64)
+				if err == nil {
+					_ = idx.SetChatMetadata(parts[1], cid, "username", strVal)
+				}
+			}
+
+		case strings.HasPrefix(key, "consolidation_last:"):
+			// consolidation_last:<id>
+			agentID := strings.TrimPrefix(key, "consolidation_last:")
+			_ = idx.SetAgentMetadata(agentID, "consolidation_last", strVal)
+
+		case strings.HasPrefix(key, "mana:"):
+			// mana:<name> — stored per-agent, but old format was global.
+			// The raw JSON value is the full state, store as-is.
+			// We don't know which agent it belongs to in the old format,
+			// so skip — the mana watcher will re-create on next threshold hit.
+
+		case strings.HasPrefix(key, "tmux:") && strings.HasSuffix(key, ":watches"):
+			// tmux:<id>:watches
+			agentID := strings.TrimPrefix(key, "tmux:")
+			agentID = strings.TrimSuffix(agentID, ":watches")
+			_ = idx.SetAgentMetadata(agentID, "tmux_watches", string(val))
+
+		case strings.HasPrefix(key, "tmux:"):
+			// tmux:<id> (owned map)
+			agentID := strings.TrimPrefix(key, "tmux:")
+			_ = idx.SetAgentMetadata(agentID, "tmux_owned", string(val))
+
+		case strings.HasPrefix(key, "facet:"):
+			_ = idx.SetAgentMetadata("_system", key, strVal)
+
+		case strings.HasPrefix(key, "discord_facet:"):
+			_ = idx.SetAgentMetadata("_system", key, strVal)
+
+		default:
+			// Check for session metadata patterns: <prefix>/<sessionKey>
+			sessionMetaPrefixes := []string{
+				"effort", "thinking", "speed", "model", "model_endpoint",
+				"model_format", "show_tool_calls", "display_show_thinking",
+				"stream_output", "display_width", "no_compact",
+			}
+			handled := false
+			for _, prefix := range sessionMetaPrefixes {
+				if strings.HasPrefix(key, prefix+"/") {
+					sk := strings.TrimPrefix(key, prefix+"/")
+					_ = idx.SetSessionMetadata(sk, prefix, strVal)
+					handled = true
+					break
+				}
+			}
+
+			// Check for <stateKey>:chatid / <stateKey>:channelid patterns
+			if !handled {
+				if strings.HasSuffix(key, ":chatid") {
+					// Can't determine agent ID from old format — skip
+					handled = true
+				} else if strings.HasSuffix(key, ":channelid") {
+					handled = true
+				}
+			}
+
+			if !handled {
+				log.Debugf("main", "migrate state.json: skipping unknown key %q", key)
+			}
+		}
+		migrated++
+	}
+
+	// Rename to .migrated
+	migratedPath := jsonPath + ".migrated"
+	if err := os.Rename(jsonPath, migratedPath); err != nil {
+		log.Warnf("main", "migrate state.json: rename: %v", err)
+	} else {
+		log.Infof("main", "migrated %d state.json keys to SQLite, renamed to %s", migrated, filepath.Base(migratedPath))
+	}
+
+	// Clean up WAL/SHM files from the old state.json (SQLite-style, but state.json was plain JSON)
+	// Actually state.json was plain JSON, no WAL files. But clean up if they exist from some transient state.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(jsonPath + suffix)
+	}
+}
+
+// cleanupStaleSessionMetadata removes no_compact entries for sessions whose
+// files no longer exist on disk.
+func cleanupStaleSessionMetadata(idx *session.SessionIndex, sessions *session.Store) {
+	if idx == nil {
+		return
+	}
+	keys, err := idx.SessionKeysWithMetadata("no_compact")
+	if err != nil {
+		log.Warnf("main", "query stale session metadata: %v", err)
+		return
+	}
+	var deleted int
+	for _, sk := range keys {
+		path, err := sessions.SessionPath(sk)
+		if err != nil {
+			_ = idx.DeleteSessionMetadata(sk, "no_compact")
+			deleted++
+			continue
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			_ = idx.DeleteSessionMetadata(sk, "no_compact")
+			deleted++
+		}
+	}
+	if deleted > 0 {
+		log.Infof("main", "cleaned up %d stale no_compact entries", deleted)
 	}
 }

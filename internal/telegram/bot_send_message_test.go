@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"foci/internal/command"
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 func TestSendInjected_SkipsEmptyMessage(t *testing.T) {
@@ -80,11 +80,13 @@ func TestSendToSession_IndependentSessionFallsBackToDefault(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 
 	// Independent session has no chat ID — needs a default chat fallback.
-	// Set up a state store with a default chat.
-	dir := t.TempDir()
-	store := state.New(filepath.Join(dir, "state.db"))
+	// Set up a session index with a default chat.
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b.agentID = "main"
-	b.SetStateStore(store, "bot:main")
+	b.sessionIndex = idx
 	b.setDefaultChat(11111)
 
 	if err := b.SendToSession("main/i1709596800/1709596800", "hello independent"); err != nil {

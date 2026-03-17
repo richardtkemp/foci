@@ -2,12 +2,13 @@ package telegram
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/command"
-	"foci/internal/state"
+	"foci/internal/session"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -109,10 +110,13 @@ func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
 func TestDefaultChatAssignment(t *testing.T) {
 	// Verifies that the default chat is set on first
 	// message and does not change.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 
 	// No default initially
 	if chatID := b.defaultChatID(); chatID != 0 {
@@ -144,10 +148,13 @@ func TestDefaultChatAssignment(t *testing.T) {
 func TestDefaultSessionKey(t *testing.T) {
 	// Verifies that DefaultSessionKey returns the correct
 	// session key for the default chat.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 
 	// No default → empty
 	if sk := b.DefaultSessionKey(); sk != "" {
@@ -164,11 +171,14 @@ func TestDefaultSessionKey(t *testing.T) {
 func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	// Verifies that primary bots use the
 	// default chat session key.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
 	b.sessionKey = "" // primary bots don't have an override
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 	b.setDefaultChat(12345)
 
 	// SessionKey() should return the default chat session
@@ -180,11 +190,14 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
 	// Verifies that SessionKey() returns the
 	// same value on repeated calls.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
 	b.sessionKey = ""
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 	b.setDefaultChat(12345)
 
 	k1 := b.SessionKey()
@@ -197,10 +210,13 @@ func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
 func TestDefaultSessionKey_IsStable(t *testing.T) {
 	// Verifies that DefaultSessionKey() returns
 	// the same value on repeated calls.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 	b.setDefaultChat(12345)
 
 	k1 := b.DefaultSessionKey()
@@ -214,10 +230,13 @@ func TestUpdateChatSessionKey_ChangesDefaultSessionKey(t *testing.T) {
 	// Verifies that UpdateChatSessionKey updates the cached session key
 	// so that subsequent DefaultSessionKey calls return the new key.
 	// This is the mechanism used by /reset to rotate session keys.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 	b.setDefaultChat(12345)
 
 	oldKey := b.DefaultSessionKey()
@@ -252,10 +271,13 @@ func TestSessionKey_SecondaryBotUsesOverride(t *testing.T) {
 func TestChatUsernameRecording(t *testing.T) {
 	// Verifies that chat usernames are recorded when
 	// messages are received.
-	ss := state.New(t.TempDir() + "/state.json")
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.SetStateStore(ss, "bot:test")
+	b.sessionIndex = idx
 
 	msg := makeMsg(111, "alice", "hello")
 	b.receiveMessage(context.Background(), msg)

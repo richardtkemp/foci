@@ -9,7 +9,6 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
-	"foci/internal/state"
 	"foci/prompts"
 )
 
@@ -18,7 +17,7 @@ func handleWelcomeAndFirstRun(
 	agents map[string]*agentInstance,
 	agentOrder []string,
 	sessions *session.Store,
-	stateStore *state.Store,
+	sessionIndex *session.SessionIndex,
 	cfg *config.Config,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
@@ -44,13 +43,13 @@ func handleWelcomeAndFirstRun(
 	// after consumption, and we mark first_run_completed via OnActivity.
 	for _, agentID := range agentOrder {
 		inst := agents[agentID]
-		if msg := checkFirstRun(stateStore, inst.agentCfg); msg != "" {
+		if msg := checkFirstRun(sessionIndex, inst.agentCfg); msg != "" {
 			inst.ag.FirstRunMessage.Store(msg)
 			agentID := agentID
 			var once sync.Once
 			inst.ag.OnActivity.Add(func(_ string) {
 				once.Do(func() {
-					if err := stateStore.Set("agent/"+agentID+"/first_run_completed", true); err != nil {
+					if err := sessionIndex.SetAgentMetadata(agentID, "first_run_completed", "true"); err != nil {
 						log.Errorf("main", "set first_run_completed for %s: %v", agentID, err)
 					}
 					log.Infof("main", "first-run onboarding completed for %s", agentID)

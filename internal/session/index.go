@@ -576,6 +576,69 @@ func toArgs(ss []string) []interface{} {
 	return args
 }
 
+// RenameSessionMetadata atomically renames all session_metadata rows from oldKey to newKey.
+// Used by RotateSession to migrate per-session state in a single UPDATE.
+func (idx *SessionIndex) RenameSessionMetadata(oldKey, newKey string) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	_, err := idx.db.Exec(
+		`UPDATE session_metadata SET session_key = ? WHERE session_key = ?`,
+		newKey, oldKey,
+	)
+	return err
+}
+
+// SessionKeysWithMetadata returns all session keys that have a given metadata key set.
+// Used for cleanup of stale session metadata (e.g. no_compact entries for rotated sessions).
+func (idx *SessionIndex) SessionKeysWithMetadata(key string) ([]string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT session_key FROM session_metadata WHERE key = ?`, key,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	var keys []string
+	for rows.Next() {
+		var sk string
+		if err := rows.Scan(&sk); err != nil {
+			return nil, err
+		}
+		keys = append(keys, sk)
+	}
+	return keys, rows.Err()
+}
+
+// AgentMetadataByPrefix returns all metadata entries for an agent whose key starts with prefix.
+// Used for facet session restoration (prefix="facet:") and similar bulk lookups.
+func (idx *SessionIndex) AgentMetadataByPrefix(agentID, prefix string) (map[string]string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT key, value FROM agent_metadata WHERE agent_id = ? AND key LIKE ?`,
+		agentID, prefix+"%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		result[k] = v
+	}
+	return result, rows.Err()
+}
+
 // ResolvePartialKey resolves a partial session key (agent/typeID, e.g.
 // "scout/c5970082313") to the most recently active full key with a versionTS
 // ("scout/c5970082313/1772794601"). Only accepts keys with exactly 2

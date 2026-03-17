@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -8,7 +9,7 @@ import (
 	"time"
 
 	"foci/internal/log"
-	"foci/internal/state"
+	"foci/internal/session"
 )
 
 type ManaWatcher struct {
@@ -20,14 +21,15 @@ type ManaWatcher struct {
 	firedRestore     bool // restore notice already fired today
 	mu               sync.Mutex
 	lastReset        time.Time
-	store            *state.Store
+	idx              *session.SessionIndex
+	agentID          string
 }
 
 type manaWatcherState struct {
-	FiredToday   map[int]bool
-	LastReset    time.Time
-	SeenBelow    bool
-	FiredRestore bool
+	FiredToday   map[int]bool `json:"fired_today"`
+	LastReset    time.Time    `json:"last_reset"`
+	SeenBelow    bool         `json:"seen_below"`
+	FiredRestore bool         `json:"fired_restore"`
 }
 
 func NewManaWatcher(name string, thresholds []int) *ManaWatcher {
@@ -49,10 +51,11 @@ func NewManaWatcher(name string, thresholds []int) *ManaWatcher {
 	}
 }
 
-func (m *ManaWatcher) SetStore(store *state.Store) {
+func (m *ManaWatcher) SetSessionIndex(idx *session.SessionIndex, agentID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.store = store
+	m.idx = idx
+	m.agentID = agentID
 }
 
 // SetRestoreThreshold enables restore notification when mana reaches 100%
@@ -73,13 +76,18 @@ func (m *ManaWatcher) Restore() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.store == nil {
+	if m.idx == nil {
 		return
 	}
 
-	key := "mana:" + m.name
+	raw, err := m.idx.GetAgentMetadata(m.agentID, "mana:"+m.name)
+	if err != nil || raw == "" {
+		return
+	}
+
 	var state manaWatcherState
-	if !m.store.Get(key, &state) {
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		log.Warnf("mana", "unmarshal fired state: %v", err)
 		return
 	}
 
@@ -95,17 +103,21 @@ func (m *ManaWatcher) Restore() {
 }
 
 func (m *ManaWatcher) saveFiredState() {
-	if m.store == nil {
+	if m.idx == nil {
 		return
 	}
-	key := "mana:" + m.name
 	state := manaWatcherState{
 		FiredToday:   m.firedToday,
 		LastReset:    m.lastReset,
 		SeenBelow:    m.seenBelow,
 		FiredRestore: m.firedRestore,
 	}
-	if err := m.store.Set(key, state); err != nil {
+	data, err := json.Marshal(state)
+	if err != nil {
+		log.Errorf("mana", "marshal fired state: %v", err)
+		return
+	}
+	if err := m.idx.SetAgentMetadata(m.agentID, "mana:"+m.name, string(data)); err != nil {
 		log.Errorf("mana", "persist fired state: %v", err)
 	}
 }
