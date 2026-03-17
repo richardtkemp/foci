@@ -72,6 +72,8 @@ func triggerToPlatform(trigger string) string {
 	switch trigger {
 	case "telegram":
 		return "telegram"
+	case "discord":
+		return "discord"
 	case "voice":
 		return "voice"
 	case "android":

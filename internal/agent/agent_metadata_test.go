@@ -148,6 +148,7 @@ func TestTriggerToPlatform(t *testing.T) {
 		platform string
 	}{
 		{"telegram", "telegram"},
+		{"discord", "discord"},
 		{"voice", "voice"},
 		{"android", "android"},
 		{"user", "api"},
