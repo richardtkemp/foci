@@ -76,6 +76,7 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 
 	if err := stream.Err(); err != nil {
 		sdkErr := classifySDKError(err)
+		attachWireRequest(sdkErr, wireReq)
 		if deltasEmitted {
 			// Mid-stream error: deltas already emitted, can't retry.
 			// Wrap so callers know it's a stream error.

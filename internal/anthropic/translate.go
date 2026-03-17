@@ -239,6 +239,14 @@ func classifySDKError(err error) error {
 	return err
 }
 
+// attachWireRequest sets the WireRequest field on an APIError if err is one.
+func attachWireRequest(err error, wireReq json.RawMessage) {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		apiErr.WireRequest = wireReq
+	}
+}
+
 // messagesToSDK translates provider messages to SDK message params.
 func messagesToSDK(msgs []Message) []sdk.MessageParam {
 	result := make([]sdk.MessageParam, 0, len(msgs))
