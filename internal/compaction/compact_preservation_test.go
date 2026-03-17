@@ -28,10 +28,10 @@ func TestCompactPreserveMessages(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("assistant reply %d", i))})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 4) // preserve last 4 messages
 
-	summary, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	summary, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -104,10 +104,10 @@ func TestCompactPreserveMessagesZero(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 0) // preserve=0 → same as current behaviour
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -142,10 +142,10 @@ func TestCompactPreserveMoreThanAvailable(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 100) // preserve=100 but only 10 messages
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -179,10 +179,10 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 			store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
-		c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+		c := NewCompactor(store, 0.8)
 		c.WithConfig(4096, 4, 4) // preserve 4 → [u3,a3,u4,a4] → starts user
 
-		_, newKey, err := c.Compact(context.Background(), noStream(client), key, nil, "", "", false)
+		_, newKey, err := c.Compact(context.Background(), noStream(client), key, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}
@@ -213,10 +213,10 @@ func TestCompactPreserveRoleAlternation(t *testing.T) {
 			store.TestAppend(key, provider.Message{Role: "assistant", Content: provider.TextContent("a")})
 		}
 
-		c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+		c := NewCompactor(store, 0.8)
 		c.WithConfig(4096, 4, 3) // preserve 3 → [a3,u4,a4] → starts assistant
 
-		_, newKey, err := c.Compact(context.Background(), noStream(client), key, nil, "", "", false)
+		_, newKey, err := c.Compact(context.Background(), noStream(client), key, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 		if err != nil {
 			t.Fatalf("Compact: %v", err)
 		}

@@ -87,8 +87,9 @@ type SpawnDeps struct {
 	Registry           *Registry // tool registry for one-shot tool access
 	Sessions           SessionBrancher
 	AgentID            string
-	Model              string                                   // parent's default model (endpoint:model format)
-	ModelAliases       map[string]string                        // model aliases (e.g. "haiku" → "anthropic:claude-haiku-4-5")
+	GroupResolver      *config.GroupResolver                    // resolves model groups for spawn modes
+	FallbackModel      string                                   // agent's default model (developer/model_id) for single-model mode fallback
+	FallbackFormat     string                                   // agent's default format for single-model mode fallback
 	MaxInherit         int                                      // semaphore size (from config)
 	MaxToolLoops       int                                      // max tool loops for raw/character spawns
 	ExploreMaxDepth    int                                      // max tool loops for explore spawns
@@ -117,7 +118,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				},
 				"model": {
 					"type": "string",
-					"description": "Model to use: 'opus', 'sonnet', 'haiku', or a full model ID. Empty uses the current model. Ignored for clone mode (inherits parent model)."
+					"description": "Model group to use: 'powerful', 'fast', 'cheap'. Empty uses the mode's default group. Ignored for clone and explore modes."
 				},
 				"context": {
 					"type": "string",
@@ -149,24 +150,15 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 			}
 			timeout := ResolveTimeout(p.Timeout, TimeoutConfig{DefaultSec: 120})
 
-			resolved, err := resolveSpawnModel(p.Model, deps.Model, deps.ModelAliases)
-			if err != nil {
-				return ToolResult{}, err
-			}
-
-			client := resolveSpawnClient(deps.Client, resolved, deps.ClientProvider)
-
-			// Use bare model ID for API calls
-			model := resolved.ModelID
-
 			switch p.Context {
 			case "raw":
+				client, model, format := resolveSpawnGroup(deps.GroupResolver, p.Model, config.CallSpawnRaw, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
 				tempDir, err := os.MkdirTemp(tempdir.SpawnDir(), "foci-spawn-*")
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, client, model, resolved.Format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -179,28 +171,25 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				return TextResult(result), nil
 
 			case "character":
+				client, model, format := resolveSpawnGroup(deps.GroupResolver, p.Model, config.CallSpawnCharacter, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
 				var system []provider.SystemBlock
 				if deps.Bootstrap != nil {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				result, err := spawnOneShot(ctx, client, model, resolved.Format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
 				if err != nil {
 					return ToolResult{}, err
 				}
 				return TextResult(result), nil
 
 			case "explore":
-				exploreResolved, err := resolveExploreModel(deps.Model, deps.ModelAliases)
-				if err != nil {
-					return ToolResult{}, err
-				}
-				exploreClient := resolveSpawnClient(deps.Client, exploreResolved, deps.ClientProvider)
+				client, model, format := resolveSpawnGroup(deps.GroupResolver, "", config.CallSpawnExplore, deps.ClientProvider, deps.Client, deps.FallbackModel, deps.FallbackFormat)
 				system := []provider.SystemBlock{
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, exploreClient, exploreResolved.ModelID, exploreResolved.Format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -612,48 +601,32 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	return TextResult(result), nil
 }
 
-// resolveSpawnModel resolves the model to use for a spawn call, with fallback to parent's model.
-func resolveSpawnModel(userModel, parentModel string, aliases map[string]string) (*config.ResolvedModel, error) {
-	modelToResolve := userModel
-	if modelToResolve == "" {
-		modelToResolve = parentModel
-	}
-	resolved, err := config.ResolveModel(modelToResolve, "", aliases)
-	if err != nil {
-		// Provide context-aware error message
-		if userModel != "" {
-			return nil, fmt.Errorf("invalid model %q: %w", userModel, err)
+// resolveSpawnGroup resolves a spawn call to (client, modelID, format) using the group resolver.
+// userGroup is the user-provided group name (may be empty). defaultCallSite is the call site
+// constant that determines the default group. fallbackModel and fallbackFormat are used in
+// single-model mode (from the agent's default model).
+func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite string, clientProvider provider.ClientProvider, fallbackClient provider.Client, fallbackModel, fallbackFormat string) (provider.Client, string, string) {
+	var resolved *config.ResolvedModel
+	if gr != nil && !gr.IsSingleModel() {
+		if userGroup != "" {
+			resolved = gr.ResolveGroup(userGroup)
 		}
-		return nil, fmt.Errorf("invalid parent model %q: %w", parentModel, err)
+		if resolved == nil {
+			resolved = gr.ResolveCall(defaultCallSite)
+		}
 	}
-	return resolved, nil
-}
-
-// resolveSpawnClient selects the best client for a spawn call.
-// Uses GetClient if available to select by endpoint and format, falls back to default client.
-func resolveSpawnClient(defaultClient provider.Client, resolved *config.ResolvedModel, clientProvider provider.ClientProvider) provider.Client {
-	if clientProvider == nil {
-		return defaultClient
+	if resolved == nil {
+		// Single-model mode: use agent's model (strip developer prefix for API call)
+		_, modelID := config.SplitDeveloperModel(fallbackModel)
+		return fallbackClient, modelID, fallbackFormat
 	}
-	if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
-		return c
+	client := fallbackClient
+	if clientProvider != nil {
+		if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+			client = c
+		}
 	}
-	return defaultClient
-}
-
-// resolveExploreModel selects the cheapest model for exploration mode.
-// Uses haiku for most models, but flash for Gemini models.
-func resolveExploreModel(parentModel string, aliases map[string]string) (*config.ResolvedModel, error) {
-	_, parentModelID := config.SplitDeveloperModel(parentModel)
-	exploreAlias := "haiku"
-	if strings.HasPrefix(parentModelID, "gemini-") {
-		exploreAlias = "gemini-flash"
-	}
-	resolved, err := config.ResolveModel(exploreAlias, "", aliases)
-	if err != nil {
-		return nil, fmt.Errorf("resolve explore model: %w", err)
-	}
-	return resolved, nil
+	return client, resolved.ModelID, resolved.Format
 }
 
 // buildSpawnContext creates a spawn context with timeout and session/inherit markers.

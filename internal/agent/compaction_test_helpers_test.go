@@ -65,7 +65,7 @@ func newCompactionTestEnv(t *testing.T, turnCount *atomic.Int32, highTokenTurn i
 
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	compactor := compaction.NewCompactor(store, "claude-haiku-4-5", 0.8)
+	compactor := compaction.NewCompactor(store, 0.8)
 
 	ag := &Agent{
 		Client:    client,

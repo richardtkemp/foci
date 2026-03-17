@@ -80,7 +80,8 @@ type CommandContext struct {
 	ConfigPath       string
 
 	// Model resolution
-	ModelAliases map[string]string
+	ModelAliases  map[string]string
+	GroupResolver *config.GroupResolver
 
 	// Tools (command already imports tools)
 	ToolsRegistry *tools.Registry

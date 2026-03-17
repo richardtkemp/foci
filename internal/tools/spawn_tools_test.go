@@ -52,7 +52,7 @@ func TestSpawnOneShotWithTools(t *testing.T) {
 	})
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -210,7 +210,7 @@ func TestSpawnCharacterAllTools(t *testing.T) {
 	}
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, Registry: reg, Model: "anthropic/claude-haiku-4-5", ModelAliases: testModelAliases(), MaxToolLoops: 10}
+	deps := SpawnDeps{Client: client, Registry: reg, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
 	params, _ := json.Marshal(map[string]string{

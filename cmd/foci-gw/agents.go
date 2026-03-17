@@ -87,6 +87,9 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultFormat = resolved.Format
 	}
 
+	// Create group resolver for multi-model routing
+	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases)
+
 	// Prompt search directories: agent workspace first, then shared.
 	promptSearchDirs := []string{
 		filepath.Join(acfg.Workspace, "prompts"),
@@ -118,7 +121,7 @@ func setupAgent(p setupParams) *agentInstance {
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Register tools by category
-	coreResult := registerCoreTools(registry, p, agentStore, notifier)
+	coreResult := registerCoreTools(registry, p, agentStore, notifier, groupResolver)
 	serverTools := registerWebTools(registry, p)
 	mcpMgr := registerMemoryAndExtTools(registry, p, agLazy)
 
@@ -126,7 +129,7 @@ func setupAgent(p setupParams) *agentInstance {
 	bs := setupBootstrapAndSkills(p, agentStore)
 
 	// Compaction
-	compactor, compactionThreshold := buildCompactor(p, defaultFormat)
+	compactor, compactionThreshold := buildCompactor(p)
 
 	// Session messaging tools (send_message_to_user, send_to_session)
 	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
@@ -168,13 +171,12 @@ func setupAgent(p setupParams) *agentInstance {
 		BatchPartialJoiner:             acfg.BatchPartialJoiner,
 		MaxResultChars:                 resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
 		ToolResultTempDir:              p.cfg.Tools.TempDir,
+		GroupResolver:                  groupResolver,
 		ModelAliases:                   p.cfg.Models.Aliases,
 		SummaryContextTurns:            resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
 		SummaryContextChars:            resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
 		MaxSummaryChars:                resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
 		MaxSummaryInputChars:           resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
-		SummaryModel:                   resolveString(acfg.SummaryModel, p.cfg.Tools.SummaryModel),
-		SummaryEndpoint:                resolveString(acfg.SummaryEndpoint, p.cfg.Tools.SummaryEndpoint),
 		MaxImagePixels:                 resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
 		AutoSummarise:                  resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
 		SessionIndex:                   p.sessionIndex,
@@ -211,7 +213,7 @@ func setupAgent(p setupParams) *agentInstance {
 	setupManaWatcher(ag, p)
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
-	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) })
+	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, defaultFormat)
 	setupWakeScheduler(agLazy, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Per-agent slash commands
@@ -249,6 +251,7 @@ func setupAgent(p setupParams) *agentInstance {
 		agentListFn:         p.agentListFn,
 		plat:                p.plat,
 		connMgr:             connMgr,
+		groupResolver:       groupResolver,
 		configureFacet: func(conn platform.Connection) {
 			if configureFacet != nil {
 				configureFacet(conn)

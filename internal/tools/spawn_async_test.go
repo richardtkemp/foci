@@ -29,11 +29,12 @@ func TestSpawnInheritSemaphore(t *testing.T) {
 	})
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 2, // only allow 2 concurrent
-		Notifier:   notifier,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     2, // only allow 2 concurrent
+		Notifier:       notifier,
 	}
 
 	// Agent that takes 50ms and tracks concurrency
@@ -86,11 +87,12 @@ func TestSpawnInheritAsyncDelivery(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
-		Notifier:   notifier,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
+		Notifier:       notifier,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -142,11 +144,12 @@ func TestSpawnInheritAsyncError(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
-		Notifier:   notifier,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
+		Notifier:       notifier,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -187,10 +190,11 @@ func TestSpawnInheritNilNotifierSync(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
 		// Notifier intentionally nil
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })

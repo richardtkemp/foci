@@ -15,15 +15,10 @@ import (
 
 func TestWithConfigOverrides(t *testing.T) {
 	// Verifies that WithConfig applies maxTokens, minMessages, and
-	// preserveMessages correctly, and that the model is never changed by WithConfig since it
-	// must always match the agent's configured model.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	// preserveMessages correctly.
+	c := NewCompactor(nil, 0.8)
 	c.WithConfig(2048, 8, 10)
 
-	// Model stays as initialized (always uses agent's model)
-	if c.model != "claude-haiku-4-5" {
-		t.Errorf("model = %q", c.model)
-	}
 	if c.maxTokens != 2048 {
 		t.Errorf("maxTokens = %d", c.maxTokens)
 	}
@@ -39,7 +34,7 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	// Verifies that passing zero values to WithConfig does not
 	// overwrite maxTokens or minMessages (zero is not a valid value), but preserveMessages=0
 	// is a valid setting that should be applied as-is.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, 0.8)
 	original := *c
 	c.WithConfig(0, 0, 0)
 
@@ -58,7 +53,7 @@ func TestWithConfigEmptyValues(t *testing.T) {
 func TestWithEffort(t *testing.T) {
 	// Verifies that WithEffort stores the given effort string and that
 	// clearing it with an empty string returns to the no-effort default state.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(nil, 0.8)
 	if c.effort != "" {
 		t.Errorf("initial effort = %q, want empty", c.effort)
 	}
@@ -102,8 +97,8 @@ func TestCompactCustomPrompts(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "custom summary prompt", "custom handoff msg", false)
+	c := NewCompactor(store, 0.8)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "custom summary prompt", "custom handoff msg", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -153,9 +148,9 @@ func TestCompactDefaultPrompts(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	// Empty strings should fall back to defaults
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -173,31 +168,3 @@ func TestCompactDefaultPrompts(t *testing.T) {
 	}
 }
 
-func TestCheckConfig_Safe(t *testing.T) {
-	// Verifies that checkConfig does not panic or error when the
-	// sum of the compaction trigger point and maxTokens fits within the model's context
-	// window, confirming a well-configured compactor is accepted silently.
-	store := session.NewStore(t.TempDir())
-	// With Claude (200k context) and 80% threshold, 160k is trigger point
-	// maxTokens=5000, so 160k + 5k < 200k → should not warn
-	c := NewCompactor(store, "claude-3-opus", 0.8)
-	c.maxTokens = 5000
-
-	// Should not warn - no assertion needed, just verify it doesn't panic
-	c.checkConfig()
-}
-
-func TestCheckConfig_Unsafe(t *testing.T) {
-	// Verifies that checkConfig handles the case where maxTokens
-	// is large enough that trigger point + maxTokens would exceed the context window,
-	// and does so without panicking (it logs a warning rather than returning an error).
-	store := session.NewStore(t.TempDir())
-	// With Claude (200k context) and 80% threshold, 160k is trigger point
-	// maxTokens=50000, so 160k + 50k > 200k → should warn
-	c := NewCompactor(store, "claude-3-opus", 0.8)
-	c.maxTokens = 50000
-
-	// Capture any warnings (they go to the logger)
-	// Just verify it doesn't panic when config is unsafe
-	c.checkConfig()
-}

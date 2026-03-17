@@ -28,11 +28,11 @@ func TestManaRefreshPreservePercentage(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("assistant reply %d", i))})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	// Simulate mana-refresh: preserve 50% of 20 = 10 messages
 	c.WithConfig(4096, 4, 10)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -83,11 +83,11 @@ func TestManaRefreshPreserveExplicitCountOverridesPercentage(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("a%d", i))})
 	}
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	// Explicit count: preserve 6 messages
 	c.WithConfig(4096, 4, 6)
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -129,10 +129,10 @@ func TestWalkBackFallbackKeepsOriginalSplit(t *testing.T) {
 	store.TestAppend(sessionKey, toolResultMsg("toolu_boundary"))
 	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("done")})
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 2) // preserve 2, minMessages 4
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -181,10 +181,10 @@ func TestWalkBackFallbackDoesNotNukeSession(t *testing.T) {
 	store.TestAppend(sessionKey, toolResultMsg("toolu_post"))
 	store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("all done")})
 
-	c := NewCompactor(store, "claude-haiku-4-5", 0.8)
+	c := NewCompactor(store, 0.8)
 	c.WithConfig(4096, 4, 2) // preserve 2, minMessages 4
 
-	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, nil, "", "", false)
+	_, newKey, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
 	}

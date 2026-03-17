@@ -33,9 +33,9 @@ func TestSpawnContextRaw(t *testing.T) {
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am a character file."},
 		}},
-		Model:        "anthropic/claude-haiku-4-5",
-		ModelAliases: testModelAliases(),
-		MaxToolLoops: 10,
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxToolLoops:   10,
 	}
 	tool := NewSpawnTool(deps, nil)
 
@@ -90,9 +90,9 @@ func TestSpawnContextCharacter(t *testing.T) {
 			{Type: "text", Text: "I am the identity file."},
 			{Type: "text", Text: "I am the soul file."},
 		}},
-		Model:        "anthropic/claude-haiku-4-5",
-		ModelAliases: testModelAliases(),
-		MaxToolLoops: 10,
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxToolLoops:   10,
 	}
 	tool := NewSpawnTool(deps, nil)
 
@@ -134,11 +134,12 @@ func TestSpawnContextClone(t *testing.T) {
 	})
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
-		Notifier:   notifier,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
+		Notifier:       notifier,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -202,10 +203,11 @@ func TestSpawnContextCloneDefault(t *testing.T) {
 	mockSessions := &mockSessionBrancher{}
 
 	deps := SpawnDeps{
-		Sessions:   mockSessions,
-		AgentID:    "test",
-		Model:      "anthropic/claude-haiku-4-5",
-		MaxInherit: 3,
+		Sessions:       mockSessions,
+		AgentID:        "test",
+		FallbackModel:  "anthropic/claude-haiku-4-5",
+		FallbackFormat: "anthropic",
+		MaxInherit:     3,
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -262,8 +264,8 @@ func TestSpawnExploreMode(t *testing.T) {
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,
-		Model:           "anthropic/claude-opus-4-6", // parent uses opus
-		ModelAliases:    testModelAliases(),
+		FallbackModel:   "anthropic/claude-opus-4-6", // parent uses opus
+		FallbackFormat:  "anthropic",
 		ExploreMaxDepth: 10,
 	}
 	tool := NewSpawnTool(deps, nil)

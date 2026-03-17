@@ -63,6 +63,9 @@ type cmdRegParams struct {
 	connMgr            platform.ConnectionManager
 	configureFacet func(platform.Connection)
 	displayDefaultsFn  func() platform.DisplaySettings
+
+	// Model groups
+	groupResolver *config.GroupResolver
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
@@ -129,6 +132,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		EventLogPath:        p.cfg.Logging.EventFile,
 		ConfigPath:          p.configPath,
 		ModelAliases:        aliases,
+		GroupResolver:       p.groupResolver,
 		ToolsRegistry:       p.registry,
 		TmuxTool:            p.tmuxTool,
 		BuildInfo: command.BuildInfo{

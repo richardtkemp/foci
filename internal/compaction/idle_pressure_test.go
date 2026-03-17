@@ -181,7 +181,7 @@ func TestCompactorGettersSetters(t *testing.T) {
 	// Verifies that Threshold returns the compaction ratio set at
 	// construction, that PreserveMessages reflects the value from WithConfig, and that
 	// SetPreserveMessages can update the preserve count independently at runtime.
-	c := NewCompactor(nil, "claude-haiku-4-5", 0.8).WithConfig(4096, 4, 25)
+	c := NewCompactor(nil, 0.8).WithConfig(4096, 4, 25)
 
 	if c.Threshold() != 0.8 {
 		t.Errorf("Threshold() = %f, want 0.8", c.Threshold())

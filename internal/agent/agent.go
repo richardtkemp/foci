@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/compaction"
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/nudge"
@@ -81,8 +82,7 @@ type Agent struct {
 	SummaryContextChars           int                          // max chars of context to send to Haiku
 	MaxSummaryChars               int                          // max chars to auto-summarise (skip Haiku above this)
 	MaxSummaryInputChars          int                          // max chars of tool result embedded in summary prompt (0 = no limit)
-	SummaryModel                  string                       // summary model (alias or developer/model_id, empty = provider-aware default)
-	SummaryEndpoint               string                       // summary endpoint override (empty = auto-select)
+	GroupResolver                 *config.GroupResolver         // nil = single-model mode (use session model for everything)
 	MaxImagePixels                int                          // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
@@ -166,6 +166,26 @@ func (a *Agent) logger() *log.ComponentLogger {
 	}
 	a.Log = log.NewComponentLogger("agent")
 	return a.Log
+}
+
+// ResolveCallSite resolves a call site to a (client, model, format) triple.
+// For ungrouped calls or single-model mode, returns the session's client/model/format.
+// Otherwise resolves via GroupResolver and gets the appropriate client.
+func (a *Agent) ResolveCallSite(callSite, sessionKey string) (provider.Client, string, string) {
+	if a.GroupResolver == nil || a.GroupResolver.IsSingleModel() {
+		return a.SessionClient(sessionKey), a.SessionModel(sessionKey), a.Format
+	}
+	resolved := a.GroupResolver.ResolveCall(callSite)
+	if resolved == nil {
+		return a.SessionClient(sessionKey), a.SessionModel(sessionKey), a.Format
+	}
+	client := a.SessionClient(sessionKey)
+	if a.ClientProvider != nil {
+		if c := a.ClientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
+			client = c
+		}
+	}
+	return client, resolved.Developer + "/" + resolved.ModelID, resolved.Format
 }
 
 // TurnDetail describes one in-flight turn for shutdown diagnostics.
@@ -647,7 +667,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			sm.prevOutput = resp.Usage.OutputTokens
 			sm.prevCacheWrite = resp.Usage.CacheCreationInputTokens
 
-			a.maybeCompact(ctx, turnClient, sessionKey, messages, system, &resp.Usage, sm)
+			a.maybeCompact(ctx, sessionKey, messages, system, &resp.Usage, sm)
 
 			finalText := provider.TextOf(resp.Content)
 			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
