@@ -112,14 +112,18 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 }
 
 // setupGoroutineMonitor starts the goroutine count monitor if configured. Returns a stop function (may be nil).
-func setupGoroutineMonitor(cfg *config.Config, ctx context.Context) func() {
+func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Context) func() {
 	interval, _ := time.ParseDuration(cfg.Resources.GoroutineMonitorInterval)
 	if interval <= 0 {
 		return nil
 	}
+	threshold := cfg.Resources.GoroutineMonitorThreshold
+	if threshold <= 0 {
+		threshold = 35 * numAgents
+	}
 	mon := resources.NewGoroutineMonitor(resources.GoroutineMonitorConfig{
 		Interval:  interval,
-		Threshold: cfg.Resources.GoroutineMonitorThreshold,
+		Threshold: threshold,
 	})
 	mon.Start(ctx)
 	return mon.Stop
