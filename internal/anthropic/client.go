@@ -206,7 +206,9 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 	callDur := time.Since(callStart)
 	if err != nil {
 		log.Debugf("anthropic", "sdk_call_error: duration=%s error=%v", callDur, err)
-		return nil, classifySDKError(err)
+		sdkErr := classifySDKError(err)
+		attachWireRequest(sdkErr, wireReq)
+		return nil, sdkErr
 	}
 	log.Debugf("anthropic", "sdk_call_done: duration=%s stop_reason=%s", callDur, msg.StopReason)
 
