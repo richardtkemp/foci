@@ -20,6 +20,7 @@ These flags are accepted by all commands:
 | `--addr <host:port>` | | `FOCI_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
 | `--session <id>` | `-s` | `FOCI_SESSION` | Target session type. Default: `main`. |
+| `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), alias, or `developer/model_id`. See [MODELS.md](MODELS.md). |
 | `--if-active <dur>` | | `FOCI_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
 | `--if-inactive <dur>` | | `FOCI_IF_INACTIVE` | Skip if user was active within duration (e.g. `30m`, `1h`). Opposite of `--if-active`. |
 | `--message-text <text>` | `-mt` | `FOCI_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
@@ -53,7 +54,7 @@ Sends a text message to the agent's default session (or a named session). By def
 
 **Usage:**
 ```
-foci send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
+foci send [-a agent] [-s session] [-m model] [--if-active <duration>] [--if-inactive <duration>] [--sync] [-mt text | -mf file] [message text]
 ```
 
 **Flags:**
@@ -62,6 +63,7 @@ foci send [-a agent] [-s session] [--if-active <duration>] [--if-inactive <durat
 |------|-------|-------------|
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `<id>/i0/0`. Default: `main`. |
+| `--model <model>` | `-m` | Model override for this request. Group name (`powerful`/`fast`/`cheap`), alias (`opus`), or `developer/model_id`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
 | `--if-inactive <dur>` | | Skip if user was active within duration. Opposite of `--if-active` — for keepalives that should only fire when idle. |
 | `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
@@ -94,6 +96,12 @@ foci send -a clutch -s research "continue the analysis"
 # Only send if user was active in the last 8 hours (for cron jobs)
 foci send --if-active 8h "daily health check"
 
+# Send with a model override (use fast group model)
+foci send --model fast "quick question"
+
+# Send with a specific model alias
+foci send -m opus "think carefully about this"
+
 # Send file contents with activity gating
 foci send -a clutch --if-active 4h -mf tasks/review.md
 ```
@@ -112,7 +120,7 @@ Aliased as `wake` for backward compatibility.
 
 **Usage:**
 ```
-foci branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+foci branch [-a agent] [-m model] [--if-active <duration>] [--if-inactive <duration>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 ```
 
 **Flags:**
@@ -120,6 +128,7 @@ foci branch [-a agent] [--if-active <duration>] [--if-inactive <duration>] [--no
 | Flag | Description |
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
+| `--model <model>` / `-m` | Model override for this branch. Group name, alias, or `developer/model_id`. |
 | `--if-active <dur>` | Skip if no real user activity within duration. |
 | `--if-inactive <dur>` | Skip if user was active within duration. For keepalives that should only fire when idle. |
 | `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |
@@ -140,6 +149,9 @@ foci branch --sync -a clutch "run your morning routine"
 
 # Quick one-shot task (no compaction, no reset hook)
 foci branch --oneshot -a clutch "check disk space and report"
+
+# Branch with a cheap model for routine work
+foci branch --oneshot -m cheap -a clutch "run health check"
 
 # Branch with message from file
 foci branch --oneshot -a scout -mf /home/foci/shared/prompts/daily-health-check.md

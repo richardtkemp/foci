@@ -13,6 +13,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/voice"
@@ -64,6 +65,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			Agent      string `json:"agent"`
 			Session    string `json:"session"`
 			Text       string `json:"text"`
+			Model      string `json:"model"`
 			IfActive   string `json:"if_active"`
 			IfInactive string `json:"if_inactive"`
 			Async      bool   `json:"async"`
@@ -93,6 +95,13 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
 			return
+		}
+
+		if req.Model != "" {
+			if err := applyModelOverride(inst, sessionKey, req.Model); err != nil {
+				http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
+				return
+			}
 		}
 
 		log.Infof("http", "send (agent=%s, session=%s): %s", inst.id, sessionKey, req.Text)
@@ -199,6 +208,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		var req struct {
 			Agent       string `json:"agent"`
 			Text        string `json:"text"`
+			Model       string `json:"model"`
 			NoCompact   bool   `json:"no_compact"`
 			NoResetHook bool   `json:"no_reset_hook"`
 			IfActive    string `json:"if_active"`
@@ -251,6 +261,13 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			log.Errorf("wake", "branch error: %v", branchErr)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+
+		if req.Model != "" {
+			if err := applyModelOverride(inst, branchKey, req.Model); err != nil {
+				http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
+				return
+			}
 		}
 
 		log.Infof("wake", "branch %s from %s, text=%q no_compact=%v no_reset_hook=%v async=%v silent=%v", branchKey, parentKey, req.Text, req.NoCompact, req.NoResetHook, req.Async, req.Silent)
@@ -417,6 +434,32 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			log.Errorf("http", "encode response: %v", err)
 		}
 	}
+}
+
+// applyModelOverride resolves a model value (group name, alias, or developer/model_id)
+// and sets it as a per-session override on the agent instance.
+func applyModelOverride(inst *agentInstance, sessionKey, value string) error {
+	// Check if value is a known group name (powerful/fast/cheap)
+	switch value {
+	case config.GroupPowerful, config.GroupFast, config.GroupCheap:
+		if resolved := inst.ag.GroupResolver.ResolveGroup(value); resolved != nil {
+			client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+			model := resolved.Developer + "/" + resolved.ModelID
+			inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
+			return nil
+		}
+		// In single-model mode, ResolveGroup returns nil — fall through to alias resolution
+	}
+
+	// Resolve as alias or developer/model_id
+	resolved, err := config.ResolveModel(value, "", inst.cc.ModelAliases)
+	if err != nil {
+		return err
+	}
+	model := resolved.Developer + "/" + resolved.ModelID
+	client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+	inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
+	return nil
 }
 
 // handleReloadCredentials returns the handler for POST /-/reload-credentials.

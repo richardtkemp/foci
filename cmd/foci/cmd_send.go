@@ -9,6 +9,7 @@ import (
 type sendFlags struct {
 	agent       string
 	session     string
+	model       string // model override (group name, alias, or developer/model_id)
 	ifActive    string // Go duration for activity gating
 	ifInactive  string // Go duration for inactivity gating (opposite of ifActive)
 	messageText string // explicit --message-text / -mt
@@ -44,6 +45,18 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 			consumed = true
 		} else if strings.HasPrefix(args[i], "-s=") {
 			flags.session = args[i][len("-s="):]
+			consumed = true
+		} else if args[i] == "-m" || args[i] == "--model" {
+			if i+1 < len(args) {
+				flags.model = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--model=") {
+			flags.model = args[i][len("--model="):]
+			consumed = true
+		} else if strings.HasPrefix(args[i], "-m=") {
+			flags.model = args[i][len("-m="):]
 			consumed = true
 		} else if args[i] == "--if-active" {
 			if i+1 < len(args) {
@@ -101,6 +114,7 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	// Apply env var fallbacks (flag > env > default)
 	flags.agent = envDefault(flags.agent, "FOCI_AGENT")
 	flags.session = envDefault(flags.session, "FOCI_SESSION")
+	flags.model = envDefault(flags.model, "FOCI_MODEL")
 	flags.ifActive = envDefault(flags.ifActive, "FOCI_IF_ACTIVE")
 	flags.ifInactive = envDefault(flags.ifInactive, "FOCI_IF_INACTIVE")
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
@@ -134,7 +148,7 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [--if-active <dur>] [--if-inactive <dur>] [--sync] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
 
@@ -145,6 +159,7 @@ until the response is available.
 Flags:
   -a, --agent <id>        Target agent (env: FOCI_AGENT)
   -s, --session <id>      Target session (env: FOCI_SESSION, default: main)
+  -m, --model <model>     Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --if-active <dur>       Skip if no user activity within duration (env: FOCI_IF_ACTIVE)
   --if-inactive <dur>     Skip if user was active within duration (env: FOCI_IF_INACTIVE)
   --sync, --wait          Wait for the response (env: FOCI_SYNC)
@@ -188,11 +203,14 @@ func cmdSend(base string, args []string) error {
 	if flags.ifInactive != "" {
 		body["if_inactive"] = flags.ifInactive
 	}
+	if flags.model != "" {
+		body["model"] = flags.model
+	}
 	return postJSON(base+"/send", body)
 }
 
 func branchUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [--if-active <dur>] [--if-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 
 Fork a branch session from the agent's main chat.
 
@@ -202,6 +220,7 @@ until the response is available.
 
 Flags:
   -a, --agent <id>        Target agent (env: FOCI_AGENT)
+  -m, --model <model>     Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
   --if-active <dur>       Skip if no user activity within duration (env: FOCI_IF_ACTIVE)
   --if-inactive <dur>     Skip if user was active within duration (env: FOCI_IF_INACTIVE)
   --no-compact            Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
@@ -227,6 +246,7 @@ func cmdBranch(base string, args []string) error {
 	silent := false
 	asyncFlag := false
 	syncFlag := false
+	model := ""
 	ifActive := ""
 	ifInactive := ""
 	messageText := ""
@@ -248,6 +268,13 @@ func cmdBranch(base string, args []string) error {
 			asyncFlag = true
 		case args[i] == "--sync" || args[i] == "--wait":
 			syncFlag = true
+		case (args[i] == "-m" || args[i] == "--model") && i+1 < len(args):
+			model = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--model="):
+			model = args[i][len("--model="):]
+		case strings.HasPrefix(args[i], "-m="):
+			model = args[i][len("-m="):]
 		case args[i] == "--if-active" && i+1 < len(args):
 			ifActive = args[i+1]
 			i++
@@ -283,6 +310,7 @@ func cmdBranch(base string, args []string) error {
 		noCompact = true
 		noResetHook = true
 	}
+	model = envDefault(model, "FOCI_MODEL")
 	asyncFlag = envBool(asyncFlag, "FOCI_ASYNC")
 	syncFlag = envBool(syncFlag, "FOCI_SYNC")
 	ifActive = envDefault(ifActive, "FOCI_IF_ACTIVE")
@@ -322,6 +350,9 @@ func cmdBranch(base string, args []string) error {
 	}
 	if silent {
 		body["silent"] = true
+	}
+	if model != "" {
+		body["model"] = model
 	}
 	return postJSON(base+"/wake", body)
 }
