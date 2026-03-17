@@ -14,9 +14,13 @@ func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, text
 		return false
 	}
 
-	// /stop and /done are handled locally (not dispatched to command registry)
-	if strings.HasPrefix(text, "/") {
-		cmd := strings.ToLower(strings.TrimSpace(text))
+	// /stop and /done are handled locally (not dispatched to command registry).
+	// Normalize dot-prefix to slash so .stop and .done work identically.
+	cmd := strings.ToLower(strings.TrimSpace(text))
+	if strings.HasPrefix(cmd, ".") {
+		cmd = "/" + cmd[1:]
+	}
+	if strings.HasPrefix(cmd, "/") {
 		if b.isStopCommand(cmd) {
 			b.cancelTurn()
 			b.sendReply(msg, "Stopped.")

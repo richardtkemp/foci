@@ -20,7 +20,7 @@ func ResetCommand() *Command {
 		Category:    "operations",
 		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
 			if cc.Agent.IsProcessing() {
-				return Response{}, fmt.Errorf("agent is processing — send /stop first, then /reset")
+				return Response{}, fmt.Errorf("agent is processing — send stop first, then reset")
 			}
 			sk := cc.DefaultSessionKey()
 			if sk == "" {
