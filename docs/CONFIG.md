@@ -409,13 +409,28 @@ SQLite database settings.
 
 ### `[models]`
 
-Model aliases and related configuration.
+Model aliases, model groups, and call site overrides.
 
 The `aliases` map allows shorthand names to be resolved to full `developer/model_id` identifiers in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `aliases` | map | see below | Shorthand → `developer/model_id` mapping. |
+| `powerful` | string | `""` | Model for primary tasks (chat, compaction, memory). Can be an alias (e.g. `"opus"`) or `developer/model_id`. When set, enables **multi-model mode** — other groups default to this model unless explicitly overridden. When empty (default), all call sites use the agent's session model (single-model mode). |
+| `fast` | string | `""` | Model for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
+| `cheap` | string | `""` | Model for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
+
+**`[models.calls]`** — Override which group a specific call site uses. Keys are call site names, values are group names (`powerful`, `fast`, `cheap`).
+
+Default call site → group assignments:
+
+| Group | Call sites |
+|-------|-----------|
+| **powerful** | `chat`, `spawn-clone`, `background`, `compaction`, `memory-capture`, `memory-consolidate` |
+| **fast** | `spawn-raw`, `spawn-character` |
+| **cheap** | `spawn-explore`, `summarize-tool`, `summarize-file`, `prompt-diff` |
+
+Ungrouped call sites (`keepalive`, `count-tokens`) always use the session model regardless of group configuration.
 
 Default aliases (used when `[models]` section is not configured):
 - `opus` → `anthropic/claude-opus-4-6`
@@ -427,8 +442,16 @@ Default aliases (used when `[models]` section is not configured):
 - `o3` → `openai/o3`
 - `o4mini` → `openai/o4-mini`
 
-Example with custom model aliases:
+Example — multi-model setup with aliases and a call site override:
 ```toml
+[models]
+powerful = "opus"
+fast = "sonnet"
+cheap = "haiku"
+
+[models.calls]
+compaction = "cheap"       # use cheap model for compaction instead of powerful
+
 [models.aliases]
 opus = "anthropic/claude-opus-5-0"
 sonnet = "anthropic/claude-sonnet-5-0"
@@ -788,8 +811,6 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). Global: `[tools]` or `[defaults]`. |
 | `max_summary_chars` | int | `300000` | Max chars to auto-summarise via Haiku. Results larger than this are saved to file with hints but skip the summary call. Global: `[tools]` or `[defaults]`. |
 | `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via Haiku. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]` or `[defaults]`. Per-agent `unset` inherits from `[tools]`. |
-| `summary_model` | string | (provider-aware) | Model for auto-summarisation. Can be an alias (e.g. `"haiku"`) or `developer/model_id` (e.g. `"google/gemini-2.5-flash"`). Empty uses provider-aware default: haiku for Anthropic sessions, flash for Gemini, gpt4o for OpenAI. Global: `[tools]` or `[defaults]`. |
-| `summary_endpoint` | string | (auto) | Endpoint override for summary requests (e.g. `"openrouter"`). Empty auto-selects based on model developer. Allows routing summaries through alternative endpoints regardless of the session's main client. Global: `[tools]` or `[defaults]`. |
 | `max_summary_input_chars` | int | `100000` | Max chars of tool result text embedded in the summary prompt. Larger results are truncated in the prompt (the full output is on disk). Prevents excessive memory use and token cost during auto-summarisation. Global: `[tools]` or `[defaults]`. |
 | `max_image_pixels` | int | `2073600` | Max pixels (width × height) for images before downscaling. Images exceeding this are proportionally resized and re-encoded as JPEG (quality 85). Default is 1920×1080. `0` disables downscaling. Global: `[tools]` or `[defaults]`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. Global: `[tools]`. |
