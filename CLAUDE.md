@@ -108,3 +108,12 @@ All tests are self-contained. Run `make test` — should pass in ~1s.
 - **Docs:** Update `docs/CONFIG.md` for any new config options. Update `docs/WIRING.md` for any architectural or flow changes.
 - **Config:** No magic numbers in code. Thresholds, intervals, model names, percentages, limits — anything that might reasonably vary per deployment — must be a config field with a sensible default. Add fields to the relevant config struct with TOML tags.
 - **Config scope:** All config keys should be available both globally (in `[defaults]` or top-level sections) AND per-agent (in `[[agents]]`), unless it genuinely doesn't make sense per-agent (e.g. `workspace`, `id`). Per-agent values override global. This is the design principle — don't add global-only config unless there's a clear reason.
+
+## Debugging
+
+If you are debugging a live install of foci, default dirs are:
+- user dir :: /home/foci
+- log dir  :: ~/logs
+- data dir :: ~/data
+- session logs :: ~/data/sessions
+- config dir :: ~/config
