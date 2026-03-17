@@ -40,9 +40,12 @@ type PayloadEntry struct {
 	Model      string          `json:"model"`
 	SystemHash string          `json:"system_hash"`
 	Request    json.RawMessage `json:"request"`
-	Response   json.RawMessage `json:"response,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	DurationMS int64           `json:"duration_ms"`
+	Response     json.RawMessage `json:"response,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	StatusCode   int             `json:"status_code,omitempty"`
+	ResponseBody json.RawMessage `json:"response_body,omitempty"`
+	RequestID    string          `json:"request_id,omitempty"`
+	DurationMS   int64           `json:"duration_ms"`
 }
 
 // api writes a structured API log entry to JSONL and SQLite.
