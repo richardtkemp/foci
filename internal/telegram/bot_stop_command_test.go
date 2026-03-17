@@ -34,6 +34,26 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 	// We can't directly check this, but the cancel function was called
 }
 
+func TestReceiveMessage_DotStopCancelsTurn(t *testing.T) {
+	// Verifies that .stop works identically to /stop.
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+
+	_, cancel := context.WithCancel(context.Background())
+	b.turnMu.Lock()
+	b.turnCancel = cancel
+	b.turnMu.Unlock()
+
+	msg := makeMsg(111, "owner", ".stop")
+	b.receiveMessage(context.Background(), msg)
+
+	if len(b.queue) != 0 {
+		t.Error(".stop should not be queued")
+	}
+	if mock.sentCount() != 1 {
+		t.Fatalf("expected 1 sent message for .stop, got %d", mock.sentCount())
+	}
+}
+
 func TestReceiveMessage_StopAlias(t *testing.T) {
 	// Verifies that stop aliases like /wait work
 	// when enabled.
