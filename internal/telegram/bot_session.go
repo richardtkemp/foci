@@ -6,6 +6,32 @@ import (
 	"foci/internal/session"
 )
 
+// ownsSession returns true if the session key's chat ID is known to this bot.
+// Checks the in-memory cache first, then the session index (persisted across
+// restarts). Lazily populates the cache on session index hit.
+func (b *Bot) ownsSession(sessionKey string) bool {
+	chatID := session.ChatIDFromKey(sessionKey)
+	if chatID == 0 {
+		return false
+	}
+	b.chatKeysMu.RLock()
+	_, ok := b.chatSessionKeys[chatID]
+	b.chatKeysMu.RUnlock()
+	if ok {
+		return true
+	}
+	// Check session index (survives restarts).
+	if b.sessionIndex != nil && b.agentID != "" {
+		if key, err := b.sessionIndex.GetChatMetadata(b.agentID, chatID, "session_key"); err == nil && key != "" {
+			b.chatKeysMu.Lock()
+			b.chatSessionKeys[chatID] = key
+			b.chatKeysMu.Unlock()
+			return true
+		}
+	}
+	return false
+}
+
 // SessionKey returns the current session key (thread-safe).
 // For primary bots, this returns the session key for the default chat.
 // For secondary bots, this returns the override session key (set by facet).
