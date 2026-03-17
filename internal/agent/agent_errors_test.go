@@ -57,6 +57,9 @@ func TestHandleMessageRateLimit(t *testing.T) {
 
 func TestHandleMessageRateLimitUserTrigger(t *testing.T) {
 	// User trigger: RateLimitFunc must NOT fire — the error response to the user is sufficient.
+	RegisterPlatformTrigger("telegram")
+	t.Cleanup(func() { platformTriggers.Delete("telegram") })
+
 	client := newTestClientWithError(func(_ context.Context, _ *provider.MessageRequest) (*provider.MessageResponse, error) {
 		return nil, &provider.APIError{StatusCode: 429, RetryAfter: "120", Body: "rate limited"}
 	})

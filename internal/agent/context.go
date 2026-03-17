@@ -3,9 +3,19 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"foci/internal/provider"
 )
+
+var platformTriggers sync.Map // trigger string → true
+
+// RegisterPlatformTrigger registers a trigger as a messaging platform trigger.
+// Platform triggers are identity-mapped (trigger == platform name) and are
+// always user-initiated. Called from platform package init() functions.
+func RegisterPlatformTrigger(trigger string) {
+	platformTriggers.Store(trigger, true)
+}
 
 // turnCallbacksKey is the context key for TurnCallbacks.
 type turnCallbacksKey struct{}
@@ -51,8 +61,11 @@ func TriggerFromContext(ctx context.Context) string {
 // (typed via a messaging platform, spoken via voice, or sent via HTTP /send).
 // Returns false for system-initiated triggers (keepalive, wake, cron, warnings, etc.).
 func isUserTrigger(trigger string) bool {
+	if _, ok := platformTriggers.Load(trigger); ok {
+		return true
+	}
 	switch trigger {
-	case "", "user", "telegram", "voice":
+	case "", "user", "voice":
 		return true
 	default:
 		return false
@@ -69,11 +82,10 @@ func isUserTrigger(trigger string) bool {
 //   - async: message from async tool result (shell, http_request, etc.)
 //   - cron: message is system-initiated (keepalive, wake, scheduled, etc.)
 func triggerToPlatform(trigger string) string {
+	if _, ok := platformTriggers.Load(trigger); ok {
+		return trigger
+	}
 	switch trigger {
-	case "telegram":
-		return "telegram"
-	case "discord":
-		return "discord"
 	case "voice":
 		return "voice"
 	case "android":

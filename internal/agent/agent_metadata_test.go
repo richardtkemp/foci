@@ -143,6 +143,14 @@ func TestBuildMetaPrefix_Mana(t *testing.T) {
 
 func TestTriggerToPlatform(t *testing.T) {
 	// Maps trigger labels to expected platform values for the [meta] header.
+	// Register platform triggers that would normally be registered by platform init().
+	RegisterPlatformTrigger("telegram")
+	RegisterPlatformTrigger("discord")
+	t.Cleanup(func() {
+		platformTriggers.Delete("telegram")
+		platformTriggers.Delete("discord")
+	})
+
 	tests := []struct {
 		trigger  string
 		platform string
@@ -175,6 +183,9 @@ func TestTriggerToPlatform(t *testing.T) {
 func TestMetaPlatformFromTrigger(t *testing.T) {
 	// Verifies that platform= appears in the [meta] header with the correct
 	// value derived from the context trigger.
+	RegisterPlatformTrigger("telegram")
+	t.Cleanup(func() { platformTriggers.Delete("telegram") })
+
 	for _, tt := range []struct {
 		trigger  string
 		wantPlat string
@@ -209,6 +220,28 @@ func TestMetaPlatformFromTrigger(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("trigger=%q: expected %q in meta, got: %q", tt.trigger, want, text)
 		}
+	}
+}
+
+func TestRegisterPlatformTrigger(t *testing.T) {
+	// Proves that RegisterPlatformTrigger causes both triggerToPlatform to
+	// identity-map the trigger and isUserTrigger to return true.
+	RegisterPlatformTrigger("test_plat")
+	t.Cleanup(func() { platformTriggers.Delete("test_plat") })
+
+	if got := triggerToPlatform("test_plat"); got != "test_plat" {
+		t.Errorf("triggerToPlatform(\"test_plat\") = %q, want \"test_plat\"", got)
+	}
+	if !isUserTrigger("test_plat") {
+		t.Error("isUserTrigger(\"test_plat\") = false, want true")
+	}
+
+	// Unregistered trigger should still fall through to defaults.
+	if got := triggerToPlatform("unknown_sys"); got != "cron" {
+		t.Errorf("triggerToPlatform(\"unknown_sys\") = %q, want \"cron\"", got)
+	}
+	if isUserTrigger("unknown_sys") {
+		t.Error("isUserTrigger(\"unknown_sys\") = true, want false")
 	}
 }
 
@@ -299,6 +332,9 @@ func TestDuplicateMessagesDisabled(t *testing.T) {
 func TestDuplicateMessagesSkippedForWake(t *testing.T) {
 	// Proves that duplication only applies to human-typed triggers (telegram, user, voice)
 	// and is suppressed for automated/system triggers (wake, keepalive, proactive_warning, etc.).
+	RegisterPlatformTrigger("telegram")
+	t.Cleanup(func() { platformTriggers.Delete("telegram") })
+
 	var receivedReq *provider.MessageRequest
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
