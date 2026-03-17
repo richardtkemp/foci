@@ -79,6 +79,38 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 	return cost
 }
 
+// logErrorPayload logs the full request payload when an API call fails.
+// Requires full_payload = true in config.
+func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, duration time.Duration, req *provider.MessageRequest, apiErr error) {
+	if !log.PayloadEnabled() {
+		return
+	}
+	reqJSON, _ := json.Marshal(req)
+
+
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	sm.apiSeqNum++
+	seqNum := sm.apiSeqNum
+	a.metaMu.Unlock()
+
+	sysTexts := make([]string, len(req.System))
+	for i, b := range req.System {
+		sysTexts[i] = b.Text
+	}
+
+	log.Payload(log.PayloadEntry{
+		Timestamp:  start.UTC(),
+		Session:    sessionKey,
+		SeqNum:     seqNum,
+		Model:      model,
+		SystemHash: log.SystemHash(sysTexts),
+		Request:    reqJSON,
+		Error:      apiErr.Error(),
+		DurationMS: duration.Milliseconds(),
+	})
+}
+
 // classifyAPIError maps API errors to user-friendly messages, notifying
 // rate limit and server error callbacks as appropriate.
 func (a *Agent) classifyAPIError(ctx context.Context, err error, sessionKey string, endpoint string, duration time.Duration) error {
