@@ -199,6 +199,7 @@ Logging and diagnostics. The `messages_in_log` field can be overridden per-agent
 | `retention_period` | string | `"48h"` | Keep lines newer than this in the active log. Older lines archived to gzip. |
 | `rotation_max_line_size` | string | `"64MB"` | Max line size for the rotation scanner buffer. Accepts `KB`, `MB`, `GB` suffixes. If a log line exceeds this size, rotation fails and that log file won't be rotated. |
 | `archive_dir` | string | `""` | Directory for gzip archives. `""` uses `logs/archive/`. |
+| `log_file_mode` | string | `"0600"` | Octal file permissions for log files (event, API, payload). Applied on creation and after rotation. Use `"0640"` for group-readable logs. |
 
 When `inject_agent_warnings` is enabled (per-agent), repeated identical warnings are deduplicated: after `warning_max_per_window` occurrences within `warning_window_duration`, further duplicates are suppressed and summarised as "... and N more in last Xm" on the next drain. Warning messages are normalised — IP addresses, hex strings, and multi-digit numbers are replaced with placeholders so semantically identical errors are grouped together.
 

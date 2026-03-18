@@ -137,7 +137,7 @@ func TestRotateFile(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRotateFileAllFresh(t *testing.T) {
 		`{"ts":"` + recent + `","msg":"new2"}` + "\n"
 	os.WriteFile(logPath, []byte(lines), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestRotateFileEmpty(t *testing.T) {
 	logPath := filepath.Join(dir, "empty.jsonl")
 	os.WriteFile(logPath, []byte{}, 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"), 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"), 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile on empty: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestRotateFileEmpty(t *testing.T) {
 func TestRotateFileMissing(t *testing.T) {
 	// Verifies that rotateFile treats a non-existent file as a
 	// no-op, returning nil rather than an error.
-	err := rotateFile("/nonexistent/path/log.jsonl", 48*time.Hour, "/tmp/archive", 1024*1024)
+	err := rotateFile("/nonexistent/path/log.jsonl", 48*time.Hour, "/tmp/archive", 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile on missing: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestRotateFileEventLog(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -292,9 +292,8 @@ func TestRotateFileEventLog(t *testing.T) {
 }
 
 func TestRotateFile_PreservesPermissions(t *testing.T) {
-	// Verifies that after rotation the active log file has 0640 permissions,
-	// not 0600 (the default from os.CreateTemp). This ensures group-read
-	// access survives rotation.
+	// Verifies that after rotation the active log file has the configured
+	// permissions, not 0600 (the default from os.CreateTemp).
 	dir := t.TempDir()
 	archiveDir := filepath.Join(dir, "archive")
 	logPath := filepath.Join(dir, "foci.log")
@@ -307,20 +306,33 @@ func TestRotateFile_PreservesPermissions(t *testing.T) {
 		old + " INFO  [main] old message",
 		recent + " WARN  [main] new message",
 	}
-	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0640)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	// Default (zero value) → 0600
+	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
-		t.Fatalf("rotateFile: %v", err)
+		t.Fatalf("rotateFile (default): %v", err)
 	}
-
 	info, err := os.Stat(logPath)
 	if err != nil {
-		t.Fatalf("stat after rotation: %v", err)
+		t.Fatalf("stat after rotation (default): %v", err)
 	}
-	perm := info.Mode().Perm()
-	if perm != 0640 {
-		t.Errorf("permissions after rotation = %o, want 0640", perm)
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("permissions after rotation (default) = %o, want 0600", perm)
+	}
+
+	// Explicit 0640
+	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0640)
+	err = rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0640)
+	if err != nil {
+		t.Fatalf("rotateFile (0640): %v", err)
+	}
+	info, err = os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat after rotation (0640): %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0640 {
+		t.Errorf("permissions after rotation (0640) = %o, want 0640", perm)
 	}
 }
 
@@ -365,7 +377,7 @@ func TestRotateFileAllOld(t *testing.T) {
 		`{"ts":"` + old + `","msg":"old2"}` + "\n"
 	os.WriteFile(logPath, []byte(lines), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -434,7 +446,7 @@ func TestRotateFileLineTooLong(t *testing.T) {
 	os.WriteFile(logPath, []byte(longLine+"\n"), 0644)
 
 	// Use a very small max line size to trigger ErrTooLong
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 32)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 32, 0)
 	if err == nil {
 		t.Fatal("expected error for too-long line")
 	}
@@ -518,7 +530,7 @@ func TestRotateFileAllUnparseable(t *testing.T) {
 	content := "no timestamp here\nalso no timestamp\n"
 	os.WriteFile(logPath, []byte(content), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -560,7 +572,7 @@ func TestRotateFileUnparseablePrefixRecentContent(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -600,7 +612,7 @@ func TestRotateFileUnparseableAfterRecent(t *testing.T) {
 	}
 	os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err != nil {
 		t.Fatalf("rotateFile: %v", err)
 	}
@@ -678,7 +690,7 @@ func TestRotateFileCreateTempError(t *testing.T) {
 	defer os.Chmod(srcDir, 0755)
 
 	archiveDir := t.TempDir()
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err == nil {
 		t.Fatal("expected error when source dir is read-only")
 	}
@@ -700,7 +712,7 @@ func TestRotateFileCreateTempArchiveError(t *testing.T) {
 	os.MkdirAll(archiveDir, 0555)
 	defer os.Chmod(archiveDir, 0755)
 
-	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, archiveDir, 1024*1024, 0)
 	if err == nil {
 		t.Fatal("expected error when archive dir is read-only")
 	}
@@ -719,7 +731,7 @@ func TestRotateFileOpenError(t *testing.T) {
 	os.Chmod(logPath, 0000)
 	defer os.Chmod(logPath, 0644)
 
-	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"), 1024*1024)
+	err := rotateFile(logPath, 48*time.Hour, filepath.Join(dir, "archive"), 1024*1024, 0)
 	if err == nil {
 		t.Fatal("expected error when file is unreadable")
 	}

@@ -415,6 +415,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Logging.RotationPeriod, "24h")
 	setStringDefault(&cfg.Logging.RetentionPeriod, "48h")
 	setStringDefault(&cfg.Logging.RotationMaxLineSize, "64MB")
+	setStringDefault(&cfg.Logging.LogFileMode, "0600")
 	// Resources defaults
 	setBoolDefaultDefined(&cfg.Resources.MemoryGuardEnabled, true, md.IsDefined("resources", "memory_guard_enabled"))
 	setStringDefault(&cfg.Resources.MemoryGuardInterval, "60s")

@@ -386,6 +386,7 @@ type LoggingConfig struct {
 	RetentionPeriod     string `toml:"retention_period"`       // keep lines newer than this (default "48h")
 	RotationMaxLineSize string `toml:"rotation_max_line_size"` // max line size for scanner buffer (default "64MB")
 	ArchiveDir          string `toml:"archive_dir"`            // gzip archive directory (default: log_dir/archive/)
+	LogFileMode         string `toml:"log_file_mode"`          // octal file permissions for log files (default "0600")
 
 	MessagesInLog bool `toml:"messages_in_log"` // log user message content to event log (default false for privacy)
 }

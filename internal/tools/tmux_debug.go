@@ -33,7 +33,7 @@ func initDebugLog() error { // nolint:unparam
 		}
 
 		debugPath := filepath.Join(logsDir, "tmux.debug")
-		f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644) // #nosec G302 - debug log, world-readable for troubleshooting
+		f, err := os.OpenFile(debugPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 		if err != nil {
 			log.Warnf("tmux_debug", "failed to open debug log: %v", err)
 			return

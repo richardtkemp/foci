@@ -18,6 +18,7 @@ type RotationConfig struct {
 	MaxLineSize int           // scanner buffer size in bytes (default 64MB)
 	ArchiveDir  string        // where to put .gz archives
 	Files       []string      // absolute paths of log files to rotate
+	FileMode    os.FileMode   // permission bits for rotated log files (default 0600)
 }
 
 // RotateOnce performs a single rotation pass with the given config.
@@ -54,7 +55,7 @@ func StartRotation(cfg RotationConfig) func() {
 
 func rotateAll(cfg RotationConfig) {
 	for _, path := range cfg.Files {
-		if err := rotateFile(path, cfg.Retention, cfg.ArchiveDir, cfg.MaxLineSize); err != nil {
+		if err := rotateFile(path, cfg.Retention, cfg.ArchiveDir, cfg.MaxLineSize, cfg.FileMode); err != nil {
 			Warnf("rotate", "rotate %s: %v", path, err)
 		}
 	}
@@ -66,7 +67,10 @@ func rotateAll(cfg RotationConfig) {
 
 // rotateFile processes a single log file: lines older than retention go to
 // a gzip archive, recent lines stay in the active file.
-func rotateFile(path string, retention time.Duration, archiveDir string, maxLineSize int) error {
+func rotateFile(path string, retention time.Duration, archiveDir string, maxLineSize int, fileMode os.FileMode) error {
+	if fileMode == 0 {
+		fileMode = 0600
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -204,9 +208,9 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	// with the source unchanged on failure, causing repeated re-archival of
 	// the same lines.
 	_ = tmpFile.Close()
-	// os.CreateTemp creates files with 0600; match the 0644 used in log.go Init
-	// so group/world read access isn't lost on rotation.
-	_ = os.Chmod(tmpPath, 0640) // #nosec G302 - log file, group-readable for debugging
+	// os.CreateTemp creates files with 0600; apply configured permissions
+	// so the rotated file matches what Init() creates.
+	_ = os.Chmod(tmpPath, fileMode)
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp to %s: %w", path, err)
 	}

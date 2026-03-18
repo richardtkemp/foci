@@ -68,15 +68,16 @@ func ParseLevel(s string) Level {
 // Logger writes event log lines and structured API log entries.
 type Logger struct {
 	level       Level
-	eventOut    io.Writer // foci.log + stderr multiwriter
-	eventFile   *os.File  // foci.log file handle (nil = stderr only)
-	apiFile     *os.File  // api.jsonl (nil if disabled)
-	payloadFile *os.File  // api-payload.jsonl (nil if disabled)
-	eventPath   string    // path to foci.log
-	apiPath     string    // path to api.jsonl
-	payloadPath string    // path to api-payload.jsonl
-	buffer      []string  // pre-Init event lines, replayed to event file on Init
-	initialized bool      // true after Init completes
+	eventOut    io.Writer   // foci.log + stderr multiwriter
+	eventFile   *os.File    // foci.log file handle (nil = stderr only)
+	apiFile     *os.File    // api.jsonl (nil if disabled)
+	payloadFile *os.File    // api-payload.jsonl (nil if disabled)
+	eventPath   string      // path to foci.log
+	apiPath     string      // path to api.jsonl
+	payloadPath string      // path to api-payload.jsonl
+	fileMode    os.FileMode // permission bits for log files
+	buffer      []string    // pre-Init event lines, replayed to event file on Init
+	initialized bool        // true after Init completes
 	mu          sync.Mutex
 }
 
@@ -85,10 +86,11 @@ var std = &Logger{level: INFO, eventOut: os.Stderr}
 
 // Config holds logging configuration.
 type Config struct {
-	Level       string // DEBUG, INFO, WARN, ERROR
-	EventFile   string // path to foci.log
-	APIFile     string // path to api.jsonl
-	PayloadFile string // path to api-payload.jsonl (empty = disabled)
+	Level       string      // DEBUG, INFO, WARN, ERROR
+	EventFile   string      // path to foci.log
+	APIFile     string      // path to api.jsonl
+	PayloadFile string      // path to api-payload.jsonl (empty = disabled)
+	FileMode    os.FileMode // permission bits for log files (default 0600)
 }
 
 // Init initializes the global logger. Safe to call more than once — any
@@ -106,6 +108,11 @@ func Init(cfg Config) error {
 
 	level := ParseLevel(cfg.Level)
 
+	fileMode := cfg.FileMode
+	if fileMode == 0 {
+		fileMode = 0600
+	}
+
 	// Event log: stderr always, plus file if configured
 	var eventOut io.Writer = os.Stderr
 	var eventFile *os.File
@@ -113,7 +120,7 @@ func Init(cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(cfg.EventFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.EventFile, err)
 		}
-		f, err := os.OpenFile(cfg.EventFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640) // #nosec G302 - log file, group-readable for debugging
+		f, err := os.OpenFile(cfg.EventFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
 		if err != nil {
 			return fmt.Errorf("open event log %s: %w", cfg.EventFile, err)
 		}
@@ -127,7 +134,7 @@ func Init(cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(cfg.APIFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.APIFile, err)
 		}
-		f, err := os.OpenFile(cfg.APIFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640) // #nosec G302 - log file, group-readable for debugging
+		f, err := os.OpenFile(cfg.APIFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
 		if err != nil {
 			return fmt.Errorf("open API log %s: %w", cfg.APIFile, err)
 		}
@@ -140,7 +147,7 @@ func Init(cfg Config) error {
 		if err := os.MkdirAll(filepath.Dir(cfg.PayloadFile), 0755); err != nil {
 			return fmt.Errorf("create log dir for %s: %w", cfg.PayloadFile, err)
 		}
-		f, err := os.OpenFile(cfg.PayloadFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640) // #nosec G302 - log file, group-readable for debugging
+		f, err := os.OpenFile(cfg.PayloadFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
 		if err != nil {
 			return fmt.Errorf("open payload log %s: %w", cfg.PayloadFile, err)
 		}
@@ -176,6 +183,7 @@ func Init(cfg Config) error {
 	std.eventPath = cfg.EventFile
 	std.apiPath = cfg.APIFile
 	std.payloadPath = cfg.PayloadFile
+	std.fileMode = fileMode
 	std.mu.Unlock()
 
 	return nil
@@ -209,10 +217,15 @@ func (l *Logger) reopen() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	fileMode := l.fileMode
+	if fileMode == 0 {
+		fileMode = 0600
+	}
+
 	// Event file
 	if l.eventFile != nil {
 		_ = l.eventFile.Close()
-		f, err := os.OpenFile(l.eventPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640) // #nosec G302 - log file, group-readable for debugging
+		f, err := os.OpenFile(l.eventPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
 		if err != nil {
 			return fmt.Errorf("reopen event log %s: %w", l.eventPath, err)
 		}
@@ -223,7 +236,7 @@ func (l *Logger) reopen() error {
 	// API file
 	if l.apiFile != nil {
 		_ = l.apiFile.Close()
-		f, err := os.OpenFile(l.apiPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640) // #nosec G302 - log file, group-readable for debugging
+		f, err := os.OpenFile(l.apiPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
 		if err != nil {
 			return fmt.Errorf("reopen API log %s: %w", l.apiPath, err)
 		}
@@ -233,7 +246,7 @@ func (l *Logger) reopen() error {
 	// Payload file
 	if l.payloadFile != nil {
 		_ = l.payloadFile.Close()
-		f, err := os.OpenFile(l.payloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0640) // #nosec G302 - log file, group-readable for debugging
+		f, err := os.OpenFile(l.payloadPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, fileMode)
 		if err != nil {
 			return fmt.Errorf("reopen payload log %s: %w", l.payloadPath, err)
 		}

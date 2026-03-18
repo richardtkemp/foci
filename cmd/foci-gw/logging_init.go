@@ -11,11 +11,17 @@ import (
 // initLogging sets up event logging, log rotation, API DB, and conversation DB.
 // Returns a cleanup function that should be deferred.
 func initLogging(cfg *config.Config) func() {
+	logFileMode, err := config.ParseFileMode(cfg.Logging.LogFileMode)
+	if err != nil {
+		log.Fatalf("main", "parse log_file_mode: %v", err)
+	}
+
 	if err := log.Init(log.Config{
 		Level:       cfg.Logging.Level,
 		EventFile:   cfg.Logging.EventFile,
 		APIFile:     cfg.Logging.APIFile,
 		PayloadFile: cfg.Logging.PayloadFile,
+		FileMode:    logFileMode,
 	}); err != nil {
 		log.Fatalf("main", "init logging: %v", err)
 	}
@@ -46,6 +52,7 @@ func initLogging(cfg *config.Config) func() {
 			MaxLineSize: maxLineSize,
 			ArchiveDir:  archiveDir,
 			Files:       files,
+			FileMode:    logFileMode,
 		})
 
 		stopRotation := log.StartRotation(log.RotationConfig{
@@ -54,6 +61,7 @@ func initLogging(cfg *config.Config) func() {
 			MaxLineSize: maxLineSize,
 			ArchiveDir:  archiveDir,
 			Files:       files,
+			FileMode:    logFileMode,
 		})
 		cleanups = append(cleanups, stopRotation)
 	}

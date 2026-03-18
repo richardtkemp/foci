@@ -146,6 +146,9 @@ func validate(cfg *Config) error {
 	if _, err := ParseByteSize(cfg.Logging.RotationMaxLineSize); err != nil {
 		return fmt.Errorf("[logging] rotation_max_line_size = %q: %w", cfg.Logging.RotationMaxLineSize, err)
 	}
+	if _, err := ParseFileMode(cfg.Logging.LogFileMode); err != nil {
+		return fmt.Errorf("[logging] log_file_mode = %q: %w", cfg.Logging.LogFileMode, err)
+	}
 
 	// Cache
 	validStrategies := map[string]bool{"auto": true, "explicit": true}
