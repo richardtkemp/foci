@@ -62,7 +62,7 @@ func NewTaskListStore(dbPath string) (*TaskListStore, error) {
 
 // Create adds a new task and returns its per-agent ID.
 func (s *TaskListStore) Create(agentID, subject, description string) (int, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var id int
 	err := s.db.QueryRow(
 		`INSERT INTO tasks (id, agent_id, subject, description, status, created_at, updated_at)
@@ -92,9 +92,9 @@ func (s *TaskListStore) Get(agentID string, id int) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	t.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	if updatedAt.Valid {
-		t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+		t.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt.String)
 	}
 	return &t, nil
 }
@@ -132,7 +132,7 @@ func (s *TaskListStore) Update(agentID string, id int, subject, description, sta
 		return fmt.Errorf("nothing to update")
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	sets = append(sets, "updated_at = ?")
 	args = append(args, now)
 	args = append(args, agentID, id)
@@ -170,9 +170,9 @@ func (s *TaskListStore) List(agentID string) ([]Task, error) {
 		if err := rows.Scan(&t.ID, &t.Subject, &t.Description, &t.Status, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		t.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		if updatedAt.Valid {
-			t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+			t.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt.String)
 		}
 		tasks = append(tasks, t)
 	}

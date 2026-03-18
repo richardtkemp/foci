@@ -2,13 +2,38 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// testBinary is the path to the CLI binary built once in TestMain.
+var testBinary string
+
+func TestMain(m *testing.M) {
+	// Build the CLI binary once for all tests.
+	dir, err := os.MkdirTemp("", "foci-test-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create temp dir: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(dir)
+
+	testBinary = filepath.Join(dir, "foci")
+	build := exec.Command("go", "build", "-o", testBinary, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build failed: %v\n%s\n", err, out)
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
 
 // mockGateway creates a test server that mimics the foci HTTP gateway.
 // It echoes the agent field back in responses so tests can verify it.
@@ -131,14 +156,6 @@ func TestCLIEnvVars(t *testing.T) {
 	msgFile := t.TempDir() + "/msg.md"
 	os.WriteFile(msgFile, []byte("env file msg"), 0644)
 
-	// Build the CLI binary
-	binPath := t.TempDir() + "/foci"
-	build := exec.Command("go", "build", "-o", binPath, ".")
-	build.Dir = "."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %s\n%s", err, out)
-	}
-
 	tests := []struct {
 		name    string
 		args    []string
@@ -258,7 +275,7 @@ func TestCLIEnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(binPath, tt.args...)
+			cmd := exec.Command(testBinary, tt.args...)
 			// Start with minimal env to avoid inheriting FOCI_ vars
 			env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
 			if tt.env != nil {
@@ -375,17 +392,9 @@ func TestSubcommandHelp(t *testing.T) {
 }
 
 func TestVersionCommand(t *testing.T) {
-	// Build the CLI binary
-	binPath := t.TempDir() + "/foci"
-	build := exec.Command("go", "build", "-o", binPath, ".")
-	build.Dir = "."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %s\n%s", err, out)
-	}
-
 	for _, arg := range []string{"version", "--version", "-v"} {
 		t.Run(arg, func(t *testing.T) {
-			cmd := exec.Command(binPath, arg)
+			cmd := exec.Command(testBinary, arg)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s failed: %v\n%s", arg, err, out)
@@ -399,17 +408,9 @@ func TestVersionCommand(t *testing.T) {
 }
 
 func TestHelpCommand(t *testing.T) {
-	// Build the CLI binary
-	binPath := t.TempDir() + "/foci"
-	build := exec.Command("go", "build", "-o", binPath, ".")
-	build.Dir = "."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %s\n%s", err, out)
-	}
-
 	for _, arg := range []string{"help", "--help", "-h"} {
 		t.Run(arg, func(t *testing.T) {
-			cmd := exec.Command(binPath, arg)
+			cmd := exec.Command(testBinary, arg)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s failed: %v\n%s", arg, err, out)

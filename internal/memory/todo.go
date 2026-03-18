@@ -139,7 +139,7 @@ func (s *TodoStore) IndexAllTodos(agentID string) error {
 		if updatedAt.Valid {
 			ts = updatedAt.String
 		}
-		t, _ := time.Parse(time.RFC3339, ts)
+		t, _ := time.Parse(time.RFC3339Nano, ts)
 		s.searchIndex.IndexTodo(agentID, id, text, float64(t.Unix()))
 	}
 	return rows.Err()
@@ -151,7 +151,7 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	if priority == "" {
 		priority = "medium"
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var nextID int64
 	err := s.db.QueryRow(
 		`INSERT INTO todos (id, text, status, priority, tags, agent_id, created_at, updated_at)
@@ -163,7 +163,7 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 		return 0, err
 	}
 	if s.searchIndex != nil {
-		t, _ := time.Parse(time.RFC3339, now)
+		t, _ := time.Parse(time.RFC3339Nano, now)
 		s.searchIndex.IndexTodo(agentID, nextID, text, float64(t.Unix()))
 	}
 	return nextID, nil
@@ -264,7 +264,7 @@ func (s *TodoStore) Complete(agentID string, id int64, reason string) error {
 // Transition changes a todo item's status. For "done" and "dropped", sets
 // completed_at and close_reason. For "open", clears them.
 func (s *TodoStore) Transition(agentID string, id int64, status, reason string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var res sql.Result
 	var err error
 	switch status {
@@ -331,7 +331,7 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 		return nil, fmt.Errorf("nothing to update")
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	setClauses = append(setClauses, "updated_at = ?")
 	args = append(args, now)
 
@@ -360,12 +360,12 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 	if err := row.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 		return nil, fmt.Errorf("re-read after edit: %w", err)
 	}
-	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	if updatedAt.Valid {
-		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+		item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt.String)
 	}
 	if completedAt.Valid {
-		ct, _ := time.Parse(time.RFC3339, completedAt.String)
+		ct, _ := time.Parse(time.RFC3339Nano, completedAt.String)
 		item.CompletedAt = &ct
 	}
 	if s.searchIndex != nil {
@@ -390,12 +390,12 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 		}
 		return nil, err
 	}
-	item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	item.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	if updatedAt.Valid {
-		item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+		item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt.String)
 	}
 	if completedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, completedAt.String)
+		t, _ := time.Parse(time.RFC3339Nano, completedAt.String)
 		item.CompletedAt = &t
 	}
 	return &item, nil
@@ -622,12 +622,12 @@ func scanTodos(rows *sql.Rows) ([]TodoItem, error) {
 		if err := rows.Scan(&item.ID, &item.Text, &item.Status, &item.Priority, &item.Tags, &item.CloseReason, &item.AgentID, &createdAt, &updatedAt, &completedAt); err != nil {
 			return nil, err
 		}
-		item.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		item.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		if updatedAt.Valid {
-			item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
+			item.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt.String)
 		}
 		if completedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, completedAt.String)
+			t, _ := time.Parse(time.RFC3339Nano, completedAt.String)
 			item.CompletedAt = &t
 		}
 		items = append(items, item)

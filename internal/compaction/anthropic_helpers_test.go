@@ -12,5 +12,6 @@ func newTestAnthropicClient(baseURL, key string) *anthropic.Client {
 	c := anthropic.NewClient(anthropic.StaticToken(key), 120*time.Second)
 	c.SetBaseURL(baseURL)
 	c.SetUseSDK(false)
+	c.SetRetryBaseDelay(time.Millisecond)
 	return c
 }

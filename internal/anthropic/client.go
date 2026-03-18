@@ -131,6 +131,10 @@ func (c *Client) WaitForRecovery() <-chan struct{} {
 	return c.enterOverload()
 }
 
+// SetRetryBaseDelay sets the base delay for standard retries (phase 1).
+// Tests use this to avoid multi-second backoff.
+func (c *Client) SetRetryBaseDelay(d time.Duration) { c.retryBaseDelay = d }
+
 // RetryBaseDelay returns the base delay for standard retries (phase 1).
 // Returns configured delay if set, otherwise 2s default. Tests can set to 1ms.
 func (c *Client) RetryBaseDelay() time.Duration {

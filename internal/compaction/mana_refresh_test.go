@@ -5,57 +5,59 @@ import (
 	"time"
 )
 
-// TestManaResetImminent_WithinThreshold verifies that a reset time within the
-// threshold window returns true.
-func TestManaResetImminent_WithinThreshold(t *testing.T) {
-	resetsAt := time.Now().Add(3 * time.Minute)
-	if !ManaResetImminent(resetsAt, 5*time.Minute) {
-		t.Error("ManaResetImminent = false, want true (3m until reset, 5m threshold)")
+func TestManaResetImminent(t *testing.T) {
+	// Verifies boundary conditions: within threshold (true), beyond threshold (false),
+	// past reset (false), zero time (false), zero threshold (false), and exact
+	// boundary (false, strict <).
+	tests := []struct {
+		name      string
+		resetTime time.Time
+		threshold time.Duration
+		want      bool
+	}{
+		{
+			name:      "within threshold",
+			resetTime: time.Now().Add(3 * time.Minute),
+			threshold: 5 * time.Minute,
+			want:      true,
+		},
+		{
+			name:      "beyond threshold",
+			resetTime: time.Now().Add(2 * time.Hour),
+			threshold: 5 * time.Minute,
+			want:      false,
+		},
+		{
+			name:      "past reset",
+			resetTime: time.Now().Add(-5 * time.Minute),
+			threshold: 5 * time.Minute,
+			want:      false,
+		},
+		{
+			name:      "zero time",
+			resetTime: time.Time{},
+			threshold: 5 * time.Minute,
+			want:      false,
+		},
+		{
+			name:      "zero threshold disables check",
+			resetTime: time.Now().Add(3 * time.Minute),
+			threshold: 0,
+			want:      false,
+		},
+		{
+			name:      "exact boundary not triggered",
+			resetTime: time.Now().Add(5*time.Minute + time.Second),
+			threshold: 5 * time.Minute,
+			want:      false,
+		},
 	}
-}
-
-// TestManaResetImminent_BeyondThreshold verifies that a reset time beyond the
-// threshold window returns false.
-func TestManaResetImminent_BeyondThreshold(t *testing.T) {
-	resetsAt := time.Now().Add(2 * time.Hour)
-	if ManaResetImminent(resetsAt, 5*time.Minute) {
-		t.Error("ManaResetImminent = true, want false (2h until reset, 5m threshold)")
-	}
-}
-
-// TestManaResetImminent_PastReset verifies that a reset time in the past
-// returns false.
-func TestManaResetImminent_PastReset(t *testing.T) {
-	resetsAt := time.Now().Add(-5 * time.Minute)
-	if ManaResetImminent(resetsAt, 5*time.Minute) {
-		t.Error("ManaResetImminent = true, want false (reset in the past)")
-	}
-}
-
-// TestManaResetImminent_ZeroTime verifies that a zero reset time returns false.
-func TestManaResetImminent_ZeroTime(t *testing.T) {
-	if ManaResetImminent(time.Time{}, 5*time.Minute) {
-		t.Error("ManaResetImminent = true for zero time, want false")
-	}
-}
-
-// TestManaResetImminent_ZeroThreshold verifies that a zero threshold disables
-// the check.
-func TestManaResetImminent_ZeroThreshold(t *testing.T) {
-	resetsAt := time.Now().Add(3 * time.Minute)
-	if ManaResetImminent(resetsAt, 0) {
-		t.Error("ManaResetImminent = true with zero threshold, want false")
-	}
-}
-
-// TestManaResetImminent_ExactBoundary verifies the boundary condition where
-// time until reset equals the threshold (should return false since < not <=).
-func TestManaResetImminent_ExactBoundary(t *testing.T) {
-	// At exactly the boundary, time.Until may be slightly less due to execution
-	// time, so test with a value just beyond the threshold.
-	resetsAt := time.Now().Add(5*time.Minute + time.Second)
-	if ManaResetImminent(resetsAt, 5*time.Minute) {
-		t.Error("ManaResetImminent = true at boundary, want false")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ManaResetImminent(tt.resetTime, tt.threshold); got != tt.want {
+				t.Errorf("ManaResetImminent = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

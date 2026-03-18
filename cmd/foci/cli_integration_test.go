@@ -109,17 +109,9 @@ func TestCLIIntegration(t *testing.T) {
 		{"branch unknown agent", []string{"branch", "-a", "nonexistent"}, "unknown agent", true},
 	}
 
-	// Build the CLI binary once
-	binPath := t.TempDir() + "/foci"
-	build := exec.Command("go", "build", "-o", binPath, ".")
-	build.Dir = "."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %s\n%s", err, out)
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(binPath, tt.args...)
+			cmd := exec.Command(testBinary, tt.args...)
 			cmd.Env = append(os.Environ(), "FOCI_ADDR="+addr)
 
 			out, err := cmd.CombinedOutput()
@@ -148,14 +140,6 @@ func TestCLIMessageFile(t *testing.T) {
 	msgFile := t.TempDir() + "/msg.md"
 	os.WriteFile(msgFile, []byte("hello from file"), 0644)
 
-	// Build the CLI binary
-	binPath := t.TempDir() + "/foci"
-	build := exec.Command("go", "build", "-o", binPath, ".")
-	build.Dir = "."
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %s\n%s", err, out)
-	}
-
 	tests := []struct {
 		name    string
 		args    []string
@@ -179,7 +163,7 @@ func TestCLIMessageFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(binPath, tt.args...)
+			cmd := exec.Command(testBinary, tt.args...)
 			cmd.Env = append(os.Environ(), "FOCI_ADDR="+addr)
 
 			out, err := cmd.CombinedOutput()

@@ -44,209 +44,181 @@ func TestToolResultIDs(t *testing.T) {
 	}
 }
 
-func TestSafeSplitPointNoToolUse(t *testing.T) {
-	// Verifies that when the message immediately before the
-	// proposed split point is plain text (no tool_use), safeSplitPoint returns the split
-	// unchanged — no walk-back is needed.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		{Role: "assistant", Content: provider.TextContent("a0")},
-		{Role: "user", Content: provider.TextContent("u1")},
-		{Role: "assistant", Content: provider.TextContent("a1")},
+func TestSafeSplitPoint(t *testing.T) {
+	// Verifies that safeSplitPoint adjusts the proposed split index to avoid
+	// separating tool_use/tool_result pairs, respects maxWalkBack bounds, and
+	// handles edge cases (no tool_use, consecutive tool_use, index 0).
+	tests := []struct {
+		name        string
+		msgs        []provider.Message
+		splitIdx    int
+		maxWalkBack int
+		want        int
+	}{
+		{
+			name: "no tool_use stays at proposed split",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				{Role: "assistant", Content: provider.TextContent("a0")},
+				{Role: "user", Content: provider.TextContent("u1")},
+				{Role: "assistant", Content: provider.TextContent("a1")},
+			},
+			splitIdx: 2, maxWalkBack: 25, want: 2,
+		},
+		{
+			name: "walks back to keep tool_use/result pair together",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				{Role: "assistant", Content: provider.TextContent("a0")},
+				{Role: "user", Content: provider.TextContent("u1")},
+				toolUseMsg("toolu_1"),
+				toolResultMsg("toolu_1"),
+				{Role: "assistant", Content: provider.TextContent("done")},
+			},
+			splitIdx: 4, maxWalkBack: 25, want: 3,
+		},
+		{
+			name: "consecutive tool_use walks back through chain",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_A"),
+				toolUseMsg("toolu_B"),
+				toolResultMsg("toolu_B"),
+				{Role: "assistant", Content: provider.TextContent("done")},
+			},
+			splitIdx: 3, maxWalkBack: 25, want: 1,
+		},
+		{
+			name: "walk-back bounded by maxWalkBack",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_A"),
+				toolUseMsg("toolu_B"),
+				toolUseMsg("toolu_C"),
+				toolResultMsg("toolu_C"),
+				{Role: "assistant", Content: provider.TextContent("done")},
+			},
+			splitIdx: 4, maxWalkBack: 2, want: 2,
+		},
+		{
+			name: "split at zero unchanged",
+			msgs: []provider.Message{
+				toolUseMsg("toolu_1"),
+				toolResultMsg("toolu_1"),
+			},
+			splitIdx: 0, maxWalkBack: 25, want: 0,
+		},
 	}
-	// Split at 2 — no tool_use, should stay at 2.
-	got := safeSplitPoint(msgs, 2, 25)
-	if got != 2 {
-		t.Errorf("safeSplitPoint = %d, want 2", got)
-	}
-}
-
-func TestSafeSplitPointBreaksPair(t *testing.T) {
-	// Verifies that when the proposed split would place a
-	// tool_result in the preserved window while its tool_use stays in the summarised
-	// window, safeSplitPoint walks back one step to keep the entire pair on the summarised
-	// side.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},      // 0
-		{Role: "assistant", Content: provider.TextContent("a0")}, // 1
-		{Role: "user", Content: provider.TextContent("u1")},      // 2
-		toolUseMsg("toolu_1"),    // 3: assistant tool_use
-		toolResultMsg("toolu_1"), // 4: user tool_result
-		{Role: "assistant", Content: provider.TextContent("done")}, // 5
-	}
-	// Split at 4 would separate tool_use (3) from tool_result (4).
-	// Should walk back to 3.
-	got := safeSplitPoint(msgs, 4, 25)
-	if got != 3 {
-		t.Errorf("safeSplitPoint = %d, want 3", got)
-	}
-}
-
-func TestSafeSplitPointConsecutiveToolPairs(t *testing.T) {
-	// In a corrupt session, two assistant tool_use messages in a row.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_A"),                                       // 1: assistant tool_use (corrupt — no result follows)
-		toolUseMsg("toolu_B"),                                       // 2: assistant tool_use
-		toolResultMsg("toolu_B"),                                    // 3: user tool_result
-		{Role: "assistant", Content: provider.TextContent("done")}, // 4
-	}
-	// Split at 3: prev is toolUseMsg("toolu_B") → walk to 2.
-	// Split at 2: prev is toolUseMsg("toolu_A") → walk to 1.
-	// Split at 1: prev is user text → stop.
-	got := safeSplitPoint(msgs, 3, 25)
-	if got != 1 {
-		t.Errorf("safeSplitPoint = %d, want 1", got)
-	}
-}
-
-func TestSafeSplitPointBounded(t *testing.T) {
-	// Walk-back bounded by maxWalkBack.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_A"),                                       // 1
-		toolUseMsg("toolu_B"),                                       // 2
-		toolUseMsg("toolu_C"),                                       // 3
-		toolResultMsg("toolu_C"),                                    // 4
-		{Role: "assistant", Content: provider.TextContent("done")}, // 5
-	}
-	// Split at 4, maxWalkBack=2 → walks to 3, then 2, stops (2 steps).
-	got := safeSplitPoint(msgs, 4, 2)
-	if got != 2 {
-		t.Errorf("safeSplitPoint = %d, want 2", got)
-	}
-}
-
-func TestSafeSplitPointAtZero(t *testing.T) {
-	// Verifies that a split at index 0 (before all messages) is
-	// returned unchanged, since there is nothing to walk back to and the function must not
-	// produce a negative split index.
-	msgs := []provider.Message{
-		toolUseMsg("toolu_1"),
-		toolResultMsg("toolu_1"),
-	}
-	// Split at 0 — already at start, can't walk back.
-	got := safeSplitPoint(msgs, 0, 25)
-	if got != 0 {
-		t.Errorf("safeSplitPoint = %d, want 0", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := safeSplitPoint(tt.msgs, tt.splitIdx, tt.maxWalkBack); got != tt.want {
+				t.Errorf("safeSplitPoint = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 
-func TestRepairOrphanedToolUseNoOrphans(t *testing.T) {
-	// Verifies that repairOrphanedToolUse is a no-op
-	// when every tool_use already has a matching tool_result, confirming the repair path
-	// does not mutate a valid message sequence.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_1"),
-		toolResultMsg("toolu_1"),
-		{Role: "assistant", Content: provider.TextContent("done")},
+func TestRepairOrphanedToolUse(t *testing.T) {
+	// Verifies that repairOrphanedToolUse correctly handles: no orphans (no-op),
+	// missing results, no next message, partial matches, and next-is-assistant.
+	tests := []struct {
+		name    string
+		msgs    []provider.Message
+		wantLen int
+		check   func(t *testing.T, repaired []provider.Message)
+	}{
+		{
+			name: "no orphans is no-op",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_1"),
+				toolResultMsg("toolu_1"),
+				{Role: "assistant", Content: provider.TextContent("done")},
+			},
+			wantLen: 4,
+		},
+		{
+			name: "missing result injects synthetic into next user msg",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_1"),
+				{Role: "user", Content: provider.TextContent("u1")},
+				{Role: "assistant", Content: provider.TextContent("a1")},
+			},
+			wantLen: 4,
+			check: func(t *testing.T, repaired []provider.Message) {
+				userMsg := repaired[2]
+				if userMsg.Role != "user" || len(userMsg.Content) != 2 {
+					t.Fatalf("repaired[2] role=%q blocks=%d, want user/2", userMsg.Role, len(userMsg.Content))
+				}
+				if userMsg.Content[0].Type != "tool_result" || userMsg.Content[0].ToolUseID != "toolu_1" || !userMsg.Content[0].IsError {
+					t.Errorf("repaired[2].Content[0] = %+v, want synthetic error tool_result for toolu_1", userMsg.Content[0])
+				}
+			},
+		},
+		{
+			name: "no next message appends standalone user",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_1"),
+			},
+			wantLen: 3,
+			check: func(t *testing.T, repaired []provider.Message) {
+				if repaired[2].Role != "user" || len(repaired[2].Content) != 1 || repaired[2].Content[0].Type != "tool_result" {
+					t.Errorf("repaired[2] should be a single tool_result user message")
+				}
+			},
+		},
+		{
+			name: "partial match injects synthetic for unmatched IDs",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_A", "toolu_B"),
+				toolResultMsg("toolu_A"),
+				{Role: "assistant", Content: provider.TextContent("done")},
+			},
+			wantLen: 4,
+			check: func(t *testing.T, repaired []provider.Message) {
+				userMsg := repaired[2]
+				if len(userMsg.Content) != 2 {
+					t.Fatalf("repaired[2] has %d blocks, want 2", len(userMsg.Content))
+				}
+				if userMsg.Content[0].ToolUseID != "toolu_B" || !userMsg.Content[0].IsError {
+					t.Errorf("synthetic block = %+v, want error tool_result for toolu_B", userMsg.Content[0])
+				}
+				if userMsg.Content[1].ToolUseID != "toolu_A" {
+					t.Errorf("original block = %+v, want tool_result for toolu_A", userMsg.Content[1])
+				}
+			},
+		},
+		{
+			name: "next is assistant injects standalone user between",
+			msgs: []provider.Message{
+				{Role: "user", Content: provider.TextContent("u0")},
+				toolUseMsg("toolu_1"),
+				{Role: "assistant", Content: provider.TextContent("a1")},
+			},
+			wantLen: 4,
+			check: func(t *testing.T, repaired []provider.Message) {
+				if repaired[2].Role != "user" || repaired[2].Content[0].Type != "tool_result" {
+					t.Errorf("repaired[2] should be injected tool_result user message")
+				}
+				if repaired[3].Role != "assistant" {
+					t.Errorf("repaired[3] should be original assistant message")
+				}
+			},
+		},
 	}
-	repaired := repairOrphanedToolUse(msgs)
-	if len(repaired) != len(msgs) {
-		t.Errorf("repaired has %d messages, want %d (no change)", len(repaired), len(msgs))
-	}
-}
-
-func TestRepairOrphanedToolUseMissingResult(t *testing.T) {
-	// Assistant has tool_use but no tool_result follows at all.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_1"),
-		// Missing: tool_result for toolu_1
-		{Role: "user", Content: provider.TextContent("u1")},
-		{Role: "assistant", Content: provider.TextContent("a1")},
-	}
-	repaired := repairOrphanedToolUse(msgs)
-
-	// Should inject synthetic result into the existing user message at index 2.
-	if len(repaired) != 4 {
-		t.Fatalf("repaired has %d messages, want 4", len(repaired))
-	}
-
-	// The user message after tool_use should now have synthetic + original content.
-	userMsg := repaired[2]
-	if userMsg.Role != "user" {
-		t.Fatalf("repaired[2].Role = %q, want user", userMsg.Role)
-	}
-	// Should have 2 blocks: synthetic tool_result + original text.
-	if len(userMsg.Content) != 2 {
-		t.Fatalf("repaired[2] has %d blocks, want 2", len(userMsg.Content))
-	}
-	if userMsg.Content[0].Type != "tool_result" || userMsg.Content[0].ToolUseID != "toolu_1" {
-		t.Errorf("repaired[2].Content[0] = %+v, want tool_result for toolu_1", userMsg.Content[0])
-	}
-	if !userMsg.Content[0].IsError {
-		t.Error("synthetic tool_result should be is_error=true")
-	}
-}
-
-func TestRepairOrphanedToolUseNoNextMessage(t *testing.T) {
-	// Tool_use is the last message — no following message at all.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_1"),
-	}
-	repaired := repairOrphanedToolUse(msgs)
-
-	// Should inject a standalone user message.
-	if len(repaired) != 3 {
-		t.Fatalf("repaired has %d messages, want 3", len(repaired))
-	}
-	if repaired[2].Role != "user" {
-		t.Errorf("repaired[2].Role = %q, want user", repaired[2].Role)
-	}
-	if len(repaired[2].Content) != 1 || repaired[2].Content[0].Type != "tool_result" {
-		t.Errorf("repaired[2] should be a single tool_result block")
-	}
-}
-
-func TestRepairOrphanedToolUsePartialMatch(t *testing.T) {
-	// Assistant has 2 tool_use blocks, but only 1 has a result.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_A", "toolu_B"),
-		toolResultMsg("toolu_A"), // only A matched
-		{Role: "assistant", Content: provider.TextContent("done")},
-	}
-	repaired := repairOrphanedToolUse(msgs)
-
-	if len(repaired) != 4 {
-		t.Fatalf("repaired has %d messages, want 4", len(repaired))
-	}
-
-	// User message should now have synthetic result for B + original result for A.
-	userMsg := repaired[2]
-	if len(userMsg.Content) != 2 {
-		t.Fatalf("repaired[2] has %d blocks, want 2", len(userMsg.Content))
-	}
-	// Synthetic comes first (prepended).
-	if userMsg.Content[0].ToolUseID != "toolu_B" || !userMsg.Content[0].IsError {
-		t.Errorf("synthetic block = %+v, want tool_result for toolu_B with is_error", userMsg.Content[0])
-	}
-	if userMsg.Content[1].ToolUseID != "toolu_A" {
-		t.Errorf("original block = %+v, want tool_result for toolu_A", userMsg.Content[1])
-	}
-}
-
-func TestRepairOrphanedToolUseNextIsAssistant(t *testing.T) {
-	// Corrupt: assistant tool_use followed by another assistant message.
-	msgs := []provider.Message{
-		{Role: "user", Content: provider.TextContent("u0")},
-		toolUseMsg("toolu_1"),
-		{Role: "assistant", Content: provider.TextContent("a1")},
-	}
-	repaired := repairOrphanedToolUse(msgs)
-
-	// Should inject a standalone user message between the two assistant messages.
-	if len(repaired) != 4 {
-		t.Fatalf("repaired has %d messages, want 4", len(repaired))
-	}
-	if repaired[2].Role != "user" || repaired[2].Content[0].Type != "tool_result" {
-		t.Errorf("repaired[2] should be injected tool_result user message")
-	}
-	if repaired[3].Role != "assistant" {
-		t.Errorf("repaired[3] should be original assistant message")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repaired := repairOrphanedToolUse(tt.msgs)
+			if len(repaired) != tt.wantLen {
+				t.Fatalf("repaired has %d messages, want %d", len(repaired), tt.wantLen)
+			}
+			if tt.check != nil {
+				tt.check(t, repaired)
+			}
+		})
 	}
 }
 
