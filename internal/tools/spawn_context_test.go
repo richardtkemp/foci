@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 )
 
 func TestSpawnContextRaw(t *testing.T) {
-	// Proves that raw context sends no system prompt to the model, resolves the model alias,
+	// Proves that raw context sends no system prompt to the model, resolves the model group,
 	// and returns the model's response directly.
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
@@ -27,12 +28,19 @@ func TestSpawnContextRaw(t *testing.T) {
 	})
 	defer server.Close()
 
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+		Fast:     "anthropic/claude-sonnet-4-6",
+		Cheap:    "anthropic/claude-haiku-4-5",
+	}, nil)
+
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am a character file."},
 		}},
+		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
 		MaxToolLoops:   10,
@@ -41,7 +49,7 @@ func TestSpawnContextRaw(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "What is the meaning of life?",
-		"model":   "opus",
+		"model":   "powerful",
 		"context": "raw",
 	})
 
@@ -260,10 +268,17 @@ func TestSpawnExploreMode(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (ToolResult, error) { return TextResult("ok"), nil },
 	})
 
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+		Fast:     "anthropic/claude-sonnet-4-6",
+		Cheap:    "anthropic/claude-haiku-4-5",
+	}, nil)
+
 	client := newTestAnthropicClient(server.URL, "test-token")
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,
+		GroupResolver:   gr,
 		FallbackModel:   "anthropic/claude-opus-4-6", // parent uses opus
 		FallbackFormat:  "anthropic",
 		ExploreMaxDepth: 10,
@@ -272,7 +287,7 @@ func TestSpawnExploreMode(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Find all Go files in the project",
-		"model":   "opus", // explicitly request opus
+		"model":   "powerful", // explicitly request powerful — but explore ignores it, uses cheap group
 		"context": "explore",
 	})
 
