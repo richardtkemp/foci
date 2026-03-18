@@ -82,6 +82,20 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 	if c := a.ForSession(sessionKey); c != nil {
 		return c
 	}
+	// Platform-aware primary: if we know which platform owns this chat,
+	// prefer that platform's primary bot over the first-match fallback.
+	if a.chatPlatformFn != nil {
+		_, chatID := extractSessionInfo(sessionKey)
+		if chatID != 0 {
+			if platName := a.chatPlatformFn(agentID, chatID); platName != "" {
+				if mgr, ok := a.named[platName]; ok {
+					if c := mgr.Primary(agentID); c != nil {
+						return c
+					}
+				}
+			}
+		}
+	}
 	return a.Primary(agentID)
 }
 
