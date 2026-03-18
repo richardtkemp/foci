@@ -26,7 +26,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/startup"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // Build info — set via ldflags: go build -ldflags "-X main.version=... -X main.gitCommit=... -X main.buildTime=..."

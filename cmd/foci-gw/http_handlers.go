@@ -17,7 +17,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/voice"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // agentResolver returns the agent instance for the given ID, or the first agent if empty.

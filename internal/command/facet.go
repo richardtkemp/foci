@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"foci/internal/session"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // forkFacet forks the current session to a secondary facet connection.

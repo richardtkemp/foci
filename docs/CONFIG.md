@@ -221,15 +221,15 @@ Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
 All prompt fields (`compaction_summary_prompt`, `branch_orientation_facet_prompt`, `branch_orientation_headless_prompt`) are file paths, not inline strings. If the file can't be read, a warning is logged and the embedded default is used. Prompt files are read live at the point of use — edits take effect immediately without restart or `/reload`.
 
-When no config override is set, embedded defaults from `prompts/` are used:
-- `prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
-- `prompts/branch-orientation-facet.md` — user-attached facet branches
-- `prompts/compaction-summary.md` — compaction summary prompt
-- `prompts/compaction-handoff.md` — post-compaction handoff message
-- `prompts/keepalive.md` — keepalive ping prompt
-- `prompts/background.md` — background work prompt
-- `prompts/memory-formation.md` — memory formation prompt (interval + session-end)
-- `prompts/memory-consolidation.md` — MEMORY.md consolidation prompt
+When no config override is set, embedded defaults from `shared/prompts/` are used:
+- `shared/prompts/branch-orientation-headless.md` — headless branches (cron, spawn, keepalive)
+- `shared/prompts/branch-orientation-facet.md` — user-attached facet branches
+- `shared/prompts/compaction-summary.md` — compaction summary prompt
+- `shared/prompts/compaction-handoff.md` — post-compaction handoff message
+- `shared/prompts/keepalive.md` — keepalive ping prompt
+- `shared/prompts/background.md` — background work prompt
+- `shared/prompts/memory-formation.md` — memory formation prompt (interval + session-end)
+- `shared/prompts/memory-consolidation.md` — MEMORY.md consolidation prompt
 
 ### `[memory]`
 
@@ -801,8 +801,8 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `autocompact_before_mana_refresh_preserve` | int | unset | Explicit message count to preserve during mana-refresh compaction. Overrides the percentage-based default. `0` uses normal preservation count. |
 | `autocompact_before_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `autocompact_before_mana_refresh_preserve` is unset. |
 | `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
-| `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-facet.md`. |
-| `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
+| `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |
+| `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `shared/prompts/branch-orientation-headless.md`. |
 
 #### Mana-Refresh Compaction
 
@@ -939,7 +939,7 @@ Automatic memory capture and MEMORY.md consolidation. All three sub-features def
 | `compaction_enabled` | bool | `true` | Run memory formation before compaction summarises context. |
 | `compaction_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
 
-All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
+All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `shared/prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
 
 **Interval memory formation** runs in the keepalive timer loop. Fires when:
 1. `interval` has elapsed since the last formation
@@ -975,7 +975,7 @@ Per-agent mana warning thresholds. When set, completely replaces the global `[us
 |-----|------|---------|-----------------|-------------|
 | `webhooks` | map[string]string | `{}` | `[defaults]` | Maps webhook hook IDs to prompt file paths. Used by `POST /webhook/{agent}/{hookid}`. Per-agent merges with global (agent keys override matching global keys; unmatched global keys are preserved). |
 
-Prompt paths are resolved via `prompts.ResolvePrompt`: bare filenames (e.g. `"deploy.md"`) are searched in `{workspace}/prompts/` then `{shared}/prompts/`; absolute paths are read directly.
+Prompt paths are resolved via `prompts.ResolvePrompt`: bare filenames (e.g. `"deploy.md"`) are searched in `{workspace}/shared/prompts/` then `{shared}/prompts/`; absolute paths are read directly.
 
 ```toml
 [defaults]

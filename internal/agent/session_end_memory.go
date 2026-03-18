@@ -7,7 +7,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // FireSessionEndMemory runs memory formation on the expiring session before it is cleared.

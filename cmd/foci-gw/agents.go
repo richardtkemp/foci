@@ -24,7 +24,7 @@ import (
 	"foci/internal/tools"
 	"foci/internal/voice"
 	"foci/internal/workspace"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // agentInstance holds all per-agent state.

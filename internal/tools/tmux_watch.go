@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"foci/internal/log"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 func (inst *tmuxInstance) watch(ctx context.Context, name string, window, thresholdSeconds int, conditional bool) (ToolResult, error) {

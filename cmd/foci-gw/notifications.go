@@ -9,7 +9,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // handleWelcomeAndFirstRun injects welcome file content and first-run onboarding prompts.

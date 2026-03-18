@@ -12,7 +12,7 @@ import (
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.

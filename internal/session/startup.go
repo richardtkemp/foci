@@ -9,7 +9,7 @@ import (
 
 	"foci/internal/messages"
 	"foci/internal/provider"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // RestartMarkerMaxAge is the maximum age of a session file to receive a restart marker.

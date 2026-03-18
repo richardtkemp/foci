@@ -203,7 +203,7 @@ Show or edit configuration.
 ### `/prompts <subcommand>`
 Show configured prompts and prompt files on disk.
 - `/prompts list` — all prompts with default/custom/disabled status and file paths
-- `/prompts reinstall` — write all embedded default prompts to `{workspace}/prompts/`
+- `/prompts reinstall` — write all embedded default prompts to `{workspace}/shared/prompts/`
 - `/prompts diff <name>` — unified diff between the resolved prompt and the embedded default, with an AI-generated summary. Name matching is fuzzy: accepts labels (`compaction_summary`), filenames (`compaction-summary.md`), or partial matches (`keepalive`)
 
 ### `/version`

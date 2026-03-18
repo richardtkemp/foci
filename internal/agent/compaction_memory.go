@@ -7,7 +7,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // FireCompactionMemory runs memory formation on the session immediately before

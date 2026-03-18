@@ -6,14 +6,14 @@ Foci ships embedded prompt files in the binary. These provide sensible defaults 
 
 | File | Accessor | Used by |
 |------|----------|---------|
-| `prompts/branch-orientation-headless.md` | `BranchOrientationHeadless()` | Headless branch sessions (cron, spawn, keepalive) |
-| `prompts/branch-orientation-facet.md` | `BranchOrientationFacet()` | User-attached facet branch sessions |
-| `prompts/compaction-summary.md` | `CompactionSummary()` | Compaction summary generation |
-| `prompts/compaction-handoff.md` | `CompactionHandoff()` | Post-compaction handoff message |
-| `prompts/keepalive.md` | `Keepalive()` | Cache keepalive pings |
-| `prompts/background.md` | `Background()` | Background work trigger |
-| `prompts/memory-formation.md` | `MemoryFormation()` | Interval + session-end memory capture |
-| `prompts/memory-consolidation.md` | `MemoryConsolidation()` | MEMORY.md curation |
+| `shared/prompts/branch-orientation-headless.md` | `BranchOrientationHeadless()` | Headless branch sessions (cron, spawn, keepalive) |
+| `shared/prompts/branch-orientation-facet.md` | `BranchOrientationFacet()` | User-attached facet branch sessions |
+| `shared/prompts/compaction-summary.md` | `CompactionSummary()` | Compaction summary generation |
+| `shared/prompts/compaction-handoff.md` | `CompactionHandoff()` | Post-compaction handoff message |
+| `shared/prompts/keepalive.md` | `Keepalive()` | Cache keepalive pings |
+| `shared/prompts/background.md` | `Background()` | Background work trigger |
+| `shared/prompts/memory-formation.md` | `MemoryFormation()` | Interval + session-end memory capture |
+| `shared/prompts/memory-consolidation.md` | `MemoryConsolidation()` | MEMORY.md curation |
 
 ## First-Run Seeding
 

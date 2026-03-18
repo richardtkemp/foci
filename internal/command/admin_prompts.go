@@ -15,7 +15,7 @@ import (
 	"foci/internal/display"
 	"foci/internal/provider"
 	"foci/internal/tempdir"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 type PromptInfo struct {

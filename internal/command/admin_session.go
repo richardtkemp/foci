@@ -9,7 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/tempdir"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // StopCommand returns a /stop command that cancels the current agent turn.

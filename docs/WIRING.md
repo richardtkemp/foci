@@ -1022,8 +1022,8 @@ Checks token usage against threshold (default 80% of context window). When trigg
 - `minMessages` — min messages before compacting (default: 4)
 
 **Passed to `Compact()` at call time** (not stored on the Compactor):
-- `summaryPrompt` — read live from file at compaction time via `ReadPromptFile` callback. If empty, falls back to `prompts.CompactionSummary()` (embedded from `prompts/compaction-summary.md`). Edits to the config file take effect immediately.
-- `handoffMessage` — message after compaction completes. If empty, uses `DefaultHandoffMessage` (embedded from `prompts/compaction-handoff.md`).
+- `summaryPrompt` — read live from file at compaction time via `ReadPromptFile` callback. If empty, falls back to `prompts.CompactionSummary()` (embedded from `shared/prompts/compaction-summary.md`). Edits to the config file take effect immediately.
+- `handoffMessage` — message after compaction completes. If empty, uses `DefaultHandoffMessage` (embedded from `shared/prompts/compaction-handoff.md`).
 - `dryRun` — when true, runs the full pipeline (API call, summary generation) but skips `sessions.Replace()`. The session is left unchanged. `/compact dry-run` sends the resulting summary as a Telegram document (via `CompactionDebugFunc` if configured, otherwise directly via `primaryBot.SendDocument`) without rewriting history. Useful for iterating on compaction prompts.
 
 ## Nudge System (`nudge/`)
