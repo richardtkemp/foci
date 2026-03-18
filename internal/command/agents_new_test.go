@@ -8,14 +8,15 @@ import (
 	"testing"
 
 	"foci/internal/provision"
-	"foci/internal/tempdir"
 )
 
 func testDeps(agents []AgentInfo, preFlightFn func(string) []string) AgentNewDeps {
+	// Use a shared temp dir per test process; callers don't write here directly.
+	dir := os.TempDir()
 	return AgentNewDeps{
-		ConfigPath:  filepath.Join(tempdir.TestDir(), "test-foci.toml"),
+		ConfigPath:  filepath.Join(dir, "test-foci.toml"),
 		DefaultsDir: "",
-		HomeDir:     tempdir.TestDir(),
+		HomeDir:     dir,
 		ListFn:      func() []AgentInfo { return agents },
 		PreFlightFn: preFlightFn,
 	}
@@ -509,10 +510,11 @@ func TestRegistryHandleMessageStop(t *testing.T) {
 // Verifies the /agents new subcommand starts the wizard with the correct prompt.
 func TestAgentsNewSubcommand(t *testing.T) {
 	reg := NewRegistry()
+	td := t.TempDir()
 	deps := &AgentNewDeps{
-		ConfigPath:  filepath.Join(tempdir.TestDir(), "test.toml"),
-		DefaultsDir: filepath.Join(tempdir.TestDir(), "defaults"),
-		HomeDir:     tempdir.TestDir(),
+		ConfigPath:  filepath.Join(td, "test.toml"),
+		DefaultsDir: filepath.Join(td, "defaults"),
+		HomeDir:     td,
 		ListFn:      func() []AgentInfo { return nil },
 		Registry:    reg,
 	}

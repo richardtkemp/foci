@@ -5,12 +5,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"foci/internal/tempdir"
 )
 
 func TestMain(m *testing.M) {
-	dir, _ := os.MkdirTemp(tempdir.TestDir(), "foci-tmux-test-*")
+	dir, _ := os.MkdirTemp(os.TempDir(), "foci-tmux-test-*")
 	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
 
 	// Pre-start the tmux server so parallel tests don't race on startup.
