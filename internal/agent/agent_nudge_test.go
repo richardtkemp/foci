@@ -13,8 +13,8 @@ import (
 	"foci/internal/workspace"
 )
 
-func TestNudgeMatchPrependedToUserMessage(t *testing.T) {
-	// Proves that match nudges are prepended as ContentBlocks to the user message
+func TestNudgeRegexPrependedToUserMessage(t *testing.T) {
+	// Proves that regex nudges are prepended as ContentBlocks to the user message
 	// rather than injected as standalone messages. Only one API call is made, and
 	// the nudge blocks appear before the user text in the request.
 	var callCount atomic.Int32
@@ -42,7 +42,7 @@ func TestNudgeMatchPrependedToUserMessage(t *testing.T) {
 		Rules: []nudge.Rule{
 			{
 				Text:    "match-debug-reminder",
-				Trigger: nudge.Trigger{Type: "match", Pattern: "debug"},
+				Trigger: nudge.Trigger{Type: "regex", Pattern: "debug"},
 			},
 		},
 	}
@@ -176,8 +176,8 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 	}
 }
 
-func TestNudgeMatchBatchMode(t *testing.T) {
-	// Proves that with BatchPartialAssistantMessages enabled, match nudges are
+func TestNudgeRegexBatchMode(t *testing.T) {
+	// Proves that with BatchPartialAssistantMessages enabled, regex nudges are
 	// prepended to the user message (not standalone messages). Only one API call,
 	// single direct response returned.
 	var callCount atomic.Int32
@@ -202,7 +202,7 @@ func TestNudgeMatchBatchMode(t *testing.T) {
 		Rules: []nudge.Rule{
 			{
 				Text:    "match-reminder",
-				Trigger: nudge.Trigger{Type: "match", Pattern: "debug"},
+				Trigger: nudge.Trigger{Type: "regex", Pattern: "debug"},
 			},
 		},
 	}

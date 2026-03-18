@@ -226,7 +226,7 @@ The core of the system. Two entry points:
 2. buildMetaPrefix() + prepend to user message text
 3. build content blocks: image/document block(s) first, then text block (with metadata)
 4. append user message
-4b. nudge StartTurn + prepend match nudge ContentBlocks to user message (if any patterns match)
+4b. nudge StartTurn + prepend regex/every_n_turns nudge ContentBlocks to user message (if any triggers fire)
 5. bootstrap.SystemBlocks()               ← workspace/*.md → []SystemBlock
    prepend EnvironmentBlock if set        ← runtime context block
    append ExtraSystemBlocks               ← skills, etc.
@@ -242,9 +242,9 @@ The core of the system. Two entry points:
       - otherwise → save & check compaction & return text
    g. if stop_reason == "tool_use":
       - execute each tool_use via registry (skip server_tool_use — already executed)
-      - track tool streak and error state
+      - track tool call count and error state
       - inject braindead warning if threshold reached
-      - inject nudge reminders based on trigger conditions (periodic, after_streak, after_error, match)
+      - inject nudge reminders based on trigger conditions (every_n_tools, after_error, regex)
       - append assistant msg + tool_result msg
       - goto 7a
 8. sessions.AppendAll(sessionKey, newMessages)
@@ -1045,19 +1045,19 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 
 ### Trigger Types
 
-- **`periodic(N)`** — fires every N tool calls (via `CheckAfterTools`)
-- **`after_streak(N)`** — fires after N consecutive calls to the same tool (via `CheckAfterTools`)
+- **`every_n_tools(N)`** — fires every N individual tool calls during a turn (via `CheckAfterTools`)
+- **`every_n_turns(N)`** — fires every N user turns; lifetime counter, never reset (via `CheckTurnInterval`, used by default nudges)
 - **`after_error`** — fires when the last tool call returned an error (via `CheckAfterTools`)
-- **`match(regex)`** — regex evaluated once against user message at `Reset()`; fires via `CheckAfterTools` on the tools path, or via `CheckMatch()` on the no-tools path (ensures match triggers fire even when the model answers directly)
+- **`regex(pattern)`** — regex evaluated once against user message at `StartTurn()`; fires via `CheckAfterTools` on the tools path, or via `CheckRegex()` on the no-tools path (ensures regex triggers fire even when the model answers directly)
 - **`pre_answer`** — all pre_answer rules concatenated and injected when the model wants to end the turn (gated by `NudgePreAnswerGate` and `NudgePreAnswerMinTools`)
 
 ### Injection
 
-Nudge reminders are injected as text ContentBlocks in user messages. After-tools nudges (periodic, after_streak, after_error, match) are appended as individual blocks to tool result messages. Match nudges on no-tools turns are prepended as ContentBlocks to the user message before the first API call. Pre_answer nudges are injected as standalone user messages that continue the loop. Each injection is one-shot per trigger type per turn to prevent infinite loops.
+Nudge reminders are injected as text ContentBlocks in user messages. After-tools nudges (every_n_tools, after_error, regex) are appended as individual blocks to tool result messages. Regex nudges on no-tools turns and every_n_turns nudges are prepended as ContentBlocks to the user message before the first API call. Pre_answer nudges are injected as standalone user messages that continue the loop. Each injection is one-shot per trigger type per turn to prevent infinite loops.
 
 ### Configuration
 
-Cooldown (min tool calls between repeating the same rule, default 5) and max-per-batch (max reminders per tool batch, default 1) prevent spam. All config is per-agent via `nudge_enable`, `nudge_cooldown`, `nudge_max_per_batch`, `nudge_pre_answer_gate`, `nudge_pre_answer_min_tools`.
+Cooldown (min tool calls between repeating the same rule, default 5) and max-per-batch (max reminders per tool batch, default 1) prevent spam. All config is per-agent via `nudge_enable`, `nudge_cooldown`, `nudge_max_per_batch`, `nudge_pre_answer_gate`, `nudge_pre_answer_min_tools`, `nudge_default_enable`, `nudge_default_frequency`.
 
 ## Deployment
 

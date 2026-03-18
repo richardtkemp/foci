@@ -296,7 +296,7 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeDefaultEnable, true, md.IsDefined("defaults", "nudge_default_enable"))
-	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultFrequency, 25, md.IsDefined("defaults", "nudge_default_frequency"))
+	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultFrequency, 50, md.IsDefined("defaults", "nudge_default_frequency"))
 	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
 
 	// Discord global defaults

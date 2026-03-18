@@ -438,17 +438,16 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	braindeadWarned := false
 	displayNoted := false // true after injecting tool_display note
 	verified := false     // pre-answer gate: true after one verification pass
-	var sameToolStreak int
-	var lastToolName string
+	var toolCallCount int  // cumulative individual tool calls this turn
 	var lastToolError bool
 	if a.Nudger != nil {
 		a.Nudger.StartTurn(texts[0])
-		// Prepend periodic_turn and match nudges as ContentBlocks before the user's text/attachment blocks.
+		// Prepend every_n_turns and regex nudges as ContentBlocks before the user's text/attachment blocks.
 		var nudgeBlocks []provider.ContentBlock
-		for _, r := range a.Nudger.CheckTurnPeriodic() {
+		for _, r := range a.Nudger.CheckTurnInterval() {
 			nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
 		}
-		for _, r := range a.Nudger.CheckMatch() {
+		for _, r := range a.Nudger.CheckRegex() {
 			nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
 		}
 		if len(nudgeBlocks) > 0 {
@@ -699,21 +698,13 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			newMessages[len(newMessages)-1].Content = filtered
 		}
 
-		// Track tool streak and error state for nudge triggers.
+		// Track tool call count and error state for nudge triggers.
 		lastToolError = false
-		batchToolName := ""
 		for _, block := range resp.Content {
 			if block.Type == "tool_use" {
-				batchToolName = block.Name
-				break
+				toolCallCount++
 			}
 		}
-		if batchToolName != "" && batchToolName == lastToolName {
-			sameToolStreak++
-		} else {
-			sameToolStreak = 1
-		}
-		lastToolName = batchToolName
 		for _, tr := range toolResults {
 			if tr.Type == "tool_result" && tr.IsError {
 				lastToolError = true
@@ -739,9 +730,9 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			displayNoted = true
 		}
 
-		// Nudge reminders: inject behavioral reminders from character file rules.
+		// Nudge reminders: inject behavioral reminders from nudge rules.
 		if a.Nudger != nil {
-			if reminders := a.Nudger.CheckAfterTools(i, sameToolStreak, lastToolError); len(reminders) > 0 {
+			if reminders := a.Nudger.CheckAfterTools(toolCallCount, lastToolError); len(reminders) > 0 {
 				for _, r := range reminders {
 					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
 				}

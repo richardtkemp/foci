@@ -23,7 +23,7 @@ func TestParseExtractionResponse(t *testing.T) {
 			"text": "Check tool output",
 			"source_file": "SOUL.md",
 			"source_text": "Read carefully",
-			"trigger": {"type": "periodic", "n": 5},
+			"trigger": {"type": "every_n_tools", "n": 5},
 			"priority": "medium"
 		}
 	]`
@@ -50,7 +50,7 @@ func TestParseExtractionResponseCodeFence(t *testing.T) {
 	// Handles markdown-wrapped JSON.
 	t.Parallel()
 
-	input := "```json\n" + `[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]` + "\n```"
+	input := "```json\n" + `[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "every_n_tools", "n": 3}, "priority": "low"}]` + "\n```"
 
 	rules, err := ParseExtractionResponse(input)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestParseExtractionResponsePreambleWithFences(t *testing.T) {
 	t.Parallel()
 
 	input := "Looking through the character files, here are the rules I found:\n\n```json\n" +
-		`[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]` +
+		`[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "every_n_tools", "n": 3}, "priority": "low"}]` +
 		"\n```"
 
 	rules, err := ParseExtractionResponse(input)
@@ -102,7 +102,7 @@ func TestParseExtractionResponsePreambleRawJSON(t *testing.T) {
 	t.Parallel()
 
 	input := "Here are the rules:\n" +
-		`[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "periodic", "n": 3}, "priority": "low"}]`
+		`[{"text": "test", "source_file": "X.md", "source_text": "x", "trigger": {"type": "every_n_tools", "n": 3}, "priority": "low"}]`
 
 	rules, err := ParseExtractionResponse(input)
 	if err != nil {

@@ -288,7 +288,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 		}
 		freq := acfg.NudgeDefaultFrequency
 		if freq <= 0 {
-			freq = 25
+			freq = 50
 		}
 		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, freq)
 	}

@@ -14,8 +14,8 @@ type Scheduler struct {
 
 	mu            sync.Mutex
 	lastFired     map[int]int    // rule index → tool call count when last fired
-	matchResults  map[int]bool   // rule index → whether match trigger matches current message
-	compiledMatch map[int]*regexp.Regexp
+	regexResults  map[int]bool   // rule index → whether regex trigger matches current message
+	compiledRegex map[int]*regexp.Regexp
 	toolCount     int
 	turnCount     int // lifetime turn counter (never reset)
 }
@@ -38,21 +38,21 @@ func NewScheduler(rs *RuleSet, cooldown, maxPerBatch int) *Scheduler {
 		cooldown:      cooldown,
 		maxPerBatch:   maxPerBatch,
 		lastFired:     make(map[int]int),
-		matchResults:  make(map[int]bool),
-		compiledMatch: make(map[int]*regexp.Regexp),
+		regexResults:  make(map[int]bool),
+		compiledRegex: make(map[int]*regexp.Regexp),
 	}
-	// Pre-compile match regexes
+	// Pre-compile regex patterns
 	for i, r := range s.rules {
-		if r.Trigger.Type == "match" && r.Trigger.Pattern != "" {
+		if r.Trigger.Type == "regex" && r.Trigger.Pattern != "" {
 			if re, err := regexp.Compile(r.Trigger.Pattern); err == nil {
-				s.compiledMatch[i] = re
+				s.compiledRegex[i] = re
 			}
 		}
 	}
 	return s
 }
 
-// StartTurn clears per-turn state and evaluates match triggers against the
+// StartTurn clears per-turn state and evaluates regex triggers against the
 // user message. Call at the start of each agent turn.
 func (s *Scheduler) StartTurn(userMessage string) {
 	if s == nil {
@@ -63,16 +63,16 @@ func (s *Scheduler) StartTurn(userMessage string) {
 	s.turnCount++
 	s.toolCount = 0
 	s.lastFired = make(map[int]int)
-	s.matchResults = make(map[int]bool)
-	for i, re := range s.compiledMatch {
-		s.matchResults[i] = re.MatchString(userMessage)
+	s.regexResults = make(map[int]bool)
+	for i, re := range s.compiledRegex {
+		s.regexResults[i] = re.MatchString(userMessage)
 	}
 }
 
-// CheckTurnPeriodic evaluates periodic_turn rules against the lifetime turn
+// CheckTurnInterval evaluates every_n_turns rules against the lifetime turn
 // counter. Returns reminder texts for rules whose turn interval has elapsed.
 // Called once per turn, after StartTurn().
-func (s *Scheduler) CheckTurnPeriodic() []string {
+func (s *Scheduler) CheckTurnInterval() []string {
 	if s == nil {
 		return nil
 	}
@@ -81,12 +81,12 @@ func (s *Scheduler) CheckTurnPeriodic() []string {
 
 	var result []string
 	for _, r := range s.rules {
-		if r.Trigger.Type != "periodic_turn" {
+		if r.Trigger.Type != "every_n_turns" {
 			continue
 		}
 		n := r.Trigger.N
 		if n <= 0 {
-			n = 25
+			n = 50
 		}
 		if s.turnCount > 0 && s.turnCount%n == 0 {
 			result = append(result, r.Text)
@@ -98,16 +98,15 @@ func (s *Scheduler) CheckTurnPeriodic() []string {
 // CheckAfterTools evaluates triggers after a tool batch and returns up to
 // maxPerBatch reminder texts. Returns nil if nothing fires.
 //
-// toolCallIndex is the loop counter (0-based), sameToolStreak is the count of
-// consecutive calls to the same tool, and lastToolError indicates the most
-// recent tool call returned an error.
-func (s *Scheduler) CheckAfterTools(toolCallIndex, sameToolStreak int, lastToolError bool) []string {
+// toolCount is the cumulative number of individual tool calls executed so far
+// this turn. lastToolError indicates the most recent tool call returned an error.
+func (s *Scheduler) CheckAfterTools(toolCount int, lastToolError bool) []string {
 	if s == nil {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.toolCount = toolCallIndex + 1
+	s.toolCount = toolCount
 
 	var result []string
 	fired := 0
@@ -115,7 +114,7 @@ func (s *Scheduler) CheckAfterTools(toolCallIndex, sameToolStreak int, lastToolE
 		if fired >= s.maxPerBatch {
 			break
 		}
-		if !s.shouldFire(i, r, lastToolError, sameToolStreak) {
+		if !s.shouldFire(i, r, lastToolError) {
 			continue
 		}
 		s.lastFired[i] = s.toolCount
@@ -147,10 +146,10 @@ func (s *Scheduler) CheckPreAnswer() string {
 	return result
 }
 
-// CheckMatch returns the text of match rules that matched the user message
-// but haven't fired yet. Ensures match triggers fire even on turns without
+// CheckRegex returns the text of regex rules that matched the user message
+// but haven't fired yet. Ensures regex triggers fire even on turns without
 // tool calls, where CheckAfterTools is never reached.
-func (s *Scheduler) CheckMatch() []string {
+func (s *Scheduler) CheckRegex() []string {
 	if s == nil {
 		return nil
 	}
@@ -159,10 +158,10 @@ func (s *Scheduler) CheckMatch() []string {
 
 	var result []string
 	for i, r := range s.rules {
-		if r.Trigger.Type != "match" {
+		if r.Trigger.Type != "regex" {
 			continue
 		}
-		if !s.matchResults[i] {
+		if !s.regexResults[i] {
 			continue
 		}
 		if _, fired := s.lastFired[i]; fired {
@@ -188,7 +187,7 @@ func (s *Scheduler) HasPreAnswerRules() bool {
 }
 
 // shouldFire checks if rule i should fire right now. Caller must hold s.mu.
-func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool, sameToolStreak int) bool {
+func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool) bool {
 	// Cooldown check
 	if last, ok := s.lastFired[i]; ok {
 		if s.toolCount-last < s.cooldown {
@@ -197,25 +196,18 @@ func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool, sameToolStreak
 	}
 
 	switch r.Trigger.Type {
-	case "periodic":
+	case "every_n_tools":
 		n := r.Trigger.N
 		if n <= 0 {
 			n = 5
 		}
 		return s.toolCount > 0 && s.toolCount%n == 0
 
-	case "after_streak":
-		n := r.Trigger.N
-		if n <= 0 {
-			n = 3
-		}
-		return sameToolStreak >= n
-
 	case "after_error":
 		return lastToolError
 
-	case "match":
-		return s.matchResults[i]
+	case "regex":
+		return s.regexResults[i]
 
 	case "pre_answer":
 		return false // handled separately by CheckPreAnswer

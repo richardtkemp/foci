@@ -25,9 +25,9 @@ type Rule struct {
 
 // Trigger describes when a rule should fire.
 type Trigger struct {
-	Type    string `json:"type"`              // "periodic", "pre_answer", "after_streak", "after_error", "match"
-	N       int    `json:"n,omitempty"`       // parameter for periodic/after_streak
-	Pattern string `json:"pattern,omitempty"` // regex for match trigger
+	Type    string `json:"type"`              // "every_n_tools", "every_n_turns", "after_error", "regex", "pre_answer"
+	N       int    `json:"n,omitempty"`       // parameter for every_n_tools/every_n_turns
+	Pattern string `json:"pattern,omitempty"` // regex pattern for regex trigger
 }
 
 const rulesFileName = "nudge-rules.json"

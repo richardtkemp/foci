@@ -198,7 +198,7 @@ type AgentConfig struct {
 	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
 	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
 	NudgeDefaultEnable     bool `toml:"nudge_default_enable"`       // enable built-in tool/skill reminders (default true)
-	NudgeDefaultFrequency  int  `toml:"nudge_default_frequency"`    // turns between tool/skill reminders (default 25)
+	NudgeDefaultFrequency  int  `toml:"nudge_default_frequency"`    // turns between tool/skill reminders (default 50)
 
 	CacheTTL string `toml:"cache_ttl"` // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 
@@ -605,7 +605,7 @@ type DefaultsConfig struct {
 	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
 	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
 	NudgeDefaultEnable     bool `toml:"nudge_default_enable"`       // enable built-in tool/skill reminders (default true)
-	NudgeDefaultFrequency  int  `toml:"nudge_default_frequency"`    // turns between tool/skill reminders (default 25)
+	NudgeDefaultFrequency  int  `toml:"nudge_default_frequency"`    // turns between tool/skill reminders (default 50)
 
 	StopAliases       []string `toml:"stop_aliases"`        // aliases for /stop command (e.g., ["stop", "wait"])
 	EnableStopAliases bool     `toml:"enable_stop_aliases"` // enable stop command aliases (default true)
