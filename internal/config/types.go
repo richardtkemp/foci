@@ -80,6 +80,23 @@ type AgentMemoryConfig struct {
 	Sources []MemorySource `toml:"sources"` // agent-specific memory directories
 }
 
+// AgentAnthropicConfig holds Anthropic-specific per-agent overrides.
+type AgentAnthropicConfig struct {
+	Thinking string `toml:"thinking"` // "adaptive" or "off"
+	Effort   string `toml:"effort"`   // "low", "medium", "high"
+	Speed    string `toml:"speed"`    // "fast" or ""
+}
+
+// AgentGeminiConfig holds Gemini-specific per-agent overrides.
+type AgentGeminiConfig struct {
+	Thinking string `toml:"thinking"` // "adaptive" or "off"
+}
+
+// AgentOpenAIConfig holds OpenAI-specific per-agent overrides.
+type AgentOpenAIConfig struct {
+	Reasoning string `toml:"reasoning"` // "adaptive" or "off"
+}
+
 type AgentConfig struct {
 	ID        string `toml:"id"`
 	Name      string `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
@@ -87,6 +104,11 @@ type AgentConfig struct {
 	Model     string `toml:"model"`    // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "gemini-flash")
 	Endpoint  string `toml:"endpoint"` // optional: which endpoint config to use (auto-selected from developer if empty)
 	Workspace string `toml:"workspace"`
+
+	// Per-agent provider overrides (resolved into Effort/Thinking/Speed by ApplyProviderDefaults)
+	Anthropic AgentAnthropicConfig `toml:"anthropic"`
+	Gemini    AgentGeminiConfig    `toml:"gemini"`
+	OpenAI    AgentOpenAIConfig    `toml:"openai"`
 
 	SystemFiles                   []string `toml:"system_files"`                     // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages             bool     `toml:"duplicate_messages"`               // send user text twice per API call (improves instruction following)
@@ -104,9 +126,9 @@ type AgentConfig struct {
 	BraindeadThreshold    int    `toml:"braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
 	BraindeadPrompt       string `toml:"braindead_prompt"`         // warning text injected as user message
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
-	Effort                string `toml:"effort"`                   // effort level: "low" (default), "medium", "high"
-	Thinking              string `toml:"thinking"`                 // thinking mode: "adaptive" (default) or "off"
-	Speed                 string `toml:"speed"`                    // speed mode: "standard" (default) or "fast" (Opus only, 6x pricing)
+	Effort                string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
+	Thinking              string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
+	Speed                 string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
 	FacetNoCompact    *bool  `toml:"facet_no_compact"`     // set no_compact on facet sessions (nil = true)
 
