@@ -435,6 +435,25 @@ func TestBleveSnippetContainsHighlight(t *testing.T) {
 	}
 }
 
+func TestBleveSearchHyphenatedQuery(t *testing.T) {
+	// Verifies that queries containing hyphens (e.g. "hunter-alpha") don't
+	// cause errors and still return matching results in the bleve backend.
+	idx, memDir := testBleveIndex(t)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The hunter-alpha protocol is used for tracking."), 0644)
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	results, err := idx.Search("hunter-alpha protocol", "", nil)
+	if err != nil {
+		t.Fatalf("Search with hyphenated query should not error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for hyphenated query")
+	}
+}
+
 func TestBleveSearchDateRangeFilter(t *testing.T) {
 	// Tests that date_from and date_to parameters correctly filter results in bleve.
 	idx, memDir := testBleveIndex(t)
