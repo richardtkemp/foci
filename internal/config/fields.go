@@ -249,6 +249,7 @@ var configFields = []ConfigField{
 	{"agent", "background.interval", FieldDuration, "background interval"},
 	{"agent", "memory_formation.interval", FieldDuration, "memory capture interval"},
 	{"agent", "memory_formation.consolidation_interval", FieldDuration, "memory consolidation interval"},
+	{"agent", "memory_formation.compaction_enabled", FieldBool, "memory capture before compaction"},
 
 	// anthropic
 	{"anthropic", "effort", FieldString, "effort level: low, medium, high"},
@@ -328,6 +329,7 @@ var configFields = []ConfigField{
 	// memory_formation (global)
 	{"memory_formation", "interval", FieldDuration, "time between captures"},
 	{"memory_formation", "consolidation_interval", FieldDuration, "min time between consolidations"},
+	{"memory_formation", "compaction_enabled", FieldBool, "memory capture before compaction"},
 
 	// environment
 	{"environment", "enabled", FieldBool, "inject environment block"},

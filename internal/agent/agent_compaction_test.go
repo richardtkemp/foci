@@ -289,6 +289,49 @@ func TestAgentCompactionIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("compaction_memory_hook", func(t *testing.T) {
+		// Proves CompactionMemoryFunc fires before compaction with the correct
+		// (pre-rotation) session key, and fires exactly once per compaction.
+		var turnCount atomic.Int32
+		env := newCompactionTestEnv(t, &turnCount, 5)
+
+		var memoryHookCalls []string
+		env.ag.CompactionMemoryFunc.Add(func(sessionKey string) {
+			memoryHookCalls = append(memoryHookCalls, sessionKey)
+		})
+
+		// Track compaction start to verify ordering
+		var startCalls []string
+		env.ag.CompactionStartFunc.Add(func(session string, msg string) {
+			startCalls = append(startCalls, session)
+		})
+
+		sessionKey := "test/icompactmem/1000000000"
+
+		// Phase 1: 4 turns with low tokens — no compaction, no hook
+		env.runTurns(t, sessionKey, 1, 4)
+
+		if len(memoryHookCalls) != 0 {
+			t.Fatalf("expected 0 memory hook calls before compaction, got %d", len(memoryHookCalls))
+		}
+
+		// Phase 2: Turn 5 — high tokens triggers compaction
+		env.runTurns(t, sessionKey, 5, 5)
+
+		// Hook should have fired exactly once with the pre-rotation key
+		if len(memoryHookCalls) != 1 {
+			t.Fatalf("expected 1 memory hook call, got %d", len(memoryHookCalls))
+		}
+		if memoryHookCalls[0] != sessionKey {
+			t.Errorf("memory hook got session key %q, want %q", memoryHookCalls[0], sessionKey)
+		}
+
+		// Memory hook should fire before compaction start
+		if len(startCalls) != 1 {
+			t.Fatalf("expected 1 compaction start call, got %d", len(startCalls))
+		}
+	})
+
 	t.Run("uses_session_model_for_context_limit", func(t *testing.T) {
 		// Verifies that compaction uses the session's effective model (not agent default)
 		// for context limit calculation. A session overridden to Gemini (1M context)

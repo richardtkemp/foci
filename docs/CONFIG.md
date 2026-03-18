@@ -913,6 +913,8 @@ Automatic memory capture and MEMORY.md consolidation. All three sub-features def
 | `consolidation_prompt` | string | `""` | Prompt override. `""` = embedded `memory-consolidation.md`, `"none"` = disabled, `/path` = custom file. |
 | `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and facet reclaim. |
 | `session_end_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+| `compaction_enabled` | bool | `true` | Run memory formation before compaction summarises context. |
+| `compaction_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
 
 All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
 
@@ -924,6 +926,8 @@ All prompt fields use 3-state resolution: `""` or `"default"` → embedded defau
 **Consolidation** reviews daily memory files and curates MEMORY.md. The last-run timestamp is persisted in state, so it survives restarts. Only fires when there's been user activity within the last hour.
 
 **Session-end** fires asynchronously on `/reset` and facet reclaim. Creates a branch from the expiring session (preserving conversation history) so the caller doesn't block.
+
+**Compaction** fires immediately before compaction summarises and replaces context. Creates a branch from the pre-compaction session so the memory agent sees the full conversation history that's about to be summarised. The branch is created synchronously (capturing the branch point) before compaction starts; the memory agent runs asynchronously in a goroutine.
 
 ### Usage Warnings (`[[agents.usage_warnings]]`)
 

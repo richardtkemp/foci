@@ -122,6 +122,9 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	}
 
 	oldCount := len(messages)
+	for _, fn := range a.CompactionMemoryFunc {
+		fn(sessionKey)
+	}
 	for _, fn := range a.CompactionStartFunc {
 		fn(sessionKey, "⏳ Compacting context...")
 	}
