@@ -247,3 +247,20 @@ func ParseByteSize(s string) (int, error) {
 	}
 	return n, nil
 }
+
+// ParseFileMode parses an octal file permission string like "0600" or "0640".
+// Returns os.FileMode.
+func ParseFileMode(s string) (os.FileMode, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty file mode")
+	}
+	n, err := strconv.ParseUint(s, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse file mode %q: %w (must be octal, e.g. \"0600\")", s, err)
+	}
+	if n > 0777 {
+		return 0, fmt.Errorf("file mode %q out of range (max 0777)", s)
+	}
+	return os.FileMode(n), nil
+}

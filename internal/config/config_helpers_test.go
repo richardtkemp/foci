@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -109,6 +110,42 @@ func TestParseByteSize(t *testing.T) {
 			}
 			if err == nil && got != tt.want {
 				t.Errorf("ParseByteSize(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseFileMode(t *testing.T) {
+	// Proves that ParseFileMode correctly converts octal permission strings
+	// to os.FileMode values, and rejects empty, non-octal, and out-of-range input.
+	tests := []struct {
+		name    string
+		input   string
+		want    os.FileMode
+		wantErr bool
+	}{
+		{"owner only", "0600", 0600, false},
+		{"group read", "0640", 0640, false},
+		{"world read", "0644", 0644, false},
+		{"all read-write", "0666", 0666, false},
+		{"all permissions", "0777", 0777, false},
+		{"no leading zero", "600", 0600, false},
+		{"with spaces", " 0600 ", 0600, false},
+		{"empty string", "", 0, true},
+		{"decimal not octal", "384", 0, true}, // 384 decimal = 0600 octal, but "8" is invalid octal
+		{"too large", "1000", 0, true},
+		{"non-numeric", "abc", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseFileMode(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseFileMode(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if err == nil && got != tt.want {
+				t.Errorf("ParseFileMode(%q) = %o, want %o", tt.input, got, tt.want)
 			}
 		})
 	}
