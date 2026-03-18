@@ -808,9 +808,9 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 func toolDisplayNote(mode string) string {
 	switch mode {
 	case "full":
-		return "[display] tool_results=visible — the user can see your tool calls, inputs, and outputs."
+		return "[display] tool_results=visible — the user can see your tool calls, inputs, and outputs, so you may refer to those rather than restate them in full, but you should still narrate the outline of what you are doing or what you have learned."
 	case "preview":
-		return "[display] tool_results=preview — the user sees tool names but not inputs or outputs."
+		return "[display] tool_results=preview — the user sees tool names and inputs briefly, but not inputs or outputs."
 	default:
 		return "[display] tool_results=hidden — the user cannot see tool calls or results. Narrate important actions and findings in your replies."
 	}
