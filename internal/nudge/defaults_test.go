@@ -140,6 +140,58 @@ func TestDefaultRulesFrequencyDefault(t *testing.T) {
 	}
 }
 
+func TestBraindeadRuleBasic(t *testing.T) {
+	// Verifies that BraindeadRule generates a single every_n_tools rule
+	// with the default prompt when no custom prompt is provided.
+	t.Parallel()
+
+	rules := BraindeadRule(10, "")
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	r := rules[0]
+	if r.Trigger.Type != "every_n_tools" {
+		t.Errorf("expected trigger type every_n_tools, got %q", r.Trigger.Type)
+	}
+	if r.Trigger.N != 10 {
+		t.Errorf("expected N=10, got %d", r.Trigger.N)
+	}
+	if !strings.Contains(r.Text, "consecutive tool calls") {
+		t.Error("expected default braindead prompt text")
+	}
+	if r.Priority != "high" {
+		t.Errorf("expected priority high, got %q", r.Priority)
+	}
+	if r.SourceFile != "builtin" {
+		t.Errorf("expected source_file builtin, got %q", r.SourceFile)
+	}
+}
+
+func TestBraindeadRuleCustomPrompt(t *testing.T) {
+	// Verifies that a custom prompt overrides the default.
+	t.Parallel()
+
+	rules := BraindeadRule(5, "custom warning text")
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Text != "custom warning text" {
+		t.Errorf("expected custom text, got %q", rules[0].Text)
+	}
+}
+
+func TestBraindeadRuleDisabled(t *testing.T) {
+	// Verifies that threshold <= 0 returns nil (disabled).
+	t.Parallel()
+
+	if rules := BraindeadRule(0, ""); rules != nil {
+		t.Errorf("expected nil for threshold=0, got %d rules", len(rules))
+	}
+	if rules := BraindeadRule(-1, ""); rules != nil {
+		t.Errorf("expected nil for threshold=-1, got %d rules", len(rules))
+	}
+}
+
 func TestDefaultRulesSourceFile(t *testing.T) {
 	// Verifies the source_file is set to "builtin".
 	t.Parallel()

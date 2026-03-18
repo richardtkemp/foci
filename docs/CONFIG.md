@@ -720,13 +720,12 @@ Missing files are silently skipped. The last file gets the cache breakpoint mark
 
 ### Braindead Warning
 
-Set in `[defaults]`, overridable per-agent.
+Implemented as a built-in nudge rule with an `every_n_tools` trigger. When tool calls reach the threshold, a warning is injected via the nudge system. Subject to the same cooldown and rate-limiting as other nudge rules. Set in `[defaults]`, overridable per-agent.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `braindead_warning_enable` | bool | `true` | Enable braindead warning injection. `false` disables. |
-| `braindead_warning_threshold` | int | `10` | Consecutive tool-call loops before injecting a braindead warning. `0` disables. |
-| `braindead_warning_prompt` | string | `""` | Custom warning text injected when the threshold is hit. `""` uses a hardcoded default. |
+| `braindead_threshold` | int | `10` | Tool calls before injecting a braindead warning. `0` disables. |
+| `braindead_prompt` | string | `""` | Custom warning text injected when the threshold is hit. `""` uses a hardcoded default. |
 | `turn_lock_warn_threshold` | string | `"3m"` | Warn if turn lock wait exceeds this duration. Go duration format. `proactive_warning` triggers are excluded. |
 
 ### Nudge System

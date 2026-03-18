@@ -211,8 +211,6 @@ func setupAgent(p setupParams) *agentInstance {
 		PromptSearchDirs:               promptSearchDirs,
 		MaxToolLoops:                   acfg.MaxToolLoops,
 		MaxOutputTokens:                acfg.MaxOutputTokens,
-		BraindeadWarningThreshold:      acfg.BraindeadThreshold,
-		BraindeadWarningPrompt:         acfg.BraindeadPrompt,
 		TurnLockWarnThreshold:          parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
 		Effort:                         acfg.Effort,
 		Thinking:                       acfg.Thinking,

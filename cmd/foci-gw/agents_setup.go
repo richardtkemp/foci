@@ -256,9 +256,13 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
-	if !acfg.NudgeEnable && !acfg.NudgeDefaultEnable {
+	hasBraindead := acfg.BraindeadThreshold > 0
+	if !acfg.NudgeEnable && !acfg.NudgeDefaultEnable && !hasBraindead {
 		return
 	}
+
+	// Braindead warning rule (fires every N tool calls).
+	braindeadRules := nudge.BraindeadRule(acfg.BraindeadThreshold, acfg.BraindeadPrompt)
 
 	// Load character-derived rules.
 	var charRules []nudge.Rule
@@ -293,11 +297,12 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, freq)
 	}
 
-	allRules := append(charRules, defaultRules...)
+	// Braindead first (highest effective priority), then character, then defaults.
+	allRules := append(braindeadRules, append(charRules, defaultRules...)...)
 	if len(allRules) > 0 {
 		rs := &nudge.RuleSet{Rules: allRules}
 		ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
-		log.Infof("main", "agent %s: loaded %d nudge rules (%d character, %d default)", acfg.ID, len(allRules), len(charRules), len(defaultRules))
+		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules))
 	}
 
 	ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
