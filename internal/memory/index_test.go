@@ -557,6 +557,46 @@ func TestIndexBusyTimeout(t *testing.T) {
 	}
 }
 
+func TestSanitizeFTS5Query(t *testing.T) {
+	// Verifies that sanitizeFTS5Query quotes each term to prevent FTS5 from
+	// interpreting hyphens as column filters and keywords as boolean operators.
+	tests := []struct {
+		input, want string
+	}{
+		{"hunter-alpha model", `"hunter-alpha" "model"`},
+		{"simple query", `"simple" "query"`},
+		{`has "quotes"`, `"has" """quotes"""`},
+		{"OR AND NOT", `"OR" "AND" "NOT"`},
+		{"", ""},
+		{"single", `"single"`},
+	}
+	for _, tt := range tests {
+		got := sanitizeFTS5Query(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizeFTS5Query(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestSearchHyphenatedQuery(t *testing.T) {
+	// Verifies that queries containing hyphens (e.g. "hunter-alpha") don't
+	// cause FTS5 column-filter errors and still return matching results.
+	idx, memDir := testIndex(t)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The hunter-alpha protocol is used for tracking."), 0644)
+	if err := idx.Reindex(); err != nil {
+		t.Fatalf("Reindex: %v", err)
+	}
+
+	results, err := idx.Search("hunter-alpha protocol", "", nil)
+	if err != nil {
+		t.Fatalf("Search with hyphenated query should not error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results for hyphenated query")
+	}
+}
+
 func TestSearchDateRangeFilter(t *testing.T) {
 	// Tests that date_from and date_to parameters correctly filter results.
 	idx, memDir := testIndex(t)

@@ -405,7 +405,7 @@ func (b *BleveIndex) SearchTodos(agentID, queryStr, sortOrder string, limit int)
 		}
 		textQuery = bq
 	} else {
-		textQuery = bleve.NewQueryStringQuery(queryStr)
+		textQuery = bleve.NewQueryStringQuery(sanitizeBleveQuery(queryStr))
 	}
 
 	// Filter: source = "todo"
@@ -465,6 +465,23 @@ func allNegatedTerms(q string) (bool, []string) {
 	return true, terms
 }
 
+// sanitizeBleveQuery wraps each space-separated term in double quotes to prevent
+// Bleve's QueryStringQuery from interpreting special characters as operators.
+// Without this, hyphens are treated as must-not (e.g. "hunter-alpha" excludes
+// "alpha"), and characters like +, :, ^, ~, * have special meaning.
+func sanitizeBleveQuery(q string) string {
+	terms := strings.Fields(q)
+	if len(terms) == 0 {
+		return q
+	}
+	for i, t := range terms {
+		t = strings.ReplaceAll(t, `\`, `\\`)
+		t = strings.ReplaceAll(t, `"`, `\"`)
+		terms[i] = `"` + t + `"`
+	}
+	return strings.Join(terms, " ")
+}
+
 // Search queries the bleve index. sort controls result ordering:
 // "relevance" (default/empty) orders by weighted score,
 // "newest" orders by mtime descending, "oldest" orders by mtime ascending.
@@ -474,7 +491,7 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 	defer b.mu.Unlock()
 
 	// Build the main query
-	mainQuery := bleve.NewQueryStringQuery(queryStr)
+	mainQuery := bleve.NewQueryStringQuery(sanitizeBleveQuery(queryStr))
 
 	var finalQuery query.Query = mainQuery
 

@@ -171,6 +171,22 @@ func (idx *Index) buildWeightedRankCase() string {
 	return "CASE f.source " + strings.Join(cases, " ") + " END"
 }
 
+// sanitizeFTS5Query wraps each space-separated term in double quotes to prevent
+// FTS5 from interpreting special characters as query operators. Without this,
+// hyphens trigger column-filter parsing (e.g. "hunter-alpha" → column "alpha"),
+// and words like OR/AND/NOT/NEAR are treated as boolean operators.
+func sanitizeFTS5Query(query string) string {
+	terms := strings.Fields(query)
+	if len(terms) == 0 {
+		return query
+	}
+	for i, t := range terms {
+		t = strings.ReplaceAll(t, `"`, `""`)
+		terms[i] = `"` + t + `"`
+	}
+	return strings.Join(terms, " ")
+}
+
 // Search queries the FTS5 index. sort controls result ordering:
 // "relevance" (default/empty) orders by weighted rank,
 // "newest" orders by file mtime descending, "oldest" orders by mtime ascending.
@@ -181,7 +197,7 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 
 	var dateFilter string
 	var args []interface{}
-	args = append(args, query)
+	args = append(args, sanitizeFTS5Query(query))
 
 	if opts != nil {
 		if opts.DateFrom != nil {
