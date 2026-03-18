@@ -48,11 +48,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"status": {
 					"type": "string",
-					"description": "Filter by status (used with 'list' and 'search'). For 'list': default is active (excludes done/dropped). For 'search': default is all. Values: 'open', 'in_progress', 'done', 'dropped', 'active', 'all'"
+					"description": "Filter by status (used with 'list' and 'search'). For 'list': default is active (excludes done/dropped). For 'search': default is all. Values: 'open', 'started', 'done', 'dropped', 'active', 'all'"
 				},
 				"state": {
 					"type": "string",
-					"description": "Target state for 'transition': 'open', 'in_progress', 'done', or 'dropped'"
+					"description": "Target state for 'transition': 'open', 'started', 'done', or 'dropped'"
 				},
 				"query": {
 					"type": "string",
@@ -139,7 +139,7 @@ func formatTodoLineOpts(item memory.TodoItem, showMarker bool) string {
 	if showMarker {
 		marker := "[ ]"
 		switch item.Status {
-		case "in_progress":
+		case "started":
 			marker = "[>]"
 		case "done":
 			marker = "[x]"
@@ -224,7 +224,7 @@ func FormatTodoTable(items []memory.TodoItem) string {
 	for i, item := range items {
 		marker := "[ ]"
 		switch item.Status {
-		case "in_progress":
+		case "started":
 			marker = "[>]"
 		case "done":
 			marker = "[x]"
@@ -371,8 +371,8 @@ func normalizeStatusFilter(s string) string {
 		return "active"
 	case "open", "reopen", "reopened":
 		return "open"
-	case "in_progress", "in-progress", "wip", "started", "working":
-		return "in_progress"
+	case "started", "in_progress", "in-progress", "wip", "working":
+		return "started"
 	case "done", "complete", "completed":
 		return "done"
 	case "dropped", "drop", "cancelled", "canceled":
@@ -390,16 +390,16 @@ func normalizeState(s string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "open", "reopen", "reopened":
 		return "open", nil
-	case "in_progress", "in-progress", "wip", "started", "working":
-		return "in_progress", nil
+	case "started", "in_progress", "in-progress", "wip", "working":
+		return "started", nil
 	case "done", "complete", "completed":
 		return "done", nil
 	case "dropped", "drop", "cancelled", "canceled":
 		return "dropped", nil
 	case "":
-		return "", fmt.Errorf("state is required for transition (use 'open', 'in_progress', 'done', or 'dropped')")
+		return "", fmt.Errorf("state is required for transition (use 'open', 'started', 'done', or 'dropped')")
 	default:
-		return "", fmt.Errorf("unknown state %q (use 'open', 'in_progress', 'done', or 'dropped')", s)
+		return "", fmt.Errorf("unknown state %q (use 'open', 'started', 'done', or 'dropped')", s)
 	}
 }
 

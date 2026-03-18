@@ -37,7 +37,7 @@ Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15)
 
 - `/todo new <text> [p:PRIORITY] [t:TAG]` — create a new todo
 - `/todo done <id> [id...]` — mark as done (ambiguity: `done` alone lists done items, `done 5` transitions)
-- `/todo start <id> [id...]` — mark as in progress
+- `/todo start <id> [id...]` — mark as started
 - `/todo drop <id> [id...]` — mark as dropped
 - `/todo reopen <id> [id...]` — reopen to "open"
 - `/todo edit <id> [p:PRIORITY] [t:TAG] [new text]` — edit fields
@@ -53,8 +53,8 @@ Manage todo items. Bare `/todo` lists active items sorted by priority (limit 15)
 |---|---|
 | `open` | Only open items |
 | `done` / `closed` | Only done items |
-| `active` | Open + in_progress (default) |
-| `in_progress` | Only in-progress items |
+| `active` | Open + started (default) |
+| `started` | Only started items |
 | `dropped` | Only dropped items |
 | `all` | All statuses |
 | `t:TAG` | Only items with this tag (multiple `t:` filters use AND logic) |

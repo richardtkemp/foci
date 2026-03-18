@@ -139,8 +139,8 @@ func parseListArgs(a *todoArgs, tokens []string) {
 			a.status = "active"
 		case "dropped":
 			a.status = "dropped"
-		case "in_progress":
-			a.status = "in_progress"
+		case "started":
+			a.status = "started"
 
 		// Sort tokens
 		case "created":
@@ -256,7 +256,7 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 		}
 
 		switch lower {
-		case "open", "done", "closed", "all", "active", "dropped", "in_progress",
+		case "open", "done", "closed", "all", "active", "dropped", "started",
 			"created", "updated", "priority",
 			"reverse":
 			// Re-use parseListArgs logic for this single token.
@@ -322,7 +322,7 @@ func TodoCommand() *Command {
 			case "done":
 				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "done")
 			case "start":
-				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "in_progress")
+				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "started")
 			case "drop":
 				return todoBatchTransition(cc.TodoStore, agentID, args.ids, "dropped")
 			case "reopen":
@@ -557,7 +557,7 @@ func todoStatsCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respo
 		{Header: "Count", Align: display.AlignRight},
 	}
 	var statusRows [][]string
-	for _, s := range []string{"open", "in_progress", "done", "dropped"} {
+	for _, s := range []string{"open", "started", "done", "dropped"} {
 		if c := statusCounts[s]; c > 0 {
 			statusRows = append(statusRows, []string{s, strconv.Itoa(c)})
 		}
@@ -594,14 +594,14 @@ func todoStatsCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respo
 }
 
 // matchesStatus reports whether itemStatus passes the given filter.
-// Empty filter matches all; "active" matches open and in_progress;
+// Empty filter matches all; "active" matches open and started;
 // otherwise exact match.
 func matchesStatus(itemStatus, filter string) bool {
 	switch filter {
 	case "":
 		return true
 	case "active":
-		return itemStatus == "open" || itemStatus == "in_progress"
+		return itemStatus == "open" || itemStatus == "started"
 	default:
 		return itemStatus == filter
 	}

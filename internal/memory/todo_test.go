@@ -191,7 +191,7 @@ func TestTodoListFilterByStatus(t *testing.T) {
 }
 
 func TestTodoListFilterActive(t *testing.T) {
-	// Verifies the "active" status filter excludes done and dropped items, returning only open and in-progress todos.
+	// Verifies the "active" status filter excludes done and dropped items, returning only open and started todos.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Open task", "medium", "")
@@ -201,7 +201,7 @@ func TestTodoListFilterActive(t *testing.T) {
 
 	store.Complete("agent1", id2, "finished")
 	store.Transition("agent1", id3, "dropped", "not needed")
-	store.Transition("agent1", id4, "in_progress", "")
+	store.Transition("agent1", id4, "started", "")
 
 	active, err := store.List("agent1", "active", nil, "", "", false, 0)
 	if err != nil {
@@ -779,32 +779,32 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	}
 }
 
-func TestTodoTransitionInProgress(t *testing.T) {
-	// Verifies the full status lifecycle: open → in_progress → done → in_progress, checking that completed_at is set/cleared appropriately.
+func TestTodoTransitionStarted(t *testing.T) {
+	// Verifies the full status lifecycle: open → started → done → started, checking that completed_at is set/cleared appropriately.
 	store := newTestTodoStore(t)
 
 	id, _ := store.Add("agent1", "Working on it", "high", "")
 
-	// Transition to in_progress
-	if err := store.Transition("agent1", id, "in_progress", ""); err != nil {
-		t.Fatalf("Transition to in_progress: %v", err)
+	// Transition to started
+	if err := store.Transition("agent1", id, "started", ""); err != nil {
+		t.Fatalf("Transition to started: %v", err)
 	}
 
 	item, err := store.Get("agent1", id)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if item.Status != "in_progress" {
-		t.Errorf("status = %q, want in_progress", item.Status)
+	if item.Status != "started" {
+		t.Errorf("status = %q, want started", item.Status)
 	}
 	if item.CompletedAt != nil {
-		t.Error("completed_at should be nil for in_progress")
+		t.Error("completed_at should be nil for started")
 	}
 	if item.CloseReason != "" {
-		t.Errorf("close_reason should be empty for in_progress, got %q", item.CloseReason)
+		t.Errorf("close_reason should be empty for started, got %q", item.CloseReason)
 	}
 
-	// Transition from in_progress to done
+	// Transition from started to done
 	if err := store.Transition("agent1", id, "done", "finished"); err != nil {
 		t.Fatalf("Transition to done: %v", err)
 	}
@@ -816,28 +816,28 @@ func TestTodoTransitionInProgress(t *testing.T) {
 		t.Error("completed_at should be set after done")
 	}
 
-	// Transition from done back to in_progress
-	if err := store.Transition("agent1", id, "in_progress", ""); err != nil {
-		t.Fatalf("Transition back to in_progress: %v", err)
+	// Transition from done back to started
+	if err := store.Transition("agent1", id, "started", ""); err != nil {
+		t.Fatalf("Transition back to started: %v", err)
 	}
 	item, _ = store.Get("agent1", id)
-	if item.Status != "in_progress" {
-		t.Errorf("status = %q, want in_progress", item.Status)
+	if item.Status != "started" {
+		t.Errorf("status = %q, want started", item.Status)
 	}
 	if item.CompletedAt != nil {
-		t.Error("completed_at should be nil after reverting to in_progress")
+		t.Error("completed_at should be nil after reverting to started")
 	}
 }
 
-func TestTodoSortOrderInProgress(t *testing.T) {
-	// Verifies that in-progress todos are sorted before open todos in the default list order.
+func TestTodoSortOrderStarted(t *testing.T) {
+	// Verifies that started todos are sorted before open todos in the default list order.
 	store := newTestTodoStore(t)
 
 	store.Add("agent1", "Open task", "high", "")
-	id2, _ := store.Add("agent1", "In progress task", "high", "")
+	id2, _ := store.Add("agent1", "Started task", "high", "")
 	store.Add("agent1", "Another open task", "high", "")
 
-	store.Transition("agent1", id2, "in_progress", "")
+	store.Transition("agent1", id2, "started", "")
 
 	items, err := store.List("agent1", "", nil, "", "", false, 0)
 	if err != nil {
@@ -846,8 +846,8 @@ func TestTodoSortOrderInProgress(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("expected 3 items, got %d", len(items))
 	}
-	if items[0].Status != "in_progress" {
-		t.Errorf("first item status = %q, want in_progress", items[0].Status)
+	if items[0].Status != "started" {
+		t.Errorf("first item status = %q, want started", items[0].Status)
 	}
 	if items[1].Status != "open" || items[2].Status != "open" {
 		t.Errorf("remaining items should be open, got %q and %q", items[1].Status, items[2].Status)
@@ -977,7 +977,7 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 	id1, _ := store.Add("agent1", "First task", "high", "")
 	time.Sleep(50 * time.Millisecond)
 	id2, _ := store.Add("agent1", "Second task", "high", "")
-	store.Transition("agent1", id2, "in_progress", "")
+	store.Transition("agent1", id2, "started", "")
 	time.Sleep(50 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Third task", "high", "")
 	store.Transition("agent1", id3, "done", "completed")
@@ -1015,7 +1015,7 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 	id1, _ := store.Add("agent1", "Task 1", "medium", "")
 	time.Sleep(1100 * time.Millisecond)
 	id2, _ := store.Add("agent1", "Task 2", "medium", "")
-	store.Transition("agent1", id2, "in_progress", "")
+	store.Transition("agent1", id2, "started", "")
 	time.Sleep(1100 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Task 3", "medium", "")
 	store.Transition("agent1", id3, "done", "completed")
