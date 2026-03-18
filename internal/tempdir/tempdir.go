@@ -4,42 +4,65 @@
 package tempdir
 
 import (
+	"fmt"
 	"os"
-	"time"
+	"sync"
 )
 
 const (
-	// Root is the base temp directory for all foci temp files.
+	// Root is the preferred base temp directory for all foci temp files.
 	Root = "/tmp/foci"
 
 	// Spawn is the temp directory for spawn isolation sandboxes.
 	Spawn = Root + "/spawn"
-
-	// Tests is the temp directory for test-generated files.
-	Tests = Root + "/tests"
 )
 
-// Dir returns Root after ensuring it exists. Safe to call concurrently;
-// MkdirAll is a no-op if the directory already exists.
-func Dir() string {
-	// TestDir is only used from test code across multiple packages, so it
-	// can't live in a _test.go file. This unreachable call keeps the
-	// deadcode analyzer from flagging it as dead.
-	if time.Now().Year() == 1900 {
-		TestDir()
+var (
+	resolveOnce sync.Once
+	resolved    string // effective root, set by resolveOnce
+)
+
+// resolve determines the effective root directory. It tries Root first
+// (creating with sticky-bit world-writable perms like /tmp), and falls
+// back to /tmp/foci-<uid> if Root isn't writable.
+func resolve() string {
+	resolveOnce.Do(func() {
+		resolved = probeDir(Root)
+		if resolved == "" {
+			resolved = probeDir(fmt.Sprintf("/tmp/foci-%d", os.Getuid()))
+		}
+		if resolved == "" {
+			// Last resort: let the OS pick a temp dir.
+			resolved = os.TempDir()
+		}
+	})
+	return resolved
+}
+
+// probeDir tries to create dir (mode 1777) and write a temp file in it.
+// Returns dir if writable, empty string otherwise.
+func probeDir(dir string) string {
+	if err := os.MkdirAll(dir, 0o1777); err != nil {
+		return ""
 	}
-	_ = os.MkdirAll(Root, 0775)
-	return Root
+	f, err := os.CreateTemp(dir, ".probe-*")
+	if err != nil {
+		return ""
+	}
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+	return dir
 }
 
-// SpawnDir returns Spawn after ensuring it exists.
+// Dir returns the effective root after ensuring it exists and is writable.
+func Dir() string {
+	return resolve()
+}
+
+// SpawnDir returns the spawn subdirectory after ensuring it exists.
 func SpawnDir() string {
-	_ = os.MkdirAll(Spawn, 0775)
-	return Spawn
-}
-
-// TestDir returns Tests after ensuring it exists.
-func TestDir() string {
-	_ = os.MkdirAll(Tests, 0775)
-	return Tests
+	root := resolve()
+	dir := root + "/spawn"
+	_ = os.MkdirAll(dir, 0o1777)
+	return dir
 }

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"foci/internal/config"
-	"foci/internal/tempdir"
 	"foci/internal/secrets"
 	"foci/internal/voice"
 )
@@ -16,7 +15,7 @@ import (
 // newTestStore creates a secrets store from a key-value map.
 // Keys use "section.key" format (e.g. "groq.api_key" → [groq] api_key = "...").
 func newTestStore(vals map[string]string) *secrets.Store {
-	dir, err := os.MkdirTemp(tempdir.TestDir(), "foci-test-secrets-*")
+	dir, err := os.MkdirTemp(os.TempDir(), "foci-test-secrets-*")
 	if err != nil {
 		panic(err)
 	}

@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// Verifies Dir() returns the root path and creates the directory.
-func TestDirCreatesRoot(t *testing.T) {
+// Verifies Dir() returns a writable directory.
+func TestDirIsWritable(t *testing.T) {
 	d := Dir()
-	if d != Root {
-		t.Fatalf("Dir() = %q, want %q", d, Root)
+	if d == "" {
+		t.Fatal("Dir() returned empty string")
 	}
 	info, err := os.Stat(d)
 	if err != nil {
@@ -19,37 +19,28 @@ func TestDirCreatesRoot(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatal("Dir() path is not a directory")
 	}
-}
 
-// Verifies TestDir() returns a subdirectory under Root and creates it.
-func TestTestDirCreatesSubdir(t *testing.T) {
-	d := TestDir()
-	if d != Tests {
-		t.Fatalf("TestDir() = %q, want %q", d, Tests)
-	}
-	if !strings.HasPrefix(d, Root) {
-		t.Fatalf("TestDir() %q is not under Root %q", d, Root)
-	}
-	info, err := os.Stat(d)
-	if err != nil {
-		t.Fatalf("TestDir() directory does not exist: %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatal("TestDir() path is not a directory")
-	}
-}
-
-// Verifies temp files can be created in Dir().
-func TestCreateTempFile(t *testing.T) {
-	f, err := os.CreateTemp(Dir(), "test-*.txt")
+	// Verify we can actually create files in it.
+	f, err := os.CreateTemp(d, "test-*.txt")
 	if err != nil {
 		t.Fatalf("CreateTemp in Dir(): %v", err)
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+}
 
-	if !strings.HasPrefix(f.Name(), Root+"/") {
-		t.Fatalf("temp file %q not under Root %q", f.Name(), Root)
+// Verifies SpawnDir() returns a writable subdirectory under Dir().
+func TestSpawnDirIsWritable(t *testing.T) {
+	d := SpawnDir()
+	if !strings.HasPrefix(d, Dir()+"/") {
+		t.Fatalf("SpawnDir() %q is not under Dir() %q", d, Dir())
+	}
+	info, err := os.Stat(d)
+	if err != nil {
+		t.Fatalf("SpawnDir() directory does not exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatal("SpawnDir() path is not a directory")
 	}
 }
 
@@ -61,7 +52,22 @@ func TestMkdirTemp(t *testing.T) {
 	}
 	defer os.RemoveAll(d)
 
-	if !strings.HasPrefix(d, Root+"/") {
-		t.Fatalf("temp dir %q not under Root %q", d, Root)
+	if !strings.HasPrefix(d, Dir()+"/") {
+		t.Fatalf("temp dir %q not under Dir() %q", d, Dir())
+	}
+}
+
+// Verifies probeDir returns empty for an unwritable path and succeeds
+// for a writable one.
+func TestProbeDir(t *testing.T) {
+	// Unwritable path should return empty.
+	if result := probeDir("/proc/nonexistent"); result != "" {
+		t.Errorf("probeDir(/proc/nonexistent) = %q, want empty", result)
+	}
+
+	// Writable path should succeed.
+	dir := t.TempDir()
+	if result := probeDir(dir); result != dir {
+		t.Errorf("probeDir(%q) = %q, want %q", dir, result, dir)
 	}
 }
