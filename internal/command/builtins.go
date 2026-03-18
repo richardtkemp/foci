@@ -105,10 +105,6 @@ func FacetCommand() *Command {
 // TmuxCommand returns a /tmux command that wraps the tmux tool, exposing all
 // operations via slash-command syntax.
 func TmuxCommand() *Command {
-	const usage = `Usage: /tmux <command> [args...]
-
-Commands: list, start, send, read, kill, watch, unwatch`
-
 	execTmux := func(ctx context.Context, cc CommandContext, params json.RawMessage) (string, error) {
 		if cc.TmuxTool == nil {
 			return "", fmt.Errorf("tmux tool not available")
@@ -117,17 +113,162 @@ Commands: list, start, send, read, kill, watch, unwatch`
 		return result.Text, err
 	}
 
-	return &Command{
+	simpleOp := func(operation string) func(context.Context, Request, CommandContext) (Response, error) {
+		return func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			fields := strings.Fields(req.Args)
+			if len(fields) < 1 {
+				return Response{}, fmt.Errorf("usage: /tmux %s <name>", operation)
+			}
+			params := map[string]interface{}{
+				"operation": operation,
+				"name":      fields[0],
+			}
+			raw, _ := json.Marshal(params)
+			text, err := execTmux(ctx, cc, raw)
+			return Response{Text: text}, err
+		}
+	}
+
+	cmd := &Command{
 		Name:        "tmux",
 		Description: "Manage tmux sessions — start, send, read, list, kill, watch, unwatch",
 		Category:    "observability",
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "list", Data: "list"},
-				{Label: "kill", Data: "kill"},
-				{Label: "read", Data: "read"},
-				{Label: "watch", Data: "watch"},
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "list",
+				Description: "List tmux sessions",
+				Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+					raw, _ := json.Marshal(map[string]interface{}{"operation": "list"})
+					text, err := execTmux(ctx, cc, raw)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "start",
+				Description: "Start a new tmux session",
+				Hidden:      true,
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					fields := strings.Fields(req.Args)
+					params := map[string]interface{}{"operation": "start"}
+					autoWatch := true
+					var cmdParts []string
+					for i := 0; i < len(fields); i++ {
+						if fields[i] == "--no-watch" {
+							autoWatch = false
+							continue
+						}
+						if _, ok := params["name"]; !ok {
+							params["name"] = fields[i]
+						} else {
+							cmdParts = append(cmdParts, fields[i:]...)
+							break
+						}
+					}
+					if len(cmdParts) > 0 {
+						params["command"] = strings.Join(cmdParts, " ")
+					}
+
+					raw, _ := json.Marshal(params)
+					text, err := execTmux(ctx, cc, raw)
+					if err != nil {
+						return Response{}, err
+					}
+
+					if autoWatch {
+						name, _ := params["name"].(string)
+						if name == "" {
+							name = strings.TrimPrefix(text, "Session started: ")
+						}
+						watchParams, _ := json.Marshal(map[string]interface{}{
+							"operation": "watch",
+							"name":      name,
+						})
+						watchText, watchErr := execTmux(ctx, cc, watchParams)
+						if watchErr != nil {
+							return Response{Text: text + "\n(auto-watch failed: " + watchErr.Error() + ")"}, nil
+						}
+						return Response{Text: text + "\n" + watchText}, nil
+					}
+					return Response{Text: text}, nil
+				},
+			},
+			{
+				Name:        "send",
+				Description: "Send keys to a tmux session",
+				Hidden:      true,
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					fields := strings.Fields(req.Args)
+					if len(fields) < 2 {
+						return Response{}, fmt.Errorf("usage: /tmux send <name> <keys...>")
+					}
+					params := map[string]interface{}{
+						"operation": "send",
+						"name":      fields[0],
+						"keys":      strings.Join(fields[1:], " "),
+					}
+					raw, _ := json.Marshal(params)
+					text, err := execTmux(ctx, cc, raw)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "read",
+				Description: "Read output from a tmux session",
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					fields := strings.Fields(req.Args)
+					if len(fields) < 1 {
+						return Response{}, fmt.Errorf("usage: /tmux read <name> [lines]")
+					}
+					params := map[string]interface{}{
+						"operation": "read",
+						"name":      fields[0],
+					}
+					if len(fields) > 1 {
+						if n, err := strconv.Atoi(fields[1]); err == nil {
+							params["lines"] = n
+						}
+					}
+					raw, _ := json.Marshal(params)
+					text, err := execTmux(ctx, cc, raw)
+					if err != nil {
+						return Response{}, err
+					}
+					return Response{Text: "```\n" + text + "\n```"}, nil
+				},
+			},
+			{
+				Name:        "kill",
+				Description: "Kill a tmux session",
+				Execute:     simpleOp("kill"),
+			},
+			{
+				Name:        "watch",
+				Description: "Watch a tmux session for output changes",
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					fields := strings.Fields(req.Args)
+					if len(fields) < 1 {
+						return Response{}, fmt.Errorf("usage: /tmux watch <name> [threshold_secs]")
+					}
+					params := map[string]interface{}{
+						"operation": "watch",
+						"name":      fields[0],
+					}
+					if len(fields) > 1 {
+						if n, err := strconv.Atoi(fields[1]); err == nil {
+							params["threshold_seconds"] = n
+						}
+					}
+					raw, _ := json.Marshal(params)
+					text, err := execTmux(ctx, cc, raw)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "unwatch",
+				Description: "Stop watching a tmux session",
+				Hidden:      true,
+				Execute:     simpleOp("unwatch"),
+			},
 		},
 		ChainKeyboard: func(ctx context.Context, subcommand string, cc CommandContext) []KeyboardOption {
 			switch subcommand {
@@ -138,7 +279,6 @@ Commands: list, start, send, read, kill, watch, unwatch`
 			if cc.TmuxTool == nil {
 				return nil
 			}
-			// List owned + watched sessions to build dynamic buttons
 			listParams, _ := json.Marshal(map[string]interface{}{"operation": "list"})
 			result, err := cc.TmuxTool.Execute(ctx, listParams)
 			if err != nil || result.Text == "No tmux sessions." {
@@ -173,137 +313,9 @@ Commands: list, start, send, read, kill, watch, unwatch`
 			}
 			return opts
 		},
-		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			fields := strings.Fields(req.Args)
-
-			if len(fields) == 0 {
-				return Response{Text: usage}, nil
-			}
-
-			op := fields[0]
-			fields = fields[1:]
-
-			var params map[string]interface{}
-
-			switch op {
-			case "list":
-				params = map[string]interface{}{"operation": "list"}
-
-			case "start":
-				params = map[string]interface{}{"operation": "start"}
-				autoWatch := true
-				var cmdParts []string
-				for i := 0; i < len(fields); i++ {
-					if fields[i] == "--no-watch" {
-						autoWatch = false
-						continue
-					}
-					if _, ok := params["name"]; !ok {
-						params["name"] = fields[i]
-					} else {
-						cmdParts = append(cmdParts, fields[i:]...)
-						break
-					}
-				}
-				if len(cmdParts) > 0 {
-					params["command"] = strings.Join(cmdParts, " ")
-				}
-
-				raw, _ := json.Marshal(params)
-				text, err := execTmux(ctx, cc, raw)
-				if err != nil {
-					return Response{}, err
-				}
-
-				if autoWatch {
-					name, _ := params["name"].(string)
-					if name == "" {
-						name = strings.TrimPrefix(text, "Session started: ")
-					}
-					watchParams, _ := json.Marshal(map[string]interface{}{
-						"operation": "watch",
-						"name":      name,
-					})
-					watchText, watchErr := execTmux(ctx, cc, watchParams)
-					if watchErr != nil {
-						return Response{Text: text + "\n(auto-watch failed: " + watchErr.Error() + ")"}, nil
-					}
-					return Response{Text: text + "\n" + watchText}, nil
-				}
-				return Response{Text: text}, nil
-
-			case "send":
-				if len(fields) < 2 {
-					return Response{}, fmt.Errorf("usage: /tmux send <name> <keys...>")
-				}
-				params = map[string]interface{}{
-					"operation": "send",
-					"name":      fields[0],
-					"keys":      strings.Join(fields[1:], " "),
-				}
-
-			case "read":
-				if len(fields) < 1 {
-					return Response{}, fmt.Errorf("usage: /tmux read <name> [lines]")
-				}
-				params = map[string]interface{}{
-					"operation": "read",
-					"name":      fields[0],
-				}
-				if len(fields) > 1 {
-					if n, err := strconv.Atoi(fields[1]); err == nil {
-						params["lines"] = n
-					}
-				}
-
-				raw, _ := json.Marshal(params)
-				text, err := execTmux(ctx, cc, raw)
-				if err != nil {
-					return Response{}, err
-				}
-				return Response{Text: "```\n" + text + "\n```"}, nil
-
-			case "kill":
-				if len(fields) < 1 {
-					return Response{}, fmt.Errorf("usage: /tmux kill <name>")
-				}
-				params = map[string]interface{}{
-					"operation": "kill",
-					"name":      fields[0],
-				}
-
-			case "watch":
-				if len(fields) < 1 {
-					return Response{}, fmt.Errorf("usage: /tmux watch <name> [threshold_secs]")
-				}
-				params = map[string]interface{}{
-					"operation": "watch",
-					"name":      fields[0],
-				}
-				if len(fields) > 1 {
-					if n, err := strconv.Atoi(fields[1]); err == nil {
-						params["threshold_seconds"] = n
-					}
-				}
-
-			case "unwatch":
-				if len(fields) < 1 {
-					return Response{}, fmt.Errorf("usage: /tmux unwatch <name>")
-				}
-				params = map[string]interface{}{
-					"operation": "unwatch",
-					"name":      fields[0],
-				}
-
-			default:
-				return Response{Text: usage}, nil
-			}
-
-			raw, _ := json.Marshal(params)
-			text, err := execTmux(ctx, cc, raw)
-			return Response{Text: text}, err
-		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 // ScriptCommand returns a command that runs a shell script.

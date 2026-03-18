@@ -15,6 +15,19 @@ type KeyboardOption struct {
 	Row   int    // Which row this button goes in (0-indexed)
 }
 
+// Subcommand declares a named subcommand within a parent command.
+// When Command.Subcommands is populated, Execute and KeyboardOptions
+// are auto-wired from the subcommand list by Register.
+type Subcommand struct {
+	Name        string
+	Label       string   // keyboard button label (defaults to Name)
+	Aliases     []string // accepted in dispatch, not shown in keyboard
+	Description string   // one-line help text for auto-generated usage
+	Hidden      bool     // dispatched but excluded from keyboard (e.g. needs args)
+	Visible     func(ctx context.Context, cc CommandContext) bool
+	Execute     func(ctx context.Context, req Request, cc CommandContext) (Response, error)
+}
+
 // Command is a slash command that executes outside the agent pipeline.
 type Command struct {
 	Name        string
@@ -23,7 +36,16 @@ type Command struct {
 	Hidden      bool
 	Visible func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
 
+	// Subcommands declares the command's subcommand set. When non-empty and
+	// Execute is nil, Register auto-wires Execute and (if nil) KeyboardOptions
+	// from this list.
+	Subcommands []Subcommand
+
 	Execute func(ctx context.Context, req Request, cc CommandContext) (Response, error)
+
+	// DefaultExecute is called when args are non-empty but no subcommand matches.
+	// When nil, auto-generated usage is shown.
+	DefaultExecute func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 
 	KeyboardOptions func(ctx context.Context, cc CommandContext) []KeyboardOption
 	ChainKeyboard   func(ctx context.Context, subcommand string, cc CommandContext) []KeyboardOption
@@ -48,9 +70,105 @@ func NewRegistry() *Registry {
 	return &Registry{commands: make(map[string]*Command)}
 }
 
-// Register adds a command to the registry.
+// Register adds a command to the registry. When cmd.Subcommands is non-empty
+// and cmd.Execute is nil, it auto-wires Execute (and KeyboardOptions if nil)
+// from the subcommand declarations.
 func (r *Registry) Register(cmd *Command) {
+	if len(cmd.Subcommands) > 0 && cmd.Execute == nil {
+		cmd.buildSubcommandDispatch()
+	}
 	r.commands[cmd.Name] = cmd
+}
+
+// buildSubcommandDispatch wires Execute and KeyboardOptions from Subcommands.
+func (cmd *Command) buildSubcommandDispatch() {
+	// Build name → subcommand lookup (including aliases).
+	lookup := make(map[string]*Subcommand, len(cmd.Subcommands)*2)
+	for i := range cmd.Subcommands {
+		sub := &cmd.Subcommands[i]
+		lookup[sub.Name] = sub
+		for _, alias := range sub.Aliases {
+			lookup[alias] = sub
+		}
+	}
+
+	usage := cmd.buildSubcommandUsage()
+
+	cmd.Execute = func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+		parts := strings.Fields(req.Args)
+		if len(parts) == 0 {
+			if cmd.DefaultExecute != nil {
+				return cmd.DefaultExecute(ctx, req, cc)
+			}
+			return Response{Text: usage}, nil
+		}
+		name := strings.ToLower(parts[0])
+		sub, ok := lookup[name]
+		if !ok {
+			if cmd.DefaultExecute != nil {
+				return cmd.DefaultExecute(ctx, req, cc)
+			}
+			return Response{Text: usage}, nil
+		}
+		subReq := req
+		subReq.Args = strings.TrimSpace(strings.TrimPrefix(req.Args, parts[0]))
+		return sub.Execute(ctx, subReq, cc)
+	}
+
+	if cmd.KeyboardOptions == nil {
+		cmd.KeyboardOptions = func(ctx context.Context, cc CommandContext) []KeyboardOption {
+			var opts []KeyboardOption
+			for _, sub := range cmd.Subcommands {
+				if sub.Hidden {
+					continue
+				}
+				if sub.Visible != nil && !sub.Visible(ctx, cc) {
+					continue
+				}
+				label := sub.Label
+				if label == "" {
+					label = sub.Name
+				}
+				opts = append(opts, KeyboardOption{Label: label, Data: sub.Name})
+			}
+			return opts
+		}
+	}
+}
+
+// buildSubcommandUsage generates a usage string from the subcommand list.
+func (cmd *Command) buildSubcommandUsage() string {
+	var names []string
+	for _, sub := range cmd.Subcommands {
+		names = append(names, sub.Name)
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Usage: /%s [%s]", cmd.Name, strings.Join(names, "|"))
+
+	hasDesc := false
+	for _, sub := range cmd.Subcommands {
+		if sub.Description != "" {
+			hasDesc = true
+			break
+		}
+	}
+	if hasDesc {
+		sb.WriteString("\n")
+		maxLen := 0
+		for _, sub := range cmd.Subcommands {
+			if len(sub.Name) > maxLen {
+				maxLen = len(sub.Name)
+			}
+		}
+		for _, sub := range cmd.Subcommands {
+			if sub.Description != "" {
+				fmt.Fprintf(&sb, "\n  %-*s  %s", maxLen, sub.Name, sub.Description)
+			}
+		}
+	}
+
+	return sb.String()
 }
 
 // Get returns a command by name, or nil.

@@ -41,68 +41,60 @@ type SessionIndexOpts struct {
 
 // SessionsCommand creates the /sessions command for managing per-chat sessions.
 func SessionsCommand() *Command {
-	return &Command{
+	cmd := &Command{
 		Name:        "sessions",
 		Description: "List and manage per-chat sessions",
 		Category:    "session",
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			parts := strings.Fields(req.Args)
-			subcmd := ""
-			if len(parts) > 0 {
-				subcmd = strings.ToLower(parts[0])
-			}
-
-			switch subcmd {
-			case "":
-				return Response{Text: "Usage: /sessions [list|default <chat_id>|info|index [filters...]]\n\n" +
-					"  list              List all chat sessions for this agent\n" +
-					"  default <chat_id> Set the default session (used by keepalive, cron)\n" +
-					"  info              Show details for the current chat's session\n" +
-					"  index [filters]   Query session index (all agents)\n\n" +
-					"Index filters: type (chat/spawn/cron/facet/branch),\n" +
-					"  status (active/compacted/archived/cleared/all), duration (3d/4h),\n" +
-					"  count (5/20) — show only the N most recent (default: 10)"}, nil
-
-			case "list":
-				text, err := sessionsListCmd(cc, req.ChatID)
-				return Response{Text: text}, err
-
-			case "default":
-				chatID := req.ChatID
-				if len(parts) >= 2 {
-					var err error
-					chatID, err = strconv.ParseInt(parts[1], 10, 64)
-					if err != nil {
-						return Response{Text: fmt.Sprintf("Invalid chat ID: %s", parts[1])}, nil
+		Subcommands: []Subcommand{
+			{
+				Name:        "list",
+				Description: "List all chat sessions for this agent",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					text, err := sessionsListCmd(cc, req.ChatID)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "default",
+				Description: "Set the default session (used by keepalive, cron)",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					chatID := req.ChatID
+					parts := strings.Fields(req.Args)
+					if len(parts) >= 1 {
+						var err error
+						chatID, err = strconv.ParseInt(parts[0], 10, 64)
+						if err != nil {
+							return Response{Text: fmt.Sprintf("Invalid chat ID: %s", parts[0])}, nil
+						}
 					}
-				}
-				text, err := sessionsDefaultCmd(cc, chatID)
-				return Response{Text: text}, err
-
-			case "info":
-				text, err := sessionsInfoCmd(cc, req.ChatID)
-				return Response{Text: text}, err
-
-			case "index":
-				opts := parseIndexArgs(parts[1:])
-				text, err := sessionsIndexCmd(cc, opts)
-				return Response{Text: text}, err
-
-			default:
-				return Response{Text: "Usage: /sessions [list|default <chat_id>|info|index [filters...]]"}, nil
-			}
-		},
-		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
-			opts := []KeyboardOption{
-				{Label: "list", Data: "list"},
-				{Label: "info", Data: "info"},
-			}
-			if cc.SessionIndex != nil {
-				opts = append(opts, KeyboardOption{Label: "index", Data: "index"})
-			}
-			return opts
+					text, err := sessionsDefaultCmd(cc, chatID)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "info",
+				Description: "Show details for the current chat's session",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					text, err := sessionsInfoCmd(cc, req.ChatID)
+					return Response{Text: text}, err
+				},
+			},
+			{
+				Name:        "index",
+				Description: "Query session index (all agents)",
+				Visible: func(_ context.Context, cc CommandContext) bool {
+					return cc.SessionIndex != nil
+				},
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					opts := parseIndexArgs(strings.Fields(req.Args))
+					text, err := sessionsIndexCmd(cc, opts)
+					return Response{Text: text}, err
+				},
+			},
 		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 // knownSessionStatuses is the set of valid status filter values.

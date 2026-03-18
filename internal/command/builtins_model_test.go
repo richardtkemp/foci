@@ -272,8 +272,8 @@ func TestConfigCommand(t *testing.T) {
 
 	// No args → usage
 	result, _ := cmd.Execute(context.Background(), Request{}, cc)
-	if !strings.Contains(result.Text, "/config toml") {
-		t.Errorf("expected usage text, got %q", result.Text)
+	if !strings.Contains(result.Text, "Usage: /config") || !strings.Contains(result.Text, "toml") {
+		t.Errorf("expected usage text mentioning toml, got %q", result.Text)
 	}
 	// toml subcommand
 	result, _ = cmd.Execute(context.Background(), Request{Args: "toml"}, cc)

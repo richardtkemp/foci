@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"foci/internal/agent"
 	"foci/internal/config"
@@ -88,28 +87,45 @@ func ResetCommand() *Command {
 
 // CompactCommand creates a /compact command that triggers manual session compaction.
 func CompactCommand() *Command {
-	return &Command{
+	compactExec := func(ctx context.Context, cc CommandContext, dryRun bool) (Response, error) {
+		oldCount, err := runCompaction(ctx, cc, dryRun)
+		if err != nil {
+			return Response{}, err
+		}
+		if dryRun {
+			return Response{Text: fmt.Sprintf("Dry-run complete — %d messages would be summarised. Summary sent.", oldCount)}, nil
+		}
+		return Response{Text: fmt.Sprintf("Context compacted — %d messages summarised.", oldCount)}, nil
+	}
+
+	cmd := &Command{
 		Name:        "compact",
 		Description: "Trigger manual context compaction",
 		Category:    "operations",
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "compact", Data: "run"},
-				{Label: "dry-run", Data: "dry-run"},
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "run",
+				Label:       "compact",
+				Description: "Run context compaction",
+				Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+					return compactExec(ctx, cc, false)
+				},
+			},
+			{
+				Name:        "dry-run",
+				Description: "Preview compaction without applying",
+				Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+					return compactExec(ctx, cc, true)
+				},
+			},
 		},
-		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			dryRun := strings.TrimSpace(req.Args) == "dry-run"
-			oldCount, err := runCompaction(ctx, cc, dryRun)
-			if err != nil {
-				return Response{}, err
-			}
-			if dryRun {
-				return Response{Text: fmt.Sprintf("Dry-run complete — %d messages would be summarised. Summary sent.", oldCount)}, nil
-			}
-			return Response{Text: fmt.Sprintf("Context compacted — %d messages summarised.", oldCount)}, nil
+		// Bare /compact (no args) runs compaction directly.
+		DefaultExecute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+			return compactExec(ctx, cc, false)
 		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 // runCompaction executes manual context compaction.
