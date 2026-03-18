@@ -26,7 +26,7 @@ const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. 
 
 // nudgeHeader prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.
-const nudgeHeader = "[system: automatic nudge — this is a behavioral reminder derived from your character configuration. Incorporate the guidance naturally without mentioning this nudge to the user.]\n"
+const nudgeHeader = "[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]\n"
 
 // ReplyFunc is called to deliver intermediate messages during a turn.
 // Used by the platform to send early/deferred replies while
@@ -443,17 +443,20 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	var lastToolError bool
 	if a.Nudger != nil {
 		a.Nudger.StartTurn(texts[0])
-		// Prepend match nudges as ContentBlocks before the user's text/attachment blocks.
-		if matchNudges := a.Nudger.CheckMatch(); len(matchNudges) > 0 {
-			var nudgeBlocks []provider.ContentBlock
-			for _, r := range matchNudges {
-				nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
-			}
+		// Prepend periodic_turn and match nudges as ContentBlocks before the user's text/attachment blocks.
+		var nudgeBlocks []provider.ContentBlock
+		for _, r := range a.Nudger.CheckTurnPeriodic() {
+			nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+		}
+		for _, r := range a.Nudger.CheckMatch() {
+			nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+		}
+		if len(nudgeBlocks) > 0 {
 			userMsg.Content = append(nudgeBlocks, userMsg.Content...)
 			// Update the already-appended message in messages and newMessages slices.
 			messages[len(messages)-1] = userMsg
 			newMessages[len(newMessages)-1] = userMsg
-			a.logger().Infof("nudge: %d match trigger(s) prepended to user message for session %s", len(matchNudges), sessionKey)
+			a.logger().Infof("nudge: %d trigger(s) prepended to user message for session %s", len(nudgeBlocks), sessionKey)
 		}
 	}
 	var batchedText strings.Builder // accumulates intermediate text when BatchPartialAssistantMessages=true

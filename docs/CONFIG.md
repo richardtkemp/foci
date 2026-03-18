@@ -743,9 +743,12 @@ Available in both `[defaults]` and `[[agents]]`.
 | `nudge_max_per_batch` | int | `1` | Maximum reminders injected per tool batch. |
 | `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate. When the model wants to end a turn after 2+ tool calls, inject pre_answer reminders and let it reconsider once. |
 | `nudge_pre_answer_min_tools` | int | `2` | Minimum tool call iterations before the pre-answer gate fires. |
+| `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders. When enabled, periodically reminds the agent which tools and skills are available. |
+| `nudge_default_frequency` | int | `25` | User turns between tool/skill reminders. The turn counter is a lifetime counter (never reset). |
 
 **Trigger types** (configured per-rule in `nudge-rules.json`):
 - `periodic(N)` — remind every N tool calls
+- `periodic_turn(N)` — remind every N user turns (used by default nudges)
 - `pre_answer` — remind just before the model returns a final answer
 - `after_streak(N)` — remind after N consecutive calls to the same tool
 - `after_error` — remind when a tool call returns an error

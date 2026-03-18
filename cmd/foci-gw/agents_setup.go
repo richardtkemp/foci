@@ -255,24 +255,59 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKey func() string) {
-	if !acfg.NudgeEnable {
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
+	if !acfg.NudgeEnable && !acfg.NudgeDefaultEnable {
 		return
 	}
 
+	// Load character-derived rules.
+	var charRules []nudge.Rule
 	rulesPath := nudge.RulesPath(acfg.Workspace)
-	rs, err := nudge.LoadRules(rulesPath)
-	if err != nil {
-		log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
+	if acfg.NudgeEnable {
+		rs, err := nudge.LoadRules(rulesPath)
+		if err != nil {
+			log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
+		}
+		if rs != nil {
+			charRules = rs.Rules
+		}
 	}
-	if rs != nil && len(rs.Rules) > 0 {
+
+	// Generate default tool/skill reminder rules.
+	var defaultRules []nudge.Rule
+	if acfg.NudgeDefaultEnable {
+		var toolNames []string
+		for _, t := range toolRegistry.All() {
+			toolNames = append(toolNames, t.Name)
+		}
+		var skillSummaries []nudge.SkillSummary
+		if skillRegistry != nil {
+			for _, s := range skillRegistry.All() {
+				skillSummaries = append(skillSummaries, nudge.SkillSummary{Name: s.Name, Description: s.Description})
+			}
+		}
+		freq := acfg.NudgeDefaultFrequency
+		if freq <= 0 {
+			freq = 25
+		}
+		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, freq)
+	}
+
+	allRules := append(charRules, defaultRules...)
+	if len(allRules) > 0 {
+		rs := &nudge.RuleSet{Rules: allRules}
 		ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
-		log.Infof("main", "agent %s: loaded %d nudge rules", acfg.ID, len(rs.Rules))
+		log.Infof("main", "agent %s: loaded %d nudge rules (%d character, %d default)", acfg.ID, len(allRules), len(charRules), len(defaultRules))
 	}
+
 	ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
 	ag.NudgePreAnswerMinTools = acfg.NudgePreAnswerMinTools
 	if ag.NudgePreAnswerMinTools <= 0 {
 		ag.NudgePreAnswerMinTools = 2
+	}
+
+	if !acfg.NudgeEnable {
+		return // no character rules → no reload/extraction logic needed
 	}
 
 	// NudgeReloadFunc: on bootstrap reload, optionally extract new rules
@@ -290,8 +325,13 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 			log.Warnf("nudge", "agent %s: reload rules: %v", acfg.ID, err)
 			return
 		}
-		if rs != nil && len(rs.Rules) > 0 {
-			ag.Nudger = nudge.NewScheduler(rs, nudgeCooldown, nudgeMaxPerBatch)
+		var reloaded []nudge.Rule
+		if rs != nil {
+			reloaded = rs.Rules
+		}
+		merged := append(reloaded, defaultRules...)
+		if len(merged) > 0 {
+			ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, nudgeCooldown, nudgeMaxPerBatch)
 		}
 	}
 

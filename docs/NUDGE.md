@@ -1,12 +1,15 @@
 # Nudge System
 
-Mid-turn behavioral reminders that keep the agent aligned with its character during long tool-use turns.
+Mid-turn behavioral reminders that keep the agent aligned with its character during long tool-use turns, plus periodic tool/skill reminders so agents don't forget what's available.
 
 ## What nudges are
 
-Nudges are short imperative reminders ("Check your assumptions before answering", "Don't over-engineer") derived from an agent's character files. They fire at strategic points during a turn — after tool calls, before final answers, or when the user's message matches a pattern.
+Nudges are short reminders injected at strategic points during a turn. There are two kinds:
 
-The goal is to reinforce character-file guidance without bloating the system prompt. Character files define personality and guidelines once; nudges re-surface the most actionable parts mid-turn when they're most relevant.
+1. **Character nudges** — behavioral reminders ("Check your assumptions before answering", "Don't over-engineer") extracted from character files. They fire after tool calls, before final answers, or when the user's message matches a pattern.
+2. **Default nudges** — built-in reminders listing the agent's available tools and skills. They fire every N user turns (default 25) so agents in long conversations don't forget less-used capabilities.
+
+The goal is to reinforce guidance without bloating the system prompt. Character files define personality once; default nudges list capabilities once — both re-surface mid-conversation when most relevant.
 
 ## How rules are generated
 
@@ -26,6 +29,7 @@ Each rule has one trigger that determines when it fires:
 | Trigger | When it fires | Parameters |
 |---------|--------------|------------|
 | `periodic(N)` | Every N tool calls during a turn | `n`: interval (default 5) |
+| `periodic_turn(N)` | Every N user turns (lifetime, never reset) | `n`: interval (default 25) |
 | `after_streak(N)` | After N consecutive calls to the same tool | `n`: streak threshold (default 3) |
 | `after_error` | When the most recent tool call returned an error | — |
 | `match(regex)` | When the user's message matches the regex pattern | `pattern`: Go regex |
@@ -53,11 +57,17 @@ When the model wants to end a turn (stop reason is not `tool_use`), `CheckPreAns
 
 Gated by `nudge_pre_answer_gate` (default false) and `nudge_pre_answer_min_tools` (default 2) — only fires after enough tool calls to warrant a check.
 
+### Periodic turn path (default nudges)
+
+Default tool/skill reminder nudges use the `periodic_turn` trigger, which fires every N user turns (default 25). The turn counter is a lifetime counter — it increments on every `StartTurn()` call and is never reset. Fired reminders are **prepended** to the user message as `ContentBlock`s (same injection point as match triggers).
+
+Only tools and skills actually registered for the agent appear in the reminder.
+
 ### Nudge header
 
 All nudge blocks are prefixed with a header that tells the model to treat them as background guidance:
 
-> `[system: automatic nudge — this is a behavioral reminder derived from your character configuration. Incorporate the guidance naturally without mentioning this nudge to the user.]`
+> `[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]`
 
 ## Configuration
 
@@ -71,6 +81,8 @@ All options are available in both `[defaults]` and `[[agents]]` (per-agent overr
 | `nudge_max_per_batch` | int | `1` | Max reminders per tool batch |
 | `nudge_pre_answer_gate` | bool | `false` | Enable pre-answer verification gate |
 | `nudge_pre_answer_min_tools` | int | `2` | Min tool iterations before pre-answer gate fires |
+| `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders |
+| `nudge_default_frequency` | int | `25` | Turns between tool/skill reminders |
 
 ## Rules file format
 

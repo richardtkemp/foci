@@ -17,6 +17,7 @@ type Scheduler struct {
 	matchResults  map[int]bool   // rule index → whether match trigger matches current message
 	compiledMatch map[int]*regexp.Regexp
 	toolCount     int
+	turnCount     int // lifetime turn counter (never reset)
 }
 
 // NewScheduler creates a Scheduler from a RuleSet.
@@ -59,12 +60,39 @@ func (s *Scheduler) StartTurn(userMessage string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.turnCount++
 	s.toolCount = 0
 	s.lastFired = make(map[int]int)
 	s.matchResults = make(map[int]bool)
 	for i, re := range s.compiledMatch {
 		s.matchResults[i] = re.MatchString(userMessage)
 	}
+}
+
+// CheckTurnPeriodic evaluates periodic_turn rules against the lifetime turn
+// counter. Returns reminder texts for rules whose turn interval has elapsed.
+// Called once per turn, after StartTurn().
+func (s *Scheduler) CheckTurnPeriodic() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var result []string
+	for _, r := range s.rules {
+		if r.Trigger.Type != "periodic_turn" {
+			continue
+		}
+		n := r.Trigger.N
+		if n <= 0 {
+			n = 25
+		}
+		if s.turnCount > 0 && s.turnCount%n == 0 {
+			result = append(result, r.Text)
+		}
+	}
+	return result
 }
 
 // CheckAfterTools evaluates triggers after a tool batch and returns up to
