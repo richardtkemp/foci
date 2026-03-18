@@ -24,6 +24,16 @@ import (
 
 const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
 
+// NoResponseSentinel is the marker that prompts instruct the model to emit
+// when it has nothing to say. The agent strips it before delivery so the
+// user never sees it (and the platform treats it as an empty response).
+const NoResponseSentinel = "[[NO_RESPONSE]]"
+
+// isNoResponse returns true when text is exactly the no-response sentinel.
+func isNoResponse(text string) bool {
+	return strings.TrimSpace(text) == NoResponseSentinel
+}
+
 // nudgeHeader prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.
 const nudgeHeader = "[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]\n"
@@ -464,7 +474,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	// reply, respecting batch mode. Used before nudge continues and for
 	// text mixed into tool_use responses.
 	sendOrBatchText := func(r provider.MessageResponse) {
-		if text := provider.TextOf(r.Content); text != "" {
+		if text := provider.TextOf(r.Content); text != "" && !isNoResponse(text) {
 			if a.BatchPartialAssistantMessages {
 				if batchedText.Len() > 0 {
 					batchedText.WriteString(a.BatchPartialJoiner)
@@ -649,12 +659,18 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			a.maybeCompact(ctx, sessionKey, messages, system, &resp.Usage, sm)
 
 			finalText := provider.TextOf(resp.Content)
+			if isNoResponse(finalText) {
+				finalText = ""
+			}
 			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
 				if finalText != "" {
 					batchedText.WriteString(a.BatchPartialJoiner)
 					batchedText.WriteString(finalText)
 				}
 				sentText := batchedText.String()
+				if isNoResponse(sentText) {
+					sentText = ""
+				}
 				a.logConversationSent(convChatID, meta, sessionKey, sentText)
 				return sentText, nil
 			}

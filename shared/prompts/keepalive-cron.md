@@ -8,7 +8,7 @@ Do whatever you think is useful or fun. You have judgment. Use it.
 - You want to do something that might need approval (external action, system change, etc.)
 - Something broke or needs attention
 
-**Stay completely silent if nothing to report.** No "all clear" messages, no status updates. If you have nothing worth saying, do your work and end without sending any messages.
+**If you have nothing to report, respond with `[[NO_RESPONSE]]` and nothing else.** No "all clear" messages, no status updates. If you have nothing worth saying, do your work and respond with `[[NO_RESPONSE]]`.
 
 ## Suggested Background Work
 - Review and organize memory files

@@ -22,4 +22,4 @@ Capture important memories from this session to today's daily file (`memory/YYYY
 ### Do NOT edit MEMORY.md
 Daily files only. MEMORY.md curation is handled by the consolidation job.
 
-Work silently. No announcements needed.
+When done, respond with `[[NO_RESPONSE]]`. No announcements needed.
