@@ -101,9 +101,10 @@ type AgentConfig struct {
 	ID        string `toml:"id"`
 	Name      string `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
 	Emoji     string `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Model     string `toml:"model"`    // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "gemini-flash")
-	Endpoint  string `toml:"endpoint"` // optional: which endpoint config to use (auto-selected from developer if empty)
-	Workspace string `toml:"workspace"`
+	Model          string            `toml:"model"`           // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "gemini-flash")
+	Endpoint       string            `toml:"endpoint"`        // optional: which endpoint config to use (auto-selected from developer if empty)
+	ModelFallbacks map[string]string `toml:"model_fallbacks"` // per-agent fallback overrides (model → fallback model); aliases supported
+	Workspace      string            `toml:"workspace"`
 
 	// Per-agent provider overrides (resolved into Effort/Thinking/Speed by ApplyProviderDefaults)
 	Anthropic AgentAnthropicConfig `toml:"anthropic"`
@@ -610,11 +611,12 @@ type DefaultsConfig struct {
 
 // ModelsConfig holds model-related configuration.
 type ModelsConfig struct {
-	Aliases  map[string]string `toml:"aliases"`  // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
-	Powerful string            `toml:"powerful"` // model for the powerful group (enables group mode when set)
-	Fast     string            `toml:"fast"`     // model for the fast group (defaults to powerful if unset)
-	Cheap    string            `toml:"cheap"`    // model for the cheap group (defaults to powerful if unset)
-	Calls    map[string]string `toml:"calls"`    // call site overrides: call name → group name
+	Aliases   map[string]string `toml:"aliases"`   // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
+	Powerful  string            `toml:"powerful"`  // model for the powerful group (enables group mode when set)
+	Fast      string            `toml:"fast"`      // model for the fast group (defaults to powerful if unset)
+	Cheap     string            `toml:"cheap"`     // model for the cheap group (defaults to powerful if unset)
+	Calls     map[string]string `toml:"calls"`     // call site overrides: call name → group name
+	Fallbacks map[string]string `toml:"fallbacks"` // model → fallback model (e.g., "opus" → "sonnet"); aliases supported
 }
 
 // EndpointConfig describes a model API endpoint.

@@ -83,6 +83,7 @@ type Agent struct {
 	MaxSummaryChars               int                          // max chars to auto-summarise (skip cheap model above this)
 	MaxSummaryInputChars          int                          // max chars of tool result embedded in summary prompt (0 = no limit)
 	GroupResolver                 *config.GroupResolver         // resolves call sites to model groups
+	FallbackResolver              *config.FallbackResolver      // nil disables automatic model fallback on transient errors
 	MaxImagePixels                int                          // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
@@ -577,28 +578,68 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				}
 			}
 			if err != nil {
-				// Log the failed request payload for debugging.
-				a.logErrorPayload(sessionKey, turnModel, start, duration, req, err)
+				// Fallback: if the error is transient and a fallback is configured,
+				// walk the fallback chain trying alternate models.
+				if a.FallbackResolver != nil && isFallbackEligible(err) {
+					fbModel := turnModel
+					for depth := 0; depth < config.MaxFallbackDepth; depth++ {
+						fb := a.FallbackResolver.Resolve(fbModel)
+						if fb == nil {
+							break
+						}
+						fbCanonical := fb.Developer + "/" + fb.ModelID
+						a.logger().Errorf("session=%s fallback: %s failed, trying %s", sessionKey, fbModel, fbCanonical)
 
-				// Append a synthetic assistant error message so the session
-				// maintains role alternation (user→assistant). Without this,
-				// the defer safety-net flushes only the user message, causing
-				// consecutive user messages on the next turn — which the API
-				// rejects with 400, creating a permanent cascade.
-				errMsg := provider.Message{
-					Role:    "assistant",
-					Content: provider.TextContent("(API error — response unavailable)"),
-				}
-				newMessages = append(newMessages, errMsg)
+						// Get client for fallback model's endpoint/format
+						fbClient := turnClient
+						if a.ClientProvider != nil {
+							if c := a.ClientProvider.GetClient(fb.Endpoint, fb.Format); c != nil {
+								fbClient = c
+							}
+						}
 
-				// Resolve endpoint for error classification
-				a.metaMu.Lock()
-				endpoint := sm.modelEndpoint
-				if endpoint == "" {
-					endpoint = a.Endpoint
+						req.Model = fbCanonical
+						resp, err = provider.Send(ctx, fbClient, req, handler)
+						duration = time.Since(start)
+						if err == nil {
+							// Fallback succeeded — log the actual model used
+							a.logger().Infof("session=%s fallback succeeded on %s", sessionKey, fbCanonical)
+							break
+						}
+						if !isFallbackEligible(err) {
+							break // non-transient error, stop trying
+						}
+						fbModel = fbCanonical
+					}
+					// Restore original model on the request so subsequent tool
+					// loop iterations rebuild with the primary model.
+					req.Model = turnModel
 				}
-				a.metaMu.Unlock()
-				return "", a.classifyAPIError(ctx, err, sessionKey, endpoint, duration)
+
+				if err != nil {
+					// Log the failed request payload for debugging.
+					a.logErrorPayload(sessionKey, turnModel, start, duration, req, err)
+
+					// Append a synthetic assistant error message so the session
+					// maintains role alternation (user→assistant). Without this,
+					// the defer safety-net flushes only the user message, causing
+					// consecutive user messages on the next turn — which the API
+					// rejects with 400, creating a permanent cascade.
+					errMsg := provider.Message{
+						Role:    "assistant",
+						Content: provider.TextContent("(API error — response unavailable)"),
+					}
+					newMessages = append(newMessages, errMsg)
+
+					// Resolve endpoint for error classification
+					a.metaMu.Lock()
+					endpoint := sm.modelEndpoint
+					if endpoint == "" {
+						endpoint = a.Endpoint
+					}
+					a.metaMu.Unlock()
+					return "", a.classifyAPIError(ctx, err, sessionKey, endpoint, duration)
+				}
 			}
 		}
 

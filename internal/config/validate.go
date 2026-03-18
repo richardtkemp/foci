@@ -283,6 +283,61 @@ func validate(cfg *Config) error {
 		return err
 	}
 
+	// Model fallbacks: validate keys/values resolve and chains don't exceed depth
+	if err := validateFallbacks("models.fallbacks", cfg.Models.Fallbacks, cfg.Models.Aliases); err != nil {
+		return err
+	}
+	for _, a := range cfg.Agents {
+		if err := validateFallbacks(fmt.Sprintf("agent %q model_fallbacks", a.ID), a.ModelFallbacks, cfg.Models.Aliases); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateFallbacks checks that all keys and values in a fallback map resolve
+// to valid models, and that no chain exceeds MaxFallbackDepth.
+func validateFallbacks(section string, fallbacks map[string]string, aliases map[string]string) error {
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	// Validate each entry resolves
+	canonical := make(map[string]string, len(fallbacks))
+	for k, v := range fallbacks {
+		rk, err := ResolveModel(k, "", aliases)
+		if err != nil {
+			return fmt.Errorf("[%s] key %q: %w", section, k, err)
+		}
+		rv, err := ResolveModel(v, "", aliases)
+		if err != nil {
+			return fmt.Errorf("[%s] value %q (for key %q): %w", section, v, k, err)
+		}
+		ck := rk.Developer + "/" + rk.ModelID
+		cv := rv.Developer + "/" + rv.ModelID
+		canonical[ck] = cv
+	}
+	// Check chain depth
+	for start := range canonical {
+		depth := 0
+		visited := map[string]bool{start: true}
+		cur := start
+		for {
+			next, ok := canonical[cur]
+			if !ok {
+				break
+			}
+			depth++
+			if depth > MaxFallbackDepth {
+				return fmt.Errorf("[%s] chain starting at %q exceeds max depth %d", section, start, MaxFallbackDepth)
+			}
+			if visited[next] {
+				return fmt.Errorf("[%s] cycle detected: %q → %q", section, cur, next)
+			}
+			visited[next] = true
+			cur = next
+		}
+	}
 	return nil
 }
 
