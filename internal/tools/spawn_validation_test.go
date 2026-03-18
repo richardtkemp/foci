@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 )
 
@@ -200,19 +201,24 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	}
 }
 
-func TestSpawnModelShortNames(t *testing.T) {
-	// Proves that model aliases (haiku, sonnet, opus) and qualified names are resolved to their
-	// canonical model IDs before the request is sent to the API.
+func TestSpawnModelGroups(t *testing.T) {
+	// Proves that model group names (powerful, fast, cheap) are resolved to their
+	// configured model IDs via the GroupResolver before the request is sent to the API.
 	t.Parallel()
 	tests := []struct {
-		short string
+		group string
 		full  string
 	}{
-		{"haiku", "claude-haiku-4-5"},
-		{"sonnet", "claude-sonnet-4-6"},
-		{"opus", "claude-opus-4-6"},
-		{"anthropic/claude-haiku-4-5", "claude-haiku-4-5"},
+		{"powerful", "claude-opus-4-6"},
+		{"fast", "claude-sonnet-4-6"},
+		{"cheap", "claude-haiku-4-5"},
 	}
+
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+		Fast:     "anthropic/claude-sonnet-4-6",
+		Cheap:    "anthropic/claude-haiku-4-5",
+	}, nil)
 
 	for _, tt := range tests {
 		var receivedModel string
@@ -226,11 +232,11 @@ func TestSpawnModelShortNames(t *testing.T) {
 		})
 
 		client := newTestAnthropicClient(server.URL, "test-token")
-		deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+		deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
 		params, _ := json.Marshal(map[string]string{
-			"model":   tt.short,
+			"model":   tt.group,
 			"prompt":  "test",
 			"context": "raw",
 		})
@@ -238,7 +244,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 		server.Close()
 
 		if receivedModel != tt.full {
-			t.Errorf("short=%q: model=%q, want %q", tt.short, receivedModel, tt.full)
+			t.Errorf("group=%q: model=%q, want %q", tt.group, receivedModel, tt.full)
 		}
 	}
 }
