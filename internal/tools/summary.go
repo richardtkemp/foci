@@ -17,37 +17,12 @@ import (
 // defaultClient is the agent's default provider client.
 // clientProvider provides access to clients for different endpoint:format pairs.
 // groupResolver resolves the call site to the appropriate model/client.
-// When groupResolver is nil or single-model, falls back to the session model.
-func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, agentModel, workspace string, modelAliases map[string]string) *Tool {
+func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, workspace string) *Tool {
 	resolveForCall := func() (provider.Client, string, string) {
-		// Try group resolver first
-		if groupResolver != nil && !groupResolver.IsSingleModel() {
-			if resolved := groupResolver.ResolveCall(config.CallSummarizeFile); resolved != nil {
-				client := defaultClient
-				if clientProvider != nil {
-					if c := clientProvider.GetClient(resolved.Endpoint, resolved.Format); c != nil {
-						client = c
-					}
-				}
-				return client, resolved.ModelID, resolved.Format
-			}
-		}
-
-		// Fallback: resolve cheap model from aliases based on agent's developer
-		dev, _ := config.SplitDeveloperModel(agentModel)
-		cheapAlias := "haiku"
-		defaultFormat := "anthropic"
-		switch dev {
-		case "google":
-			cheapAlias = "gemini-flash"
-			defaultFormat = "gemini"
-		case "openai":
-			cheapAlias = "gpt4o"
-			defaultFormat = "openai"
-		}
-		resolved, err := config.ResolveModel(cheapAlias, "", modelAliases)
-		if err != nil {
-			return defaultClient, cheapAlias, defaultFormat
+		resolved := groupResolver.ResolveCall(config.CallSummarizeFile)
+		if resolved == nil {
+			// Ungrouped — shouldn't happen for CallSummarizeFile, but be safe
+			return defaultClient, "", ""
 		}
 		client := defaultClient
 		if clientProvider != nil {

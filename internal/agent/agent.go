@@ -79,10 +79,10 @@ type Agent struct {
 	ToolResultTempDir             string                       // where to write large tool results
 	ModelAliases                  map[string]string            // for resolving "haiku" → full model ID
 	SummaryContextTurns           int                          // recent conversation turns for summary context
-	SummaryContextChars           int                          // max chars of context to send to Haiku
-	MaxSummaryChars               int                          // max chars to auto-summarise (skip Haiku above this)
+	SummaryContextChars           int                          // max chars of context to send to cheap model
+	MaxSummaryChars               int                          // max chars to auto-summarise (skip cheap model above this)
 	MaxSummaryInputChars          int                          // max chars of tool result embedded in summary prompt (0 = no limit)
-	GroupResolver                 *config.GroupResolver         // nil = single-model mode (use session model for everything)
+	GroupResolver                 *config.GroupResolver         // resolves call sites to model groups
 	MaxImagePixels                int                          // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
@@ -169,10 +169,10 @@ func (a *Agent) logger() *log.ComponentLogger {
 }
 
 // ResolveCallSite resolves a call site to a (client, model, format) triple.
-// For ungrouped calls or single-model mode, returns the session's client/model/format.
+// For ungrouped calls or nil GroupResolver, returns the session's client/model/format.
 // Otherwise resolves via GroupResolver and gets the appropriate client.
 func (a *Agent) ResolveCallSite(callSite, sessionKey string) (provider.Client, string, string) {
-	if a.GroupResolver == nil || a.GroupResolver.IsSingleModel() {
+	if a.GroupResolver == nil {
 		return a.SessionClient(sessionKey), a.SessionModel(sessionKey), a.Format
 	}
 	resolved := a.GroupResolver.ResolveCall(callSite)

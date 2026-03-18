@@ -8,8 +8,16 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 )
+
+// spawnTestAliases mirrors the default model aliases from config/load.go for tests.
+var spawnTestAliases = map[string]string{
+	"opus":   "anthropic/claude-opus-4-6",
+	"sonnet": "anthropic/claude-sonnet-4-6",
+	"haiku":  "anthropic/claude-haiku-4-5",
+}
 
 func TestSpawnContextRaw(t *testing.T) {
 	// Proves that raw context sends no system prompt to the model, resolves the model alias,
@@ -28,11 +36,16 @@ func TestSpawnContextRaw(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+		Cheap:    "anthropic/claude-haiku-4-5",
+	}, spawnTestAliases, "")
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am a character file."},
 		}},
+		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
 		MaxToolLoops:   10,
@@ -59,7 +72,7 @@ func TestSpawnContextRaw(t *testing.T) {
 		t.Errorf("expected 0 system blocks (raw), got %d", len(receivedReq.System))
 	}
 
-	// Should resolve opus
+	// Should resolve opus via group resolver
 	if receivedReq.Model != "claude-opus-4-6" {
 		t.Errorf("model = %q, want claude-opus-4-6", receivedReq.Model)
 	}
@@ -84,12 +97,16 @@ func TestSpawnContextCharacter(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+	}, spawnTestAliases, "")
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
 			{Type: "text", Text: "I am the identity file."},
 			{Type: "text", Text: "I am the soul file."},
 		}},
+		GroupResolver:  gr,
 		FallbackModel:  "anthropic/claude-haiku-4-5",
 		FallbackFormat: "anthropic",
 		MaxToolLoops:   10,
@@ -261,9 +278,14 @@ func TestSpawnExploreMode(t *testing.T) {
 	})
 
 	client := newTestAnthropicClient(server.URL, "test-token")
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+		Cheap:    "anthropic/claude-haiku-4-5",
+	}, spawnTestAliases, "")
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,
+		GroupResolver:   gr,
 		FallbackModel:   "anthropic/claude-opus-4-6", // parent uses opus
 		FallbackFormat:  "anthropic",
 		ExploreMaxDepth: 10,
@@ -272,7 +294,7 @@ func TestSpawnExploreMode(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Find all Go files in the project",
-		"model":   "opus", // explicitly request opus
+		"model":   "opus", // explicitly request opus — explore ignores it, uses cheap group
 		"context": "explore",
 	})
 
@@ -285,9 +307,9 @@ func TestSpawnExploreMode(t *testing.T) {
 		t.Errorf("result = %q", result.Text)
 	}
 
-	// Should always use haiku regardless of parent model or explicit model param
+	// Should use cheap group (haiku) regardless of parent model or explicit model param
 	if receivedReq.Model != "claude-haiku-4-5" {
-		t.Errorf("model = %q, want claude-haiku-4-5 (explore always uses haiku)", receivedReq.Model)
+		t.Errorf("model = %q, want claude-haiku-4-5 (explore uses cheap group)", receivedReq.Model)
 	}
 
 	// Should have the explore system prompt

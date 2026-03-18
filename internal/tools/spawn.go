@@ -123,7 +123,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				"context": {
 					"type": "string",
 					"enum": ["raw", "character", "clone", "explore"],
-					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': read-only exploration agent with ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional filesystem/data/system inspection tools (sync, no mutation, always haiku — model param ignored)."
+					"description": "Context mode. 'raw': just your prompt, no system context (sync). 'character': your prompt + character files (sync). 'clone' (default): branch session with full tool access — runs asynchronously in the background, result delivered via [SPAWN RESULT] when complete. 'explore': read-only exploration agent with ls, find, grep, git, read, todo, memory_search, web_search, web_fetch, plus conditional filesystem/data/system inspection tools (sync, no mutation, uses cheap model group — model param ignored)."
 				},
 				"timeout": {
 					"type": "integer",
@@ -603,11 +603,10 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 
 // resolveSpawnGroup resolves a spawn call to (client, modelID, format) using the group resolver.
 // userGroup is the user-provided group name (may be empty). defaultCallSite is the call site
-// constant that determines the default group. fallbackModel and fallbackFormat are used in
-// single-model mode (from the agent's default model).
+// constant that determines the default group.
 func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite string, clientProvider provider.ClientProvider, fallbackClient provider.Client, fallbackModel, fallbackFormat string) (provider.Client, string, string) {
 	var resolved *config.ResolvedModel
-	if gr != nil && !gr.IsSingleModel() {
+	if gr != nil {
 		if userGroup != "" {
 			resolved = gr.ResolveGroup(userGroup)
 		}
@@ -616,7 +615,7 @@ func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite stri
 		}
 	}
 	if resolved == nil {
-		// Single-model mode: use agent's model (strip developer prefix for API call)
+		// Ungrouped call or nil resolver: use agent's model
 		_, modelID := config.SplitDeveloperModel(fallbackModel)
 		return fallbackClient, modelID, fallbackFormat
 	}
