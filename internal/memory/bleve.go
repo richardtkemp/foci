@@ -495,21 +495,41 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 
 	var finalQuery query.Query = mainQuery
 
-	// Apply date range filter if provided
-	if opts != nil && (opts.DateFrom != nil || opts.DateTo != nil) {
-		minInclusive := boolPtr(true)
-		maxInclusive := boolPtr(opts.DateTo == nil) // exclusive upper bound when DateTo is set
-		dateQuery := query.NewNumericRangeInclusiveQuery(
-			floatPtrFromTime(opts.DateFrom),
-			floatPtrFromTime(opts.DateTo),
-			minInclusive,
-			maxInclusive,
-		)
-		dateQuery.SetField("mtime")
+	// Apply filters if provided
+	if opts != nil {
+		var mustClauses []query.Query
+		var mustNotClauses []query.Query
 
-		// Combine with AND conjunction
-		conjunction := bleve.NewConjunctionQuery(mainQuery, dateQuery)
-		finalQuery = conjunction
+		if opts.ExcludePath != "" {
+			eq := query.NewTermQuery(opts.ExcludePath)
+			eq.SetField("path")
+			mustNotClauses = append(mustNotClauses, eq)
+		}
+
+		if opts.DateFrom != nil || opts.DateTo != nil {
+			minInclusive := boolPtr(true)
+			maxInclusive := boolPtr(opts.DateTo == nil)
+			dateQuery := query.NewNumericRangeInclusiveQuery(
+				floatPtrFromTime(opts.DateFrom),
+				floatPtrFromTime(opts.DateTo),
+				minInclusive,
+				maxInclusive,
+			)
+			dateQuery.SetField("mtime")
+			mustClauses = append(mustClauses, dateQuery)
+		}
+
+		if len(mustClauses) > 0 || len(mustNotClauses) > 0 {
+			bq := bleve.NewBooleanQuery()
+			bq.AddMust(mainQuery)
+			for _, c := range mustClauses {
+				bq.AddMust(c)
+			}
+			for _, c := range mustNotClauses {
+				bq.AddMustNot(c)
+			}
+			finalQuery = bq
+		}
 	}
 
 	req := bleve.NewSearchRequest(finalQuery)

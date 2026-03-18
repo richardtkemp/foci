@@ -454,6 +454,41 @@ func TestBleveSearchHyphenatedQuery(t *testing.T) {
 	}
 }
 
+func TestBleveSearchExcludePath(t *testing.T) {
+	// Verifies that ExcludePath filters out conversation results whose path
+	// matches the excluded value, while leaving other results intact.
+	idx, memDir := testBleveIndex(t)
+
+	os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("The platypus is a monotreme"), 0644)
+	idx.Reindex()
+
+	idx.IndexConversation("The platypus lays eggs", "session/current", 1)
+	idx.IndexConversation("The platypus has venomous spurs", "session/other", 2)
+
+	// Without exclude — all 3 results
+	results, err := idx.Search("platypus", "", nil)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results without exclude, got %d", len(results))
+	}
+
+	// With exclude — should drop the current session conversation
+	results, err = idx.Search("platypus", "", &SearchOptions{ExcludePath: "session/current"})
+	if err != nil {
+		t.Fatalf("Search with exclude: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results with exclude, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Path == "session/current" {
+			t.Error("excluded path should not appear in results")
+		}
+	}
+}
+
 func TestBleveSearchDateRangeFilter(t *testing.T) {
 	// Tests that date_from and date_to parameters correctly filter results in bleve.
 	idx, memDir := testBleveIndex(t)
