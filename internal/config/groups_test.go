@@ -5,32 +5,45 @@ import (
 	"testing"
 )
 
-// TestSingleModelFallback verifies that when no groups are configured
-// (Powerful is empty), GroupResolver is in single-model mode and all
-// methods return nil/empty — callers should use the session model.
-func TestSingleModelFallback(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{}, nil)
+// TestSessionModelDefault verifies that when no groups are configured
+// (Powerful is empty), all groups default to the session model.
+// Grouped calls resolve to the session model; ungrouped calls still return nil.
+func TestSessionModelDefault(t *testing.T) {
+	gr := NewGroupResolver(ModelsConfig{}, nil, "anthropic/claude-sonnet-4-10-20250514")
 
-	if !gr.IsSingleModel() {
-		t.Fatal("expected single-model mode when Powerful is empty")
+	if names := gr.GroupNames(); len(names) != 3 {
+		t.Fatalf("expected 3 group names, got %v", names)
 	}
-	if names := gr.GroupNames(); len(names) != 0 {
-		t.Fatalf("expected no group names, got %v", names)
-	}
-	if pm := gr.PowerfulModel(); pm != "" {
-		t.Fatalf("expected empty PowerfulModel, got %q", pm)
+	if pm := gr.PowerfulModel(); pm != "anthropic/claude-sonnet-4-10-20250514" {
+		t.Fatalf("PowerfulModel() = %q, want session model", pm)
 	}
 
-	// All call sites should return nil
-	for _, cs := range []string{CallChat, CallSpawnExplore, CallSummarizeTool, CallKeepalive} {
-		if r := gr.ResolveCall(cs); r != nil {
-			t.Errorf("ResolveCall(%q) = %+v, want nil", cs, r)
+	// Grouped call sites should resolve to the session model
+	for _, cs := range []string{CallChat, CallSpawnExplore, CallSummarizeTool} {
+		r := gr.ResolveCall(cs)
+		if r == nil {
+			t.Errorf("ResolveCall(%q) = nil, want session model", cs)
+			continue
+		}
+		if r.ModelID != "claude-sonnet-4-10-20250514" {
+			t.Errorf("ResolveCall(%q).ModelID = %q, want %q", cs, r.ModelID, "claude-sonnet-4-10-20250514")
 		}
 	}
 
-	// ResolveGroup should also return nil
-	if r := gr.ResolveGroup(GroupPowerful); r != nil {
-		t.Errorf("ResolveGroup(%q) = %+v, want nil", GroupPowerful, r)
+	// Ungrouped call sites should still return nil
+	for _, cs := range []string{CallKeepalive, CallCountTokens} {
+		if r := gr.ResolveCall(cs); r != nil {
+			t.Errorf("ResolveCall(%q) = %+v, want nil (ungrouped)", cs, r)
+		}
+	}
+
+	// ResolveGroup should resolve to session model
+	r := gr.ResolveGroup(GroupPowerful)
+	if r == nil {
+		t.Fatal("ResolveGroup(powerful) = nil")
+	}
+	if r.ModelID != "claude-sonnet-4-10-20250514" {
+		t.Errorf("ResolveGroup(powerful).ModelID = %q, want session model", r.ModelID)
 	}
 }
 
@@ -41,11 +54,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	}, nil)
-
-	if gr.IsSingleModel() {
-		t.Fatal("expected multi-model mode")
-	}
+	}, nil, "")
 
 	tests := []struct {
 		callSite string
@@ -90,11 +99,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 func TestMissingFastCheapDefaultsToPowerful(t *testing.T) {
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, nil)
-
-	if gr.IsSingleModel() {
-		t.Fatal("expected multi-model mode")
-	}
+	}, nil, "")
 
 	// Fast call site should resolve to powerful model
 	r := gr.ResolveCall(CallSpawnRaw)
@@ -125,7 +130,7 @@ func TestCallOverrides(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: GroupFast, // move compaction from powerful → fast
 		},
-	}, nil)
+	}, nil, "")
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -154,7 +159,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: "nonexistent-group",
 		},
-	}, nil)
+	}, nil, "")
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -170,7 +175,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 func TestUngroupedCallsReturnNil(t *testing.T) {
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, nil)
+	}, nil, "")
 
 	for _, cs := range []string{CallKeepalive, CallCountTokens} {
 		if r := gr.ResolveCall(cs); r != nil {
@@ -186,7 +191,7 @@ func TestResolveGroupByName(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	}, nil)
+	}, nil, "")
 
 	tests := []struct {
 		group      string
@@ -221,7 +226,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	}, nil)
+	}, nil, "")
 
 	names := gr.GroupNames()
 	sort.Strings(names)
@@ -241,7 +246,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 func TestPowerfulModel(t *testing.T) {
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, nil)
+	}, nil, "")
 
 	if pm := gr.PowerfulModel(); pm != "anthropic/claude-opus-4-6" {
 		t.Errorf("PowerfulModel() = %q, want %q", pm, "anthropic/claude-opus-4-6")
@@ -256,11 +261,7 @@ func TestAliasResolution(t *testing.T) {
 	}
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "opus",
-	}, aliases)
-
-	if gr.IsSingleModel() {
-		t.Fatal("expected multi-model mode")
-	}
+	}, aliases, "")
 
 	r := gr.ResolveCall(CallChat)
 	if r == nil {
@@ -278,7 +279,7 @@ func TestMixedDevelopers(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "openai/gpt-4o-mini",
-	}, nil)
+	}, nil, "")
 
 	tests := []struct {
 		callSite       string
