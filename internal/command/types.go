@@ -82,6 +82,7 @@ type CommandContext struct {
 	// Model resolution
 	ModelAliases  map[string]string
 	GroupResolver *config.GroupResolver
+	FallbackFunc  provider.FallbackFunc // nil disables automatic model fallback
 
 	// Tools (command already imports tools)
 	ToolsRegistry *tools.Registry

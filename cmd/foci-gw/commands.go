@@ -66,6 +66,7 @@ type cmdRegParams struct {
 
 	// Model groups
 	groupResolver *config.GroupResolver
+	fallbackFn    provider.FallbackFunc
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
@@ -133,6 +134,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		ConfigPath:          p.configPath,
 		ModelAliases:        aliases,
 		GroupResolver:       p.groupResolver,
+		FallbackFunc:        p.fallbackFn,
 		ToolsRegistry:       p.registry,
 		TmuxTool:            p.tmuxTool,
 		BuildInfo: command.BuildInfo{

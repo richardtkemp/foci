@@ -24,7 +24,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 	t.Parallel()
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "")
+	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	tests := []struct {
 		name   string
@@ -55,7 +55,7 @@ func TestSummaryTool_FileNotFound(t *testing.T) {
 	t.Parallel()
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "")
+	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   "/tmp/nonexistent-summary-test-file-xyz",
@@ -79,7 +79,7 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "")
+	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -105,7 +105,7 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "")
+	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -156,7 +156,7 @@ func TestSummaryTool_Success(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-key")
 	aliases := map[string]string{"haiku": "anthropic/claude-haiku-4-5"}
 	gr := config.NewGroupResolver(config.ModelsConfig{}, aliases, "anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "")
+	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -222,7 +222,7 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-key")
 	// Use haiku alias as session model — GroupResolver resolves it via aliases
 	gr := config.NewGroupResolver(config.ModelsConfig{}, aliases, "haiku")
-	tool := NewSummaryTool(client, nil, gr, "")
+	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})
 	_, err := tool.Execute(context.Background(), params)

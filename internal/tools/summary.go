@@ -17,7 +17,7 @@ import (
 // defaultClient is the agent's default provider client.
 // clientProvider provides access to clients for different endpoint:format pairs.
 // groupResolver resolves the call site to the appropriate model/client.
-func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, workspace string) *Tool {
+func NewSummaryTool(defaultClient provider.Client, clientProvider provider.ClientProvider, groupResolver *config.GroupResolver, workspace string, fallbackFn provider.FallbackFunc) *Tool {
 	resolveForCall := func() (provider.Client, string, string) {
 		resolved := groupResolver.ResolveCall(config.CallSummarizeFile)
 		if resolved == nil {
@@ -53,12 +53,12 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			client, model, format := resolveForCall()
-			return summaryExecute(ctx, params, client, model, workspace, format)
+			return summaryExecute(ctx, params, client, model, workspace, format, fallbackFn, clientProvider)
 		},
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, model, workspace, format string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, client provider.Client, model, workspace, format string, fallbackFn provider.FallbackFunc, clientProvider provider.ClientProvider) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -113,7 +113,10 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		},
 	}
 
-	resp, err := provider.Send(ctx, client, req, nil)
+	resp, err := provider.SendWithFallback(ctx, client, req, nil,
+		fallbackFn, clientProvider, func(f string, args ...any) {
+			log.Errorf("summary", f, args...)
+		})
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("summary API call: %w", err)
 	}

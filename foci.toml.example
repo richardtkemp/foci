@@ -13,8 +13,6 @@
 [llm]
 model = "claude-sonnet-4-20250514"
 # max_output_tokens = 8192
-# summary_model = ""                       # model for auto-summarisation (empty = provider-aware default)
-# summary_endpoint = ""                    # endpoint override for summary requests (empty = auto-select)
 
 # ─── Defaults ─────────────────────────────────────────────────────────
 # Global defaults inherited by all agents. Per-agent values override these.
