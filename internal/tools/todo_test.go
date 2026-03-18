@@ -417,13 +417,13 @@ func TestTodoToolCompleteBackCompat(t *testing.T) {
 	}
 }
 
-func TestTodoToolInProgressAliases(t *testing.T) {
-	// Proves that all in_progress aliases (wip, started, working, in-progress, etc.) normalize to "in_progress".
+func TestTodoToolStartedAliases(t *testing.T) {
+	// Proves that all started aliases (wip, in_progress, working, in-progress, etc.) normalize to "started".
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
-	for _, alias := range []string{"in_progress", "in-progress", "wip", "started", "working"} {
+	for _, alias := range []string{"started", "in_progress", "in-progress", "wip", "working"} {
 		id, _ := store.Add("agent1", "Task for "+alias, "medium", "")
 		params := map[string]interface{}{
 			"action": "transition",
@@ -436,20 +436,20 @@ func TestTodoToolInProgressAliases(t *testing.T) {
 			continue
 		}
 		item, _ := store.Get("agent1", id)
-		if item.Status != "in_progress" {
-			t.Errorf("alias %q: status = %q, want in_progress", alias, item.Status)
+		if item.Status != "started" {
+			t.Errorf("alias %q: status = %q, want started", alias, item.Status)
 		}
 	}
 }
 
-func TestTodoToolInProgressMarker(t *testing.T) {
-	// Proves that an in_progress item shows the [>] marker when retrieved.
+func TestTodoToolStartedMarker(t *testing.T) {
+	// Proves that a started item shows the [>] marker when retrieved.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
 
 	id, _ := store.Add("agent1", "Active task", "high", "")
-	store.Transition("agent1", id, "in_progress", "")
+	store.Transition("agent1", id, "started", "")
 
 	params := map[string]interface{}{
 		"action": "get",
@@ -460,12 +460,12 @@ func TestTodoToolInProgressMarker(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	if !strings.Contains(result, "[>]") {
-		t.Errorf("in_progress item should show [>], got: %s", result)
+		t.Errorf("started item should show [>], got: %s", result)
 	}
 }
 
-func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
-	// Proves that transitioning to in_progress does not require a reason, unlike done/dropped.
+func TestTodoToolStartedNoReasonRequired(t *testing.T) {
+	// Proves that transitioning to started does not require a reason, unlike done/dropped.
 	t.Parallel()
 	store := newTestTodoStore(t)
 	tool := NewTodoTool(store, "agent1")
@@ -474,17 +474,17 @@ func TestTodoToolInProgressNoReasonRequired(t *testing.T) {
 
 	params := map[string]interface{}{
 		"action": "transition",
-		"state":  "in_progress",
+		"state":  "started",
 		"id":     id,
 	}
 	_, err := executeTodoTool(tool, params)
 	if err != nil {
-		t.Errorf("in_progress should not require reason, got: %v", err)
+		t.Errorf("started should not require reason, got: %v", err)
 	}
 }
 
-func TestTodoToolStatusFilterInProgress(t *testing.T) {
-	// Proves that filtering by in_progress (and its aliases) shows only in_progress items
+func TestTodoToolStatusFilterStarted(t *testing.T) {
+	// Proves that filtering by started (and its aliases) shows only started items
 	// and excludes open items.
 	t.Parallel()
 	store := newTestTodoStore(t)
@@ -493,9 +493,9 @@ func TestTodoToolStatusFilterInProgress(t *testing.T) {
 	id1, _ := store.Add("agent1", "Open task", "medium", "")
 	id2, _ := store.Add("agent1", "WIP task", "medium", "")
 	_ = id1
-	store.Transition("agent1", id2, "in_progress", "")
+	store.Transition("agent1", id2, "started", "")
 
-	for _, alias := range []string{"in_progress", "wip", "in-progress"} {
+	for _, alias := range []string{"started", "wip", "in-progress"} {
 		params := map[string]interface{}{
 			"action": "list",
 			"status": alias,
@@ -601,7 +601,7 @@ func TestTodoToolListDefaultExcludesDoneDropped(t *testing.T) {
 
 	store.Complete("agent1", id2, "finished")
 	store.Transition("agent1", id3, "dropped", "not needed")
-	store.Transition("agent1", 4, "in_progress", "")
+	store.Transition("agent1", 4, "started", "")
 
 	result, err := executeTodoTool(tool, map[string]interface{}{"action": "list"})
 	if err != nil {
@@ -678,8 +678,9 @@ func TestNormalizeStatusFilter(t *testing.T) {
 		{"all", ""},
 		{"active", "active"},
 		{"open", "open"},
-		{"in_progress", "in_progress"},
-		{"wip", "in_progress"},
+		{"started", "started"},
+		{"in_progress", "started"},
+		{"wip", "started"},
 		{"done", "done"},
 		{"completed", "done"},
 		{"dropped", "dropped"},

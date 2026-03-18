@@ -79,9 +79,9 @@ func TestParseTodoArgs(t *testing.T) {
 			want: todoArgs{status: "dropped", sort: "priority", limit: 15},
 		},
 		{
-			name: "in_progress status",
-			raw:  "in_progress",
-			want: todoArgs{status: "in_progress", sort: "priority", limit: 15},
+			name: "started status",
+			raw:  "started",
+			want: todoArgs{status: "started", sort: "priority", limit: 15},
 		},
 		{
 			name: "created sort",
@@ -639,12 +639,12 @@ func TestTodoStartTransition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(resp.Text, "in_progress") {
-		t.Errorf("expected in_progress: %s", resp.Text)
+	if !contains(resp.Text, "started") {
+		t.Errorf("expected started: %s", resp.Text)
 	}
 	item, _ := store.Get(testAgent, 1)
-	if item.Status != "in_progress" {
-		t.Errorf("status: got %q, want %q", item.Status, "in_progress")
+	if item.Status != "started" {
+		t.Errorf("status: got %q, want %q", item.Status, "started")
 	}
 }
 

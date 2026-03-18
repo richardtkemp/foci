@@ -14,7 +14,7 @@ import (
 type TodoItem struct {
 	ID          int64
 	Text        string
-	Status      string // "open", "in_progress", "done", "dropped"
+	Status      string // "open", "started", "done", "dropped"
 	Priority    string // "high", "medium", "low"
 	Tags        string // comma-separated tags (e.g. "background,daily")
 	CloseReason string // reason for completion (set when status="done")
@@ -74,6 +74,11 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 				return closeOnErr("add updated_at column", err)
 			}
 		}
+	}
+
+	// Migrate legacy "in_progress" status to "started".
+	if _, err := db.Exec(`UPDATE todos SET status = 'started' WHERE status = 'in_progress'`); err != nil {
+		return closeOnErr("migrate in_progress to started", err)
 	}
 
 	return &TodoStore{db: db}, nil
@@ -223,7 +228,7 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 		if status != "" && status != "active" {
 			query += fmt.Sprintf(` ORDER BY %s, id %s`, priOrder, idDir)
 		} else {
-			statusOrder := `CASE status WHEN 'in_progress' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END`
+			statusOrder := `CASE status WHEN 'started' THEN 0 WHEN 'open' THEN 1 WHEN 'done' THEN 2 WHEN 'dropped' THEN 3 END`
 			query += fmt.Sprintf(` ORDER BY %s, %s, id %s`, statusOrder, priOrder, idDir)
 		}
 	}
@@ -263,7 +268,7 @@ func (s *TodoStore) Transition(agentID string, id int64, status, reason string) 
 	var res sql.Result
 	var err error
 	switch status {
-	case "open", "in_progress":
+	case "open", "started":
 		res, err = s.db.Exec(
 			`UPDATE todos SET status = ?, completed_at = NULL, updated_at = ?, close_reason = '' WHERE id = ? AND agent_id = ?`,
 			status, now, id, agentID,
@@ -398,7 +403,7 @@ func (s *TodoStore) Get(agentID string, id int64) (*TodoItem, error) {
 
 // TodoSearchOpts controls filtering, sorting, and limiting of search results.
 type TodoSearchOpts struct {
-	Status   string   // "open", "in_progress", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
+	Status   string   // "open", "started", "done", "dropped", "active" (excludes done/dropped), "" (no filter)
 	Sort     string   // "relevance" (default), "created", "updated", "closed", "priority"
 	Reverse  bool     // reverse sort direction (default false = descending/highest first)
 	Limit    int      // max results (0 = default 10)
