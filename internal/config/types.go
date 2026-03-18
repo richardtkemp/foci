@@ -192,6 +192,7 @@ type GeminiConfig struct {
 type OpenAIConfig struct {
 	BaseURL     string `toml:"base_url"`     // API base URL (default: "https://api.openai.com", override for OpenRouter/Together/etc.)
 	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
+	Reasoning   string `toml:"reasoning"`    // OpenRouter reasoning: "off" (default) or "adaptive"
 }
 
 type AnthropicConfig struct {

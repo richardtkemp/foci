@@ -103,6 +103,7 @@ type ContentBlock struct {
 	ToolUseID    string          `json:"tool_use_id,omitempty"` // tool_result: references tool_use block
 	Content      string          `json:"content,omitempty"`   // tool_result: result text
 	IsError      bool            `json:"is_error,omitempty"`  // tool_result: error flag
+	ReasoningRaw json.RawMessage  `json:"-"`                   // OpenRouter reasoning_details (raw for pass-back)
 	Raw          json.RawMessage `json:"-"`                   // complete JSON for passthrough (server tool blocks)
 }
 

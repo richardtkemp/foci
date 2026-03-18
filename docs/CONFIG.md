@@ -77,6 +77,7 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 |-----|------|---------|-------------|
 | `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
 | `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
+| `reasoning` | string | `"off"` | OpenRouter reasoning mode: `"off"` disables, `"adaptive"` enables reasoning for models that support it (e.g. `openrouter/hunter-alpha`). Mapped to `agent.Thinking` via provider defaults, so per-agent `thinking` overrides this. Safe for non-OpenRouter endpoints — unsupported endpoints ignore the parameter, and 400 errors trigger automatic retry without reasoning. |
 
 Requires `openai.api_key` in `secrets.toml`. Use `model = "openai/gpt-4o"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 

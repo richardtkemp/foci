@@ -549,6 +549,154 @@ func TestAssistantMessage_WithToolCalls(t *testing.T) {
 	}
 }
 
+func TestBuildParams_WithReasoning(t *testing.T) {
+	// Proves that when Thinking is set on the request, buildParams injects the
+	// OpenRouter "reasoning" extra field with enabled=true into the serialized params.
+	req := &provider.MessageRequest{
+		Model:     "openrouter/hunter-alpha",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+		Thinking: &provider.ThinkingConfig{Type: "adaptive"},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	reasoning, ok := raw["reasoning"]
+	if !ok {
+		t.Fatal("expected reasoning field in params")
+	}
+	rm, ok := reasoning.(map[string]any)
+	if !ok {
+		t.Fatalf("reasoning is %T, want map", reasoning)
+	}
+	if rm["enabled"] != true {
+		t.Errorf("reasoning.enabled = %v, want true", rm["enabled"])
+	}
+}
+
+func TestBuildParams_NoReasoningByDefault(t *testing.T) {
+	// Proves that when Thinking is nil (default), no reasoning field appears in
+	// the serialized params — safe for endpoints that don't support it.
+	req := &provider.MessageRequest{
+		Model:     "openai/gpt-4o",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := raw["reasoning"]; ok {
+		t.Error("reasoning field should not be present when Thinking is nil")
+	}
+}
+
+func TestExtractReasoningText(t *testing.T) {
+	// Proves that extractReasoningText handles string, array-of-objects, and
+	// fallback formats for reasoning_details from various OpenRouter models.
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"plain string", `"Let me think about this..."`, "Let me think about this..."},
+		{"array with thinking field", `[{"type":"thinking","thinking":"step 1"},{"type":"thinking","thinking":"step 2"}]`, "step 1\n\nstep 2"},
+		{"array with content field", `[{"content":"reasoning here"}]`, "reasoning here"},
+		{"array with text field", `[{"text":"thinking text"}]`, "thinking text"},
+		{"number fallback", `42`, "42"},
+		{"object fallback", `{"unknown":"format"}`, `{"unknown":"format"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractReasoningText(json.RawMessage(tt.raw))
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAssistantMessage_WithReasoningPassBack(t *testing.T) {
+	// Proves that when a thinking block carries ReasoningRaw, assistantMessageToOpenAI
+	// injects reasoning_details as an extra field on the serialized assistant message.
+	rawReasoning := json.RawMessage(`"I need to think carefully about this."`)
+	blocks := []provider.ContentBlock{
+		{Type: "thinking", Thinking: "I need to think carefully about this.", ReasoningRaw: rawReasoning},
+		{Type: "text", Text: "Here is my answer."},
+	}
+
+	msg := assistantMessageToOpenAI(blocks)
+	if msg.OfAssistant == nil {
+		t.Fatal("expected assistant message")
+	}
+
+	// Serialize and verify reasoning_details is present.
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	rd, ok := raw["reasoning_details"]
+	if !ok {
+		t.Fatal("expected reasoning_details in serialized assistant message")
+	}
+	// The raw message is a JSON string, so it should deserialize as a string.
+	if s, ok := rd.(string); !ok || s != "I need to think carefully about this." {
+		t.Errorf("reasoning_details = %v (%T), want string", rd, rd)
+	}
+}
+
+func TestAssistantMessage_NoReasoningWithoutRaw(t *testing.T) {
+	// Proves that thinking blocks without ReasoningRaw (e.g. from Anthropic) don't
+	// inject reasoning_details — only OpenRouter-originated thinking gets passed back.
+	blocks := []provider.ContentBlock{
+		{Type: "thinking", Thinking: "internal reasoning"},
+		{Type: "text", Text: "response text"},
+	}
+
+	msg := assistantMessageToOpenAI(blocks)
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := raw["reasoning_details"]; ok {
+		t.Error("reasoning_details should not be present for thinking blocks without ReasoningRaw")
+	}
+}
+
 func TestUserMessage_WithImage(t *testing.T) {
 	// Proves that a mixed user message containing text and a base64 image is translated into a single OpenAI user message (multi-part content).
 	blocks := []provider.ContentBlock{
