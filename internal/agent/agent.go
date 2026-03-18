@@ -83,7 +83,7 @@ type Agent struct {
 	MaxSummaryChars               int                          // max chars to auto-summarise (skip cheap model above this)
 	MaxSummaryInputChars          int                          // max chars of tool result embedded in summary prompt (0 = no limit)
 	GroupResolver                 *config.GroupResolver         // resolves call sites to model groups
-	FallbackResolver              *config.FallbackResolver      // nil disables automatic model fallback on transient errors
+	FallbackFunc                  provider.FallbackFunc          // nil disables automatic model fallback on transient errors
 	MaxImagePixels                int                          // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
@@ -578,43 +578,17 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				}
 			}
 			if err != nil {
-				// Fallback: if the error is transient and a fallback is configured,
-				// walk the fallback chain trying alternate models.
-				if a.FallbackResolver != nil && isFallbackEligible(err) {
-					fbModel := turnModel
-					for depth := 0; depth < config.MaxFallbackDepth; depth++ {
-						fb := a.FallbackResolver.Resolve(fbModel)
-						if fb == nil {
-							break
-						}
-						fbCanonical := fb.Developer + "/" + fb.ModelID
-						a.logger().Errorf("session=%s fallback: %s failed, trying %s", sessionKey, fbModel, fbCanonical)
-
-						// Get client for fallback model's endpoint/format
-						fbClient := turnClient
-						if a.ClientProvider != nil {
-							if c := a.ClientProvider.GetClient(fb.Endpoint, fb.Format); c != nil {
-								fbClient = c
-							}
-						}
-
-						req.Model = fbCanonical
-						resp, err = provider.Send(ctx, fbClient, req, handler)
-						duration = time.Since(start)
-						if err == nil {
-							// Fallback succeeded — log the actual model used
-							a.logger().Infof("session=%s fallback succeeded on %s", sessionKey, fbCanonical)
-							break
-						}
-						if !isFallbackEligible(err) {
-							break // non-transient error, stop trying
-						}
-						fbModel = fbCanonical
-					}
-					// Restore original model on the request so subsequent tool
-					// loop iterations rebuild with the primary model.
-					req.Model = turnModel
-				}
+				// Fallback: walk the fallback chain on transient errors.
+				// Uses WalkFallback (not SendWithFallback) because the primary
+				// Send already failed above — no need to retry it.
+				resp, err = provider.WalkFallback(ctx, turnClient, req, handler, err,
+					a.FallbackFunc, a.ClientProvider, func(f string, args ...any) {
+						a.logger().Errorf("session=%s "+f, append([]any{sessionKey}, args...)...)
+					})
+				duration = time.Since(start)
+				// Restore original model on the request so subsequent tool
+				// loop iterations rebuild with the primary model.
+				req.Model = turnModel
 
 				if err != nil {
 					// Log the failed request payload for debugging.

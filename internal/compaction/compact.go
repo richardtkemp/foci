@@ -24,9 +24,11 @@ type Compactor struct {
 	minMessages      int
 	preserveMessages int                // preserve last N messages through compaction (0 disables)
 	effort           string                // effort level for compaction API call (empty = omit)
-	Scratchpad       *memory.Scratchpad    // nil disables scratchpad injection
-	TaskListStore    *memory.TaskListStore // nil disables task list injection
-	AgentID          string                // agent ID for per-agent store queries
+	Scratchpad       *memory.Scratchpad         // nil disables scratchpad injection
+	TaskListStore    *memory.TaskListStore      // nil disables task list injection
+	AgentID          string                     // agent ID for per-agent store queries
+	FallbackFunc     provider.FallbackFunc      // nil disables automatic model fallback
+	ClientProvider   provider.ClientProvider     // resolves clients for fallback models; nil = reuse caller's client
 }
 
 // NewCompactor creates a new Compactor with defaults.
@@ -342,7 +344,8 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 
 	// Use streaming for compaction (required for large sessions)
 	handler := &provider.StreamHandler{}
-	resp, err := provider.Send(ctx, client, req, handler)
+	resp, err := provider.SendWithFallback(ctx, client, req, handler,
+		c.FallbackFunc, c.ClientProvider, c.log.Errorf)
 	if err != nil {
 		return "", "", fmt.Errorf("summarize for compaction: %w", err)
 	}

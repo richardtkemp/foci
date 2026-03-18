@@ -94,6 +94,19 @@ func setupAgent(p setupParams) *agentInstance {
 	// Create fallback resolver for automatic model failover
 	fallbackResolver := config.NewFallbackResolver(p.cfg.Models.Fallbacks, acfg.ModelFallbacks, p.cfg.Models.Aliases)
 
+	// Build provider-level fallback function from config resolver.
+	// This bridges config (which doesn't import provider) to the provider package.
+	var fallbackFn provider.FallbackFunc
+	if fallbackResolver != nil {
+		fallbackFn = func(model string) (string, string, string, bool) {
+			rm := fallbackResolver.Resolve(model)
+			if rm == nil {
+				return "", "", "", false
+			}
+			return rm.Developer + "/" + rm.ModelID, rm.Endpoint, rm.Format, true
+		}
+	}
+
 	// Prompt search directories: agent workspace first, then shared.
 	promptSearchDirs := []string{
 		filepath.Join(acfg.Workspace, "prompts"),
@@ -125,7 +138,7 @@ func setupAgent(p setupParams) *agentInstance {
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Register tools by category
-	coreResult := registerCoreTools(registry, p, agentStore, notifier, groupResolver)
+	coreResult := registerCoreTools(registry, p, agentStore, notifier, groupResolver, fallbackFn)
 	serverTools := registerWebTools(registry, p)
 	mcpMgr := registerMemoryAndExtTools(registry, p, agLazy)
 
@@ -133,7 +146,7 @@ func setupAgent(p setupParams) *agentInstance {
 	bs := setupBootstrapAndSkills(p, agentStore)
 
 	// Compaction
-	compactor, compactionThreshold := buildCompactor(p)
+	compactor, compactionThreshold := buildCompactor(p, fallbackFn)
 
 	// Session messaging tools (send_message_to_user, send_to_session)
 	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
@@ -176,7 +189,7 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxResultChars:                 resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
 		ToolResultTempDir:              p.cfg.Tools.TempDir,
 		GroupResolver:                  groupResolver,
-		FallbackResolver:               fallbackResolver,
+		FallbackFunc:                    fallbackFn,
 		ModelAliases:                   p.cfg.Models.Aliases,
 		SummaryContextTurns:            resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
 		SummaryContextChars:            resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
@@ -227,7 +240,7 @@ func setupAgent(p setupParams) *agentInstance {
 	setupManaWatcher(ag, p)
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
-	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, defaultFormat)
+	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, defaultFormat, fallbackFn)
 	setupWakeScheduler(agLazy, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Per-agent slash commands
@@ -266,6 +279,7 @@ func setupAgent(p setupParams) *agentInstance {
 		plat:                p.plat,
 		connMgr:             connMgr,
 		groupResolver:       groupResolver,
+		fallbackFn:          fallbackFn,
 		configureFacet: func(conn platform.Connection) {
 			if configureFacet != nil {
 				configureFacet(conn)

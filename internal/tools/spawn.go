@@ -88,6 +88,7 @@ type SpawnDeps struct {
 	Sessions           SessionBrancher
 	AgentID            string
 	GroupResolver      *config.GroupResolver                    // resolves model groups for spawn modes
+	FallbackFunc       provider.FallbackFunc                    // nil disables automatic model fallback on transient errors
 	FallbackModel      string                                   // agent's default model (developer/model_id) for single-model mode fallback
 	FallbackFormat     string                                   // agent's default format for single-model mode fallback
 	MaxInherit         int                                      // semaphore size (from config)
@@ -158,7 +159,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
 				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
-				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -177,7 +178,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					system = deps.Bootstrap.SystemBlocks()
 				}
 				toolDefs, tools := spawnToolSet(deps.Registry, nil)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -189,7 +190,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 					{Type: "text", Text: exploreSystemPrompt},
 				}
 				toolDefs, tools := spawnExploreToolSet(deps.Registry)
-				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth)
+				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnExploreMaxResultChars, deps.ExploreMaxDepth, deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
 				}
@@ -381,7 +382,7 @@ func spawnGuardResult(toolName, result string, limit int) string {
 }
 
 // spawnOneShot makes API calls with optional tool access (raw/character/explore modes).
-func spawnOneShot(ctx context.Context, client provider.Client, model, format string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int) (string, error) {
+func spawnOneShot(ctx context.Context, client provider.Client, model, format string, system []provider.SystemBlock, prompt string, timeout time.Duration, toolDefs []provider.ToolDef, tools map[string]*Tool, sessions SessionBrancher, maxResultChars int, maxLoops int, fallbackFn provider.FallbackFunc, clientProvider provider.ClientProvider) (string, error) {
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -402,7 +403,10 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		}
 
 		start := time.Now()
-		resp, err := provider.Send(callCtx, client, req, nil)
+		resp, err := provider.SendWithFallback(callCtx, client, req, nil,
+			fallbackFn, clientProvider, func(f string, args ...any) {
+				log.Errorf("spawn", f, args...)
+			})
 		if err != nil {
 			return "", fmt.Errorf("spawn %s: %w", model, err)
 		}

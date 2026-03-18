@@ -539,7 +539,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 | `web_fetch_max_bytes` | int | `1048576` | Max bytes to read from web fetch (1MB default). |
 | `web_search_timeout` | string | `"15s"` | HTTP timeout for web search API calls. Go duration format. |
 | `summary_context_turns` | int | `5` | Number of recent conversation turns included as context when auto-summarising oversized tool results. |
-| `summary_context_chars` | int | `6000` | Max characters of conversation context sent to Haiku for auto-summary. |
+| `summary_context_chars` | int | `6000` | Max characters of conversation context sent to the cheap model for auto-summary. |
 | `tmux_memory_check_interval` | string | `"5m"` | How often to check tmux server RSS. Go duration format. `"0"` disables monitoring. |
 | `tmux_memory_warn` | string | `"10%"` | Warn threshold. Sends Telegram notification. Formats: `"N%"` (% of RAM), `"Nmb"`, `"Ngb"`. |
 | `tmux_memory_critical` | string | `"20%"` | Critical threshold. Sends Telegram notification with stronger message. Same formats. |
@@ -554,7 +554,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 | `web_fetch_allowed_domains` | string[] | `[]` | Domain whitelist for Anthropic web fetch. Mutually exclusive with `web_fetch_blocked_domains`. |
 | `web_fetch_blocked_domains` | string[] | `[]` | Domain blacklist for Anthropic web fetch. Mutually exclusive with `web_fetch_allowed_domains`. |
 
-The `summary` tool uses `claude-haiku-4-5` hardcoded (always cheap/fast) and has no configurable options.
+The `summary` tool uses the **cheap** model group (call site: `summarize-file`). Configure via `[models]` cheap or `[models.calls]` overrides.
 
 Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
 
@@ -831,8 +831,8 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). Global: `[tools]` or `[defaults]`. |
-| `max_summary_chars` | int | `300000` | Max chars to auto-summarise via Haiku. Results larger than this are saved to file with hints but skip the summary call. Global: `[tools]` or `[defaults]`. |
-| `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via Haiku. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]` or `[defaults]`. Per-agent `unset` inherits from `[tools]`. |
+| `max_summary_chars` | int | `300000` | Max chars to auto-summarise via the cheap model. Results larger than this are saved to file with hints but skip the summary call. Global: `[tools]` or `[defaults]`. |
+| `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via the cheap model. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]` or `[defaults]`. Per-agent `unset` inherits from `[tools]`. |
 | `max_summary_input_chars` | int | `100000` | Max chars of tool result text embedded in the summary prompt. Larger results are truncated in the prompt (the full output is on disk). Prevents excessive memory use and token cost during auto-summarisation. Global: `[tools]` or `[defaults]`. |
 | `max_image_pixels` | int | `2073600` | Max pixels (width × height) for images before downscaling. Images exceeding this are proportionally resized and re-encoded as JPEG (quality 85). Default is 1920×1080. `0` disables downscaling. Global: `[tools]` or `[defaults]`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. Global: `[tools]`. |

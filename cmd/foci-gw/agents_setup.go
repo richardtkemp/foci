@@ -36,7 +36,7 @@ type coreToolsResult struct {
 }
 
 // registerCoreTools registers exec, tmux, browser, file I/O, summary, and HTTP tools.
-func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver) coreToolsResult {
+func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc) coreToolsResult {
 	acfg := p.acfg
 
 	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
@@ -94,7 +94,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
 	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, groupResolver, acfg.Workspace))
+	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, groupResolver, acfg.Workspace, fallbackFn))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	return result
@@ -207,7 +207,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 
 // buildCompactor creates a Compactor configured for this agent.
 // Returns the compactor and the resolved compaction threshold.
-func buildCompactor(p setupParams) (*compaction.Compactor, float64) {
+func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compaction.Compactor, float64) {
 	acfg := p.acfg
 	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
 	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
@@ -223,6 +223,8 @@ func buildCompactor(p setupParams) (*compaction.Compactor, float64) {
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
 	compactor.AgentID = acfg.ID
+	compactor.FallbackFunc = fallbackFn
+	compactor.ClientProvider = p.clientProvider
 
 	return compactor, compactionThreshold
 }
@@ -375,7 +377,7 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 }
 
 // registerSpawnTool registers the spawn tool for forking sub-agents.
-func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, defaultFormat string) {
+func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, defaultFormat string, fallbackFn provider.FallbackFunc) {
 	acfg := p.acfg
 
 	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
@@ -387,6 +389,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 		Sessions:        &sessionBranchAdapter{store: p.sessions},
 		AgentID:         acfg.ID,
 		GroupResolver:   groupResolver,
+		FallbackFunc:    fallbackFn,
 		FallbackModel:   acfg.Model,
 		FallbackFormat:  defaultFormat,
 		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
