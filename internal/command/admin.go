@@ -44,38 +44,43 @@ func ToolsCommand() *Command {
 
 // ConfigCommand returns a /config command for viewing and editing the running config.
 func ConfigCommand() *Command {
-	return &Command{
+	cmd := &Command{
 		Name:        "config",
 		Description: "Show or edit config. Subcommands: toml, table, available, set",
 		Category:    "diagnostics",
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			parts := strings.Fields(req.Args)
-			if len(parts) > 0 && strings.ToLower(parts[0]) == "set" {
-				if cc.ConfigSetDeps == nil {
-					return Response{Text: "Config set is not available."}, nil
-				}
-				setArgs := strings.TrimSpace(strings.TrimPrefix(req.Args, parts[0]))
-				text, err := configSet(cc.ConfigSetDeps, setArgs)
-				return Response{Text: text}, err
-			}
-			switch strings.TrimSpace(strings.ToLower(req.Args)) {
-			case "toml":
-				return Response{Text: config.FormatConfigTOML(cc.Config, cc.AgentConfig)}, nil
-			case "table":
-				return Response{Parts: config.FormatConfigGrouped(cc.Config, cc.AgentConfig)}, nil
-			case "available":
-				return Response{Text: config.FormatAvailable(cc.Config, cc.AgentConfig)}, nil
-			default:
-				return Response{Text: "/config toml — raw TOML of running config (secrets redacted)\n/config table — formatted table of current config values\n/config available — unset options with defaults\n/config set [section.key=value] — edit config file"}, nil
-			}
-		},
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "toml", Data: "toml"},
-				{Label: "table", Data: "table"},
-				{Label: "available", Data: "available"},
-				{Label: "set", Data: "set"},
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "toml",
+				Description: "Raw TOML of running config (secrets redacted)",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					return Response{Text: config.FormatConfigTOML(cc.Config, cc.AgentConfig)}, nil
+				},
+			},
+			{
+				Name:        "table",
+				Description: "Formatted table of current config values",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					return Response{Parts: config.FormatConfigGrouped(cc.Config, cc.AgentConfig)}, nil
+				},
+			},
+			{
+				Name:        "available",
+				Description: "Unset options with defaults",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					return Response{Text: config.FormatAvailable(cc.Config, cc.AgentConfig)}, nil
+				},
+			},
+			{
+				Name:        "set",
+				Description: "Edit config file",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					if cc.ConfigSetDeps == nil {
+						return Response{Text: "Config set is not available."}, nil
+					}
+					text, err := configSet(cc.ConfigSetDeps, req.Args)
+					return Response{Text: text}, err
+				},
+			},
 		},
 		ChainKeyboard: func(_ context.Context, subcommand string, cc CommandContext) []KeyboardOption {
 			if cc.ConfigSetDeps == nil {
@@ -117,6 +122,8 @@ func ConfigCommand() *Command {
 			}
 		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 // configSet handles /config set — either starts a wizard (bare) or does a direct set.

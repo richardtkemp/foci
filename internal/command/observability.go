@@ -189,39 +189,69 @@ func LastCommand() *Command {
 
 // CostCommand returns a /cost command showing aggregated costs.
 func CostCommand() *Command {
-	return &Command{
+	readEntries := func(cc CommandContext) ([]log.APIEntry, error) {
+		entries := log.ReadAPILog(cc.APILogPath)
+		if len(entries) == 0 {
+			return nil, fmt.Errorf("No API calls logged yet.")
+		}
+		return entries, nil
+	}
+
+	cmd := &Command{
 		Name:        "cost",
 		Description: "API cost summary",
 		Category:    "observability",
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "today", Data: "today"},
-				{Label: "24h", Data: "24h"},
-				{Label: "week", Data: "week"},
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "today",
+				Aliases:     []string{"session"},
+				Description: "Today's costs by session",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					entries, err := readEntries(cc)
+					if err != nil {
+						return Response{Text: err.Error()}, nil
+					}
+					return Response{Text: costToday(entries)}, nil
+				},
+			},
+			{
+				Name:        "24h",
+				Description: "Last 24 hours with category breakdown",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					entries, err := readEntries(cc)
+					if err != nil {
+						return Response{Text: err.Error()}, nil
+					}
+					return Response{Text: cost24h(entries)}, nil
+				},
+			},
+			{
+				Name:        "week",
+				Description: "7-day summary with daily breakdown",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					entries, err := readEntries(cc)
+					if err != nil {
+						return Response{Text: err.Error()}, nil
+					}
+					return Response{Text: costWeek(entries)}, nil
+				},
+			},
 		},
-		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			entries := log.ReadAPILog(cc.APILogPath)
-			if len(entries) == 0 {
-				return Response{Text: "No API calls logged yet."}, nil
+		// /cost <days> — numeric arg handled by DefaultExecute.
+		DefaultExecute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			entries, err := readEntries(cc)
+			if err != nil {
+				return Response{Text: err.Error()}, nil
 			}
-
-			scope := strings.ToLower(strings.TrimSpace(req.Args))
-
-			switch scope {
-			case "":
+			scope := strings.TrimSpace(req.Args)
+			if scope == "" {
 				return Response{Text: costUsage()}, nil
-			case "today", "session":
-				return Response{Text: costToday(entries)}, nil
-			case "24h":
-				return Response{Text: cost24h(entries)}, nil
-			case "week":
-				return Response{Text: costWeek(entries)}, nil
-			default:
-				return Response{Text: costDays(entries, scope)}, nil
 			}
+			return Response{Text: costDays(entries, scope)}, nil
 		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 type SystemSection struct {

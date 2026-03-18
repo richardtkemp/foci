@@ -57,17 +57,55 @@ func secretKeysInSection(store SecretsStore, section string) []string {
 
 // SecretsCommand creates the /secrets slash command for managing secrets.
 func SecretsCommand() *Command {
-	return &Command{
+	secretsExec := func(cc CommandContext, fn func(SecretsStore) (Response, error)) (Response, error) {
+		store := secretsResolveStore(cc)
+		if store == nil {
+			return Response{Text: "Secrets store not configured."}, nil
+		}
+		return fn(store)
+	}
+
+	cmd := &Command{
 		Name:        "secrets",
 		Description: "Manage secrets (list/set/remove/hosts)",
 		Category:    "operations",
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "list", Data: "list"},
-				{Label: "set", Data: "set"},
-				{Label: "remove", Data: "remove"},
-				{Label: "hosts", Data: "hosts"},
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "list",
+				Description: "List all secrets",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					return secretsExec(cc, func(store SecretsStore) (Response, error) {
+						return Response{Text: secretsList(store)}, nil
+					})
+				},
+			},
+			{
+				Name:        "set",
+				Description: "Set a secret value",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					return secretsExec(cc, func(store SecretsStore) (Response, error) {
+						return secretsSetDispatch(cc, store, strings.Fields(req.Args))
+					})
+				},
+			},
+			{
+				Name:        "remove",
+				Description: "Remove a secret",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					return secretsExec(cc, func(store SecretsStore) (Response, error) {
+						return secretsRemoveDispatch(store, strings.Fields(req.Args))
+					})
+				},
+			},
+			{
+				Name:        "hosts",
+				Description: "Manage allowed hosts for a secret section",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					return secretsExec(cc, func(store SecretsStore) (Response, error) {
+						return secretsHostsDispatch(cc, store, strings.Fields(req.Args))
+					})
+				},
+			},
 		},
 		ChainKeyboard: func(_ context.Context, subcommand string, cc CommandContext) []KeyboardOption {
 			store := secretsResolveStore(cc)
@@ -76,33 +114,10 @@ func SecretsCommand() *Command {
 			}
 			return secretsChainKeyboard(store, subcommand)
 		},
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			store := secretsResolveStore(cc)
-			if store == nil {
-				return Response{Text: "Secrets store not configured."}, nil
-			}
-			parts := strings.Fields(req.Args)
-			if len(parts) == 0 {
-				return Response{Text: secretsUsage}, nil
-			}
-
-			switch parts[0] {
-			case "list":
-				return Response{Text: secretsList(store)}, nil
-			case "hosts":
-				return secretsHostsDispatch(cc, store, parts[1:])
-			case "set":
-				return secretsSetDispatch(cc, store, parts[1:])
-			case "remove":
-				return secretsRemoveDispatch(store, parts[1:])
-			default:
-				return Response{Text: secretsUsage}, nil
-			}
-		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
-
-const secretsUsage = "Usage: /secrets list | /secrets set <section.key> <value> | /secrets remove <section.key> | /secrets hosts <section> [add|remove|clear] [host]"
 
 // secretsResolveStore returns the store from SecretsDeps if available, falling back to SecretsStore.
 func secretsResolveStore(cc CommandContext) SecretsStore {
@@ -231,7 +246,7 @@ func secretsActivateSetWizard(cc CommandContext, store SecretsStore, section, ke
 	reg := secretsRegistry(cc)
 	if reg == nil {
 		// No registry — fall back to usage.
-		return Response{Text: secretsUsage}, nil
+		return Response{Text: "Usage: /secrets set <section.key> <value>"}, nil
 	}
 
 	w := newSecretsSetWizard(store)

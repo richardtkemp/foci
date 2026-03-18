@@ -51,16 +51,35 @@ type PromptsData struct {
 
 // PromptsCommand returns a /prompts command showing prompt config and files.
 func PromptsCommand() *Command {
-	return &Command{
+	cmd := &Command{
 		Name:        "prompts",
 		Description: "Prompt config. Subcommands: list, reinstall, diff",
 		Category:    "diagnostics",
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "list", Data: "list"},
-				{Label: "reinstall", Data: "reinstall"},
-				{Label: "diff", Data: "diff"},
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "list",
+				Description: "Show prompt config and files",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					return Response{Text: promptsDisplay(resolvePromptsData(cc))}, nil
+				},
+			},
+			{
+				Name:        "reinstall",
+				Description: "Reinstall embedded prompts to workspace",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					return promptsReinstall(resolvePromptsData(cc), req.Args)
+				},
+			},
+			{
+				Name:        "diff",
+				Description: "Show diff between current and default prompt",
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					if strings.TrimSpace(req.Args) == "" {
+						return Response{Text: "Usage: /prompts diff <name>"}, nil
+					}
+					return promptsDiff(ctx, resolvePromptsData(cc), req.Args, cc)
+				},
+			},
 		},
 		ChainKeyboard: func(_ context.Context, subcommand string, cc CommandContext) []KeyboardOption {
 			if subcommand != "diff" {
@@ -75,29 +94,9 @@ func PromptsCommand() *Command {
 			}
 			return opts
 		},
-		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			data := resolvePromptsData(cc)
-			parts := strings.Fields(req.Args)
-
-			if len(parts) == 0 {
-				return Response{Text: "Usage: /prompts list | reinstall | diff <name>"}, nil
-			}
-
-			switch parts[0] {
-			case "list":
-				return Response{Text: promptsDisplay(data)}, nil
-			case "reinstall":
-				return promptsReinstall(data, strings.Join(parts[1:], " "))
-			case "diff":
-				if len(parts) < 2 {
-					return Response{Text: "Usage: /prompts diff <name>"}, nil
-				}
-				return promptsDiff(ctx, data, strings.Join(parts[1:], " "), cc)
-			default:
-				return Response{Text: "Unknown subcommand. Usage: /prompts list | reinstall | diff <name>"}, nil
-			}
-		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 // resolvePromptsData returns PromptsDataFn(cc) if set, otherwise buildPromptsData(cc).

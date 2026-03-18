@@ -19,37 +19,30 @@ type BitwardenStoreInfo interface {
 
 // BitwardenCommand creates the /bitwarden slash command with setup and status subcommands.
 func BitwardenCommand() *Command {
-	return &Command{
+	cmd := &Command{
 		Name:        "bitwarden",
 		Description: "Bitwarden integration (setup/status)",
 		Category:    "operations",
-		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
-			return []KeyboardOption{
-				{Label: "status", Data: "status"},
-				{Label: "setup", Data: "setup"},
-			}
-		},
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			parts := strings.Fields(req.Args)
-			if len(parts) == 0 {
-				return Response{Text: bitwardenUsage}, nil
-			}
-
-			switch parts[0] {
-			case "setup":
-				return Response{Text: bitwardenSetup()}, nil
-			case "status":
-				return Response{Text: bitwardenStatus(cc.BitwardenStore, cc.BitwardenEnabled)}, nil
-			default:
-				return Response{Text: bitwardenUsage}, nil
-			}
+		Subcommands: []Subcommand{
+			{
+				Name:        "status",
+				Description: "Show current bitwarden integration state",
+				Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+					return Response{Text: bitwardenStatus(cc.BitwardenStore, cc.BitwardenEnabled)}, nil
+				},
+			},
+			{
+				Name:        "setup",
+				Description: "Check prerequisites and create bitwarden system user",
+				Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+					return Response{Text: bitwardenSetup()}, nil
+				},
+			},
 		},
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
-
-const bitwardenUsage = `Usage:
-  /bitwarden setup  — check prerequisites and create bitwarden system user
-  /bitwarden status — show current bitwarden integration state`
 
 func bitwardenSetup() string {
 	var sb strings.Builder
