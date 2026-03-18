@@ -20,7 +20,7 @@ var spawnTestAliases = map[string]string{
 }
 
 func TestSpawnContextRaw(t *testing.T) {
-	// Proves that raw context sends no system prompt to the model, resolves the model alias,
+	// Proves that raw context sends no system prompt to the model, resolves the model group,
 	// and returns the model's response directly.
 	t.Parallel()
 	var receivedReq *provider.MessageRequest
@@ -38,6 +38,7 @@ func TestSpawnContextRaw(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-token")
 	gr := config.NewGroupResolver(config.ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
+		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
 	}, spawnTestAliases, "")
 	deps := SpawnDeps{
@@ -54,7 +55,7 @@ func TestSpawnContextRaw(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "What is the meaning of life?",
-		"model":   "opus",
+		"model":   "powerful",
 		"context": "raw",
 	})
 
@@ -280,6 +281,7 @@ func TestSpawnExploreMode(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-token")
 	gr := config.NewGroupResolver(config.ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
+		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
 	}, spawnTestAliases, "")
 	deps := SpawnDeps{
@@ -294,7 +296,7 @@ func TestSpawnExploreMode(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "Find all Go files in the project",
-		"model":   "opus", // explicitly request opus — explore ignores it, uses cheap group
+		"model":   "powerful", // explicitly request powerful — explore ignores it, uses cheap group
 		"context": "explore",
 	})
 

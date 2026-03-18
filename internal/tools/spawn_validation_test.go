@@ -201,9 +201,9 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	}
 }
 
-func TestSpawnModelGroupNames(t *testing.T) {
-	// Proves that spawn model param accepts group names (powerful, fast, cheap) and resolves
-	// them to the configured model for that group.
+func TestSpawnModelGroups(t *testing.T) {
+	// Proves that model group names (powerful, fast, cheap) are resolved to their
+	// configured model IDs via the GroupResolver before the request is sent to the API.
 	t.Parallel()
 	tests := []struct {
 		group string
@@ -213,6 +213,12 @@ func TestSpawnModelGroupNames(t *testing.T) {
 		{"fast", "claude-sonnet-4-6"},
 		{"cheap", "claude-haiku-4-5"},
 	}
+
+	gr := config.NewGroupResolver(config.ModelsConfig{
+		Powerful: "anthropic/claude-opus-4-6",
+		Fast:     "anthropic/claude-sonnet-4-6",
+		Cheap:    "anthropic/claude-haiku-4-5",
+	}, spawnTestAliases, "")
 
 	for _, tt := range tests {
 		var receivedModel string
@@ -226,11 +232,6 @@ func TestSpawnModelGroupNames(t *testing.T) {
 		})
 
 		client := newTestAnthropicClient(server.URL, "test-token")
-		gr := config.NewGroupResolver(config.ModelsConfig{
-			Powerful: "anthropic/claude-opus-4-6",
-			Fast:     "anthropic/claude-sonnet-4-6",
-			Cheap:    "anthropic/claude-haiku-4-5",
-		}, nil, "")
 		deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
