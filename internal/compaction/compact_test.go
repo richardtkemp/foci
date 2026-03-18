@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"foci/internal/provider"
 )
@@ -16,6 +17,25 @@ import (
 type nonStreamingClient struct{ provider.Client }
 
 func noStream(c provider.Client) provider.Client { return nonStreamingClient{c} }
+
+// retryable mirrors the provider.retryableClient interface so
+// nonStreamingClient can forward retry methods through the wrapper,
+// allowing the provider layer's type assertion to succeed.
+type retryable interface {
+	OnRetrySuccess()
+	WaitForRecovery() <-chan struct{}
+	RetryBaseDelay() time.Duration
+	OverloadBaseDelay() time.Duration
+	OverloadMaxDuration() time.Duration
+	ServerErrorMaxDuration() time.Duration
+}
+
+func (n nonStreamingClient) OnRetrySuccess()                       { n.Client.(retryable).OnRetrySuccess() }
+func (n nonStreamingClient) WaitForRecovery() <-chan struct{}      { return n.Client.(retryable).WaitForRecovery() }
+func (n nonStreamingClient) RetryBaseDelay() time.Duration         { return n.Client.(retryable).RetryBaseDelay() }
+func (n nonStreamingClient) OverloadBaseDelay() time.Duration      { return n.Client.(retryable).OverloadBaseDelay() }
+func (n nonStreamingClient) OverloadMaxDuration() time.Duration    { return n.Client.(retryable).OverloadMaxDuration() }
+func (n nonStreamingClient) ServerErrorMaxDuration() time.Duration { return n.Client.(retryable).ServerErrorMaxDuration() }
 
 // mockCompactionServer returns a test API server for compaction tests.
 func mockCompactionServer(summaryText string) *httptest.Server {

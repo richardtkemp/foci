@@ -46,7 +46,7 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 
 // Write sets or overwrites a scratchpad entry for the given agent.
 func (s *Scratchpad) Write(agentID, key, content string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(
 		`INSERT INTO scratchpad (agent_id, key, content, updated) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(agent_id, key) DO UPDATE SET content = excluded.content, updated = excluded.updated`,
@@ -86,7 +86,7 @@ func (s *Scratchpad) All(agentID string) ([]ScratchpadEntry, error) {
 		if err := rows.Scan(&e.Key, &e.Content, &updated); err != nil {
 			return nil, err
 		}
-		e.Updated, _ = time.Parse(time.RFC3339, updated)
+		e.Updated, _ = time.Parse(time.RFC3339Nano, updated)
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
@@ -109,7 +109,7 @@ func (s *Scratchpad) List(agentID string) ([]ScratchpadListEntry, error) {
 			return nil, err
 		}
 		e.SizeBytes = len(content)
-		e.Updated, _ = time.Parse(time.RFC3339, updated)
+		e.Updated, _ = time.Parse(time.RFC3339Nano, updated)
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()

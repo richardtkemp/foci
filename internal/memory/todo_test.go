@@ -733,8 +733,6 @@ func TestTodoUpdatedAtOnEdit(t *testing.T) {
 	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
 
-	time.Sleep(1100 * time.Millisecond)
-
 	_, err := store.Edit("agent1", id, "Updated", "", "", false)
 	if err != nil {
 		t.Fatalf("Edit: %v", err)
@@ -759,8 +757,6 @@ func TestTodoUpdatedAtOnComplete(t *testing.T) {
 	id, _ := store.Add("agent1", "Task", "medium", "")
 	items, _ := store.List("agent1", "", nil, "", "", false, 0)
 	originalUpdatedAt := items[0].UpdatedAt
-
-	time.Sleep(1100 * time.Millisecond)
 
 	err := store.Complete("agent1", id, "done")
 	if err != nil {
@@ -860,9 +856,7 @@ func TestTodoSortByCreated(t *testing.T) {
 	store := newTestTodoStore(t)
 
 	id1, _ := store.Add("agent1", "First task", "high", "")
-	time.Sleep(50 * time.Millisecond)
 	id2, _ := store.Add("agent1", "Second task", "high", "")
-	time.Sleep(50 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Third task", "high", "")
 
 	// Default: newest first
@@ -900,15 +894,10 @@ func TestTodoSortByUpdated(t *testing.T) {
 	// Verifies that sort=updated orders todos newest-first by updated_at, confirming a later edit promotes an older item to the top.
 	store := newTestTodoStore(t)
 
-	// Add items with delays to ensure distinct timestamps (need >1s for RFC3339 precision)
 	id1, _ := store.Add("agent1", "Task 1", "medium", "")
-	time.Sleep(1100 * time.Millisecond)
 	id2, _ := store.Add("agent1", "Task 2", "medium", "")
-	time.Sleep(1100 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Task 3", "medium", "")
 
-	// Wait and edit id1 to make it most recently updated (newer than id3)
-	time.Sleep(1100 * time.Millisecond)
 	store.Edit("agent1", id1, "Updated task 1", "", "", false)
 
 	items, err := store.List("agent1", "", nil, "", "updated", false, 0)
@@ -975,13 +964,10 @@ func TestTodoSortByCreatedIgnoresStatus(t *testing.T) {
 
 	// Create items with different statuses at different times
 	id1, _ := store.Add("agent1", "First task", "high", "")
-	time.Sleep(50 * time.Millisecond)
 	id2, _ := store.Add("agent1", "Second task", "high", "")
 	store.Transition("agent1", id2, "started", "")
-	time.Sleep(50 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Third task", "high", "")
 	store.Transition("agent1", id3, "done", "completed")
-	time.Sleep(50 * time.Millisecond)
 	id4, _ := store.Add("agent1", "Fourth task", "high", "")
 
 	// sort=created, default direction = newest first
@@ -1013,15 +999,12 @@ func TestTodoSortByUpdatedIgnoresStatus(t *testing.T) {
 
 	// Create items with different statuses and update at different times
 	id1, _ := store.Add("agent1", "Task 1", "medium", "")
-	time.Sleep(1100 * time.Millisecond)
 	id2, _ := store.Add("agent1", "Task 2", "medium", "")
 	store.Transition("agent1", id2, "started", "")
-	time.Sleep(1100 * time.Millisecond)
 	id3, _ := store.Add("agent1", "Task 3", "medium", "")
 	store.Transition("agent1", id3, "done", "completed")
 
 	// Update id1 to make it most recently updated
-	time.Sleep(1100 * time.Millisecond)
 	store.Edit("agent1", id1, "Updated task 1", "", "", false)
 
 	// List with sort=updated should ignore status and sort purely by updated time (newest first)
