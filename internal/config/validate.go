@@ -122,14 +122,8 @@ func validate(cfg *Config) error {
 	if err := validateNonNegative(cfg.Sessions.CompactionPreserveMessages, "[sessions] compaction_preserve_messages"); err != nil {
 		return err
 	}
-	if err := validateRange(cfg.Sessions.CompactionIdlePressureMax, 0.0, 1.0, "[sessions] compaction_idle_pressure_max"); err != nil {
+	if err := validateRange(cfg.Sessions.CompactionManaRefreshFactor, 0.0, 1.0, "[sessions] compaction_mana_refresh_factor"); err != nil {
 		return err
-	}
-	// Idle threshold: "0" disables, otherwise must parse as duration
-	if cfg.Sessions.CompactionIdleThreshold != "0" {
-		if _, err := time.ParseDuration(cfg.Sessions.CompactionIdleThreshold); err != nil {
-			return fmt.Errorf("[sessions] compaction_idle_threshold = %q: %w", cfg.Sessions.CompactionIdleThreshold, err)
-		}
 	}
 	// Mana refresh threshold: "0" disables, otherwise must parse as duration
 	if cfg.Sessions.CompactionManaRefreshThreshold != "0" {

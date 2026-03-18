@@ -765,41 +765,32 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `task_list_notify` | bool | `true` | Send Telegram notifications when task list entries are created, started, or completed. Shows progress like "✅ 3/5: Fixed token counting". |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
-| `compaction_idle_threshold` | string | `"45m"` | Idle duration before idle pressure starts lowering the compaction threshold. `"0"` disables idle-aware compaction. Format: Go duration string (e.g., `"30m"`, `"1h"`). |
-| `compaction_idle_pressure_start` | string | `"70%"` | Context usage percentage where idle pressure starts ramping. Below this, idle time has no effect. Format: percentage string (e.g., `"70%"`) or decimal (e.g., `"0.7"`). |
-| `compaction_idle_pressure_max` | float | `0.15` | Maximum threshold reduction from idle pressure. With default base threshold of 0.8, this allows reduction to 0.65. Range: 0.0–1.0. |
-| `compaction_mana_refresh_threshold` | string | `"15m"` | Trigger special high-fidelity mana-refresh compaction when mana reset is this soon. Format: Go duration string. `"0"` disables. |
+| `compaction_mana_refresh_threshold` | string | `"5m"` | Trigger mana-refresh compaction when mana reset is within this duration. Format: Go duration string. `"0"` disables. |
+| `compaction_mana_refresh_factor` | float | `0.5` | Secondary compaction threshold for mana-refresh mode, as a fraction of the main `compaction_threshold`. E.g. with threshold 0.8 and factor 0.5, mana-refresh triggers at 40% context usage. Range: 0.0–1.0. |
 | `compaction_mana_refresh_preserve` | int | unset | Explicit message count to preserve during mana-refresh compaction. Overrides the percentage-based default. `0` uses normal preservation count. |
 | `compaction_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `compaction_mana_refresh_preserve` is unset. |
 | `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
 
-#### Idle-Aware Compaction
+#### Mana-Refresh Compaction
 
-Foci can trigger compaction proactively when the user has been idle, with mana-aware pressure adjustment:
+Compaction triggers in exactly two automatic modes:
 
-1. **Normal threshold compaction** (existing): Triggers at 80% context usage.
-2. **Idle pressure** (new): After `compaction_idle_threshold` idle time, gradually reduces the compaction threshold from base (e.g. 80%) down by `compaction_idle_pressure_max` (e.g. to 65%) over the next idle period. Only applies when context is above `compaction_idle_pressure_start`.
-3. **Mana refresh mode** (new): When mana reset is within `compaction_mana_refresh_threshold`, triggers compaction at 50% of the base threshold and preserves `compaction_mana_refresh_preserve_pct` of messages (default 50%), summarising the older half. This is gentler than normal compaction — it triggers earlier but keeps more recent context intact. An explicit `compaction_mana_refresh_preserve` count overrides the percentage.
+1. **Main threshold** — compact when context exceeds `compaction_threshold` (default 80%).
+2. **Mana-refresh** — compact when the mana reset is within `compaction_mana_refresh_threshold` (default 5m) AND context exceeds a secondary threshold (`compaction_threshold × compaction_mana_refresh_factor`, default 40%). This re-summarises before the new mana window starts. Preserves `compaction_mana_refresh_preserve_pct` of messages (default 50%), summarising the older half. An explicit `compaction_mana_refresh_preserve` count overrides the percentage.
 
-Example scenarios:
+A third mode is manual: the user can run `/compact` at any time.
+
+Only Anthropic-endpoint sessions have mana tracking. Sessions switched to Gemini/OpenAI skip the mana-refresh check (no spurious compactions from the wrong budget).
 
 ```toml
-# Scenario A: Conservative (minimize compactions)
-[sessions]
-compaction_idle_threshold = "0"  # disable idle compaction
-
-# Scenario B: Aggressive (keep context small)
-[sessions]
-compaction_idle_threshold = "30m"
-compaction_idle_pressure_max = 0.25  # reduce to 55% threshold
-compaction_mana_refresh_preserve = 50  # preserve last 50 messages in refresh mode
-
-# Scenario C: Per-agent override
+# Example: tune mana-refresh for a specific agent
 [[agents]]
 id = "research"
-compaction_idle_threshold = "15m"  # compact sooner for research bot
+compaction_mana_refresh_threshold = "10m"  # wider window
+compaction_mana_refresh_factor = 0.3       # trigger at 24% context
+compaction_mana_refresh_preserve = 50      # preserve last 50 messages
 ```
 
 ### Tool Behavior

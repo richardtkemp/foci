@@ -383,10 +383,8 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
-	setStringDefault(&cfg.Sessions.CompactionIdleThreshold, "45m")
-	setStringDefault(&cfg.Sessions.CompactionIdlePressureStart, "70%")
-	setFloatDefault(&cfg.Sessions.CompactionIdlePressureMax, 0.15)
-	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "15m")
+	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "5m")
+	setFloatDefault(&cfg.Sessions.CompactionManaRefreshFactor, 0.5)
 	// CompactionManaRefreshPreserve: nil = use percentage-based default
 	// CompactionManaRefreshPreservePct: nil = default 0.5 (50% of messages)
 

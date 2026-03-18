@@ -130,12 +130,10 @@ type AgentConfig struct {
 	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
 	CompactionEffort           string   `toml:"compaction_effort"`            // effort for compaction API calls (empty = use session effort)
-	CompactionIdleThreshold        string   `toml:"compaction_idle_threshold"`         // idle duration before pressure starts (empty = use global)
-	CompactionIdlePressureStart    string   `toml:"compaction_idle_pressure_start"`    // context % to start ramping pressure (empty = use global)
-	CompactionIdlePressureMax      *float64 `toml:"compaction_idle_pressure_max"`      // max threshold reduction (nil = use global)
-	CompactionManaRefreshThreshold   string   `toml:"compaction_mana_refresh_threshold"`    // trigger mana-refresh compact when reset this soon (empty = use global)
-	CompactionManaRefreshPreserve    *int     `toml:"compaction_mana_refresh_preserve"`    // messages to preserve in refresh mode (nil = use global)
-	CompactionManaRefreshPreservePct *float64 `toml:"compaction_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (nil = use global)
+	CompactionManaRefreshThreshold   string   `toml:"compaction_mana_refresh_threshold"`     // trigger mana-refresh compact when reset this soon (empty = use global)
+	CompactionManaRefreshFactor      *float64 `toml:"compaction_mana_refresh_factor"`         // secondary threshold = main threshold × factor (nil = use global)
+	CompactionManaRefreshPreserve    *int     `toml:"compaction_mana_refresh_preserve"`       // messages to preserve in refresh mode (nil = use global)
+	CompactionManaRefreshPreservePct *float64 `toml:"compaction_mana_refresh_preserve_pct"`   // fraction of messages to preserve in refresh mode (nil = use global)
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDirs        []string           `toml:"skills_dirs"`        // skill directories (empty = use global [skills] dirs)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
@@ -318,12 +316,10 @@ type SessionsConfig struct {
 	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
 
-	CompactionIdleThreshold        string  `toml:"compaction_idle_threshold"`         // idle duration before pressure starts (default "45m", "0" disables)
-	CompactionIdlePressureStart    string  `toml:"compaction_idle_pressure_start"`    // context % to start ramping pressure (default "70%")
-	CompactionIdlePressureMax      float64 `toml:"compaction_idle_pressure_max"`      // max threshold reduction (default 0.15)
-	CompactionManaRefreshThreshold   string   `toml:"compaction_mana_refresh_threshold"`    // trigger mana-refresh compact when reset this soon (default "15m")
-	CompactionManaRefreshPreserve    *int     `toml:"compaction_mana_refresh_preserve"`    // messages to preserve in refresh mode (nil = use percentage)
-	CompactionManaRefreshPreservePct *float64 `toml:"compaction_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (default 0.5)
+	CompactionManaRefreshThreshold   string   `toml:"compaction_mana_refresh_threshold"`     // trigger mana-refresh compact when reset this soon (default "5m")
+	CompactionManaRefreshFactor      float64  `toml:"compaction_mana_refresh_factor"`         // secondary threshold = main threshold × factor (default 0.5)
+	CompactionManaRefreshPreserve    *int     `toml:"compaction_mana_refresh_preserve"`       // messages to preserve in refresh mode (nil = use percentage)
+	CompactionManaRefreshPreservePct *float64 `toml:"compaction_mana_refresh_preserve_pct"`   // fraction of messages to preserve in refresh mode (default 0.5)
 
 	BranchOrientationFacetPrompt string `toml:"branch_orientation_facet_prompt"` // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)

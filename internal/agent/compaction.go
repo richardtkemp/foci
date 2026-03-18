@@ -13,7 +13,7 @@ import (
 )
 
 // maybeCompact checks whether context compaction is needed and performs it.
-// Supports idle-aware pressure and mana-refresh compaction modes.
+// Three triggers: (1) main threshold, (2) mana-refresh, (3) user /compact.
 func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
 	if a.Compactor == nil {
 		return
@@ -21,85 +21,43 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 
 	totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
 	effectiveModel := a.SessionModel(sessionKey)
-	contextLimit := compaction.ContextLimit(effectiveModel)
+	ctxLimit := compaction.ContextLimit(effectiveModel)
 
-	// Calculate idle duration from session metadata
-	var idleDuration time.Duration
-	if !sm.lastMessageTime.IsZero() {
-		idleDuration = time.Since(sm.lastMessageTime)
-	}
-
-	// Get mana reset time (if available)
-	var manaResetsAt time.Time
-	usageClient := a.sessionUsageClient(sessionKey)
+	// Check mana-refresh trigger: compact at a lower threshold when mana
+	// reset is imminent so the new window starts with a smaller context.
+	isManaRefresh := false
+	usageClient := a.SessionUsageClient(sessionKey)
 	if usageClient != nil {
+		manaRefreshThreshold := parseDurationFallback(a.CompactionManaRefreshThreshold, 5*time.Minute)
 		if usageResp, err := usageClient.GetUsage(ctx); err == nil && usageResp.FiveHour != nil && usageResp.FiveHour.ResetsAt != nil {
-			manaResetsAt, _ = time.Parse(time.RFC3339Nano, *usageResp.FiveHour.ResetsAt)
+			if manaResetsAt, parseErr := time.Parse(time.RFC3339Nano, *usageResp.FiveHour.ResetsAt); parseErr == nil {
+				if compaction.ManaResetImminent(manaResetsAt, manaRefreshThreshold) {
+					secondaryThreshold := int(float64(ctxLimit) * a.Compactor.Threshold() * a.CompactionManaRefreshFactor)
+					if totalTokens > secondaryThreshold {
+						isManaRefresh = true
+						untilReset := time.Until(manaResetsAt).Round(time.Minute)
+						a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens)",
+							sessionKey, untilReset, totalTokens, ctxLimit)
+					}
+				}
+			}
 		}
 	}
 
-	// Parse idle threshold (with "0" special case for disable)
-	idleThreshold, err := time.ParseDuration(a.CompactionIdleThreshold)
-	if err != nil || a.CompactionIdleThreshold == "0" {
-		idleThreshold = 0 // disabled
-	}
-
-	// Parse mana refresh threshold
-	manaRefreshThreshold := parseDurationFallback(a.CompactionManaRefreshThreshold, 15*time.Minute)
-
-	// Get pressure-adjusted threshold
-	adjustedThreshold := a.Compactor.Threshold()
-	isManaRefresh := false
-
-	if idleThreshold > 0 {
-		adjustedThreshold, isManaRefresh = compaction.CalculateIdlePressure(
-			a.Compactor.Threshold(),
-			idleDuration,
-			idleThreshold,
-			a.CompactionIdlePressureStart,
-			a.CompactionIdlePressureMax,
-			manaResetsAt,
-			manaRefreshThreshold,
-			totalTokens,
-			contextLimit,
-		)
-	}
-
-	// Check if we should compact with adjusted threshold
-	triggerPoint := int(float64(contextLimit) * adjustedThreshold)
-	shouldCompact := totalTokens > triggerPoint
-
-	// Fall back to standard ShouldCompact if idle pressure didn't trigger
-	if !shouldCompact && !isManaRefresh {
-		if !a.Compactor.ShouldCompactWithLimit(sessionKey, messages, usage, contextLimit) {
+	// Standard threshold check (if mana-refresh didn't trigger)
+	if !isManaRefresh {
+		if !a.Compactor.ShouldCompactWithLimit(sessionKey, messages, usage, ctxLimit) {
 			return
 		}
-	} else if !shouldCompact {
-		return
 	}
 
 	if a.SessionNoCompact(sessionKey) {
-		percent := int(float64(totalTokens) / float64(contextLimit) * 100)
+		percent := int(float64(totalTokens) / float64(ctxLimit) * 100)
 		a.logger().Infof("session=%s context at %d%% capacity for no_compact session", sessionKey, percent)
 		return
 	}
 
-	// Log compaction reason
-	if isManaRefresh {
-		untilReset := time.Until(manaResetsAt).Round(time.Minute)
-		a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens)",
-			sessionKey, untilReset, totalTokens, contextLimit)
-	} else if idleDuration > idleThreshold && idleThreshold > 0 {
-		a.logger().Infof("session=%s idle compaction (idle %s, threshold %.1f%%, %d/%d tokens)",
-			sessionKey, idleDuration.Round(time.Minute), adjustedThreshold*100, totalTokens, contextLimit)
-	}
-
 	// Mana-refresh mode: preserve more messages than normal compaction.
-	// Normal compaction preserves a fixed count (default 25). Mana-refresh preserves
-	// a larger fraction of messages because it triggers proactively (at ~40% context
-	// fill), not under pressure — the goal is context reduction while retaining more
-	// recent conversation.
-	//
 	// Priority: explicit *int count > percentage-based > normal preserve count.
 	if isManaRefresh {
 		oldPreserve := a.Compactor.PreserveMessages()
@@ -173,18 +131,6 @@ func parseDurationFallback(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
-}
-
-// sessionUsageClient returns the usage client for a session (per-session override or agent default).
-func (a *Agent) sessionUsageClient(sessionKey string) provider.UsageClient {
-	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	uc := sm.usageClient
-	a.metaMu.Unlock()
-	if uc != nil {
-		return uc
-	}
-	return a.UsageClient
 }
 
 // summarizeServerToolResult extracts a brief text summary from a server tool result block.

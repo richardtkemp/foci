@@ -24,7 +24,8 @@ type sessionMeta struct {
 	modelEndpoint   string                 // per-session endpoint override (empty = use agent default)
 	modelFormat     string                 // per-session format override (empty = use agent default)
 	client          provider.Client        // per-session client override (nil = use a.Client)
-	usageClient     provider.UsageClient   // per-session usage client (nil = use agent default)
+	usageClient     provider.UsageClient   // per-session usage client (nil may be intentional for non-Anthropic endpoints)
+	usageClientSet  bool                   // true if usageClient was explicitly set (distinguishes nil-from-set vs nil-from-default)
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 	apiSeqNum       int                    // per-session incrementing counter for payload log entries
@@ -175,9 +176,10 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 	sm.modelEndpoint = endpoint
 	sm.modelFormat = format
 	sm.client = client
-	// Update usage client for new endpoint
+	// Update usage client for new endpoint (may be nil for non-Anthropic endpoints)
 	if a.UsageClientProvider != nil {
 		sm.usageClient = a.UsageClientProvider.GetUsageClient(endpoint)
+		sm.usageClientSet = true
 	}
 	a.metaMu.Unlock()
 
@@ -220,13 +222,16 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 }
 
 // SessionUsageClient returns the usage client for a session's active endpoint,
-// falling back to the agent's default if not overridden.
+// falling back to the agent's default if not overridden. When the session has
+// been explicitly switched to a non-Anthropic endpoint, usageClientSet is true
+// but usageClient is nil — we return nil (no mana tracking for that endpoint)
+// instead of falling back to the agent's default Anthropic client.
 func (a *Agent) SessionUsageClient(sessionKey string) provider.UsageClient {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()
-	if sm.usageClient != nil {
-		return sm.usageClient
+	if sm.usageClientSet {
+		return sm.usageClient // may be nil for non-Anthropic endpoints
 	}
 	return a.UsageClient
 }
@@ -316,9 +321,12 @@ func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 				a.setMetaLocked(sessionKey, func(sm *sessionMeta) { sm.client = c })
 			}
 		}
+
+		// Restore usage client for the endpoint (may be nil for non-Anthropic)
 		if ep != "" && a.UsageClientProvider != nil {
 			a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
 				sm.usageClient = a.UsageClientProvider.GetUsageClient(ep)
+				sm.usageClientSet = true
 			})
 		}
 	}
