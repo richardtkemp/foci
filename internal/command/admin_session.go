@@ -59,11 +59,14 @@ func ResetCommand() *Command {
 		Name:        "reset",
 		Description: "Clear session history",
 		Category:    "operations",
-		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.Agent.IsProcessing() {
 				return Response{}, fmt.Errorf("agent is processing — send stop first, then reset")
 			}
-			sk := cc.DefaultSessionKey()
+			sk := req.SessionKey
+			if sk == "" {
+				sk = cc.DefaultSessionKey()
+			}
 			if sk == "" {
 				return Response{}, fmt.Errorf("no active session to reset")
 			}
@@ -87,8 +90,15 @@ func ResetCommand() *Command {
 
 // CompactCommand creates a /compact command that triggers manual session compaction.
 func CompactCommand() *Command {
-	compactExec := func(ctx context.Context, cc CommandContext, dryRun bool) (Response, error) {
-		oldCount, err := runCompaction(ctx, cc, dryRun)
+	compactExec := func(ctx context.Context, req Request, cc CommandContext, dryRun bool) (Response, error) {
+		if cc.Agent.Compactor == nil {
+			return Response{}, fmt.Errorf("compaction is not configured")
+		}
+		sk := req.SessionKey
+		if sk == "" {
+			sk = cc.DefaultSessionKey()
+		}
+		oldCount, err := runCompaction(ctx, cc, sk, dryRun)
 		if err != nil {
 			return Response{}, err
 		}
@@ -107,21 +117,21 @@ func CompactCommand() *Command {
 				Name:        "run",
 				Label:       "compact",
 				Description: "Run context compaction",
-				Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-					return compactExec(ctx, cc, false)
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					return compactExec(ctx, req, cc, false)
 				},
 			},
 			{
 				Name:        "dry-run",
 				Description: "Preview compaction without applying",
-				Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-					return compactExec(ctx, cc, true)
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					return compactExec(ctx, req, cc, true)
 				},
 			},
 		},
 		// Bare /compact (no args) runs compaction directly.
-		DefaultExecute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-			return compactExec(ctx, cc, false)
+		DefaultExecute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			return compactExec(ctx, req, cc, false)
 		},
 	}
 	cmd.buildSubcommandDispatch()
@@ -129,11 +139,8 @@ func CompactCommand() *Command {
 }
 
 // runCompaction executes manual context compaction.
-func runCompaction(ctx context.Context, cc CommandContext, dryRun bool) (int, error) {
-	if cc.Agent.Compactor == nil {
-		return 0, fmt.Errorf("compaction is not configured")
-	}
-	sk := cc.DefaultSessionKey()
+// Caller must verify cc.Agent.Compactor != nil before calling.
+func runCompaction(ctx context.Context, cc CommandContext, sk string, dryRun bool) (int, error) {
 	if sk == "" {
 		return 0, fmt.Errorf("no active session to compact")
 	}

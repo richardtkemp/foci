@@ -302,7 +302,10 @@ func ContextCommand() *Command {
 		Name:        "context",
 		Description: "Context window breakdown: system prompt, conversation, compaction status",
 		Category:    "observability",
-		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			if req.SessionKey != "" {
+				cc.DefaultSessionKey = func() string { return req.SessionKey }
+			}
 			infoFn := cc.ContextInfoFn
 			if infoFn == nil {
 				infoFn = buildContextInfo

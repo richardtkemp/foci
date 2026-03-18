@@ -22,13 +22,9 @@ func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error
 		cc.ConfigureFacet(secConn)
 	}
 
-	parentKey := cc.DefaultSessionKey()
-	if req.ChatID != 0 {
-		if conn := cc.ConnMgr.Primary(cc.AgentConfig.ID); conn != nil {
-			parentKey = conn.SessionKeyForChat(req.ChatID)
-		} else {
-			parentKey = session.NewChatSessionKey(cc.AgentConfig.ID, req.ChatID)
-		}
+	parentKey := req.SessionKey
+	if parentKey == "" {
+		parentKey = cc.DefaultSessionKey()
 	}
 	if parentKey == "" {
 		secConn.SetSessionKey("")
