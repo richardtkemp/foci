@@ -119,7 +119,7 @@ func TestDefaultChatAssignment(t *testing.T) {
 	b.sessionIndex = idx
 
 	// No default initially
-	if chatID := b.defaultChatID(); chatID != 0 {
+	if chatID := b.DefaultChatID(); chatID != 0 {
 		t.Errorf("expected no default, got %d", chatID)
 	}
 
@@ -127,7 +127,7 @@ func TestDefaultChatAssignment(t *testing.T) {
 	msg := makeMsg(111, "alice", "hello")
 	b.receiveMessage(context.Background(), msg)
 
-	if chatID := b.defaultChatID(); chatID != 12345 {
+	if chatID := b.DefaultChatID(); chatID != 12345 {
 		t.Errorf("expected default 12345, got %d", chatID)
 	}
 
@@ -140,7 +140,7 @@ func TestDefaultChatAssignment(t *testing.T) {
 	}
 	b.receiveMessage(context.Background(), msg2)
 
-	if chatID := b.defaultChatID(); chatID != 12345 {
+	if chatID := b.DefaultChatID(); chatID != 12345 {
 		t.Errorf("expected default still 12345, got %d", chatID)
 	}
 }
@@ -162,7 +162,7 @@ func TestDefaultSessionKey(t *testing.T) {
 	}
 
 	// Set default chat
-	b.setDefaultChat(12345)
+	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 	if sk := b.DefaultSessionKey(); !strings.HasPrefix(sk, "test-agent/c12345/") {
 		t.Errorf("expected prefix test-agent/c12345/, got %q", sk)
 	}
@@ -179,7 +179,7 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	b.agentID = "test-agent"
 	b.sessionKey = "" // primary bots don't have an override
 	b.sessionIndex = idx
-	b.setDefaultChat(12345)
+	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	// SessionKey() should return the default chat session
 	if sk := b.SessionKey(); !strings.HasPrefix(sk, "test-agent/c12345/") {
@@ -198,7 +198,7 @@ func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
 	b.agentID = "test-agent"
 	b.sessionKey = ""
 	b.sessionIndex = idx
-	b.setDefaultChat(12345)
+	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	k1 := b.SessionKey()
 	k2 := b.SessionKey()
@@ -217,7 +217,7 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
 	b.sessionIndex = idx
-	b.setDefaultChat(12345)
+	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	k1 := b.DefaultSessionKey()
 	k2 := b.DefaultSessionKey()
@@ -227,7 +227,7 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 }
 
 func TestUpdateChatSessionKey_ChangesDefaultSessionKey(t *testing.T) {
-	// Verifies that UpdateChatSessionKey updates the cached session key
+	// Verifies that UpdateChatSessionKey updates the persisted session key
 	// so that subsequent DefaultSessionKey calls return the new key.
 	// This is the mechanism used by /reset to rotate session keys.
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
@@ -237,7 +237,7 @@ func TestUpdateChatSessionKey_ChangesDefaultSessionKey(t *testing.T) {
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
 	b.sessionIndex = idx
-	b.setDefaultChat(12345)
+	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	oldKey := b.DefaultSessionKey()
 	if oldKey == "" {

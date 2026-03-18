@@ -87,7 +87,7 @@ func TestSendToSession_IndependentSessionFallsBackToDefault(t *testing.T) {
 	}
 	b.agentID = "main"
 	b.sessionIndex = idx
-	b.setDefaultChat(11111)
+	_ = idx.SetDefaultChat("main", platformName, 11111)
 
 	if err := b.SendToSession("main/i1709596800/1709596800", "hello independent"); err != nil {
 		t.Fatalf("SendToSession error: %v", err)

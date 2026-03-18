@@ -167,7 +167,6 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	if p.SessionIndex != nil {
 		primaryBot.SetSessionIndex(p.SessionIndex)
-		primaryBot.RestoreState()
 	}
 	if p.ToolDetailStore != nil {
 		primaryBot.SetToolDetailStore(p.ToolDetailStore)

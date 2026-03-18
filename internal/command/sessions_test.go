@@ -57,7 +57,7 @@ func setUsername(t *testing.T, ss *session.SessionIndex, agentID string, chatID 
 // setDefaultChat stores the default chat ID in the session index.
 func setDefaultChat(t *testing.T, ss *session.SessionIndex, agentID string, chatID int64) {
 	t.Helper()
-	if err := ss.SetAgentMetadata(agentID, "default_chat", fmt.Sprintf("%d", chatID)); err != nil {
+	if err := ss.SetDefaultChat(agentID, "", chatID); err != nil {
 		t.Fatalf("set default chat: %v", err)
 	}
 }
@@ -144,12 +144,9 @@ func TestSessionsDefaultValid(t *testing.T) {
 	}
 
 	// Verify the session index was updated
-	raw, err2 := ss.GetAgentMetadata("test-agent", "default_chat")
-	if err2 != nil || raw == "" {
-		t.Error("expected default_chat to be set in session index")
-	}
-	if raw != "987654321" {
-		t.Errorf("expected default_chat=987654321, got %s", raw)
+	defaultChat, _ := ss.DefaultChatForAgent("test-agent")
+	if defaultChat != 987654321 {
+		t.Errorf("expected default chat=987654321, got %d", defaultChat)
 	}
 	if !strings.Contains(result.Text, "987654321") {
 		t.Errorf("expected confirmation with chat ID, got %q", result.Text)

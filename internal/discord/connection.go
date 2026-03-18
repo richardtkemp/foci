@@ -2,7 +2,6 @@ package discord
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -22,9 +21,10 @@ var _ platform.Sender = (*Bot)(nil)
 type sessionIndexInterface interface {
 	GetChatMetadata(agentID, platform string, chatID int64, key string) (string, error)
 	SetChatMetadata(agentID, platform string, chatID int64, key, value string) error
-	GetAgentMetadata(agentID, key string) (string, error)
 	SetAgentMetadata(agentID, key, value string) error
-	DeleteAgentMetadata(agentID, key string) error
+	SetDefaultChat(agentID, platform string, chatID int64) error
+	DefaultChatForAgent(agentID string) (chatID int64, platform string)
+	ClearDefaultChat(agentID string) error
 }
 
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
@@ -71,8 +71,6 @@ type Bot struct {
 	channelID  int64 // last known channel ID (stored as int64 from snowflake)
 	channelMu  sync.Mutex
 
-	chatSessionKeys map[int64]string
-	chatKeysMu      sync.RWMutex
 	sessionIndex    sessionIndexInterface
 
 	display         BotDisplayConfig
@@ -195,7 +193,6 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 		allowedUsers:    allowed,
 		agentID:         agentID,
 		queue:           make(chan queuedMessage, 64),
-		chatSessionKeys: make(map[int64]string),
 	}
 }
 
@@ -301,28 +298,6 @@ func (b *Bot) dispatchSessionKey(chatID int64) string {
 		}
 	}
 	return b.sessionKeyForMsg(chatID)
-}
-
-// RestoreState restores bot state (channelID, default channel) from the session index.
-// Must be called after SetSessionIndex.
-func (b *Bot) RestoreState() {
-	if b.sessionIndex == nil || b.agentID == "" {
-		return
-	}
-
-	// Restore channelID from persisted state
-	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "bot_channel_id"); err == nil && raw != "" {
-		var channelID int64
-		if _, err := fmt.Sscanf(raw, "%d", &channelID); err == nil && channelID != 0 {
-			b.SetChatID(channelID)
-			b.logger().Infof("restored channel ID %d from state", channelID)
-		}
-	}
-
-	// Restore default channel from persisted state (for per-chat session routing)
-	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "default_channel"); err == nil && raw != "" {
-		b.logger().Infof("restored default channel for agent %s", b.agentID)
-	}
 }
 
 // SetSessionIndex sets the session index for persisting chat-to-session-key mappings.

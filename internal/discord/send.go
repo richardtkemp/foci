@@ -53,23 +53,18 @@ func isUnknownChannel(err error) bool {
 }
 
 // clearStaleChannel removes a channel that Discord reports as unknown from
-// the in-memory cache and session index so the bot stops trying to send to it.
+// the session index so the bot stops trying to send to it.
 func (b *Bot) clearStaleChannel(channelIDStr string) {
 	channelID, err := strconv.ParseInt(channelIDStr, 10, 64)
 	if err != nil {
 		return
 	}
 
-	b.logger().Warnf("clearing stale channel %s from caches", channelIDStr)
-
-	// Clear from chat session key cache.
-	b.chatKeysMu.Lock()
-	delete(b.chatSessionKeys, channelID)
-	b.chatKeysMu.Unlock()
+	b.logger().Warnf("clearing stale channel %s", channelIDStr)
 
 	// If this was the default channel, clear it so periodic tasks stop targeting it.
-	if b.defaultChannelID() == channelID && b.sessionIndex != nil && b.agentID != "" {
-		if err := b.sessionIndex.DeleteAgentMetadata(b.agentID, "default_channel"); err != nil {
+	if b.DefaultChatID() == channelID && b.sessionIndex != nil && b.agentID != "" {
+		if err := b.sessionIndex.ClearDefaultChat(b.agentID); err != nil {
 			b.logger().Errorf("failed to clear stale default channel: %v", err)
 		} else {
 			b.logger().Warnf("cleared stale default channel %s for agent %s", channelIDStr, b.agentID)
@@ -119,7 +114,7 @@ func (b *Bot) SendNotification(text string) {
 
 // SendTyping sends a typing indicator to the current channel.
 func (b *Bot) SendTyping() {
-	channelID := b.defaultChannelID()
+	channelID := b.DefaultChatID()
 	if channelID == 0 {
 		b.channelMu.Lock()
 		channelID = b.channelID
@@ -142,7 +137,7 @@ func (b *Bot) SendNotificationDirect(text string) {
 
 // sendNotificationImmediate sends a notification directly to the default channel.
 func (b *Bot) sendNotificationImmediate(text string) {
-	channelID := b.defaultChannelID()
+	channelID := b.DefaultChatID()
 	if channelID == 0 {
 		// Fall back to last known channel (e.g. when no state store is configured).
 		b.channelMu.Lock()
@@ -206,7 +201,7 @@ func (b *Bot) SendText(text string) error {
 		return nil
 	}
 
-	channelID := b.defaultChannelID()
+	channelID := b.DefaultChatID()
 	if channelID == 0 {
 		// Fall back to last known channel.
 		b.channelMu.Lock()
@@ -256,7 +251,7 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 
 	chatID := session.ChatIDFromKey(sessionKey)
 	if chatID == 0 {
-		chatID = b.defaultChannelID()
+		chatID = b.DefaultChatID()
 	}
 	if chatID == 0 {
 		return fmt.Errorf("no channel ID for session %q and no default channel", sessionKey)

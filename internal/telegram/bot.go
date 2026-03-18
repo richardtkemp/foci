@@ -39,9 +39,10 @@ type botClient interface {
 type sessionIndexInterface interface {
 	GetChatMetadata(agentID, platform string, chatID int64, key string) (string, error)
 	SetChatMetadata(agentID, platform string, chatID int64, key, value string) error
-	GetAgentMetadata(agentID, key string) (string, error)
 	SetAgentMetadata(agentID, key, value string) error
-	DeleteAgentMetadata(agentID, key string) error
+	SetDefaultChat(agentID, platform string, chatID int64) error
+	DefaultChatForAgent(agentID string) (chatID int64, platform string)
+	ClearDefaultChat(agentID string) error
 }
 
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
@@ -91,8 +92,6 @@ type Bot struct {
 	chatID         int64              // last known chat ID (for notifications)
 	chatMu     sync.Mutex
 
-	chatSessionKeys map[int64]string      // cache of chat ID → session key (prevents regenerating keys on every message)
-	chatKeysMu      sync.RWMutex          // protects chatSessionKeys
 	sessionIndex    sessionIndexInterface // nil = no session key persistence across restarts
 
 	display     BotDisplayConfig
@@ -231,7 +230,6 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		agentID:         agentID,
 		botToken:        token,
 		queue:           make(chan queuedMessage, 64),
-		chatSessionKeys: make(map[int64]string),
 	}, nil
 }
 
@@ -349,28 +347,6 @@ func (b *Bot) dispatchSessionKey(chatID int64) string {
 func (b *Bot) DisplaySettings() (showToolCalls, showThinking string, displayWidth int, messagesInLog bool, receivedFilesDir string, injectedMessageHeader string) {
 	d := b.display
 	return d.ShowToolCalls, d.ShowThinking, d.DisplayWidth, d.MessagesInLog, d.ReceivedFilesDir, d.InjectedMessageHeader
-}
-
-// RestoreState restores bot state (chatID, default chat) from the session index.
-// Must be called after SetSessionIndex.
-func (b *Bot) RestoreState() {
-	if b.sessionIndex == nil || b.agentID == "" {
-		return
-	}
-
-	// Restore chatID from persisted state
-	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "bot_chat_id"); err == nil && raw != "" {
-		var chatID int64
-		if _, err := fmt.Sscanf(raw, "%d", &chatID); err == nil && chatID != 0 {
-			b.SetChatID(chatID)
-			b.logger().Infof("restored chat ID %d from state", chatID)
-		}
-	}
-
-	// Restore default chat from persisted state (for per-chat session routing)
-	if raw, err := b.sessionIndex.GetAgentMetadata(b.agentID, "default_chat"); err == nil && raw != "" {
-		b.logger().Infof("restored default chat for agent %s", b.agentID)
-	}
 }
 
 // SetSessionIndex sets the session index for persisting chat-to-session-key mappings.

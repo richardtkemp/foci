@@ -60,7 +60,7 @@ func TestCleanupStaleSessionMetadata_PreservesOtherMetadata(t *testing.T) {
 
 	// Set non-no_compact metadata that should not be affected
 	idx.SetAgentMetadata("fotini", "first_run_completed", "true")
-	idx.SetAgentMetadata("fotini", "default_chat", "12345")
+	_ = idx.SetDefaultChat("fotini", "telegram", 12345)
 
 	cleanupStaleSessionMetadata(idx, sessions)
 
@@ -70,8 +70,8 @@ func TestCleanupStaleSessionMetadata_PreservesOtherMetadata(t *testing.T) {
 		t.Errorf("expected first_run_completed=true, got %q (err=%v)", val, err)
 	}
 
-	val, err = idx.GetAgentMetadata("fotini", "default_chat")
-	if err != nil || val != "12345" {
-		t.Errorf("expected default_chat=12345, got %q (err=%v)", val, err)
+	chatID, _ := idx.DefaultChatForAgent("fotini")
+	if chatID != 12345 {
+		t.Errorf("expected default chat=12345, got %d", chatID)
 	}
 }

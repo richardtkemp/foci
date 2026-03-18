@@ -73,7 +73,7 @@ func (b *Bot) SendNotificationDirect(text string) {
 
 // sendNotificationImmediate sends a notification directly to the default chat.
 func (b *Bot) sendNotificationImmediate(text string) {
-	chatID := b.defaultChatID()
+	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		// Fall back to last known chat (e.g. when no state store is configured).
 		b.chatMu.Lock()
@@ -153,7 +153,7 @@ func (b *Bot) SendText(text string) error {
 		return nil
 	}
 
-	chatID := b.defaultChatID()
+	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		// Fall back to last known chat (e.g. when no state store is configured).
 		b.chatMu.Lock()
@@ -202,7 +202,7 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 
 	chatID := session.ChatIDFromKey(sessionKey)
 	if chatID == 0 {
-		chatID = b.defaultChatID()
+		chatID = b.DefaultChatID()
 	}
 	if chatID == 0 {
 		return fmt.Errorf("no chat ID for session %q and no default chat", sessionKey)

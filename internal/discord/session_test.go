@@ -1,8 +1,11 @@
 package discord
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/session"
 )
 
 // TestNewSessionKeyForChat verifies that new session keys follow the expected format
@@ -31,11 +34,15 @@ func TestNewSessionKeyForChatDifferentChats(t *testing.T) {
 }
 
 // TestSessionKeyForChatCaching verifies that repeated calls to SessionKeyForChat
-// return the same cached key.
+// return the same persisted key from the DB.
 func TestSessionKeyForChatCaching(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	bot := &Bot{
-		agentID:         "test",
-		chatSessionKeys: make(map[int64]string),
+		agentID:      "test",
+		sessionIndex: idx,
 	}
 	key1 := bot.SessionKeyForChat(42)
 	key2 := bot.SessionKeyForChat(42)
@@ -47,9 +54,13 @@ func TestSessionKeyForChatCaching(t *testing.T) {
 // TestSessionKeyForChatDifferentChats verifies that different chat IDs produce
 // different session keys.
 func TestSessionKeyForChatDifferentChats(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	bot := &Bot{
-		agentID:         "test",
-		chatSessionKeys: make(map[int64]string),
+		agentID:      "test",
+		sessionIndex: idx,
 	}
 	key1 := bot.SessionKeyForChat(1)
 	key2 := bot.SessionKeyForChat(2)
@@ -62,7 +73,7 @@ func TestSessionKeyForChatDifferentChats(t *testing.T) {
 func TestSetSessionKey(t *testing.T) {
 	var calledWith string
 	bot := &Bot{
-		chatSessionKeys: make(map[int64]string),
+
 		botUserID:       "bot123",
 		OnSessionKeyChange: func(botID, sessionKey string) {
 			calledWith = sessionKey
@@ -82,7 +93,7 @@ func TestSetSessionKey(t *testing.T) {
 func TestSetSessionKeyDirect(t *testing.T) {
 	called := false
 	bot := &Bot{
-		chatSessionKeys: make(map[int64]string),
+
 		OnSessionKeyChange: func(_, _ string) {
 			called = true
 		},
@@ -98,11 +109,15 @@ func TestSetSessionKeyDirect(t *testing.T) {
 }
 
 // TestUpdateChatSessionKey verifies that updating a chat session key overwrites
-// the cached value.
+// the persisted value in the DB.
 func TestUpdateChatSessionKey(t *testing.T) {
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	bot := &Bot{
-		agentID:         "agent",
-		chatSessionKeys: make(map[int64]string),
+		agentID:      "agent",
+		sessionIndex: idx,
 	}
 
 	// First access creates a key
@@ -122,7 +137,7 @@ func TestUpdateChatSessionKey(t *testing.T) {
 
 // TestChatIDGetSet verifies the ChatID getter/setter.
 func TestChatIDGetSet(t *testing.T) {
-	bot := &Bot{chatSessionKeys: make(map[int64]string)}
+	bot := &Bot{}
 	if bot.ChatID() != 0 {
 		t.Errorf("expected 0, got %d", bot.ChatID())
 	}
@@ -136,7 +151,7 @@ func TestChatIDGetSet(t *testing.T) {
 func TestUsernameReturnsBotUserID(t *testing.T) {
 	bot := &Bot{
 		botUserID:       "12345",
-		chatSessionKeys: make(map[int64]string),
+
 	}
 	if bot.Username() != "12345" {
 		t.Errorf("expected 12345, got %q", bot.Username())

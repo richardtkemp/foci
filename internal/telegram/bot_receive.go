@@ -51,17 +51,16 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	b.chatID = msg.Chat.Id
 	b.chatMu.Unlock()
 
-	if changed && b.sessionIndex != nil && b.agentID != "" {
-		if err := b.sessionIndex.SetAgentMetadata(b.agentID, "bot_chat_id", fmt.Sprintf("%d", msg.Chat.Id)); err != nil {
-			b.logger().Errorf("persist chat ID: %v", err)
-		}
-	}
+	_ = changed // chatID tracked in-memory only; DB is source of truth for default
 
 	// Per-chat session routing: set default chat on first message, record username
-	if !b.isSecondary && b.agentID != "" {
-		if b.defaultChatID() == 0 {
-			b.setDefaultChat(msg.Chat.Id)
-			b.logger().Infof("set default chat %d for agent %s", msg.Chat.Id, b.agentID)
+	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
+		if chatID, _ := b.sessionIndex.DefaultChatForAgent(b.agentID); chatID == 0 {
+			if err := b.sessionIndex.SetDefaultChat(b.agentID, platformName, msg.Chat.Id); err != nil {
+				b.logger().Errorf("set default chat: %v", err)
+			} else {
+				b.logger().Infof("set default chat %d for agent %s", msg.Chat.Id, b.agentID)
+			}
 		}
 		if msg.From != nil {
 			b.recordChatUsername(msg.Chat.Id, msg.From.Username)
