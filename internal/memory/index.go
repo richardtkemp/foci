@@ -195,17 +195,21 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	var dateFilter string
+	var extraFilter string
 	var args []interface{}
 	args = append(args, sanitizeFTS5Query(query))
 
 	if opts != nil {
+		if opts.ExcludePath != "" {
+			extraFilter += " AND f.path != ?"
+			args = append(args, opts.ExcludePath)
+		}
 		if opts.DateFrom != nil {
-			dateFilter += " AND m.mtime >= ?"
+			extraFilter += " AND m.mtime >= ?"
 			args = append(args, float64(opts.DateFrom.Unix()))
 		}
 		if opts.DateTo != nil {
-			dateFilter += " AND m.mtime < ?"
+			extraFilter += " AND m.mtime < ?"
 			args = append(args, float64(opts.DateTo.Unix()))
 		}
 	}
@@ -227,7 +231,7 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			WHERE memory_fts MATCH ?%s
 			ORDER BY sort_mtime %s
 			LIMIT 20
-		`, dateFilter, order)
+		`, extraFilter, order)
 	default:
 		weightedRankCase := idx.buildWeightedRankCase()
 		sqlStr = fmt.Sprintf(`
@@ -240,7 +244,7 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			WHERE memory_fts MATCH ?%s
 			ORDER BY weighted_rank
 			LIMIT 20
-		`, weightedRankCase, dateFilter)
+		`, weightedRankCase, extraFilter)
 	}
 
 	rows, err := idx.db.Query(sqlStr, args...)

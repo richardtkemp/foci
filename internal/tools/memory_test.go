@@ -296,6 +296,51 @@ func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
 	}
 }
 
+func TestMemorySearchExcludesCurrentSession(t *testing.T) {
+	// Verifies that conversation results from the current session are excluded
+	// from memory_search results, preventing circular self-referencing.
+	t.Parallel()
+	_, memDir := testMemoryTool(t)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	idx, _ := memory.NewIndex(filepath.Join(filepath.Dir(memDir), "memory.db"), sources, 0, 0.1)
+	defer idx.Close()
+
+	// Index conversations from two different sessions
+	currentSession := "agent1/imain/1000000000"
+	otherSession := "agent1/imain/2000000000"
+	idx.IndexConversation("The platypus is a fascinating mammal", currentSession, 1)
+	idx.IndexConversation("The platypus lays eggs unlike most mammals", otherSession, 2)
+
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	params, _ := json.Marshal(map[string]string{"query": "platypus"})
+
+	// Search WITH session context — should exclude current session
+	ctx := WithSessionKey(context.Background(), currentSession)
+	result, err := tool.Execute(ctx, params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, otherSession) {
+		t.Errorf("should include other session in results: %q", result.Text)
+	}
+	if strings.Contains(result.Text, currentSession) {
+		t.Errorf("should exclude current session from results: %q", result.Text)
+	}
+
+	// Search WITHOUT session context — should include both
+	result, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !strings.Contains(result.Text, currentSession) || !strings.Contains(result.Text, otherSession) {
+		t.Errorf("without session context, should include both sessions: %q", result.Text)
+	}
+}
+
 func TestMemorySearchDateRange(t *testing.T) {
 	// Tests date_from and date_to filtering functionality.
 	t.Parallel()

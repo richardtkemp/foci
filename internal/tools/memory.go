@@ -122,8 +122,21 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 	}
 
 	var opts *memory.SearchOptions
+
+	// Exclude the current session's conversation entries from results —
+	// finding your own earlier messages is circular and wastes result slots.
+	sessionKey := SessionKeyFromContext(ctx)
+	if sessionKey != "" {
+		if opts == nil {
+			opts = &memory.SearchOptions{}
+		}
+		opts.ExcludePath = sessionKey
+	}
+
 	if p.DateFrom != "" || p.DateTo != "" {
-		opts = &memory.SearchOptions{}
+		if opts == nil {
+			opts = &memory.SearchOptions{}
+		}
 		if p.DateFrom != "" {
 			t, err := time.Parse("2006-01-02", p.DateFrom)
 			if err != nil {

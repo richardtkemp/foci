@@ -4,8 +4,9 @@ import "time"
 
 // SearchOptions contains optional parameters for memory search.
 type SearchOptions struct {
-	DateFrom *time.Time // Only include results from this date onwards (inclusive)
-	DateTo   *time.Time // Only include results before this date (exclusive upper bound; typically start of next day)
+	DateFrom    *time.Time // Only include results from this date onwards (inclusive)
+	DateTo      *time.Time // Only include results before this date (exclusive upper bound; typically start of next day)
+	ExcludePath string     // Exclude results whose path equals this value (used to filter out the current session's conversation entries)
 }
 
 // Searcher is the interface that memory search backends implement.
