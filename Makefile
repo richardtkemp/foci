@@ -29,23 +29,33 @@ foci-call:
 	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
 
 test:
-	go test -p=$(NPROC) ./...
+	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
+	TMPDIR=$(TESTDIR) go test -p=$(NPROC) ./... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage:
+	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
 	@echo "=== Test Coverage ==="
-	@go test -p=$(NPROC) -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)'
+	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -cover ./... 2>&1 | grep -E '(coverage:|FAIL|PASS)' ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage-report:
+	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
 	@echo "=== Generating Coverage Report ==="
-	@go test -p=$(NPROC) -coverprofile=coverage.out ./...
+	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -coverprofile=coverage.out ./...
+	@rm -rf $(TESTDIR)
 	@go tool cover -func=coverage.out | tail -20
 	@echo ""
 	@echo "Total coverage:"
 	@go tool cover -func=coverage.out | grep total | awk '{print $$3}'
 
 coverage-html:
+	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
 	@echo "=== Generating HTML Coverage Report ==="
-	@go test -p=$(NPROC) -coverprofile=coverage.out ./...
+	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -coverprofile=coverage.out ./...
+	@rm -rf $(TESTDIR)
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report saved to coverage.html"
 
@@ -54,8 +64,11 @@ COVERAGE_TOTAL_MIN ?= 75.0
 COVERAGE_PKG_MIN ?= 45.0
 
 coverage-check:
+	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
 	@echo "=== Testing with Coverage (total>=$(COVERAGE_TOTAL_MIN)%, per-package>=$(COVERAGE_PKG_MIN)%) ==="
-	@go test -p=$(NPROC) -cover -coverprofile=coverage.out ./internal/... ./prompts/... 2>&1 | tee .test-output.tmp
+	@TMPDIR=$(TESTDIR) go test -p=$(NPROC) -cover -coverprofile=coverage.out ./internal/... ./prompts/... 2>&1 | tee .test-output.tmp
+	@rm -rf $(TESTDIR)
 	@if grep -q '^FAIL' .test-output.tmp; then \
 		rm -f .test-output.tmp; \
 		exit 1; \
