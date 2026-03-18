@@ -46,6 +46,27 @@ type SkillSummary struct {
 	Description string
 }
 
+// defaultBraindeadPrompt is the fallback text when no custom prompt is configured.
+const defaultBraindeadPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
+
+// BraindeadRule builds a nudge rule for the braindead warning.
+// It fires every N tool calls, where N is the configured threshold.
+// Returns nil if threshold <= 0 (disabled).
+func BraindeadRule(threshold int, prompt string) []Rule {
+	if threshold <= 0 {
+		return nil
+	}
+	if prompt == "" {
+		prompt = defaultBraindeadPrompt
+	}
+	return []Rule{{
+		Text:       prompt,
+		SourceFile: "builtin",
+		Trigger:    Trigger{Type: "every_n_tools", N: threshold},
+		Priority:   "high",
+	}}
+}
+
 // DefaultRules builds nudge rules for periodic tool/skill reminders.
 // Only tools present in toolNames appear in the reminder text. Skills
 // are appended with their descriptions. Returns nil if nothing to list.

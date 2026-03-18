@@ -22,8 +22,6 @@ import (
 	"foci/internal/workspace"
 )
 
-const defaultBraindeadWarningPrompt = "You've made many consecutive tool calls. Stop and verify: is what you're doing right now what the user actually asked for?"
-
 // NoResponseSentinel is the marker that prompts instruct the model to emit
 // when it has nothing to say. The agent strips it before delivery so the
 // user never sees it (and the platform treats it as an empty response).
@@ -122,9 +120,6 @@ type Agent struct {
 	PromptSearchDirs              []string                     // directories to search for prompt files (agent workspace, shared)
 	MaxToolLoops                  int                          // max tool iterations per turn (default 25)
 	MaxOutputTokens               int                          // max tokens in model response (default 16384)
-	BraindeadWarningEnable        bool                         // enable braindead warning (default true)
-	BraindeadWarningThreshold     int                          // consecutive tool loops before warning (0 = disabled)
-	BraindeadWarningPrompt        string                       // warning text (empty = hardcoded default)
 	Nudger                        *nudge.Scheduler             // nil disables nudge reminders
 	NudgePreAnswerGate            bool                         // enable pre-answer verification gate
 	NudgePreAnswerMinTools        int                          // min tool calls before gate fires (default 2)
@@ -444,8 +439,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	if maxOutput <= 0 {
 		maxOutput = 16384 // default
 	}
-	braindeadWarningThreshold := a.BraindeadWarningThreshold
-	braindeadWarned := false
 	displayNoted := false // true after injecting tool_display note
 	verified := false     // pre-answer gate: true after one verification pass
 	var toolCallCount int  // cumulative individual tool calls this turn
@@ -726,18 +719,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				lastToolError = true
 				break
 			}
-		}
-
-		// Braindead warning detection: fold warning into tool results to avoid
-		// a separate user message that breaks tool_use/tool_result adjacency.
-		if a.BraindeadWarningEnable && !braindeadWarned && braindeadWarningThreshold > 0 && i+1 >= braindeadWarningThreshold {
-			prompt := a.BraindeadWarningPrompt
-			if prompt == "" {
-				prompt = defaultBraindeadWarningPrompt
-			}
-			toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: "[system] " + prompt})
-			braindeadWarned = true
-			a.logger().Infof("braindead warning injected at loop %d for session %s", i+1, sessionKey)
 		}
 
 		// Tool display note: tell the agent once per turn whether the user can see tool results.

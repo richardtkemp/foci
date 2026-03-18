@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -98,14 +99,14 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 }
 
 func TestBraindeadWarningInjected(t *testing.T) {
-	// Proves that once the tool-call loop exceeds BraindeadWarningThreshold iterations, a [system] warning is injected into the conversation to nudge the model toward finishing.
+	// Proves that the braindead warning (via nudge system) is injected when
+	// tool calls reach the configured threshold.
 	var callCount atomic.Int32
 	threshold := 3
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		n := int(callCount.Add(1))
 		if n <= threshold+1 {
-			// Return tool_use to keep the loop going
 			return &provider.MessageResponse{
 				ID:   fmt.Sprintf("msg_%d", n),
 				Role: "assistant",
@@ -132,14 +133,14 @@ func TestBraindeadWarningInjected(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
 	})
 
+	rs := &nudge.RuleSet{Rules: nudge.BraindeadRule(threshold, "")}
 	ag := &Agent{
-		Client:                    client,
-		Sessions:                  store,
-		Tools:                     registry,
-		Bootstrap:                 workspace.NewBootstrap(t.TempDir(), []string{}),
-		Model:                     "claude-haiku-4-5",
-		BraindeadWarningThreshold: threshold,
-		BraindeadWarningEnable:    true,
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+		Nudger:    nudge.NewScheduler(rs, 5, 1),
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
@@ -148,14 +149,13 @@ func TestBraindeadWarningInjected(t *testing.T) {
 	}
 
 	msgs, _ := store.Load("test/imain/1000000000")
-	// Find the braindead warning folded into a tool_result message
 	found := 0
 	for _, m := range msgs {
 		if m.Role != "user" {
 			continue
 		}
 		for _, b := range m.Content {
-			if b.Type == "text" && strings.Contains(b.Text, "[system]") && strings.Contains(b.Text, "consecutive tool calls") {
+			if b.Type == "text" && strings.Contains(b.Text, "consecutive tool calls") {
 				found++
 			}
 		}
@@ -165,8 +165,9 @@ func TestBraindeadWarningInjected(t *testing.T) {
 	}
 }
 
-func TestBraindeadWarningOnlyOnce(t *testing.T) {
-	// Proves that the braindead warning is injected at most once per turn even when the threshold is exceeded multiple times in a single tool-call loop.
+func TestBraindeadWarningCooldown(t *testing.T) {
+	// Proves that the braindead nudge fires only once per cooldown window,
+	// not on every tool batch after the threshold.
 	var callCount atomic.Int32
 	totalLoops := 6
 	threshold := 2
@@ -200,14 +201,16 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
 	})
 
+	// cooldown=5 means after firing at tool 2, next eligible is tool 7+.
+	// With 6 total tool calls, multiples of 2 are 2, 4, 6 — only 2 passes cooldown.
+	rs := &nudge.RuleSet{Rules: nudge.BraindeadRule(threshold, "")}
 	ag := &Agent{
-		Client:                    client,
-		Sessions:                  store,
-		Tools:                     registry,
-		Bootstrap:                 workspace.NewBootstrap(t.TempDir(), []string{}),
-		Model:                     "claude-haiku-4-5",
-		BraindeadWarningThreshold: threshold,
-		BraindeadWarningEnable:    true,
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+		Nudger:    nudge.NewScheduler(rs, 5, 1),
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
@@ -222,18 +225,19 @@ func TestBraindeadWarningOnlyOnce(t *testing.T) {
 			continue
 		}
 		for _, b := range m.Content {
-			if b.Type == "text" && strings.Contains(b.Text, "[system]") {
+			if b.Type == "text" && strings.Contains(b.Text, "consecutive tool calls") {
 				count++
 			}
 		}
 	}
 	if count != 1 {
-		t.Errorf("braindead warnings = %d, want exactly 1 (only-once guarantee)", count)
+		t.Errorf("braindead warnings = %d, want exactly 1 (cooldown prevents repeat)", count)
 	}
 }
 
 func TestBraindeadDisabledWhenZero(t *testing.T) {
-	// Proves that setting BraindeadWarningThreshold=0 disables the braindead warning entirely, even when the loop runs many iterations.
+	// Proves that BraindeadRule with threshold=0 produces no rules, so
+	// no warning is injected even when the loop runs many iterations.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -265,14 +269,14 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 		Execute:    func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) { return tools.TextResult("ok"), nil },
 	})
 
+	// threshold=0 → BraindeadRule returns nil → no nudger
 	ag := &Agent{
-		Client:                    client,
-		Sessions:                  store,
-		Tools:                     registry,
-		Bootstrap:                 workspace.NewBootstrap(t.TempDir(), []string{}),
-		Model:                     "claude-haiku-4-5",
-		BraindeadWarningThreshold: 0, // disabled
-		BraindeadWarningEnable:    true,
+		Client:    client,
+		Sessions:  store,
+		Tools:     registry,
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+		// No Nudger set — braindead disabled
 	}
 
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
@@ -286,7 +290,7 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 			continue
 		}
 		for _, b := range m.Content {
-			if b.Type == "text" && strings.Contains(b.Text, "[system]") {
+			if b.Type == "text" && strings.Contains(b.Text, "consecutive tool calls") {
 				t.Error("braindead warning injected despite threshold=0")
 			}
 		}

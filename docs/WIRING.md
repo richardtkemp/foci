@@ -243,8 +243,7 @@ The core of the system. Two entry points:
    g. if stop_reason == "tool_use":
       - execute each tool_use via registry (skip server_tool_use — already executed)
       - track tool call count and error state
-      - inject braindead warning if threshold reached
-      - inject nudge reminders based on trigger conditions (every_n_tools, after_error, regex)
+      - inject nudge reminders based on trigger conditions (every_n_tools for braindead warning, after_error, regex)
       - append assistant msg + tool_result msg
       - goto 7a
 8. sessions.AppendAll(sessionKey, newMessages)
