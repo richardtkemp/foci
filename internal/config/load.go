@@ -226,6 +226,8 @@ func ApplyProviderDefaults(agent *AgentConfig, format string, cfg *Config) {
 			agent.Thinking = cfg.Anthropic.Thinking
 		case "gemini":
 			agent.Thinking = cfg.Gemini.Thinking
+		case "openai":
+			agent.Thinking = cfg.OpenAI.Reasoning
 		}
 	}
 	if agent.Speed == "" && format == "anthropic" {
@@ -476,6 +478,7 @@ func Load(path string) (*Config, error) {
 
 	// OpenAI defaults
 	setStringDefault(&cfg.OpenAI.HTTPTimeout, "120s")
+	setStringDefault(&cfg.OpenAI.Reasoning, "off")
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)

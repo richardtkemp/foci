@@ -32,6 +32,13 @@ func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
 		params.Tools = tools
 	}
 
+	// OpenRouter reasoning support: inject reasoning param when thinking is enabled.
+	if req.Thinking != nil {
+		params.SetExtraFields(map[string]any{
+			"reasoning": map[string]any{"enabled": true},
+		})
+	}
+
 	return params
 }
 
@@ -109,6 +116,7 @@ func userMessageToOpenAI(blocks []provider.ContentBlock) []openai.ChatCompletion
 func assistantMessageToOpenAI(blocks []provider.ContentBlock) openai.ChatCompletionMessageParamUnion {
 	var contentParts []string
 	var toolCalls []openai.ChatCompletionMessageToolCallUnionParam
+	var reasoningRaw json.RawMessage
 
 	for _, b := range blocks {
 		switch b.Type {
@@ -130,7 +138,12 @@ func assistantMessageToOpenAI(blocks []provider.ContentBlock) openai.ChatComplet
 				},
 			})
 
-		// Skip thinking, redacted_thinking, server_tool_use — OpenAI-incompatible
+		case "thinking":
+			if len(b.ReasoningRaw) > 0 {
+				reasoningRaw = b.ReasoningRaw
+			}
+
+		// Skip redacted_thinking, server_tool_use — OpenAI-incompatible
 		}
 	}
 
@@ -143,6 +156,13 @@ func assistantMessageToOpenAI(blocks []provider.ContentBlock) openai.ChatComplet
 		msg.Content = openai.ChatCompletionAssistantMessageParamContentUnion{
 			OfString: param.NewOpt(text),
 		}
+	}
+
+	// Pass back reasoning_details for OpenRouter (faithful round-trip).
+	if len(reasoningRaw) > 0 {
+		msg.SetExtraFields(map[string]any{
+			"reasoning_details": json.RawMessage(reasoningRaw),
+		})
 	}
 
 	return openai.ChatCompletionMessageParamUnion{
@@ -226,6 +246,17 @@ func responseFromOpenAI(resp *openai.ChatCompletion, model string) (*provider.Me
 	// Map finish reason
 	result.StopReason = mapFinishReason(choice.FinishReason)
 
+	// Extract reasoning_details from OpenRouter responses (if present).
+	if f, ok := choice.Message.JSON.ExtraFields["reasoning_details"]; ok && f.Valid() {
+		rawJSON := json.RawMessage(f.Raw())
+		thinkText := extractReasoningText(rawJSON)
+		result.Content = append(result.Content, provider.ContentBlock{
+			Type:         "thinking",
+			Thinking:     thinkText,
+			ReasoningRaw: rawJSON,
+		})
+	}
+
 	// Text content
 	if choice.Message.Content != "" {
 		result.Content = append(result.Content, provider.ContentBlock{
@@ -283,3 +314,38 @@ func mapFinishReason(reason string) string {
 
 // hasToolUse checks if any content blocks are tool_use.
 func hasToolUse(blocks []provider.ContentBlock) bool { return messages.BlocksHaveToolUse(blocks) }
+
+// extractReasoningText best-effort extracts human-readable thinking text from
+// OpenRouter reasoning_details JSON. The format varies by model:
+//   - Plain string → use directly
+//   - Array of objects → look for "thinking", "content", or "text" fields
+//   - Fallback → raw JSON as text
+func extractReasoningText(raw json.RawMessage) string {
+	// Try plain string first.
+	var s string
+	if json.Unmarshal(raw, &s) == nil && s != "" {
+		return s
+	}
+
+	// Try array of objects with known text fields.
+	var arr []map[string]any
+	if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
+		var parts []string
+		for _, obj := range arr {
+			for _, key := range []string{"thinking", "content", "text"} {
+				if v, ok := obj[key]; ok {
+					if text, ok := v.(string); ok && text != "" {
+						parts = append(parts, text)
+						break
+					}
+				}
+			}
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "\n\n")
+		}
+	}
+
+	// Fallback: use raw JSON as text.
+	return string(raw)
+}

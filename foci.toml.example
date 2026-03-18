@@ -237,6 +237,7 @@ thinking = "adaptive"                     # adaptive (default), off — Anthropi
 [openai]
 # base_url = ""                           # API base URL (empty = sdk default; override for OpenRouter etc.)
 # http_timeout = "120s"                   # HTTP timeout for API calls
+# reasoning = "off"                       # OpenRouter reasoning: "off" (default) or "adaptive"
 
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]
