@@ -177,6 +177,11 @@ func TestParseTodoArgs(t *testing.T) {
 			want: todoArgs{subcommand: "new", status: "active", sort: "priority", limit: 15, text: "bread", tags: []string{"shopping"}, setTag: true, priority: "high"},
 		},
 		{
+			name: "new with multiple tags",
+			raw:  "new t:foci t:background do the thing",
+			want: todoArgs{subcommand: "new", status: "active", sort: "priority", limit: 15, text: "do the thing", tags: []string{"foci", "background"}, setTag: true},
+		},
+		{
 			name: "done transition single ID",
 			raw:  "done 5",
 			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
@@ -651,6 +656,26 @@ func TestTodoNewWithTagAndPriority(t *testing.T) {
 	item, _ := store.Get(testAgent, 1)
 	if item.Tags != "shopping" {
 		t.Errorf("tag: got %q, want %q", item.Tags, "shopping")
+	}
+}
+
+// TestTodoNewWithMultipleTags verifies creating with multiple t: prefixes
+// stores all tags as comma-separated.
+func TestTodoNewWithMultipleTags(t *testing.T) {
+	store := newTestTodoStore(t)
+	cc := newTestCC(store)
+	cmd := TodoCommand()
+
+	resp, err := cmd.Execute(context.Background(), Request{Args: "new t:foci t:background do the thing"}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(resp.Text, "Added #1") {
+		t.Errorf("expected confirmation: %s", resp.Text)
+	}
+	item, _ := store.Get(testAgent, 1)
+	if item.Tags != "foci,background" {
+		t.Errorf("tags: got %q, want %q", item.Tags, "foci,background")
 	}
 }
 
