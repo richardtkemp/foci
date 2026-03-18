@@ -113,7 +113,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		},
 	}
 
-	resp, err := provider.SendWithFallback(ctx, client, req, nil,
+	resp, err := provider.Send(ctx, client, req, nil,
 		fallbackFn, clientProvider, func(f string, args ...any) {
 			log.Errorf("summary", f, args...)
 		})

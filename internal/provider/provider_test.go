@@ -74,7 +74,7 @@ func TestSendWithNilHandlerUsesNonStreaming(t *testing.T) {
 	}
 
 	// Call with nil handler - should use SendMessage, not StreamMessage
-	resp, err := Send(context.Background(), mock, req, nil)
+	resp, err := sendWithRetry(context.Background(), mock, req, nil)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestSendWithHandlerUsesStreaming(t *testing.T) {
 	handler := &StreamHandler{}
 
 	// Call with handler - should use StreamMessage
-	resp, err := Send(context.Background(), mock, req, handler)
+	resp, err := sendWithRetry(context.Background(), mock, req, handler)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSendWithNonStreamingClientAlwaysUsesSendMessage(t *testing.T) {
 
 	// Even with a handler, non-streaming client should use SendMessage
 	handler := &StreamHandler{}
-	resp, err := Send(context.Background(), mock, req, handler)
+	resp, err := sendWithRetry(context.Background(), mock, req, handler)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestSendWithEmptyHandlerUsesStreaming(t *testing.T) {
 	// Empty handler (no callbacks) should still use streaming
 	handler := &StreamHandler{}
 
-	resp, err := Send(context.Background(), mock, req, handler)
+	resp, err := sendWithRetry(context.Background(), mock, req, handler)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestSendWithSelfRetryingClientSkipsProviderRetry(t *testing.T) {
 		},
 	}
 
-	resp, err := Send(context.Background(), mock, req, nil)
+	resp, err := sendWithRetry(context.Background(), mock, req, nil)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
 	}

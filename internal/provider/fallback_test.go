@@ -62,7 +62,7 @@ func TestIsFallbackEligible_NotEligible(t *testing.T) {
 	}
 }
 
-// fallbackMockClient is a minimal Client for testing SendWithFallback / WalkFallback.
+// fallbackMockClient is a minimal Client for testing Send's fallback behaviour.
 type fallbackMockClient struct {
 	responses []fallbackMockResponse // consumed in order; panics if exhausted
 	callIdx   int
@@ -91,8 +91,8 @@ func (m *fallbackMockClient) CountTokens(_ context.Context, _ *MessageRequest) (
 
 func (m *fallbackMockClient) IsCachingAvailable() bool { return false }
 
-// HandlesOwnRetries makes Send skip its retry loop, so tests control exactly
-// how many times SendMessage is called.
+// HandlesOwnRetries makes sendWithRetry skip its retry loop, so tests control
+// exactly how many times SendMessage is called.
 func (m *fallbackMockClient) HandlesOwnRetries() bool { return true }
 
 // fallbackMockClientProvider returns distinct mock clients keyed by endpoint:format.
@@ -112,13 +112,13 @@ func (p *fallbackMockClientProvider) ResolveEndpointClient(endpoint, format stri
 	return p.clients[endpoint+":"+format]
 }
 
-func TestSendWithFallback_NilFallbackFn(t *testing.T) {
-	// Proves that a nil fallbackFn degrades to a plain Send.
+func TestSend_NilFallbackFn(t *testing.T) {
+	// Proves that a nil fallbackFn degrades to plain send-with-retry.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{resp: &MessageResponse{Content: TextContent("ok")}},
 	}}
 	req := &MessageRequest{Model: "primary"}
-	resp, err := SendWithFallback(context.Background(), mc, req, nil, nil, nil, nil)
+	resp, err := Send(context.Background(), mc, req, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestSendWithFallback_NilFallbackFn(t *testing.T) {
 	}
 }
 
-func TestSendWithFallback_PrimarySucceeds(t *testing.T) {
+func TestSend_PrimarySucceeds(t *testing.T) {
 	// Proves that when the primary call succeeds, fallback is never tried.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{resp: &MessageResponse{Content: TextContent("primary ok")}},
@@ -138,7 +138,7 @@ func TestSendWithFallback_PrimarySucceeds(t *testing.T) {
 		return "fb-model", "ep", "fmt", true
 	}
 	req := &MessageRequest{Model: "primary"}
-	resp, err := SendWithFallback(context.Background(), mc, req, nil, fallbackFn, nil, nil)
+	resp, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestSendWithFallback_PrimarySucceeds(t *testing.T) {
 	}
 }
 
-func TestSendWithFallback_FallbackOnTransientError(t *testing.T) {
+func TestSend_FallbackOnTransientError(t *testing.T) {
 	// Proves that a 529 on primary triggers the fallback, and the
 	// fallback model's client is resolved via clientProvider.
 	primaryClient := &fallbackMockClient{responses: []fallbackMockResponse{
@@ -172,7 +172,7 @@ func TestSendWithFallback_FallbackOnTransientError(t *testing.T) {
 	logf := func(f string, args ...any) { logs = append(logs, fmt.Sprintf(f, args...)) }
 
 	req := &MessageRequest{Model: "primary-model"}
-	resp, err := SendWithFallback(context.Background(), primaryClient, req, nil, fallbackFn, cp, logf)
+	resp, err := Send(context.Background(), primaryClient, req, nil, fallbackFn, cp, logf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestSendWithFallback_FallbackOnTransientError(t *testing.T) {
 	}
 }
 
-func TestSendWithFallback_ChainWalk(t *testing.T) {
+func TestSend_ChainWalk(t *testing.T) {
 	// Proves that fallback walks the chain: primary → fb1 → fb2 succeeds.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{err: &APIError{StatusCode: 529}},                         // primary fails
@@ -205,7 +205,7 @@ func TestSendWithFallback_ChainWalk(t *testing.T) {
 		}
 	}
 	req := &MessageRequest{Model: "primary"}
-	resp, err := SendWithFallback(context.Background(), mc, req, nil, fallbackFn, nil, nil)
+	resp, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestSendWithFallback_ChainWalk(t *testing.T) {
 	}
 }
 
-func TestSendWithFallback_AllFail(t *testing.T) {
+func TestSend_AllFail(t *testing.T) {
 	// Proves that when all models in the chain fail, the last error is returned.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{err: &APIError{StatusCode: 529}},
@@ -227,7 +227,7 @@ func TestSendWithFallback_AllFail(t *testing.T) {
 		return "", "", "", false
 	}
 	req := &MessageRequest{Model: "primary"}
-	_, err := SendWithFallback(context.Background(), mc, req, nil, fallbackFn, nil, nil)
+	_, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil)
 	if err == nil {
 		t.Fatal("expected error when all fallbacks fail")
 	}
@@ -237,7 +237,7 @@ func TestSendWithFallback_AllFail(t *testing.T) {
 	}
 }
 
-func TestSendWithFallback_NonTransientSkipsFallback(t *testing.T) {
+func TestSend_NonTransientSkipsFallback(t *testing.T) {
 	// Proves that a non-transient error (401) does NOT trigger fallback.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{err: &APIError{StatusCode: 401}},
@@ -248,7 +248,7 @@ func TestSendWithFallback_NonTransientSkipsFallback(t *testing.T) {
 		return "fb", "", "", true
 	}
 	req := &MessageRequest{Model: "primary"}
-	_, err := SendWithFallback(context.Background(), mc, req, nil, fallbackFn, nil, nil)
+	_, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -257,39 +257,36 @@ func TestSendWithFallback_NonTransientSkipsFallback(t *testing.T) {
 	}
 }
 
-func TestWalkFallback_NilFallbackFn(t *testing.T) {
-	// Proves that nil fallbackFn returns the primary error unchanged.
-	primaryErr := &APIError{StatusCode: 529}
-	mc := &fallbackMockClient{}
-	req := &MessageRequest{Model: "primary"}
-	_, err := WalkFallback(context.Background(), mc, req, nil, primaryErr, nil, nil, nil)
-	if err != primaryErr {
-		t.Errorf("expected original error, got %v", err)
+func TestSend_StripUnsupportedParams(t *testing.T) {
+	// Proves that a 400 mentioning "thinking" strips the param and retries
+	// successfully on the same model.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 400, Body: `{"error":"thinking is not supported"}`}},
+		{resp: &MessageResponse{Content: TextContent("ok after strip")}},
+	}}
+	req := &MessageRequest{
+		Model:    "primary",
+		Thinking: &ThinkingConfig{Type: "enabled", BudgetTokens: 1024},
+	}
+	resp, err := Send(context.Background(), mc, req, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if TextOf(resp.Content) != "ok after strip" {
+		t.Errorf("expected 'ok after strip', got %q", TextOf(resp.Content))
+	}
+	if req.Thinking != nil {
+		t.Error("expected Thinking to be stripped")
 	}
 }
 
-func TestWalkFallback_NonTransientReturnsOriginal(t *testing.T) {
-	// Proves that a non-transient primary error is returned without walking.
-	primaryErr := &APIError{StatusCode: 401}
-	mc := &fallbackMockClient{}
-	called := false
-	fallbackFn := func(model string) (string, string, string, bool) {
-		called = true
-		return "fb", "", "", true
-	}
-	req := &MessageRequest{Model: "primary"}
-	_, err := WalkFallback(context.Background(), mc, req, nil, primaryErr, fallbackFn, nil, nil)
-	if err != primaryErr {
-		t.Errorf("expected original error, got %v", err)
-	}
-	if called {
-		t.Error("fallbackFn should not be called for non-transient errors")
-	}
-}
-
-func TestWalkFallback_FallbackSucceeds(t *testing.T) {
-	// Proves that WalkFallback tries the fallback model (without retrying primary)
-	// and succeeds.
+func TestSend_StripThenFallback(t *testing.T) {
+	// Proves that strip-and-retry happens before fallback: a 400 strips params,
+	// retry still fails (529), then fallback kicks in.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: &APIError{StatusCode: 400, Body: `{"error":"effort not supported"}`}},
+		{err: &APIError{StatusCode: 529}}, // strip retry → transient
+	}}
 	fbClient := &fallbackMockClient{responses: []fallbackMockResponse{
 		{resp: &MessageResponse{Content: TextContent("fb ok")}},
 	}}
@@ -302,15 +299,18 @@ func TestWalkFallback_FallbackSucceeds(t *testing.T) {
 		}
 		return "", "", "", false
 	}
-	req := &MessageRequest{Model: "primary"}
-	resp, err := WalkFallback(context.Background(), nil, req, nil, &APIError{StatusCode: 529}, fallbackFn, cp, nil)
+	req := &MessageRequest{
+		Model:  "primary",
+		Output: &OutputConfig{Effort: "high"},
+	}
+	resp, err := Send(context.Background(), mc, req, nil, fallbackFn, cp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if TextOf(resp.Content) != "fb ok" {
 		t.Errorf("expected 'fb ok', got %q", TextOf(resp.Content))
 	}
-	if req.Model != "fb-model" {
-		t.Errorf("expected req.Model to be 'fb-model', got %q", req.Model)
+	if req.Output != nil {
+		t.Error("expected Output to be stripped")
 	}
 }

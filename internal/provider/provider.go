@@ -30,8 +30,8 @@ type selfRetryingClient interface {
 	HandlesOwnRetries() bool
 }
 
-// Send sends a message request using streaming only when a handler is provided.
-// Pass a non-nil handler to enable streaming; pass nil to use non-streaming SendMessage.
+// sendWithRetry sends a message request with retry logic but no fallback.
+// Use Send for the full pipeline (strip unsupported params + fallback chain).
 //
 // Retry logic:
 // - Clients implementing selfRetryingClient.HandlesOwnRetries() == true use SDK retries (e.g., Gemini)
@@ -40,7 +40,7 @@ type selfRetryingClient interface {
 //   - Phase 2: Extended retry for retryableClient implementations:
 //     - 529 overload: up to ~2h (configurable via OverloadMaxDuration)
 //     - 5xx server errors: up to ~5min (configurable via ServerErrorMaxDuration)
-func Send(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
+func sendWithRetry(ctx context.Context, client Client, req *MessageRequest, handler *StreamHandler) (*MessageResponse, error) {
 	// Check if client handles its own retries (e.g., Gemini SDK has built-in retry)
 	if src, ok := client.(selfRetryingClient); ok && src.HandlesOwnRetries() {
 		// Let the client's SDK handle retries

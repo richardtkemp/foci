@@ -151,7 +151,7 @@ func (a *Agent) summariseToolResult(ctx context.Context, _ provider.Client, sess
 	}
 
 	start := time.Now()
-	resp, err := provider.SendWithFallback(ctx, summaryClient, req, nil,
+	resp, err := provider.Send(ctx, summaryClient, req, nil,
 		a.FallbackFunc, a.ClientProvider, a.logger().Errorf)
 	if err != nil {
 		a.logger().Warnf("session=%s auto-summary failed for %s: %v", sessionKey, toolName, err)

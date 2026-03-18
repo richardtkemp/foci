@@ -403,7 +403,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 		}
 
 		start := time.Now()
-		resp, err := provider.SendWithFallback(callCtx, client, req, nil,
+		resp, err := provider.Send(callCtx, client, req, nil,
 			fallbackFn, clientProvider, func(f string, args ...any) {
 				log.Errorf("spawn", f, args...)
 			})

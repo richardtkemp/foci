@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // FallbackFunc resolves a model to its fallback.
@@ -28,6 +29,39 @@ func IsFallbackEligible(err error) bool {
 	}
 	// IsRetryable covers 500, 502, 503, 529
 	return apiErr.IsRetryable()
+}
+
+// stripUnsupportedParams checks if a 400 error indicates that
+// Thinking, Output (effort), or Speed params are unsupported by the model.
+// If so, it strips the offending params from req and returns true.
+func stripUnsupportedParams(req *MessageRequest, apiErr *APIError, logf func(string, ...any)) bool {
+	if req.Thinking == nil && req.Output == nil && req.Speed == "" {
+		return false
+	}
+	body := strings.ToLower(apiErr.Body)
+	stripped := false
+	if req.Thinking != nil && strings.Contains(body, "thinking") {
+		if logf != nil {
+			logf("model %s rejected thinking param, retrying without it", req.Model)
+		}
+		req.Thinking = nil
+		stripped = true
+	}
+	if req.Output != nil && (strings.Contains(body, "effort") || strings.Contains(body, "output")) {
+		if logf != nil {
+			logf("model %s rejected effort param, retrying without it", req.Model)
+		}
+		req.Output = nil
+		stripped = true
+	}
+	if req.Speed != "" && strings.Contains(body, "speed") {
+		if logf != nil {
+			logf("model %s rejected speed param, retrying without it", req.Model)
+		}
+		req.Speed = ""
+		stripped = true
+	}
+	return stripped
 }
 
 // walkFallback walks the fallback chain trying alternate models after a
@@ -66,7 +100,7 @@ func walkFallback(
 		}
 
 		req.Model = fbCanonical
-		resp, err = Send(ctx, fbClient, req, handler)
+		resp, err = sendWithRetry(ctx, fbClient, req, handler)
 		if err == nil {
 			if logf != nil {
 				logf("fallback succeeded on %s", fbCanonical)
@@ -82,17 +116,19 @@ func walkFallback(
 	return resp, err
 }
 
-// SendWithFallback sends a request using Send, and on fallback-eligible errors
-// walks the fallback chain (up to 3 hops) trying alternate models.
+// Send sends a request with automatic error recovery:
 //
-// If fallbackFn is nil, this degrades to a plain Send call.
-// clientProvider is used to resolve clients for fallback endpoint:format pairs;
-// if nil, the original client is reused for all fallback attempts.
-// logf receives diagnostic messages about fallback attempts.
+//  1. Send the request with retries (exponential backoff + extended retry).
+//  2. On 400 errors, strip unsupported params (Thinking, Output, Speed) and retry.
+//  3. On transient errors (529, 5xx, deadline exceeded), walk the fallback chain.
 //
-// On success, req.Model will reflect the model that succeeded. The caller
+// If fallbackFn is nil, step 3 is skipped (no fallback models configured).
+// clientProvider resolves clients for fallback endpoint:format pairs; nil = reuse caller's client.
+// logf receives diagnostic messages; nil = silent.
+//
+// On success from a fallback model, req.Model reflects that model. The caller
 // should restore the original model if needed for subsequent iterations.
-func SendWithFallback(
+func Send(
 	ctx context.Context,
 	client Client,
 	req *MessageRequest,
@@ -101,33 +137,26 @@ func SendWithFallback(
 	clientProvider ClientProvider,
 	logf func(string, ...any),
 ) (*MessageResponse, error) {
-	resp, err := Send(ctx, client, req, handler)
-	if err == nil || fallbackFn == nil || !IsFallbackEligible(err) {
-		return resp, err
+	resp, err := sendWithRetry(ctx, client, req, handler)
+	if err == nil {
+		return resp, nil
 	}
 
-	return walkFallback(ctx, client, req, handler, fallbackFn, clientProvider, logf)
-}
-
-// WalkFallback walks the fallback chain after an already-failed Send.
-// Use this when the caller has already called Send and wants to try fallbacks
-// without re-sending to the primary model.
-//
-// If fallbackFn is nil or the error is not fallback-eligible, returns the
-// original error unchanged.
-func WalkFallback(
-	ctx context.Context,
-	client Client,
-	req *MessageRequest,
-	handler *StreamHandler,
-	primaryErr error,
-	fallbackFn FallbackFunc,
-	clientProvider ClientProvider,
-	logf func(string, ...any),
-) (*MessageResponse, error) {
-	if fallbackFn == nil || !IsFallbackEligible(primaryErr) {
-		return nil, primaryErr
+	// Step 2: strip unsupported params on 400 and retry once.
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 400 {
+		if stripUnsupportedParams(req, apiErr, logf) {
+			resp, err = sendWithRetry(ctx, client, req, handler)
+			if err == nil {
+				return resp, nil
+			}
+		}
 	}
 
-	return walkFallback(ctx, client, req, handler, fallbackFn, clientProvider, logf)
+	// Step 3: walk fallback chain on transient errors.
+	if fallbackFn != nil && IsFallbackEligible(err) {
+		return walkFallback(ctx, client, req, handler, fallbackFn, clientProvider, logf)
+	}
+
+	return resp, err
 }
