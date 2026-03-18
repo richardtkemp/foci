@@ -14,7 +14,7 @@ AI agents on Telegram, written in Go.
 
 ---
 
-Built on lessons learned from running [OpenClaw](https://github.com/claw-project/openclaw) in production. Same problem space — connecting language models to tools and long-running sessions — but different architectural choices: the prompt cache as a first-class structural boundary, secrets isolated at the OS level so they never enter agent context, and a single Go binary you can hold in your head. Built for Anthropic, but any OpenAI-compatible endpoint works.
+Inspired by [OpenClaw](https://github.com/claw-project/openclaw), built from scratch in Go — single binary, cache-first, with OS-level secret isolation. Session branching, tool piping, and coding agent orchestration go well beyond the original. Built for Anthropic, but any OpenAI-compatible endpoint works.
 
 ## Quick Start
 
