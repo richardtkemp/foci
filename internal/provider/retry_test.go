@@ -107,7 +107,7 @@ func TestRetryCallbacks(t *testing.T) {
 		},
 	})
 
-	resp, err := Send(ctx, client, &MessageRequest{
+	resp, err := sendWithRetry(ctx, client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)
@@ -155,7 +155,7 @@ func TestRetryCallbacksNoRetry(t *testing.T) {
 		},
 	})
 
-	_, err := Send(ctx, client, &MessageRequest{
+	_, err := sendWithRetry(ctx, client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)
@@ -203,7 +203,7 @@ func TestRetryCallbacks529Overload(t *testing.T) {
 		},
 	})
 
-	resp, err := Send(ctx, client, &MessageRequest{
+	resp, err := sendWithRetry(ctx, client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)
@@ -237,7 +237,7 @@ func TestRetryNonRetryableError(t *testing.T) {
 		},
 	}
 
-	_, err := Send(context.Background(), client, &MessageRequest{
+	_, err := sendWithRetry(context.Background(), client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)
@@ -272,7 +272,7 @@ func TestRetryStreamingClient(t *testing.T) {
 		},
 	}
 
-	resp, err := Send(context.Background(), client, &MessageRequest{
+	resp, err := sendWithRetry(context.Background(), client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, handler)
@@ -341,7 +341,7 @@ func TestRetry500ExtendsWithShorterDuration(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err := Send(context.Background(), client, &MessageRequest{
+	_, err := sendWithRetry(context.Background(), client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)
@@ -379,7 +379,7 @@ func TestRetry500Recovery(t *testing.T) {
 		},
 	}
 
-	resp, err := Send(context.Background(), client, &MessageRequest{
+	resp, err := sendWithRetry(context.Background(), client, &MessageRequest{
 		Model:     "test-model",
 		MaxTokens: 256,
 	}, nil)

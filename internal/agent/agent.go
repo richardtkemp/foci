@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -539,7 +538,10 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			},
 		})
 
-		resp, err = provider.Send(ctx, turnClient, req, handler)
+		resp, err = provider.Send(ctx, turnClient, req, handler,
+			a.FallbackFunc, a.ClientProvider, func(f string, args ...any) {
+				a.logger().Warnf("session=%s "+f, append([]any{sessionKey}, args...)...)
+			})
 
 		duration := time.Since(start)
 		keySuffix := ""
@@ -548,73 +550,33 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		}
 		a.logger().Debugf("api_call_done session=%s duration=%s key=%s err=%v", sessionKey, duration, keySuffix, err)
 
-		// Error-and-retry: if a 400 suggests unsupported thinking/effort,
-		// strip the offending params and retry once.
+		// Restore original model on the request so subsequent tool
+		// loop iterations rebuild with the primary model.
+		req.Model = turnModel
+
 		if err != nil {
-			if req.Thinking != nil || req.Output != nil || req.Speed != "" {
-				var apiErr *provider.APIError
-				if errors.As(err, &apiErr) && apiErr.StatusCode == 400 {
-					body := strings.ToLower(apiErr.Body)
-					stripped := false
-					if req.Thinking != nil && strings.Contains(body, "thinking") {
-						a.logger().Warnf("session=%s model %s rejected thinking param, retrying without it", sessionKey, turnModel)
-						req.Thinking = nil
-						stripped = true
-					}
-					if req.Output != nil && (strings.Contains(body, "effort") || strings.Contains(body, "output")) {
-						a.logger().Warnf("session=%s model %s rejected effort param, retrying without it", sessionKey, turnModel)
-						req.Output = nil
-						stripped = true
-					}
-					if req.Speed != "" && strings.Contains(body, "speed") {
-						a.logger().Warnf("session=%s model %s rejected speed param, retrying without it", sessionKey, turnModel)
-						req.Speed = ""
-						stripped = true
-					}
-					if stripped {
-						resp, err = provider.Send(ctx, turnClient, req, handler)
-						duration = time.Since(start)
-					}
-				}
+			// Log the failed request payload for debugging.
+			a.logErrorPayload(sessionKey, turnModel, start, duration, req, err)
+
+			// Append a synthetic assistant error message so the session
+			// maintains role alternation (user→assistant). Without this,
+			// the defer safety-net flushes only the user message, causing
+			// consecutive user messages on the next turn — which the API
+			// rejects with 400, creating a permanent cascade.
+			errMsg := provider.Message{
+				Role:    "assistant",
+				Content: provider.TextContent("(API error — response unavailable)"),
 			}
-			if err != nil {
-				// Fallback: walk the fallback chain on transient errors.
-				// Uses WalkFallback (not SendWithFallback) because the primary
-				// Send already failed above — no need to retry it.
-				resp, err = provider.WalkFallback(ctx, turnClient, req, handler, err,
-					a.FallbackFunc, a.ClientProvider, func(f string, args ...any) {
-						a.logger().Errorf("session=%s "+f, append([]any{sessionKey}, args...)...)
-					})
-				duration = time.Since(start)
-				// Restore original model on the request so subsequent tool
-				// loop iterations rebuild with the primary model.
-				req.Model = turnModel
+			newMessages = append(newMessages, errMsg)
 
-				if err != nil {
-					// Log the failed request payload for debugging.
-					a.logErrorPayload(sessionKey, turnModel, start, duration, req, err)
-
-					// Append a synthetic assistant error message so the session
-					// maintains role alternation (user→assistant). Without this,
-					// the defer safety-net flushes only the user message, causing
-					// consecutive user messages on the next turn — which the API
-					// rejects with 400, creating a permanent cascade.
-					errMsg := provider.Message{
-						Role:    "assistant",
-						Content: provider.TextContent("(API error — response unavailable)"),
-					}
-					newMessages = append(newMessages, errMsg)
-
-					// Resolve endpoint for error classification
-					a.metaMu.Lock()
-					endpoint := sm.modelEndpoint
-					if endpoint == "" {
-						endpoint = a.Endpoint
-					}
-					a.metaMu.Unlock()
-					return "", a.classifyAPIError(ctx, err, sessionKey, endpoint, duration)
-				}
+			// Resolve endpoint for error classification
+			a.metaMu.Lock()
+			endpoint := sm.modelEndpoint
+			if endpoint == "" {
+				endpoint = a.Endpoint
 			}
+			a.metaMu.Unlock()
+			return "", a.classifyAPIError(ctx, err, sessionKey, endpoint, duration)
 		}
 
 		// Check for cancellation after API call

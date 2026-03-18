@@ -344,7 +344,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 
 	// Use streaming for compaction (required for large sessions)
 	handler := &provider.StreamHandler{}
-	resp, err := provider.SendWithFallback(ctx, client, req, handler,
+	resp, err := provider.Send(ctx, client, req, handler,
 		c.FallbackFunc, c.ClientProvider, c.log.Errorf)
 	if err != nil {
 		return "", "", fmt.Errorf("summarize for compaction: %w", err)
