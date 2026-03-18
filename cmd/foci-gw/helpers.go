@@ -68,9 +68,6 @@ func resolveIntPtrPtr(perAgent, global *int) *int {
 	return global
 }
 
-// resolveIdlePreserve is an alias for resolveIntPtrPtr for idle-preserve config.
-var resolveIdlePreserve = resolveIntPtrPtr
-
 // resolveFloat64PtrDefault returns *perAgent if non-nil, *global if non-nil, otherwise fallback.
 func resolveFloat64PtrDefault(perAgent, global *float64, fallback float64) float64 {
 	if perAgent != nil {

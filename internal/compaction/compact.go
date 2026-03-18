@@ -213,20 +213,21 @@ func (c *Compactor) ShouldCompactWithLimit(sessionKey string, messages []provide
 	threshold := int(float64(limit) * c.threshold)
 	estimated := estimateTokens(messages)
 
-	var result bool
-	var input int
-
 	// Use actual usage if available
 	if lastUsage != nil {
-		input = lastUsage.InputTokens + lastUsage.CacheReadInputTokens + lastUsage.CacheCreationInputTokens
-		result = input > threshold
-	} else {
-		input = estimated
-		result = estimated > threshold
+		input := lastUsage.InputTokens + lastUsage.CacheReadInputTokens + lastUsage.CacheCreationInputTokens
+		if input > threshold {
+			c.log.Infof("session=%s hit threshold: input=%d threshold=%d", sessionKey, input, threshold)
+			return true
+		}
+		return false
 	}
 
-	c.log.Debugf("should_compact session=%s: input=%d threshold=%d estimated=%d result=%v", sessionKey, input, threshold, estimated, result)
-	return result
+	if estimated > threshold {
+		c.log.Infof("session=%s hit threshold: estimated=%d threshold=%d", sessionKey, estimated, threshold)
+		return true
+	}
+	return false
 }
 
 // DefaultHandoffMessage is the default message injected after compaction.
@@ -257,7 +258,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		return "", "", nil // not enough to compact
 	}
 
-	c.log.Infof("compacting session %s (%d messages)", sessionKey, len(messages))
+	c.log.Infof("session=%s compacting (%d messages)", sessionKey, len(messages))
 
 	// Split messages into two groups:
 	//   toSummarise: older messages sent to the summary model (only these go to the API)
@@ -448,6 +449,6 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		return "", "", fmt.Errorf("replace session after compaction: %w", err)
 	}
 
-	c.log.Infof("session %s compacted+rotated from %d messages to %d → %s", sessionKey, len(messages), len(compacted), newKey)
+	c.log.Infof("session=%s compacted+rotated from %d messages to %d → %s", sessionKey, len(messages), len(compacted), newKey)
 	return summary, newKey, nil
 }

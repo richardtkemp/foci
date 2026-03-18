@@ -130,10 +130,11 @@ type AgentConfig struct {
 	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
 	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
 	CompactionEffort           string   `toml:"compaction_effort"`            // effort for compaction API calls (empty = use session effort)
-	CompactionManaRefreshThreshold   string   `toml:"compaction_mana_refresh_threshold"`     // trigger mana-refresh compact when reset this soon (empty = use global)
-	CompactionManaRefreshFactor      *float64 `toml:"compaction_mana_refresh_factor"`         // secondary threshold = main threshold × factor (nil = use global)
-	CompactionManaRefreshPreserve    *int     `toml:"compaction_mana_refresh_preserve"`       // messages to preserve in refresh mode (nil = use global)
-	CompactionManaRefreshPreservePct *float64 `toml:"compaction_mana_refresh_preserve_pct"`   // fraction of messages to preserve in refresh mode (nil = use global)
+	AutocompactBeforeManaRefresh          *bool    `toml:"autocompact_before_mana_refresh"`              // master switch (nil = use global)
+	AutocompactBeforeManaRefreshThreshold string   `toml:"autocompact_before_mana_refresh_threshold"`    // trigger mana-refresh compact when reset this soon (empty = use global)
+	AutocompactBeforeManaRefreshFactor    *float64 `toml:"autocompact_before_mana_refresh_factor"`       // secondary threshold = main threshold × factor (nil = use global)
+	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve"`     // messages to preserve in refresh mode (nil = use global)
+	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (nil = use global)
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDirs        []string           `toml:"skills_dirs"`        // skill directories (empty = use global [skills] dirs)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
@@ -316,10 +317,11 @@ type SessionsConfig struct {
 	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
 
-	CompactionManaRefreshThreshold   string   `toml:"compaction_mana_refresh_threshold"`     // trigger mana-refresh compact when reset this soon (default "5m")
-	CompactionManaRefreshFactor      float64  `toml:"compaction_mana_refresh_factor"`         // secondary threshold = main threshold × factor (default 0.5)
-	CompactionManaRefreshPreserve    *int     `toml:"compaction_mana_refresh_preserve"`       // messages to preserve in refresh mode (nil = use percentage)
-	CompactionManaRefreshPreservePct *float64 `toml:"compaction_mana_refresh_preserve_pct"`   // fraction of messages to preserve in refresh mode (default 0.5)
+	AutocompactBeforeManaRefresh          bool     `toml:"autocompact_before_mana_refresh"`              // master switch (default true)
+	AutocompactBeforeManaRefreshThreshold string   `toml:"autocompact_before_mana_refresh_threshold"`    // trigger mana-refresh compact when reset this soon (default "5m")
+	AutocompactBeforeManaRefreshFactor    float64  `toml:"autocompact_before_mana_refresh_factor"`       // secondary threshold = main threshold × factor (default 0.5)
+	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve"`     // messages to preserve in refresh mode (nil = use percentage)
+	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (default 0.5)
 
 	BranchOrientationFacetPrompt string `toml:"branch_orientation_facet_prompt"` // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)

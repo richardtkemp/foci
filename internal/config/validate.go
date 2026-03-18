@@ -122,14 +122,11 @@ func validate(cfg *Config) error {
 	if err := validateNonNegative(cfg.Sessions.CompactionPreserveMessages, "[sessions] compaction_preserve_messages"); err != nil {
 		return err
 	}
-	if err := validateRange(cfg.Sessions.CompactionManaRefreshFactor, 0.0, 1.0, "[sessions] compaction_mana_refresh_factor"); err != nil {
+	if err := validateRange(cfg.Sessions.AutocompactBeforeManaRefreshFactor, 0.0, 1.0, "[sessions] autocompact_before_mana_refresh_factor"); err != nil {
 		return err
 	}
-	// Mana refresh threshold: "0" disables, otherwise must parse as duration
-	if cfg.Sessions.CompactionManaRefreshThreshold != "0" {
-		if _, err := time.ParseDuration(cfg.Sessions.CompactionManaRefreshThreshold); err != nil {
-			return fmt.Errorf("[sessions] compaction_mana_refresh_threshold = %q: %w", cfg.Sessions.CompactionManaRefreshThreshold, err)
-		}
+	if _, err := time.ParseDuration(cfg.Sessions.AutocompactBeforeManaRefreshThreshold); err != nil {
+		return fmt.Errorf("[sessions] autocompact_before_mana_refresh_threshold = %q: %w", cfg.Sessions.AutocompactBeforeManaRefreshThreshold, err)
 	}
 
 	// HTTP

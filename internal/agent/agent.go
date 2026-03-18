@@ -90,10 +90,11 @@ type Agent struct {
 	ManaWarnFunc                  HookList[func(string)]                 // callbacks for mana threshold warnings (e.g. platform notification)
 	MaxTokensWarnFunc             HookList[func(string)]                 // callbacks when stop_reason=max_tokens (response truncated)
 	RateLimitFunc                 HookList[func(resetTime time.Time)]    // callbacks when API returns 429 (rate limited)
-	CompactionManaRefreshThreshold   string                                 // trigger mana-refresh when reset this soon (e.g. "5m")
-	CompactionManaRefreshFactor      float64                               // secondary threshold = main threshold × factor (e.g. 0.5)
-	CompactionManaRefreshPreserve    *int                                   // messages to preserve in refresh mode (nil = use percentage)
-	CompactionManaRefreshPreservePct float64                                // fraction of messages to preserve in refresh mode (0 = default 0.5)
+	AutocompactBeforeManaRefresh          bool                                   // master switch for mana-refresh compaction
+	AutocompactBeforeManaRefreshThreshold string                                 // trigger mana-refresh when reset this soon (e.g. "5m")
+	AutocompactBeforeManaRefreshFactor    float64                               // secondary threshold = main threshold × factor (e.g. 0.5)
+	AutocompactBeforeManaRefreshPreserve    *int                                   // messages to preserve in refresh mode (nil = use percentage)
+	AutocompactBeforeManaRefreshPreservePct float64                                // fraction of messages to preserve in refresh mode (0 = default 0.5)
 	TaskListNotifyFunc            HookList[func(string, string)]         // callbacks for task list changes (session key, message)
 	CompactionMemoryFunc          HookList[func(string)]                 // fires before compaction to save memories (session key)
 	CompactionStartFunc           HookList[func(string, string)]         // callbacks for compaction start (session key, message) — sent immediately, not buffered

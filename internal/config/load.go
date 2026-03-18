@@ -49,7 +49,8 @@ var boolKeys = map[string]bool{
 	"nudge_pre_answer_gate":  true,
 	"browser_enabled":       true,
 	"headless":              true,
-	"incognito":             true,
+	"incognito":                          true,
+	"autocompact_before_mana_refresh":     true,
 }
 
 // normalizeBoolStrings preprocesses TOML content to convert quoted bool-like
@@ -383,10 +384,11 @@ func Load(path string) (*Config, error) {
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
-	setStringDefault(&cfg.Sessions.CompactionManaRefreshThreshold, "5m")
-	setFloatDefault(&cfg.Sessions.CompactionManaRefreshFactor, 0.5)
-	// CompactionManaRefreshPreserve: nil = use percentage-based default
-	// CompactionManaRefreshPreservePct: nil = default 0.5 (50% of messages)
+	setBoolDefaultDefined(&cfg.Sessions.AutocompactBeforeManaRefresh, true, md.IsDefined("sessions", "autocompact_before_mana_refresh"))
+	setStringDefault(&cfg.Sessions.AutocompactBeforeManaRefreshThreshold, "5m")
+	setFloatDefault(&cfg.Sessions.AutocompactBeforeManaRefreshFactor, 0.5)
+	// AutocompactBeforeManaRefreshPreserve: nil = use percentage-based default
+	// AutocompactBeforeManaRefreshPreservePct: nil = default 0.5 (50% of messages)
 
 	// Apply debug.log_api_key_suffix to the log package global.
 	log.DebugLogKeySuffix = cfg.Debug.LogAPIKeySuffix
