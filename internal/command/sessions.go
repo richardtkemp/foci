@@ -183,9 +183,7 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 
 	var defaultChat int64
 	if cc.SessionIndex != nil {
-		if raw, err := cc.SessionIndex.GetAgentMetadata(cc.AgentConfig.ID, "default_chat"); err == nil && raw != "" {
-			_, _ = fmt.Sscanf(raw, "%d", &defaultChat)
-		}
+		defaultChat, _ = cc.SessionIndex.DefaultChatForAgent(cc.AgentConfig.ID)
 	}
 
 	type row struct {
@@ -257,7 +255,12 @@ func sessionsDefaultCmd(cc CommandContext, chatID int64) (string, error) {
 	if cc.SessionIndex == nil {
 		return "", fmt.Errorf("no session index configured")
 	}
-	if err := cc.SessionIndex.SetAgentMetadata(cc.AgentConfig.ID, "default_chat", fmt.Sprintf("%d", chatID)); err != nil {
+	// Determine platform from the session key stored for this chat.
+	plat := ""
+	if sk, err := cc.SessionIndex.GetChatMetadataAnyPlatform(cc.AgentConfig.ID, chatID, "session_key"); err == nil && sk != "" {
+		plat = cc.SessionIndex.PlatformForChat(cc.AgentConfig.ID, chatID)
+	}
+	if err := cc.SessionIndex.SetDefaultChat(cc.AgentConfig.ID, plat, chatID); err != nil {
 		return "", fmt.Errorf("set default: %w", err)
 	}
 	return fmt.Sprintf("Default session set to chat %d.", chatID), nil
@@ -270,9 +273,7 @@ func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
 
 	var defaultChat int64
 	if cc.SessionIndex != nil {
-		if raw, err := cc.SessionIndex.GetAgentMetadata(cc.AgentConfig.ID, "default_chat"); err == nil && raw != "" {
-			_, _ = fmt.Sscanf(raw, "%d", &defaultChat)
-		}
+		defaultChat, _ = cc.SessionIndex.DefaultChatForAgent(cc.AgentConfig.ID)
 	}
 
 	chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID)

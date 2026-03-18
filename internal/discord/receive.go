@@ -51,17 +51,16 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 	b.channelID = channelID
 	b.channelMu.Unlock()
 
-	if changed && b.sessionIndex != nil && b.agentID != "" {
-		if err := b.sessionIndex.SetAgentMetadata(b.agentID, "bot_channel_id", fmt.Sprintf("%d", channelID)); err != nil {
-			b.logger().Errorf("persist channel ID: %v", err)
-		}
-	}
+	_ = changed // channelID tracked in-memory only; DB is source of truth for default
 
 	// Per-chat session routing: set default channel on first message, record username
-	if !b.isSecondary && b.agentID != "" {
-		if b.defaultChannelID() == 0 {
-			b.setDefaultChannel(channelID)
-			b.logger().Infof("set default channel %d for agent %s", channelID, b.agentID)
+	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
+		if chatID, _ := b.sessionIndex.DefaultChatForAgent(b.agentID); chatID == 0 {
+			if err := b.sessionIndex.SetDefaultChat(b.agentID, platformName, channelID); err != nil {
+				b.logger().Errorf("set default channel: %v", err)
+			} else {
+				b.logger().Infof("set default channel %d for agent %s", channelID, b.agentID)
+			}
 		}
 		if msg.Author != nil {
 			b.recordChannelUsername(channelID, msg.Author.Username)

@@ -14,7 +14,6 @@ func newBotForTest() *Bot {
 	return &Bot{
 		log:             log.NewComponentLogger("telegram:test"),
 		queue:           make(chan queuedMessage, 64),
-		chatSessionKeys: make(map[int64]string),
 	}
 }
 

@@ -62,46 +62,39 @@ func TestIsUnknownChannel(t *testing.T) {
 
 // mockIndex implements sessionIndexInterface for testing stale channel cleanup.
 type mockIndex struct {
-	agent map[string]string
+	defaultChatID int64
 }
 
 func (m *mockIndex) GetChatMetadata(string, string, int64, string) (string, error) { return "", nil }
 func (m *mockIndex) SetChatMetadata(string, string, int64, string, string) error   { return nil }
-func (m *mockIndex) GetAgentMetadata(_, key string) (string, error) {
-	return m.agent[key], nil
-}
-func (m *mockIndex) SetAgentMetadata(_, key, val string) error {
-	m.agent[key] = val
+func (m *mockIndex) SetAgentMetadata(string, string, string) error                 { return nil }
+func (m *mockIndex) SetDefaultChat(_ string, _ string, chatID int64) error {
+	m.defaultChatID = chatID
 	return nil
 }
-func (m *mockIndex) DeleteAgentMetadata(_, key string) error {
-	delete(m.agent, key)
+func (m *mockIndex) DefaultChatForAgent(string) (int64, string) {
+	return m.defaultChatID, "discord"
+}
+func (m *mockIndex) ClearDefaultChat(string) error {
+	m.defaultChatID = 0
 	return nil
 }
 
 // TestClearStaleChannel verifies that clearStaleChannel removes the channel
-// from the in-memory cache, session index, and last-known channel state.
+// from the session index default and last-known channel state.
 func TestClearStaleChannel(t *testing.T) {
-	idx := &mockIndex{agent: map[string]string{"default_channel": "12345"}}
+	idx := &mockIndex{defaultChatID: 12345}
 	bot := &Bot{
-		agentID:         "test",
-		chatSessionKeys: map[int64]string{12345: "test/c12345/999"},
-		channelID:       12345,
-		sessionIndex:    idx,
+		agentID:      "test",
+		channelID:    12345,
+		sessionIndex: idx,
 	}
 
 	bot.clearStaleChannel("12345")
 
-	// Chat session key cache should be cleared.
-	bot.chatKeysMu.RLock()
-	if _, ok := bot.chatSessionKeys[12345]; ok {
-		t.Error("expected chat session key to be removed")
-	}
-	bot.chatKeysMu.RUnlock()
-
 	// Default channel should be cleared from session index.
-	if _, ok := idx.agent["default_channel"]; ok {
-		t.Error("expected default_channel to be deleted from session index")
+	if idx.defaultChatID != 0 {
+		t.Error("expected default chat to be cleared")
 	}
 
 	// Last known channel should be cleared.
@@ -115,26 +108,18 @@ func TestClearStaleChannel(t *testing.T) {
 // TestClearStaleChannelNonDefault verifies that clearStaleChannel only clears
 // the default channel if it matches the stale channel, not unconditionally.
 func TestClearStaleChannelNonDefault(t *testing.T) {
-	idx := &mockIndex{agent: map[string]string{"default_channel": "99999"}}
+	idx := &mockIndex{defaultChatID: 99999}
 	bot := &Bot{
-		agentID:         "test",
-		chatSessionKeys: map[int64]string{12345: "test/c12345/999"},
-		channelID:       99999,
-		sessionIndex:    idx,
+		agentID:      "test",
+		channelID:    99999,
+		sessionIndex: idx,
 	}
 
 	bot.clearStaleChannel("12345")
 
-	// Chat session key cache should be cleared for the stale channel.
-	bot.chatKeysMu.RLock()
-	if _, ok := bot.chatSessionKeys[12345]; ok {
-		t.Error("expected stale chat session key to be removed")
-	}
-	bot.chatKeysMu.RUnlock()
-
 	// Default channel should NOT be cleared (it's a different channel).
-	if idx.agent["default_channel"] != "99999" {
-		t.Error("expected default_channel to remain unchanged")
+	if idx.defaultChatID != 99999 {
+		t.Error("expected default chat to remain unchanged")
 	}
 
 	// Last known channel should NOT be cleared (it's a different channel).

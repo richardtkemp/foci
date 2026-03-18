@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"foci/internal/log"
-	"foci/internal/session"
 )
 
 type BotManager struct {
@@ -83,13 +82,14 @@ func (m *BotManager) SharedPool() *Pool {
 }
 
 // BotForSession returns the bot that owns the given session key.
-// Checks facet pools first (exact SessionKey match), then primary bots
-// (chat ID ownership via cached chat-to-session mappings). Returns nil if
-// no bot on this platform owns the session.
+// Checks facet pools first (exact SessionKey match), then returns the
+// primary bot for the session's agent. Returns nil if no bot on this
+// platform owns the session.
 func (m *BotManager) BotForSession(sessionKey string) *Bot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Check facet pools for exact match (facets have override keys).
 	for _, pool := range m.pools {
 		if b := findInPool(pool, sessionKey); b != nil {
 			return b
@@ -102,20 +102,10 @@ func (m *BotManager) BotForSession(sessionKey string) *Bot {
 		}
 	}
 
-	// Check primary bots: return the first one whose in-memory cache
-	// contains the session key's chat ID. Cross-platform routing is now
-	// handled by the aggregatingConnMgr via PlatformForChat, so this only
-	// checks the in-memory cache (no DB fallback needed here).
-	chatID := session.ChatIDFromKey(sessionKey)
-	if chatID != 0 {
-		for _, b := range m.primary {
-			b.chatKeysMu.RLock()
-			_, ok := b.chatSessionKeys[chatID]
-			b.chatKeysMu.RUnlock()
-			if ok {
-				return b
-			}
-		}
+	// Return primary bot for this agent.
+	agentID := extractAgentID(sessionKey)
+	if agentID != "" {
+		return m.primary[agentID]
 	}
 
 	return nil

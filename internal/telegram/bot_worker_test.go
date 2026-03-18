@@ -76,7 +76,6 @@ func TestAgentWorker_OrphanDrainIsRecursive(t *testing.T) {
 		allowedUsers:    map[string]bool{"111": true},
 		sessionKey:      "agent:test:main",
 		queue:           make(chan queuedMessage, 64),
-		chatSessionKeys: make(map[int64]string),
 		display:         BotDisplayConfig{SteerMode: true},
 	}
 
@@ -167,7 +166,6 @@ func TestAgentWorker_QueueBatching(t *testing.T) {
 		allowedUsers:    map[string]bool{"111": true},
 		sessionKey:      "agent:test:main",
 		queue:           make(chan queuedMessage, 64),
-		chatSessionKeys: make(map[int64]string),
 	}
 
 	msg := &gotgbot.Message{
