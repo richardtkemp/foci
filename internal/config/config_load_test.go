@@ -374,9 +374,9 @@ some_key = "value"
 	}
 }
 
-func TestLoadWarnsUnknownKeys(t *testing.T) {
-	// Proves that Load succeeds and returns a valid config even when unknown keys
-	// are present, rather than failing with an error (they are only warned about).
+func TestLoadPopulatesUndefinedKeys(t *testing.T) {
+	// Proves that Load succeeds and populates UndefinedKeys when unknown TOML
+	// keys are present, so the caller can log them after logging is ready.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -395,6 +395,9 @@ foo = "bar"
 	}
 	if cfg.Agents[0].ID != "main" {
 		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
+	}
+	if len(cfg.UndefinedKeys) == 0 {
+		t.Error("expected UndefinedKeys to be populated for unknown TOML keys")
 	}
 }
 

@@ -113,6 +113,12 @@ Subcommands:
 	logCleanup := initLogging(cfg)
 	defer logCleanup()
 
+	// Warn about unrecognised config keys (after logging is fully initialised
+	// so the warning survives the startup log rotation).
+	if len(cfg.UndefinedKeys) > 0 {
+		log.Warnf("config", "unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
+	}
+
 	// ========== Secrets & Bitwarden ==========
 	sec := initSecrets(configPath, cfg)
 	if sec.cleanup != nil {

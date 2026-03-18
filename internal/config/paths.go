@@ -162,14 +162,6 @@ func UnknownKeys(md toml.MetaData) []string {
 	return keys
 }
 
-func checkUnknownKeys(path string, md toml.MetaData) {
-	keys := UnknownKeys(md)
-	if len(keys) == 0 {
-		return
-	}
-	log.Warnf("config", "unknown config keys in %s: %v", path, keys)
-}
-
 // ValidateMemoryThreshold checks that a memory threshold string is in a valid
 // format: "N%" (percentage of RAM), "Nmb" (megabytes), or "Ngb" (gigabytes).
 func ValidateMemoryThreshold(s string) error {
