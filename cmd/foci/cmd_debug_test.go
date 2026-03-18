@@ -337,7 +337,7 @@ func TestDefaultSessionKeyForAgent_ChatMetadata(t *testing.T) {
 	idx := testIndex(t)
 	defer idx.Close()
 
-	if err := idx.SetChatMetadata("scout", 123, "session_key", "scout/c123/1709590000"); err != nil {
+	if err := idx.SetChatMetadata("scout", "", 123, "session_key", "scout/c123/1709590000"); err != nil {
 		t.Fatalf("set chat metadata: %v", err)
 	}
 

@@ -590,9 +590,9 @@ func agentMetaOps(idx *SessionIndex, agentID string) metadataOps {
 func chatMetaOps(idx *SessionIndex, agentID string, chatID int64) metadataOps {
 	return metadataOps{
 		name:   "ChatMetadata(" + agentID + ")",
-		set:    func(k, v string) error { return idx.SetChatMetadata(agentID, chatID, k, v) },
-		get:    func(k string) (string, error) { return idx.GetChatMetadata(agentID, chatID, k) },
-		delete: func(k string) error { return idx.DeleteChatMetadata(agentID, chatID, k) },
+		set:    func(k, v string) error { return idx.SetChatMetadata(agentID, "", chatID, k, v) },
+		get:    func(k string) (string, error) { return idx.GetChatMetadata(agentID, "", chatID, k) },
+		delete: func(k string) error { return idx.DeleteChatMetadata(agentID, "", chatID, k) },
 	}
 }
 
@@ -753,20 +753,20 @@ func TestChatMetadata_IsolationBetweenChats(t *testing.T) {
 	idx := tempIndex(t)
 
 	// Same agent, different chats
-	idx.SetChatMetadata("bot1", 1, "model", "claude")
-	idx.SetChatMetadata("bot1", 2, "model", "gpt")
+	idx.SetChatMetadata("bot1", "", 1, "model", "claude")
+	idx.SetChatMetadata("bot1", "", 2, "model", "gpt")
 
-	v1, _ := idx.GetChatMetadata("bot1", 1, "model")
-	v2, _ := idx.GetChatMetadata("bot1", 2, "model")
+	v1, _ := idx.GetChatMetadata("bot1", "", 1, "model")
+	v2, _ := idx.GetChatMetadata("bot1", "", 2, "model")
 
 	if v1 != "claude" || v2 != "gpt" {
 		t.Errorf("chat isolation failed: chat1=%q chat2=%q", v1, v2)
 	}
 
 	// Different agents, same chat ID
-	idx.SetChatMetadata("bot2", 1, "model", "gemini")
-	v3, _ := idx.GetChatMetadata("bot2", 1, "model")
-	v1again, _ := idx.GetChatMetadata("bot1", 1, "model")
+	idx.SetChatMetadata("bot2", "", 1, "model", "gemini")
+	v3, _ := idx.GetChatMetadata("bot2", "", 1, "model")
+	v1again, _ := idx.GetChatMetadata("bot1", "", 1, "model")
 
 	if v3 != "gemini" || v1again != "claude" {
 		t.Errorf("agent isolation failed: bot2=%q bot1=%q", v3, v1again)
@@ -830,7 +830,7 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("first open: %v", err)
 	}
 	idx1.SetAgentMetadata("bot1", "model", "claude-3")
-	idx1.SetChatMetadata("bot1", 42, "effort", "high")
+	idx1.SetChatMetadata("bot1", "", 42, "effort", "high")
 	idx1.SetSessionMetadata("bot/c1/1000000000", "no_compact", "true")
 	idx1.SetSystemState("version", "1")
 	idx1.Close()
@@ -844,7 +844,7 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 	if v, _ := idx2.GetAgentMetadata("bot1", "model"); v != "claude-3" {
 		t.Errorf("agent metadata not persisted: got %q", v)
 	}
-	if v, _ := idx2.GetChatMetadata("bot1", 42, "effort"); v != "high" {
+	if v, _ := idx2.GetChatMetadata("bot1", "", 42, "effort"); v != "high" {
 		t.Errorf("chat metadata not persisted: got %q", v)
 	}
 	if v, _ := idx2.GetSessionMetadata("bot/c1/1000000000", "no_compact"); v != "true" {

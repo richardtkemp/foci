@@ -20,8 +20,8 @@ var _ platform.Sender = (*Bot)(nil)
 
 // sessionIndexInterface abstracts session index operations for testability.
 type sessionIndexInterface interface {
-	GetChatMetadata(agentID string, chatID int64, key string) (string, error)
-	SetChatMetadata(agentID string, chatID int64, key, value string) error
+	GetChatMetadata(agentID, platform string, chatID int64, key string) (string, error)
+	SetChatMetadata(agentID, platform string, chatID int64, key, value string) error
 	GetAgentMetadata(agentID, key string) (string, error)
 	SetAgentMetadata(agentID, key, value string) error
 	DeleteAgentMetadata(agentID, key string) error

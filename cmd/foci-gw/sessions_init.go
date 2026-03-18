@@ -237,7 +237,7 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 			if len(parts) == 5 {
 				cid, err := strconv.ParseInt(parts[3], 10, 64)
 				if err == nil {
-					_ = idx.SetChatMetadata(parts[1], cid, "username", strVal)
+					_ = idx.SetChatMetadata(parts[1], "", cid, "username", strVal)
 				}
 			}
 

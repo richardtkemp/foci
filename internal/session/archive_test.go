@@ -124,7 +124,7 @@ func TestArchiveSweep_SkipsCurrentChatSession(t *testing.T) {
 	idx.Rebuild(store)
 
 	// Mark the newer one as the current session via chat_metadata
-	idx.SetChatMetadata("bot", 100, "session_key", "bot/c100/2000000000")
+	idx.SetChatMetadata("bot", "", 100, "session_key", "bot/c100/2000000000")
 
 	// Set both to old activity so they'd normally both qualify
 	past := time.Now().UTC().Add(-48 * time.Hour)

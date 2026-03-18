@@ -49,7 +49,7 @@ func addChatSession(t *testing.T, store *session.Store, agentID string, chatID i
 // setUsername stores a username in the session index for a given agent+chat.
 func setUsername(t *testing.T, ss *session.SessionIndex, agentID string, chatID int64, username string) {
 	t.Helper()
-	if err := ss.SetChatMetadata(agentID, chatID, "username", username); err != nil {
+	if err := ss.SetChatMetadata(agentID, "", chatID, "username", username); err != nil {
 		t.Fatalf("set username: %v", err)
 	}
 }

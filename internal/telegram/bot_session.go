@@ -6,31 +6,8 @@ import (
 	"foci/internal/session"
 )
 
-// ownsSession returns true if the session key's chat ID is known to this bot.
-// Checks the in-memory cache first, then the session index (persisted across
-// restarts). Lazily populates the cache on session index hit.
-func (b *Bot) ownsSession(sessionKey string) bool {
-	chatID := session.ChatIDFromKey(sessionKey)
-	if chatID == 0 {
-		return false
-	}
-	b.chatKeysMu.RLock()
-	_, ok := b.chatSessionKeys[chatID]
-	b.chatKeysMu.RUnlock()
-	if ok {
-		return true
-	}
-	// Check session index (survives restarts).
-	if b.sessionIndex != nil && b.agentID != "" {
-		if key, err := b.sessionIndex.GetChatMetadata(b.agentID, chatID, "session_key"); err == nil && key != "" {
-			b.chatKeysMu.Lock()
-			b.chatSessionKeys[chatID] = key
-			b.chatKeysMu.Unlock()
-			return true
-		}
-	}
-	return false
-}
+// platformName is the platform identifier used for chat_metadata queries.
+const platformName = "telegram"
 
 // SessionKey returns the current session key (thread-safe).
 // For primary bots, this returns the session key for the default chat.
@@ -77,7 +54,7 @@ func (b *Bot) sessionKeyForMsg(chatID int64) string {
 
 	// In-memory cache miss — check session index (persisted across restarts)
 	if b.sessionIndex != nil && b.agentID != "" {
-		if persistedKey, err := b.sessionIndex.GetChatMetadata(b.agentID, chatID, "session_key"); err == nil && persistedKey != "" {
+		if persistedKey, err := b.sessionIndex.GetChatMetadata(b.agentID, platformName, chatID, "session_key"); err == nil && persistedKey != "" {
 			// Found persisted key — populate in-memory cache and return
 			b.chatKeysMu.Lock()
 			b.chatSessionKeys[chatID] = persistedKey
@@ -95,7 +72,7 @@ func (b *Bot) sessionKeyForMsg(chatID int64) string {
 
 	// Persist to session index for future restarts
 	if b.sessionIndex != nil && b.agentID != "" {
-		if err := b.sessionIndex.SetChatMetadata(b.agentID, chatID, "session_key", key); err != nil {
+		if err := b.sessionIndex.SetChatMetadata(b.agentID, platformName, chatID, "session_key", key); err != nil {
 			b.logger().Errorf("persist session key for chat %d: %v", chatID, err)
 		} else {
 			b.logger().Infof("persisted new session key for chat %d: %s", chatID, key)
@@ -113,7 +90,7 @@ func (b *Bot) UpdateChatSessionKey(chatID int64, newKey string) {
 	b.chatKeysMu.Unlock()
 
 	if b.sessionIndex != nil && b.agentID != "" {
-		if err := b.sessionIndex.SetChatMetadata(b.agentID, chatID, "session_key", newKey); err != nil {
+		if err := b.sessionIndex.SetChatMetadata(b.agentID, platformName, chatID, "session_key", newKey); err != nil {
 			b.logger().Errorf("update session key for chat %d: %v", chatID, err)
 		} else {
 			b.logger().Infof("rotated session key for chat %d: %s", chatID, newKey)
@@ -178,7 +155,7 @@ func (b *Bot) recordChatUsername(chatID int64, username string) {
 	if b.sessionIndex == nil || b.agentID == "" || username == "" {
 		return
 	}
-	if err := b.sessionIndex.SetChatMetadata(b.agentID, chatID, "username", username); err != nil {
+	if err := b.sessionIndex.SetChatMetadata(b.agentID, platformName, chatID, "username", username); err != nil {
 		b.logger().Errorf("persist chat username: %v", err)
 	}
 }

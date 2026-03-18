@@ -199,7 +199,7 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 		}
 		// Resolve username from session index
 		if cc.SessionIndex != nil {
-			if username, err := cc.SessionIndex.GetChatMetadata(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
+			if username, err := cc.SessionIndex.GetChatMetadataAnyPlatform(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
 				r.username = "@" + username
 			} else {
 				r.username = "—"
@@ -296,7 +296,7 @@ func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
 			}
 			// Resolve username
 			if cc.SessionIndex != nil {
-				if username, err := cc.SessionIndex.GetChatMetadata(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
+				if username, err := cc.SessionIndex.GetChatMetadataAnyPlatform(cc.AgentConfig.ID, cs.ChatID, "username"); err == nil && username != "" {
 					fmt.Fprintf(&sb, "User: @%s\n", username)
 				}
 			}

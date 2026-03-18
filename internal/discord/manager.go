@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"foci/internal/log"
+	"foci/internal/session"
 )
 
 // BotManager manages Discord bot instances for all agents.
@@ -102,12 +103,19 @@ func (m *BotManager) BotForSession(sessionKey string) *Bot {
 		}
 	}
 
-	// Check primary bots: return the first one whose chat-to-session cache
-	// contains the session key's chat ID. This ensures cross-platform
-	// routing (e.g. Telegram session keys don't resolve to Discord bots).
-	for _, b := range m.primary {
-		if b.ownsSession(sessionKey) {
-			return b
+	// Check primary bots: return the first one whose in-memory cache
+	// contains the session key's chat ID. Cross-platform routing is now
+	// handled by the aggregatingConnMgr via PlatformForChat, so this only
+	// checks the in-memory cache (no DB fallback needed here).
+	chatID := session.ChatIDFromKey(sessionKey)
+	if chatID != 0 {
+		for _, b := range m.primary {
+			b.chatKeysMu.RLock()
+			_, ok := b.chatSessionKeys[chatID]
+			b.chatKeysMu.RUnlock()
+			if ok {
+				return b
+			}
 		}
 	}
 
