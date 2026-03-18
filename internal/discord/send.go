@@ -2,6 +2,7 @@ package discord
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,8 +34,54 @@ func (b *Bot) sendMarkdownChunks(channelID string, text string) {
 			}
 			b.logger().Errorf("send error (channel=%s callers=%s): %s",
 				channelID, strings.Join(callers[:], " <- "), b.sanitizeError(err))
+
+			if isUnknownChannel(err) {
+				b.clearStaleChannel(channelID)
+				return // no point sending remaining chunks
+			}
 		}
 	}
+}
+
+// isUnknownChannel returns true if the error is a Discord API 10003 "Unknown Channel".
+func isUnknownChannel(err error) bool {
+	var restErr *discordgo.RESTError
+	if errors.As(err, &restErr) && restErr.Message != nil {
+		return restErr.Message.Code == 10003
+	}
+	return false
+}
+
+// clearStaleChannel removes a channel that Discord reports as unknown from
+// the in-memory cache and session index so the bot stops trying to send to it.
+func (b *Bot) clearStaleChannel(channelIDStr string) {
+	channelID, err := strconv.ParseInt(channelIDStr, 10, 64)
+	if err != nil {
+		return
+	}
+
+	b.logger().Warnf("clearing stale channel %s from caches", channelIDStr)
+
+	// Clear from chat session key cache.
+	b.chatKeysMu.Lock()
+	delete(b.chatSessionKeys, channelID)
+	b.chatKeysMu.Unlock()
+
+	// If this was the default channel, clear it so periodic tasks stop targeting it.
+	if b.defaultChannelID() == channelID && b.sessionIndex != nil && b.agentID != "" {
+		if err := b.sessionIndex.DeleteAgentMetadata(b.agentID, "default_channel"); err != nil {
+			b.logger().Errorf("failed to clear stale default channel: %v", err)
+		} else {
+			b.logger().Warnf("cleared stale default channel %s for agent %s", channelIDStr, b.agentID)
+		}
+	}
+
+	// Clear the in-memory last-known channel if it matches.
+	b.channelMu.Lock()
+	if b.channelID == channelID {
+		b.channelID = 0
+	}
+	b.channelMu.Unlock()
 }
 
 // sendReply sends a response back to the channel where the message originated.
