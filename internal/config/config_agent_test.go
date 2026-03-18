@@ -259,8 +259,8 @@ weight = 0.5
 	}
 }
 
-func TestBraindeadThresholdDefault(t *testing.T) {
-	// Proves that braindead_threshold defaults to 10 when not explicitly configured.
+func TestNudgeDefaultBraindeadThresholdDefault(t *testing.T) {
+	// Proves that nudge_default_braindead_threshold defaults to 10 when not explicitly configured.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
@@ -273,21 +273,21 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadThreshold != 10 {
-		t.Errorf("BraindeadThreshold = %d, want 10", cfg.Agents[0].BraindeadThreshold)
+	if cfg.Agents[0].NudgeDefaultBraindeadThreshold != 10 {
+		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 10", cfg.Agents[0].NudgeDefaultBraindeadThreshold)
 	}
 }
 
-func TestBraindeadThresholdExplicit(t *testing.T) {
-	// Proves that explicitly setting braindead_threshold and braindead_prompt in
+func TestNudgeDefaultBraindeadThresholdExplicit(t *testing.T) {
+	// Proves that explicitly setting nudge_default_braindead_threshold and nudge_default_braindead_prompt in
 	// an agent block is correctly loaded and overrides any default.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [[agents]]
 id = "test"
-braindead_threshold = 5
-braindead_prompt = "custom warning"
+nudge_default_braindead_threshold = 5
+nudge_default_braindead_prompt = "custom warning"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -295,31 +295,31 @@ braindead_prompt = "custom warning"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadThreshold != 5 {
-		t.Errorf("BraindeadThreshold = %d, want 5", cfg.Agents[0].BraindeadThreshold)
+	if cfg.Agents[0].NudgeDefaultBraindeadThreshold != 5 {
+		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 5", cfg.Agents[0].NudgeDefaultBraindeadThreshold)
 	}
-	if cfg.Agents[0].BraindeadPrompt != "custom warning" {
-		t.Errorf("BraindeadPrompt = %q, want %q", cfg.Agents[0].BraindeadPrompt, "custom warning")
+	if cfg.Agents[0].NudgeDefaultBraindeadPrompt != "custom warning" {
+		t.Errorf("NudgeDefaultBraindeadPrompt = %q, want %q", cfg.Agents[0].NudgeDefaultBraindeadPrompt, "custom warning")
 	}
 }
 
-func TestBraindeadThresholdPerAgent(t *testing.T) {
-	// Proves that a global braindead_threshold in [defaults] is inherited by agents
+func TestNudgeDefaultBraindeadThresholdPerAgent(t *testing.T) {
+	// Proves that a global nudge_default_braindead_threshold in [defaults] is inherited by agents
 	// that don't override it, while agents with explicit values keep their own.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-braindead_threshold = 15
-braindead_prompt = "defaults prompt"
+nudge_default_braindead_threshold = 15
+nudge_default_braindead_prompt = "defaults prompt"
 
 [[agents]]
 id = "a"
 
 [[agents]]
 id = "b"
-braindead_threshold = 5
-braindead_prompt = "agent prompt"
+nudge_default_braindead_threshold = 5
+nudge_default_braindead_prompt = "agent prompt"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -328,30 +328,30 @@ braindead_prompt = "agent prompt"
 	}
 
 	// Agent "a" inherits from defaults
-	if cfg.Agents[0].BraindeadThreshold != 15 {
-		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].BraindeadThreshold)
+	if cfg.Agents[0].NudgeDefaultBraindeadThreshold != 15 {
+		t.Errorf("agent a threshold = %d, want 15", cfg.Agents[0].NudgeDefaultBraindeadThreshold)
 	}
-	if cfg.Agents[0].BraindeadPrompt != "defaults prompt" {
-		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].BraindeadPrompt, "defaults prompt")
+	if cfg.Agents[0].NudgeDefaultBraindeadPrompt != "defaults prompt" {
+		t.Errorf("agent a prompt = %q, want %q", cfg.Agents[0].NudgeDefaultBraindeadPrompt, "defaults prompt")
 	}
 
 	// Agent "b" overrides
-	if cfg.Agents[1].BraindeadThreshold != 5 {
-		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].BraindeadThreshold)
+	if cfg.Agents[1].NudgeDefaultBraindeadThreshold != 5 {
+		t.Errorf("agent b threshold = %d, want 5", cfg.Agents[1].NudgeDefaultBraindeadThreshold)
 	}
-	if cfg.Agents[1].BraindeadPrompt != "agent prompt" {
-		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].BraindeadPrompt, "agent prompt")
+	if cfg.Agents[1].NudgeDefaultBraindeadPrompt != "agent prompt" {
+		t.Errorf("agent b prompt = %q, want %q", cfg.Agents[1].NudgeDefaultBraindeadPrompt, "agent prompt")
 	}
 }
 
-func TestBraindeadThresholdDisabled(t *testing.T) {
-	// Proves that setting braindead_threshold = 0 in [defaults] disables the
+func TestNudgeDefaultBraindeadThresholdDisabled(t *testing.T) {
+	// Proves that setting nudge_default_braindead_threshold = 0 in [defaults] disables the
 	// feature (threshold remains 0, not overridden by the built-in default).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-braindead_threshold = 0
+nudge_default_braindead_threshold = 0
 
 [[agents]]
 id = "test"
@@ -362,24 +362,24 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].BraindeadThreshold != 0 {
-		t.Errorf("BraindeadThreshold = %d, want 0 (disabled)", cfg.Agents[0].BraindeadThreshold)
+	if cfg.Agents[0].NudgeDefaultBraindeadThreshold != 0 {
+		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 0 (disabled)", cfg.Agents[0].NudgeDefaultBraindeadThreshold)
 	}
 }
 
 func TestAgentExplicitZeroNotOverwritten(t *testing.T) {
-	// An agent that explicitly sets braindead_threshold = 0 should NOT
+	// An agent that explicitly sets nudge_default_braindead_threshold = 0 should NOT
 	// have it overwritten by the defaults value. This tests the IsDefined
 	// fix in the reflect-based defaults waterfall.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 [defaults]
-braindead_threshold = 15
+nudge_default_braindead_threshold = 15
 
 [[agents]]
 id = "explicit-zero"
-braindead_threshold = 0
+nudge_default_braindead_threshold = 0
 
 [[agents]]
 id = "inherits"
@@ -391,12 +391,12 @@ id = "inherits"
 	}
 
 	// Agent that explicitly set 0 should keep 0
-	if cfg.Agents[0].BraindeadThreshold != 0 {
-		t.Errorf("explicit-zero agent: BraindeadThreshold = %d, want 0", cfg.Agents[0].BraindeadThreshold)
+	if cfg.Agents[0].NudgeDefaultBraindeadThreshold != 0 {
+		t.Errorf("explicit-zero agent: NudgeDefaultBraindeadThreshold = %d, want 0", cfg.Agents[0].NudgeDefaultBraindeadThreshold)
 	}
 
 	// Agent that didn't set it should inherit 15
-	if cfg.Agents[1].BraindeadThreshold != 15 {
-		t.Errorf("inherits agent: BraindeadThreshold = %d, want 15", cfg.Agents[1].BraindeadThreshold)
+	if cfg.Agents[1].NudgeDefaultBraindeadThreshold != 15 {
+		t.Errorf("inherits agent: NudgeDefaultBraindeadThreshold = %d, want 15", cfg.Agents[1].NudgeDefaultBraindeadThreshold)
 	}
 }

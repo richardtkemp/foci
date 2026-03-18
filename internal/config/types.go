@@ -124,8 +124,8 @@ type AgentConfig struct {
 
 	MaxToolLoops          int    `toml:"max_tool_loops"`           // max tool iterations per turn (default 25)
 	MaxOutputTokens       int    `toml:"max_output_tokens"`        // max tokens in model response (default 16384)
-	BraindeadThreshold    int    `toml:"braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
-	BraindeadPrompt       string `toml:"braindead_prompt"`         // warning text injected as user message
+	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
+	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // warning text injected as user message
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
 	Effort                string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
 	Thinking              string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
@@ -567,8 +567,8 @@ type DefaultsConfig struct {
 
 	InjectAgentWarnings   bool   `toml:"inject_agent_warnings"`    // default inject_agent_warnings (default: false)
 	MaxToolLoops          int    `toml:"max_tool_loops"`           // default max_tool_loops (default: 25)
-	BraindeadThreshold    int    `toml:"braindead_threshold"`      // default braindead threshold (default: 10)
-	BraindeadPrompt       string `toml:"braindead_prompt"`         // default braindead prompt
+	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // default braindead threshold (default: 10)
+	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // default braindead prompt
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // default turn lock warn threshold (default: "3m")
 
 	Streaming   *bool    `toml:"streaming"`    // default streaming (nil = use global anthropic.streaming)

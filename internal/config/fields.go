@@ -203,7 +203,7 @@ var configFields = []ConfigField{
 	{"defaults", "steer_mode", FieldBool, "inject user messages between tool calls"},
 	{"telegram", "stream_output", FieldBool, "stream model output to Telegram"},
 	{"telegram", "stream_update_interval", FieldDuration, "interval between stream edits"},
-	{"defaults", "braindead_threshold", FieldInt, "consecutive tool loops before warning (0=disabled)"},
+	{"defaults", "nudge_default_braindead_threshold", FieldInt, "consecutive tool loops before warning (0=disabled)"},
 	{"defaults", "nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
 	{"defaults", "nudge_auto_extract", FieldBool, "auto-extract rules from character files via LLM"},
 	{"defaults", "nudge_cooldown", FieldInt, "min tool calls between repeating same reminder"},

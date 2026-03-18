@@ -724,8 +724,8 @@ Implemented as a built-in nudge rule with an `every_n_tools` trigger. When tool 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `braindead_threshold` | int | `10` | Tool calls before injecting a braindead warning. `0` disables. |
-| `braindead_prompt` | string | `""` | Custom warning text injected when the threshold is hit. `""` uses a hardcoded default. |
+| `nudge_default_braindead_threshold` | int | `10` | Tool calls before injecting a braindead warning. `0` disables. |
+| `nudge_default_braindead_prompt` | string | `""` | Custom warning text injected when the threshold is hit. `""` uses a hardcoded default. |
 | `turn_lock_warn_threshold` | string | `"3m"` | Warn if turn lock wait exceeds this duration. Go duration format. `proactive_warning` triggers are excluded. |
 
 ### Nudge System

@@ -278,7 +278,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.LLM.Model, "anthropic/claude-haiku-4-5-20251001")
 	setIntDefault(&cfg.LLM.MaxOutputTokens, 16384)
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
-	setIntDefaultDefined(&cfg.Defaults.BraindeadThreshold, 10, md.IsDefined("defaults", "braindead_threshold"))
+	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultBraindeadThreshold, 10, md.IsDefined("defaults", "nudge_default_braindead_threshold"))
 	setIntDefaultDefined(&cfg.Defaults.NudgeCooldown, 5, md.IsDefined("defaults", "nudge_cooldown"))
 	setIntDefaultDefined(&cfg.Defaults.NudgeMaxPerBatch, 1, md.IsDefined("defaults", "nudge_max_per_batch"))
 	setIntDefaultDefined(&cfg.Defaults.NudgePreAnswerMinTools, 2, md.IsDefined("defaults", "nudge_pre_answer_min_tools"))
