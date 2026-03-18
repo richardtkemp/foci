@@ -234,7 +234,7 @@ func setupAgent(p setupParams) *agentInstance {
 	})
 
 	// Post-creation agent configuration
-	setupNudgeSystem(ag, acfg, defaultSessionKey)
+	setupNudgeSystem(ag, acfg, defaultSessionKey, registry, bs.skillRegistry)
 	setupRedaction(ag, p, agentStore)
 	setupWarningQueue(ag, acfg, p.cfg)
 	setupManaWatcher(ag, p)

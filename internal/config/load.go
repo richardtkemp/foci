@@ -47,6 +47,7 @@ var boolKeys = map[string]bool{
 	"nudge_enable":           true,
 	"nudge_auto_extract":     true,
 	"nudge_pre_answer_gate":  true,
+	"nudge_default_enable":   true,
 	"browser_enabled":       true,
 	"headless":              true,
 	"incognito":                          true,
@@ -294,6 +295,8 @@ func Load(path string) (*Config, error) {
 	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
 	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
+	setBoolDefaultDefined(&cfg.Defaults.NudgeDefaultEnable, true, md.IsDefined("defaults", "nudge_default_enable"))
+	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultFrequency, 25, md.IsDefined("defaults", "nudge_default_frequency"))
 	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
 
 	// Discord global defaults

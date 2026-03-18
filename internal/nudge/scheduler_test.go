@@ -271,6 +271,83 @@ func TestCheckMatchNoMatch(t *testing.T) {
 	}
 }
 
+func TestPeriodicTurnTrigger(t *testing.T) {
+	// Verifies periodic_turn rules fire at the correct turn intervals
+	// and accumulate across turns (never reset).
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "tool-reminder", Trigger: Trigger{Type: "periodic_turn", N: 3}, Priority: "low"},
+		},
+	}
+	s := NewScheduler(rs, 1, 5)
+
+	// Turns 1, 2: should not fire
+	s.StartTurn("msg1")
+	if r := s.CheckTurnPeriodic(); len(r) != 0 {
+		t.Errorf("turn 1: unexpected %q", r)
+	}
+	s.StartTurn("msg2")
+	if r := s.CheckTurnPeriodic(); len(r) != 0 {
+		t.Errorf("turn 2: unexpected %q", r)
+	}
+
+	// Turn 3: should fire (3%3==0)
+	s.StartTurn("msg3")
+	r := s.CheckTurnPeriodic()
+	if len(r) != 1 || r[0] != "tool-reminder" {
+		t.Errorf("turn 3: expected [tool-reminder], got %q", r)
+	}
+
+	// Turns 4, 5: should not fire
+	s.StartTurn("msg4")
+	if r := s.CheckTurnPeriodic(); len(r) != 0 {
+		t.Errorf("turn 4: unexpected %q", r)
+	}
+	s.StartTurn("msg5")
+	if r := s.CheckTurnPeriodic(); len(r) != 0 {
+		t.Errorf("turn 5: unexpected %q", r)
+	}
+
+	// Turn 6: should fire again (6%3==0)
+	s.StartTurn("msg6")
+	r = s.CheckTurnPeriodic()
+	if len(r) != 1 || r[0] != "tool-reminder" {
+		t.Errorf("turn 6: expected [tool-reminder], got %q", r)
+	}
+}
+
+func TestPeriodicTurnNotInCheckAfterTools(t *testing.T) {
+	// Verifies periodic_turn rules do NOT fire via CheckAfterTools —
+	// they only fire via CheckTurnPeriodic().
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "tool-reminder", Trigger: Trigger{Type: "periodic_turn", N: 1}, Priority: "low"},
+		},
+	}
+	s := NewScheduler(rs, 1, 5)
+	s.StartTurn("msg")
+
+	// CheckAfterTools should never return periodic_turn rules
+	r := s.CheckAfterTools(0, 1, false)
+	if len(r) != 0 {
+		t.Errorf("CheckAfterTools returned periodic_turn rule: %q", r)
+	}
+}
+
+func TestCheckTurnPeriodicNil(t *testing.T) {
+	// Verifies nil scheduler doesn't panic on CheckTurnPeriodic.
+	t.Parallel()
+
+	var s *Scheduler
+	if r := s.CheckTurnPeriodic(); len(r) != 0 {
+		t.Errorf("nil scheduler CheckTurnPeriodic returned %q", r)
+	}
+}
+
 func TestNilSchedulerSafe(t *testing.T) {
 	// Verifies nil scheduler doesn't panic.
 	t.Parallel()
@@ -285,6 +362,9 @@ func TestNilSchedulerSafe(t *testing.T) {
 	}
 	if r := s.CheckMatch(); len(r) != 0 {
 		t.Errorf("nil scheduler CheckMatch returned %q", r)
+	}
+	if r := s.CheckTurnPeriodic(); len(r) != 0 {
+		t.Errorf("nil scheduler CheckTurnPeriodic returned %q", r)
 	}
 	if s.HasPreAnswerRules() {
 		t.Error("nil scheduler HasPreAnswerRules should be false")
