@@ -68,12 +68,13 @@ func SessionsCommand() *Command {
 				return Response{Text: text}, err
 
 			case "default":
-				if len(parts) < 2 {
-					return Response{Text: "Usage: /sessions default <chat_id>"}, nil
-				}
-				chatID, err := strconv.ParseInt(parts[1], 10, 64)
-				if err != nil {
-					return Response{Text: fmt.Sprintf("Invalid chat ID: %s", parts[1])}, nil
+				chatID := req.ChatID
+				if len(parts) >= 2 {
+					var err error
+					chatID, err = strconv.ParseInt(parts[1], 10, 64)
+					if err != nil {
+						return Response{Text: fmt.Sprintf("Invalid chat ID: %s", parts[1])}, nil
+					}
 				}
 				text, err := sessionsDefaultCmd(cc, chatID)
 				return Response{Text: text}, err

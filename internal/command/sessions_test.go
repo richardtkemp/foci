@@ -187,19 +187,24 @@ func TestSessionsDefaultBadInput(t *testing.T) {
 	}
 }
 
-// TestSessionsDefaultNoArg verifies that "default" with no chat ID argument
-// returns a usage message telling the user how to specify a chat ID.
+// TestSessionsDefaultNoArg verifies that "default" with no explicit chat ID
+// uses the current chat (req.ChatID) as the default.
 func TestSessionsDefaultNoArg(t *testing.T) {
-	// Verifies that /sessions default with no argument returns usage.
-	cc, _, _ := sessionsTestCC(t, "test-agent")
+	// Verifies that /sessions default with no argument sets the current chat as default.
+	cc, store, ss := sessionsTestCC(t, "test-agent")
+	addChatSession(t, store, "test-agent", 555, 3)
 
 	cmd := SessionsCommand()
-	result, err := cmd.Execute(context.Background(), Request{Args: "default"}, cc)
+	result, err := cmd.Execute(context.Background(), Request{Args: "default", ChatID: 555}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "Usage") {
-		t.Errorf("expected usage message, got %q", result.Text)
+	if !strings.Contains(result.Text, "555") {
+		t.Errorf("expected confirmation with chat ID 555, got %q", result.Text)
+	}
+	defaultChat, _ := ss.DefaultChatForAgent("test-agent")
+	if defaultChat != 555 {
+		t.Errorf("expected default chat=555, got %d", defaultChat)
 	}
 }
 
