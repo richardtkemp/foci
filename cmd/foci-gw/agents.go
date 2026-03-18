@@ -89,7 +89,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Create group resolver for multi-model routing
-	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases)
+	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases, acfg.Model)
 
 	// Prompt search directories: agent workspace first, then shared.
 	promptSearchDirs := []string{

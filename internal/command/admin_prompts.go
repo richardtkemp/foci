@@ -573,33 +573,17 @@ func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaul
 	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	var diffClient provider.Client
+	diffClient := cc.Client
 	var cheapModel string
 
-	// Try group resolver first
-	if cc.GroupResolver != nil && !cc.GroupResolver.IsSingleModel() {
+	if cc.GroupResolver != nil {
 		if resolved := cc.GroupResolver.ResolveCall(config.CallPromptDiff); resolved != nil {
 			cheapModel = resolved.ModelID
 			if cc.ClientProvider != nil {
-				diffClient = cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+				if c := cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format); c != nil {
+					diffClient = c
+				}
 			}
-		}
-	}
-
-	// Fallback: provider-aware cheap alias
-	if diffClient == nil {
-		cheapAlias := "haiku"
-		_, bareModelID := config.SplitDeveloperModel(cc.AgentConfig.Model)
-		if strings.HasPrefix(bareModelID, "gemini-") {
-			cheapAlias = "gemini-flash"
-		}
-		if resolved, err := config.ResolveModel(cheapAlias, "", cc.ModelAliases); err == nil && cc.ClientProvider != nil {
-			diffClient = cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
-			cheapModel = resolved.Developer + "/" + resolved.ModelID
-		}
-		if diffClient == nil {
-			diffClient = cc.Client
-			cheapModel = cheapAlias
 		}
 	}
 
