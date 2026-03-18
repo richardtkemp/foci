@@ -261,8 +261,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
-	// Check for unknown config keys and warn about them
-	checkUnknownKeys(path, md)
+	// Collect unknown config keys for the caller to log after logging is
+	// fully initialised (the early log init gets rotated away on startup).
+	cfg.UndefinedKeys = UnknownKeys(md)
 
 	// Record which keys were explicitly set in the TOML file.
 	cfg.DefinedKeys = make(map[string]bool)
