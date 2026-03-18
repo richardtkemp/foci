@@ -19,8 +19,8 @@ model = "claude-sonnet-4-20250514"
 [defaults]
 # streaming = false                        # use streaming API (per-agent override)
 # max_tool_loops = 25
-# braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
-# braindead_prompt = ""                   # warning text injected at threshold
+# nudge_default_braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
+# nudge_default_braindead_prompt = ""                   # warning text injected at threshold
 # turn_lock_warn_threshold = "3m"         # warn if turn lock wait exceeds this duration
 # duplicate_messages = false              # send user text twice per API call
 # batch_partial_assistant_messages = false # accumulate mid-turn text; send on turn end
@@ -94,8 +94,8 @@ id = "myagent"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # max_tool_loops = 25
 # max_output_tokens = 16384
-# braindead_threshold = 10
-# braindead_prompt = ""
+# nudge_default_braindead_threshold = 10
+# nudge_default_braindead_prompt = ""
 # turn_lock_warn_threshold = "3m"
 # duplicate_messages = false
 # inject_agent_warnings = false

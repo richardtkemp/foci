@@ -256,13 +256,13 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
-	hasBraindead := acfg.BraindeadThreshold > 0
+	hasBraindead := acfg.NudgeDefaultBraindeadThreshold > 0
 	if !acfg.NudgeEnable && !acfg.NudgeDefaultEnable && !hasBraindead {
 		return
 	}
 
 	// Braindead warning rule (fires every N tool calls).
-	braindeadRules := nudge.BraindeadRule(acfg.BraindeadThreshold, acfg.BraindeadPrompt)
+	braindeadRules := nudge.BraindeadRule(acfg.NudgeDefaultBraindeadThreshold, acfg.NudgeDefaultBraindeadPrompt)
 
 	// Load character-derived rules.
 	var charRules []nudge.Rule

@@ -288,8 +288,8 @@ max_output_tokens = 16384
 
 [defaults]
 max_tool_loops = 50
-braindead_threshold = 20
-braindead_prompt = "watch it"
+nudge_default_braindead_threshold = 20
+nudge_default_braindead_prompt = "watch it"
 duplicate_messages = true
 inject_agent_warnings = true
 compaction_effort = "low"
@@ -325,11 +325,11 @@ effort = "low"
 	if bare.MaxOutputTokens != 16384 {
 		t.Errorf("bare MaxOutputTokens = %d", bare.MaxOutputTokens)
 	}
-	if bare.BraindeadThreshold != 20 {
-		t.Errorf("bare BraindeadThreshold = %d", bare.BraindeadThreshold)
+	if bare.NudgeDefaultBraindeadThreshold != 20 {
+		t.Errorf("bare NudgeDefaultBraindeadThreshold = %d", bare.NudgeDefaultBraindeadThreshold)
 	}
-	if bare.BraindeadPrompt != "watch it" {
-		t.Errorf("bare BraindeadPrompt = %q", bare.BraindeadPrompt)
+	if bare.NudgeDefaultBraindeadPrompt != "watch it" {
+		t.Errorf("bare NudgeDefaultBraindeadPrompt = %q", bare.NudgeDefaultBraindeadPrompt)
 	}
 	// Effort/thinking come from provider sections via ApplyProviderDefaults, not [defaults]
 	if bare.Effort != "" {
