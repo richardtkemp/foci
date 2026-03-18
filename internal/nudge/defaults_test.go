@@ -15,8 +15,8 @@ func TestDefaultRulesFiltering(t *testing.T) {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
 	r := rules[0]
-	if r.Trigger.Type != "periodic_turn" {
-		t.Errorf("expected trigger type periodic_turn, got %q", r.Trigger.Type)
+	if r.Trigger.Type != "every_n_turns" {
+		t.Errorf("expected trigger type every_n_turns, got %q", r.Trigger.Type)
 	}
 	if r.Trigger.N != 25 {
 		t.Errorf("expected N=25, got %d", r.Trigger.N)
@@ -128,15 +128,15 @@ func TestDefaultRulesUnknownToolsIncluded(t *testing.T) {
 }
 
 func TestDefaultRulesFrequencyDefault(t *testing.T) {
-	// Verifies that frequency <= 0 defaults to 25.
+	// Verifies that frequency <= 0 defaults to 50.
 	t.Parallel()
 
 	rules := DefaultRules([]string{"shell"}, nil, 0)
 	if len(rules) != 1 {
 		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
-	if rules[0].Trigger.N != 25 {
-		t.Errorf("expected default frequency 25, got %d", rules[0].Trigger.N)
+	if rules[0].Trigger.N != 50 {
+		t.Errorf("expected default frequency 50, got %d", rules[0].Trigger.N)
 	}
 }
 

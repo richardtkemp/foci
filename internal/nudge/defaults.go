@@ -51,7 +51,7 @@ type SkillSummary struct {
 // are appended with their descriptions. Returns nil if nothing to list.
 func DefaultRules(toolNames []string, skills []SkillSummary, frequency int) []Rule {
 	if frequency <= 0 {
-		frequency = 25
+		frequency = 50
 	}
 
 	registered := make(map[string]bool, len(toolNames))
@@ -109,7 +109,7 @@ func DefaultRules(toolNames []string, skills []SkillSummary, frequency int) []Ru
 	return []Rule{{
 		Text:       b.String(),
 		SourceFile: "builtin",
-		Trigger:    Trigger{Type: "periodic_turn", N: frequency},
+		Trigger:    Trigger{Type: "every_n_turns", N: frequency},
 		Priority:   "low",
 	}}
 }

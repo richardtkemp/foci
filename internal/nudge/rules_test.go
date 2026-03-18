@@ -63,7 +63,7 @@ func TestSaveAndLoadRules(t *testing.T) {
 				Text:       "Check tool results",
 				SourceFile: "SOUL.md",
 				SourceText: "Read tool output carefully",
-				Trigger:    Trigger{Type: "periodic", N: 3},
+				Trigger:    Trigger{Type: "every_n_tools", N: 3},
 				Priority:   "medium",
 			},
 		},

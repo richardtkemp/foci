@@ -31,13 +31,12 @@ For each rule you extract, output a JSON object:
 }
 
 Trigger types (pick the most appropriate):
-- {"type": "periodic", "n": N} — remind every N tool calls during a turn
+- {"type": "every_n_tools", "n": N} — remind every N individual tool calls during a turn
 - {"type": "pre_answer"} — remind just before returning a final answer to the user
-- {"type": "after_streak", "n": N} — remind after N consecutive calls to the same tool
 - {"type": "after_error"} — remind when a tool call returns an error
-- {"type": "match", "pattern": "regex"} — remind when the user's message matches this pattern
+- {"type": "regex", "pattern": "regex"} — remind when the user's message matches this pattern
 
-Use your judgment on trigger type and frequency. For periodic rules, keep N high —
+Use your judgment on trigger type and frequency. For every_n_tools rules, keep N high —
 every 15 tool calls is already quite frequent. Only the most critical rules should
 fire that often; most should use N=25 or higher. Rules about edge cases can have
 even higher N or more specific triggers.
@@ -46,7 +45,7 @@ Limit: return at most ONE rule for "pre_answer" and at most ONE rule for "after_
 If multiple rules would use the same trigger type, synthesize them into a single
 combined nudge that covers all the key points. Keep the combined text under 50 words.
 
-For "match" triggers: the regex is tested against the user's message with
+For "regex" triggers: the regex is tested against the user's message with
 re.MatchString (substring match, not full-string match). Be careful that what
 you write will actually do what you intend:
 - Use \b word boundaries to avoid matching substrings (e.g. \bcc\b not cc)
