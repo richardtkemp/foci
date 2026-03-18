@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 )
 
@@ -200,18 +201,17 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 	}
 }
 
-func TestSpawnModelShortNames(t *testing.T) {
-	// Proves that model aliases (haiku, sonnet, opus) and qualified names are resolved to their
-	// canonical model IDs before the request is sent to the API.
+func TestSpawnModelGroupNames(t *testing.T) {
+	// Proves that spawn model param accepts group names (powerful, fast, cheap) and resolves
+	// them to the configured model for that group.
 	t.Parallel()
 	tests := []struct {
-		short string
+		group string
 		full  string
 	}{
-		{"haiku", "claude-haiku-4-5"},
-		{"sonnet", "claude-sonnet-4-6"},
-		{"opus", "claude-opus-4-6"},
-		{"anthropic/claude-haiku-4-5", "claude-haiku-4-5"},
+		{"powerful", "claude-opus-4-6"},
+		{"fast", "claude-sonnet-4-6"},
+		{"cheap", "claude-haiku-4-5"},
 	}
 
 	for _, tt := range tests {
@@ -226,11 +226,16 @@ func TestSpawnModelShortNames(t *testing.T) {
 		})
 
 		client := newTestAnthropicClient(server.URL, "test-token")
-		deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+		gr := config.NewGroupResolver(config.ModelsConfig{
+			Powerful: "anthropic/claude-opus-4-6",
+			Fast:     "anthropic/claude-sonnet-4-6",
+			Cheap:    "anthropic/claude-haiku-4-5",
+		}, nil, "")
+		deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-haiku-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 		tool := NewSpawnTool(deps, nil)
 
 		params, _ := json.Marshal(map[string]string{
-			"model":   tt.short,
+			"model":   tt.group,
 			"prompt":  "test",
 			"context": "raw",
 		})
@@ -238,7 +243,7 @@ func TestSpawnModelShortNames(t *testing.T) {
 		server.Close()
 
 		if receivedModel != tt.full {
-			t.Errorf("short=%q: model=%q, want %q", tt.short, receivedModel, tt.full)
+			t.Errorf("group=%q: model=%q, want %q", tt.group, receivedModel, tt.full)
 		}
 	}
 }
@@ -261,10 +266,12 @@ func TestSpawnModelDefault(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	deps := SpawnDeps{Client: client, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
+	// No [models] config — GroupResolver defaults all groups to session model
+	gr := config.NewGroupResolver(config.ModelsConfig{}, nil, "anthropic/claude-sonnet-4-5")
+	deps := SpawnDeps{Client: client, GroupResolver: gr, FallbackModel: "anthropic/claude-sonnet-4-5", FallbackFormat: "anthropic", MaxToolLoops: 10}
 	tool := NewSpawnTool(deps, nil)
 
-	// No model specified — should use parent's default
+	// No model specified — should use parent's default (session model)
 	params, _ := json.Marshal(map[string]string{
 		"prompt":  "test",
 		"context": "raw",

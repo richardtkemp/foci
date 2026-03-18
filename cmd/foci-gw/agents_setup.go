@@ -78,7 +78,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
 	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths))
 	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths))
-	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, groupResolver, acfg.Model, acfg.Workspace, p.cfg.Models.Aliases))
+	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, groupResolver, acfg.Workspace))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
 
 	return result

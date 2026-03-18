@@ -52,8 +52,6 @@ var defaultCallGroups = map[string]string{
 }
 
 // GroupResolver resolves call sites and group names to concrete models.
-// When groups are not configured (single-model mode), all calls return nil
-// indicating the caller should use the session model.
 type GroupResolver struct {
 	// groups maps group name → model string (developer/model_id format)
 	groups map[string]string
@@ -61,52 +59,42 @@ type GroupResolver struct {
 	callOverrides map[string]string
 	// aliases for ResolveModel
 	aliases map[string]string
-	// singleModel is true when no groups are configured
-	singleModel bool
 }
 
 // NewGroupResolver creates a GroupResolver from config.
-// When models.Powerful is empty, single-model mode is used (all calls return nil).
-// Fast/Cheap default to Powerful when not set.
-func NewGroupResolver(models ModelsConfig, aliases map[string]string) *GroupResolver {
+// When models.Powerful is empty, it defaults to sessionModel so that all
+// groups resolve (no special single-model mode). Fast/Cheap default to
+// Powerful when not set.
+func NewGroupResolver(models ModelsConfig, aliases map[string]string, sessionModel string) *GroupResolver {
+	powerful := models.Powerful
+	if powerful == "" {
+		powerful = sessionModel
+	}
+
 	gr := &GroupResolver{
 		aliases:       aliases,
 		callOverrides: models.Calls,
+		groups: map[string]string{
+			GroupPowerful: powerful,
+		},
 	}
 
-	if models.Powerful == "" {
-		gr.singleModel = true
-		return gr
-	}
-
-	gr.groups = map[string]string{
-		GroupPowerful: models.Powerful,
-	}
 	if models.Fast != "" {
 		gr.groups[GroupFast] = models.Fast
 	} else {
-		gr.groups[GroupFast] = models.Powerful
+		gr.groups[GroupFast] = powerful
 	}
 	if models.Cheap != "" {
 		gr.groups[GroupCheap] = models.Cheap
 	} else {
-		gr.groups[GroupCheap] = models.Powerful
+		gr.groups[GroupCheap] = powerful
 	}
 
 	return gr
 }
 
-// IsSingleModel returns true when no model groups are configured.
-// In single-model mode, all calls should use the session model.
-func (gr *GroupResolver) IsSingleModel() bool {
-	return gr.singleModel
-}
-
 // GroupNames returns the names of all configured groups.
 func (gr *GroupResolver) GroupNames() []string {
-	if gr.singleModel {
-		return nil
-	}
 	names := make([]string, 0, len(gr.groups))
 	for name := range gr.groups {
 		names = append(names, name)
@@ -115,12 +103,8 @@ func (gr *GroupResolver) GroupNames() []string {
 }
 
 // ResolveCall resolves a call site to a concrete model.
-// Returns nil for ungrouped calls or when in single-model mode.
+// Returns nil for ungrouped calls.
 func (gr *GroupResolver) ResolveCall(callSite string) *ResolvedModel {
-	if gr.singleModel {
-		return nil
-	}
-
 	// Check if this call site has a group assignment
 	groupName, ok := defaultCallGroups[callSite]
 	if !ok {
@@ -139,11 +123,7 @@ func (gr *GroupResolver) ResolveCall(callSite string) *ResolvedModel {
 
 // ResolveGroup resolves a group name to a concrete model.
 // Falls back to the powerful group if the group name is unknown.
-// Returns nil in single-model mode.
 func (gr *GroupResolver) ResolveGroup(groupName string) *ResolvedModel {
-	if gr.singleModel {
-		return nil
-	}
 	return gr.resolveGroup(groupName)
 }
 
@@ -161,11 +141,7 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 	return resolved
 }
 
-// PowerfulModel returns the model string for the powerful group,
-// or empty string in single-model mode.
+// PowerfulModel returns the model string for the powerful group.
 func (gr *GroupResolver) PowerfulModel() string {
-	if gr.singleModel {
-		return ""
-	}
 	return gr.groups[GroupPowerful]
 }
