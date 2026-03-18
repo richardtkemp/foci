@@ -159,10 +159,25 @@ func NewIsolatedEditTool(store *secrets.Store, baseDir string) *Tool {
 	}
 }
 
+// expandTilde replaces a leading ~ with the user's home directory.
+func expandTilde(path string) string {
+	if path == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	} else if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
 // resolveWorkspacePath resolves a relative path against the agent's workspace directory.
 // Absolute paths pass through unchanged. This is NOT a security boundary — it just ensures
 // relative paths resolve from the agent's workspace rather than the foci-gw process cwd.
 func resolveWorkspacePath(path, workspace string) string {
+	path = expandTilde(path)
 	if workspace == "" || filepath.IsAbs(path) {
 		return path
 	}

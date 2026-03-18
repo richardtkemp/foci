@@ -913,6 +913,59 @@ func TestBlockedPathPrefixMatching(t *testing.T) {
 	}
 }
 
+func TestExpandTilde(t *testing.T) {
+	// Verifies that ~ and ~/path are expanded to the user's home directory, while other paths pass through unchanged.
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot determine home dir: %v", err)
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"~", home},
+		{"~/config/foci.toml", filepath.Join(home, "config/foci.toml")},
+		{"~/", home},
+		{"/absolute/path", "/absolute/path"},
+		{"relative/path", "relative/path"},
+		{"~user/path", "~user/path"}, // only bare ~ is expanded
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := expandTilde(tt.input)
+		if got != tt.want {
+			t.Errorf("expandTilde(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestReadFileTildePath(t *testing.T) {
+	// Verifies that the read tool expands ~ in paths, resolving to the user's home directory.
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot determine home dir: %v", err)
+	}
+
+	// Create a temp file in home dir for testing
+	path := filepath.Join(home, ".foci-test-tilde-"+t.Name())
+	os.WriteFile(path, []byte("tilde test content\n"), 0644)
+	t.Cleanup(func() { os.Remove(path) })
+
+	tool := NewReadTool(nil, "")
+	params, _ := json.Marshal(map[string]string{"path": "~/.foci-test-tilde-" + t.Name()})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute with ~ path: %v", err)
+	}
+	if !strings.Contains(result.Text, "tilde test content") {
+		t.Errorf("result = %q, want tilde test content", result.Text)
+	}
+}
+
 func TestWorkspaceResolution(t *testing.T) {
 	// Tests that read/write/edit resolve relative paths against the workspace directory,
 	// not the process cwd. Creates a file in a temp "workspace" dir and verifies that
