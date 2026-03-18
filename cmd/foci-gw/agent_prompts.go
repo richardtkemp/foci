@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"foci/internal/log"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // seedDefaultPrompts writes embedded prompt files to dir if they don't already

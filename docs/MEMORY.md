@@ -173,7 +173,7 @@ Conversation messages are indexed as they arrive:
 
 ## Memory Formation
 
-Automatic capture of session learnings into daily memory files (`memory/YYYY-MM-DD.md`). Uses the prompt at `prompts/memory-formation.md`.
+Automatic capture of session learnings into daily memory files (`memory/YYYY-MM-DD.md`). Uses the prompt at `shared/prompts/memory-formation.md`.
 
 ### What Gets Captured
 
@@ -232,7 +232,7 @@ Each formation trigger has its own prompt field (`interval_prompt`, `session_end
 
 | Value | Behavior |
 |-------|----------|
-| `""` or `"default"` | Use the embedded prompt from the `prompts/` directory. |
+| `""` or `"default"` | Use the embedded prompt from the `shared/prompts/` directory. |
 | `"none"` | Disable this trigger entirely. |
 | `/path/to/file.md` | Use the custom file as the prompt. Falls back to the embedded prompt on read error. |
 
@@ -242,7 +242,7 @@ Source: `internal/periodic/keepalive.go` (`prompts.ResolvePrompt`).
 
 ## Memory Consolidation
 
-Periodic curation of `MEMORY.md` from recent daily memory files. Uses the prompt at `prompts/memory-consolidation.md`.
+Periodic curation of `MEMORY.md` from recent daily memory files. Uses the prompt at `shared/prompts/memory-consolidation.md`.
 
 ### What Goes Into MEMORY.md
 

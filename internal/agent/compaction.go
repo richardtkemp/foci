@@ -9,7 +9,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/provider"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // maybeCompact checks whether context compaction is needed and performs it.

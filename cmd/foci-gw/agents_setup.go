@@ -24,7 +24,7 @@ import (
 	"foci/internal/voice"
 	"foci/internal/warnings"
 	"foci/internal/workspace"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // coreToolsResult holds the side-products of core tool registration.

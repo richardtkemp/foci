@@ -10,7 +10,7 @@ import (
 	"foci/internal/messages"
 	"foci/internal/modelinfo"
 	"foci/internal/tools"
-	"foci/prompts"
+	"foci/shared/prompts"
 	"foci/internal/provider"
 	"foci/internal/session"
 )

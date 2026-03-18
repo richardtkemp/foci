@@ -8,7 +8,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/session"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 // SessionAppender is the interface for session write operations.

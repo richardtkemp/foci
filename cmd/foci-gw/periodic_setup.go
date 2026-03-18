@@ -13,7 +13,7 @@ import (
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/warnings"
-	"foci/prompts"
+	"foci/shared/prompts"
 )
 
 type periodicParams struct {
