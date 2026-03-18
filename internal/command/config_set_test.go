@@ -230,7 +230,7 @@ func TestConfigSetDirectAgent(t *testing.T) {
 		return "", nil
 	})
 
-	_, err := ConfigSetDirect(deps, "agent.effort=high")
+	_, err := ConfigSetDirect(deps, "agent.anthropic.effort=high")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	if captured.Section != "agents" || captured.AgentID != "test-agent" {
 		t.Errorf("target = %+v", captured)
 	}
-	if captured.Key != "effort" {
+	if captured.Key != "anthropic.effort" {
 		t.Errorf("target.Key = %q", captured.Key)
 	}
 }

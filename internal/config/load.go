@@ -211,28 +211,41 @@ func applyDefaultsToAgent(agent *AgentConfig, cfg *Config, defined map[string]bo
 	applyStructToAgent(agent, &cfg.Defaults, defined)
 }
 
-// ApplyProviderDefaults fills in agent Effort/Thinking from provider-specific
-// config when the agent hasn't set them explicitly. Call after model resolution
-// so `format` is known.
+// ApplyProviderDefaults fills in agent Effort/Thinking/Speed from per-agent
+// provider subsections and global provider config. Resolution order:
+// per-agent provider subsection → global provider config → empty.
+// Call after model resolution so `format` is known.
 func ApplyProviderDefaults(agent *AgentConfig, format string, cfg *Config) {
-	if agent.Effort == "" {
-		if format == "anthropic" {
-			agent.Effort = cfg.Anthropic.Effort
+	switch format {
+	case "anthropic":
+		if agent.Effort == "" {
+			agent.Effort = firstNonEmpty(agent.Anthropic.Effort, cfg.Anthropic.Effort)
+		}
+		if agent.Thinking == "" {
+			agent.Thinking = firstNonEmpty(agent.Anthropic.Thinking, cfg.Anthropic.Thinking)
+		}
+		if agent.Speed == "" {
+			agent.Speed = firstNonEmpty(agent.Anthropic.Speed, cfg.Anthropic.Speed)
+		}
+	case "gemini":
+		if agent.Thinking == "" {
+			agent.Thinking = firstNonEmpty(agent.Gemini.Thinking, cfg.Gemini.Thinking)
+		}
+	case "openai":
+		if agent.Thinking == "" {
+			agent.Thinking = firstNonEmpty(agent.OpenAI.Reasoning, cfg.OpenAI.Reasoning)
 		}
 	}
-	if agent.Thinking == "" {
-		switch format {
-		case "anthropic":
-			agent.Thinking = cfg.Anthropic.Thinking
-		case "gemini":
-			agent.Thinking = cfg.Gemini.Thinking
-		case "openai":
-			agent.Thinking = cfg.OpenAI.Reasoning
+}
+
+// firstNonEmpty returns the first non-empty string argument.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
 		}
 	}
-	if agent.Speed == "" && format == "anthropic" {
-		agent.Speed = cfg.Anthropic.Speed
-	}
+	return ""
 }
 
 // Load reads config from the given TOML file path.

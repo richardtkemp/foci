@@ -196,15 +196,16 @@ id = "test"
 }
 
 func TestApplyProviderDefaults(t *testing.T) {
-	// Proves that ApplyProviderDefaults copies effort and thinking from the
-	// matching provider section, respects per-agent overrides, and only populates
+	// Proves that ApplyProviderDefaults resolves per-agent provider subsection →
+	// global provider config, respects per-agent overrides, and only populates
 	// fields relevant to each provider (e.g. effort is anthropic-only).
 	cfg := &Config{
 		Anthropic: AnthropicConfig{Effort: "low", Thinking: "adaptive"},
 		Gemini:    GeminiConfig{Thinking: "adaptive"},
+		OpenAI:    OpenAIConfig{Reasoning: "adaptive"},
 	}
 
-	// Anthropic agent gets both effort and thinking
+	// Anthropic agent with no per-agent overrides gets global defaults
 	agent := AgentConfig{}
 	ApplyProviderDefaults(&agent, "anthropic", cfg)
 	if agent.Effort != "low" {
@@ -212,6 +213,18 @@ func TestApplyProviderDefaults(t *testing.T) {
 	}
 	if agent.Thinking != "adaptive" {
 		t.Errorf("anthropic thinking = %q, want %q", agent.Thinking, "adaptive")
+	}
+
+	// Per-agent provider subsection overrides global
+	agent1b := AgentConfig{
+		Anthropic: AgentAnthropicConfig{Effort: "high", Thinking: "off"},
+	}
+	ApplyProviderDefaults(&agent1b, "anthropic", cfg)
+	if agent1b.Effort != "high" {
+		t.Errorf("anthropic subsection effort = %q, want %q", agent1b.Effort, "high")
+	}
+	if agent1b.Thinking != "off" {
+		t.Errorf("anthropic subsection thinking = %q, want %q", agent1b.Thinking, "off")
 	}
 
 	// Gemini agent gets thinking but not effort
@@ -224,17 +237,35 @@ func TestApplyProviderDefaults(t *testing.T) {
 		t.Errorf("gemini thinking = %q, want %q", agent2.Thinking, "adaptive")
 	}
 
-	// OpenAI agent gets neither
+	// Gemini per-agent subsection overrides global
+	agent2b := AgentConfig{
+		Gemini: AgentGeminiConfig{Thinking: "off"},
+	}
+	ApplyProviderDefaults(&agent2b, "gemini", cfg)
+	if agent2b.Thinking != "off" {
+		t.Errorf("gemini subsection thinking = %q, want %q", agent2b.Thinking, "off")
+	}
+
+	// OpenAI agent gets reasoning mapped to thinking
 	agent3 := AgentConfig{}
 	ApplyProviderDefaults(&agent3, "openai", cfg)
 	if agent3.Effort != "" {
 		t.Errorf("openai effort = %q, want %q", agent3.Effort, "")
 	}
-	if agent3.Thinking != "" {
-		t.Errorf("openai thinking = %q, want %q", agent3.Thinking, "")
+	if agent3.Thinking != "adaptive" {
+		t.Errorf("openai thinking = %q, want %q", agent3.Thinking, "adaptive")
 	}
 
-	// Per-agent override is preserved
+	// OpenAI per-agent subsection overrides global
+	agent3b := AgentConfig{
+		OpenAI: AgentOpenAIConfig{Reasoning: "off"},
+	}
+	ApplyProviderDefaults(&agent3b, "openai", cfg)
+	if agent3b.Thinking != "off" {
+		t.Errorf("openai subsection thinking = %q, want %q", agent3b.Thinking, "off")
+	}
+
+	// Runtime field already set — not overwritten
 	agent4 := AgentConfig{Effort: "high", Thinking: "off"}
 	ApplyProviderDefaults(&agent4, "anthropic", cfg)
 	if agent4.Effort != "high" {
@@ -274,6 +305,8 @@ id = "bare"
 [[agents]]
 id = "override"
 model = "anthropic/claude-haiku-4-5"
+
+[agents.anthropic]
 effort = "low"
 `), 0644)
 
@@ -331,8 +364,13 @@ effort = "low"
 	if override.Model != "anthropic/claude-haiku-4-5" {
 		t.Errorf("override Model = %q, want anthropic/claude-haiku-4-5", override.Model)
 	}
+	if override.Anthropic.Effort != "low" {
+		t.Errorf("override Anthropic.Effort = %q, want low", override.Anthropic.Effort)
+	}
+	// ApplyProviderDefaults resolves subsection → runtime field
+	ApplyProviderDefaults(&override, "anthropic", cfg)
 	if override.Effort != "low" {
-		t.Errorf("override Effort = %q, want low", override.Effort)
+		t.Errorf("override Effort after ApplyProviderDefaults = %q, want low", override.Effort)
 	}
 	// But inherits defaults for fields it didn't set
 	if override.MaxToolLoops != 50 {

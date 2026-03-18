@@ -657,15 +657,18 @@ max_tool_loops = 50
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
 
-Effort, thinking, and speed defaults are set in provider sections (`[anthropic]`, `[gemini]`) and automatically applied based on the agent's model format. Per-agent overrides in `[[agents]]` still work. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once.
+Effort, thinking, and speed defaults are set in provider sections (`[anthropic]`, `[gemini]`, `[openai]`) and automatically applied based on the agent's model format. Per-agent overrides use provider-specific subsections (`[agents.anthropic]`, `[agents.gemini]`, `[agents.openai]`). At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once.
 
 Override per-agent in `[[agents]]`:
 ```toml
 [[agents]]
 id = "research"
-model = "gemini/gemini-2.5-flash"
+model = "anthropic/claude-sonnet-4-6"
 max_tool_loops = 25
+
+[agents.anthropic]
 effort = "high"
+thinking = "adaptive"
 ```
 
 ### Model & Response
@@ -677,9 +680,11 @@ effort = "high"
 | `model` | string | `"anthropic/claude-haiku-4-5"` | `[llm]` | Model in `developer/model_id` format. The developer prefix selects which API endpoint to use (e.g. `"gemini/gemini-2.5-flash"`, `"openrouter/claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `/` are auto-migrated with an inferred developer. |
 | `max_output_tokens` | int | `16384` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
-| `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults come from provider sections (`[anthropic] effort`). Only applied for Anthropic models — silently skipped for other providers. Overridable at runtime via `/effort`. |
-| `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults come from provider sections (`[anthropic] thinking`, `[gemini] thinking`). Only applied for Anthropic and Gemini models — silently skipped for other providers. Overridable at runtime via `/thinking`. |
-| `speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Per-agent override; defaults from `[anthropic] speed`. Overridable at runtime via `/speed`. |
+| `[agents.anthropic] effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults from `[anthropic] effort`. Only applied for Anthropic models. Overridable at runtime via `/effort`. |
+| `[agents.anthropic] thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[anthropic] thinking`. Overridable at runtime via `/thinking`. |
+| `[agents.anthropic] speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Per-agent override; defaults from `[anthropic] speed`. Overridable at runtime via `/speed`. |
+| `[agents.gemini] thinking` | string | `""` | Gemini thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[gemini] thinking`. Overridable at runtime via `/thinking`. |
+| `[agents.openai] reasoning` | string | `""` | OpenAI/OpenRouter reasoning mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[openai] reasoning`. Mapped to thinking at runtime. |
 | `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
 | `cache_ttl` | string | `""` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |

@@ -123,8 +123,8 @@ startup_notify = false
 
 func TestLoadThinkingConfig(t *testing.T) {
 	// Proves that the thinking setting in [anthropic] is applied to agents via
-	// ApplyProviderDefaults, that an agent with an explicit per-agent override
-	// keeps it, and that ApplyProviderDefaults does not overwrite existing values.
+	// ApplyProviderDefaults, that an agent with a per-agent [agents.anthropic]
+	// override keeps it, and that ApplyProviderDefaults does not overwrite existing values.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -137,6 +137,8 @@ id = "smart"
 
 [[agents]]
 id = "fast"
+
+[agents.anthropic]
 thinking = "off"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -153,9 +155,9 @@ thinking = "off"
 	if cfg.Agents[0].Thinking != "" {
 		t.Errorf("agent smart: Thinking = %q, want %q (empty before ApplyProviderDefaults)", cfg.Agents[0].Thinking, "")
 	}
-	// Agent "fast" should keep its explicit "off"
-	if cfg.Agents[1].Thinking != "off" {
-		t.Errorf("agent fast: Thinking = %q, want %q", cfg.Agents[1].Thinking, "off")
+	// Agent "fast" subsection has "off" but runtime field is empty until ApplyProviderDefaults
+	if cfg.Agents[1].Anthropic.Thinking != "off" {
+		t.Errorf("agent fast: Anthropic.Thinking = %q, want %q", cfg.Agents[1].Anthropic.Thinking, "off")
 	}
 
 	// Simulate main.go calling ApplyProviderDefaults for an Anthropic agent
@@ -163,7 +165,7 @@ thinking = "off"
 	if cfg.Agents[0].Thinking != "adaptive" {
 		t.Errorf("agent smart after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
 	}
-	// Agent "fast" already has explicit "off" — ApplyProviderDefaults should not change it
+	// Agent "fast" has subsection override "off" — should resolve to "off"
 	ApplyProviderDefaults(&cfg.Agents[1], "anthropic", cfg)
 	if cfg.Agents[1].Thinking != "off" {
 		t.Errorf("agent fast after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[1].Thinking, "off")
@@ -171,8 +173,8 @@ thinking = "off"
 }
 
 func TestLoadThinkingPerAgent(t *testing.T) {
-	// Proves that thinking can be set per-agent directly in the [[agents]] block
-	// without requiring an [anthropic] section, and that agents without an override
+	// Proves that thinking can be set per-agent in [agents.anthropic] without
+	// requiring a global [anthropic] section, and that agents without an override
 	// have an empty thinking field until ApplyProviderDefaults is called.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -180,6 +182,8 @@ func TestLoadThinkingPerAgent(t *testing.T) {
 	toml := `
 [[agents]]
 id = "thinker"
+
+[agents.anthropic]
 thinking = "adaptive"
 
 [[agents]]
@@ -191,8 +195,13 @@ id = "default"
 		t.Fatalf("Load: %v", err)
 	}
 
+	if cfg.Agents[0].Anthropic.Thinking != "adaptive" {
+		t.Errorf("agent thinker: Anthropic.Thinking = %q, want %q", cfg.Agents[0].Anthropic.Thinking, "adaptive")
+	}
+	// ApplyProviderDefaults resolves the subsection into the runtime field
+	ApplyProviderDefaults(&cfg.Agents[0], "anthropic", cfg)
 	if cfg.Agents[0].Thinking != "adaptive" {
-		t.Errorf("agent thinker: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
+		t.Errorf("agent thinker after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
 	}
 	// Agent "default" has no per-agent override — empty after Load()
 	// Defaults come from provider section via ApplyProviderDefaults in main.go

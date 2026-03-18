@@ -213,6 +213,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"agent":            reflect.TypeOf(AgentConfig{}),
 		"anthropic":        reflect.TypeOf(AnthropicConfig{}),
 		"gemini":           reflect.TypeOf(GeminiConfig{}),
+		"openai":           reflect.TypeOf(OpenAIConfig{}),
 		"sessions":         reflect.TypeOf(SessionsConfig{}),
 		"telegram":         reflect.TypeOf(TelegramConfig{}),
 		"tools":            reflect.TypeOf(ToolsConfig{}),
