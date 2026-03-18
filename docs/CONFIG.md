@@ -766,10 +766,11 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `task_list_notify` | bool | `true` | Send Telegram notifications when task list entries are created, started, or completed. Shows progress like "✅ 3/5: Fixed token counting". |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
-| `compaction_mana_refresh_threshold` | string | `"5m"` | Trigger mana-refresh compaction when mana reset is within this duration. Format: Go duration string. `"0"` disables. |
-| `compaction_mana_refresh_factor` | float | `0.5` | Secondary compaction threshold for mana-refresh mode, as a fraction of the main `compaction_threshold`. E.g. with threshold 0.8 and factor 0.5, mana-refresh triggers at 40% context usage. Range: 0.0–1.0. |
-| `compaction_mana_refresh_preserve` | int | unset | Explicit message count to preserve during mana-refresh compaction. Overrides the percentage-based default. `0` uses normal preservation count. |
-| `compaction_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `compaction_mana_refresh_preserve` is unset. |
+| `autocompact_before_mana_refresh` | bool | `true` | Master switch for mana-refresh compaction. `false` disables entirely (replaces the old `"0"` disable convention). |
+| `autocompact_before_mana_refresh_threshold` | string | `"5m"` | Trigger mana-refresh compaction when mana reset is within this duration. Format: Go duration string. |
+| `autocompact_before_mana_refresh_factor` | float | `0.5` | Secondary compaction threshold for mana-refresh mode, as a fraction of the main `compaction_threshold`. E.g. with threshold 0.8 and factor 0.5, mana-refresh triggers at 40% context usage. Range: 0.0–1.0. |
+| `autocompact_before_mana_refresh_preserve` | int | unset | Explicit message count to preserve during mana-refresh compaction. Overrides the percentage-based default. `0` uses normal preservation count. |
+| `autocompact_before_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `autocompact_before_mana_refresh_preserve` is unset. |
 | `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `prompts/branch-orientation-headless.md`. |
@@ -779,7 +780,7 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 Compaction triggers in exactly two automatic modes:
 
 1. **Main threshold** — compact when context exceeds `compaction_threshold` (default 80%).
-2. **Mana-refresh** — compact when the mana reset is within `compaction_mana_refresh_threshold` (default 5m) AND context exceeds a secondary threshold (`compaction_threshold × compaction_mana_refresh_factor`, default 40%). This re-summarises before the new mana window starts. Preserves `compaction_mana_refresh_preserve_pct` of messages (default 50%), summarising the older half. An explicit `compaction_mana_refresh_preserve` count overrides the percentage.
+2. **Mana-refresh** — when `autocompact_before_mana_refresh` is enabled (default true), compact when the mana reset is within `autocompact_before_mana_refresh_threshold` (default 5m) AND context exceeds a secondary threshold (`compaction_threshold × autocompact_before_mana_refresh_factor`, default 40%). This re-summarises before the new mana window starts. Preserves `autocompact_before_mana_refresh_preserve_pct` of messages (default 50%), summarising the older half. An explicit `autocompact_before_mana_refresh_preserve` count overrides the percentage.
 
 A third mode is manual: the user can run `/compact` at any time.
 
@@ -789,9 +790,10 @@ Only Anthropic-endpoint sessions have mana tracking. Sessions switched to Gemini
 # Example: tune mana-refresh for a specific agent
 [[agents]]
 id = "research"
-compaction_mana_refresh_threshold = "10m"  # wider window
-compaction_mana_refresh_factor = 0.3       # trigger at 24% context
-compaction_mana_refresh_preserve = 50      # preserve last 50 messages
+autocompact_before_mana_refresh = true           # master switch (default true)
+autocompact_before_mana_refresh_threshold = "10m" # wider window
+autocompact_before_mana_refresh_factor = 0.3      # trigger at 24% context
+autocompact_before_mana_refresh_preserve = 50     # preserve last 50 messages
 ```
 
 ### Tool Behavior

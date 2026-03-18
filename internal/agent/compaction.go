@@ -26,18 +26,20 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	// Check mana-refresh trigger: compact at a lower threshold when mana
 	// reset is imminent so the new window starts with a smaller context.
 	isManaRefresh := false
-	usageClient := a.SessionUsageClient(sessionKey)
-	if usageClient != nil {
-		manaRefreshThreshold := parseDurationFallback(a.CompactionManaRefreshThreshold, 5*time.Minute)
-		if usageResp, err := usageClient.GetUsage(ctx); err == nil && usageResp.FiveHour != nil && usageResp.FiveHour.ResetsAt != nil {
-			if manaResetsAt, parseErr := time.Parse(time.RFC3339Nano, *usageResp.FiveHour.ResetsAt); parseErr == nil {
-				if compaction.ManaResetImminent(manaResetsAt, manaRefreshThreshold) {
-					secondaryThreshold := int(float64(ctxLimit) * a.Compactor.Threshold() * a.CompactionManaRefreshFactor)
-					if totalTokens > secondaryThreshold {
-						isManaRefresh = true
-						untilReset := time.Until(manaResetsAt).Round(time.Minute)
-						a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens)",
-							sessionKey, untilReset, totalTokens, ctxLimit)
+	if a.AutocompactBeforeManaRefresh {
+		usageClient := a.SessionUsageClient(sessionKey)
+		if usageClient != nil {
+			manaRefreshThreshold := parseDurationFallback(a.AutocompactBeforeManaRefreshThreshold, 5*time.Minute)
+			if usageResp, err := usageClient.GetUsage(ctx); err == nil && usageResp.FiveHour != nil && usageResp.FiveHour.ResetsAt != nil {
+				if manaResetsAt, parseErr := time.Parse(time.RFC3339Nano, *usageResp.FiveHour.ResetsAt); parseErr == nil {
+					if compaction.ManaResetImminent(manaResetsAt, manaRefreshThreshold) {
+						secondaryThreshold := int(float64(ctxLimit) * a.Compactor.Threshold() * a.AutocompactBeforeManaRefreshFactor)
+						if totalTokens > secondaryThreshold {
+							isManaRefresh = true
+							untilReset := time.Until(manaResetsAt).Round(time.Minute)
+							a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens)",
+								sessionKey, untilReset, totalTokens, ctxLimit)
+						}
 					}
 				}
 			}
@@ -63,14 +65,14 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 		oldPreserve := a.Compactor.PreserveMessages()
 		defer a.Compactor.SetPreserveMessages(oldPreserve)
 
-		if a.CompactionManaRefreshPreserve != nil {
+		if a.AutocompactBeforeManaRefreshPreserve != nil {
 			// Explicit message count configured — use it directly.
-			a.Compactor.SetPreserveMessages(*a.CompactionManaRefreshPreserve)
+			a.Compactor.SetPreserveMessages(*a.AutocompactBeforeManaRefreshPreserve)
 		} else {
-			// Percentage-based: preserve CompactionManaRefreshPreservePct of messages
+			// Percentage-based: preserve AutocompactBeforeManaRefreshPreservePct of messages
 			// (default 0.5 = 50%). This ensures meaningful summarisation of older messages
 			// while keeping the recent half of the conversation intact.
-			pct := a.CompactionManaRefreshPreservePct
+			pct := a.AutocompactBeforeManaRefreshPreservePct
 			if pct <= 0 || pct > 1.0 {
 				pct = 0.5
 			}
