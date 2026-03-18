@@ -284,15 +284,6 @@ func parseIDs(tokens []string) []int64 {
 	return ids
 }
 
-// lastTag returns the last element of a tags slice, or "" if empty.
-// Used by new/edit commands which set a single tag value.
-func lastTag(tags []string) string {
-	if len(tags) == 0 {
-		return ""
-	}
-	return tags[len(tags)-1]
-}
-
 // allIntegers returns true if all tokens parse as integers.
 func allIntegers(tokens []string) bool {
 	for _, tok := range tokens {
@@ -405,7 +396,7 @@ func todoNewCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respons
 	if args.text == "" {
 		return Response{Text: "Usage: /todo new <text>"}, nil
 	}
-	id, err := store.Add(agentID, args.text, args.priority, lastTag(args.tags))
+	id, err := store.Add(agentID, args.text, args.priority, strings.Join(args.tags, ","))
 	if err != nil {
 		return Response{}, fmt.Errorf("add todo: %w", err)
 	}
@@ -442,7 +433,7 @@ func todoEditCmd(store *memory.TodoStore, agentID string, args todoArgs) (Respon
 	if args.text == "" && args.priority == "" && !args.setTag {
 		return Response{Text: "Nothing to change. Use p:PRIORITY, t:TAG, or provide new text."}, nil
 	}
-	item, err := store.Edit(agentID, id, args.text, args.priority, lastTag(args.tags), args.setTag)
+	item, err := store.Edit(agentID, id, args.text, args.priority, strings.Join(args.tags, ","), args.setTag)
 	if err != nil {
 		return Response{}, fmt.Errorf("edit todo: %w", err)
 	}
