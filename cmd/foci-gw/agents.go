@@ -91,6 +91,9 @@ func setupAgent(p setupParams) *agentInstance {
 	// Create group resolver for multi-model routing
 	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases, acfg.Model)
 
+	// Create fallback resolver for automatic model failover
+	fallbackResolver := config.NewFallbackResolver(p.cfg.Models.Fallbacks, acfg.ModelFallbacks, p.cfg.Models.Aliases)
+
 	// Prompt search directories: agent workspace first, then shared.
 	promptSearchDirs := []string{
 		filepath.Join(acfg.Workspace, "prompts"),
@@ -173,6 +176,7 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxResultChars:                 resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
 		ToolResultTempDir:              p.cfg.Tools.TempDir,
 		GroupResolver:                  groupResolver,
+		FallbackResolver:               fallbackResolver,
 		ModelAliases:                   p.cfg.Models.Aliases,
 		SummaryContextTurns:            resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
 		SummaryContextChars:            resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),

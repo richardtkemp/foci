@@ -460,6 +460,28 @@ sonnet = "anthropic/claude-sonnet-5-0"
 local = "local/my-fine-tuned-model"
 ```
 
+**`[models.fallbacks]`** — Automatic model failover on transient errors. When a model returns 529 (overloaded), 5xx (server error), or times out (`context.DeadlineExceeded`), the agent automatically retries the request with the configured fallback model. Fallback is per-request — the primary model is always tried first on the next turn.
+
+Keys and values can be aliases or `developer/model_id` format. Chains are supported (e.g., opus → sonnet → haiku) up to a maximum depth of 3. Cycles are detected and broken at startup.
+
+Not triggered by: 401 auth errors, 400 bad requests, 429 rate limits.
+
+```toml
+[models.fallbacks]
+opus = "sonnet"                                          # alias → alias
+sonnet = "haiku"                                         # chains: opus → sonnet → haiku
+"google/gemini-2.5-pro" = "anthropic/claude-sonnet-4-6"  # cross-endpoint fallback
+```
+
+Per-agent overrides via `model_fallbacks` in `[[agents]]`:
+
+```toml
+[[agents]]
+id = "research"
+[agents.model_fallbacks]
+opus = "google/gemini-2.5-pro"   # override global fallback for this agent
+```
+
 ### `[endpoints]`
 
 Named API endpoints. Built-in defaults (anthropic, gemini, openai, openrouter) are populated automatically if not present. Users can override built-ins or add custom endpoints.
