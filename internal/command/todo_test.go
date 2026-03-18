@@ -236,6 +236,97 @@ func TestParseTodoArgs(t *testing.T) {
 			raw:  "stats",
 			want: todoArgs{subcommand: "stats", status: "active", sort: "priority", limit: 15},
 		},
+		// Subcommand aliases
+		{
+			name: "add alias for new",
+			raw:  "add buy milk",
+			want: todoArgs{subcommand: "new", status: "active", sort: "priority", limit: 15, text: "buy milk"},
+		},
+		{
+			name: "create alias for new",
+			raw:  "create buy milk",
+			want: todoArgs{subcommand: "new", status: "active", sort: "priority", limit: 15, text: "buy milk"},
+		},
+		{
+			name: "complete alias for done transition",
+			raw:  "complete 5",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "finish alias for done transition",
+			raw:  "finish 3 7",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{3, 7}},
+		},
+		{
+			name: "close alias for done transition",
+			raw:  "close 5",
+			want: todoArgs{subcommand: "done", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "complete bare is list filter",
+			raw:  "complete",
+			want: todoArgs{status: "done", sort: "priority", limit: 15},
+		},
+		{
+			name: "begin alias for start",
+			raw:  "begin 5",
+			want: todoArgs{subcommand: "start", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "cancel alias for drop",
+			raw:  "cancel 5",
+			want: todoArgs{subcommand: "drop", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "abandon alias for drop",
+			raw:  "abandon 5",
+			want: todoArgs{subcommand: "drop", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "update alias for edit",
+			raw:  "update 5 p:high",
+			want: todoArgs{subcommand: "edit", status: "active", sort: "priority", limit: 15, ids: []int64{5}, priority: "high"},
+		},
+		{
+			name: "modify alias for edit",
+			raw:  "modify 5 new text",
+			want: todoArgs{subcommand: "edit", status: "active", sort: "priority", limit: 15, ids: []int64{5}, text: "new text"},
+		},
+		{
+			name: "info alias for show",
+			raw:  "info 5",
+			want: todoArgs{subcommand: "show", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "detail alias for show",
+			raw:  "detail 5",
+			want: todoArgs{subcommand: "show", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "find alias for search",
+			raw:  "find buy milk",
+			want: todoArgs{subcommand: "search", status: "active", sort: "priority", limit: 15, text: "buy milk"},
+		},
+		{
+			name: "remove alias for rm",
+			raw:  "remove 5",
+			want: todoArgs{subcommand: "rm", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "delete alias for rm",
+			raw:  "delete 5",
+			want: todoArgs{subcommand: "rm", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "del alias for rm",
+			raw:  "del 5",
+			want: todoArgs{subcommand: "rm", status: "active", sort: "priority", limit: 15, ids: []int64{5}},
+		},
+		{
+			name: "summary alias for stats",
+			raw:  "summary",
+			want: todoArgs{subcommand: "stats", status: "active", sort: "priority", limit: 15},
+		},
 	}
 
 	for _, tt := range tests {

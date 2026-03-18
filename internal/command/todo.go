@@ -15,7 +15,7 @@ import (
 
 // todoArgs holds parsed arguments for the /todo command.
 type todoArgs struct {
-	subcommand string   // "", "new", "done", "start", "drop", "reopen", "edit", "show", "search", "rm", "stats"
+	subcommand string   // "", "new", "done", "start", "drop", "reopen", "edit", "show", "search", "rm", "stats" (each has aliases)
 	ids        []int64  // target IDs for transitions/edit/show/rm
 	text       string   // free text (new item text, search query, edit text)
 	tags       []string // t:TAG values (multiple for AND filtering)
@@ -43,15 +43,15 @@ func parseTodoArgs(raw string) todoArgs {
 	rest := tokens[1:]
 
 	switch first {
-	case "new":
+	case "new", "add", "create":
 		a.subcommand = "new"
 		parseNewArgs(&a, rest)
 		return a
-	case "start":
+	case "start", "begin":
 		a.subcommand = "start"
 		a.ids = parseIDs(rest)
 		return a
-	case "drop":
+	case "drop", "cancel", "abandon":
 		a.subcommand = "drop"
 		a.ids = parseIDs(rest)
 		return a
@@ -59,11 +59,11 @@ func parseTodoArgs(raw string) todoArgs {
 		a.subcommand = "reopen"
 		a.ids = parseIDs(rest)
 		return a
-	case "edit":
+	case "edit", "update", "modify":
 		a.subcommand = "edit"
 		parseEditArgs(&a, rest)
 		return a
-	case "show":
+	case "show", "info", "detail":
 		a.subcommand = "show"
 		a.ids = parseIDs(rest)
 		return a
@@ -71,19 +71,19 @@ func parseTodoArgs(raw string) todoArgs {
 		a.subcommand = "get"
 		parseGetArgs(&a, rest)
 		return a
-	case "search":
+	case "search", "find":
 		a.subcommand = "search"
 		a.text = strings.Join(rest, " ")
 		return a
-	case "rm":
+	case "rm", "remove", "delete", "del":
 		a.subcommand = "rm"
 		a.ids = parseIDs(rest)
 		return a
-	case "stats":
+	case "stats", "summary":
 		a.subcommand = "stats"
 		parseListArgs(&a, rest)
 		return a
-	case "done":
+	case "done", "complete", "finish", "close":
 		// Ambiguity rule: if all remaining tokens are integers, it's a transition.
 		if len(rest) > 0 && allIntegers(rest) {
 			a.subcommand = "done"
@@ -131,7 +131,7 @@ func parseListArgs(a *todoArgs, tokens []string) {
 		// Status tokens
 		case "open":
 			a.status = "open"
-		case "done", "closed":
+		case "done", "closed", "complete", "completed", "finish", "finished":
 			a.status = "done"
 		case "all":
 			a.status = ""
@@ -256,7 +256,8 @@ func parseGetArgs(a *todoArgs, tokens []string) {
 		}
 
 		switch lower {
-		case "open", "done", "closed", "all", "active", "dropped", "started",
+		case "open", "done", "closed", "complete", "completed", "finish", "finished",
+			"all", "active", "dropped", "started",
 			"created", "updated", "priority",
 			"reverse":
 			// Re-use parseListArgs logic for this single token.
