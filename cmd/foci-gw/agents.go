@@ -206,6 +206,16 @@ func setupAgent(p setupParams) *agentInstance {
 		ManaInvestInterval:             parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}
 
+	// Pre-compaction memory formation hook
+	compactMemOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	compactMemMfCfg := acfg.MemoryFormation
+	compactMemSearchDirs := promptSearchDirs
+	ag.CompactionMemoryFunc.Add(func(sessionKey string) {
+		agent.FireCompactionMemory(ag, p.sessions, sessionKey, compactMemMfCfg, func(bk, pk, bt string) string {
+			return prompts.BuildBranchOrientation(compactMemOrientPath, bk, pk, bt, false, compactMemSearchDirs)
+		}, compactMemSearchDirs, p.ctx)
+	})
+
 	// Post-creation agent configuration
 	setupNudgeSystem(ag, acfg, defaultSessionKey)
 	setupRedaction(ag, p, agentStore)
@@ -394,5 +404,6 @@ func hasMemoryFormation(mf config.MemoryFormationConfig) bool {
 	intervalEnabled := mf.IntervalEnabled == nil || *mf.IntervalEnabled
 	consolidationEnabled := mf.ConsolidationEnabled == nil || *mf.ConsolidationEnabled
 	sessionEndEnabled := mf.SessionEndEnabled == nil || *mf.SessionEndEnabled
-	return intervalEnabled || consolidationEnabled || sessionEndEnabled
+	compactionEnabled := mf.CompactionEnabled == nil || *mf.CompactionEnabled
+	return intervalEnabled || consolidationEnabled || sessionEndEnabled || compactionEnabled
 }

@@ -97,6 +97,7 @@ type Agent struct {
 	CompactionManaRefreshPreserve    *int                                 // messages to preserve in refresh mode (nil = use percentage)
 	CompactionManaRefreshPreservePct float64                              // fraction of messages to preserve in refresh mode (0 = default 0.5)
 	TaskListNotifyFunc            HookList[func(string, string)]         // callbacks for task list changes (session key, message)
+	CompactionMemoryFunc          HookList[func(string)]                 // fires before compaction to save memories (session key)
 	CompactionStartFunc           HookList[func(string, string)]         // callbacks for compaction start (session key, message) — sent immediately, not buffered
 	CompactionNotifyFunc          HookList[func(string, string)]         // callbacks for compaction notifications (session key, message)
 	CompactionDebugFunc           HookList[func(string, string)]         // callbacks for compaction debug (session key, summary text)

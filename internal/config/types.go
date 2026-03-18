@@ -660,6 +660,8 @@ type MemoryFormationConfig struct {
 	ConsolidationPrompt   string `toml:"consolidation_prompt"`   // prompt override ("" = embedded, "none" = disabled)
 	SessionEndEnabled     *bool  `toml:"session_end_enabled"`    // capture on /reset and reclaim (nil = true)
 	SessionEndPrompt      string `toml:"session_end_prompt"`     // prompt override ("" = embedded, "none" = disabled)
+	CompactionEnabled     *bool  `toml:"compaction_enabled"`     // capture before compaction (nil = true)
+	CompactionPrompt      string `toml:"compaction_prompt"`      // prompt override ("" = embedded, "none" = disabled)
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
