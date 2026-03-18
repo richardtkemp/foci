@@ -80,10 +80,11 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_metadata (
 			agent_id TEXT NOT NULL,
+			platform TEXT NOT NULL DEFAULT '',
 			chat_id  INTEGER NOT NULL,
 			key      TEXT NOT NULL,
 			value    TEXT,
-			PRIMARY KEY (agent_id, chat_id, key)
+			PRIMARY KEY (agent_id, platform, chat_id, key)
 		)`,
 		`CREATE TABLE IF NOT EXISTS session_metadata (
 			session_key TEXT NOT NULL,
@@ -102,6 +103,10 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 
 	// Migration: add last_activity_at column if missing (idempotent).
 	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`)
+
+	// Migration: add platform column to chat_metadata if missing (idempotent).
+	// Detects old schema by checking column count, then rebuilds the table in a transaction.
+	migrateChatMetadataPlatform(db)
 
 	return &SessionIndex{db: db}, nil
 }
@@ -339,6 +344,52 @@ func nullableString(s string) interface{} {
 	return s
 }
 
+// migrateChatMetadataPlatform adds the platform column to chat_metadata if missing.
+// Detects old schema by attempting to select the platform column. If it doesn't
+// exist, rebuilds the table in a transaction: rename → create new → copy → drop old.
+// Old rows get platform='' which won't match explicit platform queries.
+func migrateChatMetadataPlatform(db *sql.DB) {
+	// Check if platform column already exists by querying it.
+	var dummy string
+	err := db.QueryRow(`SELECT platform FROM chat_metadata LIMIT 1`).Scan(&dummy)
+	if err == nil || err == sql.ErrNoRows {
+		return // column exists
+	}
+	// Column doesn't exist — err is a "no such column" error. Rebuild.
+	log.Infof("session", "migrating chat_metadata: adding platform column")
+	tx, err := db.Begin()
+	if err != nil {
+		log.Errorf("session", "chat_metadata migration: begin tx: %v", err)
+		return
+	}
+	stmts := []string{
+		`ALTER TABLE chat_metadata RENAME TO chat_metadata_old`,
+		`CREATE TABLE chat_metadata (
+			agent_id TEXT NOT NULL,
+			platform TEXT NOT NULL DEFAULT '',
+			chat_id  INTEGER NOT NULL,
+			key      TEXT NOT NULL,
+			value    TEXT,
+			PRIMARY KEY (agent_id, platform, chat_id, key)
+		)`,
+		`INSERT INTO chat_metadata (agent_id, platform, chat_id, key, value)
+		 SELECT agent_id, '', chat_id, key, value FROM chat_metadata_old`,
+		`DROP TABLE chat_metadata_old`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.Exec(s); err != nil {
+			log.Errorf("session", "chat_metadata migration: %v", err)
+			_ = tx.Rollback()
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		log.Errorf("session", "chat_metadata migration: commit: %v", err)
+		return
+	}
+	log.Infof("session", "chat_metadata migration complete")
+}
+
 // metadataTable holds precomputed SQL for a metadata table's CRUD operations.
 type metadataTable struct {
 	upsertSQL string
@@ -353,9 +404,9 @@ var (
 		deleteSQL: `DELETE FROM agent_metadata WHERE agent_id = ? AND key = ?`,
 	}
 	chatMetaTable = metadataTable{
-		upsertSQL: `INSERT INTO chat_metadata (agent_id, chat_id, key, value) VALUES (?, ?, ?, ?) ON CONFLICT(agent_id, chat_id, key) DO UPDATE SET value = excluded.value`,
-		selectSQL: `SELECT value FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ?`,
-		deleteSQL: `DELETE FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ?`,
+		upsertSQL: `INSERT INTO chat_metadata (agent_id, platform, chat_id, key, value) VALUES (?, ?, ?, ?, ?) ON CONFLICT(agent_id, platform, chat_id, key) DO UPDATE SET value = excluded.value`,
+		selectSQL: `SELECT value FROM chat_metadata WHERE agent_id = ? AND platform = ? AND chat_id = ? AND key = ?`,
+		deleteSQL: `DELETE FROM chat_metadata WHERE agent_id = ? AND platform = ? AND chat_id = ? AND key = ?`,
 	}
 	sessionMetaTable = metadataTable{
 		upsertSQL: `INSERT INTO session_metadata (session_key, key, value) VALUES (?, ?, ?) ON CONFLICT(session_key, key) DO UPDATE SET value = excluded.value`,
@@ -420,14 +471,33 @@ func (idx *SessionIndex) DeleteAgentMetadata(agentID, key string) error {
 // Chat Metadata Methods
 
 // SetChatMetadata stores a metadata value for a chat.
-func (idx *SessionIndex) SetChatMetadata(agentID string, chatID int64, key, value string) error {
-	return idx.metaSet(chatMetaTable, agentID, chatID, key, value)
+// Platform identifies the source platform (e.g. "telegram", "discord").
+// Use "" for platform-agnostic lookups (e.g. legacy migration, cross-platform queries).
+func (idx *SessionIndex) SetChatMetadata(agentID, platform string, chatID int64, key, value string) error {
+	return idx.metaSet(chatMetaTable, agentID, platform, chatID, key, value)
 }
 
 // GetChatMetadata retrieves a metadata value for a chat.
 // Returns empty string if not found.
-func (idx *SessionIndex) GetChatMetadata(agentID string, chatID int64, key string) (string, error) {
-	return idx.metaGet(chatMetaTable, agentID, chatID, key)
+func (idx *SessionIndex) GetChatMetadata(agentID, platform string, chatID int64, key string) (string, error) {
+	return idx.metaGet(chatMetaTable, agentID, platform, chatID, key)
+}
+
+// GetChatMetadataAnyPlatform retrieves a metadata value for a chat across all platforms.
+// Returns the first match found. Used when the caller doesn't know which platform
+// the chat belongs to (e.g. username lookups in /sessions).
+func (idx *SessionIndex) GetChatMetadataAnyPlatform(agentID string, chatID int64, key string) (string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	var value string
+	err := idx.db.QueryRow(
+		`SELECT value FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = ? LIMIT 1`,
+		agentID, chatID, key,
+	).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
 }
 
 // CurrentSessionKeys returns the set of session keys that are the active/current
@@ -456,8 +526,25 @@ func (idx *SessionIndex) CurrentSessionKeys() (map[string]bool, error) {
 }
 
 // DeleteChatMetadata removes a metadata key for a chat.
-func (idx *SessionIndex) DeleteChatMetadata(agentID string, chatID int64, key string) error {
-	return idx.metaDelete(chatMetaTable, agentID, chatID, key)
+func (idx *SessionIndex) DeleteChatMetadata(agentID, platform string, chatID int64, key string) error {
+	return idx.metaDelete(chatMetaTable, agentID, platform, chatID, key)
+}
+
+// PlatformForChat returns the platform name that owns a given chat's session key.
+// Returns "" if no platform-specific mapping exists (e.g. legacy data or first message).
+func (idx *SessionIndex) PlatformForChat(agentID string, chatID int64) string {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	var platform string
+	err := idx.db.QueryRow(
+		`SELECT platform FROM chat_metadata WHERE agent_id = ? AND chat_id = ? AND key = 'session_key' AND platform != ''`,
+		agentID, chatID,
+	).Scan(&platform)
+	if err != nil {
+		return ""
+	}
+	return platform
 }
 
 // Session Metadata Methods

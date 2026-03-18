@@ -366,7 +366,11 @@ func InitMessaging(cfg *config.Config, deps ProviderDeps) (*Messaging, error) {
 
 	m := &Messaging{providers: active}
 	if len(active) > 0 {
-		m.connMgr = newAggregatingConnMgr(active)
+		var chatPlatformFn func(string, int64) string
+		if deps.SessionIndex != nil {
+			chatPlatformFn = deps.SessionIndex.PlatformForChat
+		}
+		m.connMgr = newAggregatingConnMgr(active, chatPlatformFn)
 	} else {
 		m.connMgr = &noopConnMgr{}
 	}
@@ -496,83 +500,6 @@ func (m *Messaging) Close() error {
 		}
 	}
 	return firstErr
-}
-
-// --- Aggregating ConnectionManager ---
-
-type aggregatingConnMgr struct {
-	managers []ConnectionManager
-}
-
-func newAggregatingConnMgr(providers []MessagingProvider) *aggregatingConnMgr {
-	managers := make([]ConnectionManager, len(providers))
-	for i, p := range providers {
-		managers[i] = p.ConnectionManager()
-	}
-	return &aggregatingConnMgr{managers: managers}
-}
-
-func (a *aggregatingConnMgr) Primary(agentID string) Connection {
-	for _, m := range a.managers {
-		if c := m.Primary(agentID); c != nil {
-			return c
-		}
-	}
-	return nil
-}
-
-func (a *aggregatingConnMgr) AllForAgent(agentID string) []Connection {
-	var conns []Connection
-	for _, m := range a.managers {
-		conns = append(conns, m.AllForAgent(agentID)...)
-	}
-	return conns
-}
-
-func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
-	for _, m := range a.managers {
-		if c := m.ForSession(sessionKey); c != nil {
-			return c
-		}
-	}
-	return nil
-}
-
-func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Connection {
-	if c := a.ForSession(sessionKey); c != nil {
-		return c
-	}
-	return a.Primary(agentID)
-}
-
-func (a *aggregatingConnMgr) AcquireFacet(agentID string) (Connection, bool) {
-	for _, m := range a.managers {
-		if c, ok := m.AcquireFacet(agentID); ok {
-			return c, true
-		}
-	}
-	return nil, false
-}
-
-func (a *aggregatingConnMgr) HasFacet(agentID string) bool {
-	for _, m := range a.managers {
-		if m.HasFacet(agentID) {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *aggregatingConnMgr) StartAll(ctx context.Context) {
-	for _, m := range a.managers {
-		m.StartAll(ctx)
-	}
-}
-
-func (a *aggregatingConnMgr) Wait() {
-	for _, m := range a.managers {
-		m.Wait()
-	}
 }
 
 // --- Noop ConnectionManager ---

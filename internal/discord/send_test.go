@@ -65,8 +65,8 @@ type mockIndex struct {
 	agent map[string]string
 }
 
-func (m *mockIndex) GetChatMetadata(string, int64, string) (string, error) { return "", nil }
-func (m *mockIndex) SetChatMetadata(string, int64, string, string) error   { return nil }
+func (m *mockIndex) GetChatMetadata(string, string, int64, string) (string, error) { return "", nil }
+func (m *mockIndex) SetChatMetadata(string, string, int64, string, string) error   { return nil }
 func (m *mockIndex) GetAgentMetadata(_, key string) (string, error) {
 	return m.agent[key], nil
 }
