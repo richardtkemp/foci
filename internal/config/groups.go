@@ -53,35 +53,35 @@ var defaultCallGroups = map[string]string{
 
 // GroupResolver resolves call sites and group names to concrete models.
 type GroupResolver struct {
-	// groups maps group name → model string (developer/model_id format)
+	// groups maps group name → model name (key in models map or raw developer/model_id)
 	groups map[string]string
-	// callOverrides maps call site name → group name (from [models.calls])
+	// callOverrides maps call site name → group name (from [groups.calls])
 	callOverrides map[string]string
-	// aliases for ResolveModel
-	aliases map[string]string
+	// models for ResolveModel (carries settings through)
+	models map[string]ModelConfig
 }
 
 // NewGroupResolver creates a GroupResolver from config.
 // Powerful must be set in config (validated by Validate). Fast/Cheap default
 // to Powerful when not set.
-func NewGroupResolver(models ModelsConfig, aliases map[string]string) *GroupResolver {
+func NewGroupResolver(groups GroupsConfig, models map[string]ModelConfig) *GroupResolver {
 	gr := &GroupResolver{
-		aliases:       aliases,
-		callOverrides: models.Calls,
+		models:        models,
+		callOverrides: groups.Calls,
 		groups: map[string]string{
-			GroupPowerful: models.Powerful,
+			GroupPowerful: groups.Powerful,
 		},
 	}
 
-	if models.Fast != "" {
-		gr.groups[GroupFast] = models.Fast
+	if groups.Fast != "" {
+		gr.groups[GroupFast] = groups.Fast
 	} else {
-		gr.groups[GroupFast] = models.Powerful
+		gr.groups[GroupFast] = groups.Powerful
 	}
-	if models.Cheap != "" {
-		gr.groups[GroupCheap] = models.Cheap
+	if groups.Cheap != "" {
+		gr.groups[GroupCheap] = groups.Cheap
 	} else {
-		gr.groups[GroupCheap] = models.Powerful
+		gr.groups[GroupCheap] = groups.Powerful
 	}
 
 	return gr
@@ -128,7 +128,7 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 		// Unknown group — fall back to powerful
 		model = gr.groups[GroupPowerful]
 	}
-	resolved, err := ResolveModel(model, "", gr.aliases)
+	resolved, err := ResolveModel(model, "", gr.models)
 	if err != nil {
 		return nil
 	}

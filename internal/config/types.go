@@ -80,21 +80,24 @@ type AgentMemoryConfig struct {
 	Sources []MemorySource `toml:"sources"` // agent-specific memory directories
 }
 
-// AgentAnthropicConfig holds Anthropic-specific per-agent overrides.
-type AgentAnthropicConfig struct {
-	Thinking string `toml:"thinking"` // "adaptive" or "off"
-	Effort   string `toml:"effort"`   // "low", "medium", "high"
-	Speed    string `toml:"speed"`    // "fast" or ""
+// ModelConfig defines a named model with its settings.
+// Used in [models.*] TOML sections.
+type ModelConfig struct {
+	Model           string `toml:"model"`             // "developer/model_id" (required)
+	Thinking        string `toml:"thinking"`           // "adaptive", "off", or bool via UnmarshalTOML
+	Effort          string `toml:"effort"`             // "low", "medium", "high"
+	Speed           string `toml:"speed"`              // "fast" or ""
+	EnableKeepalive *bool  `toml:"enable_keepalive"`   // nil=auto-detect, true/false=explicit
+	PromptCacheTTL  string `toml:"prompt_cache_ttl"`   // Go duration, empty=auto-detect
 }
 
-// AgentGeminiConfig holds Gemini-specific per-agent overrides.
-type AgentGeminiConfig struct {
-	Thinking string `toml:"thinking"` // "adaptive" or "off"
-}
-
-// AgentOpenAIConfig holds OpenAI-specific per-agent overrides.
-type AgentOpenAIConfig struct {
-	Reasoning string `toml:"reasoning"` // "adaptive" or "off"
+// GroupsConfig assigns named models to groups and call sites.
+type GroupsConfig struct {
+	Powerful  string            `toml:"powerful"`
+	Fast      string            `toml:"fast"`
+	Cheap     string            `toml:"cheap"`
+	Calls     map[string]string `toml:"calls"`
+	Fallbacks map[string]string `toml:"fallbacks"`
 }
 
 type AgentConfig struct {
@@ -103,11 +106,6 @@ type AgentConfig struct {
 	Emoji     string `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
 	ModelFallbacks map[string]string `toml:"model_fallbacks"` // per-agent fallback overrides (model → fallback model); aliases supported
 	Workspace      string            `toml:"workspace"`
-
-	// Per-agent provider overrides (resolved into Effort/Thinking/Speed by ApplyProviderDefaults)
-	Anthropic AgentAnthropicConfig `toml:"anthropic"`
-	Gemini    AgentGeminiConfig    `toml:"gemini"`
-	OpenAI    AgentOpenAIConfig    `toml:"openai"`
 
 	SystemFiles                   []string `toml:"system_files"`                     // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
 	DuplicateMessages             bool     `toml:"duplicate_messages"`               // send user text twice per API call (improves instruction following)
@@ -125,9 +123,9 @@ type AgentConfig struct {
 	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
 	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // warning text injected as user message
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
-	Effort                string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
-	Thinking              string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
-	Speed                 string `toml:"-"` // runtime: resolved by ApplyProviderDefaults from provider subsections
+	Effort                string `toml:"-"` // runtime: populated from resolved model's ModelConfig
+	Thinking              string `toml:"-"` // runtime: populated from resolved model's ModelConfig
+	Speed                 string `toml:"-"` // runtime: populated from resolved model's ModelConfig
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
 	FacetNoCompact    *bool  `toml:"facet_no_compact"`     // set no_compact on facet sessions (nil = true)
 
@@ -209,25 +207,20 @@ type AgentConfig struct {
 type GeminiConfig struct {
 	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
 	CacheTTL    string `toml:"cache_ttl"`    // context cache TTL (default "1h", "0" disables)
-	Thinking    string `toml:"thinking"`     // thinking mode: "adaptive" (default) or "off"
 }
 
 type OpenAIConfig struct {
 	BaseURL     string `toml:"base_url"`     // API base URL (default: "https://api.openai.com", override for OpenRouter/Together/etc.)
 	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
-	Reasoning   string `toml:"reasoning"`    // OpenRouter reasoning: "off" (default) or "adaptive"
 }
 
 type AnthropicConfig struct {
-	HTTPTimeout               string `toml:"http_timeout"`                 // HTTP timeout for API calls (default "600s")
-	UsageAPITimeout           string `toml:"usage_api_timeout"`            // HTTP timeout for usage API calls (default "10s")
-	UsageCacheTTL             string `toml:"usage_cache_ttl"`              // cache TTL for usage API responses (default "10m")
+	HTTPTimeout       string `toml:"http_timeout"`       // HTTP timeout for API calls (default "600s")
+	UsageAPITimeout   string `toml:"usage_api_timeout"`  // HTTP timeout for usage API calls (default "10s")
+	UsageCacheTTL     string `toml:"usage_cache_ttl"`    // cache TTL for usage API responses (default "10m")
 	CCExpiryThreshold string `toml:"cc_expiry_threshold"` // how far before expiry to trigger proactive token refresh (default "5m")
-	UseSDK                    bool   `toml:"use_sdk"`                      // use SDK transport (default true; false = raw HTTP)
-	Streaming                 bool   `toml:"streaming"`                    // use streaming API (default false; requires use_sdk)
-	Effort                    string `toml:"effort"`                       // effort level: "low" (default), "medium", "high"
-	Thinking                  string `toml:"thinking"`                     // thinking mode: "adaptive" (default) or "off"
-	Speed                     string `toml:"speed"`                        // speed mode: "standard" (default) or "fast" (Opus only, 6x pricing)
+	UseSDK            bool   `toml:"use_sdk"`            // use SDK transport (default true; false = raw HTTP)
+	Streaming         bool   `toml:"streaming"`          // use streaming API (default false; requires use_sdk)
 }
 
 type DiscordConfig struct {
@@ -605,15 +598,6 @@ type DefaultsConfig struct {
 	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
 }
 
-// ModelsConfig holds model-related configuration.
-type ModelsConfig struct {
-	Aliases   map[string]string `toml:"aliases"`   // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
-	Powerful  string            `toml:"powerful"`  // model for the powerful group (required)
-	Fast      string            `toml:"fast"`      // model for the fast group (defaults to powerful if unset)
-	Cheap     string            `toml:"cheap"`     // model for the cheap group (defaults to powerful if unset)
-	Calls     map[string]string `toml:"calls"`     // call site overrides: call name → group name
-	Fallbacks map[string]string `toml:"fallbacks"` // model → fallback model (e.g., "opus" → "sonnet"); aliases supported
-}
 
 // EndpointConfig describes a model API endpoint.
 type EndpointConfig struct {
@@ -703,10 +687,11 @@ type DebugConfig struct {
 }
 
 type Config struct {
-	DataDir            string                    `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
-	Defaults           DefaultsConfig            `toml:"defaults"`  // global defaults for agent-specific fields
-	Models             ModelsConfig              `toml:"models"`    // model aliases and related config
-	Endpoints          map[string]EndpointConfig `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
+	DataDir            string                       `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
+	Defaults           DefaultsConfig               `toml:"defaults"`  // global defaults for agent-specific fields
+	Groups             GroupsConfig                  `toml:"groups"`    // model group assignments and fallbacks
+	Models             map[string]ModelConfig        `toml:"models"`    // named model definitions with per-model settings
+	Endpoints          map[string]EndpointConfig     `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
 	Agents             []AgentConfig             `toml:"agents"`    // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`
 	Gemini             GeminiConfig              `toml:"gemini"`

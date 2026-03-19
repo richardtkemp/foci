@@ -211,42 +211,6 @@ func applyDefaultsToAgent(agent *AgentConfig, cfg *Config, defined map[string]bo
 	applyStructToAgent(agent, &cfg.Defaults, defined)
 }
 
-// ApplyProviderDefaults fills in agent Effort/Thinking/Speed from per-agent
-// provider subsections and global provider config. Resolution order:
-// per-agent provider subsection → global provider config → empty.
-// Call after model resolution so `format` is known.
-func ApplyProviderDefaults(agent *AgentConfig, format string, cfg *Config) {
-	switch format {
-	case "anthropic":
-		if agent.Effort == "" {
-			agent.Effort = firstNonEmpty(agent.Anthropic.Effort, cfg.Anthropic.Effort)
-		}
-		if agent.Thinking == "" {
-			agent.Thinking = firstNonEmpty(agent.Anthropic.Thinking, cfg.Anthropic.Thinking)
-		}
-		if agent.Speed == "" {
-			agent.Speed = firstNonEmpty(agent.Anthropic.Speed, cfg.Anthropic.Speed)
-		}
-	case "gemini":
-		if agent.Thinking == "" {
-			agent.Thinking = firstNonEmpty(agent.Gemini.Thinking, cfg.Gemini.Thinking)
-		}
-	case "openai":
-		if agent.Thinking == "" {
-			agent.Thinking = firstNonEmpty(agent.OpenAI.Reasoning, cfg.OpenAI.Reasoning)
-		}
-	}
-}
-
-// firstNonEmpty returns the first non-empty string argument.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
 
 // Load reads config from the given TOML file path.
 func Load(path string) (*Config, error) {
@@ -347,18 +311,19 @@ func Load(path string) (*Config, error) {
 		syncDisplayFields(&cfg.Agents[i])
 	}
 
-	// Model aliases defaults (if not configured) — use developer/model_id format
-	if len(cfg.Models.Aliases) == 0 {
-		cfg.Models.Aliases = map[string]string{
-			"opus":     "anthropic/claude-opus-4-6",
-			"sonnet":   "anthropic/claude-sonnet-4-6",
-			"haiku":    "anthropic/claude-haiku-4-5-20251001",
-			"gemini-flash": "google/gemini-2.5-flash",
-			"gemini-pro":   "google/gemini-2.5-pro",
-			"gpt4o":    "openai/gpt-4o",
-			"o3":       "openai/o3",
-			"o4mini":   "openai/o4-mini",
-			"deepseek": "deepseek/deepseek-chat",
+	// Default named model entries — provide shorthand names for common models.
+	// Only added when the user hasn't defined any [models.*] sections.
+	if len(cfg.Models) == 0 {
+		cfg.Models = map[string]ModelConfig{
+			"opus":         {Model: "anthropic/claude-opus-4-6"},
+			"sonnet":       {Model: "anthropic/claude-sonnet-4-6"},
+			"haiku":        {Model: "anthropic/claude-haiku-4-5-20251001"},
+			"gemini-flash": {Model: "google/gemini-2.5-flash"},
+			"gemini-pro":   {Model: "google/gemini-2.5-pro"},
+			"gpt4o":        {Model: "openai/gpt-4o"},
+			"o3":           {Model: "openai/o3"},
+			"o4mini":       {Model: "openai/o4-mini"},
+			"deepseek":     {Model: "deepseek/deepseek-chat"},
 		}
 	}
 
@@ -367,11 +332,11 @@ func Load(path string) (*Config, error) {
 	// for endpoints the user doesn't use (e.g. openai.api_key when no group
 	// references OpenAI).
 	usedEndpoints := make(map[string]bool)
-	for _, groupModel := range []string{cfg.Models.Powerful, cfg.Models.Fast, cfg.Models.Cheap} {
+	for _, groupModel := range []string{cfg.Groups.Powerful, cfg.Groups.Fast, cfg.Groups.Cheap} {
 		if groupModel == "" {
 			continue
 		}
-		resolved, err := ResolveModel(groupModel, "", cfg.Models.Aliases)
+		resolved, err := ResolveModel(groupModel, "", cfg.Models)
 		if err == nil {
 			usedEndpoints[resolved.Endpoint] = true
 		}
@@ -486,17 +451,13 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Anthropic.UsageCacheTTL, "10m")
 	setStringDefault(&cfg.Anthropic.CCExpiryThreshold, "5m")
 	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
-	setStringDefault(&cfg.Anthropic.Effort, "low")
-	setStringDefault(&cfg.Anthropic.Thinking, "adaptive")
 
 	// Gemini defaults
 	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")
 	setStringDefault(&cfg.Gemini.CacheTTL, "1h")
-	setStringDefault(&cfg.Gemini.Thinking, "adaptive")
 
 	// OpenAI defaults
 	setStringDefault(&cfg.OpenAI.HTTPTimeout, "120s")
-	setStringDefault(&cfg.OpenAI.Reasoning, "off")
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)

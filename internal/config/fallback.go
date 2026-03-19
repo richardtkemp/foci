@@ -12,9 +12,9 @@ type FallbackResolver struct {
 
 // NewFallbackResolver creates a FallbackResolver by merging global and per-agent
 // fallback maps (per-agent wins). All keys and values are normalized through
-// aliases to canonical "developer/model_id" format. Cycles are detected and
-// broken. Returns nil if both maps are empty.
-func NewFallbackResolver(global, perAgent, aliases map[string]string) *FallbackResolver {
+// named model configs to canonical "developer/model_id" format. Cycles are
+// detected and broken. Returns nil if both maps are empty.
+func NewFallbackResolver(global, perAgent map[string]string, models map[string]ModelConfig) *FallbackResolver {
 	if len(global) == 0 && len(perAgent) == 0 {
 		return nil
 	}
@@ -23,8 +23,8 @@ func NewFallbackResolver(global, perAgent, aliases map[string]string) *FallbackR
 
 	// Start with global entries
 	for k, v := range global {
-		ck := canonicalize(k, aliases)
-		cv := canonicalize(v, aliases)
+		ck := canonicalize(k, models)
+		cv := canonicalize(v, models)
 		if ck != "" && cv != "" {
 			merged[ck] = cv
 		}
@@ -32,8 +32,8 @@ func NewFallbackResolver(global, perAgent, aliases map[string]string) *FallbackR
 
 	// Per-agent overrides
 	for k, v := range perAgent {
-		ck := canonicalize(k, aliases)
-		cv := canonicalize(v, aliases)
+		ck := canonicalize(k, models)
+		cv := canonicalize(v, models)
 		if ck != "" && cv != "" {
 			merged[ck] = cv
 		}
@@ -77,10 +77,10 @@ func (fr *FallbackResolver) Resolve(model string) *ResolvedModel {
 	return resolved
 }
 
-// canonicalize resolves a model string (alias or developer/model_id) to
+// canonicalize resolves a model string (named model or developer/model_id) to
 // canonical "developer/model_id" format. Returns "" if unresolvable.
-func canonicalize(model string, aliases map[string]string) string {
-	resolved, err := ResolveModel(model, "", aliases)
+func canonicalize(model string, models map[string]ModelConfig) string {
+	resolved, err := ResolveModel(model, "", models)
 	if err != nil {
 		return ""
 	}

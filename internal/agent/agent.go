@@ -84,7 +84,7 @@ type Agent struct {
 	BatchPartialJoiner            string                       // separator between batched partial messages (default "")
 	MaxResultChars                int                          // max chars for tool result before writing to file (0 disables)
 	ToolResultTempDir             string                       // where to write large tool results
-	ModelAliases                  map[string]string            // for resolving "haiku" → full model ID
+	ModelConfigs                  map[string]config.ModelConfig // for resolving "haiku" → full model ID + settings
 	SummaryContextTurns           int                          // recent conversation turns for summary context
 	SummaryContextChars           int                          // max chars of context to send to cheap model
 	MaxSummaryChars               int                          // max chars to auto-summarise (skip cheap model above this)

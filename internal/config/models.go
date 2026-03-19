@@ -13,28 +13,39 @@ type ResolvedModel struct {
 	ModelID   string // "claude-opus-4-6", "gemini-2.5-flash", etc.
 	Format    string // "anthropic", "gemini", "openai" (wire format, derived from developer)
 	Endpoint  string // "anthropic", "openrouter", "google", etc.
+	// From ModelConfig (populated when resolved via a named model entry)
+	Thinking        string // "adaptive", "off", or ""
+	Effort          string // "low", "medium", "high", or ""
+	Speed           string // "fast" or ""
+	EnableKeepalive *bool  // nil=auto-detect, true/false=explicit
+	PromptCacheTTL  string // Go duration, empty=auto-detect
 }
 
 // ResolveModel takes a model string (alias or developer/model_id)
 // and returns the canonical resolution with wire format and endpoint.
 // endpoint param is optional - if empty, auto-selects based on developer.
+// models is the named model config map; entries are checked first by name,
+// then their .Model field provides the developer/model_id string.
+// Raw "developer/model_id" strings not in the models map still work.
 //
 // Resolution logic:
-// 1. Resolve alias: check if input exists in aliases map
+// 1. Resolve named model: check if input exists in models map (carries settings)
 // 2. Parse developer/model: split on "/" (error if no slash found)
 // 3. Infer wire format from developer
 // 4. Determine endpoint (explicit override, or auto-select based on developer)
-func ResolveModel(input string, endpoint string, aliases map[string]string) (*ResolvedModel, error) {
+func ResolveModel(input string, endpoint string, models map[string]ModelConfig) (*ResolvedModel, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil, fmt.Errorf("model string is empty")
 	}
 
-	// Step 1: Resolve alias
+	// Step 1: Resolve named model entry (carries settings through)
 	resolved := input
-	if len(aliases) > 0 {
-		if aliasVal, ok := aliases[strings.ToLower(input)]; ok {
-			resolved = aliasVal
+	var mc *ModelConfig
+	if len(models) > 0 {
+		if cfg, ok := models[strings.ToLower(input)]; ok {
+			resolved = cfg.Model
+			mc = &cfg
 		}
 	}
 
@@ -67,12 +78,23 @@ func ResolveModel(input string, endpoint string, aliases map[string]string) (*Re
 		}
 	}
 
-	return &ResolvedModel{
+	rm := &ResolvedModel{
 		Developer: developer,
 		ModelID:   modelID,
 		Format:    format,
 		Endpoint:  endpointName,
-	}, nil
+	}
+
+	// Carry settings from ModelConfig if resolved via a named entry
+	if mc != nil {
+		rm.Thinking = mc.Thinking
+		rm.Effort = mc.Effort
+		rm.Speed = mc.Speed
+		rm.EnableKeepalive = mc.EnableKeepalive
+		rm.PromptCacheTTL = mc.PromptCacheTTL
+	}
+
+	return rm, nil
 }
 
 // InferWireFormat returns the wire format for a developer based on naming conventions.

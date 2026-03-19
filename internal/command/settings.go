@@ -21,7 +21,7 @@ func ModelCommand() *Command {
 				current := cc.Agent.SessionModel(req.SessionKey)
 				return Response{Text: fmt.Sprintf("Current model: %s", current)}, nil
 			}
-			resolved, err := config.ResolveModel(req.Args, "", cc.ModelAliases)
+			resolved, err := config.ResolveModel(req.Args, "", cc.ModelConfigs)
 			var endpoint, model, format string
 			if err != nil {
 				endpoint = ""
@@ -47,12 +47,12 @@ func ModelCommand() *Command {
 			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil
 		},
 		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
-			if len(cc.ModelAliases) == 0 {
+			if len(cc.ModelConfigs) == 0 {
 				return nil
 			}
-			names := make([]string, 0, len(cc.ModelAliases))
-			for alias := range cc.ModelAliases {
-				resolved, err := config.ResolveModel(alias, "", cc.ModelAliases)
+			names := make([]string, 0, len(cc.ModelConfigs))
+			for alias := range cc.ModelConfigs {
+				resolved, err := config.ResolveModel(alias, "", cc.ModelConfigs)
 				if err != nil {
 					continue
 				}

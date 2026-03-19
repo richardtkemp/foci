@@ -31,7 +31,7 @@ type periodicParams struct {
 // Returns the runner (also set on inst.kaRunner), or nil if not needed.
 func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
 	// Resolve model from powerful group to get endpoint information
-	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases)
+	groupResolver := config.NewGroupResolver(p.cfg.Groups, p.cfg.Models)
 	resolved := groupResolver.ResolveGroup(config.GroupPowerful)
 	var endpoint string
 	var client provider.Client
@@ -40,8 +40,28 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		client = p.resolveEndpointClient(endpoint, resolved.Format)
 	}
 
-	// Check if provider supports caching
-	cachingAvailable := client != nil && client.IsCachingAvailable()
+	// Check if keepalive should be enabled, considering both:
+	// 1. Per-model auto-detection (OpenAI/DeepSeek have auto caching)
+	// 2. Client-reported caching availability (Anthropic/Gemini)
+	var cachingOverride *bool
+	if resolved != nil {
+		modelKAEnabled, modelKAInterval := config.ResolveModelKeepalive(resolved)
+		if modelKAEnabled {
+			// Model config says keepalive is appropriate — override client check
+			t := true
+			cachingOverride = &t
+			if modelKAInterval > 0 {
+				acfg.Keepalive.Interval = modelKAInterval.String()
+			}
+		}
+	}
+
+	cachingAvailable := true
+	if cachingOverride != nil {
+		cachingAvailable = *cachingOverride
+	} else if client != nil {
+		cachingAvailable = client.IsCachingAvailable()
+	}
 	kaEnabled := acfg.Keepalive.Enabled && cachingAvailable
 
 	if !kaEnabled && !acfg.Background.Enabled && !hasMemoryFormation(acfg.MemoryFormation) && !acfg.InjectAgentWarnings {
@@ -107,6 +127,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	runner := periodic.New(periodic.RunnerConfig{
 		AgentID:            acfg.ID,
 		Client:             client,
+		CachingOverride:    cachingOverride,
 		Keepalive:          kaCfg,
 		Background:         acfg.Background,
 		MemoryFormation:    acfg.MemoryFormation,
