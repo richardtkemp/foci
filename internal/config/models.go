@@ -17,6 +17,7 @@ type ResolvedModel struct {
 	Thinking        string // "adaptive", "off", or ""
 	Effort          string // "low", "medium", "high", or ""
 	Speed           string // "fast" or ""
+	Context         int    // context window size in tokens (0 = unknown)
 	EnableKeepalive *bool  // nil=auto-detect, true/false=explicit
 	PromptCacheTTL  string // Go duration, empty=auto-detect
 }
@@ -90,6 +91,7 @@ func ResolveModel(input string, endpoint string, models map[string]ModelConfig) 
 		rm.Thinking = mc.Thinking
 		rm.Effort = mc.Effort
 		rm.Speed = mc.Speed
+		rm.Context = int(mc.Context)
 		rm.EnableKeepalive = mc.EnableKeepalive
 		rm.PromptCacheTTL = mc.PromptCacheTTL
 	}
