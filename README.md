@@ -50,7 +50,7 @@ Fewer moving parts means fewer surprises. Secret management follows the same pri
 
 **Tool result guard** — Large tool outputs are truncated *before* entering context, with full results saved to disk. Cache stays intact, context window stays clean.
 
-**Tool piping** — Tools are exposed as shell functions, composable with Unix pipes. `foci_web_search "latest golang release" | foci_spawn "summarize" --model haiku | foci_send_message_to_user` — three tools, one shell call, no intermediate data in context. [→ docs](docs/TOOLS.md#tool-piping-exec-bridge)
+**Tool piping** — Tools are exposed as shell functions, composable with Unix pipes. `foci_web_search "latest golang release" | foci_spawn "summarize" --model haiku | foci_send_to_chat` — three tools, one shell call, no intermediate data in context. [→ docs](docs/TOOLS.md#tool-piping-exec-bridge)
 
 **Facet** — `/facet` forks your session to a second Telegram bot — same agent, same context, parallel thread. Both share the cached prefix, so the fork is cheap. [→ docs](docs/FACET.md)
 

@@ -25,7 +25,7 @@ func TestFormatToolCallCompact(t *testing.T) {
 		{"read", "read", `{"path":"/home/user/file.txt"}`, "/home/user/file.txt", "📖"},
 		{"tmux watch", "tmux", `{"operation":"watch","name":"cc-bash","threshold_seconds":30}`, "watch cc-bash", "🪟"},
 		{"todo add", "todo", `{"action":"add","text":"buy milk"}`, "add", "☑️"},
-		{"send_message_to_user", "send_message_to_user", `{"text":"hello world, how are you doing today?"}`, "hello world", "📨"},
+		{"send_to_chat", "send_to_chat", `{"text":"hello world, how are you doing today?"}`, "hello world", "📨"},
 		{"spawn", "spawn", `{"prompt":"summarize this document please"}`, "summarize this document", "🐣"},
 		{"memory_search", "memory_search", `{"query":"project setup"}`, "project setup", "🧠"},
 		{"unknown tool", "custom_tool", `{"foo":"bar value"}`, "bar value", "🔧"},

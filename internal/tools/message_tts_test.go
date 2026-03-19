@@ -29,7 +29,7 @@ func TestSendMessageToUserVoiceTTS(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -60,7 +60,7 @@ func TestSendMessageToUserVoiceTTSChatRouting(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("fake-audio")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
@@ -90,7 +90,7 @@ func TestSendMessageToUserVoiceTTSNoProvider(t *testing.T) {
 	// Verifies that requesting TTS synthesis when no TTS provider is configured returns a "tts not configured" error.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello world",
@@ -111,7 +111,7 @@ func TestSendMessageToUserVoiceTTSSynthesizeError(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{err: fmt.Errorf("API rate limit")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":    "hello",
@@ -132,7 +132,7 @@ func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	t.Parallel()
 	mock := &mockSender{}
 	tts := &mockTTS{data: []byte("should-not-be-used")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, tts)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",

@@ -42,7 +42,7 @@ http_request(
 
 Then send the image to the user:
 ```
-send_message_to_user(file_path: "/tmp/generated-image.png", text: "Here's your image")
+send_to_chat(file_path: "/tmp/generated-image.png", text: "Here's your image")
 ```
 
 ## Parameters
@@ -75,7 +75,7 @@ For Gemini models, add `image_config` to the request body:
 3. If the extracted value is a `data:image/png;base64,...` URI, it's decoded to binary automatically
 4. If it's a regular URL, the raw content is saved
 5. The decoded image is written to the `save_to` path
-6. Send via `send_message_to_user` with `file_path`
+6. Send via `send_to_chat` with `file_path`
 
 ## Notes
 

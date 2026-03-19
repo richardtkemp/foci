@@ -12,9 +12,9 @@ import (
 	"foci/internal/voice"
 )
 
-func NewSendMessageToUserTool(getSender func(sessionKey string) platform.Sender, tts voice.TTS) *Tool {
+func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts voice.TTS) *Tool {
 	return &Tool{
-		Name:        "send_message_to_user",
+		Name:        "send_to_chat",
 		ExecExport:  true,
 		Description: "Send a proactive message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use send_as=\"voice\" with text (no file_path) to synthesize speech and send as a voice note. Use for alerts, sharing files, or sending media.",
 		Parameters: json.RawMessage(`{

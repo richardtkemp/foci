@@ -73,7 +73,7 @@ These are applied when the session is forked and when restored after restart.
 
 ## Routing
 
-All messages from a facet session route through the correct bot — tool outputs, async notifications, spawn results, and `send_message_to_user` calls all go to the facet bot's chat, not the primary bot.
+All messages from a facet session route through the correct bot — tool outputs, async notifications, spawn results, and `send_to_chat` calls all go to the facet bot's chat, not the primary bot.
 
 ## Use Cases
 

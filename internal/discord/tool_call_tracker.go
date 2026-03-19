@@ -229,7 +229,7 @@ var toolEmoji = map[string]string{
 	"edit":                 "/\\ ",
 	"tmux":                 ":: ",
 	"todo":                 "-- ",
-	"send_message_to_user": ">> ",
+	"send_to_chat":         ">> ",
 	"memory_search":        "** ",
 	"spawn":                "++ ",
 	"scratchpad":           "// ",
@@ -322,7 +322,7 @@ func compactSummary(toolName string, params json.RawMessage) string {
 		return str("action")
 	case "remind":
 		return truncate(str("text"), 40)
-	case "send_message_to_user":
+	case "send_to_chat":
 		return truncate(str("text"), 40)
 	case "spawn":
 		return truncate(str("prompt"), 40)

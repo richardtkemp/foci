@@ -669,7 +669,7 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 	exportedTools := []string{
 		"http_request",
 		"memory_search",
-		"send_message_to_user",
+		"send_to_chat",
 		"spawn",
 		"summary",
 		"tmux",
@@ -723,7 +723,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 		"write",
 		"edit",
 		"summary",
-		"send_message_to_user",
+		"send_to_chat",
 		"send_to_session",
 		"spawn",
 		"tmux",
@@ -740,7 +740,7 @@ func TestAllToolsExportedOrSkipped(t *testing.T) {
 	exportedTools := map[string]bool{
 		"http_request":  true,
 		"memory_search": true,
-		"send_message_to_user": true,
+		"send_to_chat": true,
 		"spawn":         true,
 		"summary":       true,
 		"tmux":          true,
@@ -850,7 +850,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 			validFlags: []string{"--method", "--body", "--header", "--save-to", "--include-headers"},
 		},
 		{
-			name:       "send_message_to_user",
+			name:       "send_to_chat",
 			params:     json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
 			validFlags: []string{"--file", "--send-as"},
 		},
@@ -941,7 +941,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 
 func TestExecBridgePipeFunctions(t *testing.T) {
 	// Verifies that piping between generated shell functions works end-to-end:
-	// foci_todo get 1 | foci_send_message_to_user
+	// foci_todo get 1 | foci_send_to_chat
 	// The left side outputs todo text via foci-call, the right side reads stdin
 	// via $(cat) and sends it via foci-call. This is the exact scenario that
 	// was reported broken in production.
@@ -978,7 +978,7 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 		},
 	})
 	r.Register(&Tool{
-		Name:       "send_message_to_user",
+		Name:       "send_to_chat",
 		ExecExport: true,
 		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
@@ -1002,7 +1002,7 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	// Run the pipe through real bash with the same shell options as production
 	// (execPreamble sets pipefail, nounset, failglob).
 	script := fmt.Sprintf(
-		"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo get 1 | foci_send_message_to_user",
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_todo get 1 | foci_send_to_chat",
 		bridge.FuncsPath(),
 	)
 	cmd := osexec.Command("bash", "-c", script)
