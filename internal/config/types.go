@@ -123,11 +123,37 @@ func (c *ContextWindow) parse(s string) error {
 	return nil
 }
 
+// ThinkingMode controls whether model thinking/reasoning is enabled.
+type ThinkingMode string
+
+// UnmarshalTOML accepts both string ("adaptive"/"off") and bool (true→"adaptive", false→"off").
+func (t *ThinkingMode) UnmarshalTOML(v any) error {
+	switch val := v.(type) {
+	case string:
+		switch val {
+		case "adaptive", "off", "":
+			*t = ThinkingMode(val)
+			return nil
+		default:
+			return fmt.Errorf("invalid thinking value %q (must be adaptive, off)", val)
+		}
+	case bool:
+		if val {
+			*t = "adaptive"
+		} else {
+			*t = "off"
+		}
+		return nil
+	default:
+		return fmt.Errorf("thinking must be a string (adaptive/off) or bool")
+	}
+}
+
 // ModelConfig defines a named model with its settings.
 // Used in [models.*] TOML sections.
 type ModelConfig struct {
 	Model           string        `toml:"model"`             // "developer/model_id" (required)
-	Thinking        string        `toml:"thinking"`          // "adaptive", "off", or bool via UnmarshalTOML
+	Thinking        ThinkingMode  `toml:"thinking"`          // "adaptive", "off", or bool via UnmarshalTOML
 	Effort          string        `toml:"effort"`            // "low", "medium", "high"
 	Speed           string        `toml:"speed"`             // "fast" or ""
 	Context         ContextWindow `toml:"context"`           // context window size in tokens (e.g. 262000 or "262k")

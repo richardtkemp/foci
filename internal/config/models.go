@@ -88,7 +88,7 @@ func ResolveModel(input string, endpoint string, models map[string]ModelConfig) 
 
 	// Carry settings from ModelConfig if resolved via a named entry
 	if mc != nil {
-		rm.Thinking = mc.Thinking
+		rm.Thinking = string(mc.Thinking)
 		rm.Effort = mc.Effort
 		rm.Speed = mc.Speed
 		rm.Context = int(mc.Context)
