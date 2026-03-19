@@ -231,7 +231,11 @@ func deliverInjectedTurn(
 		log.Errorf(trigger, "error: %v", err)
 		return
 	}
-	if resp == "" || conn == nil {
+	if resp == "" {
+		return
+	}
+	if conn == nil {
+		log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
 		return
 	}
 	if err := conn.SendToSession(sessionKey, resp); err != nil {

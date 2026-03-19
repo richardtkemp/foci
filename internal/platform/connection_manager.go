@@ -96,6 +96,7 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 			}
 		}
 	}
+	log.Warnf("platform", "ambiguous routing for session %s agent %s: no platform claim, falling back to first primary", sessionKey, agentID)
 	return a.Primary(agentID)
 }
 

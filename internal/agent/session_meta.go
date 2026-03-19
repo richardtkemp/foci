@@ -288,6 +288,39 @@ func (a *Agent) ClearSessionDisplayOverrides(sessionKey string) {
 	a.SetSessionDisplayWidth(sessionKey, "")
 }
 
+// SessionOverrides returns a map of prefix→value for all non-empty session overrides.
+func (a *Agent) SessionOverrides(sessionKey string) map[string]string {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	defer a.metaMu.Unlock()
+
+	overrides := make(map[string]string)
+	for _, s := range allSessionStringSettings {
+		if v := s.getter(sm); v != "" {
+			overrides[s.prefix] = v
+		}
+	}
+	if sm.noCompact {
+		overrides["no_compact"] = "true"
+	}
+	return overrides
+}
+
+// ClearAllSessionOverrides removes all per-session overrides (string settings + no_compact).
+func (a *Agent) ClearAllSessionOverrides(sessionKey string) {
+	for _, s := range allSessionStringSettings {
+		a.setStringSetting(sessionKey, "", s)
+	}
+	a.SetSessionNoCompact(sessionKey, false)
+
+	// Clear model client overrides
+	a.setMetaLocked(sessionKey, func(sm *sessionMeta) {
+		sm.client = nil
+		sm.usageClient = nil
+		sm.usageClientSet = false
+	})
+}
+
 // RestoreSessionOverrides loads per-session effort/thinking/model/no_compact from session metadata.
 func (a *Agent) RestoreSessionOverrides(sessionKey string) {
 	if a.SessionIndex == nil {

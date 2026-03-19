@@ -103,12 +103,6 @@ func (m *BotManager) BotForSession(sessionKey string) *Bot {
 		}
 	}
 
-	// Return primary bot for this agent.
-	agentID := extractAgentID(sessionKey)
-	if agentID != "" {
-		return m.primary[agentID]
-	}
-
 	return nil
 }
 
