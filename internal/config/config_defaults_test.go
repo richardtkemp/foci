@@ -282,11 +282,11 @@ func TestApplyDefaultsReflect(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[llm]
-model = "anthropic/claude-opus-4-6"
-max_output_tokens = 16384
+[models]
+powerful = "anthropic/claude-opus-4-6"
 
 [defaults]
+max_output_tokens = 16384
 max_tool_loops = 50
 nudge_default_braindead_threshold = 20
 nudge_default_braindead_prompt = "watch it"
@@ -304,7 +304,6 @@ id = "bare"
 
 [[agents]]
 id = "override"
-model = "anthropic/claude-haiku-4-5"
 
 [agents.anthropic]
 effort = "low"
@@ -316,9 +315,6 @@ effort = "low"
 	}
 
 	bare := cfg.Agents[0]
-	if bare.Model != "anthropic/claude-opus-4-6" {
-		t.Errorf("bare Model = %q", bare.Model)
-	}
 	if bare.MaxToolLoops != 50 {
 		t.Errorf("bare MaxToolLoops = %d", bare.MaxToolLoops)
 	}
@@ -361,9 +357,6 @@ effort = "low"
 
 	// Override agent keeps its own values
 	override := cfg.Agents[1]
-	if override.Model != "anthropic/claude-haiku-4-5" {
-		t.Errorf("override Model = %q, want anthropic/claude-haiku-4-5", override.Model)
-	}
 	if override.Anthropic.Effort != "low" {
 		t.Errorf("override Anthropic.Effort = %q, want low", override.Anthropic.Effort)
 	}

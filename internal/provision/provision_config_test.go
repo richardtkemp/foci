@@ -11,7 +11,6 @@ func TestGenerateAgentBlock(t *testing.T) {
 	// Verifies agent block TOML generation with basic spec.
 	spec := AgentSpec{
 		ID:      "greek-tutor",
-		Model:   "claude-sonnet-4-6",
 		HomeDir: "/home/foci",
 	}
 
@@ -20,7 +19,6 @@ func TestGenerateAgentBlock(t *testing.T) {
 	checks := []string{
 		"[[agents]]",
 		`id = "greek-tutor"`,
-		`model = "claude-sonnet-4-6"`,
 		`workspace = "/home/foci/greek-tutor"`,
 		`"character/SOUL.md"`,
 	}
@@ -40,7 +38,6 @@ func TestGenerateAgentBlockCustomSystemFiles(t *testing.T) {
 	// Verifies system_files array in agent block.
 	spec := AgentSpec{
 		ID:          "scout",
-		Model:       "claude-haiku-4-5-20251001",
 		HomeDir:     "/home/foci",
 		SystemFiles: []string{"character/SOUL.md", "character/CRAFT.md"},
 	}

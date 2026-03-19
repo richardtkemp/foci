@@ -190,11 +190,8 @@ func FieldsInSection(section string) []ConfigField {
 }
 
 var configFields = []ConfigField{
-	// llm — global LLM settings inherited by agents
-	{"llm", "model", FieldString, "default model for all agents"},
-	{"llm", "max_output_tokens", FieldInt, "max tokens in model response"},
-
 	// defaults — global defaults inherited by agents
+	{"defaults", "max_output_tokens", FieldInt, "max tokens in model response"},
 	{"defaults", "max_tool_loops", FieldInt, "max tool iterations per turn"},
 	{"defaults", "duplicate_messages", FieldBool, "send user text twice per API call"},
 	{"defaults", "inject_agent_warnings", FieldBool, "inject warnings into agent session"},
@@ -221,7 +218,6 @@ var configFields = []ConfigField{
 	{"defaults", "facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
 
 	// agent — per-agent fields (written to [[agents]] block)
-	{"agent", "model", FieldString, "model for this agent"},
 	{"agent", "max_tool_loops", FieldInt, "max tool iterations per turn"},
 	{"agent", "max_output_tokens", FieldInt, "max tokens in model response"},
 	{"agent", "anthropic.thinking", FieldString, "Anthropic thinking mode: adaptive or off"},

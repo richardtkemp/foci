@@ -435,7 +435,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 		AgentID:         acfg.ID,
 		GroupResolver:   groupResolver,
 		FallbackFunc:    fallbackFn,
-		FallbackModel:   acfg.Model,
+		FallbackModel:   groupResolver.PowerfulModel(),
 		FallbackFormat:  defaultFormat,
 		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
 		MaxToolLoops:    acfg.MaxToolLoops,

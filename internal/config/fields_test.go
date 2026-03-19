@@ -31,16 +31,16 @@ func TestLookupField(t *testing.T) {
 	// and returns false for unknown paths.
 
 	// Known field
-	f, ok := LookupField("llm.model")
+	f, ok := LookupField("defaults.max_output_tokens")
 	if !ok {
-		t.Fatal("LookupField(llm.model) returned false")
+		t.Fatal("LookupField(defaults.max_output_tokens) returned false")
 	}
-	if f.Key != "model" || f.Section != "llm" {
+	if f.Key != "max_output_tokens" || f.Section != "defaults" {
 		t.Errorf("got section=%q key=%q", f.Section, f.Key)
 	}
 
 	// Case insensitive
-	f2, ok := LookupField("LLM.MODEL")
+	f2, ok := LookupField("DEFAULTS.MAX_OUTPUT_TOKENS")
 	if !ok {
 		t.Fatal("LookupField case-insensitive returned false")
 	}
@@ -73,7 +73,7 @@ func TestFieldSections(t *testing.T) {
 	}
 
 	// Should include well-known sections
-	for _, want := range []string{"llm", "defaults", "agent", "sessions", "tools", "logging"} {
+	for _, want := range []string{"defaults", "agent", "sessions", "tools", "logging"} {
 		if !seen[want] {
 			t.Errorf("missing expected section %q", want)
 		}
@@ -166,7 +166,7 @@ func TestValidateValueChoices(t *testing.T) {
 
 func TestValidateValueNoConstraint(t *testing.T) {
 	// Proves fields without constraints accept any value.
-	f, ok := LookupField("llm.model")
+	f, ok := LookupField("usage_warnings.name")
 	if !ok {
 		t.Fatal("field not found")
 	}
@@ -189,7 +189,7 @@ func TestConstraintHint(t *testing.T) {
 		{"http.port", "1–65535"},
 		{"sessions.compaction_max_tokens", ">= 0"},
 		{"logging.level", "DEBUG, INFO, WARN, ERROR"},
-		{"llm.model", ""},
+		{"usage_warnings.name", ""},
 	}
 	for _, tt := range tests {
 		f, ok := LookupField(tt.field)
@@ -208,7 +208,6 @@ func TestFieldsMatchStructTags(t *testing.T) {
 
 	// Map section names to the struct types they represent.
 	sectionStructs := map[string]reflect.Type{
-		"llm":              reflect.TypeOf(LLMConfig{}),
 		"defaults":         reflect.TypeOf(DefaultsConfig{}),
 		"agent":            reflect.TypeOf(AgentConfig{}),
 		"anthropic":        reflect.TypeOf(AnthropicConfig{}),

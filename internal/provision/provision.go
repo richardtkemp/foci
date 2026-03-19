@@ -32,7 +32,6 @@ var DefaultCharacterFileNames = []string{
 // AgentSpec describes the inputs needed to provision a new agent workspace.
 type AgentSpec struct {
 	ID          string // slug: "greek-tutor"
-	Model       string // developer/model_id: "anthropic/claude-sonnet-4-6"
 	DisplayName string // "Greek Tutor" (optional)
 	HomeDir     string // workspace parent: /home/foci
 	DefaultsDir string // shared/ root (in repo or on disk)

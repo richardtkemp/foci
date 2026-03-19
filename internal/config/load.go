@@ -204,11 +204,10 @@ func applyStructToAgent(agent *AgentConfig, source any, defined map[string]bool)
 	}
 }
 
-// applyDefaultsToAgent copies fields from defaults and LLM config to agent
+// applyDefaultsToAgent copies fields from defaults config to agent
 // where the agent field is zero-value and was not explicitly set in the TOML file.
 // Fields are matched by TOML tag name between the source and AgentConfig.
 func applyDefaultsToAgent(agent *AgentConfig, cfg *Config, defined map[string]bool) {
-	applyStructToAgent(agent, &cfg.LLM, defined)
 	applyStructToAgent(agent, &cfg.Defaults, defined)
 }
 
@@ -275,8 +274,7 @@ func Load(path string) (*Config, error) {
 	// Populate [defaults] section with hardcoded fallbacks.
 	// All defaults must be set BEFORE applyDefaultsToAgent so the reflection-based
 	// copier propagates them to agents automatically — no manual fallback needed.
-	setStringDefault(&cfg.LLM.Model, "anthropic/claude-haiku-4-5-20251001")
-	setIntDefault(&cfg.LLM.MaxOutputTokens, 16384)
+	setIntDefault(&cfg.Defaults.MaxOutputTokens, 16384)
 	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
 	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultBraindeadThreshold, 10, md.IsDefined("defaults", "nudge_default_braindead_threshold"))
 	setIntDefaultDefined(&cfg.Defaults.NudgeCooldown, 5, md.IsDefined("defaults", "nudge_cooldown"))
@@ -365,12 +363,15 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Endpoint defaults — only create built-in defaults for endpoints that
-	// agents actually resolve to. This avoids spurious "missing secret" warnings
-	// for endpoints the user doesn't use (e.g. openai.api_key when no agent
+	// model groups resolve to. This avoids spurious "missing secret" warnings
+	// for endpoints the user doesn't use (e.g. openai.api_key when no group
 	// references OpenAI).
 	usedEndpoints := make(map[string]bool)
-	for _, agent := range cfg.Agents {
-		resolved, err := ResolveModel(agent.Model, agent.Endpoint, cfg.Models.Aliases)
+	for _, groupModel := range []string{cfg.Models.Powerful, cfg.Models.Fast, cfg.Models.Cheap} {
+		if groupModel == "" {
+			continue
+		}
+		resolved, err := ResolveModel(groupModel, "", cfg.Models.Aliases)
 		if err == nil {
 			usedEndpoints[resolved.Endpoint] = true
 		}

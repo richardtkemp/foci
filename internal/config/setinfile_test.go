@@ -329,8 +329,8 @@ func TestSetInFile_RoundTrip(t *testing.T) {
 	// confirming that the file output is valid TOML with the expected field value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	content := `[llm]
-model = "anthropic/claude-haiku-4-5-20251001"
+	content := `[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [sessions]
 dir = "` + filepath.Join(dir, "sessions") + `"
@@ -345,7 +345,7 @@ port = 8080
 	os.WriteFile(path, []byte(content), 0o644)
 	os.MkdirAll(filepath.Join(dir, "sessions"), 0o755)
 
-	_, err := SetInFile(path, SetTarget{Section: "llm", Key: "model"}, `"anthropic/claude-sonnet-4-5-20250929"`)
+	_, err := SetInFile(path, SetTarget{Section: "models", Key: "powerful"}, `"anthropic/claude-sonnet-4-5-20250929"`)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -354,7 +354,7 @@ port = 8080
 	if err != nil {
 		t.Fatalf("Load after set: %v", err)
 	}
-	if cfg.LLM.Model != "anthropic/claude-sonnet-4-5-20250929" {
-		t.Errorf("model = %q after round-trip", cfg.LLM.Model)
+	if cfg.Models.Powerful != "anthropic/claude-sonnet-4-5-20250929" {
+		t.Errorf("models.powerful = %q after round-trip", cfg.Models.Powerful)
 	}
 }

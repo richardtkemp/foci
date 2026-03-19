@@ -23,7 +23,6 @@ func TestProvisionDefaults(t *testing.T) {
 	homeDir := filepath.Join(tmpDir, "home")
 	spec := AgentSpec{
 		ID:          "test-agent",
-		Model:       "claude-sonnet-4-6",
 		DisplayName: "Test Agent",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,
@@ -72,7 +71,6 @@ func TestProvisionOpenclaw(t *testing.T) {
 	homeDir := filepath.Join(tmpDir, "home")
 	spec := AgentSpec{
 		ID:          "oc-agent",
-		Model:       "claude-sonnet-4-6",
 		DisplayName: "OC Agent",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,
@@ -105,7 +103,6 @@ func TestProvisionBlank(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "blank-agent",
-		Model:       "claude-haiku-4-5-20251001",
 		HomeDir:     homeDir,
 		DefaultsDir: filepath.Join(tmpDir, "nonexistent"),
 		CharMode:    "blank",
@@ -142,7 +139,6 @@ func TestProvisionCopy(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "copy-agent",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: filepath.Join(tmpDir, "defaults"),
 		CharMode:    "copy",
@@ -205,7 +201,6 @@ func TestProvisionErrorCreatingWorkspace(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "agent-id",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: filepath.Join(tmpDir, "defaults"),
 		CharMode:    "blank",
@@ -227,7 +222,6 @@ func TestProvisionDefaultsCopyError(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "err-agent",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,
 		CharMode:    "defaults",
@@ -251,7 +245,6 @@ func TestProvisionOpenclawCopyError(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "oc-err",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,
 		CharMode:    "openclaw",
@@ -273,7 +266,6 @@ func TestProvisionCopySourceMissing(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "copy-err",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: filepath.Join(tmpDir, "defaults"),
 		CharMode:    "copy",
@@ -303,7 +295,6 @@ func TestProvisionBlankWriteError(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "blank-err",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: filepath.Join(tmpDir, "defaults"),
 		CharMode:    "blank",
@@ -324,7 +315,6 @@ func TestProvisionWithoutCrontabTemplate(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "test-agent",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,
 		CharMode:    "blank",
@@ -349,7 +339,6 @@ func TestProvisionInvalidCharMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	spec := AgentSpec{
 		ID:          "bad-agent",
-		Model:       "claude-sonnet-4-6",
 		HomeDir:     tmpDir,
 		DefaultsDir: filepath.Join(tmpDir, "defaults"),
 		CharMode:    "invalid",

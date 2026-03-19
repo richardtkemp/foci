@@ -76,29 +76,12 @@ func validate(cfg *Config) error {
 		}
 	}
 
-	// Validate agent model format (must use slash syntax, not colon)
-	for _, a := range cfg.Agents {
-		if a.Model == "" {
-			continue
-		}
-		// Check for legacy colon format
-		if strings.Contains(a.Model, ":") {
-			return fmt.Errorf(`agent %q: invalid model format %q
-  The model format has changed from "endpoint:model" to "developer/model_id"
-
-  Update your config:
-  - Old: model = %q
-  - New: model = %q
-
-  Or use an alias:
-  - model = "haiku"  (expands to "anthropic/claude-haiku-4-5-20251001")`,
-				a.ID, a.Model, a.Model, strings.ReplaceAll(a.Model, ":", "/"))
-		}
-		// Validate slash format (will be checked by ResolveModel at load time)
-		if !strings.Contains(a.Model, "/") {
-			// Could be an alias - this is checked during Load()
-			continue
-		}
+	// Validate models.powerful is set and resolves successfully
+	if cfg.Models.Powerful == "" {
+		return fmt.Errorf("[models] powerful is required — set it in foci.toml")
+	}
+	if _, err := ResolveModel(cfg.Models.Powerful, "", cfg.Models.Aliases); err != nil {
+		return fmt.Errorf("[models] powerful = %q: %w", cfg.Models.Powerful, err)
 	}
 
 	// Validate endpoint configs

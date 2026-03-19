@@ -68,7 +68,7 @@ func TestConventionTelegramBot(t *testing.T) {
 	// a "telegram.<bot_name>" convention secret reference.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot"}}},
+			{ID: "scout", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot"}}},
 		},
 	}
 
@@ -81,7 +81,7 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	// not produced; only the explicit override key is reported.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot", BotSecret: "custom.token"}}},
+			{ID: "scout", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot", BotSecret: "custom.token"}}},
 		},
 	}
 
@@ -95,7 +95,7 @@ func TestConventionFacetBots(t *testing.T) {
 	// produce "telegram.<name>" convention secret references.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{FacetBots: []string{"extra1"}}}},
+			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{FacetBots: []string{"extra1"}}}},
 		},
 		Telegram: TelegramConfig{
 			FacetBots: []string{"shared1", "shared2"},
@@ -109,13 +109,16 @@ func TestConventionFacetBots(t *testing.T) {
 }
 
 func TestConventionEndpointAPIKey(t *testing.T) {
-	// Proves that an endpoint used by an agent with no explicit api_key generates
-	// a "<endpoint>.api_key" convention ref, while anthropic endpoints are
-	// excluded from this convention.
+	// Proves that a model group resolving to a non-anthropic endpoint with no
+	// explicit api_key generates a "<endpoint>.api_key" convention ref, while
+	// anthropic endpoints are excluded from this convention.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929"},
-			{ID: "a2", Model: "deepseek/deepseek-chat", Endpoint: "openrouter"},
+			{ID: "a1"},
+		},
+		Models: ModelsConfig{
+			Powerful: "anthropic/claude-sonnet-4-5-20250929",
+			Cheap:    "deepseek/deepseek-chat", // resolves to openrouter endpoint
 		},
 		Endpoints: map[string]EndpointConfig{
 			"openrouter": {Format: "openai"},
@@ -132,7 +135,10 @@ func TestConventionEndpointExplicitAPIKey(t *testing.T) {
 	// reported and no convention ref is generated for the endpoint name.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Model: "deepseek/deepseek-chat", Endpoint: "openrouter"},
+			{ID: "a1"},
+		},
+		Models: ModelsConfig{
+			Powerful: "openrouter/some-model",
 		},
 		Endpoints: map[string]EndpointConfig{
 			"openrouter": {Format: "openai", APIKey: "or.key"},
@@ -151,7 +157,7 @@ func TestConventionBraveSearch(t *testing.T) {
 	t.Run("explicit brave", func(t *testing.T) {
 		cfg := Config{
 			Agents: []AgentConfig{
-				{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", SearchProvider: "brave"},
+				{ID: "a1", SearchProvider: "brave"},
 			},
 		}
 		assertHasKey(t, RequiredSecrets(&cfg), "brave.api_key")
@@ -160,7 +166,7 @@ func TestConventionBraveSearch(t *testing.T) {
 	t.Run("default brave via tools", func(t *testing.T) {
 		cfg := Config{
 			Agents: []AgentConfig{
-				{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929"},
+				{ID: "a1"},
 			},
 			Tools: ToolsConfig{SearchProvider: "brave"},
 		}
@@ -170,7 +176,7 @@ func TestConventionBraveSearch(t *testing.T) {
 	t.Run("anthropic search — no brave key needed", func(t *testing.T) {
 		cfg := Config{
 			Agents: []AgentConfig{
-				{ID: "a1", Model: "anthropic/claude-sonnet-4-5-20250929", SearchProvider: "anthropic"},
+				{ID: "a1", SearchProvider: "anthropic"},
 			},
 		}
 		assertMissingKey(t, RequiredSecrets(&cfg), "brave.api_key")
@@ -205,13 +211,16 @@ func TestConventionSTTHostname(t *testing.T) {
 }
 
 func TestDeduplication(t *testing.T) {
-	// Proves that the same secret key referenced by multiple agents only appears
-	// once in the required secrets list, even if both agents need the same
-	// endpoint credential.
+	// Proves that the same secret key referenced by multiple sources only
+	// appears once in the required secrets list.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Model: "deepseek/deepseek-chat", Endpoint: "openrouter"},
-			{ID: "a2", Model: "meta-llama/llama-3-70b", Endpoint: "openrouter"},
+			{ID: "a1"},
+			{ID: "a2"},
+		},
+		Models: ModelsConfig{
+			Powerful: "openrouter/some-model",
+			Cheap:    "openrouter/another-model",
 		},
 		Endpoints: map[string]EndpointConfig{
 			"openrouter": {Format: "openai"},
@@ -278,7 +287,7 @@ func TestUnusedEndpointSecretNotRequired(t *testing.T) {
 	// gemini, or openrouter keys, while TTS/STT secrets still appear.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "main", Model: "anthropic/claude-sonnet-4-5-20250929"},
+			{ID: "main"},
 		},
 		TTS: []TTSConfig{
 			{ID: "groq-tts", Format: "openai", Endpoint: "https://api.groq.com/openai/v1/audio/speech"},

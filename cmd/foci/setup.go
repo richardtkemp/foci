@@ -317,7 +317,6 @@ func runSetupNonInteractive(f setupFlags) error {
 	defaultsDir := filepath.Join(f.homeDir, "shared")
 	spec := provision.AgentSpec{
 		ID:          f.agentID,
-		Model:       model,
 		DisplayName: displayName,
 		HomeDir:     f.homeDir,
 		DefaultsDir: defaultsDir,
@@ -492,7 +491,6 @@ func runSetupInteractive(f setupFlags) error {
 			defaultsDir := filepath.Join(f.homeDir, "shared")
 			spec := provision.AgentSpec{
 				ID:          state.agentID,
-				Model:       state.model,
 				DisplayName: state.displayName,
 				HomeDir:     f.homeDir,
 				DefaultsDir: defaultsDir,

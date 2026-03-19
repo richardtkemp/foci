@@ -16,7 +16,7 @@ import (
 
 // testGroupResolver creates a GroupResolver that resolves all groups to the given model.
 func testGroupResolver(model string) *config.GroupResolver {
-	return config.NewGroupResolver(config.ModelsConfig{}, nil, model)
+	return config.NewGroupResolver(config.ModelsConfig{Powerful: model}, nil)
 }
 
 func TestSummaryTool_MissingParams(t *testing.T) {
@@ -155,7 +155,7 @@ func TestSummaryTool_Success(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	aliases := map[string]string{"haiku": "anthropic/claude-haiku-4-5"}
-	gr := config.NewGroupResolver(config.ModelsConfig{}, aliases, "anthropic/claude-haiku-4-5")
+	gr := config.NewGroupResolver(config.ModelsConfig{Powerful: "anthropic/claude-haiku-4-5"}, aliases)
 	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -220,8 +220,8 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 		"haiku": "anthropic/claude-haiku-4-5-custom",
 	}
 	client := newTestAnthropicClient(server.URL, "test-key")
-	// Use haiku alias as session model — GroupResolver resolves it via aliases
-	gr := config.NewGroupResolver(config.ModelsConfig{}, aliases, "haiku")
+	// Use haiku alias as powerful model — GroupResolver resolves it via aliases
+	gr := config.NewGroupResolver(config.ModelsConfig{Powerful: "haiku"}, aliases)
 	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})

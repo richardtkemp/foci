@@ -72,7 +72,6 @@ func testConfig() (*Config, AgentConfig) {
 	}
 	agent := AgentConfig{
 		ID:        "test-agent",
-		Model:     "claude-haiku-4-5",
 		Workspace: "/home/user/workspace",
 
 		MaxToolLoops:    25,
@@ -216,7 +215,6 @@ func TestFormatConfigGrouped(t *testing.T) {
 	cfg, agent := testConfig()
 	cfg.Agents = []AgentConfig{agent, {
 		ID:        "second-agent",
-		Model:     "claude-sonnet-4-6",
 		Workspace: "/home/user/workspace2",
 
 		MaxToolLoops:    25,
@@ -249,8 +247,8 @@ func TestFormatConfigGrouped(t *testing.T) {
 	if !strings.Contains(tables[1], "Agent: test-agent") {
 		t.Errorf("second table should be test-agent:\n%s", tables[1])
 	}
-	if !strings.Contains(tables[1], "claude-haiku-4-5") {
-		t.Error("test-agent table missing model")
+	if !strings.Contains(tables[1], "/home/user/workspace") {
+		t.Error("test-agent table missing workspace")
 	}
 
 	// Other agents should NOT appear
@@ -267,39 +265,36 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// agent matches the default.
 	cfg, _ := testConfig()
 	// Set defaults as Load() would.
-	cfg.LLM = LLMConfig{
-		Model:           "claude-haiku-4-5",
-		MaxOutputTokens: 16384,
-	}
 	cfg.Defaults = DefaultsConfig{
-		MaxToolLoops: 25,
-	}
-	// Agent overrides model from the default.
-	agent := AgentConfig{
-		ID:        "test-agent",
-		Model:     "claude-sonnet-4-6",
-		Workspace: "/home/user/workspace",
-
 		MaxToolLoops:    25,
 		MaxOutputTokens: 16384,
 	}
+	cfg.Models.Powerful = "claude-haiku-4-5"
+	// Agent overrides max_output_tokens from the default.
+	agent := AgentConfig{
+		ID:        "test-agent",
+		Workspace: "/home/user/workspace",
+
+		MaxToolLoops:    25,
+		MaxOutputTokens: 32768,
+	}
 	cfg.Agents = []AgentConfig{agent}
 
-	// Simulate TOML metadata: model is explicitly set, some others are not (hardcoded default).
+	// Simulate TOML metadata: max_output_tokens is explicitly set, some others are not (hardcoded default).
 	cfg.DefinedKeys = map[string]bool{
-		"llm":                     true,
-		"llm.model":               true,
-		"llm.max_output_tokens":   true,
-		"defaults":                true,
-		"defaults.max_tool_loops": true,
-		"telegram":                true,
-		"telegram.allowed_users":  true,
-		"sessions":                true,
-		"sessions.dir":            true,
-		"logging":                 true,
-		"logging.level":           true,
-		"http":                    true,
-		"http.port":               true,
+		"defaults":                     true,
+		"defaults.max_output_tokens":   true,
+		"defaults.max_tool_loops":      true,
+		"models":                       true,
+		"models.powerful":              true,
+		"telegram":                     true,
+		"telegram.allowed_users":       true,
+		"sessions":                     true,
+		"sessions.dir":                 true,
+		"logging":                      true,
+		"logging.level":                true,
+		"http":                         true,
+		"http.port":                    true,
 	}
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -308,9 +303,9 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	}
 	global := tables[0]
 
-	// defaults.model is explicitly set but overridden by agent → "(overridden)"
-	if !strings.Contains(global, "claude-haiku-4-5 (overridden)") {
-		t.Errorf("expected model to show (overridden):\n%s", global)
+	// defaults.max_output_tokens is explicitly set but overridden by agent → "(overridden)"
+	if !strings.Contains(global, "16384 (overridden)") {
+		t.Errorf("expected max_output_tokens to show (overridden):\n%s", global)
 	}
 
 	// defaults.max_tool_loops is set and NOT overridden → no annotation

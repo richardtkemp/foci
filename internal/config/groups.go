@@ -62,32 +62,26 @@ type GroupResolver struct {
 }
 
 // NewGroupResolver creates a GroupResolver from config.
-// When models.Powerful is empty, it defaults to sessionModel so that all
-// groups resolve (no special single-model mode). Fast/Cheap default to
-// Powerful when not set.
-func NewGroupResolver(models ModelsConfig, aliases map[string]string, sessionModel string) *GroupResolver {
-	powerful := models.Powerful
-	if powerful == "" {
-		powerful = sessionModel
-	}
-
+// Powerful must be set in config (validated by Validate). Fast/Cheap default
+// to Powerful when not set.
+func NewGroupResolver(models ModelsConfig, aliases map[string]string) *GroupResolver {
 	gr := &GroupResolver{
 		aliases:       aliases,
 		callOverrides: models.Calls,
 		groups: map[string]string{
-			GroupPowerful: powerful,
+			GroupPowerful: models.Powerful,
 		},
 	}
 
 	if models.Fast != "" {
 		gr.groups[GroupFast] = models.Fast
 	} else {
-		gr.groups[GroupFast] = powerful
+		gr.groups[GroupFast] = models.Powerful
 	}
 	if models.Cheap != "" {
 		gr.groups[GroupCheap] = models.Cheap
 	} else {
-		gr.groups[GroupCheap] = powerful
+		gr.groups[GroupCheap] = models.Powerful
 	}
 
 	return gr

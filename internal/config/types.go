@@ -101,8 +101,6 @@ type AgentConfig struct {
 	ID        string `toml:"id"`
 	Name      string `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
 	Emoji     string `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	Model          string            `toml:"model"`           // "developer/model_id" format (e.g. "google/gemini-2.5-flash") or alias (e.g. "gemini-flash")
-	Endpoint       string            `toml:"endpoint"`        // optional: which endpoint config to use (auto-selected from developer if empty)
 	ModelFallbacks map[string]string `toml:"model_fallbacks"` // per-agent fallback overrides (model → fallback model); aliases supported
 	Workspace      string            `toml:"workspace"`
 
@@ -553,14 +551,8 @@ type CommandConfig struct {
 
 // DefaultsConfig provides global defaults for agent-specific fields.
 // Agents inherit these unless they override them explicitly.
-// LLMConfig holds LLM-specific settings that apply globally.
-// Per-agent overrides use the matching fields on AgentConfig.
-type LLMConfig struct {
-	Model           string `toml:"model"`            // default model: "developer/model_id" or alias (default: "anthropic/claude-haiku-4-5-20251001")
-	MaxOutputTokens int    `toml:"max_output_tokens"` // default max_output_tokens (default: 16384)
-}
-
 type DefaultsConfig struct {
+	MaxOutputTokens int `toml:"max_output_tokens"` // default max_output_tokens (default: 16384)
 	DuplicateMessages             bool   `toml:"duplicate_messages"`               // default duplicate_messages (default: false)
 	BatchPartialAssistantMessages bool   `toml:"batch_partial_assistant_messages"` // default batch_partial_assistant_messages (default: false)
 	BatchPartialJoiner            string `toml:"batch_partial_joiner"`             // default separator between batched partial messages (default: "")
@@ -712,7 +704,6 @@ type DebugConfig struct {
 
 type Config struct {
 	DataDir            string                    `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
-	LLM                LLMConfig                 `toml:"llm"`       // LLM-specific settings (model, max_output_tokens, summary model/endpoint)
 	Defaults           DefaultsConfig            `toml:"defaults"`  // global defaults for agent-specific fields
 	Models             ModelsConfig              `toml:"models"`    // model aliases and related config
 	Endpoints          map[string]EndpointConfig `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
