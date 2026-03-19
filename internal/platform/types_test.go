@@ -70,6 +70,7 @@ func (m *mockConnection) SendToSession(sk, text string) error       { return nil
 func (m *mockConnection) SendNotification(text string)            {}
 func (m *mockConnection) SendNotificationDirect(text string)      {}
 func (m *mockConnection) SendTyping()                              {}
+func (m *mockConnection) BuildTurnObservers(string) *TurnObservers { return nil }
 
 type mockHandler struct{}
 
