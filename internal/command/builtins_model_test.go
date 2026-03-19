@@ -10,12 +10,12 @@ import (
 )
 
 // modelCC returns a CommandContext with a real agent for model/effort/thinking tests.
-func modelCC(ag *agent.Agent, aliases map[string]string) CommandContext {
+func modelCC(ag *agent.Agent, models map[string]config.ModelConfig) CommandContext {
 	return CommandContext{
 		Agent:        ag,
 		AgentConfig:  config.AgentConfig{},
 		Config:       &config.Config{},
-		ModelAliases: aliases,
+		ModelConfigs: models,
 	}
 }
 
@@ -23,18 +23,18 @@ func modelCC(ag *agent.Agent, aliases map[string]string) CommandContext {
 // aliases whose resolved endpoint exists in the config, hiding models that would fail.
 func TestModelKeyboardOptionsFiltersUnconfiguredEndpoints(t *testing.T) {
 	ag := &agent.Agent{}
-	aliases := map[string]string{
-		"opus":     "anthropic/claude-opus-4-6",
-		"sonnet":   "anthropic/claude-sonnet-4-6",
-		"haiku":    "anthropic/claude-haiku-4-5-20251001",
-		"gemini-flash": "google/gemini-2.5-flash",
-		"deepseek":     "deepseek/deepseek-chat",
+	models := map[string]config.ModelConfig{
+		"opus":         {Model: "anthropic/claude-opus-4-6"},
+		"sonnet":       {Model: "anthropic/claude-sonnet-4-6"},
+		"haiku":        {Model: "anthropic/claude-haiku-4-5-20251001"},
+		"gemini-flash": {Model: "google/gemini-2.5-flash"},
+		"deepseek":     {Model: "deepseek/deepseek-chat"},
 	}
 	// Only anthropic endpoint is configured.
 	cc := CommandContext{
 		Agent:        ag,
 		AgentConfig:  config.AgentConfig{},
-		ModelAliases: aliases,
+		ModelConfigs: models,
 		Config: &config.Config{
 			Endpoints: map[string]config.EndpointConfig{
 				"anthropic": {Format: "anthropic", APIKey: "anthropic.api_key"},
@@ -66,14 +66,14 @@ func TestModelKeyboardOptionsFiltersUnconfiguredEndpoints(t *testing.T) {
 // configured, aliases for all of them appear.
 func TestModelKeyboardOptionsAllEndpoints(t *testing.T) {
 	ag := &agent.Agent{}
-	aliases := map[string]string{
-		"opus":  "anthropic/claude-opus-4-6",
-		"gemini-flash": "google/gemini-2.5-flash",
+	models := map[string]config.ModelConfig{
+		"opus":         {Model: "anthropic/claude-opus-4-6"},
+		"gemini-flash": {Model: "google/gemini-2.5-flash"},
 	}
 	cc := CommandContext{
 		Agent:        ag,
 		AgentConfig:  config.AgentConfig{},
-		ModelAliases: aliases,
+		ModelConfigs: models,
 		Config: &config.Config{
 			Endpoints: map[string]config.EndpointConfig{
 				"anthropic": {Format: "anthropic"},
@@ -96,7 +96,7 @@ func TestModelKeyboardOptionsNoAliases(t *testing.T) {
 		Agent:        ag,
 		AgentConfig:  config.AgentConfig{},
 		Config:       &config.Config{},
-		ModelAliases: nil,
+		ModelConfigs: nil,
 	}
 	cmd := ModelCommand()
 	opts := cmd.KeyboardOptions(context.Background(), cc)
@@ -109,12 +109,12 @@ func TestModelKeyboardOptionsNoAliases(t *testing.T) {
 func TestModelCommand(t *testing.T) {
 	ag := &agent.Agent{Model: "claude-haiku-4-5"}
 	sk := "test-session"
-	aliases := map[string]string{
-		"opus":   "anthropic/claude-opus-4-6",
-		"sonnet": "anthropic/claude-sonnet-4-6",
-		"haiku":  "anthropic/claude-haiku-4-5",
+	models := map[string]config.ModelConfig{
+		"opus":   {Model: "anthropic/claude-opus-4-6"},
+		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
+		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
 	}
-	cc := modelCC(ag, aliases)
+	cc := modelCC(ag, models)
 	cmd := ModelCommand()
 
 	// Show current
