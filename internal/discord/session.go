@@ -99,7 +99,10 @@ func (b *Bot) DefaultChatID() int64 {
 	if b.sessionIndex == nil || b.agentID == "" {
 		return 0
 	}
-	chatID, _ := b.sessionIndex.DefaultChatForAgent(b.agentID)
+	chatID, plat := b.sessionIndex.DefaultChatForAgent(b.agentID)
+	if plat != "" && plat != platformName {
+		return 0
+	}
 	return chatID
 }
 
