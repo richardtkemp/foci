@@ -387,7 +387,7 @@ System resource monitoring.
 | `memory_kill_percent` | int | `40` | Kill threshold as % of total RAM. Kills the largest non-foci process owned by the foci user. Requires memory pressure (PSI) to fire. |
 | `memory_pressure_threshold` | float | `10.0` | Minimum PSI memory avg10 value required before warn/kill actions fire. Prevents false alarms when RSS is high but free RAM is available. |
 | `goroutine_monitor_interval` | string | `"60s"` | Goroutine count check interval. Set to `"0"` to disable. Go duration format. |
-| `goroutine_monitor_threshold` | int | `0` (auto) | Warn when `runtime.NumGoroutine()` exceeds this value. `0` = auto: 35 × number of agents. |
+| `goroutine_monitor_threshold` | int | `0` (auto) | Warn when `runtime.NumGoroutine()` exceeds this value. `0` = auto: `30 + 25×agents + 5×telegram_bots`. |
 
 Both thresholds require memory pressure (PSI `avg10` from `/proc/pressure/memory` exceeding `memory_pressure_threshold`) before acting. This avoids false alarms when the system has ample free RAM despite high RSS. The guard reads `/proc` directly — no external commands.
 
