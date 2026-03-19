@@ -120,7 +120,7 @@ func TestNonPlatformSecretNeverDowngraded(t *testing.T) {
 				},
 			},
 		},
-		Models: config.ModelsConfig{
+		Groups: config.GroupsConfig{
 			Powerful: "openrouter/some-model",
 		},
 		Endpoints: map[string]config.EndpointConfig{
