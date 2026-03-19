@@ -132,6 +132,10 @@ Discord bot configuration. Fields `allowed_users`, `guild_id`, and `received_fil
 | `message_queue_size` | int | `64` | Inbound message queue buffer size. |
 | `display_width` | int | `60` | Character width for dividers in Discord messages. Overridable per-agent. |
 | `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. Overridable per-agent. |
+| `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"`, `"preview"`, `"full"`. Overridable per-agent. |
+| `show_thinking` | string | `"off"` | Thinking block display mode: `"off"`, `"compact"`, `"true"`. Overridable per-agent. |
+| `stream_output` | bool | `false` | Stream model output in real-time. Overridable per-agent. |
+| `stream_update_interval` | string | `"1200ms"` | Duration between message edits during streaming. Overridable per-agent. |
 
 #### Bot token resolution
 
@@ -154,6 +158,7 @@ HTTP API server.
 | `port` | int | `18791` | HTTP server port. |
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
 | `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
+| `ws_enabled` | bool | `false` | Enable `/voice` WebSocket endpoint. |
 
 Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `POST /webhook/{agent}/{hookid}`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
 
@@ -237,7 +242,7 @@ Memory system (full-text search over markdown files + conversation history).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `search_backends` | string[] | `["fts5"]` | Active search backends. Valid values: `"fts5"` (SQLite FTS5), `"bleve"` (blevesearch/bleve). Both can run simultaneously for A/B comparison. |
+| `search_backends` | string[] | `["bleve"]` | Active search backends. Valid values: `"fts5"` (SQLite FTS5), `"bleve"` (blevesearch/bleve). Both can run simultaneously for A/B comparison. |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format. |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. FTS5 only — bleve does not index conversations. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |
@@ -437,12 +442,13 @@ Ungrouped call sites (`keepalive`, `count-tokens`) always use the session model 
 Default aliases (used when `[models]` section is not configured):
 - `opus` → `anthropic/claude-opus-4-6`
 - `sonnet` → `anthropic/claude-sonnet-4-6`
-- `haiku` → `anthropic/claude-haiku-4-5`
-- `flash` → `gemini/gemini-2.5-flash`
-- `pro` → `gemini/gemini-2.5-pro`
+- `haiku` → `anthropic/claude-haiku-4-5-20251001`
+- `gemini-flash` → `google/gemini-2.5-flash`
+- `gemini-pro` → `google/gemini-2.5-pro`
 - `gpt4o` → `openai/gpt-4o`
 - `o3` → `openai/o3`
 - `o4mini` → `openai/o4-mini`
+- `deepseek` → `deepseek/deepseek-chat`
 
 Example — multi-model setup with aliases and a call site override:
 ```toml
@@ -699,7 +705,7 @@ thinking = "adaptive"
 
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
-| `model` | string | `"anthropic/claude-haiku-4-5"` | `[llm]` | Model in `developer/model_id` format. The developer prefix selects which API endpoint to use (e.g. `"gemini/gemini-2.5-flash"`, `"openrouter/claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `/` are auto-migrated with an inferred developer. |
+| `model` | string | `"anthropic/claude-haiku-4-5-20251001"` | `[llm]` | Model in `developer/model_id` format. The developer prefix selects which API endpoint to use (e.g. `"gemini/gemini-2.5-flash"`, `"openrouter/claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `/` are auto-migrated with an inferred developer. |
 | `max_output_tokens` | int | `16384` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `[agents.anthropic] effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults from `[anthropic] effort`. Only applied for Anthropic models. Overridable at runtime via `/effort`. |
@@ -800,7 +806,6 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `autocompact_before_mana_refresh_factor` | float | `0.5` | Secondary compaction threshold for mana-refresh mode, as a fraction of the main `compaction_threshold`. E.g. with threshold 0.8 and factor 0.5, mana-refresh triggers at 40% context usage. Range: 0.0–1.0. |
 | `autocompact_before_mana_refresh_preserve` | int | unset | Explicit message count to preserve during mana-refresh compaction. Overrides the percentage-based default. `0` uses normal preservation count. |
 | `autocompact_before_mana_refresh_preserve_pct` | float | `0.5` | Fraction of messages to preserve during mana-refresh compaction (0.0–1.0). Default 0.5 preserves 50% of messages, summarising the older half. Only used when `autocompact_before_mana_refresh_preserve` is unset. |
-| `session_reset_prompt` | string | `""` | Path to session reset prompt file. `""` uses embedded default. |
 | `branch_orientation_facet_prompt` | string | `""` | Path to prompt file for user-attached facet branches. Supports template variables `{branch_key}`, `{parent_key}`, `{branch_type}`, `{direct_chat}`. `""` uses embedded default from `shared/prompts/branch-orientation-facet.md`. |
 | `branch_orientation_headless_prompt` | string | `""` | Path to prompt file for headless branches (cron, spawn, keepalive). Same template variables. `""` uses embedded default from `shared/prompts/branch-orientation-headless.md`. |
 
@@ -842,6 +847,7 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | `max_upload_file_size` | int | `52428800` | Max file size in bytes for multipart/form-data file uploads (default 50MB). Global: `[tools]`. |
 | `search_provider` | string | `"brave"` | Web search provider: `"brave"` (client-side, needs `brave_api_key`) or `"anthropic"` (server-side). Brave is recommended: Anthropic's server-side search returns encrypted content blobs that massively inflate token counts (observed: 256k tokens from just two searches) and bypass the tool result size guard entirely. Brave results are client-side, guardable, and far more token-efficient. Global: `[tools]` or `[defaults]`. |
 | `fetch_provider` | string | `"builtin"` | Web fetch provider. See [TOOLS.md](TOOLS.md) for provider details. Global: `[tools]` or `[defaults]`. |
+| `todo_format` | string | `"lines"` | Todo list rendering format: `"lines"` (one item per line) or `"table"` (tabular layout). Global: `[defaults]`. |
 
 ### Notifications & Logging
 
@@ -905,7 +911,7 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable background work timer. |
-| `interval` | string | `"5m"` | Time since last interaction before firing. |
+| `interval` | string | `"15m"` | Time since last interaction before firing. |
 | `prompt` | string | `""` | Prompt file path. `""` = embedded default, `"default"` = embedded, `"none"` = disabled, `/path` = custom file. |
 
 **Validation warnings:**

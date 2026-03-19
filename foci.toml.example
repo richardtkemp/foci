@@ -27,9 +27,6 @@ model = "claude-sonnet-4-20250514"
 # batch_partial_joiner = ""               # separator between batched partial messages
 # inject_agent_warnings = false           # inject warnings/errors into session
 # steer_mode = true                       # inject user messages between tool calls (default true)
-# show_tool_calls = "off"                 # off, preview, full
-# show_thinking = "off"                   # off, compact, true
-# display_width = 44                      # divider width in Telegram
 # injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
 # system_files = ["character/SOUL.md"]    # default system file list
 # max_result_chars = 15000               # max chars before writing to file
@@ -37,15 +34,22 @@ model = "claude-sonnet-4-20250514"
 # auto_summarise = true                  # auto-summarise oversized results
 # summary_context_turns = 5              # recent turns for auto-summary context
 # summary_context_chars = 6000           # max chars of context for auto-summary
-# search_provider = "anthropic"          # "anthropic" (default) or "brave"
+# search_provider = "brave"              # "brave" (default) or "anthropic"
 # fetch_provider = "builtin"            # "builtin" (default) or "anthropic"
+# todo_format = "lines"                 # "lines" (default) or "table"
+# stop_aliases = ["stop", "wait"]         # aliases for /stop command
+# enable_stop_aliases = true              # enable stop command aliases
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
 # ─── Model aliases ───────────────────────────────────────────────────
 # [models]
 # [models.aliases]
-# opus = "claude-opus-4-6"
-# sonnet = "claude-sonnet-4-5"
+# opus = "anthropic/claude-opus-4-6"
+# sonnet = "anthropic/claude-sonnet-4-6"
+# haiku = "anthropic/claude-haiku-4-5-20251001"
+# gemini-flash = "google/gemini-2.5-flash"
+# gemini-pro = "google/gemini-2.5-pro"
+# deepseek = "deepseek/deepseek-chat"
 
 # ─── Agent ────────────────────────────────────────────────────────────
 # Define one or more agents. Each gets its own sessions, memory, and bot.
@@ -256,8 +260,6 @@ thinking = "adaptive"                     # adaptive (default), off — Anthropi
 [telegram]
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # facet_bots = ["bot2", "bot3"]       # shared facet bot pool
-# stop_aliases = ["stop", "wait"]
-# enable_stop_aliases = true
 # facet_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
 # message_queue_size = 64
 # long_poll_timeout = "65s"
@@ -303,7 +305,7 @@ compaction_threshold = 0.8
 
 # ─── Memory ───────────────────────────────────────────────────────────
 # [memory]
-# search_backends = ["fts5"]              # active backends: "fts5", "bleve", or both
+# search_backends = ["bleve"]              # active backends: "fts5", "bleve", or both
 # reindex_debounce = "0s"
 # conversation_weight = 0.1
 # search_limit = 20
@@ -392,6 +394,7 @@ bind = "127.0.0.1"
 # ─── Cache ────────────────────────────────────────────────────────────
 # [cache]
 # strategy = "auto"                       # auto or explicit
+# ttl = "1h"                              # Anthropic prompt cache TTL: "5m" or "1h"
 
 # ─── Usage Warnings ──────────────────────────────────────────────────
 # [usage_warnings]
@@ -431,7 +434,7 @@ bind = "127.0.0.1"
 # max_upload_file_size = 52428800
 # summary_context_turns = 5
 # summary_context_chars = 6000
-# search_provider = "anthropic"              # "anthropic" (server-side, default) or "brave" (needs brave.api_key in secrets)
+# search_provider = "brave"                  # "brave" (client-side, default) or "anthropic" (server-side, high token cost)
 # fetch_provider = "builtin"                  # "builtin" (client-side, default) or "anthropic" (server-side)
 # web_search_max_uses = 0                    # max searches per API call (0 = unlimited, anthropic provider only)
 # web_search_allowed_domains = []            # domain whitelist (mutually exclusive with blocked)
@@ -451,7 +454,7 @@ bind = "127.0.0.1"
 # ─── Global Background ───────────────────────────────────────────────
 # [background]
 # enabled = false
-# interval = "5m"
+# interval = "15m"
 # prompt = ""
 
 # ─── Mana ────────────────────────────────────────────────────────────

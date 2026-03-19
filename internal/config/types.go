@@ -524,7 +524,7 @@ type ToolsConfig struct {
 	MaxSummaryInputChars    int      `toml:"max_summary_input_chars"`    // max chars of tool result embedded in summary prompt (default 100000)
 	MaxImagePixels          int      `toml:"max_image_pixels"`           // max pixels (w*h) before downscaling images (default 2073600)
 	SearchProvider          string   `toml:"search_provider"`            // "brave" (default) or "anthropic"
-	FetchProvider           string   `toml:"fetch_provider"`             // "anthropic" (default) or "builtin"
+	FetchProvider           string   `toml:"fetch_provider"`             // "builtin" (default) or "anthropic"
 	WebSearchMaxUses        int      `toml:"web_search_max_uses"`        // max searches per API call (0 = unlimited)
 	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"` // domain whitelist (mutually exclusive with blocked)
 	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"` // domain blacklist
@@ -584,7 +584,7 @@ type DefaultsConfig struct {
 	MaxImagePixels       int   `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
 
 	SearchProvider        string `toml:"search_provider"`         // default search provider: "brave" (default) or "anthropic"
-	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "anthropic" (default) or "builtin"
+	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "builtin" (default) or "anthropic"
 	TodoFormat            string `toml:"todo_format"`             // default todo list format: "lines" (default) or "table"
 	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
 
