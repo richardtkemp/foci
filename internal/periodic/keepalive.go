@@ -54,6 +54,7 @@ type Runner struct {
 	log                *log.ComponentLogger
 	agentID            string
 	client             provider.Client // for checking caching availability at runtime
+	cachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override
 	kaCfg              config.KeepaliveConfig
 	bgCfg              config.BackgroundConfig
 	mfCfg              config.MemoryFormationConfig
@@ -92,6 +93,7 @@ type Runner struct {
 type RunnerConfig struct {
 	AgentID            string
 	Client             provider.Client // for checking caching availability at runtime
+	CachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override (for OpenAI/DeepSeek)
 	Keepalive          config.KeepaliveConfig
 	Background         config.BackgroundConfig
 	MemoryFormation    config.MemoryFormationConfig
@@ -117,6 +119,7 @@ func New(cfg RunnerConfig) *Runner {
 		log:                log.NewComponentLogger("keepalive:" + cfg.AgentID),
 		agentID:            cfg.AgentID,
 		client:             cfg.Client,
+		cachingOverride:    cfg.CachingOverride,
 		kaCfg:              cfg.Keepalive,
 		bgCfg:              cfg.Background,
 		mfCfg:              cfg.MemoryFormation,
@@ -219,8 +222,16 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		}
 	}()
 
-	// Check if caching is still available (handles dynamic state changes like Gemini free-tier detection)
-	if r.client != nil && !r.client.IsCachingAvailable() {
+	// Check if caching is still available.
+	// cachingOverride allows models with auto-detected caching (OpenAI, DeepSeek) to
+	// bypass the client.IsCachingAvailable() check which may return false for non-Anthropic clients.
+	cachingAvailable := true
+	if r.cachingOverride != nil {
+		cachingAvailable = *r.cachingOverride
+	} else if r.client != nil {
+		cachingAvailable = r.client.IsCachingAvailable()
+	}
+	if !cachingAvailable {
 		skip = "caching not available"
 		return
 	}

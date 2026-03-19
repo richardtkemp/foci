@@ -452,7 +452,7 @@ func applyModelOverride(inst *agentInstance, sessionKey, value string) error {
 	}
 
 	// Resolve as alias or developer/model_id
-	resolved, err := config.ResolveModel(value, "", inst.cc.ModelAliases)
+	resolved, err := config.ResolveModel(value, "", inst.cc.ModelConfigs)
 	if err != nil {
 		return err
 	}

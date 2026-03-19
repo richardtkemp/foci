@@ -63,14 +63,6 @@ var fieldConstraints = map[string]Constraint{
 	"defaults.fetch_provider":  {Choices: []string{"anthropic", "builtin"}},
 	"defaults.todo_format":     {Choices: []string{"lines", "table"}},
 	"defaults.compaction_effort": {Choices: []string{"low", "medium", "high"}},
-	"anthropic.effort":             {Choices: []string{"low", "medium", "high"}},
-	"anthropic.thinking":           {Choices: []string{"adaptive", "off"}},
-	"gemini.thinking":              {Choices: []string{"adaptive", "off"}},
-	"openai.reasoning":             {Choices: []string{"adaptive", "off"}},
-	"agent.anthropic.effort":       {Choices: []string{"low", "medium", "high"}},
-	"agent.anthropic.thinking":     {Choices: []string{"adaptive", "off"}},
-	"agent.gemini.thinking":        {Choices: []string{"adaptive", "off"}},
-	"agent.openai.reasoning":       {Choices: []string{"adaptive", "off"}},
 	"agent.show_tool_calls":    {Choices: []string{"off", "preview", "full"}},
 	"agent.show_thinking":      {Choices: []string{"off", "compact", "true"}},
 	"agent.compaction_effort":  {Choices: []string{"low", "medium", "high"}},
@@ -220,11 +212,6 @@ var configFields = []ConfigField{
 	// agent — per-agent fields (written to [[agents]] block)
 	{"agent", "max_tool_loops", FieldInt, "max tool iterations per turn"},
 	{"agent", "max_output_tokens", FieldInt, "max tokens in model response"},
-	{"agent", "anthropic.thinking", FieldString, "Anthropic thinking mode: adaptive or off"},
-	{"agent", "anthropic.effort", FieldString, "Anthropic effort: low, medium, high"},
-	{"agent", "anthropic.speed", FieldString, "Anthropic speed mode: fast or empty"},
-	{"agent", "gemini.thinking", FieldString, "Gemini thinking mode: adaptive or off"},
-	{"agent", "openai.reasoning", FieldString, "OpenAI reasoning mode: adaptive or off"},
 	{"agent", "duplicate_messages", FieldBool, "send user text twice per API call"},
 	{"agent", "steer_mode", FieldBool, "inject user messages between tool calls"},
 	{"agent", "nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
@@ -258,18 +245,12 @@ var configFields = []ConfigField{
 	{"agent", "memory_formation.compaction_enabled", FieldBool, "memory capture before compaction"},
 
 	// anthropic
-	{"anthropic", "effort", FieldString, "effort level: low, medium, high"},
-	{"anthropic", "thinking", FieldString, "thinking mode: adaptive or off"},
 	{"anthropic", "streaming", FieldBool, "use streaming API"},
 	{"anthropic", "http_timeout", FieldDuration, "HTTP timeout for API calls"},
 
 	// gemini
-	{"gemini", "thinking", FieldString, "thinking mode: adaptive or off"},
 	{"gemini", "http_timeout", FieldDuration, "HTTP timeout for API calls"},
 	{"gemini", "cache_ttl", FieldDuration, "context cache TTL"},
-
-	// openai
-	{"openai", "reasoning", FieldString, "reasoning mode: adaptive or off"},
 
 	// sessions
 	{"sessions", "compaction_threshold", FieldFloat, "compact at this fraction of context window"},

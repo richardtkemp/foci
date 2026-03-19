@@ -80,7 +80,7 @@ type CommandContext struct {
 	ConfigPath       string
 
 	// Model resolution
-	ModelAliases  map[string]string
+	ModelConfigs  map[string]config.ModelConfig
 	GroupResolver *config.GroupResolver
 	FallbackFunc  provider.FallbackFunc // nil disables automatic model fallback
 

@@ -37,7 +37,6 @@ func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
 	overrides := map[string]bool{
 		"defaults.max_tool_loops":    agent.MaxToolLoops != cfg.Defaults.MaxToolLoops,
 		"defaults.max_output_tokens": agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens,
-		"anthropic.effort":           agent.Effort != cfg.Anthropic.Effort,
 	}
 	for i := range rows {
 		path := rows[i].Section + "." + rows[i].Key
@@ -57,27 +56,18 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		rows = append(rows, configRow{section, key, formatValue(val)})
 	}
 
-	// models
-	add("models", "powerful", cfg.Models.Powerful)
-	if cfg.Models.Fast != "" {
-		add("models", "fast", cfg.Models.Fast)
+	// groups
+	add("groups", "powerful", cfg.Groups.Powerful)
+	if cfg.Groups.Fast != "" {
+		add("groups", "fast", cfg.Groups.Fast)
 	}
-	if cfg.Models.Cheap != "" {
-		add("models", "cheap", cfg.Models.Cheap)
+	if cfg.Groups.Cheap != "" {
+		add("groups", "cheap", cfg.Groups.Cheap)
 	}
 
 	// defaults
 	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
 	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
-	if cfg.Anthropic.Effort != "" {
-		add("anthropic", "effort", cfg.Anthropic.Effort)
-	}
-	if cfg.Anthropic.Thinking != "" {
-		add("anthropic", "thinking", cfg.Anthropic.Thinking)
-	}
-	if cfg.Gemini.Thinking != "" {
-		add("gemini", "thinking", cfg.Gemini.Thinking)
-	}
 	if cfg.Defaults.DuplicateMessages {
 		add("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
 	}

@@ -17,20 +17,20 @@ type modelLister interface {
 	ListModels() ([]provider.ModelInfo, error)
 }
 
-// resolveAllAliases inspects the aliases map, determines which providers are in use,
+// resolveAllModelConfigs inspects the model configs, determines which providers are in use,
 // and resolves the latest models for each provider. It gets credentials and config
 // directly without requiring main.go to know about specific providers.
-func resolveAllAliases(ctx context.Context, clients *clientRegistry, store *secrets.Store, cfg *config.Config, aliases map[string]string) {
-	if aliases == nil {
+func resolveAllModelConfigs(ctx context.Context, clients *clientRegistry, store *secrets.Store, cfg *config.Config, models map[string]config.ModelConfig) {
+	if models == nil {
 		return
 	}
 
-	// Determine which providers are referenced in aliases
+	// Determine which providers are referenced in model configs
 	providers := make(map[string]bool)
-	for _, aliasValue := range aliases {
+	for _, mc := range models {
 		// Extract provider prefix (e.g., "anthropic/" from "anthropic/claude-opus-4-6")
-		if idx := strings.Index(aliasValue, "/"); idx > 0 {
-			provider := aliasValue[:idx]
+		if idx := strings.Index(mc.Model, "/"); idx > 0 {
+			provider := mc.Model[:idx]
 			providers[provider] = true
 		}
 	}
@@ -39,7 +39,7 @@ func resolveAllAliases(ctx context.Context, clients *clientRegistry, store *secr
 	if providers["anthropic"] {
 		if client := clients.GetClient("anthropic", "anthropic"); client != nil {
 			if ml, ok := client.(modelLister); ok {
-				resolveAnthropicAliases(ml, aliases)
+				resolveAnthropicModelConfigs(ml, models)
 			}
 		}
 	}
@@ -51,24 +51,24 @@ func resolveAllAliases(ctx context.Context, clients *clientRegistry, store *secr
 			if cfg.OpenAI.BaseURL != "" {
 				openaiOpts = append(openaiOpts, oai.WithBaseURL(cfg.OpenAI.BaseURL))
 			}
-			resolveOpenAIAliases(ctx, oai.NewClient(openaiKey, openaiOpts...), aliases)
+			resolveOpenAIModelConfigs(ctx, oai.NewClient(openaiKey, openaiOpts...), models)
 		}
 	}
 }
 
-// resolveAnthropicAliases queries the Anthropic API for available models and
-// updates aliases (haiku, sonnet, opus) in-place with the latest dated model ID.
-// On API failure, existing alias values are kept unchanged.
-func resolveAnthropicAliases(client modelLister, aliases map[string]string) {
-	if aliases == nil {
+// resolveAnthropicModelConfigs queries the Anthropic API for available models and
+// updates model configs (haiku, sonnet, opus) in-place with the latest dated model ID.
+// On API failure, existing values are kept unchanged.
+func resolveAnthropicModelConfigs(client modelLister, configs map[string]config.ModelConfig) {
+	if configs == nil {
 		return
 	}
 
-	// Only resolve Anthropic family aliases
+	// Only resolve Anthropic family entries
 	families := []string{"haiku", "sonnet", "opus"}
 	var toResolve []string
 	for _, f := range families {
-		if _, ok := aliases[f]; ok {
+		if _, ok := configs[f]; ok {
 			toResolve = append(toResolve, f)
 		}
 	}
@@ -95,9 +95,11 @@ func resolveAnthropicAliases(client modelLister, aliases map[string]string) {
 			}
 		}
 		if bestID != "" {
-			old := aliases[family]
-			aliases[family] = "anthropic/" + bestID
-			log.Infof("model-discovery", "resolved %s → %s (was %s)", family, aliases[family], old)
+			mc := configs[family]
+			old := mc.Model
+			mc.Model = "anthropic/" + bestID
+			configs[family] = mc
+			log.Infof("model-discovery", "resolved %s → %s (was %s)", family, mc.Model, old)
 		}
 	}
 }
@@ -115,23 +117,23 @@ var openaiAliasFamilies = map[string]string{
 	"o4mini": "o4-mini",
 }
 
-// resolveOpenAIAliases queries the OpenAI API for available models and updates
-// aliases (gpt4o, o3, o4mini) in-place with the latest model ID.
-// On API failure, existing alias values are kept unchanged.
-func resolveOpenAIAliases(ctx context.Context, client openaiModelLister, aliases map[string]string) {
-	if aliases == nil {
+// resolveOpenAIModelConfigs queries the OpenAI API for available models and updates
+// model configs (gpt4o, o3, o4mini) in-place with the latest model ID.
+// On API failure, existing values are kept unchanged.
+func resolveOpenAIModelConfigs(ctx context.Context, client openaiModelLister, configs map[string]config.ModelConfig) {
+	if configs == nil {
 		return
 	}
 
-	// Only resolve OpenAI family aliases that are present in the map
-	type aliasEntry struct {
+	// Only resolve OpenAI family entries that are present in the map
+	type configEntry struct {
 		key   string
 		match string
 	}
-	var toResolve []aliasEntry
+	var toResolve []configEntry
 	for alias, match := range openaiAliasFamilies {
-		if v, ok := aliases[alias]; ok && strings.HasPrefix(v, "openai/") {
-			toResolve = append(toResolve, aliasEntry{key: alias, match: match})
+		if mc, ok := configs[alias]; ok && strings.HasPrefix(mc.Model, "openai/") {
+			toResolve = append(toResolve, configEntry{key: alias, match: match})
 		}
 	}
 	if len(toResolve) == 0 {
@@ -157,9 +159,11 @@ func resolveOpenAIAliases(ctx context.Context, client openaiModelLister, aliases
 			}
 		}
 		if bestID != "" {
-			old := aliases[entry.key]
-			aliases[entry.key] = "openai/" + bestID
-			log.Infof("model-discovery", "resolved %s → %s (was %s)", entry.key, aliases[entry.key], old)
+			mc := configs[entry.key]
+			old := mc.Model
+			mc.Model = "openai/" + bestID
+			configs[entry.key] = mc
+			log.Infof("model-discovery", "resolved %s → %s (was %s)", entry.key, mc.Model, old)
 		}
 	}
 }
