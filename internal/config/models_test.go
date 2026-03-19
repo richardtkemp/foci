@@ -371,6 +371,59 @@ func TestModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestContextWindowUnmarshal(t *testing.T) {
+	// Proves that ContextWindow correctly parses integers, k/K suffixed strings,
+	// m/M suffixed strings, and rejects invalid input.
+	tests := []struct {
+		name    string
+		input   any
+		want    int
+		wantErr bool
+	}{
+		{"plain int", int64(131072), 131072, false},
+		{"string k", "262k", 262000, false},
+		{"string K", "128K", 128000, false},
+		{"string m", "1m", 1000000, false},
+		{"string M", "2M", 2000000, false},
+		{"string plain number", "131072", 131072, false},
+		{"empty string", "", 0, false},
+		{"invalid string", "abc", 0, true},
+		{"invalid type", true, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var c ContextWindow
+			err := c.UnmarshalTOML(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if int(c) != tt.want {
+				t.Errorf("got %d, want %d", int(c), tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveModelCarriesContext(t *testing.T) {
+	// Proves that context window size from ModelConfig is carried through to ResolvedModel.
+	models := map[string]ModelConfig{
+		"kimi": {Model: "openrouter/moonshotai/kimi-k2.5", Context: 262000},
+	}
+	got, err := ResolveModel("kimi", "", models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Context != 262000 {
+		t.Errorf("Context = %d, want 262000", got.Context)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || (len(s) > 0 && len(substr) > 0 && hasSubstring(s, substr)))
 }
