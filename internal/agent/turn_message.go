@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -33,19 +34,20 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 			}
 		})
 		if msg := a.ManaWatcher.CheckRestore(manaStr); msg != "" {
-			manaRestoreNote = "[" + msg + "]\n"
+			manaRestoreNote = "[" + msg + "]"
 			log.Infof("mana", "session=%s restore: %s", sessionKey, msg)
 		}
 	}
 
 	// Annotate with saved attachment paths so the agent knows where files are
-	var attachmentPaths string
+	var attachmentParts []string
 	for _, att := range attachments {
 		if att.SavedPath != "" {
 			label := labelForMIME(att.MimeType)
-			attachmentPaths += "[" + label + " saved to: " + att.SavedPath + "]\n"
+			attachmentParts = append(attachmentParts, "["+label+" saved to: "+att.SavedPath+"]")
 		}
 	}
+	attachmentPaths := strings.Join(attachmentParts, "\n")
 
 	trigger := TriggerFromContext(ctx)
 	plat := triggerToPlatform(trigger)

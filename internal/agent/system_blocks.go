@@ -44,7 +44,7 @@ func (a *Agent) collectReminders(sessionKey string) string {
 	}
 
 	var block string
-	block = "\n[reminders]"
+	block = "[reminders]"
 	for _, r := range reminders {
 		block += fmt.Sprintf("\n- %s (set %s, due: %s)", r.Text, r.DueTag, r.Created.Format("2006-01-02 15:04"))
 	}
@@ -115,7 +115,7 @@ func (a *Agent) collectStateDashboard(sessionKey string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "\n[state] " + strings.Join(parts, " | ")
+	return "[state] " + strings.Join(parts, " | ")
 }
 
 // buildSystemBlocks assembles the system prompt blocks from bootstrap,
