@@ -384,9 +384,18 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	// Repair missing assistant messages (consecutive user messages or empty
 	// assistant content). Caused by API errors where the defer safety-net
 	// flushed the user message without a matching assistant response.
+	// Persisted via Replace so the warning fires only once per corruption.
 	if repaired, n := repairMissingAssistantMessages(messages); n > 0 {
 		messages = repaired
-		a.logger().Warnf("session=%s repaired %d missing/empty assistant messages", sessionKey, n)
+		sessionFile := sessionKey
+		if p, err := a.Sessions.SessionPath(sessionKey); err == nil {
+			sessionFile = p
+		}
+		a.logger().Warnf("session=%s repaired %d missing/empty assistant messages in %s", sessionKey, n, sessionFile)
+		writer := a.Sessions.For(sessionKey)
+		if err := writer.Replace(sessionKey, messages); err != nil {
+			a.logger().Errorf("session=%s persist assistant message repair: %v", sessionKey, err)
+		}
 	}
 
 	turnModel := a.SessionModel(sessionKey)
