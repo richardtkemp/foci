@@ -151,7 +151,10 @@ func (b *Bot) sendNotificationImmediate(text string) {
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	if _, err := b.session.ChannelMessageSend(channelIDStr, text); err != nil {
-		b.logger().Errorf("send notification: %s", b.sanitizeError(err))
+		b.logger().Errorf("send notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
+		if isUnknownChannel(err) {
+			b.clearStaleChannel(channelIDStr)
+		}
 	}
 }
 
@@ -189,7 +192,10 @@ func (b *Bot) SendStartupNotification(agentID string) {
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
 	if _, err := b.session.ChannelMessageSend(channelIDStr, text); err != nil {
-		b.logger().Errorf("send startup notification: %s", b.sanitizeError(err))
+		b.logger().Errorf("send startup notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
+		if isUnknownChannel(err) {
+			b.clearStaleChannel(channelIDStr)
+		}
 	}
 }
 
