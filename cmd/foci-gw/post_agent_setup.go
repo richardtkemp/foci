@@ -111,6 +111,23 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 	return memGuard.Stop
 }
 
+// countTelegramBots returns the total number of Telegram bots that will be
+// started: one primary bot per agent with a telegram token, plus all shared
+// and per-agent facet bots.
+func countTelegramBots(cfg *config.Config) int {
+	count := len(cfg.Telegram.FacetBots) // shared facet pool
+	for _, acfg := range cfg.Agents {
+		// Each agent with a resolvable telegram token gets a primary bot.
+		// We approximate by counting all enabled agents — the token check
+		// happens later, and missing tokens just mean the bot won't start.
+		count++ // primary bot
+		if tg := acfg.Platforms.Telegram; tg != nil {
+			count += len(tg.FacetBots) // per-agent facet bots
+		}
+	}
+	return count
+}
+
 // setupGoroutineMonitor starts the goroutine count monitor if configured. Returns a stop function (may be nil).
 func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Context) func() {
 	interval, _ := time.ParseDuration(cfg.Resources.GoroutineMonitorInterval)
@@ -119,7 +136,11 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 	}
 	threshold := cfg.Resources.GoroutineMonitorThreshold
 	if threshold <= 0 {
-		threshold = 35 * numAgents
+		// 30 base (global infra + tool-execution headroom)
+		// + 25 per agent (DB pools, bleve, housekeeping goroutines)
+		// + 5 per telegram bot (poll loop, worker, HTTP/2 read/write)
+		numBots := countTelegramBots(cfg)
+		threshold = 30 + 25*numAgents + 5*numBots
 	}
 	mon := resources.NewGoroutineMonitor(resources.GoroutineMonitorConfig{
 		Interval:  interval,
