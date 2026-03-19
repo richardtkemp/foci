@@ -437,7 +437,7 @@ Default call site → group assignments:
 | **fast** | `spawn-raw`, `spawn-character` |
 | **cheap** | `spawn-explore`, `summarize-tool`, `summarize-file`, `prompt-diff` |
 
-Ungrouped call sites (`keepalive`, `count-tokens`) always use the session model regardless of group configuration.
+Ungrouped call sites (`keepalive`) always use the session model regardless of group configuration.
 
 Default aliases (used when `[models]` section is not configured):
 - `opus` → `anthropic/claude-opus-4-6`
