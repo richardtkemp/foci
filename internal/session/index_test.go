@@ -857,6 +857,65 @@ func TestMetadata_PersistsAcrossReopen(t *testing.T) {
 
 // ========== Metadata tables don't interfere with session index ==========
 
+// Proves that RotateChatSessionKey only updates the chat_metadata row whose value
+// matches oldKey, leaving rows for other platforms, other chats, and rows with
+// different values completely untouched. Also verifies no spurious rows are created.
+func TestSessionIndex_RotateChatSessionKey(t *testing.T) {
+	idx := tempIndex(t)
+
+	// Set up: two platforms for the same agent+chat, each with a different session key.
+	// This simulates the bug scenario where telegram and discord both have rows.
+	idx.SetChatMetadata("clutch", "telegram", 5970, "session_key", "clutch/c5970/1000")
+	idx.SetChatMetadata("clutch", "discord", 5970, "session_key", "clutch/c5970/2000")
+
+	// Also set up a different chat that should never be touched.
+	idx.SetChatMetadata("clutch", "telegram", 9999, "session_key", "clutch/c9999/1000")
+
+	// Rotate: only the telegram row (value=clutch/c5970/1000) should change.
+	err := idx.RotateChatSessionKey("clutch", 5970, "clutch/c5970/1000", "clutch/c5970/3000")
+	if err != nil {
+		t.Fatalf("RotateChatSessionKey: %v", err)
+	}
+
+	// Telegram row updated.
+	v, _ := idx.GetChatMetadata("clutch", "telegram", 5970, "session_key")
+	if v != "clutch/c5970/3000" {
+		t.Errorf("telegram row: got %q, want %q", v, "clutch/c5970/3000")
+	}
+
+	// Discord row untouched (different value).
+	v, _ = idx.GetChatMetadata("clutch", "discord", 5970, "session_key")
+	if v != "clutch/c5970/2000" {
+		t.Errorf("discord row should be untouched: got %q, want %q", v, "clutch/c5970/2000")
+	}
+
+	// Other chat untouched.
+	v, _ = idx.GetChatMetadata("clutch", "telegram", 9999, "session_key")
+	if v != "clutch/c9999/1000" {
+		t.Errorf("other chat should be untouched: got %q, want %q", v, "clutch/c9999/1000")
+	}
+}
+
+// Proves that RotateChatSessionKey is a no-op when no row matches the old value,
+// and does not create any new rows.
+func TestSessionIndex_RotateChatSessionKey_NoMatch(t *testing.T) {
+	idx := tempIndex(t)
+
+	idx.SetChatMetadata("clutch", "telegram", 5970, "session_key", "clutch/c5970/1000")
+
+	// Rotate with a wrong oldKey — should be a no-op.
+	err := idx.RotateChatSessionKey("clutch", 5970, "clutch/c5970/WRONG", "clutch/c5970/3000")
+	if err != nil {
+		t.Fatalf("RotateChatSessionKey: %v", err)
+	}
+
+	// Original row unchanged.
+	v, _ := idx.GetChatMetadata("clutch", "telegram", 5970, "session_key")
+	if v != "clutch/c5970/1000" {
+		t.Errorf("row should be unchanged: got %q, want %q", v, "clutch/c5970/1000")
+	}
+}
+
 func TestMetadata_IndependentOfSessionIndex(t *testing.T) {
 	// Proves that metadata operations don't affect the session entry count and that
 	// session operations don't corrupt metadata values — the two concerns are fully
