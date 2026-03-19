@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -17,6 +18,17 @@ import (
 	"foci/internal/voice"
 	"foci/internal/warnings"
 )
+
+// TurnObservers holds platform-specific observer callbacks for tool call
+// visibility during agent turns. Returned by Connection.BuildTurnObservers
+// and wired into agent.TurnCallbacks by callers.
+type TurnObservers struct {
+	OnToolCall   func(toolName string, params json.RawMessage)
+	OnToolResult func(toolName string, result string, isError bool)
+	OnRetry      func(endpoint string)
+	OnRetryClear func()
+	Cleanup      func() // delete transient preview messages after turn
+}
 
 type Message struct {
 	ID        string
@@ -124,6 +136,9 @@ type Connection interface {
 	SendNotification(text string)
 	SendNotificationDirect(text string) // sends immediately, bypassing turn buffering
 	SendTyping()                        // sends a "typing" indicator to the user
+
+	// Observers
+	BuildTurnObservers(sessionKey string) *TurnObservers // nil when unsupported or no chat target
 }
 
 // ConnectionManager manages platform connection instances and facet pools.

@@ -38,6 +38,13 @@ func newAsyncNotifier(
 			// If replyToSession is set, route response back to caller
 			if replyToSession != "" {
 				notifyCtx := agent.WithTrigger(ctx, trigger)
+				// Wire tool call observers for the target session so tool
+				// calls are visible in the user's chat during processing.
+				if targetConn := connMgr.ForSessionOrPrimary(target, agentID); targetConn != nil {
+					cb := &agent.TurnCallbacks{}
+					defer wireTurnObservers(targetConn, target, cb)()
+					notifyCtx = agent.WithTurnCallbacks(notifyCtx, cb)
+				}
 				// Process message on target session
 				resp, err := getAgent().HandleMessage(notifyCtx, target, message)
 				if err != nil {
@@ -89,7 +96,7 @@ func newAsyncNotifier(
 			if conn != nil && !isBranchWithoutConn {
 				defer startTypingTicker(ctx, conn)()
 
-				notifyCtx = agent.WithTurnCallbacks(notifyCtx, &agent.TurnCallbacks{
+				cb := &agent.TurnCallbacks{
 					ReplyFunc: func(text string) {
 						// Intermediate replies are agent output — use SendToSession
 						// to avoid prepending the system injection header.
@@ -100,7 +107,9 @@ func newAsyncNotifier(
 					ActivityFunc: func() {
 						conn.SendTyping()
 					},
-				})
+				}
+				defer wireTurnObservers(conn, target, cb)()
+				notifyCtx = agent.WithTurnCallbacks(notifyCtx, cb)
 			}
 
 			resp, err := getAgent().HandleMessage(notifyCtx, target, message)
@@ -152,7 +161,15 @@ func newSessionNotifyFn(
 				return
 			}
 
-			resp, err := inst.ag.HandleMessage(agent.WithTrigger(ctx, "session_notify"), targetSessionKey, message)
+			conn := connMgr.ForSessionOrPrimary(targetSessionKey, targetAgentID)
+			notifyCtx := agent.WithTrigger(ctx, "session_notify")
+			if conn != nil {
+				cb := &agent.TurnCallbacks{}
+				defer wireTurnObservers(conn, targetSessionKey, cb)()
+				notifyCtx = agent.WithTurnCallbacks(notifyCtx, cb)
+			}
+
+			resp, err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, message)
 			if err != nil {
 				log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
 				return
@@ -160,8 +177,6 @@ func newSessionNotifyFn(
 			if resp == "" {
 				return
 			}
-
-			conn := connMgr.ForSessionOrPrimary(targetSessionKey, targetAgentID)
 			if conn == nil {
 				log.Warnf("session_notify", "no connection for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
 				return
@@ -198,6 +213,20 @@ func startTypingTicker(ctx context.Context, conn platform.Connection) (cancel fu
 	}
 }
 
+// wireTurnObservers attaches platform-specific tool call/result/retry observers
+// to the given TurnCallbacks. Returns a cleanup function that should be deferred.
+func wireTurnObservers(conn platform.Connection, sessionKey string, cb *agent.TurnCallbacks) (cleanup func()) {
+	obs := conn.BuildTurnObservers(sessionKey)
+	if obs == nil {
+		return func() {}
+	}
+	cb.ToolCallObserver = obs.OnToolCall
+	cb.ToolResultObserver = obs.OnToolResult
+	cb.RetryNotifyFunc = obs.OnRetry
+	cb.RetrySuccessFunc = obs.OnRetryClear
+	return obs.Cleanup
+}
+
 // deliverInjectedTurn runs a HandleMessage turn and delivers the response
 // to the user's platform connection. Used by all system-initiated injections
 // (restart changelog, scheduled wakes, proactive warnings).
@@ -215,7 +244,7 @@ func deliverInjectedTurn(
 	if conn != nil {
 		defer startTypingTicker(ctx, conn)()
 
-		triggerCtx = agent.WithTurnCallbacks(triggerCtx, &agent.TurnCallbacks{
+		cb := &agent.TurnCallbacks{
 			ReplyFunc: func(text string) {
 				if err := conn.SendToSession(sessionKey, text); err != nil {
 					log.Errorf(trigger, "intermediate platform delivery: %v", err)
@@ -224,7 +253,9 @@ func deliverInjectedTurn(
 			ActivityFunc: func() {
 				conn.SendTyping()
 			},
-		})
+		}
+		defer wireTurnObservers(conn, sessionKey, cb)()
+		triggerCtx = agent.WithTurnCallbacks(triggerCtx, cb)
 	}
 	resp, err := ag.HandleMessage(triggerCtx, sessionKey, message)
 	if err != nil {
