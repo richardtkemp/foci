@@ -722,6 +722,20 @@ func toArgs(ss []string) []interface{} {
 	return args
 }
 
+// RotateChatSessionKey updates chat_metadata session_key rows that currently hold oldKey
+// to newKey. Uses a conditional UPDATE (WHERE value = oldKey) so it only touches the correct
+// row(s) regardless of platform — no spurious rows are created, and rows with a different
+// value are left untouched.
+func (idx *SessionIndex) RotateChatSessionKey(agentID string, chatID int64, oldKey, newKey string) error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	_, err := idx.db.Exec(
+		`UPDATE chat_metadata SET value = ? WHERE agent_id = ? AND chat_id = ? AND key = 'session_key' AND value = ?`,
+		newKey, agentID, chatID, oldKey,
+	)
+	return err
+}
+
 // RenameSessionMetadata atomically renames all session_metadata rows from oldKey to newKey.
 // Used by RotateSession to migrate per-session state in a single UPDATE.
 func (idx *SessionIndex) RenameSessionMetadata(oldKey, newKey string) error {

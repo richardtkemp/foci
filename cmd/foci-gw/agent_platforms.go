@@ -135,17 +135,17 @@ func wireAgentPlatformCallbacks(
 		})
 	}
 
-	// Session key rotation — update platform caches and tmux ownership
+	// Session key rotation — update DB directly and tmux ownership
 	ag.SessionKeyRotatedFunc.Add(func(oldKey, newKey string) {
 		if tmuxMigrateKey != nil {
 			tmuxMigrateKey(oldKey, newKey)
 		}
 		chatID := session.ChatIDFromKey(oldKey)
-		if chatID == 0 {
+		if chatID == 0 || sessionIndex == nil {
 			return
 		}
-		if conn := connMgr.ForSessionOrPrimary(oldKey, acfg.ID); conn != nil {
-			conn.UpdateChatSessionKey(chatID, newKey)
+		if err := sessionIndex.RotateChatSessionKey(acfg.ID, chatID, oldKey, newKey); err != nil {
+			log.Errorf("agent", "rotate chat session key %s → %s: %v", oldKey, newKey, err)
 		}
 	})
 
