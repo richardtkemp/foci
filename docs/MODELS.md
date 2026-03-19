@@ -6,7 +6,7 @@ Foci uses model groups to route different tasks to different models. This guide 
 
 ## Model Groups
 
-All models are configured in the `[models]` section. Three groups are available:
+Group assignments are configured in `[groups]`, and per-model settings in `[models.*]`. Three groups are available:
 
 | Group | Purpose | Default call sites |
 |-------|---------|-------------------|
@@ -17,13 +17,24 @@ All models are configured in the `[models]` section. Three groups are available:
 `powerful` is required. `fast` and `cheap` default to the `powerful` model when not set.
 
 ```toml
-[models]
-powerful = "opus"           # alias — see Model Aliases below
+[groups]
+powerful = "opus"           # model name — see [models.*] below
 fast = "sonnet"
 cheap = "haiku"
+
+[models.opus]
+model = "anthropic/claude-opus-4-6"
+thinking = "adaptive"
+effort = "low"
+
+[models.sonnet]
+model = "anthropic/claude-sonnet-4-6"
+
+[models.haiku]
+model = "anthropic/claude-haiku-4-5-20251001"
 ```
 
-Models use `developer/model_id` format. The developer prefix determines the API endpoint and wire format:
+Models use `developer/model_id` format in their `model` field. The developer prefix determines the API endpoint and wire format:
 
 | Developer | Wire format | Default endpoint |
 |-----------|-------------|------------------|
@@ -38,10 +49,10 @@ Ungrouped call sites (`keepalive`, `count-tokens`) always use the session model 
 
 ## Call Site Overrides
 
-Override which group a specific call site uses with `[models.calls]`:
+Override which group a specific call site uses with `[groups.calls]`:
 
 ```toml
-[models.calls]
+[groups.calls]
 compaction = "cheap"        # use cheap model for compaction instead of powerful
 spawn-clone = "fast"        # use fast model for clone spawns
 ```
@@ -69,33 +80,41 @@ Keys are call site names, values are group names (`powerful`, `fast`, `cheap`).
 
 ---
 
-## Model Aliases
+## Named Models
 
-Aliases map short names to full `developer/model_id` identifiers. Configure in `[models.aliases]`:
+Named models are defined in `[models.*]` sections. Each entry maps a short name to a `developer/model_id` with optional per-model settings:
 
 ```toml
-[models.aliases]
-opus = "anthropic/claude-opus-4-6"
-sonnet = "anthropic/claude-sonnet-4-6"
-haiku = "anthropic/claude-haiku-4-5"
-flash = "gemini/gemini-2.5-flash"
-local = "local/my-fine-tuned-model"
+[models.opus]
+model = "anthropic/claude-opus-4-6"
+thinking = "adaptive"
+effort = "low"
+
+[models.sonnet]
+model = "anthropic/claude-sonnet-4-6"
+thinking = "adaptive"
+
+[models.flash]
+model = "google/gemini-2.5-flash"
+thinking = "adaptive"
+
+[models.deepseek]
+model = "deepseek/deepseek-chat"
+# enable_keepalive auto-detected (5m prompt cache TTL)
 ```
 
-Built-in defaults (used when `[models.aliases]` is not configured):
+Per-model settings:
 
-| Alias | Resolves to |
-|-------|------------|
-| `opus` | `anthropic/claude-opus-4-6` |
-| `sonnet` | `anthropic/claude-sonnet-4-6` |
-| `haiku` | `anthropic/claude-haiku-4-5` |
-| `flash` | `gemini/gemini-2.5-flash` |
-| `pro` | `gemini/gemini-2.5-pro` |
-| `gpt4o` | `openai/gpt-4o` |
-| `o3` | `openai/o3` |
-| `o4mini` | `openai/o4-mini` |
+| Key | Description |
+|-----|-------------|
+| `model` | Full `developer/model_id` string (required) |
+| `thinking` | `"adaptive"` or `"off"` |
+| `effort` | `"low"`, `"medium"`, `"high"` |
+| `speed` | `"fast"` or `""` (Opus only) |
+| `enable_keepalive` | `nil` (auto-detect), `true`, `false` |
+| `prompt_cache_ttl` | Go duration (e.g. `"5m"`) for keepalive interval |
 
-Aliases are used everywhere models are accepted: `[models]` groups, `/model` command, `--model` CLI flag, and the spawn tool's `model` parameter.
+Model names are used everywhere models are accepted: `[groups]`, `/model` command, `--model` CLI flag, and the spawn tool's `model` parameter. Raw `developer/model_id` strings also work (without per-model settings).
 
 ---
 
@@ -139,10 +158,11 @@ Agents can specify a model when spawning sub-agents:
 
 When a model value is provided (via config, command, or flag), resolution follows these steps:
 
-1. **Alias lookup** — if the value matches a key in `[models.aliases]`, it's replaced with the alias target
-2. **Parse** — split on `/` into `developer` and `model_id` (error if no slash)
+1. **Named model lookup** — if the value matches a key in `[models.*]`, the `ModelConfig` is loaded (providing `model`, `thinking`, `effort`, `speed`, `enable_keepalive`, `prompt_cache_ttl`)
+2. **Parse** — split the `model` field (or raw string) on `/` into `developer` and `model_id` (error if no slash)
 3. **Wire format** — inferred from developer: `anthropic` → anthropic, `google`/`gemini` → gemini, `openai` → openai, others → openai (universal fallback)
 4. **Endpoint** — auto-selected from developer (`anthropic` → anthropic endpoint, `google` → gemini endpoint, others → openrouter), or explicitly set via `endpoint` config
+5. **Per-model settings** — `ResolvedModel` carries thinking, effort, speed, enable_keepalive, and prompt_cache_ttl from the `ModelConfig`
 
 For `--model` flag and `/model` command, the override is per-session: it applies to the target session and persists across restarts (stored in SessionIndex). Group names (`powerful`, `fast`, `cheap`) are resolved to their configured model before applying.
 
@@ -153,32 +173,53 @@ For `--model` flag and `/model` command, the override is per-session: it applies
 ### Single model (simplest)
 
 ```toml
-[models]
-powerful = "anthropic/claude-sonnet-4-6"
+[groups]
+powerful = "sonnet"
+
+[models.sonnet]
+model = "anthropic/claude-sonnet-4-6"
 ```
 
 ### Cost optimization
 
 ```toml
-[models]
+[groups]
 powerful = "opus"
 fast = "sonnet"
 cheap = "haiku"
 
-[models.calls]
+[groups.calls]
 compaction = "cheap"       # compaction doesn't need the powerful model
+
+[models.opus]
+model = "anthropic/claude-opus-4-6"
+thinking = "adaptive"
+effort = "low"
+
+[models.sonnet]
+model = "anthropic/claude-sonnet-4-6"
+
+[models.haiku]
+model = "anthropic/claude-haiku-4-5-20251001"
 ```
 
 ### Mixed developers
 
 ```toml
-[models]
+[groups]
 powerful = "opus"
 fast = "sonnet"
 cheap = "flash"            # use Gemini Flash for cheap tasks
 
-[models.aliases]
-flash = "gemini/gemini-2.5-flash"
+[models.opus]
+model = "anthropic/claude-opus-4-6"
+
+[models.sonnet]
+model = "anthropic/claude-sonnet-4-6"
+
+[models.flash]
+model = "google/gemini-2.5-flash"
+thinking = "adaptive"
 ```
 
 ### Custom endpoint
@@ -189,11 +230,11 @@ format = "openai"
 url = "http://localhost:8080/v1"
 api_key = "local.api_key"
 
-[models]
-powerful = "local/my-model"
+[groups]
+powerful = "local"
 
-[models.aliases]
-local = "local/my-model"
+[models.local]
+model = "local/my-model"
 ```
 
 ### CLI override examples
@@ -213,6 +254,6 @@ FOCI_MODEL=cheap foci send "routine check"
 
 ## See Also
 
-- [CONFIG.md](CONFIG.md) — full configuration reference (`[models]`, `[endpoints]`)
+- [CONFIG.md](CONFIG.md) — full configuration reference (`[groups]`, `[models.*]`, `[endpoints]`)
 - [CLI.md](CLI.md) — CLI command reference (`--model` flag)
 - [WIRING.md](WIRING.md) — architecture and startup flow

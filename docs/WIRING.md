@@ -79,7 +79,7 @@ config.Load(path)                                        ← validates values; l
   → block on signal → runShutdown(...)                     ← shutdown.go
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from the `[models]` group configuration (the powerful group determines the agent's primary model/endpoint/format). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from the `[groups]` configuration (the powerful group determines the agent's primary model/endpoint/format). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
 **Per-agent data:** All per-agent databases (conversation, reminders, scratchpad, todo, tasklist, memory indices) are stored in each agent's `workspace/.data/` directory. On startup, databases at the old shared `data_dir` location are automatically migrated to the workspace. Shared databases (api.db, state.db, sessions/) remain in `data_dir`.
 
@@ -257,7 +257,7 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 - **529 (overloaded):** Anthropic servers are overloaded (their problem, not ours). Two-phase retry in `SendMessage`: phase 1 retries 3× with exponential backoff (2s→4s→8s, same as other retryable errors); phase 2 (529 only) enters an extended duration-based loop retrying up to ~2 hours with 5s base backoff doubling without cap. A cross-goroutine recovery signal on the `Client` wakes all sleeping retry loops when any `SendMessage` succeeds (proving the server has recovered). If still failing after phase 2, `classifyAPIError` returns `"API is overloaded (HTTP 529) — try again shortly"`.
 - **500/502/503 (server error):** `SendMessage` retries 3× with backoff. If still failing, `classifyAPIError` fires `RateLimitFunc(0)` and returns a temporary unavailability message.
 
-**Model fallback** (`[models.fallbacks]`): `provider.Send` handles the full error recovery pipeline: (1) retry with backoff, (2) strip unsupported params (thinking/effort/speed) on 400 and retry, (3) walk the fallback chain on transient errors (529, 5xx, `context.DeadlineExceeded`). Each fallback hop resolves the model's endpoint/format via `ClientProvider.GetClient` and retries. On success, the response is used; subsequent tool-loop iterations rebuild with the primary model (fallback is per-request, not sticky). All API call sites use `provider.Send` — main agent loop, compaction, spawn one-shot, summary tool, auto-summary, and prompt-diff all have fallback support. Not triggered by 401 or 429. Configured via `[models.fallbacks]` (global) and `model_fallbacks` (per-agent override). Max chain depth: 3.
+**Model fallback** (`[groups.fallbacks]`): `provider.Send` handles the full error recovery pipeline: (1) retry with backoff, (2) strip unsupported params (thinking/effort/speed) on 400 and retry, (3) walk the fallback chain on transient errors (529, 5xx, `context.DeadlineExceeded`). Each fallback hop resolves the model's endpoint/format via `ClientProvider.GetClient` and retries. On success, the response is used; subsequent tool-loop iterations rebuild with the primary model (fallback is per-request, not sticky). All API call sites use `provider.Send` — main agent loop, compaction, spawn one-shot, summary tool, auto-summary, and prompt-diff all have fallback support. Not triggered by 401 or 429. Configured via `[groups.fallbacks]` (global) and `model_fallbacks` (per-agent override). Max chain depth: 3.
 
 ### Cache Stability Invariant
 
@@ -470,7 +470,7 @@ type StreamingClient interface {
 
 ### Dynamic Provider Switching
 
-Agents can switch endpoints at runtime via `/model endpoint:alias` (e.g. `/model gemini:flash`, `/model anthropic:haiku`, `/model openrouter:opus`). The model field always uses `endpoint:model_id` format.
+Agents can switch endpoints at runtime via `/model endpoint:name` (e.g. `/model gemini:flash`, `/model anthropic:haiku`, `/model openrouter:opus`). The model field always uses `endpoint:model_id` format.
 
 **Three independent concepts:**
 
@@ -480,21 +480,23 @@ Agents can switch endpoints at runtime via `/model endpoint:alias` (e.g. `/model
 | **Wire format** | `anthropic`, `openai`, `gemini` | Which Go client serializes the request |
 | **Model ID** | `claude-opus-4-6` | String passed in the API call |
 
-**Format resolution:** `config.ResolveModel()` resolves the wire format once at startup (or `/model` switch) from the developer prefix: `anthropic/*` → anthropic format, `google/*` → gemini format, `openai/*` → openai format, unknown → openai (universal fallback). The resolved format is persisted on `Agent.Format` and `sessionMeta.modelFormat` — it is never re-inferred from the model name. Multi-format endpoints (like openrouter with both `anthropic_url` and `openai_url`) auto-select the right URL based on the stored format.
+**Format resolution:** `config.ResolveModel()` resolves the wire format once at startup (or `/model` switch) from the developer prefix: `anthropic/*` → anthropic format, `google/*` → gemini format, `openai/*` → openai format, unknown → openai (universal fallback). When the model string matches a named model in `[models.*]`, the `ResolvedModel` is populated with per-model settings (thinking, effort, speed, enable_keepalive, prompt_cache_ttl) from the `ModelConfig`. The resolved format is persisted on `Agent.Format` and `sessionMeta.modelFormat` — it is never re-inferred from the model name. Multi-format endpoints (like openrouter with both `anthropic_url` and `openai_url`) auto-select the right URL based on the stored format.
 
 **Resolution chain:**
-1. `/model openrouter:opus` → resolve alias `opus` → `anthropic/claude-opus-4-6` → parse developer `anthropic`, but user specified `openrouter` → endpoint=`openrouter`, format=`anthropic`
+1. `/model openrouter:opus` → look up `opus` in `[models.*]` → get `ModelConfig{Model: "anthropic/claude-opus-4-6", Thinking: "adaptive", ...}` → parse developer `anthropic`, but user specified `openrouter` → endpoint=`openrouter`, format=`anthropic`, plus per-model settings
 2. `ResolveEndpointClient("openrouter", "anthropic")` → lazy-init anthropic client for openrouter endpoint
 3. Per-session client override stored in `sessionMeta.client`, endpoint in `sessionMeta.modelEndpoint`, format in `sessionMeta.modelFormat`
 4. On next API call, `HandleMessage` uses `SessionClient(sessionKey)` → returns per-session client or agent default
 
 **Wiring:** `agent.ClientProvider` implements `provider.ClientProvider` and delegates to the lazy client registry in `main.go`. This is shared with `tools.SpawnDeps` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
 
-**Model Group Resolution:** The `[models] powerful` key (defaulted to haiku in `load.go`) determines the primary model for all agents. A `config.GroupResolver` (created once at startup from `ModelsConfig` and aliases) maps call sites to model groups (`powerful`, `fast`, `cheap`), resolving each to a concrete `developer/model_id`. The unified entry point is `agent.ResolveCallSite(callSite, sessionKey)` — it returns a `(client, model, format)` triple. It delegates to `GroupResolver.ResolveCall(callSite)` which looks up the call site's group (with optional per-call overrides from `[models.calls]`), resolves the group's model through alias expansion, and fetches the appropriate client from `ClientProvider`. All internal call sites (compaction, guard summaries, spawns, prompt-diff) use `ResolveCallSite` instead of directly accessing the session model.
+**Model Group Resolution:** The `[groups] powerful` key (defaulted to haiku in `load.go`) determines the primary model for all agents. A `config.GroupResolver` (created once at startup from `GroupsConfig` and the `map[string]ModelConfig` models map) maps call sites to model groups (`powerful`, `fast`, `cheap`), resolving each to a concrete `developer/model_id` with per-model settings. The unified entry point is `agent.ResolveCallSite(callSite, sessionKey)` — it returns a `(client, model, format)` triple. It delegates to `GroupResolver.ResolveCall(callSite)` which looks up the call site's group (with optional per-call overrides from `[groups.calls]`), resolves the group's model through the models map, and fetches the appropriate client from `ClientProvider`. All internal call sites (compaction, guard summaries, spawns, prompt-diff) use `ResolveCallSite` instead of directly accessing the session model.
+
+**Agent defaults from powerful model:** At startup, `main.go` resolves the powerful model's `ModelConfig` and populates each `AgentConfig`'s runtime fields (`Effort`, `Thinking`, `Speed`) from it. These become the agent's defaults for API calls, overridable at runtime via `/effort`, `/thinking`, `/speed`.
 
 **Compaction:** `Compactor.Compact()` receives the client, model, and format as parameters (not stored on the struct). The caller resolves these via `agent.ResolveCallSite(config.CallCompaction, sessionKey)`, so compaction uses the group-appropriate model in multi-model mode or the session's active client in single-model mode.
 
-**Keepalive:** Skipped for non-Anthropic endpoints — Anthropic ephemeral cache warming is unnecessary since Gemini's `CacheManager` handles its own TTL extension, and OpenAI has no ephemeral cache.
+**Keepalive:** For Anthropic endpoints, the keepalive fires on a configurable interval (default 55m, just under the 1h cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected via `config.ResolveModelKeepalive()` — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s. Auto-detection uses the `enable_keepalive` and `prompt_cache_ttl` fields from `[models.*]` config. Gemini's `CacheManager` handles its own TTL extension independently.
 
 ## Anthropic API Client (`anthropic/`)
 
@@ -685,7 +687,7 @@ Messages starting with `/` are intercepted at the Telegram router level before r
    - `/reload` — reload workspace files, skills, and system blocks from disk
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
-**`/model` endpoint switching:** Accepts `endpoint:alias` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The Execute function calls `config.ResolveModel()` to resolve aliases and `cc.ClientProvider.ResolveEndpointClient(endpoint, format)` to lazy-init the correct client. Calls `cc.Agent.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
+**`/model` endpoint switching:** Accepts `endpoint:name` syntax (e.g. `/model gemini:flash`, `/model openrouter:opus`). The Execute function calls `config.ResolveModel()` to resolve model names via the `[models.*]` map and `cc.ClientProvider.ResolveEndpointClient(endpoint, format)` to lazy-init the correct client. Calls `cc.Agent.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
 
 **Command registration** (`commands.go` in main package): All per-agent slash commands are registered in `registerAgentCommands()`, which builds a `command.CommandContext` struct from agent references, config, clients, and stores. Commands are zero-argument constructors (e.g. `ModelCommand()`, `ResetCommand()`) returning `*Command` structs with an `Execute(ctx, Request, CommandContext)` function. All command logic accesses dependencies through the `CommandContext` parameter — no closures or per-command constructor injection. Commands interact with platforms via `cc.ConnMgr` (a `platform.ConnectionManager` interface) to avoid importing the `telegram` package.
 
