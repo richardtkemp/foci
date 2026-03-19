@@ -153,7 +153,7 @@ func TestConventionEndpointAPIKey(t *testing.T) {
 		Agents: []AgentConfig{
 			{ID: "a1"},
 		},
-		Models: ModelsConfig{
+		Groups: GroupsConfig{
 			Powerful: "anthropic/claude-sonnet-4-5-20250929",
 			Cheap:    "deepseek/deepseek-chat", // resolves to openrouter endpoint
 		},
@@ -174,7 +174,7 @@ func TestConventionEndpointExplicitAPIKey(t *testing.T) {
 		Agents: []AgentConfig{
 			{ID: "a1"},
 		},
-		Models: ModelsConfig{
+		Groups: GroupsConfig{
 			Powerful: "openrouter/some-model",
 		},
 		Endpoints: map[string]EndpointConfig{
@@ -255,7 +255,7 @@ func TestDeduplication(t *testing.T) {
 			{ID: "a1"},
 			{ID: "a2"},
 		},
-		Models: ModelsConfig{
+		Groups: GroupsConfig{
 			Powerful: "openrouter/some-model",
 			Cheap:    "openrouter/another-model",
 		},

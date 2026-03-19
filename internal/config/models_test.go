@@ -8,21 +8,21 @@ func TestResolveModel(t *testing.T) {
 	// Proves that ResolveModel correctly handles alias expansion, developer/model_id
 	// syntax, endpoint overrides, case normalization, and error cases for malformed
 	// or empty input.
-	aliases := map[string]string{
-		"opus":     "anthropic/claude-opus-4-6",
-		"sonnet":   "anthropic/claude-sonnet-4-6",
-		"haiku":    "anthropic/claude-haiku-4-5",
-		"gemini-flash": "google/gemini-2.5-flash",
-		"gemini-pro":   "google/gemini-2.5-pro",
-		"gpt4o":    "openai/gpt-4o",
-		"deepseek": "deepseek/deepseek-chat",
+	models := map[string]ModelConfig{
+		"opus":         {Model: "anthropic/claude-opus-4-6"},
+		"sonnet":       {Model: "anthropic/claude-sonnet-4-6"},
+		"haiku":        {Model: "anthropic/claude-haiku-4-5"},
+		"gemini-flash": {Model: "google/gemini-2.5-flash"},
+		"gemini-pro":   {Model: "google/gemini-2.5-pro"},
+		"gpt4o":        {Model: "openai/gpt-4o"},
+		"deepseek":     {Model: "deepseek/deepseek-chat"},
 	}
 
 	tests := []struct {
 		name            string
 		input           string
 		endpoint        string
-		aliases         map[string]string
+		models          map[string]ModelConfig
 		wantDeveloper   string
 		wantModelID     string
 		wantFormat      string
@@ -35,7 +35,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "alias opus",
 			input:         "opus",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-opus-4-6",
 			wantFormat:    "anthropic",
@@ -45,7 +45,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "alias gemini-flash",
 			input:         "gemini-flash",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "google",
 			wantModelID:   "gemini-2.5-flash",
 			wantFormat:    "gemini",
@@ -55,7 +55,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "alias deepseek",
 			input:         "deepseek",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "deepseek",
 			wantModelID:   "deepseek-chat",
 			wantFormat:    "openai",
@@ -67,7 +67,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct anthropic",
 			input:         "anthropic/claude-haiku-4-5",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-haiku-4-5",
 			wantFormat:    "anthropic",
@@ -77,7 +77,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct google",
 			input:         "google/gemini-2.5-flash",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "google",
 			wantModelID:   "gemini-2.5-flash",
 			wantFormat:    "gemini",
@@ -87,7 +87,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct gemini developer",
 			input:         "gemini/gemini-2.5-pro",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "gemini",
 			wantModelID:   "gemini-2.5-pro",
 			wantFormat:    "gemini",
@@ -97,7 +97,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct openai",
 			input:         "openai/gpt-4o",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "openai",
 			wantModelID:   "gpt-4o",
 			wantFormat:    "openai",
@@ -107,7 +107,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "third-party model defaults to openrouter",
 			input:         "deepseek/deepseek-chat",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "deepseek",
 			wantModelID:   "deepseek-chat",
 			wantFormat:    "openai",
@@ -119,7 +119,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "override to openrouter",
 			input:         "anthropic/claude-opus-4-6",
 			endpoint:      "openrouter",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-opus-4-6",
 			wantFormat:    "anthropic",
@@ -129,7 +129,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "override to custom endpoint",
 			input:         "google/gemini-2.5-flash",
 			endpoint:      "mycustom",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "google",
 			wantModelID:   "gemini-2.5-flash",
 			wantFormat:    "gemini",
@@ -141,7 +141,7 @@ func TestResolveModel(t *testing.T) {
 			name:            "empty input",
 			input:           "",
 			endpoint:        "",
-			aliases:         aliases,
+			models:          models,
 			wantErr:         true,
 			wantErrContains: "empty",
 		},
@@ -149,7 +149,7 @@ func TestResolveModel(t *testing.T) {
 			name:            "no slash",
 			input:           "claude-haiku-4-5",
 			endpoint:        "",
-			aliases:         aliases,
+			models:          models,
 			wantErr:         true,
 			wantErrContains: "developer/model_id syntax",
 		},
@@ -157,7 +157,7 @@ func TestResolveModel(t *testing.T) {
 			name:            "trailing slash",
 			input:           "anthropic/",
 			endpoint:        "",
-			aliases:         aliases,
+			models:          models,
 			wantErr:         true,
 			wantErrContains: "developer/model_id syntax",
 		},
@@ -165,7 +165,7 @@ func TestResolveModel(t *testing.T) {
 			name:            "leading slash",
 			input:           "/claude-haiku-4-5",
 			endpoint:        "",
-			aliases:         aliases,
+			models:          models,
 			wantErr:         true,
 			wantErrContains: "developer/model_id syntax",
 		},
@@ -175,7 +175,7 @@ func TestResolveModel(t *testing.T) {
 			name:          "uppercase developer",
 			input:         "ANTHROPIC/claude-haiku-4-5",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-haiku-4-5",
 			wantFormat:    "anthropic",
@@ -185,19 +185,19 @@ func TestResolveModel(t *testing.T) {
 			name:          "mixed case alias",
 			input:         "OPUS",
 			endpoint:      "",
-			aliases:       aliases,
+			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-opus-4-6",
 			wantFormat:    "anthropic",
 			wantEndpoint:  "anthropic",
 		},
 
-		// No aliases map
+		// No models map
 		{
-			name:          "no aliases direct syntax",
+			name:          "no models direct syntax",
 			input:         "anthropic/claude-haiku-4-5",
 			endpoint:      "",
-			aliases:       nil,
+			models:        nil,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-haiku-4-5",
 			wantFormat:    "anthropic",
@@ -207,7 +207,7 @@ func TestResolveModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ResolveModel(tt.input, tt.endpoint, tt.aliases)
+			got, err := ResolveModel(tt.input, tt.endpoint, tt.models)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ResolveModel() expected error, got nil")

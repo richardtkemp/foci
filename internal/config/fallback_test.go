@@ -39,15 +39,15 @@ func TestFallbackResolver_BasicResolution(t *testing.T) {
 }
 
 func TestFallbackResolver_AliasResolution(t *testing.T) {
-	// Proves that aliases in both keys and values are resolved to
-	// canonical form, so "opus" → "sonnet" works when aliases are set.
-	aliases := map[string]string{
-		"opus":   "anthropic/claude-opus-4-6",
-		"sonnet": "anthropic/claude-sonnet-4-6",
+	// Proves that model names in both keys and values are resolved to
+	// canonical form, so "opus" → "sonnet" works when models are set.
+	models := map[string]ModelConfig{
+		"opus":   {Model: "anthropic/claude-opus-4-6"},
+		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
 	}
 	fr := NewFallbackResolver(
 		map[string]string{"opus": "sonnet"},
-		nil, aliases,
+		nil, models,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -64,17 +64,17 @@ func TestFallbackResolver_AliasResolution(t *testing.T) {
 func TestFallbackResolver_ChainWalk(t *testing.T) {
 	// Proves that fallback chains work: opus → sonnet → haiku,
 	// where each Resolve returns the next hop (not the full chain).
-	aliases := map[string]string{
-		"opus":   "anthropic/claude-opus-4-6",
-		"sonnet": "anthropic/claude-sonnet-4-6",
-		"haiku":  "anthropic/claude-haiku-4-5",
+	models := map[string]ModelConfig{
+		"opus":   {Model: "anthropic/claude-opus-4-6"},
+		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
+		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
 	}
 	fr := NewFallbackResolver(
 		map[string]string{
 			"opus":   "sonnet",
 			"sonnet": "haiku",
 		},
-		nil, aliases,
+		nil, models,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -128,10 +128,10 @@ func TestFallbackResolver_CycleDetection(t *testing.T) {
 func TestFallbackResolver_PerAgentOverride(t *testing.T) {
 	// Proves that per-agent fallback entries override global entries
 	// for the same key, and global entries for other keys are preserved.
-	aliases := map[string]string{
-		"opus":   "anthropic/claude-opus-4-6",
-		"sonnet": "anthropic/claude-sonnet-4-6",
-		"haiku":  "anthropic/claude-haiku-4-5",
+	models := map[string]ModelConfig{
+		"opus":   {Model: "anthropic/claude-opus-4-6"},
+		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
+		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
 	}
 	global := map[string]string{
 		"opus":   "sonnet",
@@ -140,7 +140,7 @@ func TestFallbackResolver_PerAgentOverride(t *testing.T) {
 	perAgent := map[string]string{
 		"opus": "haiku", // override: skip sonnet
 	}
-	fr := NewFallbackResolver(global, perAgent, aliases)
+	fr := NewFallbackResolver(global, perAgent, models)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
 	}

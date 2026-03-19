@@ -16,7 +16,7 @@ func TestLoadFullConfig(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -88,7 +88,7 @@ func TestLoadDefaults(t *testing.T) {
 
 	// Minimal config — only required fields
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -133,7 +133,7 @@ func TestLoadCustomManaName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -164,7 +164,7 @@ func TestLoadCustomCommands(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -207,7 +207,7 @@ func TestLoadSingleAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -239,7 +239,7 @@ func TestLoadMultiAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -305,7 +305,7 @@ func TestLoadPerAgentUsageWarnings(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [usage_warnings]
@@ -387,7 +387,7 @@ func TestLoadPopulatesUndefinedKeys(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -439,7 +439,7 @@ func TestLoadPlatformConfigSync(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -503,7 +503,7 @@ func TestLoadPlatformConfigNewStyle(t *testing.T) {
 
 	// New-style config with platforms section
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]

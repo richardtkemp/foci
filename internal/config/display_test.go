@@ -269,7 +269,7 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 		MaxToolLoops:    25,
 		MaxOutputTokens: 16384,
 	}
-	cfg.Models.Powerful = "claude-haiku-4-5"
+	cfg.Groups.Powerful = "claude-haiku-4-5"
 	// Agent overrides max_output_tokens from the default.
 	agent := AgentConfig{
 		ID:        "test-agent",
@@ -285,8 +285,8 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 		"defaults":                     true,
 		"defaults.max_output_tokens":   true,
 		"defaults.max_tool_loops":      true,
-		"models":                       true,
-		"models.powerful":              true,
+		"groups":                       true,
+		"groups.powerful":              true,
 		"telegram":                     true,
 		"telegram.allowed_users":       true,
 		"sessions":                     true,
