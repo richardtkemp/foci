@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 )
 
@@ -31,28 +32,28 @@ func TestResolveAnthropicAliases(t *testing.T) {
 		},
 	}
 
-	aliases := map[string]string{
-		"haiku":  "anthropic/claude-haiku-4-5",
-		"sonnet": "anthropic/claude-sonnet-4-6",
-		"opus":   "anthropic/claude-opus-4-6",
-		"gemini-flash": "google/gemini-2.5-flash",
+	configs := map[string]config.ModelConfig{
+		"haiku":         {Model: "anthropic/claude-haiku-4-5"},
+		"sonnet":        {Model: "anthropic/claude-sonnet-4-6"},
+		"opus":          {Model: "anthropic/claude-opus-4-6"},
+		"gemini-flash":  {Model: "google/gemini-2.5-flash"},
 	}
 
-	resolveAnthropicAliases(mock, aliases)
+	resolveAnthropicModelConfigs(mock, configs)
 
 	// Should resolve to latest dated version
-	if got := aliases["haiku"]; got != "anthropic/claude-haiku-4-5-20251001" {
+	if got := configs["haiku"].Model; got != "anthropic/claude-haiku-4-5-20251001" {
 		t.Errorf("haiku = %q, want anthropic/claude-haiku-4-5-20251001", got)
 	}
-	if got := aliases["sonnet"]; got != "anthropic/claude-sonnet-4-6-20250514" {
+	if got := configs["sonnet"].Model; got != "anthropic/claude-sonnet-4-6-20250514" {
 		t.Errorf("sonnet = %q, want anthropic/claude-sonnet-4-6-20250514", got)
 	}
-	if got := aliases["opus"]; got != "anthropic/claude-opus-4-6-20250610" {
+	if got := configs["opus"].Model; got != "anthropic/claude-opus-4-6-20250610" {
 		t.Errorf("opus = %q, want anthropic/claude-opus-4-6-20250610", got)
 	}
 
-	// Non-Anthropic aliases should be untouched
-	if got := aliases["gemini-flash"]; got != "google/gemini-2.5-flash" {
+	// Non-Anthropic configs should be untouched
+	if got := configs["gemini-flash"].Model; got != "google/gemini-2.5-flash" {
 		t.Errorf("gemini-flash = %q, want google/gemini-2.5-flash", got)
 	}
 }
@@ -62,67 +63,67 @@ func TestResolveAnthropicAliasesAPIError(t *testing.T) {
 		err: errors.New("connection refused"),
 	}
 
-	aliases := map[string]string{
-		"haiku":  "anthropic/claude-haiku-4-5",
-		"sonnet": "anthropic/claude-sonnet-4-6",
+	configs := map[string]config.ModelConfig{
+		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
+		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
 	}
 
-	resolveAnthropicAliases(mock, aliases)
+	resolveAnthropicModelConfigs(mock, configs)
 
 	// Should keep defaults on error
-	if got := aliases["haiku"]; got != "anthropic/claude-haiku-4-5" {
+	if got := configs["haiku"].Model; got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("haiku = %q, want anthropic/claude-haiku-4-5 (unchanged)", got)
 	}
-	if got := aliases["sonnet"]; got != "anthropic/claude-sonnet-4-6" {
+	if got := configs["sonnet"].Model; got != "anthropic/claude-sonnet-4-6" {
 		t.Errorf("sonnet = %q, want anthropic/claude-sonnet-4-6 (unchanged)", got)
 	}
 }
 
-func TestResolveAnthropicAliasesNilMap(t *testing.T) {
+func TestResolveAnthropicModelConfigsNilMap(t *testing.T) {
 	mock := &mockModelLister{}
 	// Should not panic
-	resolveAnthropicAliases(mock, nil)
+	resolveAnthropicModelConfigs(mock, nil)
 }
 
-func TestResolveAnthropicAliasesNoMatchingModels(t *testing.T) {
+func TestResolveAnthropicModelConfigsNoMatchingModels(t *testing.T) {
 	mock := &mockModelLister{
 		models: []provider.ModelInfo{
 			{ID: "claude-sonnet-4-6-20250514", CreatedAt: time.Now()},
 		},
 	}
 
-	aliases := map[string]string{
-		"haiku":  "anthropic/claude-haiku-4-5",
-		"sonnet": "anthropic/claude-sonnet-4-6",
+	configs := map[string]config.ModelConfig{
+		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
+		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
 	}
 
-	resolveAnthropicAliases(mock, aliases)
+	resolveAnthropicModelConfigs(mock, configs)
 
 	// haiku has no match — should keep default
-	if got := aliases["haiku"]; got != "anthropic/claude-haiku-4-5" {
+	if got := configs["haiku"].Model; got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("haiku = %q, want anthropic/claude-haiku-4-5 (unchanged)", got)
 	}
 	// sonnet should be resolved
-	if got := aliases["sonnet"]; got == "anthropic/claude-sonnet-4-6" {
+	if got := configs["sonnet"].Model; got == "anthropic/claude-sonnet-4-6" {
 		t.Errorf("sonnet should have been resolved, still %q", got)
 	}
 }
 
-func TestResolveAnthropicAliasesNoAnthropicAliases(t *testing.T) {
+func TestResolveAnthropicModelConfigsNoAnthropicConfigs(t *testing.T) {
 	mock := &mockModelLister{
 		models: []provider.ModelInfo{
 			{ID: "claude-haiku-4-5-20251001", CreatedAt: time.Now()},
 		},
 	}
 
-	aliases := map[string]string{
-		"gemini-flash": "google/gemini-2.5-flash",
+	configs := map[string]config.ModelConfig{
+		"gemini-flash": {Model: "google/gemini-2.5-flash"},
 	}
 
-	resolveAnthropicAliases(mock, aliases)
+	resolveAnthropicModelConfigs(mock, configs)
 
-	// Should not call API or modify anything (no anthropic aliases present)
-	if got := aliases["gemini-flash"]; got != "google/gemini-2.5-flash" {
+	// Should not call API or modify anything (no anthropic configs present)
+	if got := configs["gemini-flash"].Model; got != "google/gemini-2.5-flash" {
 		t.Errorf("gemini-flash = %q, want google/gemini-2.5-flash", got)
 	}
 }
@@ -138,7 +139,7 @@ func (m *mockOpenAIModelLister) ListModels(ctx context.Context) ([]provider.Mode
 	return m.models, m.err
 }
 
-func TestResolveOpenAIAliases(t *testing.T) {
+func TestResolveOpenAIModelConfigs(t *testing.T) {
 	mock := &mockOpenAIModelLister{
 		models: []provider.ModelInfo{
 			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
@@ -149,120 +150,120 @@ func TestResolveOpenAIAliases(t *testing.T) {
 		},
 	}
 
-	aliases := map[string]string{
-		"gpt4o":  "openai/gpt-4o",
-		"o3":     "openai/o3",
-		"o4mini": "openai/o4-mini",
-		"haiku":  "anthropic/claude-haiku-4-5",
+	configs := map[string]config.ModelConfig{
+		"gpt4o":  {Model: "openai/gpt-4o"},
+		"o3":     {Model: "openai/o3"},
+		"o4mini": {Model: "openai/o4-mini"},
+		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
 	}
 
-	resolveOpenAIAliases(context.Background(), mock, aliases)
+	resolveOpenAIModelConfigs(context.Background(), mock, configs)
 
-	if got := aliases["gpt4o"]; got != "openai/gpt-4o-2025-08-01" {
+	if got := configs["gpt4o"].Model; got != "openai/gpt-4o-2025-08-01" {
 		t.Errorf("gpt4o = %q, want openai/gpt-4o-2025-08-01", got)
 	}
-	if got := aliases["o3"]; got != "openai/o3-2025-07-15" {
+	if got := configs["o3"].Model; got != "openai/o3-2025-07-15" {
 		t.Errorf("o3 = %q, want openai/o3-2025-07-15", got)
 	}
-	if got := aliases["o4mini"]; got != "openai/o4-mini-2025-09-01" {
+	if got := configs["o4mini"].Model; got != "openai/o4-mini-2025-09-01" {
 		t.Errorf("o4mini = %q, want openai/o4-mini-2025-09-01", got)
 	}
 
-	// Non-OpenAI aliases should be untouched
-	if got := aliases["haiku"]; got != "anthropic/claude-haiku-4-5" {
+	// Non-OpenAI configs should be untouched
+	if got := configs["haiku"].Model; got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("haiku = %q, want anthropic/claude-haiku-4-5", got)
 	}
 }
 
-func TestResolveOpenAIAliasesAPIError(t *testing.T) {
+func TestResolveOpenAIModelConfigsAPIError(t *testing.T) {
 	mock := &mockOpenAIModelLister{
 		err: errors.New("connection refused"),
 	}
 
-	aliases := map[string]string{
-		"gpt4o": "openai/gpt-4o",
-		"o3":    "openai/o3",
+	configs := map[string]config.ModelConfig{
+		"gpt4o": {Model: "openai/gpt-4o"},
+		"o3":    {Model: "openai/o3"},
 	}
 
-	resolveOpenAIAliases(context.Background(), mock, aliases)
+	resolveOpenAIModelConfigs(context.Background(), mock, configs)
 
 	// Should keep defaults on error
-	if got := aliases["gpt4o"]; got != "openai/gpt-4o" {
+	if got := configs["gpt4o"].Model; got != "openai/gpt-4o" {
 		t.Errorf("gpt4o = %q, want openai/gpt-4o (unchanged)", got)
 	}
-	if got := aliases["o3"]; got != "openai/o3" {
+	if got := configs["o3"].Model; got != "openai/o3" {
 		t.Errorf("o3 = %q, want openai/o3 (unchanged)", got)
 	}
 }
 
-func TestResolveOpenAIAliasesNilMap(t *testing.T) {
+func TestResolveOpenAIModelConfigsNilMap(t *testing.T) {
 	mock := &mockOpenAIModelLister{}
 	// Should not panic
-	resolveOpenAIAliases(context.Background(), mock, nil)
+	resolveOpenAIModelConfigs(context.Background(), mock, nil)
 }
 
-func TestResolveOpenAIAliasesNoMatchingModels(t *testing.T) {
+func TestResolveOpenAIModelConfigsNoMatchingModels(t *testing.T) {
 	mock := &mockOpenAIModelLister{
 		models: []provider.ModelInfo{
 			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
 		},
 	}
 
-	aliases := map[string]string{
-		"gpt4o":  "openai/gpt-4o",
-		"o4mini": "openai/o4-mini",
+	configs := map[string]config.ModelConfig{
+		"gpt4o":  {Model: "openai/gpt-4o"},
+		"o4mini": {Model: "openai/o4-mini"},
 	}
 
-	resolveOpenAIAliases(context.Background(), mock, aliases)
+	resolveOpenAIModelConfigs(context.Background(), mock, configs)
 
 	// gpt4o should be resolved
-	if got := aliases["gpt4o"]; got != "openai/gpt-4o-2025-06-01" {
+	if got := configs["gpt4o"].Model; got != "openai/gpt-4o-2025-06-01" {
 		t.Errorf("gpt4o = %q, want openai/gpt-4o-2025-06-01", got)
 	}
 	// o4mini has no match — should keep default
-	if got := aliases["o4mini"]; got != "openai/o4-mini" {
+	if got := configs["o4mini"].Model; got != "openai/o4-mini" {
 		t.Errorf("o4mini = %q, want openai/o4-mini (unchanged)", got)
 	}
 }
 
-func TestResolveOpenAIAliasesNoOpenAIAliases(t *testing.T) {
+func TestResolveOpenAIModelConfigsNoOpenAIConfigs(t *testing.T) {
 	mock := &mockOpenAIModelLister{
 		models: []provider.ModelInfo{
 			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
 		},
 	}
 
-	aliases := map[string]string{
-		"haiku": "anthropic/claude-haiku-4-5",
-		"gemini-flash": "google/gemini-2.5-flash",
+	configs := map[string]config.ModelConfig{
+		"haiku":        {Model: "anthropic/claude-haiku-4-5"},
+		"gemini-flash": {Model: "google/gemini-2.5-flash"},
 	}
 
-	resolveOpenAIAliases(context.Background(), mock, aliases)
+	resolveOpenAIModelConfigs(context.Background(), mock, configs)
 
-	// Should not modify anything (no openai aliases present)
-	if got := aliases["haiku"]; got != "anthropic/claude-haiku-4-5" {
+	// Should not modify anything (no openai configs present)
+	if got := configs["haiku"].Model; got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("haiku = %q, want anthropic/claude-haiku-4-5", got)
 	}
-	if got := aliases["gemini-flash"]; got != "google/gemini-2.5-flash" {
+	if got := configs["gemini-flash"].Model; got != "google/gemini-2.5-flash" {
 		t.Errorf("gemini-flash = %q, want google/gemini-2.5-flash", got)
 	}
 }
 
-func TestResolveOpenAIAliasesSkipsNonOpenAIPrefixed(t *testing.T) {
+func TestResolveOpenAIModelConfigsSkipsNonOpenAIPrefixed(t *testing.T) {
 	mock := &mockOpenAIModelLister{
 		models: []provider.ModelInfo{
 			{ID: "gpt-4o-2025-06-01", CreatedAt: time.Unix(1717200000, 0)},
 		},
 	}
 
-	// gpt4o alias points to a non-openai endpoint (e.g. openrouter) — should not be resolved
-	aliases := map[string]string{
-		"gpt4o": "openrouter/gpt-4o",
+	// gpt4o config points to a non-openai endpoint (e.g. openrouter) — should not be resolved
+	configs := map[string]config.ModelConfig{
+		"gpt4o": {Model: "openrouter/gpt-4o"},
 	}
 
-	resolveOpenAIAliases(context.Background(), mock, aliases)
+	resolveOpenAIModelConfigs(context.Background(), mock, configs)
 
-	if got := aliases["gpt4o"]; got != "openrouter/gpt-4o" {
+	if got := configs["gpt4o"].Model; got != "openrouter/gpt-4o" {
 		t.Errorf("gpt4o = %q, want openrouter/gpt-4o (unchanged)", got)
 	}
 }
