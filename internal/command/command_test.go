@@ -294,13 +294,13 @@ func TestKeyboardOptionsOnBuiltinCommands(t *testing.T) {
 
 	t.Run("model_with_aliases", func(t *testing.T) {
 		cmd := ModelCommand()
-		aliases := map[string]string{
-			"haiku":  "anthropic/claude-haiku-4-5",
-			"sonnet": "anthropic/claude-sonnet-4-6",
-			"opus":   "anthropic/claude-opus-4-6",
+		models := map[string]config.ModelConfig{
+			"haiku":  {Model: "anthropic/claude-haiku-4-5"},
+			"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
+			"opus":   {Model: "anthropic/claude-opus-4-6"},
 		}
 		ccAliased := CommandContext{
-			ModelAliases: aliases,
+			ModelConfigs: models,
 			Config: &config.Config{
 				Endpoints: map[string]config.EndpointConfig{
 					"anthropic": {Format: "anthropic"},

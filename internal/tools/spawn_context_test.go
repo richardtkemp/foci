@@ -12,11 +12,11 @@ import (
 	"foci/internal/provider"
 )
 
-// spawnTestAliases mirrors the default model aliases from config/load.go for tests.
-var spawnTestAliases = map[string]string{
-	"opus":   "anthropic/claude-opus-4-6",
-	"sonnet": "anthropic/claude-sonnet-4-6",
-	"haiku":  "anthropic/claude-haiku-4-5",
+// spawnTestModels mirrors the default model configs from config/load.go for tests.
+var spawnTestModels = map[string]config.ModelConfig{
+	"opus":   {Model: "anthropic/claude-opus-4-6"},
+	"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
+	"haiku":  {Model: "anthropic/claude-haiku-4-5"},
 }
 
 func TestSpawnContextRaw(t *testing.T) {
@@ -36,11 +36,11 @@ func TestSpawnContextRaw(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	gr := config.NewGroupResolver(config.ModelsConfig{
+	gr := config.NewGroupResolver(config.GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
-	}, spawnTestAliases)
+	}, spawnTestModels)
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -98,9 +98,9 @@ func TestSpawnContextCharacter(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	gr := config.NewGroupResolver(config.ModelsConfig{
+	gr := config.NewGroupResolver(config.GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, spawnTestAliases)
+	}, spawnTestModels)
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -279,11 +279,11 @@ func TestSpawnExploreMode(t *testing.T) {
 	})
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	gr := config.NewGroupResolver(config.ModelsConfig{
+	gr := config.NewGroupResolver(config.GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
-	}, spawnTestAliases)
+	}, spawnTestModels)
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,
