@@ -14,7 +14,7 @@ func TestSendMessageToUserTextOnly(t *testing.T) {
 	// Verifies that providing only text sends exactly one text message and no document or voice calls.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello user",
@@ -39,7 +39,7 @@ func TestSendMessageToUserDocumentOnly(t *testing.T) {
 	// Verifies that providing only a file path sends exactly one document and no text calls.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/report.pdf",
@@ -61,7 +61,7 @@ func TestSendMessageToUserVoice(t *testing.T) {
 	// Verifies that a file with send_as=voice is sent as a voice note, not a document.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/note.ogg",
@@ -84,7 +84,7 @@ func TestSendMessageToUserTextAndDocument(t *testing.T) {
 	// Verifies that providing both text and a file path sends both independently and reports the combined result.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "here's the file",
@@ -110,7 +110,7 @@ func TestSendMessageToUserNoInput(t *testing.T) {
 	// Verifies that omitting both text and file_path returns a validation error requiring at least one input.
 	t.Parallel()
 	mock := &mockSender{}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{})
 
@@ -126,7 +126,7 @@ func TestSendMessageToUserNoInput(t *testing.T) {
 func TestSendMessageToUserNilSender(t *testing.T) {
 	// Verifies that a nil platform.Sender (messaging not configured) returns a "messaging not configured" error rather than panicking.
 	t.Parallel()
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return nil }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return nil }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -145,7 +145,7 @@ func TestSendMessageToUserTextError(t *testing.T) {
 	// Verifies that errors from the text sender are propagated back to the caller.
 	t.Parallel()
 	mock := &mockSender{textErr: fmt.Errorf("network down")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text": "hello",
@@ -164,7 +164,7 @@ func TestSendMessageToUserDocumentError(t *testing.T) {
 	// Verifies that errors from the document sender are propagated back to the caller.
 	t.Parallel()
 	mock := &mockSender{documentErr: fmt.Errorf("file too large")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/huge.bin",
@@ -183,7 +183,7 @@ func TestSendMessageToUserVoiceError(t *testing.T) {
 	// Verifies that errors from the voice sender are propagated back to the caller.
 	t.Parallel()
 	mock := &mockSender{voiceErr: fmt.Errorf("codec error")}
-	tool := NewSendMessageToUserTool(func(string) platform.Sender { return mock }, nil)
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"file_path": "/tmp/voice.ogg",

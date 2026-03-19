@@ -95,10 +95,10 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 
 			// Tag the message with its origin, timestamp, and delivery context.
 			// The note tells the receiving agent where its reply will go so it
-			// can decide whether to use send_message_to_user.
+			// can decide whether to use send_to_chat.
 			var contextNote string
 			if p.ReplyTo == "caller" {
-				contextNote = "[SYSTEM INJECTION — This is a user-role message sent by another session, NOT by the user. The user has not seen it. Your reply will be routed back to the calling session — it will NOT appear in the user's chat. Reply normally to communicate with the calling session. If you also want to inform the user, use `send_message_to_user`. If you have nothing to say, respond with `[[NO_RESPONSE]]` and nothing else.]"
+				contextNote = "[SYSTEM INJECTION — This is a user-role message sent by another session, NOT by the user. The user has not seen it. Your reply will be routed back to the calling session — it will NOT appear in the user's chat. Reply normally to communicate with the calling session. If you also want to inform the user, use `send_to_chat`. If you have nothing to say, respond with `[[NO_RESPONSE]]` and nothing else.]"
 			} else {
 				contextNote = "[SYSTEM INJECTION — This is a user-role message sent by another session, NOT by the user. The user has not seen it. Your reply will be delivered to the user's chat normally. If the user already knows about it or you don't want to bother them, respond with `[[NO_RESPONSE]]` and nothing else. Otherwise actively *tell* the user about it and explain (e.g. \"I received a notification that...\", \"The system reports...\"). Do NOT passively comment on or observe the content — either `[[NO_RESPONSE]]` or proactively inform the user.]"
 			}

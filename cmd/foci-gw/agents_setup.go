@@ -229,14 +229,14 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	return compactor, compactionThreshold
 }
 
-// registerSessionTools registers send_message_to_user and send_to_session tools.
+// registerSessionTools registers send_to_chat and send_to_session tools.
 // Returns the resolved agent TTS and TTS replacements for reuse in platform setup.
 func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platform.ConnectionManager, notifier *tools.AsyncNotifier) (voice.TTS, map[string]string) {
 	acfg := p.acfg
 
 	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.TTSReplacements)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls)
-	registry.Register(tools.NewSendMessageToUserTool(func(sessionKey string) platform.Sender {
+	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
 		if conn == nil {
 			return nil

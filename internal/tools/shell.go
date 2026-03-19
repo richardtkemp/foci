@@ -79,7 +79,7 @@ func NewExecTool(store *secrets.Store, bwStore *bitwarden.Store, autoBackgroundS
 	}
 	return &Tool{
 		Name:        "shell",
-		Description: "Run a shell command and return its output. pipefail, nounset, and failglob are set. Use timeout to set a generous limit on execution time, or set background=true for persistent processes (tmux, daemons) that should survive after the call. {{secret:}} templates may be used but only inside foci_http_request arguments. Most tools are available as foci_$toolname shell functions. You will find foci_send_message_to_user and foci_summarize especially useful.",
+		Description: "Run a shell command and return its output. pipefail, nounset, and failglob are set. Use timeout to set a generous limit on execution time, or set background=true for persistent processes (tmux, daemons) that should survive after the call. {{secret:}} templates may be used but only inside foci_http_request arguments. Most tools are available as foci_$toolname shell functions. You will find foci_send_to_chat and foci_summarize especially useful.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {

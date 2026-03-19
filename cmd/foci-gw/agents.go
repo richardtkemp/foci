@@ -149,7 +149,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Compaction
 	compactor, compactionThreshold := buildCompactor(p, fallbackFn)
 
-	// Session messaging tools (send_message_to_user, send_to_session)
+	// Session messaging tools (send_to_chat, send_to_session)
 	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
 
 	// Per-agent environment block

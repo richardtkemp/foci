@@ -23,7 +23,7 @@ var toolDescriptions = map[string]string{
 	"todo":                 "task management",
 	"task_list":            "track current work items",
 	"remind":               "defer a thought for later with scheduled surfacing",
-	"send_message_to_user": "proactive messages to user",
+	"send_to_chat":         "proactive messages to user",
 	"send_to_session":      "cross-session messaging",
 	"spawn":                "create sub-agents for parallel work",
 	"bitwarden_search":     "search credential vault",
@@ -36,7 +36,7 @@ var toolOrder = []string{
 	"read", "write", "edit", "summary",
 	"http_request", "web_search", "web_fetch",
 	"memory_search", "scratchpad", "todo", "task_list", "remind",
-	"send_message_to_user", "send_to_session", "spawn",
+	"send_to_chat", "send_to_session", "spawn",
 	"bitwarden_search", "bitwarden_unlock",
 }
 
