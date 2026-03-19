@@ -19,7 +19,7 @@ func TestLoadNewConfigFields(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -123,7 +123,7 @@ func TestNewConfigDefaults(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -201,94 +201,14 @@ id = "test"
 	}
 }
 
-func TestApplyProviderDefaults(t *testing.T) {
-	// Proves that ApplyProviderDefaults resolves per-agent provider subsection →
-	// global provider config, respects per-agent overrides, and only populates
-	// fields relevant to each provider (e.g. effort is anthropic-only).
-	cfg := &Config{
-		Anthropic: AnthropicConfig{Effort: "low", Thinking: "adaptive"},
-		Gemini:    GeminiConfig{Thinking: "adaptive"},
-		OpenAI:    OpenAIConfig{Reasoning: "adaptive"},
-	}
-
-	// Anthropic agent with no per-agent overrides gets global defaults
-	agent := AgentConfig{}
-	ApplyProviderDefaults(&agent, "anthropic", cfg)
-	if agent.Effort != "low" {
-		t.Errorf("anthropic effort = %q, want %q", agent.Effort, "low")
-	}
-	if agent.Thinking != "adaptive" {
-		t.Errorf("anthropic thinking = %q, want %q", agent.Thinking, "adaptive")
-	}
-
-	// Per-agent provider subsection overrides global
-	agent1b := AgentConfig{
-		Anthropic: AgentAnthropicConfig{Effort: "high", Thinking: "off"},
-	}
-	ApplyProviderDefaults(&agent1b, "anthropic", cfg)
-	if agent1b.Effort != "high" {
-		t.Errorf("anthropic subsection effort = %q, want %q", agent1b.Effort, "high")
-	}
-	if agent1b.Thinking != "off" {
-		t.Errorf("anthropic subsection thinking = %q, want %q", agent1b.Thinking, "off")
-	}
-
-	// Gemini agent gets thinking but not effort
-	agent2 := AgentConfig{}
-	ApplyProviderDefaults(&agent2, "gemini", cfg)
-	if agent2.Effort != "" {
-		t.Errorf("gemini effort = %q, want %q", agent2.Effort, "")
-	}
-	if agent2.Thinking != "adaptive" {
-		t.Errorf("gemini thinking = %q, want %q", agent2.Thinking, "adaptive")
-	}
-
-	// Gemini per-agent subsection overrides global
-	agent2b := AgentConfig{
-		Gemini: AgentGeminiConfig{Thinking: "off"},
-	}
-	ApplyProviderDefaults(&agent2b, "gemini", cfg)
-	if agent2b.Thinking != "off" {
-		t.Errorf("gemini subsection thinking = %q, want %q", agent2b.Thinking, "off")
-	}
-
-	// OpenAI agent gets reasoning mapped to thinking
-	agent3 := AgentConfig{}
-	ApplyProviderDefaults(&agent3, "openai", cfg)
-	if agent3.Effort != "" {
-		t.Errorf("openai effort = %q, want %q", agent3.Effort, "")
-	}
-	if agent3.Thinking != "adaptive" {
-		t.Errorf("openai thinking = %q, want %q", agent3.Thinking, "adaptive")
-	}
-
-	// OpenAI per-agent subsection overrides global
-	agent3b := AgentConfig{
-		OpenAI: AgentOpenAIConfig{Reasoning: "off"},
-	}
-	ApplyProviderDefaults(&agent3b, "openai", cfg)
-	if agent3b.Thinking != "off" {
-		t.Errorf("openai subsection thinking = %q, want %q", agent3b.Thinking, "off")
-	}
-
-	// Runtime field already set — not overwritten
-	agent4 := AgentConfig{Effort: "high", Thinking: "off"}
-	ApplyProviderDefaults(&agent4, "anthropic", cfg)
-	if agent4.Effort != "high" {
-		t.Errorf("override effort = %q, want %q", agent4.Effort, "high")
-	}
-	if agent4.Thinking != "off" {
-		t.Errorf("override thinking = %q, want %q", agent4.Thinking, "off")
-	}
-}
 
 func TestApplyDefaultsReflect(t *testing.T) {
 	// Verify that the reflect-based waterfall copies all DefaultsConfig fields.
-	// Note: effort and thinking are now in provider sections, not [defaults].
+	// Note: effort and thinking are now per-model in [models.<name>], not [defaults].
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-opus-4-6"
 
 [defaults]
@@ -301,18 +221,11 @@ inject_agent_warnings = true
 compaction_effort = "low"
 system_files = ["A.md", "B.md"]
 
-[anthropic]
-effort = "high"
-thinking = "adaptive"
-
 [[agents]]
 id = "bare"
 
 [[agents]]
 id = "override"
-
-[agents.anthropic]
-effort = "low"
 `), 0644)
 
 	cfg, err := Load(path)
@@ -333,21 +246,6 @@ effort = "low"
 	if bare.NudgeDefaultBraindeadPrompt != "watch it" {
 		t.Errorf("bare NudgeDefaultBraindeadPrompt = %q", bare.NudgeDefaultBraindeadPrompt)
 	}
-	// Effort/thinking come from provider sections via ApplyProviderDefaults, not [defaults]
-	if bare.Effort != "" {
-		t.Errorf("bare Effort = %q, want empty (set via ApplyProviderDefaults)", bare.Effort)
-	}
-	if bare.Thinking != "" {
-		t.Errorf("bare Thinking = %q, want empty (set via ApplyProviderDefaults)", bare.Thinking)
-	}
-	// Verify ApplyProviderDefaults fills them in
-	ApplyProviderDefaults(&bare, "anthropic", cfg)
-	if bare.Effort != "high" {
-		t.Errorf("bare Effort after ApplyProviderDefaults = %q, want high", bare.Effort)
-	}
-	if bare.Thinking != "adaptive" {
-		t.Errorf("bare Thinking after ApplyProviderDefaults = %q, want adaptive", bare.Thinking)
-	}
 	if !bare.DuplicateMessages {
 		t.Error("bare DuplicateMessages should be true")
 	}
@@ -361,17 +259,8 @@ effort = "low"
 		t.Errorf("bare SystemFiles = %v", bare.SystemFiles)
 	}
 
-	// Override agent keeps its own values
+	// Override agent inherits defaults for fields it didn't set
 	override := cfg.Agents[1]
-	if override.Anthropic.Effort != "low" {
-		t.Errorf("override Anthropic.Effort = %q, want low", override.Anthropic.Effort)
-	}
-	// ApplyProviderDefaults resolves subsection → runtime field
-	ApplyProviderDefaults(&override, "anthropic", cfg)
-	if override.Effort != "low" {
-		t.Errorf("override Effort after ApplyProviderDefaults = %q, want low", override.Effort)
-	}
-	// But inherits defaults for fields it didn't set
 	if override.MaxToolLoops != 50 {
 		t.Errorf("override MaxToolLoops = %d, want 50 (from defaults)", override.MaxToolLoops)
 	}
@@ -478,7 +367,7 @@ func TestMemorySourcesInheritance(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[memory.sources]]
@@ -513,7 +402,7 @@ workspace = "/ws/clutch"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[memory.sources]]
@@ -552,7 +441,7 @@ weight = 0.8
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -582,7 +471,7 @@ func TestDataDirDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -609,7 +498,7 @@ func TestDataDirExplicitNotOverridden(t *testing.T) {
 	os.WriteFile(path, []byte(`
 data_dir = "/opt/foci/data"
 
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]

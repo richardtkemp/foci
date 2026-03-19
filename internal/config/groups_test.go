@@ -9,7 +9,7 @@ import (
 // all groups default to the powerful model.
 // Grouped calls resolve to the powerful model; ungrouped calls still return nil.
 func TestPowerfulDefault(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-sonnet-4-10-20250514",
 	}, nil)
 
@@ -52,7 +52,7 @@ func TestPowerfulDefault(t *testing.T) {
 // TestThreeGroupsResolution verifies that when all three groups are defined,
 // each call site resolves to the correct model based on its default group.
 func TestThreeGroupsResolution(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
@@ -99,7 +99,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 // TestMissingFastCheapDefaultsToPowerful verifies that when Fast and Cheap
 // are not set, they default to the Powerful model.
 func TestMissingFastCheapDefaultsToPowerful(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 	}, nil)
 
@@ -125,7 +125,7 @@ func TestMissingFastCheapDefaultsToPowerful(t *testing.T) {
 // TestCallOverrides verifies that [models.calls] overrides take precedence
 // over the default group assignment for a call site.
 func TestCallOverrides(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
@@ -155,7 +155,7 @@ func TestCallOverrides(t *testing.T) {
 // TestInvalidOverrideGroupFallsToPowerful verifies that if a call override
 // references a non-existent group name, it falls back to the powerful group.
 func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
 		Calls: map[string]string{
@@ -175,7 +175,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 // TestUngroupedCallsReturnNil verifies that call sites not in the
 // defaultCallGroups map always return nil (use session model).
 func TestUngroupedCallsReturnNil(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 	}, nil)
 
@@ -189,7 +189,7 @@ func TestUngroupedCallsReturnNil(t *testing.T) {
 // TestResolveGroupByName verifies that ResolveGroup resolves group names
 // directly, falling back to powerful for unknown names.
 func TestResolveGroupByName(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
@@ -224,7 +224,7 @@ func TestResolveGroupByName(t *testing.T) {
 // TestGroupNamesReturnsAllGroups verifies GroupNames returns all three
 // built-in groups when configured.
 func TestGroupNamesReturnsAllGroups(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
@@ -246,7 +246,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 // TestPowerfulModel verifies that PowerfulModel returns the raw model string
 // for the powerful group.
 func TestPowerfulModel(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 	}, nil)
 
@@ -258,12 +258,12 @@ func TestPowerfulModel(t *testing.T) {
 // TestAliasResolution verifies that group model strings can be aliases
 // that get resolved via the aliases map.
 func TestAliasResolution(t *testing.T) {
-	aliases := map[string]string{
-		"opus": "anthropic/claude-opus-4-6",
+	models := map[string]ModelConfig{
+		"opus": {Model: "anthropic/claude-opus-4-6"},
 	}
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "opus",
-	}, aliases)
+	}, models)
 
 	r := gr.ResolveCall(CallChat)
 	if r == nil {
@@ -277,7 +277,7 @@ func TestAliasResolution(t *testing.T) {
 // TestMixedDevelopers verifies that groups can use models from different
 // developers and each resolves with the correct format and endpoint.
 func TestMixedDevelopers(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{
+	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "openai/gpt-4o-mini",

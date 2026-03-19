@@ -61,7 +61,7 @@ func TestMultiAgentSessionKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -191,7 +191,7 @@ func TestAgentNameDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -222,7 +222,7 @@ func TestAgentMemorySourcesDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -273,7 +273,7 @@ func TestNudgeDefaultBraindeadThresholdDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -296,7 +296,7 @@ func TestNudgeDefaultBraindeadThresholdExplicit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -324,7 +324,7 @@ func TestNudgeDefaultBraindeadThresholdPerAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [defaults]
@@ -368,7 +368,7 @@ func TestNudgeDefaultBraindeadThresholdDisabled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [defaults]
@@ -395,7 +395,7 @@ func TestAgentExplicitZeroNotOverwritten(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [defaults]

@@ -18,17 +18,17 @@ func TestValidateCompactionThreshold(t *testing.T) {
 	}{
 		{
 			"threshold too high",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = 1.5",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = 1.5",
 			"compaction_threshold = 1.5",
 		},
 		{
 			"threshold negative",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = -0.1",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = -0.1",
 			"compaction_threshold = -0.1",
 		},
 		{
 			"threshold valid",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = 0.7",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[sessions]\ncompaction_threshold = 0.7",
 			"",
 		},
 	}
@@ -65,18 +65,18 @@ func TestValidateHTTPPort(t *testing.T) {
 	}{
 		{
 			"port too high",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[http]\nport = 70000",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[http]\nport = 70000",
 			"port = 70000",
 		},
 		{
 			"port zero",
 			// port 0 gets defaulted to 18791, so it should pass
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[http]\nport = 0",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[http]\nport = 0",
 			"",
 		},
 		{
 			"port valid",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[http]\nport = 8080",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[http]\nport = 8080",
 			"",
 		},
 	}
@@ -108,7 +108,7 @@ func TestValidateLoggingLevel(t *testing.T) {
 	// invalid value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
+	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[logging]\nlevel = \"BOGUS\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -123,7 +123,7 @@ func TestValidateCacheStrategy(t *testing.T) {
 	// Proves that an unrecognized cache strategy value produces a validation error.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
+	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -139,7 +139,7 @@ func TestValidateCacheTTL(t *testing.T) {
 	// with an error mentioning the "ttl" field name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
+	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -156,7 +156,7 @@ func TestValidateCacheTTLValid(t *testing.T) {
 	dir := t.TempDir()
 	for _, ttl := range []string{"5m", "1h"} {
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(fmt.Sprintf("[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nttl = %q", ttl)), 0644)
+		os.WriteFile(path, []byte(fmt.Sprintf("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nttl = %q", ttl)), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Errorf("ttl=%q: unexpected error: %v", ttl, err)
@@ -172,7 +172,7 @@ func TestValidateWarningWindowDuration(t *testing.T) {
 	// error mentioning the field name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
+	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[logging]\nwarning_window_duration = \"bogus\""), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -189,7 +189,7 @@ func TestValidateMemorySourceWeight(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -217,7 +217,7 @@ func TestLoadMemoryConversationWeightDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -241,7 +241,7 @@ func TestLoadMemoryConversationWeightCustom(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -272,17 +272,17 @@ func TestValidateMemoryConversationWeight(t *testing.T) {
 	}{
 		{
 			"weight too high",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = 1.5",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = 1.5",
 			"conversation_weight = 1.5",
 		},
 		{
 			"weight negative",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = -0.1",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = -0.1",
 			"conversation_weight = -0.1",
 		},
 		{
 			"weight valid",
-			"[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = 0.5",
+			"[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[memory]\nconversation_weight = 0.5",
 			"",
 		},
 	}
@@ -321,7 +321,7 @@ func TestValidateNewDurationFields(t *testing.T) {
 		{
 			name: "invalid http_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -334,7 +334,7 @@ http_timeout = "invalid"
 		{
 			name: "invalid database busy_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -347,7 +347,7 @@ busy_timeout = "invalid"
 		{
 			name: "invalid telegram long_poll_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -360,7 +360,7 @@ long_poll_timeout = "invalid"
 		{
 			name: "invalid http graceful_shutdown_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -373,7 +373,7 @@ graceful_shutdown_timeout = "invalid"
 		{
 			name: "invalid tools tmux_command_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -386,7 +386,7 @@ tmux_command_timeout = "invalid"
 		{
 			name: "invalid tools web_fetch_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -399,7 +399,7 @@ web_fetch_timeout = "invalid"
 		{
 			name: "invalid tools web_search_timeout",
 			toml: `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -476,7 +476,7 @@ func TestValidateReservedAgentIDs(t *testing.T) {
 		t.Run("valid_"+id, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "foci.toml")
-			os.WriteFile(path, []byte(fmt.Sprintf("[models]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = %q", id)), 0644)
+			os.WriteFile(path, []byte(fmt.Sprintf("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = %q", id)), 0644)
 
 			_, err := Load(path)
 			if err != nil {

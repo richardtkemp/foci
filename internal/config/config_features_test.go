@@ -15,7 +15,7 @@ func TestLoadTelegramToggleDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -41,7 +41,7 @@ func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -74,7 +74,7 @@ func TestAgentStartupNotification(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -95,7 +95,7 @@ id = "test"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -117,7 +117,7 @@ startup_notify = true
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -136,100 +136,10 @@ startup_notify = false
 	})
 }
 
-func TestLoadThinkingConfig(t *testing.T) {
-	// Proves that the thinking setting in [anthropic] is applied to agents via
-	// ApplyProviderDefaults, that an agent with a per-agent [agents.anthropic]
-	// override keeps it, and that ApplyProviderDefaults does not overwrite existing values.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-
-	toml := `
-[models]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[anthropic]
-thinking = "adaptive"
-
-[[agents]]
-id = "smart"
-
-[[agents]]
-id = "fast"
-
-[agents.anthropic]
-thinking = "off"
-`
-	os.WriteFile(path, []byte(toml), 0644)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	// Provider-section default should be set
-	if cfg.Anthropic.Thinking != "adaptive" {
-		t.Errorf("anthropic: Thinking = %q, want %q", cfg.Anthropic.Thinking, "adaptive")
-	}
-	// Agent "smart" has no per-agent override — empty until ApplyProviderDefaults
-	if cfg.Agents[0].Thinking != "" {
-		t.Errorf("agent smart: Thinking = %q, want %q (empty before ApplyProviderDefaults)", cfg.Agents[0].Thinking, "")
-	}
-	// Agent "fast" subsection has "off" but runtime field is empty until ApplyProviderDefaults
-	if cfg.Agents[1].Anthropic.Thinking != "off" {
-		t.Errorf("agent fast: Anthropic.Thinking = %q, want %q", cfg.Agents[1].Anthropic.Thinking, "off")
-	}
-
-	// Simulate main.go calling ApplyProviderDefaults for an Anthropic agent
-	ApplyProviderDefaults(&cfg.Agents[0], "anthropic", cfg)
-	if cfg.Agents[0].Thinking != "adaptive" {
-		t.Errorf("agent smart after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
-	}
-	// Agent "fast" has subsection override "off" — should resolve to "off"
-	ApplyProviderDefaults(&cfg.Agents[1], "anthropic", cfg)
-	if cfg.Agents[1].Thinking != "off" {
-		t.Errorf("agent fast after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[1].Thinking, "off")
-	}
-}
-
-func TestLoadThinkingPerAgent(t *testing.T) {
-	// Proves that thinking can be set per-agent in [agents.anthropic] without
-	// requiring a global [anthropic] section, and that agents without an override
-	// have an empty thinking field until ApplyProviderDefaults is called.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-
-	toml := `
-[models]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[[agents]]
-id = "thinker"
-
-[agents.anthropic]
-thinking = "adaptive"
-
-[[agents]]
-id = "default"
-`
-	os.WriteFile(path, []byte(toml), 0644)
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-
-	if cfg.Agents[0].Anthropic.Thinking != "adaptive" {
-		t.Errorf("agent thinker: Anthropic.Thinking = %q, want %q", cfg.Agents[0].Anthropic.Thinking, "adaptive")
-	}
-	// ApplyProviderDefaults resolves the subsection into the runtime field
-	ApplyProviderDefaults(&cfg.Agents[0], "anthropic", cfg)
-	if cfg.Agents[0].Thinking != "adaptive" {
-		t.Errorf("agent thinker after ApplyProviderDefaults: Thinking = %q, want %q", cfg.Agents[0].Thinking, "adaptive")
-	}
-	// Agent "default" has no per-agent override — empty after Load()
-	// Defaults come from provider section via ApplyProviderDefaults in main.go
-	if cfg.Agents[1].Thinking != "" {
-		t.Errorf("agent default: Thinking = %q, want %q (empty before ApplyProviderDefaults)", cfg.Agents[1].Thinking, "")
-	}
-}
+// TestLoadThinkingConfig and TestLoadThinkingPerAgent were removed:
+// Thinking/effort settings are now per-model in [models.<name>] ModelConfig,
+// not in global [anthropic] or per-agent [agents.anthropic] sections.
+// ApplyProviderDefaults was deleted as part of the Per-Model Config refactor.
 
 func TestShowToolCallsDisplay(t *testing.T) {
 	// Proves that ToolCallDisplay accepts bool (true→preview, false→off) and string
@@ -275,7 +185,7 @@ func TestShowToolCallsDisplay(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -306,7 +216,7 @@ id = "b"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -330,7 +240,7 @@ show_tool_calls = true
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [telegram]
@@ -350,7 +260,7 @@ show_tool_calls = "full"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 `), 0644)
 		cfg, err := Load(path)
@@ -404,7 +314,7 @@ func TestBoolStringConfigLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [defaults]
@@ -443,7 +353,7 @@ func TestLoadFacetBotsPlural(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -481,7 +391,7 @@ func TestLoadSharedFacetBots(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -516,7 +426,7 @@ func TestCompactionPreserveMessagesConfig(t *testing.T) {
 	t.Run("global default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -535,7 +445,7 @@ id = "test"
 	t.Run("global explicit", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -556,7 +466,7 @@ compaction_preserve_messages = 10
 	t.Run("global explicit zero", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -577,7 +487,7 @@ compaction_preserve_messages = 0
 	t.Run("per-agent override", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [sessions]
@@ -609,7 +519,7 @@ id = "b"
 	t.Run("negative rejected", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -634,7 +544,7 @@ func TestMessagesInLogConfig(t *testing.T) {
 	t.Run("default false", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -653,7 +563,7 @@ id = "test"
 	t.Run("global explicit true", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -674,7 +584,7 @@ messages_in_log = true
 	t.Run("per-agent override", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[models]
+		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [logging]
@@ -711,7 +621,7 @@ func TestDebugSection(t *testing.T) {
 	t.Run("direct", func(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -737,7 +647,7 @@ compaction_debug = true
 	t.Run("defaults", func(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -763,7 +673,7 @@ func TestFacetNoCompactConfig(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -783,7 +693,7 @@ id = "test"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -804,7 +714,7 @@ facet_no_compact = true
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -827,7 +737,7 @@ facet_no_compact = false
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [defaults]

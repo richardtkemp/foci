@@ -89,7 +89,7 @@ func TestDataPathLoadsFromConfig(t *testing.T) {
 	toml := `
 data_dir = "/opt/foci/data"
 
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -117,7 +117,7 @@ func TestPromptFilePathsConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -143,7 +143,7 @@ func TestPromptFilePathsDefaultEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -170,7 +170,7 @@ func TestResolveAllPaths(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	// Minimal config with no path overrides — all defaults
 	toml := `
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
@@ -220,7 +220,7 @@ func TestResolveAllPathsAbsoluteOverrides(t *testing.T) {
 	toml := `
 welcome_file = "/opt/welcome.md"
 
-[models]
+[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
