@@ -8,8 +8,10 @@ import (
 
 // SecretRef represents a secret key that the configuration expects to exist.
 type SecretRef struct {
-	Key     string // secret key name, e.g. "telegram.scout", "openrouter.api_key"
-	Context string // human-readable context for warning messages
+	Key      string // secret key name, e.g. "telegram.scout", "openrouter.api_key"
+	Context  string // human-readable context for warning messages
+	AgentID  string // which agent this belongs to ("" for global)
+	Platform bool   // true for platform secrets (telegram/discord bots)
 }
 
 // RequiredSecrets returns all secret keys that the current configuration expects
@@ -127,23 +129,28 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		tg := agent.GetTelegramPlatform()
 		if tg != nil && tg.Bot != "" && tg.BotSecret == "" {
 			refs = append(refs, SecretRef{
-				Key:     "telegram." + tg.Bot,
-				Context: fmt.Sprintf("agent %q telegram bot %q", agent.ID, tg.Bot),
+				Key:      "telegram." + tg.Bot,
+				Context:  fmt.Sprintf("agent %q telegram bot %q", agent.ID, tg.Bot),
+				AgentID:  agent.ID,
+				Platform: true,
 			})
 		}
 		if tg != nil {
 			for _, bot := range tg.FacetBots {
 				refs = append(refs, SecretRef{
-					Key:     "telegram." + bot,
-					Context: fmt.Sprintf("agent %q facet bot %q", agent.ID, bot),
+					Key:      "telegram." + bot,
+					Context:  fmt.Sprintf("agent %q facet bot %q", agent.ID, bot),
+					AgentID:  agent.ID,
+					Platform: true,
 				})
 			}
 		}
 	}
 	for _, bot := range cfg.Telegram.FacetBots {
 		refs = append(refs, SecretRef{
-			Key:     "telegram." + bot,
-			Context: fmt.Sprintf("global facet bot %q", bot),
+			Key:      "telegram." + bot,
+			Context:  fmt.Sprintf("global facet bot %q", bot),
+			Platform: true,
 		})
 	}
 
@@ -154,8 +161,10 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		dc := agent.GetDiscordPlatform()
 		if dc != nil && dc.Bot != "" && dc.BotSecret == "" {
 			refs = append(refs, SecretRef{
-				Key:     "discord." + dc.Bot,
-				Context: fmt.Sprintf("agent %q discord bot %q", agent.ID, dc.Bot),
+				Key:      "discord." + dc.Bot,
+				Context:  fmt.Sprintf("agent %q discord bot %q", agent.ID, dc.Bot),
+				AgentID:  agent.ID,
+				Platform: true,
 			})
 		}
 	}

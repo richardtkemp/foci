@@ -65,7 +65,7 @@ func TestReflectIgnoresEmptySecrets(t *testing.T) {
 
 func TestConventionTelegramBot(t *testing.T) {
 	// Proves that an agent with telegram_bot set but no bot_secret produces
-	// a "telegram.<bot_name>" convention secret reference.
+	// a "telegram.<bot_name>" convention secret reference with AgentID and Platform set.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "scout", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot"}}},
@@ -73,7 +73,13 @@ func TestConventionTelegramBot(t *testing.T) {
 	}
 
 	refs := RequiredSecrets(&cfg)
-	assertHasKey(t, refs, "telegram.scout_bot")
+	ref := assertHasKeyReturn(t, refs, "telegram.scout_bot")
+	if ref.AgentID != "scout" {
+		t.Errorf("expected AgentID %q, got %q", "scout", ref.AgentID)
+	}
+	if !ref.Platform {
+		t.Error("expected Platform=true for telegram bot secret")
+	}
 }
 
 func TestConventionTelegramBotWithOverride(t *testing.T) {
@@ -90,9 +96,28 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	assertMissingKey(t, refs, "telegram.scout_bot")
 }
 
+func TestConventionDiscordBot(t *testing.T) {
+	// Proves that discord bot convention refs have AgentID and Platform set.
+	cfg := Config{
+		Agents: []AgentConfig{
+			{ID: "fotini", Platforms: &PlatformsConfig{Discord: &DiscordPlatformConfig{Bot: "fotini_bot"}}},
+		},
+	}
+
+	refs := RequiredSecrets(&cfg)
+	ref := assertHasKeyReturn(t, refs, "discord.fotini_bot")
+	if ref.AgentID != "fotini" {
+		t.Errorf("expected AgentID %q, got %q", "fotini", ref.AgentID)
+	}
+	if !ref.Platform {
+		t.Error("expected Platform=true for discord bot secret")
+	}
+}
+
 func TestConventionFacetBots(t *testing.T) {
 	// Proves that both per-agent and global [telegram] facet_bots entries
-	// produce "telegram.<name>" convention secret references.
+	// produce "telegram.<name>" convention secret references. Per-agent facet
+	// bots have AgentID set; global ones have empty AgentID.
 	cfg := Config{
 		Agents: []AgentConfig{
 			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{FacetBots: []string{"extra1"}}}},
@@ -103,9 +128,21 @@ func TestConventionFacetBots(t *testing.T) {
 	}
 
 	refs := RequiredSecrets(&cfg)
-	assertHasKey(t, refs, "telegram.extra1")
-	assertHasKey(t, refs, "telegram.shared1")
-	assertHasKey(t, refs, "telegram.shared2")
+	agentFacet := assertHasKeyReturn(t, refs, "telegram.extra1")
+	if agentFacet.AgentID != "a1" {
+		t.Errorf("expected per-agent facet AgentID %q, got %q", "a1", agentFacet.AgentID)
+	}
+	if !agentFacet.Platform {
+		t.Error("expected Platform=true for per-agent facet bot")
+	}
+
+	globalFacet := assertHasKeyReturn(t, refs, "telegram.shared1")
+	if globalFacet.AgentID != "" {
+		t.Errorf("expected global facet AgentID to be empty, got %q", globalFacet.AgentID)
+	}
+	if !globalFacet.Platform {
+		t.Error("expected Platform=true for global facet bot")
+	}
 }
 
 func TestConventionEndpointAPIKey(t *testing.T) {
@@ -327,4 +364,15 @@ func assertMissingKey(t *testing.T, refs []SecretRef, key string) {
 			return
 		}
 	}
+}
+
+func assertHasKeyReturn(t *testing.T, refs []SecretRef, key string) SecretRef {
+	t.Helper()
+	for _, ref := range refs {
+		if ref.Key == key {
+			return ref
+		}
+	}
+	t.Fatalf("expected secret ref %q not found", key)
+	return SecretRef{}
 }

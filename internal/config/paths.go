@@ -31,7 +31,7 @@ func ResolveBotToken(botName, botSecret string, secrets SecretGetter) string {
 	}
 	v, ok := secrets.Get(key)
 	if !ok {
-		log.Warnf("config", "ResolveBotToken(%q): secret %q not found in secrets store", botName, key)
+		log.Debugf("config", "ResolveBotToken(%q): secret %q not found in secrets store", botName, key)
 		return ""
 	}
 	return v
@@ -50,7 +50,7 @@ func ResolveDiscordToken(botName, botSecret string, secrets SecretGetter) string
 	}
 	v, ok := secrets.Get(key)
 	if !ok {
-		log.Warnf("config", "ResolveDiscordToken(%q): secret %q not found in secrets store", botName, key)
+		log.Debugf("config", "ResolveDiscordToken(%q): secret %q not found in secrets store", botName, key)
 		return ""
 	}
 	return v
