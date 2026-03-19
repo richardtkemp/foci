@@ -409,6 +409,104 @@ func formatSingleDisplay(sessionKey string, cc CommandContext, key string) (Resp
 	return Response{}, fmt.Errorf("unknown display key: %q\nValid keys: show_tool_calls, show_thinking, stream_output (stream), display_width (width)", key)
 }
 
+// OverridesCommand returns a /overrides command to list and manage per-session overrides.
+func OverridesCommand() *Command {
+	return &Command{
+		Name:        "overrides",
+		Description: "Show or manage per-session setting overrides",
+		Category:    "operations",
+		DefaultExecute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+			return formatOverridesStatus(req.SessionKey, cc), nil
+		},
+		Subcommands: []Subcommand{
+			{
+				Name:        "reset",
+				Description: "Clear all overrides for this session",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					cc.Agent.ClearAllSessionOverrides(req.SessionKey)
+					return Response{Text: "All session overrides cleared."}, nil
+				},
+			},
+			{
+				Name:        "delete",
+				Description: "Clear a single override by key",
+				Hidden:      true,
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					key := strings.ToLower(strings.TrimSpace(req.Args))
+					if key == "" {
+						return Response{Text: "Usage: /overrides delete <key>"}, nil
+					}
+					return deleteOverride(req.SessionKey, cc, key)
+				},
+			},
+		},
+	}
+}
+
+// overrideKeyMap maps user-facing key names to their sessionStringSetting.
+var overrideKeyMap = map[string]struct {
+	clearFn func(CommandContext, string)
+}{
+	"effort":                 {func(cc CommandContext, sk string) { cc.Agent.SetSessionEffort(sk, "") }},
+	"thinking":               {func(cc CommandContext, sk string) { cc.Agent.SetSessionThinking(sk, "") }},
+	"speed":                  {func(cc CommandContext, sk string) { cc.Agent.SetSessionSpeed(sk, "") }},
+	"model":                  {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, "", "", "", nil) }},
+	"model_endpoint":         {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil) }},
+	"model_format":           {func(cc CommandContext, sk string) { cc.Agent.SetSessionModel(sk, cc.Agent.SessionModel(sk), "", "", nil) }},
+	"show_tool_calls":        {func(cc CommandContext, sk string) { cc.Agent.SetSessionShowToolCalls(sk, "") }},
+	"display_show_thinking":  {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayShowThinking(sk, "") }},
+	"stream_output":          {func(cc CommandContext, sk string) { cc.Agent.SetSessionStreamOutput(sk, "") }},
+	"display_width":          {func(cc CommandContext, sk string) { cc.Agent.SetSessionDisplayWidth(sk, "") }},
+	"no_compact":             {func(cc CommandContext, sk string) { cc.Agent.SetSessionNoCompact(sk, false) }},
+}
+
+// formatOverridesStatus builds a display of all current session overrides.
+func formatOverridesStatus(sessionKey string, cc CommandContext) Response {
+	overrides := cc.Agent.SessionOverrides(sessionKey)
+	if len(overrides) == 0 {
+		return Response{Text: "No session overrides set."}
+	}
+
+	var b strings.Builder
+	b.WriteString("Session overrides:\n")
+
+	// Show in a deterministic order matching allSessionStringSettings + no_compact.
+	type entry struct{ key, val string }
+	var entries []entry
+	for _, key := range []string{
+		"effort", "thinking", "speed",
+		"model", "model_endpoint", "model_format",
+		"show_tool_calls", "display_show_thinking",
+		"stream_output", "display_width",
+		"no_compact",
+	} {
+		if v, ok := overrides[key]; ok {
+			entries = append(entries, entry{key, v})
+		}
+	}
+
+	for _, e := range entries {
+		fmt.Fprintf(&b, "  %s = %s\n", e.key, e.val)
+	}
+	b.WriteString("\nUse /overrides reset to clear all, /overrides delete <key> to clear one.")
+	return Response{Text: b.String()}
+}
+
+// deleteOverride clears a single session override by key name.
+func deleteOverride(sessionKey string, cc CommandContext, key string) (Response, error) {
+	entry, ok := overrideKeyMap[key]
+	if !ok {
+		var valid []string
+		for k := range overrideKeyMap {
+			valid = append(valid, k)
+		}
+		sort.Strings(valid)
+		return Response{Text: fmt.Sprintf("Unknown override key %q.\nValid keys: %s", key, strings.Join(valid, ", "))}, nil
+	}
+	entry.clearFn(cc, sessionKey)
+	return Response{Text: fmt.Sprintf("Override %q cleared.", key)}, nil
+}
+
 // applyDisplaySetting validates and applies a display setting override.
 func applyDisplaySetting(sessionKey string, cc CommandContext, key, value string) (Response, error) {
 	if canonical, ok := displayKeyAliases[key]; ok {

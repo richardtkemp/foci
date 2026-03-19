@@ -565,6 +565,31 @@ func (idx *SessionIndex) DeleteSessionMetadata(sessionKey, key string) error {
 	return idx.metaDelete(sessionMetaTable, sessionKey, key)
 }
 
+// AllSessionMetadata returns all metadata key-value pairs for a session.
+func (idx *SessionIndex) AllSessionMetadata(sessionKey string) (map[string]string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT key, value FROM session_metadata WHERE session_key = ?`,
+		sessionKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		result[k] = v
+	}
+	return result, rows.Err()
+}
+
 // System State Methods
 
 // SetSystemState stores a system state value.
