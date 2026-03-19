@@ -16,6 +16,9 @@ func TestLoadFullConfig(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "main"
 workspace = "/tmp/workspace"
@@ -85,6 +88,9 @@ func TestLoadDefaults(t *testing.T) {
 
 	// Minimal config — only required fields
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `
@@ -127,6 +133,9 @@ func TestLoadCustomManaName(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 
@@ -155,6 +164,9 @@ func TestLoadCustomCommands(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 
@@ -195,6 +207,9 @@ func TestLoadSingleAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "main"
 workspace = "/tmp/workspace"
@@ -224,6 +239,9 @@ func TestLoadMultiAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 workspace = "/tmp/foci/workspace1"
@@ -287,6 +305,9 @@ func TestLoadPerAgentUsageWarnings(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [usage_warnings]
 thresholds = [50, 25, 10]
 
@@ -366,6 +387,9 @@ func TestLoadPopulatesUndefinedKeys(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "main"
 
@@ -415,6 +439,9 @@ func TestLoadPlatformConfigSync(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "testbot"
 show_tool_calls = "preview"
@@ -476,6 +503,9 @@ func TestLoadPlatformConfigNewStyle(t *testing.T) {
 
 	// New-style config with platforms section
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "newbot"
 

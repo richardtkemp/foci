@@ -61,6 +61,9 @@ func TestMultiAgentSessionKeys(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 model = "anthropic/claude-sonnet-4-6"
@@ -188,6 +191,9 @@ func TestAgentNameDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 
@@ -216,6 +222,9 @@ func TestAgentMemorySourcesDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 workspace = "/home/foci/clutch"
@@ -264,6 +273,9 @@ func TestNudgeDefaultBraindeadThresholdDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `), 0644)
@@ -284,6 +296,9 @@ func TestNudgeDefaultBraindeadThresholdExplicit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 nudge_default_braindead_threshold = 5
@@ -309,6 +324,9 @@ func TestNudgeDefaultBraindeadThresholdPerAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [defaults]
 nudge_default_braindead_threshold = 15
 nudge_default_braindead_prompt = "defaults prompt"
@@ -350,6 +368,9 @@ func TestNudgeDefaultBraindeadThresholdDisabled(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [defaults]
 nudge_default_braindead_threshold = 0
 
@@ -374,6 +395,9 @@ func TestAgentExplicitZeroNotOverwritten(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [defaults]
 nudge_default_braindead_threshold = 15
 
