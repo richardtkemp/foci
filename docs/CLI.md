@@ -20,7 +20,7 @@ These flags are accepted by all commands:
 | `--addr <host:port>` | | `FOCI_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
 | `--session <id>` | `-s` | `FOCI_SESSION` | Target session type. Default: `main`. |
-| `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), alias, or `developer/model_id`. See [MODELS.md](MODELS.md). |
+| `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), model name, or `developer/model_id`. See [MODELS.md](MODELS.md). |
 | `--if-active <dur>` | | `FOCI_IF_ACTIVE` | Skip if no user activity within duration (e.g. `8h`, `30m`). |
 | `--if-inactive <dur>` | | `FOCI_IF_INACTIVE` | Skip if user was active within duration (e.g. `30m`, `1h`). Opposite of `--if-active`. |
 | `--message-text <text>` | `-mt` | `FOCI_MESSAGE_TEXT` | Explicit message text (alternative to trailing args). |
@@ -63,7 +63,7 @@ foci send [-a agent] [-s session] [-m model] [--if-active <duration>] [--if-inac
 |------|-------|-------------|
 | `--agent <id>` | `-a` | Target agent. |
 | `--session <id>` | `-s` | Target session type (e.g. `main`, `research`). Produces session key `<id>/i0/0`. Default: `main`. |
-| `--model <model>` | `-m` | Model override for this request. Group name (`powerful`/`fast`/`cheap`), alias (`opus`), or `developer/model_id`. |
+| `--model <model>` | `-m` | Model override for this request. Group name (`powerful`/`fast`/`cheap`), model name (`opus`), or `developer/model_id`. |
 | `--if-active <dur>` | | Skip if no real Telegram user activity within duration. Go duration format (e.g. `8h`, `30m`). |
 | `--if-inactive <dur>` | | Skip if user was active within duration. Opposite of `--if-active` — for keepalives that should only fire when idle. |
 | `--sync` / `--wait` | | Wait for the agent's response instead of returning immediately. |
@@ -99,7 +99,7 @@ foci send --if-active 8h "daily health check"
 # Send with a model override (use fast group model)
 foci send --model fast "quick question"
 
-# Send with a specific model alias
+# Send with a specific model name
 foci send -m opus "think carefully about this"
 
 # Send file contents with activity gating
@@ -128,7 +128,7 @@ foci branch [-a agent] [-m model] [--if-active <duration>] [--if-inactive <durat
 | Flag | Description |
 |------|-------------|
 | `--agent <id>` / `-a` | Target agent. |
-| `--model <model>` / `-m` | Model override for this branch. Group name, alias, or `developer/model_id`. |
+| `--model <model>` / `-m` | Model override for this branch. Group name, model name, or `developer/model_id`. |
 | `--if-active <dur>` | Skip if no real user activity within duration. |
 | `--if-inactive <dur>` | Skip if user was active within duration. For keepalives that should only fire when idle. |
 | `--sync` / `--wait` | Wait for the agent's response instead of returning immediately. |

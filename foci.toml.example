@@ -8,14 +8,26 @@
 # welcome_file = "WELCOME.md"             # changelog/welcome file injected on startup
 # skip_security_checks = false            # skip startup security checks for secrets.toml
 
-# ─── Models ──────────────────────────────────────────────────────────
+# ─── Groups ──────────────────────────────────────────────────────────
 # Model groups control which model is used for each type of LLM call.
 # "powerful" is the primary model (chat, compaction, memory). Required.
 # "fast" and "cheap" default to powerful when unset.
-[models]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-# fast = "anthropic/claude-haiku-4-5-20251001"
-# cheap = "anthropic/claude-haiku-4-5-20251001"
+# Values are model names defined in [models.*] or developer/model_id strings.
+[groups]
+powerful = "haiku"
+# fast = "haiku"
+# cheap = "haiku"
+
+# ─── Models ──────────────────────────────────────────────────────────
+# Named model definitions with per-model settings.
+# Each [models.<name>] section defines a model and its parameters.
+[models.haiku]
+model = "anthropic/claude-haiku-4-5-20251001"
+# thinking = "adaptive"                  # adaptive (default for anthropic), off
+# effort = "low"                         # low, medium, high
+# speed = ""                             # fast or empty (Opus only, 6x pricing)
+# enable_keepalive = nil                 # nil=auto-detect, true/false=explicit
+# prompt_cache_ttl = ""                  # Go duration, empty=auto-detect
 
 # ─── Defaults ─────────────────────────────────────────────────────────
 # Global defaults inherited by all agents. Per-agent values override these.
@@ -44,14 +56,23 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 # enable_stop_aliases = true              # enable stop command aliases
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
-# ─── Model aliases ───────────────────────────────────────────────────
-# [models.aliases]
-# opus = "anthropic/claude-opus-4-6"
-# sonnet = "anthropic/claude-sonnet-4-6"
-# haiku = "anthropic/claude-haiku-4-5-20251001"
-# gemini-flash = "google/gemini-2.5-flash"
-# gemini-pro = "google/gemini-2.5-pro"
-# deepseek = "deepseek/deepseek-chat"
+# ─── More model examples ─────────────────────────────────────────────
+# [models.opus]
+# model = "anthropic/claude-opus-4-6"
+# thinking = "adaptive"
+# effort = "low"
+#
+# [models.sonnet]
+# model = "anthropic/claude-sonnet-4-6"
+# thinking = "adaptive"
+#
+# [models.gemini-flash]
+# model = "google/gemini-2.5-flash"
+# thinking = "adaptive"
+#
+# [models.deepseek]
+# model = "deepseek/deepseek-chat"
+# enable_keepalive auto-detected (DeepSeek developer → 5m cache TTL)
 
 # ─── Agent ────────────────────────────────────────────────────────────
 # Define one or more agents. Each gets its own sessions, memory, and bot.
@@ -124,22 +145,6 @@ id = "myagent"
 # auto_summarise = true                  # override [tools] value
 # summary_context_turns = 5
 # summary_context_chars = 6000
-
-# ─── Agent: Provider-specific overrides ─────────────────────────────
-# Per-agent provider settings. Only the relevant section is used based
-# on the agent's model format. Defaults come from global [anthropic],
-# [gemini], [openai] sections.
-#
-# [agents.anthropic]
-# thinking = "adaptive"                   # adaptive (default), off
-# effort = "low"                          # low (default), medium, high
-# speed = ""                              # fast or empty (Opus only, 6x pricing)
-#
-# [agents.gemini]
-# thinking = "adaptive"                   # adaptive (default), off
-#
-# [agents.openai]
-# reasoning = "off"                       # off (default), adaptive
 
 system_files = [
   "character/SOUL.md",
@@ -231,10 +236,8 @@ system_files = [
 
 # ─── Anthropic ────────────────────────────────────────────────────────
 # API keys go in secrets.toml. These are non-secret settings only.
+# Model params (thinking, effort, speed) are now per-model in [models.*].
 [anthropic]
-effort = "low"                            # low (default), medium, high — Anthropic-only
-thinking = "adaptive"                     # adaptive (default), off — Anthropic+Gemini
-# speed = ""                              # fast or empty (Opus only, 6x pricing)
 # http_timeout = "600s"                   # HTTP timeout for API calls
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
 # usage_cache_ttl = "10m"                # cache TTL for usage API responses
@@ -244,18 +247,18 @@ thinking = "adaptive"                     # adaptive (default), off — Anthropi
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.
+# Model params (thinking) are now per-model in [models.*].
 [gemini]
-# thinking = "adaptive"                   # adaptive (default), off
 # http_timeout = "120s"                   # HTTP timeout for API calls
 # cache_ttl = "1h"                        # context cache TTL ("0" disables)
 
 # ─── OpenAI ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as openai.api_key.
 # Also works with OpenAI-compatible endpoints (OpenRouter, Together, Groq, etc.)
+# Model params (reasoning/thinking) are now per-model in [models.*].
 [openai]
 # base_url = ""                           # API base URL (empty = sdk default; override for OpenRouter etc.)
 # http_timeout = "120s"                   # HTTP timeout for API calls
-# reasoning = "off"                       # OpenRouter reasoning: "off" (default) or "adaptive"
 
 # ─── Telegram ─────────────────────────────────────────────────────────
 [telegram]

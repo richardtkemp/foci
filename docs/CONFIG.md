@@ -51,10 +51,6 @@ Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.
 | `cc_expiry_threshold` | string | `"5m"` | How far before expiry to trigger a proactive token refresh. Credentials are read lazily from `~/.claude/.credentials.json` on each API call. |
 | `use_sdk` | bool | `true` | Use official Anthropic SDK for API transport. When `false`, falls back to hand-rolled HTTP (legacy). SDK transport is required for streaming. |
 | `streaming` | bool | `false` | Use streaming API for Anthropic requests (global default). Requires `use_sdk = true`. When enabled, text and thinking deltas are delivered incrementally. Per-agent override available in `[defaults]` and `[[agents]]`. |
-| `effort` | string | `"low"` | Effort level for Anthropic API requests: `"low"`, `"medium"`, `"high"`. Applied as default for agents using Anthropic models. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/effort`. |
-| `thinking` | string | `"adaptive"` | Thinking mode for Anthropic models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
-| `speed` | string | `""` | Speed mode: `"fast"` enables Anthropic fast mode (beta) for ~2.5x faster output at 6x pricing. Only supported on Opus models. Uses a separate prompt cache from standard requests. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/speed`. |
-
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
 ### `[gemini]`
@@ -65,9 +61,8 @@ Google Gemini API configuration.
 |-----|------|---------|-------------|
 | `http_timeout` | string | `"120s"` | HTTP timeout for Gemini API calls. Go duration format. |
 | `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
-| `thinking` | string | `"adaptive"` | Thinking mode for Gemini models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
 
-Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-flash"` in `[models]` to use.
+Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-flash"` in `[groups]` to use.
 
 ### `[openai]`
 
@@ -77,9 +72,8 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 |-----|------|---------|-------------|
 | `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
 | `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
-| `reasoning` | string | `"off"` | OpenRouter reasoning mode: `"off"` disables, `"adaptive"` enables reasoning for models that support it (e.g. `openrouter/hunter-alpha`). Mapped to `agent.Thinking` via provider defaults, so per-agent `thinking` overrides this. Safe for non-OpenRouter endpoints — unsupported endpoints ignore the parameter, and 400 errors trigger automatic retry without reasoning. |
 
-Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[models]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
+Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[groups]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
 ### `[cache]`
 
@@ -414,20 +408,17 @@ SQLite database settings.
 |-----|------|---------|-------------|
 | `busy_timeout` | string | `"5s"` | SQLite busy timeout for concurrent access. Go duration format. High-load systems may need longer waits. |
 
-### `[models]`
+### `[groups]`
 
-Model aliases, model groups, and call site overrides.
-
-The `aliases` map allows shorthand names to be resolved to full `developer/model_id` identifiers in both `/model` command and the agent wizard. These are the built-in defaults if not configured.
+Model group assignments, call site overrides, and fallbacks.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `aliases` | map | see below | Shorthand → `developer/model_id` mapping. |
-| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Can be an alias (e.g. `"opus"`) or `developer/model_id`. All agents use this model. Other groups default to this model unless explicitly overridden. |
-| `fast` | string | `""` | Model for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
-| `cheap` | string | `""` | Model for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
+| `powerful` | string | *(required)* | Model name for primary tasks (chat, compaction, memory). Must be a key in `[models.*]` or a `developer/model_id` string. All agents use this model. Other groups default to this model unless explicitly overridden. |
+| `fast` | string | `""` | Model name for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
+| `cheap` | string | `""` | Model name for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
 
-**`[models.calls]`** — Override which group a specific call site uses. Keys are call site names, values are group names (`powerful`, `fast`, `cheap`).
+**`[groups.calls]`** — Override which group a specific call site uses. Keys are call site names, values are group names (`powerful`, `fast`, `cheap`).
 
 Default call site → group assignments:
 
@@ -439,42 +430,15 @@ Default call site → group assignments:
 
 Ungrouped call sites (`keepalive`) always use the session model regardless of group configuration.
 
-Default aliases (used when `[models]` section is not configured):
-- `opus` → `anthropic/claude-opus-4-6`
-- `sonnet` → `anthropic/claude-sonnet-4-6`
-- `haiku` → `anthropic/claude-haiku-4-5-20251001`
-- `gemini-flash` → `google/gemini-2.5-flash`
-- `gemini-pro` → `google/gemini-2.5-pro`
-- `gpt4o` → `openai/gpt-4o`
-- `o3` → `openai/o3`
-- `o4mini` → `openai/o4-mini`
-- `deepseek` → `deepseek/deepseek-chat`
+**`[groups.fallbacks]`** — Automatic model failover on transient errors. When a model returns 529 (overloaded), 5xx (server error), or times out (`context.DeadlineExceeded`), the agent automatically retries the request with the configured fallback model. Fallback is per-request — the primary model is always tried first on the next turn.
 
-Example — multi-model setup with aliases and a call site override:
-```toml
-[models]
-powerful = "opus"
-fast = "sonnet"
-cheap = "haiku"
-
-[models.calls]
-compaction = "cheap"       # use cheap model for compaction instead of powerful
-
-[models.aliases]
-opus = "anthropic/claude-opus-5-0"
-sonnet = "anthropic/claude-sonnet-5-0"
-local = "local/my-fine-tuned-model"
-```
-
-**`[models.fallbacks]`** — Automatic model failover on transient errors. When a model returns 529 (overloaded), 5xx (server error), or times out (`context.DeadlineExceeded`), the agent automatically retries the request with the configured fallback model. Fallback is per-request — the primary model is always tried first on the next turn.
-
-Keys and values can be aliases or `developer/model_id` format. Chains are supported (e.g., opus → sonnet → haiku) up to a maximum depth of 3. Cycles are detected and broken at startup.
+Keys and values can be model names (from `[models.*]`) or `developer/model_id` format. Chains are supported (e.g., opus → sonnet → haiku) up to a maximum depth of 3. Cycles are detected and broken at startup.
 
 Not triggered by: 401 auth errors, 400 bad requests, 429 rate limits.
 
 ```toml
-[models.fallbacks]
-opus = "sonnet"                                          # alias → alias
+[groups.fallbacks]
+opus = "sonnet"                                          # name → name
 sonnet = "haiku"                                         # chains: opus → sonnet → haiku
 "google/gemini-2.5-pro" = "anthropic/claude-sonnet-4-6"  # cross-endpoint fallback
 ```
@@ -486,6 +450,51 @@ Per-agent overrides via `model_fallbacks` in `[[agents]]`:
 id = "research"
 [agents.model_fallbacks]
 opus = "google/gemini-2.5-pro"   # override global fallback for this agent
+```
+
+### `[models.*]`
+
+Named model definitions with per-model settings. Each key under `[models]` defines a named model that can be referenced by `[groups]`, `/model` command, and the agent wizard.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `model` | string | *(required)* | Full `developer/model_id` string (e.g. `"anthropic/claude-opus-4-6"`). |
+| `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Empty means no override. Overridable at runtime via `/thinking`. |
+| `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Empty means no override. Overridable at runtime via `/effort`. |
+| `speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Empty means no override. Overridable at runtime via `/speed`. |
+| `enable_keepalive` | bool/nil | `nil` | Keepalive auto-detection override. `nil` (unset) = auto-detect based on developer (OpenAI and DeepSeek models enable keepalive automatically). `true`/`false` = explicit override. |
+| `prompt_cache_ttl` | string | `""` | Prompt cache TTL for keepalive interval calculation. Go duration format. Empty = auto-detect from developer defaults (5m for OpenAI/DeepSeek). Used to calculate keepalive interval (95% of TTL). |
+
+The powerful model's `thinking`, `effort`, and `speed` settings are applied as the agent's defaults at startup. These can be overridden at runtime via `/thinking`, `/effort`, and `/speed` commands.
+
+**Keepalive auto-detection:** Models from OpenAI and DeepSeek developers automatically enable keepalive with a 5-minute prompt cache TTL (firing every 4m45s). This keeps their prompt cache warm. Set `enable_keepalive = false` to disable, or `prompt_cache_ttl` to override the interval.
+
+Example — multi-model setup with per-model settings:
+```toml
+[groups]
+powerful = "opus"
+fast = "sonnet"
+cheap = "haiku"
+
+[groups.calls]
+compaction = "cheap"       # use cheap model for compaction instead of powerful
+
+[models.opus]
+model = "anthropic/claude-opus-4-6"
+thinking = "adaptive"
+effort = "low"
+
+[models.sonnet]
+model = "anthropic/claude-sonnet-4-6"
+thinking = "adaptive"
+
+[models.haiku]
+model = "anthropic/claude-haiku-4-5-20251001"
+
+[models.deepseek]
+model = "deepseek/deepseek-chat"
+# enable_keepalive auto-detected as true (DeepSeek developer)
+# prompt_cache_ttl auto-detected as "5m"
 ```
 
 ### `[endpoints]`
@@ -560,7 +569,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 | `web_fetch_allowed_domains` | string[] | `[]` | Domain whitelist for Anthropic web fetch. Mutually exclusive with `web_fetch_blocked_domains`. |
 | `web_fetch_blocked_domains` | string[] | `[]` | Domain blacklist for Anthropic web fetch. Mutually exclusive with `web_fetch_allowed_domains`. |
 
-The `summary` tool uses the **cheap** model group (call site: `summarize-file`). Configure via `[models]` cheap or `[models.calls]` overrides.
+The `summary` tool uses the **cheap** model group (call site: `summarize-file`). Configure via `[groups]` cheap or `[groups.calls]` overrides.
 
 Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
 
@@ -685,33 +694,23 @@ max_tool_loops = 50
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
 
-Effort, thinking, and speed defaults are set in provider sections (`[anthropic]`, `[gemini]`, `[openai]`) and automatically applied based on the agent's model format. Per-agent overrides use provider-specific subsections (`[agents.anthropic]`, `[agents.gemini]`, `[agents.openai]`). At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once.
+Effort, thinking, and speed defaults come from the powerful model's `[models.*]` config and are applied to all agents at startup. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once. Override at runtime via `/effort`, `/thinking`, `/speed`.
 
 Override per-agent in `[[agents]]`:
 ```toml
 [[agents]]
 id = "research"
-model = "anthropic/claude-sonnet-4-6"
 max_tool_loops = 25
-
-[agents.anthropic]
-effort = "high"
-thinking = "adaptive"
 ```
 
 ### Model & Response
 
-Models are configured solely via `[models]` groups (see [`[models]`](#models) section). `max_output_tokens` is set in `[defaults]`. Other fields are set in `[defaults]`.
+Models are configured via `[groups]` (group assignments) and `[models.*]` (per-model settings). See [`[groups]`](#groups) and [`[models.*]`](#models) sections. Thinking, effort, and speed are set per-model in `[models.*]` — the powerful model's settings become the agent defaults. `max_output_tokens` and other fields are set in `[defaults]`.
 
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
 | `max_output_tokens` | int | `16384` | `[defaults]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
-| `[agents.anthropic] effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults from `[anthropic] effort`. Only applied for Anthropic models. Overridable at runtime via `/effort`. |
-| `[agents.anthropic] thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[anthropic] thinking`. Overridable at runtime via `/thinking`. |
-| `[agents.anthropic] speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Per-agent override; defaults from `[anthropic] speed`. Overridable at runtime via `/speed`. |
-| `[agents.gemini] thinking` | string | `""` | Gemini thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[gemini] thinking`. Overridable at runtime via `/thinking`. |
-| `[agents.openai] reasoning` | string | `""` | OpenAI/OpenRouter reasoning mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[openai] reasoning`. Mapped to thinking at runtime. |
 | `streaming` | bool | `false` | Use streaming API. Text and thinking deltas are delivered incrementally. Requires Anthropic provider with `use_sdk = true`. Per-agent override; `[anthropic] streaming` sets the global default. |
 | `cache_ttl` | string | `""` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
@@ -895,7 +894,7 @@ Set in `[discord]`, overridable per-agent via `[agents.platforms.discord]`.
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
-Cache keepalive timer. Fires a lightweight branch session to keep the Anthropic cache prefix warm.
+Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected via the model's `enable_keepalive` and `prompt_cache_ttl` settings in `[models.*]` (see [`[models.*]`](#models)).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
