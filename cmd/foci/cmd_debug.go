@@ -17,6 +17,10 @@ import (
 )
 
 func cmdDebug(args []string) error {
+	// Parse --config before subcommand dispatch so it can appear anywhere
+	// (e.g. "foci debug --config path session scout").
+	configPath, args := parseFlagValue(args, "config")
+
 	if len(args) == 0 || wantsHelp(args) {
 		debugUsage()
 		return nil
@@ -25,15 +29,18 @@ func cmdDebug(args []string) error {
 	subcmd := args[0]
 	switch subcmd {
 	case "session":
-		return cmdDebugSession(args[1:])
+		return cmdDebugSession(args[1:], configPath)
 	default:
 		return fmt.Errorf("unknown debug subcommand: %s", subcmd)
 	}
 }
 
-func cmdDebugSession(args []string) error {
-	// Parse --config flag
-	configPath, args := parseFlagValue(args, "config")
+func cmdDebugSession(args []string, configPath string) error {
+	// --config may also appear after "session"; parse it from remaining args too.
+	if flagVal, rest := parseFlagValue(args, "config"); flagVal != "" {
+		configPath = flagVal
+		args = rest
+	}
 	if configPath == "" {
 		configPath = envDefault("", "FOCI_CONFIG")
 	}
