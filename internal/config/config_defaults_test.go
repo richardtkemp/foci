@@ -19,6 +19,9 @@ func TestLoadNewConfigFields(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 max_tool_loops = 50
@@ -120,6 +123,9 @@ func TestNewConfigDefaults(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `
@@ -472,6 +478,9 @@ func TestMemorySourcesInheritance(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[memory.sources]]
 name = "shared"
 dir = "/shared/memory"
@@ -504,6 +513,9 @@ workspace = "/ws/clutch"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[memory.sources]]
 name = "shared"
 dir = "/shared/memory"
@@ -540,6 +552,9 @@ weight = 0.8
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 workspace = "/ws/clutch"
@@ -567,6 +582,9 @@ func TestDataDirDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `), 0644)
@@ -590,6 +608,9 @@ func TestDataDirExplicitNotOverridden(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
 data_dir = "/opt/foci/data"
+
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"

@@ -15,6 +15,9 @@ func TestLoadTelegramToggleDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `
@@ -38,6 +41,9 @@ func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 
@@ -68,6 +74,9 @@ func TestAgentStartupNotification(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `
@@ -86,6 +95,9 @@ id = "test"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 startup_notify = true
@@ -105,6 +117,9 @@ startup_notify = true
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 startup_notify = false
@@ -129,6 +144,9 @@ func TestLoadThinkingConfig(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [anthropic]
 thinking = "adaptive"
 
@@ -180,6 +198,9 @@ func TestLoadThinkingPerAgent(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "thinker"
 
@@ -254,6 +275,9 @@ func TestShowToolCallsDisplay(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "a"
 show_tool_calls = "full"
@@ -282,6 +306,9 @@ id = "b"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "a"
 show_tool_calls = true
@@ -303,6 +330,9 @@ show_tool_calls = true
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [telegram]
 show_tool_calls = "full"
 `), 0644)
@@ -319,7 +349,10 @@ show_tool_calls = "full"
 	t.Run("telegram default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(``), 0644)
+		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+`), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
@@ -371,6 +404,9 @@ func TestBoolStringConfigLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [defaults]
 enable_stop_aliases = "on"
 
@@ -407,6 +443,9 @@ func TestLoadFacetBotsPlural(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 
@@ -442,6 +481,9 @@ func TestLoadSharedFacetBots(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "clutch"
 
@@ -474,7 +516,10 @@ func TestCompactionPreserveMessagesConfig(t *testing.T) {
 	t.Run("global default", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[[agents]]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
 id = "test"
 `), 0644)
 
@@ -490,7 +535,10 @@ id = "test"
 	t.Run("global explicit", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[[agents]]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
 id = "test"
 [sessions]
 compaction_preserve_messages = 10
@@ -508,7 +556,10 @@ compaction_preserve_messages = 10
 	t.Run("global explicit zero", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[[agents]]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
 id = "test"
 [sessions]
 compaction_preserve_messages = 0
@@ -526,7 +577,10 @@ compaction_preserve_messages = 0
 	t.Run("per-agent override", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[sessions]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[sessions]
 compaction_preserve_messages = 10
 
 [[agents]]
@@ -555,7 +609,10 @@ id = "b"
 	t.Run("negative rejected", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[[agents]]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
 id = "test"
 [sessions]
 compaction_preserve_messages = -1
@@ -577,7 +634,10 @@ func TestMessagesInLogConfig(t *testing.T) {
 	t.Run("default false", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[[agents]]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
 id = "test"
 `), 0644)
 
@@ -593,7 +653,10 @@ id = "test"
 	t.Run("global explicit true", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[[agents]]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
 id = "test"
 [logging]
 messages_in_log = true
@@ -611,7 +674,10 @@ messages_in_log = true
 	t.Run("per-agent override", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[logging]
+		os.WriteFile(path, []byte(`[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[logging]
 messages_in_log = false
 
 [[agents]]
@@ -645,6 +711,9 @@ func TestDebugSection(t *testing.T) {
 	t.Run("direct", func(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "a"
 
@@ -668,6 +737,9 @@ compaction_debug = true
 	t.Run("defaults", func(t *testing.T) {
 		dir := t.TempDir()
 		os.WriteFile(filepath.Join(dir, "foci.toml"), []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "a"
 `), 0644)
@@ -691,6 +763,9 @@ func TestFacetNoCompactConfig(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 `), 0644)
@@ -708,6 +783,9 @@ id = "test"
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 facet_no_compact = true
@@ -726,6 +804,9 @@ facet_no_compact = true
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [[agents]]
 id = "test"
 facet_no_compact = false
@@ -746,6 +827,9 @@ facet_no_compact = false
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
 [defaults]
 facet_no_compact = false
 

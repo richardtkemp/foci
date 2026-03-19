@@ -608,7 +608,7 @@ type DefaultsConfig struct {
 // ModelsConfig holds model-related configuration.
 type ModelsConfig struct {
 	Aliases   map[string]string `toml:"aliases"`   // shorthand → full model ID (e.g., "opus" → "anthropic:claude-opus-4-6")
-	Powerful  string            `toml:"powerful"`  // model for the powerful group (enables group mode when set)
+	Powerful  string            `toml:"powerful"`  // model for the powerful group (required)
 	Fast      string            `toml:"fast"`      // model for the fast group (defaults to powerful if unset)
 	Cheap     string            `toml:"cheap"`     // model for the cheap group (defaults to powerful if unset)
 	Calls     map[string]string `toml:"calls"`     // call site overrides: call name → group name
