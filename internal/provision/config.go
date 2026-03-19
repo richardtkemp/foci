@@ -12,7 +12,6 @@ func GenerateAgentBlock(spec AgentSpec) string {
 	sb.WriteString("\n")
 	sb.WriteString("[[agents]]\n")
 	fmt.Fprintf(&sb, "id = %q\n", spec.ID)
-	fmt.Fprintf(&sb, "model = %q\n", spec.Model)
 
 	workspace := spec.workspacePath()
 	fmt.Fprintf(&sb, "workspace = %q\n", workspace)

@@ -227,16 +227,14 @@ Subcommands:
 			agentBackends = mem.sharedBackends
 		}
 
-		// Resolve model using new ResolveModel function
-		resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, cfg.Models.Aliases)
-		if err != nil {
-			log.Errorf("main", "agent %q: %v (agent skipped)", acfg.ID, err)
+		// Resolve model from [models] powerful group
+		groupResolver := config.NewGroupResolver(cfg.Models, cfg.Models.Aliases)
+		resolved := groupResolver.ResolveGroup(config.GroupPowerful)
+		if resolved == nil {
+			log.Errorf("main", "agent %q: cannot resolve powerful model %q (agent skipped)", acfg.ID, cfg.Models.Powerful)
 			continue
 		}
 
-		// Update acfg.Model to the resolved developer/model_id format so all
-		// downstream code (SplitDeveloperModel, agent.Model) uses the full ID.
-		acfg.Model = resolved.Developer + "/" + resolved.ModelID
 		config.ApplyProviderDefaults(&acfg, resolved.Format, cfg)
 
 		agentClient := clients.GetClient(resolved.Endpoint, resolved.Format)
@@ -313,7 +311,8 @@ Subcommands:
 				func() { inst.kaRunner.NotifyTurnEnd() })
 		}
 
-		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, acfg.Model, acfg.Workspace)
+		powerfulModel := resolved.Developer + "/" + resolved.ModelID
+		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, powerfulModel, acfg.Workspace)
 	}
 
 	// ========== Post-agent setup ==========
@@ -456,7 +455,7 @@ Subcommands:
 	// Log startup
 	var agentNames []string
 	for _, id := range agentOrder {
-		agentNames = append(agentNames, fmt.Sprintf("%s(%s)", id, agents[id].agentCfg.Model))
+		agentNames = append(agentNames, fmt.Sprintf("%s(%s)", id, agents[id].ag.Model))
 	}
 	log.Infof("main", "started %d agent(s): %s", len(agents), strings.Join(agentNames, ", "))
 

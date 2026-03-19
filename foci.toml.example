@@ -8,11 +8,14 @@
 # welcome_file = "WELCOME.md"             # changelog/welcome file injected on startup
 # skip_security_checks = false            # skip startup security checks for secrets.toml
 
-# ─── LLM ─────────────────────────────────────────────────────────────
-# Global LLM settings. Per-agent values override these.
-[llm]
-model = "claude-sonnet-4-20250514"
-# max_output_tokens = 8192
+# ─── Models ──────────────────────────────────────────────────────────
+# Model groups control which model is used for each type of LLM call.
+# "powerful" is the primary model (chat, compaction, memory). Required.
+# "fast" and "cheap" default to powerful when unset.
+[models]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+# fast = "anthropic/claude-haiku-4-5-20251001"
+# cheap = "anthropic/claude-haiku-4-5-20251001"
 
 # ─── Defaults ─────────────────────────────────────────────────────────
 # Global defaults inherited by all agents. Per-agent values override these.
@@ -42,7 +45,6 @@ model = "claude-sonnet-4-20250514"
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
 # ─── Model aliases ───────────────────────────────────────────────────
-# [models]
 # [models.aliases]
 # opus = "anthropic/claude-opus-4-6"
 # sonnet = "anthropic/claude-sonnet-4-6"
@@ -93,7 +95,6 @@ model = "claude-sonnet-4-20250514"
 id = "myagent"
 # name = "My Agent"                       # human-readable name (default: capitalised id)
 # emoji = "🤖"
-# model = "claude-sonnet-4-20250514"      # override default model
 # streaming = false                        # per-agent streaming override
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # max_tool_loops = 25

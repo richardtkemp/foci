@@ -1,24 +1,26 @@
 # Model Configuration
 
-Foci supports single-model and multi-model setups. This guide covers how to configure models, route different tasks to different models, and override models at runtime.
+Foci uses model groups to route different tasks to different models. This guide covers how to configure models, route tasks, and override models at runtime.
 
 ---
 
-## Single-Model Mode (Default)
+## Model Groups
 
-By default, every agent uses one model for all tasks. Set it in `[llm]`:
+All models are configured in the `[models]` section. Three groups are available:
+
+| Group | Purpose | Default call sites |
+|-------|---------|-------------------|
+| **powerful** | Primary tasks | chat, spawn-clone, background, compaction, memory-capture, memory-consolidate |
+| **fast** | Quick spawns | spawn-raw, spawn-character |
+| **cheap** | Bulk/utility work | spawn-explore, summarize-tool, summarize-file, prompt-diff |
+
+`powerful` is required. `fast` and `cheap` default to the `powerful` model when not set.
 
 ```toml
-[llm]
-model = "anthropic/claude-sonnet-4-6"
-```
-
-Per-agent override:
-
-```toml
-[[agents]]
-id = "research"
-model = "gemini/gemini-2.5-flash"
+[models]
+powerful = "opus"           # alias — see Model Aliases below
+fast = "sonnet"
+cheap = "haiku"
 ```
 
 Models use `developer/model_id` format. The developer prefix determines the API endpoint and wire format:
@@ -29,27 +31,6 @@ Models use `developer/model_id` format. The developer prefix determines the API 
 | `google` / `gemini` | gemini | gemini |
 | `openai` | openai | openai |
 | Others (e.g. `deepseek`) | openai | openrouter |
-
----
-
-## Multi-Model Mode
-
-When `[models] powerful` is set, foci routes different tasks to different models. Three groups are available:
-
-| Group | Purpose | Default call sites |
-|-------|---------|-------------------|
-| **powerful** | Primary tasks | chat, spawn-clone, background, compaction, memory-capture, memory-consolidate |
-| **fast** | Quick spawns | spawn-raw, spawn-character |
-| **cheap** | Bulk/utility work | spawn-explore, summarize-tool, summarize-file, prompt-diff |
-
-`fast` and `cheap` default to the `powerful` model when not set.
-
-```toml
-[models]
-powerful = "opus"           # alias — see Model Aliases below
-fast = "sonnet"
-cheap = "haiku"
-```
 
 Ungrouped call sites (`keepalive`, `count-tokens`) always use the session model regardless of group configuration.
 
@@ -172,16 +153,13 @@ For `--model` flag and `/model` command, the override is per-session: it applies
 ### Single model (simplest)
 
 ```toml
-[llm]
-model = "anthropic/claude-sonnet-4-6"
+[models]
+powerful = "anthropic/claude-sonnet-4-6"
 ```
 
-### Multi-model with cost optimization
+### Cost optimization
 
 ```toml
-[llm]
-model = "anthropic/claude-sonnet-4-6"    # default/session model
-
 [models]
 powerful = "opus"
 fast = "sonnet"
@@ -194,9 +172,6 @@ compaction = "cheap"       # compaction doesn't need the powerful model
 ### Mixed developers
 
 ```toml
-[llm]
-model = "anthropic/claude-opus-4-6"
-
 [models]
 powerful = "opus"
 fast = "sonnet"
@@ -214,8 +189,8 @@ format = "openai"
 url = "http://localhost:8080/v1"
 api_key = "local.api_key"
 
-[llm]
-model = "local/my-model"
+[models]
+powerful = "local/my-model"
 
 [models.aliases]
 local = "local/my-model"
@@ -238,6 +213,6 @@ FOCI_MODEL=cheap foci send "routine check"
 
 ## See Also
 
-- [CONFIG.md](CONFIG.md) — full configuration reference (`[models]`, `[endpoints]`, `[llm]`)
+- [CONFIG.md](CONFIG.md) — full configuration reference (`[models]`, `[endpoints]`)
 - [CLI.md](CLI.md) — CLI command reference (`--model` flag)
 - [WIRING.md](WIRING.md) — architecture and startup flow

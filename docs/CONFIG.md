@@ -67,7 +67,7 @@ Google Gemini API configuration.
 | `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
 | `thinking` | string | `"adaptive"` | Thinking mode for Gemini models: `"adaptive"` enables extended thinking. `"off"` disables. Per-agent override in `[[agents]]` takes precedence. Overridable at runtime via `/thinking`. |
 
-Requires `gemini.api_key` in `secrets.toml`. Use `model = "gemini/gemini-2.5-flash"` in `[defaults]` or per-agent to use.
+Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-flash"` in `[models]` to use.
 
 ### `[openai]`
 
@@ -79,7 +79,7 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 | `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
 | `reasoning` | string | `"off"` | OpenRouter reasoning mode: `"off"` disables, `"adaptive"` enables reasoning for models that support it (e.g. `openrouter/hunter-alpha`). Mapped to `agent.Thinking` via provider defaults, so per-agent `thinking` overrides this. Safe for non-OpenRouter endpoints — unsupported endpoints ignore the parameter, and 400 errors trigger automatic retry without reasoning. |
 
-Requires `openai.api_key` in `secrets.toml`. Use `model = "openai/gpt-4o"` in `[defaults]` or per-agent to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
+Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[models]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
 ### `[cache]`
 
@@ -423,7 +423,7 @@ The `aliases` map allows shorthand names to be resolved to full `developer/model
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `aliases` | map | see below | Shorthand → `developer/model_id` mapping. |
-| `powerful` | string | `""` | Model for primary tasks (chat, compaction, memory). Can be an alias (e.g. `"opus"`) or `developer/model_id`. When set, enables **multi-model mode** — other groups default to this model unless explicitly overridden. When empty (default), all call sites use the agent's session model (single-model mode). |
+| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Can be an alias (e.g. `"opus"`) or `developer/model_id`. All agents use this model. Other groups default to this model unless explicitly overridden. |
 | `fast` | string | `""` | Model for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
 | `cheap` | string | `""` | Model for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
 
@@ -701,12 +701,11 @@ thinking = "adaptive"
 
 ### Model & Response
 
-`model` and `max_output_tokens` are set in `[llm]`, overridable per-agent. Other fields are set in `[defaults]`.
+Models are configured solely via `[models]` groups (see [`[models]`](#models) section). `max_output_tokens` is set in `[defaults]`. Other fields are set in `[defaults]`.
 
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
-| `model` | string | `"anthropic/claude-haiku-4-5-20251001"` | `[llm]` | Model in `developer/model_id` format. The developer prefix selects which API endpoint to use (e.g. `"gemini/gemini-2.5-flash"`, `"openrouter/claude-opus-4-6"`). Wire format is auto-inferred from model name (`claude-*` → anthropic, `gemini-*` → gemini, `gpt-*`/`o3*`/`o4*` → openai). Bare model names without `/` are auto-migrated with an inferred developer. |
-| `max_output_tokens` | int | `16384` | `[llm]` | Maximum tokens in model response. Larger values allow longer responses. |
+| `max_output_tokens` | int | `16384` | `[defaults]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
 | `[agents.anthropic] effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Per-agent override; defaults from `[anthropic] effort`. Only applied for Anthropic models. Overridable at runtime via `/effort`. |
 | `[agents.anthropic] thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Per-agent override; defaults from `[anthropic] thinking`. Overridable at runtime via `/thinking`. |

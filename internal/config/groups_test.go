@@ -5,24 +5,26 @@ import (
 	"testing"
 )
 
-// TestSessionModelDefault verifies that when no groups are configured
-// (Powerful is empty), all groups default to the session model.
-// Grouped calls resolve to the session model; ungrouped calls still return nil.
-func TestSessionModelDefault(t *testing.T) {
-	gr := NewGroupResolver(ModelsConfig{}, nil, "anthropic/claude-sonnet-4-10-20250514")
+// TestPowerfulDefault verifies that when only Powerful is set,
+// all groups default to the powerful model.
+// Grouped calls resolve to the powerful model; ungrouped calls still return nil.
+func TestPowerfulDefault(t *testing.T) {
+	gr := NewGroupResolver(ModelsConfig{
+		Powerful: "anthropic/claude-sonnet-4-10-20250514",
+	}, nil)
 
 	if names := gr.GroupNames(); len(names) != 3 {
 		t.Fatalf("expected 3 group names, got %v", names)
 	}
 	if pm := gr.PowerfulModel(); pm != "anthropic/claude-sonnet-4-10-20250514" {
-		t.Fatalf("PowerfulModel() = %q, want session model", pm)
+		t.Fatalf("PowerfulModel() = %q, want powerful model", pm)
 	}
 
-	// Grouped call sites should resolve to the session model
+	// Grouped call sites should resolve to the powerful model
 	for _, cs := range []string{CallChat, CallSpawnExplore, CallSummarizeTool} {
 		r := gr.ResolveCall(cs)
 		if r == nil {
-			t.Errorf("ResolveCall(%q) = nil, want session model", cs)
+			t.Errorf("ResolveCall(%q) = nil, want powerful model", cs)
 			continue
 		}
 		if r.ModelID != "claude-sonnet-4-10-20250514" {
@@ -37,13 +39,13 @@ func TestSessionModelDefault(t *testing.T) {
 		}
 	}
 
-	// ResolveGroup should resolve to session model
+	// ResolveGroup should resolve to powerful model
 	r := gr.ResolveGroup(GroupPowerful)
 	if r == nil {
 		t.Fatal("ResolveGroup(powerful) = nil")
 	}
 	if r.ModelID != "claude-sonnet-4-10-20250514" {
-		t.Errorf("ResolveGroup(powerful).ModelID = %q, want session model", r.ModelID)
+		t.Errorf("ResolveGroup(powerful).ModelID = %q, want powerful model", r.ModelID)
 	}
 }
 
@@ -54,7 +56,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	}, nil, "")
+	}, nil)
 
 	tests := []struct {
 		callSite string
@@ -99,7 +101,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 func TestMissingFastCheapDefaultsToPowerful(t *testing.T) {
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, nil, "")
+	}, nil)
 
 	// Fast call site should resolve to powerful model
 	r := gr.ResolveCall(CallSpawnRaw)
@@ -130,7 +132,7 @@ func TestCallOverrides(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: GroupFast, // move compaction from powerful → fast
 		},
-	}, nil, "")
+	}, nil)
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -159,7 +161,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: "nonexistent-group",
 		},
-	}, nil, "")
+	}, nil)
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -175,7 +177,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 func TestUngroupedCallsReturnNil(t *testing.T) {
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, nil, "")
+	}, nil)
 
 	for _, cs := range []string{CallKeepalive, CallCountTokens} {
 		if r := gr.ResolveCall(cs); r != nil {
@@ -191,7 +193,7 @@ func TestResolveGroupByName(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	}, nil, "")
+	}, nil)
 
 	tests := []struct {
 		group      string
@@ -226,7 +228,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	}, nil, "")
+	}, nil)
 
 	names := gr.GroupNames()
 	sort.Strings(names)
@@ -246,7 +248,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 func TestPowerfulModel(t *testing.T) {
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, nil, "")
+	}, nil)
 
 	if pm := gr.PowerfulModel(); pm != "anthropic/claude-opus-4-6" {
 		t.Errorf("PowerfulModel() = %q, want %q", pm, "anthropic/claude-opus-4-6")
@@ -261,7 +263,7 @@ func TestAliasResolution(t *testing.T) {
 	}
 	gr := NewGroupResolver(ModelsConfig{
 		Powerful: "opus",
-	}, aliases, "")
+	}, aliases)
 
 	r := gr.ResolveCall(CallChat)
 	if r == nil {
@@ -279,7 +281,7 @@ func TestMixedDevelopers(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "openai/gpt-4o-mini",
-	}, nil, "")
+	}, nil)
 
 	tests := []struct {
 		callSite       string

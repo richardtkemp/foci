@@ -33,22 +33,22 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
 		captured = target
 		capturedValue = value
-		return `"old-model"`, nil
+		return "16384", nil
 	})
 
 	w := newConfigSetWizard(deps)
 
 	// Step 0: section
-	resp, done := w.Handle("llm")
+	resp, done := w.Handle("defaults")
 	if done {
 		t.Fatal("should not be done after section")
 	}
-	if !strings.Contains(resp, "model") {
-		t.Errorf("expected key listing with 'model', got %q", resp)
+	if !strings.Contains(resp, "max_output_tokens") {
+		t.Errorf("expected key listing with 'max_output_tokens', got %q", resp)
 	}
 
 	// Step 1: key
-	resp, done = w.Handle("model")
+	resp, done = w.Handle("max_output_tokens")
 	if done {
 		t.Fatal("should not be done after key")
 	}
@@ -63,24 +63,24 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 
 	// Step 2: value
-	resp, done = w.Handle("new-model")
+	resp, done = w.Handle("32768")
 	if !done {
 		t.Fatal("should be done after value")
 	}
-	if !strings.Contains(resp, "Set llm.model") {
+	if !strings.Contains(resp, "Set defaults.max_output_tokens") {
 		t.Errorf("expected confirmation, got %q", resp)
 	}
 	if !strings.Contains(resp, "Restart") {
 		t.Errorf("expected restart hint, got %q", resp)
 	}
 
-	if captured.Section != "llm" {
+	if captured.Section != "defaults" {
 		t.Errorf("target.Section = %q", captured.Section)
 	}
-	if captured.Key != "model" {
+	if captured.Key != "max_output_tokens" {
 		t.Errorf("target.Key = %q", captured.Key)
 	}
-	if capturedValue != `"new-model"` {
+	if capturedValue != "32768" {
 		t.Errorf("value = %q", capturedValue)
 	}
 }
@@ -122,8 +122,8 @@ func TestConfigSetWizardAgentSection(t *testing.T) {
 	w := newConfigSetWizard(deps)
 
 	w.Handle("agent")
-	w.Handle("model")
-	w.Handle("opus")
+	w.Handle("max_output_tokens")
+	w.Handle("32768")
 
 	if captured.Section != "agents" {
 		t.Errorf("target.Section = %q, want 'agents'", captured.Section)
@@ -204,18 +204,18 @@ func TestConfigSetDirect(t *testing.T) {
 		return "", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "llm.model=new-model")
+	resp, err := ConfigSetDirect(deps, "defaults.max_output_tokens=32768")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
-	if !strings.Contains(resp, "Set llm.model") {
+	if !strings.Contains(resp, "Set defaults.max_output_tokens") {
 		t.Errorf("response = %q", resp)
 	}
 
-	if captured.Section != "llm" || captured.Key != "model" {
+	if captured.Section != "defaults" || captured.Key != "max_output_tokens" {
 		t.Errorf("target = %+v", captured)
 	}
-	if capturedValue != `"new-model"` {
+	if capturedValue != "32768" {
 		t.Errorf("value = %q", capturedValue)
 	}
 }
@@ -314,18 +314,18 @@ func TestConfigSetDirectInt(t *testing.T) {
 // and the old value, giving the user feedback about what was replaced.
 func TestConfigSetDirectShowsOldValue(t *testing.T) {
 	deps := testConfigSetDeps(func(path string, target config.SetTarget, value string) (string, error) {
-		return `"old-model"`, nil
+		return "16384", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "llm.model=new-model")
+	resp, err := ConfigSetDirect(deps, "defaults.max_output_tokens=32768")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
 	if !strings.Contains(resp, "was") {
 		t.Errorf("expected old value in response, got %q", resp)
 	}
-	if !strings.Contains(resp, `"old-model"`) {
-		t.Errorf("expected old value quoted, got %q", resp)
+	if !strings.Contains(resp, "16384") {
+		t.Errorf("expected old value in response, got %q", resp)
 	}
 }
 
@@ -337,14 +337,14 @@ func TestConfigSetSectionKey(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	deps.Registry = registry
 
-	text, err := configSet(&deps, "llm model")
+	text, err := configSet(&deps, "defaults max_output_tokens")
 	if err != nil {
 		t.Fatalf("configSet: %v", err)
 	}
 	if !strings.Contains(text, "New value") {
 		t.Errorf("expected value prompt, got %q", text)
 	}
-	if !strings.Contains(text, "llm") {
+	if !strings.Contains(text, "defaults") {
 		t.Errorf("expected section in prompt, got %q", text)
 	}
 }

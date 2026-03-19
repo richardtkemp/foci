@@ -80,16 +80,17 @@ type setupParams struct {
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
-	// Resolve agent's default endpoint and format
-	resolved, err := config.ResolveModel(acfg.Model, acfg.Endpoint, p.cfg.Models.Aliases)
-	var defaultEndpoint, defaultFormat string
-	if err == nil {
-		defaultEndpoint = resolved.Endpoint
-		defaultFormat = resolved.Format
-	}
+	// Create group resolver for multi-model routing (powerful model is the agent's primary)
+	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases)
 
-	// Create group resolver for multi-model routing
-	groupResolver := config.NewGroupResolver(p.cfg.Models, p.cfg.Models.Aliases, acfg.Model)
+	// Resolve agent's default endpoint and format from powerful group
+	powerfulResolved := groupResolver.ResolveGroup(config.GroupPowerful)
+	var defaultEndpoint, defaultFormat, resolvedModel string
+	if powerfulResolved != nil {
+		defaultEndpoint = powerfulResolved.Endpoint
+		defaultFormat = powerfulResolved.Format
+		resolvedModel = powerfulResolved.Developer + "/" + powerfulResolved.ModelID
+	}
 
 	// Create fallback resolver for automatic model failover
 	fallbackResolver := config.NewFallbackResolver(p.cfg.Models.Fallbacks, acfg.ModelFallbacks, p.cfg.Models.Aliases)
@@ -176,7 +177,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ScratchpadStore:                p.scratchpadStore,
 		DefaultSessionKey:              defaultSessionKey,
 		AgentID:                        acfg.ID,
-		Model:                          acfg.Model,
+		Model:                          resolvedModel,
 		Format:                         defaultFormat,
 		Endpoint:                       defaultEndpoint,
 		ExtraSystemBlocks:              bs.extraSystemBlocks,

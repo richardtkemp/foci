@@ -143,7 +143,6 @@ func (w *agentWizard) handleCharMode(text string) (string, bool) {
 func createAgent(w *agentWizard) (string, error) {
 	spec := provision.AgentSpec{
 		ID:          w.id,
-		Model:       w.model,
 		DisplayName: w.display,
 		HomeDir:     w.deps.HomeDir,
 		DefaultsDir: w.deps.DefaultsDir,

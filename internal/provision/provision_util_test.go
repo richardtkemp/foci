@@ -223,7 +223,6 @@ func TestProvisionDefaultsTemplateError(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "tmpl-err",
-		Model:       "claude-sonnet-4-6",
 		DisplayName: "Test",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,
@@ -255,7 +254,6 @@ func TestProvisionOpenclawTemplateError(t *testing.T) {
 
 	spec := AgentSpec{
 		ID:          "oc-tmpl-err",
-		Model:       "claude-sonnet-4-6",
 		DisplayName: "OC Test",
 		HomeDir:     homeDir,
 		DefaultsDir: defaultsDir,

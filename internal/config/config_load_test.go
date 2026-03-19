@@ -18,7 +18,6 @@ func TestLoadFullConfig(t *testing.T) {
 	toml := `
 [[agents]]
 id = "main"
-model = "anthropic/claude-haiku-4-5"
 workspace = "/tmp/workspace"
 
 
@@ -47,9 +46,6 @@ api_file = "/tmp/api.jsonl"
 
 	if cfg.Agents[0].ID != "main" {
 		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
-	}
-	if cfg.Agents[0].Model != "anthropic/claude-haiku-4-5" {
-		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-haiku-4-5")
 	}
 	if cfg.Agents[0].Workspace != "/tmp/workspace" {
 		t.Errorf("Agents[0].Workspace = %q", cfg.Agents[0].Workspace)
@@ -99,9 +95,6 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].Model != "anthropic/claude-haiku-4-5-20251001" {
-		t.Errorf("default Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-haiku-4-5-20251001")
-	}
 	if cfg.Sessions.CompactionThreshold != 0.8 {
 		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
 	}
@@ -204,7 +197,6 @@ func TestLoadSingleAgent(t *testing.T) {
 	toml := `
 [[agents]]
 id = "main"
-model = "anthropic/claude-sonnet-4-6"
 workspace = "/tmp/workspace"
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -220,8 +212,8 @@ workspace = "/tmp/workspace"
 	if cfg.Agents[0].ID != "main" {
 		t.Errorf("Agents[0].ID = %q, want %q", cfg.Agents[0].ID, "main")
 	}
-	if cfg.Agents[0].Model != "anthropic/claude-sonnet-4-6" {
-		t.Errorf("Agents[0].Model = %q, want %q", cfg.Agents[0].Model, "anthropic/claude-sonnet-4-6")
+	if cfg.Agents[0].Workspace != "/tmp/workspace" {
+		t.Errorf("Agents[0].Workspace = %q, want %q", cfg.Agents[0].Workspace, "/tmp/workspace")
 	}
 
 }
@@ -234,7 +226,6 @@ func TestLoadMultiAgent(t *testing.T) {
 	toml := `
 [[agents]]
 id = "clutch"
-model = "anthropic/claude-sonnet-4-6"
 workspace = "/tmp/foci/workspace1"
 
 [agents.platforms.telegram]
@@ -267,9 +258,6 @@ allowed_users = ["111"]
 	if cfg.Agents[0].ID != "clutch" {
 		t.Errorf("Agents[0].ID = %q", cfg.Agents[0].ID)
 	}
-	if cfg.Agents[0].Model != "anthropic/claude-sonnet-4-6" {
-		t.Errorf("Agents[0].Model = %q", cfg.Agents[0].Model)
-	}
 	tg0 := cfg.Agents[0].GetTelegramPlatform()
 	if tg0 == nil || tg0.Bot != "primary" {
 		t.Errorf("Agents[0] telegram bot = %v", tg0)
@@ -281,9 +269,6 @@ allowed_users = ["111"]
 	// Second agent — defaults applied
 	if cfg.Agents[1].ID != "scout" {
 		t.Errorf("Agents[1].ID = %q", cfg.Agents[1].ID)
-	}
-	if cfg.Agents[1].Model != "anthropic/claude-haiku-4-5-20251001" {
-		t.Errorf("Agents[1].Model = %q, want default", cfg.Agents[1].Model)
 	}
 	tg1 := cfg.Agents[1].GetTelegramPlatform()
 	if tg1 == nil || tg1.Bot != "scout" {

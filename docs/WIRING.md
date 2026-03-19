@@ -79,7 +79,7 @@ config.Load(path)                                        ← validates values; l
   → block on signal → runShutdown(...)                     ← shutdown.go
 ```
 
-**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from its `model` field (`endpoint:model_id` format, e.g. `"anthropic:claude-haiku-4-5"`). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
+**Multi-agent:** Each agent gets its own tool registry, command registry, workspace bootstrap, compactor, and platform connection(s). Each agent gets a `provider.Client` resolved from the `[models]` group configuration (the powerful group determines the agent's primary model/endpoint/format). Clients are lazy-initialized — only endpoints actually referenced create connections. Shared resources (session store, voice providers) are passed to each agent.
 
 **Per-agent data:** All per-agent databases (conversation, reminders, scratchpad, todo, tasklist, memory indices) are stored in each agent's `workspace/.data/` directory. On startup, databases at the old shared `data_dir` location are automatically migrated to the workspace. Shared databases (api.db, state.db, sessions/) remain in `data_dir`.
 
@@ -490,7 +490,7 @@ Agents can switch endpoints at runtime via `/model endpoint:alias` (e.g. `/model
 
 **Wiring:** `agent.ClientProvider` implements `provider.ClientProvider` and delegates to the lazy client registry in `main.go`. This is shared with `tools.SpawnDeps` and `tools.NewSummaryTool` so spawns and auto-summaries also route to the correct provider.
 
-**Model Group Resolution:** When `[models] powerful` is configured, foci operates in multi-model mode. A `config.GroupResolver` (created once at startup from `ModelsConfig` and aliases) maps call sites to model groups (`powerful`, `fast`, `cheap`), resolving each to a concrete `developer/model_id`. The unified entry point is `agent.ResolveCallSite(callSite, sessionKey)` — it returns a `(client, model, format)` triple. In single-model mode (no `powerful` set), it returns the session's client/model/format unchanged. In multi-model mode, it delegates to `GroupResolver.ResolveCall(callSite)` which looks up the call site's group (with optional per-call overrides from `[models.calls]`), resolves the group's model through alias expansion, and fetches the appropriate client from `ClientProvider`. All internal call sites (compaction, guard summaries, spawns, prompt-diff) use `ResolveCallSite` instead of directly accessing the session model.
+**Model Group Resolution:** The `[models] powerful` key (defaulted to haiku in `load.go`) determines the primary model for all agents. A `config.GroupResolver` (created once at startup from `ModelsConfig` and aliases) maps call sites to model groups (`powerful`, `fast`, `cheap`), resolving each to a concrete `developer/model_id`. The unified entry point is `agent.ResolveCallSite(callSite, sessionKey)` — it returns a `(client, model, format)` triple. It delegates to `GroupResolver.ResolveCall(callSite)` which looks up the call site's group (with optional per-call overrides from `[models.calls]`), resolves the group's model through alias expansion, and fetches the appropriate client from `ClientProvider`. All internal call sites (compaction, guard summaries, spawns, prompt-diff) use `ResolveCallSite` instead of directly accessing the session model.
 
 **Compaction:** `Compactor.Compact()` receives the client, model, and format as parameters (not stored on the struct). The caller resolves these via `agent.ResolveCallSite(config.CallCompaction, sessionKey)`, so compaction uses the group-appropriate model in multi-model mode or the session's active client in single-model mode.
 
@@ -696,7 +696,7 @@ Single `foci.toml` parsed with BurntSushi/toml. Defaults applied for missing fie
 **Multi-agent config:** Two formats supported:
 
 1. **Legacy (single agent):** `[agent]` table — backward compatible, auto-promoted to single-element `Agents` slice.
-2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `model`, `workspace`, and platform config.
+2. **Multi-agent:** `[[agents]]` array — each agent has its own `id`, `workspace`, and platform config.
 
 When both `[agent]` and `[[agents]]` are present, `[[agents]]` wins.
 
