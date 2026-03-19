@@ -130,12 +130,18 @@ type ThinkingMode string
 func (t *ThinkingMode) UnmarshalTOML(v any) error {
 	switch val := v.(type) {
 	case string:
-		switch val {
-		case "adaptive", "off", "":
-			*t = ThinkingMode(val)
+		switch strings.ToLower(val) {
+		case "adaptive", "on", "true":
+			*t = "adaptive"
+			return nil
+		case "off", "false":
+			*t = "off"
+			return nil
+		case "":
+			*t = ""
 			return nil
 		default:
-			return fmt.Errorf("invalid thinking value %q (must be adaptive, off)", val)
+			return fmt.Errorf("invalid thinking value %q (must be adaptive, off, or bool)", val)
 		}
 	case bool:
 		if val {

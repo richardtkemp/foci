@@ -410,6 +410,52 @@ func TestContextWindowUnmarshal(t *testing.T) {
 	}
 }
 
+func TestThinkingModeUnmarshal(t *testing.T) {
+	// Proves that ThinkingMode.UnmarshalTOML accepts canonical strings
+	// ("adaptive"/"off"), bool values (true/false), and string-encoded bools
+	// ("true"/"false"/"on"/"off"), rejecting invalid values.
+	tests := []struct {
+		name    string
+		input   any
+		want    ThinkingMode
+		wantErr bool
+	}{
+		{"string adaptive", "adaptive", "adaptive", false},
+		{"string off", "off", "off", false},
+		{"string empty", "", "", false},
+		{"bool true", true, "adaptive", false},
+		{"bool false", false, "off", false},
+		{"string true", "true", "adaptive", false},
+		{"string TRUE", "TRUE", "adaptive", false},
+		{"string false", "false", "off", false},
+		{"string False", "False", "off", false},
+		{"string on", "on", "adaptive", false},
+		{"string ON", "ON", "adaptive", false},
+		{"string Adaptive", "Adaptive", "adaptive", false},
+		{"string Off", "Off", "off", false},
+		{"invalid string", "always", "", true},
+		{"invalid type", 42, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m ThinkingMode
+			err := m.UnmarshalTOML(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if m != tt.want {
+				t.Errorf("got %q, want %q", m, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveModelCarriesContext(t *testing.T) {
 	// Proves that context window size from ModelConfig is carried through to ResolvedModel.
 	models := map[string]ModelConfig{
