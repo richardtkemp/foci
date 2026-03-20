@@ -295,6 +295,12 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 		})
 	}
 
+	// Stamp message with current time if not already set
+	if msg.Timestamp == nil {
+		now := time.Now().UTC()
+		msg.Timestamp = &now
+	}
+
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
@@ -359,6 +365,11 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 	}
 
 	for _, msg := range msgs {
+		// Stamp message with current time if not already set
+		if msg.Timestamp == nil {
+			now := time.Now().UTC()
+			msg.Timestamp = &now
+		}
 		data, err := json.Marshal(msg)
 		if err != nil {
 			return fmt.Errorf("marshal message: %w", err)

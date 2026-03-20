@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -403,7 +404,7 @@ func TestPrintExistingContent(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	offset, err := printExistingContent(path)
+	offset, err := printExistingContent(path, outputHuman)
 	if err != nil {
 		t.Fatalf("printExistingContent: %v", err)
 	}
@@ -432,12 +433,242 @@ func TestPrintNewContent(t *testing.T) {
 	f.WriteString(added)
 	f.Close()
 
-	newOffset, err := printNewContent(path, initialOffset)
+	newOffset, err := printNewContent(path, initialOffset, outputHuman)
 	if err != nil {
 		t.Fatalf("printNewContent: %v", err)
 	}
 	if newOffset != int64(len(initial)+len(added)) {
 		t.Errorf("expected offset %d, got %d", len(initial)+len(added), newOffset)
+	}
+}
+
+// Tests parseTimeArg with RFC3339 timestamps and relative durations.
+func TestParseTimeArg(t *testing.T) {
+	// RFC3339 should parse exactly
+	ts, err := parseTimeArg("2026-03-14T10:00:00Z")
+	if err != nil {
+		t.Fatalf("RFC3339: %v", err)
+	}
+	if ts.Format(time.RFC3339) != "2026-03-14T10:00:00Z" {
+		t.Errorf("RFC3339 = %v, want 2026-03-14T10:00:00Z", ts)
+	}
+
+	// Relative duration should return a time in the past
+	before := time.Now().UTC()
+	ts, err = parseTimeArg("1h")
+	if err != nil {
+		t.Fatalf("duration: %v", err)
+	}
+	after := time.Now().UTC()
+	expectedApprox := before.Add(-time.Hour)
+	if ts.Before(expectedApprox.Add(-time.Second)) || ts.After(after.Add(-time.Hour).Add(time.Second)) {
+		t.Errorf("1h duration: got %v, expected ~%v", ts, expectedApprox)
+	}
+
+	// Invalid input
+	_, err = parseTimeArg("not-a-time")
+	if err == nil {
+		t.Error("expected error for invalid input")
+	}
+}
+
+// Tests inTimeRange with various boundary conditions.
+func TestInTimeRange(t *testing.T) {
+	base := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	before := base.Add(-time.Hour)
+	after := base.Add(time.Hour)
+
+	// Zero timestamp always excluded
+	if inTimeRange(time.Time{}, before, after) {
+		t.Error("zero time should be excluded")
+	}
+
+	// Within range
+	if !inTimeRange(base, before, after) {
+		t.Error("base should be in [before, after]")
+	}
+
+	// Before range
+	if inTimeRange(before.Add(-time.Minute), before, after) {
+		t.Error("should be out of range (too early)")
+	}
+
+	// After range
+	if inTimeRange(after.Add(time.Minute), before, after) {
+		t.Error("should be out of range (too late)")
+	}
+
+	// Open lower bound (zero from)
+	if !inTimeRange(base, time.Time{}, after) {
+		t.Error("open lower bound should include base")
+	}
+
+	// Open upper bound (zero to)
+	if !inTimeRange(base, before, time.Time{}) {
+		t.Error("open upper bound should include base")
+	}
+}
+
+// Tests lineTimestamp extracts the timestamp from a JSONL message line.
+func TestLineTimestamp(t *testing.T) {
+	ts := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	msg := provider.Message{
+		Role:      "user",
+		Content:   provider.TextContent("hello"),
+		Timestamp: &ts,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	got := lineTimestamp(data)
+	if !got.Equal(ts) {
+		t.Errorf("lineTimestamp = %v, want %v", got, ts)
+	}
+
+	// Line without timestamp
+	noTS := `{"role":"user","content":[{"type":"text","text":"hi"}]}`
+	got = lineTimestamp([]byte(noTS))
+	if !got.IsZero() {
+		t.Errorf("expected zero time for line without timestamp, got %v", got)
+	}
+
+	// Meta line (no timestamp)
+	meta := `{"type":"session_meta","created_at":"2026-03-14T10:00:00Z"}`
+	got = lineTimestamp([]byte(meta))
+	if !got.IsZero() {
+		t.Errorf("expected zero time for meta line, got %v", got)
+	}
+}
+
+// Tests renderLine in JSON mode returns raw line with newline.
+func TestRenderLine_JSON(t *testing.T) {
+	line := `{"role":"user","content":[{"type":"text","text":"hello"}]}`
+	out := renderLine([]byte(line), outputJSON)
+	if out != line+"\n" {
+		t.Errorf("JSON render = %q, want %q", out, line+"\n")
+	}
+}
+
+// Tests renderLine in human mode delegates to formatLine.
+func TestRenderLine_Human(t *testing.T) {
+	msg := provider.Message{
+		Role:    "user",
+		Content: provider.TextContent("hello"),
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	out := renderLine(data, outputHuman)
+	if !strings.Contains(out, "USER") {
+		t.Errorf("human render should contain USER header, got: %s", out)
+	}
+}
+
+// Tests printFilteredContent filters messages by timestamp range.
+func TestPrintFilteredContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	base := time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC)
+	early := base.Add(-2 * time.Hour)
+	late := base.Add(2 * time.Hour)
+
+	msg1 := provider.Message{Role: "user", Content: provider.TextContent("early"), Timestamp: &early}
+	msg2 := provider.Message{Role: "user", Content: provider.TextContent("middle"), Timestamp: &base}
+	msg3 := provider.Message{Role: "assistant", Content: provider.TextContent("late"), Timestamp: &late}
+
+	var content string
+	for _, msg := range []provider.Message{msg1, msg2, msg3} {
+		data, _ := json.Marshal(msg)
+		content += string(data) + "\n"
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Filter: from 1h before base to 1h after base — should include only msg2
+	from := base.Add(-time.Hour)
+	to := base.Add(time.Hour)
+
+	// Capture output by redirecting stdout
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := printFilteredContent(path, from, to, outputJSON)
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("printFilteredContent: %v", err)
+	}
+
+	var buf strings.Builder
+	io.Copy(&buf, r) //nolint:errcheck
+	output := buf.String()
+
+	if !strings.Contains(output, "middle") {
+		t.Errorf("expected 'middle' in output, got: %s", output)
+	}
+	if strings.Contains(output, "early") {
+		t.Errorf("'early' should be filtered out, got: %s", output)
+	}
+	if strings.Contains(output, "late") {
+		t.Errorf("'late' should be filtered out, got: %s", output)
+	}
+}
+
+// Tests printExistingContent with JSON format outputs raw JSONL.
+func TestPrintExistingContent_JSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.jsonl")
+
+	line := `{"role":"user","content":[{"type":"text","text":"hello"}]}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	offset, err := printExistingContent(path, outputJSON)
+	w.Close()
+	os.Stdout = old
+
+	if err != nil {
+		t.Fatalf("printExistingContent: %v", err)
+	}
+	if offset != int64(len(line)+1) {
+		t.Errorf("offset = %d, want %d", offset, len(line)+1)
+	}
+
+	var buf strings.Builder
+	io.Copy(&buf, r) //nolint:errcheck
+	output := buf.String()
+
+	// JSON mode should pass through the raw line
+	if !strings.Contains(output, line) {
+		t.Errorf("expected raw JSON in output, got: %s", output)
+	}
+}
+
+// Tests that formatMessage uses stored timestamp when available.
+func TestFormatMessage_UsesStoredTimestamp(t *testing.T) {
+	ts := time.Date(2026, 3, 14, 15, 30, 45, 0, time.UTC)
+	msg := provider.Message{
+		Role:      "user",
+		Content:   provider.TextContent("hello"),
+		Timestamp: &ts,
+	}
+
+	out := formatMessage(msg)
+	if !strings.Contains(out, "15:30:45") {
+		t.Errorf("expected stored timestamp 15:30:45 in output, got: %s", out)
 	}
 }
 
