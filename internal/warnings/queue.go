@@ -7,6 +7,7 @@ package warnings
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,7 +53,8 @@ type Queue struct {
 	maxPerWindow   int
 	windowDuration time.Duration
 	buckets        map[string]*warningBucket
-	nowFunc        func() time.Time // for deterministic testing
+	errorsOnly     bool                 // when true, Push silently drops non-ERROR entries
+	nowFunc        func() time.Time     // for deterministic testing
 }
 
 // NewQueue creates a warning queue with optional rate-limiting.
@@ -72,10 +74,22 @@ func (q *Queue) quietWindow() time.Duration {
 	return q.windowDuration * 12
 }
 
+// SetErrorsOnly configures the queue to silently drop non-ERROR entries on Push.
+func (q *Queue) SetErrorsOnly(v bool) {
+	q.mu.Lock()
+	q.errorsOnly = v
+	q.mu.Unlock()
+}
+
 // Push adds a warning to the queue, subject to rate-limiting.
 func (q *Queue) Push(level, component, msg string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+
+	// Severity filter: drop WARN-level when errorsOnly is set.
+	if q.errorsOnly && level != "ERROR" {
+		return
+	}
 
 	// Rate-limiting disabled — pass everything through
 	if q.maxPerWindow <= 0 {
@@ -237,6 +251,19 @@ func (q *Queue) Len() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return len(q.warnings)
+}
+
+// FormatList formats a list of warning entries as a bullet list.
+func FormatList(entries []string) string {
+	var b strings.Builder
+	for i, w := range entries {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("- ")
+		b.WriteString(w)
+	}
+	return b.String()
 }
 
 // FormatDuration returns a human-readable duration string.

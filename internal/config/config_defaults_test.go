@@ -249,8 +249,8 @@ id = "override"
 	if !bare.DuplicateMessages {
 		t.Error("bare DuplicateMessages should be true")
 	}
-	if !bare.InjectAgentWarnings {
-		t.Error("bare InjectAgentWarnings should be true")
+	if bare.InjectAgentWarnings != InjectionAll {
+		t.Errorf("bare InjectAgentWarnings = %q, want %q", bare.InjectAgentWarnings, InjectionAll)
 	}
 	if bare.CompactionEffort != "low" {
 		t.Errorf("bare CompactionEffort = %q", bare.CompactionEffort)

@@ -201,7 +201,7 @@ Logging and diagnostics. The `messages_in_log` field can be overridden per-agent
 | `archive_dir` | string | `""` | Directory for gzip archives. `""` uses `logs/archive/`. |
 | `log_file_mode` | string | `"0600"` | Octal file permissions for log files (event, API, payload). Applied on creation and after rotation. Use `"0640"` for group-readable logs. |
 
-When `inject_agent_warnings` is enabled (per-agent), repeated identical warnings are deduplicated: after `warning_max_per_window` occurrences within `warning_window_duration`, further duplicates are suppressed and summarised as "... and N more in last Xm" on the next drain. Warning messages are normalised — IP addresses, hex strings, and multi-digit numbers are replaced with placeholders so semantically identical errors are grouped together.
+When `inject_agent_warnings` or `inject_chat_warnings` is enabled (per-agent), repeated identical warnings are deduplicated: after `warning_max_per_window` occurrences within `warning_window_duration`, further duplicates are suppressed and summarised as "... and N more in last Xm" on the next drain. Warning messages are normalised — IP addresses, hex strings, and multi-digit numbers are replaced with placeholders so semantically identical errors are grouped together.
 
 ### `[sessions]`
 
@@ -571,7 +571,7 @@ Tool behavior settings (global-only fields). Fields that can be overridden per-a
 
 The `summary` tool uses the **cheap** model group (call site: `summarize-file`). Configure via `[groups]` cheap or `[groups.calls]` overrides.
 
-Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `false` — agents with injection enabled already see log warnings in their session.
+Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `"off"` — agents with injection enabled already see log warnings in their session.
 
 ### `[tools.browser]`
 
@@ -852,7 +852,8 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
 | `startup_notify` | bool | `true` | `[telegram] startup_notify` | Send a startup notification when the service starts. `false` for silent bots (e.g. cron-only agents). |
-| `inject_agent_warnings` | bool | `false` | `[defaults]` | Feed WARN/ERROR log events into this agent's conversation as system warnings before each turn. Per-agent — some agents can have injection enabled while others rely on Telegram notifications. |
+| `inject_agent_warnings` | string | `"off"` | `[defaults]` | Feed log events into this agent's conversation as system warnings before each turn. Values: `"all"` (WARN+ERROR), `"errors"` (ERROR only), `"off"` (disabled). Accepts bool for backward compatibility (`true`→`"all"`, `false`→`"off"`). Per-agent — some agents can have injection enabled while others rely on chat notifications. |
+| `inject_chat_warnings` | string | `"off"` | `[defaults]` | Send log events as platform chat notifications (Telegram messages). Values: `"all"` (WARN+ERROR), `"errors"` (ERROR only), `"off"` (disabled). Independent of `inject_agent_warnings` — both can be enabled simultaneously. |
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
 | `stream_output` | bool | `false` | `[telegram]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time with HTML formatting. A message is created on the first text delta and edited periodically as more tokens arrive. Each update strips incomplete markdown delimiters and converts to Telegram HTML, so formatting renders throughout streaming (not just on the final message). Falls back to plain text if HTML parsing fails. Requires `streaming = true` for API-level delta callbacks. Set globally in `[telegram]` or per-agent in platform config. |

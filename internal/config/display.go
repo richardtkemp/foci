@@ -71,8 +71,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Defaults.DuplicateMessages {
 		add("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
 	}
-	if cfg.Defaults.InjectAgentWarnings {
-		add("defaults", "inject_agent_warnings", cfg.Defaults.InjectAgentWarnings)
+	if cfg.Defaults.InjectAgentWarnings.Enabled() {
+		add("defaults", "inject_agent_warnings", string(cfg.Defaults.InjectAgentWarnings))
+	}
+	if cfg.Defaults.InjectChatWarnings.Enabled() {
+		add("defaults", "inject_chat_warnings", string(cfg.Defaults.InjectChatWarnings))
 	}
 	if cfg.Defaults.FacetNoCompact != nil {
 		add("defaults", "facet_no_compact", *cfg.Defaults.FacetNoCompact)
@@ -348,7 +351,10 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.TTSRate != 0 {
 		add("tts_rate", agent.TTSRate)
 	}
-	add("inject_agent_warnings", agent.InjectAgentWarnings)
+	add("inject_agent_warnings", string(agent.InjectAgentWarnings))
+	if agent.InjectChatWarnings.Enabled() {
+		add("inject_chat_warnings", string(agent.InjectChatWarnings))
+	}
 	add("steer_mode", agent.SteerMode)
 	if agent.StartupNotify != nil {
 		add("startup_notify", *agent.StartupNotify)

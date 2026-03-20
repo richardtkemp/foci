@@ -23,7 +23,6 @@ var boolKeyLineRe = regexp.MustCompile(`(?m)^(\s*(\w+)\s*=\s*)"(?i)(on|off|true|
 // Only these keys have their quoted string values normalized to native bools.
 var boolKeys = map[string]bool{
 	"duplicate_messages":    true,
-	"inject_agent_warnings": true,
 	"startup_notify":        true,
 	"messages_in_log":       true,
 	"compaction_notify":     true,

@@ -70,6 +70,57 @@ func (s *ShowThinking) UnmarshalTOML(v any) error {
 	}
 }
 
+// InjectionLevel controls whether and what severity of log warnings are injected.
+type InjectionLevel string
+
+const (
+	InjectionAll  InjectionLevel = "all"  // inject WARN + ERROR
+	InjectionErrors InjectionLevel = "errors" // inject ERROR only
+	InjectionOff  InjectionLevel = "off"  // disabled
+)
+
+// UnmarshalTOML accepts bool (true→"all", false→"off") or string ("all"/"errors"/"off"/"on"/"true"/"false").
+func (il *InjectionLevel) UnmarshalTOML(v any) error {
+	switch val := v.(type) {
+	case string:
+		switch strings.ToLower(val) {
+		case "all", "on", "true":
+			*il = InjectionAll
+			return nil
+		case "errors":
+			*il = InjectionErrors
+			return nil
+		case "off", "false":
+			*il = InjectionOff
+			return nil
+		case "":
+			*il = ""
+			return nil
+		default:
+			return fmt.Errorf("invalid injection level %q (must be all, errors, off, or bool)", val)
+		}
+	case bool:
+		if val {
+			*il = InjectionAll
+		} else {
+			*il = InjectionOff
+		}
+		return nil
+	default:
+		return fmt.Errorf("injection level must be a string (all/errors/off) or bool")
+	}
+}
+
+// Enabled returns true if injection is active (all or errors).
+func (il InjectionLevel) Enabled() bool {
+	return il == InjectionAll || il == InjectionErrors
+}
+
+// IncludeWarnings returns true if WARN-level entries should be included.
+func (il InjectionLevel) IncludeWarnings() bool {
+	return il == InjectionAll
+}
+
 // AgentUsageWarningsConfig holds per-agent mana warning thresholds.
 // When set, completely replaces global [usage_warnings] thresholds.
 type AgentUsageWarningsConfig struct {
@@ -211,8 +262,9 @@ type AgentConfig struct {
 	TTSReplacements  map[string]string `toml:"tts_replacements"`  // per-agent TTS word replacements (merged with [[tts]] entry replacements)
 	STTReplacements  map[string]string `toml:"stt_replacements"`  // per-agent STT word replacements (merged with [[stt]] entry replacements)
 
-	InjectAgentWarnings bool  `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default false)
-	StartupNotify       *bool `toml:"startup_notify"`        // send startup notification (nil = use global telegram.startup_notify)
+	InjectAgentWarnings InjectionLevel `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default "off")
+	InjectChatWarnings  InjectionLevel `toml:"inject_chat_warnings"`  // send warnings/errors as chat notifications (default "off")
+	StartupNotify       *bool          `toml:"startup_notify"`        // send startup notification (nil = use global telegram.startup_notify)
 	ShowToolCalls *ToolCallDisplay `toml:"show_tool_calls"` // show tool call messages (nil = use global/default)
 	ShowThinking  *ShowThinking   `toml:"show_thinking"`  // show thinking blocks (nil = use global/default)
 	MessagesInLog *bool           `toml:"messages_in_log"` // log user message content to event log (nil = use global logging.messages_in_log)
@@ -626,8 +678,9 @@ type DefaultsConfig struct {
 	BatchPartialAssistantMessages bool   `toml:"batch_partial_assistant_messages"` // default batch_partial_assistant_messages (default: false)
 	BatchPartialJoiner            string `toml:"batch_partial_joiner"`             // default separator between batched partial messages (default: "")
 
-	InjectAgentWarnings   bool   `toml:"inject_agent_warnings"`    // default inject_agent_warnings (default: false)
-	MaxToolLoops          int    `toml:"max_tool_loops"`           // default max_tool_loops (default: 25)
+	InjectAgentWarnings   InjectionLevel `toml:"inject_agent_warnings"`    // default inject_agent_warnings (default: "off")
+	InjectChatWarnings    InjectionLevel `toml:"inject_chat_warnings"`     // default inject_chat_warnings (default: "off")
+	MaxToolLoops          int            `toml:"max_tool_loops"`           // default max_tool_loops (default: 25)
 	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // default braindead threshold (default: 10)
 	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // default braindead prompt
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // default turn lock warn threshold (default: "3m")
