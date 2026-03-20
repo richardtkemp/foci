@@ -414,7 +414,7 @@ Model group assignments, call site overrides, and fallbacks.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `powerful` | string | *(required)* | Model name for primary tasks (chat, compaction, memory). Must be a key in `[models.*]` or a `developer/model_id` string. All agents use this model. Other groups default to this model unless explicitly overridden. |
+| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Must be a `developer/model_id` string (e.g. `"anthropic/claude-opus-4-6"`). All agents use this model. Other groups default to this model unless explicitly overridden. |
 | `fast` | string | `""` | Model name for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
 | `cheap` | string | `""` | Model name for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
 
@@ -432,7 +432,7 @@ Ungrouped call sites (`keepalive`) always use the session model regardless of gr
 
 **`[groups.fallbacks]`** — Automatic model failover on transient errors. When a model returns 529 (overloaded), 5xx (server error), or times out (`context.DeadlineExceeded`), the agent automatically retries the request with the configured fallback model. Fallback is per-request — the primary model is always tried first on the next turn.
 
-Keys and values can be model names (from `[models.*]`) or `developer/model_id` format. Chains are supported (e.g., opus → sonnet → haiku) up to a maximum depth of 3. Cycles are detected and broken at startup.
+Keys and values are `developer/model_id` strings. Chains are supported (e.g., opus → sonnet → haiku) up to a maximum depth of 3. Cycles are detected and broken at startup.
 
 Not triggered by: 401 auth errors, 400 bad requests, 429 rate limits.
 
@@ -450,52 +450,6 @@ Per-agent overrides via `model_fallbacks` in `[[agents]]`:
 id = "research"
 [agents.model_fallbacks]
 opus = "google/gemini-2.5-pro"   # override global fallback for this agent
-```
-
-### `[models.*]`
-
-Named model definitions with per-model settings. Each key under `[models]` defines a named model that can be referenced by `[groups]`, `/model` command, and the agent wizard.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `model` | string | *(required)* | Full `developer/model_id` string (e.g. `"anthropic/claude-opus-4-6"`). |
-| `endpoint` | string | `""` | Explicit endpoint override. When set, routes this model through the named endpoint instead of auto-selecting by developer. Useful for OpenRouter (`"openrouter"`) or custom endpoints. Empty = auto-select (anthropic→anthropic, google→gemini, openai→openai, others→openrouter). |
-| `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Empty means no override. Overridable at runtime via `/thinking`. |
-| `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Empty means no override. Overridable at runtime via `/effort`. |
-| `speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Empty means no override. Overridable at runtime via `/speed`. |
-| `enable_keepalive` | bool/nil | `nil` | Keepalive auto-detection override. `nil` (unset) = auto-detect based on developer (OpenAI and DeepSeek models enable keepalive automatically). `true`/`false` = explicit override. |
-| `prompt_cache_ttl` | string | `""` | Prompt cache TTL for keepalive interval calculation. Go duration format. Empty = auto-detect from developer defaults (5m for OpenAI/DeepSeek). Used to calculate keepalive interval (95% of TTL). |
-
-The powerful model's `thinking`, `effort`, and `speed` settings are applied as the agent's defaults at startup. These can be overridden at runtime via `/thinking`, `/effort`, and `/speed` commands.
-
-**Keepalive auto-detection:** Models from OpenAI and DeepSeek developers automatically enable keepalive with a 5-minute prompt cache TTL (firing every 4m45s). This keeps their prompt cache warm. Set `enable_keepalive = false` to disable, or `prompt_cache_ttl` to override the interval.
-
-Example — multi-model setup with per-model settings:
-```toml
-[groups]
-powerful = "opus"
-fast = "sonnet"
-cheap = "haiku"
-
-[groups.calls]
-compaction = "cheap"       # use cheap model for compaction instead of powerful
-
-[models.opus]
-model = "anthropic/claude-opus-4-6"
-thinking = "adaptive"
-effort = "low"
-
-[models.sonnet]
-model = "anthropic/claude-sonnet-4-6"
-thinking = "adaptive"
-
-[models.haiku]
-model = "anthropic/claude-haiku-4-5-20251001"
-
-[models.deepseek]
-model = "deepseek/deepseek-chat"
-# enable_keepalive auto-detected as true (DeepSeek developer)
-# prompt_cache_ttl auto-detected as "5m"
 ```
 
 ### `[endpoints]`
@@ -702,7 +656,7 @@ max_tool_loops = 50
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
 
-Effort, thinking, and speed defaults come from the powerful model's `[models.*]` config and are applied to all agents at startup. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once. Override at runtime via `/effort`, `/thinking`, `/speed`.
+Effort, thinking, and speed defaults are set directly in `[defaults]` or per-agent in `[[agents]]`. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once. Override at runtime via `/effort`, `/thinking`, `/speed`.
 
 Override per-agent in `[[agents]]`:
 ```toml
@@ -713,7 +667,7 @@ max_tool_loops = 25
 
 ### Model & Response
 
-Models are configured via `[groups]` (group assignments) and `[models.*]` (per-model settings). See [`[groups]`](#groups) and [`[models.*]`](#models) sections. Thinking, effort, and speed are set per-model in `[models.*]` — the powerful model's settings become the agent defaults. `max_output_tokens` and other fields are set in `[defaults]`.
+Models are configured via `[groups]` (group assignments with `developer/model_id` strings). See [`[groups]`](#groups). Thinking, effort, and speed are set in `[defaults]` or per-agent in `[[agents]]`. `max_output_tokens` and other fields are set in `[defaults]`.
 
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
@@ -906,7 +860,7 @@ Set in `[discord]`, overridable per-agent via `[agents.platforms.discord]`.
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
-Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected via the model's `enable_keepalive` and `prompt_cache_ttl` settings in `[models.*]` (see [`[models.*]`](#models)).
+Cache keepalive timer. Fires a lightweight branch session to keep the prompt cache warm. For Anthropic, the interval defaults to 55 minutes (just under the 1-hour cache TTL). For OpenAI and DeepSeek models, keepalive is auto-detected by developer name — these developers have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
