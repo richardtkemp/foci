@@ -10,12 +10,12 @@ import (
 )
 
 func TestSessionEffort(t *testing.T) {
-	// Proves that per-session effort overrides take precedence over the agent default, are isolated per session, and revert to the default when cleared.
-	ag := &Agent{Model: "test", Effort: "low"}
+	// Proves that per-session effort overrides are isolated per session and revert to empty when cleared.
+	ag := &Agent{Model: "test"}
 
-	// Default: falls back to agent-wide
-	if got := ag.SessionEffort("s1"); got != "low" {
-		t.Errorf("SessionEffort fallback = %q, want %q", got, "low")
+	// Default: empty (no agent-wide default)
+	if got := ag.SessionEffort("s1"); got != "" {
+		t.Errorf("SessionEffort default = %q, want %q", got, "")
 	}
 
 	// Set per-session override
@@ -25,14 +25,14 @@ func TestSessionEffort(t *testing.T) {
 	}
 
 	// Other session unaffected
-	if got := ag.SessionEffort("s2"); got != "low" {
-		t.Errorf("SessionEffort other session = %q, want %q", got, "low")
+	if got := ag.SessionEffort("s2"); got != "" {
+		t.Errorf("SessionEffort other session = %q, want %q", got, "")
 	}
 
-	// Clear override — falls back to agent default
+	// Clear override — falls back to empty
 	ag.SetSessionEffort("s1", "")
-	if got := ag.SessionEffort("s1"); got != "low" {
-		t.Errorf("SessionEffort after clear = %q, want %q", got, "low")
+	if got := ag.SessionEffort("s1"); got != "" {
+		t.Errorf("SessionEffort after clear = %q, want %q", got, "")
 	}
 }
 
@@ -64,8 +64,8 @@ func TestSessionNoCompact(t *testing.T) {
 }
 
 func TestSessionSpeed(t *testing.T) {
-	// Proves that per-session speed overrides take precedence over the agent default, are isolated per session, and revert to the default when cleared.
-	ag := &Agent{Model: "test", Speed: ""}
+	// Proves that per-session speed overrides are isolated per session and revert to empty when cleared.
+	ag := &Agent{Model: "test"}
 
 	// Default: falls back to agent-wide (empty = standard)
 	if got := ag.SessionSpeed("s1"); got != "" {
@@ -91,12 +91,12 @@ func TestSessionSpeed(t *testing.T) {
 }
 
 func TestSessionThinking(t *testing.T) {
-	// Proves that per-session thinking mode overrides the agent-wide default, are scoped to a single session, and revert to the default when cleared.
-	ag := &Agent{Model: "test", Thinking: "off"}
+	// Proves that per-session thinking mode overrides are scoped to a single session and revert to empty when cleared.
+	ag := &Agent{Model: "test"}
 
-	// Default: falls back to agent-wide
-	if got := ag.SessionThinking("s1"); got != "off" {
-		t.Errorf("SessionThinking fallback = %q, want %q", got, "off")
+	// Default: empty (no agent-wide default)
+	if got := ag.SessionThinking("s1"); got != "" {
+		t.Errorf("SessionThinking default = %q, want %q", got, "")
 	}
 
 	// Set per-session override
@@ -106,14 +106,14 @@ func TestSessionThinking(t *testing.T) {
 	}
 
 	// Other session unaffected
-	if got := ag.SessionThinking("s2"); got != "off" {
-		t.Errorf("SessionThinking other session = %q, want %q", got, "off")
+	if got := ag.SessionThinking("s2"); got != "" {
+		t.Errorf("SessionThinking other session = %q, want %q", got, "")
 	}
 
 	// Clear override
 	ag.SetSessionThinking("s1", "")
-	if got := ag.SessionThinking("s1"); got != "off" {
-		t.Errorf("SessionThinking after clear = %q, want %q", got, "off")
+	if got := ag.SessionThinking("s1"); got != "" {
+		t.Errorf("SessionThinking after clear = %q, want %q", got, "")
 	}
 }
 
@@ -158,8 +158,6 @@ func TestRestoreSessionOverrides(t *testing.T) {
 
 	ag := &Agent{
 		Model:        "claude-haiku-4-5",
-		Effort:       "low",
-		Thinking:     "off",
 		SessionIndex: idx,
 	}
 
@@ -173,14 +171,12 @@ func TestRestoreSessionOverrides(t *testing.T) {
 	// Create a fresh agent (simulating restart) with the same session index
 	ag2 := &Agent{
 		Model:        "claude-haiku-4-5",
-		Effort:       "low",
-		Thinking:     "off",
 		SessionIndex: idx,
 	}
 
-	// Before restore: should fall back to defaults
-	if got := ag2.SessionEffort("s1"); got != "low" {
-		t.Errorf("before restore effort = %q, want %q", got, "low")
+	// Before restore: should fall back to empty defaults
+	if got := ag2.SessionEffort("s1"); got != "" {
+		t.Errorf("before restore effort = %q, want %q", got, "")
 	}
 
 	// Restore
@@ -206,21 +202,21 @@ func TestRestoreSessionOverrides(t *testing.T) {
 		t.Errorf("after restore no_compact = %v, want %v", got, true)
 	}
 
-	// Unrelated session should still use defaults
-	if got := ag2.SessionEffort("s2"); got != "low" {
-		t.Errorf("unrelated session effort = %q, want %q", got, "low")
+	// Unrelated session should still use empty defaults
+	if got := ag2.SessionEffort("s2"); got != "" {
+		t.Errorf("unrelated session effort = %q, want %q", got, "")
 	}
 }
 
 func TestRestoreSessionOverrides_NilSessionIndex(t *testing.T) {
 	// Proves that RestoreSessionOverrides is safe to call with a nil SessionIndex — it is a no-op that does not panic.
-	ag := &Agent{Model: "test", Effort: "low", SessionIndex: nil}
+	ag := &Agent{Model: "test", SessionIndex: nil}
 
 	// Should not panic with nil SessionIndex
 	ag.RestoreSessionOverrides("s1")
 
-	if got := ag.SessionEffort("s1"); got != "low" {
-		t.Errorf("effort with nil SessionIndex = %q, want %q", got, "low")
+	if got := ag.SessionEffort("s1"); got != "" {
+		t.Errorf("effort with nil SessionIndex = %q, want %q", got, "")
 	}
 }
 

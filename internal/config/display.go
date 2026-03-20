@@ -339,9 +339,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	add("max_tool_loops", agent.MaxToolLoops)
 	add("max_output_tokens", agent.MaxOutputTokens)
-	if agent.Effort != "" {
-		add("effort", agent.Effort)
-	}
 	if agent.TTS != "" {
 		add("tts", agent.TTS)
 	}

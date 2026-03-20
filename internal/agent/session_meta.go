@@ -50,19 +50,19 @@ var (
 		prefix: "effort",
 		getter: func(sm *sessionMeta) string { return sm.effort },
 		setter: func(sm *sessionMeta, v string) { sm.effort = v },
-		agentDefault: func(a *Agent) string { return a.Effort },
+		agentDefault: nil,
 	}
 	settingThinking = sessionStringSetting{
 		prefix: "thinking",
 		getter: func(sm *sessionMeta) string { return sm.thinking },
 		setter: func(sm *sessionMeta, v string) { sm.thinking = v },
-		agentDefault: func(a *Agent) string { return a.Thinking },
+		agentDefault: nil,
 	}
 	settingSpeed = sessionStringSetting{
 		prefix: "speed",
 		getter: func(sm *sessionMeta) string { return sm.speed },
 		setter: func(sm *sessionMeta, v string) { sm.speed = v },
-		agentDefault: func(a *Agent) string { return a.Speed },
+		agentDefault: nil,
 	}
 	settingModel = sessionStringSetting{
 		prefix: "model",

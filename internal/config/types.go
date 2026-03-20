@@ -166,9 +166,6 @@ type AgentConfig struct {
 	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
 	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // warning text injected as user message
 	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
-	Effort                string `toml:"-"` // runtime: populated from resolved model's ModelConfig
-	Thinking              string `toml:"-"` // runtime: populated from resolved model's ModelConfig
-	Speed                 string `toml:"-"` // runtime: populated from resolved model's ModelConfig
 	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
 	FacetNoCompact    *bool  `toml:"facet_no_compact"`     // set no_compact on facet sessions (nil = true)
 

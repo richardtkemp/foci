@@ -126,9 +126,6 @@ type Agent struct {
 	NudgeReloadFunc               func()                       // called after bootstrap reload to refresh nudge rules; nil disables
 	FirstRunMessage               atomic.Value                 // string; prepended as separate content block on first HandleMessage, then cleared
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
-	Effort                        string                       // effort level for API requests (empty = omit from request)
-	Thinking                      string                       // thinking mode: "off" or "adaptive" (empty/"off" = disabled)
-	Speed                         string                       // speed mode: "fast" for Anthropic fast mode (Opus only, empty = standard)
 	ShowToolCalls                 string                       // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
 	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
