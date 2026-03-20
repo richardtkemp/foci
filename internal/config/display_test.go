@@ -199,7 +199,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.TTS = []TTSConfig{{ID: "edge", Format: "edge-tts", Voice: "en-US-AriaNeural"}}
 	cfg.STT = []STTConfig{{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com", Model: "whisper-large-v3"}}
 	cfg.Environment.DocsPath = "/docs"
-	cfg.Skills.Dirs = []string{"/skills"}
+	cfg.Skills.Dir = "/skills"
 	cfg.ManaWarnings.Thresholds = []int{50, 25, 10}
 
 	result := FormatAvailable(cfg, agent)

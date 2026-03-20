@@ -283,7 +283,7 @@ type AgentConfig struct {
 	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve"`     // messages to preserve in refresh mode (nil = use global)
 	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (nil = use global)
 	// Per-agent skills and message transforms (empty = use global)
-	SkillsDirs        []string           `toml:"skills_dirs"`        // skill directories (empty = use global [skills] dirs)
+	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
 	BlockedPaths      []BlockedPath      `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (empty = use global)
 	// Per-agent tool behaviour (0 = use global [tools] value)
@@ -590,7 +590,7 @@ type EnvironmentConfig struct {
 }
 
 type SkillsConfig struct {
-	Dirs []string `toml:"dirs"` // directories to scan for skill subdirectories
+	Dir string `toml:"dir"` // shared skills directory (default: $home/shared/skills/)
 }
 
 type ResourcesConfig struct {

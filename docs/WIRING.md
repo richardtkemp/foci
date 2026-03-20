@@ -51,7 +51,8 @@ config.Load(path)                                        ← validates values; l
      → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
      → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
      → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
-     → skills.Load(cfg.Skills.Dirs)
+     → skills.ResolveDirs(home, workspace, cfg.Skills.Dir, acfg.SkillsDir)
+     → skills.Load(resolvedDirs)                              ← shared first, then per-agent (overrides on collision)
      → compaction.NewCompactor(sessions, model, threshold)
      → config.NewFallbackResolver(global, perAgent, aliases)  ← nil if no fallbacks configured
      → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}

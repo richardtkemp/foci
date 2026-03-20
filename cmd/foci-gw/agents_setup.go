@@ -179,10 +179,8 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
 	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 
-	skillsDirs := p.cfg.Skills.Dirs
-	if len(acfg.SkillsDirs) > 0 {
-		skillsDirs = acfg.SkillsDirs
-	}
+	home := filepath.Dir(acfg.Workspace)
+	skillsDirs := skills.ResolveDirs(home, acfg.Workspace, p.cfg.Skills.Dir, acfg.SkillsDir)
 	skillRegistry := skills.Load(skillsDirs)
 	var extraSystemBlocks []provider.SystemBlock
 	if skillRegistry.Len() > 0 {
@@ -191,10 +189,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
-	maxRC := p.cfg.Tools.MaxResultChars
-	if len(acfg.SkillsDirs) > 0 {
-		maxRC = resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
-	}
+	maxRC := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
 	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
 
 	return bootstrapResult{

@@ -112,7 +112,7 @@ func TestSystemBlocksCustomOrder(t *testing.T) {
 func TestDefaultFileOrder(t *testing.T) {
 	expected := []string{
 		"IDENTITY.md", "SOUL.md", "COHERENCE.md", "AGENTS.md",
-		"TOOLS.md", "USER.md", "MEMORY.md", "KEEPALIVE.md",
+		"TOOLS.md", "USER.md", "MEMORY.md",
 	}
 
 	if len(DefaultFileOrder) != len(expected) {

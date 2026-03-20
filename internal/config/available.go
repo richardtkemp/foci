@@ -140,8 +140,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Skills fields
-	if len(cfg.Skills.Dirs) == 0 {
-		opts = append(opts, availableOption{"skills", "dirs", "[]", "directories to scan for skills"})
+	if cfg.Skills.Dir == "" {
+		opts = append(opts, availableOption{"skills", "dir", "\"\"", "shared skills directory (default: $home/shared/skills/)"})
 	}
 
 	// Usage warnings

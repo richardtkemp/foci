@@ -600,11 +600,18 @@ timeout_sec = 30
 
 ### `[skills]`
 
-Skill directories to scan on startup. Per-agent override: `skills_dirs` in `[[agents]]` — see [Global-or-Agent: Skills & Message Transforms](#skills--message-transforms).
+Override for the shared skills directory. By default, skills are loaded from two directories in order:
+
+1. **Shared:** `$home/shared/skills/` (where `$home` is the parent of the agent's workspace)
+2. **Per-agent:** `$workspace/skills/`
+
+When both directories contain a skill with the same name, the per-agent version wins.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `dirs` | string[] | `[]` | Directories to scan for skill subdirectories containing `SKILL.md` files. |
+| `dir` | string | `""` | Shared skills directory. Empty uses the default `$home/shared/skills/`. |
+
+Per-agent override: `skills_dir` in `[[agents]]` overrides the per-agent directory (default: `$workspace/skills/`).
 
 Each subdirectory with a `SKILL.md` is loaded. The skill name and description (from YAML frontmatter) are injected into the system prompt. Skills with `command` + `script` frontmatter auto-register as slash commands.
 
@@ -971,7 +978,7 @@ Per-agent mana warning thresholds. When set, completely replaces the global `[us
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `skills_dirs` | string[] | `[]` | `[skills] dirs` | Directories to scan for skill subdirectories. `[]` inherits from global `[skills] dirs`. |
+| `skills_dir` | string | `""` | `[skills] dir` | Per-agent skills directory. Empty uses default `$workspace/skills/`. |
 | `message_transforms` | array | `[]` | `[[message_transforms]]` | Regex find/replace rules applied to inbound messages. `[]` inherits from global `[[message_transforms]]`. |
 | `blocked_paths` | array | `[]` | `[[blocked_paths]]` | Path prefixes blocked for write/edit tools. `[]` inherits from global `[[blocked_paths]]`. Per-agent replaces global (not merged). |
 
@@ -1240,7 +1247,7 @@ api_file = "/home/foci/logs/api.jsonl"
 conversation_file = "/home/foci/data/conversation.db"
 
 [skills]
-dirs = ["/home/foci/shared/skills"]
+dir = "/home/foci/shared/skills"
 
 welcome_file = "/home/foci/data/WELCOME.md"
 ```

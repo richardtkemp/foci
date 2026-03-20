@@ -244,6 +244,52 @@ func TestNoScript(t *testing.T) {
 	}
 }
 
+func TestLoadCollisionOverride(t *testing.T) {
+	// Verifies that when two directories contain a skill with the same name,
+	// the skill from the later directory replaces the earlier one — this is
+	// the mechanism for per-agent skills overriding shared skills.
+	shared := t.TempDir()
+	agent := t.TempDir()
+	writeSkillMD(t, shared, "camera", "---\nname: camera\ndescription: Shared camera\n---\n")
+	writeSkillMD(t, agent, "camera", "---\nname: camera\ndescription: Agent camera\n---\n")
+
+	reg := Load([]string{shared, agent})
+	if reg.Len() != 1 {
+		t.Fatalf("expected 1 skill after collision, got %d", reg.Len())
+	}
+	if reg.All()[0].Description != "Agent camera" {
+		t.Errorf("expected agent override, got description = %q", reg.All()[0].Description)
+	}
+	if reg.All()[0].Dir != filepath.Join(agent, "camera") {
+		t.Errorf("expected agent dir, got %q", reg.All()[0].Dir)
+	}
+}
+
+func TestLoadCollisionPreservesOrder(t *testing.T) {
+	// Verifies that when a later directory overrides a skill, it stays in
+	// the original position in the list rather than being appended again.
+	shared := t.TempDir()
+	agent := t.TempDir()
+	writeSkillMD(t, shared, "alpha", "---\nname: alpha\ndescription: Shared alpha\n---\n")
+	writeSkillMD(t, shared, "beta", "---\nname: beta\ndescription: Shared beta\n---\n")
+	writeSkillMD(t, agent, "alpha", "---\nname: alpha\ndescription: Agent alpha\n---\n")
+
+	reg := Load([]string{shared, agent})
+	if reg.Len() != 2 {
+		t.Fatalf("expected 2 skills, got %d", reg.Len())
+	}
+	// alpha should still be first (overridden in place), beta second
+	if reg.All()[0].Name != "alpha" {
+		t.Errorf("first skill = %q, want alpha", reg.All()[0].Name)
+	}
+	if reg.All()[0].Description != "Agent alpha" {
+		t.Errorf("alpha description = %q, want Agent alpha", reg.All()[0].Description)
+	}
+	if reg.All()[1].Name != "beta" {
+		t.Errorf("second skill = %q, want beta", reg.All()[1].Name)
+	}
+}
+
 // TestShortPathComparison tests shortPath returns the shorter of absolute or relative
 func TestShortPathComparison(t *testing.T) {
 	tests := []struct {

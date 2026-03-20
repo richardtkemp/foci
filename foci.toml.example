@@ -133,7 +133,7 @@ id = "myagent"
 # branch_orientation_prompt = ""                                  # deprecated: sets both facet and headless
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"  # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"   # prompt for headless branches (cron, spawn, keepalive)
-# skills_dirs = ["skills"]                # per-agent skill directories
+# skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 # compaction_effort = "high"              # effort for compaction API calls
 # exec_auto_background = 10              # seconds before auto-backgrounding exec
 # max_concurrent_spawns = 3
@@ -307,7 +307,7 @@ compaction_threshold = 0.8
 
 # ─── Skills ───────────────────────────────────────────────────────────
 # [skills]
-# dirs = ["/home/foci/shared/skills"]
+# dir = "/home/foci/shared/skills"       # shared skills directory (default: $home/shared/skills/)
 
 # ─── Memory ───────────────────────────────────────────────────────────
 # [memory]
