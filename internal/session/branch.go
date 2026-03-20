@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,6 +18,7 @@ type BranchMeta struct {
 	ParentKey   string `json:"parent_key"`
 	BranchPoint int    `json:"branch_point"`
 	NoResetHook bool   `json:"no_reset_hook,omitempty"` // skip pre-reset memory hook
+	Orientation string `json:"orientation,omitempty"`    // orientation text for first turn
 }
 
 // BranchOptions configures optional behavior for a new branch session.
@@ -40,6 +42,7 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		ParentKey:   parentKey,
 		BranchPoint: len(parentMsgs),
 		NoResetHook: opts.NoResetHook,
+		Orientation: opts.OrientationMessage,
 	}
 
 	path, err := s.SessionPath(branchKey)
@@ -65,21 +68,6 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		return fmt.Errorf("write branch meta: %w", err)
 	}
 
-	// Write orientation message as first user message if provided.
-	if opts.OrientationMessage != "" {
-		orientMsg := provider.Message{
-			Role:    "user",
-			Content: provider.TextContent(opts.OrientationMessage),
-		}
-		orientData, err := json.Marshal(orientMsg)
-		if err != nil {
-			return fmt.Errorf("marshal orientation message: %w", err)
-		}
-		if _, err := f.Write(append(orientData, '\n')); err != nil {
-			return fmt.Errorf("write orientation message: %w", err)
-		}
-	}
-
 	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v orientation=%v",
 		branchKey, parentKey, meta.BranchPoint, opts.NoResetHook, opts.OrientationMessage != "")
 	s.fireEvent(SessionEvent{
@@ -98,6 +86,27 @@ func (s *Store) GetBranchMeta(key string) (*BranchMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.readBranchMeta(key)
+}
+
+// PendingOrientation returns the orientation text for a branch session that
+// hasn't had its first turn yet. Returns "" for non-branches or branches that
+// already have messages (orientation was consumed on the first turn).
+func (s *Store) PendingOrientation(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	meta, err := s.readBranchMeta(key)
+	if err != nil || meta == nil || meta.Orientation == "" {
+		return ""
+	}
+
+	// Only return orientation if the branch has no own messages yet (first turn).
+	ownMsgs, err := s.loadUnlocked(key)
+	if err != nil || len(ownMsgs) > 0 {
+		return ""
+	}
+
+	return meta.Orientation
 }
 
 // LoadFull loads the full message history for a session.
@@ -158,23 +167,21 @@ func (s *Store) readBranchMeta(key string) (*BranchMeta, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	// Read first line
-	buf := make([]byte, 4096)
-	n, err := f.Read(buf)
-	if err != nil || n == 0 {
+	// Read first line using a scanner to handle large meta lines
+	// (orientation text is stored in the meta JSON).
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	if !scanner.Scan() {
+		return nil, nil
+	}
+	line := scanner.Bytes()
+	if len(line) == 0 {
 		return nil, nil
 	}
 
-	// Find first newline
-	for i := 0; i < n; i++ {
-		if buf[i] == '\n' {
-			var meta BranchMeta
-			if json.Unmarshal(buf[:i], &meta) == nil && meta.Type == "branch_meta" {
-				return &meta, nil
-			}
-			return nil, nil
-		}
+	var meta BranchMeta
+	if json.Unmarshal(line, &meta) == nil && meta.Type == "branch_meta" {
+		return &meta, nil
 	}
-
 	return nil, nil
 }

@@ -15,10 +15,13 @@ import (
 )
 
 // prepareUserMessage builds the user message with separate content blocks for
-// metadata, reminders, state dashboard, attachments, and user text.
+// metadata, reminders, state dashboard, attachments, orientation, and user text.
 // Multiple texts produce separate content blocks: texts[0] gets the full
 // annotation treatment; texts[1:] each become a "[follow-up]" block.
-func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts []string, turnModel string, attachments []platform.Attachment, duplicateMessages bool) provider.Message {
+// If orientation is non-empty, it is included as a content block before the
+// user text — this is how branch orientation is delivered on the first turn
+// instead of being a separate user message (which would cause consecutive users).
+func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts []string, turnModel string, attachments []platform.Attachment, duplicateMessages bool, orientation string) provider.Message {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
@@ -104,6 +107,12 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 	}
 	if attachmentPaths != "" {
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: attachmentPaths})
+	}
+
+	// Branch orientation (first turn only — delivered as a content block
+	// instead of a separate user message to maintain role alternation).
+	if orientation != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: orientation})
 	}
 
 	// Primary user text
