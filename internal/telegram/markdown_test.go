@@ -440,14 +440,14 @@ func TestClosePartialMarkdown(t *testing.T) {
 			want: "**bold**",
 		},
 		{
-			name: "unmatched bold stripped",
+			name: "unmatched bold closed",
 			in:   "**Bold tex",
-			want: "Bold tex",
+			want: "**Bold tex**",
 		},
 		{
 			name: "unmatched bold at start with text after",
 			in:   "hello **world",
-			want: "hello world",
+			want: "hello **world**",
 		},
 		{
 			name: "complete italic unchanged",
@@ -455,14 +455,14 @@ func TestClosePartialMarkdown(t *testing.T) {
 			want: "*italic*",
 		},
 		{
-			name: "unmatched italic star stripped",
+			name: "unmatched italic star closed",
 			in:   "hello *world",
-			want: "hello world",
+			want: "hello *world*",
 		},
 		{
-			name: "unmatched italic underscore stripped",
+			name: "unmatched italic underscore closed",
 			in:   "hello _world",
-			want: "hello world",
+			want: "hello _world_",
 		},
 		{
 			name: "complete strikethrough unchanged",
@@ -470,9 +470,9 @@ func TestClosePartialMarkdown(t *testing.T) {
 			want: "~~deleted~~",
 		},
 		{
-			name: "unmatched strikethrough stripped",
+			name: "unmatched strikethrough closed",
 			in:   "hello ~~deleted",
-			want: "hello deleted",
+			want: "hello ~~deleted~~",
 		},
 		{
 			name: "complete underline unchanged",
@@ -480,9 +480,9 @@ func TestClosePartialMarkdown(t *testing.T) {
 			want: "__underline__",
 		},
 		{
-			name: "unmatched underline stripped",
+			name: "unmatched underline closed",
 			in:   "hello __under",
-			want: "hello under",
+			want: "hello __under__",
 		},
 		{
 			name: "complete code fence unchanged",
@@ -490,14 +490,14 @@ func TestClosePartialMarkdown(t *testing.T) {
 			want: "```\ncode\n```",
 		},
 		{
-			name: "unclosed code fence stripped",
+			name: "unclosed code fence closed",
 			in:   "before\n```\nsome code",
-			want: "before\n",
+			want: "before\n```\nsome code\n```",
 		},
 		{
 			name: "unclosed code fence at start",
 			in:   "```\ncode here",
-			want: "",
+			want: "```\ncode here\n```",
 		},
 		{
 			name: "complete inline code unchanged",
@@ -505,20 +505,20 @@ func TestClosePartialMarkdown(t *testing.T) {
 			want: "use `code` here",
 		},
 		{
-			name: "unmatched backtick stripped",
+			name: "unmatched backtick closed",
 			in:   "use `code",
-			want: "use code",
+			want: "use `code`",
 		},
 		{
 			name: "mixed complete and partial",
 			in:   "**bold** and *ital",
-			want: "**bold** and ital",
+			want: "**bold** and *ital*",
 		},
 		{
 			name: "bold with italic inside complete",
 			in:   "**bold *italic***",
-			// The lone * inside the ** pair is stripped since it's unmatched
-			want: "**bold italic***",
+			// The lone * inside is closed by appending — already valid markdown
+			want: "**bold *italic****",
 		},
 		{
 			name: "empty string",
@@ -551,9 +551,9 @@ func TestClosePartialMarkdown_ThenConvert(t *testing.T) {
 		want string
 	}{
 		{
-			name: "partial bold becomes plain text",
+			name: "partial bold becomes bold HTML",
 			in:   "**Bold tex",
-			want: "Bold tex",
+			want: "<b>Bold tex</b>",
 		},
 		{
 			name: "complete bold becomes HTML",
@@ -561,9 +561,9 @@ func TestClosePartialMarkdown_ThenConvert(t *testing.T) {
 			want: "<b>Bold text</b>",
 		},
 		{
-			name: "partial code fence stripped",
+			name: "partial code fence closed",
 			in:   "before\n```\ncode",
-			want: "before\n",
+			want: "before\n<pre><code>code</code></pre>",
 		},
 		{
 			name: "complete code fence becomes pre",
@@ -571,9 +571,9 @@ func TestClosePartialMarkdown_ThenConvert(t *testing.T) {
 			want: "before\n<pre><code>code</code></pre>",
 		},
 		{
-			name: "partial inline code stripped",
+			name: "partial inline code closed",
 			in:   "use `func",
-			want: "use func",  // backtick removed, text preserved
+			want: "use <code>func</code>",
 		},
 	}
 

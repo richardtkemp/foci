@@ -270,54 +270,54 @@ func convertBlockquotes(text string) string {
 	return strings.Join(result, "\n")
 }
 
-// closePartialMarkdown strips or closes unmatched markdown delimiters so that
+// closePartialMarkdown closes unmatched markdown delimiters so that
 // ConvertToTelegramHTML produces valid HTML from incomplete streaming text.
-// It handles: code fences (```), inline code (`), bold (**), strikethrough (~~),
-// underline (__), and italic (* and _). Designed to be lightweight — called on
-// every stream tick (~4/s).
+// Unmatched markers are closed by appending their counterpart, so partial
+// formatting renders correctly during streaming (e.g. "**Bold tex" becomes
+// "**Bold tex**" → renders as bold). Handles: code fences (```), inline code
+// (`), bold (**), strikethrough (~~), underline (__), and italic (* and _).
+// Designed to be lightweight — called on every stream tick (~4/s).
 func closePartialMarkdown(text string) string {
 	// Handle unclosed code fences: if odd number of ``` occurrences,
-	// strip the trailing unmatched fence (may be partial content inside).
+	// close by appending a newline + fence so partial code renders as a block.
 	fenceCount := strings.Count(text, "```")
 	if fenceCount%2 != 0 {
-		// Find the last ``` and remove everything from it onward
-		// (the partial code block content would render badly).
-		lastFence := strings.LastIndex(text, "```")
-		text = text[:lastFence]
+		text += "\n```"
 	}
 
 	// Handle unclosed inline code: count unescaped backticks outside code fences.
 	// After code fences are balanced above, remaining solo backticks are inline code.
+	// Close by appending so partial inline code renders formatted.
 	backtickCount := strings.Count(text, "`")
 	if backtickCount%2 != 0 {
-		// Remove the trailing unmatched backtick (keep surrounding text).
-		lastBT := strings.LastIndex(text, "`")
-		text = text[:lastBT] + text[lastBT+1:]
+		text += "`"
 	}
 
-	// Paired delimiters: strip trailing unmatched markers.
+	// Paired delimiters: close trailing unmatched markers by appending.
+	// This makes partial formatting render correctly during streaming
+	// (e.g. "**Bold tex" → "**Bold tex**" → renders as bold).
 	// Order matters — check multi-char delimiters before single-char.
 	for _, delim := range []string{"**", "~~", "__"} {
 		if strings.Count(text, delim)%2 != 0 {
-			last := strings.LastIndex(text, delim)
-			text = text[:last] + text[last+len(delim):]
+			text += delim
 		}
 	}
 
 	// Single-char italic markers: * and _ (but not ** or __ which are handled above).
 	// Count standalone * (not part of **) and standalone _ (not part of __).
-	text = stripUnmatchedSingle(text, '*')
-	text = stripUnmatchedSingle(text, '_')
+	// Close by appending rather than stripping so partial italic renders correctly.
+	text = closeUnmatchedSingle(text, '*')
+	text = closeUnmatchedSingle(text, '_')
 
 	return text
 }
 
-// stripUnmatchedSingle strips a trailing unmatched single-char delimiter,
-// ignoring occurrences that are part of a double-char delimiter (e.g. ** or __).
-func stripUnmatchedSingle(text string, ch byte) string {
+// closeUnmatchedSingle closes a trailing unmatched single-char delimiter by
+// appending it, ignoring occurrences that are part of a double-char delimiter
+// (e.g. ** or __).
+func closeUnmatchedSingle(text string, ch byte) string {
 	// Count standalone occurrences of ch (not part of doubleCh).
 	count := 0
-	lastPos := -1
 	for i := 0; i < len(text); i++ {
 		if text[i] != ch {
 			continue
@@ -331,10 +331,9 @@ func stripUnmatchedSingle(text string, ch byte) string {
 			continue // second char of a pair already skipped
 		}
 		count++
-		lastPos = i
 	}
-	if count%2 != 0 && lastPos >= 0 {
-		text = text[:lastPos] + text[lastPos+1:]
+	if count%2 != 0 {
+		text += string(ch)
 	}
 	return text
 }
