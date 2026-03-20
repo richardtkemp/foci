@@ -466,7 +466,7 @@ type StreamingClient interface {
 }
 ```
 
-`StreamingClient` is opt-in — the agent loop type-asserts `provider.StreamingClient` when `Streaming = true`. Currently only the Anthropic client implements it. `StreamHandler` has `OnTextDelta` and `OnThinkingDelta` callbacks for incremental delivery.
+`StreamingClient` is opt-in — the agent loop type-asserts `provider.StreamingClient` when `Streaming = true`. The Anthropic and OpenAI clients implement it. `StreamHandler` has `OnTextDelta` and `OnThinkingDelta` callbacks for incremental delivery.
 
 ### Dynamic Provider Switching
 
@@ -540,13 +540,15 @@ Implements `provider.Client` using `google.golang.org/genai` SDK. Translation la
 
 ## OpenAI API Client (`openai/`)
 
-Implements `provider.Client` using `github.com/openai/openai-go/v3` SDK. Translation layer converts between provider-neutral types and OpenAI wire format:
+Implements `provider.Client` and `provider.StreamingClient` using `github.com/openai/openai-go/v3` SDK. Translation layer converts between provider-neutral types and OpenAI wire format:
 - `messagesToOpenAI()` — system blocks → `DeveloperMessage`, tool results → `ToolMessage`, images → `image_url` parts
 - `toolsToOpenAI()` — `ToolDef` → `ChatCompletionFunctionTool`, server tools filtered out
 - `responseFromOpenAI()` — finish reason mapping (`"stop"` → `"end_turn"`, `"tool_calls"` → `"tool_use"`), usage extraction, `ToolCalls` → `tool_use` ContentBlock
 - `classifyError()` — maps SDK `*openai.Error` to `provider.APIError`
 - `CountTokens()` — returns error (no free token counting endpoint); compaction handles gracefully
 - Configurable base URL (`[openai] base_url`) enables OpenRouter, Together, Groq, local LLMs
+
+**Streaming** (`stream.go`): `StreamMessage()` wraps `streamOnce()`. Pre-stream errors (before any deltas) are retryable; mid-stream errors are not (deltas already emitted). `streamOnce()` calls `Chat.Completions.NewStreaming()` with `include_usage: true`, iterates chunks, fires `StreamHandler.OnTextDelta` callbacks, uses `ChatCompletionAccumulator` for response assembly. OpenRouter `reasoning_content` extra fields on deltas are accumulated manually and fire `OnThinkingDelta` callbacks. Enabled per-agent via `streaming = true`.
 
 ## Prompt Caching
 
