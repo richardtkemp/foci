@@ -5,24 +5,13 @@ import (
 )
 
 func TestResolveModel(t *testing.T) {
-	// Proves that ResolveModel correctly handles alias expansion, developer/model_id
-	// syntax, endpoint overrides, case normalization, and error cases for malformed
+	// Proves that ResolveModel correctly handles developer/model_id syntax,
+	// endpoint overrides, case normalization, and error cases for malformed
 	// or empty input.
-	models := map[string]ModelConfig{
-		"opus":         {Model: "anthropic/claude-opus-4-6"},
-		"sonnet":       {Model: "anthropic/claude-sonnet-4-6"},
-		"haiku":        {Model: "anthropic/claude-haiku-4-5"},
-		"gemini-flash": {Model: "google/gemini-2.5-flash"},
-		"gemini-pro":   {Model: "google/gemini-2.5-pro"},
-		"gpt4o":        {Model: "openai/gpt-4o"},
-		"deepseek":     {Model: "deepseek/deepseek-chat"},
-	}
-
 	tests := []struct {
 		name            string
 		input           string
 		endpoint        string
-		models          map[string]ModelConfig
 		wantDeveloper   string
 		wantModelID     string
 		wantFormat      string
@@ -30,44 +19,11 @@ func TestResolveModel(t *testing.T) {
 		wantErr         bool
 		wantErrContains string
 	}{
-		// Alias resolution
-		{
-			name:          "alias opus",
-			input:         "opus",
-			endpoint:      "",
-			models:        models,
-			wantDeveloper: "anthropic",
-			wantModelID:   "claude-opus-4-6",
-			wantFormat:    "anthropic",
-			wantEndpoint:  "anthropic",
-		},
-		{
-			name:          "alias gemini-flash",
-			input:         "gemini-flash",
-			endpoint:      "",
-			models:        models,
-			wantDeveloper: "google",
-			wantModelID:   "gemini-2.5-flash",
-			wantFormat:    "gemini",
-			wantEndpoint:  "gemini",
-		},
-		{
-			name:          "alias deepseek",
-			input:         "deepseek",
-			endpoint:      "",
-			models:        models,
-			wantDeveloper: "deepseek",
-			wantModelID:   "deepseek-chat",
-			wantFormat:    "openai",
-			wantEndpoint:  "openrouter",
-		},
-
 		// Direct syntax
 		{
 			name:          "direct anthropic",
 			input:         "anthropic/claude-haiku-4-5",
 			endpoint:      "",
-			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-haiku-4-5",
 			wantFormat:    "anthropic",
@@ -77,7 +33,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct google",
 			input:         "google/gemini-2.5-flash",
 			endpoint:      "",
-			models:        models,
 			wantDeveloper: "google",
 			wantModelID:   "gemini-2.5-flash",
 			wantFormat:    "gemini",
@@ -87,7 +42,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct gemini developer",
 			input:         "gemini/gemini-2.5-pro",
 			endpoint:      "",
-			models:        models,
 			wantDeveloper: "gemini",
 			wantModelID:   "gemini-2.5-pro",
 			wantFormat:    "gemini",
@@ -97,7 +51,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "direct openai",
 			input:         "openai/gpt-4o",
 			endpoint:      "",
-			models:        models,
 			wantDeveloper: "openai",
 			wantModelID:   "gpt-4o",
 			wantFormat:    "openai",
@@ -107,7 +60,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "third-party model defaults to openrouter",
 			input:         "deepseek/deepseek-chat",
 			endpoint:      "",
-			models:        models,
 			wantDeveloper: "deepseek",
 			wantModelID:   "deepseek-chat",
 			wantFormat:    "openai",
@@ -119,7 +71,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "override to openrouter",
 			input:         "anthropic/claude-opus-4-6",
 			endpoint:      "openrouter",
-			models:        models,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-opus-4-6",
 			wantFormat:    "anthropic",
@@ -129,7 +80,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "override to custom endpoint",
 			input:         "google/gemini-2.5-flash",
 			endpoint:      "mycustom",
-			models:        models,
 			wantDeveloper: "google",
 			wantModelID:   "gemini-2.5-flash",
 			wantFormat:    "gemini",
@@ -141,7 +91,6 @@ func TestResolveModel(t *testing.T) {
 			name:            "empty input",
 			input:           "",
 			endpoint:        "",
-			models:          models,
 			wantErr:         true,
 			wantErrContains: "empty",
 		},
@@ -149,7 +98,6 @@ func TestResolveModel(t *testing.T) {
 			name:            "no slash",
 			input:           "claude-haiku-4-5",
 			endpoint:        "",
-			models:          models,
 			wantErr:         true,
 			wantErrContains: "developer/model_id syntax",
 		},
@@ -157,7 +105,6 @@ func TestResolveModel(t *testing.T) {
 			name:            "trailing slash",
 			input:           "anthropic/",
 			endpoint:        "",
-			models:          models,
 			wantErr:         true,
 			wantErrContains: "developer/model_id syntax",
 		},
@@ -165,7 +112,6 @@ func TestResolveModel(t *testing.T) {
 			name:            "leading slash",
 			input:           "/claude-haiku-4-5",
 			endpoint:        "",
-			models:          models,
 			wantErr:         true,
 			wantErrContains: "developer/model_id syntax",
 		},
@@ -175,29 +121,6 @@ func TestResolveModel(t *testing.T) {
 			name:          "uppercase developer",
 			input:         "ANTHROPIC/claude-haiku-4-5",
 			endpoint:      "",
-			models:        models,
-			wantDeveloper: "anthropic",
-			wantModelID:   "claude-haiku-4-5",
-			wantFormat:    "anthropic",
-			wantEndpoint:  "anthropic",
-		},
-		{
-			name:          "mixed case alias",
-			input:         "OPUS",
-			endpoint:      "",
-			models:        models,
-			wantDeveloper: "anthropic",
-			wantModelID:   "claude-opus-4-6",
-			wantFormat:    "anthropic",
-			wantEndpoint:  "anthropic",
-		},
-
-		// No models map
-		{
-			name:          "no models direct syntax",
-			input:         "anthropic/claude-haiku-4-5",
-			endpoint:      "",
-			models:        nil,
 			wantDeveloper: "anthropic",
 			wantModelID:   "claude-haiku-4-5",
 			wantFormat:    "anthropic",
@@ -207,7 +130,7 @@ func TestResolveModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ResolveModel(tt.input, tt.endpoint, tt.models)
+			got, err := ResolveModel(tt.input, tt.endpoint)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ResolveModel() expected error, got nil")
@@ -239,7 +162,7 @@ func TestResolveModel(t *testing.T) {
 }
 
 func TestInferWireFormat(t *testing.T) {
-	// Proves that InferWireFormat maps anthropic→anthropic, google/gemini→gemini,
+	// Proves that InferWireFormat maps anthropic->anthropic, google/gemini->gemini,
 	// and everything else (including openai, deepseek, unknown) to openai format,
 	// case-insensitively.
 	tests := []struct {
@@ -368,105 +291,6 @@ func TestModelCapabilities(t *testing.T) {
 				t.Errorf("ModelCapabilities(%q).Thinking = %v, want %v", tt.model, caps.Thinking, tt.wantThinking)
 			}
 		})
-	}
-}
-
-func TestContextWindowUnmarshal(t *testing.T) {
-	// Proves that ContextWindow correctly parses integers, k/K suffixed strings,
-	// m/M suffixed strings, and rejects invalid input.
-	tests := []struct {
-		name    string
-		input   any
-		want    int
-		wantErr bool
-	}{
-		{"plain int", int64(131072), 131072, false},
-		{"string k", "262k", 262000, false},
-		{"string K", "128K", 128000, false},
-		{"string m", "1m", 1000000, false},
-		{"string M", "2M", 2000000, false},
-		{"string plain number", "131072", 131072, false},
-		{"empty string", "", 0, false},
-		{"invalid string", "abc", 0, true},
-		{"invalid type", true, 0, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var c ContextWindow
-			err := c.UnmarshalTOML(tt.input)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if int(c) != tt.want {
-				t.Errorf("got %d, want %d", int(c), tt.want)
-			}
-		})
-	}
-}
-
-func TestThinkingModeUnmarshal(t *testing.T) {
-	// Proves that ThinkingMode.UnmarshalTOML accepts canonical strings
-	// ("adaptive"/"off"), bool values (true/false), and string-encoded bools
-	// ("true"/"false"/"on"/"off"), rejecting invalid values.
-	tests := []struct {
-		name    string
-		input   any
-		want    ThinkingMode
-		wantErr bool
-	}{
-		{"string adaptive", "adaptive", "adaptive", false},
-		{"string off", "off", "off", false},
-		{"string empty", "", "", false},
-		{"bool true", true, "adaptive", false},
-		{"bool false", false, "off", false},
-		{"string true", "true", "adaptive", false},
-		{"string TRUE", "TRUE", "adaptive", false},
-		{"string false", "false", "off", false},
-		{"string False", "False", "off", false},
-		{"string on", "on", "adaptive", false},
-		{"string ON", "ON", "adaptive", false},
-		{"string Adaptive", "Adaptive", "adaptive", false},
-		{"string Off", "Off", "off", false},
-		{"invalid string", "always", "", true},
-		{"invalid type", 42, "", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var m ThinkingMode
-			err := m.UnmarshalTOML(tt.input)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if m != tt.want {
-				t.Errorf("got %q, want %q", m, tt.want)
-			}
-		})
-	}
-}
-
-func TestResolveModelCarriesContext(t *testing.T) {
-	// Proves that context window size from ModelConfig is carried through to ResolvedModel.
-	models := map[string]ModelConfig{
-		"kimi": {Model: "openrouter/moonshotai/kimi-k2.5", Context: 262000},
-	}
-	got, err := ResolveModel("kimi", "", models)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Context != 262000 {
-		t.Errorf("Context = %d, want 262000", got.Context)
 	}
 }
 

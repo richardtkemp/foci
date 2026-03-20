@@ -311,22 +311,6 @@ func Load(path string) (*Config, error) {
 		syncDisplayFields(&cfg.Agents[i])
 	}
 
-	// Default named model entries — provide shorthand names for common models.
-	// Only added when the user hasn't defined any [models.*] sections.
-	if len(cfg.Models) == 0 {
-		cfg.Models = map[string]ModelConfig{
-			"opus":         {Model: "anthropic/claude-opus-4-6"},
-			"sonnet":       {Model: "anthropic/claude-sonnet-4-6"},
-			"haiku":        {Model: "anthropic/claude-haiku-4-5-20251001"},
-			"gemini-flash": {Model: "google/gemini-2.5-flash"},
-			"gemini-pro":   {Model: "google/gemini-2.5-pro"},
-			"gpt4o":        {Model: "openai/gpt-4o"},
-			"o3":           {Model: "openai/o3"},
-			"o4mini":       {Model: "openai/o4-mini"},
-			"deepseek":     {Model: "deepseek/deepseek-chat"},
-		}
-	}
-
 	// Endpoint defaults — only create built-in defaults for endpoints that
 	// model groups resolve to. This avoids spurious "missing secret" warnings
 	// for endpoints the user doesn't use (e.g. openai.api_key when no group
@@ -336,7 +320,7 @@ func Load(path string) (*Config, error) {
 		if groupModel == "" {
 			continue
 		}
-		resolved, err := ResolveModel(groupModel, "", cfg.Models)
+		resolved, err := ResolveModel(groupModel, "")
 		if err == nil {
 			usedEndpoints[resolved.Endpoint] = true
 		}
