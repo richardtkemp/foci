@@ -89,6 +89,9 @@ func (s *Scheduler) CheckTurnInterval() []string {
 			n = 50
 		}
 		if s.turnCount > 0 && s.turnCount%n == 0 {
+			if r.Condition != nil && !r.Condition() {
+				continue
+			}
 			result = append(result, r.Text)
 		}
 	}
@@ -193,6 +196,10 @@ func (s *Scheduler) shouldFire(i int, r Rule, lastToolError bool) bool {
 		if s.toolCount-last < s.cooldown {
 			return false
 		}
+	}
+	// Runtime condition check
+	if r.Condition != nil && !r.Condition() {
+		return false
 	}
 
 	switch r.Trigger.Type {

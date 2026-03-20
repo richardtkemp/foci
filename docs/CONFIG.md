@@ -748,6 +748,7 @@ Available in both `[defaults]` and `[[agents]]`.
 | `nudge_pre_answer_min_tools` | int | `2` | Minimum tool call iterations before the pre-answer gate fires. |
 | `nudge_default_enable` | bool | `true` | Enable built-in tool/skill reminders. When enabled, periodically reminds the agent which tools and skills are available. |
 | `nudge_default_frequency` | int | `50` | User turns between tool/skill reminders. The turn counter is a lifetime counter (never reset). |
+| `nudge_default_scratchpad_frequency` | int | `20` | User turns between scratchpad review reminders. Only fires when scratchpad entries exist, prompting the agent to update or clear stale entries. `0` disables. |
 
 **Trigger types** (configured per-rule in `nudge-rules.json`):
 - `every_n_tools(N)` — remind every N individual tool calls during a turn (default N=5)
