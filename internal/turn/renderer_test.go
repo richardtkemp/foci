@@ -513,6 +513,221 @@ func TestOnThinking_Off_Ignored(t *testing.T) {
 	}
 }
 
+func TestOnThinking_Compact_StreamsLive(t *testing.T) {
+	// When compact + streaming, thinking deltas are fed into the StreamWriter
+	// so users see thinking content in real-time. Typing indicator is refreshed.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("analyzing the problem")
+
+	// Thinking should be in the stream writer's buffer.
+	content := r.sw.Content()
+	if content != "analyzing the problem" {
+		t.Errorf("stream content = %q, want %q", content, "analyzing the problem")
+	}
+	// Typing indicator should have been sent.
+	if backend.typingCount != 1 {
+		t.Errorf("typing count = %d, want 1", backend.typingCount)
+	}
+}
+
+func TestOnThinking_True_StreamsLive(t *testing.T) {
+	// When true + streaming, thinking deltas are also fed into the StreamWriter
+	// for live visibility. At finalization, BuildThinkingCombined reformats.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "true", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("deep analysis")
+
+	content := r.sw.Content()
+	if content != "deep analysis" {
+		t.Errorf("stream content = %q, want %q", content, "deep analysis")
+	}
+	if backend.typingCount != 1 {
+		t.Errorf("typing count = %d, want 1", backend.typingCount)
+	}
+}
+
+func TestOnThinking_Off_NoStream(t *testing.T) {
+	// When mode is "off", thinking is not streamed even with streaming enabled.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "off", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("should not appear")
+
+	content := r.sw.Content()
+	if content != "" {
+		t.Errorf("stream content = %q, want empty", content)
+	}
+}
+
+func TestOnTextDelta_InsertsDividerAfterThinking(t *testing.T) {
+	// First text delta after thinking inserts a divider in the stream,
+	// visually separating thinking from response content.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("let me think")
+	r.OnTextDelta("Hello")
+	r.OnTextDelta(" world")
+
+	content := r.sw.Content()
+	want := "let me think\n\n---\n\nHello world"
+	if content != want {
+		t.Errorf("stream content = %q, want %q", content, want)
+	}
+}
+
+func TestOnTextDelta_NoDividerWithoutThinking(t *testing.T) {
+	// When no thinking preceded text deltas, no divider is inserted.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnTextDelta("Hello")
+	r.OnTextDelta(" world")
+
+	content := r.sw.Content()
+	if content != "Hello world" {
+		t.Errorf("stream content = %q, want %q", content, "Hello world")
+	}
+}
+
+func TestFinalize_StreamContentFallback_StripsThinking(t *testing.T) {
+	// When response is empty and thinking was streamed into the buffer,
+	// the Content() fallback strips thinking + divider to extract text only.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("reasoning here")
+	r.OnTextDelta("actual response")
+	r.Finalize("") // empty response triggers Content() fallback
+
+	// Should extract text after divider and use EditWithThinkingButton.
+	if len(backend.editThinkingCalls) != 1 {
+		t.Fatalf("editThinkingButton calls = %d, want 1", len(backend.editThinkingCalls))
+	}
+	if !strings.Contains(backend.editThinkingCalls[0].formatted, "actual response") {
+		t.Errorf("formatted = %q, should contain 'actual response'", backend.editThinkingCalls[0].formatted)
+	}
+	if backend.editThinkingCalls[0].thinkingText != "reasoning here" {
+		t.Errorf("thinkingText = %q, want %q", backend.editThinkingCalls[0].thinkingText, "reasoning here")
+	}
+}
+
+func TestFinalize_StreamContentFallback_ThinkingOnly(t *testing.T) {
+	// When response is empty, thinking was streamed but no text deltas arrived,
+	// the response should remain empty (no divider → nothing to extract).
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("reasoning only")
+	r.Finalize("") // no text deltas, no response
+
+	// Should not send anything — only thinking, no actual response.
+	total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.editThinkingCalls)
+	if total != 0 {
+		t.Errorf("expected no sends/edits for thinking-only response, got %d", total)
+	}
+}
+
+func TestOnReply_ResetsThinkingPhase(t *testing.T) {
+	// OnReply resets thinkingPhase so the next segment doesn't inherit
+	// stale thinking state.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("segment 1 thinking")
+	r.OnReply("reply 1") // resets phase
+
+	// After OnReply, a new text delta should NOT insert a divider.
+	r.OnTextDelta("segment 2 text")
+	content := r.sw.Content()
+	if strings.Contains(content, "---") {
+		t.Errorf("stream content should not contain divider after phase reset, got %q", content)
+	}
+}
+
+func TestFinalize_CompactStream_FullFlow(t *testing.T) {
+	// End-to-end test: compact + streaming → thinking streams live with divider,
+	// finalization collapses to response + button.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	// Simulate realistic streaming order: thinking first, then text.
+	r.OnThinking("I need to consider ")
+	r.OnThinking("this carefully")
+	r.OnTextDelta("Here is ")
+	r.OnTextDelta("the answer.")
+
+	r.Finalize("Here is the answer.")
+
+	// Stream content during streaming should have been: thinking + divider + text.
+	// At finalization, the message is edited to show only the response + button.
+	if len(backend.editThinkingCalls) != 1 {
+		t.Fatalf("editThinkingButton calls = %d, want 1", len(backend.editThinkingCalls))
+	}
+	if !strings.Contains(backend.editThinkingCalls[0].formatted, "Here is the answer.") {
+		t.Errorf("formatted = %q, should contain response", backend.editThinkingCalls[0].formatted)
+	}
+	if backend.editThinkingCalls[0].thinkingText != "I need to consider \nthis carefully" {
+		t.Errorf("thinkingText = %q, want accumulated thinking", backend.editThinkingCalls[0].thinkingText)
+	}
+}
+
+func TestFinalize_TrueStream_FullFlow(t *testing.T) {
+	// End-to-end test: true + streaming → thinking streams live, finalization
+	// reformats with BuildThinkingCombined.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "true", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("deep thoughts")
+	r.OnTextDelta("The answer is 42.")
+
+	r.Finalize("The answer is 42.")
+
+	// Finalization should use BuildThinkingCombined + EditMessage.
+	if len(backend.combinedCalls) != 1 {
+		t.Fatalf("buildCombined calls = %d, want 1", len(backend.combinedCalls))
+	}
+	if len(backend.editCalls) != 1 {
+		t.Fatalf("editMessage calls = %d, want 1", len(backend.editCalls))
+	}
+	if backend.combinedCalls[0].thinkingText != "deep thoughts" {
+		t.Errorf("thinkingText = %q, want %q", backend.combinedCalls[0].thinkingText, "deep thoughts")
+	}
+}
+
 func TestOnTextDelta_SendsTyping(t *testing.T) {
 	// Verifies that OnTextDelta refreshes the typing indicator.
 	backend := newMockBackend()
