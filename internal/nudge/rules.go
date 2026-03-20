@@ -21,6 +21,11 @@ type Rule struct {
 	SourceText string  `json:"source_text"` // original passage
 	Trigger    Trigger `json:"trigger"`
 	Priority   string  `json:"priority"` // "high", "medium", "low"
+
+	// Condition is an optional runtime predicate. If set, the rule only fires
+	// when Condition returns true. Used by built-in rules that depend on agent
+	// state (e.g. scratchpad non-empty). Not serialized to JSON.
+	Condition func() bool `json:"-"`
 }
 
 // Trigger describes when a rule should fire.

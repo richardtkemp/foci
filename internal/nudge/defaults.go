@@ -67,6 +67,23 @@ func BraindeadRule(threshold int, prompt string) []Rule {
 	}}
 }
 
+// ScratchpadRule builds a nudge rule that periodically reminds the agent to
+// review, update, or clear scratchpad entries. The condition function gates
+// firing so the nudge is suppressed when the scratchpad is empty.
+// Returns nil if frequency <= 0 (disabled) or condition is nil.
+func ScratchpadRule(frequency int, condition func() bool) []Rule {
+	if frequency <= 0 || condition == nil {
+		return nil
+	}
+	return []Rule{{
+		Text:       "Scratchpad entries exist. Review them — update any that are stale, and clear entries you no longer need. Stale scratchpad entries waste context after compaction.",
+		SourceFile: "builtin",
+		Trigger:    Trigger{Type: "every_n_turns", N: frequency},
+		Priority:   "low",
+		Condition:  condition,
+	}}
+}
+
 // DefaultRules builds nudge rules for periodic tool/skill reminders.
 // Only tools present in toolNames appear in the reminder text. Skills
 // are appended with their descriptions. Returns nil if nothing to list.

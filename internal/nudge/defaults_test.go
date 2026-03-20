@@ -192,6 +192,54 @@ func TestBraindeadRuleDisabled(t *testing.T) {
 	}
 }
 
+func TestScratchpadRuleBasic(t *testing.T) {
+	// Verifies ScratchpadRule generates an every_n_turns rule with
+	// the given frequency and a condition function attached.
+	t.Parallel()
+
+	called := false
+	condition := func() bool { called = true; return true }
+	rules := ScratchpadRule(20, condition)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	r := rules[0]
+	if r.Trigger.Type != "every_n_turns" {
+		t.Errorf("expected trigger type every_n_turns, got %q", r.Trigger.Type)
+	}
+	if r.Trigger.N != 20 {
+		t.Errorf("expected N=20, got %d", r.Trigger.N)
+	}
+	if r.SourceFile != "builtin" {
+		t.Errorf("expected source_file builtin, got %q", r.SourceFile)
+	}
+	if r.Condition == nil {
+		t.Fatal("expected Condition to be set")
+	}
+	r.Condition()
+	if !called {
+		t.Error("expected condition function to be called")
+	}
+	if !strings.Contains(r.Text, "Scratchpad") {
+		t.Error("expected rule text to mention scratchpad")
+	}
+}
+
+func TestScratchpadRuleDisabled(t *testing.T) {
+	// Verifies that frequency <= 0 or nil condition returns nil.
+	t.Parallel()
+
+	if rules := ScratchpadRule(0, func() bool { return true }); rules != nil {
+		t.Errorf("expected nil for frequency=0, got %d rules", len(rules))
+	}
+	if rules := ScratchpadRule(-1, func() bool { return true }); rules != nil {
+		t.Errorf("expected nil for frequency=-1, got %d rules", len(rules))
+	}
+	if rules := ScratchpadRule(20, nil); rules != nil {
+		t.Errorf("expected nil for nil condition, got %d rules", len(rules))
+	}
+}
+
 func TestDefaultRulesSourceFile(t *testing.T) {
 	// Verifies the source_file is set to "builtin".
 	t.Parallel()

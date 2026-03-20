@@ -371,6 +371,75 @@ func TestStartTurnClearsState(t *testing.T) {
 	}
 }
 
+func TestConditionGatesEveryNTurns(t *testing.T) {
+	// Verifies that a rule with a Condition function only fires via
+	// CheckTurnInterval when the condition returns true.
+	t.Parallel()
+
+	conditionResult := false
+	rs := &RuleSet{
+		Rules: []Rule{
+			{
+				Text:      "scratchpad-check",
+				Trigger:   Trigger{Type: "every_n_turns", N: 2},
+				Priority:  "low",
+				Condition: func() bool { return conditionResult },
+			},
+		},
+	}
+	s := NewScheduler(rs, 1, 5)
+
+	// Turn 2: interval matches but condition is false — should not fire
+	s.StartTurn("msg1")
+	s.StartTurn("msg2")
+	r := s.CheckTurnInterval()
+	if len(r) != 0 {
+		t.Errorf("condition false: expected no reminders, got %q", r)
+	}
+
+	// Turn 4: interval matches and condition is true — should fire
+	conditionResult = true
+	s.StartTurn("msg3")
+	s.StartTurn("msg4")
+	r = s.CheckTurnInterval()
+	if len(r) != 1 || r[0] != "scratchpad-check" {
+		t.Errorf("condition true: expected [scratchpad-check], got %q", r)
+	}
+}
+
+func TestConditionGatesAfterTools(t *testing.T) {
+	// Verifies that a rule with a Condition function only fires via
+	// CheckAfterTools when the condition returns true.
+	t.Parallel()
+
+	conditionResult := false
+	rs := &RuleSet{
+		Rules: []Rule{
+			{
+				Text:      "conditional-error",
+				Trigger:   Trigger{Type: "after_error"},
+				Priority:  "high",
+				Condition: func() bool { return conditionResult },
+			},
+		},
+	}
+	s := NewScheduler(rs, 1, 5)
+	s.StartTurn("msg")
+
+	// Error present but condition is false — should not fire
+	r := s.CheckAfterTools(1, true)
+	if len(r) != 0 {
+		t.Errorf("condition false: expected no reminders, got %q", r)
+	}
+
+	// Error present and condition is true — should fire
+	conditionResult = true
+	r = s.CheckAfterTools(2, true)
+	if len(r) != 1 || r[0] != "conditional-error" {
+		t.Errorf("condition true: expected [conditional-error], got %q", r)
+	}
+}
+
 func TestNewSchedulerNilRuleSet(t *testing.T) {
 	// Returns nil scheduler.
 	t.Parallel()

@@ -297,12 +297,23 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, freq)
 	}
 
-	// Braindead first (highest effective priority), then character, then defaults.
-	allRules := append(braindeadRules, append(charRules, defaultRules...)...)
+	// Scratchpad staleness reminder: fires every N turns, but only when entries exist.
+	var scratchpadRules []nudge.Rule
+	if acfg.NudgeDefaultEnable && ag.ScratchpadStore != nil && acfg.NudgeDefaultScratchpadFrequency > 0 {
+		agentID := ag.AgentID
+		store := ag.ScratchpadStore
+		scratchpadRules = nudge.ScratchpadRule(acfg.NudgeDefaultScratchpadFrequency, func() bool {
+			entries, err := store.List(agentID)
+			return err == nil && len(entries) > 0
+		})
+	}
+
+	// Braindead first (highest effective priority), then character, then defaults, then scratchpad.
+	allRules := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
 	if len(allRules) > 0 {
 		rs := &nudge.RuleSet{Rules: allRules}
 		ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
-		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules))
+		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default, %d scratchpad)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules), len(scratchpadRules))
 	}
 
 	ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
@@ -334,7 +345,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 		if rs != nil {
 			reloaded = rs.Rules
 		}
-		merged := append(reloaded, defaultRules...)
+		merged := append(reloaded, append(defaultRules, scratchpadRules...)...)
 		if len(merged) > 0 {
 			ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, nudgeCooldown, nudgeMaxPerBatch)
 		}
