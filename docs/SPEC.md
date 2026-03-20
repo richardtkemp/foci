@@ -74,7 +74,7 @@ A SQLite index (`session_index.db`) tracks all session files with metadata: sess
 
 ### Anthropic API
 
-- **Auth:** Setup token (from `claude setup-token`), API key, or Claude Code credentials fallback. See [docs/AUTH.md](docs/AUTH.md).
+- **Auth:** API key or Claude Code credentials fallback. See [docs/AUTH.md](docs/AUTH.md).
 - **Model:** Haiku (`claude-haiku-4-5`) for foci itself; configurable per agent
 - **Prompt caching:** Two cache breakpoints per API request (system prompt + conversation history). See [docs/CACHING.md](docs/CACHING.md).
 - **Streaming:** Server-sent events for responses. Telegram streaming shows HTML-formatted output in real-time — partial markdown delimiters are stripped before conversion so incomplete syntax doesn't break rendering.
@@ -578,7 +578,7 @@ Credentials are loaded once at startup into process memory. Built-in integration
 
 Secrets in `secrets.toml` are global by default. Agents can have their own overrides via `[agents.ID]` sections.
 
-Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.setup_token, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (shell templates, http_request, redaction, system prompt secret names).
+Resolution order: agent-specific value wins over global. Keys not overridden in the agent section fall back to globals. Each agent only sees its own overrides — agent A cannot see agent B's secrets. Built-in credential resolution (anthropic.api_key, telegram, brave) stays global (process-wide); per-agent scoping applies to tool-visible secrets (shell templates, http_request, redaction, system prompt secret names).
 
 ### What the agent knows about secrets
 - That secrets exist (by name): "anthropic", "telegram", "brave", "custom.github_token"
@@ -801,7 +801,7 @@ Idempotent. Run it once to install, run it again to update. Safe to re-run.
 3. **systemd service:** Install `/etc/systemd/system/foci.service` if it doesn't exist. `User=foci`, `WorkingDirectory=/home/foci`, restart on failure. Enable and start.
 4. **Config:** Write `/home/foci/foci.toml` if it doesn't exist. Prompt interactively for:
    - Telegram bot token
-   - Anthropic auth (via `foci auth` setup token or API key)
+   - LLM provider and API key (via `foci first-run` or `foci auth`)
    - Telegram user ID (allowed_users)
    - Agent model (default: claude-haiku-4-5)
 5. **Character files:** Create `~/character/` with template content if files don't exist:

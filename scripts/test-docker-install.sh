@@ -11,7 +11,7 @@
 #
 #   FOCI_TELEGRAM_TOKEN=123456789:AAF-...
 #   FOCI_TELEGRAM_USER=5970082313
-#   FOCI_AUTH_METHOD=skip
+#   FOCI_PROVIDER=anthropic
 #
 # By default the container is removed on exit. Use --persist to keep it.
 set -euo pipefail
@@ -47,7 +47,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
     echo ""
     echo "  FOCI_TELEGRAM_TOKEN=123456789:AAF-..."
     echo "  FOCI_TELEGRAM_USER=your_user_id"
-    echo "  FOCI_AUTH_METHOD=skip"
+    echo "  FOCI_PROVIDER=anthropic"
     echo ""
     exit 1
 fi
@@ -91,8 +91,8 @@ info "Running setup.sh --install (this downloads Go and builds — may take a fe
 run "cd /root/src/foci && \
     FOCI_TELEGRAM_TOKEN='$FOCI_TELEGRAM_TOKEN' \
     FOCI_TELEGRAM_USER='$FOCI_TELEGRAM_USER' \
-    FOCI_AUTH_METHOD='${FOCI_AUTH_METHOD:-skip}' \
-    FOCI_AUTH_TOKEN='${FOCI_AUTH_TOKEN:-}' \
+    FOCI_PROVIDER='${FOCI_PROVIDER:-}' \
+    FOCI_API_KEY='${FOCI_API_KEY:-}' \
     FOCI_AGENT_ID='${FOCI_AGENT_ID:-main}' \
     ./setup.sh -u foci --install 2>&1"
 pass "setup.sh completed"

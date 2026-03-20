@@ -8,7 +8,7 @@ Run foci with a single command using Docker Compose.
 - At least one messaging platform:
   - **Telegram:** A bot token from [@BotFather](https://t.me/BotFather) + your Telegram user ID
   - **Discord:** A bot token from the [Developer Portal](https://discord.com/developers/applications) + your Discord user ID
-- An API key or setup token for LLM access
+- An API key for your LLM provider
 
 ## Quick Start
 
@@ -105,8 +105,8 @@ Required on first startup only, to seed the config file. At least one platform (
 | `FOCI_TELEGRAM_USER` | Platform | Your Telegram user ID |
 | `FOCI_DISCORD_TOKEN` | Platform | Discord bot token from the Developer Portal |
 | `FOCI_DISCORD_USER` | Platform | Your Discord user ID |
-| `FOCI_AUTH_METHOD` | No | `apikey`, `setup-token`, or `skip` (default: `skip`) |
-| `FOCI_AUTH_TOKEN` | Conditional | API key or setup token (required if auth method is not `skip`) |
+| `FOCI_PROVIDER` | No | LLM provider: `anthropic`, `gemini`, `openai`, `openrouter` (default: `anthropic`) |
+| `FOCI_API_KEY` | No | API key for the chosen provider |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 | `FOCI_CHAR_MODE` | No | Character mode: `defaults`, `openclaw`, `import`, `blank` |
 

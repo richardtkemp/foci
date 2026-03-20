@@ -171,7 +171,7 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 
 	// --- Endpoint API keys ---
 	// Convention: endpoint "openrouter" with no api_key field needs "openrouter.api_key".
-	// Skip "anthropic" — it has its own 3-way credential resolution (setup_token, api_key, CC creds).
+	// Skip "anthropic" — it has its own credential resolution (api_key, CC creds).
 	// Resolve from model groups (powerful/fast/cheap) instead of per-agent models.
 	usedEndpoints := make(map[string]bool)
 	for _, groupModel := range []string{cfg.Groups.Powerful, cfg.Groups.Fast, cfg.Groups.Cheap} {

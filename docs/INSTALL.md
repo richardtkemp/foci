@@ -74,8 +74,9 @@ The setup script creates a system user, builds binaries, sets up systemd, and la
 ```
 
 The wizard prompts for:
+- **LLM provider** — Anthropic, Google Gemini, OpenAI, OpenRouter, or Custom endpoint
+- **API key** — for the chosen provider
 - **Bot token** — paste the token from @BotFather
-- **Authentication** — API key (for Anthropic), setup token (uses Claude Code subscription), or skip. If you're not using Anthropic, choose **skip** and configure your endpoint manually in `foci.toml` after setup (see [CONFIG.md](CONFIG.md))
 - **User ID** — auto-detected by messaging your bot, or entered manually
 - **Agent ID** — a short name for your agent (default: `main`)
 - **Character files** — use default templates or import from an existing directory
@@ -95,8 +96,8 @@ Pass configuration via environment variables for automated or CI installs:
 ```bash
 FOCI_TELEGRAM_TOKEN="123456789:AAF-..." \
 FOCI_TELEGRAM_USER="5970082313" \
-FOCI_AUTH_METHOD="apikey" \
-FOCI_AUTH_TOKEN="sk-ant-..." \
+FOCI_PROVIDER="anthropic" \
+FOCI_API_KEY="sk-ant-..." \
 FOCI_AGENT_ID="myagent" \
 ./setup.sh
 ```
@@ -106,8 +107,8 @@ Available env vars:
 |----------|----------|-------------|
 | `FOCI_TELEGRAM_TOKEN` | Yes | Telegram bot token |
 | `FOCI_TELEGRAM_USER` | Yes | Your Telegram user ID |
-| `FOCI_AUTH_METHOD` | No | `setup-token`, `apikey`, or `skip` (default: `skip`) |
-| `FOCI_AUTH_TOKEN` | If auth | Setup token or API key (per `FOCI_AUTH_METHOD`) |
+| `FOCI_PROVIDER` | No | LLM provider: `anthropic`, `gemini`, `openai`, `openrouter` (default: `anthropic`) |
+| `FOCI_API_KEY` | No | API key for the chosen provider |
 | `FOCI_AGENT_ID` | No | Agent identifier (default: `main`) |
 | `FOCI_CHAR_MODE` | No | Character mode: `defaults`, `openclaw`, `import`, `blank` (default: `defaults`) |
 | `FOCI_CHAR_IMPORT_DIR` | If import | Directory to import character `.md` files from |
