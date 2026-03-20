@@ -8,19 +8,16 @@ import (
 )
 
 func TestGenerateConfig(t *testing.T) {
-	// Proves GenerateConfig produces valid, parseable TOML containing the
-	// agent ID, model, and system files, while omitting default-restating
-	// keys and platform-specific sections.
+	// Proves GenerateConfig produces valid TOML with groups, models, and
+	// agent block sections.
+	agentBlock := `[[agents]]
+id = "fotini"
+workspace = "/home/foci/fotini"
+system_files = ["character/SOUL.md", "character/CRAFT.md"]
+`
 	opts := SetupOptions{
-		AgentID: "fotini",
-		Model:   "anthropic/claude-sonnet-4-6",
-		SystemFiles: []string{
-			"character/SOUL.md",
-			"character/CRAFT.md",
-			"character/COHERENCE.md",
-			"character/USER.md",
-			"character/MEMORY.md",
-		},
+		Model:      "anthropic/claude-sonnet-4-6",
+		AgentBlock: agentBlock,
 	}
 
 	result := GenerateConfig(opts)
@@ -31,14 +28,17 @@ func TestGenerateConfig(t *testing.T) {
 		t.Fatalf("generated config is not valid TOML: %v\nOutput:\n%s", err, result)
 	}
 
-	if !strings.Contains(result, `id = "fotini"`) {
-		t.Error("missing agent id")
+	if !strings.Contains(result, `powerful = "default"`) {
+		t.Error("missing groups.powerful")
+	}
+	if !strings.Contains(result, `[models.default]`) {
+		t.Error("missing [models.default] section")
 	}
 	if !strings.Contains(result, `model = "anthropic/claude-sonnet-4-6"`) {
-		t.Error("missing model")
+		t.Error("missing model in [models.default]")
 	}
-	if !strings.Contains(result, `"character/SOUL.md"`) {
-		t.Error("missing system_files entry")
+	if !strings.Contains(result, `id = "fotini"`) {
+		t.Error("missing agent id")
 	}
 
 	// Must NOT contain values that restate defaults
@@ -63,10 +63,14 @@ func TestGenerateConfig(t *testing.T) {
 }
 
 func TestGenerateConfigMinimal(t *testing.T) {
-	// Proves GenerateConfig works with just an agent ID, producing valid TOML
-	// without a model key when model is empty.
+	// Proves GenerateConfig works with no model, producing valid TOML
+	// without groups/models sections.
+	agentBlock := `[[agents]]
+id = "main"
+workspace = "/home/foci/main"
+`
 	opts := SetupOptions{
-		AgentID: "main",
+		AgentBlock: agentBlock,
 	}
 	result := GenerateConfig(opts)
 
@@ -78,22 +82,22 @@ func TestGenerateConfigMinimal(t *testing.T) {
 	if !strings.Contains(result, `id = "main"`) {
 		t.Error("missing agent id")
 	}
-	if strings.Contains(result, "model") {
-		t.Error("should not have model key when model is empty")
+	if strings.Contains(result, "[groups]") {
+		t.Error("should not have groups section when model is empty")
+	}
+	if strings.Contains(result, "[models") {
+		t.Error("should not have models section when model is empty")
 	}
 }
 
-func TestGenerateConfigWithAgentBlock(t *testing.T) {
-	// Proves that when a pre-built AgentBlock string is supplied, GenerateConfig
-	// embeds it verbatim, including workspace and system_files entries.
-	agentBlock := `[[agents]]
-id = "fotini"
-model = "anthropic/claude-sonnet-4-6"
-workspace = "/home/foci/fotini"
-system_files = ["character/SOUL.md", "character/COHERENCE.md", "character/CRAFT.md", "character/USER.md", "character/MEMORY.md"]
-`
+func TestGenerateConfigWithEndpoint(t *testing.T) {
+	// Proves endpoint override appears in [models.default] when set.
 	opts := SetupOptions{
-		AgentBlock: agentBlock,
+		Model:    "anthropic/claude-sonnet-4-6",
+		Endpoint: "openrouter",
+		AgentBlock: `[[agents]]
+id = "main"
+`,
 	}
 
 	result := GenerateConfig(opts)
@@ -103,11 +107,44 @@ system_files = ["character/SOUL.md", "character/COHERENCE.md", "character/CRAFT.
 		t.Fatalf("generated config is not valid TOML: %v\nOutput:\n%s", err, result)
 	}
 
-	if !strings.Contains(result, `id = "fotini"`) {
-		t.Error("missing agent id from agent block")
-	}
-	if !strings.Contains(result, `workspace = "/home/foci/fotini"`) {
-		t.Error("missing workspace from agent block")
+	if !strings.Contains(result, `endpoint = "openrouter"`) {
+		t.Error("missing endpoint in [models.default]")
 	}
 }
 
+func TestGenerateConfigWithCustomEndpoint(t *testing.T) {
+	// Proves custom endpoint section is generated.
+	opts := SetupOptions{
+		Model:    "openai/my-model",
+		Endpoint: "local",
+		AgentBlock: `[[agents]]
+id = "main"
+`,
+		CustomEndpoint: &CustomEndpointSetup{
+			Name:      "local",
+			URL:       "http://localhost:8000/v1",
+			Format:    "openai",
+			SecretKey: "local.api_key",
+		},
+	}
+
+	result := GenerateConfig(opts)
+
+	var parsed map[string]any
+	if _, err := tomlParser.Decode(result, &parsed); err != nil {
+		t.Fatalf("generated config is not valid TOML: %v\nOutput:\n%s", err, result)
+	}
+
+	if !strings.Contains(result, `[endpoints.local]`) {
+		t.Error("missing [endpoints.local] section")
+	}
+	if !strings.Contains(result, `format = "openai"`) {
+		t.Error("missing format in custom endpoint")
+	}
+	if !strings.Contains(result, `url = "http://localhost:8000/v1"`) {
+		t.Error("missing url in custom endpoint")
+	}
+	if !strings.Contains(result, `api_key = "local.api_key"`) {
+		t.Error("missing api_key in custom endpoint")
+	}
+}

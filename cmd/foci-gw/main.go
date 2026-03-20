@@ -18,13 +18,11 @@ import (
 	_ "foci/internal/telegram" // register telegram messaging provider
 
 	"foci/internal/agent"
-	"foci/internal/anthropic"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
-	"foci/internal/secrets"
 	"foci/internal/startup"
 	"foci/shared/prompts"
 )
@@ -56,7 +54,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, `foci-gw — Foci gateway server
 
 Usage: foci-gw [flags]
-       foci-gw auth [-config <path>]
        foci-gw version
 
 Flags:
@@ -64,33 +61,14 @@ Flags:
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
 Subcommands:
-  auth      Authenticate with Anthropic (setup token from Claude Code)
   version   Print version information
 `)
 	}
 
-	// Handle "foci auth" subcommand before normal flag parsing
+	// Handle "foci-gw auth" subcommand — use "foci auth" instead.
 	if len(os.Args) >= 2 && os.Args[1] == "auth" {
-		authFlags := flag.NewFlagSet("auth", flag.ExitOnError)
-		configFile := authFlags.String("config", "", "path to foci.toml (to find secrets.toml)")
-		_ = authFlags.Parse(os.Args[2:])
-
-		cfgPath := *configFile
-		if cfgPath == "" {
-			cfgPath = config.ParseFlags()
-		}
-		secretsPath := filepath.Join(filepath.Dir(cfgPath), "secrets.toml")
-		authStore, err := secrets.Load(secretsPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "load secrets: %v\n", err)
-			os.Exit(1)
-		}
-		if err := anthropic.RunSetupTokenFlow(authStore); err != nil {
-			fmt.Fprintf(os.Stderr, "auth failed: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "Setup token saved to %s\n", secretsPath)
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "Use 'foci auth' to manage credentials, or 'foci secrets set <key> <value>' directly.\n")
+		os.Exit(1)
 	}
 
 	configPath := config.ParseFlags()

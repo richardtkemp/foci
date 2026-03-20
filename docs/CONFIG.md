@@ -460,6 +460,7 @@ Named model definitions with per-model settings. Each key under `[models]` defin
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `model` | string | *(required)* | Full `developer/model_id` string (e.g. `"anthropic/claude-opus-4-6"`). |
+| `endpoint` | string | `""` | Explicit endpoint override. When set, routes this model through the named endpoint instead of auto-selecting by developer. Useful for OpenRouter (`"openrouter"`) or custom endpoints. Empty = auto-select (anthropic→anthropic, google→gemini, openai→openai, others→openrouter). |
 | `thinking` | string | `""` | Thinking mode: `"adaptive"` or `"off"`. Empty means no override. Overridable at runtime via `/thinking`. |
 | `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"`. Empty means no override. Overridable at runtime via `/effort`. |
 | `speed` | string | `""` | Speed mode: `"fast"` for Anthropic fast mode (Opus only, beta, 6x pricing). Empty means no override. Overridable at runtime via `/speed`. |

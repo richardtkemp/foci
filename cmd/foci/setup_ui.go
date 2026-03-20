@@ -138,13 +138,8 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 	}
 
 	// Get a token for the API call
-	token := ""
-	if v, ok := store.Get("anthropic.setup_token"); ok {
-		token = v
-	} else if v, ok := store.Get("anthropic.api_key"); ok {
-		token = v
-	}
-	if token == "" {
+	token, ok := store.Get("anthropic.api_key")
+	if !ok || token == "" {
 		return fallback
 	}
 

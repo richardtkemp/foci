@@ -7,21 +7,49 @@ import (
 	"path/filepath"
 	"strings"
 
-	"foci/internal/anthropic"
 	"foci/internal/config"
 	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/secrets"
 )
 
-// stepAuth prompts for authentication method.
-func stepAuth(reader *bufio.Reader, current string, total int) (method string, back bool) { // nolint:unparam
+// llmProviderInfo describes an LLM provider for the setup wizard.
+type llmProviderInfo struct {
+	Name         string // display name: "Anthropic (Claude)"
+	Key          string // selection key: "anthropic", "gemini", etc.
+	SecretKey    string // secrets.toml key: "anthropic.api_key"
+	DefaultModel string // default model: "anthropic/claude-sonnet-4-6"
+	Endpoint     string // endpoint override (empty = auto-detect from developer)
+	HasAliases   bool   // opus/sonnet/haiku aliases work
+	HasDiscovery bool   // Anthropic API model discovery works
+}
+
+var llmProviders = []llmProviderInfo{
+	{Name: "Anthropic (Claude)", Key: "anthropic", SecretKey: "anthropic.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", HasAliases: true, HasDiscovery: true},
+	{Name: "Google Gemini", Key: "gemini", SecretKey: "gemini.api_key", DefaultModel: "google/gemini-2.5-flash"},
+	{Name: "OpenAI", Key: "openai", SecretKey: "openai.api_key", DefaultModel: "openai/gpt-4o"},
+	{Name: "OpenRouter (multi-provider)", Key: "openrouter", SecretKey: "openrouter.api_key", DefaultModel: "anthropic/claude-sonnet-4-6", Endpoint: "openrouter"},
+	{Name: "Custom endpoint", Key: "custom"},
+}
+
+// providerByKey returns the provider info for a key, or nil if not found.
+func providerByKey(key string) *llmProviderInfo {
+	for i := range llmProviders {
+		if llmProviders[i].Key == key {
+			return &llmProviders[i]
+		}
+	}
+	return nil
+}
+
+// stepProvider prompts for LLM provider selection.
+func stepProvider(reader *bufio.Reader, _ string, total int) (providerKey string, back bool) {
 	fmt.Println()
-	fmt.Printf("Step 1/%d: Anthropic Authentication\n", total)
-	fmt.Println("  Foci needs access to Claude. Choose one:")
-	fmt.Println("  [1] Setup token (recommended — uses Claude Code subscription)")
-	fmt.Println("  [2] API key")
-	fmt.Println("  [3] Skip (use Claude Code credentials if available)")
+	fmt.Printf("Step 1/%d: LLM Provider\n", total)
+	fmt.Println("  Choose your LLM provider:")
+	for i, p := range llmProviders {
+		fmt.Printf("  [%d] %s\n", i+1, p.Name)
+	}
 	fmt.Println()
 
 	for {
@@ -33,65 +61,127 @@ func stepAuth(reader *bufio.Reader, current string, total int) (method string, b
 			return "", true
 		}
 
-		switch input {
-		case "1":
-			return "setup-token", false
-		case "2":
-			return "apikey", false
-		case "3":
-			return "skip", false
-		default:
-			fmt.Println("  Enter 1, 2, or 3.")
+		var idx int
+		if _, err := fmt.Sscanf(input, "%d", &idx); err == nil && idx >= 1 && idx <= len(llmProviders) {
+			p := llmProviders[idx-1]
+			fmt.Printf("  Provider: %s\n", p.Name)
+			return p.Key, false
 		}
+		fmt.Printf("  Enter a number between 1 and %d.\n", len(llmProviders))
 	}
 }
 
-// stepCredential collects the actual auth credential based on the chosen method.
-func stepCredential(reader *bufio.Reader, authMethod string, store *secrets.Store, opts *config.SecretsOptions, total int) (back bool, err error) {
+// stepAPIKey prompts for the API key and stores it in the secrets store.
+func stepAPIKey(reader *bufio.Reader, providerKey string, store *secrets.Store, total int) (back bool) {
 	fmt.Println()
-	fmt.Printf("Step 2/%d: Credential\n", total)
+	fmt.Printf("Step 2/%d: API Key\n", total)
 
-	switch authMethod {
-	case "setup-token":
-		fmt.Println("  Run 'claude setup-token' in another terminal and follow the prompts.")
-		fmt.Println("  Type 'back' to return to auth method selection.")
-		fmt.Println()
-		fmt.Print("  Press Enter when ready (or 'back'): ")
+	prov := providerByKey(providerKey)
+	if prov == nil || providerKey == "custom" {
+		// Custom provider handles credentials in stepCustomEndpoint
+		fmt.Println("  (API key will be configured with the endpoint.)")
+		return false
+	}
+
+	fmt.Printf("  Enter your %s API key:\n", prov.Name)
+	fmt.Println()
+
+	for {
+		fmt.Print("  API key: ")
 		input, _ := reader.ReadString('\n')
 		input = strings.TrimSpace(input)
 		if input == "back" {
-			return true, nil
+			return true
 		}
-		if err := anthropic.RunSetupTokenFlow(store); err != nil {
-			return false, fmt.Errorf("auth: %w", err)
+		if input == "" {
+			fmt.Println("  API key cannot be empty.")
+			continue
 		}
-		fmt.Println("  Setup token saved.")
-		if v, ok := store.Get("anthropic.setup_token"); ok {
-			opts.SetupToken = v
-		}
+		store.Set(prov.SecretKey, input)
+		fmt.Println("  API key saved.")
+		return false
+	}
+}
 
-	case "apikey":
-		for {
-			fmt.Print("  API key: ")
-			input, _ := reader.ReadString('\n')
-			input = strings.TrimSpace(input)
-			if input == "back" {
-				return true, nil
-			}
-			if input == "" {
-				fmt.Println("  API key cannot be empty.")
-				continue
-			}
-			opts.SetupToken = input
-			fmt.Println("  API key saved.")
-			break
-		}
+// stepCustomEndpoint collects custom endpoint details.
+func stepCustomEndpoint(reader *bufio.Reader, store *secrets.Store, total int) (ce *config.CustomEndpointSetup, back bool, err error) {
+	fmt.Println()
+	fmt.Printf("Step 2/%d: Custom Endpoint\n", total)
+	fmt.Println("  Configure your custom LLM endpoint.")
+	fmt.Println()
 
-	case "skip":
-		fmt.Println("  Skipping auth (will use Claude Code credentials if available).")
+	// Endpoint name
+	fmt.Print("  Endpoint name (e.g. local, vllm): ")
+	name, _ := reader.ReadString('\n')
+	name = strings.TrimSpace(name)
+	if name == "back" {
+		return nil, true, nil
+	}
+	if name == "" {
+		name = "custom"
 	}
 
-	return false, nil
+	// Base URL
+	fmt.Print("  Base URL (e.g. http://localhost:8000/v1): ")
+	url, _ := reader.ReadString('\n')
+	url = strings.TrimSpace(url)
+	if url == "back" {
+		return nil, true, nil
+	}
+	if url == "" {
+		return nil, false, fmt.Errorf("base URL is required")
+	}
+
+	// Wire format
+	fmt.Println("  Wire format:")
+	fmt.Println("  [1] OpenAI (most common)")
+	fmt.Println("  [2] Anthropic")
+	fmt.Println("  [3] Gemini")
+	fmt.Println()
+	var format string
+	for {
+		fmt.Print("> ")
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "back" {
+			return nil, true, nil
+		}
+		switch input {
+		case "1", "":
+			format = "openai"
+		case "2":
+			format = "anthropic"
+		case "3":
+			format = "gemini"
+		default:
+			fmt.Println("  Enter 1, 2, or 3.")
+			continue
+		}
+		break
+	}
+
+	// API key (optional)
+	secretKey := name + ".api_key"
+	fmt.Print("  API key (blank to skip): ")
+	apiKey, _ := reader.ReadString('\n')
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "back" {
+		return nil, true, nil
+	}
+	if apiKey != "" {
+		store.Set(secretKey, apiKey)
+		fmt.Println("  API key saved.")
+	} else {
+		secretKey = "" // no secret needed
+	}
+
+	fmt.Printf("  Custom endpoint %q configured (%s format, %s)\n", name, format, url)
+	return &config.CustomEndpointSetup{
+		Name:      name,
+		URL:       url,
+		Format:    format,
+		SecretKey: secretKey,
+	}, false, nil
 }
 
 // stepAgentID prompts for an agent identifier.
@@ -151,20 +241,38 @@ func stepDisplayName(reader *bufio.Reader, agentID, current string, total int) (
 	return input, false
 }
 
-// stepModel prompts for a model selection.
-func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total int) (model string, back bool) {
+// stepModel prompts for a model selection, aware of the chosen provider.
+func stepModel(reader *bufio.Reader, current, providerKey string, store *secrets.Store, total int) (model string, back bool) {
 	fmt.Println()
 	fmt.Printf("Step 5/%d: Model\n", total)
-	fmt.Println("  Choose a model: opus, sonnet, haiku, or enter a full model ID.")
+
+	prov := providerByKey(providerKey)
+
+	if prov != nil && prov.HasAliases {
+		// Anthropic: show aliases
+		fmt.Println("  Choose a model: opus, sonnet, haiku, or enter a full model ID.")
+	} else if providerKey == "custom" {
+		fmt.Println("  Enter a full model ID (developer/model_id, e.g. openai/my-model).")
+	} else {
+		fmt.Println("  Enter a full model ID (developer/model_id).")
+		if prov != nil && prov.DefaultModel != "" {
+			fmt.Printf("  Example: %s\n", prov.DefaultModel)
+		}
+	}
 	fmt.Println()
 
-	defaultModel := "sonnet"
+	defaultModel := ""
 	if current != "" {
 		defaultModel = current
+	} else if prov != nil {
+		defaultModel = prov.DefaultModel
 	}
 
-	prompt := fmt.Sprintf("Model [%s]: ", defaultModel)
-	fmt.Print(prompt)
+	prompt := "Model"
+	if defaultModel != "" {
+		prompt = fmt.Sprintf("Model [%s]", defaultModel)
+	}
+	fmt.Printf("%s: ", prompt)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 
@@ -174,9 +282,20 @@ func stepModel(reader *bufio.Reader, current string, store *secrets.Store, total
 	if input == "" {
 		input = defaultModel
 	}
+	if input == "" {
+		fmt.Println("  Model is required.")
+		return stepModel(reader, current, providerKey, store, total)
+	}
 
-	// Try to discover exact model from API
-	resolved := discoverModelFamily(store, input)
+	// For Anthropic with aliases, try API discovery
+	if prov != nil && prov.HasDiscovery {
+		resolved := discoverModelFamily(store, input)
+		fmt.Printf("  Model: %s\n", resolved)
+		return resolved, false
+	}
+
+	// For non-Anthropic, resolve alias or use as-is
+	resolved := provision.ResolveModelAlias(input)
 	fmt.Printf("  Model: %s\n", resolved)
 	return resolved, false
 }

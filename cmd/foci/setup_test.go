@@ -23,8 +23,8 @@ func TestParseSetupFlags(t *testing.T) {
 		"--agent-id", "fotini",
 		"--display-name", "Fotini",
 		"--model", "opus",
-		"--auth-method", "setup-token",
-		"--auth-token", "stp_test123",
+		"--provider", "anthropic",
+		"--api-key", "sk-ant-test123",
 		"--char-mode", "import",
 		"--char-import-dir", "/home/foci/old-agent/character",
 		"--memory-import-dir", "/home/foci/old-agent/memory",
@@ -53,11 +53,11 @@ func TestParseSetupFlags(t *testing.T) {
 	if f.model != "opus" {
 		t.Errorf("model = %q, want opus", f.model)
 	}
-	if f.authMethod != "setup-token" {
-		t.Errorf("authMethod = %q, want setup-token", f.authMethod)
+	if f.provider != "anthropic" {
+		t.Errorf("provider = %q, want anthropic", f.provider)
 	}
-	if f.authToken != "stp_test123" {
-		t.Errorf("authToken = %q, want stp_test123", f.authToken)
+	if f.apiKey != "sk-ant-test123" {
+		t.Errorf("apiKey = %q, want sk-ant-test123", f.apiKey)
 	}
 	if f.charMode != "import" {
 		t.Errorf("charMode = %q, want import", f.charMode)

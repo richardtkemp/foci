@@ -210,6 +210,7 @@ func (t *ThinkingMode) UnmarshalTOML(v any) error {
 // Used in [models.*] TOML sections.
 type ModelConfig struct {
 	Model           string        `toml:"model"`             // "developer/model_id" (required)
+	Endpoint        string        `toml:"endpoint"`          // explicit endpoint override (optional; empty = auto-select from developer)
 	Thinking        ThinkingMode  `toml:"thinking"`          // "adaptive", "off", or bool via UnmarshalTOML
 	Effort          string        `toml:"effort"`            // "low", "medium", "high"
 	Speed           string        `toml:"speed"`             // "fast" or ""

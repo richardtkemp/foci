@@ -25,9 +25,9 @@ type setupFlags struct {
 	nonInteractive  bool
 	agentID         string
 	displayName     string // display name for agent
+	provider        string // LLM provider: "anthropic", "gemini", "openai", "openrouter"
+	apiKey          string // API key for the chosen provider
 	model           string // model alias or full ID
-	authMethod      string // "setup-token", "apikey", "skip"
-	authToken       string // setup token or API key (interpretation depends on authMethod)
 	charMode        string // "defaults", "openclaw", "import", "blank"
 	charImportDir   string // source directory when charMode=="import"
 	memoryImportDir string // directory to import memory .md files from
@@ -37,13 +37,14 @@ type setupFlags struct {
 
 // setupState tracks wizard state for back navigation.
 type setupState struct {
-	authMethod      string // "setup-token", "apikey", "skip"
+	provider        string // "anthropic", "gemini", "openai", "openrouter", "custom"
 	agentID         string
 	displayName     string
 	model           string
 	charMode        string // "defaults", "openclaw", "import"
 	importDir       string // source directory when charMode=="import"
 	memoryImportDir string // source directory for memory file import
+	customEndpoint  *config.CustomEndpointSetup
 }
 
 func setupUsage() {
@@ -58,9 +59,9 @@ Flags:
   --non-interactive      Non-interactive mode (all required flags must be set)
   --agent-id <id>        Agent identifier (default: main)
   --display-name <name>  Display name for agent (default: titlecased agent ID)
-  --model <model>        Model alias or full ID: opus, sonnet, haiku (default: sonnet)
-  --auth-method <method> Auth method: setup-token, apikey, skip (default: interactive prompt)
-  --auth-token <token>   Auth credential (setup token or API key, per --auth-method)
+  --provider <name>      LLM provider: anthropic, gemini, openai, openrouter (default: interactive prompt)
+  --api-key <key>        API key for the chosen provider
+  --model <model>        Model alias or full ID: opus, sonnet, haiku, or developer/model_id (default: sonnet)
   --char-mode <mode>     Character mode: defaults, openclaw, import, blank (default: defaults)
   --char-import-dir <path>  Directory to import character .md files from (requires --char-mode import)
   --memory-import-dir <path>  Directory to import memory .md files from
@@ -155,19 +156,19 @@ func parseSetupFlags(args []string) setupFlags {
 				f.displayName = args[i+1]
 				i++
 			}
+		case "--provider":
+			if i+1 < len(args) {
+				f.provider = args[i+1]
+				i++
+			}
+		case "--api-key":
+			if i+1 < len(args) {
+				f.apiKey = args[i+1]
+				i++
+			}
 		case "--model":
 			if i+1 < len(args) {
 				f.model = args[i+1]
-				i++
-			}
-		case "--auth-method":
-			if i+1 < len(args) {
-				f.authMethod = args[i+1]
-				i++
-			}
-		case "--auth-token":
-			if i+1 < len(args) {
-				f.authToken = args[i+1]
 				i++
 			}
 		case "--char-mode":
@@ -251,8 +252,27 @@ func findRepoShared() string {
 }
 
 func runSetupNonInteractive(f setupFlags) error {
+	// Determine provider (default to anthropic for backward compat with --model aliases)
+	provider := f.provider
+	if provider == "" {
+		provider = "anthropic"
+	}
+	prov := providerByKey(provider)
+	if prov == nil && provider != "custom" {
+		return fmt.Errorf("unknown provider %q; use: anthropic, gemini, openai, openrouter", provider)
+	}
+
 	// Resolve model
-	model := provision.ResolveModelAlias(f.model)
+	model := f.model
+	if model == "" && prov != nil {
+		model = prov.DefaultModel
+	}
+	if prov != nil && prov.HasAliases {
+		model = provision.ResolveModelAlias(model)
+	} else if model != "" && !strings.Contains(model, "/") {
+		// Non-Anthropic: aliases don't apply, but still resolve if it happens to be one
+		model = provision.ResolveModelAlias(model)
+	}
 
 	// Resolve display name
 	displayName := f.displayName
@@ -266,18 +286,9 @@ func runSetupNonInteractive(f setupFlags) error {
 		return fmt.Errorf("load secrets: %w", err)
 	}
 
-	secretsOpts := config.SecretsOptions{}
-
-	// Auth: apply token based on method.
-	if f.authToken != "" {
-		switch f.authMethod {
-		case "apikey":
-			store.Set("anthropic.api_key", f.authToken)
-			secretsOpts.SetupToken = f.authToken
-		default: // "setup-token" or unspecified
-			store.Set("anthropic.setup_token", f.authToken)
-			secretsOpts.SetupToken = f.authToken
-		}
+	// Store API key under the provider's secret key
+	if f.apiKey != "" && prov != nil {
+		store.Set(prov.SecretKey, f.apiKey)
 	}
 
 	// Run provider setup (non-interactive)
@@ -348,12 +359,17 @@ func runSetupNonInteractive(f setupFlags) error {
 		}
 	}
 
+	endpoint := ""
+	if prov != nil {
+		endpoint = prov.Endpoint
+	}
 	configOpts := config.SetupOptions{
 		AgentBlock: result.ConfigBlock,
 		Model:      model,
+		Endpoint:   endpoint,
 	}
 
-	return writeSetupFiles(f, configOpts, secretsOpts, store, result, providerConfigFragments, providerSecrets)
+	return writeSetupFiles(f, configOpts, store, result, providerConfigFragments, providerSecrets)
 }
 
 // copyMDFiles copies all .md files from srcDir to destDir (non-interactive).
@@ -398,14 +414,12 @@ func runSetupInteractive(f setupFlags) error {
 	fmt.Println("  (Enter 'back' at any prompt to return to the previous step)")
 	fmt.Println("──────────────────────────────────────────")
 
-	// Load secrets store early — needed by RunSetupTokenFlow in step 2.
+	// Load secrets store early — needed by API key storage and model discovery.
 	secretsPath := filepath.Join(f.configDir, "secrets.toml")
 	store, err := secrets.Load(secretsPath)
 	if err != nil {
 		return fmt.Errorf("load secrets: %w", err)
 	}
-
-	secretsOpts := config.SecretsOptions{}
 
 	// Generic steps
 	totalSteps := 8
@@ -413,22 +427,31 @@ func runSetupInteractive(f setupFlags) error {
 	for step <= totalSteps {
 		switch step {
 		case 1:
-			method, back := stepAuth(reader, state.authMethod, totalSteps)
+			providerKey, back := stepProvider(reader, state.provider, totalSteps)
 			if back {
 				fmt.Println("  Already at the first step.")
 				continue
 			}
-			state.authMethod = method
+			state.provider = providerKey
 			step++
 
 		case 2:
-			back, err := stepCredential(reader, state.authMethod, store, &secretsOpts, totalSteps)
-			if err != nil {
-				return err
-			}
-			if back {
-				step--
-				continue
+			if state.provider == "custom" {
+				ce, back, err := stepCustomEndpoint(reader, store, totalSteps)
+				if err != nil {
+					return err
+				}
+				if back {
+					step--
+					continue
+				}
+				state.customEndpoint = ce
+			} else {
+				back := stepAPIKey(reader, state.provider, store, totalSteps)
+				if back {
+					step--
+					continue
+				}
 			}
 			step++
 
@@ -451,7 +474,7 @@ func runSetupInteractive(f setupFlags) error {
 			step++
 
 		case 5:
-			model, back := stepModel(reader, state.model, store, totalSteps)
+			model, back := stepModel(reader, state.model, state.provider, store, totalSteps)
 			if back {
 				step--
 				continue
@@ -520,15 +543,27 @@ func runSetupInteractive(f setupFlags) error {
 				}
 			}
 
+			// Determine endpoint override from provider
+			prov := providerByKey(state.provider)
+			endpoint := ""
+			if prov != nil {
+				endpoint = prov.Endpoint
+			}
+			if state.customEndpoint != nil {
+				endpoint = state.customEndpoint.Name
+			}
+
 			configOpts := config.SetupOptions{
-				AgentBlock: provResult.ConfigBlock,
-				Model:      state.model,
+				AgentBlock:     provResult.ConfigBlock,
+				Model:          state.model,
+				Endpoint:       endpoint,
+				CustomEndpoint: state.customEndpoint,
 			}
 
 			fmt.Println()
 			fmt.Println("Creating config...")
 
-			if err := writeSetupFiles(f, configOpts, secretsOpts, store, provResult, providerConfigFragments, providerSecrets); err != nil {
+			if err := writeSetupFiles(f, configOpts, store, provResult, providerConfigFragments, providerSecrets); err != nil {
 				return err
 			}
 
@@ -558,7 +593,7 @@ func backupIfExists(path string) (string, error) {
 
 // writeSetupFiles writes foci.toml, secrets.toml, and ensures workspace directories exist.
 // Existing files are backed up to *.old.<timestamp> before overwriting.
-func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts config.SecretsOptions, store *secrets.Store, provResult *provision.Result, providerConfigFragments []string, providerSecrets map[string]string) error {
+func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, store *secrets.Store, provResult *provision.Result, providerConfigFragments []string, providerSecrets map[string]string) error {
 	// Ensure config directory exists
 	if err := os.MkdirAll(f.configDir, 0755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
@@ -585,10 +620,6 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, secretsOpts c
 	}
 	fmt.Printf("  → %s\n", configPath)
 
-	// Write secrets via the store (so it handles formatting + existing values)
-	if secretsOpts.SetupToken != "" {
-		store.Set("anthropic.setup_token", secretsOpts.SetupToken)
-	}
 	// Store provider-contributed secrets
 	// Sort keys for deterministic output.
 	provSecretKeys := make([]string, 0, len(providerSecrets))
