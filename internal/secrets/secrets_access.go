@@ -144,6 +144,66 @@ func (s *Store) Resolve(text string) (string, error) {
 	return result, nil
 }
 
+// IsAllowedInBody reports whether the named secret (section.key) is permitted
+// in HTTP request bodies. Returns false by default unless the key is listed in
+// allowed_in_body for its section.
+func (s *Store) IsAllowedInBody(name string) bool {
+	parts := strings.SplitN(name, ".", 2)
+	if len(parts) < 2 {
+		return false
+	}
+	section, key := parts[0], parts[1]
+	for _, k := range s.allowedInBody[section] {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// SectionAllowedInBody returns the allowed_in_body list for a section name
+// (e.g. "custom"). Returns nil if none are configured.
+func (s *Store) SectionAllowedInBody(section string) []string {
+	return s.allowedInBody[section]
+}
+
+// SetAllowedInBody replaces the allowed_in_body list for a section.
+// Pass nil or empty to remove all allowed_in_body for the section.
+func (s *Store) SetAllowedInBody(section string, keys []string) {
+	if len(keys) == 0 {
+		delete(s.allowedInBody, section)
+	} else {
+		s.allowedInBody[section] = keys
+	}
+}
+
+// AddAllowedInBody adds a key to the section's allowed_in_body list.
+// No-op if already present.
+func (s *Store) AddAllowedInBody(section, key string) {
+	for _, k := range s.allowedInBody[section] {
+		if k == key {
+			return
+		}
+	}
+	s.allowedInBody[section] = append(s.allowedInBody[section], key)
+}
+
+// RemoveAllowedInBody removes a key from the section's allowed_in_body list.
+// Returns true if found and removed.
+func (s *Store) RemoveAllowedInBody(section, key string) bool {
+	keys := s.allowedInBody[section]
+	for i, k := range keys {
+		if k == key {
+			s.allowedInBody[section] = append(keys[:i], keys[i+1:]...)
+			if len(s.allowedInBody[section]) == 0 {
+				delete(s.allowedInBody, section)
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // Redact replaces any occurrence of a secret value in text with [REDACTED].
 // Longer values are checked first to avoid partial matches.
 func (s *Store) Redact(text string) string {

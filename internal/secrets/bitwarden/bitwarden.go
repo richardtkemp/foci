@@ -429,6 +429,12 @@ func (s *Store) Close() {
 	s.stopWg.Wait()
 }
 
+// IsAllowedInBody always returns false — bitwarden secrets cannot be used in
+// request bodies. There is no per-item config mechanism for bitwarden.
+func (s *Store) IsAllowedInBody(name string) bool {
+	return false
+}
+
 // IsBitwardenRef returns true if the secret name is a bitwarden reference (starts with "bw.").
 func IsBitwardenRef(name string) bool {
 	return strings.HasPrefix(name, "bw.")

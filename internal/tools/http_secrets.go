@@ -68,19 +68,46 @@ func validateAndResolveSecrets(
 		body = string(data)
 	}
 
-	// Collect all secret refs from headers, body, and form_fields
-	var allText strings.Builder
+	// Collect secret refs from headers separately from body/form_fields
+	var headerText strings.Builder
 	for _, v := range headers {
-		allText.WriteString(v)
-		allText.WriteByte(' ')
+		headerText.WriteString(v)
+		headerText.WriteByte(' ')
 	}
-	allText.WriteString(body)
+	headerRefs := secrets.FindSecretRefs(headerText.String())
+
+	var bodyText strings.Builder
+	bodyText.WriteString(body)
 	for _, v := range formFields {
-		allText.WriteByte(' ')
-		allText.WriteString(v)
+		bodyText.WriteByte(' ')
+		bodyText.WriteString(v)
+	}
+	bodyRefs := secrets.FindSecretRefs(bodyText.String())
+
+	// Enforce allowed_in_body: secrets in body/body_file/form_fields are blocked
+	// unless explicitly listed in allowed_in_body for the secret's section.
+	for _, name := range bodyRefs {
+		if bitwarden.IsBitwardenRef(name) {
+			return nil, fmt.Errorf("bitwarden secret %q is not permitted in request body", name)
+		}
+		if store != nil && !store.IsAllowedInBody(name) {
+			parts := strings.SplitN(name, ".", 2)
+			return nil, fmt.Errorf("secret %q found in request body but not listed in allowed_in_body for [%s] — add %q to allowed_in_body in secrets.toml to permit body resolution",
+				name, parts[0], parts[1])
+		}
 	}
 
-	secretRefs := secrets.FindSecretRefs(allText.String())
+	// Combine all refs (deduplicating, preserving order)
+	secretRefSet := make(map[string]struct{})
+	var secretRefs []string
+	for _, refs := range [][]string{headerRefs, bodyRefs} {
+		for _, r := range refs {
+			if _, seen := secretRefSet[r]; !seen {
+				secretRefSet[r] = struct{}{}
+				secretRefs = append(secretRefs, r)
+			}
+		}
+	}
 	hasSecrets := len(secretRefs) > 0
 
 	// Split refs into regular (custom.key) and bitwarden (bw.UUID) groups
