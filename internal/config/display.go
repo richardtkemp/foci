@@ -238,8 +238,8 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	}
 
 	// skills
-	if len(cfg.Skills.Dirs) > 0 {
-		add("skills", "dirs", cfg.Skills.Dirs)
+	if cfg.Skills.Dir != "" {
+		add("skills", "dir", cfg.Skills.Dir)
 	}
 
 	// cache

@@ -440,8 +440,8 @@ The agent reads this file with the `read` tool.
 - `script` (optional) — script to run when the command fires (path relative to skill dir)
 
 **How it works:**
-1. Config lists directories to scan: `[skills] dirs = ["/home/foci/skills"]`
-2. On startup, scan each dir for subdirectories containing `SKILL.md`
+1. On startup, resolve two skill directories: shared (`$home/shared/skills/`) and per-agent (`$workspace/skills/`). Both are configurable via `[skills] dir` and per-agent `skills_dir`.
+2. Scan each dir for subdirectories containing `SKILL.md`. Per-agent skills override shared skills on name collision.
 3. Parse frontmatter, collect name + description into a registry
 4. Inject skill list (name, description, SKILL.md path) as a system prompt block — the agent knows what's available but doesn't load full instructions until needed
 5. The agent reads the full `SKILL.md` with the `read` tool when it decides a skill applies

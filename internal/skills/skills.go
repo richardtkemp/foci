@@ -27,8 +27,11 @@ type Registry struct {
 
 // Load scans directories for subdirectories containing SKILL.md files,
 // parses their YAML frontmatter, and returns a registry.
+// Directories are scanned in order; when a skill name appears in multiple
+// directories, the later directory wins (overrides the earlier one).
 func Load(dirs []string) *Registry {
 	r := &Registry{}
+	seen := make(map[string]int) // name → index in r.skills
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -46,8 +49,14 @@ func Load(dirs []string) *Registry {
 				log.Warnf("skills", "skip %s: %v", skillFile, err)
 				continue
 			}
-			r.skills = append(r.skills, skill)
-			log.Infof("skills", "loaded: %s (%s)", skill.Name, skill.Dir)
+			if idx, exists := seen[skill.Name]; exists {
+				log.Infof("skills", "override: %s (from %s, replacing %s)", skill.Name, skill.Dir, r.skills[idx].Dir)
+				r.skills[idx] = skill
+			} else {
+				seen[skill.Name] = len(r.skills)
+				r.skills = append(r.skills, skill)
+				log.Infof("skills", "loaded: %s (%s)", skill.Name, skill.Dir)
+			}
 		}
 	}
 	return r
