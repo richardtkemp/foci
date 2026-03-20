@@ -64,6 +64,13 @@ type TurnRenderer struct {
 	sw       *StreamWriter
 	newSW    func() *StreamWriter
 	thinking strings.Builder
+
+	// thinkingPhase is true while thinking deltas are being streamed live
+	// (compact mode + streaming). Reset when the first text delta arrives.
+	thinkingPhase bool
+	// streamedThinkingLive is true when thinking was written to the current
+	// StreamWriter, so the Content() fallback knows to strip it.
+	streamedThinkingLive bool
 }
 
 // NewTurnRenderer creates a TurnRenderer with the given backend, tracker, and display
@@ -115,6 +122,8 @@ func (r *TurnRenderer) OnReply(text string) {
 	}
 	// Fresh stream writer for the next segment.
 	r.sw = r.newSW()
+	r.thinkingPhase = false
+	r.streamedThinkingLive = false
 }
 
 // editToolPreviewWithReply edits the tool call preview message with intermediate
@@ -140,6 +149,9 @@ func (r *TurnRenderer) editToolPreviewWithReply(text string) bool {
 }
 
 // OnThinking accumulates thinking blocks (gated by showThinking config).
+// In compact mode with live streaming, thinking is also fed into the
+// StreamWriter so users can read it while the model thinks. At finalization
+// the message is edited to show only the response with a thinking button.
 func (r *TurnRenderer) OnThinking(thinking string) {
 	mode := r.display.ShowThinking
 	if mode == "off" || mode == "" {
@@ -149,11 +161,27 @@ func (r *TurnRenderer) OnThinking(thinking string) {
 		r.thinking.WriteString("\n")
 	}
 	r.thinking.WriteString(thinking)
+
+	// Stream thinking live so there's visible progress while the model
+	// thinks. For compact mode, the message is collapsed to a button at
+	// finalization. For true mode, it's reformatted with proper styling.
+	if (mode == "compact" || mode == "true") && r.display.StreamOutput {
+		r.sw.OnDelta(thinking)
+		r.thinkingPhase = true
+		r.streamedThinkingLive = true
+		r.backend.SendTyping()
+	}
 }
 
 // OnTextDelta handles streaming delta callbacks: updates the stream writer
-// and refreshes the typing indicator.
+// and refreshes the typing indicator. When transitioning from a live thinking
+// phase (compact mode), inserts a divider so thinking and response are
+// visually separated during streaming.
 func (r *TurnRenderer) OnTextDelta(delta string) {
+	if r.thinkingPhase {
+		r.sw.OnDelta("\n\n---\n\n")
+		r.thinkingPhase = false
+	}
 	r.sw.OnDelta(delta)
 	r.backend.SendTyping()
 }
@@ -179,7 +207,16 @@ func (r *TurnRenderer) Finalize(response string) {
 	// stream's buffer so the message gets properly finalized.
 	streamMsgID := r.sw.Finish()
 	if streamContent := r.sw.Content(); strings.TrimSpace(response) == "" && strings.TrimSpace(streamContent) != "" {
-		response = streamContent
+		if r.streamedThinkingLive {
+			// Thinking was streamed into the buffer (compact mode) — extract
+			// only the text portion after the divider.
+			if idx := strings.Index(streamContent, "\n\n---\n\n"); idx >= 0 {
+				response = streamContent[idx+len("\n\n---\n\n"):]
+			}
+			// No divider means only thinking arrived, no text — leave response empty.
+		} else {
+			response = streamContent
+		}
 	}
 
 	// Guard against empty responses.
