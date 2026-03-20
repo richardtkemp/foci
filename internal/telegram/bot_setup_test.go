@@ -1,18 +1,16 @@
 package telegram
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"foci/internal/chatmeta"
 	"foci/internal/command"
+	"foci/internal/log"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
-
-// errTestHTML is a sentinel error for simulating Telegram HTML parse failures in tests.
-var errTestHTML = errors.New("Bad Request: can't parse entities")
 
 // mockClient implements botClient for testing.
 type mockClient struct {
@@ -154,6 +152,10 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 		allowedUsers:    allowed,
 		sessionKey:      "agent:test:main",
 		queue:           make(chan queuedMessage, 64),
+		chatmeta: &chatmeta.Resolver{
+			PlatformName: platformName,
+			Logger:       func() *log.ComponentLogger { return defaultLogger },
+		},
 	}
 	b.dispatcher = NewDispatcher(cmds, command.CommandContext{}, "test")
 	return b, mock

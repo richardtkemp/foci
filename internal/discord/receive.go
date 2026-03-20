@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/platform"
+	"foci/internal/toolformat"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -186,10 +187,8 @@ func (b *Bot) enqueue(qm queuedMessage) {
 	}
 }
 
-// truncate shortens a string to max characters, appending "..." if truncated.
+// truncate is a package-local alias for toolformat.Truncate, used throughout
+// the discord package for log messages, stream previews, etc.
 func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
+	return toolformat.Truncate(s, max)
 }

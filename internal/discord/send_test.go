@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"testing"
 
+	"foci/internal/chatmeta"
+	"foci/internal/log"
+
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -60,7 +63,7 @@ func TestIsUnknownChannel(t *testing.T) {
 	}
 }
 
-// mockIndex implements sessionIndexInterface for testing stale channel cleanup.
+// mockIndex implements platform.SessionIndex for testing stale channel cleanup.
 type mockIndex struct {
 	defaultChatID int64
 }
@@ -88,6 +91,12 @@ func TestClearStaleChannel(t *testing.T) {
 		agentID:      "test",
 		channelID:    12345,
 		sessionIndex: idx,
+		chatmeta: &chatmeta.Resolver{
+			Index:        idx,
+			AgentID:      "test",
+			PlatformName: platformName,
+			Logger:       func() *log.ComponentLogger { return defaultLogger },
+		},
 	}
 
 	bot.clearStaleChannel("12345")
@@ -113,6 +122,12 @@ func TestClearStaleChannelNonDefault(t *testing.T) {
 		agentID:      "test",
 		channelID:    99999,
 		sessionIndex: idx,
+		chatmeta: &chatmeta.Resolver{
+			Index:        idx,
+			AgentID:      "test",
+			PlatformName: platformName,
+			Logger:       func() *log.ComponentLogger { return defaultLogger },
+		},
 	}
 
 	bot.clearStaleChannel("12345")

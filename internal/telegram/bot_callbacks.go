@@ -238,7 +238,7 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 
 	switch action {
 	case "show":
-		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.resolveDisplay(b.sessionKeyForMsg(chatID)).displayWidth)
+		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.resolveDisplay(b.sessionKeyForMsg(chatID)).DisplayWidth)
 		kb := singleButtonKeyboard("Hide thinking", "th:hide")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,

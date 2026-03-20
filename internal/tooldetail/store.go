@@ -1,4 +1,4 @@
-package telegram
+package tooldetail
 
 import (
 	"database/sql"
@@ -11,25 +11,32 @@ import (
 	"foci/internal/sqlite"
 )
 
-// Compile-time check: ToolDetailStore satisfies platform.ToolDetailStore.
-var _ platform.ToolDetailStore = (*ToolDetailStore)(nil)
+// Compile-time check: Store satisfies platform.ToolDetailStore.
+var _ platform.ToolDetailStore = (*Store)(nil)
 
 const (
 	toolDetailTTL     = 48 * time.Hour
 	vacuumIdleMinutes = 10 // run cleanup when user idle > this many minutes
 )
 
-// ToolDetailStore persists tool call detail text to SQLite so inline keyboard
+// Entry holds the fields returned by LoadAll for each persisted tool detail.
+type Entry struct {
+	CompactText string
+	FullInput   string
+	Result      string
+}
+
+// Store persists tool call detail text to SQLite so inline keyboard
 // expansions survive restarts. Entries older than 48h are expired on cleanup.
-type ToolDetailStore struct {
+type Store struct {
 	db     *sql.DB
 	mu     sync.Mutex // serialise writes (reads use db concurrency)
 	closed bool
 }
 
-// NewToolDetailStore opens (or creates) the SQLite database for tool call details.
+// NewStore opens (or creates) the SQLite database for tool call details.
 // Sets PRAGMA auto_vacuum=INCREMENTAL so incremental_vacuum reclaims space.
-func NewToolDetailStore(dbPath string) (*ToolDetailStore, error) {
+func NewStore(dbPath string) (*Store, error) {
 	db, err := sqlite.OpenInit(dbPath,
 		"PRAGMA auto_vacuum=INCREMENTAL",
 		`CREATE TABLE IF NOT EXISTS tool_call_details (
@@ -43,11 +50,11 @@ func NewToolDetailStore(dbPath string) (*ToolDetailStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ToolDetailStore{db: db}, nil
+	return &Store{db: db}, nil
 }
 
 // Close closes the underlying database.
-func (s *ToolDetailStore) Close() error {
+func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -58,7 +65,7 @@ func (s *ToolDetailStore) Close() error {
 }
 
 // Store inserts or replaces a tool call detail entry.
-func (s *ToolDetailStore) Store(messageID int64, compact, fullInput, result string) {
+func (s *Store) Store(messageID int64, compact, fullInput, result string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -70,12 +77,12 @@ func (s *ToolDetailStore) Store(messageID int64, compact, fullInput, result stri
 		 VALUES (?, ?, ?, ?, ?)`,
 		messageID, compact, fullInput, result, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
-		log.Warnf("tool_detail_store", "store message_id=%d: %v", messageID, err)
+		log.Warnf("tooldetail", "store message_id=%d: %v", messageID, err)
 	}
 }
 
 // LoadAll returns all entries newer than 48h. Used on startup to populate the in-memory map.
-func (s *ToolDetailStore) LoadAll() (map[int64]toolResultEntry, error) {
+func (s *Store) LoadAll() (map[int64]Entry, error) {
 	cutoff := time.Now().Add(-toolDetailTTL).UTC().Format(time.RFC3339Nano)
 
 	rows, err := s.db.Query(
@@ -86,12 +93,12 @@ func (s *ToolDetailStore) LoadAll() (map[int64]toolResultEntry, error) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	result := make(map[int64]toolResultEntry)
+	result := make(map[int64]Entry)
 	for rows.Next() {
 		var id int64
-		var entry toolResultEntry
-		if err := rows.Scan(&id, &entry.compactText, &entry.fullInput, &entry.result); err != nil {
-			log.Warnf("tool_detail_store", "scan row: %v", err)
+		var entry Entry
+		if err := rows.Scan(&id, &entry.CompactText, &entry.FullInput, &entry.Result); err != nil {
+			log.Warnf("tooldetail", "scan row: %v", err)
 			continue
 		}
 		result[id] = entry
@@ -100,7 +107,7 @@ func (s *ToolDetailStore) LoadAll() (map[int64]toolResultEntry, error) {
 }
 
 // ExpireAndVacuum deletes entries older than 48h and runs incremental vacuum.
-func (s *ToolDetailStore) ExpireAndVacuum() {
+func (s *Store) ExpireAndVacuum() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -110,24 +117,24 @@ func (s *ToolDetailStore) ExpireAndVacuum() {
 	cutoff := time.Now().Add(-toolDetailTTL).UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(`DELETE FROM tool_call_details WHERE created_at <= ?`, cutoff)
 	if err != nil {
-		log.Warnf("tool_detail_store", "expire: %v", err)
+		log.Warnf("tooldetail", "expire: %v", err)
 		return
 	}
 	n, _ := res.RowsAffected()
 	if n > 0 {
-		log.Infof("tool_detail_store", "expired %d old tool detail entries", n)
+		log.Infof("tooldetail", "expired %d old tool detail entries", n)
 	}
 
 	if _, err := s.db.Exec("PRAGMA incremental_vacuum"); err != nil {
-		log.Warnf("tool_detail_store", "incremental_vacuum: %v", err)
+		log.Warnf("tooldetail", "incremental_vacuum: %v", err)
 	}
 }
 
 // Count returns the number of entries in the store. Test helper.
-func (s *ToolDetailStore) Count() int {
+func (s *Store) Count() int {
 	var n int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM tool_call_details").Scan(&n); err != nil {
-		log.Warnf("tool_detail_store", "count: %v", err)
+		log.Warnf("tooldetail", "count: %v", err)
 	}
 	return n
 }

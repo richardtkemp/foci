@@ -87,6 +87,18 @@ func IsConvertibleDocMIME(mime string) bool {
 	return false
 }
 
+// SessionIndex abstracts session index operations used by chat session
+// management (session key lookup, default chat tracking, username recording).
+// Implemented by *session.SessionIndex; extracted as an interface for testability.
+type SessionIndex interface {
+	GetChatMetadata(agentID, platform string, chatID int64, key string) (string, error)
+	SetChatMetadata(agentID, platform string, chatID int64, key, value string) error
+	SetAgentMetadata(agentID, key, value string) error
+	SetDefaultChat(agentID, platform string, chatID int64) error
+	DefaultChatForAgent(agentID string) (chatID int64, platform string)
+	ClearDefaultChat(agentID string) error
+}
+
 type SendOptions struct {
 	ParseMode string
 	ReplyTo   string

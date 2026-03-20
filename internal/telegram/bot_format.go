@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/toolformat"
 )
 
 func isPDFMIME(mime string) bool {
@@ -218,211 +217,11 @@ func formatToolCallCompact(toolName string, params json.RawMessage) string {
 		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))
 	}
 
-	summary := compactSummary(toolName, m)
+	summary := toolformat.CompactSummary(toolName, m)
 	if summary == "" {
 		return fmt.Sprintf("%s <b>%s</b>", emoji, htmlEscape(toolName))
 	}
 	return fmt.Sprintf("%s <b>%s</b>: %s", emoji, htmlEscape(toolName), htmlEscape(summary))
-}
-
-// compactSummary extracts the most meaningful param values for a compact display.
-func compactSummary(toolName string, m map[string]json.RawMessage) string {
-	str := func(key string) string {
-		raw, ok := m[key]
-		if !ok {
-			return ""
-		}
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			return s
-		}
-		// Not a string — use raw JSON (e.g. numbers, booleans)
-		return strings.TrimSpace(string(raw))
-	}
-
-	switch toolName {
-	case "shell":
-		return truncate(str("command"), 60)
-	case "web_fetch":
-		return truncate(str("url"), 80)
-	case "web_search", "memory_search":
-		return truncate(str("query"), 60)
-	case "http_request":
-		method := str("method")
-		if method == "" {
-			method = "GET"
-		}
-		return truncate(method+" "+str("url"), 80)
-	case "read", "write", "edit":
-		return truncate(str("path"), 80)
-	case "tmux":
-		op := str("operation")
-		name := str("name")
-		if op != "" && name != "" {
-			return op + " " + name
-		}
-		if op != "" {
-			return op
-		}
-		return truncate(str("name"), 60)
-	case "todo", "scratchpad":
-		return str("action")
-	case "remind":
-		return truncate(str("text"), 40)
-	case "send_to_chat":
-		return truncate(str("text"), 40)
-	case "spawn":
-		return truncate(str("prompt"), 40)
-	}
-
-	// Fallback: use the first string-valued param
-	for _, key := range sortedKeys(m) {
-		if v := str(key); v != "" {
-			return truncate(v, 60)
-		}
-	}
-	return ""
-}
-
-// compactResultHint extracts a short hint from a tool result to append
-// to the compact notification line. Returns "" if no useful hint can be extracted.
-func compactResultHint(toolName string, params json.RawMessage, result string) string {
-	switch toolName {
-	case "todo":
-		return todoResultHint(params, result)
-	case "shell":
-		return shellResultHint(result)
-	case "write":
-		return writeResultHint(result)
-	case "edit":
-		return editResultHint(result)
-	case "spawn":
-		return spawnResultHint(result)
-	case "tmux":
-		return tmuxResultHint(params, result)
-	}
-	return ""
-}
-
-// todoResultHint extracts key info from todo results (e.g. "#542" from "Added #542 (medium)").
-func todoResultHint(params json.RawMessage, result string) string {
-	var p struct {
-		Action string `json:"action"`
-	}
-	if json.Unmarshal(params, &p) != nil {
-		return ""
-	}
-	firstLine, _, _ := strings.Cut(result, "\n")
-	switch p.Action {
-	case "add":
-		// "Added #542 (medium)" → "#542"
-		if i := strings.Index(firstLine, "#"); i >= 0 {
-			end := strings.IndexByte(firstLine[i:], ' ')
-			if end > 0 {
-				return firstLine[i : i+end]
-			}
-			return firstLine[i:]
-		}
-	case "list", "search":
-		// Count items by counting dividers (items separated by \n---\n)
-		if strings.HasPrefix(firstLine, "No ") {
-			return "0 items"
-		}
-		n := strings.Count(result, "\n---\n") + 1
-		if n == 1 {
-			return "1 item"
-		}
-		return fmt.Sprintf("%d items", n)
-	case "transition":
-		// "#542: done" or "#1: done\n#2: done" → "done" (first line's state)
-		if _, after, ok := strings.Cut(firstLine, ": "); ok {
-			return truncate(after, 20)
-		}
-	case "remove":
-		// "#542: removed" → "done"
-		return ""
-	case "edit":
-		// "#542: text: old → new" → show the ID
-		if i := strings.Index(firstLine, "#"); i >= 0 {
-			end := strings.IndexByte(firstLine[i:], ':')
-			if end > 0 {
-				return firstLine[i : i+end]
-			}
-		}
-	}
-	return ""
-}
-
-// shellResultHint shows line count for multi-line output.
-func shellResultHint(result string) string {
-	if result == "" {
-		return "(empty)"
-	}
-	lines := strings.Count(result, "\n") + 1
-	if lines <= 3 {
-		return ""
-	}
-	return fmt.Sprintf("%d lines", lines)
-}
-
-// writeResultHint extracts byte count from "Wrote N bytes to /path".
-func writeResultHint(result string) string {
-	if strings.HasPrefix(result, "Wrote ") {
-		// "Wrote 42 bytes to /path/file.go" → "42 bytes"
-		parts := strings.SplitN(result, " ", 4)
-		if len(parts) >= 3 {
-			return parts[1] + " " + parts[2]
-		}
-	}
-	return ""
-}
-
-// editResultHint extracts edit confirmation info.
-func editResultHint(result string) string {
-	if strings.HasPrefix(result, "Applied ") || strings.HasPrefix(result, "Edited ") {
-		firstLine, _, _ := strings.Cut(result, "\n")
-		return truncate(firstLine, 30)
-	}
-	return ""
-}
-
-// spawnResultHint shows the spawned agent name.
-func spawnResultHint(result string) string {
-	// Spawn results start with "Spawned agent: <name>" or similar
-	if strings.HasPrefix(result, "Spawned ") {
-		firstLine, _, _ := strings.Cut(result, "\n")
-		return truncate(firstLine, 30)
-	}
-	return ""
-}
-
-// tmuxResultHint extracts a short hint from a tmux tool result.
-func tmuxResultHint(params json.RawMessage, result string) string {
-	var p struct {
-		Operation string `json:"operation"`
-	}
-	if json.Unmarshal(params, &p) != nil {
-		return ""
-	}
-	switch p.Operation {
-	case "read":
-		if strings.TrimSpace(result) == "" {
-			return "(empty)"
-		}
-		lines := strings.Count(result, "\n") + 1
-		if lines == 1 {
-			return "1 line"
-		}
-		return fmt.Sprintf("%d lines", lines)
-	default:
-		firstLine, _, _ := strings.Cut(result, "\n")
-		return truncate(firstLine, 30)
-	}
-}
-
-// sortedKeys returns map keys in sorted order for deterministic fallback.
-func sortedKeys(m map[string]json.RawMessage) []string {
-	return slices.Sorted(maps.Keys(m))
 }
 
 // unescapeJSONStringLiterals replaces literal \n and \t sequences (as they
@@ -442,9 +241,13 @@ func htmlEscape(s string) string {
 	return s
 }
 
+// truncate is a package-local alias for toolformat.Truncate, used throughout
+// the telegram package for log messages, stream previews, etc.
 func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
+	return toolformat.Truncate(s, max)
+}
+
+// compactResultHint delegates to toolformat.CompactResultHint.
+func compactResultHint(toolName string, params json.RawMessage, result string) string {
+	return toolformat.CompactResultHint(toolName, params, result)
 }

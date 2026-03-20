@@ -5,207 +5,130 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
-	"sync"
 
+	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/internal/toolformat"
+	"foci/internal/turn"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// toolCallTracker manages tool call visibility state during an agent turn.
-type toolCallTracker struct {
+// newToolCallTracker creates a shared turn.ToolCallTracker backed by
+// Discord-specific formatting and messaging.
+func newToolCallTracker(bot *Bot, channelID string, d turn.TurnDisplay) *turn.ToolCallTracker {
+	backend := &discordTrackerBackend{bot: bot, channelID: channelID}
+	store := &discordTrackerStore{bot: bot, channelID: channelID}
+	display := turn.TrackerDisplay{ShowToolCalls: d.ShowToolCalls}
+	return turn.NewToolCallTracker(backend, store, display, compactResultHint)
+}
+
+// discordTrackerBackend implements turn.TrackerBackend for Discord.
+type discordTrackerBackend struct {
 	bot       *Bot
 	channelID string
-	display   turnDisplay
-
-	mu         sync.Mutex
-	msgID      string          // Discord message ID of the current tool-call message
-	text       string          // last compact summary (full mode) or full text (preview mode)
-	fullText   string          // last full formatted tool call text (full mode only)
-	lastParams json.RawMessage // params of the last tool call (for result hints)
-	retryMsgID string          // Discord message ID of the retry notification message
 }
 
-// lastMsgID returns the current tool-call message ID (thread-safe).
-func (t *toolCallTracker) lastMsgID() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.msgID
+func (b *discordTrackerBackend) FormatCompact(toolName string, params json.RawMessage) string {
+	return formatToolCallCompact(toolName, params)
 }
 
-// resetMsgID clears the tool-call message ID (e.g. after intermediate text).
-func (t *toolCallTracker) resetMsgID() {
-	t.mu.Lock()
-	t.msgID = ""
-	t.mu.Unlock()
+func (b *discordTrackerBackend) FormatFull(toolName string, params json.RawMessage, showMode string) string {
+	return formatToolCallFull(toolName, params, showMode, b.bot.display.ToolCallPreviewChars)
 }
 
-// observeToolCall handles tool call visibility via send+edit pattern.
-func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessage) {
-	mode := t.display.showToolCalls
-	if mode == "off" || mode == "" {
-		return
+func (b *discordTrackerBackend) FormatWithResult(toolText, result string) string {
+	return formatToolCallWithResult(toolText, result)
+}
+
+func (b *discordTrackerBackend) FormatHintSuffix(hint string) string {
+	return " -> " + hint
+}
+
+func (b *discordTrackerBackend) FormatRetry(endpoint string) string {
+	return fmt.Sprintf("*%s is busy right now, retrying...*", endpoint)
+}
+
+func (b *discordTrackerBackend) FormatRetryClear() string {
+	return "*Request completed*"
+}
+
+func (b *discordTrackerBackend) Send(text string) (string, error) {
+	sent, err := b.bot.session.ChannelMessageSend(b.channelID, text)
+	if err != nil {
+		return "", err
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if mode == "full" {
-		t.sendFullModeToolCall(toolName, params)
-		return
-	}
-	t.sendPreviewModeToolCall(toolName, params)
+	return sent.ID, nil
 }
 
-// sendFullModeToolCall sends a compact summary with a "Show full" button.
-func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawMessage) {
-	compact := formatToolCallCompact(toolName, params)
-	full := formatToolCallFull(toolName, params, t.display.showToolCalls, t.bot.display.ToolCallPreviewChars)
-	buttons := singleButton("Show full", "tc:show")
-	sent, err := t.bot.session.ChannelMessageSendComplex(t.channelID, &discordgo.MessageSend{
-		Content:    compact,
+func (b *discordTrackerBackend) SendWithButton(text, btnLabel, btnData string) (string, error) {
+	buttons := singleButton(btnLabel, btnData)
+	sent, err := b.bot.session.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
+		Content:    text,
 		Components: buttons,
 	})
 	if err != nil {
-		t.bot.logger().Debugf("send tool call msg: %v", err)
-		return
+		return "", err
 	}
-	t.msgID = sent.ID
-	t.text = compact
-	t.fullText = full
-	t.lastParams = params
-	msgIDInt, _ := strconv.ParseInt(sent.ID, 10, 64)
-	t.bot.toolResults.Store(msgIDInt, toolResultEntry{
-		compactText: compact,
-		fullInput:   full,
-		channelID:   t.channelID,
+	return sent.ID, nil
+}
+
+func (b *discordTrackerBackend) Edit(msgID, text string) error {
+	_, err := b.bot.session.ChannelMessageEdit(b.channelID, msgID, text)
+	return err
+}
+
+func (b *discordTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData string) error {
+	buttons := singleButton(btnLabel, btnData)
+	_, err := b.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    b.channelID,
+		ID:         msgID,
+		Content:    &text,
+		Components: &buttons,
 	})
+	return err
 }
 
-// sendPreviewModeToolCall sends or edits a tool call message (overwriting previous).
-func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.RawMessage) {
-	text := formatToolCallFull(toolName, params, t.display.showToolCalls, t.bot.display.ToolCallPreviewChars)
-	if t.msgID == "" {
-		sent, err := t.bot.session.ChannelMessageSend(t.channelID, text)
-		if err != nil {
-			t.bot.logger().Debugf("send tool call msg: %v", err)
-			return
-		}
-		t.msgID = sent.ID
-		t.text = text
-	} else {
-		_, err := t.bot.session.ChannelMessageEdit(t.channelID, t.msgID, text)
-		if err != nil {
-			t.bot.logger().Debugf("edit tool call msg: %v", err)
-		}
-		t.text = text
-	}
+func (b *discordTrackerBackend) Delete(msgID string) error {
+	return b.bot.session.ChannelMessageDelete(b.channelID, msgID)
 }
 
-// cleanupPreview deletes the tool call preview message if one exists.
-func (t *toolCallTracker) cleanupPreview() {
-	t.mu.Lock()
-	id := t.msgID
-	t.msgID = ""
-	t.mu.Unlock()
-	if id == "" || t.display.showToolCalls != "preview" {
-		return
-	}
-	_ = t.bot.session.ChannelMessageDelete(t.channelID, id)
+func (b *discordTrackerBackend) Logger() *log.ComponentLogger {
+	return b.bot.logger()
 }
 
-// observeToolResult stores tool results for button expansion (full mode only).
-func (t *toolCallTracker) observeToolResult(toolName string, result string, isError bool) {
-	if t.display.showToolCalls != "full" {
-		return
-	}
-	t.mu.Lock()
-	msgID := t.msgID
-	compact := t.text
-	full := t.fullText
-	params := t.lastParams
-	t.mu.Unlock()
-	if msgID == "" {
-		return
-	}
+// discordTrackerStore implements turn.TrackerStore backed by the Bot's
+// sync.Map and optional ToolDetailStore.
+type discordTrackerStore struct {
+	bot       *Bot
+	channelID string
+}
 
-	// Generate a result hint to append to the compact notification.
-	hint := compactResultHint(toolName, params, result)
-	if hint != "" {
-		compact = compact + " -> " + hint
-	}
-
-	msgIDInt, _ := strconv.ParseInt(msgID, 10, 64)
-	var wasExpanded bool
-	if prev, ok := t.bot.toolResults.Load(msgIDInt); ok {
-		entry := prev.(toolResultEntry)
-		wasExpanded = entry.expanded
-	}
-
-	t.bot.toolResults.Store(msgIDInt, toolResultEntry{
+func (s *discordTrackerStore) StoreEntry(msgID, compact, full, result string, expanded bool) {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	s.bot.toolResults.Store(id, toolResultEntry{
 		compactText: compact,
 		fullInput:   full,
 		result:      result,
-		expanded:    wasExpanded,
-		channelID:   t.channelID,
+		expanded:    expanded,
+		channelID:   s.channelID,
 	})
-	if t.bot.toolDetailStore != nil {
-		t.bot.toolDetailStore.Store(msgIDInt, compact, full, result)
-	}
-
-	if wasExpanded {
-		expanded := formatToolCallWithResult(full, result)
-		buttons := singleButton("Hide", "tc:hide")
-		if len(expanded) > discordMaxChars {
-			expanded = expanded[:discordMaxChars-4] + "\n..."
-		}
-		_, _ = t.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
-			Channel:    t.channelID,
-			ID:         msgID,
-			Content:    &expanded,
-			Components: &buttons,
-		})
-	} else if hint != "" {
-		buttons := singleButton("Show full", "tc:show")
-		_, _ = t.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
-			Channel:    t.channelID,
-			ID:         msgID,
-			Content:    &compact,
-			Components: &buttons,
-		})
-	}
 }
 
-// notifyRetry sends a retry notification message on first API retry.
-func (t *toolCallTracker) notifyRetry(endpoint string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	text := fmt.Sprintf("*%s is busy right now, retrying...*", endpoint)
-	sent, err := t.bot.session.ChannelMessageSend(t.channelID, text)
-	if err != nil {
-		t.bot.logger().Debugf("send retry notification: %v", err)
-		return
+func (s *discordTrackerStore) IsExpanded(msgID string) bool {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	if prev, ok := s.bot.toolResults.Load(id); ok {
+		return prev.(toolResultEntry).expanded
 	}
-	t.retryMsgID = sent.ID
+	return false
 }
 
-// clearRetryNotification deletes or overwrites the retry notification on success.
-func (t *toolCallTracker) clearRetryNotification() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.retryMsgID == "" {
+func (s *discordTrackerStore) Persist(msgID, compact, full, result string) {
+	if s.bot.toolDetailStore == nil {
 		return
 	}
-
-	text := "*Request completed*"
-	_, err := t.bot.session.ChannelMessageEdit(t.channelID, t.retryMsgID, text)
-	if err != nil {
-		t.bot.logger().Debugf("clear retry notification: %v", err)
-	}
-
-	t.retryMsgID = ""
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	s.bot.toolDetailStore.Store(id, compact, full, result)
 }
 
 // toolResultEntry stores the compact summary, full input text, and result
@@ -218,23 +141,23 @@ type toolResultEntry struct {
 	channelID   string // channel where the message lives (for deferred edits)
 }
 
-// toolEmoji maps tool names to per-tool display emoji.
+// toolEmoji maps tool names to per-tool display prefixes.
 var toolEmoji = map[string]string{
-	"shell":                "> ",
-	"web_fetch":            ">> ",
-	"web_search":           "?? ",
-	"http_request":         ">> ",
-	"read":                 "[] ",
-	"write":                "<> ",
-	"edit":                 "/\\ ",
-	"tmux":                 ":: ",
-	"todo":                 "-- ",
-	"send_to_chat":         ">> ",
-	"memory_search":        "** ",
-	"spawn":                "++ ",
-	"scratchpad":           "// ",
-	"send_to_session":      ">> ",
-	"remind":               ".. ",
+	"shell":           "> ",
+	"web_fetch":       ">> ",
+	"web_search":      "?? ",
+	"http_request":    ">> ",
+	"read":            "[] ",
+	"write":           "<> ",
+	"edit":            "/\\ ",
+	"tmux":            ":: ",
+	"todo":            "-- ",
+	"send_to_chat":    ">> ",
+	"memory_search":   "** ",
+	"spawn":           "++ ",
+	"scratchpad":      "// ",
+	"send_to_session": ">> ",
+	"remind":          ".. ",
 }
 
 // emojiForTool returns the per-tool prefix, falling back to a generic prefix.
@@ -248,7 +171,12 @@ func emojiForTool(name string) string {
 // formatToolCallCompact returns a compact one-line summary.
 func formatToolCallCompact(toolName string, params json.RawMessage) string {
 	prefix := emojiForTool(toolName)
-	summary := compactSummary(toolName, params)
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(params, &m); err != nil {
+		return fmt.Sprintf("%s**%s**", prefix, toolName)
+	}
+
+	summary := toolformat.CompactSummary(toolName, m)
 	if summary == "" {
 		return fmt.Sprintf("%s**%s**", prefix, toolName)
 	}
@@ -260,8 +188,6 @@ func formatToolCallFull(toolName string, params json.RawMessage, showMode string
 	if maxChars == 0 {
 		maxChars = 450
 	}
-	// Unescape JSON unicode sequences (e.g. \u003e → >) so tool parameters
-	// render cleanly in Discord code blocks.
 	paramStr := provider.UnescapeUnicodeJSON(string(params))
 	var pretty bytes.Buffer
 	if json.Indent(&pretty, json.RawMessage(paramStr), "", "  ") == nil {
@@ -274,135 +200,26 @@ func formatToolCallFull(toolName string, params json.RawMessage, showMode string
 	return fmt.Sprintf("%s**%s**\n```json\n%s\n```", prefix, toolName, paramStr)
 }
 
-// compactSummary extracts the most meaningful param values for a compact display.
-func compactSummary(toolName string, params json.RawMessage) string {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(params, &m); err != nil {
-		return ""
+// formatToolCallWithResult combines a tool call message with its result,
+// truncating the result so the total message fits within Discord's 2000 char limit.
+func formatToolCallWithResult(toolText, result string) string {
+	const maxLen = discordMaxChars
+	separator := "\n\n**Result:**\n```\n"
+	suffix := "\n```"
+
+	overhead := len(toolText) + len(separator) + len(suffix)
+	if overhead >= maxLen {
+		return toolText
 	}
 
-	str := func(key string) string {
-		raw, ok := m[key]
-		if !ok {
-			return ""
-		}
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			return s
-		}
-		return strings.TrimSpace(string(raw))
+	available := maxLen - overhead
+	if len(result) > available {
+		result = result[:available-3] + "..."
 	}
-
-	switch toolName {
-	case "shell":
-		return truncate(str("command"), 60)
-	case "web_fetch":
-		return truncate(str("url"), 80)
-	case "web_search", "memory_search":
-		return truncate(str("query"), 60)
-	case "http_request":
-		method := str("method")
-		if method == "" {
-			method = "GET"
-		}
-		return truncate(method+" "+str("url"), 80)
-	case "read", "write", "edit":
-		return truncate(str("path"), 80)
-	case "tmux":
-		op := str("operation")
-		name := str("name")
-		if op != "" && name != "" {
-			return op + " " + name
-		}
-		if op != "" {
-			return op
-		}
-		return truncate(str("name"), 60)
-	case "todo", "scratchpad":
-		return str("action")
-	case "remind":
-		return truncate(str("text"), 40)
-	case "send_to_chat":
-		return truncate(str("text"), 40)
-	case "spawn":
-		return truncate(str("prompt"), 40)
-	}
-
-	// Fallback: use the first string-valued param
-	for _, raw := range m {
-		var s string
-		if json.Unmarshal(raw, &s) == nil && s != "" {
-			return truncate(s, 60)
-		}
-	}
-	return ""
+	return toolText + separator + result + suffix
 }
 
-// compactResultHint extracts a short hint from a tool result.
+// compactResultHint delegates to toolformat.CompactResultHint.
 func compactResultHint(toolName string, params json.RawMessage, result string) string {
-	switch toolName {
-	case "todo":
-		return todoResultHint(params, result)
-	case "shell":
-		if result == "" {
-			return "(empty)"
-		}
-		lines := strings.Count(result, "\n") + 1
-		if lines <= 3 {
-			return ""
-		}
-		return fmt.Sprintf("%d lines", lines)
-	case "write":
-		if strings.HasPrefix(result, "Wrote ") {
-			parts := strings.SplitN(result, " ", 4)
-			if len(parts) >= 3 {
-				return parts[1] + " " + parts[2]
-			}
-		}
-	case "edit":
-		if strings.HasPrefix(result, "Applied ") || strings.HasPrefix(result, "Edited ") {
-			firstLine, _, _ := strings.Cut(result, "\n")
-			return truncate(firstLine, 30)
-		}
-	case "spawn":
-		if strings.HasPrefix(result, "Spawned ") {
-			firstLine, _, _ := strings.Cut(result, "\n")
-			return truncate(firstLine, 30)
-		}
-	}
-	return ""
-}
-
-// todoResultHint extracts a compact hint from a todo tool result.
-func todoResultHint(params json.RawMessage, result string) string {
-	var p struct {
-		Action string `json:"action"`
-	}
-	if json.Unmarshal(params, &p) != nil {
-		return ""
-	}
-	firstLine, _, _ := strings.Cut(result, "\n")
-	switch p.Action {
-	case "add":
-		// "Added #542 (medium)" -> "#542"
-		if i := strings.Index(firstLine, "#"); i >= 0 {
-			end := strings.IndexByte(firstLine[i:], ' ')
-			if end > 0 {
-				return firstLine[i : i+end]
-			}
-			return firstLine[i:]
-		}
-	case "list", "search":
-		if strings.HasPrefix(firstLine, "No ") {
-			return "0 items"
-		}
-		n := strings.Count(result, "\n") + 1
-		if n == 1 {
-			return "1 item"
-		}
-		return fmt.Sprintf("%d items", n)
-	case "done", "delete", "update":
-		return truncate(firstLine, 30)
-	}
-	return ""
+	return toolformat.CompactResultHint(toolName, params, result)
 }

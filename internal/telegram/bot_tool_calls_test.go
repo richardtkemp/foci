@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"foci/internal/command"
 
@@ -245,43 +244,31 @@ func TestShowToolCalls_Full(t *testing.T) {
 }
 
 func TestToolCallTracker_CleanupPreview(t *testing.T) {
-	// Verifies that cleanupPreview deletes the tool call preview message
-	// when in preview mode, and does nothing in other modes or when no
-	// message exists.
+	// Verifies that CleanupPreview deletes the tool call preview message
+	// when in preview mode, and does nothing when no message exists.
+	// The full/preview mode behavior is tested in the shared turn package.
 	mock := &mockClient{}
 	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "preview"}}
-	tracker := &toolCallTracker{bot: b, chatID: 12345, display: b.resolveDisplay("")}
+	d := b.resolveDisplay("")
+	tracker := newToolCallTracker(b, 12345, d)
 
 	// No message → no delete.
-	tracker.cleanupPreview()
+	tracker.CleanupPreview()
 	if mock.deleteCount() != 0 {
 		t.Errorf("deleteCount = %d, want 0 (no message to clean)", mock.deleteCount())
 	}
 
-	// Set a message ID → should delete.
-	tracker.mu.Lock()
-	tracker.msgID = 42
-	tracker.mu.Unlock()
-	tracker.cleanupPreview()
+	// Send a tool call (creates a message), then cleanup.
+	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.CleanupPreview()
 	if mock.deleteCount() != 1 {
 		t.Errorf("deleteCount = %d, want 1", mock.deleteCount())
 	}
 
-	// After cleanup, msgID should be 0 → second call is a no-op.
-	tracker.cleanupPreview()
+	// After cleanup, second call is a no-op.
+	tracker.CleanupPreview()
 	if mock.deleteCount() != 1 {
 		t.Errorf("deleteCount = %d, want 1 (idempotent)", mock.deleteCount())
-	}
-
-	// In "full" mode, cleanupPreview should not delete.
-	b.display.ShowToolCalls = "full"
-	tracker.display = b.resolveDisplay("")
-	tracker.mu.Lock()
-	tracker.msgID = 99
-	tracker.mu.Unlock()
-	tracker.cleanupPreview()
-	if mock.deleteCount() != 1 {
-		t.Errorf("deleteCount = %d, want 1 (full mode should not delete)", mock.deleteCount())
 	}
 }
 
@@ -297,25 +284,18 @@ func TestPreviewModeOverwritesToolCallOnReply(t *testing.T) {
 	msg := &gotgbot.Message{Chat: gotgbot.Chat{Id: 12345}}
 	d := b.resolveDisplay("")
 
-	tracker := &toolCallTracker{bot: b, chatID: 12345, display: d}
-	sw := newStreamWriter(mock, 12345, time.Hour, d.renderOpts, false) // live=false (no streaming)
-	r := &TurnRenderer{
-		bot:     b,
-		msg:     msg,
-		chatID:  12345,
-		display: d,
-		sw:      sw,
-		tracker: tracker,
-	}
+	tracker := newToolCallTracker(b, 12345, d)
+	r := newTurnRenderer(b, msg, tracker, d)
+	defer r.Cleanup()
 
 	// Tool call B: sends new preview message.
-	tracker.observeToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Fatalf("after tool B: sends=%d, want 1", mock.sentCount())
 	}
 
 	// Reply C: should EDIT tool B's message, not send a new one.
-	r.onReply("Reply C content")
+	r.OnReply("Reply C content")
 	if mock.editCount() != 1 {
 		t.Errorf("after reply C: edits=%d, want 1 (should overwrite tool B)", mock.editCount())
 	}
@@ -324,7 +304,7 @@ func TestPreviewModeOverwritesToolCallOnReply(t *testing.T) {
 	}
 
 	// Tool call D: should send a NEW preview message (tracker was reset).
-	tracker.observeToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
 	if mock.sentCount() != 2 {
 		t.Errorf("after tool D: sends=%d, want 2", mock.sentCount())
 	}
@@ -332,45 +312,38 @@ func TestPreviewModeOverwritesToolCallOnReply(t *testing.T) {
 
 func TestPreviewModeResetsAfterStreamingReply(t *testing.T) {
 	// When streaming is active and show_tool_calls=preview, an intermediate
-	// reply (onReply) must delete the tool preview and reset the tracker so
+	// reply (OnReply) must delete the tool preview and reset the tracker so
 	// the next tool call sends a new message.
 	//
-	// Sequence: tool B → stream reply C → onReply → tool D
+	// Sequence: tool B → stream reply C → OnReply → tool D
 	// Expected: B's preview deleted, D sends a new message.
 	mock := &mockClient{}
-	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "preview"}}
+	b := &Bot{client: mock, display: BotDisplayConfig{ShowToolCalls: "preview", StreamOutput: true}}
 	msg := &gotgbot.Message{Chat: gotgbot.Chat{Id: 12345}}
 	d := b.resolveDisplay("")
 
-	tracker := &toolCallTracker{bot: b, chatID: 12345, display: d}
-	sw := newStreamWriter(mock, 12345, time.Hour, d.renderOpts, true) // live=true (streaming)
-	r := &TurnRenderer{
-		bot:     b,
-		msg:     msg,
-		chatID:  12345,
-		display: d,
-		sw:      sw,
-		tracker: tracker,
-	}
+	tracker := newToolCallTracker(b, 12345, d)
+	r := newTurnRenderer(b, msg, tracker, d)
+	defer r.Cleanup()
 
 	// Tool call B: sends new preview message.
-	tracker.observeToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Fatalf("after tool B: sends=%d, want 1", mock.sentCount())
 	}
 
 	// Stream some text so the stream writer has content + a message ID.
-	r.sw.OnDelta("Reply C content")
+	r.OnTextDelta("Reply C content")
 	// sends=2 now (stream writer sent initial message)
 
 	// Intermediate reply fires — should delete tool B's preview.
-	r.onReply("Reply C content")
+	r.OnReply("Reply C content")
 	if mock.deleteCount() != 1 {
 		t.Errorf("after reply C: deletes=%d, want 1 (tool B preview should be deleted)", mock.deleteCount())
 	}
 
 	// Tool call D: should send a NEW message, not edit the deleted one.
-	tracker.observeToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
 	if mock.sentCount() != 3 {
 		t.Errorf("after tool D: sends=%d, want 3 (tool D should be a new message)", mock.sentCount())
 	}

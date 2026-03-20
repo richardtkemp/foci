@@ -160,17 +160,21 @@ main
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── agent         → compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
- ├── telegram      → agent, command, config, display, log, platform, secrets, session, sqlite, state, voice
+ ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
+ ├── turn          → display, log, toolformat (shared turn rendering + tool call tracking for all platforms)
+ ├── telegram      → agent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, sqlite, state, tooldetail, toolformat, turn, voice
  │                  (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
- └── discord       → agent, command, config, display, log, platform, secrets, session, sqlite, state, voice
+ └── discord       → agent, chatmeta, command, config, dispatch, display, log, platform, secrets, session, sqlite, state, tooldetail, toolformat, turn, voice
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
 **`platform` package:** Defines platform-agnostic messaging types (`Message`, `Attachment`), the `Connection`/`ConnectionManager` interfaces, the `MessagingProvider` interface for platform implementations, and the `Messaging` facade that manages all active providers. Providers register via `RegisterMessagingProvider()` (called from `init()`) and are activated at startup via `InitMessaging()`. An aggregating `ConnectionManager` merges connections from all providers — `AllForAgent()` returns connections across all platforms, enabling multi-platform fan-out for notifications. `cmd/foci-gw/` uses only the facade; zero platform-specific type references. Also defines the `SetupWizard` interface (optionally implemented by `MessagingProvider`) for contributing interactive setup steps to `foci first-run`. `SetupProviders()` returns all registered providers that implement `SetupWizard`. Types: `SetupFlag` (CLI flag definition), `WizardResult` (config TOML fragment + secrets), `SetupUI` (console interaction primitives).
+
+**`chatmeta` package:** Shared session key management logic extracted from `telegram` and `discord`. Provides `Resolver` — a lightweight struct that looks up, creates, persists, and rotates per-chat session keys via `platform.SessionIndex`. Each platform `Bot` holds a `*chatmeta.Resolver` and delegates `SessionKeyForChat`, `UpdateSessionKey`, `DefaultChatID`, `DefaultSessionKey`, and `RecordUsername` to it. Platform-specific methods (`SessionKey`, `SetSessionKey`, `ChatID`, `SetChatID`, `Username`) remain on each Bot. Imports: `platform`, `session`, `log`. All methods are nil-receiver safe.
 
 Most packages depend on `provider` for types; only `main.go`, `tools`, and `mana` import `anthropic` directly (for Anthropic-specific features like `UsageClient`). `periodic` no longer imports `agent` or `session` — mana monitoring and warning dispatch are handled by the `mana` and `warnings` packages respectively, wired together in `main.go`.
 
@@ -178,23 +182,27 @@ Most packages depend on `provider` for types; only `main.go`, `tools`, and `mana
 
 ## Command Dispatch Architecture
 
-Slash commands (`/ping`, `/model`, etc.) are dispatched through a two-layer architecture:
+Slash commands (`/ping`, `/model`, etc.) are dispatched through a three-layer architecture:
 
-1. **Platform layer** (`telegram/dispatch.go`, `discord/dispatch.go`): Parses platform-specific command syntax (e.g., `/cmd args` for Telegram, `.cmd args` or `/cmd args` for Discord) and builds a platform-agnostic `Request` struct with `Name`, `Args`, `SessionKey`, `UserID`, and `ChatID`.
+1. **Platform wrapper** (`telegram/dispatch.go`, `discord/dispatch.go`): Thin wrappers that extract `text`, `chatID`, and `userID` from platform-native message types (`gotgbot.Message`, `discordgo.Message`) and delegate to the shared dispatcher.
 
-2. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
+2. **Shared dispatch** (`dispatch/dispatcher.go`): Platform-agnostic routing logic. Detects dot-commands (`.model`) vs slash-commands (`/model`), resolves session keys, and builds a `command.Request`. Returns a `dispatch.Result` with `Handled`, `Response`, `SessionKey`, `UserID`.
+
+3. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
 
 **Dispatch flow:**
 ```
 Telegram message "/model haiku"
     ↓
-telegram.Dispatcher.Dispatch()
-    ↓ parses "/model" + "haiku"
+telegram.Dispatcher.Dispatch(ctx, msg)
+    ↓ extracts msg.Text, msg.Chat.Id, msg.From.Id
+dispatch.Dispatcher.DispatchText(ctx, "/model haiku", chatID, userID)
+    ↓ parses "/model" + "haiku", resolves session key
 command.Request{Name: "model", Args: "haiku", SessionKey: "...", UserID: "..."}
     ↓
 command.Registry.Dispatch(ctx, req, cc)
     ↓ executes with command.CommandContext
-command.Response{Text: "Model set to haiku"}
+dispatch.Result{Handled: true, Response: command.Response{Text: "Model set to haiku"}}
     ↓
 Telegram renders response (markdown, keyboards, etc.)
 ```
@@ -206,8 +214,10 @@ All commands use a unified signature: `Execute(ctx context.Context, req Request,
 - `command.Response`: Platform-agnostic result (`Text`, `DocPath`)
 - `command.CommandContext`: Platform-agnostic dependencies struct (Agent, Sessions, Config, client references, stores, paths, etc.)
 - `command.Registry.Dispatch()`: Executes commands using `(ctx, Request, CommandContext)`
+- `dispatch.Dispatcher`: Shared routing logic (dot/slash detection, session key resolution, request building)
+- `dispatch.Result`: Dispatch outcome (`Handled`, `Response`, `SessionKey`, `UserID`)
 
-**Why this split:** Each platform owns the parsing of its command syntax (Telegram: `/cmd args`, Discord: `.cmd args` or `/cmd args`). The command layer owns what commands do. This enables any platform to use the same command logic with different syntax.
+**Why this split:** The platform wrappers own only the extraction of text/chatID/userID from native message types — typically 5-10 lines of code each. The shared `dispatch` package owns all routing logic (dot-command detection, slash-command parsing, session key resolution, `command.Request` construction). The `command` layer owns what commands do. Adding a new platform requires only a thin wrapper that extracts three values from the native message type.
 
 ## The Agent Loop (`agent/agent.go`)
 
