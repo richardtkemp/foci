@@ -45,6 +45,18 @@ openrouter_key = "sk-or-v1-..."
 
 Keys use `section.key` format. The `[anthropic]`, `[telegram]`, and `[http]` sections are used by core wiring; `[custom]` is for user-defined secrets.
 
+Each section supports optional control arrays:
+
+```toml
+[custom]
+api_key = "sk-..."
+other_key = "sk-other-..."
+allowed_hosts = ["api.example.com"]
+allowed_in_body = ["api_key"]    # only api_key can appear in request body; other_key cannot
+```
+
+`allowed_in_body` lists the key names within the section that may appear in `http_request` body, body_file, or form_fields. Secrets not listed are restricted to headers only. See [Body Restriction](#body-restricted-secrets) below.
+
 ### `http.api_key` — HTTP API authentication
 
 All HTTP endpoints (including `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.
@@ -98,12 +110,41 @@ The agent uses `http_request` to make API calls with secrets:
 }
 ```
 
+### Body-Restricted Secrets
+
+By default, secrets resolve **only in headers**. Request body, body_file, and form_fields are blocked unless the key is explicitly listed in `allowed_in_body` for its section.
+
+**Threat model:** When a secret is in a request body, it is visible in the third party's request logs, load balancer logs, and any middleware between foci and the target API. Headers marked `Authorization` are typically excluded from logs by convention. Body content has no such protection.
+
+```toml
+[custom]
+api_key = "sk-..."
+other_key = "sk-other-..."
+allowed_hosts = ["api.example.com"]
+allowed_in_body = ["api_key"]    # only api_key is permitted in body
+```
+
+With this config:
+- `{{secret:custom.api_key}}` in headers: **allowed** (always)
+- `{{secret:custom.api_key}}` in body: **allowed** (listed in `allowed_in_body`)
+- `{{secret:custom.other_key}}` in body: **blocked** (not listed)
+- Bitwarden secrets in body: **always blocked** (no per-item config mechanism)
+
+**Managing via `/secrets`:**
+- `/secrets body <section>` — view current allowed_in_body
+- `/secrets body <section> add <key>` — allow a key in body
+- `/secrets body <section> remove <key>` — revoke body permission
+- `/secrets body <section> clear` — remove all body permissions
+
+`allowed_in_body` follows the same patterns as `allowed_hosts` and supports per-agent overrides via `[agents.ID.section]` sections.
+
 ### Security guarantees
 
 - **No shell** — secrets are resolved in-process, never passed to `sh -c`. Shell encoding attacks are impossible.
 - **Host validation** — before sending, each secret's target URL is checked against `allowed_hosts`. Requests to unlisted hosts are rejected.
 - **Userinfo defense** — URLs like `https://api.example.com@evil.com/steal` are detected. The tool uses `url.Parse().Hostname()` which returns `evil.com`, not `api.example.com`.
 - **Redirect blocking** — when secrets are present, cross-domain redirects are blocked. A server at `api.example.com` cannot redirect to `evil.com` to capture credentials.
+- **Body restriction** — secrets resolve only in headers by default. Body/body_file/form_fields require the key to be listed in `allowed_in_body`. Bitwarden secrets are never permitted in bodies.
 - **Response redaction** — secret values in the response body are replaced with `[REDACTED]`, preventing the agent from seeing raw credentials echoed back.
 - **Case-insensitive host matching** — per RFC 4343, host comparison is case-insensitive.
 

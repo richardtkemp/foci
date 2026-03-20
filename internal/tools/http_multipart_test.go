@@ -287,6 +287,7 @@ func TestHTTPRequestMultipartFormFieldsSecrets(t *testing.T) {
 [custom]
 bot_token = "secret-bot-token-123"
 allowed_hosts = ["%s"]
+allowed_in_body = ["bot_token"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
 	tmpFile := filepath.Join(t.TempDir(), "doc.pdf")

@@ -19,6 +19,10 @@ type SecretsStore interface {
 	AddAllowedHost(section, host string)
 	RemoveAllowedHost(section, host string) bool
 	SetAllowedHosts(section string, hosts []string)
+	SectionAllowedInBody(section string) []string
+	AddAllowedInBody(section, key string)
+	RemoveAllowedInBody(section, key string) bool
+	SetAllowedInBody(section string, keys []string)
 }
 
 // SecretsDeps holds dependencies for the /secrets wizard flows.
@@ -67,7 +71,7 @@ func SecretsCommand() *Command {
 
 	cmd := &Command{
 		Name:        "secrets",
-		Description: "Manage secrets (list/set/remove/hosts)",
+		Description: "Manage secrets (list/set/remove/hosts/body)",
 		Category:    "operations",
 		Subcommands: []Subcommand{
 			{
@@ -106,6 +110,15 @@ func SecretsCommand() *Command {
 					})
 				},
 			},
+			{
+				Name:        "body",
+				Description: "Manage allowed_in_body for a secret section",
+				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+					return secretsExec(cc, func(store SecretsStore) (Response, error) {
+						return secretsBodyDispatch(store, strings.Fields(req.Args))
+					})
+				},
+			},
 		},
 		ChainKeyboard: func(_ context.Context, subcommand string, cc CommandContext) []KeyboardOption {
 			store := secretsResolveStore(cc)
@@ -141,6 +154,8 @@ func secretsChainKeyboard(store SecretsStore, subcommand string) []KeyboardOptio
 		return secretsChainSectionKeys(store, "remove", parts[1:])
 	case "hosts":
 		return secretsChainHosts(store, parts[1:])
+	case "body":
+		return secretsChainBody(store, parts[1:])
 	default:
 		return nil
 	}
@@ -393,6 +408,110 @@ func secretsSetDirect(store SecretsStore, args []string) (Response, error) {
 		return Response{}, fmt.Errorf("save secrets: %w", err)
 	}
 	return Response{Text: fmt.Sprintf("Secret %s set.", name)}, nil
+}
+
+// secretsBodyDispatch handles "body" subcommand routing.
+func secretsBodyDispatch(store SecretsStore, args []string) (Response, error) {
+	if len(args) == 0 {
+		return Response{Text: "Usage: /secrets body <section> [add <key> | remove <key> | clear]"}, nil
+	}
+
+	section := args[0]
+
+	if len(args) == 1 {
+		keys := store.SectionAllowedInBody(section)
+		if len(keys) == 0 {
+			return Response{Text: fmt.Sprintf("[%s] allowed_in_body: (none)", section)}, nil
+		}
+		return Response{Text: fmt.Sprintf("[%s] allowed_in_body: %s", section, strings.Join(keys, ", "))}, nil
+	}
+
+	action := args[1]
+	switch action {
+	case "add":
+		if len(args) < 3 {
+			return Response{Text: "Usage: /secrets body <section> add <key>"}, nil
+		}
+		key := strings.TrimSpace(args[2])
+		store.AddAllowedInBody(section, key)
+		if err := store.Save(); err != nil {
+			return Response{}, fmt.Errorf("save secrets: %w", err)
+		}
+		return Response{Text: fmt.Sprintf("Added %q to [%s] allowed_in_body.", key, section)}, nil
+
+	case "remove":
+		if len(args) < 3 {
+			return Response{Text: "Usage: /secrets body <section> remove <key>"}, nil
+		}
+		key := args[2]
+		if !store.RemoveAllowedInBody(section, key) {
+			return Response{Text: fmt.Sprintf("Key %q not found in [%s] allowed_in_body.", key, section)}, nil
+		}
+		if err := store.Save(); err != nil {
+			return Response{}, fmt.Errorf("save secrets: %w", err)
+		}
+		return Response{Text: fmt.Sprintf("Removed %q from [%s] allowed_in_body.", key, section)}, nil
+
+	case "clear":
+		store.SetAllowedInBody(section, nil)
+		if err := store.Save(); err != nil {
+			return Response{}, fmt.Errorf("save secrets: %w", err)
+		}
+		return Response{Text: fmt.Sprintf("Cleared allowed_in_body for [%s].", section)}, nil
+
+	default:
+		return Response{Text: "Usage: /secrets body <section> [add <key> | remove <key> | clear]"}, nil
+	}
+}
+
+// secretsChainBody: body → sections → [add, remove, clear] → (add shows available keys, remove shows current keys).
+func secretsChainBody(store SecretsStore, args []string) []KeyboardOption {
+	switch len(args) {
+	case 0: // "body" → section buttons
+		sections := secretSections(store)
+		opts := make([]KeyboardOption, len(sections))
+		for i, s := range sections {
+			opts[i] = KeyboardOption{Label: s, Data: "body " + s}
+		}
+		return opts
+	case 1: // "body <section>" → action buttons [add, remove, clear]
+		return []KeyboardOption{
+			{Label: "add", Data: "body " + args[0] + " add"},
+			{Label: "remove", Data: "body " + args[0] + " remove"},
+			{Label: "clear", Data: "body " + args[0] + " clear"},
+		}
+	case 2: // "body <section> add" → available keys; "body <section> remove" → current keys
+		section := args[0]
+		switch args[1] {
+		case "add":
+			currentBody := make(map[string]bool)
+			for _, k := range store.SectionAllowedInBody(section) {
+				currentBody[k] = true
+			}
+			allKeys := secretKeysInSection(store, section)
+			var opts []KeyboardOption
+			for _, k := range allKeys {
+				if !currentBody[k] {
+					opts = append(opts, KeyboardOption{Label: k, Data: "body " + section + " add " + k})
+				}
+			}
+			return opts
+		case "remove":
+			keys := store.SectionAllowedInBody(section)
+			if len(keys) == 0 {
+				return nil
+			}
+			opts := make([]KeyboardOption, len(keys))
+			for i, k := range keys {
+				opts[i] = KeyboardOption{Label: k, Data: "body " + section + " remove " + k}
+			}
+			return opts
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
 }
 
 func secretsList(store SecretsStore) string {

@@ -63,6 +63,7 @@ func TestHTTPRequestBodyFileWithSecrets(t *testing.T) {
 [custom]
 api_key = "resolved-secret-key"
 allowed_hosts = ["%s"]
+allowed_in_body = ["api_key"]
 `, srv.Listener.Addr().(*net.TCPAddr).IP.String()))
 
 	bodyPath := filepath.Join(t.TempDir(), "payload.json")

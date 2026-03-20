@@ -510,9 +510,10 @@ func TestAll(t *testing.T) {
 
 // mockSecretsStore implements SecretsStore for testing.
 type mockSecretsStore struct {
-	data         map[string]string
-	allowedHosts map[string][]string
-	saved        bool
+	data          map[string]string
+	allowedHosts  map[string][]string
+	allowedInBody map[string][]string
+	saved         bool
 }
 
 func (m *mockSecretsStore) Names() []string {
@@ -565,6 +566,47 @@ func (m *mockSecretsStore) SetAllowedHosts(section string, hosts []string) {
 	}
 }
 
+func (m *mockSecretsStore) SectionAllowedInBody(section string) []string {
+	if m.allowedInBody == nil {
+		return nil
+	}
+	return m.allowedInBody[section]
+}
+func (m *mockSecretsStore) AddAllowedInBody(section, key string) {
+	if m.allowedInBody == nil {
+		m.allowedInBody = make(map[string][]string)
+	}
+	for _, k := range m.allowedInBody[section] {
+		if k == key {
+			return
+		}
+	}
+	m.allowedInBody[section] = append(m.allowedInBody[section], key)
+}
+func (m *mockSecretsStore) RemoveAllowedInBody(section, key string) bool {
+	keys := m.allowedInBody[section]
+	for i, k := range keys {
+		if k == key {
+			m.allowedInBody[section] = append(keys[:i], keys[i+1:]...)
+			if len(m.allowedInBody[section]) == 0 {
+				delete(m.allowedInBody, section)
+			}
+			return true
+		}
+	}
+	return false
+}
+func (m *mockSecretsStore) SetAllowedInBody(section string, keys []string) {
+	if m.allowedInBody == nil {
+		m.allowedInBody = make(map[string][]string)
+	}
+	if len(keys) == 0 {
+		delete(m.allowedInBody, section)
+	} else {
+		m.allowedInBody[section] = keys
+	}
+}
+
 // TestRestartCommand verifies the restart command exists with correct properties.
 func TestRestartCommand(t *testing.T) {
 	cmd := RestartCommand()
@@ -589,7 +631,7 @@ func TestSecretsCommand(t *testing.T) {
 		t.Fatal("secrets command should have KeyboardOptions")
 	}
 	opts := cmd.KeyboardOptions(context.Background(), cc)
-	wantLabels := []string{"list", "set", "remove", "hosts"}
+	wantLabels := []string{"list", "set", "remove", "hosts", "body"}
 	if len(opts) != len(wantLabels) {
 		t.Fatalf("got %d keyboard options, want %d", len(opts), len(wantLabels))
 	}

@@ -43,10 +43,12 @@ type Store struct {
 	values        map[string]string
 	allowedHosts  map[string][]string            // section name → allowed hosts
 	allowedAgents map[string][]string            // section name → agent whitelist
-	deniedAgents  map[string][]string            // section name → agent blacklist
-	blockedPaths  []string
-	agentValues   map[string]map[string]string   // agent ID → flat key → value
-	agentHosts    map[string]map[string][]string // agent ID → section → allowed hosts
+	deniedAgents       map[string][]string            // section name → agent blacklist
+	allowedInBody      map[string][]string            // section name → key names allowed in request body
+	blockedPaths       []string
+	agentValues        map[string]map[string]string   // agent ID → flat key → value
+	agentHosts         map[string]map[string][]string // agent ID → section → allowed hosts
+	agentAllowedInBody map[string]map[string][]string // agent ID → section → key names allowed in body
 }
 
 // Load reads secrets from a TOML file. Returns an empty store (not error) if the file doesn't exist.
@@ -57,6 +59,7 @@ func Load(path string) (*Store, error) {
 		allowedHosts:  make(map[string][]string),
 		allowedAgents: make(map[string][]string),
 		deniedAgents:  make(map[string][]string),
+		allowedInBody: make(map[string][]string),
 		blockedPaths:  append([]string{}, defaultBlockedPaths...),
 	}
 
@@ -82,6 +85,7 @@ func Load(path string) (*Store, error) {
 			// [agents.ID] sections → per-agent overrides
 			s.agentValues = make(map[string]map[string]string)
 			s.agentHosts = make(map[string]map[string][]string)
+			s.agentAllowedInBody = make(map[string]map[string][]string)
 			for agentID, v := range pairs {
 				agentTable, ok := v.(map[string]interface{})
 				if !ok {
@@ -111,6 +115,8 @@ func Load(path string) (*Store, error) {
 					s.allowedAgents[section] = strs
 				case "denied_agents":
 					s.deniedAgents[section] = strs
+				case "allowed_in_body":
+					s.allowedInBody[section] = strs
 				}
 				// silently skip other array keys
 			default:
@@ -147,17 +153,23 @@ func flattenInto(agentID string, table map[string]interface{}, s *Store) {
 			case int64:
 				s.agentValues[agentID][section+"."+key] = strconv.FormatInt(tv, 10)
 			case []interface{}:
-				if key == "allowed_hosts" {
-					hosts := make([]string, 0, len(tv))
-					for _, h := range tv {
-						if hs, ok := h.(string); ok {
-							hosts = append(hosts, hs)
-						}
+				strs := make([]string, 0, len(tv))
+				for _, h := range tv {
+					if hs, ok := h.(string); ok {
+						strs = append(strs, hs)
 					}
+				}
+				switch key {
+				case "allowed_hosts":
 					if s.agentHosts[agentID] == nil {
 						s.agentHosts[agentID] = make(map[string][]string)
 					}
-					s.agentHosts[agentID][section] = hosts
+					s.agentHosts[agentID][section] = strs
+				case "allowed_in_body":
+					if s.agentAllowedInBody[agentID] == nil {
+						s.agentAllowedInBody[agentID] = make(map[string][]string)
+					}
+					s.agentAllowedInBody[agentID][section] = strs
 				}
 			}
 		}
@@ -201,10 +213,24 @@ func (s *Store) ForAgent(agentID string) *Store {
 		}
 	}
 
+	// Same for allowedInBody: filter globals, overlay agent-specific
+	mergedAllowedInBody := make(map[string][]string, len(s.allowedInBody))
+	for k, v := range s.allowedInBody {
+		if s.agentAllowed(agentID, k) {
+			mergedAllowedInBody[k] = v
+		}
+	}
+	if s.agentAllowedInBody != nil {
+		for k, v := range s.agentAllowedInBody[agentID] {
+			mergedAllowedInBody[k] = v
+		}
+	}
+
 	return &Store{
-		values:       merged,
-		allowedHosts: mergedHosts,
-		blockedPaths: s.blockedPaths,
+		values:        merged,
+		allowedHosts:  mergedHosts,
+		allowedInBody: mergedAllowedInBody,
+		blockedPaths:  s.blockedPaths,
 	}
 }
 
@@ -271,7 +297,7 @@ func (s *Store) Save() error {
 	var buf strings.Builder
 
 	// Write global sections
-	secNames := sortedKeyUnion(keysOf(sections), keysOf(s.allowedHosts), keysOf(s.allowedAgents), keysOf(s.deniedAgents))
+	secNames := sortedKeyUnion(keysOf(sections), keysOf(s.allowedHosts), keysOf(s.allowedAgents), keysOf(s.deniedAgents), keysOf(s.allowedInBody))
 	for i, sec := range secNames {
 		if i > 0 {
 			buf.WriteByte('\n')
@@ -281,22 +307,28 @@ func (s *Store) Save() error {
 		writeStringArrayField(&buf, "allowed_hosts", s.allowedHosts[sec])
 		writeStringArrayField(&buf, "allowed_agents", s.allowedAgents[sec])
 		writeStringArrayField(&buf, "denied_agents", s.deniedAgents[sec])
+		writeStringArrayField(&buf, "allowed_in_body", s.allowedInBody[sec])
 	}
 
 	// Write [agents.*] sections
-	agentIDs := sortedKeyUnion(keysOf(s.agentValues), keysOf(s.agentHosts))
+	agentIDs := sortedKeyUnion(keysOf(s.agentValues), keysOf(s.agentHosts), keysOf(s.agentAllowedInBody))
 	for _, agentID := range agentIDs {
 		agentSections := flatKeysToSections(s.agentValues[agentID])
 		var agentHosts map[string][]string
 		if s.agentHosts != nil {
 			agentHosts = s.agentHosts[agentID]
 		}
-		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(agentHosts))
+		var agentBody map[string][]string
+		if s.agentAllowedInBody != nil {
+			agentBody = s.agentAllowedInBody[agentID]
+		}
+		subSecs := sortedKeyUnion(keysOf(agentSections), keysOf(agentHosts), keysOf(agentBody))
 		for _, sec := range subSecs {
 			buf.WriteByte('\n')
 			fmt.Fprintf(&buf, "[agents.%s.%s]\n", agentID, sec)
 			writeKeyValues(&buf, agentSections[sec])
 			writeStringArrayField(&buf, "allowed_hosts", agentHosts[sec])
+			writeStringArrayField(&buf, "allowed_in_body", agentBody[sec])
 		}
 	}
 
