@@ -29,7 +29,39 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *discordgo.Message) {
 	if b.tryIntercept(ctx, &qm) {
 		return
 	}
-	b.enqueue(qm)
+	b.mq.Enqueue(b.toPlatformMessage(msg, qm))
+}
+
+// toPlatformMessage converts a discord queuedMessage to a platform.QueuedMessage.
+func (b *Bot) toPlatformMessage(msg *discordgo.Message, qm queuedMessage) platform.QueuedMessage {
+	var atts []platform.Attachment
+	for _, a := range qm.attachments {
+		atts = append(atts, platform.Attachment{
+			MimeType:  a.mediaType,
+			Data:      a.data,
+			SavedPath: a.savedPath,
+		})
+	}
+
+	channelID, _ := strconv.ParseInt(msg.ChannelID, 10, 64)
+	isGroup := msg.GuildID != ""
+	isMention := isGroup && b.messageContainsMention(msg)
+
+	senderName := ""
+	if msg.Author != nil {
+		senderName = msg.Author.Username
+	}
+
+	return platform.QueuedMessage{
+		UserID:      qm.userID,
+		SenderName:  senderName,
+		Text:        qm.text,
+		Attachments: atts,
+		ChatID:      channelID,
+		IsGroupChat: isGroup,
+		IsMention:   isMention,
+		Original:    msg,
+	}
 }
 
 // buildReceivedMessage performs auth, text extraction, and attachment downloading.
@@ -164,28 +196,6 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	return false
 }
 
-// enqueue delivers the message to the steer buffer (if a turn is active and
-// steer mode is on) or to the main message queue.
-func (b *Bot) enqueue(qm queuedMessage) {
-	// Steer mode: if a turn is active, route text to the steer buffer
-	if b.display.SteerMode && qm.text != "" && len(qm.attachments) == 0 {
-		b.turnMu.Lock()
-		active := b.turnCancel != nil
-		b.turnMu.Unlock()
-		if active {
-			b.appendSteer(qm.text)
-			b.logger().Infof("steer: buffered message from %s", formatUserInfo(qm.msg.Author))
-			return
-		}
-	}
-
-	select {
-	case b.queue <- qm:
-	default:
-		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(qm.msg.Author))
-		b.sendReply(qm.msg, "Busy -- message queue is full. Try again shortly.")
-	}
-}
 
 // truncate is a package-local alias for toolformat.Truncate, used throughout
 // the discord package for log messages, stream previews, etc.

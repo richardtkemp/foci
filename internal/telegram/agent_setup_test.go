@@ -5,16 +5,23 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/platform"
 )
 
 func ptr[T any](v T) *T { return &v }
 
 // newBotForTest creates a Bot without connecting to the Telegram API.
 func newBotForTest() *Bot {
-	return &Bot{
-		log:             log.NewComponentLogger("telegram:test"),
-		queue:           make(chan queuedMessage, 64),
+	lg := log.NewComponentLogger("telegram:test")
+	b := &Bot{
+		log: lg,
 	}
+	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		TurnActive: b.isTurnActive,
+		Logger:     lg,
+	})
+	return b
 }
 
 func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {

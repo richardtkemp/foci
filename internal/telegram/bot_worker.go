@@ -7,6 +7,8 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/platform"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
 // agentWorker processes queued messages, batching any that arrive while busy.
@@ -15,22 +17,27 @@ func (b *Bot) agentWorker(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case qm := <-b.queue:
+		case qm := <-b.mq.Chan():
 			// Batch with any other immediately-available messages.
-			batch := append([]queuedMessage{qm}, b.drainQueue()...)
+			batch := append([]platform.QueuedMessage{qm}, b.mq.DrainQueue()...)
 			b.processAgentMessage(ctx, batch)
 
 			// After the turn: drain orphan steers + any newly queued messages.
 			// Loop because new steers/messages can arrive during processing.
 			for {
-				orphans := b.drainSteer()
-				extras := b.drainQueue()
+				orphans := b.mq.DrainSteer()
+				extras := b.mq.DrainQueue()
 				if len(orphans) == 0 && len(extras) == 0 {
 					break
 				}
-				var followUp []queuedMessage
+				var followUp []platform.QueuedMessage
 				for _, s := range orphans {
-					followUp = append(followUp, queuedMessage{msg: qm.msg, userID: qm.userID, text: s})
+					followUp = append(followUp, platform.QueuedMessage{
+						Original: qm.Original,
+						UserID:   qm.UserID,
+						Text:     s,
+						ChatID:   qm.ChatID,
+					})
 				}
 				followUp = append(followUp, extras...)
 				b.logger().Infof("steer: processing %d orphan(s) + %d queued as follow-up turn", len(orphans), len(extras))
@@ -40,28 +47,21 @@ func (b *Bot) agentWorker(ctx context.Context) {
 	}
 }
 
-// drainQueue non-blocking drains all immediately available messages from the queue.
-func (b *Bot) drainQueue() []queuedMessage {
-	var msgs []queuedMessage
-	for {
-		select {
-		case qm := <-b.queue:
-			msgs = append(msgs, qm)
-		default:
-			return msgs
-		}
-	}
-}
-
 // processAgentMessage handles a batched agent turn with a cancellable context.
 // Session key, typing indicator, and renderer are derived from batch[0].
-func (b *Bot) processAgentMessage(ctx context.Context, batch []queuedMessage) {
+func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMessage) {
 	first := batch[0]
+	origMsg, _ := first.Original.(*gotgbot.Message)
+	if origMsg == nil {
+		b.logger().Warnf("processAgentMessage: missing original message")
+		return
+	}
+
 	var sk string
 	if b.isSecondary {
 		sk = b.SessionKey()
 	} else if b.agentID != "" {
-		sk = b.sessionKeyForMsg(first.msg.Chat.Id)
+		sk = b.sessionKeyForMsg(first.ChatID)
 	} else {
 		sk = b.SessionKey()
 	}
@@ -89,13 +89,13 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []queuedMessage) {
 
 	// Send typing indicator and keep it alive throughout the agent turn.
 	// Telegram typing expires after ~5s, so we re-send every 4s.
-	_, _ = b.client.SendChatAction(first.msg.Chat.Id, "typing", nil)
+	_, _ = b.client.SendChatAction(first.ChatID, "typing", nil)
 	typingTicker := time.NewTicker(4 * time.Second)
 	go func() {
 		for {
 			select {
 			case <-typingTicker.C:
-				_, _ = b.client.SendChatAction(first.msg.Chat.Id, "typing", nil)
+				_, _ = b.client.SendChatAction(first.ChatID, "typing", nil)
 			case <-turnCtx.Done():
 				return
 			}
@@ -104,8 +104,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []queuedMessage) {
 	defer typingTicker.Stop()
 
 	d := b.resolveDisplay(sk)
-	tracker := newToolCallTracker(b, first.msg.Chat.Id, d)
-	renderer := newTurnRenderer(b, first.msg, tracker, d)
+	tracker := newToolCallTracker(b, first.ChatID, d)
+	renderer := newTurnRenderer(b, origMsg, tracker, d)
 	defer renderer.Cleanup()
 
 	cb := &agent.TurnCallbacks{
@@ -115,30 +115,31 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []queuedMessage) {
 		ToolResultObserver: tracker.ObserveToolResult,
 		ThinkingObserver:   renderer.OnThinking,
 		TextDeltaObserver:  renderer.OnTextDelta,
-		SteerCheckFunc:     b.drainSteer,
+		SteerCheckFunc:     b.mq.DrainSteer,
 		RetryNotifyFunc:    tracker.NotifyRetry,
 		RetrySuccessFunc:   tracker.ClearRetryNotification,
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
 	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
-		UserID:   first.userID,
-		Username: first.msg.From.Username,
-		ChatID:   first.msg.Chat.Id,
+		UserID:   first.UserID,
+		Username: origMsg.From.Username,
+		ChatID:   first.ChatID,
 	})
 
 	// Collect texts and attachments across the batch.
+	// Group chat messages get sender attribution.
 	var texts []string
 	var allAttachments []platform.Attachment
 	for _, qm := range batch {
-		texts = append(texts, qm.text)
-		for _, att := range qm.attachments {
-			allAttachments = append(allAttachments, platform.Attachment{
-				MimeType:  att.mediaType,
-				Data:      att.data,
-				SavedPath: att.savedPath,
-			})
+		text := qm.Text
+		if qm.IsGroupChat && qm.SenderName != "" {
+			text = fmt.Sprintf("[%s] %s", qm.SenderName, text)
+		} else if qm.IsGroupChat && qm.UserID != "" {
+			text = fmt.Sprintf("[user:%s] %s", qm.UserID, text)
 		}
+		texts = append(texts, text)
+		allAttachments = append(allAttachments, qm.Attachments...)
 	}
 
 	response, err := b.handler.HandleMessageWithAttachments(turnCtx, sk, texts, allAttachments)

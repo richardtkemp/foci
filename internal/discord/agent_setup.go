@@ -164,6 +164,25 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 	primaryBot.autoThread = autoThread
 
+	// Configure message queue with require_mention and throttle.
+	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
+	primaryBot.mq.SetSteerMode(acfg.SteerMode)
+
+	// Resolve group_throttle: per-agent > global defaults.
+	throttleStr := cfg.Defaults.GroupThrottle
+	if acfg.GroupThrottle != "" {
+		throttleStr = acfg.GroupThrottle
+	}
+	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
+		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
+			for _, m := range msgs {
+				primaryBot.mq.PushFlushed(m)
+			}
+		}, primaryBot.log)
+		primaryBot.mq.SetThrottle(gt)
+		log.Infof("discord", "agent %q: group throttle = %v", acfg.ID, dur)
+	}
+
 	primaryBot.SetCommandContext(p.CommandContext)
 
 	if p.SessionIndex != nil {
@@ -258,7 +277,6 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	} else {
 		d.InjectedMessageHeader = cfg.Defaults.InjectedMessageHeader
 	}
-	d.SteerMode = acfg.SteerMode
 	switch {
 	case dc != nil && dc.StreamOutput != nil:
 		d.StreamOutput = *dc.StreamOutput

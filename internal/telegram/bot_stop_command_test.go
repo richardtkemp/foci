@@ -30,7 +30,7 @@ func TestReceiveMessage_StopCancelsTurn(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should NOT be queued
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("/stop should not be queued")
 	}
 
@@ -60,7 +60,7 @@ func TestReceiveMessage_DotStopCancelsTurn(t *testing.T) {
 	msg := makeMsg(111, "owner", ".stop")
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error(".stop should not be queued")
 	}
 	if mock.sentCount() != 1 {
@@ -93,7 +93,7 @@ func TestReceiveMessage_StopAlias(t *testing.T) {
 	msg := makeMsg(111, "owner", "/wait")
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("/wait should not be queued")
 	}
 	if mock.sentCount() != 1 {
@@ -126,8 +126,8 @@ func TestReceiveMessage_StopAliasNotConfigured(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should get a suggestion reply (unknown command), not queued or treated as stop
-	if len(b.queue) != 0 {
-		t.Fatalf("expected 0 queued messages for unknown /wait, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 0 {
+		t.Fatalf("expected 0 queued messages for unknown /wait, got %d", len(b.mq.Chan()))
 	}
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 suggestion reply for unknown /wait, got %d", mock.sentCount())

@@ -67,17 +67,22 @@ func TestAgentWorker_OrphanDrainIsRecursive(t *testing.T) {
 	// was drained; the second remained in the buffer indefinitely.
 	handler := &mockHandler{}
 
+	lg := log.NewComponentLogger("telegram:test")
 	b := &Bot{
-		log:             log.NewComponentLogger("telegram:test"),
+		log:             lg,
 		client:          &mockClient{},
 		handler:         handler,
 		commands:        command.NewRegistry(),
 		lastMsgStore:    command.NewLastMessageStore(),
 		allowedUsers:    map[string]bool{"111": true},
 		sessionKey:      "agent:test:main",
-		queue:           make(chan queuedMessage, 64),
-		display:         BotDisplayConfig{SteerMode: true},
 	}
+	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		SteerMode:  true,
+		TurnActive: b.isTurnActive,
+		Logger:     lg,
+	})
 
 	// Wire up onCall now that b exists: inject orphan-2 during orphan-1 processing.
 	var once sync.Once
@@ -85,15 +90,15 @@ func TestAgentWorker_OrphanDrainIsRecursive(t *testing.T) {
 		if len(texts) > 0 && texts[0] == "orphan-1" {
 			once.Do(func() {
 				// Simulate a message arriving during orphan-1 processing.
-				// In production, the receiver goroutine calls appendSteer.
-				b.appendSteer("orphan-2")
+				// In production, the receiver goroutine calls AppendSteer.
+				b.mq.AppendSteer("orphan-2")
 			})
 		}
 	}
 
 	// Pre-load the steer buffer with orphan-1 (simulates a message that
 	// arrived during the queued turn but wasn't consumed by tool execution).
-	b.appendSteer("orphan-1")
+	b.mq.AppendSteer("orphan-1")
 
 	msg := &gotgbot.Message{
 		From: &gotgbot.User{Id: 111, Username: "testuser"},
@@ -111,7 +116,7 @@ func TestAgentWorker_OrphanDrainIsRecursive(t *testing.T) {
 		b.agentWorker(ctx)
 	}()
 
-	b.queue <- queuedMessage{msg: msg, userID: "111", text: "queued-msg"}
+	b.mq.PushFlushed(platform.QueuedMessage{Original: msg, UserID: "111", Text: "queued-msg", ChatID: 12345})
 
 	// Wait for all three handler calls.
 	deadline := time.After(5 * time.Second)
@@ -157,16 +162,21 @@ func TestAgentWorker_QueueBatching(t *testing.T) {
 		}
 	}
 
+	lg := log.NewComponentLogger("telegram:test")
 	b := &Bot{
-		log:             log.NewComponentLogger("telegram:test"),
+		log:             lg,
 		client:          &mockClient{},
 		handler:         handler,
 		commands:        command.NewRegistry(),
 		lastMsgStore:    command.NewLastMessageStore(),
 		allowedUsers:    map[string]bool{"111": true},
 		sessionKey:      "agent:test:main",
-		queue:           make(chan queuedMessage, 64),
 	}
+	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		TurnActive: b.isTurnActive,
+		Logger:     lg,
+	})
 
 	msg := &gotgbot.Message{
 		From: &gotgbot.User{Id: 111, Username: "testuser"},
@@ -185,13 +195,13 @@ func TestAgentWorker_QueueBatching(t *testing.T) {
 	}()
 
 	// Send first message — worker picks it up and blocks.
-	b.queue <- queuedMessage{msg: msg, userID: "111", text: "first"}
+	b.mq.PushFlushed(platform.QueuedMessage{Original: msg, UserID: "111", Text: "first", ChatID: 12345})
 	// Give the worker time to pick up the first message.
 	time.Sleep(50 * time.Millisecond)
 
 	// Queue two more messages while the first is being processed.
-	b.queue <- queuedMessage{msg: msg, userID: "111", text: "second"}
-	b.queue <- queuedMessage{msg: msg, userID: "111", text: "third"}
+	b.mq.PushFlushed(platform.QueuedMessage{Original: msg, UserID: "111", Text: "second", ChatID: 12345})
+	b.mq.PushFlushed(platform.QueuedMessage{Original: msg, UserID: "111", Text: "third", ChatID: 12345})
 
 	// Unblock the first call — worker will pick up "second" and "third"
 	// from the queue and batch them.

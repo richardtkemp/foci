@@ -19,7 +19,7 @@ func TestReceiveMessage_RejectsUnauthorizedUser(t *testing.T) {
 	if mock.sentCount() != 0 {
 		t.Error("should not send reply to unauthorized user")
 	}
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("should not queue message from unauthorized user")
 	}
 }
@@ -33,15 +33,15 @@ func TestReceiveMessage_AcceptsAuthorizedUser(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should be queued for the agent
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
-	if qm.text != "hello world" {
-		t.Errorf("queued text = %q, want %q", qm.text, "hello world")
+	qm := <-b.mq.Chan()
+	if qm.Text != "hello world" {
+		t.Errorf("queued text = %q, want %q", qm.Text, "hello world")
 	}
-	if qm.userID != "111" {
-		t.Errorf("queued userID = %q, want %q", qm.userID, "111")
+	if qm.UserID != "111" {
+		t.Errorf("queued userID = %q, want %q", qm.UserID, "111")
 	}
 }
 
@@ -56,7 +56,7 @@ func TestReceiveMessage_IgnoresEmptyText(t *testing.T) {
 	if mock.sentCount() != 0 {
 		t.Error("should not send reply to empty message")
 	}
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("should not queue empty message")
 	}
 }

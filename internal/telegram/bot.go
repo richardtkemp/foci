@@ -79,11 +79,11 @@ type Bot struct {
 	transcriber voice.STT // nil = voice notes not supported
 	tts         voice.TTS // nil = TTS not available
 
-	queue          chan queuedMessage // receiver → agent worker
-	turnCancel     context.CancelFunc // cancel the current agent turn
-	turnMu         sync.Mutex         // protects turnCancel
-	chatID         int64              // last known chat ID (for notifications)
-	chatMu     sync.Mutex
+	mq             *platform.MessageQueue // shared message queue (receiver → agent worker)
+	turnCancel     context.CancelFunc     // cancel the current agent turn
+	turnMu         sync.Mutex             // protects turnCancel
+	chatID         int64                  // last known chat ID (for notifications)
+	chatMu         sync.Mutex
 
 	sessionIndex platform.SessionIndex // nil = no session key persistence across restarts
 	chatmeta     *chatmeta.Resolver   // shared session key management
@@ -93,13 +93,12 @@ type Bot struct {
 	thinkingStore sync.Map       // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite
 
-	steerMu    sync.Mutex // protects steerParts
-	steerParts []string   // pending steer messages; drained atomically
-
 	pendingNotifsMu sync.Mutex // protects pendingNotifs
 	pendingNotifs   []string   // notifications buffered during active turns; drained after turn ends
 
 	displayOverrideFn DisplayOverrideFn // per-session display override callback; nil = use bot defaults
+
+	requireMention bool // require @mention in group chats (Telegram)
 }
 
 // BotDisplayConfig groups all display-related settings. Write-once at startup
@@ -117,7 +116,6 @@ type BotDisplayConfig struct {
 	MessagesInLog         bool          // log user message content to event log
 	ReceivedFilesDir      string        // if non-empty, save received files to this directory
 	InjectedMessageHeader string        // prepended to injected (system) messages; empty disables
-	SteerMode             bool          // user messages route to buffer during active turns
 }
 
 // resolveDisplay snapshots all display settings for a turn with the given session key.
@@ -205,23 +203,28 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 	}
 
 	lg := log.NewComponentLogger("telegram:" + agentID)
-	return &Bot{
-		log:             lg,
-		api:             api,
-		client:          api,
-		handler:         handler,
-		commands:        cmds,
-		lastMsgStore:    lastMsgStore,
-		allowedUsers:    allowed,
-		agentID:         agentID,
-		botToken:        token,
-		queue:           make(chan queuedMessage, 64),
+	bot := &Bot{
+		log:          lg,
+		api:          api,
+		client:       api,
+		handler:      handler,
+		commands:     cmds,
+		lastMsgStore: lastMsgStore,
+		allowedUsers: allowed,
+		agentID:      agentID,
+		botToken:     token,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,
 			Logger:       func() *log.ComponentLogger { return lg },
 		},
-	}, nil
+	}
+	bot.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		TurnActive: bot.isTurnActive,
+		Logger:     lg,
+	})
+	return bot, nil
 }
 
 // SetTranscriber sets the STT provider for inbound voice notes.
@@ -263,24 +266,33 @@ func (b *Bot) streamInterval() time.Duration {
 	return 250 * time.Millisecond
 }
 
-// appendSteer adds text to the steer buffer. Called by the receiver goroutine.
-func (b *Bot) appendSteer(text string) {
-	b.steerMu.Lock()
-	b.steerParts = append(b.steerParts, text)
-	b.steerMu.Unlock()
+// isTurnActive returns true if an agent turn is currently in progress.
+func (b *Bot) isTurnActive() bool {
+	b.turnMu.Lock()
+	active := b.turnCancel != nil
+	b.turnMu.Unlock()
+	return active
 }
 
-// drainSteer returns all pending steer parts and clears the buffer.
-// Called by the agent loop via SteerCheckFunc. Returns nil if no messages are pending.
-func (b *Bot) drainSteer() []string {
-	b.steerMu.Lock()
-	defer b.steerMu.Unlock()
-	if len(b.steerParts) == 0 {
-		return nil
+// messageContainsMention returns true if the message @mentions the bot.
+func (b *Bot) messageContainsMention(msg *gotgbot.Message) bool {
+	if b.api == nil || b.api.User.Id == 0 {
+		return false
 	}
-	parts := b.steerParts
-	b.steerParts = nil
-	return parts
+	botUsername := b.api.User.Username
+	botUserID := b.api.User.Id
+	for _, entity := range msg.Entities {
+		if entity.Type == "mention" && botUsername != "" {
+			mentioned := msg.Text[entity.Offset : entity.Offset+entity.Length]
+			if mentioned == "@"+botUsername {
+				return true
+			}
+		}
+		if entity.Type == "text_mention" && entity.User != nil && entity.User.Id == botUserID {
+			return true
+		}
+	}
+	return false
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.

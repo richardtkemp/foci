@@ -58,7 +58,7 @@ type Bot struct {
 	transcriber voice.STT
 	tts         voice.TTS
 
-	queue      chan queuedMessage
+	mq         *platform.MessageQueue // shared message queue (receiver → agent worker)
 	turnCancel context.CancelFunc
 	turnMu     sync.Mutex
 	channelID  int64 // last known channel ID (stored as int64 from snowflake)
@@ -71,9 +71,6 @@ type Bot struct {
 	toolResults     sync.Map         // message ID (int64) -> toolResultEntry; for button expansion
 	thinkingStore   sync.Map         // message ID (int64) -> thinkingEntry; ephemeral
 	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite
-
-	steerMu    sync.Mutex // protects steerParts
-	steerParts []string   // pending steer messages; drained atomically
 
 	pendingNotifsMu sync.Mutex // protects pendingNotifs
 	pendingNotifs   []string   // notifications buffered during active turns; drained after turn ends
@@ -100,7 +97,6 @@ type BotDisplayConfig struct {
 	MessagesInLog         bool          // log user message content to event log
 	ReceivedFilesDir      string        // if non-empty, save received files to this directory
 	InjectedMessageHeader string        // prepended to injected (system) messages; empty disables
-	SteerMode             bool          // user messages route to buffer during active turns
 }
 
 // resolveDisplay snapshots all display settings for a turn with the given session key.
@@ -170,21 +166,26 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 	}
 
 	lg := log.NewComponentLogger("discord:" + agentID)
-	return &Bot{
-		log:             lg,
-		session:         dg,
-		handler:         handler,
-		commands:        cmds,
-		lastMsgStore:    lastMsgStore,
-		allowedUsers:    allowed,
-		agentID:         agentID,
-		queue:           make(chan queuedMessage, 64),
+	bot := &Bot{
+		log:          lg,
+		session:      dg,
+		handler:      handler,
+		commands:     cmds,
+		lastMsgStore: lastMsgStore,
+		allowedUsers: allowed,
+		agentID:      agentID,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,
 			Logger:       func() *log.ComponentLogger { return lg },
 		},
 	}
+	bot.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		TurnActive: bot.isTurnActive,
+		Logger:     lg,
+	})
+	return bot
 }
 
 // SetTranscriber sets the STT provider for inbound voice notes.
@@ -220,24 +221,12 @@ func (b *Bot) streamInterval() time.Duration {
 	return 1200 * time.Millisecond
 }
 
-// appendSteer adds text to the steer buffer. Called by the receiver goroutine.
-func (b *Bot) appendSteer(text string) {
-	b.steerMu.Lock()
-	b.steerParts = append(b.steerParts, text)
-	b.steerMu.Unlock()
-}
-
-// drainSteer returns all pending steer parts and clears the buffer.
-// Called by the agent loop via SteerCheckFunc. Returns nil if no messages are pending.
-func (b *Bot) drainSteer() []string {
-	b.steerMu.Lock()
-	defer b.steerMu.Unlock()
-	if len(b.steerParts) == 0 {
-		return nil
-	}
-	parts := b.steerParts
-	b.steerParts = nil
-	return parts
+// isTurnActive returns true if an agent turn is currently in progress.
+func (b *Bot) isTurnActive() bool {
+	b.turnMu.Lock()
+	active := b.turnCancel != nil
+	b.turnMu.Unlock()
+	return active
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.

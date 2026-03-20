@@ -75,13 +75,6 @@ func (b *Bot) onMessageCreate(ctx context.Context, m *discordgo.MessageCreate) {
 		return
 	}
 
-	// In guild channels (non-DM), require @mention if configured
-	if b.requireMention && m.GuildID != "" {
-		if !b.messageContainsMention(m.Message) {
-			return
-		}
-	}
-
 	b.receiveMessage(ctx, m.Message)
 }
 

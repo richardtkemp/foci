@@ -27,7 +27,7 @@ func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
 	}
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("/done should not be queued")
 	}
 }
@@ -83,7 +83,7 @@ func TestReceiveMessage_IdleSecondaryBot(t *testing.T) {
 	if mock.sentCount() != 0 {
 		t.Fatalf("expected 0 sent messages (silent drop), got %d", mock.sentCount())
 	}
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("idle secondary bot should not queue messages")
 	}
 }
@@ -99,7 +99,7 @@ func TestReceiveMessage_SecondaryBotWithSession(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should queue normally when session is assigned
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
 }

@@ -5,30 +5,29 @@ import (
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 )
 
 func TestReceiveMessage_QueueFull(t *testing.T) {
 	// Verifies that when the message queue is full,
-	// new messages are dropped and a reply is sent to the user.
-	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	// new messages are dropped (the mq logs a warning internally).
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	// Fill the queue
-	b.queue = make(chan queuedMessage, 2)
-	b.queue <- queuedMessage{msg: makeMsg(111, "owner", "msg1"), text: "msg1"}
-	b.queue <- queuedMessage{msg: makeMsg(111, "owner", "msg2"), text: "msg2"}
+	// Replace the default mq with a tiny one (size=2)
+	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       2,
+		TurnActive: b.isTurnActive,
+	})
+	b.mq.PushFlushed(platform.QueuedMessage{UserID: "111", Text: "msg1", ChatID: 12345})
+	b.mq.PushFlushed(platform.QueuedMessage{UserID: "111", Text: "msg2", ChatID: 12345})
 
-	// Next message should be dropped
+	// Next message should be dropped (queue full, Enqueue drops silently)
 	msg := makeMsg(111, "owner", "msg3 overflow")
 	b.receiveMessage(context.Background(), msg)
 
-	// Should have sent a "queue full" reply
-	if mock.sentCount() != 1 {
-		t.Fatalf("expected 1 sent message for queue full, got %d", mock.sentCount())
-	}
-
 	// Queue should still have exactly 2
-	if len(b.queue) != 2 {
-		t.Errorf("queue should still have 2 messages, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 2 {
+		t.Errorf("queue should still have 2 messages, got %d", len(b.mq.Chan()))
 	}
 }
 
@@ -41,7 +40,7 @@ func TestReceiveMessage_MultipleUsersAllowed(t *testing.T) {
 	b.receiveMessage(context.Background(), makeMsg(222, "user2", "world"))
 	b.receiveMessage(context.Background(), makeMsg(333, "user3", "rejected"))
 
-	if len(b.queue) != 2 {
-		t.Errorf("expected 2 queued messages, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 2 {
+		t.Errorf("expected 2 queued messages, got %d", len(b.mq.Chan()))
 	}
 }

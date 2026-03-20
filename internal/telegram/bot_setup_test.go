@@ -8,6 +8,7 @@ import (
 	"foci/internal/chatmeta"
 	"foci/internal/command"
 	"foci/internal/log"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -145,18 +146,24 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 	for _, u := range allowedUsers {
 		allowed[u] = true
 	}
+	lg := log.NewComponentLogger("telegram:test")
 	b := &Bot{
-		client:          mock,
-		commands:        cmds,
-		lastMsgStore:    command.NewLastMessageStore(),
-		allowedUsers:    allowed,
-		sessionKey:      "agent:test:main",
-		queue:           make(chan queuedMessage, 64),
+		log:          lg,
+		client:       mock,
+		commands:     cmds,
+		lastMsgStore: command.NewLastMessageStore(),
+		allowedUsers: allowed,
+		sessionKey:   "agent:test:main",
 		chatmeta: &chatmeta.Resolver{
 			PlatformName: platformName,
 			Logger:       func() *log.ComponentLogger { return defaultLogger },
 		},
 	}
+	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		TurnActive: b.isTurnActive,
+		Logger:     lg,
+	})
 	b.dispatcher = NewDispatcher(cmds, command.CommandContext{}, "test")
 	return b, mock
 }
