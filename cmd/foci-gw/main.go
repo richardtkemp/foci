@@ -263,6 +263,7 @@ Subcommands:
 			store:               sec.store,
 			bwStore:             sec.bwStore,
 			memBackends:         agentBackends,
+			convReader:          mem.convReader,
 			reminderStore:       mem.reminderStores[acfg.ID],
 			scratchpadStore:     mem.scratchpadStores[acfg.ID],
 			todoStore:           mem.todoStores[acfg.ID],

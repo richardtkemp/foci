@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -578,6 +579,16 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 		}
 		if mtime, ok := hit.Fields["mtime"].(float64); ok && mtime > 0 {
 			r.Time = time.Unix(int64(mtime), 0)
+		}
+		// Parse row ID from bleve doc ID: "conversation:{session}:{rowID}"
+		if source == "conversation" {
+			if trimmed := strings.TrimPrefix(hit.ID, "conversation:"); trimmed != hit.ID {
+				if lastColon := strings.LastIndex(trimmed, ":"); lastColon > 0 {
+					if id, err := strconv.ParseInt(trimmed[lastColon+1:], 10, 64); err == nil {
+						r.RowID = id
+					}
+				}
+			}
 		}
 		results = append(results, r)
 	}

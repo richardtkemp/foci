@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/memory"
+	"foci/internal/sqlite"
 )
 
 func testMemoryTool(t *testing.T) (*Tool, string) {
@@ -29,7 +31,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 	t.Cleanup(func() { idx.Close() })
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	return NewMemorySearchTool(backends, []string{"fts5"}), memDir
+	return NewMemorySearchTool(backends, []string{"fts5"}, nil), memDir
 }
 
 func TestMemorySearch(t *testing.T) {
@@ -49,7 +51,7 @@ func TestMemorySearch(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool2 := NewMemorySearchTool(backends, []string{"fts5"})
+	tool2 := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 	params, _ := json.Marshal(map[string]string{"query": "buy"})
 
 	result, err := tool2.Execute(context.Background(), params)
@@ -82,7 +84,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 	params, _ := json.Marshal(map[string]string{"query": "xyzzy"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -124,7 +126,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx.IndexConversation("We talked about the weather yesterday", "main/i0/0", 1)
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 	params, _ := json.Marshal(map[string]string{"query": "weather"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -156,7 +158,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 
 	// Test with sort=newest
 	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "newest"})
@@ -231,7 +233,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 		"fts5":  fts5Idx,
 		"bleve": bleveIdx,
 	}
-	tool := NewMemorySearchTool(backends, []string{"fts5", "bleve"})
+	tool := NewMemorySearchTool(backends, []string{"fts5", "bleve"}, nil)
 
 	// Tool schema should include "backend" parameter when multiple backends
 	schemaStr := string(tool.Parameters)
@@ -288,7 +290,7 @@ func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
 
 	// Single backend — schema should NOT include "backend" parameter
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 
 	schemaStr := string(tool.Parameters)
 	if strings.Contains(schemaStr, "backend") {
@@ -315,7 +317,7 @@ func TestMemorySearchExcludesCurrentSession(t *testing.T) {
 	idx.IndexConversation("The platypus lays eggs unlike most mammals", otherSession, 2)
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 	params, _ := json.Marshal(map[string]string{"query": "platypus"})
 
 	// Search WITH session context — should exclude current session
@@ -368,7 +370,7 @@ func TestMemorySearchDateRange(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 
 	// Search without date filter should find both
 	params, _ := json.Marshal(map[string]string{"query": "project"})
@@ -426,7 +428,7 @@ func TestMemorySearchDateRangeInvalid(t *testing.T) {
 	defer idx.Close()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"})
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
 
 	// Invalid date_from format
 	params, _ := json.Marshal(map[string]string{"query": "test", "date_from": "2024/01/15"})
@@ -446,5 +448,209 @@ func TestMemorySearchDateRangeInvalid(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "date_to") {
 		t.Errorf("error should mention date_to: %v", err)
+	}
+}
+
+func TestMemorySearchBleveRowID(t *testing.T) {
+	// Verifies that bleve conversation results include the row ID in output (session#rowID format).
+	t.Parallel()
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+
+	sources := map[string]memory.SourceConfig{
+		"memory": {Dir: memDir, Weight: 1.0},
+	}
+	bleveIdx, err := memory.NewBleveIndex(filepath.Join(dir, "search.bleve"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer bleveIdx.Close()
+
+	bleveIdx.IndexConversation("The platypus is an unusual creature", "agent/c100/1000", 42)
+	// Allow bleve to process
+	time.Sleep(50 * time.Millisecond)
+
+	backends := map[string]memory.Searcher{"bleve": bleveIdx}
+	tool := NewMemorySearchTool(backends, []string{"bleve"}, nil)
+	params, _ := json.Marshal(map[string]string{"query": "platypus"})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should include session#rowID in the output
+	if !strings.Contains(result.Text, "agent/c100/1000#42") {
+		t.Errorf("expected session#rowID in result, got: %q", result.Text)
+	}
+}
+
+// setupConversationDB creates a conversation DB with test messages and returns the path.
+func setupConversationDB(t *testing.T, dir, agentID, session string, messages []string) string {
+	t.Helper()
+	dbDir := filepath.Join(dir, agentID, ".data")
+	os.MkdirAll(dbDir, 0755)
+	dbPath := filepath.Join(dbDir, "conversation.db")
+
+	db, err := sqlite.OpenInit(dbPath, `CREATE TABLE IF NOT EXISTS messages (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts         TEXT    NOT NULL,
+		direction  TEXT    NOT NULL,
+		user_id    TEXT    NOT NULL,
+		username   TEXT    NOT NULL,
+		chat_id    INTEGER NOT NULL,
+		text       TEXT    NOT NULL,
+		parse_mode TEXT,
+		session    TEXT,
+		error      TEXT
+	)`)
+	if err != nil {
+		t.Fatalf("create conversation db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	baseTime := time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)
+	for i, msg := range messages {
+		ts := baseTime.Add(time.Duration(i) * time.Minute).Format(time.RFC3339Nano)
+		_, err := db.Exec(
+			`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, parse_mode, session, error)
+			 VALUES (?, 'recv', 'u1', 'user', 100, ?, '', ?, '')`,
+			ts, msg, session,
+		)
+		if err != nil {
+			t.Fatalf("insert message: %v", err)
+		}
+	}
+	return dbPath
+}
+
+func TestMemorySearchDirectLookup(t *testing.T) {
+	// Verifies that using "session#rowID" as query triggers direct conversation lookup
+	// and returns surrounding messages with the target marked.
+	t.Parallel()
+	dir := t.TempDir()
+	session := "testagent/c100/1000"
+	messages := []string{
+		"first message",
+		"second message",
+		"the important message about permissions",
+		"fourth message",
+		"fifth message",
+	}
+	dbPath := setupConversationDB(t, dir, "testagent", session, messages)
+
+	convReader := memory.NewConversationReader(map[string]string{
+		"testagent": dbPath,
+	})
+
+	// Create a minimal tool — backends aren't used for direct lookup
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	sources := map[string]memory.SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, _ := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
+	defer idx.Close()
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, convReader)
+
+	// Row 3 is "the important message about permissions"
+	params, _ := json.Marshal(map[string]string{"query": fmt.Sprintf("%s#3", session)})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should contain the target message marked with »
+	if !strings.Contains(result.Text, "» "+session+"#3") {
+		t.Errorf("expected target message marked with », got: %q", result.Text)
+	}
+	// Should contain surrounding messages
+	if !strings.Contains(result.Text, "permissions") {
+		t.Errorf("expected matched message content, got: %q", result.Text)
+	}
+	// Default lines=10, so should include other messages
+	if !strings.Contains(result.Text, "first message") {
+		t.Errorf("expected surrounding context messages, got: %q", result.Text)
+	}
+}
+
+func TestMemorySearchLinesParam(t *testing.T) {
+	// Verifies that the lines parameter adds inline conversation context to search results.
+	t.Parallel()
+	dir := t.TempDir()
+	session := "testagent/c100/1000"
+	messages := []string{
+		"the weather was nice",
+		"we discussed the weather forecast",
+		"then talked about weather patterns",
+		"weather prediction is hard",
+		"last message about weather",
+	}
+	dbPath := setupConversationDB(t, dir, "testagent", session, messages)
+
+	convReader := memory.NewConversationReader(map[string]string{
+		"testagent": dbPath,
+	})
+
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	sources := map[string]memory.SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+
+	// Use bleve so we get RowIDs
+	bleveIdx, err := memory.NewBleveIndex(filepath.Join(dir, "search.bleve"), sources, 0, 0.1)
+	if err != nil {
+		t.Fatalf("NewBleveIndex: %v", err)
+	}
+	defer bleveIdx.Close()
+
+	// Index conversations with matching row IDs
+	for i, msg := range messages {
+		bleveIdx.IndexConversation(msg, session, int64(i+1))
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	backends := map[string]memory.Searcher{"bleve": bleveIdx}
+	tool := NewMemorySearchTool(backends, []string{"bleve"}, convReader)
+
+	// Search with lines=4 to get context
+	params, _ := json.Marshal(map[string]interface{}{
+		"query": "forecast",
+		"lines": 4,
+	})
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Should have the search result line
+	if !strings.Contains(result.Text, "[conversation") {
+		t.Errorf("expected conversation result, got: %q", result.Text)
+	}
+	// Should have context lines with » marking the matched message
+	if !strings.Contains(result.Text, "»") {
+		t.Errorf("expected » marker in context, got: %q", result.Text)
+	}
+}
+
+func TestMemorySearchDirectLookupNoReader(t *testing.T) {
+	// Verifies that direct lookup without a ConversationReader returns a clear error.
+	t.Parallel()
+	dir := t.TempDir()
+	memDir := filepath.Join(dir, "memory")
+	os.MkdirAll(memDir, 0755)
+	sources := map[string]memory.SourceConfig{"memory": {Dir: memDir, Weight: 1.0}}
+	idx, _ := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
+	defer idx.Close()
+
+	backends := map[string]memory.Searcher{"fts5": idx}
+	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+
+	params, _ := json.Marshal(map[string]string{"query": "agent/c100/1000#42"})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Error("expected error for direct lookup without ConversationReader")
+	}
+	if !strings.Contains(err.Error(), "conversation context not available") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

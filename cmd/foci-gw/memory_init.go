@@ -49,6 +49,7 @@ type memoryResult struct {
 	agentFTS5       map[string]*memory.Index              // for conversation hook (per-agent mode)
 	sharedBleve     *memory.BleveIndex                    // for conversation hook (shared mode)
 	agentBleve      map[string]*memory.BleveIndex         // for conversation hook (per-agent mode)
+	convReader      *memory.ConversationReader             // for conversation context lookup
 	reminderStores  map[string]*memory.ReminderStore
 	scratchpadStores map[string]*memory.Scratchpad
 	todoStores      map[string]*memory.TodoStore
@@ -304,6 +305,13 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			}
 		}
 	}
+
+	// Build ConversationReader for context lookup around search results.
+	convDBPaths := make(map[string]string)
+	for _, acfg := range cfg.Agents {
+		convDBPaths[acfg.ID] = config.AgentDataPath(acfg.Workspace, "conversation.db")
+	}
+	result.convReader = memory.NewConversationReader(convDBPaths)
 
 	// Backfill historical conversations into bleve indices.
 	// Runs in a goroutine to avoid blocking startup.
