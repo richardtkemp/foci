@@ -13,7 +13,7 @@ Both run on a single goroutine per agent with ~30-second ticks. Neither fires du
 
 ## Keepalive
 
-The keepalive keeps the prompt cache warm. For Anthropic, the cache TTL is ~1 hour and the default interval is 55 minutes. For OpenAI and DeepSeek models, keepalive is auto-detected via the model's `enable_keepalive` setting in `[models.*]` config — these models have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s (95% of TTL). Auto-detection can be overridden with explicit `enable_keepalive = false` or a custom `prompt_cache_ttl` in the model config.
+The keepalive keeps the prompt cache warm. For Anthropic, the cache TTL is ~1 hour and the default interval is 55 minutes. For OpenAI and DeepSeek models, keepalive is auto-detected by developer name — these models have a 5-minute prompt cache TTL, so keepalive fires every ~4m45s (95% of TTL).
 
 When the keepalive fires, it creates a branch session from the agent's default session. The branch shares the parent's cache prefix, so the API call warms the cache for the next real interaction. The branch runs with `no_compact` (returns immediately if context limit is hit) and does no real work.
 

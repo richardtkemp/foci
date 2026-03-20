@@ -6,7 +6,7 @@ Foci uses model groups to route different tasks to different models. This guide 
 
 ## Model Groups
 
-Group assignments are configured in `[groups]`, and per-model settings in `[models.*]`. Three groups are available:
+Group assignments are configured in `[groups]` using `developer/model_id` strings. Three groups are available:
 
 | Group | Purpose | Default call sites |
 |-------|---------|-------------------|
@@ -18,23 +18,12 @@ Group assignments are configured in `[groups]`, and per-model settings in `[mode
 
 ```toml
 [groups]
-powerful = "opus"           # model name — see [models.*] below
-fast = "sonnet"
-cheap = "haiku"
-
-[models.opus]
-model = "anthropic/claude-opus-4-6"
-thinking = "adaptive"
-effort = "low"
-
-[models.sonnet]
-model = "anthropic/claude-sonnet-4-6"
-
-[models.haiku]
-model = "anthropic/claude-haiku-4-5-20251001"
+powerful = "anthropic/claude-opus-4-6"
+fast = "anthropic/claude-sonnet-4-6"
+cheap = "anthropic/claude-haiku-4-5-20251001"
 ```
 
-Models use `developer/model_id` format in their `model` field. The developer prefix determines the API endpoint and wire format:
+Models use `developer/model_id` format. The developer prefix determines the API endpoint and wire format:
 
 | Developer | Wire format | Default endpoint |
 |-----------|-------------|------------------|
@@ -80,44 +69,6 @@ Keys are call site names, values are group names (`powerful`, `fast`, `cheap`).
 
 ---
 
-## Named Models
-
-Named models are defined in `[models.*]` sections. Each entry maps a short name to a `developer/model_id` with optional per-model settings:
-
-```toml
-[models.opus]
-model = "anthropic/claude-opus-4-6"
-thinking = "adaptive"
-effort = "low"
-
-[models.sonnet]
-model = "anthropic/claude-sonnet-4-6"
-thinking = "adaptive"
-
-[models.flash]
-model = "google/gemini-2.5-flash"
-thinking = "adaptive"
-
-[models.deepseek]
-model = "deepseek/deepseek-chat"
-# enable_keepalive auto-detected (5m prompt cache TTL)
-```
-
-Per-model settings:
-
-| Key | Description |
-|-----|-------------|
-| `model` | Full `developer/model_id` string (required) |
-| `thinking` | `"adaptive"` or `"off"` |
-| `effort` | `"low"`, `"medium"`, `"high"` |
-| `speed` | `"fast"` or `""` (Opus only) |
-| `enable_keepalive` | `nil` (auto-detect), `true`, `false` |
-| `prompt_cache_ttl` | Go duration (e.g. `"5m"`) for keepalive interval |
-
-Model names are used everywhere models are accepted: `[groups]`, `/model` command, `--model` CLI flag, and the spawn tool's `model` parameter. Raw `developer/model_id` strings also work (without per-model settings).
-
----
-
 ## Runtime Overrides
 
 ### `/model` command (Telegram)
@@ -125,9 +76,8 @@ Model names are used everywhere models are accepted: `[groups]`, `/model` comman
 Switch the session model interactively:
 
 ```
-/model opus          # switch to alias
-/model anthropic/claude-opus-4-6   # switch to full model ID
-/model               # show current model
+/model anthropic/claude-opus-4-6   # switch to a specific model
+/model                              # show current model
 ```
 
 ### `--model` CLI flag
@@ -136,11 +86,11 @@ Override the model for a single `send` or `branch` request:
 
 ```bash
 foci send --model fast "summarize this"
-foci send -m opus "think carefully about this"
-foci branch --model haiku "quick task"
+foci send -m anthropic/claude-opus-4-6 "think carefully about this"
+foci branch --model anthropic/claude-haiku-4-5 "quick task"
 ```
 
-The value can be a group name (`powerful`, `fast`, `cheap`), an alias (`opus`, `haiku`), or a full `developer/model_id`.
+The value can be a group name (`powerful`, `fast`, `cheap`) or a `developer/model_id` string.
 
 Env var: `FOCI_MODEL` (flag takes precedence).
 
@@ -149,7 +99,7 @@ Env var: `FOCI_MODEL` (flag takes precedence).
 Agents can specify a model when spawning sub-agents:
 
 ```json
-{"tool": "spawn", "input": {"mode": "raw", "model": "haiku", "task": "..."}}
+{"tool": "spawn", "input": {"mode": "raw", "model": "anthropic/claude-haiku-4-5", "task": "..."}}
 ```
 
 ---
@@ -158,11 +108,9 @@ Agents can specify a model when spawning sub-agents:
 
 When a model value is provided (via config, command, or flag), resolution follows these steps:
 
-1. **Named model lookup** — if the value matches a key in `[models.*]`, the `ModelConfig` is loaded (providing `model`, `thinking`, `effort`, `speed`, `enable_keepalive`, `prompt_cache_ttl`)
-2. **Parse** — split the `model` field (or raw string) on `/` into `developer` and `model_id` (error if no slash)
-3. **Wire format** — inferred from developer: `anthropic` → anthropic, `google`/`gemini` → gemini, `openai` → openai, others → openai (universal fallback)
-4. **Endpoint** — auto-selected from developer (`anthropic` → anthropic endpoint, `google` → gemini endpoint, others → openrouter), or explicitly set via `endpoint` config
-5. **Per-model settings** — `ResolvedModel` carries thinking, effort, speed, enable_keepalive, and prompt_cache_ttl from the `ModelConfig`
+1. **Parse** — split the `developer/model_id` string on `/` into `developer` and `model_id` (error if no slash)
+2. **Wire format** — inferred from developer: `anthropic` → anthropic, `google`/`gemini` → gemini, `openai` → openai, others → openai (universal fallback)
+3. **Endpoint** — auto-selected from developer (`anthropic` → anthropic endpoint, `google` → gemini endpoint, others → openrouter), or explicitly set via `endpoint` config
 
 For `--model` flag and `/model` command, the override is per-session: it applies to the target session and persists across restarts (stored in SessionIndex). Group names (`powerful`, `fast`, `cheap`) are resolved to their configured model before applying.
 
@@ -174,52 +122,28 @@ For `--model` flag and `/model` command, the override is per-session: it applies
 
 ```toml
 [groups]
-powerful = "sonnet"
-
-[models.sonnet]
-model = "anthropic/claude-sonnet-4-6"
+powerful = "anthropic/claude-sonnet-4-6"
 ```
 
 ### Cost optimization
 
 ```toml
 [groups]
-powerful = "opus"
-fast = "sonnet"
-cheap = "haiku"
+powerful = "anthropic/claude-opus-4-6"
+fast = "anthropic/claude-sonnet-4-6"
+cheap = "anthropic/claude-haiku-4-5-20251001"
 
 [groups.calls]
 compaction = "cheap"       # compaction doesn't need the powerful model
-
-[models.opus]
-model = "anthropic/claude-opus-4-6"
-thinking = "adaptive"
-effort = "low"
-
-[models.sonnet]
-model = "anthropic/claude-sonnet-4-6"
-
-[models.haiku]
-model = "anthropic/claude-haiku-4-5-20251001"
 ```
 
 ### Mixed developers
 
 ```toml
 [groups]
-powerful = "opus"
-fast = "sonnet"
-cheap = "flash"            # use Gemini Flash for cheap tasks
-
-[models.opus]
-model = "anthropic/claude-opus-4-6"
-
-[models.sonnet]
-model = "anthropic/claude-sonnet-4-6"
-
-[models.flash]
-model = "google/gemini-2.5-flash"
-thinking = "adaptive"
+powerful = "anthropic/claude-opus-4-6"
+fast = "anthropic/claude-sonnet-4-6"
+cheap = "google/gemini-2.5-flash"    # use Gemini Flash for cheap tasks
 ```
 
 ### Custom endpoint
@@ -231,10 +155,7 @@ url = "http://localhost:8080/v1"
 api_key = "local.api_key"
 
 [groups]
-powerful = "local"
-
-[models.local]
-model = "local/my-model"
+powerful = "local/my-model"
 ```
 
 ### CLI override examples
@@ -244,7 +165,7 @@ model = "local/my-model"
 foci send --model fast "what time is it?"
 
 # Use a specific model for a branch
-foci branch -m opus --oneshot "deep analysis task"
+foci branch -m anthropic/claude-opus-4-6 --oneshot "deep analysis task"
 
 # Set via environment for cron
 FOCI_MODEL=cheap foci send "routine check"
@@ -254,6 +175,6 @@ FOCI_MODEL=cheap foci send "routine check"
 
 ## See Also
 
-- [CONFIG.md](CONFIG.md) — full configuration reference (`[groups]`, `[models.*]`, `[endpoints]`)
+- [CONFIG.md](CONFIG.md) — full configuration reference (`[groups]`, `[endpoints]`)
 - [CLI.md](CLI.md) — CLI command reference (`--model` flag)
 - [WIRING.md](WIRING.md) — architecture and startup flow

@@ -116,7 +116,7 @@ Manage tmux sessions. **CLI-only** (the `tmux` tool is the agent-facing equivale
 ### `/model [alias-or-id]`
 Show or switch the model for the current session.
 - `/model` — show current model
-- `/model haiku` — switch to haiku (supports named models from `[models.*]` config)
+- `/model anthropic/claude-haiku-4-5` — switch to a specific model using `developer/model_id` format
 - `/model gemini:flash` — switch with explicit endpoint via `endpoint:name` syntax
 
 ### `/effort [level]`
