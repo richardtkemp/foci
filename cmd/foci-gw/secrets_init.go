@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"time"
 
@@ -21,15 +20,8 @@ type secretsResult struct {
 }
 
 // initSecrets loads secrets.toml, runs security checks, generates the HTTP API key,
-// sets up bitwarden (if enabled), and seeds default prompt files.
+// and sets up bitwarden (if enabled).
 func initSecrets(configPath string, cfg *config.Config) secretsResult {
-	// Seed default prompts and skills to ~/shared/ for user customisation
-	if home, err := os.UserHomeDir(); err == nil {
-		shared := filepath.Join(home, "shared")
-		seedDefaultPrompts(filepath.Join(shared, "prompts"))
-		seedDefaultSkills(filepath.Join(shared, "skills"))
-	}
-
 	// Load secrets (from secrets.toml alongside config file)
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
 	store, err := secrets.Load(secretsPath)

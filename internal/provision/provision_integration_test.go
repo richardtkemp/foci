@@ -157,7 +157,7 @@ func TestProvisionCopy(t *testing.T) {
 }
 
 func TestSeedDefaults(t *testing.T) {
-	// Verifies seeding a defaults directory from a source.
+	// Verifies seeding a defaults directory from an fs.FS source.
 	// Verifies that existing files are not overwritten.
 	src := t.TempDir()
 	os.MkdirAll(filepath.Join(src, "character"), 0755)
@@ -165,7 +165,7 @@ func TestSeedDefaults(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "crontab.template"), []byte("template"), 0644)
 
 	dst := filepath.Join(t.TempDir(), "target")
-	if err := SeedDefaults(src, dst); err != nil {
+	if err := SeedDefaults(os.DirFS(src), dst); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestSeedDefaults(t *testing.T) {
 
 	// Run again — existing files should not be overwritten
 	os.WriteFile(filepath.Join(dst, "crontab.template"), []byte("edited"), 0644)
-	if err := SeedDefaults(src, dst); err != nil {
+	if err := SeedDefaults(os.DirFS(src), dst); err != nil {
 		t.Fatal(err)
 	}
 	data, _ = os.ReadFile(filepath.Join(dst, "crontab.template"))
