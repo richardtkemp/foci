@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -133,90 +132,6 @@ type AgentUsageWarningsConfig struct {
 // sources receiving an automatic weight boost.
 type AgentMemoryConfig struct {
 	Sources []MemorySource `toml:"sources"` // agent-specific memory directories
-}
-
-// ContextWindow represents a model's context window size in tokens.
-// Accepts plain integers or strings with k/K suffix (1k = 1000 tokens).
-type ContextWindow int
-
-// UnmarshalTOML accepts both int (context = 131072) and string (context = "262k").
-func (c *ContextWindow) UnmarshalTOML(v any) error {
-	switch val := v.(type) {
-	case int64:
-		*c = ContextWindow(val)
-		return nil
-	case string:
-		return c.parse(val)
-	default:
-		return fmt.Errorf("context: expected int or string, got %T", v)
-	}
-}
-
-func (c *ContextWindow) parse(s string) error {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		*c = 0
-		return nil
-	}
-	multiplier := 1
-	if strings.HasSuffix(s, "k") || strings.HasSuffix(s, "K") {
-		multiplier = 1000
-		s = s[:len(s)-1]
-	} else if strings.HasSuffix(s, "m") || strings.HasSuffix(s, "M") {
-		multiplier = 1000000
-		s = s[:len(s)-1]
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return fmt.Errorf("context: invalid value %q", s)
-	}
-	*c = ContextWindow(n * multiplier)
-	return nil
-}
-
-// ThinkingMode controls whether model thinking/reasoning is enabled.
-type ThinkingMode string
-
-// UnmarshalTOML accepts both string ("adaptive"/"off") and bool (true→"adaptive", false→"off").
-func (t *ThinkingMode) UnmarshalTOML(v any) error {
-	switch val := v.(type) {
-	case string:
-		switch strings.ToLower(val) {
-		case "adaptive", "on", "true":
-			*t = "adaptive"
-			return nil
-		case "off", "false":
-			*t = "off"
-			return nil
-		case "":
-			*t = ""
-			return nil
-		default:
-			return fmt.Errorf("invalid thinking value %q (must be adaptive, off, or bool)", val)
-		}
-	case bool:
-		if val {
-			*t = "adaptive"
-		} else {
-			*t = "off"
-		}
-		return nil
-	default:
-		return fmt.Errorf("thinking must be a string (adaptive/off) or bool")
-	}
-}
-
-// ModelConfig defines a named model with its settings.
-// Used in [models.*] TOML sections.
-type ModelConfig struct {
-	Model           string        `toml:"model"`             // "developer/model_id" (required)
-	Endpoint        string        `toml:"endpoint"`          // explicit endpoint override (optional; empty = auto-select from developer)
-	Thinking        ThinkingMode  `toml:"thinking"`          // "adaptive", "off", or bool via UnmarshalTOML
-	Effort          string        `toml:"effort"`            // "low", "medium", "high"
-	Speed           string        `toml:"speed"`             // "fast" or ""
-	Context         ContextWindow `toml:"context"`           // context window size in tokens (e.g. 262000 or "262k")
-	EnableKeepalive *bool         `toml:"enable_keepalive"`  // nil=auto-detect, true/false=explicit
-	PromptCacheTTL  string        `toml:"prompt_cache_ttl"`  // Go duration, empty=auto-detect
 }
 
 // GroupsConfig assigns named models to groups and call sites.
@@ -826,7 +741,6 @@ type Config struct {
 	DataDir            string                       `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
 	Defaults           DefaultsConfig               `toml:"defaults"`  // global defaults for agent-specific fields
 	Groups             GroupsConfig                  `toml:"groups"`    // model group assignments and fallbacks
-	Models             map[string]ModelConfig        `toml:"models"`    // named model definitions with per-model settings
 	Endpoints          map[string]EndpointConfig     `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
 	Agents             []AgentConfig             `toml:"agents"`    // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`

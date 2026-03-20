@@ -178,7 +178,7 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 		if groupModel == "" {
 			continue
 		}
-		resolved, err := ResolveModel(groupModel, "", cfg.Models)
+		resolved, err := ResolveModel(groupModel, "")
 		if err != nil {
 			continue
 		}

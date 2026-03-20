@@ -5,11 +5,11 @@ import "testing"
 func TestNewFallbackResolver_NilOnEmptyMaps(t *testing.T) {
 	// Proves that NewFallbackResolver returns nil when both global and
 	// per-agent maps are empty, enabling a fast no-op check.
-	fr := NewFallbackResolver(nil, nil, nil)
+	fr := NewFallbackResolver(nil, nil)
 	if fr != nil {
 		t.Fatal("expected nil resolver for empty maps")
 	}
-	fr = NewFallbackResolver(map[string]string{}, map[string]string{}, nil)
+	fr = NewFallbackResolver(map[string]string{}, map[string]string{})
 	if fr != nil {
 		t.Fatal("expected nil resolver for empty (non-nil) maps")
 	}
@@ -21,7 +21,7 @@ func TestFallbackResolver_BasicResolution(t *testing.T) {
 	// and format.
 	fr := NewFallbackResolver(
 		map[string]string{"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6"},
-		nil, nil,
+		nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -38,16 +38,12 @@ func TestFallbackResolver_BasicResolution(t *testing.T) {
 	}
 }
 
-func TestFallbackResolver_AliasResolution(t *testing.T) {
-	// Proves that model names in both keys and values are resolved to
-	// canonical form, so "opus" → "sonnet" works when models are set.
-	models := map[string]ModelConfig{
-		"opus":   {Model: "anthropic/claude-opus-4-6"},
-		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
-	}
+func TestFallbackResolver_FullModelStrings(t *testing.T) {
+	// Proves that fallback entries using full developer/model_id strings
+	// resolve correctly in both keys and values.
 	fr := NewFallbackResolver(
-		map[string]string{"opus": "sonnet"},
-		nil, models,
+		map[string]string{"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6"},
+		nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -62,37 +58,32 @@ func TestFallbackResolver_AliasResolution(t *testing.T) {
 }
 
 func TestFallbackResolver_ChainWalk(t *testing.T) {
-	// Proves that fallback chains work: opus → sonnet → haiku,
+	// Proves that fallback chains work: opus -> sonnet -> haiku,
 	// where each Resolve returns the next hop (not the full chain).
-	models := map[string]ModelConfig{
-		"opus":   {Model: "anthropic/claude-opus-4-6"},
-		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
-		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
-	}
 	fr := NewFallbackResolver(
 		map[string]string{
-			"opus":   "sonnet",
-			"sonnet": "haiku",
+			"anthropic/claude-opus-4-6":   "anthropic/claude-sonnet-4-6",
+			"anthropic/claude-sonnet-4-6": "anthropic/claude-haiku-4-5",
 		},
-		nil, models,
+		nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
 	}
 
-	// First hop: opus → sonnet
+	// First hop: opus -> sonnet
 	got := fr.Resolve("anthropic/claude-opus-4-6")
 	if got == nil || got.ModelID != "claude-sonnet-4-6" {
 		t.Fatalf("first hop: got %v, want sonnet", got)
 	}
 
-	// Second hop: sonnet → haiku
+	// Second hop: sonnet -> haiku
 	got = fr.Resolve("anthropic/claude-sonnet-4-6")
 	if got == nil || got.ModelID != "claude-haiku-4-5" {
 		t.Fatalf("second hop: got %v, want haiku", got)
 	}
 
-	// Third hop: haiku → nil (end of chain)
+	// Third hop: haiku -> nil (end of chain)
 	got = fr.Resolve("anthropic/claude-haiku-4-5")
 	if got != nil {
 		t.Fatalf("third hop: got %v, want nil", got)
@@ -107,51 +98,46 @@ func TestFallbackResolver_CycleDetection(t *testing.T) {
 			"anthropic/claude-opus-4-6":   "anthropic/claude-sonnet-4-6",
 			"anthropic/claude-sonnet-4-6": "anthropic/claude-opus-4-6",
 		},
-		nil, nil,
+		nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver (cycle should be broken, not discarded)")
 	}
 
-	// Walk the chain — must terminate within MaxFallbackDepth
+	// Walk the chain -- must terminate within MaxFallbackDepth
 	model := "anthropic/claude-opus-4-6"
 	for i := 0; i < MaxFallbackDepth+1; i++ {
 		got := fr.Resolve(model)
 		if got == nil {
-			return // chain terminated — no cycle
+			return // chain terminated -- no cycle
 		}
 		model = got.Developer + "/" + got.ModelID
 	}
-	t.Fatal("chain did not terminate — cycle was not broken")
+	t.Fatal("chain did not terminate -- cycle was not broken")
 }
 
 func TestFallbackResolver_PerAgentOverride(t *testing.T) {
 	// Proves that per-agent fallback entries override global entries
 	// for the same key, and global entries for other keys are preserved.
-	models := map[string]ModelConfig{
-		"opus":   {Model: "anthropic/claude-opus-4-6"},
-		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
-		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
-	}
 	global := map[string]string{
-		"opus":   "sonnet",
-		"sonnet": "haiku",
+		"anthropic/claude-opus-4-6":   "anthropic/claude-sonnet-4-6",
+		"anthropic/claude-sonnet-4-6": "anthropic/claude-haiku-4-5",
 	}
 	perAgent := map[string]string{
-		"opus": "haiku", // override: skip sonnet
+		"anthropic/claude-opus-4-6": "anthropic/claude-haiku-4-5", // override: skip sonnet
 	}
-	fr := NewFallbackResolver(global, perAgent, models)
+	fr := NewFallbackResolver(global, perAgent)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
 	}
 
-	// Per-agent override: opus → haiku (not sonnet)
+	// Per-agent override: opus -> haiku (not sonnet)
 	got := fr.Resolve("anthropic/claude-opus-4-6")
 	if got == nil || got.ModelID != "claude-haiku-4-5" {
 		t.Fatalf("opus fallback: got %v, want haiku", got)
 	}
 
-	// Global preserved: sonnet → haiku
+	// Global preserved: sonnet -> haiku
 	got = fr.Resolve("anthropic/claude-sonnet-4-6")
 	if got == nil || got.ModelID != "claude-haiku-4-5" {
 		t.Fatalf("sonnet fallback: got %v, want haiku", got)
@@ -165,7 +151,7 @@ func TestFallbackResolver_CrossEndpoint(t *testing.T) {
 		map[string]string{
 			"google/gemini-2.5-pro": "anthropic/claude-sonnet-4-6",
 		},
-		nil, nil,
+		nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -189,7 +175,7 @@ func TestFallbackResolver_NoMatch(t *testing.T) {
 	// Proves that Resolve returns nil for models without a fallback entry.
 	fr := NewFallbackResolver(
 		map[string]string{"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6"},
-		nil, nil,
+		nil,
 	)
 	got := fr.Resolve("anthropic/claude-haiku-4-5")
 	if got != nil {
@@ -216,9 +202,9 @@ func TestFallbackResolver_InvalidKeysIgnored(t *testing.T) {
 			"anthropic/claude-opus-4-6": "badvalue",
 			"":                           "anthropic/claude-sonnet-4-6",
 		},
-		nil, nil,
+		nil,
 	)
-	// All entries had invalid keys or values — resolver should be nil
+	// All entries had invalid keys or values -- resolver should be nil
 	if fr != nil {
 		t.Fatalf("expected nil resolver for all-invalid entries, got %+v", fr)
 	}
@@ -230,7 +216,7 @@ func TestFallbackResolver_SelfCycleDetection(t *testing.T) {
 		map[string]string{
 			"anthropic/claude-opus-4-6": "anthropic/claude-opus-4-6",
 		},
-		nil, nil,
+		nil,
 	)
 	if fr != nil {
 		t.Fatal("expected nil resolver for self-cycle")

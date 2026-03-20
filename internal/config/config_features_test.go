@@ -137,7 +137,7 @@ startup_notify = false
 }
 
 // TestLoadThinkingConfig and TestLoadThinkingPerAgent were removed:
-// Thinking/effort settings are now per-model in [models.<name>] ModelConfig,
+// Thinking/effort settings are now per-agent in AgentConfig fields,
 // not in global [anthropic] or per-agent [agents.anthropic] sections.
 // ApplyProviderDefaults was deleted as part of the Per-Model Config refactor.
 

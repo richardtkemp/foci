@@ -53,20 +53,17 @@ var defaultCallGroups = map[string]string{
 
 // GroupResolver resolves call sites and group names to concrete models.
 type GroupResolver struct {
-	// groups maps group name → model name (key in models map or raw developer/model_id)
+	// groups maps group name → developer/model_id string
 	groups map[string]string
 	// callOverrides maps call site name → group name (from [groups.calls])
 	callOverrides map[string]string
-	// models for ResolveModel (carries settings through)
-	models map[string]ModelConfig
 }
 
 // NewGroupResolver creates a GroupResolver from config.
 // Powerful must be set in config (validated by Validate). Fast/Cheap default
 // to Powerful when not set.
-func NewGroupResolver(groups GroupsConfig, models map[string]ModelConfig) *GroupResolver {
+func NewGroupResolver(groups GroupsConfig) *GroupResolver {
 	gr := &GroupResolver{
-		models:        models,
 		callOverrides: groups.Calls,
 		groups: map[string]string{
 			GroupPowerful: groups.Powerful,
@@ -128,7 +125,7 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 		// Unknown group — fall back to powerful
 		model = gr.groups[GroupPowerful]
 	}
-	resolved, err := ResolveModel(model, "", gr.models)
+	resolved, err := ResolveModel(model, "")
 	if err != nil {
 		return nil
 	}
