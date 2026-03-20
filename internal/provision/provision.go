@@ -5,6 +5,7 @@ package provision
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,21 +129,21 @@ func copyDefaultFiles(defaultsDir, workspace string) error {
 	return copyDir(charSrc, charDst)
 }
 
-// SeedDefaults copies the shared/ directory tree from the repo to
-// a target directory on disk, creating it if needed. Skips files that already exist.
-func SeedDefaults(repoDefaultsDir, targetDefaultsDir string) error {
-	return filepath.Walk(repoDefaultsDir, func(path string, info os.FileInfo, err error) error {
+// SeedDefaults walks srcFS and copies files to targetDir on disk,
+// creating directories as needed. Files that already exist on disk are skipped.
+// Callers pass os.DirFS(path) for a repo checkout or an embed.FS for binary-only installs.
+func SeedDefaults(srcFS fs.FS, targetDir string) error {
+	return fs.WalkDir(srcFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-
-		rel, err := filepath.Rel(repoDefaultsDir, path)
-		if err != nil {
-			return err
+		if path == "." {
+			return nil
 		}
-		target := filepath.Join(targetDefaultsDir, rel)
 
-		if info.IsDir() {
+		target := filepath.Join(targetDir, path)
+
+		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
 
@@ -151,7 +152,14 @@ func SeedDefaults(repoDefaultsDir, targetDefaultsDir string) error {
 			return nil
 		}
 
-		return copyFile(path, target)
+		data, err := fs.ReadFile(srcFS, path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0644)
 	})
 }
 

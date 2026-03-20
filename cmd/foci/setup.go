@@ -13,6 +13,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/secrets"
+	"foci/shared"
 
 	_ "foci/internal/telegram" // register telegram messaging provider
 )
@@ -105,13 +106,16 @@ func cmdSetup(args []string) error {
 		}
 	}
 
-	// Seed shared/ from repo to disk if not already present
-	repoSharedDir := findRepoShared()
-	if repoSharedDir != "" {
-		targetSharedDir := filepath.Join(flags.homeDir, "shared")
-		if err := provision.SeedDefaults(repoSharedDir, targetSharedDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not seed defaults: %v\n", err)
+	// Seed shared/ from repo to disk if available, then fill gaps from embedded defaults.
+	targetSharedDir := filepath.Join(flags.homeDir, "shared")
+	if repoSharedDir := findRepoShared(); repoSharedDir != "" {
+		if err := provision.SeedDefaults(os.DirFS(repoSharedDir), targetSharedDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not seed defaults from repo: %v\n", err)
 		}
+	}
+	// Always seed from embedded defaults (no-ops for files already on disk)
+	if err := provision.SeedDefaults(shared.DefaultsFS, targetSharedDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not seed embedded defaults: %v\n", err)
 	}
 
 	if flags.nonInteractive {

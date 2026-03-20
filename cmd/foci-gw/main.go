@@ -119,6 +119,9 @@ Subcommands:
 		log.Warnf("config", "unknown config keys in %s: %v", configPath, cfg.UndefinedKeys)
 	}
 
+	// ========== Seed shared defaults ==========
+	seedSharedDefaults()
+
 	// ========== Secrets & Bitwarden ==========
 	sec := initSecrets(configPath, cfg)
 	if sec.cleanup != nil {

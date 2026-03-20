@@ -133,7 +133,7 @@ func TestSeedDefaultsWalkError(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(subdir, 0755) })
 
 	dst := filepath.Join(t.TempDir(), "target")
-	err := SeedDefaults(src, dst)
+	err := SeedDefaults(os.DirFS(src), dst)
 	if err == nil {
 		t.Error("expected error when source subdir is unreadable")
 	}
@@ -151,9 +151,40 @@ func TestSeedDefaultsCopyError(t *testing.T) {
 	os.Chmod(dst, 0555)
 	t.Cleanup(func() { os.Chmod(dst, 0755) })
 
-	err := SeedDefaults(src, dst)
+	err := SeedDefaults(os.DirFS(src), dst)
 	if err == nil {
 		t.Error("expected error when target dir is read-only")
+	}
+}
+
+func TestSeedDefaultsEmbedFS(t *testing.T) {
+	// Verifies that SeedDefaults works with an fs.FS built from a temp dir
+	// (stand-in for embed.FS). Seeds files, verifies content, and confirms
+	// existing files are not overwritten on a second call.
+	srcDir := t.TempDir()
+	os.MkdirAll(filepath.Join(srcDir, "character"), 0755)
+	os.WriteFile(filepath.Join(srcDir, "character", "SOUL.md"), []byte("embedded soul"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "crontab.template"), []byte("embedded template"), 0644)
+	fsys := os.DirFS(srcDir)
+
+	dst := filepath.Join(t.TempDir(), "target")
+	if err := SeedDefaults(fsys, dst); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dst, "character", "SOUL.md"))
+	if string(data) != "embedded soul" {
+		t.Errorf("SOUL.md = %q, want 'embedded soul'", data)
+	}
+
+	// Modify a file and re-seed — should not overwrite
+	os.WriteFile(filepath.Join(dst, "crontab.template"), []byte("user-edited"), 0644)
+	if err := SeedDefaults(fsys, dst); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(dst, "crontab.template"))
+	if string(data) != "user-edited" {
+		t.Errorf("existing file overwritten, got %q", data)
 	}
 }
 
