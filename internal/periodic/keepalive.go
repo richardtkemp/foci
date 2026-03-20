@@ -64,7 +64,8 @@ type Runner struct {
 	sessionIndex       *session.SessionIndex
 	branchFn           BranchFunc
 
-	warningDispatcher  *warnings.Dispatcher
+	warningDispatcher      *warnings.Dispatcher
+	chatWarningDispatcher  *warnings.Dispatcher
 	hasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	drainFn            func() // called each tick to drain rate-limit queues
 
@@ -103,7 +104,8 @@ type RunnerConfig struct {
 	SessionIndex       *session.SessionIndex
 	BranchFunc         BranchFunc
 
-	WarningDispatcher  *warnings.Dispatcher
+	WarningDispatcher      *warnings.Dispatcher
+	ChatWarningDispatcher  *warnings.Dispatcher
 	HasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
 
@@ -129,7 +131,8 @@ func New(cfg RunnerConfig) *Runner {
 		sessionIndex:       cfg.SessionIndex,
 		branchFn:           cfg.BranchFunc,
 
-		warningDispatcher:  cfg.WarningDispatcher,
+		warningDispatcher:      cfg.WarningDispatcher,
+		chatWarningDispatcher:  cfg.ChatWarningDispatcher,
 		hasActiveWorkFn:    cfg.HasActiveWorkFn,
 		drainFn:            cfg.DrainFn,
 		sessionKeyFn:       cfg.SessionKeyFunc,
@@ -183,6 +186,9 @@ func (r *Runner) NotifyTurnEnd() {
 	if r.warningDispatcher != nil {
 		r.warningDispatcher.FlushPending()
 	}
+	if r.chatWarningDispatcher != nil {
+		r.chatWarningDispatcher.FlushPending()
+	}
 }
 
 func (r *Runner) run(ctx context.Context) {
@@ -205,6 +211,9 @@ func (r *Runner) run(ctx context.Context) {
 			r.maybeConsolidation()
 			if r.warningDispatcher != nil {
 				r.warningDispatcher.MaybeFire()
+			}
+			if r.chatWarningDispatcher != nil {
+				r.chatWarningDispatcher.MaybeFire()
 			}
 		}
 	}

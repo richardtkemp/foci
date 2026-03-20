@@ -12,11 +12,12 @@ import (
 	"foci/internal/tools"
 )
 
-// setupWarningHooks wires log warnings into agent sessions for agents with inject_agent_warnings.
+// setupWarningHooks wires log warnings into agent warning queues.
+// Pushes to both agent session queues and chat notification queues when configured.
 func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 	anyInjection := false
 	for _, acfg := range cfg.Agents {
-		if acfg.InjectAgentWarnings {
+		if acfg.InjectAgentWarnings.Enabled() || acfg.InjectChatWarnings.Enabled() {
 			anyInjection = true
 			break
 		}
@@ -29,9 +30,12 @@ func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 			if w := inst.ag.Warnings(); w != nil {
 				w.Push(level.String(), component, msg)
 			}
+			if w := inst.ag.ChatWarnings(); w != nil {
+				w.Push(level.String(), component, msg)
+			}
 		}
 	})
-	log.Infof("main", "warning injection into agent sessions enabled")
+	log.Infof("main", "warning injection enabled")
 }
 
 // setupTmuxMemoryMonitor starts the tmux memory monitor if tmux is available.
@@ -63,7 +67,7 @@ func setupTmuxMemoryMonitor(
 		func(msg string) {
 			for _, id := range agentOrder {
 				inst := agents[id]
-				if inst.agentCfg.InjectAgentWarnings {
+				if inst.agentCfg.InjectAgentWarnings.Enabled() {
 					continue
 				}
 				if conn := connMgr.Primary(id); conn != nil {

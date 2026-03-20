@@ -64,7 +64,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 	kaEnabled := acfg.Keepalive.Enabled && cachingAvailable
 
-	if !kaEnabled && !acfg.Background.Enabled && !hasMemoryFormation(acfg.MemoryFormation) && !acfg.InjectAgentWarnings {
+	if !kaEnabled && !acfg.Background.Enabled && !hasMemoryFormation(acfg.MemoryFormation) && !acfg.InjectAgentWarnings.Enabled() && !acfg.InjectChatWarnings.Enabled() {
 		return nil
 	}
 
@@ -87,14 +87,22 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		},
 	)
 
-	// Proactive warning dispatcher
-	var warningDispatcher *warnings.Dispatcher
-	if acfg.InjectAgentWarnings {
-		warningActiveInterval, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActiveInterval)
-		warningInactiveInterval, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveInactiveInterval)
-		warningActivityThreshold, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActivityThreshold)
+	// Shared timing config for warning dispatchers
+	warningActiveInterval, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActiveInterval)
+	warningInactiveInterval, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveInactiveInterval)
+	warningActivityThreshold, _ := time.ParseDuration(p.cfg.Logging.WarningProactiveActivityThreshold)
+	agentID := acfg.ID
+	lastUserMsgFn := func() time.Time {
+		sk := inst.defaultSessionKey()
+		if sk == "" {
+			return time.Time{}
+		}
+		return inst.ag.LastUserMessageTime(sk)
+	}
 
-		agentID := acfg.ID
+	// Proactive warning dispatcher (agent session injection)
+	var warningDispatcher *warnings.Dispatcher
+	if acfg.InjectAgentWarnings.Enabled() {
 		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
 			Queue:          inst.ag.Warnings(),
 			IsProcessingFn: inst.ag.IsProcessing,
@@ -109,16 +117,30 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 				}
 				deliverInjectedTurn(inst.ag, p.ctx, "proactive_warning", p.connMgr, agentID, sk, warningText)
 			},
-			ActiveInterval:    warningActiveInterval,
-			InactiveInterval:  warningInactiveInterval,
-			ActivityThreshold: warningActivityThreshold,
-			LastUserMessageTimeFn: func() time.Time {
-				sk := inst.defaultSessionKey()
-				if sk == "" {
-					return time.Time{}
-				}
-				return inst.ag.LastUserMessageTime(sk)
+			ActiveInterval:        warningActiveInterval,
+			InactiveInterval:      warningInactiveInterval,
+			ActivityThreshold:     warningActivityThreshold,
+			LastUserMessageTimeFn: lastUserMsgFn,
+		})
+	}
+
+	// Chat warning dispatcher (platform notifications)
+	var chatWarningDispatcher *warnings.Dispatcher
+	if acfg.InjectChatWarnings.Enabled() {
+		chatWarningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
+			Queue: inst.ag.ChatWarnings(),
+			FormatFn: func(body string) string {
+				return "[system diagnostics]\n" + body
 			},
+			DispatchFn: func(warningText string) {
+				if conn := p.connMgr.Primary(agentID); conn != nil {
+					conn.SendNotification(warningText)
+				}
+			},
+			ActiveInterval:        warningActiveInterval,
+			InactiveInterval:      warningInactiveInterval,
+			ActivityThreshold:     warningActivityThreshold,
+			LastUserMessageTimeFn: lastUserMsgFn,
 		})
 	}
 
@@ -137,7 +159,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		SessionIndex:       p.sessionIndex,
 		BranchFunc:         branchFn,
 
-		WarningDispatcher:  warningDispatcher,
+		WarningDispatcher:      warningDispatcher,
+		ChatWarningDispatcher:  chatWarningDispatcher,
 		HasActiveWorkFn: func() int {
 			if inst.tmuxWatchCount == nil {
 				return 0

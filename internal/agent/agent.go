@@ -94,6 +94,7 @@ type Agent struct {
 	MaxImagePixels                int                          // max pixels (w*h) for images before downscaling; 0 disables
 	AutoSummarise                 bool                         // enable auto-summarise of oversized tool results (default true)
 	WarningQueue                  *warnings.Queue              // nil disables warning injection into session
+	ChatWarningQueue              *warnings.Queue              // nil disables chat warning notifications
 	ManaWatcher                   *ManaWatcher                 // nil disables mana threshold warnings
 	ManaWarnFunc                  HookList[func(string)]                 // callbacks for mana threshold warnings (e.g. platform notification)
 	MaxTokensWarnFunc             HookList[func(string)]                 // callbacks when stop_reason=max_tokens (response truncated)
@@ -162,6 +163,10 @@ func (a *Agent) TransformMessage(text string) string {
 
 func (a *Agent) Warnings() *warnings.Queue {
 	return a.WarningQueue
+}
+
+func (a *Agent) ChatWarnings() *warnings.Queue {
+	return a.ChatWarningQueue
 }
 
 // logger returns the agent's ComponentLogger, lazily creating a default if nil.

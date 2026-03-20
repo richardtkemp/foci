@@ -128,13 +128,7 @@ func (d *Dispatcher) dispatchDrained() {
 		return
 	}
 
-	body := ""
-	for i, w := range warnings {
-		if i > 0 {
-			body += "\n"
-		}
-		body += "- " + w
-	}
+	body := FormatList(warnings)
 
 	text := body
 	if d.formatFn != nil {

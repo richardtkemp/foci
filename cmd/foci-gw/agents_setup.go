@@ -388,16 +388,28 @@ func setupRedaction(ag *agent.Agent, p setupParams, agentStore *secrets.Store) {
 	}
 }
 
-// setupWarningQueue configures the warning injection queue on the agent.
+// setupWarningQueue configures warning injection queues on the agent.
+// Creates separate queues for agent session injection and chat notifications,
+// each with independent severity filtering based on their InjectionLevel.
 func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Config) {
-	if !acfg.InjectAgentWarnings {
-		return
-	}
 	warningWindow, err := time.ParseDuration(cfg.Logging.WarningWindowDuration)
 	if err != nil {
 		warningWindow = 5 * time.Minute
 	}
-	ag.WarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
+
+	if acfg.InjectAgentWarnings.Enabled() {
+		ag.WarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
+		if !acfg.InjectAgentWarnings.IncludeWarnings() {
+			ag.WarningQueue.SetErrorsOnly(true)
+		}
+	}
+
+	if acfg.InjectChatWarnings.Enabled() {
+		ag.ChatWarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
+		if !acfg.InjectChatWarnings.IncludeWarnings() {
+			ag.ChatWarningQueue.SetErrorsOnly(true)
+		}
+	}
 }
 
 // setupManaWatcher configures mana threshold warnings on the agent.

@@ -501,6 +501,63 @@ func TestQueue_QuietMode_NonSaturatedWindowNoQuiet(t *testing.T) {
 	}
 }
 
+// --- ErrorsOnly tests ---
+
+func TestQueue_ErrorsOnly_DropsWarn(t *testing.T) {
+	// Proves that when errorsOnly is set, WARN-level entries are silently dropped
+	// while ERROR-level entries pass through normally.
+	q := NewQueue(0, 0)
+	q.SetErrorsOnly(true)
+
+	q.Push("WARN", "config", "unknown key: foo")
+	q.Push("ERROR", "telegram", "fatal: connection lost")
+	q.Push("WARN", "disk", "getting full")
+
+	warnings := q.Drain()
+	if len(warnings) != 1 {
+		t.Fatalf("Drain() returned %d warnings, want 1 (only ERROR)", len(warnings))
+	}
+	if !strings.Contains(warnings[0], "fatal: connection lost") {
+		t.Errorf("warnings[0] = %q, want ERROR entry", warnings[0])
+	}
+}
+
+func TestQueue_ErrorsOnly_AllowsAllWhenFalse(t *testing.T) {
+	// Proves that when errorsOnly is false (default), both WARN and ERROR entries pass through.
+	q := NewQueue(0, 0)
+
+	q.Push("WARN", "config", "unknown key")
+	q.Push("ERROR", "telegram", "fatal error")
+
+	warnings := q.Drain()
+	if len(warnings) != 2 {
+		t.Fatalf("Drain() returned %d warnings, want 2", len(warnings))
+	}
+}
+
+// --- FormatList tests ---
+
+func TestFormatList(t *testing.T) {
+	// Proves that FormatList produces a newline-separated bullet list.
+	tests := []struct {
+		name    string
+		entries []string
+		want    string
+	}{
+		{"single", []string{"foo"}, "- foo"},
+		{"multiple", []string{"a", "b", "c"}, "- a\n- b\n- c"},
+		{"empty", nil, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatList(tt.entries)
+			if got != tt.want {
+				t.Errorf("FormatList(%v) = %q, want %q", tt.entries, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- FormatDuration tests ---
 
 func TestFormatDuration(t *testing.T) {
