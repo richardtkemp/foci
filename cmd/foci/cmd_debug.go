@@ -9,11 +9,20 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"foci/internal/config"
 	"foci/internal/session"
 
 	"github.com/fsnotify/fsnotify"
+)
+
+// outputFormat controls how session lines are rendered.
+type outputFormat int
+
+const (
+	outputHuman outputFormat = iota
+	outputJSON
 )
 
 func cmdDebug(args []string) error {
@@ -52,10 +61,44 @@ func cmdDebugSession(args []string, configPath string) error {
 		configPath = filepath.Join(home, "config", "foci.toml")
 	}
 
+	// Parse optional flags
+	fromStr, args := parseFlagValue(args, "from")
+	toStr, args := parseFlagValue(args, "to")
+	formatStr, args := parseFlagValue(args, "format")
+
 	if len(args) == 0 {
-		return fmt.Errorf("usage: foci debug session <key>")
+		return fmt.Errorf("usage: foci debug session <key> [--from <time>] [--to <time>] [--format human|json]")
 	}
 	keyArg := args[0]
+
+	// Parse output format
+	format := outputHuman
+	switch formatStr {
+	case "", "human":
+		// default
+	case "json":
+		format = outputJSON
+	default:
+		return fmt.Errorf("unknown format %q: expected \"human\" or \"json\"", formatStr)
+	}
+
+	// Parse time range
+	var fromTime, toTime time.Time
+	hasTimeRange := fromStr != "" || toStr != ""
+	if fromStr != "" {
+		t, err := parseTimeArg(fromStr)
+		if err != nil {
+			return fmt.Errorf("parse --from: %w", err)
+		}
+		fromTime = t
+	}
+	if toStr != "" {
+		t, err := parseTimeArg(toStr)
+		if err != nil {
+			return fmt.Errorf("parse --to: %w", err)
+		}
+		toTime = t
+	}
 
 	// Load config for paths
 	cfg, err := config.Load(configPath)
@@ -94,8 +137,13 @@ func cmdDebugSession(args []string, configPath string) error {
 	fmt.Printf("── session: %s ──\n", sessionKey)
 	fmt.Printf("── file: %s ──\n\n", filePath)
 
-	// Read and print existing content
-	offset, err := printExistingContent(filePath)
+	if hasTimeRange {
+		// Time range mode: filter and print once, then exit
+		return printFilteredContent(filePath, fromTime, toTime, format)
+	}
+
+	// Follow mode: print existing content then tail
+	offset, err := printExistingContent(filePath, format)
 	if err != nil {
 		return fmt.Errorf("read session: %w", err)
 	}
@@ -132,7 +180,7 @@ func cmdDebugSession(args []string, configPath string) error {
 			if event.Op&fsnotify.Write == 0 {
 				continue
 			}
-			newOffset, err := printNewContent(filePath, offset)
+			newOffset, err := printNewContent(filePath, offset, format)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "read error: %v\n", err)
 				continue
@@ -149,6 +197,78 @@ func cmdDebugSession(args []string, configPath string) error {
 			fmt.Fprintln(os.Stderr, "\n[stopped]")
 			return nil
 		}
+	}
+}
+
+// parseTimeArg parses a time argument as either an RFC3339 timestamp or a
+// relative duration like "1h", "30m", "2h30m" (interpreted as that duration ago).
+func parseTimeArg(s string) (time.Time, error) {
+	// Try RFC3339 first
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+
+	// Try as relative duration
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%q is not a valid RFC3339 timestamp or duration (e.g. \"1h\", \"30m\")", s)
+	}
+	return time.Now().UTC().Add(-d), nil
+}
+
+// inTimeRange returns true if ts falls within [from, to].
+// Zero from means no lower bound; zero to means no upper bound.
+// Returns false if ts is zero (message has no timestamp).
+func inTimeRange(ts, from, to time.Time) bool {
+	if ts.IsZero() {
+		return false
+	}
+	if !from.IsZero() && ts.Before(from) {
+		return false
+	}
+	if !to.IsZero() && ts.After(to) {
+		return false
+	}
+	return true
+}
+
+// printFilteredContent reads a session file and prints only lines with timestamps
+// in the given range. Meta lines (session_meta, branch_meta) are always included.
+func printFilteredContent(path string, from, to time.Time, format outputFormat) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		ts := lineTimestamp(line)
+		if !ts.IsZero() && !inTimeRange(ts, from, to) {
+			continue
+		}
+
+		out := renderLine(line, format)
+		if out != "" {
+			fmt.Print(out)
+		}
+	}
+	return scanner.Err()
+}
+
+// renderLine formats a JSONL line according to the output format.
+func renderLine(line []byte, format outputFormat) string {
+	switch format {
+	case outputJSON:
+		return string(line) + "\n"
+	default:
+		return formatLine(line)
 	}
 }
 
@@ -182,7 +302,7 @@ func resolveSessionKey(idx *session.SessionIndex, keyArg string) (string, error)
 
 // printExistingContent reads and formats all existing lines in the session file.
 // Returns the file offset after reading.
-func printExistingContent(path string) (int64, error) {
+func printExistingContent(path string, format outputFormat) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
@@ -196,7 +316,7 @@ func printExistingContent(path string) (int64, error) {
 		if len(line) == 0 {
 			continue
 		}
-		out := formatLine(line)
+		out := renderLine(line, format)
 		if out != "" {
 			fmt.Print(out)
 		}
@@ -220,7 +340,7 @@ func printExistingContent(path string) (int64, error) {
 
 // printNewContent reads and formats lines added since the given offset.
 // Returns the new offset.
-func printNewContent(path string, offset int64) (int64, error) {
+func printNewContent(path string, offset int64, format outputFormat) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return offset, err
@@ -248,7 +368,7 @@ func printNewContent(path string, offset int64) (int64, error) {
 		if len(line) == 0 {
 			continue
 		}
-		out := formatLine(line)
+		out := renderLine(line, format)
 		if out != "" {
 			fmt.Print(out)
 		}
@@ -276,6 +396,12 @@ Session key formats:
   scout/c5970082313/1709590000 Full session key
 
 Flags:
-  --config <path>  Config file path (default: ~/config/foci.toml)
+  --config <path>    Config file path (default: ~/config/foci.toml)
+  --from <time>      Start of time range (RFC3339 or duration like "1h", "30m")
+  --to <time>        End of time range (RFC3339 or duration like "1h", "30m")
+  --format <fmt>     Output format: "human" (default) or "json"
+
+When --from or --to is specified, matching messages are printed and the command
+exits (no tailing). Without time range flags, the session is tailed live.
 `)
 }

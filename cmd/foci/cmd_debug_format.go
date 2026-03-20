@@ -69,12 +69,27 @@ func formatLine(line []byte) string {
 	return formatMessage(msg)
 }
 
+// lineTimestamp extracts the timestamp from a JSONL line.
+// Returns zero time if the line has no timestamp or is not a message.
+func lineTimestamp(line []byte) time.Time {
+	var probe struct {
+		Timestamp *time.Time `json:"timestamp"`
+	}
+	if json.Unmarshal(line, &probe) == nil && probe.Timestamp != nil {
+		return *probe.Timestamp
+	}
+	return time.Time{}
+}
+
 // formatMessage renders a provider.Message in human-readable format.
 func formatMessage(msg provider.Message) string {
 	var b strings.Builder
 
-	// Role header
+	// Use stored timestamp if available, otherwise current time
 	ts := time.Now().Format("15:04:05")
+	if msg.Timestamp != nil {
+		ts = msg.Timestamp.Format("15:04:05")
+	}
 	switch msg.Role {
 	case "user":
 		fmt.Fprintf(&b, "\n%s[%s]%s %s%s═══ USER ═══%s\n",
