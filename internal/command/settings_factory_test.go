@@ -112,7 +112,7 @@ func TestNewSessionSettingCommandSetAndInvalid(t *testing.T) {
 func TestNewSessionSettingCommandGateExecute(t *testing.T) {
 	ag := &agent.Agent{Model: "anthropic/claude-haiku-4-5-20251001"}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 
 	cmd := newSessionSettingCommand(sessionSettingDef{
 		Name:        "speed",
@@ -182,7 +182,7 @@ func TestNewSessionSettingCommandHiddenChoice(t *testing.T) {
 func TestNewSessionSettingCommandVisibility(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 
 	cmd := newSessionSettingCommand(sessionSettingDef{
 		Name:        "test",

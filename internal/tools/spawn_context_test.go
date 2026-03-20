@@ -12,13 +12,6 @@ import (
 	"foci/internal/provider"
 )
 
-// spawnTestModels mirrors the default model configs from config/load.go for tests.
-var spawnTestModels = map[string]config.ModelConfig{
-	"opus":   {Model: "anthropic/claude-opus-4-6"},
-	"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
-	"haiku":  {Model: "anthropic/claude-haiku-4-5"},
-}
-
 func TestSpawnContextRaw(t *testing.T) {
 	// Proves that raw context sends no system prompt to the model, resolves the model group,
 	// and returns the model's response directly.
@@ -40,7 +33,7 @@ func TestSpawnContextRaw(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
-	}, spawnTestModels)
+	})
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -100,7 +93,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-token")
 	gr := config.NewGroupResolver(config.GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	}, spawnTestModels)
+	})
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -283,7 +276,7 @@ func TestSpawnExploreMode(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
-	}, spawnTestModels)
+	})
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,

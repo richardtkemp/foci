@@ -16,7 +16,7 @@ import (
 
 // testGroupResolver creates a GroupResolver that resolves all groups to the given model.
 func testGroupResolver(model string) *config.GroupResolver {
-	return config.NewGroupResolver(config.GroupsConfig{Powerful: model}, nil)
+	return config.NewGroupResolver(config.GroupsConfig{Powerful: model})
 }
 
 func TestSummaryTool_MissingParams(t *testing.T) {
@@ -154,8 +154,7 @@ func TestSummaryTool_Success(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
-	models := map[string]config.ModelConfig{"haiku": {Model: "anthropic/claude-haiku-4-5"}}
-	gr := config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}, models)
+	gr := config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"})
 	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -193,7 +192,7 @@ func TestSummaryTool_Success(t *testing.T) {
 }
 
 func TestSummaryTool_ModelAlias(t *testing.T) {
-	// Proves that a model alias configured in the aliases map is resolved to the full model name
+	// Proves that the GroupResolver resolves the full model name from the Powerful group
 	// before the API request is made.
 	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "test.txt")
@@ -216,12 +215,9 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models := map[string]config.ModelConfig{
-		"haiku": {Model: "anthropic/claude-haiku-4-5-custom"},
-	}
 	client := newTestAnthropicClient(server.URL, "test-key")
-	// Use haiku alias as powerful model — GroupResolver resolves it via models
-	gr := config.NewGroupResolver(config.GroupsConfig{Powerful: "haiku"}, models)
+	// Use full model string in Powerful group
+	gr := config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5-custom"})
 	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})

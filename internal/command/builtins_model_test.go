@@ -10,81 +10,11 @@ import (
 )
 
 // modelCC returns a CommandContext with a real agent for model/effort/thinking tests.
-func modelCC(ag *agent.Agent, models map[string]config.ModelConfig) CommandContext {
+func modelCC(ag *agent.Agent) CommandContext {
 	return CommandContext{
-		Agent:        ag,
-		AgentConfig:  config.AgentConfig{},
-		Config:       &config.Config{},
-		ModelConfigs: models,
-	}
-}
-
-// TestModelKeyboardOptionsFiltersUnconfiguredEndpoints proves that /model only shows
-// aliases whose resolved endpoint exists in the config, hiding models that would fail.
-func TestModelKeyboardOptionsFiltersUnconfiguredEndpoints(t *testing.T) {
-	ag := &agent.Agent{}
-	models := map[string]config.ModelConfig{
-		"opus":         {Model: "anthropic/claude-opus-4-6"},
-		"sonnet":       {Model: "anthropic/claude-sonnet-4-6"},
-		"haiku":        {Model: "anthropic/claude-haiku-4-5-20251001"},
-		"gemini-flash": {Model: "google/gemini-2.5-flash"},
-		"deepseek":     {Model: "deepseek/deepseek-chat"},
-	}
-	// Only anthropic endpoint is configured.
-	cc := CommandContext{
-		Agent:        ag,
-		AgentConfig:  config.AgentConfig{},
-		ModelConfigs: models,
-		Config: &config.Config{
-			Endpoints: map[string]config.EndpointConfig{
-				"anthropic": {Format: "anthropic", APIKey: "anthropic.api_key"},
-			},
-		},
-	}
-	cmd := ModelCommand()
-	opts := cmd.KeyboardOptions(context.Background(), cc)
-
-	got := make(map[string]bool)
-	for _, o := range opts {
-		got[o.Label] = true
-	}
-	// Anthropic aliases should appear.
-	for _, want := range []string{"opus", "sonnet", "haiku"} {
-		if !got[want] {
-			t.Errorf("expected alias %q in keyboard options", want)
-		}
-	}
-	// Non-anthropic aliases should be filtered out.
-	for _, unwanted := range []string{"gemini-flash", "deepseek"} {
-		if got[unwanted] {
-			t.Errorf("alias %q should not appear (endpoint not configured)", unwanted)
-		}
-	}
-}
-
-// TestModelKeyboardOptionsAllEndpoints proves that when multiple endpoints are
-// configured, aliases for all of them appear.
-func TestModelKeyboardOptionsAllEndpoints(t *testing.T) {
-	ag := &agent.Agent{}
-	models := map[string]config.ModelConfig{
-		"opus":         {Model: "anthropic/claude-opus-4-6"},
-		"gemini-flash": {Model: "google/gemini-2.5-flash"},
-	}
-	cc := CommandContext{
-		Agent:        ag,
-		AgentConfig:  config.AgentConfig{},
-		ModelConfigs: models,
-		Config: &config.Config{
-			Endpoints: map[string]config.EndpointConfig{
-				"anthropic": {Format: "anthropic"},
-				"gemini":    {Format: "gemini"},
-			},
-		},
-	}
-	cmd := ModelCommand()
-	opts := cmd.KeyboardOptions(context.Background(), cc)
-	if len(opts) != 2 {
-		t.Fatalf("expected 2 options, got %d", len(opts))
+		Agent:       ag,
+		AgentConfig: config.AgentConfig{},
+		Config:      &config.Config{},
 	}
 }
 
@@ -93,10 +23,9 @@ func TestModelKeyboardOptionsAllEndpoints(t *testing.T) {
 func TestModelKeyboardOptionsNoAliases(t *testing.T) {
 	ag := &agent.Agent{}
 	cc := CommandContext{
-		Agent:        ag,
-		AgentConfig:  config.AgentConfig{},
-		Config:       &config.Config{},
-		ModelConfigs: nil,
+		Agent:       ag,
+		AgentConfig: config.AgentConfig{},
+		Config:      &config.Config{},
 	}
 	cmd := ModelCommand()
 	opts := cmd.KeyboardOptions(context.Background(), cc)
@@ -105,16 +34,11 @@ func TestModelKeyboardOptionsNoAliases(t *testing.T) {
 	}
 }
 
-// TestModelCommand verifies model can be switched between options and short names are resolved.
+// TestModelCommand verifies model can be switched using full developer/model_id syntax.
 func TestModelCommand(t *testing.T) {
-	ag := &agent.Agent{Model: "claude-haiku-4-5"}
+	ag := &agent.Agent{Model: "anthropic/claude-haiku-4-5"}
 	sk := "test-session"
-	models := map[string]config.ModelConfig{
-		"opus":   {Model: "anthropic/claude-opus-4-6"},
-		"sonnet": {Model: "anthropic/claude-sonnet-4-6"},
-		"haiku":  {Model: "anthropic/claude-haiku-4-5"},
-	}
-	cc := modelCC(ag, models)
+	cc := modelCC(ag)
 	cmd := ModelCommand()
 
 	// Show current
@@ -128,19 +52,13 @@ func TestModelCommand(t *testing.T) {
 	if !strings.Contains(result.Text, "claude-opus-4-6") {
 		t.Errorf("result = %q", result.Text)
 	}
-
-	// Switch with short alias
-	result, _ = cmd.Execute(context.Background(), Request{Args: "haiku", SessionKey: sk}, cc)
-	if !strings.Contains(result.Text, "claude-haiku-4-5") {
-		t.Errorf("result = %q", result.Text)
-	}
 }
 
 // TestEffortCommand verifies effort levels can be set by name or number and persisted.
 func TestEffortCommand(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := EffortCommand()
 
 	// Show when not set
@@ -197,7 +115,7 @@ func TestEffortCommand(t *testing.T) {
 func TestThinkingCommand(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := ThinkingCommand()
 
 	// Show when off (default)
@@ -250,7 +168,7 @@ func TestThinkingCommand(t *testing.T) {
 func TestThinkingCommandContextRouting(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := ThinkingCommand()
 
 	_, _ = cmd.Execute(context.Background(), Request{Args: "adaptive", SessionKey: sk}, cc)
@@ -296,7 +214,7 @@ func TestConfigCommand(t *testing.T) {
 func TestSpeedCommand(t *testing.T) {
 	ag := &agent.Agent{Model: "anthropic/claude-opus-4-6"}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := SpeedCommand()
 
 	// Show when standard (default)
@@ -355,7 +273,7 @@ func TestSpeedCommand(t *testing.T) {
 func TestSpeedCommandUnsupportedModel(t *testing.T) {
 	ag := &agent.Agent{Model: "anthropic/claude-haiku-4-5-20251001"}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := SpeedCommand()
 
 	result, _ := cmd.Execute(context.Background(), Request{Args: "fast", SessionKey: sk}, cc)
@@ -371,7 +289,7 @@ func TestSpeedCommandUnsupportedModel(t *testing.T) {
 func TestSpeedCommandVisibility(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := SpeedCommand()
 
 	if cmd.Visible == nil {
@@ -399,7 +317,7 @@ func TestSpeedCommandVisibility(t *testing.T) {
 func TestEffortCommandVisibility(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := EffortCommand()
 
 	if cmd.Visible == nil {
@@ -422,7 +340,7 @@ func TestEffortCommandVisibility(t *testing.T) {
 func TestThinkingCommandVisibility(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
-	cc := modelCC(ag, nil)
+	cc := modelCC(ag)
 	cmd := ThinkingCommand()
 
 	if cmd.Visible == nil {

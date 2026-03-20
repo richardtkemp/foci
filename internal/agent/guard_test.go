@@ -316,7 +316,7 @@ func (stubClient) CountTokens(context.Context, *provider.MessageRequest) (int, e
 func (stubClient) IsCachingAvailable() bool { return false }
 
 func TestGuardToolResult_AutoSummary(t *testing.T) {
-	// Proves that auto-summarisation is skipped (fallback used) when ModelConfigs is nil.
+	// Proves that auto-summarisation is skipped (fallback used) when GroupResolver is nil.
 	tmpDir := t.TempDir()
 	bigResult := strings.Repeat("x", 100)
 
@@ -328,19 +328,19 @@ func TestGuardToolResult_AutoSummary(t *testing.T) {
 		},
 	}
 
-	// When ModelConfigs is nil, no summary is attempted (fallback path)
+	// When GroupResolver is nil, no summary is attempted (fallback path)
 	a := &Agent{
 		MaxResultChars:      10,
 		ToolResultTempDir:   tmpDir,
 		Client:              stubClient{},
 		AutoSummarise:       true,
-		ModelConfigs:        nil, // no configs → skip summary
+		GroupResolver:       nil, // no resolver → skip summary
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
 	got := a.guardToolResult(context.Background(), nil, "test-session", "test", "", tools.TextResult(bigResult), nil)
 	if !strings.Contains(got, "Result too large") {
-		t.Error("expected fallback guard message when ModelConfigs is nil")
+		t.Error("expected fallback guard message when GroupResolver is nil")
 	}
 
 	// Verify the mock is not used (just testing the nil path)
@@ -357,7 +357,7 @@ func TestGuardToolResult_SkipsSummaryAboveMaxSummaryChars(t *testing.T) {
 		ToolResultTempDir:   tmpDir,
 		Client:              stubClient{},
 		AutoSummarise:       true,
-		ModelConfigs:        map[string]config.ModelConfig{"haiku": {Model: "anthropic/claude-haiku-4-5"}},
+		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}),
 		MaxSummaryChars:     50, // result (200 chars) exceeds this → skip summary
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
@@ -378,7 +378,7 @@ func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
 		ToolResultTempDir:   tmpDir,
 		AutoSummarise:       true,
 		Client:              nil, // no client → skip summary
-		ModelConfigs:        map[string]config.ModelConfig{"haiku": {Model: "anthropic/claude-haiku-4-5"}},
+		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}),
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
@@ -528,7 +528,7 @@ func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
 		ToolResultTempDir:   tmpDir,
 		Client:              stubClient{},
 		AutoSummarise:       false, // disabled → skip summary
-		ModelConfigs:        map[string]config.ModelConfig{"haiku": {Model: "anthropic/claude-haiku-4-5"}},
+		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}),
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
