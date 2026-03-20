@@ -104,7 +104,7 @@ func endpointFromClient(client Client) string {
 }
 
 // EndpointNameFromURL extracts a human-readable name from an API base URL.
-// Uses the penultimate domain label: "api.openrouter.ai" -> "Openrouter".
+// Uses the penultimate domain label: "api.openrouter.ai" -> "Openrouter API".
 func EndpointNameFromURL(rawURL string) string {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
@@ -113,7 +113,7 @@ func EndpointNameFromURL(rawURL string) string {
 	parts := strings.Split(u.Hostname(), ".")
 	if len(parts) >= 2 {
 		name := parts[len(parts)-2]
-		return strings.ToUpper(name[:1]) + name[1:]
+		return strings.ToUpper(name[:1]) + name[1:] + " API"
 	}
 	return u.Host
 }

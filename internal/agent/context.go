@@ -112,7 +112,7 @@ type TurnCallbacks struct {
 	TextDeltaObserver    func(delta string)
 	ThinkingDeltaObserver func(delta string)
 	SteerCheckFunc       func() []string // non-blocking; returns nil if no pending steer
-	RetryNotifyFunc      func(endpoint string) // called on first API retry; endpoint is the base URL being retried
+	RetryNotifyFunc      func(endpoint string) // called on first API retry; endpoint is a human-readable name (e.g. "Anthropic API")
 	RetrySuccessFunc     func() // called when a retry succeeds (to clear/overwrite retry message)
 }
 
