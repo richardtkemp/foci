@@ -106,7 +106,7 @@ func (r *TurnRenderer) OnReply(text string) {
 	if msgID != "" {
 		// Streaming: reply content is in the stream message. Finalize it
 		// and delete any lingering tool call preview.
-		content := r.sw.Content()
+		content := r.streamTextContent()
 		if strings.TrimSpace(content) != "" {
 			formatted := r.backend.FormatResponse(content)
 			_ = r.backend.EditMessage(msgID, formatted)
@@ -124,6 +124,21 @@ func (r *TurnRenderer) OnReply(text string) {
 	r.sw = r.newSW()
 	r.thinkingPhase = false
 	r.streamedThinkingLive = false
+}
+
+// streamTextContent returns the text-only portion of the stream buffer.
+// When thinking was streamed live, it strips the thinking + divider prefix.
+func (r *TurnRenderer) streamTextContent() string {
+	content := r.sw.Content()
+	if !r.streamedThinkingLive {
+		return content
+	}
+	// Thinking was streamed into the buffer — extract text after divider.
+	if idx := strings.Index(content, "\n\n---\n\n"); idx >= 0 {
+		return content[idx+len("\n\n---\n\n"):]
+	}
+	// No divider means only thinking arrived, no text.
+	return ""
 }
 
 // editToolPreviewWithReply edits the tool call preview message with intermediate
@@ -206,17 +221,8 @@ func (r *TurnRenderer) Finalize(response string) {
 	// call. When response is empty but the stream has content, use the
 	// stream's buffer so the message gets properly finalized.
 	streamMsgID := r.sw.Finish()
-	if streamContent := r.sw.Content(); strings.TrimSpace(response) == "" && strings.TrimSpace(streamContent) != "" {
-		if r.streamedThinkingLive {
-			// Thinking was streamed into the buffer (compact mode) — extract
-			// only the text portion after the divider.
-			if idx := strings.Index(streamContent, "\n\n---\n\n"); idx >= 0 {
-				response = streamContent[idx+len("\n\n---\n\n"):]
-			}
-			// No divider means only thinking arrived, no text — leave response empty.
-		} else {
-			response = streamContent
-		}
+	if textContent := r.streamTextContent(); strings.TrimSpace(response) == "" && strings.TrimSpace(textContent) != "" {
+		response = textContent
 	}
 
 	// Guard against empty responses.

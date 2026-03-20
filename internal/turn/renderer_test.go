@@ -173,6 +173,51 @@ func TestOnReply_StreamEnabled_DeltasArrived_FinalizesStream(t *testing.T) {
 	}
 }
 
+func TestOnReply_StreamEnabled_StripsThinkingFromContent(t *testing.T) {
+	// When thinking was streamed into the buffer, OnReply must strip thinking
+	// from the stream content so only the text portion is finalized. Without
+	// this, thinking would be permanently visible in intermediate messages.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{StreamOutput: true, ShowThinking: "compact", MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("internal reasoning")
+	r.OnTextDelta("visible reply")
+	r.OnReply("visible reply")
+
+	// Stream content is "internal reasoning\n\n---\n\nvisible reply" but
+	// the edit should only contain the text portion.
+	if len(backend.editCalls) != 1 {
+		t.Fatalf("editMessage calls = %d, want 1", len(backend.editCalls))
+	}
+	if !strings.Contains(backend.editCalls[0].formatted, "visible reply") {
+		t.Errorf("edit should contain reply text, got %q", backend.editCalls[0].formatted)
+	}
+	if strings.Contains(backend.editCalls[0].formatted, "internal reasoning") {
+		t.Errorf("edit should NOT contain thinking text, got %q", backend.editCalls[0].formatted)
+	}
+}
+
+func TestOnReply_StreamEnabled_ThinkingOnly_NoEdit(t *testing.T) {
+	// When only thinking was streamed (no text deltas), OnReply should not
+	// edit with thinking content — there's no text to show.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{StreamOutput: true, ShowThinking: "compact", MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("just thinking")
+	r.OnReply("")
+
+	// No text content after stripping thinking — should not edit.
+	if len(backend.editCalls) != 0 {
+		t.Errorf("editMessage calls = %d, want 0 (no text to show)", len(backend.editCalls))
+	}
+}
+
 func TestOnReply_StreamEnabled_DeltasArrived_FreshWriterForNextSegment(t *testing.T) {
 	// After OnReply finalizes the stream message, a fresh stream writer
 	// is created for the next segment. The next OnReply should take the
