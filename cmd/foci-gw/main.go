@@ -120,9 +120,6 @@ Subcommands:
 	clients := newClientRegistry(cfg, sec.store, ctx)
 	usageClients := newUsageClientRegistry(cfg)
 
-	// ========== Dynamic model alias resolution ==========
-	resolveAllModelConfigs(ctx, clients, sec.store, cfg, cfg.Models)
-
 	// ========== Sessions & State ==========
 	si := initSessions(cfg)
 	defer si.cleanup()
@@ -209,22 +206,11 @@ Subcommands:
 		}
 
 		// Resolve model from [groups] powerful group
-		groupResolver := config.NewGroupResolver(cfg.Groups, cfg.Models)
+		groupResolver := config.NewGroupResolver(cfg.Groups)
 		resolved := groupResolver.ResolveGroup(config.GroupPowerful)
 		if resolved == nil {
 			log.Errorf("main", "agent %q: cannot resolve powerful model %q (agent skipped)", acfg.ID, cfg.Groups.Powerful)
 			continue
-		}
-
-		// Populate agent Thinking/Effort/Speed from the resolved model's config
-		if resolved.Thinking != "" {
-			acfg.Thinking = resolved.Thinking
-		}
-		if resolved.Effort != "" {
-			acfg.Effort = resolved.Effort
-		}
-		if resolved.Speed != "" {
-			acfg.Speed = resolved.Speed
 		}
 
 		agentClient := clients.GetClient(resolved.Endpoint, resolved.Format)

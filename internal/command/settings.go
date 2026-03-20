@@ -21,7 +21,7 @@ func ModelCommand() *Command {
 				current := cc.Agent.SessionModel(req.SessionKey)
 				return Response{Text: fmt.Sprintf("Current model: %s", current)}, nil
 			}
-			resolved, err := config.ResolveModel(req.Args, "", cc.ModelConfigs)
+			resolved, err := config.ResolveModel(req.Args, "")
 			var endpoint, model, format string
 			if err != nil {
 				endpoint = ""
@@ -47,32 +47,7 @@ func ModelCommand() *Command {
 			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil
 		},
 		KeyboardOptions: func(_ context.Context, cc CommandContext) []KeyboardOption {
-			if len(cc.ModelConfigs) == 0 {
-				return nil
-			}
-			names := make([]string, 0, len(cc.ModelConfigs))
-			for alias := range cc.ModelConfigs {
-				resolved, err := config.ResolveModel(alias, "", cc.ModelConfigs)
-				if err != nil {
-					continue
-				}
-				// Only show models whose endpoint is configured.
-				if cc.Config != nil && cc.Config.Endpoints != nil {
-					if _, ok := cc.Config.Endpoints[resolved.Endpoint]; !ok {
-						continue
-					}
-				}
-				names = append(names, alias)
-			}
-			if len(names) == 0 {
-				return nil
-			}
-			sort.Strings(names)
-			opts := make([]KeyboardOption, len(names))
-			for i, alias := range names {
-				opts[i] = KeyboardOption{Label: alias, Data: alias}
-			}
-			return opts
+			return nil
 		},
 	}
 }

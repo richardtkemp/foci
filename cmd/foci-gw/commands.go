@@ -94,7 +94,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	}
 
 	// Build AgentNewDeps
-	models := p.cfg.Models
 	agentNewDeps := &command.AgentNewDeps{
 		Registry:    cmds,
 		ConfigPath:  p.configPath,
@@ -108,7 +107,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			return p.plat.AgentPreFlight(agentID)
 		},
 		ResolveModel: func(input string) string {
-			resolved, err := config.ResolveModel(input, "", models)
+			resolved, err := config.ResolveModel(input, "")
 			if err != nil {
 				return input
 			}
@@ -132,7 +131,6 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		APILogPath:          p.cfg.Logging.APIFile,
 		EventLogPath:        p.cfg.Logging.EventFile,
 		ConfigPath:          p.configPath,
-		ModelConfigs:        models,
 		GroupResolver:       p.groupResolver,
 		FallbackFunc:        p.fallbackFn,
 		ToolsRegistry:       p.registry,

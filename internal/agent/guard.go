@@ -105,7 +105,7 @@ func (a *Agent) guardToolResult(ctx context.Context, client provider.Client, ses
 	a.logger().Debugf("session=%s tool result guard: %s produced %d chars (limit %d), saved to %s", sessionKey, toolName, resultLen, a.MaxResultChars, fpath)
 
 	// Try to auto-summarise via Haiku (skip if disabled or result exceeds MaxSummaryChars)
-	if a.AutoSummarise && client != nil && len(a.ModelConfigs) > 0 && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
+	if a.AutoSummarise && client != nil && a.GroupResolver != nil && (a.MaxSummaryChars <= 0 || resultLen <= a.MaxSummaryChars) {
 		if summary := a.summariseToolResult(ctx, client, sessionKey, toolName, turnModel, result, messages, fpath); summary != "" {
 			return summary
 		}

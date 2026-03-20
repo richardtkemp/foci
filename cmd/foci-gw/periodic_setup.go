@@ -31,7 +31,7 @@ type periodicParams struct {
 // Returns the runner (also set on inst.kaRunner), or nil if not needed.
 func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
 	// Resolve model from powerful group to get endpoint information
-	groupResolver := config.NewGroupResolver(p.cfg.Groups, p.cfg.Models)
+	groupResolver := config.NewGroupResolver(p.cfg.Groups)
 	resolved := groupResolver.ResolveGroup(config.GroupPowerful)
 	var endpoint string
 	var client provider.Client
