@@ -265,23 +265,26 @@ foci secrets --config /etc/foci/foci.toml list
 
 ---
 
-### `auth` — Authenticate with Anthropic
+### `auth` — Set API key for an LLM provider
 
-Save a setup token to `secrets.toml`. If a gateway is running, the new credentials are hot-reloaded immediately.
+Save an API key to `secrets.toml`. If a gateway is running, the new credentials are hot-reloaded immediately.
 
 **Usage:**
 ```
-foci auth [--config PATH] [--addr HOST:PORT]
+foci auth [--provider NAME] [--api-key KEY] [--config PATH] [--addr HOST:PORT]
 ```
 
 **Flags:**
+- `--provider` — provider name: `anthropic`, `gemini`, `openai`, `openrouter` (default: `anthropic`).
+- `--api-key` — API key (prompted interactively if omitted).
 - `--config` — path to foci.toml (secrets.toml is written alongside it). Default: `~/config/secrets.toml`.
 - `--addr` — gateway address for hot-reload notification. Env: `FOCI_ADDR`. Default: `127.0.0.1:18791`.
 
 **Examples:**
 ```bash
-foci auth                            # default secrets path, default gateway
-foci auth --config /etc/foci/foci.toml  # custom config directory
+foci auth                                          # interactive: prompts for API key
+foci auth --provider openai --api-key sk-...       # non-interactive
+foci auth --config /etc/foci/foci.toml             # custom config directory
 foci auth --addr 10.0.0.1:18791      # notify remote gateway
 ```
 

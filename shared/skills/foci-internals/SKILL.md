@@ -7,9 +7,9 @@ description: Debug and investigate foci platform internals. API logs, payload lo
 
 ## Auth
 
-- Foci uses **setup-tokens** from `claude setup-token` (prefix `sk-ant-oat01-`). Stored in `secrets.toml` alongside `foci.toml`.
-- `foci auth` prompts for token, validates, saves, and signals running gateway to hot-swap credentials (POST `/-/reload-credentials`).
-- Setup-tokens valid ~1 year. No dashboard UI to revoke — regenerate to invalidate old one.
+- Foci uses API keys for LLM providers (Anthropic, Gemini, OpenAI, OpenRouter). Stored in `secrets.toml` alongside `foci.toml`.
+- `foci auth` prompts for provider and API key, saves, and signals running gateway to hot-swap credentials (POST `/-/reload-credentials`).
+- For Anthropic, Claude Code credentials (`~/.claude/.credentials.json`) are used as a fallback if no API key is configured.
 
 ## Anthropic Cache
 

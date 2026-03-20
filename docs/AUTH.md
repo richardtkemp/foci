@@ -1,76 +1,83 @@
 # Authentication Setup
 
-Foci authenticates with Anthropic using a setup token, API key, or Claude Code credentials. A single token handles both conversations (Messages API) and usage/mana queries.
+Foci authenticates with LLM providers using API keys or Claude Code credentials. The setup wizard (`foci first-run`) configures credentials for your chosen provider.
 
 ## Quick Start
 
 ```
+foci auth --provider anthropic --api-key sk-ant-...
+```
+
+Or interactively:
+```
 foci auth
 ```
 
-This prompts you to run `claude setup-token` in another terminal, then paste the token. The token is saved to `secrets.toml`.
+This prompts for a provider and API key. The key is saved to `secrets.toml` and hot-reloaded if a gateway is running.
 
-## Token Resolution Order
+## Supported Providers
 
-Foci checks credentials in this order:
+| Provider | Secret Key | Endpoint |
+|----------|-----------|----------|
+| Anthropic | `anthropic.api_key` | `anthropic` (auto) |
+| Google Gemini | `gemini.api_key` | `gemini` (auto) |
+| OpenAI | `openai.api_key` | `openai` (auto) |
+| OpenRouter | `openrouter.api_key` | `openrouter` (needs explicit `endpoint` in model config) |
+| Custom | `<name>.api_key` | User-defined |
 
-1. **Setup token** — `anthropic.setup_token` in `secrets.toml`. Written by `foci auth`. Static (no refresh needed).
-2. **API key** — `anthropic.api_key` in `secrets.toml`. Standard Anthropic API key.
-3. **Claude Code credentials** — `~/.claude/.credentials.json`. Read-only fallback. Auto-refreshing.
+## Credential Resolution (Anthropic)
+
+For the Anthropic endpoint, foci checks credentials in this order:
+
+1. **API key** — `anthropic.api_key` in `secrets.toml`. Set via `foci auth` or `foci first-run`.
+2. **Claude Code credentials** — `~/.claude/.credentials.json`. Read-only fallback. Auto-refreshing.
 
 The first source that succeeds is used. Startup log shows which source was selected:
 
 ```
-using setup-token from secrets.toml
 using API key from secrets.toml
 using Claude Code credentials from ~/.claude/.credentials.json (fallback, read-only, expires in 4h 15m)
 ```
 
-## How It Works
-
-1. **`foci auth`** prints instructions to run `claude setup-token`
-2. You run `claude setup-token` in another terminal (requires a Claude Code session)
-3. Paste the token back into the foci prompt
-4. Foci validates the token (prefix `sk-ant-oat01-`, minimum 80 chars) and saves it to `secrets.toml`
-5. If a foci gateway is running, the new credentials are **hot-reloaded immediately** — no restart needed
+Other providers (Gemini, OpenAI, OpenRouter) use API keys only — no fallback mechanism.
 
 ## Credentials in secrets.toml
-
-`foci auth` writes this field under `[anthropic]`:
-
-```toml
-[anthropic]
-setup_token = "sk-ant-oat01-..."
-```
-
-Alternatively, use a standard API key:
 
 ```toml
 [anthropic]
 api_key = "sk-ant-api03-..."
+
+[gemini]
+api_key = "AI..."
+
+[openai]
+api_key = "sk-..."
+
+[openrouter]
+api_key = "sk-or-..."
 ```
 
-## Claude Code Fallback
+## Claude Code Fallback (Anthropic only)
 
-If no setup token or API key is configured, foci falls back to Claude Code's credentials at `~/.claude/.credentials.json`. This is read-only — foci never writes to Claude Code's file. Token refreshes update in-memory state only.
-
-If you already use Claude Code, foci can read its credentials as a fallback — but running `foci auth` for a dedicated token is recommended.
+If no Anthropic API key is configured, foci falls back to Claude Code's credentials at `~/.claude/.credentials.json`. This is read-only — foci never writes to Claude Code's file.
 
 ### `foci auth` flags
 
 ```
-foci auth [--config PATH] [--addr HOST:PORT]
+foci auth [--config PATH] [--addr HOST:PORT] [--provider NAME] [--api-key KEY]
 ```
 
+- `--provider` — provider name: `anthropic`, `gemini`, `openai`, `openrouter` (default: `anthropic`)
+- `--api-key` — API key (prompted interactively if omitted)
 - `--config` — path to foci.toml (to find `secrets.toml` in the same directory)
 - `--addr` — gateway address for credential hot-reload notification (env: `FOCI_ADDR`, default: `127.0.0.1:18791`)
 
 ## Credential Hot-Reload
 
-When `foci auth` saves a new token, it sends a `POST /-/reload-credentials` request to the running gateway. The gateway re-reads `secrets.toml` and swaps to the new credentials immediately — in-flight API calls complete with the old token, subsequent calls use the new one.
+When `foci auth` saves a new key, it sends a `POST /-/reload-credentials` request to the running gateway. The gateway re-reads `secrets.toml` and swaps to the new credentials immediately — in-flight API calls complete with the old token, subsequent calls use the new one.
 
 If the gateway isn't running, `foci auth` prints a note and the new credentials take effect on next startup.
 
 ## Auto-Refresh
 
-When using Claude Code credentials fallback, foci refreshes the token ~5 minutes before expiry. The refresh runs in the background — no manual intervention needed. Setup tokens and API keys are static and do not need refresh.
+When using Claude Code credentials fallback, foci refreshes the token ~5 minutes before expiry. The refresh runs in the background — no manual intervention needed. API keys are static and do not need refresh.

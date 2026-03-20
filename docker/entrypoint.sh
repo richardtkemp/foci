@@ -65,8 +65,8 @@ if [ ! -f "$CONFIG_FILE" ]; then
 			SETUP_ARGS="$SETUP_ARGS --discord-bot-token $FOCI_DISCORD_TOKEN"
 			SETUP_ARGS="$SETUP_ARGS --discord-user-id $FOCI_DISCORD_USER"
 		fi
-		[ -n "${FOCI_AUTH_METHOD:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-method $FOCI_AUTH_METHOD"
-		[ -n "${FOCI_AUTH_TOKEN:-}" ] && SETUP_ARGS="$SETUP_ARGS --auth-token $FOCI_AUTH_TOKEN"
+		[ -n "${FOCI_PROVIDER:-}" ] && SETUP_ARGS="$SETUP_ARGS --provider $FOCI_PROVIDER"
+		[ -n "${FOCI_API_KEY:-}" ] && SETUP_ARGS="$SETUP_ARGS --api-key $FOCI_API_KEY"
 		[ -n "${FOCI_AGENT_ID:-}" ] && SETUP_ARGS="$SETUP_ARGS --agent-id $FOCI_AGENT_ID"
 		[ -n "${FOCI_AGENT_NAME:-}" ] && SETUP_ARGS="$SETUP_ARGS --display-name $FOCI_AGENT_NAME"
 		[ -n "${FOCI_CHAR_MODE:-}" ] && SETUP_ARGS="$SETUP_ARGS --char-mode $FOCI_CHAR_MODE"
