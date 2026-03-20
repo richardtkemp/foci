@@ -570,12 +570,16 @@ func (b *BleveIndex) Search(queryStr string, sortOrder string, opts *SearchOptio
 			rank *= (1.0 + cfg.Weight)
 		}
 
-		results = append(results, Result{
+		r := Result{
 			Path:    path,
 			Snippet: snippet,
 			Source:  source,
 			Rank:    rank,
-		})
+		}
+		if mtime, ok := hit.Fields["mtime"].(float64); ok && mtime > 0 {
+			r.Time = time.Unix(int64(mtime), 0)
+		}
+		results = append(results, r)
 	}
 
 	// For relevance sort, re-sort by weighted rank (descending — higher is better)
