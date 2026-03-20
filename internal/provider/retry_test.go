@@ -298,10 +298,10 @@ func TestEndpointNameFromURL(t *testing.T) {
 		url  string
 		want string
 	}{
-		{"https://api.openrouter.ai/v1", "Openrouter"},
-		{"https://api.together.xyz/v1", "Together"},
-		{"https://api.groq.com/v1", "Groq"},
-		{"https://generativelanguage.googleapis.com", "Googleapis"},
+		{"https://api.openrouter.ai/v1", "Openrouter API"},
+		{"https://api.together.xyz/v1", "Together API"},
+		{"https://api.groq.com/v1", "Groq API"},
+		{"https://generativelanguage.googleapis.com", "Googleapis API"},
 		{"https://localhost:8080", "localhost:8080"},
 		{"not-a-url", "not-a-url"},
 	}
