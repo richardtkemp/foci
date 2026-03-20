@@ -247,7 +247,9 @@ func responseFromOpenAI(resp *openai.ChatCompletion, model string) (*provider.Me
 	result.StopReason = mapFinishReason(choice.FinishReason)
 
 	// Extract reasoning_details from OpenRouter responses (if present).
-	if f, ok := choice.Message.JSON.ExtraFields["reasoning_details"]; ok && f.Valid() {
+	// ExtraFields have invalid status in the SDK (not modeled by struct fields),
+	// so check Raw() instead of Valid().
+	if f, ok := choice.Message.JSON.ExtraFields["reasoning_details"]; ok && f.Raw() != "" && f.Raw() != "null" {
 		rawJSON := json.RawMessage(f.Raw())
 		thinkText := extractReasoningText(rawJSON)
 		result.Content = append(result.Content, provider.ContentBlock{
