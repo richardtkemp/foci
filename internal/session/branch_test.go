@@ -252,9 +252,9 @@ func TestBranchDoesNotContaminateParent(t *testing.T) {
 }
 
 func TestCreateBranchWithOrientationMessage(t *testing.T) {
-	// Proves that an orientation message is injected as the first branch message
-	// when provided in BranchOptions, appearing after the inherited parent messages
-	// in the LoadFull result.
+	// Proves that orientation text is stored in branch metadata and retrievable
+	// via PendingOrientation. LoadFull returns only the parent messages — the
+	// orientation is consumed by the agent loop on the first turn, not by LoadFull.
 	s := NewStore(t.TempDir())
 	parentKey := "main/imain/1000000000"
 	branchKey := "main/iorient/1000000000"
@@ -270,23 +270,26 @@ func TestCreateBranchWithOrientationMessage(t *testing.T) {
 		t.Fatalf("CreateBranchWithOptions: %v", err)
 	}
 
-	// LoadFull should include parent msgs + orientation message
+	// LoadFull returns only parent messages (no orientation injected here).
 	msgs, err := s.LoadFull(branchKey)
 	if err != nil {
 		t.Fatalf("LoadFull: %v", err)
 	}
-
-	// 2 parent + 1 orientation
-	if len(msgs) != 3 {
-		t.Fatalf("len = %d, want 3 (2 parent + 1 orientation)", len(msgs))
+	if len(msgs) != 2 {
+		t.Fatalf("len = %d, want 2 (parent messages only)", len(msgs))
 	}
 
-	// Orientation should be the first branch message (index 2)
-	if msgs[2].Role != "user" {
-		t.Errorf("orientation role = %q, want user", msgs[2].Role)
+	// Orientation is available via PendingOrientation for the first turn.
+	got := s.PendingOrientation(branchKey)
+	if got != orientText {
+		t.Errorf("PendingOrientation = %q, want %q", got, orientText)
 	}
-	if provider.TextOf(msgs[2].Content) != orientText {
-		t.Errorf("orientation text = %q, want %q", provider.TextOf(msgs[2].Content), orientText)
+
+	// After appending a message (first turn consumed), orientation is gone.
+	s.TestAppend(branchKey, msg("user", "first turn"))
+	got = s.PendingOrientation(branchKey)
+	if got != "" {
+		t.Errorf("PendingOrientation after first turn = %q, want empty", got)
 	}
 }
 
