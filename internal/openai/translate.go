@@ -230,8 +230,17 @@ func responseFromOpenAI(resp *openai.ChatCompletion, model string) (*provider.Me
 
 	// Usage
 	result.Usage = provider.Usage{
-		InputTokens:  int(resp.Usage.PromptTokens),
-		OutputTokens: int(resp.Usage.CompletionTokens),
+		InputTokens:          int(resp.Usage.PromptTokens),
+		OutputTokens:         int(resp.Usage.CompletionTokens),
+		CacheReadInputTokens: int(resp.Usage.PromptTokensDetails.CachedTokens),
+	}
+	// OpenRouter returns cache_write_tokens as a non-standard extra field
+	// inside prompt_tokens_details.
+	if f, ok := resp.Usage.PromptTokensDetails.JSON.ExtraFields["cache_write_tokens"]; ok && f.Raw() != "" {
+		var n int64
+		if json.Unmarshal([]byte(f.Raw()), &n) == nil {
+			result.Usage.CacheCreationInputTokens = int(n)
+		}
 	}
 
 	// Extract content from first choice

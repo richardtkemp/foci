@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"foci/internal/provider"
+
+	"github.com/openai/openai-go/v3"
 )
 
 func TestListModels(t *testing.T) {
@@ -410,6 +412,93 @@ func TestMapFinishReason(t *testing.T) {
 	}
 }
 
+func TestResponseFromOpenAI_CacheMetrics(t *testing.T) {
+	// Proves that cache metrics from OpenAI-compatible responses (e.g. OpenRouter
+	// proxying Z.AI) are extracted into provider.Usage. CachedTokens is a standard
+	// OpenAI field; cache_write_tokens is an OpenRouter extension.
+	respJSON := `{
+		"id": "chatcmpl-cache-test",
+		"object": "chat.completion",
+		"created": 1711000000,
+		"model": "z-ai/glm-5-turbo",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": "hello"},
+			"finish_reason": "stop"
+		}],
+		"usage": {
+			"prompt_tokens": 130000,
+			"completion_tokens": 50,
+			"total_tokens": 130050,
+			"prompt_tokens_details": {
+				"cached_tokens": 125000,
+				"cache_write_tokens": 5000
+			}
+		}
+	}`
+
+	var resp openai.ChatCompletion
+	if err := json.Unmarshal([]byte(respJSON), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	result, err := responseFromOpenAI(&resp, "z-ai/glm-5-turbo")
+	if err != nil {
+		t.Fatalf("responseFromOpenAI: %v", err)
+	}
+
+	if result.Usage.InputTokens != 130000 {
+		t.Errorf("InputTokens = %d, want 130000", result.Usage.InputTokens)
+	}
+	if result.Usage.OutputTokens != 50 {
+		t.Errorf("OutputTokens = %d, want 50", result.Usage.OutputTokens)
+	}
+	if result.Usage.CacheReadInputTokens != 125000 {
+		t.Errorf("CacheReadInputTokens = %d, want 125000", result.Usage.CacheReadInputTokens)
+	}
+	if result.Usage.CacheCreationInputTokens != 5000 {
+		t.Errorf("CacheCreationInputTokens = %d, want 5000", result.Usage.CacheCreationInputTokens)
+	}
+}
+
+func TestResponseFromOpenAI_NoCacheMetrics(t *testing.T) {
+	// Proves that responses without cache fields (e.g. real OpenAI) work fine
+	// with zero values — no regression for non-caching endpoints.
+	respJSON := `{
+		"id": "chatcmpl-no-cache",
+		"object": "chat.completion",
+		"created": 1711000000,
+		"model": "gpt-4o",
+		"choices": [{
+			"index": 0,
+			"message": {"role": "assistant", "content": "hi"},
+			"finish_reason": "stop"
+		}],
+		"usage": {
+			"prompt_tokens": 100,
+			"completion_tokens": 10,
+			"total_tokens": 110
+		}
+	}`
+
+	var resp openai.ChatCompletion
+	if err := json.Unmarshal([]byte(respJSON), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	result, err := responseFromOpenAI(&resp, "gpt-4o")
+	if err != nil {
+		t.Fatalf("responseFromOpenAI: %v", err)
+	}
+
+	if result.Usage.CacheReadInputTokens != 0 {
+		t.Errorf("CacheReadInputTokens = %d, want 0", result.Usage.CacheReadInputTokens)
+	}
+	if result.Usage.CacheCreationInputTokens != 0 {
+		t.Errorf("CacheCreationInputTokens = %d, want 0", result.Usage.CacheCreationInputTokens)
+	}
+}
+
 func TestResponseFromOpenAI_NilResponse(t *testing.T) {
 	// Proves that passing a nil response to responseFromOpenAI returns an error rather than panicking or silently returning an empty result.
 	_, err := responseFromOpenAI(nil, "gpt-4o")
@@ -463,8 +552,13 @@ type openaiFunction struct {
 }
 
 type openaiUsage struct {
-	PromptTokens     int64
-	CompletionTokens int64
+	PromptTokens        int64
+	CompletionTokens    int64
+	PromptTokensDetails openaiPromptTokensDetails
+}
+
+type openaiPromptTokensDetails struct {
+	CachedTokens int64
 }
 
 // responseFromOpenAIHelper tests the translation logic without the SDK types.
@@ -478,8 +572,9 @@ func responseFromOpenAIHelper(resp *openaiChatCompletion, model string) (*provid
 		Role:  "assistant",
 		Model: model,
 		Usage: provider.Usage{
-			InputTokens:  int(resp.Usage.PromptTokens),
-			OutputTokens: int(resp.Usage.CompletionTokens),
+			InputTokens:          int(resp.Usage.PromptTokens),
+			OutputTokens:         int(resp.Usage.CompletionTokens),
+			CacheReadInputTokens: int(resp.Usage.PromptTokensDetails.CachedTokens),
 		},
 	}
 
