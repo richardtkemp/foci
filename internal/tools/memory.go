@@ -166,7 +166,11 @@ func memorySearch(ctx context.Context, params json.RawMessage, backends map[stri
 
 	var sb strings.Builder
 	for _, r := range results {
-		fmt.Fprintf(&sb, "[%s] %s: %s\n", r.Source, r.Path, r.Snippet)
+		if !r.Time.IsZero() {
+			fmt.Fprintf(&sb, "[%s %s] %s: %s\n", r.Source, r.Time.Format("2006-01-02 15:04"), r.Path, r.Snippet)
+		} else {
+			fmt.Fprintf(&sb, "[%s] %s: %s\n", r.Source, r.Path, r.Snippet)
+		}
 	}
 	return TextResult(sb.String()), nil
 }

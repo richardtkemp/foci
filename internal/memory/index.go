@@ -21,6 +21,7 @@ type Result struct {
 	Snippet string
 	Source  string // source name (e.g., "memory", "code", "docs") or "conversation"
 	Rank    float64
+	Time    time.Time // message time for conversations, file mtime for memory files (zero if unavailable)
 }
 
 // SourceConfig describes a memory source directory with weight.
@@ -225,7 +226,8 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			SELECT f.path,
 			       snippet(memory_fts, 0, '>', '<', '...', 40),
 			       f.source,
-			       COALESCE(m.mtime, 0) AS sort_mtime
+			       COALESCE(m.mtime, 0) AS sort_mtime,
+			       COALESCE(m.mtime, 0)
 			FROM memory_fts f
 			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
 			WHERE memory_fts MATCH ?%s
@@ -238,7 +240,8 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 			SELECT f.path,
 			       snippet(memory_fts, 0, '>', '<', '...', 40),
 			       f.source,
-			       %s AS weighted_rank
+			       %s AS weighted_rank,
+			       COALESCE(m.mtime, 0)
 			FROM memory_fts f
 			LEFT JOIN memory_meta m ON f.source = m.source AND f.path = m.path
 			WHERE memory_fts MATCH ?%s
@@ -256,8 +259,12 @@ func (idx *Index) Search(query string, sort string, opts *SearchOptions) ([]Resu
 	var results []Result
 	for rows.Next() {
 		var r Result
-		if err := rows.Scan(&r.Path, &r.Snippet, &r.Source, &r.Rank); err != nil {
+		var mtime float64
+		if err := rows.Scan(&r.Path, &r.Snippet, &r.Source, &r.Rank, &mtime); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if mtime > 0 {
+			r.Time = time.Unix(int64(mtime), 0)
 		}
 		results = append(results, r)
 	}

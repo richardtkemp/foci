@@ -132,12 +132,12 @@ func TestMemorySearchShowsSource(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// Should show both memory and conversation results with source labels
-	if !strings.Contains(result.Text, "[memory]") {
-		t.Errorf("missing [memory] source label in result: %q", result.Text)
+	// Should show both memory and conversation results with source labels (timestamps may be included)
+	if !strings.Contains(result.Text, "[memory") {
+		t.Errorf("missing [memory source label in result: %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "[conversation]") {
-		t.Errorf("missing [conversation] source label in result: %q", result.Text)
+	if !strings.Contains(result.Text, "[conversation") {
+		t.Errorf("missing [conversation source label in result: %q", result.Text)
 	}
 }
 
