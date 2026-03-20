@@ -27,7 +27,7 @@ func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
 
 	b, mock := testBot([]string{"111"}, cmds)
 
-	// Fresh message (timestamp = now) — should be dispatched normally
+	// Fresh message (timestamp = now) -- should be dispatched normally
 	msg := makeMsg(111, "owner", "/ping")
 	b.receiveMessage(context.Background(), msg)
 
@@ -59,7 +59,7 @@ func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
 	msg.Date = int64(time.Now().Add(-60 * time.Second).Unix())
 	b.receiveMessage(context.Background(), msg)
 
-	// Stale slash command should be dropped — no reply, no queue
+	// Stale slash command should be dropped -- no reply, no queue
 	if mock.sentCount() != 0 {
 		t.Errorf("stale slash command should not send a reply, got %d sends", mock.sentCount())
 	}
@@ -88,25 +88,6 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 	}
 }
 
-func TestNewSessionKeyForChat(t *testing.T) {
-	// Verifies that session keys are created with the
-	// correct chat prefix.
-	key := NewSessionKeyForChat("fotini", 123456789)
-	if !strings.HasPrefix(key, "fotini/c123456789/") {
-		t.Errorf("got %q, want prefix %q", key, "fotini/c123456789/")
-	}
-}
-
-func TestNewSessionKeyForChat_DifferentChats(t *testing.T) {
-	// Verifies that different chat IDs
-	// produce different session keys.
-	k1 := NewSessionKeyForChat("fotini", 111)
-	k2 := NewSessionKeyForChat("fotini", 222)
-	if k1 == k2 {
-		t.Error("different chat IDs should produce different session keys")
-	}
-}
-
 func TestDefaultChatAssignment(t *testing.T) {
 	// Verifies that the default chat is set on first
 	// message and does not change.
@@ -116,7 +97,8 @@ func TestDefaultChatAssignment(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.sessionIndex = idx
+	b.chatmeta.AgentID = "test-agent"
+	b.SetSessionIndex(idx)
 
 	// No default initially
 	if chatID := b.DefaultChatID(); chatID != 0 {
@@ -154,9 +136,10 @@ func TestDefaultSessionKey(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.sessionIndex = idx
+	b.chatmeta.AgentID = "test-agent"
+	b.SetSessionIndex(idx)
 
-	// No default → empty
+	// No default -> empty
 	if sk := b.DefaultSessionKey(); sk != "" {
 		t.Errorf("expected empty, got %q", sk)
 	}
@@ -177,8 +160,9 @@ func TestSessionKey_PrimaryBotUsesDefault(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
+	b.chatmeta.AgentID = "test-agent"
 	b.sessionKey = "" // primary bots don't have an override
-	b.sessionIndex = idx
+	b.SetSessionIndex(idx)
 	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	// SessionKey() should return the default chat session
@@ -196,8 +180,9 @@ func TestSessionKey_PrimaryBotIsStable(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
+	b.chatmeta.AgentID = "test-agent"
 	b.sessionKey = ""
-	b.sessionIndex = idx
+	b.SetSessionIndex(idx)
 	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	k1 := b.SessionKey()
@@ -216,7 +201,8 @@ func TestDefaultSessionKey_IsStable(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.sessionIndex = idx
+	b.chatmeta.AgentID = "test-agent"
+	b.SetSessionIndex(idx)
 	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	k1 := b.DefaultSessionKey()
@@ -236,7 +222,8 @@ func TestUpdateChatSessionKey_ChangesDefaultSessionKey(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.sessionIndex = idx
+	b.chatmeta.AgentID = "test-agent"
+	b.SetSessionIndex(idx)
 	_ = idx.SetDefaultChat("test-agent", platformName, 12345)
 
 	oldKey := b.DefaultSessionKey()
@@ -277,7 +264,8 @@ func TestChatUsernameRecording(t *testing.T) {
 	}
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
-	b.sessionIndex = idx
+	b.chatmeta.AgentID = "test-agent"
+	b.SetSessionIndex(idx)
 
 	msg := makeMsg(111, "alice", "hello")
 	b.receiveMessage(context.Background(), msg)
@@ -360,8 +348,9 @@ func TestDispatchSessionKey_SecondaryIdleFallsBack(t *testing.T) {
 	// to chat-based session key resolution.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
+	b.chatmeta.AgentID = "test-agent"
 	b.isSecondary = true
-	b.SetSessionKey("") // idle — no session assigned
+	b.SetSessionKey("") // idle -- no session assigned
 
 	got := b.dispatchSessionKey(12345)
 	if !strings.HasPrefix(got, "test-agent/c12345/") {
@@ -374,6 +363,7 @@ func TestDispatchSessionKey_PrimaryUsesChat(t *testing.T) {
 	// (not affected by the secondary-bot override logic).
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.agentID = "test-agent"
+	b.chatmeta.AgentID = "test-agent"
 
 	got := b.dispatchSessionKey(12345)
 	if !strings.HasPrefix(got, "test-agent/c12345/") {

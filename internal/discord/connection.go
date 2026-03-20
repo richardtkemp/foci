@@ -6,26 +6,19 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/chatmeta"
 	"foci/internal/command"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/tooldetail"
+	"foci/internal/turn"
 	"foci/internal/voice"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 var _ platform.Sender = (*Bot)(nil)
-
-// sessionIndexInterface abstracts session index operations for testability.
-type sessionIndexInterface interface {
-	GetChatMetadata(agentID, platform string, chatID int64, key string) (string, error)
-	SetChatMetadata(agentID, platform string, chatID int64, key, value string) error
-	SetAgentMetadata(agentID, key, value string) error
-	SetDefaultChat(agentID, platform string, chatID int64) error
-	DefaultChatForAgent(agentID string) (chatID int64, platform string)
-	ClearDefaultChat(agentID string) error
-}
 
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
 type attachment struct {
@@ -71,12 +64,13 @@ type Bot struct {
 	channelID  int64 // last known channel ID (stored as int64 from snowflake)
 	channelMu  sync.Mutex
 
-	sessionIndex    sessionIndexInterface
+	sessionIndex platform.SessionIndex
+	chatmeta     *chatmeta.Resolver
 
 	display         BotDisplayConfig
 	toolResults     sync.Map         // message ID (int64) -> toolResultEntry; for button expansion
 	thinkingStore   sync.Map         // message ID (int64) -> thinkingEntry; ephemeral
-	toolDetailStore *ToolDetailStore // nil = no persistence; write-through to SQLite
+	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite
 
 	steerMu    sync.Mutex // protects steerParts
 	steerParts []string   // pending steer messages; drained atomically
@@ -109,19 +103,9 @@ type BotDisplayConfig struct {
 	SteerMode             bool          // user messages route to buffer during active turns
 }
 
-// turnDisplay holds resolved display settings for a single turn.
-// Resolved once at turn start to avoid repeated override lookups.
-type turnDisplay struct {
-	showToolCalls string
-	showThinking  string
-	streamOutput  bool
-	displayWidth  int
-	renderOpts    display.RenderOpts
-}
-
 // resolveDisplay snapshots all display settings for a turn with the given session key.
 // Applies per-session overrides from displayOverrideFn on top of bot defaults.
-func (b *Bot) resolveDisplay(sessionKey string) turnDisplay {
+func (b *Bot) resolveDisplay(sessionKey string) turn.TurnDisplay {
 	d := b.display
 	if b.displayOverrideFn != nil {
 		ov := b.displayOverrideFn(sessionKey)
@@ -141,12 +125,13 @@ func (b *Bot) resolveDisplay(sessionKey string) turnDisplay {
 			d.StreamOutput = false
 		}
 	}
-	return turnDisplay{
-		showToolCalls: d.ShowToolCalls,
-		showThinking:  d.ShowThinking,
-		streamOutput:  d.StreamOutput,
-		displayWidth:  d.DisplayWidth,
-		renderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth},
+	return turn.TurnDisplay{
+		ShowToolCalls: d.ShowToolCalls,
+		ShowThinking:  d.ShowThinking,
+		StreamOutput:  d.StreamOutput,
+		DisplayWidth:  d.DisplayWidth,
+		MaxChars:      discordMaxChars,
+		RenderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth},
 	}
 }
 
@@ -184,8 +169,9 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 		allowed[u] = true
 	}
 
+	lg := log.NewComponentLogger("discord:" + agentID)
 	return &Bot{
-		log:             log.NewComponentLogger("discord:" + agentID),
+		log:             lg,
 		session:         dg,
 		handler:         handler,
 		commands:        cmds,
@@ -193,6 +179,11 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 		allowedUsers:    allowed,
 		agentID:         agentID,
 		queue:           make(chan queuedMessage, 64),
+		chatmeta: &chatmeta.Resolver{
+			AgentID:      agentID,
+			PlatformName: platformName,
+			Logger:       func() *log.ComponentLogger { return lg },
+		},
 	}
 }
 
@@ -251,7 +242,7 @@ func (b *Bot) drainSteer() []string {
 
 // SetToolDetailStore sets the persistent store for tool call details.
 // On startup, loads entries <48h old into the in-memory map.
-func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
+func (b *Bot) SetToolDetailStore(store *tooldetail.Store) {
 	b.toolDetailStore = store
 	if store == nil {
 		return
@@ -262,7 +253,11 @@ func (b *Bot) SetToolDetailStore(store *ToolDetailStore) {
 		return
 	}
 	for id, entry := range entries {
-		b.toolResults.Store(id, entry)
+		b.toolResults.Store(id, toolResultEntry{
+			compactText: entry.CompactText,
+			fullInput:   entry.FullInput,
+			result:      entry.Result,
+		})
 	}
 	if len(entries) > 0 {
 		b.logger().Infof("restored %d tool call details from disk", len(entries))
@@ -302,8 +297,11 @@ func (b *Bot) dispatchSessionKey(chatID int64) string {
 
 // SetSessionIndex sets the session index for persisting chat-to-session-key mappings.
 // Must be called before the bot starts receiving messages to ensure session continuity across restarts.
-func (b *Bot) SetSessionIndex(idx sessionIndexInterface) {
+func (b *Bot) SetSessionIndex(idx platform.SessionIndex) {
 	b.sessionIndex = idx
+	if b.chatmeta != nil {
+		b.chatmeta.Index = idx
+	}
 }
 
 // SetSecondary marks this bot as a secondary bot in the given pool.

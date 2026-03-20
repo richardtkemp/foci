@@ -11,6 +11,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/session"
+	"foci/internal/tooldetail"
 	"foci/internal/voice"
 
 	"github.com/bwmarrin/discordgo"
@@ -27,7 +28,7 @@ type AgentSetupParams struct {
 	SecretStore    *secrets.Store
 	Sessions       *session.Store
 	SessionIndex   *session.SessionIndex
-	ToolDetailStore *ToolDetailStore
+	ToolDetailStore *tooldetail.Store
 	STT            voice.STT
 	TTS            voice.TTS
 	STTMap         map[string]voice.STT

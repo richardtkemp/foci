@@ -113,7 +113,7 @@ On startup (`sessions_init.go:initSessions`):
 
 3. `SessionIndex.Rebuild(store)` — scans all session files on disk and rebuilds the SQLite index.
 
-4. `Bot.sessionKeyForMsg(chatID)` — on first message after restart, checks in-memory cache (empty), then queries `SessionIndex.GetChatMetadata(agentID, chatID, "session_key")` which returns the **persisted key** from before restart. Caches it in memory and continues using it.
+4. `chatmeta.Resolver.SessionKeyForChat(chatID)` — on first message after restart, queries `SessionIndex.GetChatMetadata(agentID, chatID, "session_key")` which returns the **persisted key** from before restart. Continues using it.
 
 **Net effect:** The same `root.jsonl` file keeps getting appended to across restarts. No new file, no new key. The restart is only visible as injected marker messages within the file.
 

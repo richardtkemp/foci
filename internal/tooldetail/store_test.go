@@ -1,4 +1,4 @@
-package telegram
+package tooldetail
 
 import (
 	"os"
@@ -7,18 +7,18 @@ import (
 	"time"
 )
 
-func tempStore(t *testing.T) *ToolDetailStore {
+func tempStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := NewToolDetailStore(filepath.Join(dir, "test.db"))
+	s, err := NewStore(filepath.Join(dir, "test.db"))
 	if err != nil {
-		t.Fatalf("NewToolDetailStore: %v", err)
+		t.Fatalf("NewStore: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
 }
 
-func TestToolDetailStore_StoreAndLoadAll(t *testing.T) {
+func TestStore_StoreAndLoadAll(t *testing.T) {
 	// Verifies that multiple entries can be stored and then loaded back by LoadAll
 	// with all fields (compact text, full input, result) intact.
 	s := tempStore(t)
@@ -33,15 +33,15 @@ func TestToolDetailStore_StoreAndLoadAll(t *testing.T) {
 	if len(m) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(m))
 	}
-	if e := m[100]; e.compactText != "compact1" || e.fullInput != "full1" || e.result != "result1" {
+	if e := m[100]; e.CompactText != "compact1" || e.FullInput != "full1" || e.Result != "result1" {
 		t.Errorf("entry 100 mismatch: %+v", e)
 	}
-	if e := m[200]; e.compactText != "compact2" || e.fullInput != "full2" || e.result != "result2" {
+	if e := m[200]; e.CompactText != "compact2" || e.FullInput != "full2" || e.Result != "result2" {
 		t.Errorf("entry 200 mismatch: %+v", e)
 	}
 }
 
-func TestToolDetailStore_Replace(t *testing.T) {
+func TestStore_Replace(t *testing.T) {
 	// Verifies that storing a second entry with the same message ID replaces
 	// the first, so LoadAll returns only one entry with the updated values.
 	s := tempStore(t)
@@ -56,12 +56,12 @@ func TestToolDetailStore_Replace(t *testing.T) {
 	if len(m) != 1 {
 		t.Fatalf("expected 1 entry after replace, got %d", len(m))
 	}
-	if e := m[100]; e.compactText != "new" {
-		t.Errorf("expected replaced value, got %q", e.compactText)
+	if e := m[100]; e.CompactText != "new" {
+		t.Errorf("expected replaced value, got %q", e.CompactText)
 	}
 }
 
-func TestToolDetailStore_Count(t *testing.T) {
+func TestStore_Count(t *testing.T) {
 	// Verifies that Count() accurately reflects the number of stored entries,
 	// starting at zero and incrementing with each distinct message ID stored.
 	s := tempStore(t)
@@ -78,7 +78,7 @@ func TestToolDetailStore_Count(t *testing.T) {
 	}
 }
 
-func TestToolDetailStore_ExpireAndVacuum(t *testing.T) {
+func TestStore_ExpireAndVacuum(t *testing.T) {
 	// Verifies that ExpireAndVacuum removes entries older than 48 hours while
 	// leaving fresh entries intact, by backdating one row directly in the DB.
 	s := tempStore(t)
@@ -116,7 +116,7 @@ func TestToolDetailStore_ExpireAndVacuum(t *testing.T) {
 	}
 }
 
-func TestToolDetailStore_LoadAll_SkipsExpired(t *testing.T) {
+func TestStore_LoadAll_SkipsExpired(t *testing.T) {
 	// Verifies that LoadAll itself filters out entries older than 48 hours,
 	// even without calling ExpireAndVacuum first.
 	s := tempStore(t)
@@ -138,7 +138,7 @@ func TestToolDetailStore_LoadAll_SkipsExpired(t *testing.T) {
 	}
 }
 
-func TestToolDetailStore_EmptyLoadAll(t *testing.T) {
+func TestStore_EmptyLoadAll(t *testing.T) {
 	// Verifies that LoadAll returns an empty map (not an error or nil) when the
 	// store has no entries.
 	s := tempStore(t)
@@ -152,29 +152,29 @@ func TestToolDetailStore_EmptyLoadAll(t *testing.T) {
 	}
 }
 
-func TestToolDetailStore_InvalidPath(t *testing.T) {
-	// Verifies that NewToolDetailStore returns an error when given a path in a
+func TestStore_InvalidPath(t *testing.T) {
+	// Verifies that NewStore returns an error when given a path in a
 	// non-existent directory, rather than panicking or silently failing.
-	_, err := NewToolDetailStore("/nonexistent/dir/test.db")
+	_, err := NewStore("/nonexistent/dir/test.db")
 	if err == nil {
 		t.Fatal("expected error for invalid path")
 	}
 }
 
-func TestToolDetailStore_PersistsAcrossReopen(t *testing.T) {
+func TestStore_PersistsAcrossReopen(t *testing.T) {
 	// Verifies that data written to the store persists after Close() and
 	// is fully readable when the database is reopened at the same path.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	s1, err := NewToolDetailStore(dbPath)
+	s1, err := NewStore(dbPath)
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
 	s1.Store(42, "compact", "full", "result")
 	s1.Close()
 
-	s2, err := NewToolDetailStore(dbPath)
+	s2, err := NewStore(dbPath)
 	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
@@ -187,20 +187,20 @@ func TestToolDetailStore_PersistsAcrossReopen(t *testing.T) {
 	if len(m) != 1 {
 		t.Fatalf("expected 1 entry after reopen, got %d", len(m))
 	}
-	if e := m[42]; e.compactText != "compact" || e.fullInput != "full" || e.result != "result" {
+	if e := m[42]; e.CompactText != "compact" || e.FullInput != "full" || e.Result != "result" {
 		t.Errorf("entry mismatch after reopen: %+v", e)
 	}
 }
 
-func TestToolDetailStore_DbFileCreated(t *testing.T) {
+func TestStore_DbFileCreated(t *testing.T) {
 	// Verifies that the SQLite database file is physically created on disk after
 	// data is stored, confirming the store is backed by a real file.
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
-	s, err := NewToolDetailStore(dbPath)
+	s, err := NewStore(dbPath)
 	if err != nil {
-		t.Fatalf("NewToolDetailStore: %v", err)
+		t.Fatalf("NewStore: %v", err)
 	}
 	defer s.Close()
 

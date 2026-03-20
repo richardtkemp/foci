@@ -222,7 +222,7 @@ func (b *Bot) handleThinkingCallback(channelID, action, msgID string) {
 		return
 	}
 	entry := val.(thinkingEntry)
-	dw := b.resolveDisplay(b.sessionKeyForMsg(0)).displayWidth
+	dw := b.resolveDisplay(b.sessionKeyForMsg(0)).DisplayWidth
 
 	switch action {
 	case "show":
@@ -254,20 +254,3 @@ func formatThinkingExpanded(thinkingText, responseText string, displayWidth int)
 	return "*" + thinkingText + "*" + divider + responseText
 }
 
-// formatToolCallWithResult combines a tool call message with its result,
-// truncating the result so the total fits within Discord's 2000 char limit.
-func formatToolCallWithResult(toolText, result string) string {
-	separator := "\n\n**Result:**\n```\n"
-	suffix := "\n```"
-
-	overhead := len(toolText) + len(separator) + len(suffix)
-	if overhead >= discordMaxChars {
-		return toolText
-	}
-
-	available := discordMaxChars - overhead
-	if len(result) > available {
-		result = result[:available-3] + "..."
-	}
-	return toolText + separator + result + suffix
-}

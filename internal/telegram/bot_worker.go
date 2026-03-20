@@ -103,19 +103,21 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []queuedMessage) {
 	}()
 	defer typingTicker.Stop()
 
-	renderer := newTurnRenderer(b, first.msg, sk)
+	d := b.resolveDisplay(sk)
+	tracker := newToolCallTracker(b, first.msg.Chat.Id, d)
+	renderer := newTurnRenderer(b, first.msg, tracker, d)
 	defer renderer.Cleanup()
 
 	cb := &agent.TurnCallbacks{
-		ReplyFunc:          renderer.onReply,
-		ActivityFunc:       renderer.onActivity,
-		ToolCallObserver:   renderer.tracker.observeToolCall,
-		ToolResultObserver: renderer.tracker.observeToolResult,
-		ThinkingObserver:   renderer.onThinking,
-		TextDeltaObserver:  renderer.onTextDelta,
+		ReplyFunc:          renderer.OnReply,
+		ActivityFunc:       renderer.OnActivity,
+		ToolCallObserver:   tracker.ObserveToolCall,
+		ToolResultObserver: tracker.ObserveToolResult,
+		ThinkingObserver:   renderer.OnThinking,
+		TextDeltaObserver:  renderer.OnTextDelta,
 		SteerCheckFunc:     b.drainSteer,
-		RetryNotifyFunc:    renderer.tracker.notifyRetry,
-		RetrySuccessFunc:   renderer.tracker.clearRetryNotification,
+		RetryNotifyFunc:    tracker.NotifyRetry,
+		RetrySuccessFunc:   tracker.ClearRetryNotification,
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")

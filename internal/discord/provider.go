@@ -8,13 +8,14 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tooldetail"
 )
 
 // discordProvider implements platform.MessagingProvider for Discord.
 type discordProvider struct {
 	mgr             *BotManager
 	connMgr         *ConnectionManagerAdapter
-	toolDetailStore *ToolDetailStore
+	toolDetailStore *tooldetail.Store
 	deps            platform.ProviderDeps
 }
 
@@ -31,7 +32,7 @@ func (p *discordProvider) Init(deps platform.ProviderDeps) error {
 
 	// Create tool detail store
 	dbPath := deps.Config.DataPath("discord_tool_details.db")
-	store, err := NewToolDetailStore(dbPath)
+	store, err := tooldetail.NewStore(dbPath)
 	if err != nil {
 		log.Errorf("discord", "create tool detail store: %v (inline button expansion will not persist)", err)
 	} else {

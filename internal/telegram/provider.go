@@ -9,6 +9,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/tooldetail"
 	"foci/internal/voice"
 )
 
@@ -16,7 +17,7 @@ import (
 type telegramProvider struct {
 	mgr            *BotManager
 	connMgr        *ConnectionManagerAdapter
-	toolDetailStore *ToolDetailStore
+	toolDetailStore *tooldetail.Store
 	deps           platform.ProviderDeps
 }
 
@@ -33,7 +34,7 @@ func (p *telegramProvider) Init(deps platform.ProviderDeps) error {
 
 	// Create tool detail store
 	dbPath := deps.Config.DataPath("tool_details.db")
-	store, err := NewToolDetailStore(dbPath)
+	store, err := tooldetail.NewStore(dbPath)
 	if err != nil {
 		log.Errorf("telegram", "create tool detail store: %v (inline keyboard expansion will not persist)", err)
 	} else {

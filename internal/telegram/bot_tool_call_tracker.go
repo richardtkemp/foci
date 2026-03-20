@@ -3,217 +3,139 @@ package telegram
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
+	"strconv"
+
+	"foci/internal/log"
+	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// toolCallTracker manages tool call visibility state during an agent turn.
-// It encapsulates the mutable state shared between ToolCallObserver and
-// ToolResultObserver callbacks (message ID, text snapshots, mutex).
-type toolCallTracker struct {
-	bot     *Bot
-	chatID  int64
-	display turnDisplay
-
-	mu         sync.Mutex
-	msgID      int64            // Telegram message ID of the current tool-call message
-	text       string           // last compact summary HTML (full mode) or full HTML (preview mode)
-	fullText   string           // last full formatted tool call HTML (full mode only)
-	lastParams json.RawMessage  // params of the last tool call (for result hints)
-	retryMsgID int64            // Telegram message ID of the retry notification message
+// newToolCallTracker creates a shared turn.ToolCallTracker backed by
+// Telegram-specific formatting and messaging.
+func newToolCallTracker(bot *Bot, chatID int64, d turn.TurnDisplay) *turn.ToolCallTracker {
+	backend := &telegramTrackerBackend{bot: bot, chatID: chatID}
+	store := &telegramTrackerStore{bot: bot, chatID: chatID}
+	display := turn.TrackerDisplay{ShowToolCalls: d.ShowToolCalls}
+	return turn.NewToolCallTracker(backend, store, display, compactResultHint)
 }
 
-// lastMsgID returns the current tool-call message ID (thread-safe).
-func (t *toolCallTracker) lastMsgID() int64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.msgID
+// telegramTrackerBackend implements turn.TrackerBackend for Telegram.
+type telegramTrackerBackend struct {
+	bot    *Bot
+	chatID int64
 }
 
-// resetMsgID clears the tool-call message ID (e.g. after intermediate text).
-func (t *toolCallTracker) resetMsgID() {
-	t.mu.Lock()
-	t.msgID = 0
-	t.mu.Unlock()
+func (b *telegramTrackerBackend) FormatCompact(toolName string, params json.RawMessage) string {
+	return formatToolCallCompact(toolName, params)
 }
 
-// observeToolCall handles tool call visibility via send+edit pattern.
-func (t *toolCallTracker) observeToolCall(toolName string, params json.RawMessage) {
-	mode := t.display.showToolCalls
-	if mode == "off" || mode == "" {
-		return
+func (b *telegramTrackerBackend) FormatFull(toolName string, params json.RawMessage, showMode string) string {
+	return b.bot.formatToolCall(toolName, params, showMode)
+}
+
+func (b *telegramTrackerBackend) FormatWithResult(toolText, result string) string {
+	return formatToolCallWithResult(toolText, result)
+}
+
+func (b *telegramTrackerBackend) FormatHintSuffix(hint string) string {
+	return " → " + htmlEscape(hint)
+}
+
+func (b *telegramTrackerBackend) FormatRetry(endpoint string) string {
+	return fmt.Sprintf("⏳ <i>%s is busy right now, retrying...</i>", endpoint)
+}
+
+func (b *telegramTrackerBackend) FormatRetryClear() string {
+	return "✓ <i>Request completed</i>"
+}
+
+func (b *telegramTrackerBackend) Send(text string) (string, error) {
+	sent, err := b.bot.client.SendMessage(b.chatID, text, &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
+	})
+	if err != nil {
+		return "", err
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if mode == "full" {
-		t.sendFullModeToolCall(toolName, params)
-		return
-	}
-	t.sendPreviewModeToolCall(toolName, params)
+	return strconv.FormatInt(sent.MessageId, 10), nil
 }
 
-// sendFullModeToolCall sends a compact summary with a "Show full" button.
-func (t *toolCallTracker) sendFullModeToolCall(toolName string, params json.RawMessage) {
-	compact := formatToolCallCompact(toolName, params)
-	full := t.bot.formatToolCall(toolName, params, t.display.showToolCalls)
-	kb := singleButtonKeyboard("Show full", "tc:show")
-	sent, err := t.bot.client.SendMessage(t.chatID, compact, &gotgbot.SendMessageOpts{
+func (b *telegramTrackerBackend) SendWithButton(text, btnLabel, btnData string) (string, error) {
+	kb := singleButtonKeyboard(btnLabel, btnData)
+	sent, err := b.bot.client.SendMessage(b.chatID, text, &gotgbot.SendMessageOpts{
 		ParseMode:   "HTML",
 		ReplyMarkup: kb,
 	})
 	if err != nil {
-		t.bot.logger().Debugf("send tool call msg: %v", err)
-		return
+		return "", err
 	}
-	t.msgID = sent.MessageId
-	t.text = compact
-	t.fullText = full
-	t.lastParams = params
-	t.bot.toolResults.Store(t.msgID, toolResultEntry{
-		compactText: compact,
-		fullInput:   full,
-		chatID:      t.chatID,
+	return strconv.FormatInt(sent.MessageId, 10), nil
+}
+
+func (b *telegramTrackerBackend) Edit(msgID, text string) error {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	_, _, err := b.bot.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+		ChatId:    b.chatID,
+		MessageId: id,
+		ParseMode: "HTML",
 	})
+	return err
 }
 
-// sendPreviewModeToolCall sends or edits a tool call message (overwriting previous).
-func (t *toolCallTracker) sendPreviewModeToolCall(toolName string, params json.RawMessage) {
-	text := t.bot.formatToolCall(toolName, params, t.display.showToolCalls)
-	sendOpts := &gotgbot.SendMessageOpts{ParseMode: "HTML"}
-	if t.msgID == 0 {
-		sent, err := t.bot.client.SendMessage(t.chatID, text, sendOpts)
-		if err != nil {
-			t.bot.logger().Debugf("send tool call msg: %v", err)
-			return
-		}
-		t.msgID = sent.MessageId
-		t.text = text
-	} else {
-		_, _, err := t.bot.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-			ChatId:    t.chatID,
-			MessageId: t.msgID,
-			ParseMode: "HTML",
-		})
-		if err != nil {
-			t.bot.logger().Debugf("edit tool call msg: %v", err)
-		}
-		t.text = text
-	}
+func (b *telegramTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData string) error {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	kb := singleButtonKeyboard(btnLabel, btnData)
+	_, _, err := b.bot.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
+		ChatId:      b.chatID,
+		MessageId:   id,
+		ParseMode:   "HTML",
+		ReplyMarkup: kb,
+	})
+	return err
 }
 
-// cleanupPreview deletes the tool call preview message if one exists.
-// Called when the final response is delivered via a separate message (streaming,
-// thinking, or long response) so the transient tool call doesn't linger in chat.
-func (t *toolCallTracker) cleanupPreview() {
-	t.mu.Lock()
-	id := t.msgID
-	t.msgID = 0
-	t.mu.Unlock()
-	if id == 0 || t.display.showToolCalls != "preview" {
-		return
-	}
-	_, _ = t.bot.client.DeleteMessage(t.chatID, id, nil)
+func (b *telegramTrackerBackend) Delete(msgID string) error {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	_, _ = b.bot.client.DeleteMessage(b.chatID, id, nil)
+	return nil
 }
 
-// observeToolResult stores tool results for inline keyboard expansion (full mode only).
-// When a result hint is available, the compact notification is updated inline
-// (e.g. "☑️ todo: add" becomes "☑️ todo: add → #542").
-func (t *toolCallTracker) observeToolResult(toolName string, result string, isError bool) {
-	if t.display.showToolCalls != "full" {
-		return
-	}
-	t.mu.Lock()
-	msgID := t.msgID
-	compact := t.text
-	full := t.fullText
-	params := t.lastParams
-	t.mu.Unlock()
-	if msgID == 0 {
-		return
-	}
+func (b *telegramTrackerBackend) Logger() *log.ComponentLogger {
+	return b.bot.logger()
+}
 
-	// Generate a result hint to append to the compact notification.
-	hint := compactResultHint(toolName, params, result)
-	if hint != "" {
-		compact = compact + " → " + htmlEscape(hint)
-	}
+// telegramTrackerStore implements turn.TrackerStore backed by the Bot's
+// sync.Map and optional ToolDetailStore.
+type telegramTrackerStore struct {
+	bot    *Bot
+	chatID int64
+}
 
-	var wasExpanded bool
-	if prev, ok := t.bot.toolResults.Load(msgID); ok {
-		entry := prev.(toolResultEntry)
-		wasExpanded = entry.expanded
-	}
-
-	t.bot.toolResults.Store(msgID, toolResultEntry{
+func (s *telegramTrackerStore) StoreEntry(msgID, compact, full, result string, expanded bool) {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	s.bot.toolResults.Store(id, toolResultEntry{
 		compactText: compact,
 		fullInput:   full,
 		result:      result,
-		expanded:    wasExpanded,
-		chatID:      t.chatID,
+		expanded:    expanded,
+		chatID:      s.chatID,
 	})
-	if t.bot.toolDetailStore != nil {
-		t.bot.toolDetailStore.Store(msgID, compact, full, result)
-	}
-
-	if wasExpanded {
-		expanded := formatToolCallWithResult(full, result)
-		kb := singleButtonKeyboard("Hide", "tc:hide")
-		_, _, _ = t.bot.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
-			ChatId:    t.chatID,
-			MessageId: msgID,
-			ParseMode: "HTML",
-			ReplyMarkup: kb,
-		})
-	} else if hint != "" {
-		// Update the compact notification with the result hint.
-		kb := singleButtonKeyboard("Show full", "tc:show")
-		_, _, _ = t.bot.client.EditMessageText(compact, &gotgbot.EditMessageTextOpts{
-			ChatId:    t.chatID,
-			MessageId: msgID,
-			ParseMode: "HTML",
-			ReplyMarkup: kb,
-		})
-	}
 }
 
-// notifyRetry sends a retry notification message on first API retry.
-func (t *toolCallTracker) notifyRetry(endpoint string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	text := fmt.Sprintf("⏳ <i>%s is busy right now, retrying...</i>", endpoint)
-	sent, err := t.bot.client.SendMessage(t.chatID, text, &gotgbot.SendMessageOpts{
-		ParseMode: "HTML",
-	})
-	if err != nil {
-		t.bot.logger().Debugf("send retry notification: %v", err)
-		return
+func (s *telegramTrackerStore) IsExpanded(msgID string) bool {
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	if prev, ok := s.bot.toolResults.Load(id); ok {
+		return prev.(toolResultEntry).expanded
 	}
-	t.retryMsgID = sent.MessageId
+	return false
 }
 
-// clearRetryNotification deletes or overwrites the retry notification on success.
-func (t *toolCallTracker) clearRetryNotification() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.retryMsgID == 0 {
+func (s *telegramTrackerStore) Persist(msgID, compact, full, result string) {
+	if s.bot.toolDetailStore == nil {
 		return
 	}
-
-	// Overwrite with success message
-	_, _, err := t.bot.client.EditMessageText("✓ <i>Request completed</i>", &gotgbot.EditMessageTextOpts{
-		ChatId:    t.chatID,
-		MessageId: t.retryMsgID,
-		ParseMode: "HTML",
-	})
-	if err != nil {
-		t.bot.logger().Debugf("clear retry notification: %v", err)
-	}
-
-	t.retryMsgID = 0
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	s.bot.toolDetailStore.Store(id, compact, full, result)
 }
 
 // toolResultEntry stores the compact summary, full input text, and result
@@ -235,7 +157,6 @@ func formatToolCallWithResult(toolText, result string) string {
 
 	overhead := len(toolText) + len(separator) + len(suffix)
 	if overhead >= maxLen {
-		// Tool text alone is too long; just return it as-is.
 		return toolText
 	}
 

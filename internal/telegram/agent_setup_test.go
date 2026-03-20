@@ -135,17 +135,17 @@ func TestDisplayOverrideFn_UsesSessionKey(t *testing.T) {
 	})
 
 	// With a different session key, should fall back to bot default.
-	if got := bot.resolveDisplay("sk-other").showToolCalls; got != "off" {
+	if got := bot.resolveDisplay("sk-other").ShowToolCalls; got != "off" {
 		t.Errorf("with sk-other: got %q, want %q", got, "off")
 	}
 
 	// With the matching session key, should resolve the override.
-	if got := bot.resolveDisplay("sk-turn").showToolCalls; got != "full" {
+	if got := bot.resolveDisplay("sk-turn").ShowToolCalls; got != "full" {
 		t.Errorf("with sk-turn: got %q, want %q", got, "full")
 	}
 
 	// Empty session key, should fall back to bot default.
-	if got := bot.resolveDisplay("").showToolCalls; got != "off" {
+	if got := bot.resolveDisplay("").ShowToolCalls; got != "off" {
 		t.Errorf("with empty sk: got %q, want %q", got, "off")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/secrets"
 	"foci/internal/session"
+	"foci/internal/tooldetail"
 	"foci/internal/voice"
 )
 
@@ -25,7 +26,7 @@ type AgentSetupParams struct {
 	SecretStore     *secrets.Store
 	Sessions        *session.Store
 	SessionIndex    *session.SessionIndex
-	ToolDetailStore *ToolDetailStore
+	ToolDetailStore *tooldetail.Store
 	STT             voice.STT
 	TTS             voice.TTS
 	STTMap          map[string]voice.STT
@@ -213,7 +214,7 @@ type FacetBotConfig struct {
 	TTSProvider     voice.TTS
 	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
-	ToolDetailStore *ToolDetailStore
+	ToolDetailStore *tooldetail.Store
 	SessionIndex    *session.SessionIndex
 }
 
