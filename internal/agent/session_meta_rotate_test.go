@@ -47,8 +47,8 @@ func TestRotateSession(t *testing.T) {
 	}
 
 	// Old key should have empty/default values
-	if ag.SessionEffort(oldKey) != ag.Effort {
-		t.Errorf("old key should return agent default effort, got %q", ag.SessionEffort(oldKey))
+	if ag.SessionEffort(oldKey) != "" {
+		t.Errorf("old key should return empty default effort, got %q", ag.SessionEffort(oldKey))
 	}
 
 	// Verify session metadata keys migrated

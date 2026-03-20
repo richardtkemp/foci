@@ -36,8 +36,8 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-opus-4-6",
-		Thinking:  "adaptive",
 	}
+	ag.SetSessionThinking("test/imain/1000000000", "adaptive")
 
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Think about this")
 	if err != nil {
@@ -116,8 +116,8 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 		Tools:     registry,
 		Bootstrap: bootstrap,
 		Model:     "claude-opus-4-6",
-		Thinking:  "adaptive",
 	}
+	ag.SetSessionThinking("test/imain/1000000000", "adaptive")
 
 	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Think and answer")
 	if err != nil {

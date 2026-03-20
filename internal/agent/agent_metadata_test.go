@@ -448,11 +448,11 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 		Bootstrap:         bootstrap,
 		Model:             "claude-haiku-4-5",
 		DuplicateMessages: true,
-		Thinking:          "enabled",
-		Effort:            "high",
 	}
 
 	// With thinking+effort>low, duplication should be suppressed
+	ag.SetSessionThinking("test/ithink/1000000000", "enabled")
+	ag.SetSessionEffort("test/ithink/1000000000", "high")
 	ag.HandleMessage(context.Background(), "test/ithink/1000000000", "Do the thing")
 
 	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -462,7 +462,8 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With effort=low, duplication should NOT be suppressed
-	ag.Effort = "low"
+	ag.SetSessionThinking("test/ilow/1000000000", "enabled")
+	ag.SetSessionEffort("test/ilow/1000000000", "low")
 	ag.HandleMessage(context.Background(), "test/ilow/1000000000", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -472,8 +473,7 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With thinking but default (empty) effort, duplication should still be suppressed
-	ag.Thinking = "adaptive"
-	ag.Effort = ""
+	ag.SetSessionThinking("test/idefaulteffort/1000000000", "adaptive")
 	ag.HandleMessage(context.Background(), "test/idefaulteffort/1000000000", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -483,8 +483,7 @@ func TestDuplicateMessagesSuppressedWithThinking(t *testing.T) {
 	}
 
 	// With no thinking, duplication should NOT be suppressed
-	ag.Thinking = ""
-	ag.Effort = "high"
+	ag.SetSessionEffort("test/inothink/1000000000", "high")
 	ag.HandleMessage(context.Background(), "test/inothink/1000000000", "Do the thing")
 
 	lastMsg = receivedReq.Messages[len(receivedReq.Messages)-1]
