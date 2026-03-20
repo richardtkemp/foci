@@ -5,17 +5,22 @@ import (
 	"time"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 )
 
 func testSecondaryBot(name string) *Bot {
 	allowed := map[string]bool{"111": true}
-	return &Bot{
+	b := &Bot{
 		client:       &mockClient{},
 		commands:     command.NewRegistry(),
 		allowedUsers: allowed,
-		queue:        make(chan queuedMessage, 64),
 		isSecondary:  true,
 	}
+	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
+		Size:       64,
+		TurnActive: b.isTurnActive,
+	})
+	return b
 }
 
 func TestPool_AcquireRelease(t *testing.T) {

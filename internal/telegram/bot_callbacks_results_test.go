@@ -332,26 +332,26 @@ func TestSteerBuffer_AppendAndDrain(t *testing.T) {
 	// Verifies basic steer buffer operations.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	b.appendSteer("message1")
-	b.appendSteer("message2")
+	b.mq.AppendSteer("message1")
+	b.mq.AppendSteer("message2")
 
-	got := b.drainSteer()
+	got := b.mq.DrainSteer()
 	if len(got) != 2 || got[0] != "message1" || got[1] != "message2" {
 		t.Errorf("drainSteer = %v, want [message1 message2]", got)
 	}
 
 	// After drain, should be empty
-	if b.drainSteer() != nil {
+	if b.mq.DrainSteer() != nil {
 		t.Error("buffer should be empty after drain")
 	}
 }
 
 func TestSteerBuffer_DrainEmpty(t *testing.T) {
 	// Verifies that draining an empty buffer returns
-	// empty string.
+	// nil.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	if got := b.drainSteer(); got != nil {
+	if got := b.mq.DrainSteer(); got != nil {
 		t.Errorf("drainSteer on empty = %v, want nil", got)
 	}
 }
@@ -366,7 +366,7 @@ func TestSteerBuffer_Concurrent(t *testing.T) {
 
 	go func() {
 		for i := 0; i < n; i++ {
-			b.appendSteer(fmt.Sprintf("msg-%d\n", i))
+			b.mq.AppendSteer(fmt.Sprintf("msg-%d\n", i))
 		}
 		done <- true
 	}()
@@ -374,13 +374,13 @@ func TestSteerBuffer_Concurrent(t *testing.T) {
 	// Drain periodically until writer is done and buffer is empty
 	var collected []string
 	for {
-		if parts := b.drainSteer(); len(parts) > 0 {
+		if parts := b.mq.DrainSteer(); len(parts) > 0 {
 			collected = append(collected, parts...)
 		}
 		select {
 		case <-done:
 			// Writer finished — drain remaining
-			if parts := b.drainSteer(); len(parts) > 0 {
+			if parts := b.mq.DrainSteer(); len(parts) > 0 {
 				collected = append(collected, parts...)
 			}
 			// Verify we got all messages
@@ -401,7 +401,7 @@ func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
 	// Verifies that when steer mode is
 	// enabled and a turn is active, text messages go to the steer buffer.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.display.SteerMode = true
+	b.mq.SetSteerMode(true)
 
 	// Simulate active turn
 	_, cancel := context.WithCancel(context.Background())
@@ -414,12 +414,12 @@ func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should NOT be in the queue
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("message should not be in queue when steer mode is active")
 	}
 
 	// Should be in steer buffer
-	got := b.drainSteer()
+	got := b.mq.DrainSteer()
 	if len(got) != 1 || got[0] != "change direction" {
 		t.Errorf("steer buffer = %v, want [change direction]", got)
 	}
@@ -441,10 +441,10 @@ func TestReceiveMessage_SteerDisabledQueuesNormally(t *testing.T) {
 	msg := makeMsg(111, "owner", "hello")
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Errorf("queue length = %d, want 1", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Errorf("queue length = %d, want 1", len(b.mq.Chan()))
 	}
-	if got := b.drainSteer(); got != nil {
+	if got := b.mq.DrainSteer(); got != nil {
 		t.Errorf("steer buffer should be empty, got %v", got)
 	}
 }
@@ -453,32 +453,54 @@ func TestReceiveMessage_SteerNoActiveTurnQueuesNormally(t *testing.T) {
 	// Verifies that when steer
 	// mode is enabled but no turn is active, messages go to the normal queue.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	b.display.SteerMode = true
+	b.mq.SetSteerMode(true)
 
 	// No active turn (turnCancel is nil)
 	msg := makeMsg(111, "owner", "hello")
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Errorf("queue length = %d, want 1", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Errorf("queue length = %d, want 1", len(b.mq.Chan()))
 	}
-	if got := b.drainSteer(); got != nil {
+	if got := b.mq.DrainSteer(); got != nil {
 		t.Errorf("steer buffer should be empty, got %v", got)
 	}
 }
 
 func TestSetSteerMode(t *testing.T) {
-	// Verifies that SetSteerMode toggles the flag.
-	b, _ := testBot([]string{}, command.NewRegistry())
-	if b.display.SteerMode {
-		t.Error("steerMode should default to false")
+	// Verifies that SetSteerMode toggles routing behavior.
+	// With steer mode on and a turn active, messages go to steer buffer.
+	// With steer mode off, messages go to the queue.
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	// Simulate active turn
+	_, cancel := context.WithCancel(context.Background())
+	b.turnMu.Lock()
+	b.turnCancel = cancel
+	b.turnMu.Unlock()
+	defer cancel()
+
+	// Enable steer mode
+	b.mq.SetSteerMode(true)
+	msg := makeMsg(111, "owner", "steered")
+	b.receiveMessage(context.Background(), msg)
+
+	if len(b.mq.Chan()) != 0 {
+		t.Error("with steer mode on, message should go to steer buffer not queue")
 	}
-	b.display.SteerMode = true
-	if !b.display.SteerMode {
-		t.Error("steerMode should be true after SetSteerMode(true)")
+	if got := b.mq.DrainSteer(); len(got) != 1 || got[0] != "steered" {
+		t.Errorf("steer buffer = %v, want [steered]", got)
 	}
-	b.display.SteerMode = false
-	if b.display.SteerMode {
-		t.Error("steerMode should be false after SetSteerMode(false)")
+
+	// Disable steer mode
+	b.mq.SetSteerMode(false)
+	msg2 := makeMsg(111, "owner", "queued")
+	b.receiveMessage(context.Background(), msg2)
+
+	if len(b.mq.Chan()) != 1 {
+		t.Error("with steer mode off, message should go to queue")
+	}
+	if got := b.mq.DrainSteer(); got != nil {
+		t.Errorf("steer buffer should be empty, got %v", got)
 	}
 }

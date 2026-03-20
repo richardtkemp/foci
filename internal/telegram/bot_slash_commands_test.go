@@ -25,7 +25,7 @@ func TestReceiveMessage_SlashCommandBypassesQueue(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should NOT be queued (command was handled directly)
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("slash command should not be queued for agent")
 	}
 
@@ -52,8 +52,8 @@ func TestReceiveMessage_UnknownSlashCommandGetsSuggestion(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Unknown commands should get a suggestion reply, not be queued
-	if len(b.queue) != 0 {
-		t.Fatalf("unknown slash command should not be queued, got %d queued", len(b.queue))
+	if len(b.mq.Chan()) != 0 {
+		t.Fatalf("unknown slash command should not be queued, got %d queued", len(b.mq.Chan()))
 	}
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 suggestion reply, got %d", mock.sentCount())

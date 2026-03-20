@@ -35,7 +35,7 @@ func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 sent message for fresh /ping, got %d", mock.sentCount())
 	}
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("fresh slash command should not be queued")
 	}
 }
@@ -63,7 +63,7 @@ func TestReceiveMessage_StaleSlashCommandDropped(t *testing.T) {
 	if mock.sentCount() != 0 {
 		t.Errorf("stale slash command should not send a reply, got %d sends", mock.sentCount())
 	}
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("stale slash command should not be queued")
 	}
 }
@@ -79,12 +79,12 @@ func TestReceiveMessage_StaleNonSlashMessageStillQueued(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Non-slash messages should still be queued regardless of age
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message for stale non-slash message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message for stale non-slash message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
-	if qm.text != "hello from the past" {
-		t.Errorf("queued text = %q, want %q", qm.text, "hello from the past")
+	qm := <-b.mq.Chan()
+	if qm.Text != "hello from the past" {
+		t.Errorf("queued text = %q, want %q", qm.Text, "hello from the past")
 	}
 }
 

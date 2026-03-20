@@ -31,7 +31,41 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	if b.tryIntercept(ctx, &qm) {
 		return
 	}
-	b.enqueue(qm)
+	b.mq.Enqueue(b.toPlatformMessage(msg, qm))
+}
+
+// toPlatformMessage converts a telegram queuedMessage to a platform.QueuedMessage.
+func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform.QueuedMessage {
+	var atts []platform.Attachment
+	for _, a := range qm.attachments {
+		atts = append(atts, platform.Attachment{
+			MimeType:  a.mediaType,
+			Data:      a.data,
+			SavedPath: a.savedPath,
+		})
+	}
+
+	isGroup := msg.Chat.Type == "group" || msg.Chat.Type == "supergroup"
+	isMention := isGroup && b.messageContainsMention(msg)
+
+	senderName := ""
+	if msg.From != nil {
+		senderName = msg.From.Username
+		if senderName == "" {
+			senderName = msg.From.FirstName
+		}
+	}
+
+	return platform.QueuedMessage{
+		UserID:      qm.userID,
+		SenderName:  senderName,
+		Text:        qm.text,
+		Attachments: atts,
+		ChatID:      msg.Chat.Id,
+		IsGroupChat: isGroup,
+		IsMention:   isMention,
+		Original:    msg,
+	}
 }
 
 // buildReceivedMessage performs auth, text extraction, and attachment downloading.
@@ -250,26 +284,3 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	return false
 }
 
-// enqueue delivers the message to the steer buffer (if a turn is active and
-// steer mode is on) or to the main message queue.
-func (b *Bot) enqueue(qm queuedMessage) {
-	// Steer mode: if a turn is active, route text to the steer buffer
-	// so it gets injected between tool calls instead of queuing behind the turn lock.
-	if b.display.SteerMode && qm.text != "" && len(qm.attachments) == 0 {
-		b.turnMu.Lock()
-		active := b.turnCancel != nil
-		b.turnMu.Unlock()
-		if active {
-			b.appendSteer(qm.text)
-			b.logger().Infof("steer: buffered message from %s", formatUserInfo(qm.msg.From))
-			return
-		}
-	}
-
-	select {
-	case b.queue <- qm:
-	default:
-		b.logger().Warnf("message queue full, dropping message from %s", formatUserInfo(qm.msg.From))
-		b.sendReply(qm.msg, "Busy — message queue is full. Try again shortly.")
-	}
-}

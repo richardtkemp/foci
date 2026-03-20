@@ -128,6 +128,30 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		return
 	}
 
+	// Resolve require_mention: per-agent > global (default true).
+	reqMention := cfg.Telegram.RequireMention
+	if tg.RequireMention != nil {
+		reqMention = *tg.RequireMention
+	}
+	primaryBot.requireMention = reqMention
+
+	// Resolve group_throttle: per-agent > global defaults.
+	throttleStr := cfg.Defaults.GroupThrottle
+	if acfg.GroupThrottle != "" {
+		throttleStr = acfg.GroupThrottle
+	}
+	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
+		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
+			for _, m := range msgs {
+				primaryBot.mq.PushFlushed(m)
+			}
+		}, primaryBot.log)
+		primaryBot.mq.SetThrottle(gt)
+		log.Infof("telegram", "agent %q: group throttle = %v", acfg.ID, dur)
+	}
+	primaryBot.mq.SetRequireMention(reqMention)
+	primaryBot.mq.SetSteerMode(acfg.SteerMode)
+
 	primaryBot.SetCommandContext(p.CommandContext)
 
 	if p.SessionIndex != nil {
@@ -299,7 +323,6 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	} else {
 		d.InjectedMessageHeader = cfg.Defaults.InjectedMessageHeader
 	}
-	d.SteerMode = acfg.SteerMode
 	switch {
 	case tg != nil && tg.StreamOutput != nil:
 		d.StreamOutput = *tg.StreamOutput

@@ -313,6 +313,7 @@ type AgentConfig struct {
 	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
 	UsageWarnings        AgentUsageWarningsConfig `toml:"usage_warnings"`         // per-agent mana warning thresholds
 	SteerMode            bool                     `toml:"steer_mode"`             // inject user messages between tool calls (default true)
+	GroupThrottle        string                   `toml:"group_throttle"`         // group chat throttle window (Go duration; "" or "0" = disabled)
 
 	// Nudge system: mid-turn behavioral reminders extracted from character files
 	NudgeEnable            bool `toml:"nudge_enable"`              // enable the nudge system (default true)
@@ -371,6 +372,7 @@ type DiscordConfig struct {
 type TelegramConfig struct {
 	AllowedUsers        []string `toml:"allowed_users"`
 	FacetBots       []string `toml:"facet_bots"`        // shared facet pool: bot names (tokens via "telegram.<name>" secrets)
+	RequireMention      bool     `toml:"require_mention"`       // require @mention in group chats (default true)
 	StartupNotify       bool     `toml:"startup_notify"`        // send notification on startup (default true)
 	FacetSessionTTL string   `toml:"facet_session_ttl"` // idle TTL before a facet bot can be reclaimed (default "60m", "0" disables)
 	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
@@ -399,6 +401,7 @@ type TelegramPlatformConfig struct {
 	ReceivedFilesDir string           `toml:"received_files_dir"` // save received files to this directory (empty = disabled)
 	StreamOutput     *bool            `toml:"stream_output"`      // stream model output to Telegram in real-time (nil = use default)
 	StreamInterval   string           `toml:"stream_interval"`    // duration between Telegram message edits during streaming
+	RequireMention   *bool            `toml:"require_mention"`    // require @mention in group chats (nil = use global, default true)
 }
 
 func (t *TelegramPlatformConfig) getShowToolCalls() *ToolCallDisplay { return t.ShowToolCalls }
@@ -709,6 +712,7 @@ type DefaultsConfig struct {
 	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
 	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
 	SteerMode           bool   `toml:"steer_mode"`            // default steer_mode (default: true)
+	GroupThrottle       string `toml:"group_throttle"`        // default group_throttle (Go duration; "" or "0" = disabled)
 	FacetNoCompact   *bool  `toml:"facet_no_compact"`   // set no_compact on facet sessions (nil = true)
 	CacheTTL             string `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
 

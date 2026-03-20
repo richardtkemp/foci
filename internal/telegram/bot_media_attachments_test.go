@@ -28,12 +28,12 @@ func TestReceiveMessage_PhotoMessageQueued(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Message should be queued (text from caption)
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
-	if qm.text != "Look at this!" {
-		t.Errorf("queued text = %q, want %q", qm.text, "Look at this!")
+	qm := <-b.mq.Chan()
+	if qm.Text != "Look at this!" {
+		t.Errorf("queued text = %q, want %q", qm.Text, "Look at this!")
 	}
 }
 
@@ -82,7 +82,7 @@ func TestReceiveMessage_NonImageDocumentIgnored(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Non-image, non-PDF document with no text should be dropped
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("non-image document should not be queued")
 	}
 }
@@ -106,7 +106,7 @@ func TestReceiveMessage_VoiceWithoutTranscriber(t *testing.T) {
 	msg := makeMsgWithVoice(111, "owner")
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 0 {
+	if len(b.mq.Chan()) != 0 {
 		t.Error("voice without transcriber should not be queued")
 	}
 	if mock.sentCount() != 1 {

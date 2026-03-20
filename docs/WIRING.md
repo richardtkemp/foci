@@ -136,7 +136,8 @@ main
  │   └── secrets/bitwarden → log
  ├── provider      (no deps — provider-neutral types and Client interface)
  ├── platform      → config, log, secrets, session, state, voice, warnings
- │                  (messaging types, interfaces, provider registry, Messaging facade)
+ │                  (messaging types, interfaces, provider registry, Messaging facade,
+ │                   shared MessageQueue + GroupThrottle for inbound message routing)
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
@@ -776,9 +777,20 @@ Two goroutines:
                                        →  slash command?  →  yes: execute, reply
                                        →  voice note?     →  download OGG, transcribe via Whisper → text
                                        →  photo/doc/PDF?  →  download attachment via Telegram file API
-                                                           →  enqueue (buffered chan) with text + attachments
-[agent worker goroutine]  →  dequeue msg  →  create turn context  →  HandleMessage[WithAttachments]  →  reply
+                                                           →  MessageQueue.Enqueue() routes to:
+                                                              - steer buffer (mention + turn active + steer mode)
+                                                              - GroupThrottle (group chat + throttle configured)
+                                                              - drop (group + require_mention + no throttle + no mention)
+                                                              - main channel (everything else)
+[agent worker goroutine]  →  dequeue msg  →  batch with DrainQueue()  →  HandleMessageWithAttachments  →  reply
 ```
+
+Both platforms use a shared `platform.MessageQueue` that manages inbound message buffering, steer injection, and group chat throttling. The `MessageQueue` wraps a buffered channel with routing logic:
+
+- **Steer mode** (`steer_mode`): During active turns, text-only messages go to the steer buffer for injection between tool calls.
+- **Group throttle** (`group_throttle`): Non-mention group messages accumulate in a `GroupThrottle` per chat ID. A fixed-window timer flushes them as a batch. @mentions flush immediately and reset the cooldown.
+- **Require mention** (`require_mention`): Without throttle, non-mention group messages are dropped. With throttle, they're buffered.
+- **Sender attribution**: Group chat batches prefix each message with `[senderName]` for multi-user context.
 
 The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
 
@@ -816,7 +828,7 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 
 ## Discord Bot (`discord/`)
 
-Same two-goroutine architecture as Telegram (receiver + agent worker), connected via a single WebSocket gateway instead of HTTP long-polling.
+Same two-goroutine architecture as Telegram (receiver + agent worker), connected via a single WebSocket gateway instead of HTTP long-polling. Uses the same shared `platform.MessageQueue` for message routing, steer injection, and group chat throttling.
 
 **Key differences from Telegram:**
 - **Gateway:** Single `discordgo.Session` WebSocket connection shared across all agents, vs one HTTP poller per Telegram bot.

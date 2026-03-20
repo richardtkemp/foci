@@ -74,14 +74,14 @@ func TestReceiveMessage_VideoQueuedWithSavedPath(t *testing.T) {
 	msg := makeMsgWithVideo(111, "owner", "Check this out!", 5*1024*1024)
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
+	qm := <-b.mq.Chan()
 	// Note: Download will fail without a real server, so we can't test the saved path
 	// Just verify the caption is preserved
-	if !strings.Contains(qm.text, "Check this out!") {
-		t.Errorf("text should contain original caption, got: %q", qm.text)
+	if !strings.Contains(qm.Text, "Check this out!") {
+		t.Errorf("text should contain original caption, got: %q", qm.Text)
 	}
 }
 
@@ -96,12 +96,12 @@ func TestReceiveMessage_VideoTooLarge(t *testing.T) {
 	msg := makeMsgWithVideo(111, "owner", "Check this out!", 25*1024*1024)
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
-	if !strings.Contains(qm.text, "[Video too large to download (25 MB)]") {
-		t.Errorf("text should indicate video too large, got: %q", qm.text)
+	qm := <-b.mq.Chan()
+	if !strings.Contains(qm.Text, "[Video too large to download (25 MB)]") {
+		t.Errorf("text should indicate video too large, got: %q", qm.Text)
 	}
 }
 
@@ -118,8 +118,8 @@ func TestReceiveMessage_VideoWithoutCaption(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Without a real server, download fails, so message with no caption is dropped
-	if len(b.queue) != 0 {
-		t.Errorf("expected 0 queued messages when video download fails with no caption, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 0 {
+		t.Errorf("expected 0 queued messages when video download fails with no caption, got %d", len(b.mq.Chan()))
 	}
 }
 
@@ -136,13 +136,13 @@ func TestReceiveMessage_VideoNoteQueuedWithSavedPath(t *testing.T) {
 	msg.Caption = "Quick video note"
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
+	qm := <-b.mq.Chan()
 	// Download will fail without a real server, just check caption preserved
-	if !strings.Contains(qm.text, "Quick video note") {
-		t.Errorf("text should contain caption, got: %q", qm.text)
+	if !strings.Contains(qm.Text, "Quick video note") {
+		t.Errorf("text should contain caption, got: %q", qm.Text)
 	}
 }
 
@@ -157,12 +157,12 @@ func TestReceiveMessage_VideoNoteTooLarge(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Video note too large - message is still queued with size warning
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
-	if !strings.Contains(qm.text, "[Video too large to download (25 MB)]") {
-		t.Errorf("text should indicate video too large, got: %q", qm.text)
+	qm := <-b.mq.Chan()
+	if !strings.Contains(qm.Text, "[Video too large to download (25 MB)]") {
+		t.Errorf("text should indicate video too large, got: %q", qm.Text)
 	}
 }
 
@@ -179,13 +179,13 @@ func TestReceiveMessage_NonImageDocumentSaved(t *testing.T) {
 	msg.Caption = "Here's the report"
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
+	qm := <-b.mq.Chan()
 	// Download will fail without a real server, just check caption preserved
-	if !strings.Contains(qm.text, "Here's the report") {
-		t.Errorf("text should contain caption, got: %q", qm.text)
+	if !strings.Contains(qm.Text, "Here's the report") {
+		t.Errorf("text should contain caption, got: %q", qm.Text)
 	}
 }
 
@@ -201,12 +201,12 @@ func TestReceiveMessage_NonImageDocumentTooLarge(t *testing.T) {
 	msg.Caption = "Big file"
 	b.receiveMessage(context.Background(), msg)
 
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
-	if !strings.Contains(qm.text, "[Document too large to download (25 MB)]") {
-		t.Errorf("text should indicate document too large, got: %q", qm.text)
+	qm := <-b.mq.Chan()
+	if !strings.Contains(qm.Text, "[Document too large to download (25 MB)]") {
+		t.Errorf("text should indicate document too large, got: %q", qm.Text)
 	}
 }
 
@@ -221,13 +221,13 @@ func TestReceiveMessage_VideoNoSaveDir(t *testing.T) {
 	b.receiveMessage(context.Background(), msg)
 
 	// Should still queue the message, but without the saved path
-	if len(b.queue) != 1 {
-		t.Fatalf("expected 1 queued message, got %d", len(b.queue))
+	if len(b.mq.Chan()) != 1 {
+		t.Fatalf("expected 1 queued message, got %d", len(b.mq.Chan()))
 	}
-	qm := <-b.queue
+	qm := <-b.mq.Chan()
 	// Text should be the caption since we couldn't save
-	if qm.text != "Check this out!" {
-		t.Errorf("text should be original caption, got: %q", qm.text)
+	if qm.Text != "Check this out!" {
+		t.Errorf("text should be original caption, got: %q", qm.Text)
 	}
 }
 
