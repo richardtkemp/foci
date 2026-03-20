@@ -50,6 +50,11 @@ func ResolveModel(input string, endpoint string, models map[string]ModelConfig) 
 		}
 	}
 
+	// Use endpoint from named model config if caller didn't specify one
+	if mc != nil && mc.Endpoint != "" && endpoint == "" {
+		endpoint = mc.Endpoint
+	}
+
 	// Step 2: Parse developer/model_id
 	parts := strings.SplitN(resolved, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {

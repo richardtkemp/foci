@@ -10,46 +10,6 @@ import (
 	"testing"
 )
 
-// --- Setup token validation ---
-
-func TestValidateSetupToken(t *testing.T) {
-	// Proves that a well-formed setup token (correct prefix and sufficient length) passes validation without error.
-	// Valid token (80+ chars with correct prefix)
-	valid := "sk-ant-oat01-" + strings.Repeat("a", 80)
-	if err := ValidateSetupToken(valid); err != nil {
-		t.Errorf("valid token rejected: %v", err)
-	}
-}
-
-func TestValidateSetupTokenEmpty(t *testing.T) {
-	// Proves that an empty string is rejected by ValidateSetupToken.
-	if err := ValidateSetupToken(""); err == nil {
-		t.Error("expected error for empty token")
-	}
-}
-
-func TestValidateSetupTokenBadPrefix(t *testing.T) {
-	// Proves that a token with the wrong prefix (e.g. an API key instead of an OAuth token) is rejected, and that the error message names the expected prefix.
-	err := ValidateSetupToken("sk-ant-api03-" + strings.Repeat("a", 80))
-	if err == nil {
-		t.Fatal("expected error for wrong prefix")
-	}
-	if !strings.Contains(err.Error(), SetupTokenPrefix) {
-		t.Errorf("error = %q, want mention of prefix", err.Error())
-	}
-}
-
-func TestValidateSetupTokenTooShort(t *testing.T) {
-	// Proves that a token with the right prefix but insufficient total length is rejected with a "too short" message.
-	err := ValidateSetupToken("sk-ant-oat01-short")
-	if err == nil {
-		t.Fatal("expected error for short token")
-	}
-	if !strings.Contains(err.Error(), "too short") {
-		t.Errorf("error = %q, want 'too short'", err.Error())
-	}
-}
-
 // --- TokenFunc integration ---
 
 func TestClientWithTokenFunc(t *testing.T) {

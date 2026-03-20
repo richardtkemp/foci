@@ -523,11 +523,11 @@ func TestTokenHolder_ConcurrentAccess(t *testing.T) {
 // ========== /-/reload-credentials endpoint tests ==========
 
 func TestReloadCredentialsEndpoint_Success(t *testing.T) {
-	// Write a secrets.toml with a setup token
+	// Write a secrets.toml with an API key
 	dir := t.TempDir()
 	secretsPath := filepath.Join(dir, "secrets.toml")
 	os.WriteFile(secretsPath, []byte(`[anthropic]
-setup_token = "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-pass-validation-checks-here"`+"\n"), 0600)
+api_key = "sk-ant-test-new-token-value-for-reload"`+"\n"), 0600)
 
 	holder := anthropic.NewTokenHolder("old-token")
 	cfg := &config.Config{}
@@ -537,10 +537,7 @@ setup_token = "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-p
 		if err != nil {
 			return err
 		}
-		token, _ := st.Get("anthropic.setup_token")
-		if token == "" {
-			token, _ = st.Get("anthropic.api_key")
-		}
+		token, _ := st.Get("anthropic.api_key")
 		if token == "" {
 			return nil
 		}
@@ -571,7 +568,7 @@ setup_token = "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-p
 	}
 
 	tok, _ := holder.Get()
-	expected := "sk-ant-oat01-new-token-value-for-testing-that-is-long-enough-to-pass-validation-checks-here"
+	expected := "sk-ant-test-new-token-value-for-reload"
 	if tok != expected {
 		t.Errorf("holder token = %q, want %q", tok, expected)
 	}

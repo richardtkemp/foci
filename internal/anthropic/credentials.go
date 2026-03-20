@@ -44,7 +44,7 @@ func (h *tokenHolder) Set(token string) {
 }
 
 // AnthropicResolver implements provider.CredentialResolver for anthropic-format endpoints.
-// It handles the 3-tier priority: setup-token (OAuth) → API key → Claude Code credentials.
+// Priority: API key → Claude Code credentials.
 type AnthropicResolver struct {
 	store         SecretsStore
 	ccSrc         *CCTokenSource
@@ -106,25 +106,9 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 func (r *AnthropicResolver) Close() {}
 
 // ResolveClient implements provider.CredentialResolver.
-// Priority: (1) setup-token, (2) api_key, (3) Claude Code credentials.
+// Priority: (1) API key, (2) Claude Code credentials.
 func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string) (provider.Client, error) {
-	// Priority 1: setup-token (OAuth)
-	setupToken, ok := r.store.Get("anthropic.setup_token")
-	if ok && setupToken != "" {
-		log.Infof("anthropic", "using setup-token from secrets (endpoint %q)", endpointName)
-		holder := NewTokenHolder(setupToken)
-		r.mu.Lock()
-		r.credHolders[endpointName] = holder
-		r.mu.Unlock()
-		c := NewClient(holder.Get, r.httpTimeout)
-		if baseURL != "" {
-			c.SetBaseURL(baseURL)
-		}
-		c.SetUseSDK(r.useSDK)
-		return c, nil
-	}
-
-	// Priority 2: API key
+	// Priority 1: API key
 	apiKey, ok := r.store.Get(apiKeyName)
 	if ok && apiKey != "" {
 		log.Infof("anthropic", "using API key from secrets (endpoint %q)", endpointName)
@@ -140,7 +124,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		return c, nil
 	}
 
-	// Priority 3: Claude Code credentials (lazy disk reads, no polling)
+	// Priority 2: Claude Code credentials (lazy disk reads, no polling)
 	if r.ccSrc != nil {
 		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
 		c := NewClient(r.ccSrc.Token, r.httpTimeout)
@@ -194,13 +178,9 @@ func (r *AnthropicResolver) GetReloadFunc(secretsPath string) func() error {
 			return fmt.Errorf("reload secrets.toml: %w", err)
 		}
 
-		// Try setup-token first, then API key
-		token, _ := st.Get("anthropic.setup_token")
+		token, _ := st.Get("anthropic.api_key")
 		if token == "" {
-			token, _ = st.Get("anthropic.api_key")
-		}
-		if token == "" {
-			return fmt.Errorf("no setup_token or api_key found in secrets.toml after reload")
+			return fmt.Errorf("no api_key found in secrets.toml after reload")
 		}
 
 		// Update all cached tokenHolders

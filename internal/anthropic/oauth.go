@@ -2,17 +2,8 @@
 package anthropic
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
-)
-
-const (
-	// Setup token validation constants.
-	SetupTokenPrefix    = "sk-ant-oat01-"
-	SetupTokenMinLength = 80
 )
 
 // SecretsStore is the subset of secrets.Store used for credential management.
@@ -56,45 +47,3 @@ func parseCredentials(data []byte) (OAuthCredentials, error) {
 	return OAuthCredentials{}, fmt.Errorf("unrecognized credentials format")
 }
 
-// ValidateSetupToken checks that a token has the expected prefix and minimum length.
-func ValidateSetupToken(token string) error {
-	if token == "" {
-		return fmt.Errorf("token is empty")
-	}
-	if !strings.HasPrefix(token, SetupTokenPrefix) {
-		return fmt.Errorf("expected token starting with %s", SetupTokenPrefix)
-	}
-	if len(token) < SetupTokenMinLength {
-		return fmt.Errorf("token looks too short; paste the full setup-token")
-	}
-	return nil
-}
-
-// RunSetupTokenFlow runs the interactive setup-token flow: instructs the user
-// to run `claude setup-token`, reads the token from stdin, validates it,
-// and saves it to the secrets store as anthropic.setup_token.
-func RunSetupTokenFlow(store SecretsStore) error {
-	fmt.Println("Run this command in another terminal:")
-	fmt.Println()
-	fmt.Println("  claude setup-token")
-	fmt.Println()
-	fmt.Print("Paste the token: ")
-
-	reader := bufio.NewReader(os.Stdin)
-	raw, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("read token: %w", err)
-	}
-	token := strings.TrimSpace(raw)
-
-	if err := ValidateSetupToken(token); err != nil {
-		return err
-	}
-
-	store.Set("anthropic.setup_token", token)
-	if err := store.Save(); err != nil {
-		return fmt.Errorf("save token: %w", err)
-	}
-
-	return nil
-}

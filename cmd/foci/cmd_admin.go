@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/anthropic"
 	"foci/internal/secrets"
 )
 
@@ -110,11 +109,9 @@ Flags:
 }
 
 func authUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci auth [--config <path>] [--addr <host:port>]
+	fmt.Fprintf(os.Stderr, `Usage: foci auth [--config <path>] [--addr <host:port>] [--provider <name>] [--api-key <key>]
 
-Authenticate with Anthropic using a Claude Code setup token.
-Run 'claude setup-token' in another terminal, then paste the token.
-Token is saved to secrets.toml.
+Set an API key for an LLM provider. Saved to secrets.toml.
 
 If a foci gateway is running, the new credentials are hot-reloaded
 immediately (no restart needed).
@@ -124,6 +121,8 @@ Flags:
                         Default secrets path: ~/config/secrets.toml
   --addr <host:port>    Gateway address for credential hot-reload notification
                         Env: FOCI_ADDR / Default: %s
+  --provider <name>     Provider: anthropic, gemini, openai, openrouter (default: anthropic)
+  --api-key <key>       API key (prompted interactively if omitted)
 
 The HTTP API key (http.api_key in secrets.toml) is read automatically
 to authenticate the reload request to the gateway.
@@ -136,9 +135,11 @@ func cmdAuth(args []string) error {
 		return nil
 	}
 
-	// Parse --config and --addr flags
+	// Parse flags
 	configPath := ""
 	addr := ""
+	providerKey := ""
+	apiKey := ""
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--config" && i+1 < len(args):
@@ -151,11 +152,29 @@ func cmdAuth(args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "--addr="):
 			addr = args[i][len("--addr="):]
+		case args[i] == "--provider" && i+1 < len(args):
+			providerKey = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--provider="):
+			providerKey = args[i][len("--provider="):]
+		case args[i] == "--api-key" && i+1 < len(args):
+			apiKey = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--api-key="):
+			apiKey = args[i][len("--api-key="):]
 		}
 	}
 	addr = envDefault(addr, "FOCI_ADDR")
 	if addr == "" {
 		addr = defaultAddr
+	}
+	if providerKey == "" {
+		providerKey = "anthropic"
+	}
+
+	prov := providerByKey(providerKey)
+	if prov == nil {
+		return fmt.Errorf("unknown provider %q; use: anthropic, gemini, openai, openrouter", providerKey)
 	}
 
 	secretsPath := resolveSecretsPath(configPath)
@@ -178,10 +197,22 @@ func cmdAuth(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load secrets (%s): %w", secretsPath, err)
 	}
-	if err := anthropic.RunSetupTokenFlow(store); err != nil {
-		return err
+
+	// Prompt for API key if not provided
+	if apiKey == "" {
+		fmt.Fprintf(os.Stderr, "%s API key: ", prov.Name)
+		_, _ = fmt.Scanln(&apiKey)
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			return fmt.Errorf("API key cannot be empty")
+		}
 	}
-	fmt.Fprintf(os.Stderr, "Setup token saved to %s\n", secretsPath)
+
+	store.Set(prov.SecretKey, apiKey)
+	if err := store.Save(); err != nil {
+		return fmt.Errorf("save secrets: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "API key saved to %s\n", secretsPath)
 
 	// Read HTTP API key from secrets for gateway notification auth
 	httpAPIKey, _ := store.Get("http.api_key")
