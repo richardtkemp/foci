@@ -263,8 +263,9 @@ type SystemBlock struct {
 
 // Message is a single message in a conversation.
 type Message struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
+	Role      string         `json:"role"`
+	Content   []ContentBlock `json:"content"`
+	Timestamp *time.Time     `json:"timestamp,omitempty"`
 }
 
 // MessageRequest is the request body for an LLM API call.
