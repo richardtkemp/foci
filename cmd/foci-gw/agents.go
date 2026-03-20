@@ -58,6 +58,7 @@ type setupParams struct {
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
 	memBackends         map[string]memory.Searcher
+	convReader          *memory.ConversationReader
 	reminderStore       *memory.ReminderStore
 	scratchpadStore     *memory.Scratchpad
 	todoStore           *memory.TodoStore

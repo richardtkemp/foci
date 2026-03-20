@@ -19,9 +19,10 @@ import (
 type Result struct {
 	Path    string
 	Snippet string
-	Source  string // source name (e.g., "memory", "code", "docs") or "conversation"
+	Source  string    // source name (e.g., "memory", "code", "docs") or "conversation"
 	Rank    float64
 	Time    time.Time // message time for conversations, file mtime for memory files (zero if unavailable)
+	RowID   int64     // conversation message row ID (0 for non-conversation results)
 }
 
 // SourceConfig describes a memory source directory with weight.
