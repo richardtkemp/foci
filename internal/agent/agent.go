@@ -420,7 +420,12 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	now := time.Now()
 	sm = a.getSessionMeta(sessionKey)
 
-	userMsg := a.prepareUserMessage(ctx, sessionKey, texts, turnModel, attachments, effectiveDuplicate)
+	// Consume branch orientation on first turn — delivered as a content block
+	// in the user message instead of a separate message, preventing the
+	// consecutive user messages that caused session corruption (b1773980151).
+	orientation := a.Sessions.PendingOrientation(sessionKey)
+
+	userMsg := a.prepareUserMessage(ctx, sessionKey, texts, turnModel, attachments, effectiveDuplicate, orientation)
 	messages = append(messages, userMsg)
 
 	// Track new messages to save. The defer flushes unsaved messages on
