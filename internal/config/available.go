@@ -71,9 +71,6 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		}
 		opts = append(opts, availableOption{"agent.platforms.telegram", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown (nil = use telegram)"})
 	}
-	if agent.CompactionEffort == "" {
-		opts = append(opts, availableOption{"agent", "compaction_effort", "\"\"", "effort for compaction API calls (empty = use session effort)"})
-	}
 	if (tg == nil || tg.ReceivedFilesDir == "") && cfg.Telegram.ReceivedFilesDir == "" {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "received_files_dir", "\"\"", "save received files to this directory"})
 	}

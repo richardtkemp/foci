@@ -80,7 +80,7 @@ func validate(cfg *Config) error {
 	if cfg.Groups.Powerful == "" {
 		return fmt.Errorf("[groups] powerful is required — set it in foci.toml")
 	}
-	if _, err := ResolveModel(cfg.Groups.Powerful, ""); err != nil {
+	if _, err := ResolveModel(cfg.Groups.Powerful, "", cfg.Models); err != nil {
 		return fmt.Errorf("[groups] powerful = %q: %w", cfg.Groups.Powerful, err)
 	}
 
@@ -267,11 +267,11 @@ func validate(cfg *Config) error {
 	}
 
 	// Model fallbacks: validate keys/values resolve and chains don't exceed depth
-	if err := validateFallbacks("groups.fallbacks", cfg.Groups.Fallbacks); err != nil {
+	if err := validateFallbacks("groups.fallbacks", cfg.Groups.Fallbacks, cfg.Models); err != nil {
 		return err
 	}
 	for _, a := range cfg.Agents {
-		if err := validateFallbacks(fmt.Sprintf("agent %q model_fallbacks", a.ID), a.ModelFallbacks); err != nil {
+		if err := validateFallbacks(fmt.Sprintf("agent %q model_fallbacks", a.ID), a.ModelFallbacks, cfg.Models); err != nil {
 			return err
 		}
 	}
@@ -281,18 +281,18 @@ func validate(cfg *Config) error {
 
 // validateFallbacks checks that all keys and values in a fallback map resolve
 // to valid models, and that no chain exceeds MaxFallbackDepth.
-func validateFallbacks(section string, fallbacks map[string]string) error {
+func validateFallbacks(section string, fallbacks map[string]string, models map[string]ModelConfig) error {
 	if len(fallbacks) == 0 {
 		return nil
 	}
 	// Validate each entry resolves
 	canonical := make(map[string]string, len(fallbacks))
 	for k, v := range fallbacks {
-		rk, err := ResolveModel(k, "")
+		rk, err := ResolveModel(k, "", models)
 		if err != nil {
 			return fmt.Errorf("[%s] key %q: %w", section, k, err)
 		}
-		rv, err := ResolveModel(v, "")
+		rv, err := ResolveModel(v, "", models)
 		if err != nil {
 			return fmt.Errorf("[%s] value %q (for key %q): %w", section, v, k, err)
 		}

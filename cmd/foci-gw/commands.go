@@ -107,7 +107,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			return p.plat.AgentPreFlight(agentID)
 		},
 		ResolveModel: func(input string) string {
-			resolved, err := config.ResolveModel(input, "")
+			resolved, err := config.ResolveModel(input, "", p.cfg.Models)
 			if err != nil {
 				return input
 			}

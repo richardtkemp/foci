@@ -218,7 +218,6 @@ nudge_default_braindead_threshold = 20
 nudge_default_braindead_prompt = "watch it"
 duplicate_messages = true
 inject_agent_warnings = true
-compaction_effort = "low"
 system_files = ["A.md", "B.md"]
 
 [[agents]]
@@ -251,9 +250,6 @@ id = "override"
 	}
 	if bare.InjectAgentWarnings != InjectionAll {
 		t.Errorf("bare InjectAgentWarnings = %q, want %q", bare.InjectAgentWarnings, InjectionAll)
-	}
-	if bare.CompactionEffort != "low" {
-		t.Errorf("bare CompactionEffort = %q", bare.CompactionEffort)
 	}
 	if len(bare.SystemFiles) != 2 || bare.SystemFiles[0] != "A.md" {
 		t.Errorf("bare SystemFiles = %v", bare.SystemFiles)

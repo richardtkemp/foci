@@ -23,7 +23,7 @@ type Compactor struct {
 	maxTokens        int
 	minMessages      int
 	preserveMessages int                // preserve last N messages through compaction (0 disables)
-	effort           string                // effort level for compaction API call (empty = omit)
+	ModelDefaultsFn  func(model string) (thinking, effort, speed string) // per-model defaults from [models.*] config
 	Scratchpad       *memory.Scratchpad         // nil disables scratchpad injection
 	TaskListStore    *memory.TaskListStore      // nil disables task list injection
 	AgentID          string                     // agent ID for per-agent store queries
@@ -53,12 +53,6 @@ func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Co
 	if preserveMessages >= 0 {
 		c.preserveMessages = preserveMessages
 	}
-	return c
-}
-
-// WithEffort sets the effort level for compaction API calls.
-func (c *Compactor) WithEffort(effort string) *Compactor {
-	c.effort = effort
 	return c
 }
 
@@ -330,7 +324,13 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		Content: provider.TextContent(summaryPrompt),
 	})
 
-	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s", model, c.maxTokens, len(summaryMessages), c.effort)
+	// Apply per-model defaults from [models.*] config.
+	var mdEffort, mdThinking string
+	if c.ModelDefaultsFn != nil {
+		mdThinking, mdEffort, _ = c.ModelDefaultsFn(model)
+	}
+
+	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s thinking=%s", model, c.maxTokens, len(summaryMessages), mdEffort, mdThinking)
 	start := time.Now()
 	req := &provider.MessageRequest{
 		Model:     model,
@@ -338,8 +338,11 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		System:    system,
 		Messages:  summaryMessages,
 	}
-	if c.effort != "" {
-		req.Output = &provider.OutputConfig{Effort: c.effort}
+	if mdEffort != "" && mdEffort != "off" {
+		req.Output = &provider.OutputConfig{Effort: mdEffort}
+	}
+	if mdThinking == "adaptive" {
+		req.Thinking = &provider.ThinkingConfig{Type: "adaptive"}
 	}
 
 	// Use streaming for compaction (required for large sessions)

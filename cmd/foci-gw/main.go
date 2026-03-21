@@ -209,7 +209,7 @@ Subcommands:
 		}
 
 		// Resolve model from [groups] powerful group
-		groupResolver := config.NewGroupResolver(cfg.Groups)
+		groupResolver := config.NewGroupResolver(cfg.Groups, cfg.Models)
 		resolved := groupResolver.ResolveGroup(config.GroupPowerful)
 		if resolved == nil {
 			log.Errorf("main", "agent %q: cannot resolve powerful model %q (agent skipped)", acfg.ID, cfg.Groups.Powerful)

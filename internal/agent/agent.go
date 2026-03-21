@@ -129,6 +129,7 @@ type Agent struct {
 	ShowToolCalls                 string                       // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
 	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
+	ModelDefaultsFn               func(model string) (thinking, effort, speed string) // returns per-model defaults from [models.*] config; nil = no model defaults
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey             func() string                // returns the main/default session key; reminders only inject into this session
@@ -404,6 +405,21 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	turnEffort := a.SessionEffort(sessionKey)
 	turnThinking := a.SessionThinking(sessionKey)
 	turnSpeed := a.SessionSpeed(sessionKey)
+
+	// Apply per-model defaults from [models.*] config as fallback
+	// when no session-level override is set.
+	if a.ModelDefaultsFn != nil {
+		mdThinking, mdEffort, mdSpeed := a.ModelDefaultsFn(turnModel)
+		if turnEffort == "" {
+			turnEffort = mdEffort
+		}
+		if turnThinking == "" {
+			turnThinking = mdThinking
+		}
+		if turnSpeed == "" {
+			turnSpeed = mdSpeed
+		}
+	}
 
 	// When extended thinking is active with effort above "low", duplicate_messages
 	// wastes tokens — thinking already produces high-quality first responses.

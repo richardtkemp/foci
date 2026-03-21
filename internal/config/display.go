@@ -389,9 +389,6 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.CompactionPreserveMessages != nil {
 		add("compaction_preserve_messages", *agent.CompactionPreserveMessages)
 	}
-	if agent.CompactionEffort != "" {
-		add("compaction_effort", agent.CompactionEffort)
-	}
 	if len(agent.UsageWarnings.Thresholds) > 0 {
 		add("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
 	}

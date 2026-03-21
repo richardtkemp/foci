@@ -409,13 +409,44 @@ SQLite database settings.
 |-----|------|---------|-------------|
 | `busy_timeout` | string | `"5s"` | SQLite busy timeout for concurrent access. Go duration format. High-load systems may need longer waits. |
 
-### `[groups]`
+### `[models.*]`
 
-Model group assignments, call site overrides, and fallbacks.
+Named model definitions with per-model settings. Each section defines an alias and its parameters. Aliases can be used anywhere a model is referenced (groups, fallbacks, `/model` command).
+
+```toml
+[models.glmturbo]
+model = "openrouter/z-ai/glm-5-turbo"
+thinking = true
+effort = "high"
+enable_keepalive = true
+context = "202k"
+
+[models.kimi]
+model = "openrouter/moonshotai/kimi-k2.5"
+thinking = true
+enable_keepalive = true
+```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Must be a `developer/model_id` string (e.g. `"anthropic/claude-opus-4-6"`). All agents use this model. Other groups default to this model unless explicitly overridden. |
+| `model` | string | *(required)* | Full `developer/model_id` string |
+| `endpoint` | string | `""` | Explicit endpoint override (empty = auto-detect from developer) |
+| `thinking` | string/bool | `""` | Thinking mode: `"adaptive"`, `"off"`, `true`, `false` |
+| `effort` | string | `""` | Effort level: `"low"`, `"medium"`, `"high"` |
+| `speed` | string | `""` | Speed mode: `"fast"` or empty |
+| `context` | int/string | `0` | Context window size in tokens (e.g. `262000` or `"262k"`) |
+| `enable_keepalive` | bool | `nil` | Enable keepalive pings (`nil` = auto-detect from developer) |
+| `prompt_cache_ttl` | string | `""` | Prompt cache TTL as Go duration (empty = auto-detect) |
+
+**Model defaults hierarchy:** Per-model settings (thinking, effort, speed) act as defaults for any session using that model. Session-level overrides via `/thinking`, `/effort`, `/speed` take precedence. Clearing a session override (e.g. `/effort none`) reverts to the model default.
+
+### `[groups]`
+
+Model group assignments, call site overrides, and fallbacks. Group values can be `developer/model_id` strings or `[models.*]` alias names.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Must be a `developer/model_id` string or `[models.*]` alias. All agents use this model. Other groups default to this model unless explicitly overridden. |
 | `fast` | string | `""` | Model name for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
 | `cheap` | string | `""` | Model name for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
 

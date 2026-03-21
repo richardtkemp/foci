@@ -130,7 +130,7 @@ func TestResolveModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ResolveModel(tt.input, tt.endpoint)
+			got, err := ResolveModel(tt.input, tt.endpoint, nil)
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("ResolveModel() expected error, got nil")

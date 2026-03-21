@@ -33,7 +33,7 @@ func TestSpawnContextRaw(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
-	})
+	}, nil)
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -93,7 +93,7 @@ func TestSpawnContextCharacter(t *testing.T) {
 	client := newTestAnthropicClient(server.URL, "test-token")
 	gr := config.NewGroupResolver(config.GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	})
+	}, nil)
 	deps := SpawnDeps{
 		Client: client,
 		Bootstrap: &mockBootstrap{blocks: []provider.SystemBlock{
@@ -276,7 +276,7 @@ func TestSpawnExploreMode(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-6",
 		Cheap:    "anthropic/claude-haiku-4-5",
-	})
+	}, nil)
 	deps := SpawnDeps{
 		Client:          client,
 		Registry:        reg,

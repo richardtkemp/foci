@@ -21,7 +21,7 @@ func ModelCommand() *Command {
 				current := cc.Agent.SessionModel(req.SessionKey)
 				return Response{Text: fmt.Sprintf("Current model: %s", current)}, nil
 			}
-			resolved, err := config.ResolveModel(req.Args, "")
+			resolved, err := config.ResolveModel(req.Args, "", nil)
 			var endpoint, model, format string
 			if err != nil {
 				endpoint = ""
@@ -158,7 +158,7 @@ func EffortCommand() *Command {
 		Description: "Show or set effort level (low/medium/high)",
 		OptionsHint: "Options: 1) low  2) medium  3) high",
 		Capability:  func(c config.ModelCaps) bool { return c.Effort },
-		EmptyShow:   "not set (using API default)",
+		EmptyShow:   "not set (using model default)",
 		InvalidName: "effort level",
 		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
 		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
@@ -166,7 +166,8 @@ func EffortCommand() *Command {
 			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
 			{Label: "medium", Aliases: []string{"2"}, SetValue: "medium", Response: "Effort set to: medium"},
 			{Label: "high", Aliases: []string{"3"}, SetValue: "high", Response: "Effort set to: high"},
-			{Label: "none", Aliases: []string{"off", ""}, SetValue: "", Response: "Effort cleared (using API default)", Hidden: true},
+			{Label: "off", Aliases: []string{"0"}, SetValue: "off", Response: "Effort: off (overrides model default)", Hidden: true},
+			{Label: "none", Aliases: []string{"clear", "reset", ""}, SetValue: "", Response: "Effort cleared (using model default)", Hidden: true},
 		},
 	})
 }
@@ -203,8 +204,9 @@ func SpeedCommand() *Command {
 		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionSpeed(sk) },
 		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionSpeed(sk, v) },
 		Choices: []settingChoice{
-			{Label: "standard", Aliases: []string{"0", "off", "none"}, SetValue: "", Response: "Speed: standard"},
+			{Label: "standard", Aliases: []string{"0", "off"}, SetValue: "standard", Response: "Speed: standard (overrides model default)"},
 			{Label: "fast", Aliases: []string{"1"}, SetValue: "fast", Response: "Speed: fast (6x pricing, separate prompt cache)"},
+			{Label: "none", Aliases: []string{"clear", "reset", "none"}, SetValue: "", Response: "Speed cleared (using model default)", Hidden: true},
 		},
 	})
 }

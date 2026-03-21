@@ -11,7 +11,7 @@ import (
 func TestPowerfulDefault(t *testing.T) {
 	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-sonnet-4-10-20250514",
-	})
+	}, nil)
 
 	if names := gr.GroupNames(); len(names) != 3 {
 		t.Fatalf("expected 3 group names, got %v", names)
@@ -56,7 +56,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	})
+	}, nil)
 
 	tests := []struct {
 		callSite string
@@ -101,7 +101,7 @@ func TestThreeGroupsResolution(t *testing.T) {
 func TestMissingFastCheapDefaultsToPowerful(t *testing.T) {
 	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	})
+	}, nil)
 
 	// Fast call site should resolve to powerful model
 	r := gr.ResolveCall(CallSpawnRaw)
@@ -132,7 +132,7 @@ func TestCallOverrides(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: GroupFast, // move compaction from powerful -> fast
 		},
-	})
+	}, nil)
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -161,7 +161,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 		Calls: map[string]string{
 			CallCompaction: "nonexistent-group",
 		},
-	})
+	}, nil)
 
 	r := gr.ResolveCall(CallCompaction)
 	if r == nil {
@@ -177,7 +177,7 @@ func TestInvalidOverrideGroupFallsToPowerful(t *testing.T) {
 func TestUngroupedCallsReturnNil(t *testing.T) {
 	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	})
+	}, nil)
 
 	for _, cs := range []string{CallKeepalive, CallCountTokens} {
 		if r := gr.ResolveCall(cs); r != nil {
@@ -193,7 +193,7 @@ func TestResolveGroupByName(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	})
+	}, nil)
 
 	tests := []struct {
 		group      string
@@ -228,7 +228,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "anthropic/claude-sonnet-4-10-20250514",
 		Cheap:    "anthropic/claude-haiku-4-5-20251001",
-	})
+	}, nil)
 
 	names := gr.GroupNames()
 	sort.Strings(names)
@@ -248,7 +248,7 @@ func TestGroupNamesReturnsAllGroups(t *testing.T) {
 func TestPowerfulModel(t *testing.T) {
 	gr := NewGroupResolver(GroupsConfig{
 		Powerful: "anthropic/claude-opus-4-6",
-	})
+	}, nil)
 
 	if pm := gr.PowerfulModel(); pm != "anthropic/claude-opus-4-6" {
 		t.Errorf("PowerfulModel() = %q, want %q", pm, "anthropic/claude-opus-4-6")
@@ -262,7 +262,7 @@ func TestMixedDevelopers(t *testing.T) {
 		Powerful: "anthropic/claude-opus-4-6",
 		Fast:     "google/gemini-2.5-flash",
 		Cheap:    "openai/gpt-4o-mini",
-	})
+	}, nil)
 
 	tests := []struct {
 		callSite       string
