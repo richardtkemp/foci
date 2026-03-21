@@ -516,15 +516,31 @@ func setupPlatformConnections(
 			}
 		},
 	})
+	var sessionKeyFns []func() string
 	for _, r := range results {
 		if r.DefaultSessionKeyFn != nil {
-			result.defaultSessionKeyFn = r.DefaultSessionKeyFn
+			sessionKeyFns = append(sessionKeyFns, r.DefaultSessionKeyFn)
 		}
 		if r.ConfigureFacetConn != nil {
 			result.configureFacetFn = r.ConfigureFacetConn
 		}
 		if r.DisplayDefaultsFn != nil {
 			result.displayDefaultsFn = r.DisplayDefaultsFn
+		}
+	}
+	// Each platform's DefaultSessionKeyFn is scoped to its own PlatformName,
+	// so we try all of them and return the first match.
+	switch len(sessionKeyFns) {
+	case 1:
+		result.defaultSessionKeyFn = sessionKeyFns[0]
+	default:
+		result.defaultSessionKeyFn = func() string {
+			for _, fn := range sessionKeyFns {
+				if sk := fn(); sk != "" {
+					return sk
+				}
+			}
+			return ""
 		}
 	}
 
