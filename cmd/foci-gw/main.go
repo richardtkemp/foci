@@ -23,6 +23,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
+	"foci/internal/provision"
 	"foci/internal/startup"
 	"foci/shared/prompts"
 )
@@ -199,6 +200,16 @@ Subcommands:
 		if reason, skip := skipAgents[acfg.ID]; skip {
 			log.Errorf("main", "agent %q skipped: %s", acfg.ID, reason)
 			continue
+		}
+
+		// Seed default character files for agents without explicit system_files.
+		// This ensures non-provisioned agents (added with just id= in config)
+		// get the same default character files as provisioned ones.
+		if len(acfg.SystemFiles) == 0 {
+			sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared")
+			if err := provision.SeedCharacterFiles(sharedDir, acfg.Workspace); err != nil {
+				log.Warnf("main", "agent %q: seed character files: %v", acfg.ID, err)
+			}
 		}
 
 		var agentBackends map[string]memory.Searcher

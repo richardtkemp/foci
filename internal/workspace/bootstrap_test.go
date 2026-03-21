@@ -8,20 +8,20 @@ import (
 )
 
 func TestSystemBlocks(t *testing.T) {
+	// Verifies system blocks are loaded in the given file order and all have type "text".
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
-	os.WriteFile(filepath.Join(dir, "TOOLS.md"), []byte("You have tools."), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I am Foci."), 0644)
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("Be kind."), 0644)
+	os.WriteFile(filepath.Join(dir, "C.md"), []byte("You have tools."), 0644)
 
-	b := NewBootstrap(dir, nil) // default file order
+	b := NewBootstrap(dir, []string{"A.md", "B.md", "C.md"})
 	blocks := b.SystemBlocks()
 
 	if len(blocks) != 3 {
 		t.Fatalf("len = %d, want 3", len(blocks))
 	}
 
-	// Check order matches file order (IDENTITY before SOUL before TOOLS)
 	if blocks[0].Text != "I am Foci." {
 		t.Errorf("blocks[0].Text = %q", blocks[0].Text)
 	}
@@ -32,7 +32,6 @@ func TestSystemBlocks(t *testing.T) {
 		t.Errorf("blocks[2].Text = %q", blocks[2].Text)
 	}
 
-	// All should be type "text"
 	for i, b := range blocks {
 		if b.Type != "text" {
 			t.Errorf("blocks[%d].Type = %q", i, b.Type)
@@ -41,12 +40,12 @@ func TestSystemBlocks(t *testing.T) {
 }
 
 func TestSystemBlocksSkipsMissing(t *testing.T) {
+	// Verifies that missing files in the file order are silently skipped.
 	dir := t.TempDir()
 
-	// Only create IDENTITY.md — all others should be skipped silently
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I exist."), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I exist."), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md", "B.md", "C.md"})
 	blocks := b.SystemBlocks()
 
 	if len(blocks) != 1 {
@@ -69,12 +68,13 @@ func TestSystemBlocksEmpty(t *testing.T) {
 }
 
 func TestSystemBlocksSkipsEmptyFiles(t *testing.T) {
+	// Verifies that empty files are skipped and not included in system blocks.
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte(""), 0644)
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("has content"), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("has content"), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md", "B.md"})
 	blocks := b.SystemBlocks()
 
 	if len(blocks) != 1 {
@@ -110,9 +110,13 @@ func TestSystemBlocksCustomOrder(t *testing.T) {
 }
 
 func TestDefaultFileOrder(t *testing.T) {
+	// Verifies DefaultFileOrder matches provision.DefaultSystemFiles layout.
 	expected := []string{
-		"IDENTITY.md", "SOUL.md", "COHERENCE.md", "AGENTS.md",
-		"TOOLS.md", "USER.md", "MEMORY.md",
+		"character/SOUL.md",
+		"character/COHERENCE.md",
+		"character/CRAFT.md",
+		"character/USER.md",
+		"character/MEMORY.md",
 	}
 
 	if len(DefaultFileOrder) != len(expected) {
@@ -127,9 +131,9 @@ func TestDefaultFileOrder(t *testing.T) {
 
 func TestSetSecretNames(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I am Foci."), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md"})
 
 	// Without secrets
 	blocks := b.SystemBlocks()
@@ -160,9 +164,9 @@ func TestSetSecretNames(t *testing.T) {
 
 func TestSetSecretNamesCacheInvalidation(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I am Foci."), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md"})
 
 	// First call — no secrets
 	blocks1 := b.SystemBlocks()
@@ -182,10 +186,10 @@ func TestSetSecretNamesCacheInvalidation(t *testing.T) {
 func TestSecretsBlockIsLast(t *testing.T) {
 	// Verify secrets block is the last block (translate layer will mark it for caching).
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644)
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I am Foci."), 0644)
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("Be kind."), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md", "B.md"})
 	b.SetSecretNames([]string{"secret.key"}, false)
 
 	blocks := b.SystemBlocks()
@@ -201,10 +205,11 @@ func TestSecretsBlockIsLast(t *testing.T) {
 }
 
 func TestReload(t *testing.T) {
+	// Verifies Reload re-reads files from disk and updates cached blocks.
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("original content"), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("original content"), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md"})
 
 	blocks := b.SystemBlocks()
 	if blocks[0].Text != "original content" {
@@ -212,7 +217,7 @@ func TestReload(t *testing.T) {
 	}
 
 	// Modify file on disk
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("updated content"), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("updated content"), 0644)
 
 	// Before reload — should still have old content
 	blocks = b.SystemBlocks()
@@ -231,9 +236,9 @@ func TestReload(t *testing.T) {
 
 func TestReloadInvalidatesSecretCache(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("content"), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("content"), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md"})
 	b.SetSecretNames([]string{"my.key"}, false)
 
 	// Build cache with secrets
@@ -297,23 +302,25 @@ func TestCheckSizes(t *testing.T) {
 }
 
 func TestSectionSizes(t *testing.T) {
+	// Verifies SectionSizes reports name and char count for loaded files,
+	// skipping missing files.
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am Foci."), 0644) // 10 chars
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Be kind."), 0644)       // 8 chars
-	// COHERENCE.md missing — should be skipped
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I am Foci."), 0644) // 10 chars
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("Be kind."), 0644)   // 8 chars
+	// C.md missing — should be skipped
 
-	b := NewBootstrap(dir, nil) // default file order
+	b := NewBootstrap(dir, []string{"A.md", "B.md", "C.md"})
 	sizes := b.SectionSizes()
 
 	if len(sizes) != 2 {
 		t.Fatalf("len = %d, want 2", len(sizes))
 	}
-	if sizes[0].Name != "IDENTITY.md" || sizes[0].Chars != 10 {
-		t.Errorf("sizes[0] = %+v, want {IDENTITY.md, 10}", sizes[0])
+	if sizes[0].Name != "A.md" || sizes[0].Chars != 10 {
+		t.Errorf("sizes[0] = %+v, want {A.md, 10}", sizes[0])
 	}
-	if sizes[1].Name != "SOUL.md" || sizes[1].Chars != 8 {
-		t.Errorf("sizes[1] = %+v, want {SOUL.md, 8}", sizes[1])
+	if sizes[1].Name != "B.md" || sizes[1].Chars != 8 {
+		t.Errorf("sizes[1] = %+v, want {B.md, 8}", sizes[1])
 	}
 }
 
@@ -388,12 +395,11 @@ func TestBuildSecretsBlock_WithSecretsAndBitwarden(t *testing.T) {
 func TestSystemBlocks_AllFiles(t *testing.T) {
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("I am test."), 0644)
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("My soul."), 0644)
-	os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("My craft."), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("I am test."), 0644)
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("My soul."), 0644)
+	os.WriteFile(filepath.Join(dir, "C.md"), []byte("My craft."), 0644)
 
-	// Create Bootstrap with custom file order
-	b := NewBootstrap(dir, []string{"IDENTITY.md", "SOUL.md", "CRAFT.md"})
+	b := NewBootstrap(dir, []string{"A.md", "B.md", "C.md"})
 
 	// Set secret names to trigger secrets block
 	b.SetSecretNames([]string{"api.key"}, false)
@@ -420,34 +426,45 @@ func TestSystemBlocks_AllFiles(t *testing.T) {
 
 // TestLoadFromDisk tests loadFromDisk with existing files
 func TestLoadFromDisk(t *testing.T) {
+	// Verifies loadFromDisk returns blocks for files that exist.
 	dir := t.TempDir()
 
-	// Create some workspace files
-	os.WriteFile(filepath.Join(dir, "IDENTITY.md"), []byte("Identity content"), 0644)
-	os.WriteFile(filepath.Join(dir, "SOUL.md"), []byte("Soul content"), 0644)
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("Identity content"), 0644)
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("Soul content"), 0644)
 
-	b := NewBootstrap(dir, nil)
+	b := NewBootstrap(dir, []string{"A.md", "B.md"})
 	blocks := b.loadFromDisk()
 
-	// Should return blocks for files that exist
-	if len(blocks) == 0 {
-		t.Error("loadFromDisk should return blocks for existing files")
+	if len(blocks) != 2 {
+		t.Fatalf("loadFromDisk returned %d blocks, want 2", len(blocks))
 	}
-
-	// Each block should have its content
-	hasIdentity := false
-	hasSoul := false
-	for _, block := range blocks {
-		if strings.Contains(block.Text, "Identity") {
-			hasIdentity = true
-		}
-		if strings.Contains(block.Text, "Soul") {
-			hasSoul = true
-		}
+	if blocks[0].Text != "Identity content" {
+		t.Errorf("blocks[0].Text = %q", blocks[0].Text)
 	}
+	if blocks[1].Text != "Soul content" {
+		t.Errorf("blocks[1].Text = %q", blocks[1].Text)
+	}
+}
 
-	if !hasIdentity || !hasSoul {
-		t.Errorf("Expected blocks for IDENTITY and SOUL files, got %d blocks", len(blocks))
+func TestBootstrapWithCharacterSubdir(t *testing.T) {
+	// Verifies bootstrap loads character files from the character/ subdirectory
+	// using the default file order — the standard layout for provisioned agents.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "character"), 0755)
+	os.WriteFile(filepath.Join(dir, "character", "SOUL.md"), []byte("soul content"), 0644)
+	os.WriteFile(filepath.Join(dir, "character", "CRAFT.md"), []byte("craft content"), 0644)
+
+	b := NewBootstrap(dir, nil) // uses DefaultFileOrder (character/*.md)
+	blocks := b.SystemBlocks()
+
+	if len(blocks) != 2 {
+		t.Fatalf("len = %d, want 2", len(blocks))
+	}
+	if blocks[0].Text != "soul content" {
+		t.Errorf("blocks[0] = %q, want soul content", blocks[0].Text)
+	}
+	if blocks[1].Text != "craft content" {
+		t.Errorf("blocks[1] = %q, want craft content", blocks[1].Text)
 	}
 }
 

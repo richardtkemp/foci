@@ -12,14 +12,14 @@ import (
 )
 
 // DefaultFileOrder is the default order for loading workspace files.
+// Matches provision.DefaultSystemFiles so provisioned and non-provisioned
+// agents use the same directory layout.
 var DefaultFileOrder = []string{
-	"IDENTITY.md",
-	"SOUL.md",
-	"COHERENCE.md",
-	"AGENTS.md",
-	"TOOLS.md",
-	"USER.md",
-	"MEMORY.md",
+	"character/SOUL.md",
+	"character/COHERENCE.md",
+	"character/CRAFT.md",
+	"character/USER.md",
+	"character/MEMORY.md",
 }
 
 // Bootstrap loads workspace markdown files as system prompt blocks.
