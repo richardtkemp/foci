@@ -394,7 +394,6 @@ type AnthropicConfig struct {
 	UsageCacheTTL     string `toml:"usage_cache_ttl"`    // cache TTL for usage API responses (default "10m")
 	CCExpiryThreshold string `toml:"cc_expiry_threshold"` // how far before expiry to trigger proactive token refresh (default "5m")
 	UseSDK            bool   `toml:"use_sdk"`            // use SDK transport (default true; false = raw HTTP)
-	Streaming         bool   `toml:"streaming"`          // use streaming API (default false; requires use_sdk)
 }
 
 // DisplayConfig holds display-related settings that can be set at any level
@@ -405,7 +404,7 @@ type DisplayConfig struct {
 	ShowThinking         *ShowThinking    `toml:"show_thinking"`          // thinking display: off, compact, true
 	StreamOutput         *bool            `toml:"stream_output"`          // stream model output in real-time
 	StreamInterval       *string          `toml:"stream_interval"`        // duration between message edits during streaming
-	Streaming            *bool            `toml:"streaming"`              // use streaming API (requires use_sdk)
+	Streaming            *bool            `toml:"streaming"`              // use streaming API
 	DisplayWidth         *int             `toml:"display_width"`          // display width for dividers
 	ReceivedFilesDir     *string          `toml:"received_files_dir"`     // save received files to this directory
 	InjectedMessageHeader *string         `toml:"injected_message_header"` // header prepended to injected messages

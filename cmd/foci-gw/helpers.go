@@ -99,17 +99,13 @@ func modelDefaultsFn(models map[string]config.ModelConfig) func(string) (string,
 }
 
 // resolveStreamingConfig resolves the streaming setting for an agent.
-// Cascade: per-agent → global defaults → anthropic.streaming.
-// Streaming is forced off when use_sdk is false.
+// Cascade: per-agent → global defaults → false.
 func resolveStreamingConfig(acfg config.AgentConfig, cfg *config.Config) bool {
-	if !cfg.Anthropic.UseSDK {
-		return false // streaming requires SDK
-	}
 	dc := config.Merge(acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig)
 	if dc.Streaming != nil {
 		return *dc.Streaming
 	}
-	return cfg.Anthropic.Streaming
+	return false
 }
 
 // buildBotConflictSkipSet returns a map of agent IDs that should be skipped
