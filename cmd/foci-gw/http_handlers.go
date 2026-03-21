@@ -98,7 +98,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		if req.Model != "" {
-			if err := applyModelOverride(inst, sessionKey, req.Model); err != nil {
+			if err := applyModelOverride(inst, sessionKey, req.Model, d.cfg.Models); err != nil {
 				http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
 				return
 			}
@@ -264,7 +264,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		if req.Model != "" {
-			if err := applyModelOverride(inst, branchKey, req.Model); err != nil {
+			if err := applyModelOverride(inst, branchKey, req.Model, d.cfg.Models); err != nil {
 				http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
 				return
 			}
@@ -438,7 +438,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 
 // applyModelOverride resolves a model value (group name, alias, or developer/model_id)
 // and sets it as a per-session override on the agent instance.
-func applyModelOverride(inst *agentInstance, sessionKey, value string) error {
+func applyModelOverride(inst *agentInstance, sessionKey, value string, models map[string]config.ModelConfig) error {
 	// Check if value is a known group name (powerful/fast/cheap)
 	switch value {
 	case config.GroupPowerful, config.GroupFast, config.GroupCheap:
@@ -452,7 +452,7 @@ func applyModelOverride(inst *agentInstance, sessionKey, value string) error {
 	}
 
 	// Resolve as alias or developer/model_id
-	resolved, err := config.ResolveModel(value, "")
+	resolved, err := config.ResolveModel(value, "", models)
 	if err != nil {
 		return err
 	}

@@ -104,6 +104,23 @@ func resolveShowToolCalls(acfg config.AgentConfig, cfg *config.Config) string {
 	}
 }
 
+// modelDefaultsFn returns a function that looks up per-model defaults
+// (thinking, effort, speed) from [models.*] config by matching the
+// developer/model_id string.
+func modelDefaultsFn(models map[string]config.ModelConfig) func(string) (string, string, string) {
+	if len(models) == 0 {
+		return nil
+	}
+	return func(model string) (thinking, effort, speed string) {
+		for _, mc := range models {
+			if mc.Model == model {
+				return string(mc.Thinking), mc.Effort, mc.Speed
+			}
+		}
+		return "", "", ""
+	}
+}
+
 // resolveStreamingConfig resolves the streaming setting for an agent.
 // Per-agent *bool overrides defaults *bool which overrides global anthropic.streaming.
 // Streaming is forced off when use_sdk is false.

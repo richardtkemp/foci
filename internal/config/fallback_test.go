@@ -5,11 +5,11 @@ import "testing"
 func TestNewFallbackResolver_NilOnEmptyMaps(t *testing.T) {
 	// Proves that NewFallbackResolver returns nil when both global and
 	// per-agent maps are empty, enabling a fast no-op check.
-	fr := NewFallbackResolver(nil, nil)
+	fr := NewFallbackResolver(nil, nil, nil)
 	if fr != nil {
 		t.Fatal("expected nil resolver for empty maps")
 	}
-	fr = NewFallbackResolver(map[string]string{}, map[string]string{})
+	fr = NewFallbackResolver(map[string]string{}, map[string]string{}, nil)
 	if fr != nil {
 		t.Fatal("expected nil resolver for empty (non-nil) maps")
 	}
@@ -21,7 +21,7 @@ func TestFallbackResolver_BasicResolution(t *testing.T) {
 	// and format.
 	fr := NewFallbackResolver(
 		map[string]string{"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6"},
-		nil,
+		nil, nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -43,7 +43,7 @@ func TestFallbackResolver_FullModelStrings(t *testing.T) {
 	// resolve correctly in both keys and values.
 	fr := NewFallbackResolver(
 		map[string]string{"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6"},
-		nil,
+		nil, nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -65,7 +65,7 @@ func TestFallbackResolver_ChainWalk(t *testing.T) {
 			"anthropic/claude-opus-4-6":   "anthropic/claude-sonnet-4-6",
 			"anthropic/claude-sonnet-4-6": "anthropic/claude-haiku-4-5",
 		},
-		nil,
+		nil, nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -98,7 +98,7 @@ func TestFallbackResolver_CycleDetection(t *testing.T) {
 			"anthropic/claude-opus-4-6":   "anthropic/claude-sonnet-4-6",
 			"anthropic/claude-sonnet-4-6": "anthropic/claude-opus-4-6",
 		},
-		nil,
+		nil, nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver (cycle should be broken, not discarded)")
@@ -126,7 +126,7 @@ func TestFallbackResolver_PerAgentOverride(t *testing.T) {
 	perAgent := map[string]string{
 		"anthropic/claude-opus-4-6": "anthropic/claude-haiku-4-5", // override: skip sonnet
 	}
-	fr := NewFallbackResolver(global, perAgent)
+	fr := NewFallbackResolver(global, perAgent, nil)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
 	}
@@ -151,7 +151,7 @@ func TestFallbackResolver_CrossEndpoint(t *testing.T) {
 		map[string]string{
 			"google/gemini-2.5-pro": "anthropic/claude-sonnet-4-6",
 		},
-		nil,
+		nil, nil,
 	)
 	if fr == nil {
 		t.Fatal("expected non-nil resolver")
@@ -175,7 +175,7 @@ func TestFallbackResolver_NoMatch(t *testing.T) {
 	// Proves that Resolve returns nil for models without a fallback entry.
 	fr := NewFallbackResolver(
 		map[string]string{"anthropic/claude-opus-4-6": "anthropic/claude-sonnet-4-6"},
-		nil,
+		nil, nil,
 	)
 	got := fr.Resolve("anthropic/claude-haiku-4-5")
 	if got != nil {
@@ -202,7 +202,7 @@ func TestFallbackResolver_InvalidKeysIgnored(t *testing.T) {
 			"anthropic/claude-opus-4-6": "badvalue",
 			"":                           "anthropic/claude-sonnet-4-6",
 		},
-		nil,
+		nil, nil,
 	)
 	// All entries had invalid keys or values -- resolver should be nil
 	if fr != nil {
@@ -216,7 +216,7 @@ func TestFallbackResolver_SelfCycleDetection(t *testing.T) {
 		map[string]string{
 			"anthropic/claude-opus-4-6": "anthropic/claude-opus-4-6",
 		},
-		nil,
+		nil, nil,
 	)
 	if fr != nil {
 		t.Fatal("expected nil resolver for self-cycle")

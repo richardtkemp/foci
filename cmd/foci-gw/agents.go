@@ -82,7 +82,7 @@ func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
 	// Create group resolver for multi-model routing (powerful model is the agent's primary)
-	groupResolver := config.NewGroupResolver(p.cfg.Groups)
+	groupResolver := config.NewGroupResolver(p.cfg.Groups, p.cfg.Models)
 
 	// Resolve agent's default endpoint and format from powerful group
 	powerfulResolved := groupResolver.ResolveGroup(config.GroupPowerful)
@@ -94,7 +94,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Create fallback resolver for automatic model failover
-	fallbackResolver := config.NewFallbackResolver(p.cfg.Groups.Fallbacks, acfg.ModelFallbacks)
+	fallbackResolver := config.NewFallbackResolver(p.cfg.Groups.Fallbacks, acfg.ModelFallbacks, p.cfg.Models)
 
 	// Build provider-level fallback function from config resolver.
 	// This bridges config (which doesn't import provider) to the provider package.
@@ -216,6 +216,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ShowToolCalls:                  resolveShowToolCalls(acfg, p.cfg),
 		CacheTTL:                       resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
 		Streaming:                      resolveStreamingConfig(acfg, p.cfg),
+		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
 		ManaInvestInterval:             parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
 	}
 

@@ -317,11 +317,10 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 	}
 }
 
-func TestCompactWithEffortOverride(t *testing.T) {
-	// Verifies that the effort parameter is included in the
-	// API request body for models that support it (Sonnet), and is silently omitted for
-	// models that do not (Haiku), by capturing and inspecting the raw request body for
-	// both cases in a single test.
+func TestCompactWithModelDefaults(t *testing.T) {
+	// Verifies that ModelDefaultsFn provides effort to the compaction API
+	// request for models that support it (Sonnet), and that the effort is
+	// stripped for models that do not (Haiku).
 	var capturedBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedBody, _ = io.ReadAll(r.Body)
@@ -346,9 +345,11 @@ func TestCompactWithEffortOverride(t *testing.T) {
 		store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 
-	// Sonnet supports effort — should be included
+	// Sonnet supports effort — model defaults should apply
 	c := NewCompactor(store, 0.8)
-	c.WithEffort("high")
+	c.ModelDefaultsFn = func(model string) (string, string, string) {
+		return "", "high", "" // thinking, effort, speed
+	}
 	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-sonnet-4-6", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact: %v", err)
@@ -356,20 +357,19 @@ func TestCompactWithEffortOverride(t *testing.T) {
 
 	body := string(capturedBody)
 	if !strings.Contains(body, `"effort":"high"`) {
-		t.Errorf("API request body should contain effort=high, got: %s", body)
-	}
-	if !strings.Contains(body, `"output_config"`) {
-		t.Errorf("API request body should contain output_config, got: %s", body)
+		t.Errorf("API request body should contain effort=high from model defaults, got: %s", body)
 	}
 
-	// Haiku does not support effort — should be stripped
+	// Haiku does not support effort — should be stripped even with model defaults
 	store2 := session.NewStore(t.TempDir())
 	for i := 0; i < 3; i++ {
 		store2.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("msg")})
 		store2.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 	c2 := NewCompactor(store2, 0.8)
-	c2.WithEffort("high")
+	c2.ModelDefaultsFn = func(model string) (string, string, string) {
+		return "", "high", ""
+	}
 	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {
 		t.Fatalf("Compact with haiku: %v", err)

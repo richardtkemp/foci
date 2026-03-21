@@ -50,22 +50,27 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	}
 }
 
-func TestWithEffort(t *testing.T) {
-	// Verifies that WithEffort stores the given effort string and that
-	// clearing it with an empty string returns to the no-effort default state.
+func TestModelDefaultsFn(t *testing.T) {
+	// Verifies that ModelDefaultsFn is nil by default and can be set
+	// to provide per-model defaults.
 	c := NewCompactor(nil, 0.8)
-	if c.effort != "" {
-		t.Errorf("initial effort = %q, want empty", c.effort)
+	if c.ModelDefaultsFn != nil {
+		t.Error("initial ModelDefaultsFn should be nil")
 	}
 
-	c.WithEffort("high")
-	if c.effort != "high" {
-		t.Errorf("after WithEffort, effort = %q, want high", c.effort)
+	c.ModelDefaultsFn = func(model string) (string, string, string) {
+		if model == "anthropic/claude-opus-4-6" {
+			return "adaptive", "high", ""
+		}
+		return "", "", ""
 	}
-
-	c.WithEffort("")
-	if c.effort != "" {
-		t.Errorf("after clearing, effort = %q, want empty", c.effort)
+	thinking, effort, speed := c.ModelDefaultsFn("anthropic/claude-opus-4-6")
+	if thinking != "adaptive" || effort != "high" || speed != "" {
+		t.Errorf("ModelDefaultsFn(opus) = (%q, %q, %q), want (adaptive, high, \"\")", thinking, effort, speed)
+	}
+	thinking, effort, speed = c.ModelDefaultsFn("anthropic/claude-haiku-4-5")
+	if thinking != "" || effort != "" || speed != "" {
+		t.Errorf("ModelDefaultsFn(haiku) = (%q, %q, %q), want all empty", thinking, effort, speed)
 	}
 }
 

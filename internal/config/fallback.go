@@ -11,10 +11,10 @@ type FallbackResolver struct {
 }
 
 // NewFallbackResolver creates a FallbackResolver by merging global and per-agent
-// fallback maps (per-agent wins). All keys and values are normalized to
-// canonical "developer/model_id" format. Cycles are detected and broken.
-// Returns nil if both maps are empty.
-func NewFallbackResolver(global, perAgent map[string]string) *FallbackResolver {
+// fallback maps (per-agent wins). All keys and values are normalized through
+// named model configs to canonical "developer/model_id" format. Cycles are
+// detected and broken. Returns nil if both maps are empty.
+func NewFallbackResolver(global, perAgent map[string]string, models map[string]ModelConfig) *FallbackResolver {
 	if len(global) == 0 && len(perAgent) == 0 {
 		return nil
 	}
@@ -23,8 +23,8 @@ func NewFallbackResolver(global, perAgent map[string]string) *FallbackResolver {
 
 	// Start with global entries
 	for k, v := range global {
-		ck := canonicalize(k)
-		cv := canonicalize(v)
+		ck := canonicalize(k, models)
+		cv := canonicalize(v, models)
 		if ck != "" && cv != "" {
 			merged[ck] = cv
 		}
@@ -32,8 +32,8 @@ func NewFallbackResolver(global, perAgent map[string]string) *FallbackResolver {
 
 	// Per-agent overrides
 	for k, v := range perAgent {
-		ck := canonicalize(k)
-		cv := canonicalize(v)
+		ck := canonicalize(k, models)
+		cv := canonicalize(v, models)
 		if ck != "" && cv != "" {
 			merged[ck] = cv
 		}
@@ -70,17 +70,17 @@ func (fr *FallbackResolver) Resolve(model string) *ResolvedModel {
 	}
 
 	// Parse the canonical fallback into a ResolvedModel
-	resolved, err := ResolveModel(fb, "")
+	resolved, err := ResolveModel(fb, "", nil)
 	if err != nil {
 		return nil
 	}
 	return resolved
 }
 
-// canonicalize resolves a model string to canonical "developer/model_id" format.
-// Returns "" if unresolvable.
-func canonicalize(model string) string {
-	resolved, err := ResolveModel(model, "")
+// canonicalize resolves a model string (named model or developer/model_id) to
+// canonical "developer/model_id" format. Returns "" if unresolvable.
+func canonicalize(model string, models map[string]ModelConfig) string {
+	resolved, err := ResolveModel(model, "", models)
 	if err != nil {
 		return ""
 	}
@@ -92,7 +92,7 @@ func canonicalize(model string) string {
 // model IDs by attempting ResolveModel without aliases.
 func normalizeModelKey(model string) string {
 	// If it already has a slash, parse directly
-	resolved, err := ResolveModel(model, "")
+	resolved, err := ResolveModel(model, "", nil)
 	if err != nil {
 		return model
 	}

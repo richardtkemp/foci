@@ -180,7 +180,6 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	agent.ShowToolCalls = &showPreview
 	showCompact := ShowThinkingCompact
 	agent.ShowThinking = &showCompact
-	agent.CompactionEffort = "high"
 	// Set optional global fields
 	cfg.Sessions.CompactionSummaryPrompt = "/tmp/summary.md"
 	cfg.Sessions.CompactionHandoffMsg = "handoff"

@@ -232,10 +232,10 @@ func TestSpeedCommand(t *testing.T) {
 		t.Errorf("result = %q", result.Text)
 	}
 
-	// Set via numeric alias
+	// Set to standard via numeric alias (explicit override that blocks model defaults)
 	_, _ = cmd.Execute(context.Background(), Request{Args: "0", SessionKey: sk}, cc)
-	if ag.SessionSpeed(sk) != "" {
-		t.Errorf("speed not cleared via '0': %q", ag.SessionSpeed(sk))
+	if ag.SessionSpeed(sk) != "standard" {
+		t.Errorf("speed not set to standard via '0': %q", ag.SessionSpeed(sk))
 	}
 
 	_, _ = cmd.Execute(context.Background(), Request{Args: "1", SessionKey: sk}, cc)
@@ -249,13 +249,19 @@ func TestSpeedCommand(t *testing.T) {
 		t.Errorf("expected 'fast', got %q", result.Text)
 	}
 
-	// Clear via "standard"
+	// Set to standard via name (explicit override)
 	result, _ = cmd.Execute(context.Background(), Request{Args: "standard", SessionKey: sk}, cc)
-	if ag.SessionSpeed(sk) != "" {
-		t.Errorf("speed not cleared: %q", ag.SessionSpeed(sk))
+	if ag.SessionSpeed(sk) != "standard" {
+		t.Errorf("speed not set to standard: %q", ag.SessionSpeed(sk))
 	}
 	if !strings.Contains(result.Text, "standard") {
 		t.Errorf("result = %q", result.Text)
+	}
+
+	// Clear via "none" (revert to model default)
+	_, _ = cmd.Execute(context.Background(), Request{Args: "none", SessionKey: sk}, cc)
+	if ag.SessionSpeed(sk) != "" {
+		t.Errorf("speed not cleared via 'none': %q", ag.SessionSpeed(sk))
 	}
 
 	// Invalid value

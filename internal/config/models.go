@@ -13,26 +13,50 @@ type ResolvedModel struct {
 	ModelID         string // "claude-opus-4-6", "gemini-2.5-flash", etc.
 	Format          string // "anthropic", "gemini", "openai" (wire format, derived from developer)
 	Endpoint        string // "anthropic", "openrouter", "google", etc.
+	// From ModelConfig (populated when resolved via a named model entry)
+	Thinking        string // "adaptive", "off", or ""
+	Effort          string // "low", "medium", "high", or ""
+	Speed           string // "fast" or ""
+	Context         int    // context window size in tokens (0 = unknown)
 	EnableKeepalive *bool  // nil=auto-detect, true/false=explicit
 	PromptCacheTTL  string // Go duration, empty=auto-detect
 }
 
-// ResolveModel takes a model string in developer/model_id format
+// ResolveModel takes a model string (alias or developer/model_id)
 // and returns the canonical resolution with wire format and endpoint.
 // endpoint param is optional - if empty, auto-selects based on developer.
+// models is the named model config map; entries are checked first by name,
+// then their .Model field provides the developer/model_id string.
+// Raw "developer/model_id" strings not in the models map still work.
 //
 // Resolution logic:
-// 1. Parse developer/model: split on "/" (error if no slash found)
-// 2. Infer wire format from developer
-// 3. Determine endpoint (explicit override, or auto-select based on developer)
-func ResolveModel(input string, endpoint string) (*ResolvedModel, error) {
+// 1. Resolve named model: check if input exists in models map (carries settings)
+// 2. Parse developer/model: split on "/" (error if no slash found)
+// 3. Infer wire format from developer
+// 4. Determine endpoint (explicit override, or auto-select based on developer)
+func ResolveModel(input string, endpoint string, models map[string]ModelConfig) (*ResolvedModel, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return nil, fmt.Errorf("model string is empty")
 	}
 
-	// Step 1: Parse developer/model_id
-	parts := strings.SplitN(input, "/", 2)
+	// Step 1: Resolve named model entry (carries settings through)
+	resolved := input
+	var mc *ModelConfig
+	if len(models) > 0 {
+		if cfg, ok := models[strings.ToLower(input)]; ok {
+			resolved = cfg.Model
+			mc = &cfg
+		}
+	}
+
+	// Use endpoint from named model config if caller didn't specify one
+	if mc != nil && mc.Endpoint != "" && endpoint == "" {
+		endpoint = mc.Endpoint
+	}
+
+	// Step 2: Parse developer/model_id
+	parts := strings.SplitN(resolved, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return nil, fmt.Errorf("model must be in developer/model_id syntax (e.g., 'google/gemini-2.5-flash'), got: %q", input)
 	}
@@ -40,10 +64,10 @@ func ResolveModel(input string, endpoint string) (*ResolvedModel, error) {
 	developer := strings.ToLower(strings.TrimSpace(parts[0]))
 	modelID := strings.TrimSpace(parts[1])
 
-	// Step 2: Infer wire format from developer
+	// Step 3: Infer wire format from developer
 	format := InferWireFormat(developer)
 
-	// Step 3: Determine endpoint
+	// Step 4: Determine endpoint
 	endpointName := endpoint
 	if endpointName == "" {
 		// Auto-select based on developer
@@ -60,12 +84,24 @@ func ResolveModel(input string, endpoint string) (*ResolvedModel, error) {
 		}
 	}
 
-	return &ResolvedModel{
+	rm := &ResolvedModel{
 		Developer: developer,
 		ModelID:   modelID,
 		Format:    format,
 		Endpoint:  endpointName,
-	}, nil
+	}
+
+	// Carry settings from ModelConfig if resolved via a named entry
+	if mc != nil {
+		rm.Thinking = string(mc.Thinking)
+		rm.Effort = mc.Effort
+		rm.Speed = mc.Speed
+		rm.Context = int(mc.Context)
+		rm.EnableKeepalive = mc.EnableKeepalive
+		rm.PromptCacheTTL = mc.PromptCacheTTL
+	}
+
+	return rm, nil
 }
 
 // InferWireFormat returns the wire format for a developer based on naming conventions.

@@ -215,9 +215,7 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 		p.cfg.Sessions.CompactionMinMessages,
 		preserveMessages,
 	)
-	if acfg.CompactionEffort != "" {
-		compactor.WithEffort(acfg.CompactionEffort)
-	}
+	compactor.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
 	compactor.AgentID = acfg.ID
