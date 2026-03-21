@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -55,6 +56,7 @@ type Queue struct {
 	buckets        map[string]*warningBucket
 	errorsOnly     bool                 // when true, Push silently drops non-ERROR entries
 	nowFunc        func() time.Time     // for deterministic testing
+	suppressed     atomic.Int32         // when > 0, Push is a no-op (breaks dispatch→warn→push loops)
 }
 
 // NewQueue creates a warning queue with optional rate-limiting.
@@ -81,8 +83,22 @@ func (q *Queue) SetErrorsOnly(v bool) {
 	q.mu.Unlock()
 }
 
+// Suppress increments the suppression counter. While suppressed, Push is a no-op.
+// Used by the Dispatcher to prevent feedback loops: when a dispatch triggers a
+// log warning (e.g. "no channel ID"), that warning must not re-enter the same
+// queue, otherwise each failed dispatch grows the next diagnostic payload
+// indefinitely.
+func (q *Queue) Suppress()   { q.suppressed.Add(1) }
+
+// Unsuppress decrements the suppression counter.
+func (q *Queue) Unsuppress() { q.suppressed.Add(-1) }
+
 // Push adds a warning to the queue, subject to rate-limiting.
 func (q *Queue) Push(level, component, msg string) {
+	if q.suppressed.Load() > 0 {
+		return
+	}
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 

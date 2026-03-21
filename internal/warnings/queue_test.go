@@ -501,6 +501,54 @@ func TestQueue_QuietMode_NonSaturatedWindowNoQuiet(t *testing.T) {
 	}
 }
 
+// --- Suppress tests ---
+
+func TestQueue_Suppress_BlocksPush(t *testing.T) {
+	// Proves that Push is a no-op while the queue is suppressed, and that
+	// warnings are accepted again once Unsuppress restores the counter.
+	q := NewQueue(0, 0)
+
+	q.Suppress()
+	q.Push("WARN", "discord", "no channel ID for notification: [system diagnostics]")
+	q.Push("ERROR", "discord", "also suppressed")
+
+	if q.Len() != 0 {
+		t.Fatalf("Len() = %d, want 0 (suppressed)", q.Len())
+	}
+
+	q.Unsuppress()
+	q.Push("WARN", "discord", "after unsuppress")
+
+	warnings := q.Drain()
+	if len(warnings) != 1 {
+		t.Fatalf("Drain() got %d, want 1", len(warnings))
+	}
+	if !strings.Contains(warnings[0], "after unsuppress") {
+		t.Errorf("warnings[0] = %q, want post-unsuppress entry", warnings[0])
+	}
+}
+
+func TestQueue_Suppress_Nested(t *testing.T) {
+	// Proves that suppression nesting works: two Suppress calls require two
+	// Unsuppress calls before Push accepts warnings again.
+	q := NewQueue(0, 0)
+
+	q.Suppress()
+	q.Suppress()
+	q.Unsuppress()
+
+	q.Push("WARN", "test", "still suppressed")
+	if q.Len() != 0 {
+		t.Fatalf("Len() = %d after partial unsuppress, want 0", q.Len())
+	}
+
+	q.Unsuppress()
+	q.Push("WARN", "test", "now allowed")
+	if q.Len() != 1 {
+		t.Fatalf("Len() = %d after full unsuppress, want 1", q.Len())
+	}
+}
+
 // --- ErrorsOnly tests ---
 
 func TestQueue_ErrorsOnly_DropsWarn(t *testing.T) {
