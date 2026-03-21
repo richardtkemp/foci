@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -100,6 +103,53 @@ func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return base.RoundTrip(req)
 }
 
+// unixSocketTransport returns an http.Transport that dials a Unix domain socket.
+// No API key is needed — the kernel verifies peer credentials on the socket.
+func unixSocketTransport(sockPath string) *http.Transport {
+	return &http.Transport{
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", sockPath)
+		},
+	}
+}
+
+// parseSocketFlag extracts --socket from args, returning the path and remaining args.
+func parseSocketFlag(args []string) (sockPath string, rest []string) {
+	return parseFlagValue(args, "socket")
+}
+
+// resolveGWSocket returns the gateway Unix socket path if one is available.
+// Resolution order: --socket flag > FOCI_GW_SOCK env var > default path.
+// Returns empty string if no socket is found.
+func resolveGWSocket(flagValue string) string {
+	sock := envDefault(flagValue, "FOCI_GW_SOCK")
+	if sock != "" {
+		if isSocket(sock) {
+			return sock
+		}
+		return ""
+	}
+	// Default: $HOME/data/foci-gw.sock
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	sock = filepath.Join(home, "data", "foci-gw.sock")
+	if isSocket(sock) {
+		return sock
+	}
+	return ""
+}
+
+// isSocket returns true if path exists and is a Unix socket.
+func isSocket(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeSocket != 0
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -136,19 +186,29 @@ func main() {
 		return
 	}
 
-	// Parse --addr and --api-key from global args (before command)
+	// Parse --addr, --api-key, and --socket from global args (before command).
 	allArgs := os.Args[1:]
 	addrFlag, allArgs := parseAddrFlag(allArgs)
 	apiKeyFlag, allArgs := parseAPIKeyFlag(allArgs)
-	addr := envDefault(addrFlag, "FOCI_ADDR")
-	if addr == "" {
-		addr = defaultAddr
+	socketFlag, allArgs := parseSocketFlag(allArgs)
+
+	// Transport resolution: prefer Unix socket (no secret needed), fall back to TCP + API key.
+	var base string
+	if sock := resolveGWSocket(socketFlag); sock != "" {
+		client.Transport = unixSocketTransport(sock)
+		// URL host is ignored by the unix transport; use a placeholder.
+		base = "http://foci-gw"
+	} else {
+		addr := envDefault(addrFlag, "FOCI_ADDR")
+		if addr == "" {
+			addr = defaultAddr
+		}
+		apiKey := envDefault(apiKeyFlag, "FOCI_API_KEY")
+		if apiKey != "" {
+			client.Transport = &authTransport{key: apiKey, base: client.Transport}
+		}
+		base = "http://" + addr
 	}
-	apiKey := envDefault(apiKeyFlag, "FOCI_API_KEY")
-	if apiKey != "" {
-		client.Transport = &authTransport{key: apiKey, base: client.Transport}
-	}
-	base := "http://" + addr
 
 	if len(allArgs) == 0 {
 		usage()
@@ -214,8 +274,9 @@ Commands:
   version              Print version information
 
 Flags:
+  --socket <path>      Gateway Unix socket (auto-detected from ~/data/foci-gw.sock)
   --addr <host:port>   Gateway address (default: %s)
-  --api-key <key>      HTTP API key for authentication
+  --api-key <key>      HTTP API key (for TCP auth; not needed with Unix socket)
   -a, --agent <id>     Target a specific agent (default: first agent)
   -s, --session <id>   Target a specific session (default: main)
   --if-active <dur>    Skip if no user activity within duration (e.g. 8h, 30m)
@@ -223,8 +284,9 @@ Flags:
   -mf, --message-file  Read message from file path
 
 Environment (flag > env var > default):
+  FOCI_GW_SOCK         Gateway Unix socket path (--socket, auto-detected)
   FOCI_ADDR            Gateway address (--addr)
-  FOCI_API_KEY         HTTP API key (--api-key)
+  FOCI_API_KEY         HTTP API key (--api-key, not needed with Unix socket)
   FOCI_AGENT           Target agent (-a)
   FOCI_SESSION         Target session (-s)
   FOCI_IF_ACTIVE       Activity gate duration (--if-active)

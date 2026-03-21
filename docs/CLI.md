@@ -6,7 +6,7 @@ The `foci` CLI is a lightweight client that talks to the `foci-gw` HTTP gateway.
 go build ./cmd/foci
 ```
 
-All commands communicate over HTTP to the gateway at `FOCI_ADDR` (default `127.0.0.1:18791`).
+All commands communicate over HTTP to the gateway. The CLI auto-discovers the gateway's Unix socket at `~/data/foci-gw.sock` (same-user auth via kernel peer credentials — no API key needed). Falls back to TCP at `FOCI_ADDR` (default `127.0.0.1:18791`) with `FOCI_API_KEY` for remote/cross-user access.
 
 ---
 
@@ -17,7 +17,8 @@ These flags are accepted by all commands:
 | Flag | Short | Env var | Description |
 |------|-------|---------|-------------|
 | `--help` | `-h` | | Show usage for any command (e.g. `foci send -h`). |
-| `--addr <host:port>` | | `FOCI_ADDR` | Gateway address. Default: `127.0.0.1:18791`. |
+| `--socket <path>` | | `FOCI_GW_SOCK` | Gateway Unix socket path. Auto-detected from `~/data/foci-gw.sock`. No API key needed. |
+| `--addr <host:port>` | | `FOCI_ADDR` | Gateway TCP address. Default: `127.0.0.1:18791`. Used when no Unix socket is available. |
 | `--agent <id>` | `-a` | `FOCI_AGENT` | Target a specific agent. Default: first configured agent. |
 | `--session <id>` | `-s` | `FOCI_SESSION` | Target session type. Default: `main`. |
 | `--model <model>` | `-m` | `FOCI_MODEL` | Model override: group name (`powerful`/`fast`/`cheap`), model name, or `developer/model_id`. See [MODELS.md](MODELS.md). |

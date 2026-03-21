@@ -153,6 +153,7 @@ HTTP API server.
 | `bind` | string | `"127.0.0.1"` | Bind address. Use `0.0.0.0` for external access. |
 | `graceful_shutdown_timeout` | string | `"30s"` | Time to wait for in-flight requests on shutdown. Go duration format. |
 | `ws_enabled` | bool | `false` | Enable `/voice` WebSocket endpoint. |
+| `socket_path` | string | `""` | Unix socket path for same-user auth. Empty (default) auto-resolves to `~/data/foci-gw.sock`. Same-user connections via this socket are authenticated by the kernel using `SO_PEERCRED` — no API key needed. |
 
 Endpoints: `POST /send`, `GET /status`, `POST /command`, `POST /wake`, `POST /webhook/{agent}/{hookid}`, `GET /voice` (WebSocket, when `[http] ws_enabled = true`).
 

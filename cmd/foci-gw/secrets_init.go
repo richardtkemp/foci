@@ -56,7 +56,7 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 			log.Fatalf("main", "save HTTP API key: %v", err)
 		}
 		httpAPIKey = generated
-		log.Infof("main", "generated HTTP API key — add FOCI_API_KEY to crontab: %s", httpAPIKey)
+		log.Infof("main", "generated HTTP API key (for remote/cross-user access): %s", httpAPIKey)
 	}
 
 	// Wire child process group-dropping into the command package

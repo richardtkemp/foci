@@ -425,6 +425,7 @@ type HTTPConfig struct {
 	Bind                    string `toml:"bind"`
 	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout"` // time to wait for in-flight requests on shutdown (default "30s")
 	WSEnabled               bool   `toml:"ws_enabled"`                // enable /voice WebSocket endpoint (default false)
+	SocketPath              string `toml:"socket_path"`               // Unix socket path for same-user auth (default: auto-resolved to data dir)
 }
 
 type LoggingConfig struct {

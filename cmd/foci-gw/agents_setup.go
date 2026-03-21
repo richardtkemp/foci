@@ -43,8 +43,11 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
 	spillThreshold := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
 
-	// Inject FOCI_ADDR and FOCI_API_KEY so agents can run foci CLI commands
+	// Inject FOCI_ADDR and FOCI_GW_SOCK so agents can run foci CLI commands
 	// (send, branch, ping, etc.) without sourcing vars manually.
+	// FOCI_GW_SOCK is a Unix socket path (not a secret) — the CLI uses it
+	// for same-user authentication via kernel peer credentials, so no API
+	// key needs to appear in the child environment.
 	var execExtraEnv []string
 	if p.cfg.HTTP.Port > 0 {
 		bind := p.cfg.HTTP.Bind
@@ -53,8 +56,8 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 		}
 		execExtraEnv = append(execExtraEnv, fmt.Sprintf("FOCI_ADDR=%s:%d", bind, p.cfg.HTTP.Port))
 	}
-	if p.httpAPIKey != "" {
-		execExtraEnv = append(execExtraEnv, "FOCI_API_KEY="+p.httpAPIKey)
+	if p.gwSocketPath != "" {
+		execExtraEnv = append(execExtraEnv, "FOCI_GW_SOCK="+p.gwSocketPath)
 	}
 
 	registry.Register(tools.NewExecTool(agentStore, p.bwStore, execAutoBg, notifier, acfg.Workspace, registry, spillThreshold, p.cfg.Tools.TempDir, execExtraEnv))
