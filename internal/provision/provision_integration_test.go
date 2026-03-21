@@ -352,3 +352,58 @@ func TestProvisionInvalidCharMode(t *testing.T) {
 		t.Errorf("error = %q, want to contain 'unknown character mode'", err.Error())
 	}
 }
+
+func TestSeedCharacterFiles(t *testing.T) {
+	// Verifies SeedCharacterFiles copies defaults from shared/character/ to
+	// workspace/character/, and does not overwrite existing files.
+	sharedDir := t.TempDir()
+	os.MkdirAll(filepath.Join(sharedDir, "character"), 0755)
+	for _, name := range DefaultCharacterFileNames {
+		os.WriteFile(filepath.Join(sharedDir, "character", name), []byte("default "+name), 0644)
+	}
+
+	workspace := filepath.Join(t.TempDir(), "new-agent")
+	os.MkdirAll(workspace, 0755)
+
+	if err := SeedCharacterFiles(sharedDir, workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	// All character files should exist with default content
+	for _, name := range DefaultCharacterFileNames {
+		data, err := os.ReadFile(filepath.Join(workspace, "character", name))
+		if err != nil {
+			t.Errorf("missing %s: %v", name, err)
+			continue
+		}
+		if string(data) != "default "+name {
+			t.Errorf("%s = %q, want %q", name, data, "default "+name)
+		}
+	}
+
+	// Existing files should not be overwritten
+	os.WriteFile(filepath.Join(workspace, "character", "SOUL.md"), []byte("custom"), 0644)
+	if err := SeedCharacterFiles(sharedDir, workspace); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(workspace, "character", "SOUL.md"))
+	if string(data) != "custom" {
+		t.Errorf("SOUL.md overwritten: got %q", data)
+	}
+}
+
+func TestSeedCharacterFilesNoShared(t *testing.T) {
+	// Verifies SeedCharacterFiles is a no-op when shared/character/ doesn't exist.
+	workspace := filepath.Join(t.TempDir(), "agent")
+	os.MkdirAll(workspace, 0755)
+
+	err := SeedCharacterFiles("/nonexistent/shared", workspace)
+	if err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+
+	// workspace/character/ should not have been created
+	if _, err := os.Stat(filepath.Join(workspace, "character")); err == nil {
+		t.Error("character dir should not exist when shared dir is missing")
+	}
+}

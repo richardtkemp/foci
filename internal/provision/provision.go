@@ -163,6 +163,19 @@ func SeedDefaults(srcFS fs.FS, targetDir string) error {
 	})
 }
 
+// SeedCharacterFiles copies default character files from sharedDir/character/
+// to workspaceDir/character/, skipping files that already exist.
+// This ensures non-provisioned agents (those with only id= in config) get
+// the same default character files as provisioned agents.
+// Returns nil if the shared character directory does not exist.
+func SeedCharacterFiles(sharedDir, workspaceDir string) error {
+	charSrc := filepath.Join(sharedDir, "character")
+	if _, err := os.Stat(charSrc); os.IsNotExist(err) {
+		return nil
+	}
+	return SeedDefaults(os.DirFS(charSrc), filepath.Join(workspaceDir, "character"))
+}
+
 // TitleCase converts a hyphenated slug to title case.
 // "greek-tutor" → "Greek Tutor"
 func TitleCase(slug string) string {
