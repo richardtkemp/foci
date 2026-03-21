@@ -12,7 +12,7 @@ func TestTmuxSendRateLimit(t *testing.T) {
 	// Verifies that consecutive sends are rate-limited: the first send completes quickly but the second is delayed ~2s, enforcing the send rate limit.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-ratelimit"
 	tmuxSetup(t, name)
@@ -68,7 +68,7 @@ func TestTmuxSessionKeyIsolation(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Single tool instance, two different session keys
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	nameA := "foci-test-skiso-a"
 	nameB := "foci-test-skiso-b"

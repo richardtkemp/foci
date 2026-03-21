@@ -11,7 +11,7 @@ import (
 func TestTmuxInvalidOperation(t *testing.T) {
 	// Verifies that unknown operations return a meaningful error rather than silently succeeding or panicking.
 	t.Parallel()
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "restart",
@@ -29,7 +29,7 @@ func TestTmuxStartNoName(t *testing.T) {
 	// Verifies that omitting the name parameter auto-generates a foci-prefixed session name rather than failing.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"operation": "start",
@@ -52,7 +52,7 @@ func TestTmuxSendNoEnter(t *testing.T) {
 	// Verifies that keys can be sent without triggering Enter, leaving typed text in the input buffer without executing it.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-noenter"
 	tmuxSetup(t, name)
@@ -87,7 +87,7 @@ func TestTmuxSendBareEnter(t *testing.T) {
 	// Verifies that enter=true with no keys succeeds (sends just Enter), while enter=false with no keys correctly fails as an empty operation.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-bareenter"
 	tmuxSetup(t, name)
@@ -131,7 +131,7 @@ func TestTmuxSendBareEnter(t *testing.T) {
 func TestTmuxMissingName(t *testing.T) {
 	// Verifies that send, read, and kill all fail with an error when no session name is supplied, covering required-parameter validation.
 	t.Parallel()
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	for _, op := range []string{"send", "read", "kill"} {
 		params, _ := json.Marshal(map[string]interface{}{
