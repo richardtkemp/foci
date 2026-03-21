@@ -328,6 +328,51 @@ func TestDispatcher_SuppressesFeedbackLoop(t *testing.T) {
 	}
 }
 
+func TestDispatcher_SuppressesCrossQueueFeedback(t *testing.T) {
+	// Proves that warnings generated during dispatch don't enter peer queues
+	// either. The warn hook pushes to both ChatWarnings and Warnings queues;
+	// without PeerQueues suppression, a ChatWarnings dispatch failure enters
+	// the Warnings queue and vice versa, creating a cross-queue feedback loop.
+	chatQ := NewQueue(0, 0)
+	agentQ := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue:            chatQ,
+		PeerQueues:       []*Queue{agentQ},
+		ActiveInterval:   0,
+		InactiveInterval: 0,
+		DispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			// Simulate the warn hook pushing to both queues when
+			// Discord's send fails with "no channel ID".
+			chatQ.Push("WARN", "discord", "no channel ID for notification: "+text)
+			agentQ.Push("WARN", "discord", "no channel ID for notification: "+text)
+		},
+	})
+
+	chatQ.Push("WARN", "startup", "skills dir not found")
+	d.MaybeFire()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("dispatch calls = %d, want 1", got)
+	}
+
+	if chatQ.Pending() {
+		t.Error("chatQ should be empty — re-entrant push must be suppressed")
+	}
+	if agentQ.Pending() {
+		t.Error("agentQ should be empty — peer queue push during dispatch must be suppressed")
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		found := false

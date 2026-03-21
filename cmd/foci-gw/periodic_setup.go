@@ -100,11 +100,16 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		return inst.ag.LastUserMessageTime(sk)
 	}
 
-	// Proactive warning dispatcher (agent session injection)
+	// Proactive warning dispatcher (agent session injection).
+	// PeerQueues: the warn hook pushes every WARN/ERROR to both queues. Without
+	// cross-queue suppression, a failed dispatch here (e.g. "no default session")
+	// generates a WARN that enters the ChatWarnings queue, whose dispatch also
+	// fails and re-enters this queue — an infinite cross-queue feedback loop.
 	var warningDispatcher *warnings.Dispatcher
 	if acfg.InjectAgentWarnings.Enabled() {
 		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
 			Queue:          inst.ag.Warnings(),
+			PeerQueues:     []*warnings.Queue{inst.ag.ChatWarnings()},
 			IsProcessingFn: inst.ag.IsProcessing,
 			FormatFn: func(body string) string {
 				return prompts.FormatInjectedMessage("PROACTIVE WARNINGS", time.Now(), body)
@@ -124,11 +129,14 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		})
 	}
 
-	// Chat warning dispatcher (platform notifications)
+	// Chat warning dispatcher (platform notifications).
+	// PeerQueues: same cross-queue feedback prevention as above — a failed
+	// SendNotification (e.g. "no channel ID") must not enter the agent queue.
 	var chatWarningDispatcher *warnings.Dispatcher
 	if acfg.InjectChatWarnings.Enabled() {
 		chatWarningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
-			Queue: inst.ag.ChatWarnings(),
+			Queue:      inst.ag.ChatWarnings(),
+			PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
 			FormatFn: func(body string) string {
 				return "[system diagnostics]\n" + body
 			},
