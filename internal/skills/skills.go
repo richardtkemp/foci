@@ -35,7 +35,7 @@ func Load(dirs []string) *Registry {
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			log.Warnf("skills", "scan %s: %v", dir, err)
+			log.Debugf("skills", "scan: %v", err)
 			continue
 		}
 		for _, entry := range entries {
