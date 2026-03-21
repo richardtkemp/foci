@@ -15,6 +15,7 @@ type DispatchFunc func(warningText string)
 // DispatcherConfig holds all the dependencies for creating a Dispatcher.
 type DispatcherConfig struct {
 	Queue                 *Queue
+	PeerQueues            []*Queue                 // additional queues to suppress during dispatch (prevents cross-queue feedback)
 	DispatchFn            DispatchFunc
 	FormatFn              func(body string) string // wraps body with injection header; nil = use body as-is
 	ActiveInterval        time.Duration
@@ -30,6 +31,7 @@ type DispatcherConfig struct {
 type Dispatcher struct {
 	log                   *log.ComponentLogger
 	queue                 *Queue
+	peerQueues            []*Queue
 	dispatchFn            DispatchFunc
 	formatFn              func(body string) string
 	activeInterval        time.Duration
@@ -48,6 +50,7 @@ func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
 	return &Dispatcher{
 		log:                   log.NewComponentLogger("warnings"),
 		queue:                 cfg.Queue,
+		peerQueues:            cfg.PeerQueues,
 		dispatchFn:            cfg.DispatchFn,
 		formatFn:              cfg.FormatFn,
 		activeInterval:        cfg.ActiveInterval,
@@ -143,9 +146,19 @@ func (d *Dispatcher) dispatchDrained() {
 	d.log.Infof("dispatching %d proactive warnings", len(warnings))
 
 	d.queue.Suppress()
+	for _, pq := range d.peerQueues {
+		if pq != nil {
+			pq.Suppress()
+		}
+	}
 	go func() {
 		defer func() {
 			d.queue.Unsuppress()
+			for _, pq := range d.peerQueues {
+				if pq != nil {
+					pq.Unsuppress()
+				}
+			}
 			d.mu.Lock()
 			d.dispatching = false
 			d.mu.Unlock()
