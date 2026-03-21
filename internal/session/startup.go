@@ -56,15 +56,21 @@ func (s *Store) RepairOrphans() (int, error) {
 			return nil
 		}
 
-		// Build synthetic tool_result message
+		// Build synthetic tool_result + assistant ack to maintain role alternation.
+		// Without the assistant ack, the next HandleMessage would append a user
+		// message after this user(tool_result), creating consecutive users.
 		var results []provider.ContentBlock
 		for _, id := range toolUseIDs {
 			results = append(results, provider.ToolResultBlock(id, "Tool call interrupted", true))
 		}
 		repairMsg := provider.Message{Role: "user", Content: results}
+		ackMsg := provider.Message{Role: "assistant", Content: provider.TextContent("(tool call interrupted)")}
 
 		if err := s.appendUnlocked(key, repairMsg); err != nil {
 			return fmt.Errorf("repair %s: %w", key, err)
+		}
+		if err := s.appendUnlocked(key, ackMsg); err != nil {
+			return fmt.Errorf("repair ack %s: %w", key, err)
 		}
 		repaired++
 		return nil

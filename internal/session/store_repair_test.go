@@ -6,8 +6,8 @@ import (
 
 func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	// Proves that RepairOrphans detects a session ending with an unanswered
-	// tool_use message and appends a synthetic error tool_result, making the
-	// session structurally valid again.
+	// tool_use message and appends a synthetic tool_result + assistant ack,
+	// maintaining role alternation for the next user message.
 	s := NewStore(t.TempDir())
 	key := "test/imain/1000000000"
 
@@ -26,8 +26,8 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(msgs) != 3 {
-		t.Fatalf("len = %d, want 3", len(msgs))
+	if len(msgs) != 4 {
+		t.Fatalf("len = %d, want 4 (user, assistant, user(repair), assistant(ack))", len(msgs))
 	}
 
 	repair := msgs[2]
@@ -49,6 +49,11 @@ func TestRepairOrphansDetectsTrailingToolUse(t *testing.T) {
 	}
 	if block.Content != "Tool call interrupted" {
 		t.Errorf("content = %q", block.Content)
+	}
+
+	ack := msgs[3]
+	if ack.Role != "assistant" {
+		t.Errorf("ack role = %q, want assistant", ack.Role)
 	}
 }
 
@@ -99,10 +104,10 @@ func TestRepairOrphansMultipleSessions(t *testing.T) {
 		t.Errorf("repaired = %d, want 1", n)
 	}
 
-	// Broken should be repaired
+	// Broken should be repaired (user, assistant(tool_use), user(repair), assistant(ack))
 	msgs, _ := s.Load(broken)
-	if len(msgs) != 3 {
-		t.Errorf("broken len = %d, want 3", len(msgs))
+	if len(msgs) != 4 {
+		t.Errorf("broken len = %d, want 4", len(msgs))
 	}
 
 	// Clean should be unchanged
@@ -131,8 +136,8 @@ func TestRepairOrphansMultipleToolUse(t *testing.T) {
 	}
 
 	msgs, _ := s.Load(key)
-	if len(msgs) != 3 {
-		t.Fatalf("len = %d, want 3", len(msgs))
+	if len(msgs) != 4 {
+		t.Fatalf("len = %d, want 4", len(msgs))
 	}
 
 	repair := msgs[2]
@@ -144,6 +149,9 @@ func TestRepairOrphansMultipleToolUse(t *testing.T) {
 	}
 	if repair.Content[1].ToolUseID != "toolu_two" {
 		t.Errorf("block[1] tool_use_id = %q", repair.Content[1].ToolUseID)
+	}
+	if msgs[3].Role != "assistant" {
+		t.Errorf("ack role = %q, want assistant", msgs[3].Role)
 	}
 }
 

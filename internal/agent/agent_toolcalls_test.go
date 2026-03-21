@@ -16,7 +16,9 @@ import (
 )
 
 func TestRepairInterruptedToolCalls(t *testing.T) {
-	// Proves that repairInterruptedToolCalls returns nil for benign cases (empty, last message is user, no tool_use) and produces a synthetic error tool_result for every unmatched tool_use block when an assistant message ends mid-call.
+	// Proves that repairInterruptedToolCalls returns nil for benign cases
+	// (empty, last message is user, no tool_use) and produces a
+	// user(tool_result) + assistant(ack) pair for interrupted tool calls.
 	t.Run("empty messages", func(t *testing.T) {
 		if got := repairInterruptedToolCalls(nil); got != nil {
 			t.Errorf("expected nil for empty messages, got %v", got)
@@ -51,26 +53,28 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 			}},
 		}
 		got := repairInterruptedToolCalls(msgs)
-		if got == nil {
-			t.Fatal("expected repair message, got nil")
+		if len(got) != 2 {
+			t.Fatalf("expected 2 repair messages (tool_result + ack), got %d", len(got))
 		}
-		if got.Role != "user" {
-			t.Errorf("repair message role = %q, want user", got.Role)
+		// First message: user with tool_result
+		if got[0].Role != "user" {
+			t.Errorf("repair[0] role = %q, want user", got[0].Role)
 		}
-		if len(got.Content) != 1 {
-			t.Fatalf("expected 1 tool_result block, got %d", len(got.Content))
+		if len(got[0].Content) != 1 {
+			t.Fatalf("expected 1 tool_result block, got %d", len(got[0].Content))
 		}
-		if got.Content[0].Type != "tool_result" {
-			t.Errorf("block type = %q, want tool_result", got.Content[0].Type)
+		if got[0].Content[0].Type != "tool_result" {
+			t.Errorf("block type = %q, want tool_result", got[0].Content[0].Type)
 		}
-		if got.Content[0].ToolUseID != "tu_123" {
-			t.Errorf("tool_use_id = %q, want tu_123", got.Content[0].ToolUseID)
+		if got[0].Content[0].ToolUseID != "tu_123" {
+			t.Errorf("tool_use_id = %q, want tu_123", got[0].Content[0].ToolUseID)
 		}
-		if !got.Content[0].IsError {
+		if !got[0].Content[0].IsError {
 			t.Error("expected is_error = true")
 		}
-		if got.Content[0].Content != "Tool call interrupted" {
-			t.Errorf("content = %q, want %q", got.Content[0].Content, "Tool call interrupted")
+		// Second message: assistant ack
+		if got[1].Role != "assistant" {
+			t.Errorf("repair[1] role = %q, want assistant", got[1].Role)
 		}
 	})
 
@@ -83,17 +87,17 @@ func TestRepairInterruptedToolCalls(t *testing.T) {
 			}},
 		}
 		got := repairInterruptedToolCalls(msgs)
-		if got == nil {
-			t.Fatal("expected repair message, got nil")
+		if len(got) != 2 {
+			t.Fatalf("expected 2 repair messages, got %d", len(got))
 		}
-		if len(got.Content) != 2 {
-			t.Fatalf("expected 2 tool_result blocks, got %d", len(got.Content))
+		if len(got[0].Content) != 2 {
+			t.Fatalf("expected 2 tool_result blocks, got %d", len(got[0].Content))
 		}
-		if got.Content[0].ToolUseID != "tu_a" {
-			t.Errorf("block[0].tool_use_id = %q, want tu_a", got.Content[0].ToolUseID)
+		if got[0].Content[0].ToolUseID != "tu_a" {
+			t.Errorf("block[0].tool_use_id = %q, want tu_a", got[0].Content[0].ToolUseID)
 		}
-		if got.Content[1].ToolUseID != "tu_b" {
-			t.Errorf("block[1].tool_use_id = %q, want tu_b", got.Content[1].ToolUseID)
+		if got[0].Content[1].ToolUseID != "tu_b" {
+			t.Errorf("block[1].tool_use_id = %q, want tu_b", got[0].Content[1].ToolUseID)
 		}
 	})
 }
@@ -146,9 +150,9 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 		t.Fatal("no request received")
 	}
 
-	// Messages: user("do something"), assistant(tool_use), user(tool_result repair), user("continue")
-	// But Anthropic requires alternating roles, so the repair and new message are separate user turns.
-	// Let's check the repair is in there.
+	// Messages: user("do something"), assistant(tool_use), user(tool_result repair),
+	// assistant(ack), user("continue"), assistant("Recovered.")
+	// The repair includes an assistant ack to maintain role alternation.
 	found := false
 	for _, msg := range receivedReq.Messages {
 		for _, block := range msg.Content {
@@ -163,7 +167,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 
 	// Verify repair was persisted to the session store
 	saved, _ := store.Load(sessionKey)
-	// Should have: user, assistant(tool_use), user(tool_result repair), user(continue), assistant(Recovered.)
+	// Should have: user, assistant(tool_use), user(tool_result repair), assistant(ack), user(continue), assistant(Recovered.)
 	repairFound := false
 	for _, msg := range saved {
 		for _, block := range msg.Content {

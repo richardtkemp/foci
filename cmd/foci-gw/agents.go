@@ -136,7 +136,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent tool registry and supporting services
 	registry := tools.NewRegistry()
-	notifier := newAsyncNotifier(agLazy, defaultSessionKey, acfg.ID, p.ctx, p.sessions, connMgr)
+	notifier := newAsyncNotifier(agLazy, defaultSessionKey, acfg.ID, p.ctx, connMgr)
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Register tools by category

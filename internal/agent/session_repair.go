@@ -11,8 +11,9 @@ import (
 // assistant message with tool_use blocks that have no following tool_result.
 // This happens when SIGTERM kills the process during tool execution — the defer
 // flushes the assistant message but no tool_result was ever created.
-// Returns a synthetic tool_result message to append, or nil if no repair needed.
-func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
+// Returns a synthetic tool_result + assistant ack pair to maintain role alternation,
+// or nil if no repair needed.
+func repairInterruptedToolCalls(messages []provider.Message) []provider.Message {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -30,7 +31,10 @@ func repairInterruptedToolCalls(messages []provider.Message) *provider.Message {
 	for _, id := range toolUseIDs {
 		results = append(results, provider.ToolResultBlock(id, "Tool call interrupted", true))
 	}
-	return &provider.Message{Role: "user", Content: results}
+	return []provider.Message{
+		{Role: "user", Content: results},
+		{Role: "assistant", Content: provider.TextContent("(tool call interrupted)")},
+	}
 }
 
 // repairDuplicateToolIDs fixes two classes of session corruption:
