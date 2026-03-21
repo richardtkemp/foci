@@ -57,6 +57,7 @@ type mockConnection struct {
 	*mockSender
 }
 
+func (m *mockConnection) PlatformName() string                 { return "mock" }
 func (m *mockConnection) SessionKeyForChat(chatID int64) string { return "" }
 func (m *mockConnection) DefaultSessionKey() string             { return "" }
 func (m *mockConnection) SetSessionKey(key string)              {}
@@ -100,6 +101,8 @@ func (p *mockProvider) RestoreFacetSessions(RestoreParams)                  {}
 func (p *mockProvider) SetLifecycleCallback(string, LifecycleEvent, func())    {}
 func (p *mockProvider) ToolDetailStore() ToolDetailStore                        { return nil }
 func (p *mockProvider) AgentPreFlight(string) []string                          { return nil }
+func (p *mockProvider) DefaultPlatformConfig() config.PlatformConfig            { return config.PlatformConfig{} }
+func (p *mockProvider) ValidateConfig(config.PlatformConfig) []string           { return nil }
 func (p *mockProvider) Close() error                                            { return nil }
 
 // mockWizardProvider implements both MessagingProvider and SetupWizard.

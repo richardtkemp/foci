@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+// findTOMLTag recursively searches a struct type for a field with the given
+// TOML tag, including fields in inline-embedded structs.
+func findTOMLTag(st reflect.Type, key string) bool {
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		tag := f.Tag.Get("toml")
+		// Strip options after comma
+		if idx := strings.IndexByte(tag, ','); idx >= 0 {
+			tag = tag[:idx]
+		}
+		if tag == key {
+			return true
+		}
+		// Recurse into inline-embedded structs
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			if findTOMLTag(f.Type, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestFieldsNonEmpty(t *testing.T) {
 	// Proves configFields returns a non-empty registry where every entry has Section,
 	// Key, and Description populated.
@@ -214,7 +237,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"gemini":           reflect.TypeOf(GeminiConfig{}),
 		"openai":           reflect.TypeOf(OpenAIConfig{}),
 		"sessions":         reflect.TypeOf(SessionsConfig{}),
-		"telegram":         reflect.TypeOf(TelegramConfig{}),
+		"platforms":        reflect.TypeOf(PlatformConfig{}),
 		"tools":            reflect.TypeOf(ToolsConfig{}),
 		"logging":          reflect.TypeOf(LoggingConfig{}),
 		"memory":           reflect.TypeOf(MemoryConfig{}),
@@ -224,7 +247,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"memory_formation": reflect.TypeOf(MemoryFormationConfig{}),
 		"environment":      reflect.TypeOf(EnvironmentConfig{}),
 		"cache":            reflect.TypeOf(CacheConfig{}),
-		"usage_warnings":   reflect.TypeOf(ManaWarningsConfig{}),
+		"usage_warnings":   reflect.TypeOf(ManaConfig{}),
 		"debug":            reflect.TypeOf(DebugConfig{}),
 		"database":         reflect.TypeOf(DatabaseConfig{}),
 		"http":             reflect.TypeOf(HTTPConfig{}),
@@ -246,8 +269,12 @@ func TestFieldsMatchStructTags(t *testing.T) {
 			found := false
 			for i := 0; i < st.NumField(); i++ {
 				tag := st.Field(i).Tag.Get("toml")
-				if tag == prefix && st.Field(i).Type.Kind() == reflect.Struct {
-					st = st.Field(i).Type
+				ft := st.Field(i).Type
+				if ft.Kind() == reflect.Ptr {
+					ft = ft.Elem()
+				}
+				if tag == prefix && ft.Kind() == reflect.Struct {
+					st = ft
 					key = suffix
 					found = true
 					break
@@ -259,15 +286,8 @@ func TestFieldsMatchStructTags(t *testing.T) {
 			}
 		}
 
-		// Look for the TOML tag in the struct.
-		tagFound := false
-		for i := 0; i < st.NumField(); i++ {
-			tag := st.Field(i).Tag.Get("toml")
-			if tag == key {
-				tagFound = true
-				break
-			}
-		}
+		// Look for the TOML tag in the struct, including inline embedded structs.
+		tagFound := findTOMLTag(st, key)
 		if !tagFound {
 			t.Errorf("field %s.%s: TOML tag %q not found in struct %s", f.Section, f.Key, key, st.Name())
 		}

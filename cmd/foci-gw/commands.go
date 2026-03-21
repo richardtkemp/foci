@@ -141,7 +141,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 			GitCommit: gitCommit,
 			BuildTime: buildTime,
 		},
-		ManaName:            p.cfg.ManaWarnings.Name,
+		ManaName:            config.DerefStr(p.cfg.Mana.Name),
 		StartTime:           p.startTime,
 		CompactionThreshold: p.compactionThreshold,
 		SecretsStore:        p.store,
@@ -200,9 +200,10 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.DoneCommand())
 
 	// Stop aliases (e.g. "wait" → same as "stop")
-	if p.acfg.EnableStopAliases {
+	bc := config.Merge(p.acfg.Defaults.BehaviorConfig, p.cfg.Defaults.BehaviorConfig)
+	if bc.EnableStopAliases == nil || *bc.EnableStopAliases { // default true
 		stopCmd := cmds.Get("stop")
-		for _, alias := range p.acfg.StopAliases {
+		for _, alias := range bc.StopAliases {
 			if alias != "stop" {
 				cmds.Register(&command.Command{Name: alias, Hidden: true, Execute: stopCmd.Execute})
 			}
@@ -214,7 +215,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// Dynamic mana command — only register if the provider supports usage tracking.
 	if p.ag.UsageClient != nil {
-		manaName := p.cfg.ManaWarnings.Name
+		manaName := config.DerefStr(p.cfg.Mana.Name)
 		if manaName == "" {
 			manaName = "mana"
 		}

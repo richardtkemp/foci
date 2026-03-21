@@ -8,7 +8,6 @@ import (
 	"foci/internal/platform"
 )
 
-func ptr[T any](v T) *T { return &v }
 
 // newBotForTest creates a Bot without connecting to the Telegram API.
 func newBotForTest() *Bot {
@@ -25,27 +24,42 @@ func newBotForTest() *Bot {
 }
 
 func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
-	// Verifies that per-agent
-	// display settings take precedence over global defaults.
+	// Verifies that per-agent display settings take precedence over global defaults.
 	bot := newBotForTest()
+	recvDir := "/agent/files"
 	acfg := config.AgentConfig{
-		ShowToolCalls: ptr(config.ToolCallFull),
-		ShowThinking:  ptr(config.ShowThinkingCompact),
-		MessagesInLog: ptr(true),
-		Platforms: &config.PlatformsConfig{Telegram: &config.TelegramPlatformConfig{
-			DisplayWidth:     ptr(80),
-			ReceivedFilesDir: "/agent/files",
+		Defaults: config.AgentDefaultsOverride{
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls: config.Ptr(config.ToolCallFull),
+				ShowThinking:  config.Ptr(config.ShowThinkingCompact),
+			},
+		},
+		Debug: config.DebugConfig{
+			MessagesInLog: config.Ptr(true),
+		},
+		Platforms: []config.PlatformConfig{{
+			ID: "telegram",
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls:    config.Ptr(config.ToolCallFull),
+				ShowThinking:     config.Ptr(config.ShowThinkingCompact),
+				DisplayWidth:     config.Ptr(80),
+				ReceivedFilesDir: &recvDir,
+			},
+			Telegram: &config.TelegramSpecific{},
 		}},
 	}
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			ShowToolCalls:    ptr(config.ToolCallOff),
-			ShowThinking:     ptr(config.ShowThinkingOff),
-			DisplayWidth:     ptr(44),
-			ReceivedFilesDir: "/global/files",
-		},
-		Logging: config.LoggingConfig{
-			MessagesInLog: false,
+		Platforms: []config.PlatformConfig{{
+			ID: "telegram",
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls:    config.Ptr(config.ToolCallOff),
+				ShowThinking:     config.Ptr(config.ShowThinkingOff),
+				DisplayWidth:     config.Ptr(44),
+				ReceivedFilesDir: config.Ptr("/global/files"),
+			},
+		}},
+		Debug: config.DebugConfig{
+			MessagesInLog: config.Ptr(false),
 		},
 	}
 
@@ -70,19 +84,26 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 }
 
 func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
-	// Verifies that when no
-	// agent-level settings are set, global defaults are used.
+	// Verifies that when no agent-level settings are set, platform defaults are used.
 	bot := newBotForTest()
-	acfg := config.AgentConfig{} // all nil/zero — should fall back to telegram
+	// Agent has a telegram platform entry with merged values (as would happen
+	// after ApplyProviderDefaults + ApplyDefaults).
+	recvDir := "/global/files"
+	acfg := config.AgentConfig{
+		Platforms: []config.PlatformConfig{{
+			ID: "telegram",
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls:    config.Ptr(config.ToolCallPreview),
+				ShowThinking:     config.Ptr(config.ShowThinkingTrue),
+				DisplayWidth:     config.Ptr(60),
+				ReceivedFilesDir: &recvDir,
+			},
+			Telegram: &config.TelegramSpecific{},
+		}},
+	}
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			ShowToolCalls:    ptr(config.ToolCallPreview),
-			ShowThinking:     ptr(config.ShowThinkingTrue),
-			DisplayWidth:     ptr(60),
-			ReceivedFilesDir: "/global/files",
-		},
-		Logging: config.LoggingConfig{
-			MessagesInLog: true,
+		Debug: config.DebugConfig{
+			MessagesInLog: config.Ptr(true),
 		},
 	}
 
@@ -90,33 +111,36 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 
 	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "preview" {
-		t.Errorf("ShowToolCalls = %q, want %q (telegram fallback)", stc, "preview")
+		t.Errorf("ShowToolCalls = %q, want %q (platform fallback)", stc, "preview")
 	}
 	if st != "true" {
-		t.Errorf("ShowThinking = %q, want %q (telegram fallback)", st, "true")
+		t.Errorf("ShowThinking = %q, want %q (platform fallback)", st, "true")
 	}
 	if dw != 60 {
-		t.Errorf("DisplayWidth = %d, want 60 (telegram fallback)", dw)
+		t.Errorf("DisplayWidth = %d, want 60 (platform fallback)", dw)
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")
 	}
 	if rfd != "/global/files" {
-		t.Errorf("ReceivedFilesDir = %q, want %q (global fallback)", rfd, "/global/files")
+		t.Errorf("ReceivedFilesDir = %q, want %q (platform fallback)", rfd, "/global/files")
 	}
 }
 
 func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
-	// Verifies that a
-	// pre-existing ReceivedFilesDir is not overwritten when both agent and global are empty.
+	// Verifies that a pre-existing ReceivedFilesDir is not overwritten when
+	// both agent and global platform have empty values.
 	bot := newBotForTest()
 	// Pre-set a value to verify it's NOT overwritten when both are empty
 	bot.display.ReceivedFilesDir = "/pre-existing"
 
-	acfg := config.AgentConfig{}
-	cfg := &config.Config{
-		Telegram: config.TelegramConfig{ReceivedFilesDir: ""},
+	acfg := config.AgentConfig{
+		Platforms: []config.PlatformConfig{{
+			ID:       "telegram",
+			Telegram: &config.TelegramSpecific{},
+		}},
 	}
+	cfg := &config.Config{}
 
 	ApplyAgentDisplaySettings(bot, acfg, cfg)
 
@@ -158,35 +182,45 @@ func TestDisplayOverrideFn_UsesSessionKey(t *testing.T) {
 }
 
 func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
-	// Verifies that partial agent
-	// overrides work correctly with defaults filling the gaps.
+	// Verifies that partial agent overrides work correctly with platform
+	// defaults filling the gaps.
 	bot := newBotForTest()
-	// Only override ShowToolCalls; rest falls back to telegram
+	// Only override ShowToolCalls at agent level; rest comes from platform config.
 	acfg := config.AgentConfig{
-		ShowToolCalls: ptr(config.ToolCallFull),
+		Defaults: config.AgentDefaultsOverride{
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls: config.Ptr(config.ToolCallFull),
+			},
+		},
+		Platforms: []config.PlatformConfig{{
+			ID: "telegram",
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls: config.Ptr(config.ToolCallOff),
+				ShowThinking:  config.Ptr(config.ShowThinkingCompact),
+				DisplayWidth:  config.Ptr(44),
+			},
+			Telegram: &config.TelegramSpecific{},
+		}},
 	}
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			ShowToolCalls: ptr(config.ToolCallOff),
-			ShowThinking:  ptr(config.ShowThinkingCompact),
-			DisplayWidth:  ptr(44),
-		},
-		Logging: config.LoggingConfig{
-			MessagesInLog: true,
+		Debug: config.DebugConfig{
+			MessagesInLog: config.Ptr(true),
 		},
 	}
 
 	ApplyAgentDisplaySettings(bot, acfg, cfg)
 
 	stc, st, dw, mil, _, _ := bot.DisplaySettings()
-	if stc != "full" {
-		t.Errorf("ShowToolCalls = %q, want %q (agent override)", stc, "full")
+	// Per-agent platform config (most specific) takes precedence over agent-level
+	// via the Merge cascade: per-agent-platform → per-agent → global-platform → defaults.
+	if stc != "off" {
+		t.Errorf("ShowToolCalls = %q, want %q (platform)", stc, "off")
 	}
 	if st != "compact" {
-		t.Errorf("ShowThinking = %q, want %q (telegram fallback)", st, "compact")
+		t.Errorf("ShowThinking = %q, want %q (platform fallback)", st, "compact")
 	}
 	if dw != 44 {
-		t.Errorf("DisplayWidth = %d, want 44 (telegram fallback)", dw)
+		t.Errorf("DisplayWidth = %d, want 44 (platform fallback)", dw)
 	}
 	if !mil {
 		t.Error("MessagesInLog = false, want true (global fallback)")

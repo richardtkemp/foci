@@ -60,11 +60,11 @@ func testHTMLServer(t *testing.T, body string) *httptest.Server {
 func testBrowserManager(t *testing.T) *BrowserManager {
 	t.Helper()
 	mgr := NewBrowserManager(&config.BrowserConfig{
-		Headless:      true,
-		TimeoutSec:    10,
-		Incognito:     true,
-		DOMStableSec:  0.1,
-		DOMStableDiff: 0.5,
+		Headless:      config.Ptr[bool](true),
+		TimeoutSec:    config.Ptr[int](10),
+		Incognito:     config.Ptr[bool](true),
+		DOMStableSec:  config.Ptr[float64](0.1),
+		DOMStableDiff: config.Ptr[float64](0.5),
 	})
 	t.Cleanup(func() { mgr.Stop() })
 	return mgr

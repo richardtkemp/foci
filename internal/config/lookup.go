@@ -44,6 +44,7 @@ func findSection(cfgVal reflect.Value, section string) reflect.Value {
 
 // walkTOMLPath resolves a dotted TOML key (e.g. "keepalive.enabled") through
 // nested struct fields, matching each segment against TOML tags.
+// Recurses into embedded (anonymous) structs to find promoted fields.
 func walkTOMLPath(v reflect.Value, key string) reflect.Value {
 	parts := strings.Split(key, ".")
 	for _, part := range parts {
@@ -51,20 +52,32 @@ func walkTOMLPath(v reflect.Value, key string) reflect.Value {
 		if !v.IsValid() || v.Kind() != reflect.Struct {
 			return reflect.Value{}
 		}
-		t := v.Type()
-		found := false
-		for i := 0; i < t.NumField(); i++ {
-			if tomlTagName(t.Field(i)) == part {
-				v = v.Field(i)
-				found = true
-				break
-			}
-		}
-		if !found {
+		fv := findFieldByTOMLTag(v, part)
+		if !fv.IsValid() {
 			return reflect.Value{}
 		}
+		v = fv
 	}
 	return v
+}
+
+// findFieldByTOMLTag searches a struct value for a field with the given TOML tag,
+// recursing into anonymous (embedded) structs.
+func findFieldByTOMLTag(v reflect.Value, tag string) reflect.Value {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if tomlTagName(f) == tag {
+			return v.Field(i)
+		}
+		// Recurse into embedded structs
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			if fv := findFieldByTOMLTag(v.Field(i), tag); fv.IsValid() {
+				return fv
+			}
+		}
+	}
+	return reflect.Value{}
 }
 
 // tomlTagName extracts the TOML key from a struct field tag, stripping options.

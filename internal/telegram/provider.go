@@ -24,7 +24,8 @@ type telegramProvider struct {
 func (p *telegramProvider) Name() string { return "telegram" }
 
 func (p *telegramProvider) IsConfigured(cfg *config.Config) bool {
-	return len(cfg.Telegram.AllowedUsers) > 0
+	tg := cfg.Platform("telegram")
+	return tg != nil && len(tg.AllowedUsers) > 0
 }
 
 func (p *telegramProvider) Init(deps platform.ProviderDeps) error {
@@ -78,22 +79,23 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 
 func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 	cfg := p.deps.Config
-	if len(cfg.Telegram.FacetBots) == 0 || len(params.AgentOrder) == 0 {
+	tgPlat := cfg.Platform("telegram")
+	if tgPlat == nil || len(tgPlat.FacetBots) == 0 || len(params.AgentOrder) == 0 {
 		return
 	}
 
 	cmds, _ := params.FirstCommands.(*command.Registry)
 	firstACfg := params.FirstAgentConfig
-	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, firstACfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, firstACfg.STTReplacements))
-	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, firstACfg.TTS, firstACfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, firstACfg.TTSReplacements))
+	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, config.DerefStr(firstACfg.Defaults.STT), voice.MergeReplacements(cfg.Defaults.STTReplacements, firstACfg.Defaults.STTReplacements))
+	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, config.DerefStr(firstACfg.Defaults.TTS), config.DerefFloat(firstACfg.Defaults.TTSRate), voice.MergeReplacements(cfg.Defaults.TTSReplacements, firstACfg.Defaults.TTSReplacements))
 
-	for _, botName := range cfg.Telegram.FacetBots {
+	for _, botName := range tgPlat.FacetBots {
 		facetToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)
 		if facetToken == "" {
 			log.Errorf("telegram", "shared facet bot %q: token not found", botName)
 			continue
 		}
-		facetBot, err := NewBot(facetToken, cfg.Telegram.AllowedUsers,
+		facetBot, err := NewBot(facetToken, tgPlat.AllowedUsers,
 			params.FirstHandler, cmds, command.NewLastMessageStore(), "")
 		if err != nil {
 			log.Errorf("telegram", "shared facet bot %q: create: %v", botName, err)
@@ -111,7 +113,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 	}
 
 	if pool := p.mgr.SharedPool(); pool != nil && pool.Size() > 0 {
-		sessionTTL, _ := time.ParseDuration(cfg.Telegram.FacetSessionTTL)
+		sessionTTL, _ := time.ParseDuration(tgPlat.FacetSessionTTL)
 		if sessionTTL > 0 {
 			pool.SetSessionTTL(sessionTTL, p.deps.Sessions)
 		}
@@ -159,6 +161,44 @@ func (p *telegramProvider) AgentPreFlight(agentID string) []string {
 			tokenSecret, tokenSecret,
 		)}
 	}
+	return nil
+}
+
+func (p *telegramProvider) DefaultPlatformConfig() config.PlatformConfig {
+	off := config.ToolCallOff
+	thinkOff := config.ShowThinkingOff
+	dw := 44
+	twl := 5
+	ts := "pretty"
+	so := false
+	rm := true
+	sn := true
+	return config.PlatformConfig{
+		ID: "telegram",
+		NotifyConfig: config.NotifyConfig{
+			StartupNotify: &sn,
+		},
+		DisplayConfig: config.DisplayConfig{
+			ShowToolCalls:  &off,
+			ShowThinking:   &thinkOff,
+			StreamOutput:   &so,
+			StreamInterval: config.Ptr[string]("250ms"),
+			DisplayWidth:   &dw,
+		},
+		AccessConfig: config.AccessConfig{
+			RequireMention: &rm,
+		},
+		FacetSessionTTL:  "60m",
+		MessageQueueSize: 64,
+		Telegram: &config.TelegramSpecific{
+			LongPollTimeout: "65s",
+			TableWrapLines:  &twl,
+			TableStyle:      &ts,
+		},
+	}
+}
+
+func (p *telegramProvider) ValidateConfig(_ config.PlatformConfig) []string {
 	return nil
 }
 

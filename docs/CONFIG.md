@@ -83,65 +83,80 @@ Prompt caching strategy and TTL. The `strategy` field is global-only. The `ttl` 
 | `strategy` | string | `"auto"` | Cache strategy: `"auto"` (top-level, lets the API decide breakpoints) or `"explicit"` (manual breakpoints on system prompt and second-to-last message). |
 | `ttl` | string | `"1h"` | Anthropic prompt cache TTL. Must be `"5m"` (5 minutes) or `"1h"` (1 hour). Only applied to Anthropic API requests — other providers ignore it. Default `"1h"` maximises cache lifetime and is recommended for most deployments. Per-agent override via `cache_ttl` in `[defaults]` or `[[agents]]`. |
 
-### `[telegram]`
+### `[[platforms]]`
 
-Telegram bot configuration. Fields `allowed_users` and `received_files_dir` can be overridden per-agent — see [Global-or-Agent: Telegram](#telegram-overrides).
+Platform configuration. Each entry defines a platform (telegram, discord, etc.) with an `id` field. All fields follow the 5-level cascade: per-agent platform → per-agent → global platform → `[defaults]` → code default.
+
+```toml
+[[platforms]]
+id = "telegram"
+allowed_users = ["123456"]
+show_tool_calls = "preview"
+telegram.long_poll_timeout = "65s"
+
+[[platforms]]
+id = "discord"
+allowed_users = ["789012"]
+discord.auto_thread = true
+```
+
+#### Shared fields (all platforms)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `require_mention` | bool | `true` | Require @mention in group chats. DMs are always processed. When combined with `group_throttle`, non-mentions are buffered instead of dropped. Overridable per-agent. |
-| `facet_bots` | string[] | `[]` | Shared facet pool: bot names whose tokens are resolved via `"telegram.<name>"` secret convention. Fallback for any agent whose per-agent pool is exhausted (or has no per-agent pool). |
-| `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet bot can be reclaimed by a new `/facet` call. If no messages to/from the bot within this window, it's considered abandoned and available for reuse. `"0"` disables auto-reclaim. Go duration format. Applies to both per-agent and shared pools. |
-| `message_queue_size` | int | `64` | Outbound message queue buffer size. High-traffic bots may need larger queues. |
-| `long_poll_timeout` | string | `"65s"` | Long-poll timeout for Telegram `getUpdates`. Should exceed 60s. Go duration format. |
-| `display_width` | int | `44` | Character width for table width constraint. Tables in `<pre>` blocks are shrunk to fit this width and cells are wrapped or truncated. Overridable per-agent. |
-| `table_wrap_lines` | int | `5` | Max wrapped lines per table cell when tables are constrained to `display_width`. `0` truncates with `…` instead of wrapping. Overridable per-agent. |
-| `table_style` | string | `"pretty"` | Table rendering style: `"pretty"` (no pipe borders, `─` separator, 2-space column gaps) or `"markdown"` (pipe-delimited `\| col \| col \|`). Overridable per-agent. |
+| `id` | string | required | Platform identifier: `"telegram"`, `"discord"`, etc. |
+| `allowed_users` | string[] | `[]` | User IDs allowed to interact with the bot. |
+| `require_mention` | bool | `true` | Require @mention in group chats. DMs are always processed. |
+| `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. |
+| `facet_bots` | string[] | `[]` | Shared facet bot pool. Bot tokens resolved via `"<platform>.<name>"` secret convention. |
+| `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet bot/thread can be reclaimed. `"0"` disables. |
+| `message_queue_size` | int | `64` | Message queue buffer size. |
+| `show_tool_calls` | string | `"off"` | Tool call display: `"off"`, `"preview"`, `"full"`. |
+| `show_thinking` | string | `"off"` | Thinking display: `"off"`, `"compact"`, `"true"`. |
+| `display_width` | int | `44`/`60` | Character width for dividers. Default varies by platform. |
+| `stream_output` | bool | `false` | Stream model output in real-time. |
+| `stream_interval` | string | `"250ms"`/`"1200ms"` | Duration between message edits during streaming. Default varies by platform. |
+| `startup_notify` | bool | `true` | Send notification on startup. |
+| `inject_agent_warnings` | string | `"off"` | Inject warnings into agent session: `"all"`, `"errors"`, `"off"`. |
+| `inject_chat_warnings` | string | `"off"` | Send warnings as chat notifications: `"all"`, `"errors"`, `"off"`. |
+| `compaction_notify` | bool | `true` | Send notification on compaction. |
+| `task_list_notify` | bool | `true` | Send notification on task list changes. |
+| `compaction_debug` | bool | `false` | Send compaction summary as file attachment. |
+
+#### Telegram-specific fields (`telegram.*` subsection)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `long_poll_timeout` | string | `"65s"` | Long-poll timeout for `getUpdates`. Should exceed 60s. |
+| `table_wrap_lines` | int | `5` | Max wrapped lines per table cell. `0` truncates with `…`. |
+| `table_style` | string | `"pretty"` | Table style: `"pretty"` or `"markdown"`. |
+
+#### Discord-specific fields (`discord.*` subsection)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `auto_thread` | bool | `true` | Create threads for facet sessions. |
+| `guild_id` | string | `""` | Restrict to a single guild. Empty allows all guilds. |
 
 #### Bot token resolution
 
-Bot tokens are resolved by convention: `"telegram.<botname>"` in `secrets.toml`. No explicit bot map is needed.
+Bot tokens are resolved by convention: `"<platform>.<botname>"` in `secrets.toml`. No explicit bot map is needed.
 
-For example, an agent with `telegram_bot = "primary"` resolves its token from the secret key `telegram.primary`. To override the convention, set `bot_secret` on the agent.
+For example, an agent with `bot = "primary"` on a telegram platform resolves its token from the secret key `telegram.primary`. To override the convention, set `bot_secret` on the platform entry.
 
 `secrets.toml`:
 ```toml
 [telegram]
 primary = "123456:ABC..."
 secondary = "789012:DEF..."
-```
 
-### `[discord]`
-
-Discord bot configuration. Fields `allowed_users`, `guild_id`, and `received_files_dir` can be overridden per-agent — see [Global-or-Agent: Discord](#discord-overrides).
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `allowed_users` | string[] | `[]` | Discord user ID snowflakes allowed to interact with the bot. |
-| `guild_id` | string | `""` | Restrict to a single guild. Empty allows all guilds. |
-| `require_mention` | bool | `true` | Require @mention in guild channels. DMs are always processed. |
-| `auto_thread` | bool | `true` | Create threads for facet sessions. |
-| `startup_notify` | bool | `true` | Send notification on startup. |
-| `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet thread can be reclaimed. `"0"` disables auto-reclaim. Go duration format. |
-| `message_queue_size` | int | `64` | Inbound message queue buffer size. |
-| `display_width` | int | `60` | Character width for dividers in Discord messages. Overridable per-agent. |
-| `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. Overridable per-agent. |
-| `show_tool_calls` | string | `"off"` | Tool call display mode: `"off"`, `"preview"`, `"full"`. Overridable per-agent. |
-| `show_thinking` | string | `"off"` | Thinking block display mode: `"off"`, `"compact"`, `"true"`. Overridable per-agent. |
-| `stream_output` | bool | `false` | Stream model output in real-time. Overridable per-agent. |
-| `stream_update_interval` | string | `"1200ms"` | Duration between message edits during streaming. Overridable per-agent. |
-
-#### Bot token resolution
-
-Bot tokens are resolved by convention: `"discord.<botname>"` in `secrets.toml`. No explicit bot map is needed.
-
-For example, an agent with `bot = "primary"` in `[agents.platforms.discord]` resolves its token from the secret key `discord.primary`. To override the convention, set `bot_secret` on the agent.
-
-`secrets.toml`:
-```toml
 [discord]
 primary = "MTIzNDU2Nzg5..."
 ```
+
+#### Provider-driven defaults
+
+Platform defaults (display_width, stream_interval, etc.) are supplied by each platform's provider implementation, not hardcoded in config loading. Adding a new platform just requires implementing the `MessagingProvider` interface — no config loader changes needed.
 
 ### `[http]`
 
@@ -753,7 +768,7 @@ Available in both `[defaults]` and `[[agents]]`.
 
 ### Display
 
-Set in `[telegram]`, overridable per-agent via `[agents.platforms.telegram]`. At runtime, the `/display` command sets per-session overrides without modifying the config file:
+Set in `[[platforms]]`, overridable per-agent via `[[agents.platforms]]`. At runtime, the `/display` command sets per-session overrides without modifying the config file:
 
 ```
 /display                          # show current effective values
@@ -844,41 +859,20 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 
 ### Notifications & Logging
 
+Notification fields (`startup_notify`, `inject_agent_warnings`, etc.) are part of `NotifyConfig` and follow the 5-level cascade: per-agent platform → per-agent → global platform (`[[platforms]]`) → `[defaults]` → code default. See the `[[platforms]]` section for the full list.
+
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `startup_notify` | bool | `true` | `[telegram] startup_notify` | Send a startup notification when the service starts. `false` for silent bots (e.g. cron-only agents). |
-| `inject_agent_warnings` | string | `"off"` | `[defaults]` | Feed log events into this agent's conversation as system warnings before each turn. Values: `"all"` (WARN+ERROR), `"errors"` (ERROR only), `"off"` (disabled). Accepts bool for backward compatibility (`true`→`"all"`, `false`→`"off"`). Per-agent — some agents can have injection enabled while others rely on chat notifications. |
-| `inject_chat_warnings` | string | `"off"` | `[defaults]` | Send log events as platform chat notifications (Telegram messages). Values: `"all"` (WARN+ERROR), `"errors"` (ERROR only), `"off"` (disabled). Independent of `inject_agent_warnings` — both can be enabled simultaneously. |
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
 | `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
 | `group_throttle` | string | `""` | `[defaults]` | Group chat throttle window. Non-mention messages accumulate silently and are delivered as a batch when the timer fires. @mentions flush all buffered messages immediately and reset the timer. Go duration format (e.g. `"30s"`, `"1m"`). Empty or `"0"` disables (default). Works with both `require_mention = true` (non-mentions buffered instead of dropped) and `false` (non-mentions buffered instead of processed immediately). |
-| `stream_output` | bool | `false` | `[telegram]` / `[agents.platforms.telegram]` | Stream model output to Telegram in real-time with HTML formatting. A message is created on the first text delta and edited periodically as more tokens arrive. Each update strips incomplete markdown delimiters and converts to Telegram HTML, so formatting renders throughout streaming (not just on the final message). Falls back to plain text if HTML parsing fails. Requires `streaming = true` for API-level delta callbacks. Set globally in `[telegram]` or per-agent in platform config. |
-| `stream_update_interval` | string | `"250ms"` | `[telegram]` / `[agents.platforms.telegram]` | Duration between Telegram message edits during streaming. Go duration format. Lower values give smoother updates but increase API calls. Per-agent override via `stream_interval` in platform config. |
+| `stream_output` | bool | `false` | `[[platforms]]` | Stream model output in real-time. Requires `streaming = true` for API-level delta callbacks. |
+| `stream_interval` | string | `"250ms"`/`"1200ms"` | `[[platforms]]` | Duration between message edits during streaming. Default varies by platform. |
 | `facet_no_compact` | bool | `true` | `[defaults]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 
-### Telegram Overrides
+### Per-agent platform overrides
 
-| Key | Type | Default | Global location | Description |
-|-----|------|---------|-----------------|-------------|
-| `allowed_users` | string[] | `[]` | `[telegram]` | Telegram user IDs allowed to interact with bots. `[]` falls back to global `[telegram] allowed_users`. |
-| `require_mention` | bool | `true` | `[telegram]` | Per-agent override for `[telegram] require_mention`. |
-| `received_files_dir` | string | `$workspace/received_files` | `[telegram]` | Save received media (images, videos, video notes, documents) to this directory. `""` in global disables. Per-agent defaults to `$workspace/received_files`. Relative paths resolve against `$HOME`. Filename formats — Images: `YYYY-MM-DDTHH-MM-SSZ_chat-CHATID.ext`. Videos: `YYYY-MM-DDTHH-MM-SSZ_video_chat-CHATID.ext`. Video notes: `YYYY-MM-DDTHH-MM-SSZ_videonote_chat-CHATID.mp4`. Documents: `YYYY-MM-DDTHH-MM-SSZ_document_chat-CHATID.ext`. The agent sees `[Image/Video/Document saved to: /path/to/file]` in the message text. Files over 20MB (Telegram Bot API limit) show `[Video/Document too large to download (N MB)]` instead. |
-| `display_width` | int | `44` | `[telegram]` | Per-agent override for `[telegram] display_width`. |
-| `table_wrap_lines` | int | `5` | `[telegram]` | Per-agent override for `[telegram] table_wrap_lines`. |
-| `table_style` | string | `"pretty"` | `[telegram]` | Per-agent override for `[telegram] table_style`. |
-
-### Discord Overrides
-
-Set in `[discord]`, overridable per-agent via `[agents.platforms.discord]`.
-
-| Key | Type | Default | Inherits from | Description |
-|-----|------|---------|---------------|-------------|
-| `allowed_users` | string[] | `[]` | `[discord]` | Discord user IDs allowed to interact with bots. `[]` falls back to global `[discord] allowed_users`. |
-| `guild_id` | string | `""` | `[discord]` | Restrict to this guild. Empty uses global. |
-| `require_mention` | bool | `true` | `[discord]` | Require @mention in guild channels. |
-| `auto_thread` | bool | `true` | `[discord]` | Create threads for facet sessions. |
-| `display_width` | int | `60` | `[discord]` | Per-agent override for `[discord] display_width`. |
-| `received_files_dir` | string | `""` | `[discord]` | Per-agent directory for saving received files. |
+All platform fields from `[[platforms]]` can be overridden per-agent via `[[agents.platforms]]`. The 5-level cascade handles resolution. See the `[[platforms]]` section for the full list of available fields.
 
 ### Voice
 
@@ -1001,81 +995,37 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
 
-### Platform Configuration (`[agents.platforms.telegram]`) — NEW
+### Per-agent platform configuration (`[[agents.platforms]]`)
 
-Per-agent platform settings are configured in the `[agents.platforms.telegram]` section.
-
-```toml
-[[agents]]
-id = "myagent"
-
-[agents.platforms.telegram]
-bot = "myagent"                 # bot name; token via "telegram.<bot>" secret
-bot_secret = ""                 # override secret key (default: "telegram.<bot>")
-facet_bots = []             # additional bot names for facet
-allowed_users = []              # per-agent allowed users (empty = use global)
-show_tool_calls = "preview"     # off, preview, full
-show_thinking = "off"           # off, compact, true
-display_width = 44
-table_wrap_lines = 5
-table_style = "pretty"
-stream_output = false
-stream_interval = "250ms"
-received_files_dir = ""
-```
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"telegram.<bot>"`. |
-| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"telegram.<bot>"`. |
-| `facet_bots` | string[] | `[]` | Per-agent facet bot pool. Tokens resolved via `"telegram.<name>"` secret. |
-| `allowed_users` | string[] | `[]` | Per-agent allowed Telegram user IDs. Empty uses global `[telegram] allowed_users`. |
-| `show_tool_calls` | string | `[telegram]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
-| `show_thinking` | string | `[telegram]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
-| `display_width` | int | `[telegram]` | Display width for dividers in Telegram messages. |
-| `table_wrap_lines` | int | `[telegram]` | Max wrapped lines per table cell. |
-| `table_style` | string | `[telegram]` | Table style: `pretty` or `markdown`. |
-| `stream_output` | bool | `[telegram]` | Stream model output to Telegram in real-time. |
-| `stream_interval` | duration | `[defaults]` | Duration between message edits during streaming. |
-| `received_files_dir` | string | `[telegram]` | Save received files to this directory. |
-
-### Platform Configuration (`[agents.platforms.discord]`)
-
-Per-agent Discord platform settings.
+Per-agent platform settings override the global `[[platforms]]` entries. All shared and platform-specific fields from `[[platforms]]` are available here.
 
 ```toml
 [[agents]]
 id = "myagent"
 
-[agents.platforms.discord]
-bot = "myagent"                 # bot name; token via "discord.<bot>" secret
-bot_secret = ""                 # override secret key (default: "discord.<bot>")
-allowed_users = ["12345"]       # per-agent allowed Discord user IDs
-guild_id = ""                   # restrict to this guild
-show_tool_calls = "off"         # off, preview, full
-show_thinking = "off"           # off, compact, true
-display_width = 60
-stream_output = false
-stream_interval = "1200ms"
-require_mention = true
-auto_thread = true
-received_files_dir = "received"
+[[agents.platforms]]
+id = "telegram"
+bot = "myagent"
+facet_bots = ["spare1"]
+show_tool_calls = "preview"
+startup_notify = true
+telegram.table_wrap_lines = 5
+
+[[agents.platforms]]
+id = "discord"
+bot = "myagent"
+startup_notify = false
+discord.auto_thread = false
 ```
+
+Agent-specific fields:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"discord.<bot>"`. |
-| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"discord.<bot>"`. |
-| `allowed_users` | string[] | `[]` | Per-agent allowed Discord user IDs. Empty uses global `[discord] allowed_users`. |
-| `guild_id` | string | `""` | Restrict to this guild. Empty uses global. |
-| `show_tool_calls` | string | `[discord]` | Tool call visibility: `off` (hidden), `preview` (shown then overwritten), `full` (kept). |
-| `show_thinking` | string | `[discord]` | Thinking visibility: `off`, `compact` (toggle button), `true` (inline). |
-| `display_width` | int | `[discord]` | Display width for dividers in Discord messages. |
-| `stream_output` | bool | `[discord]` | Stream model output to Discord in real-time. |
-| `stream_interval` | string | `[discord]` | Duration between Discord message edits during streaming. Default `1200ms`. |
-| `require_mention` | bool | `[discord]` | Require @mention in guild channels. |
-| `auto_thread` | bool | `[discord]` | Create threads for facet sessions. |
-| `received_files_dir` | string | `[discord]` | Save received files to this directory. |
+| `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"<platform>.<bot>"`. |
+| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"<platform>.<bot>"`. |
+
+All other fields (display, access, notification, platform-specific) inherit from the global `[[platforms]]` entry with the same ID, then from `[defaults]`, then from code defaults.
 
 ### Memory (`[[agents.memory.sources]]`)
 
@@ -1107,7 +1057,8 @@ dir = "/home/foci/shared/memory"
 weight = 1.0
 
 # Shared facet pool (fallback for any agent)
-[telegram]
+[[platforms]]
+id = "telegram"
 facet_bots = ["spare1"]
 
 [[agents]]
@@ -1115,7 +1066,8 @@ id = "main"
 model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/foci/character"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "primary"
 facet_bots = ["mainling"]  # per-agent facet pool
 
@@ -1129,7 +1081,8 @@ id = "research"
 model = "google/gemini-2.5-flash"
 workspace = "/home/foci/character"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "secondary"
 # no facet_bots — uses shared pool only
 
@@ -1343,7 +1296,8 @@ id = "main"
 model = "anthropic/claude-haiku-4-5"
 workspace = "/home/foci/character"
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["123456789"]
 
 [sessions]
@@ -1376,7 +1330,8 @@ model = "anthropic/claude-sonnet-4-6"
 workspace = "/home/foci/character"
 system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "MEMORY.md", "KEEPALIVE.md"]
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["123456789"]
 
 [sessions]

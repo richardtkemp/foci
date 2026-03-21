@@ -352,7 +352,10 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[telegram]
+
+[[platforms]]
+id = "telegram"
+[platforms.telegram]
 long_poll_timeout = "invalid"
 `,
 			wantErr: "long_poll_timeout",

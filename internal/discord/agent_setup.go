@@ -91,14 +91,17 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	}
 }
 
-// resolveDiscordAllowedUsers returns the effective allowed user list for an agent.
-// Priority: per-agent platform config > global.
+// resolveDiscordAllowedUsers merges per-agent and global allowed users for Discord.
+// Agent users are added to global users (deduplicated).
 func resolveDiscordAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
-	dc := acfg.GetDiscordPlatform()
-	if dc != nil && len(dc.AllowedUsers) > 0 {
-		return dc.AllowedUsers
+	var agentUsers, globalUsers []string
+	if p := acfg.Platform("discord"); p != nil {
+		agentUsers = p.AllowedUsers
 	}
-	return cfg.Discord.AllowedUsers
+	if gp := cfg.Platform("discord"); gp != nil {
+		globalUsers = gp.AllowedUsers
+	}
+	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
 }
 
 // setupDiscordBots creates and registers Discord bots for an agent.
@@ -106,7 +109,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	acfg := p.AgentConfig
 	cfg := p.GlobalConfig
 
-	dc := acfg.GetDiscordPlatform()
+	dc := acfg.Platform("discord")
 	if dc == nil || dc.Bot == "" {
 		return
 	}
@@ -145,34 +148,30 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		primaryBot.botUserID = dg.State.User.ID
 	}
 
-	// Apply Discord-specific settings
-	if dc.GuildID != "" {
-		primaryBot.guildID = dc.GuildID
-	} else if cfg.Discord.GuildID != "" {
-		primaryBot.guildID = cfg.Discord.GuildID
+	// Apply Discord-specific settings from resolved platform config
+	if dc.Discord != nil && dc.Discord.GuildID != "" {
+		primaryBot.guildID = dc.Discord.GuildID
 	}
 
-	requireMention := cfg.Discord.RequireMention
+	requireMention := true
 	if dc.RequireMention != nil {
 		requireMention = *dc.RequireMention
 	}
 	primaryBot.requireMention = requireMention
 
-	autoThread := cfg.Discord.AutoThread
-	if dc.AutoThread != nil {
-		autoThread = *dc.AutoThread
+	autoThread := true
+	if dc.Discord != nil && dc.Discord.AutoThread != nil {
+		autoThread = *dc.Discord.AutoThread
 	}
 	primaryBot.autoThread = autoThread
 
-	// Configure message queue with require_mention and throttle.
+	// Resolve behavior config via Merge cascade.
+	bc := config.Merge(acfg.Defaults.BehaviorConfig, cfg.Defaults.BehaviorConfig)
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
-	primaryBot.mq.SetSteerMode(acfg.SteerMode)
+	steerMode := bc.SteerMode == nil || *bc.SteerMode // default true
+	primaryBot.mq.SetSteerMode(steerMode)
 
-	// Resolve group_throttle: per-agent > global defaults.
-	throttleStr := cfg.Defaults.GroupThrottle
-	if acfg.GroupThrottle != "" {
-		throttleStr = acfg.GroupThrottle
-	}
+	throttleStr := config.DerefStr(bc.GroupThrottle)
 	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
 			for _, m := range msgs {
@@ -222,7 +221,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Configure session TTL for per-agent facet pool
 	if pool := mgr.Pool(acfg.ID); pool != nil {
-		ttl, _ := time.ParseDuration(cfg.Discord.FacetSessionTTL)
+		ttl, _ := time.ParseDuration(dc.FacetSessionTTL)
 		if ttl > 0 {
 			pool.SetSessionTTL(ttl, p.Sessions)
 			log.Infof("discord", "agent %q: facet session TTL = %v", acfg.ID, ttl)
@@ -234,64 +233,43 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 }
 
 // ApplyAgentDisplaySettings sets per-agent display settings on a bot,
-// falling back to global config when the agent field is nil/empty.
+// resolving the full 4-level cascade for DisplayConfig via Merge.
 func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Config) {
-	dc := acfg.GetDiscordPlatform()
+	dpc := config.Merge(
+		acfg.Platform("discord").SafeDisplay(),
+		acfg.Defaults.DisplayConfig,
+		cfg.Platform("discord").SafeDisplay(),
+		cfg.Defaults.DisplayConfig,
+	)
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
-	switch {
-	case dc != nil && dc.ShowToolCalls != nil:
-		d.ShowToolCalls = string(*dc.ShowToolCalls)
-	case acfg.ShowToolCalls != nil:
-		d.ShowToolCalls = string(*acfg.ShowToolCalls)
-	case cfg.Discord.ShowToolCalls != nil:
-		d.ShowToolCalls = string(*cfg.Discord.ShowToolCalls)
+	if dpc.ShowToolCalls != nil {
+		d.ShowToolCalls = string(*dpc.ShowToolCalls)
 	}
-	switch {
-	case dc != nil && dc.ShowThinking != nil:
-		d.ShowThinking = string(*dc.ShowThinking)
-	case acfg.ShowThinking != nil:
-		d.ShowThinking = string(*acfg.ShowThinking)
-	case cfg.Discord.ShowThinking != nil:
-		d.ShowThinking = string(*cfg.Discord.ShowThinking)
+	if dpc.ShowThinking != nil {
+		d.ShowThinking = string(*dpc.ShowThinking)
 	}
-	switch {
-	case dc != nil && dc.DisplayWidth != nil:
-		d.DisplayWidth = *dc.DisplayWidth
-	case cfg.Discord.DisplayWidth != nil:
-		d.DisplayWidth = *cfg.Discord.DisplayWidth
+	if dpc.DisplayWidth != nil {
+		d.DisplayWidth = *dpc.DisplayWidth
 	}
-	if acfg.MessagesInLog != nil {
-		d.MessagesInLog = *acfg.MessagesInLog
-	} else {
-		d.MessagesInLog = cfg.Logging.MessagesInLog
+	if dpc.ReceivedFilesDir != nil && *dpc.ReceivedFilesDir != "" {
+		d.ReceivedFilesDir = *dpc.ReceivedFilesDir
 	}
-	switch {
-	case dc != nil && dc.ReceivedFilesDir != "":
-		d.ReceivedFilesDir = dc.ReceivedFilesDir
-	case cfg.Discord.ReceivedFilesDir != "":
-		d.ReceivedFilesDir = cfg.Discord.ReceivedFilesDir
+	if dpc.StreamOutput != nil {
+		d.StreamOutput = *dpc.StreamOutput
 	}
-	if acfg.InjectedMessageHeader != "" {
-		d.InjectedMessageHeader = acfg.InjectedMessageHeader
-	} else {
-		d.InjectedMessageHeader = cfg.Defaults.InjectedMessageHeader
+	if dpc.StreamInterval != nil {
+		if dur, err := time.ParseDuration(*dpc.StreamInterval); err == nil && dur > 0 {
+			d.StreamUpdateInterval = dur
+		}
 	}
-	switch {
-	case dc != nil && dc.StreamOutput != nil:
-		d.StreamOutput = *dc.StreamOutput
-	default:
-		d.StreamOutput = cfg.Discord.StreamOutput
+	if dpc.InjectedMessageHeader != nil {
+		d.InjectedMessageHeader = *dpc.InjectedMessageHeader
 	}
-	streamInterval := ""
-	if dc != nil && dc.StreamInterval != "" {
-		streamInterval = dc.StreamInterval
-	} else {
-		streamInterval = cfg.Discord.StreamUpdateInterval
-	}
-	if dur, err := time.ParseDuration(streamInterval); err == nil && dur > 0 {
-		d.StreamUpdateInterval = dur
-	}
+
+	// MessagesInLog is not in DisplayConfig — resolve via Merge.
+	dbg := config.Merge(acfg.Debug, cfg.Debug)
+	d.MessagesInLog = config.DerefBool(dbg.MessagesInLog)
 
 	bot.display = d
 }

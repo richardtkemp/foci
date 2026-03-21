@@ -185,7 +185,7 @@ func manualUserID(ui platform.SetupUI) (string, bool) {
 }
 
 func buildResult(agentID, botToken, userID string) *platform.WizardResult {
-	configTOML := fmt.Sprintf("[discord]\nallowed_users = [\"%s\"]\n", userID)
+	configTOML := fmt.Sprintf("[[platforms]]\nid = \"discord\"\nallowed_users = [\"%s\"]\n", userID)
 
 	secretsMap := map[string]string{}
 	if agentID != "" {

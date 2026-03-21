@@ -288,10 +288,16 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "off"
-		if cc.AgentConfig.ShowToolCalls != nil {
-			effective = string(*cc.AgentConfig.ShowToolCalls)
-		} else if cc.Config.Telegram.ShowToolCalls != nil {
-			effective = string(*cc.Config.Telegram.ShowToolCalls)
+		if cc.AgentConfig.Defaults.ShowToolCalls != nil {
+			effective = string(*cc.AgentConfig.Defaults.ShowToolCalls)
+		} else {
+			// Check platforms for default
+			for _, p := range cc.Config.Platforms {
+				if p.ShowToolCalls != nil {
+					effective = string(*p.ShowToolCalls)
+					break
+				}
+			}
 		}
 		return "", effective
 	case "show_thinking":
@@ -300,10 +306,15 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "off"
-		if cc.AgentConfig.ShowThinking != nil {
-			effective = string(*cc.AgentConfig.ShowThinking)
-		} else if cc.Config.Telegram.ShowThinking != nil {
-			effective = string(*cc.Config.Telegram.ShowThinking)
+		if cc.AgentConfig.Defaults.ShowThinking != nil {
+			effective = string(*cc.AgentConfig.Defaults.ShowThinking)
+		} else {
+			for _, p := range cc.Config.Platforms {
+				if p.ShowThinking != nil {
+					effective = string(*p.ShowThinking)
+					break
+				}
+			}
 		}
 		return "", effective
 	case "stream_output":
@@ -316,8 +327,12 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, eff
 		}
 		effective = "off"
-		if cc.Config.Telegram.StreamOutput {
-			effective = "on"
+		// Check agent platform config for stream_output
+		for _, p := range cc.AgentConfig.Platforms {
+			if p.StreamOutput != nil && *p.StreamOutput {
+				effective = "on"
+				break
+			}
 		}
 		return "", effective
 	case "display_width":
@@ -326,11 +341,10 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "44"
-		tg := cc.AgentConfig.GetTelegramPlatform()
-		if tg != nil && tg.DisplayWidth != nil {
+		if tg := cc.AgentConfig.Platform("telegram"); tg != nil && tg.DisplayWidth != nil {
 			effective = fmt.Sprintf("%d", *tg.DisplayWidth)
-		} else if cc.Config.Telegram.DisplayWidth != nil {
-			effective = fmt.Sprintf("%d", *cc.Config.Telegram.DisplayWidth)
+		} else if gp := cc.Config.Platform("telegram"); gp != nil && gp.DisplayWidth != nil {
+			effective = fmt.Sprintf("%d", *gp.DisplayWidth)
 		}
 		return "", effective
 	}

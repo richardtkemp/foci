@@ -22,8 +22,8 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		hasActiveWorkFn: func() int { return activeCount },
@@ -68,8 +68,8 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 		agentID:            "test",
 		manaInvestInterval: "invalid",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -94,7 +94,7 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			Interval: "1h",
+			Interval: config.Ptr("1h"),
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
@@ -124,7 +124,7 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			ConsolidationInterval: "1h",
+			ConsolidationInterval: config.Ptr("1h"),
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
@@ -153,8 +153,8 @@ func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {

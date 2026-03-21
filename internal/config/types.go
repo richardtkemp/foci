@@ -121,11 +121,14 @@ func (il InjectionLevel) IncludeWarnings() bool {
 	return il == InjectionAll
 }
 
-// AgentUsageWarningsConfig holds per-agent mana warning thresholds.
-// When set, completely replaces global [usage_warnings] thresholds.
-type AgentUsageWarningsConfig struct {
-	Thresholds       []int `toml:"thresholds"`        // mana percentages to warn at (replaces global, not merged)
-	RestoreThreshold *int  `toml:"restore_threshold"` // inject session notice when mana restores to 100% (nil=use global, 0=disabled)
+// ManaConfig holds mana/quota budget and warning settings.
+// Embed in Config (global, TOML [mana]) and AgentConfig (per-agent).
+// All fields are pointer/slice types for Merge-based resolution.
+type ManaConfig struct {
+	Name             *string `toml:"name"`              // what to call quota (default "mana")
+	Thresholds       []int   `toml:"thresholds"`        // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	RestoreThreshold *int    `toml:"restore_threshold"` // inject session notice when mana restores to 100% after being below this (0=disabled)
+	InvestInterval   *string `toml:"invest_interval"`   // quiet period after mana reset before spending (default "30m")
 }
 
 // AgentMemoryConfig holds per-agent memory sources.
@@ -229,106 +232,149 @@ type GroupsConfig struct {
 }
 
 type AgentConfig struct {
-	ID        string `toml:"id"`
-	Name      string `toml:"name"`     // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji     string `toml:"emoji"`    // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	ModelFallbacks map[string]string `toml:"model_fallbacks"` // per-agent fallback overrides (model → fallback model); aliases supported
+	ID             string            `toml:"id"`
+	Name           string            `toml:"name"`              // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji          string            `toml:"emoji"`             // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	ModelFallbacks map[string]string `toml:"model_fallbacks"`   // per-agent fallback overrides (model → fallback model); aliases supported
 	Workspace      string            `toml:"workspace"`
 
-	SystemFiles                   []string `toml:"system_files"`                     // workspace file order for system prompt (default: IDENTITY.md, SOUL.md, ...)
-	DuplicateMessages             bool     `toml:"duplicate_messages"`               // send user text twice per API call (improves instruction following)
-	BatchPartialAssistantMessages bool     `toml:"batch_partial_assistant_messages"` // accumulate mid-turn text; send concatenated on turn end (default: false = send immediately)
-	BatchPartialJoiner            string   `toml:"batch_partial_joiner"`             // separator between batched partial messages (default: "")
-
-	BranchOrientationFacetPrompt string `toml:"branch_orientation_facet_prompt"` // path to prompt file for user-attached facet branches
-	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
-
 	Memory    AgentMemoryConfig `toml:"memory"`    // per-agent memory sources (combined with global [memory])
-	Platforms *PlatformsConfig  `toml:"platforms"` // per-agent platform configurations (telegram, discord, etc.)
+	Platforms []PlatformConfig  `toml:"platforms"` // per-agent platform configurations
 
-	MaxToolLoops          int    `toml:"max_tool_loops"`           // max tool iterations per turn (default 25)
-	MaxOutputTokens       int    `toml:"max_output_tokens"`        // max tokens in model response (default 16384)
-	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // consecutive tool loops before warning (0 = disabled, default 10)
-	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // warning text injected as user message
-	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // warn if turn lock wait exceeds this duration (Go duration, default "3m")
-	Streaming             *bool  `toml:"streaming"`                // per-agent streaming override (nil = use global anthropic.streaming)
-	FacetNoCompact    *bool  `toml:"facet_no_compact"`     // set no_compact on facet sessions (nil = true)
+	// Per-agent section overrides — each prefix matches its global TOML section.
+	// Resolved via Merge at use time (e.g. config.Merge(acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig)).
+	Defaults AgentDefaultsOverride  `toml:"defaults"`          // overrides from [defaults]
+	Sessions AgentSessionsOverride  `toml:"sessions"`          // overrides from [sessions]
+	Tools    AgentToolsOverride     `toml:"tools"`             // overrides from [tools]
+	Debug    DebugConfig            `toml:"debug"`             // overrides from [debug]
+	Browser         BrowserConfig         `toml:"browser"`          // overrides from [browser]
+	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // overrides from [keepalive]
+	Background      BackgroundConfig      `toml:"background"`       // overrides from [background]
+	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // overrides from [memory_formation]
+	Mana            ManaConfig            `toml:"mana"`             // overrides from [mana]
 
-	TTS              string            `toml:"tts"`               // per-agent TTS provider id (empty = default [[tts]] entry)
-	STT              string            `toml:"stt"`               // per-agent STT provider id (empty = default [[stt]] entry)
-	TTSRate          float64           `toml:"tts_rate"`          // per-agent TTS speech rate multiplier (0 = use entry rate only)
-	TTSReplacements  map[string]string `toml:"tts_replacements"`  // per-agent TTS word replacements (merged with [[tts]] entry replacements)
-	STTReplacements  map[string]string `toml:"stt_replacements"`  // per-agent STT word replacements (merged with [[stt]] entry replacements)
-
-	InjectAgentWarnings InjectionLevel `toml:"inject_agent_warnings"` // inject warnings/errors into agent session (default "off")
-	InjectChatWarnings  InjectionLevel `toml:"inject_chat_warnings"`  // send warnings/errors as chat notifications (default "off")
-	StartupNotify       *bool          `toml:"startup_notify"`        // send startup notification (nil = use global telegram.startup_notify)
-	ShowToolCalls *ToolCallDisplay `toml:"show_tool_calls"` // show tool call messages (nil = use global/default)
-	ShowThinking  *ShowThinking   `toml:"show_thinking"`  // show thinking blocks (nil = use global/default)
-	MessagesInLog *bool           `toml:"messages_in_log"` // log user message content to event log (nil = use global logging.messages_in_log)
-	// Per-agent compaction overrides (nil/empty = use global [sessions] value)
-	CompactionThreshold        *float64 `toml:"compaction_threshold"`         // compact at this % of context window
-	CompactionSummaryPrompt    string   `toml:"compaction_summary_prompt"`    // path to summary prompt file
-	CompactionHandoffMsg       string   `toml:"compaction_handoff_msg"`       // handoff message after compaction
-	CompactionNotify           *bool    `toml:"compaction_notify"`            // send Telegram notification on compaction
-	TaskListNotify             *bool    `toml:"task_list_notify"`              // send Telegram notification on task list changes (default true)
-	CompactionDebug            *bool    `toml:"compaction_debug"`             // send compaction summary as Telegram file
-	CompactionPreserveMessages *int     `toml:"compaction_preserve_messages"` // preserve last N messages through compaction (nil = use global)
-	AutocompactBeforeManaRefresh          *bool    `toml:"autocompact_before_mana_refresh"`              // master switch (nil = use global)
-	AutocompactBeforeManaRefreshThreshold string   `toml:"autocompact_before_mana_refresh_threshold"`    // trigger mana-refresh compact when reset this soon (empty = use global)
-	AutocompactBeforeManaRefreshFactor    *float64 `toml:"autocompact_before_mana_refresh_factor"`       // secondary threshold = main threshold × factor (nil = use global)
-	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve"`     // messages to preserve in refresh mode (nil = use global)
-	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (nil = use global)
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
 	BlockedPaths      []BlockedPath      `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (empty = use global)
-	// Per-agent tool behaviour (0 = use global [tools] value)
-	ExecAutoBackground    int    `toml:"exec_auto_background"`    // seconds before auto-backgrounding exec
-	MaxConcurrentSpawns   int    `toml:"max_concurrent_spawns"`   // max concurrent spawn sessions
-	ExploreMaxDepth       int    `toml:"explore_max_depth"`       // max tool loops for explore spawn mode (0 = use global)
-	MaxUploadFileSize     int64  `toml:"max_upload_file_size"`    // max file size for multipart uploads in bytes
-	BrowserEnabled        *bool  `toml:"browser_enabled"`         // per-agent browser tool override (nil = use global tools.browser.enabled)
-	TmuxAutopilot         *bool  `toml:"tmux_autopilot"`          // per-agent tmux autopilot override (nil = use global)
-	TmuxWatchThreshold    string `toml:"tmux_watch_threshold"`    // per-agent watch threshold (empty = use global)
-	TmuxSessionTTL        string `toml:"tmux_session_ttl"`        // per-agent session TTL override (empty = use global)
-	MaxResultChars        int    `toml:"max_result_chars"`        // max chars before writing to file (0 = use global)
-	MaxSummaryChars       int    `toml:"max_summary_chars"`       // max chars to auto-summarise (0 = use global)
-	AutoSummarise         *bool  `toml:"auto_summarise"`          // auto-summarise oversized results (nil = use global)
-	SummaryContextTurns   int    `toml:"summary_context_turns"`   // recent turns for auto-summary context (0 = use global)
-	SummaryContextChars   int    `toml:"summary_context_chars"`   // max chars of context for auto-summary (0 = use global)
-	MaxSummaryInputChars  int    `toml:"max_summary_input_chars"` // max chars embedded in summary prompt (0 = use global)
-	MaxImagePixels        int    `toml:"max_image_pixels"`        // max pixels (w*h) before downscaling images (0 = use global)
-	SearchProvider        string `toml:"search_provider"`         // "anthropic" or "brave" (empty = use global)
-	FetchProvider         string `toml:"fetch_provider"`          // "anthropic" or "builtin" (empty = use global)
-	TodoFormat            string `toml:"todo_format"`             // "lines" or "table" (empty = use global, default: lines)
-	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected messages (empty = use default)
-	// Per-agent keepalive/background (zero = use global [keepalive]/[background])
-	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // per-agent keepalive override
-	Background      BackgroundConfig      `toml:"background"`       // per-agent background override
-	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // per-agent memory formation override
-	// Per-agent usage warning thresholds (nil = use global [usage_warnings])
-	UsageWarnings        AgentUsageWarningsConfig `toml:"usage_warnings"`         // per-agent mana warning thresholds
-	SteerMode            bool                     `toml:"steer_mode"`             // inject user messages between tool calls (default true)
-	GroupThrottle        string                   `toml:"group_throttle"`         // group chat throttle window (Go duration; "" or "0" = disabled)
+}
 
-	// Nudge system: mid-turn behavioral reminders extracted from character files
-	NudgeEnable            bool `toml:"nudge_enable"`              // enable the nudge system (default true)
-	NudgeAutoExtract       bool `toml:"nudge_auto_extract"`        // auto-extract rules from character files via LLM (default true)
-	NudgeCooldown          int  `toml:"nudge_cooldown"`            // min tool calls between repeating same reminder (default 5)
-	NudgeMaxPerBatch       int  `toml:"nudge_max_per_batch"`       // max reminders injected per tool batch (default 1)
-	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
-	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
-	NudgeDefaultEnable               bool `toml:"nudge_default_enable"`                // enable built-in tool/skill reminders (default true)
-	NudgeDefaultFrequency            int  `toml:"nudge_default_frequency"`             // turns between tool/skill reminders (default 50)
-	NudgeDefaultScratchpadFrequency  int  `toml:"nudge_default_scratchpad_frequency"`  // turns between scratchpad review reminders (0=disabled, default 20)
+// AgentDefaultsOverride groups the 7 config groups whose global home is [defaults].
+type AgentDefaultsOverride struct {
+	NotifyConfig
+	DisplayConfig
+	NudgeConfig
+	VoiceConfig
+	AgentLoopConfig
+	BehaviorConfig
+	SystemConfig
+}
 
-	CacheTTL string `toml:"cache_ttl"` // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
+// AgentSessionsOverride groups the config from [sessions] that can be overridden per-agent.
+type AgentSessionsOverride struct {
+	CompactionConfig
+	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`
+	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"`
+}
 
-	StopAliases       []string `toml:"stop_aliases"`        // per-agent stop aliases (empty = use global)
-	EnableStopAliases bool     `toml:"enable_stop_aliases"` // per-agent enable stop aliases (inherited from defaults)
+// AgentToolsOverride groups the config groups whose global home is [tools].
+type AgentToolsOverride struct {
+	ToolConfig
+	SummaryConfig
+}
 
-	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
+// CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
+type CompactionConfig struct {
+	CompactionThreshold                     *float64 `toml:"compaction_threshold"`
+	CompactionSummaryPrompt                 *string  `toml:"compaction_summary_prompt"`
+	CompactionHandoffMsg                    *string  `toml:"compaction_handoff_msg"`
+	CompactionPreserveMessages              *int     `toml:"compaction_preserve_messages"`
+	CompactionEffort                        *string  `toml:"compaction_effort"`
+	FacetNoCompact                          *bool    `toml:"facet_no_compact"`
+	AutocompactBeforeManaRefresh            *bool    `toml:"autocompact_before_mana_refresh"`
+	AutocompactBeforeManaRefreshThreshold   *string  `toml:"autocompact_before_mana_refresh_threshold"`
+	AutocompactBeforeManaRefreshFactor      *float64 `toml:"autocompact_before_mana_refresh_factor"`
+	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve"`
+	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"`
+}
+
+// NudgeConfig holds nudge system settings. Embed in DefaultsConfig (global) and AgentConfig (per-agent).
+type NudgeConfig struct {
+	NudgeEnable                     *bool   `toml:"nudge_enable"`
+	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"`
+	NudgeCooldown                   *int    `toml:"nudge_cooldown"`
+	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"`
+	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"`
+	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"`
+	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"`
+	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"`
+	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"`
+	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"`
+	NudgeDefaultBraindeadPrompt     *string `toml:"nudge_default_braindead_prompt"`
+}
+
+// SummaryConfig holds tool result summarisation settings.
+// Embed in ToolsConfig (global), DefaultsConfig (defaults), and AgentConfig (per-agent).
+type SummaryConfig struct {
+	MaxResultChars       *int  `toml:"max_result_chars"`
+	MaxSummaryChars      *int  `toml:"max_summary_chars"`
+	AutoSummarise        *bool `toml:"auto_summarise"`
+	SummaryContextTurns  *int  `toml:"summary_context_turns"`
+	SummaryContextChars  *int  `toml:"summary_context_chars"`
+	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"`
+	MaxImagePixels       *int  `toml:"max_image_pixels"`
+}
+
+// VoiceConfig holds TTS/STT settings. Embed in DefaultsConfig and AgentConfig.
+type VoiceConfig struct {
+	TTS             *string           `toml:"tts"`
+	STT             *string           `toml:"stt"`
+	TTSRate         *float64          `toml:"tts_rate"`
+	TTSReplacements map[string]string `toml:"tts_replacements"`
+	STTReplacements map[string]string `toml:"stt_replacements"`
+}
+
+// AgentLoopConfig holds settings consumed by agent.HandleTurn().
+// Embed in DefaultsConfig and AgentConfig.
+type AgentLoopConfig struct {
+	MaxOutputTokens               *int    `toml:"max_output_tokens"`
+	MaxToolLoops                  *int    `toml:"max_tool_loops"`
+	DuplicateMessages             *bool   `toml:"duplicate_messages"`
+	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"`
+	BatchPartialJoiner            *string `toml:"batch_partial_joiner"`
+	CacheTTL                      *string `toml:"cache_ttl"`
+}
+
+// BehaviorConfig holds agent behavioral settings.
+// Embed in DefaultsConfig and AgentConfig.
+type BehaviorConfig struct {
+	SteerMode             *bool    `toml:"steer_mode"`
+	GroupThrottle         *string  `toml:"group_throttle"`
+	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold"`
+	EnableStopAliases     *bool    `toml:"enable_stop_aliases"`
+	StopAliases           []string `toml:"stop_aliases"`
+}
+
+// SystemConfig holds system-level agent settings.
+// Embed in DefaultsConfig and AgentConfig.
+type SystemConfig struct {
+	SystemFiles []string          `toml:"system_files"`
+	Webhooks    map[string]string `toml:"webhooks"`
+}
+
+// ToolConfig holds per-agent tool behavioral overrides.
+// Embed in ToolsConfig (global home) and AgentConfig (per-agent).
+type ToolConfig struct {
+	ExecAutoBackground  *int    `toml:"exec_auto_background"`
+	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns"`
+	ExploreMaxDepth     *int    `toml:"explore_max_depth"`
+	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"`
+	TmuxAutopilot       *bool   `toml:"tmux_autopilot"`
+	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"`
+	TmuxSessionTTL      *string `toml:"tmux_session_ttl"`
+	SearchProvider      *string `toml:"search_provider"`
+	FetchProvider       *string `toml:"fetch_provider"`
+	TodoFormat          *string `toml:"todo_format"`
 }
 
 type GeminiConfig struct {
@@ -350,127 +396,202 @@ type AnthropicConfig struct {
 	Streaming         bool   `toml:"streaming"`          // use streaming API (default false; requires use_sdk)
 }
 
-type DiscordConfig struct {
-	AllowedUsers         []string         `toml:"allowed_users"`          // Discord user ID snowflakes
-	GuildID              string           `toml:"guild_id"`               // optional restriction to a single guild
-	RequireMention       bool             `toml:"require_mention"`        // require @mention in guild channels (default true)
-	AutoThread           bool             `toml:"auto_thread"`            // create threads for facet sessions (default true)
-	StartupNotify        bool             `toml:"startup_notify"`         // send notification on startup (default true)
-	FacetSessionTTL      string           `toml:"facet_session_ttl"`      // idle TTL before a facet thread can be reclaimed (default "60m")
-	MessageQueueSize     int              `toml:"message_queue_size"`     // inbound message queue buffer size (default 64)
-	ReceivedFilesDir     string           `toml:"received_files_dir"`     // save received files to this directory (empty = disabled)
-	ShowToolCalls        *ToolCallDisplay `toml:"show_tool_calls"`        // default show_tool_calls (default: "off")
-	ShowThinking         *ShowThinking    `toml:"show_thinking"`          // default show_thinking (default: "off")
-	StreamOutput         bool             `toml:"stream_output"`          // default stream_output (default: false)
-	StreamUpdateInterval string           `toml:"stream_update_interval"` // default stream_update_interval (default: "1200ms")
-	DisplayWidth         *int             `toml:"display_width"`          // display width for dividers (default 60)
+// DisplayConfig holds display-related settings that can be set at any level
+// of the configuration cascade. All fields are pointer types so Merge can
+// distinguish "not set" from "set to zero value".
+type DisplayConfig struct {
+	ShowToolCalls        *ToolCallDisplay `toml:"show_tool_calls"`        // tool call display: off, preview, full
+	ShowThinking         *ShowThinking    `toml:"show_thinking"`          // thinking display: off, compact, true
+	StreamOutput         *bool            `toml:"stream_output"`          // stream model output in real-time
+	StreamInterval       *string          `toml:"stream_interval"`        // duration between message edits during streaming
+	Streaming            *bool            `toml:"streaming"`              // use streaming API (requires use_sdk)
+	DisplayWidth         *int             `toml:"display_width"`          // display width for dividers
+	ReceivedFilesDir     *string          `toml:"received_files_dir"`     // save received files to this directory
+	InjectedMessageHeader *string         `toml:"injected_message_header"` // header prepended to injected messages
 }
 
-type TelegramConfig struct {
-	AllowedUsers        []string `toml:"allowed_users"`
-	FacetBots       []string `toml:"facet_bots"`        // shared facet pool: bot names (tokens via "telegram.<name>" secrets)
-	RequireMention      bool     `toml:"require_mention"`       // require @mention in group chats (default true)
-	StartupNotify       bool     `toml:"startup_notify"`        // send notification on startup (default true)
-	FacetSessionTTL string   `toml:"facet_session_ttl"` // idle TTL before a facet bot can be reclaimed (default "60m", "0" disables)
-	MessageQueueSize    int      `toml:"message_queue_size"`    // outbound message queue buffer size (default 64)
-	LongPollTimeout     string   `toml:"long_poll_timeout"`     // long-poll timeout for getUpdates (default "65s")
-	ReceivedFilesDir    string   `toml:"received_files_dir"`    // save received files to this directory (empty = disabled, per-agent overrides)
-	ShowToolCalls       *ToolCallDisplay `toml:"show_tool_calls"` // default show_tool_calls (default: "off")
-	ShowThinking        *ShowThinking    `toml:"show_thinking"`   // default show_thinking (default: "off")
-	StreamOutput         bool    `toml:"stream_output"`          // default stream_output (default: false)
-	StreamUpdateInterval string  `toml:"stream_update_interval"` // default stream_update_interval (default: "250ms")
-	DisplayWidth        *int     `toml:"display_width"`         // display width for dividers (default 44)
-	TableWrapLines      *int     `toml:"table_wrap_lines"`      // max wrapped lines per table cell (default 5)
-	TableStyle          *string  `toml:"table_style"`           // table style: "pretty" (default) or "markdown"
+// AccessConfig holds access control settings that can be set at any level
+// of the configuration cascade.
+type AccessConfig struct {
+	AllowedUsers   []string `toml:"allowed_users"`   // platform-specific user IDs allowed to interact
+	RequireMention *bool    `toml:"require_mention"`  // require @mention in group chats
 }
 
-// TelegramPlatformConfig holds per-agent Telegram platform settings.
-type TelegramPlatformConfig struct {
-	Bot              string           `toml:"bot"`                // bot name; token resolved via "telegram.<bot>" secret
-	BotSecret        string           `toml:"bot_secret"`         // override secret key for bot token (default: "telegram.<bot>")
-	FacetBots    []string         `toml:"facet_bots"`     // additional bot names for facet (optional)
-	AllowedUsers     []string         `toml:"allowed_users"`      // per-agent allowed Telegram user IDs (empty = use global)
-	ShowToolCalls    *ToolCallDisplay `toml:"show_tool_calls"`    // show tool call messages (nil = use global/default)
-	ShowThinking     *ShowThinking    `toml:"show_thinking"`      // show thinking blocks (nil = use global/default)
-	DisplayWidth     *int             `toml:"display_width"`      // display width for dividers (nil = use global)
-	TableWrapLines   *int             `toml:"table_wrap_lines"`   // max wrapped lines per table cell (nil = use global)
-	TableStyle       *string          `toml:"table_style"`        // table style: "pretty" or "markdown" (nil = use global)
-	ReceivedFilesDir string           `toml:"received_files_dir"` // save received files to this directory (empty = disabled)
-	StreamOutput     *bool            `toml:"stream_output"`      // stream model output to Telegram in real-time (nil = use default)
-	StreamInterval   string           `toml:"stream_interval"`    // duration between Telegram message edits during streaming
-	RequireMention   *bool            `toml:"require_mention"`    // require @mention in group chats (nil = use global, default true)
+// NotifyConfig holds notification/warning settings that can be configured at
+// any scope level. Resolution follows the 5-level cascade via Merge.
+// All fields are nillable so nil means "not set, inherit from wider scope."
+type NotifyConfig struct {
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"` // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"`  // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"`        // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"`     // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"`      // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"`      // send compaction summary as file attachment
 }
 
-func (t *TelegramPlatformConfig) getShowToolCalls() *ToolCallDisplay { return t.ShowToolCalls }
-func (t *TelegramPlatformConfig) setShowToolCalls(v *ToolCallDisplay) { t.ShowToolCalls = v }
-func (t *TelegramPlatformConfig) getShowThinking() *ShowThinking      { return t.ShowThinking }
-func (t *TelegramPlatformConfig) setShowThinking(v *ShowThinking)     { t.ShowThinking = v }
-
-// DiscordPlatformConfig holds per-agent Discord platform settings.
-type DiscordPlatformConfig struct {
-	Bot            string           `toml:"bot"`              // bot name; token resolved via "discord.<bot>" secret
-	BotSecret      string           `toml:"bot_secret"`       // override secret key for bot token (default: "discord.<bot>")
-	AllowedUsers   []string         `toml:"allowed_users"`    // per-agent allowed Discord user IDs (empty = use global)
-	GuildID        string           `toml:"guild_id"`         // restrict to this guild (empty = all guilds)
-	ShowToolCalls  *ToolCallDisplay `toml:"show_tool_calls"`  // show tool call messages (nil = use global/default)
-	ShowThinking   *ShowThinking    `toml:"show_thinking"`    // show thinking blocks (nil = use global/default)
-	DisplayWidth   *int             `toml:"display_width"`    // display width for dividers (nil = use global)
-	StreamOutput   *bool            `toml:"stream_output"`    // stream model output in real-time (nil = use default)
-	StreamInterval string           `toml:"stream_interval"`  // duration between Discord message edits during streaming
-	RequireMention *bool            `toml:"require_mention"`  // require @mention in guild channels (nil = use global, default true)
-	AutoThread     *bool            `toml:"auto_thread"`      // create threads for facet sessions (nil = use global, default true)
-	ReceivedFilesDir string         `toml:"received_files_dir"` // save received files to this directory (empty = disabled)
-}
-
-func (d *DiscordPlatformConfig) getShowToolCalls() *ToolCallDisplay { return d.ShowToolCalls }
-func (d *DiscordPlatformConfig) setShowToolCalls(v *ToolCallDisplay) { d.ShowToolCalls = v }
-func (d *DiscordPlatformConfig) getShowThinking() *ShowThinking      { return d.ShowThinking }
-func (d *DiscordPlatformConfig) setShowThinking(v *ShowThinking)     { d.ShowThinking = v }
-
-// PlatformsConfig holds per-agent platform configurations.
-// Each platform (telegram, discord, etc.) has its own config section.
-type PlatformsConfig struct {
-	Telegram *TelegramPlatformConfig `toml:"telegram"`
-	Discord  *DiscordPlatformConfig  `toml:"discord"`
-}
-
-// GetTelegramPlatform returns the Telegram platform config for this agent, or nil.
-func (a *AgentConfig) GetTelegramPlatform() *TelegramPlatformConfig {
-	if a.Platforms == nil {
-		return nil
+// StartupNotifyEnabled returns the resolved value (default: true).
+func (n NotifyConfig) StartupNotifyEnabled() bool {
+	if n.StartupNotify != nil {
+		return *n.StartupNotify
 	}
-	return a.Platforms.Telegram
+	return true
 }
 
-// GetDiscordPlatform returns the Discord platform config for this agent, or nil.
-func (a *AgentConfig) GetDiscordPlatform() *DiscordPlatformConfig {
-	if a.Platforms == nil {
-		return nil
+// CompactionNotifyEnabled returns the resolved value (default: true).
+func (n NotifyConfig) CompactionNotifyEnabled() bool {
+	if n.CompactionNotify != nil {
+		return *n.CompactionNotify
 	}
-	return a.Platforms.Discord
+	return true
+}
+
+// TaskListNotifyEnabled returns the resolved value (default: true).
+func (n NotifyConfig) TaskListNotifyEnabled() bool {
+	if n.TaskListNotify != nil {
+		return *n.TaskListNotify
+	}
+	return true
+}
+
+// CompactionDebugEnabled returns the resolved value (default: false).
+func (n NotifyConfig) CompactionDebugEnabled() bool {
+	if n.CompactionDebug != nil {
+		return *n.CompactionDebug
+	}
+	return false
+}
+
+// InjectAgentWarningsLevel returns the resolved InjectionLevel (default: off).
+func (n NotifyConfig) InjectAgentWarningsLevel() InjectionLevel {
+	if n.InjectAgentWarnings != nil {
+		return *n.InjectAgentWarnings
+	}
+	return InjectionOff
+}
+
+// InjectChatWarningsLevel returns the resolved InjectionLevel (default: off).
+func (n NotifyConfig) InjectChatWarningsLevel() InjectionLevel {
+	if n.InjectChatWarnings != nil {
+		return *n.InjectChatWarnings
+	}
+	return InjectionOff
+}
+
+// PlatformConfig is the unified platform configuration used for both global
+// [[platforms]] entries and per-agent [[agents.platforms]] overrides.
+type PlatformConfig struct {
+	ID string `toml:"id"`
+
+	// Embedded config groups (cascade via Merge)
+	NotifyConfig  `toml:",inline"`
+	DisplayConfig `toml:",inline"`
+	AccessConfig  `toml:",inline"`
+
+	// Shared platform fields
+	Bot              string   `toml:"bot"`
+	BotSecret        string   `toml:"bot_secret"`
+	FacetBots        []string `toml:"facet_bots"`
+	FacetSessionTTL  string   `toml:"facet_session_ttl"`
+	MessageQueueSize int      `toml:"message_queue_size"`
+
+	// Platform-specific subsections (at most one non-nil, must match ID)
+	Telegram *TelegramSpecific `toml:"telegram"`
+	Discord  *DiscordSpecific  `toml:"discord"`
+}
+
+// Platform returns the PlatformConfig with the given ID, or nil.
+func (c *Config) Platform(id string) *PlatformConfig {
+	for i := range c.Platforms {
+		if c.Platforms[i].ID == id {
+			return &c.Platforms[i]
+		}
+	}
+	return nil
+}
+
+// Platform returns the PlatformConfig with the given ID from agent platforms, or nil.
+func (a *AgentConfig) Platform(id string) *PlatformConfig {
+	for i := range a.Platforms {
+		if a.Platforms[i].ID == id {
+			return &a.Platforms[i]
+		}
+	}
+	return nil
+}
+
+// SafeNotify returns the NotifyConfig from a *PlatformConfig, or zero if nil.
+func (p *PlatformConfig) SafeNotify() NotifyConfig {
+	if p == nil {
+		return NotifyConfig{}
+	}
+	return p.NotifyConfig
+}
+
+// SafeDisplay returns the DisplayConfig from a *PlatformConfig, or zero if nil.
+func (p *PlatformConfig) SafeDisplay() DisplayConfig {
+	if p == nil {
+		return DisplayConfig{}
+	}
+	return p.DisplayConfig
+}
+
+// TelegramSpecific holds Telegram-only config fields.
+type TelegramSpecific struct {
+	LongPollTimeout string  `toml:"long_poll_timeout"` // default "65s"
+	TableWrapLines  *int    `toml:"table_wrap_lines"`  // default 5
+	TableStyle      *string `toml:"table_style"`       // default "pretty"
+}
+
+// DiscordSpecific holds Discord-only config fields.
+type DiscordSpecific struct {
+	AutoThread *bool  `toml:"auto_thread"` // default true
+	GuildID    string `toml:"guild_id"`
+}
+
+// ApplyDefaults fills zero-value fields from the given defaults.
+func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
+	p.NotifyConfig = Merge(p.NotifyConfig, defaults.NotifyConfig)
+	p.DisplayConfig = Merge(p.DisplayConfig, defaults.DisplayConfig)
+	p.AccessConfig = Merge(p.AccessConfig, defaults.AccessConfig)
+	if p.FacetSessionTTL == "" {
+		p.FacetSessionTTL = defaults.FacetSessionTTL
+	}
+	if p.MessageQueueSize == 0 {
+		p.MessageQueueSize = defaults.MessageQueueSize
+	}
+	// Platform-specific: merge only if same platform
+	if p.Telegram != nil && defaults.Telegram != nil {
+		if p.Telegram.LongPollTimeout == "" {
+			p.Telegram.LongPollTimeout = defaults.Telegram.LongPollTimeout
+		}
+		if p.Telegram.TableWrapLines == nil {
+			p.Telegram.TableWrapLines = defaults.Telegram.TableWrapLines
+		}
+		if p.Telegram.TableStyle == nil {
+			p.Telegram.TableStyle = defaults.Telegram.TableStyle
+		}
+	}
+	if p.Discord != nil && defaults.Discord != nil {
+		if p.Discord.AutoThread == nil {
+			p.Discord.AutoThread = defaults.Discord.AutoThread
+		}
+		if p.Discord.GuildID == "" {
+			p.Discord.GuildID = defaults.Discord.GuildID
+		}
+	}
 }
 
 type SessionsConfig struct {
 	Dir string `toml:"dir"`
 
-	CompactionThreshold        float64 `toml:"compaction_threshold"`          // compact at this % of context window (default 0.8)
-	CompactionMaxTokens        int     `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
-	CompactionMinMessages      int     `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
-	CompactionSummaryPrompt    string  `toml:"compaction_summary_prompt"`     // path to summary prompt file
-	CompactionHandoffMsg       string  `toml:"compaction_handoff_msg"`        // handoff message after compaction
-	CompactionNotify           *bool   `toml:"compaction_notify"`             // send Telegram notification on compaction (default true)
-	MaxSystemPromptFile        int     `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
-	MaxSystemPromptTotal       int     `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
-	CompactionPreserveMessages int     `toml:"compaction_preserve_messages"`  // preserve last N messages through compaction (default 25, 0 disables)
+	CompactionConfig  // compaction settings (global defaults, overridable per-agent)
+	CompactionMaxTokens   int `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
+	CompactionMinMessages int `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
+	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
+	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
 
-	AutocompactBeforeManaRefresh          bool     `toml:"autocompact_before_mana_refresh"`              // master switch (default true)
-	AutocompactBeforeManaRefreshThreshold string   `toml:"autocompact_before_mana_refresh_threshold"`    // trigger mana-refresh compact when reset this soon (default "5m")
-	AutocompactBeforeManaRefreshFactor    float64  `toml:"autocompact_before_mana_refresh_factor"`       // secondary threshold = main threshold × factor (default 0.5)
-	AutocompactBeforeManaRefreshPreserve    *int     `toml:"autocompact_before_mana_refresh_preserve"`     // messages to preserve in refresh mode (nil = use percentage)
-	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"` // fraction of messages to preserve in refresh mode (default 0.5)
-
-	BranchOrientationFacetPrompt string `toml:"branch_orientation_facet_prompt"` // path to prompt file for user-attached facet branches
-	BranchOrientationHeadlessPrompt  string `toml:"branch_orientation_headless_prompt"`  // path to prompt file for headless branches (cron, spawn, keepalive)
+	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`    // path to prompt file for user-attached facet branches
+	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"` // path to prompt file for headless branches (cron, spawn, keepalive)
 
 	ArchiveAfter string `toml:"archive_after"` // gzip idle sessions after this duration (default "24h")
 }
@@ -537,7 +658,6 @@ type LoggingConfig struct {
 	ArchiveDir          string `toml:"archive_dir"`            // gzip archive directory (default: log_dir/archive/)
 	LogFileMode         string `toml:"log_file_mode"`          // octal file permissions for log files (default "0600")
 
-	MessagesInLog bool `toml:"messages_in_log"` // log user message content to event log (default false for privacy)
 }
 
 // TTSConfig describes a text-to-speech provider entry.
@@ -579,11 +699,6 @@ type CacheConfig struct {
 	TTL      string `toml:"ttl"`      // Anthropic prompt cache TTL: "5m" or "1h" (default "1h")
 }
 
-type ManaWarningsConfig struct {
-	Name             string `toml:"name"`              // what to call quota (default "mana")
-	Thresholds       []int  `toml:"thresholds"`        // mana percentages to warn at (e.g. [50, 25, 10, 5])
-	RestoreThreshold int    `toml:"restore_threshold"` // inject session notice when mana restores to 100% after being below this (0=disabled)
-}
 
 type EnvironmentConfig struct {
 	Enabled  bool   `toml:"enabled"`   // inject environment block as first system block (default true)
@@ -605,54 +720,42 @@ type ResourcesConfig struct {
 }
 
 // BrowserConfig holds configuration for the browser automation tool.
+// All fields are pointer types for Merge-based resolution (per-agent → global).
+// TOML: [browser] globally, [[agents]].browser per-agent.
 type BrowserConfig struct {
-	Enabled        bool    `toml:"enabled"`          // enable browser tool (default true)
-	Headless       bool    `toml:"headless"`          // run headless (default true)
-	TimeoutSec     int     `toml:"timeout_sec"`       // page operation timeout in seconds (default 30)
-	UserDataDir    string  `toml:"user_data_dir"`     // Chrome user data dir (empty = temp profile)
-	ExecutablePath string  `toml:"executable_path"`   // Chrome executable path (empty = auto-detect)
-	Incognito      bool    `toml:"incognito"`          // use incognito mode (default true)
-	DOMStableSec   float64 `toml:"dom_stable_sec"`    // DOM stability wait interval in seconds (default 1)
-	DOMStableDiff  float64 `toml:"dom_stable_diff"`   // DOM stability diff threshold (default 0.2)
+	Enabled        *bool    `toml:"enabled"`          // enable browser tool (default true)
+	Headless       *bool    `toml:"headless"`          // run headless (default true)
+	TimeoutSec     *int     `toml:"timeout_sec"`       // page operation timeout in seconds (default 30)
+	UserDataDir    *string  `toml:"user_data_dir"`     // Chrome user data dir (empty = temp profile)
+	ExecutablePath *string  `toml:"executable_path"`   // Chrome executable path (empty = auto-detect)
+	Incognito      *bool    `toml:"incognito"`          // use incognito mode (default true)
+	DOMStableSec   *float64 `toml:"dom_stable_sec"`    // DOM stability wait interval in seconds (default 1)
+	DOMStableDiff  *float64 `toml:"dom_stable_diff"`   // DOM stability diff threshold (default 0.2)
 }
 
 type ToolsConfig struct {
-	MaxResultChars          int      `toml:"max_result_chars"`           // max chars before writing result to file (default 15000)
+	SummaryConfig // global summary/tool-result defaults (resolved via Merge with per-agent)
+	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
+
 	TempDir                 string   `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci/tool-results)
 	TmuxCols                int      `toml:"tmux_cols"`                  // tmux window columns on start (default 300)
 	TmuxRows                int      `toml:"tmux_rows"`                  // tmux window rows on start (default 30)
-	ExecAutoBackground      int      `toml:"exec_auto_background"`       // seconds before auto-backgrounding exec (default 10, 0 disables)
 	ExecDefaultTimeout      int      `toml:"exec_default_timeout"`       // default timeout for exec commands in seconds (default 30)
-	MaxSummaryChars         int      `toml:"max_summary_chars"`          // max chars to auto-summarise (default 300000; larger results skip cheap model)
-	AutoSummarise           bool     `toml:"auto_summarise"`             // auto-summarise oversized results via cheap model (default true)
 	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"`       // timeout for tmux control commands (default "5s")
 	WebFetchTimeout         string   `toml:"web_fetch_timeout"`          // HTTP timeout for web fetch (default "30s")
 	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"`        // max bytes to read from web fetch (default 1048576 = 1MB)
 	WebSearchTimeout        string   `toml:"web_search_timeout"`         // HTTP timeout for web search (default "15s")
-	MaxConcurrentSpawns     int      `toml:"max_concurrent_spawns"`      // max concurrent spawn inherit sessions per agent (default 3)
-	ExploreMaxDepth         int      `toml:"explore_max_depth"`          // max tool loops for explore spawn mode (default 100)
 	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"`    // max chars for tool call param preview in Telegram (default 450)
 	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval"` // how often to check tmux RSS (default "5m", "0" disables)
 	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
 	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
 	TmuxMemoryKill          string   `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
-	TmuxAutopilot           bool     `toml:"tmux_autopilot"`             // auto-unwatch on inactivity, auto-watch on send (default true)
-	TmuxWatchThreshold      string   `toml:"tmux_watch_threshold"`       // default watch threshold duration (default "30s")
-	TmuxSessionTTL          string   `toml:"tmux_session_ttl"`           // auto-kill idle tmux sessions after this duration (default "24h", "0" disables)
-	MaxUploadFileSize       int64    `toml:"max_upload_file_size"`       // max file size for multipart uploads in bytes (default 52428800 = 50MB)
-	SummaryContextTurns     int      `toml:"summary_context_turns"`      // recent turns for auto-summary context (default 5)
-	SummaryContextChars     int      `toml:"summary_context_chars"`      // max chars of context for auto-summary (default 6000)
-	MaxSummaryInputChars    int      `toml:"max_summary_input_chars"`    // max chars of tool result embedded in summary prompt (default 100000)
-	MaxImagePixels          int      `toml:"max_image_pixels"`           // max pixels (w*h) before downscaling images (default 2073600)
-	SearchProvider          string   `toml:"search_provider"`            // "brave" (default) or "anthropic"
-	FetchProvider           string   `toml:"fetch_provider"`             // "builtin" (default) or "anthropic"
 	WebSearchMaxUses        int      `toml:"web_search_max_uses"`        // max searches per API call (0 = unlimited)
 	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"` // domain whitelist (mutually exclusive with blocked)
 	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"` // domain blacklist
 	WebFetchMaxUses         int      `toml:"web_fetch_max_uses"`         // max fetches per API call (0 = unlimited)
-	WebFetchAllowedDomains  []string      `toml:"web_fetch_allowed_domains"`  // domain whitelist
-	WebFetchBlockedDomains  []string      `toml:"web_fetch_blocked_domains"`  // domain blacklist
-	Browser                 BrowserConfig `toml:"browser"`                    // browser automation tool config
+	WebFetchAllowedDomains  []string `toml:"web_fetch_allowed_domains"`  // domain whitelist
+	WebFetchBlockedDomains  []string `toml:"web_fetch_blocked_domains"`  // domain blacklist
 }
 
 type MessageTransform struct {
@@ -673,61 +776,15 @@ type CommandConfig struct {
 }
 
 // DefaultsConfig provides global defaults for agent-specific fields.
-// Agents inherit these unless they override them explicitly.
+// All embedded config groups use Merge[T] for resolution at use time.
 type DefaultsConfig struct {
-	MaxOutputTokens int `toml:"max_output_tokens"` // default max_output_tokens (default: 16384)
-	DuplicateMessages             bool   `toml:"duplicate_messages"`               // default duplicate_messages (default: false)
-	BatchPartialAssistantMessages bool   `toml:"batch_partial_assistant_messages"` // default batch_partial_assistant_messages (default: false)
-	BatchPartialJoiner            string `toml:"batch_partial_joiner"`             // default separator between batched partial messages (default: "")
-
-	InjectAgentWarnings   InjectionLevel `toml:"inject_agent_warnings"`    // default inject_agent_warnings (default: "off")
-	InjectChatWarnings    InjectionLevel `toml:"inject_chat_warnings"`     // default inject_chat_warnings (default: "off")
-	MaxToolLoops          int            `toml:"max_tool_loops"`           // default max_tool_loops (default: 25)
-	NudgeDefaultBraindeadThreshold    int    `toml:"nudge_default_braindead_threshold"`      // default braindead threshold (default: 10)
-	NudgeDefaultBraindeadPrompt       string `toml:"nudge_default_braindead_prompt"`         // default braindead prompt
-	TurnLockWarnThreshold string `toml:"turn_lock_warn_threshold"` // default turn lock warn threshold (default: "3m")
-
-	Streaming   *bool    `toml:"streaming"`    // default streaming (nil = use global anthropic.streaming)
-	SystemFiles []string `toml:"system_files"` // default system file list
-
-	MaxResultChars       int   `toml:"max_result_chars"`        // default max_result_chars (default 15000)
-	MaxSummaryChars      int   `toml:"max_summary_chars"`       // default max_summary_chars (default 300000)
-	AutoSummarise        *bool `toml:"auto_summarise"`          // default auto_summarise (nil = use [tools] value)
-	SummaryContextTurns  int   `toml:"summary_context_turns"`   // default summary_context_turns (default 5)
-	SummaryContextChars  int   `toml:"summary_context_chars"`   // default summary_context_chars (default 6000)
-	MaxSummaryInputChars int   `toml:"max_summary_input_chars"` // default max_summary_input_chars (default 100000)
-	MaxImagePixels       int   `toml:"max_image_pixels"`        // default max_image_pixels (default 2073600 = 1920*1080)
-
-	SearchProvider        string `toml:"search_provider"`         // default search provider: "brave" (default) or "anthropic"
-	FetchProvider         string `toml:"fetch_provider"`          // default fetch provider: "builtin" (default) or "anthropic"
-	TodoFormat            string `toml:"todo_format"`             // default todo list format: "lines" (default) or "table"
-	InjectedMessageHeader string `toml:"injected_message_header"` // header prepended to injected (system) messages in Telegram (default: "[[ System message ]]", empty disables)
-
-	TTS                  string            `toml:"tts"`                    // default TTS provider id
-	STT                  string            `toml:"stt"`                    // default STT provider id
-	TTSRate              float64           `toml:"tts_rate"`               // default TTS speech rate multiplier
-	TTSReplacements      map[string]string `toml:"tts_replacements"`       // default TTS word replacements (merged with [[tts]] entry replacements)
-	STTReplacements      map[string]string `toml:"stt_replacements"`       // default STT word replacements (merged with [[stt]] entry replacements)
-	SteerMode           bool   `toml:"steer_mode"`            // default steer_mode (default: true)
-	GroupThrottle       string `toml:"group_throttle"`        // default group_throttle (Go duration; "" or "0" = disabled)
-	FacetNoCompact   *bool  `toml:"facet_no_compact"`   // set no_compact on facet sessions (nil = true)
-	CacheTTL             string `toml:"cache_ttl"`              // default Anthropic prompt cache TTL: "5m" or "1h" (empty = use [cache] ttl)
-
-	// Nudge system: mid-turn behavioral reminders extracted from character files
-	NudgeEnable            bool `toml:"nudge_enable"`              // enable the nudge system (default true)
-	NudgeAutoExtract       bool `toml:"nudge_auto_extract"`        // auto-extract rules from character files via LLM (default true)
-	NudgeCooldown          int  `toml:"nudge_cooldown"`            // min tool calls between repeating same reminder (default 5)
-	NudgeMaxPerBatch       int  `toml:"nudge_max_per_batch"`       // max reminders injected per tool batch (default 1)
-	NudgePreAnswerGate     bool `toml:"nudge_pre_answer_gate"`     // enable pre-answer verification gate (default false)
-	NudgePreAnswerMinTools int  `toml:"nudge_pre_answer_min_tools"` // min tool calls before gate fires (default 2)
-	NudgeDefaultEnable               bool `toml:"nudge_default_enable"`                // enable built-in tool/skill reminders (default true)
-	NudgeDefaultFrequency            int  `toml:"nudge_default_frequency"`             // turns between tool/skill reminders (default 50)
-	NudgeDefaultScratchpadFrequency  int  `toml:"nudge_default_scratchpad_frequency"`  // turns between scratchpad review reminders (0=disabled, default 20)
-
-	StopAliases       []string `toml:"stop_aliases"`        // aliases for /stop command (e.g., ["stop", "wait"])
-	EnableStopAliases bool     `toml:"enable_stop_aliases"` // enable stop command aliases (default true)
-
-	Webhooks map[string]string `toml:"webhooks"` // webhook hook ID → prompt path (per-agent overrides global entirely)
+	NotifyConfig    // notification defaults
+	DisplayConfig   // display defaults
+	NudgeConfig     // nudge system defaults
+	VoiceConfig     // TTS/STT defaults
+	AgentLoopConfig // agent loop defaults
+	BehaviorConfig  // behavioral defaults
+	SystemConfig    // system defaults
 }
 
 
@@ -780,42 +837,41 @@ func (e EndpointConfig) URLForFormat(f string) string {
 }
 
 // KeepaliveConfig controls the cache keepalive timer.
+// All fields are pointer types for Merge-based resolution (per-agent → global).
 type KeepaliveConfig struct {
-	Enabled  bool   `toml:"enabled"`  // enable keepalive timer (default: false)
-	Interval string `toml:"interval"` // time since cache last warmed before firing (default: "55m")
-	Prompt   string `toml:"prompt"`   // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
+	Enabled  *bool   `toml:"enabled"`  // enable keepalive timer (default: false)
+	Interval *string `toml:"interval"` // time since cache last warmed before firing (default: "55m")
+	Prompt   *string `toml:"prompt"`   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
 // MemoryFormationConfig controls automatic memory capture and consolidation.
+// All fields are pointer types for Merge-based resolution (per-agent → global).
 type MemoryFormationConfig struct {
-	IntervalEnabled       *bool  `toml:"interval_enabled"`       // periodic capture on timer (nil = true)
-	Interval              string `toml:"interval"`               // time between captures (default "1h")
-	IntervalPrompt        string `toml:"interval_prompt"`        // prompt override ("" = embedded, "none" = disabled)
-	ConsolidationEnabled  *bool  `toml:"consolidation_enabled"`  // curate MEMORY.md periodically (nil = true)
-	ConsolidationInterval string `toml:"consolidation_interval"` // min time between consolidations (default "20h")
-	ConsolidationPrompt   string `toml:"consolidation_prompt"`   // prompt override ("" = embedded, "none" = disabled)
-	SessionEndEnabled     *bool  `toml:"session_end_enabled"`    // capture on /reset and reclaim (nil = true)
-	SessionEndPrompt      string `toml:"session_end_prompt"`     // prompt override ("" = embedded, "none" = disabled)
-	CompactionEnabled     *bool  `toml:"compaction_enabled"`     // capture before compaction (nil = true)
-	CompactionPrompt      string `toml:"compaction_prompt"`      // prompt override ("" = embedded, "none" = disabled)
+	IntervalEnabled       *bool   `toml:"interval_enabled"`       // periodic capture on timer (nil = true)
+	Interval              *string `toml:"interval"`               // time between captures (default "1h")
+	IntervalPrompt        *string `toml:"interval_prompt"`        // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationEnabled  *bool   `toml:"consolidation_enabled"`  // curate MEMORY.md periodically (nil = true)
+	ConsolidationInterval *string `toml:"consolidation_interval"` // min time between consolidations (default "20h")
+	ConsolidationPrompt   *string `toml:"consolidation_prompt"`   // prompt override (nil = embedded, "none" = disabled)
+	SessionEndEnabled     *bool   `toml:"session_end_enabled"`    // capture on /reset and reclaim (nil = true)
+	SessionEndPrompt      *string `toml:"session_end_prompt"`     // prompt override (nil = embedded, "none" = disabled)
+	CompactionEnabled     *bool   `toml:"compaction_enabled"`     // capture before compaction (nil = true)
+	CompactionPrompt      *string `toml:"compaction_prompt"`      // prompt override (nil = embedded, "none" = disabled)
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
+// All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
-	Enabled  bool   `toml:"enabled"`  // enable background work timer (default: false)
-	Interval string `toml:"interval"` // time since last interaction before firing (default: "15m")
-	Prompt   string `toml:"prompt"`   // prompt file path ("" = embedded default, "none" = disabled, "default" = embedded)
+	Enabled  *bool   `toml:"enabled"`  // enable background work timer (default: false)
+	Interval *string `toml:"interval"` // time since last interaction before firing (default: "15m")
+	Prompt   *string `toml:"prompt"`   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
-// ManaConfig controls mana budget behavior.
-type ManaConfig struct {
-	InvestInterval string `toml:"invest_interval"` // quiet period after mana reset before spending (default: "30m")
-}
-
-// DebugConfig holds developer/debugging knobs that are off by default.
+// DebugConfig holds developer/debugging knobs.
+// Embed in Config (global) and AgentConfig (per-agent) for Merge-based resolution.
 type DebugConfig struct {
-	LogAPIKeySuffix bool `toml:"log_api_key_suffix"` // log last 4 chars of API keys on each provider call (default false)
-	CompactionDebug bool `toml:"compaction_debug"`   // send compaction summary as Telegram file attachment (default false)
+	LogAPIKeySuffix *bool `toml:"log_api_key_suffix"` // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog   *bool `toml:"messages_in_log"`    // log user message content to event log (default false for privacy)
 }
 
 type Config struct {
@@ -828,8 +884,7 @@ type Config struct {
 	Anthropic          AnthropicConfig           `toml:"anthropic"`
 	Gemini             GeminiConfig              `toml:"gemini"`
 	OpenAI             OpenAIConfig              `toml:"openai"`
-	Telegram           TelegramConfig            `toml:"telegram"`
-	Discord            DiscordConfig             `toml:"discord"`
+	Platforms          []PlatformConfig          `toml:"platforms"`
 	Sessions           SessionsConfig            `toml:"sessions"`
 	Memory             MemoryConfig              `toml:"memory"`
 	Database           DatabaseConfig            `toml:"database"`
@@ -840,12 +895,12 @@ type Config struct {
 	Bitwarden          BitwardenConfig           `toml:"bitwarden"`
 	Cache              CacheConfig               `toml:"cache"`
 	Mana               ManaConfig                `toml:"mana"`
-	ManaWarnings       ManaWarningsConfig        `toml:"usage_warnings"`
 	Environment        EnvironmentConfig         `toml:"environment"`
 	Skills             SkillsConfig              `toml:"skills"`
 	Resources          ResourcesConfig           `toml:"resources"`
 	Debug              DebugConfig               `toml:"debug"`
 	Tools              ToolsConfig               `toml:"tools"`
+	Browser            BrowserConfig             `toml:"browser"`
 	Keepalive          KeepaliveConfig           `toml:"keepalive"`
 	Background         BackgroundConfig          `toml:"background"`
 	MemoryFormation    MemoryFormationConfig     `toml:"memory_formation"`

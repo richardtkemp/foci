@@ -132,8 +132,8 @@ compaction_summary_prompt = "/home/foci/shared/prompts/compaction-summary.md"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Sessions.CompactionSummaryPrompt != "/home/foci/shared/prompts/compaction-summary.md" {
-		t.Errorf("CompactionSummaryPrompt = %q", cfg.Sessions.CompactionSummaryPrompt)
+	if DerefStr(cfg.Sessions.CompactionSummaryPrompt) != "/home/foci/shared/prompts/compaction-summary.md" {
+		t.Errorf("CompactionSummaryPrompt = %v", cfg.Sessions.CompactionSummaryPrompt)
 	}
 }
 
@@ -155,8 +155,8 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Sessions.CompactionSummaryPrompt != "" {
-		t.Errorf("CompactionSummaryPrompt should default to empty, got %q", cfg.Sessions.CompactionSummaryPrompt)
+	if DerefStr(cfg.Sessions.CompactionSummaryPrompt) != "" {
+		t.Errorf("CompactionSummaryPrompt should default to empty, got %v", cfg.Sessions.CompactionSummaryPrompt)
 	}
 }
 

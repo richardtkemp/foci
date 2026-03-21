@@ -69,7 +69,7 @@ func validate(cfg *Config) error {
 		}
 	}
 	for _, a := range cfg.Agents {
-		for k := range a.Webhooks {
+		for k := range a.Defaults.Webhooks {
 			if strings.ContainsAny(k, "/\\") {
 				return fmt.Errorf("agent %q webhooks: key %q must not contain path separators", a.ID, k)
 			}
@@ -93,8 +93,10 @@ func validate(cfg *Config) error {
 	}
 
 	// Sessions
-	if err := validateRange(cfg.Sessions.CompactionThreshold, 0.0, 1.0, "[sessions] compaction_threshold"); err != nil {
-		return err
+	if cfg.Sessions.CompactionThreshold != nil {
+		if err := validateRange(*cfg.Sessions.CompactionThreshold, 0.0, 1.0, "[sessions] compaction_threshold"); err != nil {
+			return err
+		}
 	}
 	if err := validateNonNegative(cfg.Sessions.CompactionMaxTokens, "[sessions] compaction_max_tokens"); err != nil {
 		return err
@@ -102,14 +104,20 @@ func validate(cfg *Config) error {
 	if err := validateNonNegative(cfg.Sessions.CompactionMinMessages, "[sessions] compaction_min_messages"); err != nil {
 		return err
 	}
-	if err := validateNonNegative(cfg.Sessions.CompactionPreserveMessages, "[sessions] compaction_preserve_messages"); err != nil {
-		return err
+	if cfg.Sessions.CompactionPreserveMessages != nil {
+		if err := validateNonNegative(*cfg.Sessions.CompactionPreserveMessages, "[sessions] compaction_preserve_messages"); err != nil {
+			return err
+		}
 	}
-	if err := validateRange(cfg.Sessions.AutocompactBeforeManaRefreshFactor, 0.0, 1.0, "[sessions] autocompact_before_mana_refresh_factor"); err != nil {
-		return err
+	if cfg.Sessions.AutocompactBeforeManaRefreshFactor != nil {
+		if err := validateRange(*cfg.Sessions.AutocompactBeforeManaRefreshFactor, 0.0, 1.0, "[sessions] autocompact_before_mana_refresh_factor"); err != nil {
+			return err
+		}
 	}
-	if _, err := time.ParseDuration(cfg.Sessions.AutocompactBeforeManaRefreshThreshold); err != nil {
-		return fmt.Errorf("[sessions] autocompact_before_mana_refresh_threshold = %q: %w", cfg.Sessions.AutocompactBeforeManaRefreshThreshold, err)
+	if cfg.Sessions.AutocompactBeforeManaRefreshThreshold != nil {
+		if _, err := time.ParseDuration(*cfg.Sessions.AutocompactBeforeManaRefreshThreshold); err != nil {
+			return fmt.Errorf("[sessions] autocompact_before_mana_refresh_threshold = %q: %w", *cfg.Sessions.AutocompactBeforeManaRefreshThreshold, err)
+		}
 	}
 
 	// HTTP
@@ -140,12 +148,12 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("[cache] ttl = %q: must be \"5m\" or \"1h\"", cfg.Cache.TTL)
 	}
 	for _, a := range cfg.Agents {
-		if a.CacheTTL != "" && !validCacheTTLs[a.CacheTTL] {
-			return fmt.Errorf("agent %q cache_ttl = %q: must be \"5m\" or \"1h\"", a.ID, a.CacheTTL)
+		if a.Defaults.CacheTTL != nil && !validCacheTTLs[*a.Defaults.CacheTTL] {
+			return fmt.Errorf("agent %q cache_ttl = %q: must be \"5m\" or \"1h\"", a.ID, *a.Defaults.CacheTTL)
 		}
 	}
-	if cfg.Defaults.CacheTTL != "" && !validCacheTTLs[cfg.Defaults.CacheTTL] {
-		return fmt.Errorf("[defaults] cache_ttl = %q: must be \"5m\" or \"1h\"", cfg.Defaults.CacheTTL)
+	if cfg.Defaults.CacheTTL != nil && !validCacheTTLs[*cfg.Defaults.CacheTTL] {
+		return fmt.Errorf("[defaults] cache_ttl = %q: must be \"5m\" or \"1h\"", *cfg.Defaults.CacheTTL)
 	}
 
 	// Memory sources
@@ -164,22 +172,24 @@ func validate(cfg *Config) error {
 	}
 
 	// Mana warnings thresholds
-	for i, t := range cfg.ManaWarnings.Thresholds {
+	for i, t := range cfg.Mana.Thresholds {
 		if err := validateIntRange(t, 0, 100, fmt.Sprintf("[usage_warnings] thresholds[%d]", i)); err != nil {
 			return err
 		}
 	}
-	if err := validateIntRange(cfg.ManaWarnings.RestoreThreshold, 0, 100, "[usage_warnings] restore_threshold"); err != nil {
-		return err
+	if cfg.Mana.RestoreThreshold != nil {
+		if err := validateIntRange(*cfg.Mana.RestoreThreshold, 0, 100, "[mana] restore_threshold"); err != nil {
+			return err
+		}
 	}
 	for _, a := range cfg.Agents {
-		for i, t := range a.UsageWarnings.Thresholds {
-			if err := validateIntRange(t, 0, 100, fmt.Sprintf("agent %q [usage_warnings] thresholds[%d]", a.ID, i)); err != nil {
+		for i, t := range a.Mana.Thresholds {
+			if err := validateIntRange(t, 0, 100, fmt.Sprintf("agent %q [mana] thresholds[%d]", a.ID, i)); err != nil {
 				return err
 			}
 		}
-		if a.UsageWarnings.RestoreThreshold != nil {
-			if err := validateIntRange(*a.UsageWarnings.RestoreThreshold, 0, 100, fmt.Sprintf("agent %q [usage_warnings] restore_threshold", a.ID)); err != nil {
+		if a.Mana.RestoreThreshold != nil {
+			if err := validateIntRange(*a.Mana.RestoreThreshold, 0, 100, fmt.Sprintf("agent %q [mana] restore_threshold", a.ID)); err != nil {
 				return err
 			}
 		}
@@ -193,9 +203,9 @@ func validate(cfg *Config) error {
 	}
 
 	// Special case: tmux_session_ttl allows "0" to disable
-	if cfg.Tools.TmuxSessionTTL != "0" {
-		if _, err := time.ParseDuration(cfg.Tools.TmuxSessionTTL); err != nil {
-			return fmt.Errorf("[tools] tmux_session_ttl = %q: %w", cfg.Tools.TmuxSessionTTL, err)
+	if ttl := DerefStr(cfg.Tools.TmuxSessionTTL); ttl != "" && ttl != "0" {
+		if _, err := time.ParseDuration(ttl); err != nil {
+			return fmt.Errorf("[tools] tmux_session_ttl = %q: %w", ttl, err)
 		}
 	}
 
@@ -245,8 +255,6 @@ func validate(cfg *Config) error {
 		{"tools", "web_fetch_timeout", cfg.Tools.WebFetchTimeout},
 		{"tools", "web_search_timeout", cfg.Tools.WebSearchTimeout},
 		{"resources", "memory_guard_interval", cfg.Resources.MemoryGuardInterval},
-		{"telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout},
-		{"telegram", "facet_session_ttl", cfg.Telegram.FacetSessionTTL},
 		{"http", "graceful_shutdown_timeout", cfg.HTTP.GracefulShutdownTimeout},
 		{"sessions", "archive_after", cfg.Sessions.ArchiveAfter},
 	}
@@ -260,6 +268,14 @@ func validate(cfg *Config) error {
 	for name, ep := range cfg.Endpoints {
 		if ep.HTTPTimeout != "" {
 			durations = append(durations, durationEntry{"endpoints." + name, "http_timeout", ep.HTTPTimeout})
+		}
+	}
+	for _, p := range cfg.Platforms {
+		if p.FacetSessionTTL != "" {
+			durations = append(durations, durationEntry{"platforms." + p.ID, "facet_session_ttl", p.FacetSessionTTL})
+		}
+		if p.Telegram != nil && p.Telegram.LongPollTimeout != "" {
+			durations = append(durations, durationEntry{"platforms." + p.ID, "long_poll_timeout", p.Telegram.LongPollTimeout})
 		}
 	}
 	if err := validateDurations(durations); err != nil {
@@ -346,7 +362,7 @@ func DetectBotTokenConflicts(agents []AgentConfig, secrets SecretGetter) []BotTo
 	dcTokens := make(map[string]*tokenInfo)
 
 	for _, a := range agents {
-		if tg := a.GetTelegramPlatform(); tg != nil && tg.Bot != "" {
+		if tg := a.Platform("telegram"); tg != nil && tg.Bot != "" {
 			token := ResolveBotToken(tg.Bot, tg.BotSecret, secrets)
 			if token == "" {
 				continue
@@ -357,7 +373,7 @@ func DetectBotTokenConflicts(agents []AgentConfig, secrets SecretGetter) []BotTo
 				tgTokens[token] = &tokenInfo{botName: tg.Bot, agentIDs: []string{a.ID}}
 			}
 		}
-		if dc := a.GetDiscordPlatform(); dc != nil && dc.Bot != "" {
+		if dc := a.Platform("discord"); dc != nil && dc.Bot != "" {
 			token := ResolveDiscordToken(dc.Bot, dc.BotSecret, secrets)
 			if token == "" {
 				continue

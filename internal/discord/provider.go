@@ -22,7 +22,8 @@ type discordProvider struct {
 func (p *discordProvider) Name() string { return "discord" }
 
 func (p *discordProvider) IsConfigured(cfg *config.Config) bool {
-	return len(cfg.Discord.AllowedUsers) > 0
+	dc := cfg.Platform("discord")
+	return dc != nil && len(dc.AllowedUsers) > 0
 }
 
 func (p *discordProvider) Init(deps platform.ProviderDeps) error {
@@ -116,6 +117,41 @@ func (p *discordProvider) AgentPreFlight(agentID string) []string {
 			tokenSecret, tokenSecret,
 		)}
 	}
+	return nil
+}
+
+func (p *discordProvider) DefaultPlatformConfig() config.PlatformConfig {
+	off := config.ToolCallOff
+	thinkOff := config.ShowThinkingOff
+	dw := 60
+	so := false
+	rm := true
+	sn := true
+	at := true
+	return config.PlatformConfig{
+		ID: "discord",
+		NotifyConfig: config.NotifyConfig{
+			StartupNotify: &sn,
+		},
+		DisplayConfig: config.DisplayConfig{
+			ShowToolCalls:  &off,
+			ShowThinking:   &thinkOff,
+			StreamOutput:   &so,
+			StreamInterval: config.Ptr[string]("1200ms"),
+			DisplayWidth:   &dw,
+		},
+		AccessConfig: config.AccessConfig{
+			RequireMention: &rm,
+		},
+		FacetSessionTTL:  "60m",
+		MessageQueueSize: 64,
+		Discord: &config.DiscordSpecific{
+			AutoThread: &at,
+		},
+	}
+}
+
+func (p *discordProvider) ValidateConfig(_ config.PlatformConfig) []string {
 	return nil
 }
 

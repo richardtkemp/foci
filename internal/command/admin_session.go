@@ -70,9 +70,9 @@ func ResetCommand() *Command {
 			if sk == "" {
 				return Response{}, fmt.Errorf("no active session to reset")
 			}
-			resetOrientPath := prompts.ResolveOrientPath(
-				cc.AgentConfig.BranchOrientationHeadlessPrompt, cc.Config.Sessions.BranchOrientationHeadlessPrompt,
-			)
+			resetOrientPath := config.DerefStr(config.First(
+				cc.AgentConfig.Sessions.BranchOrientationHeadlessPrompt, cc.Config.Sessions.BranchOrientationHeadlessPrompt,
+			))
 			agent.FireSessionEndMemory(cc.Agent, cc.Sessions, sk, cc.AgentConfig.MemoryFormation, func(bk, pk, bt string) string {
 				return prompts.BuildBranchOrientation(resetOrientPath, bk, pk, bt, false, cc.PromptSearchDirs)
 			}, cc.PromptSearchDirs, ctx, false)

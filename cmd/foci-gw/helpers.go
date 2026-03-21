@@ -9,76 +9,6 @@ import (
 	"foci/internal/log"
 )
 
-// resolveZeroable returns the per-agent value if non-zero, otherwise global.
-// Works for any comparable type where zero value means "not set".
-func resolveZeroable[T comparable](perAgent, global T) T {
-	var zero T
-	if perAgent != zero {
-		return perAgent
-	}
-	return global
-}
-
-// resolvePtr returns *perAgent if non-nil, otherwise global.
-// Works for any pointer type.
-func resolvePtr[T any](perAgent *T, global T) T {
-	if perAgent != nil {
-		return *perAgent
-	}
-	return global
-}
-
-// Typed wrappers for readability at call sites.
-
-// resolveInt returns the per-agent value if non-zero, otherwise global.
-func resolveInt(perAgent, global int) int {
-	return resolveZeroable(perAgent, global)
-}
-
-// resolveInt64 returns the per-agent value if non-zero, otherwise global.
-func resolveInt64(perAgent, global int64) int64 {
-	return resolveZeroable(perAgent, global)
-}
-
-// resolveIntPtr returns *perAgent if non-nil, otherwise global.
-func resolveIntPtr(perAgent *int, global int) int {
-	return resolvePtr(perAgent, global)
-}
-
-// resolveBoolPtr returns the per-agent value if non-nil, otherwise the global default.
-func resolveBoolPtr(perAgent *bool, global bool) bool {
-	return resolvePtr(perAgent, global)
-}
-
-// resolveFloat64Ptr returns *perAgent if non-nil, otherwise global.
-func resolveFloat64Ptr(perAgent *float64, global float64) float64 {
-	return resolvePtr(perAgent, global)
-}
-
-// resolveString returns the per-agent value if non-empty, otherwise global.
-func resolveString(perAgent, global string) string {
-	return resolveZeroable(perAgent, global)
-}
-
-// resolveIntPtrPtr returns perAgent if non-nil, otherwise global (both are *int).
-func resolveIntPtrPtr(perAgent, global *int) *int {
-	if perAgent != nil {
-		return perAgent
-	}
-	return global
-}
-
-// resolveFloat64PtrDefault returns *perAgent if non-nil, *global if non-nil, otherwise fallback.
-func resolveFloat64PtrDefault(perAgent, global *float64, fallback float64) float64 {
-	if perAgent != nil {
-		return *perAgent
-	}
-	if global != nil {
-		return *global
-	}
-	return fallback
-}
-
 // parseDurationDefault parses a Go duration string, returning fallback on error or empty.
 func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 	if s == "" {
@@ -91,17 +21,64 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 	return d
 }
 
-// resolveShowToolCalls resolves the effective show_tool_calls value:
-// per-agent → global telegram → "off".
-func resolveShowToolCalls(acfg config.AgentConfig, cfg *config.Config) string {
-	switch {
-	case acfg.ShowToolCalls != nil:
-		return string(*acfg.ShowToolCalls)
-	case cfg.Telegram.ShowToolCalls != nil:
-		return string(*cfg.Telegram.ShowToolCalls)
-	default:
-		return string(config.ToolCallOff)
+// resolveNotify returns the effective NotifyConfig for a platform connection
+// by resolving the 5-level cascade.
+func resolveNotify(acfg config.AgentConfig, cfg *config.Config, platformName string) config.NotifyConfig {
+	return config.Merge(
+		acfg.Platform(platformName).SafeNotify(),
+		acfg.Defaults.NotifyConfig,
+		cfg.Platform(platformName).SafeNotify(),
+		cfg.Defaults.NotifyConfig,
+	)
+}
+
+// anyNotifyEnabled checks if any platform for this agent has the given
+// notification feature enabled.
+func anyNotifyEnabled(acfg config.AgentConfig, cfg *config.Config, checker func(config.NotifyConfig) bool) bool {
+	for _, p := range cfg.Platforms {
+		if checker(resolveNotify(acfg, cfg, p.ID)) {
+			return true
+		}
 	}
+	return false
+}
+
+// maxInjectionLevel returns the most permissive InjectionLevel across all
+// platforms for a given extractor.
+func maxInjectionLevel(acfg config.AgentConfig, cfg *config.Config, extract func(config.NotifyConfig) config.InjectionLevel) config.InjectionLevel {
+	best := config.InjectionOff
+	for _, p := range cfg.Platforms {
+		level := extract(resolveNotify(acfg, cfg, p.ID))
+		if level == config.InjectionAll {
+			return config.InjectionAll
+		}
+		if level == config.InjectionErrors {
+			best = config.InjectionErrors
+		}
+	}
+	return best
+}
+
+// resolveDisplay returns the effective DisplayConfig for an agent by resolving
+// the cascade: per-agent → global defaults → platform defaults (any platform).
+// This is for agent-level resolution (environment block, agent struct);
+// platform-specific display resolution is done in ApplyAgentDisplaySettings.
+func resolveDisplay(acfg config.AgentConfig, cfg *config.Config) config.DisplayConfig {
+	layers := []config.DisplayConfig{acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig}
+	for _, p := range cfg.Platforms {
+		layers = append(layers, p.DisplayConfig)
+	}
+	return config.Merge(layers...)
+}
+
+// resolveShowToolCalls resolves the effective show_tool_calls value via the
+// display config cascade: per-agent → global defaults → platform defaults → code default.
+func resolveShowToolCalls(acfg config.AgentConfig, cfg *config.Config) string {
+	dc := resolveDisplay(acfg, cfg)
+	if dc.ShowToolCalls != nil {
+		return string(*dc.ShowToolCalls)
+	}
+	return string(config.ToolCallOff)
 }
 
 // modelDefaultsFn returns a function that looks up per-model defaults
@@ -122,14 +99,15 @@ func modelDefaultsFn(models map[string]config.ModelConfig) func(string) (string,
 }
 
 // resolveStreamingConfig resolves the streaming setting for an agent.
-// Per-agent *bool overrides defaults *bool which overrides global anthropic.streaming.
+// Cascade: per-agent → global defaults → anthropic.streaming.
 // Streaming is forced off when use_sdk is false.
 func resolveStreamingConfig(acfg config.AgentConfig, cfg *config.Config) bool {
 	if !cfg.Anthropic.UseSDK {
 		return false // streaming requires SDK
 	}
-	if acfg.Streaming != nil {
-		return *acfg.Streaming
+	dc := config.Merge(acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig)
+	if dc.Streaming != nil {
+		return *dc.Streaming
 	}
 	return cfg.Anthropic.Streaming
 }

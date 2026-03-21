@@ -430,7 +430,7 @@ func TestTodoListWithItems(t *testing.T) {
 func TestTodoListTableFormat(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
-	cc.AgentConfig.TodoFormat = "table"
+	cc.AgentConfig.Tools.TodoFormat = config.Ptr[string]("table")
 	cmd := TodoCommand()
 
 	store.Add(testAgent, "buy milk", "high", "")
@@ -465,8 +465,11 @@ func TestTodoListDefaultFormat(t *testing.T) {
 func TestTodoListGlobalFormat(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
-	cc.Config = &config.Config{}
-	cc.Config.Defaults.TodoFormat = "table"
+	cc.Config = &config.Config{
+		Tools: config.ToolsConfig{
+			ToolConfig: config.ToolConfig{TodoFormat: config.Ptr[string]("table")},
+		},
+	}
 	cmd := TodoCommand()
 
 	store.Add(testAgent, "buy milk", "high", "")

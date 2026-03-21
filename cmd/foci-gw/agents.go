@@ -161,6 +161,12 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Per-agent agent struct
+	// Resolve each embedded config group once via Merge cascade.
+	al := config.Merge(acfg.Defaults.AgentLoopConfig, p.cfg.Defaults.AgentLoopConfig)
+	sc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
+	cpc := config.Merge(acfg.Sessions.CompactionConfig, p.cfg.Sessions.CompactionConfig)
+	bc := config.Merge(acfg.Defaults.BehaviorConfig, p.cfg.Defaults.BehaviorConfig)
+
 	ag = &agent.Agent{
 		Log:                            log.NewComponentLogger("agent/" + acfg.ID),
 		Client:                         p.client,
@@ -185,43 +191,43 @@ func setupAgent(p setupParams) *agentInstance {
 		CacheStrategy:                  p.cfg.Cache.Strategy,
 		CacheBustDetect:                p.cfg.Logging.CacheBustDetect,
 		CacheBustIdleThreshold:         time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
-		DuplicateMessages:              acfg.DuplicateMessages,
-		BatchPartialAssistantMessages:  acfg.BatchPartialAssistantMessages,
-		BatchPartialJoiner:             acfg.BatchPartialJoiner,
-		MaxResultChars:                 resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars),
+		DuplicateMessages:              config.DerefBool(al.DuplicateMessages),
+		BatchPartialAssistantMessages:  config.DerefBool(al.BatchPartialAssistantMessages),
+		BatchPartialJoiner:             config.DerefStr(al.BatchPartialJoiner),
+		MaxResultChars:                 config.DerefInt(sc.MaxResultChars),
 		ToolResultTempDir:              p.cfg.Tools.TempDir,
 		GroupResolver:                  groupResolver,
-		FallbackFunc:                    fallbackFn,
-		SummaryContextTurns:            resolveInt(acfg.SummaryContextTurns, p.cfg.Tools.SummaryContextTurns),
-		SummaryContextChars:            resolveInt(acfg.SummaryContextChars, p.cfg.Tools.SummaryContextChars),
-		MaxSummaryChars:                resolveInt(acfg.MaxSummaryChars, p.cfg.Tools.MaxSummaryChars),
-		MaxSummaryInputChars:           resolveInt(acfg.MaxSummaryInputChars, p.cfg.Tools.MaxSummaryInputChars),
-		MaxImagePixels:                 resolveInt(acfg.MaxImagePixels, p.cfg.Tools.MaxImagePixels),
-		AutoSummarise:                  resolveBoolPtr(acfg.AutoSummarise, p.cfg.Tools.AutoSummarise),
+		FallbackFunc:                   fallbackFn,
+		SummaryContextTurns:            config.DerefInt(sc.SummaryContextTurns),
+		SummaryContextChars:            config.DerefInt(sc.SummaryContextChars),
+		MaxSummaryChars:                config.DerefInt(sc.MaxSummaryChars),
+		MaxSummaryInputChars:           config.DerefInt(sc.MaxSummaryInputChars),
+		MaxImagePixels:                 config.DerefInt(sc.MaxImagePixels),
+		AutoSummarise:                  sc.AutoSummarise == nil || *sc.AutoSummarise, // default true
 		SessionIndex:                   p.sessionIndex,
 		UsageClient:                    p.usageClientProvider.GetUsageClient(defaultEndpoint),
 		UsageClientProvider:            p.usageClientProvider,
 		MessageTransforms:              agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
-		CompactionSummaryPromptPath:    resolveString(acfg.CompactionSummaryPrompt, p.cfg.Sessions.CompactionSummaryPrompt),
-		CompactionHandoffMsg:           resolveString(acfg.CompactionHandoffMsg, p.cfg.Sessions.CompactionHandoffMsg),
-		AutocompactBeforeManaRefresh:          resolveBoolPtr(acfg.AutocompactBeforeManaRefresh, p.cfg.Sessions.AutocompactBeforeManaRefresh),
-		AutocompactBeforeManaRefreshThreshold: resolveString(acfg.AutocompactBeforeManaRefreshThreshold, p.cfg.Sessions.AutocompactBeforeManaRefreshThreshold),
-		AutocompactBeforeManaRefreshFactor:    resolveFloat64Ptr(acfg.AutocompactBeforeManaRefreshFactor, p.cfg.Sessions.AutocompactBeforeManaRefreshFactor),
-		AutocompactBeforeManaRefreshPreserve:    resolveIntPtrPtr(acfg.AutocompactBeforeManaRefreshPreserve, p.cfg.Sessions.AutocompactBeforeManaRefreshPreserve),
-		AutocompactBeforeManaRefreshPreservePct: resolveFloat64PtrDefault(acfg.AutocompactBeforeManaRefreshPreservePct, p.cfg.Sessions.AutocompactBeforeManaRefreshPreservePct, 0.5),
+		CompactionSummaryPromptPath:    config.DerefStr(cpc.CompactionSummaryPrompt),
+		CompactionHandoffMsg:           config.DerefStr(cpc.CompactionHandoffMsg),
+		AutocompactBeforeManaRefresh:          config.DerefBool(cpc.AutocompactBeforeManaRefresh),
+		AutocompactBeforeManaRefreshThreshold: config.DerefStr(cpc.AutocompactBeforeManaRefreshThreshold),
+		AutocompactBeforeManaRefreshFactor:    config.DerefFloat(cpc.AutocompactBeforeManaRefreshFactor),
+		AutocompactBeforeManaRefreshPreserve:    cpc.AutocompactBeforeManaRefreshPreserve,
+		AutocompactBeforeManaRefreshPreservePct: config.DerefFloat(cpc.AutocompactBeforeManaRefreshPreservePct),
 		PromptSearchDirs:               promptSearchDirs,
-		MaxToolLoops:                   acfg.MaxToolLoops,
-		MaxOutputTokens:                acfg.MaxOutputTokens,
-		TurnLockWarnThreshold:          parseDurationDefault(acfg.TurnLockWarnThreshold, 3*time.Minute),
+		MaxToolLoops:                   config.DerefInt(al.MaxToolLoops),
+		MaxOutputTokens:                config.DerefInt(al.MaxOutputTokens),
+		TurnLockWarnThreshold:          parseDurationDefault(config.DerefStr(bc.TurnLockWarnThreshold), 3*time.Minute),
 		ShowToolCalls:                  resolveShowToolCalls(acfg, p.cfg),
-		CacheTTL:                       resolveString(acfg.CacheTTL, resolveString(p.cfg.Defaults.CacheTTL, p.cfg.Cache.TTL)),
+		CacheTTL:                       config.DerefStr(al.CacheTTL),
 		Streaming:                      resolveStreamingConfig(acfg, p.cfg),
 		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
-		ManaInvestInterval:             parseDurationDefault(p.cfg.Mana.InvestInterval, 30*time.Minute),
+		ManaInvestInterval:             parseDurationDefault(config.DerefStr(p.cfg.Mana.InvestInterval), 30*time.Minute),
 	}
 
 	// Pre-compaction memory formation hook
-	compactMemOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	compactMemMfCfg := acfg.MemoryFormation
 	compactMemSearchDirs := promptSearchDirs
 	ag.CompactionMemoryFunc.Add(func(sessionKey string) {
@@ -231,7 +237,7 @@ func setupAgent(p setupParams) *agentInstance {
 	})
 
 	// Post-creation agent configuration
-	setupNudgeSystem(ag, acfg, defaultSessionKey, registry, bs.skillRegistry)
+	setupNudgeSystem(ag, acfg, p.cfg, defaultSessionKey, registry, bs.skillRegistry)
 	setupRedaction(ag, p, agentStore)
 	setupWarningQueue(ag, acfg, p.cfg)
 	setupManaWatcher(ag, p)
@@ -322,7 +328,7 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
-		webhooks:          mergeWebhooks(p.cfg.Defaults.Webhooks, acfg.Webhooks),
+		webhooks:          mergeWebhooks(p.cfg.Defaults.Webhooks, acfg.Defaults.Webhooks),
 		tmuxClearAll:      coreResult.tmuxClearAll,
 		tmuxWatchCount:    coreResult.tmuxWatchCount,
 		tmuxMigrateKey:    coreResult.tmuxMigrateKey,
@@ -396,20 +402,18 @@ func buildServerTool(toolType, toolName string, maxUses int, allowed, blocked []
 	return provider.NewServerTool(cfg)
 }
 
-// resolveMessageTransforms returns per-agent message transforms if set, otherwise global.
+// resolveMessageTransforms merges per-agent and global message transforms.
+// Agent rules override matching global rules (by Find pattern); non-matching global rules fall through.
 func resolveMessageTransforms(acfg config.AgentConfig, cfg *config.Config) []config.MessageTransform {
-	if len(acfg.MessageTransforms) > 0 {
-		return acfg.MessageTransforms
-	}
-	return cfg.MessageTransforms
+	return config.SuperveneSlice(acfg.MessageTransforms, cfg.MessageTransforms,
+		func(t config.MessageTransform) string { return t.Find })
 }
 
-// resolveBlockedPaths returns per-agent blocked paths if set, otherwise global.
+// resolveBlockedPaths merges per-agent and global blocked paths.
+// Agent paths override matching global paths (by Path); non-matching global paths fall through.
 func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.BlockedPath {
-	if len(acfg.BlockedPaths) > 0 {
-		return acfg.BlockedPaths
-	}
-	return cfg.BlockedPaths
+	return config.SuperveneSlice(acfg.BlockedPaths, cfg.BlockedPaths,
+		func(b config.BlockedPath) string { return b.Path })
 }
 
 // hasMemoryFormation returns true if any memory formation feature is enabled.

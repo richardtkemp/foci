@@ -51,10 +51,16 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			t := true
 			cachingOverride = &t
 			if modelKAInterval > 0 {
-				acfg.Keepalive.Interval = modelKAInterval.String()
+				s := modelKAInterval.String()
+				acfg.Keepalive.Interval = &s
 			}
 		}
 	}
+
+	// Merge per-agent and global configs for keepalive, background, memory formation.
+	ka := config.Merge(acfg.Keepalive, p.cfg.Keepalive)
+	bg := config.Merge(acfg.Background, p.cfg.Background)
+	mf := config.Merge(acfg.MemoryFormation, p.cfg.MemoryFormation)
 
 	cachingAvailable := true
 	if cachingOverride != nil {
@@ -62,13 +68,15 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	} else if client != nil {
 		cachingAvailable = client.IsCachingAvailable()
 	}
-	kaEnabled := acfg.Keepalive.Enabled && cachingAvailable
+	kaEnabled := config.DerefBool(ka.Enabled) && cachingAvailable
 
-	if !kaEnabled && !acfg.Background.Enabled && !hasMemoryFormation(acfg.MemoryFormation) && !acfg.InjectAgentWarnings.Enabled() && !acfg.InjectChatWarnings.Enabled() {
+	hasAgentWarnings := anyNotifyEnabled(acfg, p.cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() })
+	hasChatWarnings := anyNotifyEnabled(acfg, p.cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() })
+	if !kaEnabled && !config.DerefBool(bg.Enabled) && !hasMemoryFormation(mf) && !hasAgentWarnings && !hasChatWarnings {
 		return nil
 	}
 
-	kaOrientPrompt := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	kaOrientPrompt := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	buildOrient := func(branchKey, parentKey, branchType string) string {
 		return prompts.BuildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false, inst.promptSearchDirs)
 	}
@@ -82,7 +90,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			// Fire memory formation on the completed background branch.
 			// skipMetaCheck=true because background branches set NoResetHook
 			// but should still get memory formation on completion.
-			agent.FireSessionEndMemory(inst.ag, p.sessions, branchKey, acfg.MemoryFormation,
+			agent.FireSessionEndMemory(inst.ag, p.sessions, branchKey, mf,
 				buildOrient, inst.promptSearchDirs, p.ctx, true)
 		},
 	)
@@ -106,7 +114,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// generates a WARN that enters the ChatWarnings queue, whose dispatch also
 	// fails and re-enters this queue — an infinite cross-queue feedback loop.
 	var warningDispatcher *warnings.Dispatcher
-	if acfg.InjectAgentWarnings.Enabled() {
+	if hasAgentWarnings {
 		warningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
 			Queue:          inst.ag.Warnings(),
 			PeerQueues:     []*warnings.Queue{inst.ag.ChatWarnings()},
@@ -133,7 +141,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// PeerQueues: same cross-queue feedback prevention as above — a failed
 	// SendNotification (e.g. "no channel ID") must not enter the agent queue.
 	var chatWarningDispatcher *warnings.Dispatcher
-	if acfg.InjectChatWarnings.Enabled() {
+	if hasChatWarnings {
 		chatWarningDispatcher = warnings.NewDispatcher(warnings.DispatcherConfig{
 			Queue:      inst.ag.ChatWarnings(),
 			PeerQueues: []*warnings.Queue{inst.ag.Warnings()},
@@ -152,16 +160,15 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		})
 	}
 
-	kaCfg := acfg.Keepalive
-	kaCfg.Enabled = kaEnabled
+	ka.Enabled = &kaEnabled
 	runner := periodic.New(periodic.RunnerConfig{
 		AgentID:            acfg.ID,
 		Client:             client,
 		CachingOverride:    cachingOverride,
-		Keepalive:          kaCfg,
-		Background:         acfg.Background,
-		MemoryFormation:    acfg.MemoryFormation,
-		ManaInvestInterval: p.cfg.Mana.InvestInterval,
+		Keepalive:          ka,
+		Background:         bg,
+		MemoryFormation:    mf,
+		ManaInvestInterval: config.DerefStr(p.cfg.Mana.InvestInterval),
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,
 		SessionIndex:       p.sessionIndex,
@@ -187,6 +194,6 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
 
-	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, acfg.Keepalive.Enabled, acfg.Background.Enabled)
+	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, config.DerefBool(bg.Enabled))
 	return runner
 }

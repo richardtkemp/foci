@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"foci/internal/config"
 	"foci/internal/session"
 	"foci/shared/prompts"
 )
@@ -37,9 +38,9 @@ func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error
 		return "", fmt.Errorf("create facet key: %w", err)
 	}
 
-	orientPath := prompts.ResolveOrientPath(
-		cc.AgentConfig.BranchOrientationFacetPrompt, cc.Config.Sessions.BranchOrientationFacetPrompt,
-	)
+	orientPath := config.DerefStr(config.First(
+		cc.AgentConfig.Sessions.BranchOrientationFacetPrompt, cc.Config.Sessions.BranchOrientationFacetPrompt,
+	))
 	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "facet", true, cc.PromptSearchDirs)
 	if err := cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		OrientationMessage: orientText,
@@ -49,7 +50,7 @@ func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error
 	}
 
 	// Facet sessions default to no_compact=true (short-lived, shouldn't trigger compaction).
-	if cc.AgentConfig.FacetNoCompact == nil || *cc.AgentConfig.FacetNoCompact {
+	if cc.AgentConfig.Sessions.FacetNoCompact == nil || *cc.AgentConfig.Sessions.FacetNoCompact {
 		cc.Agent.SetSessionNoCompact(branchKey, true)
 	}
 

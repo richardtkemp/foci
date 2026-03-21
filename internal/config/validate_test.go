@@ -16,12 +16,8 @@ func (f fakeSecrets) Get(key string) (string, bool) {
 // tokens on both platforms produce no conflicts.
 func TestDetectBotTokenConflicts_NoConflicts(t *testing.T) {
 	agents := []AgentConfig{
-		{ID: "alice", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "bot_a"},
-		}},
-		{ID: "bob", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "bot_b"},
-		}},
+		{ID: "alice", Platforms: []PlatformConfig{{ID: "telegram", Bot: "bot_a"}}},
+		{ID: "bob", Platforms: []PlatformConfig{{ID: "telegram", Bot: "bot_b"}}},
 	}
 	secrets := fakeSecrets{
 		"telegram.bot_a": "token_a",
@@ -37,12 +33,8 @@ func TestDetectBotTokenConflicts_NoConflicts(t *testing.T) {
 // sharing the same resolved Telegram token are detected.
 func TestDetectBotTokenConflicts_TelegramDuplicate(t *testing.T) {
 	agents := []AgentConfig{
-		{ID: "alice", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "mybot"},
-		}},
-		{ID: "bob", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "mybot"},
-		}},
+		{ID: "alice", Platforms: []PlatformConfig{{ID: "telegram", Bot: "mybot"}}},
+		{ID: "bob", Platforms: []PlatformConfig{{ID: "telegram", Bot: "mybot"}}},
 	}
 	secrets := fakeSecrets{
 		"telegram.mybot": "same_token",
@@ -67,12 +59,8 @@ func TestDetectBotTokenConflicts_TelegramDuplicate(t *testing.T) {
 // sharing the same resolved Discord token are detected.
 func TestDetectBotTokenConflicts_DiscordDuplicate(t *testing.T) {
 	agents := []AgentConfig{
-		{ID: "alpha", Platforms: &PlatformsConfig{
-			Discord: &DiscordPlatformConfig{Bot: "dcbot"},
-		}},
-		{ID: "beta", Platforms: &PlatformsConfig{
-			Discord: &DiscordPlatformConfig{Bot: "dcbot"},
-		}},
+		{ID: "alpha", Platforms: []PlatformConfig{{ID: "discord", Bot: "dcbot"}}},
+		{ID: "beta", Platforms: []PlatformConfig{{ID: "discord", Bot: "dcbot"}}},
 	}
 	secrets := fakeSecrets{
 		"discord.dcbot": "dc_token",
@@ -94,14 +82,8 @@ func TestDetectBotTokenConflicts_DiscordDuplicate(t *testing.T) {
 // and Discord conflicts are returned independently.
 func TestDetectBotTokenConflicts_MixedConflicts(t *testing.T) {
 	agents := []AgentConfig{
-		{ID: "a1", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "tgbot"},
-			Discord:  &DiscordPlatformConfig{Bot: "dcbot"},
-		}},
-		{ID: "a2", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "tgbot"},
-			Discord:  &DiscordPlatformConfig{Bot: "dcbot"},
-		}},
+		{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram", Bot: "tgbot"}, {ID: "discord", Bot: "dcbot"}}},
+		{ID: "a2", Platforms: []PlatformConfig{{ID: "telegram", Bot: "tgbot"}, {ID: "discord", Bot: "dcbot"}}},
 	}
 	secrets := fakeSecrets{
 		"telegram.tgbot": "tg_tok",
@@ -125,12 +107,8 @@ func TestDetectBotTokenConflicts_MixedConflicts(t *testing.T) {
 // are correctly detected as a conflict.
 func TestDetectBotTokenConflicts_DifferentBotSecretSameToken(t *testing.T) {
 	agents := []AgentConfig{
-		{ID: "x", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "bot_x", BotSecret: "shared_key"},
-		}},
-		{ID: "y", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "bot_y", BotSecret: "shared_key"},
-		}},
+		{ID: "x", Platforms: []PlatformConfig{{ID: "telegram", Bot: "bot_x", BotSecret: "shared_key"}}},
+		{ID: "y", Platforms: []PlatformConfig{{ID: "telegram", Bot: "bot_y", BotSecret: "shared_key"}}},
 	}
 	secrets := fakeSecrets{
 		"shared_key": "the_same_token",
@@ -149,12 +127,8 @@ func TestDetectBotTokenConflicts_DifferentBotSecretSameToken(t *testing.T) {
 // resolve to different tokens are NOT flagged as a conflict.
 func TestDetectBotTokenConflicts_SameBotNameDifferentSecrets(t *testing.T) {
 	agents := []AgentConfig{
-		{ID: "p", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "shared_name", BotSecret: "key_p"},
-		}},
-		{ID: "q", Platforms: &PlatformsConfig{
-			Telegram: &TelegramPlatformConfig{Bot: "shared_name", BotSecret: "key_q"},
-		}},
+		{ID: "p", Platforms: []PlatformConfig{{ID: "telegram", Bot: "shared_name", BotSecret: "key_p"}}},
+		{ID: "q", Platforms: []PlatformConfig{{ID: "telegram", Bot: "shared_name", BotSecret: "key_q"}}},
 	}
 	secrets := fakeSecrets{
 		"key_p": "token_p",

@@ -35,8 +35,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 // (overridden) tag; all fields get (default) if they weren't explicitly set.
 func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
 	overrides := map[string]bool{
-		"defaults.max_tool_loops":    agent.MaxToolLoops != cfg.Defaults.MaxToolLoops,
-		"defaults.max_output_tokens": agent.MaxOutputTokens != cfg.Defaults.MaxOutputTokens,
+		"defaults.max_tool_loops":    DerefInt(agent.Defaults.MaxToolLoops) != DerefInt(cfg.Defaults.MaxToolLoops),
+		"defaults.max_output_tokens": DerefInt(agent.Defaults.MaxOutputTokens) != DerefInt(cfg.Defaults.MaxOutputTokens),
 	}
 	for i := range rows {
 		path := rows[i].Section + "." + rows[i].Key
@@ -66,28 +66,35 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	}
 
 	// defaults
-	add("defaults", "max_output_tokens", cfg.Defaults.MaxOutputTokens)
-	add("defaults", "max_tool_loops", cfg.Defaults.MaxToolLoops)
-	if cfg.Defaults.DuplicateMessages {
-		add("defaults", "duplicate_messages", cfg.Defaults.DuplicateMessages)
+	if cfg.Defaults.MaxOutputTokens != nil {
+		add("defaults", "max_output_tokens", *cfg.Defaults.MaxOutputTokens)
 	}
-	if cfg.Defaults.InjectAgentWarnings.Enabled() {
-		add("defaults", "inject_agent_warnings", string(cfg.Defaults.InjectAgentWarnings))
+	if cfg.Defaults.MaxToolLoops != nil {
+		add("defaults", "max_tool_loops", *cfg.Defaults.MaxToolLoops)
 	}
-	if cfg.Defaults.InjectChatWarnings.Enabled() {
-		add("defaults", "inject_chat_warnings", string(cfg.Defaults.InjectChatWarnings))
+	if cfg.Defaults.DuplicateMessages != nil && *cfg.Defaults.DuplicateMessages {
+		add("defaults", "duplicate_messages", true)
 	}
-	if cfg.Defaults.FacetNoCompact != nil {
-		add("defaults", "facet_no_compact", *cfg.Defaults.FacetNoCompact)
+	if cfg.Defaults.InjectAgentWarnings != nil && cfg.Defaults.InjectAgentWarningsLevel().Enabled() {
+		add("defaults", "inject_agent_warnings", string(*cfg.Defaults.InjectAgentWarnings))
 	}
-	if cfg.Telegram.ShowToolCalls != nil {
-		add("telegram", "show_tool_calls", string(*cfg.Telegram.ShowToolCalls))
+	if cfg.Defaults.InjectChatWarnings != nil && cfg.Defaults.InjectChatWarningsLevel().Enabled() {
+		add("defaults", "inject_chat_warnings", string(*cfg.Defaults.InjectChatWarnings))
 	}
-	if cfg.Telegram.ShowThinking != nil {
-		add("telegram", "show_thinking", string(*cfg.Telegram.ShowThinking))
+	if cfg.Sessions.FacetNoCompact != nil {
+		add("sessions", "facet_no_compact", *cfg.Sessions.FacetNoCompact)
 	}
-	if cfg.Defaults.InjectedMessageHeader != "" {
-		add("defaults", "injected_message_header", cfg.Defaults.InjectedMessageHeader)
+	// Platform display settings
+	for _, p := range cfg.Platforms {
+		if p.ShowToolCalls != nil {
+			add("platforms."+p.ID, "show_tool_calls", string(*p.ShowToolCalls))
+		}
+		if p.ShowThinking != nil {
+			add("platforms."+p.ID, "show_thinking", string(*p.ShowThinking))
+		}
+	}
+	if cfg.Defaults.InjectedMessageHeader != nil && *cfg.Defaults.InjectedMessageHeader != "" {
+		add("defaults", "injected_message_header", *cfg.Defaults.InjectedMessageHeader)
 	}
 	if len(cfg.Defaults.SystemFiles) > 0 {
 		add("defaults", "system_files", cfg.Defaults.SystemFiles)
@@ -116,56 +123,66 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("memory_formation", "session_end_enabled", *cfg.MemoryFormation.SessionEndEnabled)
 	}
 
-	// telegram
-	if len(cfg.Telegram.AllowedUsers) > 0 {
-		add("telegram", "allowed_users", cfg.Telegram.AllowedUsers)
-	}
-	if len(cfg.Telegram.FacetBots) > 0 {
-		add("telegram", "facet_bots", cfg.Telegram.FacetBots)
+	// platforms
+	for _, p := range cfg.Platforms {
+		sec := "platforms." + p.ID
+		if len(p.AllowedUsers) > 0 {
+			add(sec, "allowed_users", p.AllowedUsers)
+		}
+		if len(p.FacetBots) > 0 {
+			add(sec, "facet_bots", p.FacetBots)
+		}
+		if p.StartupNotify != nil {
+			add(sec, "startup_notify", *p.StartupNotify)
+		}
+		add(sec, "facet_session_ttl", p.FacetSessionTTL)
+		add(sec, "message_queue_size", p.MessageQueueSize)
+		if p.ReceivedFilesDir != nil && *p.ReceivedFilesDir != "" {
+			add(sec, "received_files_dir", *p.ReceivedFilesDir)
+		}
+		if p.DisplayWidth != nil {
+			add(sec, "display_width", *p.DisplayWidth)
+		}
+		if p.Telegram != nil {
+			add(sec, "long_poll_timeout", p.Telegram.LongPollTimeout)
+			if p.Telegram.TableWrapLines != nil {
+				add(sec, "table_wrap_lines", *p.Telegram.TableWrapLines)
+			}
+			if p.Telegram.TableStyle != nil {
+				add(sec, "table_style", *p.Telegram.TableStyle)
+			}
+		}
 	}
 	if len(cfg.Defaults.StopAliases) > 0 {
 		add("defaults", "stop_aliases", cfg.Defaults.StopAliases)
 	}
-	add("defaults", "enable_stop_aliases", cfg.Defaults.EnableStopAliases)
-	add("telegram", "startup_notify", cfg.Telegram.StartupNotify)
-	add("telegram", "facet_session_ttl", cfg.Telegram.FacetSessionTTL)
-	add("telegram", "message_queue_size", cfg.Telegram.MessageQueueSize)
-	add("telegram", "long_poll_timeout", cfg.Telegram.LongPollTimeout)
-	if cfg.Telegram.ReceivedFilesDir != "" {
-		add("telegram", "received_files_dir", cfg.Telegram.ReceivedFilesDir)
-	}
-	if cfg.Telegram.DisplayWidth != nil {
-		add("telegram", "display_width", *cfg.Telegram.DisplayWidth)
-	}
-	if cfg.Telegram.TableWrapLines != nil {
-		add("telegram", "table_wrap_lines", *cfg.Telegram.TableWrapLines)
-	}
-	if cfg.Telegram.TableStyle != nil {
-		add("telegram", "table_style", *cfg.Telegram.TableStyle)
+	if cfg.Defaults.EnableStopAliases != nil {
+		add("defaults", "enable_stop_aliases", *cfg.Defaults.EnableStopAliases)
 	}
 
 	// sessions
 	add("sessions", "dir", cfg.Sessions.Dir)
-	add("sessions", "compaction_threshold", cfg.Sessions.CompactionThreshold)
+	if cfg.Sessions.CompactionThreshold != nil {
+		add("sessions", "compaction_threshold", *cfg.Sessions.CompactionThreshold)
+	}
 	add("sessions", "compaction_max_tokens", cfg.Sessions.CompactionMaxTokens)
 	add("sessions", "compaction_min_messages", cfg.Sessions.CompactionMinMessages)
-	if cfg.Sessions.CompactionSummaryPrompt != "" {
-		add("sessions", "compaction_summary_prompt", cfg.Sessions.CompactionSummaryPrompt)
+	if cfg.Sessions.CompactionSummaryPrompt != nil {
+		add("sessions", "compaction_summary_prompt", *cfg.Sessions.CompactionSummaryPrompt)
 	}
-	if cfg.Sessions.CompactionHandoffMsg != "" {
-		add("sessions", "compaction_handoff_msg", cfg.Sessions.CompactionHandoffMsg)
+	if cfg.Sessions.CompactionHandoffMsg != nil {
+		add("sessions", "compaction_handoff_msg", *cfg.Sessions.CompactionHandoffMsg)
 	}
-	if cfg.Sessions.CompactionNotify != nil {
-		add("sessions", "compaction_notify", *cfg.Sessions.CompactionNotify)
+	if cfg.Sessions.CompactionPreserveMessages != nil {
+		add("sessions", "compaction_preserve_messages", *cfg.Sessions.CompactionPreserveMessages)
 	}
-	add("sessions", "compaction_preserve_messages", cfg.Sessions.CompactionPreserveMessages)
 	add("sessions", "max_system_prompt_chars_file", cfg.Sessions.MaxSystemPromptFile)
 	add("sessions", "max_system_prompt_chars_total", cfg.Sessions.MaxSystemPromptTotal)
-	if cfg.Sessions.BranchOrientationFacetPrompt != "" {
-		add("sessions", "branch_orientation_facet_prompt", cfg.Sessions.BranchOrientationFacetPrompt)
+	if cfg.Sessions.BranchOrientationFacetPrompt != nil {
+		add("sessions", "branch_orientation_facet_prompt", *cfg.Sessions.BranchOrientationFacetPrompt)
 	}
-	if cfg.Sessions.BranchOrientationHeadlessPrompt != "" {
-		add("sessions", "branch_orientation_headless_prompt", cfg.Sessions.BranchOrientationHeadlessPrompt)
+	if cfg.Sessions.BranchOrientationHeadlessPrompt != nil {
+		add("sessions", "branch_orientation_headless_prompt", *cfg.Sessions.BranchOrientationHeadlessPrompt)
 	}
 
 	// memory
@@ -188,7 +205,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Logging.PayloadFile != "" {
 		add("logging", "payload_file", cfg.Logging.PayloadFile)
 	}
-	add("logging", "messages_in_log", cfg.Logging.MessagesInLog)
+	add("debug", "messages_in_log", cfg.Debug.MessagesInLog)
 	add("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
 	add("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
 	add("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
@@ -246,10 +263,10 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("cache", "strategy", cfg.Cache.Strategy)
 	add("cache", "ttl", cfg.Cache.TTL)
 
-	// usage_warnings
-	add("usage_warnings", "name", cfg.ManaWarnings.Name)
-	if len(cfg.ManaWarnings.Thresholds) > 0 {
-		add("usage_warnings", "thresholds", cfg.ManaWarnings.Thresholds)
+	// mana
+	add("mana", "name", cfg.Mana.Name)
+	if len(cfg.Mana.Thresholds) > 0 {
+		add("mana", "thresholds", cfg.Mana.Thresholds)
 	}
 
 	// tts
@@ -285,7 +302,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 
 	// debug
 	add("debug", "log_api_key_suffix", cfg.Debug.LogAPIKeySuffix)
-	add("debug", "compaction_debug", cfg.Debug.CompactionDebug)
 
 	// database
 	add("database", "busy_timeout", cfg.Database.BusyTimeout)
@@ -320,103 +336,140 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	add("id", agent.ID)
 	add("workspace", agent.Workspace)
 
-	if len(agent.SystemFiles) > 0 {
-		add("system_files", agent.SystemFiles)
+	if len(agent.Defaults.SystemFiles) > 0 {
+		add("system_files", agent.Defaults.SystemFiles)
 	}
-	add("duplicate_messages", agent.DuplicateMessages)
-	if agent.BranchOrientationFacetPrompt != "" {
-		add("branch_orientation_facet_prompt", agent.BranchOrientationFacetPrompt)
+	add("duplicate_messages", agent.Defaults.DuplicateMessages)
+	if agent.Sessions.BranchOrientationFacetPrompt != nil {
+		add("branch_orientation_facet_prompt", *agent.Sessions.BranchOrientationFacetPrompt)
 	}
-	if agent.BranchOrientationHeadlessPrompt != "" {
-		add("branch_orientation_headless_prompt", agent.BranchOrientationHeadlessPrompt)
+	if agent.Sessions.BranchOrientationHeadlessPrompt != nil {
+		add("branch_orientation_headless_prompt", *agent.Sessions.BranchOrientationHeadlessPrompt)
 	}
-	tg := agent.GetTelegramPlatform()
-	if tg != nil && tg.Bot != "" {
-		add("platforms.telegram.bot", tg.Bot)
+	for _, p := range agent.Platforms {
+		sec := "platforms." + p.ID
+		if p.Bot != "" {
+			add(sec+".bot", p.Bot)
+		}
+		if len(p.FacetBots) > 0 {
+			add(sec+".facet_bots", p.FacetBots)
+		}
 	}
-	if tg != nil && len(tg.FacetBots) > 0 {
-		add("facet_bots", tg.FacetBots)
+	tg := agent.Platform("telegram")
+	if agent.Defaults.MaxToolLoops != nil {
+		add("max_tool_loops", *agent.Defaults.MaxToolLoops)
 	}
-	add("max_tool_loops", agent.MaxToolLoops)
-	add("max_output_tokens", agent.MaxOutputTokens)
-	if agent.TTS != "" {
-		add("tts", agent.TTS)
+	if agent.Defaults.MaxOutputTokens != nil {
+		add("max_output_tokens", *agent.Defaults.MaxOutputTokens)
 	}
-	if agent.STT != "" {
-		add("stt", agent.STT)
+	if agent.Defaults.TTS != nil {
+		add("tts", *agent.Defaults.TTS)
 	}
-	if agent.TTSRate != 0 {
-		add("tts_rate", agent.TTSRate)
+	if agent.Defaults.STT != nil {
+		add("stt", *agent.Defaults.STT)
 	}
-	add("inject_agent_warnings", string(agent.InjectAgentWarnings))
-	if agent.InjectChatWarnings.Enabled() {
-		add("inject_chat_warnings", string(agent.InjectChatWarnings))
+	if agent.Defaults.TTSRate != nil {
+		add("tts_rate", *agent.Defaults.TTSRate)
 	}
-	add("steer_mode", agent.SteerMode)
-	if agent.StartupNotify != nil {
-		add("startup_notify", *agent.StartupNotify)
+	if agent.Defaults.InjectAgentWarnings != nil {
+		add("inject_agent_warnings", string(*agent.Defaults.InjectAgentWarnings))
 	}
-	if agent.FacetNoCompact != nil {
-		add("facet_no_compact", *agent.FacetNoCompact)
+	if agent.Defaults.InjectChatWarnings != nil {
+		add("inject_chat_warnings", string(*agent.Defaults.InjectChatWarnings))
 	}
-	if agent.ShowToolCalls != nil {
-		add("show_tool_calls", string(*agent.ShowToolCalls))
+	if agent.Defaults.StartupNotify != nil {
+		add("startup_notify", *agent.Defaults.StartupNotify)
 	}
-	if agent.ShowThinking != nil {
-		add("show_thinking", string(*agent.ShowThinking))
+	if agent.Defaults.CompactionNotify != nil {
+		add("compaction_notify", *agent.Defaults.CompactionNotify)
+	}
+	if agent.Defaults.TaskListNotify != nil {
+		add("task_list_notify", *agent.Defaults.TaskListNotify)
+	}
+	if agent.Defaults.CompactionDebug != nil {
+		add("compaction_debug", *agent.Defaults.CompactionDebug)
+	}
+	if agent.Defaults.SteerMode != nil {
+		add("steer_mode", *agent.Defaults.SteerMode)
+	}
+	if agent.Sessions.FacetNoCompact != nil {
+		add("facet_no_compact", *agent.Sessions.FacetNoCompact)
+	}
+	if agent.Defaults.ShowToolCalls != nil {
+		add("show_tool_calls", string(*agent.Defaults.ShowToolCalls))
+	}
+	if agent.Defaults.ShowThinking != nil {
+		add("show_thinking", string(*agent.Defaults.ShowThinking))
 	}
 	if tg != nil && tg.DisplayWidth != nil {
 		add("platforms.telegram.display_width", *tg.DisplayWidth)
 	}
-	if tg != nil && tg.TableWrapLines != nil {
-		add("platforms.telegram.table_wrap_lines", *tg.TableWrapLines)
+	if tg != nil && tg.Telegram != nil && tg.Telegram.TableWrapLines != nil {
+		add("platforms.telegram.table_wrap_lines", *tg.Telegram.TableWrapLines)
 	}
-	if tg != nil && tg.TableStyle != nil {
-		add("platforms.telegram.table_style", *tg.TableStyle)
+	if tg != nil && tg.Telegram != nil && tg.Telegram.TableStyle != nil {
+		add("platforms.telegram.table_style", *tg.Telegram.TableStyle)
 	}
-	if agent.MessagesInLog != nil {
-		add("messages_in_log", *agent.MessagesInLog)
+	if agent.Debug.MessagesInLog != nil {
+		add("messages_in_log", *agent.Debug.MessagesInLog)
 	}
-	if tg != nil && tg.ReceivedFilesDir != "" {
-		add("platforms.telegram.received_files_dir", tg.ReceivedFilesDir)
+	if tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != "" {
+		add("platforms.telegram.received_files_dir", *tg.ReceivedFilesDir)
 	}
-	if agent.InjectedMessageHeader != "" {
-		add("injected_message_header", agent.InjectedMessageHeader)
+	if agent.Defaults.InjectedMessageHeader != nil && *agent.Defaults.InjectedMessageHeader != "" {
+		add("injected_message_header", *agent.Defaults.InjectedMessageHeader)
 	}
 	if tg != nil && len(tg.AllowedUsers) > 0 {
 		add("platforms.telegram.allowed_users", tg.AllowedUsers)
 	}
-	if agent.CompactionPreserveMessages != nil {
-		add("compaction_preserve_messages", *agent.CompactionPreserveMessages)
+	_ = tg // suppress unused warning if no telegram-specific fields above
+	if agent.Sessions.CompactionPreserveMessages != nil {
+		add("compaction_preserve_messages", *agent.Sessions.CompactionPreserveMessages)
 	}
-	if len(agent.UsageWarnings.Thresholds) > 0 {
-		add("usage_warnings.thresholds", agent.UsageWarnings.Thresholds)
+	if len(agent.Mana.Thresholds) > 0 {
+		add("mana.thresholds", agent.Mana.Thresholds)
 	}
-	add("keepalive.enabled", agent.Keepalive.Enabled)
-	add("keepalive.interval", agent.Keepalive.Interval)
-	add("keepalive.prompt", agent.Keepalive.Prompt)
-	add("background.enabled", agent.Background.Enabled)
-	add("background.interval", agent.Background.Interval)
-	add("background.prompt", agent.Background.Prompt)
-	add("memory_formation.interval", agent.MemoryFormation.Interval)
+	if agent.Keepalive.Enabled != nil {
+		add("keepalive.enabled", *agent.Keepalive.Enabled)
+	}
+	if agent.Keepalive.Interval != nil {
+		add("keepalive.interval", *agent.Keepalive.Interval)
+	}
+	if agent.Keepalive.Prompt != nil {
+		add("keepalive.prompt", *agent.Keepalive.Prompt)
+	}
+	if agent.Background.Enabled != nil {
+		add("background.enabled", *agent.Background.Enabled)
+	}
+	if agent.Background.Interval != nil {
+		add("background.interval", *agent.Background.Interval)
+	}
+	if agent.Background.Prompt != nil {
+		add("background.prompt", *agent.Background.Prompt)
+	}
+	if agent.MemoryFormation.Interval != nil {
+		add("memory_formation.interval", *agent.MemoryFormation.Interval)
+	}
 	if agent.MemoryFormation.IntervalEnabled != nil {
 		add("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
 	}
-	if agent.MemoryFormation.IntervalPrompt != "" {
-		add("memory_formation.interval_prompt", agent.MemoryFormation.IntervalPrompt)
+	if agent.MemoryFormation.IntervalPrompt != nil {
+		add("memory_formation.interval_prompt", *agent.MemoryFormation.IntervalPrompt)
 	}
-	add("memory_formation.consolidation_interval", agent.MemoryFormation.ConsolidationInterval)
+	if agent.MemoryFormation.ConsolidationInterval != nil {
+		add("memory_formation.consolidation_interval", *agent.MemoryFormation.ConsolidationInterval)
+	}
 	if agent.MemoryFormation.ConsolidationEnabled != nil {
 		add("memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
 	}
-	if agent.MemoryFormation.ConsolidationPrompt != "" {
-		add("memory_formation.consolidation_prompt", agent.MemoryFormation.ConsolidationPrompt)
+	if agent.MemoryFormation.ConsolidationPrompt != nil {
+		add("memory_formation.consolidation_prompt", *agent.MemoryFormation.ConsolidationPrompt)
 	}
 	if agent.MemoryFormation.SessionEndEnabled != nil {
 		add("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
 	}
-	if agent.MemoryFormation.SessionEndPrompt != "" {
-		add("memory_formation.session_end_prompt", agent.MemoryFormation.SessionEndPrompt)
+	if agent.MemoryFormation.SessionEndPrompt != nil {
+		add("memory_formation.session_end_prompt", *agent.MemoryFormation.SessionEndPrompt)
 	}
 	if len(agent.BlockedPaths) > 0 {
 		add("blocked_paths", fmt.Sprintf("(%d paths)", len(agent.BlockedPaths)))
@@ -469,7 +522,7 @@ func formatValue(val interface{}) string {
 // only the relevant sections for a given agent.
 type displayConfig struct {
 	Agent         AgentConfig        `toml:"agent"`
-	Telegram      displayTelegram    `toml:"telegram"`
+	Platforms     []PlatformConfig   `toml:"platforms"`
 	Sessions      SessionsConfig     `toml:"sessions"`
 	Memory        MemoryConfig       `toml:"memory"`
 	HTTP          HTTPConfig         `toml:"http"`
@@ -478,25 +531,12 @@ type displayConfig struct {
 	Environment   EnvironmentConfig  `toml:"environment"`
 	Skills        SkillsConfig       `toml:"skills"`
 	Cache         CacheConfig        `toml:"cache"`
-	UsageWarnings ManaWarningsConfig `toml:"usage_warnings"`
+	Mana          ManaConfig         `toml:"mana"`
 	TTS           []TTSConfig        `toml:"tts"`
 	STT           []STTConfig        `toml:"stt"`
 	Debug         DebugConfig        `toml:"debug"`
 	Database      DatabaseConfig     `toml:"database"`
 	Anthropic     displayAnthropic   `toml:"anthropic"`
-}
-
-type displayTelegram struct {
-	AllowedUsers        []string `toml:"allowed_users,omitempty"`
-	FacetBots       []string `toml:"facet_bots,omitempty"`
-	StartupNotify       bool     `toml:"startup_notify"`
-	FacetSessionTTL string   `toml:"facet_session_ttl"`
-	MessageQueueSize    int      `toml:"message_queue_size"`
-	LongPollTimeout     string   `toml:"long_poll_timeout"`
-	ReceivedFilesDir    string   `toml:"received_files_dir,omitempty"`
-	DisplayWidth        *int     `toml:"display_width,omitempty"`
-	TableWrapLines      *int     `toml:"table_wrap_lines,omitempty"`
-	TableStyle          *string  `toml:"table_style,omitempty"`
 }
 
 type displayAnthropic struct {
@@ -509,19 +549,8 @@ type displayAnthropic struct {
 // config for the given agent. Secrets are redacted.
 func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 	dc := displayConfig{
-		Agent: agent,
-		Telegram: displayTelegram{
-			AllowedUsers:        cfg.Telegram.AllowedUsers,
-			FacetBots:       cfg.Telegram.FacetBots,
-			StartupNotify:       cfg.Telegram.StartupNotify,
-			FacetSessionTTL: cfg.Telegram.FacetSessionTTL,
-			MessageQueueSize:    cfg.Telegram.MessageQueueSize,
-			LongPollTimeout:     cfg.Telegram.LongPollTimeout,
-			ReceivedFilesDir:    cfg.Telegram.ReceivedFilesDir,
-			DisplayWidth:        cfg.Telegram.DisplayWidth,
-			TableWrapLines:      cfg.Telegram.TableWrapLines,
-			TableStyle:          cfg.Telegram.TableStyle,
-		},
+		Agent:         agent,
+		Platforms:     cfg.Platforms,
 		Sessions:      cfg.Sessions,
 		Memory:        cfg.Memory,
 		HTTP:          cfg.HTTP,
@@ -530,7 +559,7 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Environment:   cfg.Environment,
 		Skills:        cfg.Skills,
 		Cache:         cfg.Cache,
-		UsageWarnings: cfg.ManaWarnings,
+		Mana:          cfg.Mana,
 		TTS:           cfg.TTS,
 		STT:           cfg.STT,
 		Debug:         cfg.Debug,

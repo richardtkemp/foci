@@ -210,10 +210,13 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 				Workspace: "/tmp/test",
 			}
 			cfg := &config.Config{
-				Telegram: config.TelegramConfig{
-					ShowToolCalls: &tt.toolCalls,
-					ShowThinking:  &tt.thinking,
-				},
+				Platforms: []config.PlatformConfig{{
+					ID: "telegram",
+					DisplayConfig: config.DisplayConfig{
+						ShowToolCalls: &tt.toolCalls,
+						ShowThinking:  &tt.thinking,
+					},
+				}},
 				Logging: config.LoggingConfig{
 					EventFile: "/tmp/foci.log",
 				},
@@ -236,16 +239,23 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 
 func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 	acfg := config.AgentConfig{
-		ID:            "test",
-		Workspace:     "/tmp/test",
-		ShowToolCalls: ptr(config.ToolCallFull),
-		ShowThinking:  ptr(config.ShowThinkingTrue),
+		ID:        "test",
+		Workspace: "/tmp/test",
+		Defaults: config.AgentDefaultsOverride{
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls: config.Ptr(config.ToolCallFull),
+				ShowThinking:  config.Ptr(config.ShowThinkingTrue),
+			},
+		},
 	}
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			ShowToolCalls: ptr(config.ToolCallOff),
-			ShowThinking:  ptr(config.ShowThinkingOff),
-		},
+		Platforms: []config.PlatformConfig{{
+			ID: "telegram",
+			DisplayConfig: config.DisplayConfig{
+				ShowToolCalls: config.Ptr(config.ToolCallOff),
+				ShowThinking:  config.Ptr(config.ShowThinkingOff),
+			},
+		}},
 		Logging: config.LoggingConfig{
 			EventFile: "/tmp/foci.log",
 		},
@@ -418,7 +428,6 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
 
 // ========== tokenHolder tests ==========
 

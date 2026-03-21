@@ -10,8 +10,8 @@ import (
 )
 
 func TestLoadTelegramToggleDefaults(t *testing.T) {
-	// Proves that enable_stop_aliases (in defaults) and startup_notify (in telegram)
-	// both default to true when not set in the config file.
+	// Proves that enable_stop_aliases and startup_notify are nil when not set
+	// (code defaults apply at use time, not load time).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -27,17 +27,14 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Defaults.EnableStopAliases {
-		t.Error("EnableStopAliases should default to true")
-	}
-	if !cfg.Telegram.StartupNotify {
-		t.Error("StartupNotify should default to true")
+	if cfg.Defaults.EnableStopAliases != nil {
+		t.Errorf("EnableStopAliases should be nil (code default true at use time), got %v", cfg.Defaults.EnableStopAliases)
 	}
 }
 
 func TestLoadTelegramTogglesExplicitFalse(t *testing.T) {
 	// Proves that explicitly setting enable_stop_aliases (in defaults) and
-	// startup_notify (in telegram) to false correctly disables both toggles.
+	// startup_notify (in platforms) to false correctly disables both toggles.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -50,7 +47,8 @@ id = "test"
 [defaults]
 enable_stop_aliases = false
 
-[telegram]
+[[platforms]]
+id = "telegram"
 startup_notify = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -59,10 +57,14 @@ startup_notify = false
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Defaults.EnableStopAliases {
+	if DerefBool(cfg.Defaults.EnableStopAliases) {
 		t.Error("EnableStopAliases should be false when explicitly set")
 	}
-	if cfg.Telegram.StartupNotify {
+	tgPlat := cfg.Platform("telegram")
+	if tgPlat == nil {
+		t.Fatal("Platform(telegram) = nil")
+	}
+	if tgPlat.StartupNotify == nil || *tgPlat.StartupNotify {
 		t.Error("StartupNotify should be false when explicitly set")
 	}
 }
@@ -86,7 +88,7 @@ id = "test"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].StartupNotify != nil {
+		if cfg.Agents[0].Defaults.StartupNotify != nil {
 			t.Error("StartupNotify should default to nil (use global)")
 		}
 	})
@@ -100,6 +102,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
+[agents.defaults]
 startup_notify = true
 `
 		os.WriteFile(path, []byte(toml), 0644)
@@ -108,7 +111,7 @@ startup_notify = true
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].StartupNotify == nil || !*cfg.Agents[0].StartupNotify {
+		if cfg.Agents[0].Defaults.StartupNotify == nil || !*cfg.Agents[0].Defaults.StartupNotify {
 			t.Error("StartupNotify should be true")
 		}
 	})
@@ -122,6 +125,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
+[agents.defaults]
 startup_notify = false
 `
 		os.WriteFile(path, []byte(toml), 0644)
@@ -130,7 +134,7 @@ startup_notify = false
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].StartupNotify == nil || *cfg.Agents[0].StartupNotify {
+		if cfg.Agents[0].Defaults.StartupNotify == nil || *cfg.Agents[0].Defaults.StartupNotify {
 			t.Error("StartupNotify should be false")
 		}
 	})
@@ -190,6 +194,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "a"
+[agents.defaults]
 show_tool_calls = "full"
 
 [[agents]]
@@ -199,15 +204,15 @@ id = "b"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].ShowToolCalls == nil {
+		if cfg.Agents[0].Defaults.ShowToolCalls == nil {
 			t.Fatal("agent a: ShowToolCalls should be non-nil")
 		}
-		if *cfg.Agents[0].ShowToolCalls != ToolCallFull {
-			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].ShowToolCalls, ToolCallFull)
+		if *cfg.Agents[0].Defaults.ShowToolCalls != ToolCallFull {
+			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].Defaults.ShowToolCalls, ToolCallFull)
 		}
 		// Agent b has no show_tool_calls set — should be nil (resolved at runtime via telegram config)
-		if cfg.Agents[1].ShowToolCalls != nil {
-			t.Errorf("agent b: ShowToolCalls = %q, want nil (not set)", *cfg.Agents[1].ShowToolCalls)
+		if cfg.Agents[1].Defaults.ShowToolCalls != nil {
+			t.Errorf("agent b: ShowToolCalls = %q, want nil (not set)", *cfg.Agents[1].Defaults.ShowToolCalls)
 		}
 	})
 
@@ -221,42 +226,45 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "a"
+[agents.defaults]
 show_tool_calls = true
 `), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].ShowToolCalls == nil {
+		if cfg.Agents[0].Defaults.ShowToolCalls == nil {
 			t.Fatal("agent a: ShowToolCalls should be non-nil")
 		}
-		if *cfg.Agents[0].ShowToolCalls != ToolCallPreview {
-			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].ShowToolCalls, ToolCallPreview)
+		if *cfg.Agents[0].Defaults.ShowToolCalls != ToolCallPreview {
+			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].Defaults.ShowToolCalls, ToolCallPreview)
 		}
 	})
 
-	// Telegram section
-	t.Run("telegram string", func(t *testing.T) {
+	// Platform section
+	t.Run("platform string", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[telegram]
+[[platforms]]
+id = "telegram"
 show_tool_calls = "full"
 `), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Telegram.ShowToolCalls == nil || *cfg.Telegram.ShowToolCalls != ToolCallFull {
-			t.Errorf("Telegram.ShowToolCalls = %v, want %q", cfg.Telegram.ShowToolCalls, ToolCallFull)
+		tgPlat := cfg.Platform("telegram")
+		if tgPlat == nil || tgPlat.ShowToolCalls == nil || *tgPlat.ShowToolCalls != ToolCallFull {
+			t.Errorf("Platform(telegram).ShowToolCalls want %q", ToolCallFull)
 		}
 	})
 
-	// Global default (not set) — defaults to ToolCallOff
-	t.Run("telegram default", func(t *testing.T) {
+	// Global default (not set) — ShowToolCalls is now provider-driven, nil in Load
+	t.Run("platform default nil", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "foci.toml")
 		os.WriteFile(path, []byte(`
@@ -267,8 +275,9 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Telegram.ShowToolCalls == nil || *cfg.Telegram.ShowToolCalls != ToolCallOff {
-			t.Errorf("Telegram.ShowToolCalls = %v, want %q", cfg.Telegram.ShowToolCalls, ToolCallOff)
+		// Without ApplyProviderDefaults, there are no platform entries
+		if tg := cfg.Platform("telegram"); tg != nil && tg.ShowToolCalls != nil {
+			t.Errorf("Platform(telegram).ShowToolCalls should be nil without provider defaults, got %v", *tg.ShowToolCalls)
 		}
 	})
 
@@ -320,7 +329,8 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [defaults]
 enable_stop_aliases = "on"
 
-[telegram]
+[[platforms]]
+id = "telegram"
 startup_notify = "off"
 
 [environment]
@@ -333,10 +343,11 @@ log_rotation = "false"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !cfg.Defaults.EnableStopAliases {
+	if !DerefBool(cfg.Defaults.EnableStopAliases) {
 		t.Error("EnableStopAliases should be true (from \"on\")")
 	}
-	if cfg.Telegram.StartupNotify {
+	tgPlat := cfg.Platform("telegram")
+	if tgPlat == nil || tgPlat.StartupNotify == nil || *tgPlat.StartupNotify {
 		t.Error("StartupNotify should be false (from \"off\")")
 	}
 	if !cfg.Environment.Enabled {
@@ -359,11 +370,13 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "clutch"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "primary"
 facet_bots = ["mb1", "mb2"]
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["111"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -373,9 +386,9 @@ allowed_users = ["111"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	tg := cfg.Agents[0].GetTelegramPlatform()
+	tg := cfg.Agents[0].Platform("telegram")
 	if tg == nil {
-		t.Fatal("GetTelegramPlatform() = nil")
+		t.Fatal("Platform(telegram) = nil")
 	}
 	if len(tg.FacetBots) != 2 {
 		t.Fatalf("FacetBots len = %d, want 2", len(tg.FacetBots))
@@ -386,8 +399,8 @@ allowed_users = ["111"]
 }
 
 func TestLoadSharedFacetBots(t *testing.T) {
-	// Proves that the global [telegram] facet_bots list is correctly loaded
-	// into the TelegramConfig and made available for shared cross-agent routing.
+	// Proves that the global [[platforms]] facet_bots list is correctly loaded
+	// into the PlatformConfig and made available for shared cross-agent routing.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
@@ -397,10 +410,12 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "clutch"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "primary"
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["111"]
 facet_bots = ["spare1", "spare2"]
 `
@@ -411,11 +426,15 @@ facet_bots = ["spare1", "spare2"]
 		t.Fatalf("Load: %v", err)
 	}
 
-	if len(cfg.Telegram.FacetBots) != 2 {
-		t.Fatalf("Telegram.FacetBots len = %d, want 2", len(cfg.Telegram.FacetBots))
+	tgPlat := cfg.Platform("telegram")
+	if tgPlat == nil {
+		t.Fatal("Platform(telegram) = nil")
 	}
-	if cfg.Telegram.FacetBots[0] != "spare1" || cfg.Telegram.FacetBots[1] != "spare2" {
-		t.Errorf("Telegram.FacetBots = %v, want [spare1 spare2]", cfg.Telegram.FacetBots)
+	if len(tgPlat.FacetBots) != 2 {
+		t.Fatalf("Platform(telegram).FacetBots len = %d, want 2", len(tgPlat.FacetBots))
+	}
+	if tgPlat.FacetBots[0] != "spare1" || tgPlat.FacetBots[1] != "spare2" {
+		t.Errorf("Platform(telegram).FacetBots = %v, want [spare1 spare2]", tgPlat.FacetBots)
 	}
 }
 
@@ -423,24 +442,8 @@ func TestCompactionPreserveMessagesConfig(t *testing.T) {
 	// Proves that compaction_preserve_messages defaults to 25, can be overridden
 	// globally or to zero, supports per-agent override (nil when unset), and
 	// rejects negative values with an error.
-	t.Run("global default", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[[agents]]
-id = "test"
-`), 0644)
-
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.Sessions.CompactionPreserveMessages != 25 {
-			t.Errorf("CompactionPreserveMessages = %d, want 25", cfg.Sessions.CompactionPreserveMessages)
-		}
-	})
+	// global default subtest removed — CompactionPreserveMessages is nil when unset,
+	// code default (25) applied at use time.
 
 	t.Run("global explicit", func(t *testing.T) {
 		dir := t.TempDir()
@@ -458,7 +461,7 @@ compaction_preserve_messages = 10
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Sessions.CompactionPreserveMessages != 10 {
+		if DerefInt(cfg.Sessions.CompactionPreserveMessages) != 10 {
 			t.Errorf("CompactionPreserveMessages = %d, want 10", cfg.Sessions.CompactionPreserveMessages)
 		}
 	})
@@ -479,7 +482,7 @@ compaction_preserve_messages = 0
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Sessions.CompactionPreserveMessages != 0 {
+		if DerefInt(cfg.Sessions.CompactionPreserveMessages) != 0 {
 			t.Errorf("CompactionPreserveMessages = %d, want 0", cfg.Sessions.CompactionPreserveMessages)
 		}
 	})
@@ -495,6 +498,7 @@ compaction_preserve_messages = 10
 
 [[agents]]
 id = "a"
+[agents.sessions]
 compaction_preserve_messages = 5
 
 [[agents]]
@@ -505,14 +509,14 @@ id = "b"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Sessions.CompactionPreserveMessages != 10 {
+		if DerefInt(cfg.Sessions.CompactionPreserveMessages) != 10 {
 			t.Errorf("global = %d, want 10", cfg.Sessions.CompactionPreserveMessages)
 		}
-		if cfg.Agents[0].CompactionPreserveMessages == nil || *cfg.Agents[0].CompactionPreserveMessages != 5 {
-			t.Errorf("agent a = %v, want 5", cfg.Agents[0].CompactionPreserveMessages)
+		if cfg.Agents[0].Sessions.CompactionPreserveMessages == nil || *cfg.Agents[0].Sessions.CompactionPreserveMessages != 5 {
+			t.Errorf("agent a = %v, want 5", cfg.Agents[0].Sessions.CompactionPreserveMessages)
 		}
-		if cfg.Agents[1].CompactionPreserveMessages != nil {
-			t.Errorf("agent b should be nil, got %v", cfg.Agents[1].CompactionPreserveMessages)
+		if cfg.Agents[1].Sessions.CompactionPreserveMessages != nil {
+			t.Errorf("agent b should be nil, got %v", cfg.Agents[1].Sessions.CompactionPreserveMessages)
 		}
 	})
 
@@ -555,7 +559,7 @@ id = "test"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Logging.MessagesInLog {
+		if DerefBool(cfg.Debug.MessagesInLog) {
 			t.Error("MessagesInLog should default to false")
 		}
 	})
@@ -568,7 +572,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[logging]
+[debug]
 messages_in_log = true
 `), 0644)
 
@@ -576,7 +580,7 @@ messages_in_log = true
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if !cfg.Logging.MessagesInLog {
+		if !DerefBool(cfg.Debug.MessagesInLog) {
 			t.Error("MessagesInLog should be true")
 		}
 	})
@@ -587,11 +591,12 @@ messages_in_log = true
 		os.WriteFile(path, []byte(`[groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[logging]
+[debug]
 messages_in_log = false
 
 [[agents]]
 id = "a"
+[agents.debug]
 messages_in_log = true
 
 [[agents]]
@@ -602,14 +607,14 @@ id = "b"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Logging.MessagesInLog {
+		if DerefBool(cfg.Debug.MessagesInLog) {
 			t.Error("global should be false")
 		}
-		if cfg.Agents[0].MessagesInLog == nil || !*cfg.Agents[0].MessagesInLog {
+		if cfg.Agents[0].Debug.MessagesInLog == nil || !*cfg.Agents[0].Debug.MessagesInLog {
 			t.Error("agent a should override to true")
 		}
-		if cfg.Agents[1].MessagesInLog != nil {
-			t.Errorf("agent b should be nil, got %v", cfg.Agents[1].MessagesInLog)
+		if cfg.Agents[1].Debug.MessagesInLog != nil {
+			t.Errorf("agent b should be nil, got %v", cfg.Agents[1].Debug.MessagesInLog)
 		}
 	})
 }
@@ -629,17 +634,19 @@ id = "a"
 
 [debug]
 log_api_key_suffix = true
+
+[defaults]
 compaction_debug = true
 `), 0644)
 		cfg, err := Load(filepath.Join(dir, "foci.toml"))
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if !cfg.Debug.LogAPIKeySuffix {
+		if !DerefBool(cfg.Debug.LogAPIKeySuffix) {
 			t.Error("expected log_api_key_suffix = true")
 		}
-		if !cfg.Debug.CompactionDebug {
-			t.Error("expected compaction_debug = true")
+		if !cfg.Defaults.CompactionDebugEnabled() {
+			t.Error("expected compaction_debug = true (via defaults NotifyConfig)")
 		}
 	})
 
@@ -657,10 +664,10 @@ id = "a"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Debug.LogAPIKeySuffix {
+		if DerefBool(cfg.Debug.LogAPIKeySuffix) {
 			t.Error("expected log_api_key_suffix default false")
 		}
-		if cfg.Debug.CompactionDebug {
+		if cfg.Defaults.CompactionDebugEnabled() {
 			t.Error("expected compaction_debug default false")
 		}
 	})
@@ -684,7 +691,7 @@ id = "test"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].FacetNoCompact != nil {
+		if cfg.Agents[0].Sessions.FacetNoCompact != nil {
 			t.Error("FacetNoCompact should default to nil (treated as true)")
 		}
 	})
@@ -698,6 +705,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
+[agents.sessions]
 facet_no_compact = true
 `), 0644)
 
@@ -705,7 +713,7 @@ facet_no_compact = true
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].FacetNoCompact == nil || !*cfg.Agents[0].FacetNoCompact {
+		if cfg.Agents[0].Sessions.FacetNoCompact == nil || !*cfg.Agents[0].Sessions.FacetNoCompact {
 			t.Error("FacetNoCompact should be true")
 		}
 	})
@@ -719,6 +727,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
+[agents.sessions]
 facet_no_compact = false
 `), 0644)
 
@@ -726,42 +735,11 @@ facet_no_compact = false
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].FacetNoCompact == nil || *cfg.Agents[0].FacetNoCompact {
+		if cfg.Agents[0].Sessions.FacetNoCompact == nil || *cfg.Agents[0].Sessions.FacetNoCompact {
 			t.Error("FacetNoCompact should be false")
 		}
 	})
 
-	t.Run("inherited from defaults", func(t *testing.T) {
-		// Verifies that [defaults] facet_no_compact propagates to agents
-		// that don't set it explicitly.
-		dir := t.TempDir()
-		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(`
-[groups]
-powerful = "anthropic/claude-haiku-4-5-20251001"
-
-[defaults]
-facet_no_compact = false
-
-[[agents]]
-id = "inherits"
-
-[[agents]]
-id = "overrides"
-facet_no_compact = true
-`), 0644)
-
-		cfg, err := Load(path)
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		// Agent without explicit value should inherit false from defaults
-		if cfg.Agents[0].FacetNoCompact == nil || *cfg.Agents[0].FacetNoCompact {
-			t.Error("inherits agent should get false from defaults")
-		}
-		// Agent with explicit true should keep its own value
-		if cfg.Agents[1].FacetNoCompact == nil || !*cfg.Agents[1].FacetNoCompact {
-			t.Error("overrides agent should keep true")
-		}
-	})
+	// "inherited from defaults" subtest removed — facet_no_compact moved to
+	// CompactionConfig (SessionsConfig + AgentConfig). Defaults cascade via Merge at use time.
 }

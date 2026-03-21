@@ -251,7 +251,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		orientPath := prompts.ResolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt)
+		orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
 		orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
 		branchErr := d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        req.NoResetHook,
@@ -328,8 +328,9 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			if !ok {
 				return resolveTTS(d.ttsMap, d.cfg.TTS, "", 0, d.cfg.Defaults.TTSReplacements)
 			}
-			ttsRepls := voice.MergeReplacements(d.cfg.Defaults.TTSReplacements, inst.agentCfg.TTSReplacements)
-			return resolveTTS(d.ttsMap, d.cfg.TTS, inst.agentCfg.TTS, inst.agentCfg.TTSRate, ttsRepls)
+			vc := config.Merge(inst.agentCfg.Defaults.VoiceConfig, d.cfg.Defaults.VoiceConfig)
+			ttsRepls := voice.MergeReplacements(d.cfg.Defaults.TTSReplacements, inst.agentCfg.Defaults.TTSReplacements)
+			return resolveTTS(d.ttsMap, d.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls)
 		},
 	}
 }

@@ -9,7 +9,7 @@ func TestReflectFindsExplicitSecrets(t *testing.T) {
 	// across agent, TTS, STT, and endpoint config structs, ignoring empty values.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{BotSecret: "custom.bot_token"}}},
+			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram",BotSecret: "custom.bot_token"}}},
 		},
 		TTS: []TTSConfig{
 			{ID: "tts1", Secret: "groq.api_key"},
@@ -48,7 +48,7 @@ func TestReflectIgnoresEmptySecrets(t *testing.T) {
 	// secrets list, preventing spurious missing-secret warnings.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{BotSecret: ""}}},
+			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram",BotSecret: ""}}},
 		},
 		TTS: []TTSConfig{
 			{ID: "tts1", Secret: ""},
@@ -68,7 +68,7 @@ func TestConventionTelegramBot(t *testing.T) {
 	// a "telegram.<bot_name>" convention secret reference with AgentID and Platform set.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot"}}},
+			{ID: "scout", Platforms: []PlatformConfig{{ID: "telegram",Bot: "scout_bot"}}},
 		},
 	}
 
@@ -87,7 +87,7 @@ func TestConventionTelegramBotWithOverride(t *testing.T) {
 	// not produced; only the explicit override key is reported.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "scout", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{Bot: "scout_bot", BotSecret: "custom.token"}}},
+			{ID: "scout", Platforms: []PlatformConfig{{ID: "telegram",Bot: "scout_bot", BotSecret: "custom.token"}}},
 		},
 	}
 
@@ -100,7 +100,7 @@ func TestConventionDiscordBot(t *testing.T) {
 	// Proves that discord bot convention refs have AgentID and Platform set.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "fotini", Platforms: &PlatformsConfig{Discord: &DiscordPlatformConfig{Bot: "fotini_bot"}}},
+			{ID: "fotini", Platforms: []PlatformConfig{{ID: "discord",Bot: "fotini_bot"}}},
 		},
 	}
 
@@ -115,16 +115,14 @@ func TestConventionDiscordBot(t *testing.T) {
 }
 
 func TestConventionFacetBots(t *testing.T) {
-	// Proves that both per-agent and global [telegram] facet_bots entries
+	// Proves that both per-agent and global [[platforms]] facet_bots entries
 	// produce "telegram.<name>" convention secret references. Per-agent facet
 	// bots have AgentID set; global ones have empty AgentID.
 	cfg := Config{
 		Agents: []AgentConfig{
-			{ID: "a1", Platforms: &PlatformsConfig{Telegram: &TelegramPlatformConfig{FacetBots: []string{"extra1"}}}},
+			{ID: "a1", Platforms: []PlatformConfig{{ID: "telegram",FacetBots: []string{"extra1"}}}},
 		},
-		Telegram: TelegramConfig{
-			FacetBots: []string{"shared1", "shared2"},
-		},
+		Platforms: []PlatformConfig{{ID: "telegram", FacetBots: []string{"shared1", "shared2"}}},
 	}
 
 	refs := RequiredSecrets(&cfg)
@@ -194,7 +192,7 @@ func TestConventionBraveSearch(t *testing.T) {
 	t.Run("explicit brave", func(t *testing.T) {
 		cfg := Config{
 			Agents: []AgentConfig{
-				{ID: "a1", SearchProvider: "brave"},
+				{ID: "a1", Tools: AgentToolsOverride{ToolConfig: ToolConfig{SearchProvider: Ptr[string]("brave")}}},
 			},
 		}
 		assertHasKey(t, RequiredSecrets(&cfg), "brave.api_key")
@@ -205,7 +203,7 @@ func TestConventionBraveSearch(t *testing.T) {
 			Agents: []AgentConfig{
 				{ID: "a1"},
 			},
-			Tools: ToolsConfig{SearchProvider: "brave"},
+			Tools: ToolsConfig{ToolConfig: ToolConfig{SearchProvider: Ptr[string]("brave")}},
 		}
 		assertHasKey(t, RequiredSecrets(&cfg), "brave.api_key")
 	})
@@ -213,7 +211,7 @@ func TestConventionBraveSearch(t *testing.T) {
 	t.Run("anthropic search — no brave key needed", func(t *testing.T) {
 		cfg := Config{
 			Agents: []AgentConfig{
-				{ID: "a1", SearchProvider: "anthropic"},
+				{ID: "a1", Tools: AgentToolsOverride{ToolConfig: ToolConfig{SearchProvider: Ptr[string]("anthropic")}}},
 			},
 		}
 		assertMissingKey(t, RequiredSecrets(&cfg), "brave.api_key")

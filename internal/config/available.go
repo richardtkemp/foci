@@ -21,72 +21,76 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	var opts []availableOption
 
 	// Agent fields
-	if len(agent.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
+	if len(agent.Defaults.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
-	if agent.BranchOrientationFacetPrompt == "" && cfg.Sessions.BranchOrientationFacetPrompt == "" {
+	if agent.Sessions.BranchOrientationFacetPrompt == nil && cfg.Sessions.BranchOrientationFacetPrompt == nil {
 		opts = append(opts, availableOption{"agent", "branch_orientation_facet_prompt", "\"\"", "prompt file for user-attached facet branches"})
 	}
-	if agent.BranchOrientationHeadlessPrompt == "" && cfg.Sessions.BranchOrientationHeadlessPrompt == "" {
+	if agent.Sessions.BranchOrientationHeadlessPrompt == nil && cfg.Sessions.BranchOrientationHeadlessPrompt == nil {
 		opts = append(opts, availableOption{"agent", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
 	}
-	tg := agent.GetTelegramPlatform()
+	tg := agent.Platform("telegram")
 	if tg == nil || tg.Bot == "" {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "bot", "(agent ID)", "bot name; token via \"telegram.<bot>\" secret"})
 	}
 	if tg == nil || len(tg.FacetBots) == 0 {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "facet_bots", "[]", "additional bot names for facet"})
 	}
-	if agent.TTSRate == 0 {
+	if agent.Defaults.TTSRate == nil {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
 	}
 	// Only show agent override options when the global fallback isn't covering them.
-	if agent.StartupNotify == nil && !cfg.Telegram.StartupNotify {
-		opts = append(opts, availableOption{"agent", "startup_notify", "(telegram)", "send startup notification (nil = use telegram)"})
+	globalTg := cfg.Platform("telegram")
+	if agent.Defaults.StartupNotify == nil && (globalTg == nil || globalTg.StartupNotify == nil || !*globalTg.StartupNotify) {
+		opts = append(opts, availableOption{"agent", "startup_notify", "(platform)", "send startup notification (nil = use platform)"})
 	}
-	if agent.ShowToolCalls == nil && cfg.Telegram.ShowToolCalls != nil && *cfg.Telegram.ShowToolCalls == ToolCallOff {
-		opts = append(opts, availableOption{"agent", "show_tool_calls", "(telegram)", "tool call display mode: off, preview, full (nil = use telegram)"})
+	if agent.Defaults.ShowToolCalls == nil && (globalTg == nil || globalTg.ShowToolCalls == nil || *globalTg.ShowToolCalls == ToolCallOff) {
+		opts = append(opts, availableOption{"agent", "show_tool_calls", "(platform)", "tool call display mode: off, preview, full"})
 	}
-	if agent.ShowThinking == nil && cfg.Telegram.ShowThinking != nil && *cfg.Telegram.ShowThinking == ShowThinkingOff {
-		opts = append(opts, availableOption{"agent", "show_thinking", "(telegram)", "thinking display mode: off, compact, true (nil = use telegram)"})
+	if agent.Defaults.ShowThinking == nil && (globalTg == nil || globalTg.ShowThinking == nil || *globalTg.ShowThinking == ShowThinkingOff) {
+		opts = append(opts, availableOption{"agent", "show_thinking", "(platform)", "thinking display mode: off, compact, true"})
 	}
 	if tg == nil || tg.DisplayWidth == nil {
 		dw := 44
-		if cfg.Telegram.DisplayWidth != nil {
-			dw = *cfg.Telegram.DisplayWidth
+		if globalTg != nil && globalTg.DisplayWidth != nil {
+			dw = *globalTg.DisplayWidth
 		}
-		opts = append(opts, availableOption{"agent.platforms.telegram", "display_width", fmt.Sprintf("%d", dw), "display width for dividers (nil = use telegram)"})
+		opts = append(opts, availableOption{"agent.platforms.telegram", "display_width", fmt.Sprintf("%d", dw), "display width for dividers"})
 	}
-	if tg == nil || tg.TableWrapLines == nil {
+	if tg == nil || tg.Telegram == nil || tg.Telegram.TableWrapLines == nil {
 		twl := 5
-		if cfg.Telegram.TableWrapLines != nil {
-			twl = *cfg.Telegram.TableWrapLines
+		if globalTg != nil && globalTg.Telegram != nil && globalTg.Telegram.TableWrapLines != nil {
+			twl = *globalTg.Telegram.TableWrapLines
 		}
-		opts = append(opts, availableOption{"agent.platforms.telegram", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell (nil = use telegram)"})
+		opts = append(opts, availableOption{"agent.platforms.telegram", "table_wrap_lines", fmt.Sprintf("%d", twl), "max wrapped lines per table cell"})
 	}
-	if tg == nil || tg.TableStyle == nil {
+	if tg == nil || tg.Telegram == nil || tg.Telegram.TableStyle == nil {
 		ts := "pretty"
-		if cfg.Telegram.TableStyle != nil {
-			ts = *cfg.Telegram.TableStyle
+		if globalTg != nil && globalTg.Telegram != nil && globalTg.Telegram.TableStyle != nil {
+			ts = *globalTg.Telegram.TableStyle
 		}
-		opts = append(opts, availableOption{"agent.platforms.telegram", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown (nil = use telegram)"})
+		opts = append(opts, availableOption{"agent.platforms.telegram", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown"})
 	}
-	if (tg == nil || tg.ReceivedFilesDir == "") && cfg.Telegram.ReceivedFilesDir == "" {
+	hasRecvDir := tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != ""
+	globalHasRecvDir := globalTg != nil && globalTg.ReceivedFilesDir != nil && *globalTg.ReceivedFilesDir != ""
+	if !hasRecvDir && !globalHasRecvDir {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "received_files_dir", "\"\"", "save received files to this directory"})
 	}
-	if (tg == nil || len(tg.AllowedUsers) == 0) && len(cfg.Telegram.AllowedUsers) == 0 {
+	globalHasAllowed := globalTg != nil && len(globalTg.AllowedUsers) > 0
+	if (tg == nil || len(tg.AllowedUsers) == 0) && !globalHasAllowed {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
 	}
 
 	// Sessions fields
-	if cfg.Sessions.CompactionSummaryPrompt == "" {
+	if cfg.Sessions.CompactionSummaryPrompt == nil {
 		opts = append(opts, availableOption{"sessions", "compaction_summary_prompt", "\"\"", "path to summary prompt file"})
 	}
-	if cfg.Sessions.CompactionHandoffMsg == "" {
+	if cfg.Sessions.CompactionHandoffMsg == nil {
 		opts = append(opts, availableOption{"sessions", "compaction_handoff_msg", "\"\"", "handoff message after compaction"})
 	}
-	if cfg.Sessions.CompactionNotify == nil {
-		opts = append(opts, availableOption{"sessions", "compaction_notify", "true", "send Telegram notification on compaction"})
+	if cfg.Defaults.CompactionNotify == nil {
+		opts = append(opts, availableOption{"defaults", "compaction_notify", "true", "send notification on compaction"})
 	}
 	if cfg.Sessions.MaxSystemPromptFile == 0 {
 		opts = append(opts, availableOption{"sessions", "max_system_prompt_chars_file", "20000", "per-file char warning threshold"})
@@ -94,13 +98,13 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if cfg.Sessions.MaxSystemPromptTotal == 0 {
 		opts = append(opts, availableOption{"sessions", "max_system_prompt_chars_total", "80000", "total system prompt char warning threshold"})
 	}
-	if cfg.Sessions.CompactionPreserveMessages == 0 {
+	if cfg.Sessions.CompactionPreserveMessages == nil {
 		opts = append(opts, availableOption{"sessions", "compaction_preserve_messages", "0", "preserve last N messages through compaction"})
 	}
-	if cfg.Sessions.BranchOrientationFacetPrompt == "" {
+	if cfg.Sessions.BranchOrientationFacetPrompt == nil {
 		opts = append(opts, availableOption{"sessions", "branch_orientation_facet_prompt", "\"\"", "prompt file for user-attached facet branches"})
 	}
-	if cfg.Sessions.BranchOrientationHeadlessPrompt == "" {
+	if cfg.Sessions.BranchOrientationHeadlessPrompt == nil {
 		opts = append(opts, availableOption{"sessions", "branch_orientation_headless_prompt", "\"\"", "prompt file for headless branches (cron, spawn, keepalive)"})
 	}
 
@@ -109,9 +113,9 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"memory", "reindex_debounce", "\"0s\"", "delay before reindex"})
 	}
 
-	// Logging fields
-	if !cfg.Logging.MessagesInLog {
-		opts = append(opts, availableOption{"logging", "messages_in_log", "false", "log user message content to event log"})
+	// Debug fields
+	if !DerefBool(cfg.Debug.MessagesInLog) {
+		opts = append(opts, availableOption{"debug", "messages_in_log", "false", "log user message content to event log"})
 	}
 	if !cfg.Logging.FullPayload {
 		opts = append(opts, availableOption{"logging", "full_payload", "false", "write full API payloads to file"})
@@ -138,9 +142,10 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		opts = append(opts, availableOption{"skills", "dir", "\"\"", "shared skills directory (default: $home/shared/skills/)"})
 	}
 
-	// Usage warnings
-	if len(cfg.ManaWarnings.Thresholds) == 0 && len(agent.UsageWarnings.Thresholds) == 0 {
-		opts = append(opts, availableOption{"usage_warnings", "thresholds", "[]", "mana percentages to warn at"})
+	// Mana warnings
+	mc := Merge(agent.Mana, cfg.Mana)
+	if len(mc.Thresholds) == 0 {
+		opts = append(opts, availableOption{"mana", "thresholds", "[]", "mana percentages to warn at"})
 	}
 
 	if len(opts) == 0 {

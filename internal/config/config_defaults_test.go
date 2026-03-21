@@ -24,6 +24,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
+[agents.defaults]
 max_tool_loops = 50
 max_output_tokens = 16384
 
@@ -31,11 +32,14 @@ max_output_tokens = 16384
 http_timeout = "180s"
 usage_api_timeout = "15s"
 
-[telegram]
+[[platforms]]
+id = "telegram"
 message_queue_size = 128
+[platforms.telegram]
 long_poll_timeout = "70s"
 
-[discord]
+[[platforms]]
+id = "discord"
 message_queue_size = 32
 facet_session_ttl = "30m"
 
@@ -63,11 +67,11 @@ web_search_timeout = "20s"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].MaxToolLoops != 50 {
-		t.Errorf("Agent.MaxToolLoops = %d, want 50", cfg.Agents[0].MaxToolLoops)
+	if DerefInt(cfg.Agents[0].Defaults.MaxToolLoops) != 50 {
+		t.Errorf("Agent.Defaults.MaxToolLoops = %d, want 50", cfg.Agents[0].Defaults.MaxToolLoops)
 	}
-	if cfg.Agents[0].MaxOutputTokens != 16384 {
-		t.Errorf("Agent.MaxOutputTokens = %d, want 16384", cfg.Agents[0].MaxOutputTokens)
+	if DerefInt(cfg.Agents[0].Defaults.MaxOutputTokens) != 16384 {
+		t.Errorf("Agent.Defaults.MaxOutputTokens = %d, want 16384", cfg.Agents[0].Defaults.MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "180s" {
 		t.Errorf("Anthropic.HTTPTimeout = %q, want 180s", cfg.Anthropic.HTTPTimeout)
@@ -75,17 +79,25 @@ web_search_timeout = "20s"
 	if cfg.Anthropic.UsageAPITimeout != "15s" {
 		t.Errorf("Anthropic.UsageAPITimeout = %q, want 15s", cfg.Anthropic.UsageAPITimeout)
 	}
-	if cfg.Telegram.MessageQueueSize != 128 {
-		t.Errorf("Telegram.MessageQueueSize = %d, want 128", cfg.Telegram.MessageQueueSize)
+	tgPlat := cfg.Platform("telegram")
+	if tgPlat == nil {
+		t.Fatal("Platform(telegram) = nil")
 	}
-	if cfg.Telegram.LongPollTimeout != "70s" {
-		t.Errorf("Telegram.LongPollTimeout = %q, want 70s", cfg.Telegram.LongPollTimeout)
+	if tgPlat.MessageQueueSize != 128 {
+		t.Errorf("Platform(telegram).MessageQueueSize = %d, want 128", tgPlat.MessageQueueSize)
 	}
-	if cfg.Discord.MessageQueueSize != 32 {
-		t.Errorf("Discord.MessageQueueSize = %d, want 32", cfg.Discord.MessageQueueSize)
+	if tgPlat.Telegram == nil || tgPlat.Telegram.LongPollTimeout != "70s" {
+		t.Errorf("Platform(telegram).LongPollTimeout = %v, want 70s", tgPlat.Telegram)
 	}
-	if cfg.Discord.FacetSessionTTL != "30m" {
-		t.Errorf("Discord.FacetSessionTTL = %q, want 30m", cfg.Discord.FacetSessionTTL)
+	dcPlat := cfg.Platform("discord")
+	if dcPlat == nil {
+		t.Fatal("Platform(discord) = nil")
+	}
+	if dcPlat.MessageQueueSize != 32 {
+		t.Errorf("Platform(discord).MessageQueueSize = %d, want 32", dcPlat.MessageQueueSize)
+	}
+	if dcPlat.FacetSessionTTL != "30m" {
+		t.Errorf("Platform(discord).FacetSessionTTL = %q, want 30m", dcPlat.FacetSessionTTL)
 	}
 	if cfg.HTTP.GracefulShutdownTimeout != "10s" {
 		t.Errorf("HTTP.GracefulShutdownTimeout = %q, want 10s", cfg.HTTP.GracefulShutdownTimeout)
@@ -99,7 +111,7 @@ web_search_timeout = "20s"
 	if cfg.Tools.ExecDefaultTimeout != 60 {
 		t.Errorf("Tools.ExecDefaultTimeout = %d, want 60", cfg.Tools.ExecDefaultTimeout)
 	}
-	if cfg.Tools.MaxSummaryChars != 500000 {
+	if DerefInt(cfg.Tools.MaxSummaryChars) != 500000 {
 		t.Errorf("Tools.MaxSummaryChars = %d, want 500000", cfg.Tools.MaxSummaryChars)
 	}
 	if cfg.Tools.TmuxCommandTimeout != "10s" {
@@ -136,11 +148,12 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Agents[0].MaxToolLoops != 25 {
-		t.Errorf("default Agent.MaxToolLoops = %d, want 25", cfg.Agents[0].MaxToolLoops)
+	// MaxToolLoops and MaxOutputTokens are nil on agent when unset — defaults resolve at use time
+	if cfg.Agents[0].Defaults.MaxToolLoops != nil {
+		t.Errorf("default Agent.Defaults.MaxToolLoops should be nil (use-time resolution), got %v", cfg.Agents[0].Defaults.MaxToolLoops)
 	}
-	if cfg.Agents[0].MaxOutputTokens != 16384 {
-		t.Errorf("default Agent.MaxOutputTokens = %d, want 16384", cfg.Agents[0].MaxOutputTokens)
+	if cfg.Agents[0].Defaults.MaxOutputTokens != nil {
+		t.Errorf("default Agent.Defaults.MaxOutputTokens should be nil (use-time resolution), got %v", cfg.Agents[0].Defaults.MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "600s" {
 		t.Errorf("default Anthropic.HTTPTimeout = %q, want 600s", cfg.Anthropic.HTTPTimeout)
@@ -148,30 +161,9 @@ id = "test"
 	if cfg.Anthropic.UsageAPITimeout != "10s" {
 		t.Errorf("default Anthropic.UsageAPITimeout = %q, want 10s", cfg.Anthropic.UsageAPITimeout)
 	}
-	if cfg.Telegram.MessageQueueSize != 64 {
-		t.Errorf("default Telegram.MessageQueueSize = %d, want 64", cfg.Telegram.MessageQueueSize)
-	}
-	if cfg.Telegram.LongPollTimeout != "65s" {
-		t.Errorf("default Telegram.LongPollTimeout = %q, want 65s", cfg.Telegram.LongPollTimeout)
-	}
-	if cfg.Discord.MessageQueueSize != 64 {
-		t.Errorf("default Discord.MessageQueueSize = %d, want 64", cfg.Discord.MessageQueueSize)
-	}
-	if cfg.Discord.FacetSessionTTL != "60m" {
-		t.Errorf("default Discord.FacetSessionTTL = %q, want 60m", cfg.Discord.FacetSessionTTL)
-	}
-	if cfg.Discord.StreamUpdateInterval != "1200ms" {
-		t.Errorf("default Discord.StreamUpdateInterval = %q, want 1200ms", cfg.Discord.StreamUpdateInterval)
-	}
-	if !cfg.Discord.RequireMention {
-		t.Error("default Discord.RequireMention should be true")
-	}
-	if !cfg.Discord.AutoThread {
-		t.Error("default Discord.AutoThread should be true")
-	}
-	if !cfg.Discord.StartupNotify {
-		t.Error("default Discord.StartupNotify should be true")
-	}
+	// Platform defaults (message_queue_size, long_poll_timeout, etc.) are now
+	// provider-driven via ApplyProviderDefaults, not hardcoded in Load().
+	// They are tested in the provider packages.
 	if cfg.HTTP.GracefulShutdownTimeout != "30s" {
 		t.Errorf("default HTTP.GracefulShutdownTimeout = %q, want 30s", cfg.HTTP.GracefulShutdownTimeout)
 	}
@@ -184,8 +176,8 @@ id = "test"
 	if cfg.Tools.ExecDefaultTimeout != 30 {
 		t.Errorf("default Tools.ExecDefaultTimeout = %d, want 30", cfg.Tools.ExecDefaultTimeout)
 	}
-	if cfg.Tools.MaxSummaryChars != 300000 {
-		t.Errorf("default Tools.MaxSummaryChars = %d, want 300000", cfg.Tools.MaxSummaryChars)
+	if cfg.Tools.MaxSummaryChars != nil {
+		t.Errorf("default Tools.MaxSummaryChars should be nil (code default at use time), got %v", cfg.Tools.MaxSummaryChars)
 	}
 	if cfg.Tools.TmuxCommandTimeout != "5s" {
 		t.Errorf("default Tools.TmuxCommandTimeout = %q, want 5s", cfg.Tools.TmuxCommandTimeout)
@@ -220,6 +212,9 @@ duplicate_messages = true
 inject_agent_warnings = true
 system_files = ["A.md", "B.md"]
 
+[sessions]
+compaction_effort = "low"
+
 [[agents]]
 id = "bare"
 
@@ -232,33 +227,39 @@ id = "override"
 		t.Fatalf("Load: %v", err)
 	}
 
+	// Bare agent has nil fields — values resolve via Merge with defaults at use time.
 	bare := cfg.Agents[0]
-	if bare.MaxToolLoops != 50 {
-		t.Errorf("bare MaxToolLoops = %d", bare.MaxToolLoops)
-	}
-	if bare.MaxOutputTokens != 16384 {
-		t.Errorf("bare MaxOutputTokens = %d", bare.MaxOutputTokens)
-	}
-	if bare.NudgeDefaultBraindeadThreshold != 20 {
-		t.Errorf("bare NudgeDefaultBraindeadThreshold = %d", bare.NudgeDefaultBraindeadThreshold)
-	}
-	if bare.NudgeDefaultBraindeadPrompt != "watch it" {
-		t.Errorf("bare NudgeDefaultBraindeadPrompt = %q", bare.NudgeDefaultBraindeadPrompt)
-	}
-	if !bare.DuplicateMessages {
-		t.Error("bare DuplicateMessages should be true")
-	}
-	if bare.InjectAgentWarnings != InjectionAll {
-		t.Errorf("bare InjectAgentWarnings = %q, want %q", bare.InjectAgentWarnings, InjectionAll)
-	}
-	if len(bare.SystemFiles) != 2 || bare.SystemFiles[0] != "A.md" {
-		t.Errorf("bare SystemFiles = %v", bare.SystemFiles)
+	if bare.Defaults.MaxToolLoops != nil {
+		t.Errorf("bare Defaults.MaxToolLoops should be nil, got %v", bare.Defaults.MaxToolLoops)
 	}
 
-	// Override agent inherits defaults for fields it didn't set
-	override := cfg.Agents[1]
-	if override.MaxToolLoops != 50 {
-		t.Errorf("override MaxToolLoops = %d, want 50 (from defaults)", override.MaxToolLoops)
+	// Verify defaults config was parsed correctly
+	if DerefInt(cfg.Defaults.MaxToolLoops) != 50 {
+		t.Errorf("Defaults.MaxToolLoops = %v, want 50", cfg.Defaults.MaxToolLoops)
+	}
+	if DerefInt(cfg.Defaults.MaxOutputTokens) != 16384 {
+		t.Errorf("Defaults.MaxOutputTokens = %v, want 16384", cfg.Defaults.MaxOutputTokens)
+	}
+	if DerefInt(cfg.Defaults.NudgeDefaultBraindeadThreshold) != 20 {
+		t.Errorf("Defaults.NudgeDefaultBraindeadThreshold = %v, want 20", cfg.Defaults.NudgeDefaultBraindeadThreshold)
+	}
+	if DerefStr(cfg.Defaults.NudgeDefaultBraindeadPrompt) != "watch it" {
+		t.Errorf("Defaults.NudgeDefaultBraindeadPrompt = %v", cfg.Defaults.NudgeDefaultBraindeadPrompt)
+	}
+	if !DerefBool(cfg.Defaults.DuplicateMessages) {
+		t.Error("Defaults.DuplicateMessages should be true")
+	}
+	if cfg.Defaults.InjectAgentWarnings == nil || *cfg.Defaults.InjectAgentWarnings != InjectionAll {
+		t.Errorf("Defaults.InjectAgentWarnings = %v, want %q", cfg.Defaults.InjectAgentWarnings, InjectionAll)
+	}
+	if len(cfg.Defaults.SystemFiles) != 2 || cfg.Defaults.SystemFiles[0] != "A.md" {
+		t.Errorf("Defaults.SystemFiles = %v", cfg.Defaults.SystemFiles)
+	}
+
+	// Merge resolves bare agent fields from defaults
+	al := Merge(bare.Defaults.AgentLoopConfig, cfg.Defaults.AgentLoopConfig)
+	if DerefInt(al.MaxToolLoops) != 50 {
+		t.Errorf("Merge resolved MaxToolLoops = %v, want 50", al.MaxToolLoops)
 	}
 }
 

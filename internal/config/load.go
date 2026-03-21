@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
+
 	"regexp"
 	"strings"
 	"time"
@@ -85,129 +85,50 @@ func normalizeBoolStrings(data string) string {
 }
 
 // agentDefinedFields parses TOML metadata keys to determine which fields each
-// [[agents]] array element explicitly defines. Returns a slice (one entry per
-// agent) of sets of TOML field names.
-func agentDefinedFields(md toml.MetaData) []map[string]bool {
-	var result []map[string]bool
-	var current map[string]bool
+// agentDefinedFields is no longer needed — defaults resolve at use time via Merge[T].
 
-	for _, key := range md.Keys() {
-		parts := []string(key)
-		if len(parts) == 0 || parts[0] != "agents" {
-			continue
-		}
-		if len(parts) == 1 {
-			// Start of a new [[agents]] block
-			current = make(map[string]bool)
-			result = append(result, current)
-			continue
-		}
-		if current != nil {
-			current[parts[1]] = true
-		}
+// ensureAgentPlatform ensures an agent has a platform entry for the given ID.
+// If absent, creates one with sensible defaults (bot = agent ID, received_files_dir).
+func ensureAgentPlatform(agent *AgentConfig, platformID string, _ *Config) {
+	p := agent.Platform(platformID)
+	if p == nil {
+		agent.Platforms = append(agent.Platforms, PlatformConfig{ID: platformID})
+		p = &agent.Platforms[len(agent.Platforms)-1]
 	}
-	return result
-}
-
-// platformDisplayFields is implemented by platform configs that carry display overrides.
-type platformDisplayFields interface {
-	getShowToolCalls() *ToolCallDisplay
-	setShowToolCalls(*ToolCallDisplay)
-	getShowThinking() *ShowThinking
-	setShowThinking(*ShowThinking)
-}
-
-// syncPlatformDisplayFields copies agent-level display fields (ShowToolCalls, ShowThinking)
-// to/from a platform config so both levels stay in sync.
-func syncPlatformDisplayFields(acfg *AgentConfig, pf platformDisplayFields) {
-	if pf == nil {
-		return
+	if p.Bot == "" {
+		p.Bot = agent.ID
 	}
-	// Forward: agent -> platform (so the bot inherits agent display prefs).
-	if acfg.ShowToolCalls != nil && pf.getShowToolCalls() == nil {
-		pf.setShowToolCalls(acfg.ShowToolCalls)
-	}
-	if acfg.ShowThinking != nil && pf.getShowThinking() == nil {
-		pf.setShowThinking(acfg.ShowThinking)
-	}
-	// Reverse: platform -> agent (so generic code sees platform overrides).
-	if pf.getShowToolCalls() != nil && acfg.ShowToolCalls == nil {
-		acfg.ShowToolCalls = pf.getShowToolCalls()
-	}
-	if pf.getShowThinking() != nil && acfg.ShowThinking == nil {
-		acfg.ShowThinking = pf.getShowThinking()
+	dir := filepath.Join(agent.Workspace, "received_files")
+	if p.ReceivedFilesDir == nil {
+		p.ReceivedFilesDir = &dir
 	}
 }
 
-// syncDisplayFields syncs agent-level display fields with all platform configs.
-func syncDisplayFields(acfg *AgentConfig) {
-	if acfg.Platforms == nil {
-		return
-	}
-	if acfg.Platforms.Telegram != nil {
-		syncPlatformDisplayFields(acfg, acfg.Platforms.Telegram)
-	}
-	if acfg.Platforms.Discord != nil {
-		syncPlatformDisplayFields(acfg, acfg.Platforms.Discord)
-	}
-}
+// PlatformDefaulter returns the default PlatformConfig for a platform ID.
+// Used as a callback from main.go to avoid config importing platform.
+type PlatformDefaulter func(id string) *PlatformConfig
 
-// applyStructToAgent copies fields from a source struct to agent where the
-// agent field is zero-value and was not explicitly set in the TOML file.
-// Fields are matched by TOML tag name between the source and AgentConfig.
-func applyStructToAgent(agent *AgentConfig, source any, defined map[string]bool) {
-	dv := reflect.ValueOf(source).Elem()
-	dt := dv.Type()
-	av := reflect.ValueOf(agent).Elem()
-	at := av.Type()
-
-	// Build AgentConfig field index by TOML tag
-	agentFieldByTag := make(map[string]int, at.NumField())
-	for i := 0; i < at.NumField(); i++ {
-		tag := at.Field(i).Tag.Get("toml")
-		if tag != "" && tag != "-" {
-			agentFieldByTag[tag] = i
+// ApplyProviderDefaults applies provider-driven defaults to all platform configs.
+// Called from main.go after both config and platform packages are initialised.
+func ApplyProviderDefaults(cfg *Config, getDefaults PlatformDefaulter) {
+	for i := range cfg.Platforms {
+		if defaults := getDefaults(cfg.Platforms[i].ID); defaults != nil {
+			cfg.Platforms[i].ApplyDefaults(*defaults)
 		}
 	}
-
-	for i := 0; i < dt.NumField(); i++ {
-		tag := dt.Field(i).Tag.Get("toml")
-		if tag == "" || tag == "-" {
-			continue
+	for i := range cfg.Agents {
+		for j := range cfg.Agents[i].Platforms {
+			agentPlat := &cfg.Agents[i].Platforms[j]
+			// Merge: agent platform < global platform
+			if globalPlat := cfg.Platform(agentPlat.ID); globalPlat != nil {
+				agentPlat.ApplyDefaults(*globalPlat)
+			}
+			// Then apply provider defaults for anything still unset
+			if defaults := getDefaults(agentPlat.ID); defaults != nil {
+				agentPlat.ApplyDefaults(*defaults)
+			}
 		}
-
-		ai, ok := agentFieldByTag[tag]
-		if !ok {
-			continue // source field has no matching AgentConfig field
-		}
-
-		af := av.Field(ai)
-		df := dv.Field(i)
-
-		// Skip if agent explicitly defined this field in TOML
-		if defined[tag] {
-			continue
-		}
-
-		// Skip if agent value is already non-zero
-		if !af.IsZero() {
-			continue
-		}
-
-		// Skip if default is also zero (nothing to copy)
-		if df.IsZero() {
-			continue
-		}
-
-		af.Set(df)
 	}
-}
-
-// applyDefaultsToAgent copies fields from defaults config to agent
-// where the agent field is zero-value and was not explicitly set in the TOML file.
-// Fields are matched by TOML tag name between the source and AgentConfig.
-func applyDefaultsToAgent(agent *AgentConfig, cfg *Config, defined map[string]bool) {
-	applyStructToAgent(agent, &cfg.Defaults, defined)
 }
 
 
@@ -234,81 +155,11 @@ func Load(path string) (*Config, error) {
 		cfg.DefinedKeys[strings.Join(key, ".")] = true
 	}
 
-	// Populate [defaults] section with hardcoded fallbacks.
-	// All defaults must be set BEFORE applyDefaultsToAgent so the reflection-based
-	// copier propagates them to agents automatically — no manual fallback needed.
-	setIntDefault(&cfg.Defaults.MaxOutputTokens, 16384)
-	setIntDefault(&cfg.Defaults.MaxToolLoops, 25)
-	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultBraindeadThreshold, 10, md.IsDefined("defaults", "nudge_default_braindead_threshold"))
-	setIntDefaultDefined(&cfg.Defaults.NudgeCooldown, 5, md.IsDefined("defaults", "nudge_cooldown"))
-	setIntDefaultDefined(&cfg.Defaults.NudgeMaxPerBatch, 1, md.IsDefined("defaults", "nudge_max_per_batch"))
-	setIntDefaultDefined(&cfg.Defaults.NudgePreAnswerMinTools, 2, md.IsDefined("defaults", "nudge_pre_answer_min_tools"))
-	setStringDefault(&cfg.Defaults.TurnLockWarnThreshold, "3m")
-	if cfg.Telegram.ShowToolCalls == nil {
-		v := ToolCallOff
-		cfg.Telegram.ShowToolCalls = &v
-	}
-	if cfg.Telegram.ShowThinking == nil {
-		v := ShowThinkingOff
-		cfg.Telegram.ShowThinking = &v
-	}
-	setStringDefaultDefined(&cfg.Defaults.InjectedMessageHeader, "[[ System message ]]", md.IsDefined("defaults", "injected_message_header"))
-	setBoolDefaultDefined(&cfg.Defaults.SteerMode, true, md.IsDefined("defaults", "steer_mode"))
-	setBoolDefaultDefined(&cfg.Defaults.NudgeEnable, true, md.IsDefined("defaults", "nudge_enable"))
-	setBoolDefaultDefined(&cfg.Defaults.NudgeAutoExtract, true, md.IsDefined("defaults", "nudge_auto_extract"))
-	setBoolDefaultDefined(&cfg.Defaults.NudgeDefaultEnable, true, md.IsDefined("defaults", "nudge_default_enable"))
-	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultFrequency, 50, md.IsDefined("defaults", "nudge_default_frequency"))
-	setIntDefaultDefined(&cfg.Defaults.NudgeDefaultScratchpadFrequency, 20, md.IsDefined("defaults", "nudge_default_scratchpad_frequency"))
-	setStringDefault(&cfg.Telegram.StreamUpdateInterval, "250ms")
-
-	// Discord global defaults
-	if cfg.Discord.ShowToolCalls == nil {
-		v := ToolCallOff
-		cfg.Discord.ShowToolCalls = &v
-	}
-	if cfg.Discord.ShowThinking == nil {
-		v := ShowThinkingOff
-		cfg.Discord.ShowThinking = &v
-	}
-	setStringDefault(&cfg.Discord.StreamUpdateInterval, "1200ms")
-	setStringDefault(&cfg.Discord.FacetSessionTTL, "60m")
-	setIntDefault(&cfg.Discord.MessageQueueSize, 64)
-	if cfg.Discord.DisplayWidth == nil {
-		v := 60
-		cfg.Discord.DisplayWidth = &v
-	}
-	setBoolDefaultDefined(&cfg.Discord.RequireMention, true, md.IsDefined("discord", "require_mention"))
-	setBoolDefaultDefined(&cfg.Discord.AutoThread, true, md.IsDefined("discord", "auto_thread"))
-	setBoolDefaultDefined(&cfg.Discord.StartupNotify, true, md.IsDefined("discord", "startup_notify"))
-
-	// Apply [defaults] to all agents (agent value > global default > hardcoded).
-	// Uses reflect to iterate DefaultsConfig fields and copy to matching
-	// AgentConfig fields when the agent value is zero and wasn't explicitly
-	// set in the TOML file. This means adding new fields to DefaultsConfig
-	// with matching TOML tags in AgentConfig "just works" — no new if-blocks.
-	perAgentDefined := agentDefinedFields(md)
+	// Defaults are now resolved at use time via Merge[T] — no load-time copying needed.
+	// Resolve agent path fields.
 	for i := range cfg.Agents {
-		var defined map[string]bool
-		if i < len(perAgentDefined) {
-			defined = perAgentDefined[i]
-		}
-		applyDefaultsToAgent(&cfg.Agents[i], &cfg, defined)
-
-		if cfg.Agents[i].BranchOrientationFacetPrompt != "" {
-			cfg.Agents[i].BranchOrientationFacetPrompt = ResolvePath(cfg.Agents[i].BranchOrientationFacetPrompt)
-		}
-		if cfg.Agents[i].BranchOrientationHeadlessPrompt != "" {
-			cfg.Agents[i].BranchOrientationHeadlessPrompt = ResolvePath(cfg.Agents[i].BranchOrientationHeadlessPrompt)
-		}
-
-		// =========================================================================
-		// BACKWARD COMPATIBILITY: Migrate deprecated telegram fields to Platforms
-		//
-		// This migration code is TEMPORARY. Once all callers read from
-		// Platforms.Telegram, the deprecated fields on AgentConfig and this
-		// migration code will be removed.
-		// =========================================================================
-		syncDisplayFields(&cfg.Agents[i])
+		ResolvePathPtr(cfg.Agents[i].Sessions.BranchOrientationFacetPrompt)
+		ResolvePathPtr(cfg.Agents[i].Sessions.BranchOrientationHeadlessPrompt)
 	}
 
 	// Endpoint defaults — only create built-in defaults for endpoints that
@@ -349,18 +200,13 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	setFloatDefault(&cfg.Sessions.CompactionThreshold, 0.8)
+	// CompactionConfig fields are now pointer-typed in CompactionConfig.
+	// Defaults are resolved at use time via Merge + code defaults.
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
-	setIntDefaultDefined(&cfg.Sessions.CompactionPreserveMessages, 25, md.IsDefined("sessions", "compaction_preserve_messages"))
-	setBoolDefaultDefined(&cfg.Sessions.AutocompactBeforeManaRefresh, true, md.IsDefined("sessions", "autocompact_before_mana_refresh"))
-	setStringDefault(&cfg.Sessions.AutocompactBeforeManaRefreshThreshold, "5m")
-	setFloatDefault(&cfg.Sessions.AutocompactBeforeManaRefreshFactor, 0.5)
-	// AutocompactBeforeManaRefreshPreserve: nil = use percentage-based default
-	// AutocompactBeforeManaRefreshPreservePct: nil = default 0.5 (50% of messages)
 
 	// Apply debug.log_api_key_suffix to the log package global.
-	log.DebugLogKeySuffix = cfg.Debug.LogAPIKeySuffix
+	log.DebugLogKeySuffix = DerefBool(cfg.Debug.LogAPIKeySuffix)
 
 	setStringDefault(&cfg.Sessions.ArchiveAfter, "24h")
 	setIntDefault(&cfg.HTTP.Port, 18791)
@@ -403,18 +249,36 @@ func Load(path string) (*Config, error) {
 
 	setStringDefault(&cfg.Cache.Strategy, "auto")
 	setStringDefault(&cfg.Cache.TTL, "1h")
-	setStringDefault(&cfg.ManaWarnings.Name, "mana")
-	setIntDefault(&cfg.Tools.MaxResultChars, 15000)
+	if cfg.Mana.Name == nil {
+		cfg.Mana.Name = Ptr[string]("mana")
+	}
+	if cfg.Mana.InvestInterval == nil {
+		cfg.Mana.InvestInterval = Ptr[string]("30m")
+	}
+	// SummaryConfig fields (MaxResultChars etc.) are now pointers — defaults at use time via Merge
 	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci/tool-results")
 	setIntDefault(&cfg.Tools.TmuxCols, 300)
 	setIntDefault(&cfg.Tools.TmuxRows, 30)
-	setIntDefaultDefined(&cfg.Tools.ExecAutoBackground, 10, md.IsDefined("tools", "exec_auto_background"))
-	setBoolDefaultDefined(&cfg.Tools.AutoSummarise, true, md.IsDefined("tools", "auto_summarise"))
-	setBoolDefaultDefined(&cfg.Tools.TmuxAutopilot, true, md.IsDefined("tools", "tmux_autopilot"))
-	setStringDefault(&cfg.Tools.TmuxWatchThreshold, "30s")
-	setStringDefault(&cfg.Tools.TmuxSessionTTL, "24h")
-	setStringDefault(&cfg.Tools.SearchProvider, "brave")
-	setStringDefault(&cfg.Tools.FetchProvider, "builtin")
+	// ToolConfig fields are pointers — nil means "not set" (no IsDefined needed).
+	if cfg.Tools.ExecAutoBackground == nil {
+		cfg.Tools.ExecAutoBackground = Ptr[int](10)
+	}
+	// AutoSummarise now in SummaryConfig — default at use time
+	if cfg.Tools.TmuxAutopilot == nil {
+		cfg.Tools.TmuxAutopilot = Ptr[bool](true)
+	}
+	if cfg.Tools.TmuxWatchThreshold == nil {
+		cfg.Tools.TmuxWatchThreshold = Ptr[string]("30s")
+	}
+	if cfg.Tools.TmuxSessionTTL == nil {
+		cfg.Tools.TmuxSessionTTL = Ptr[string]("24h")
+	}
+	if cfg.Tools.SearchProvider == nil {
+		cfg.Tools.SearchProvider = Ptr[string]("brave")
+	}
+	if cfg.Tools.FetchProvider == nil {
+		cfg.Tools.FetchProvider = Ptr[string]("builtin")
+	}
 	if len(cfg.Defaults.StopAliases) == 0 {
 		cfg.Defaults.StopAliases = []string{"stop", "wait"}
 	}
@@ -445,47 +309,46 @@ func Load(path string) (*Config, error) {
 
 	// Tools defaults
 	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)
-	setIntDefault(&cfg.Tools.MaxSummaryChars, 300000)
+	// MaxSummaryChars now in SummaryConfig — default at use time
 	setStringDefault(&cfg.Tools.TmuxCommandTimeout, "5s")
 	setStringDefault(&cfg.Tools.WebFetchTimeout, "30s")
 	setIntDefault(&cfg.Tools.WebFetchMaxBytes, 1048576) // 1MB
 	setStringDefault(&cfg.Tools.WebSearchTimeout, "15s")
-	setIntDefault(&cfg.Tools.MaxConcurrentSpawns, 3)
-	setIntDefault(&cfg.Tools.ExploreMaxDepth, 100)
-	setInt64Default(&cfg.Tools.MaxUploadFileSize, 50*1024*1024) // 50MB
+	if cfg.Tools.MaxConcurrentSpawns == nil {
+		cfg.Tools.MaxConcurrentSpawns = Ptr[int](3)
+	}
+	if cfg.Tools.ExploreMaxDepth == nil {
+		cfg.Tools.ExploreMaxDepth = Ptr[int](100)
+	}
+	if cfg.Tools.MaxUploadFileSize == nil {
+		cfg.Tools.MaxUploadFileSize = Ptr[int64](50 * 1024 * 1024) // 50MB
+	}
 	setIntDefault(&cfg.Tools.ToolCallPreviewChars, 450)
 	setStringDefault(&cfg.Tools.TmuxMemoryCheckInterval, "5m")
 	setStringDefault(&cfg.Tools.TmuxMemoryWarn, "10%")
 	setStringDefault(&cfg.Tools.TmuxMemoryCritical, "20%")
 	setStringDefault(&cfg.Tools.TmuxMemoryKill, "30%")
-	setIntDefault(&cfg.Tools.SummaryContextTurns, 5)
-	setIntDefault(&cfg.Tools.SummaryContextChars, 6000)
-	setIntDefault(&cfg.Tools.MaxSummaryInputChars, 100000)
-	setIntDefault(&cfg.Tools.MaxImagePixels, 1920*1080) // 2,073,600 pixels
+	// SummaryContextTurns, SummaryContextChars, MaxSummaryInputChars, MaxImagePixels
+	// now in SummaryConfig — defaults at use time
 
-	// Browser defaults
-	setBoolDefaultDefined(&cfg.Tools.Browser.Enabled, true, md.IsDefined("tools", "browser", "enabled"))
-	setBoolDefaultDefined(&cfg.Tools.Browser.Headless, true, md.IsDefined("tools", "browser", "headless"))
-	setIntDefault(&cfg.Tools.Browser.TimeoutSec, 30)
-	setBoolDefaultDefined(&cfg.Tools.Browser.Incognito, true, md.IsDefined("tools", "browser", "incognito"))
-	setFloatDefault(&cfg.Tools.Browser.DOMStableSec, 1.0)
-	setFloatDefault(&cfg.Tools.Browser.DOMStableDiff, 0.2)
-
-	// Telegram defaults
-	setIntDefault(&cfg.Telegram.MessageQueueSize, 64)
-	setStringDefault(&cfg.Telegram.LongPollTimeout, "65s")
-	setStringDefault(&cfg.Telegram.FacetSessionTTL, "60m")
-	if cfg.Telegram.DisplayWidth == nil {
-		v := 44
-		cfg.Telegram.DisplayWidth = &v
+	// Browser defaults (BrowserConfig is now top-level with all-pointer fields)
+	if cfg.Browser.Enabled == nil {
+		cfg.Browser.Enabled = Ptr[bool](true)
 	}
-	if cfg.Telegram.TableWrapLines == nil {
-		v := 5
-		cfg.Telegram.TableWrapLines = &v
+	if cfg.Browser.Headless == nil {
+		cfg.Browser.Headless = Ptr[bool](true)
 	}
-	if cfg.Telegram.TableStyle == nil {
-		v := "pretty"
-		cfg.Telegram.TableStyle = &v
+	if cfg.Browser.TimeoutSec == nil {
+		cfg.Browser.TimeoutSec = Ptr[int](30)
+	}
+	if cfg.Browser.Incognito == nil {
+		cfg.Browser.Incognito = Ptr[bool](true)
+	}
+	if cfg.Browser.DOMStableSec == nil {
+		cfg.Browser.DOMStableSec = Ptr[float64](1.0)
+	}
+	if cfg.Browser.DOMStableDiff == nil {
+		cfg.Browser.DOMStableDiff = Ptr[float64](0.2)
 	}
 
 	// HTTP defaults
@@ -494,29 +357,26 @@ func Load(path string) (*Config, error) {
 	// Bool defaults: default to true unless explicitly set to false in config.
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
-	setBoolDefaultDefined(&cfg.Defaults.EnableStopAliases, true, md.IsDefined("defaults", "enable_stop_aliases"))
-	setBoolDefaultDefined(&cfg.Telegram.StartupNotify, true, md.IsDefined("telegram", "startup_notify"))
+	// EnableStopAliases now in BehaviorConfig — code default at use time
 
-	// Keepalive/background defaults
-	setStringDefault(&cfg.Keepalive.Interval, "55m")
-	// Keepalive.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
-	setStringDefault(&cfg.Background.Interval, "15m")
-	// Background.Prompt: empty = use embedded default (via prompts.ResolvePrompt)
-
-	// Mana defaults
-	setStringDefault(&cfg.Mana.InvestInterval, "30m")
+	// Keepalive/background defaults (pointer — resolved via Merge at use time)
+	if cfg.Keepalive.Interval == nil {
+		cfg.Keepalive.Interval = Ptr[string]("55m")
+	}
+	if cfg.Background.Interval == nil {
+		cfg.Background.Interval = Ptr[string]("15m")
+	}
 
 	// Memory formation defaults
-	setStringDefault(&cfg.MemoryFormation.Interval, "1h")
-	setStringDefault(&cfg.MemoryFormation.ConsolidationInterval, "20h")
+	if cfg.MemoryFormation.Interval == nil {
+		cfg.MemoryFormation.Interval = Ptr[string]("1h")
+	}
+	if cfg.MemoryFormation.ConsolidationInterval == nil {
+		cfg.MemoryFormation.ConsolidationInterval = Ptr[string]("20h")
+	}
 	// IntervalEnabled/ConsolidationEnabled/SessionEndEnabled: nil = true (resolved at runtime)
 
-	// Per-agent keepalive/background/memory-formation: inherit from global.
-	for i := range cfg.Agents {
-		cfg.Agents[i].Keepalive.MergeDefaults(cfg.Keepalive)
-		cfg.Agents[i].Background.MergeDefaults(cfg.Background)
-		cfg.Agents[i].MemoryFormation.MergeDefaults(cfg.MemoryFormation)
-	}
+	// Keepalive/background/memory-formation: resolved via Merge at use time (no load-time copying)
 
 	// Apply convention-based defaults before path resolution.
 	for i := range cfg.Agents {
@@ -525,33 +385,13 @@ func Load(path string) (*Config, error) {
 			home, _ := os.UserHomeDir()
 			cfg.Agents[i].Workspace = filepath.Join(home, cfg.Agents[i].ID)
 		}
-		// Telegram defaults: bot name = agent ID, received_files_dir = $workspace/received_files.
-		// Initialize Platforms.Telegram if not already set (every agent gets one by default).
-		if cfg.Agents[i].Platforms == nil {
-			cfg.Agents[i].Platforms = &PlatformsConfig{}
-		}
-		if cfg.Agents[i].Platforms.Telegram == nil {
-			cfg.Agents[i].Platforms.Telegram = &TelegramPlatformConfig{}
-		}
-		tg := cfg.Agents[i].Platforms.Telegram
-		if tg.Bot == "" {
-			tg.Bot = cfg.Agents[i].ID
-		}
-		if tg.ReceivedFilesDir == "" {
-			tg.ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
-		}
-		// Discord defaults: initialize Platforms.Discord only if discord is configured globally.
-		if len(cfg.Discord.AllowedUsers) > 0 {
-			if cfg.Agents[i].Platforms.Discord == nil {
-				cfg.Agents[i].Platforms.Discord = &DiscordPlatformConfig{}
-			}
-			dc := cfg.Agents[i].Platforms.Discord
-			if dc.Bot == "" {
-				dc.Bot = cfg.Agents[i].ID
-			}
-			if dc.ReceivedFilesDir == "" {
-				dc.ReceivedFilesDir = filepath.Join(cfg.Agents[i].Workspace, "received_files")
-			}
+		// Platform defaults: ensure each agent has platform entries for
+		// configured platforms. Bot name defaults to agent ID, received_files_dir
+		// defaults to $workspace/received_files.
+		ensureAgentPlatform(&cfg.Agents[i], "telegram", &cfg)
+		// Discord: only auto-create if discord is configured globally.
+		if p := cfg.Platform("discord"); p != nil && len(p.AllowedUsers) > 0 {
+			ensureAgentPlatform(&cfg.Agents[i], "discord", &cfg)
 		}
 
 		// Name default: capitalised ID (e.g. "clutch" → "Clutch")
@@ -583,17 +423,17 @@ func Load(path string) (*Config, error) {
 	cfg.ResolveAllPaths()
 
 	// Keepalive/background validation warnings
-	if cfg.Background.Enabled && cfg.Keepalive.Enabled {
-		bgInt, _ := time.ParseDuration(cfg.Background.Interval)
-		kaInt, _ := time.ParseDuration(cfg.Keepalive.Interval)
+	if DerefBool(cfg.Background.Enabled) && DerefBool(cfg.Keepalive.Enabled) {
+		bgInt, _ := time.ParseDuration(DerefStr(cfg.Background.Interval))
+		kaInt, _ := time.ParseDuration(DerefStr(cfg.Keepalive.Interval))
 		if bgInt > 0 && kaInt > 0 && bgInt > kaInt {
-			log.Warnf("config", "[background] interval %s > [keepalive] interval %s — keepalive resets cache timer, background work may never trigger", cfg.Background.Interval, cfg.Keepalive.Interval)
+			log.Warnf("config", "[background] interval %s > [keepalive] interval %s — keepalive resets cache timer, background work may never trigger", DerefStr(cfg.Background.Interval), DerefStr(cfg.Keepalive.Interval))
 		}
 	}
-	if cfg.Keepalive.Enabled {
-		kaInt, _ := time.ParseDuration(cfg.Keepalive.Interval)
+	if DerefBool(cfg.Keepalive.Enabled) {
+		kaInt, _ := time.ParseDuration(DerefStr(cfg.Keepalive.Interval))
 		if kaInt > time.Hour {
-			log.Warnf("config", "[keepalive] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between keepalives", cfg.Keepalive.Interval)
+			log.Warnf("config", "[keepalive] interval %s > 1h — Anthropic cache TTL is 1 hour, cache may expire between keepalives", DerefStr(cfg.Keepalive.Interval))
 		}
 	}
 

@@ -3,6 +3,9 @@ package discord
 // platformName is the platform identifier used for chat_metadata queries.
 const platformName = "discord"
 
+// PlatformName returns "discord".
+func (b *Bot) PlatformName() string { return platformName }
+
 // SessionKey returns the current session key (thread-safe).
 // For primary bots, this returns the session key for the default channel.
 // For secondary bots, this returns the override session key (set by facet).

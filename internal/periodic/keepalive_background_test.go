@@ -10,6 +10,7 @@ import (
 	"foci/internal/log"
 )
 
+
 func TestBackgroundRunningGuard(t *testing.T) {
 	// Verifies the backgroundRunning flag prevents concurrent dispatch. Calls maybeBackgroundWork
 	// twice while the first is still running and confirms only one branchFn invocation occurs.
@@ -20,8 +21,8 @@ func TestBackgroundRunningGuard(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second), // idle for 2s (> 1s interval)
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -64,8 +65,8 @@ func TestBackgroundCooldown(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -107,8 +108,8 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		lastInteraction: time.Now().Add(-5 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -145,8 +146,8 @@ func TestBackgroundNoSelfChaining(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1s",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1s"),
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {

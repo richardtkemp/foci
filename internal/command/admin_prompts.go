@@ -115,37 +115,37 @@ func buildPromptsData(cc CommandContext) PromptsData {
 
 	allPrompts := []PromptInfo{
 		resolvePromptInfo("compaction_summary",
-			resolveString(acfg.CompactionSummaryPrompt, cfg.Sessions.CompactionSummaryPrompt),
+			resolveString(derefStr(acfg.Sessions.CompactionSummaryPrompt), derefStr(cfg.Sessions.CompactionSummaryPrompt)),
 			"compaction-summary.md", prompts.CompactionSummary(), dirs),
 		resolvePromptInfo("branch_orient_facet",
-			prompts.ResolveOrientPath(acfg.BranchOrientationFacetPrompt, cfg.Sessions.BranchOrientationFacetPrompt),
+			resolveString(derefStr(acfg.Sessions.BranchOrientationFacetPrompt), derefStr(cfg.Sessions.BranchOrientationFacetPrompt)),
 			"branch-orientation-facet.md", prompts.BranchOrientationFacet(), dirs),
 		resolvePromptInfo("branch_orient_headless",
-			prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt),
+			resolveString(derefStr(acfg.Sessions.BranchOrientationHeadlessPrompt), derefStr(cfg.Sessions.BranchOrientationHeadlessPrompt)),
 			"branch-orientation-headless.md", prompts.BranchOrientationHeadless(), dirs),
 		resolvePromptInfo("keepalive",
-			acfg.Keepalive.Prompt,
+			derefStr(acfg.Keepalive.Prompt),
 			"keepalive.md", prompts.Keepalive(), dirs),
 		resolvePromptInfo("background",
-			acfg.Background.Prompt,
+			derefStr(acfg.Background.Prompt),
 			"background.md", prompts.Background(), dirs),
 		resolvePromptInfo("memory_formation",
-			acfg.MemoryFormation.IntervalPrompt,
+			derefStr(acfg.MemoryFormation.IntervalPrompt),
 			"memory-formation.md", prompts.MemoryFormation(), dirs),
 		resolvePromptInfo("memory_consolidation",
-			acfg.MemoryFormation.ConsolidationPrompt,
+			derefStr(acfg.MemoryFormation.ConsolidationPrompt),
 			"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
 		resolvePromptInfo("memory_session_end",
-			acfg.MemoryFormation.SessionEndPrompt,
+			derefStr(acfg.MemoryFormation.SessionEndPrompt),
 			"memory-formation.md", prompts.MemoryFormation(), dirs),
 	}
 
 	allPrompts = append(allPrompts,
 		inlinePromptInfo("compaction_handoff",
-			resolveString(acfg.CompactionHandoffMsg, cfg.Sessions.CompactionHandoffMsg),
+			resolveString(derefStr(acfg.Sessions.CompactionHandoffMsg), derefStr(cfg.Sessions.CompactionHandoffMsg)),
 			prompts.CompactionHandoff()),
 		inlinePromptInfo("braindead_warning",
-			acfg.NudgeDefaultBraindeadPrompt, ""),
+			derefStr(acfg.Defaults.NudgeDefaultBraindeadPrompt), ""),
 	)
 
 	embedded := map[string]string{
@@ -164,14 +164,14 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		embeddedDefault             string
 	}
 	fileDefs := []promptDef{
-		{"compaction_summary", resolveString(acfg.CompactionSummaryPrompt, cfg.Sessions.CompactionSummaryPrompt), "compaction-summary.md", prompts.CompactionSummary()},
-		{"branch_orient_facet", prompts.ResolveOrientPath(acfg.BranchOrientationFacetPrompt, cfg.Sessions.BranchOrientationFacetPrompt), "branch-orientation-facet.md", prompts.BranchOrientationFacet()},
-		{"branch_orient_headless", prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
-		{"keepalive", acfg.Keepalive.Prompt, "keepalive.md", prompts.Keepalive()},
-		{"background", acfg.Background.Prompt, "background.md", prompts.Background()},
-		{"memory_formation", acfg.MemoryFormation.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation()},
-		{"memory_consolidation", acfg.MemoryFormation.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation()},
-		{"memory_session_end", acfg.MemoryFormation.SessionEndPrompt, "memory-formation.md", prompts.MemoryFormation()},
+		{"compaction_summary", resolveString(derefStr(acfg.Sessions.CompactionSummaryPrompt), derefStr(cfg.Sessions.CompactionSummaryPrompt)), "compaction-summary.md", prompts.CompactionSummary()},
+		{"branch_orient_facet", resolveString(derefStr(acfg.Sessions.BranchOrientationFacetPrompt), derefStr(cfg.Sessions.BranchOrientationFacetPrompt)), "branch-orientation-facet.md", prompts.BranchOrientationFacet()},
+		{"branch_orient_headless", resolveString(derefStr(acfg.Sessions.BranchOrientationHeadlessPrompt), derefStr(cfg.Sessions.BranchOrientationHeadlessPrompt)), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
+		{"keepalive", derefStr(acfg.Keepalive.Prompt), "keepalive.md", prompts.Keepalive()},
+		{"background", derefStr(acfg.Background.Prompt), "background.md", prompts.Background()},
+		{"memory_formation", derefStr(acfg.MemoryFormation.IntervalPrompt), "memory-formation.md", prompts.MemoryFormation()},
+		{"memory_consolidation", derefStr(acfg.MemoryFormation.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
+		{"memory_session_end", derefStr(acfg.MemoryFormation.SessionEndPrompt), "memory-formation.md", prompts.MemoryFormation()},
 	}
 	resolvedTexts := make(map[string]string, len(fileDefs)+2)
 	defaultTexts := make(map[string]string, len(fileDefs)+2)
@@ -180,15 +180,16 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		defaultTexts[d.label] = d.embeddedDefault
 	}
 
-	handoffVal := resolveString(acfg.CompactionHandoffMsg, cfg.Sessions.CompactionHandoffMsg)
+	handoffVal := resolveString(derefStr(acfg.Sessions.CompactionHandoffMsg), derefStr(cfg.Sessions.CompactionHandoffMsg))
 	if handoffVal == "" {
 		resolvedTexts["compaction_handoff"] = prompts.CompactionHandoff()
 	} else if handoffVal != "none" {
 		resolvedTexts["compaction_handoff"] = handoffVal
 	}
 	defaultTexts["compaction_handoff"] = prompts.CompactionHandoff()
-	if acfg.NudgeDefaultBraindeadPrompt != "" && acfg.NudgeDefaultBraindeadPrompt != "none" {
-		resolvedTexts["braindead_warning"] = acfg.NudgeDefaultBraindeadPrompt
+	bdp := derefStr(acfg.Defaults.NudgeDefaultBraindeadPrompt)
+	if bdp != "" && bdp != "none" {
+		resolvedTexts["braindead_warning"] = bdp
 	}
 	defaultTexts["braindead_warning"] = ""
 
@@ -240,6 +241,14 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		ResolvedTexts:       resolvedTexts,
 		DefaultTexts:        defaultTexts,
 	}
+}
+
+// derefStr dereferences a *string, returning "" if nil.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // resolveString returns the first non-empty string.

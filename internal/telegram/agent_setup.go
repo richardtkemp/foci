@@ -94,14 +94,17 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	}
 }
 
-// resolveAllowedUsers returns the effective allowed user list for an agent.
-// Priority: per-agent platform config > global.
+// resolveAllowedUsers merges per-agent and global allowed users for Telegram.
+// Agent users are added to global users (deduplicated).
 func resolveAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
-	tg := acfg.GetTelegramPlatform()
-	if tg != nil && len(tg.AllowedUsers) > 0 {
-		return tg.AllowedUsers
+	var agentUsers, globalUsers []string
+	if p := acfg.Platform("telegram"); p != nil {
+		agentUsers = p.AllowedUsers
 	}
-	return cfg.Telegram.AllowedUsers
+	if gp := cfg.Platform("telegram"); gp != nil {
+		globalUsers = gp.AllowedUsers
+	}
+	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
 }
 
 // setupTelegramBots creates and registers Telegram bots for an agent.
@@ -109,7 +112,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	acfg := p.AgentConfig
 	cfg := p.GlobalConfig
 
-	tg := acfg.GetTelegramPlatform()
+	tg := acfg.Platform("telegram")
 	if tg == nil || tg.Bot == "" {
 		return
 	}
@@ -128,18 +131,16 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		return
 	}
 
-	// Resolve require_mention: per-agent > global (default true).
-	reqMention := cfg.Telegram.RequireMention
+	// Resolve require_mention: per-agent platform > global platform (default true).
+	reqMention := true
 	if tg.RequireMention != nil {
 		reqMention = *tg.RequireMention
 	}
 	primaryBot.requireMention = reqMention
 
-	// Resolve group_throttle: per-agent > global defaults.
-	throttleStr := cfg.Defaults.GroupThrottle
-	if acfg.GroupThrottle != "" {
-		throttleStr = acfg.GroupThrottle
-	}
+	// Resolve behavior config via Merge cascade.
+	bc := config.Merge(acfg.Defaults.BehaviorConfig, cfg.Defaults.BehaviorConfig)
+	throttleStr := config.DerefStr(bc.GroupThrottle)
 	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
 			for _, m := range msgs {
@@ -150,7 +151,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		log.Infof("telegram", "agent %q: group throttle = %v", acfg.ID, dur)
 	}
 	primaryBot.mq.SetRequireMention(reqMention)
-	primaryBot.mq.SetSteerMode(acfg.SteerMode)
+	steerMode := bc.SteerMode == nil || *bc.SteerMode // default true
+	primaryBot.mq.SetSteerMode(steerMode)
 
 	primaryBot.SetCommandContext(p.CommandContext)
 
@@ -190,10 +192,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	mgr.AddPrimary(acfg.ID, primaryBot)
 
 	// Per-agent facet bots
-	var facetBots []string
-	if len(tg.FacetBots) > 0 {
-		facetBots = tg.FacetBots
-	}
+	facetBots := tg.FacetBots
 	for _, facetName := range facetBots {
 		facetToken := config.ResolveBotToken(facetName, "", p.SecretStore)
 		if facetToken == "" {
@@ -206,8 +205,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			continue
 		}
 		ConfigureFacetBot(facetBot, FacetBotConfig{
-			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, acfg.STT, voice.MergeReplacements(cfg.Defaults.STTReplacements, acfg.STTReplacements)),
-			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, acfg.TTS, acfg.TTSRate, voice.MergeReplacements(cfg.Defaults.TTSReplacements, acfg.TTSReplacements)),
+			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Defaults.STT), voice.MergeReplacements(cfg.Defaults.STTReplacements, acfg.Defaults.STTReplacements)),
+			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Defaults.TTS), config.DerefFloat(acfg.Defaults.TTSRate), voice.MergeReplacements(cfg.Defaults.TTSReplacements, acfg.Defaults.TTSReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			ToolDetailStore: p.ToolDetailStore,
@@ -221,7 +220,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Configure session TTL for per-agent facet pool
 	if pool := mgr.Pool(acfg.ID); pool != nil {
-		ttl, _ := time.ParseDuration(cfg.Telegram.FacetSessionTTL)
+		ttl, _ := time.ParseDuration(tg.FacetSessionTTL)
 		if ttl > 0 {
 			pool.SetSessionTTL(ttl, p.Sessions)
 			log.Infof("telegram", "agent %q: facet session TTL = %v", acfg.ID, ttl)
@@ -268,76 +267,54 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 }
 
 // ApplyAgentDisplaySettings sets per-agent display settings on a bot,
-// falling back to global config when the agent field is nil/empty.
+// resolving the full 4-level cascade for DisplayConfig via Merge.
 func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Config) {
-	tg := acfg.GetTelegramPlatform()
+	tg := acfg.Platform("telegram")
+	dc := config.Merge(
+		tg.SafeDisplay(),
+		acfg.Defaults.DisplayConfig,
+		cfg.Platform("telegram").SafeDisplay(),
+		cfg.Defaults.DisplayConfig,
+	)
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
-	switch {
-	case tg != nil && tg.ShowToolCalls != nil:
-		d.ShowToolCalls = string(*tg.ShowToolCalls)
-	case acfg.ShowToolCalls != nil:
-		d.ShowToolCalls = string(*acfg.ShowToolCalls)
-	case cfg.Telegram.ShowToolCalls != nil:
-		d.ShowToolCalls = string(*cfg.Telegram.ShowToolCalls)
+	if dc.ShowToolCalls != nil {
+		d.ShowToolCalls = string(*dc.ShowToolCalls)
 	}
-	switch {
-	case tg != nil && tg.ShowThinking != nil:
-		d.ShowThinking = string(*tg.ShowThinking)
-	case acfg.ShowThinking != nil:
-		d.ShowThinking = string(*acfg.ShowThinking)
-	case cfg.Telegram.ShowThinking != nil:
-		d.ShowThinking = string(*cfg.Telegram.ShowThinking)
+	if dc.ShowThinking != nil {
+		d.ShowThinking = string(*dc.ShowThinking)
 	}
-	switch {
-	case tg != nil && tg.DisplayWidth != nil:
-		d.DisplayWidth = *tg.DisplayWidth
-	case cfg.Telegram.DisplayWidth != nil:
-		d.DisplayWidth = *cfg.Telegram.DisplayWidth
+	if dc.DisplayWidth != nil {
+		d.DisplayWidth = *dc.DisplayWidth
 	}
-	switch {
-	case tg != nil && tg.TableWrapLines != nil:
-		d.TableWrapLines = *tg.TableWrapLines
-	case cfg.Telegram.TableWrapLines != nil:
-		d.TableWrapLines = *cfg.Telegram.TableWrapLines
+	if dc.ReceivedFilesDir != nil && *dc.ReceivedFilesDir != "" {
+		d.ReceivedFilesDir = *dc.ReceivedFilesDir
 	}
-	switch {
-	case tg != nil && tg.TableStyle != nil:
-		d.TableStyle = *tg.TableStyle
-	case cfg.Telegram.TableStyle != nil:
-		d.TableStyle = *cfg.Telegram.TableStyle
+	if dc.StreamOutput != nil {
+		d.StreamOutput = *dc.StreamOutput
 	}
-	if acfg.MessagesInLog != nil {
-		d.MessagesInLog = *acfg.MessagesInLog
-	} else {
-		d.MessagesInLog = cfg.Logging.MessagesInLog
+	if dc.StreamInterval != nil {
+		if dur, err := time.ParseDuration(*dc.StreamInterval); err == nil && dur > 0 {
+			d.StreamUpdateInterval = dur
+		}
 	}
-	switch {
-	case tg != nil && tg.ReceivedFilesDir != "":
-		d.ReceivedFilesDir = tg.ReceivedFilesDir
-	case cfg.Telegram.ReceivedFilesDir != "":
-		d.ReceivedFilesDir = cfg.Telegram.ReceivedFilesDir
+	if dc.InjectedMessageHeader != nil {
+		d.InjectedMessageHeader = *dc.InjectedMessageHeader
 	}
-	if acfg.InjectedMessageHeader != "" {
-		d.InjectedMessageHeader = acfg.InjectedMessageHeader
-	} else {
-		d.InjectedMessageHeader = cfg.Defaults.InjectedMessageHeader
+
+	// Telegram-specific fields (not in DisplayConfig)
+	if tg != nil && tg.Telegram != nil {
+		if tg.Telegram.TableWrapLines != nil {
+			d.TableWrapLines = *tg.Telegram.TableWrapLines
+		}
+		if tg.Telegram.TableStyle != nil {
+			d.TableStyle = *tg.Telegram.TableStyle
+		}
 	}
-	switch {
-	case tg != nil && tg.StreamOutput != nil:
-		d.StreamOutput = *tg.StreamOutput
-	default:
-		d.StreamOutput = cfg.Telegram.StreamOutput
-	}
-	streamInterval := ""
-	if tg != nil && tg.StreamInterval != "" {
-		streamInterval = tg.StreamInterval
-	} else {
-		streamInterval = cfg.Telegram.StreamUpdateInterval
-	}
-	if dur, err := time.ParseDuration(streamInterval); err == nil && dur > 0 {
-		d.StreamUpdateInterval = dur
-	}
+
+	// MessagesInLog is not in DisplayConfig — resolve via Merge.
+	dbg := config.Merge(acfg.Debug, cfg.Debug)
+	d.MessagesInLog = config.DerefBool(dbg.MessagesInLog)
 
 	bot.display = d
 }
