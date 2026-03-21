@@ -16,6 +16,7 @@ import (
 
 const (
 	systemStateKeyLastCleanShutdown = "last_clean_shutdown"
+	systemStateKeyLastStartup       = "last_startup"
 	cleanShutdownWindow             = 5 * time.Minute
 	maxDiagnosticLines              = 10
 )
@@ -30,24 +31,34 @@ const (
 )
 
 type DiagnosisResult struct {
-	Class        RestartClass
-	ShutdownTime time.Time
-	Diagnostics  []string
-	Summary      string
+	Class         RestartClass
+	LastAliveTime time.Time
+	Diagnostics   []string
+	Summary       string
 }
 
 // GetSystemUptime returns the system uptime. Replaceable for testing.
 var GetSystemUptime = getSystemUptime
 
 func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir string) *DiagnosisResult {
-	var shutdownUnix int64
-	hasShutdown := false
-	raw, err := idx.GetSystemState(systemStateKeyLastCleanShutdown)
-	if err == nil && raw != "" {
+	// Read both timestamps to find the most recent proof-of-life.
+	// After a crash, last_clean_shutdown is stale, but last_startup
+	// still reflects when the crashed process started.
+	var shutdownUnix, startupUnix int64
+	if raw, err := idx.GetSystemState(systemStateKeyLastCleanShutdown); err == nil && raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			shutdownUnix = v
-			hasShutdown = true
 		}
+	}
+	if raw, err := idx.GetSystemState(systemStateKeyLastStartup); err == nil && raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			startupUnix = v
+		}
+	}
+
+	// Record this startup for the next restart diagnosis.
+	if err := idx.SetSystemState(systemStateKeyLastStartup, strconv.FormatInt(startTime.Unix(), 10)); err != nil {
+		log.Warnf("startup", "record startup time: %v", err)
 	}
 
 	systemUptime, err := GetSystemUptime()
@@ -55,31 +66,20 @@ func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir str
 		log.Debugf("startup", "could not read system uptime: %v", err)
 	}
 
+	// Use the most recent of shutdown/startup as the reference point.
+	lastAliveUnix := shutdownUnix
+	wasCleanShutdown := true
+	if startupUnix > shutdownUnix {
+		lastAliveUnix = startupUnix
+		wasCleanShutdown = false
+	}
+
 	result := &DiagnosisResult{
 		Class: ClassUnknown,
 	}
 
-	if hasShutdown {
-		result.ShutdownTime = time.Unix(shutdownUnix, 0)
-		shutdownAge := startTime.Sub(result.ShutdownTime)
-
-		if shutdownAge < 0 {
-			result.Class = ClassUnknown
-			result.Summary = "shutdown timestamp is in the future"
-		} else if shutdownAge <= cleanShutdownWindow {
-			result.Class = ClassClean
-			result.Summary = fmt.Sprintf("clean shutdown %s ago", shutdownAge.Round(time.Second))
-		} else if systemUptime > 0 && systemUptime < shutdownAge {
-			result.Class = ClassReboot
-			result.Summary = fmt.Sprintf("system reboot detected (uptime %s < gap %s)", systemUptime.Round(time.Second), shutdownAge.Round(time.Second))
-			result.Diagnostics = gatherDiagnostics(logsDir, result.ShutdownTime)
-		} else {
-			result.Class = ClassCrash
-			result.Summary = fmt.Sprintf("unexpected restart (gap %s)", shutdownAge.Round(time.Second))
-			result.Diagnostics = gatherDiagnostics(logsDir, result.ShutdownTime)
-		}
-	} else {
-		result.Class = ClassUnknown
+	if lastAliveUnix == 0 {
+		// No prior record at all.
 		if systemUptime > 0 && systemUptime < 5*time.Minute {
 			result.Class = ClassReboot
 			result.Summary = "system recently rebooted (no prior shutdown record)"
@@ -87,6 +87,26 @@ func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir str
 			result.Summary = "no prior shutdown record"
 		}
 		result.Diagnostics = gatherDiagnostics(logsDir, startTime.Add(-1*time.Hour))
+		return result
+	}
+
+	result.LastAliveTime = time.Unix(lastAliveUnix, 0)
+	gap := startTime.Sub(result.LastAliveTime)
+
+	if gap < 0 {
+		result.Class = ClassUnknown
+		result.Summary = "last-alive timestamp is in the future"
+	} else if wasCleanShutdown && gap <= cleanShutdownWindow {
+		result.Class = ClassClean
+		result.Summary = fmt.Sprintf("clean shutdown %s ago", gap.Round(time.Second))
+	} else if systemUptime > 0 && systemUptime < gap {
+		result.Class = ClassReboot
+		result.Summary = fmt.Sprintf("system reboot detected (uptime %s < gap %s)", systemUptime.Round(time.Second), gap.Round(time.Second))
+		result.Diagnostics = gatherDiagnostics(logsDir, result.LastAliveTime)
+	} else {
+		result.Class = ClassCrash
+		result.Summary = fmt.Sprintf("unexpected restart (gap %s)", gap.Round(time.Second))
+		result.Diagnostics = gatherDiagnostics(logsDir, result.LastAliveTime)
 	}
 
 	return result

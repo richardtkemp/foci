@@ -27,6 +27,13 @@ func setShutdownTime(t *testing.T, idx *session.SessionIndex, ts int64) {
 	}
 }
 
+func setStartupTime(t *testing.T, idx *session.SessionIndex, ts int64) {
+	t.Helper()
+	if err := idx.SetSystemState("last_startup", strconv.FormatInt(ts, 10)); err != nil {
+		t.Fatalf("set startup time: %v", err)
+	}
+}
+
 func TestDiagnoseRestart_CleanShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	idx := newTestIndex(t, tmpDir)
@@ -453,5 +460,53 @@ func TestDiagnoseRestart_RebootNoRecordNoUptime(t *testing.T) {
 
 	if result.Class != ClassUnknown {
 		t.Errorf("expected ClassUnknown when uptime unavailable, got %s", result.Class)
+	}
+}
+
+// TestDiagnoseRestart_CrashAfterCrash verifies the gap reflects time since
+// last startup, not last clean shutdown. When the process crashes repeatedly
+// without a clean shutdown, the gap should be measured from the most recent
+// startup (last_startup), not the stale last_clean_shutdown.
+func TestDiagnoseRestart_CrashAfterCrash(t *testing.T) {
+	tmpDir := t.TempDir()
+	idx := newTestIndex(t, tmpDir)
+
+	now := time.Now()
+
+	// Simulate: clean shutdown 20h ago, then a startup 25m ago that crashed.
+	setShutdownTime(t, idx, now.Add(-20*time.Hour).Unix())
+	setStartupTime(t, idx, now.Add(-25*time.Minute).Unix())
+
+	result := DiagnoseRestart(idx, now, tmpDir)
+
+	if result.Class != ClassCrash {
+		t.Errorf("expected ClassCrash, got %s (summary: %s)", result.Class, result.Summary)
+	}
+	// The gap should be ~25m (since last startup), not ~20h (since last clean shutdown).
+	if result.LastAliveTime.Before(now.Add(-26 * time.Minute)) {
+		t.Errorf("LastAliveTime should reflect last startup (~25m ago), got %v (gap: %s)",
+			result.LastAliveTime, now.Sub(result.LastAliveTime))
+	}
+}
+
+// TestDiagnoseRestart_RecordsStartup verifies that DiagnoseRestart writes
+// the current startTime as last_startup for the next restart to use.
+func TestDiagnoseRestart_RecordsStartup(t *testing.T) {
+	tmpDir := t.TempDir()
+	idx := newTestIndex(t, tmpDir)
+
+	startTime := time.Now().Truncate(time.Second)
+	DiagnoseRestart(idx, startTime, tmpDir)
+
+	raw, err := idx.GetSystemState("last_startup")
+	if err != nil || raw == "" {
+		t.Fatal("last_startup not recorded")
+	}
+	recorded, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		t.Fatalf("parse last_startup: %v", err)
+	}
+	if recorded != startTime.Unix() {
+		t.Errorf("last_startup = %d, want %d", recorded, startTime.Unix())
 	}
 }
