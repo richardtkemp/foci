@@ -19,6 +19,7 @@ type RotationConfig struct {
 	ArchiveDir  string        // where to put .gz archives
 	Files       []string      // absolute paths of log files to rotate
 	FileMode    os.FileMode   // permission bits for rotated log files (default 0600)
+	PostRotate  func()        // called after each rotation pass (e.g. temp file cleanup)
 }
 
 // RotateOnce performs a single rotation pass with the given config.
@@ -62,6 +63,9 @@ func rotateAll(cfg RotationConfig) {
 	// Reopen file handles so the logger writes to the new files.
 	if err := Reopen(); err != nil {
 		Errorf("rotate", "reopen after rotation: %v", err)
+	}
+	if cfg.PostRotate != nil {
+		cfg.PostRotate()
 	}
 }
 

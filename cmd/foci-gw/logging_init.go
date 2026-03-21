@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/tempdir"
 )
 
 // initLogging sets up event logging, log rotation, API DB, and conversation DB.
@@ -44,6 +45,14 @@ func initLogging(cfg *config.Config) func() {
 				files = append(files, p)
 			}
 		}
+		cleanupTempFiles := func() {
+			n, err := tempdir.CleanOldFiles(tempdir.Dir(), "spawn-result-*.txt", 7*24*time.Hour)
+			if err != nil {
+				log.Warnf("rotate", "temp cleanup: %v", err)
+			} else if n > 0 {
+				log.Infof("rotate", "cleaned %d stale spawn-result files", n)
+			}
+		}
 
 		// Archive all existing log content on startup so each process
 		// lifetime begins with a clean log file.
@@ -53,6 +62,7 @@ func initLogging(cfg *config.Config) func() {
 			ArchiveDir:  archiveDir,
 			Files:       files,
 			FileMode:    logFileMode,
+			PostRotate:  cleanupTempFiles,
 		})
 
 		stopRotation := log.StartRotation(log.RotationConfig{
@@ -62,6 +72,7 @@ func initLogging(cfg *config.Config) func() {
 			ArchiveDir:  archiveDir,
 			Files:       files,
 			FileMode:    logFileMode,
+			PostRotate:  cleanupTempFiles,
 		})
 		cleanups = append(cleanups, stopRotation)
 	}
