@@ -362,14 +362,15 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 	// Repair interrupted tool calls (e.g. SIGTERM during tool execution).
 	// If the last message is assistant with tool_use but no tool_result follows,
-	// inject synthetic error results so the API accepts the message history.
-	if repair := repairInterruptedToolCalls(messages); repair != nil {
-		messages = append(messages, *repair)
+	// inject synthetic error results + assistant ack so the API accepts the
+	// message history and role alternation is maintained for the next user message.
+	if repair := repairInterruptedToolCalls(messages); len(repair) > 0 {
+		messages = append(messages, repair...)
 		writer := a.Sessions.For(sessionKey)
-		if err := writer.Append(sessionKey, *repair); err != nil {
+		if err := writer.AppendAll(sessionKey, repair); err != nil {
 			a.logger().Errorf("session=%s persist tool call repair: %v", sessionKey, err)
 		} else {
-			a.logger().Infof("session=%s repaired %d interrupted tool calls", sessionKey, len(repair.Content))
+			a.logger().Infof("session=%s repaired %d interrupted tool calls", sessionKey, len(repair[0].Content))
 		}
 	}
 

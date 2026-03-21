@@ -9,7 +9,6 @@ import (
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
-	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/shared/prompts"
@@ -22,7 +21,6 @@ func newAsyncNotifier(
 	defaultSessionKey func() string,
 	agentID string,
 	ctx context.Context,
-	sessions tools.SessionAppender,
 	connMgr platform.ConnectionManager,
 ) *tools.AsyncNotifier {
 	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
@@ -55,31 +53,13 @@ func newAsyncNotifier(
 					return
 				}
 
-				// Format response with source session prefix
-				formattedResp := "Message from session: " + target + "\n" + resp
-
-				// STEP 1: Append to calling session JSONL (record the response)
-				msg := provider.Message{
-					Role:    "user",
-					Content: provider.TextContent(formattedResp),
-				}
-				writer := sessions.For(replyToSession)
-				if err := writer.Append(replyToSession, msg); err != nil {
-					log.Errorf(trigger, "failed to append to caller %s: %v", replyToSession, err)
-					return
-				}
-
-				// STEP 2: Display to user in calling session's chat.
-				// Use SendToSession (not SendInjectedMessage) — the response is an
-				// agent reply, not a system injection, so no header prefix.
-				callerConn := connMgr.ForSession(replyToSession)
-				if callerConn != nil {
-					if err := callerConn.SendToSession(replyToSession, formattedResp); err != nil {
-						log.Errorf(trigger, "platform delivery to caller %s: %v", replyToSession, err)
-					}
-				} else {
-					log.Debugf(trigger, "no connection for caller session %s, response recorded but not displayed", replyToSession)
-				}
+				// Route the target session's response through HandleMessage on the
+				// calling session. This maintains role alternation and lets the
+				// agent process/relay the response.
+				formattedResp := "Response from session " + target + ":\n" + resp
+				injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
+					"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
+				deliverInjectedTurn(getAgent(), ctx, trigger, connMgr, agentID, replyToSession, injected)
 				return
 			}
 
