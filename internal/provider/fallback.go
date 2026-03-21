@@ -78,10 +78,10 @@ func walkFallback(
 	fallbackFn FallbackFunc,
 	clientProvider ClientProvider,
 	logf func(string, ...any),
+	originalErr error,
 ) (*MessageResponse, error) {
 	fbModel := req.Model
-	var resp *MessageResponse
-	var err error
+	var lastErr error
 	for depth := 0; depth < maxFallbackDepth; depth++ {
 		fbCanonical, endpoint, format, ok := fallbackFn(fbModel)
 		if !ok {
@@ -100,20 +100,26 @@ func walkFallback(
 		}
 
 		req.Model = fbCanonical
-		resp, err = sendWithRetry(ctx, fbClient, req, handler)
+		resp, err := sendWithRetry(ctx, fbClient, req, handler)
 		if err == nil {
 			if logf != nil {
 				logf("fallback succeeded on %s", fbCanonical)
 			}
 			return resp, nil
 		}
+		lastErr = err
 		if !IsFallbackEligible(err) {
 			break // non-transient error, stop trying
 		}
 		fbModel = fbCanonical
 	}
 
-	return resp, err
+	// Return the last fallback error, or the original error if no fallbacks
+	// were attempted (no fallback model configured for this model).
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, originalErr
 }
 
 // Send sends a request with automatic error recovery:
@@ -155,7 +161,7 @@ func Send(
 
 	// Step 3: walk fallback chain on transient errors.
 	if fallbackFn != nil && IsFallbackEligible(err) {
-		return walkFallback(ctx, client, req, handler, fallbackFn, clientProvider, logf)
+		return walkFallback(ctx, client, req, handler, fallbackFn, clientProvider, logf, err)
 	}
 
 	return resp, err

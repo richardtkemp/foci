@@ -280,6 +280,27 @@ func TestSend_StripUnsupportedParams(t *testing.T) {
 	}
 }
 
+func TestSend_NoFallbackConfigured(t *testing.T) {
+	// Proves that when a transient error triggers fallback but no fallback model
+	// is configured, the original error is returned (not nil). This was a crash:
+	// walkFallback returned (nil, nil) when fallbackFn returned ok=false on
+	// the first iteration, causing a nil response dereference.
+	mc := &fallbackMockClient{responses: []fallbackMockResponse{
+		{err: context.DeadlineExceeded},
+	}}
+	fallbackFn := func(model string) (string, string, string, bool) {
+		return "", "", "", false // no fallback for any model
+	}
+	req := &MessageRequest{Model: "primary"}
+	_, err := Send(context.Background(), mc, req, nil, fallbackFn, nil, nil)
+	if err == nil {
+		t.Fatal("expected error when no fallback is configured, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
 func TestSend_StripThenFallback(t *testing.T) {
 	// Proves that strip-and-retry happens before fallback: a 400 strips params,
 	// retry still fails (529), then fallback kicks in.
