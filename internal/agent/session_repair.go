@@ -235,15 +235,14 @@ func stripUnmatchedToolUse(assistantContent []provider.ContentBlock, toolResults
 // repairMissingAssistantMessages fixes two classes of role-alternation corruption:
 //
 //  1. Consecutive user messages (no assistant between them): inserts a synthetic
-//     assistant message with placeholder text. This happens when an API error
-//     causes the turn to return early but the defer safety-net flushes the user
-//     message without a matching assistant response.
+//     assistant message with placeholder text. Legacy sessions may have this from
+//     bare restart marker injection (now fixed).
 //
 //  2. Assistant messages with zero content blocks: replaces content with a
 //     placeholder so the API doesn't reject empty assistant messages.
 //
 // Returns the repaired slice and the number of repairs made.
-// O(n) scan, not persisted — runs on every load like repairDuplicateToolIDs.
+// Persisted via Replace by the caller so the warning fires only once.
 func repairMissingAssistantMessages(messages []provider.Message) ([]provider.Message, int) {
 	repairs := 0
 	var result []provider.Message

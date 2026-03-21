@@ -354,11 +354,11 @@ func checkFirstRun(idx *session.SessionIndex, acfg config.AgentConfig) string {
 	return prompt
 }
 
-// injectWelcomeFile checks for a welcome/changelog file written by setup.sh
-// on update. If found, returns the file contents and deletes the file.
+// readAndConsumeWelcomeFile checks for a welcome/changelog file written by
+// setup.sh on update. If found, returns the file contents and deletes the file.
 // Returns empty string if no file exists or file is empty.
-func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder []string, sessions *session.Store) string { // nolint:unparam
-	if path == "" || len(agentOrder) == 0 {
+func readAndConsumeWelcomeFile(path string) string {
+	if path == "" {
 		return ""
 	}
 	data, err := os.ReadFile(path)
@@ -373,7 +373,7 @@ func injectWelcomeFile(path string, agents map[string]*agentInstance, agentOrder
 		return ""
 	}
 
-	log.Infof("main", "found welcome file for agent %s (%d bytes)", agentOrder[0], len(content))
+	log.Infof("main", "found welcome file (%d bytes)", len(content))
 	return content
 }
 

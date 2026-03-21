@@ -16,7 +16,6 @@ import (
 	"foci/internal/config"
 	"foci/internal/memory"
 	"foci/internal/secrets"
-	"foci/internal/session"
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {
@@ -111,25 +110,19 @@ func TestProcessingCounter_Multiple(t *testing.T) {
 	}
 }
 
-func TestInjectWelcomeFile(t *testing.T) {
+func TestReadAndConsumeWelcomeFile(t *testing.T) {
+	// Proves that readAndConsumeWelcomeFile reads the file, deletes it, and
+	// returns the trimmed content.
 	dir := t.TempDir()
-	sessDir := filepath.Join(dir, "sessions")
-	os.MkdirAll(sessDir, 0755)
-	sessions := session.NewStore(sessDir)
 
 	welcomePath := filepath.Join(dir, "WELCOME.md")
 	os.WriteFile(welcomePath, []byte("# Updated\n\nNew stuff here."), 0644)
 
-	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
-	}
-	agentOrder := []string{"main"}
-
-	content := injectWelcomeFile(welcomePath, agents, agentOrder, sessions)
+	content := readAndConsumeWelcomeFile(welcomePath)
 
 	// File should be deleted
 	if _, err := os.Stat(welcomePath); !os.IsNotExist(err) {
-		t.Error("welcome file should be deleted after injection")
+		t.Error("welcome file should be deleted after reading")
 	}
 
 	// Should return the changelog content
@@ -141,30 +134,22 @@ func TestInjectWelcomeFile(t *testing.T) {
 	}
 }
 
-func TestInjectWelcomeFile_NoFile(t *testing.T) {
-	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
-	}
-	agentOrder := []string{"main"}
-
-	content := injectWelcomeFile("/nonexistent/path/WELCOME.md", agents, agentOrder, nil)
+func TestReadAndConsumeWelcomeFile_NoFile(t *testing.T) {
+	// Proves that a missing file returns empty string without error.
+	content := readAndConsumeWelcomeFile("/nonexistent/path/WELCOME.md")
 	if content != "" {
 		t.Errorf("expected empty content when no file, got %q", content)
 	}
 }
 
-func TestInjectWelcomeFile_EmptyFile(t *testing.T) {
+func TestReadAndConsumeWelcomeFile_EmptyFile(t *testing.T) {
+	// Proves that an empty file is consumed (deleted) but returns empty string.
 	dir := t.TempDir()
 
 	welcomePath := filepath.Join(dir, "WELCOME.md")
 	os.WriteFile(welcomePath, []byte(""), 0644)
 
-	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
-	}
-	agentOrder := []string{"main"}
-
-	content := injectWelcomeFile(welcomePath, agents, agentOrder, nil)
+	content := readAndConsumeWelcomeFile(welcomePath)
 
 	// File should be deleted even if empty
 	if _, err := os.Stat(welcomePath); !os.IsNotExist(err) {
@@ -177,35 +162,11 @@ func TestInjectWelcomeFile_EmptyFile(t *testing.T) {
 	}
 }
 
-func TestInjectWelcomeFile_EmptyPath(t *testing.T) {
-	// Should not panic when path is empty
-	content := injectWelcomeFile("", nil, nil, nil)
+func TestReadAndConsumeWelcomeFile_EmptyPath(t *testing.T) {
+	// Proves that an empty path returns empty string without panic.
+	content := readAndConsumeWelcomeFile("")
 	if content != "" {
 		t.Errorf("expected empty content for empty path, got %q", content)
-	}
-}
-
-func TestInjectWelcomeFile_TriggersTurnOnlyWithContent(t *testing.T) {
-	dir := t.TempDir()
-
-	agents := map[string]*agentInstance{
-		"main": {id: "main", defaultSessionKey: func() string { return "main/i0/0" }},
-	}
-	agentOrder := []string{"main"}
-
-	// With content: should trigger a restart turn (non-empty return)
-	withPath := filepath.Join(dir, "WITH.md")
-	os.WriteFile(withPath, []byte("changelog text"), 0644)
-	content := injectWelcomeFile(withPath, agents, agentOrder, nil)
-	if content == "" {
-		t.Error("SYSTEM UPDATE present: expected non-empty content (should trigger restart turn)")
-	}
-
-	// Without content (bare restart): should NOT trigger a turn (empty return)
-	noPath := filepath.Join(dir, "NONE.md")
-	content = injectWelcomeFile(noPath, agents, agentOrder, nil)
-	if content != "" {
-		t.Error("bare restart (no file): expected empty content (should NOT trigger turn)")
 	}
 }
 

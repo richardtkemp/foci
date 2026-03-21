@@ -9,33 +9,72 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/session"
+	"foci/internal/startup"
 	"foci/shared/prompts"
 )
 
-// handleWelcomeAndFirstRun injects welcome file content and first-run onboarding prompts.
-func handleWelcomeAndFirstRun(
+// handleRestartAndFirstRun delivers restart notifications (with optional
+// welcome/changelog content) and first-run onboarding prompts.
+//
+// Restart notifications are delivered as proper agent turns via HandleMessage,
+// so the session maintains role alternation (user→assistant). The welcome file
+// content, if present, is included in the same turn as the restart notification
+// for the primary agent.
+func handleRestartAndFirstRun(
 	agents map[string]*agentInstance,
 	agentOrder []string,
-	sessions *session.Store,
 	sessionIndex *session.SessionIndex,
 	cfg *config.Config,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
+	diagnosis *startup.DiagnosisResult,
 ) {
-	// Welcome file (written by setup.sh on update)
-	if len(agentOrder) > 0 {
-		if content := injectWelcomeFile(cfg.WelcomeFile, agents, agentOrder, sessions); content != "" {
-			inst := agents[agentOrder[0]]
-			go func() {
-				sk := inst.defaultSessionKey()
-				if sk == "" {
-					log.Warnf("main", "no default session for welcome file injection, skipping")
-					return
-				}
-				msg := prompts.FormatInjectedMessage("SYSTEM UPDATE", time.Now(), content)
-				deliverInjectedTurn(inst.ag, ctx, "restart", connMgr, agentOrder[0], sk, msg)
-			}()
+	// Read and consume the welcome/changelog file (written by setup.sh on update).
+	welcomeContent := readAndConsumeWelcomeFile(cfg.WelcomeFile)
+
+	// Deliver restart notification to each agent's default session.
+	// The welcome content is included only for the primary (first) agent.
+	needsRestart := diagnosis != nil &&
+		diagnosis.Class != startup.ClassClean &&
+		diagnosis.Class != startup.ClassUnknown
+
+	for i, agentID := range agentOrder {
+		isPrimary := i == 0
+		agentWelcome := ""
+		if isPrimary {
+			agentWelcome = welcomeContent
 		}
+
+		if !needsRestart && agentWelcome == "" {
+			continue // nothing to inject for this agent
+		}
+
+		inst := agents[agentID]
+		agentID := agentID
+		go func() {
+			sk := inst.defaultSessionKey()
+			if sk == "" {
+				log.Warnf("main", "[%s] no default session for restart injection, skipping", agentID)
+				return
+			}
+
+			tag := "SYSTEM RESTART"
+			var body string
+			switch {
+			case needsRestart && agentWelcome != "":
+				// Both restart + welcome: combine into one message
+				body = agentWelcome + "\n\n---\n" + diagnosis.Summary
+			case needsRestart:
+				body = diagnosis.Summary
+			default:
+				// Welcome-only (clean restart with code update)
+				tag = "SYSTEM UPDATE"
+				body = agentWelcome
+			}
+
+			msg := prompts.FormatInjectedMessage(tag, time.Now(), body)
+			deliverInjectedTurn(inst.ag, ctx, "restart", connMgr, agentID, sk, msg)
+		}()
 	}
 
 	// First-run onboarding — store the prompt so it gets prepended to the

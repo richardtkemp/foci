@@ -109,19 +109,19 @@ On startup (`sessions_init.go:initSessions`):
 
 1. `RepairOrphans()` — walks all `.jsonl` files, finds assistant messages ending with tool_use blocks that have no tool_result response. Appends synthetic "Tool call interrupted" tool_result messages to the **existing file**.
 
-2. `InjectRestartMarkers()` — walks all `.jsonl` files modified within `RestartMarkerMaxAge` (1 hour). Appends a "SYSTEM RESTART" user message to the **existing file**.
+2. `SessionIndex.Rebuild(store)` — scans all session files on disk and rebuilds the SQLite index.
 
-3. `SessionIndex.Rebuild(store)` — scans all session files on disk and rebuilds the SQLite index.
+3. `chatmeta.Resolver.SessionKeyForChat(chatID)` — on first message after restart, queries `SessionIndex.GetChatMetadata(agentID, chatID, "session_key")` which returns the **persisted key** from before restart. Continues using it.
 
-4. `chatmeta.Resolver.SessionKeyForChat(chatID)` — on first message after restart, queries `SessionIndex.GetChatMetadata(agentID, chatID, "session_key")` which returns the **persisted key** from before restart. Continues using it.
+After agents are set up, `handleRestartAndFirstRun()` delivers a restart notification to each agent's default session via `deliverInjectedTurn` → `HandleMessage`, producing a proper user/assistant turn pair. Welcome/changelog content (if present) is included in the same turn for the primary agent.
 
-**Net effect:** The same `root.jsonl` file keeps getting appended to across restarts. No new file, no new key. The restart is only visible as injected marker messages within the file.
+**Net effect:** The same `root.jsonl` file keeps getting appended to across restarts. No new file, no new key. The restart is visible as a normal user/assistant turn in the session history.
 
 ## Why Your Session Is All In One File
 
 Given the behavior above, a session that has been running for hours with restarts will have **everything in a single `root.jsonl`** because:
 
-1. Restart does NOT rotate/create a new file — it appends restart markers to the existing one
+1. Restart does NOT rotate/create a new file — restart notifications are appended as normal turns
 2. The session key is persisted in the SQLite index and restored on startup
 3. Only compaction creates a new root file (with a new `versionTS` directory)
 4. Only `/reset` creates a new root file (lazily, on next message)
@@ -171,7 +171,7 @@ root.2026-03-13T10-30-00Z.jsonl.gz (gzipped, original deleted)
 - `internal/session/archive.go` — ReplaceAndRotate, RotateKey, replaceInternal, ArchiveSweep
 - `internal/session/branch.go` — CreateBranchWithOptions
 - `internal/session/key.go` — SessionKey struct, NewChatSession, WithVersion
-- `internal/session/startup.go` — RepairOrphans, InjectRestartMarkers
+- `internal/session/startup.go` — RepairOrphans
 - `internal/telegram/bot_session.go` — sessionKeyForMsg (key caching + persistence)
 - `cmd/foci-gw/sessions_init.go` — startup wiring, event handler, archive goroutine
 - `cmd/foci-gw/agent_platforms.go` — SessionKeyRotatedFunc → UpdateChatSessionKey propagation

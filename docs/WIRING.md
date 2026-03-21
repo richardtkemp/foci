@@ -28,7 +28,6 @@ config.Load(path)                                        ← validates values; l
 → initSessions(cfg)                                      ← sessions_init.go
   → session.NewStore(dir)
   → sessions.RepairOrphans()                             ← fix interrupted tool calls before agents start
-  → sessions.InjectRestartMarkers(1h)                    ← append "[System restarted]" to recently active sessions
   → session.NewSessionIndex(session_index.db)             ← SQLite index; rebuilt on startup
   → sessions.OnSessionEvent(→ sessionIndex)               ← lifecycle hook: create/compact/clear → update index
   → migrateStateJSON(state.json → SQLite)             ← one-time migration, renames to state.json.migrated
@@ -76,7 +75,7 @@ config.Load(path)                                        ← validates values; l
   → plat.StartAll(ctx)                                     ← starts all provider connections
   → startup notifications (inline in main.go)              ← uses connMgr.AllForAgent() for fan-out
   → http.Server{...}                                       ← http.go (registerHTTPHandlers)
-  → handleWelcomeAndFirstRun(...)                          ← notifications.go
+  → handleRestartAndFirstRun(...)                          ← notifications.go (restart + welcome via HandleMessage)
   → block on signal → runShutdown(...)                     ← shutdown.go
 ```
 
@@ -1043,7 +1042,7 @@ Checks token usage against threshold (default 80% of context window). When trigg
 4. Appends any scratchpad entries to preservation message (scoped to agent via `Compactor.AgentID`)
 5. If `CompactionNotifyFunc` is set, sends Telegram notification with session key and pre-compaction message count (configurable via `compaction_notify`, default true)
 
-**Session file rotation:** `Replace()` in `session/store.go` renames the existing file before writing. Archive files use the pattern `{name}.{timestamp}.jsonl` (timestamp in format `YYYY-MM-DDTHH-MM-SSZ`) or `{name}.{timestamp}.{N}.jsonl` if multiple archives have the same timestamp. The active session is always the unnumbered file. `Load`, `LoadFull`, `Append` etc. are unaffected — `keyToPath()` always resolves to the unnumbered path. `ListChatSessions`, `RepairOrphans`, and `InjectRestartMarkers` skip archive files.
+**Session file rotation:** `Replace()` in `session/store.go` renames the existing file before writing. Archive files use the pattern `{name}.{timestamp}.jsonl` (timestamp in format `YYYY-MM-DDTHH-MM-SSZ`) or `{name}.{timestamp}.{N}.jsonl` if multiple archives have the same timestamp. The active session is always the unnumbered file. `Load`, `LoadFull`, `Append` etc. are unaffected — `keyToPath()` always resolves to the unnumbered path. `ListChatSessions` and `RepairOrphans` skip archive files.
 
 **Session lifecycle events:** `Store.OnSessionEvent(func(SessionEvent))` fires on create (first `Append` to new file), branch create (`CreateBranchWithOptions`), compaction (`Replace`), and clear (`Clear`). Events carry the session key, type, status, parent key, file path, and timestamp. Used by `SessionIndex` to maintain a queryable SQLite index of all sessions.
 

@@ -20,8 +20,8 @@ type sessionInfra struct {
 }
 
 // initSessions creates the session store, session index (SQLite), and state store.
-// Repairs orphaned tool calls, injects restart markers, rebuilds the session index,
-// and starts the archive sweep goroutine.
+// Repairs orphaned tool calls, rebuilds the session index, and starts the
+// archive sweep goroutine.
 func initSessions(cfg *config.Config) sessionInfra {
 	var cleanups []func()
 
@@ -34,13 +34,6 @@ func initSessions(cfg *config.Config) sessionInfra {
 		log.Warnf("main", "session repair: %v", err)
 	} else if n > 0 {
 		log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
-	}
-
-	// Inject restart markers into recently active sessions
-	if n, err := sessions.InjectRestartMarkers(session.RestartMarkerMaxAge); err != nil {
-		log.Warnf("main", "restart markers: %v", err)
-	} else if n > 0 {
-		log.Infof("main", "injected restart markers into %d active session(s)", n)
 	}
 
 	// State database (SQLite-backed state for sessions, agents, chats, and system)
