@@ -21,9 +21,9 @@ func TestMissingPlatformSecretDowngradedWhenAlternativeExists(t *testing.T) {
 		Agents: []config.AgentConfig{
 			{
 				ID: "fotini",
-				Platforms: &config.PlatformsConfig{
-					Telegram: &config.TelegramPlatformConfig{Bot: "fotini"},
-					Discord:  &config.DiscordPlatformConfig{Bot: "fotini"},
+				Platforms: []config.PlatformConfig{
+					{ID: "telegram", Bot: "fotini"},
+					{ID: "discord", Bot: "fotini"},
 				},
 			},
 		},
@@ -58,8 +58,8 @@ func TestMissingPlatformSecretWarnWhenNoAlternative(t *testing.T) {
 		Agents: []config.AgentConfig{
 			{
 				ID: "fotini",
-				Platforms: &config.PlatformsConfig{
-					Discord: &config.DiscordPlatformConfig{Bot: "fotini"},
+				Platforms: []config.PlatformConfig{
+					{ID: "discord", Bot: "fotini"},
 				},
 			},
 		},
@@ -90,9 +90,9 @@ func TestMissingPlatformSecretWarnWhenBothMissing(t *testing.T) {
 		Agents: []config.AgentConfig{
 			{
 				ID: "fotini",
-				Platforms: &config.PlatformsConfig{
-					Telegram: &config.TelegramPlatformConfig{Bot: "fotini"},
-					Discord:  &config.DiscordPlatformConfig{Bot: "fotini"},
+				Platforms: []config.PlatformConfig{
+					{ID: "telegram", Bot: "fotini"},
+					{ID: "discord", Bot: "fotini"},
 				},
 			},
 		},
@@ -115,8 +115,8 @@ func TestNonPlatformSecretNeverDowngraded(t *testing.T) {
 		Agents: []config.AgentConfig{
 			{
 				ID: "fotini",
-				Platforms: &config.PlatformsConfig{
-					Telegram: &config.TelegramPlatformConfig{Bot: "fotini"},
+				Platforms: []config.PlatformConfig{
+					{ID: "telegram", Bot: "fotini"},
 				},
 			},
 		},
@@ -145,14 +145,14 @@ func TestGlobalFacetBotNotDowngraded(t *testing.T) {
 	// Proves that global facet bot secrets (no AgentID) are never downgraded,
 	// since they don't belong to a specific agent.
 	cfg := &config.Config{
-		Telegram: config.TelegramConfig{
-			FacetBots: []string{"shared_bot"},
+		Platforms: []config.PlatformConfig{
+			{ID: "telegram", FacetBots: []string{"shared_bot"}},
 		},
 		Agents: []config.AgentConfig{
 			{
 				ID: "fotini",
-				Platforms: &config.PlatformsConfig{
-					Telegram: &config.TelegramPlatformConfig{Bot: "fotini"},
+				Platforms: []config.PlatformConfig{
+					{ID: "telegram", Bot: "fotini"},
 				},
 			},
 		},
@@ -177,9 +177,9 @@ func TestAllSecretsPresent(t *testing.T) {
 		Agents: []config.AgentConfig{
 			{
 				ID: "fotini",
-				Platforms: &config.PlatformsConfig{
-					Telegram: &config.TelegramPlatformConfig{Bot: "fotini"},
-					Discord:  &config.DiscordPlatformConfig{Bot: "fotini"},
+				Platforms: []config.PlatformConfig{
+					{ID: "telegram", Bot: "fotini"},
+					{ID: "discord", Bot: "fotini"},
 				},
 			},
 		},

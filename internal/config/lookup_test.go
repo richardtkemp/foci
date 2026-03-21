@@ -7,7 +7,7 @@ import "testing"
 // includes defaults applied by Load.
 func TestLookupValueGlobalSection(t *testing.T) {
 	cfg := &Config{
-		Sessions: SessionsConfig{CompactionThreshold: 0.8},
+		Sessions: SessionsConfig{CompactionConfig: CompactionConfig{CompactionThreshold: Ptr[float64](0.8)}},
 	}
 	agent := AgentConfig{}
 
@@ -21,11 +21,11 @@ func TestLookupValueGlobalSection(t *testing.T) {
 // field using the AgentConfig, not the global Config.
 func TestLookupValueAgentSection(t *testing.T) {
 	cfg := &Config{}
-	agent := AgentConfig{MaxToolLoops: 30}
+	agent := AgentConfig{Defaults: AgentDefaultsOverride{AgentLoopConfig: AgentLoopConfig{MaxToolLoops: Ptr[int](30)}}}
 
-	got := LookupValue(cfg, agent, "agent", "max_tool_loops")
+	got := LookupValue(cfg, agent, "agent", "defaults.max_tool_loops")
 	if got != "30" {
-		t.Errorf("LookupValue(agent, max_tool_loops) = %q, want %q", got, "30")
+		t.Errorf("LookupValue(agent, defaults.max_tool_loops) = %q, want %q", got, "30")
 	}
 }
 
@@ -34,7 +34,7 @@ func TestLookupValueAgentSection(t *testing.T) {
 func TestLookupValueDottedKey(t *testing.T) {
 	cfg := &Config{}
 	agent := AgentConfig{
-		Keepalive: KeepaliveConfig{Enabled: true, Interval: "5m"},
+		Keepalive: KeepaliveConfig{Enabled: Ptr[bool](true), Interval: Ptr[string]("5m")},
 	}
 
 	got := LookupValue(cfg, agent, "agent", "keepalive.enabled")
@@ -65,7 +65,7 @@ func TestLookupValueUnknown(t *testing.T) {
 // TestLookupValueBool verifies that boolean fields display as "true"/"false".
 func TestLookupValueBool(t *testing.T) {
 	cfg := &Config{
-		Keepalive: KeepaliveConfig{Enabled: true},
+		Keepalive: KeepaliveConfig{Enabled: Ptr[bool](true)},
 	}
 	agent := AgentConfig{}
 

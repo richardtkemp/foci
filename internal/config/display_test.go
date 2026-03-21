@@ -13,19 +13,22 @@ func testConfig() (*Config, AgentConfig) {
 			HTTPTimeout:     "120s",
 			UsageAPITimeout: "10s",
 		},
-		Telegram: TelegramConfig{
-			AllowedUsers:        []string{"alice"},
-			StartupNotify:       true,
-			FacetSessionTTL: "60m",
-			MessageQueueSize:    64,
-			LongPollTimeout:     "65s",
-			ShowToolCalls:       func() *ToolCallDisplay { v := ToolCallPreview; return &v }(),
-			ShowThinking:        func() *ShowThinking { v := ShowThinkingOff; return &v }(),
-			DisplayWidth:        func() *int { v := 44; return &v }(),
-		},
+		Platforms: []PlatformConfig{{
+			ID: "telegram",
+			NotifyConfig:  NotifyConfig{StartupNotify: Ptr[bool](true)},
+			DisplayConfig: DisplayConfig{
+				ShowToolCalls: Ptr[ToolCallDisplay](ToolCallPreview),
+				ShowThinking:  Ptr[ShowThinking](ShowThinkingOff),
+				DisplayWidth:  Ptr[int](44),
+			},
+			AccessConfig: AccessConfig{AllowedUsers: []string{"alice"}},
+			FacetSessionTTL:  "60m",
+			MessageQueueSize: 64,
+			Telegram: &TelegramSpecific{LongPollTimeout: "65s"},
+		}},
 		Sessions: SessionsConfig{
-			Dir:                   "/data/sessions",
-			CompactionThreshold:   0.8,
+			Dir:              "/data/sessions",
+			CompactionConfig: CompactionConfig{CompactionThreshold: Ptr[float64](0.8)},
 			CompactionMaxTokens:   4096,
 			CompactionMinMessages: 4,
 		},
@@ -47,19 +50,23 @@ func testConfig() (*Config, AgentConfig) {
 			WarningWindowDuration: "5m",
 		},
 		Tools: ToolsConfig{
-			MaxResultChars:          15000,
+			SummaryConfig: SummaryConfig{
+				MaxResultChars:  Ptr[int](15000),
+				MaxSummaryChars: Ptr[int](300000),
+			},
+			ToolConfig: ToolConfig{
+				ExecAutoBackground:  Ptr[int](10),
+				MaxConcurrentSpawns: Ptr[int](3),
+				ExploreMaxDepth:     Ptr[int](100),
+			},
 			TempDir:                 "/tmp/foci/tool-results",
 			TmuxCols:                300,
 			TmuxRows:                30,
-			ExecAutoBackground:      10,
 			ExecDefaultTimeout:      30,
-			MaxSummaryChars:         300000,
 			TmuxCommandTimeout:      "5s",
 			WebFetchTimeout:         "30s",
 			WebFetchMaxBytes:        1048576,
-				WebSearchTimeout:        "15s",
-			MaxConcurrentSpawns:     3,
-			ExploreMaxDepth:         100,
+			WebSearchTimeout:        "15s",
 			ToolCallPreviewChars:    450,
 			TmuxMemoryCheckInterval: "5m",
 			TmuxMemoryWarn:          "10%",
@@ -67,15 +74,18 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxMemoryKill:          "30%",
 		},
 		Environment:  EnvironmentConfig{Enabled: true},
-		ManaWarnings: ManaWarningsConfig{},
+		Mana: ManaConfig{},
 		Database:     DatabaseConfig{BusyTimeout: "5s"},
 	}
 	agent := AgentConfig{
 		ID:        "test-agent",
 		Workspace: "/home/user/workspace",
-
-		MaxToolLoops:    25,
-		MaxOutputTokens: 16384,
+		Defaults: AgentDefaultsOverride{
+			AgentLoopConfig: AgentLoopConfig{
+				MaxToolLoops:    Ptr[int](25),
+				MaxOutputTokens: Ptr[int](16384),
+			},
+		},
 	}
 	return cfg, agent
 }
@@ -87,9 +97,9 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 	// multi-table format as well.
 	cfg, agent := testConfig()
 	cfg.Agents = []AgentConfig{agent}
-	cfg.Background.Enabled = false
-	cfg.Background.Interval = "5m"
-	cfg.Mana.InvestInterval = "30m"
+	cfg.Background.Enabled = Ptr[bool](false)
+	cfg.Background.Interval = Ptr[string]("5m")
+	cfg.Mana.InvestInterval = Ptr[string]("30m")
 	agent.Background = cfg.Background
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -108,7 +118,7 @@ func TestFormatConfigGroupedBackgroundFieldsAlwaysShown(t *testing.T) {
 
 func TestFormatConfigTOML(t *testing.T) {
 	// Proves that FormatConfigTOML produces valid parseable TOML containing at
-	// minimum an [agent] and [telegram] section.
+	// minimum an [agent] and [[platforms]] section.
 	cfg, agent := testConfig()
 	result := FormatConfigTOML(cfg, agent)
 
@@ -122,8 +132,8 @@ func TestFormatConfigTOML(t *testing.T) {
 	if _, ok := parsed["agent"]; !ok {
 		t.Error("missing [agent] section in TOML")
 	}
-	if _, ok := parsed["telegram"]; !ok {
-		t.Error("missing [telegram] section in TOML")
+	if _, ok := parsed["platforms"]; !ok {
+		t.Error("missing [[platforms]] section in TOML")
 	}
 }
 
@@ -158,39 +168,49 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	// returns an "all set" message rather than listing any remaining options.
 	cfg, agent := testConfig()
 	// Set all optional agent fields
-	agent.SystemFiles = []string{"IDENTITY.md"}
-	agent.BranchOrientationFacetPrompt = "/tmp/orientation-facet.md"
-	agent.BranchOrientationHeadlessPrompt = "/tmp/orientation-headless.md"
+	agent.Defaults.SystemFiles = []string{"IDENTITY.md"}
+	agent.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orientation-facet.md")
+	agent.Sessions.BranchOrientationHeadlessPrompt = Ptr("/tmp/orientation-headless.md")
 	displayWidth := 44
 	tableWrapLines := 5
 	tableStyle := "pretty"
-	agent.Platforms = &PlatformsConfig{Telegram: &TelegramPlatformConfig{
-		Bot:              "primary",
-		FacetBots:    []string{"mb1"},
-		DisplayWidth:     &displayWidth,
-		TableWrapLines:   &tableWrapLines,
-		TableStyle:       &tableStyle,
-		ReceivedFilesDir: "/tmp/images",
-		AllowedUsers:     []string{"123"},
+	recvDir := "/tmp/images"
+	agent.Platforms = []PlatformConfig{{
+		ID:  "telegram",
+		Bot: "primary",
+		FacetBots: []string{"mb1"},
+		DisplayConfig: DisplayConfig{
+			DisplayWidth:     &displayWidth,
+			ReceivedFilesDir: &recvDir,
+		},
+		AccessConfig: AccessConfig{AllowedUsers: []string{"123"}},
+		Telegram: &TelegramSpecific{
+			TableWrapLines: &tableWrapLines,
+			TableStyle:     &tableStyle,
+		},
 	}}
-	agent.TTSRate = 1.3
+	ttsRate := 1.3
+	agent.Defaults.TTSRate = &ttsRate
 	boolTrue := true
-	agent.StartupNotify = &boolTrue
+	agent.Defaults.StartupNotify = &boolTrue
 	showPreview := ToolCallPreview
-	agent.ShowToolCalls = &showPreview
+	agent.Defaults.ShowToolCalls = &showPreview
 	showCompact := ShowThinkingCompact
-	agent.ShowThinking = &showCompact
+	agent.Defaults.ShowThinking = &showCompact
 	// Set optional global fields
-	cfg.Sessions.CompactionSummaryPrompt = "/tmp/summary.md"
-	cfg.Sessions.CompactionHandoffMsg = "handoff"
-	cfg.Sessions.CompactionNotify = &boolTrue
+	summaryPrompt := "/tmp/summary.md"
+	cfg.Sessions.CompactionSummaryPrompt = &summaryPrompt
+	handoff := "handoff"
+	cfg.Sessions.CompactionHandoffMsg = &handoff
+	cfg.Defaults.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
-	cfg.Sessions.BranchOrientationFacetPrompt = "/tmp/orient-facet.md"
-	cfg.Sessions.BranchOrientationHeadlessPrompt = "/tmp/orient-headless.md"
-	cfg.Sessions.CompactionPreserveMessages = 25
+	cfg.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orient-facet.md")
+	cfg.Sessions.BranchOrientationHeadlessPrompt = Ptr("/tmp/orient-headless.md")
+	preserve25 := 25
+	cfg.Sessions.CompactionPreserveMessages = &preserve25
 	cfg.Memory.ReindexDebounce = "2s"
-	cfg.Logging.MessagesInLog = true
+	cfg.Debug.MessagesInLog = Ptr[bool](true)
 	cfg.Logging.FullPayload = true
 	cfg.Logging.CacheBustDetect = true
 	cfg.Logging.CacheBustIdleMinutes = 10
@@ -198,7 +218,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.STT = []STTConfig{{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com", Model: "whisper-large-v3"}}
 	cfg.Environment.DocsPath = "/docs"
 	cfg.Skills.Dir = "/skills"
-	cfg.ManaWarnings.Thresholds = []int{50, 25, 10}
+	cfg.Mana.Thresholds = []int{50, 25, 10}
 
 	result := FormatAvailable(cfg, agent)
 	if result != "All config options are set." {
@@ -214,9 +234,12 @@ func TestFormatConfigGrouped(t *testing.T) {
 	cfg.Agents = []AgentConfig{agent, {
 		ID:        "second-agent",
 		Workspace: "/home/user/workspace2",
-
-		MaxToolLoops:    25,
-		MaxOutputTokens: 16384,
+		Defaults: AgentDefaultsOverride{
+			AgentLoopConfig: AgentLoopConfig{
+				MaxToolLoops:    Ptr[int](25),
+				MaxOutputTokens: Ptr[int](16384),
+			},
+		},
 	}}
 
 	tables := FormatConfigGrouped(cfg, agent)
@@ -231,7 +254,7 @@ func TestFormatConfigGrouped(t *testing.T) {
 		t.Errorf("first table should be Global:\n%s", tables[0])
 	}
 	// Global should contain non-agent sections as [section] headers
-	for _, section := range []string{"telegram", "sessions", "logging", "tools"} {
+	for _, section := range []string{"platforms.telegram", "sessions", "logging", "tools"} {
 		if !strings.Contains(tables[0], "["+section+"]") {
 			t.Errorf("Global table missing section header [%s]", section)
 		}
@@ -263,18 +286,22 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// agent matches the default.
 	cfg, _ := testConfig()
 	// Set defaults as Load() would.
+	mtl := 25
+	mot := 16384
 	cfg.Defaults = DefaultsConfig{
-		MaxToolLoops:    25,
-		MaxOutputTokens: 16384,
+		AgentLoopConfig: AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot},
 	}
 	cfg.Groups.Powerful = "claude-haiku-4-5"
 	// Agent overrides max_output_tokens from the default.
 	agent := AgentConfig{
 		ID:        "test-agent",
 		Workspace: "/home/user/workspace",
-
-		MaxToolLoops:    25,
-		MaxOutputTokens: 32768,
+		Defaults: AgentDefaultsOverride{
+			AgentLoopConfig: AgentLoopConfig{
+				MaxToolLoops:    Ptr[int](25),
+				MaxOutputTokens: Ptr[int](32768),
+			},
+		},
 	}
 	cfg.Agents = []AgentConfig{agent}
 
@@ -358,12 +385,12 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	// sessions sections, showing each option only once in the output.
 	cfg, agent := testConfig()
 	// Ensure both agent and sessions have orientation prompts unset
-	agent.BranchOrientationFacetPrompt = ""
-	agent.BranchOrientationHeadlessPrompt = ""
-	cfg.Sessions.BranchOrientationFacetPrompt = ""
-	cfg.Sessions.BranchOrientationHeadlessPrompt = ""
+	agent.Sessions.BranchOrientationFacetPrompt = nil
+	agent.Sessions.BranchOrientationHeadlessPrompt = nil
+	cfg.Sessions.BranchOrientationFacetPrompt = nil
+	cfg.Sessions.BranchOrientationHeadlessPrompt = nil
 	// Ensure both agent and defaults have system_files unset
-	agent.SystemFiles = nil
+	agent.Defaults.SystemFiles = nil
 	cfg.Defaults.SystemFiles = nil
 
 	result := FormatAvailable(cfg, agent)

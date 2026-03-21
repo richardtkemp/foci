@@ -40,25 +40,6 @@ func TestSetIntDefault(t *testing.T) {
 	})
 }
 
-func TestSetInt64Default(t *testing.T) {
-	// Proves that setInt64Default sets the value when the target is zero and
-	// preserves an existing non-zero int64 value.
-	t.Run("sets when zero", func(t *testing.T) {
-		var v int64
-		setInt64Default(&v, 1024)
-		if v != 1024 {
-			t.Errorf("got %d, want %d", v, 1024)
-		}
-	})
-	t.Run("preserves non-zero", func(t *testing.T) {
-		var v int64 = 512
-		setInt64Default(&v, 1024)
-		if v != 512 {
-			t.Errorf("got %d, want %d", v, 512)
-		}
-	})
-}
-
 func TestSetFloatDefault(t *testing.T) {
 	// Proves that setFloatDefault sets the value when the target is zero and
 	// preserves an existing non-zero float value.
@@ -146,84 +127,76 @@ func TestValidateDurations(t *testing.T) {
 	})
 }
 
-func TestKeepaliveConfigMergeDefaults(t *testing.T) {
-	// Proves that KeepaliveConfig.MergeDefaults fills all fields from the global
-	// config when the local config is a zero value, and only fills empty fields
-	// when the local config has partial values.
-	global := KeepaliveConfig{Enabled: true, Interval: "55m", Prompt: "global.md"}
+func TestKeepaliveConfigMerge(t *testing.T) {
+	// Proves that Merge fills all fields from the global config when the local
+	// config is a zero value, and only fills nil fields when the local config
+	// has partial values.
+	global := KeepaliveConfig{Enabled: Ptr[bool](true), Interval: Ptr[string]("55m"), Prompt: Ptr[string]("global.md")}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
-		ka := KeepaliveConfig{}
-		ka.MergeDefaults(global)
-		if ka != global {
+		ka := Merge(KeepaliveConfig{}, global)
+		if DerefBool(ka.Enabled) != true || DerefStr(ka.Interval) != "55m" || DerefStr(ka.Prompt) != "global.md" {
 			t.Errorf("expected full copy of global, got %+v", ka)
 		}
 	})
 	t.Run("fills gaps", func(t *testing.T) {
-		ka := KeepaliveConfig{Interval: "30m"}
-		ka.MergeDefaults(global)
-		if ka.Interval != "30m" {
-			t.Errorf("Interval should be preserved, got %q", ka.Interval)
+		ka := Merge(KeepaliveConfig{Interval: Ptr[string]("30m")}, global)
+		if DerefStr(ka.Interval) != "30m" {
+			t.Errorf("Interval should be preserved, got %q", DerefStr(ka.Interval))
 		}
-		if ka.Prompt != "global.md" {
-			t.Errorf("Prompt should be filled from global, got %q", ka.Prompt)
+		if DerefStr(ka.Prompt) != "global.md" {
+			t.Errorf("Prompt should be filled from global, got %q", DerefStr(ka.Prompt))
 		}
 	})
 }
 
-func TestBackgroundConfigMergeDefaults(t *testing.T) {
-	// Proves that BackgroundConfig.MergeDefaults copies all global fields when the
-	// local config is zero, and preserves non-zero local fields when merging.
-	global := BackgroundConfig{Interval: "5m", Prompt: "bg.md"}
+func TestBackgroundConfigMerge(t *testing.T) {
+	// Proves that Merge copies all global fields when the local config is zero,
+	// and preserves non-nil local fields when merging.
+	global := BackgroundConfig{Interval: Ptr[string]("5m"), Prompt: Ptr[string]("bg.md")}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
-		bg := BackgroundConfig{}
-		bg.MergeDefaults(global)
-		if bg != global {
+		bg := Merge(BackgroundConfig{}, global)
+		if DerefStr(bg.Interval) != "5m" || DerefStr(bg.Prompt) != "bg.md" {
 			t.Errorf("expected full copy of global, got %+v", bg)
 		}
 	})
 	t.Run("fills gaps", func(t *testing.T) {
-		bg := BackgroundConfig{Interval: "10m"}
-		bg.MergeDefaults(global)
-		if bg.Interval != "10m" {
-			t.Errorf("Interval should be preserved, got %q", bg.Interval)
+		bg := Merge(BackgroundConfig{Interval: Ptr[string]("10m")}, global)
+		if DerefStr(bg.Interval) != "10m" {
+			t.Errorf("Interval should be preserved, got %q", DerefStr(bg.Interval))
 		}
 	})
 }
 
-func TestMemoryFormationConfigMergeDefaults(t *testing.T) {
-	// Proves that MemoryFormationConfig.MergeDefaults copies pointer fields from
-	// the global config when they are nil locally, and preserves locally-set
-	// pointer values (including false) without overwriting them.
-	boolTrue := true
+func TestMemoryFormationConfigMerge(t *testing.T) {
+	// Proves that Merge copies pointer fields from the global config when they
+	// are nil locally, and preserves locally-set pointer values (including false)
+	// without overwriting them.
 	global := MemoryFormationConfig{
-		IntervalEnabled: &boolTrue, Interval: "1h", IntervalPrompt: "mf.md",
-		ConsolidationEnabled: &boolTrue, ConsolidationInterval: "20h",
-		SessionEndEnabled: &boolTrue, SessionEndPrompt: "se.md",
+		IntervalEnabled: Ptr[bool](true), Interval: Ptr[string]("1h"), IntervalPrompt: Ptr[string]("mf.md"),
+		ConsolidationEnabled: Ptr[bool](true), ConsolidationInterval: Ptr[string]("20h"),
+		SessionEndEnabled: Ptr[bool](true), SessionEndPrompt: Ptr[string]("se.md"),
 	}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
-		mf := MemoryFormationConfig{}
-		mf.MergeDefaults(global)
-		if mf.Interval != "1h" || mf.IntervalEnabled != &boolTrue {
+		mf := Merge(MemoryFormationConfig{}, global)
+		if DerefStr(mf.Interval) != "1h" || !DerefBool(mf.IntervalEnabled) {
 			t.Errorf("expected full copy of global, got %+v", mf)
 		}
 	})
 	t.Run("fills gaps preserving set values", func(t *testing.T) {
-		boolFalse := false
-		mf := MemoryFormationConfig{IntervalEnabled: &boolFalse, Interval: "2h"}
-		mf.MergeDefaults(global)
-		if *mf.IntervalEnabled != false {
+		mf := Merge(MemoryFormationConfig{IntervalEnabled: Ptr[bool](false), Interval: Ptr[string]("2h")}, global)
+		if DerefBool(mf.IntervalEnabled) != false {
 			t.Errorf("IntervalEnabled should be preserved as false")
 		}
-		if mf.Interval != "2h" {
-			t.Errorf("Interval should be preserved, got %q", mf.Interval)
+		if DerefStr(mf.Interval) != "2h" {
+			t.Errorf("Interval should be preserved, got %q", DerefStr(mf.Interval))
 		}
-		if mf.ConsolidationInterval != "20h" {
-			t.Errorf("ConsolidationInterval should be filled, got %q", mf.ConsolidationInterval)
+		if DerefStr(mf.ConsolidationInterval) != "20h" {
+			t.Errorf("ConsolidationInterval should be filled, got %q", DerefStr(mf.ConsolidationInterval))
 		}
-		if mf.SessionEndEnabled != &boolTrue {
+		if !DerefBool(mf.SessionEndEnabled) {
 			t.Errorf("SessionEndEnabled should be filled from global")
 		}
 	})

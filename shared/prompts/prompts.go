@@ -114,14 +114,6 @@ func BuildBranchOrientation(promptPath, branchKey, parentKey, branchType string,
 	})
 }
 
-// ResolveOrientPath picks the first non-empty value: agent-level then global.
-func ResolveOrientPath(agentLevel, global string) string {
-	if agentLevel != "" {
-		return agentLevel
-	}
-	return global
-}
-
 // ReplaceVars performs template variable substitution on text.
 // Variables use {key} syntax. Only variables present in vars are replaced.
 func ReplaceVars(text string, vars map[string]string) string {

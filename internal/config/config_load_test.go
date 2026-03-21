@@ -24,7 +24,8 @@ id = "main"
 workspace = "/tmp/workspace"
 
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["111", "222"]
 
 [sessions]
@@ -53,14 +54,15 @@ api_file = "/tmp/api.jsonl"
 	if cfg.Agents[0].Workspace != "/tmp/workspace" {
 		t.Errorf("Agents[0].Workspace = %q", cfg.Agents[0].Workspace)
 	}
-	if len(cfg.Telegram.AllowedUsers) != 2 || cfg.Telegram.AllowedUsers[0] != "111" {
-		t.Errorf("Telegram.AllowedUsers = %v", cfg.Telegram.AllowedUsers)
+	tgPlat := cfg.Platform("telegram")
+	if tgPlat == nil || len(tgPlat.AllowedUsers) != 2 || tgPlat.AllowedUsers[0] != "111" {
+		t.Errorf("Platform(telegram).AllowedUsers = %v", tgPlat)
 	}
 	if cfg.Sessions.Dir != "/tmp/sessions" {
 		t.Errorf("Sessions.Dir = %q", cfg.Sessions.Dir)
 	}
-	if cfg.Sessions.CompactionThreshold != 0.7 {
-		t.Errorf("Sessions.CompactionThreshold = %f, want 0.7", cfg.Sessions.CompactionThreshold)
+	if DerefFloat(cfg.Sessions.CompactionThreshold) != 0.7 {
+		t.Errorf("Sessions.CompactionThreshold = %v, want 0.7", cfg.Sessions.CompactionThreshold)
 	}
 	if cfg.HTTP.Port != 9999 {
 		t.Errorf("HTTP.Port = %d, want 9999", cfg.HTTP.Port)
@@ -101,8 +103,8 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Sessions.CompactionThreshold != 0.8 {
-		t.Errorf("default CompactionThreshold = %f, want 0.8", cfg.Sessions.CompactionThreshold)
+	if cfg.Sessions.CompactionThreshold != nil {
+		t.Errorf("default CompactionThreshold should be nil (code default 0.8 at use time), got %v", cfg.Sessions.CompactionThreshold)
 	}
 	if cfg.HTTP.Port != 18791 {
 		t.Errorf("default HTTP.Port = %d, want 18791", cfg.HTTP.Port)
@@ -122,8 +124,8 @@ id = "test"
 	if cfg.Logging.APIFile != wantAPIFile {
 		t.Errorf("default Logging.APIFile = %q, want %q", cfg.Logging.APIFile, wantAPIFile)
 	}
-	if cfg.ManaWarnings.Name != "mana" {
-		t.Errorf("default ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "mana")
+	if DerefStr(cfg.Mana.Name) != "mana" {
+		t.Errorf("default Mana.Name = %q, want %q", DerefStr(cfg.Mana.Name), "mana")
 	}
 }
 
@@ -139,7 +141,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "test"
 
-[usage_warnings]
+[mana]
 name = "juice"
 thresholds = [50, 25, 10]
 `
@@ -150,11 +152,11 @@ thresholds = [50, 25, 10]
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.ManaWarnings.Name != "juice" {
-		t.Errorf("ManaWarnings.Name = %q, want %q", cfg.ManaWarnings.Name, "juice")
+	if DerefStr(cfg.Mana.Name) != "juice" {
+		t.Errorf("Mana.Name = %q, want %q", DerefStr(cfg.Mana.Name), "juice")
 	}
-	if len(cfg.ManaWarnings.Thresholds) != 3 {
-		t.Errorf("len(Thresholds) = %d, want 3", len(cfg.ManaWarnings.Thresholds))
+	if len(cfg.Mana.Thresholds) != 3 {
+		t.Errorf("len(Thresholds) = %d, want 3", len(cfg.Mana.Thresholds))
 	}
 }
 
@@ -246,7 +248,8 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "clutch"
 workspace = "/tmp/foci/workspace1"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "primary"
 facet_bots = ["secondary"]
 
@@ -254,10 +257,12 @@ facet_bots = ["secondary"]
 id = "scout"
 workspace = "/tmp/foci/workspace2"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "scout"
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["111"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -276,11 +281,11 @@ allowed_users = ["111"]
 	if cfg.Agents[0].ID != "clutch" {
 		t.Errorf("Agents[0].ID = %q", cfg.Agents[0].ID)
 	}
-	tg0 := cfg.Agents[0].GetTelegramPlatform()
+	tg0 := cfg.Agents[0].Platform("telegram")
 	if tg0 == nil || tg0.Bot != "primary" {
 		t.Errorf("Agents[0] telegram bot = %v", tg0)
 	}
-	if len(tg0.FacetBots) != 1 || tg0.FacetBots[0] != "secondary" {
+	if tg0 == nil || len(tg0.FacetBots) != 1 || tg0.FacetBots[0] != "secondary" {
 		t.Errorf("Agents[0].FacetBots = %v, want [secondary]", tg0.FacetBots)
 	}
 
@@ -288,7 +293,7 @@ allowed_users = ["111"]
 	if cfg.Agents[1].ID != "scout" {
 		t.Errorf("Agents[1].ID = %q", cfg.Agents[1].ID)
 	}
-	tg1 := cfg.Agents[1].GetTelegramPlatform()
+	tg1 := cfg.Agents[1].Platform("telegram")
 	if tg1 == nil || tg1.Bot != "scout" {
 		t.Errorf("Agents[1] telegram bot = %v", tg1)
 	}
@@ -299,7 +304,7 @@ allowed_users = ["111"]
 }
 
 func TestLoadPerAgentUsageWarnings(t *testing.T) {
-	// Proves that per-agent [agents.usage_warnings] overrides the global thresholds
+	// Proves that per-agent [agents.mana] overrides the global thresholds
 	// for that agent, while agents without an override have an empty threshold list,
 	// and the global configuration remains unaffected.
 	dir := t.TempDir()
@@ -308,13 +313,13 @@ func TestLoadPerAgentUsageWarnings(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[usage_warnings]
+[mana]
 thresholds = [50, 25, 10]
 
 [[agents]]
 id = "main"
 
-[agents.usage_warnings]
+[agents.mana]
 thresholds = [5]
 
 [[agents]]
@@ -328,18 +333,18 @@ id = "other"
 	}
 
 	// First agent should have per-agent thresholds
-	if len(cfg.Agents[0].UsageWarnings.Thresholds) != 1 || cfg.Agents[0].UsageWarnings.Thresholds[0] != 5 {
-		t.Errorf("Agents[0].UsageWarnings.Thresholds = %v, want [5]", cfg.Agents[0].UsageWarnings.Thresholds)
+	if len(cfg.Agents[0].Mana.Thresholds) != 1 || cfg.Agents[0].Mana.Thresholds[0] != 5 {
+		t.Errorf("Agents[0].Mana.Thresholds = %v, want [5]", cfg.Agents[0].Mana.Thresholds)
 	}
 
 	// Second agent should have no per-agent thresholds (falls back to global)
-	if len(cfg.Agents[1].UsageWarnings.Thresholds) != 0 {
-		t.Errorf("Agents[1].UsageWarnings.Thresholds = %v, want []", cfg.Agents[1].UsageWarnings.Thresholds)
+	if len(cfg.Agents[1].Mana.Thresholds) != 0 {
+		t.Errorf("Agents[1].Mana.Thresholds = %v, want []", cfg.Agents[1].Mana.Thresholds)
 	}
 
 	// Global should still be set
-	if len(cfg.ManaWarnings.Thresholds) != 3 {
-		t.Errorf("ManaWarnings.Thresholds = %v, want [50, 25, 10]", cfg.ManaWarnings.Thresholds)
+	if len(cfg.Mana.Thresholds) != 3 {
+		t.Errorf("Mana.Thresholds = %v, want [50, 25, 10]", cfg.Mana.Thresholds)
 	}
 }
 
@@ -432,9 +437,8 @@ func TestLoadInvalidTOML(t *testing.T) {
 }
 
 func TestLoadPlatformConfigSync(t *testing.T) {
-	// Proves that agent-level display fields (show_tool_calls) are synced to
-	// Platforms.Telegram at load time, and that platform-specific fields are set
-	// directly via [agents.platforms.telegram].
+	// Proves that agent-level platform fields are loaded from the [[agents.platforms]]
+	// array and that show_tool_calls is set at the agent level.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
@@ -446,13 +450,15 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 id = "testbot"
 show_tool_calls = "preview"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "my_bot"
 bot_secret = "custom.secret"
 facet_bots = ["extra1", "extra2"]
 allowed_users = ["123", "456"]
 
-[telegram]
+[[platforms]]
+id = "telegram"
 allowed_users = ["789"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -468,40 +474,30 @@ allowed_users = ["789"]
 
 	agent := cfg.Agents[0]
 
-	// Platforms structure should be populated
-	if agent.Platforms == nil {
-		t.Fatal("Platforms is nil")
+	tg := agent.Platform("telegram")
+	if tg == nil {
+		t.Fatal("Platform(telegram) is nil")
 	}
-	if agent.Platforms.Telegram == nil {
-		t.Fatal("Platforms.Telegram is nil")
-	}
-
-	tg := agent.Platforms.Telegram
 	if tg.Bot != "my_bot" {
-		t.Errorf("Platforms.Telegram.Bot = %q, want %q", tg.Bot, "my_bot")
+		t.Errorf("Platform(telegram).Bot = %q, want %q", tg.Bot, "my_bot")
 	}
 	if tg.BotSecret != "custom.secret" {
-		t.Errorf("Platforms.Telegram.BotSecret = %q, want %q", tg.BotSecret, "custom.secret")
+		t.Errorf("Platform(telegram).BotSecret = %q, want %q", tg.BotSecret, "custom.secret")
 	}
 	if len(tg.FacetBots) != 2 || tg.FacetBots[0] != "extra1" {
-		t.Errorf("Platforms.Telegram.FacetBots = %v, want [extra1 extra2]", tg.FacetBots)
+		t.Errorf("Platform(telegram).FacetBots = %v, want [extra1 extra2]", tg.FacetBots)
 	}
 	if len(tg.AllowedUsers) != 2 || tg.AllowedUsers[0] != "123" {
-		t.Errorf("Platforms.Telegram.AllowedUsers = %v, want [123 456]", tg.AllowedUsers)
-	}
-	if tg.ShowToolCalls == nil || *tg.ShowToolCalls != ToolCallPreview {
-		t.Errorf("Platforms.Telegram.ShowToolCalls = %v, want preview", tg.ShowToolCalls)
+		t.Errorf("Platform(telegram).AllowedUsers = %v, want [123 456]", tg.AllowedUsers)
 	}
 }
 
 func TestLoadPlatformConfigNewStyle(t *testing.T) {
-	// Proves that the new-style [agents.platforms.telegram] config block is loaded
-	// directly into Platforms.Telegram without any migration, including stream_output
-	// as a nullable bool.
+	// Proves that the [[agents.platforms]] config block is loaded correctly,
+	// including stream_output as a nullable bool.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 
-	// New-style config with platforms section
 	toml := `
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
@@ -509,7 +505,8 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "newbot"
 
-[agents.platforms.telegram]
+[[agents.platforms]]
+id = "telegram"
 bot = "new_bot"
 bot_secret = "new.secret"
 allowed_users = ["999"]
@@ -528,24 +525,20 @@ stream_output = false
 
 	agent := cfg.Agents[0]
 
-	if agent.Platforms == nil {
-		t.Fatal("Platforms is nil")
+	tg := agent.Platform("telegram")
+	if tg == nil {
+		t.Fatal("Platform(telegram) is nil")
 	}
-	if agent.Platforms.Telegram == nil {
-		t.Fatal("Platforms.Telegram is nil")
-	}
-
-	tg := agent.Platforms.Telegram
 	if tg.Bot != "new_bot" {
-		t.Errorf("Platforms.Telegram.Bot = %q, want %q", tg.Bot, "new_bot")
+		t.Errorf("Platform(telegram).Bot = %q, want %q", tg.Bot, "new_bot")
 	}
 	if tg.BotSecret != "new.secret" {
-		t.Errorf("Platforms.Telegram.BotSecret = %q, want %q", tg.BotSecret, "new.secret")
+		t.Errorf("Platform(telegram).BotSecret = %q, want %q", tg.BotSecret, "new.secret")
 	}
 	if len(tg.AllowedUsers) != 1 || tg.AllowedUsers[0] != "999" {
-		t.Errorf("Platforms.Telegram.AllowedUsers = %v, want [999]", tg.AllowedUsers)
+		t.Errorf("Platform(telegram).AllowedUsers = %v, want [999]", tg.AllowedUsers)
 	}
 	if tg.StreamOutput == nil || *tg.StreamOutput != false {
-		t.Errorf("Platforms.Telegram.StreamOutput = %v, want false", tg.StreamOutput)
+		t.Errorf("Platform(telegram).StreamOutput = %v, want false", tg.StreamOutput)
 	}
 }

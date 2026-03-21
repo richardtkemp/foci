@@ -122,7 +122,7 @@ func TestConfigSetWizardAgentSection(t *testing.T) {
 	w := newConfigSetWizard(deps)
 
 	w.Handle("agent")
-	w.Handle("max_output_tokens")
+	w.Handle("defaults.max_output_tokens")
 	w.Handle("32768")
 
 	if captured.Section != "agents" {
@@ -230,7 +230,7 @@ func TestConfigSetDirectAgent(t *testing.T) {
 		return "", nil
 	})
 
-	_, err := ConfigSetDirect(deps, "agent.max_tool_loops=50")
+	_, err := ConfigSetDirect(deps, "agent.defaults.max_tool_loops=50")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	if captured.Section != "agents" || captured.AgentID != "test-agent" {
 		t.Errorf("target = %+v", captured)
 	}
-	if captured.Key != "max_tool_loops" {
+	if captured.Key != "defaults.max_tool_loops" {
 		t.Errorf("target.Key = %q", captured.Key)
 	}
 }
@@ -281,7 +281,7 @@ func TestConfigSetDirectBool(t *testing.T) {
 		return "", nil
 	})
 
-	_, err := ConfigSetDirect(deps, "logging.messages_in_log=yes")
+	_, err := ConfigSetDirect(deps, "debug.messages_in_log=yes")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -360,14 +360,14 @@ func TestConfigSetSectionKeyValue(t *testing.T) {
 		return "", nil
 	})
 
-	text, err := configSet(&deps, "logging messages_in_log true")
+	text, err := configSet(&deps, "debug messages_in_log true")
 	if err != nil {
 		t.Fatalf("configSet: %v", err)
 	}
-	if !strings.Contains(text, "Set logging.messages_in_log") {
+	if !strings.Contains(text, "Set debug.messages_in_log") {
 		t.Errorf("expected confirmation, got %q", text)
 	}
-	if captured.Section != "logging" || captured.Key != "messages_in_log" {
+	if captured.Section != "debug" || captured.Key != "messages_in_log" {
 		t.Errorf("target = %+v", captured)
 	}
 	if capturedValue != "true" {

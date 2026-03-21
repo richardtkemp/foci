@@ -122,48 +122,35 @@ func reflectSecretRefs(v reflect.Value, path string, refs *[]SecretRef) {
 func conventionSecretRefs(cfg *Config) []SecretRef {
 	var refs []SecretRef
 
-	// --- Telegram bot tokens ---
-	// Convention: agent with telegram_bot="scout" and no bot_secret override
-	// needs secret "telegram.scout".
+	// --- Platform bot tokens ---
+	// Convention: agent platform with bot="scout" and no bot_secret override
+	// needs secret "<platform>.<bot>".
 	for _, agent := range cfg.Agents {
-		tg := agent.GetTelegramPlatform()
-		if tg != nil && tg.Bot != "" && tg.BotSecret == "" {
-			refs = append(refs, SecretRef{
-				Key:      "telegram." + tg.Bot,
-				Context:  fmt.Sprintf("agent %q telegram bot %q", agent.ID, tg.Bot),
-				AgentID:  agent.ID,
-				Platform: true,
-			})
-		}
-		if tg != nil {
-			for _, bot := range tg.FacetBots {
+		for _, p := range agent.Platforms {
+			if p.Bot != "" && p.BotSecret == "" {
 				refs = append(refs, SecretRef{
-					Key:      "telegram." + bot,
-					Context:  fmt.Sprintf("agent %q facet bot %q", agent.ID, bot),
+					Key:      p.ID + "." + p.Bot,
+					Context:  fmt.Sprintf("agent %q %s bot %q", agent.ID, p.ID, p.Bot),
+					AgentID:  agent.ID,
+					Platform: true,
+				})
+			}
+			for _, bot := range p.FacetBots {
+				refs = append(refs, SecretRef{
+					Key:      p.ID + "." + bot,
+					Context:  fmt.Sprintf("agent %q %s facet bot %q", agent.ID, p.ID, bot),
 					AgentID:  agent.ID,
 					Platform: true,
 				})
 			}
 		}
 	}
-	for _, bot := range cfg.Telegram.FacetBots {
-		refs = append(refs, SecretRef{
-			Key:      "telegram." + bot,
-			Context:  fmt.Sprintf("global facet bot %q", bot),
-			Platform: true,
-		})
-	}
-
-	// --- Discord bot tokens ---
-	// Convention: agent with discord bot="scout" and no bot_secret override
-	// needs secret "discord.scout".
-	for _, agent := range cfg.Agents {
-		dc := agent.GetDiscordPlatform()
-		if dc != nil && dc.Bot != "" && dc.BotSecret == "" {
+	// Global platform facet bots
+	for _, p := range cfg.Platforms {
+		for _, bot := range p.FacetBots {
 			refs = append(refs, SecretRef{
-				Key:      "discord." + dc.Bot,
-				Context:  fmt.Sprintf("agent %q discord bot %q", agent.ID, dc.Bot),
-				AgentID:  agent.ID,
+				Key:      p.ID + "." + bot,
+				Context:  fmt.Sprintf("global %s facet bot %q", p.ID, bot),
 				Platform: true,
 			})
 		}
@@ -203,14 +190,8 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 	// --- Brave search ---
 	// If any agent effectively uses brave search, brave.api_key is needed.
 	for _, agent := range cfg.Agents {
-		sp := agent.SearchProvider
-		if sp == "" {
-			sp = cfg.Defaults.SearchProvider
-		}
-		if sp == "" {
-			sp = cfg.Tools.SearchProvider
-		}
-		if sp == "brave" {
+		tc := Merge(agent.Tools.ToolConfig, cfg.Tools.ToolConfig)
+		if DerefStr(tc.SearchProvider) == "brave" {
 			refs = append(refs, SecretRef{
 				Key:     "brave.api_key",
 				Context: "brave search",

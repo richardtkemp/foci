@@ -3,6 +3,9 @@ package telegram
 // platformName is the platform identifier used for chat_metadata queries.
 const platformName = "telegram"
 
+// PlatformName returns "telegram".
+func (b *Bot) PlatformName() string { return platformName }
+
 // SessionKey returns the current session key (thread-safe).
 // For primary bots, this returns the session key for the default chat.
 // For secondary bots, this returns the override session key (set by facet).

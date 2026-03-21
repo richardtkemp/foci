@@ -39,9 +39,11 @@ type coreToolsResult struct {
 func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc) coreToolsResult {
 	acfg := p.acfg
 
-	execAutoBg := resolveInt(acfg.ExecAutoBackground, p.cfg.Tools.ExecAutoBackground)
-	maxUploadSize := resolveInt64(acfg.MaxUploadFileSize, p.cfg.Tools.MaxUploadFileSize)
-	spillThreshold := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
+	sc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
+	execAutoBg := config.DerefInt(tc.ExecAutoBackground)
+	maxUploadSize := config.DerefInt64(tc.MaxUploadFileSize)
+	spillThreshold := config.DerefInt(sc.MaxResultChars)
 
 	// Inject FOCI_ADDR and FOCI_GW_SOCK so agents can run foci CLI commands
 	// (send, branch, ping, etc.) without sourcing vars manually.
@@ -66,13 +68,13 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 
 	// Only register tmux tool if tmux is available in PATH
 	if _, err := exec.LookPath("tmux"); err == nil {
-		tmuxAutopilot := resolveBoolPtr(acfg.TmuxAutopilot, p.cfg.Tools.TmuxAutopilot)
-		tmuxWatchThreshold := resolveString(acfg.TmuxWatchThreshold, p.cfg.Tools.TmuxWatchThreshold)
+		tmuxAutopilot := config.DerefBool(tc.TmuxAutopilot)
+		tmuxWatchThreshold := config.DerefStr(tc.TmuxWatchThreshold)
 		tmuxWatchThresholdSec := 30
 		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
 			tmuxWatchThresholdSec = int(d.Seconds())
 		}
-		tmuxSessionTTLStr := resolveString(acfg.TmuxSessionTTL, p.cfg.Tools.TmuxSessionTTL)
+		tmuxSessionTTLStr := config.DerefStr(tc.TmuxSessionTTL)
 		var tmuxSessionTTL time.Duration
 		if tmuxSessionTTLStr != "0" {
 			if d, err := time.ParseDuration(tmuxSessionTTLStr); err == nil {
@@ -84,9 +86,9 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	}
 
 	// Only register browser tool if enabled
-	browserEnabled := resolveBoolPtr(acfg.BrowserEnabled, p.cfg.Tools.Browser.Enabled)
-	if browserEnabled {
-		browserMgr := tools.NewBrowserManager(&p.cfg.Tools.Browser)
+	bc := config.Merge(acfg.Browser, p.cfg.Browser)
+	if config.DerefBool(bc.Enabled) {
+		browserMgr := tools.NewBrowserManager(&bc)
 		registry.Register(tools.NewBrowserTool(browserMgr))
 	}
 
@@ -109,7 +111,8 @@ func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDe
 	acfg := p.acfg
 	var serverTools []provider.ToolDef
 
-	searchProvider := resolveString(acfg.SearchProvider, p.cfg.Tools.SearchProvider)
+	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
+	searchProvider := config.DerefStr(tc.SearchProvider)
 	if searchProvider == "anthropic" {
 		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
 			p.cfg.Tools.WebSearchMaxUses, p.cfg.Tools.WebSearchAllowedDomains, p.cfg.Tools.WebSearchBlockedDomains))
@@ -117,7 +120,7 @@ func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDe
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
 
-	fetchProvider := resolveString(acfg.FetchProvider, p.cfg.Tools.FetchProvider)
+	fetchProvider := config.DerefStr(tc.FetchProvider)
 	if fetchProvider == "anthropic" {
 		serverTools = append(serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
 			p.cfg.Tools.WebFetchMaxUses, p.cfg.Tools.WebFetchAllowedDomains, p.cfg.Tools.WebFetchBlockedDomains))
@@ -178,7 +181,7 @@ type bootstrapResult struct {
 func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrapResult {
 	acfg := p.acfg
 
-	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.SystemFiles)
+	bootstrap := workspace.NewBootstrap(acfg.Workspace, acfg.Defaults.SystemFiles)
 	bootstrap.SetSecretNames(agentStore.Names(), p.bwStore != nil)
 	checkSystemPromptSizes(bootstrap, p.cfg.Sessions, acfg.ID)
 
@@ -192,7 +195,8 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
-	maxRC := resolveInt(acfg.MaxResultChars, p.cfg.Tools.MaxResultChars)
+	bsc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
+	maxRC := config.DerefInt(bsc.MaxResultChars)
 	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
 
 	return bootstrapResult{
@@ -207,8 +211,12 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 // Returns the compactor and the resolved compaction threshold.
 func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compaction.Compactor, float64) {
 	acfg := p.acfg
-	compactionThreshold := resolveFloat64Ptr(acfg.CompactionThreshold, p.cfg.Sessions.CompactionThreshold)
-	preserveMessages := resolveIntPtr(acfg.CompactionPreserveMessages, p.cfg.Sessions.CompactionPreserveMessages)
+	cc := config.Merge(acfg.Sessions.CompactionConfig, p.cfg.Sessions.CompactionConfig)
+	compactionThreshold := config.DerefFloat(cc.CompactionThreshold)
+	if compactionThreshold == 0 {
+		compactionThreshold = 0.8 // code default
+	}
+	preserveMessages := config.DerefInt(cc.CompactionPreserveMessages)
 	compactor := compaction.NewCompactor(p.sessions, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
@@ -230,8 +238,9 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platform.ConnectionManager, notifier *tools.AsyncNotifier) (voice.TTS, map[string]string) {
 	acfg := p.acfg
 
-	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.TTSReplacements)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls)
+	vc := config.Merge(acfg.Defaults.VoiceConfig, p.cfg.Defaults.VoiceConfig)
+	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.TTSReplacements, acfg.Defaults.TTSReplacements)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls)
 	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
 		if conn == nil {
@@ -251,19 +260,23 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
-	hasBraindead := acfg.NudgeDefaultBraindeadThreshold > 0
-	if !acfg.NudgeEnable && !acfg.NudgeDefaultEnable && !hasBraindead {
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Config, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
+	nc := config.Merge(acfg.Defaults.NudgeConfig, cfg.Defaults.NudgeConfig)
+	nudgeEnabled := nc.NudgeEnable == nil || *nc.NudgeEnable                       // default true
+	nudgeDefaultEnabled := nc.NudgeDefaultEnable == nil || *nc.NudgeDefaultEnable  // default true
+	braindeadThreshold := config.DerefInt(nc.NudgeDefaultBraindeadThreshold)
+	hasBraindead := braindeadThreshold > 0
+	if !nudgeEnabled && !nudgeDefaultEnabled && !hasBraindead {
 		return
 	}
 
 	// Braindead warning rule (fires every N tool calls).
-	braindeadRules := nudge.BraindeadRule(acfg.NudgeDefaultBraindeadThreshold, acfg.NudgeDefaultBraindeadPrompt)
+	braindeadRules := nudge.BraindeadRule(braindeadThreshold, config.DerefStr(nc.NudgeDefaultBraindeadPrompt))
 
 	// Load character-derived rules.
 	var charRules []nudge.Rule
 	rulesPath := nudge.RulesPath(acfg.Workspace)
-	if acfg.NudgeEnable {
+	if nudgeEnabled {
 		rs, err := nudge.LoadRules(rulesPath)
 		if err != nil {
 			log.Warnf("main", "agent %s: load nudge rules: %v", acfg.ID, err)
@@ -275,7 +288,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 
 	// Generate default tool/skill reminder rules.
 	var defaultRules []nudge.Rule
-	if acfg.NudgeDefaultEnable {
+	if nudgeDefaultEnabled {
 		var toolNames []string
 		for _, t := range toolRegistry.All() {
 			toolNames = append(toolNames, t.Name)
@@ -286,7 +299,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 				skillSummaries = append(skillSummaries, nudge.SkillSummary{Name: s.Name, Description: s.Description})
 			}
 		}
-		freq := acfg.NudgeDefaultFrequency
+		freq := config.DerefInt(nc.NudgeDefaultFrequency)
 		if freq <= 0 {
 			freq = 50
 		}
@@ -294,43 +307,45 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 	}
 
 	// Scratchpad staleness reminder: fires every N turns, but only when entries exist.
+	scratchpadFreq := config.DerefInt(nc.NudgeDefaultScratchpadFrequency)
 	var scratchpadRules []nudge.Rule
-	if acfg.NudgeDefaultEnable && ag.ScratchpadStore != nil && acfg.NudgeDefaultScratchpadFrequency > 0 {
+	if nudgeDefaultEnabled && ag.ScratchpadStore != nil && scratchpadFreq > 0 {
 		agentID := ag.AgentID
 		store := ag.ScratchpadStore
-		scratchpadRules = nudge.ScratchpadRule(acfg.NudgeDefaultScratchpadFrequency, func() bool {
+		scratchpadRules = nudge.ScratchpadRule(scratchpadFreq, func() bool {
 			entries, err := store.List(agentID)
 			return err == nil && len(entries) > 0
 		})
 	}
 
 	// Braindead first (highest effective priority), then character, then defaults, then scratchpad.
+	cooldown := config.DerefInt(nc.NudgeCooldown)
+	maxPerBatch := config.DerefInt(nc.NudgeMaxPerBatch)
 	allRules := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
 	if len(allRules) > 0 {
 		rs := &nudge.RuleSet{Rules: allRules}
-		ag.Nudger = nudge.NewScheduler(rs, acfg.NudgeCooldown, acfg.NudgeMaxPerBatch)
+		ag.Nudger = nudge.NewScheduler(rs, cooldown, maxPerBatch)
 		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default, %d scratchpad)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules), len(scratchpadRules))
 	}
 
-	ag.NudgePreAnswerGate = acfg.NudgePreAnswerGate
-	ag.NudgePreAnswerMinTools = acfg.NudgePreAnswerMinTools
-	if ag.NudgePreAnswerMinTools <= 0 {
-		ag.NudgePreAnswerMinTools = 2
+	ag.NudgePreAnswerGate = config.DerefBool(nc.NudgePreAnswerGate)
+	preAnswerMinTools := config.DerefInt(nc.NudgePreAnswerMinTools)
+	if preAnswerMinTools <= 0 {
+		preAnswerMinTools = 2
 	}
+	ag.NudgePreAnswerMinTools = preAnswerMinTools
 
-	if !acfg.NudgeEnable {
+	if !nudgeEnabled {
 		return // no character rules → no reload/extraction logic needed
 	}
 
 	// NudgeReloadFunc: on bootstrap reload, optionally extract new rules
 	// from character files (if nudge_auto_extract), then refresh from disk.
-	fileOrder := acfg.SystemFiles
+	fileOrder := acfg.Defaults.SystemFiles
 	if len(fileOrder) == 0 {
 		fileOrder = workspace.DefaultFileOrder
 	}
-	nudgeCooldown := acfg.NudgeCooldown
-	nudgeMaxPerBatch := acfg.NudgeMaxPerBatch
-	autoExtract := acfg.NudgeAutoExtract
+	autoExtract := nc.NudgeAutoExtract == nil || *nc.NudgeAutoExtract // default true
 	nudgeReloadFromDisk := func() {
 		rs, err := nudge.LoadRules(rulesPath)
 		if err != nil {
@@ -343,7 +358,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, defaultSessionKe
 		}
 		merged := append(reloaded, append(defaultRules, scratchpadRules...)...)
 		if len(merged) > 0 {
-			ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, nudgeCooldown, nudgeMaxPerBatch)
+			ag.Nudger = nudge.NewScheduler(&nudge.RuleSet{Rules: merged}, cooldown, maxPerBatch)
 		}
 	}
 
@@ -404,16 +419,18 @@ func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Con
 		warningWindow = 5 * time.Minute
 	}
 
-	if acfg.InjectAgentWarnings.Enabled() {
+	agentLevel := maxInjectionLevel(acfg, cfg, config.NotifyConfig.InjectAgentWarningsLevel)
+	if agentLevel.Enabled() {
 		ag.WarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
-		if !acfg.InjectAgentWarnings.IncludeWarnings() {
+		if !agentLevel.IncludeWarnings() {
 			ag.WarningQueue.SetErrorsOnly(true)
 		}
 	}
 
-	if acfg.InjectChatWarnings.Enabled() {
+	chatLevel := maxInjectionLevel(acfg, cfg, config.NotifyConfig.InjectChatWarningsLevel)
+	if chatLevel.Enabled() {
 		ag.ChatWarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
-		if !acfg.InjectChatWarnings.IncludeWarnings() {
+		if !chatLevel.IncludeWarnings() {
 			ag.ChatWarningQueue.SetErrorsOnly(true)
 		}
 	}
@@ -421,30 +438,24 @@ func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Con
 
 // setupManaWatcher configures mana threshold warnings on the agent.
 func setupManaWatcher(ag *agent.Agent, p setupParams) {
-	acfg := p.acfg
-	manaThresholds := p.cfg.ManaWarnings.Thresholds
-	if len(acfg.UsageWarnings.Thresholds) > 0 {
-		manaThresholds = acfg.UsageWarnings.Thresholds
-	}
-	if len(manaThresholds) == 0 {
+	mc := config.Merge(p.acfg.Mana, p.cfg.Mana)
+	if len(mc.Thresholds) == 0 {
 		return
 	}
 
-	ag.ManaWatcher = agent.NewManaWatcher(p.cfg.ManaWarnings.Name, manaThresholds)
-	ag.ManaWatcher.SetSessionIndex(p.sessionIndex, acfg.ID)
+	ag.ManaWatcher = agent.NewManaWatcher(config.DerefStr(mc.Name), mc.Thresholds)
+	ag.ManaWatcher.SetSessionIndex(p.sessionIndex, p.acfg.ID)
 	ag.ManaWatcher.Restore()
-	restoreThreshold := p.cfg.ManaWarnings.RestoreThreshold
-	if acfg.UsageWarnings.RestoreThreshold != nil {
-		restoreThreshold = *acfg.UsageWarnings.RestoreThreshold
-	}
-	ag.ManaWatcher.SetRestoreThreshold(restoreThreshold)
+	ag.ManaWatcher.SetRestoreThreshold(config.DerefInt(mc.RestoreThreshold))
 }
 
 // registerSpawnTool registers the spawn tool for forking sub-agents.
 func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, defaultFormat string, fallbackFn provider.FallbackFunc) {
 	acfg := p.acfg
 
-	spawnOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	spawnOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
+	al := config.Merge(acfg.Defaults.AgentLoopConfig, p.cfg.Defaults.AgentLoopConfig)
+	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
 		ClientProvider:  p.clientProvider,
@@ -456,9 +467,9 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 		FallbackFunc:    fallbackFn,
 		FallbackModel:   groupResolver.PowerfulModel(),
 		FallbackFormat:  defaultFormat,
-		MaxInherit:      resolveInt(acfg.MaxConcurrentSpawns, p.cfg.Tools.MaxConcurrentSpawns),
-		MaxToolLoops:    acfg.MaxToolLoops,
-		ExploreMaxDepth: resolveInt(acfg.ExploreMaxDepth, p.cfg.Tools.ExploreMaxDepth),
+		MaxInherit:      config.DerefInt(tc.MaxConcurrentSpawns),
+		MaxToolLoops:    config.DerefInt(al.MaxToolLoops),
+		ExploreMaxDepth: config.DerefInt(tc.ExploreMaxDepth),
 		Notifier:        notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
 			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
@@ -489,10 +500,11 @@ func setupPlatformConnections(
 	acfg := p.acfg
 	var result platformConnectionResult
 
-	reclaimOrientPath := prompts.ResolveOrientPath(acfg.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt)
+	reclaimOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	reclaimMfCfg := acfg.MemoryFormation
 	reclaimSearchDirs := promptSearchDirs
 
+	vc := config.Merge(acfg.Defaults.VoiceConfig, p.cfg.Defaults.VoiceConfig)
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
 		AgentID:        acfg.ID,
 		Handler:        ag,
@@ -500,8 +512,8 @@ func setupPlatformConnections(
 		CommandContext: cc,
 		LastMsgStore:   lastMsgStore,
 		AgentConfig:    acfg,
-		STT:            resolveSTT(p.sttMap, p.cfg.STT, acfg.STT, voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.STTReplacements)),
-		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, acfg.TTS, acfg.TTSRate, ttsRepls),
+		STT:            resolveSTT(p.sttMap, p.cfg.STT, config.DerefStr(vc.STT), voice.MergeReplacements(p.cfg.Defaults.STTReplacements, acfg.Defaults.STTReplacements)),
+		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls),
 		ReclaimHook: func(sessionKey string) {
 			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
 				return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)

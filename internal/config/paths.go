@@ -70,6 +70,13 @@ func ResolvePath(p string) string {
 	return filepath.Join(home, p)
 }
 
+// ResolvePathPtr resolves a *string path in place if non-nil and non-empty.
+func ResolvePathPtr(p *string) {
+	if p != nil && *p != "" {
+		*p = ResolvePath(*p)
+	}
+}
+
 // DataPath resolves the path for a data file (database, state, etc.).
 // If DataDir is set, the file is placed there (resolved via ResolvePath).
 // Otherwise, defaults to $HOME/data/<filename>.
@@ -109,34 +116,20 @@ func (c *Config) ResolveAllPaths() {
 	} else {
 		c.Sessions.Dir = ResolvePath(c.Sessions.Dir)
 	}
-	if c.Sessions.BranchOrientationFacetPrompt != "" {
-		c.Sessions.BranchOrientationFacetPrompt = ResolvePath(c.Sessions.BranchOrientationFacetPrompt)
-	}
-	if c.Sessions.BranchOrientationHeadlessPrompt != "" {
-		c.Sessions.BranchOrientationHeadlessPrompt = ResolvePath(c.Sessions.BranchOrientationHeadlessPrompt)
-	}
-	if c.Sessions.CompactionSummaryPrompt != "" {
-		c.Sessions.CompactionSummaryPrompt = ResolvePath(c.Sessions.CompactionSummaryPrompt)
-	}
+	ResolvePathPtr(c.Sessions.BranchOrientationFacetPrompt)
+	ResolvePathPtr(c.Sessions.BranchOrientationHeadlessPrompt)
+	ResolvePathPtr(c.Sessions.CompactionSummaryPrompt)
 	// Keepalive.Prompt and Background.Prompt: path resolution handled by prompts.ResolvePrompt at runtime.
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
 	if c.Environment.DocsPath != "" {
 		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)
 	}
-	if c.Telegram.ReceivedFilesDir != "" {
-		c.Telegram.ReceivedFilesDir = ResolvePath(c.Telegram.ReceivedFilesDir)
-	}
-	if c.Discord.ReceivedFilesDir != "" {
-		c.Discord.ReceivedFilesDir = ResolvePath(c.Discord.ReceivedFilesDir)
+	for i := range c.Platforms {
+		ResolvePathPtr(c.Platforms[i].ReceivedFilesDir)
 	}
 	for i := range c.Agents {
-		tg := c.Agents[i].GetTelegramPlatform()
-		if tg != nil && tg.ReceivedFilesDir != "" {
-			tg.ReceivedFilesDir = ResolvePath(tg.ReceivedFilesDir)
-		}
-		dc := c.Agents[i].GetDiscordPlatform()
-		if dc != nil && dc.ReceivedFilesDir != "" {
-			dc.ReceivedFilesDir = ResolvePath(dc.ReceivedFilesDir)
+		for j := range c.Agents[i].Platforms {
+			ResolvePathPtr(c.Agents[i].Platforms[j].ReceivedFilesDir)
 		}
 	}
 }

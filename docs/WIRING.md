@@ -150,7 +150,7 @@ main
  ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, tools/browserjs, voice
  ├── workspace     → log, provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       (top-level package, not internal) → log (embedded .md files + BuildBranchOrientation, ResolveOrientPath helpers)
+ ├── prompts       (top-level package, not internal) → log (embedded .md files + BuildBranchOrientation helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── compaction    → log, memory, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)

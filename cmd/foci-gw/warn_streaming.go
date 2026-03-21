@@ -25,9 +25,9 @@ func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 			continue // provider streaming is on — no conflict
 		}
 
-		// Resolve effective stream_output for Telegram.
-		streamOutput := cfg.Telegram.StreamOutput // global default
-		if tg := acfg.GetTelegramPlatform(); tg != nil && tg.StreamOutput != nil {
+		// Resolve effective stream_output for each platform.
+		streamOutput := false
+		if tg := acfg.Platform("telegram"); tg != nil && tg.StreamOutput != nil {
 			streamOutput = *tg.StreamOutput
 		}
 

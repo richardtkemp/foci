@@ -2,10 +2,9 @@ package periodic
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
-
-	"path/filepath"
 
 	"foci/internal/config"
 	"foci/internal/log"
@@ -19,7 +18,7 @@ func TestMaybeKeepalive_Disabled(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		kaCfg: config.KeepaliveConfig{
-			Enabled: false,
+			Enabled: config.Ptr(false),
 		},
 		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -41,8 +40,8 @@ func TestMaybeKeepalive_BadInterval(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		kaCfg: config.KeepaliveConfig{
-			Enabled:  true,
-			Interval: "invalid",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("invalid"),
 		},
 		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -65,8 +64,8 @@ func TestMaybeKeepalive_RecentCache(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		kaCfg: config.KeepaliveConfig{
-			Enabled:  true,
-			Interval: "1h",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1h"),
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -89,9 +88,9 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		kaCfg: config.KeepaliveConfig{
-			Enabled:  true,
-			Interval: "1m",
-			Prompt:   "keepalive.md",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1m"),
+			Prompt:   config.Ptr("keepalive.md"),
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -116,8 +115,8 @@ func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		kaCfg: config.KeepaliveConfig{
-			Enabled:  true,
-			Interval: "1m",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1m"),
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
 		keepaliveRunning: true,
@@ -140,7 +139,7 @@ func TestMaybeBackgroundWork_Disabled(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled: false,
+			Enabled: config.Ptr(false),
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -163,8 +162,8 @@ func TestMaybeBackgroundWork_BadInterval(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "invalid",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("invalid"),
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -187,8 +186,8 @@ func TestMaybeBackgroundWork_RecentInteraction(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		bgCfg: config.BackgroundConfig{
-			Enabled:  true,
-			Interval: "1h",
+			Enabled:  config.Ptr(true),
+			Interval: config.Ptr("1h"),
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -235,7 +234,7 @@ func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			Interval: "invalid",
+			Interval: config.Ptr("invalid"),
 		},
 		lastInteraction:  time.Now().Add(-1 * time.Hour),
 		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
@@ -260,8 +259,8 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			Interval:         "1h",
-			IntervalPrompt:   "memory-formation.md",
+			Interval:       config.Ptr("1h"),
+			IntervalPrompt: config.Ptr("memory-formation.md"),
 		},
 		lastInteraction:     now.Add(-30 * time.Minute),
 		lastMemoryFormation: now.Add(-2 * time.Hour),
@@ -314,7 +313,7 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			ConsolidationInterval: "invalid",
+			ConsolidationInterval: config.Ptr("invalid"),
 		},
 		lastInteraction:  time.Now(),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
@@ -339,8 +338,8 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			ConsolidationInterval: "1h",
-			ConsolidationPrompt:   "memory-consolidation.md",
+			ConsolidationInterval: config.Ptr("1h"),
+			ConsolidationPrompt:   config.Ptr("memory-consolidation.md"),
 		},
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
@@ -369,7 +368,7 @@ func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			Interval: "1h",
+			Interval: config.Ptr("1h"),
 		},
 		lastInteraction:     time.Now().Add(-2 * time.Hour),
 		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
@@ -393,7 +392,7 @@ func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			Interval: "1h",
+			Interval: config.Ptr("1h"),
 		},
 		lastInteraction:        time.Now().Add(-30 * time.Minute),
 		lastMemoryFormation:    time.Now().Add(-2 * time.Hour),
@@ -418,7 +417,7 @@ func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			ConsolidationInterval: "1h",
+			ConsolidationInterval: config.Ptr("1h"),
 		},
 		lastInteraction:   time.Now().Add(-3 * time.Hour),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
@@ -442,7 +441,7 @@ func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		mfCfg: config.MemoryFormationConfig{
-			ConsolidationInterval: "1h",
+			ConsolidationInterval: config.Ptr("1h"),
 		},
 		lastInteraction:    time.Now().Add(-30 * time.Minute),
 		lastConsolidation:  time.Now().Add(-2 * time.Hour),
@@ -465,13 +464,13 @@ func TestNew(t *testing.T) {
 	cfg := RunnerConfig{
 		AgentID: "test-agent",
 		Keepalive: config.KeepaliveConfig{
-			Enabled: true,
+			Enabled: config.Ptr(true),
 		},
 		Background: config.BackgroundConfig{
-			Enabled: true,
+			Enabled: config.Ptr(true),
 		},
 		MemoryFormation: config.MemoryFormationConfig{
-			Interval: "1h",
+			Interval: config.Ptr("1h"),
 		},
 		BranchFunc: func(branchType, promptText string, noCompact bool) {},
 	}
@@ -480,10 +479,10 @@ func TestNew(t *testing.T) {
 	if r.agentID != "test-agent" {
 		t.Errorf("agentID = %q, want test-agent", r.agentID)
 	}
-	if !r.kaCfg.Enabled {
+	if !config.DerefBool(r.kaCfg.Enabled) {
 		t.Errorf("keepalive not enabled")
 	}
-	if !r.bgCfg.Enabled {
+	if !config.DerefBool(r.bgCfg.Enabled) {
 		t.Errorf("background not enabled")
 	}
 	if r.done == nil {
@@ -560,13 +559,13 @@ func TestStartStop(t *testing.T) {
 	r := New(RunnerConfig{
 		AgentID: "test",
 		Keepalive: config.KeepaliveConfig{
-			Enabled: false,
+			Enabled: config.Ptr(false),
 		},
 		Background: config.BackgroundConfig{
-			Enabled: false,
+			Enabled: config.Ptr(false),
 		},
 		MemoryFormation: config.MemoryFormationConfig{
-			Interval: "1h",
+			Interval: config.Ptr("1h"),
 		},
 		BranchFunc: func(branchType, promptText string, noCompact bool) {},
 	})
@@ -597,13 +596,13 @@ func TestRun_ContextCancellation(t *testing.T) {
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
 		kaCfg: config.KeepaliveConfig{
-			Enabled: false,
+			Enabled: config.Ptr(false),
 		},
 		bgCfg: config.BackgroundConfig{
-			Enabled: false,
+			Enabled: config.Ptr(false),
 		},
 		mfCfg: config.MemoryFormationConfig{
-			Interval: "1h",
+			Interval: config.Ptr("1h"),
 		},
 		branchFn: func(branchType, promptText string, noCompact bool) {},
 		done:     make(chan struct{}),

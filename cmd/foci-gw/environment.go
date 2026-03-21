@@ -90,7 +90,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	// Session Structure
 	b.WriteString("\n## Session Structure\n")
 	b.WriteString("Your context is assembled from: this environment block, character files, a secrets list, and the conversation history.\n")
-	sysFiles := acfg.SystemFiles
+	sysFiles := acfg.Defaults.SystemFiles
 	if len(sysFiles) == 0 {
 		sysFiles = workspace.DefaultFileOrder
 	}
@@ -108,13 +108,14 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
 
 	// Visibility: resolve effective show_tool_calls and show_thinking.
-	toolCalls := config.ToolCallDisplay(resolveShowToolCalls(acfg, cfg))
+	dc := resolveDisplay(acfg, cfg)
+	toolCalls := config.ToolCallOff
+	if dc.ShowToolCalls != nil {
+		toolCalls = *dc.ShowToolCalls
+	}
 	thinking := config.ShowThinkingOff
-	switch {
-	case acfg.ShowThinking != nil:
-		thinking = *acfg.ShowThinking
-	case cfg.Telegram.ShowThinking != nil:
-		thinking = *cfg.Telegram.ShowThinking
+	if dc.ShowThinking != nil {
+		thinking = *dc.ShowThinking
 	}
 	var toolDesc, thinkDesc string
 	switch toolCalls {

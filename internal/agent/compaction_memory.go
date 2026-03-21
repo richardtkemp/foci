@@ -24,7 +24,7 @@ func FireCompactionMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(mfCfg.CompactionPrompt, "memory-formation.md", prompts.MemoryFormation(), searchDirs...)
+	prompt := prompts.ResolvePrompt(config.DerefStr(mfCfg.CompactionPrompt), "memory-formation.md", prompts.MemoryFormation(), searchDirs...)
 	if prompt == "" {
 		return
 	}

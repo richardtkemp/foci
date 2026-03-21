@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/display"
 	"foci/internal/memory"
 	"foci/internal/tools"
@@ -348,15 +349,15 @@ func TodoCommand() *Command {
 }
 
 // resolveTodoFormat returns the effective todo list format: "table" or "lines".
-// Per-agent overrides global; defaults to "lines".
+// Resolved via Merge cascade: per-agent → global tools. Defaults to "lines".
 func resolveTodoFormat(cc CommandContext) string {
-	if f := cc.AgentConfig.TodoFormat; f != "" {
-		return f
-	}
+	var global config.ToolConfig
 	if cc.Config != nil {
-		if f := cc.Config.Defaults.TodoFormat; f != "" {
-			return f
-		}
+		global = cc.Config.Tools.ToolConfig
+	}
+	tc := config.Merge(cc.AgentConfig.Tools.ToolConfig, global)
+	if f := config.DerefStr(tc.TodoFormat); f != "" {
+		return f
 	}
 	return "lines"
 }

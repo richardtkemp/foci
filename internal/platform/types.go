@@ -132,6 +132,9 @@ type Sender interface {
 type Connection interface {
 	Sender
 
+	// Identity
+	PlatformName() string // "telegram", "discord", etc.
+
 	// Session management
 	SessionKeyForChat(chatID int64) string
 	DefaultSessionKey() string
@@ -223,6 +226,8 @@ type MessagingProvider interface {
 	SetLifecycleCallback(agentID string, event LifecycleEvent, fn func())
 	ToolDetailStore() ToolDetailStore // may return nil
 	AgentPreFlight(agentID string) []string // warnings for /agents new wizard
+	DefaultPlatformConfig() config.PlatformConfig
+	ValidateConfig(cfg config.PlatformConfig) []string
 	Close() error
 }
 
@@ -254,7 +259,7 @@ type DisplaySettings struct {
 // imports agent, which imports platform — circular). Providers type-assert.
 //
 // AllowedUsers is resolved by each provider from its own config section
-// (e.g. telegram reads from [telegram] and [agents.platforms.telegram]).
+// (e.g. telegram reads from [[platforms]] and [[agents.platforms]]).
 type AgentConnectionParams struct {
 	AgentID        string
 	Handler        MessageHandler
@@ -370,6 +375,13 @@ func RegisterMessagingProvider(name string, p MessagingProvider) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	providers[name] = p
+}
+
+// GetProvider returns the registered provider with the given name, or nil.
+func GetProvider(name string) MessagingProvider {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	return providers[name]
 }
 
 // InitMessaging initialises all registered providers that are configured,

@@ -99,6 +99,16 @@ Subcommands:
 		}
 	}
 
+	// Apply provider-driven platform defaults (providers were registered via init()).
+	config.ApplyProviderDefaults(cfg, func(id string) *config.PlatformConfig {
+		p := platform.GetProvider(id)
+		if p == nil {
+			return nil
+		}
+		defaults := p.DefaultPlatformConfig()
+		return &defaults
+	})
+
 	// ========== Logging ==========
 	// Re-init with full config (level, API log, payload log, etc.).
 	logCleanup := initLogging(cfg)
@@ -217,7 +227,7 @@ Subcommands:
 		// Seed default character files for agents without explicit system_files.
 		// This ensures non-provisioned agents (added with just id= in config)
 		// get the same default character files as provisioned ones.
-		if len(acfg.SystemFiles) == 0 {
+		if len(acfg.Defaults.SystemFiles) == 0 {
 			sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared")
 			if err := provision.SeedCharacterFiles(sharedDir, acfg.Workspace); err != nil {
 				log.Warnf("main", "agent %q: seed character files: %v", acfg.ID, err)
@@ -330,7 +340,7 @@ Subcommands:
 				for _, id := range agentOrder {
 					inst := agents[id]
 					if strings.HasPrefix(sessionKey, id+"/") {
-						orientPath := prompts.ResolveOrientPath(inst.agentCfg.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt)
+						orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt))
 						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
 							return prompts.BuildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
 						}, inst.promptSearchDirs, ctx, false)
@@ -380,22 +390,19 @@ Subcommands:
 	}
 	for _, id := range agentOrder {
 		inst := agents[id]
-		enabled := cfg.Telegram.StartupNotify
-		if inst.agentCfg.StartupNotify != nil {
-			enabled = *inst.agentCfg.StartupNotify
-		}
-		if enabled {
-			for _, conn := range connMgr.AllForAgent(id) {
-				name := conn.Username()
-				if name == "" {
-					name = "foci"
-				}
-				text := fmt.Sprintf("%s restarted at %s", name, time.Now().Format("15:04:05"))
-				if extra := diagnosis.FormatNotification(); extra != "" {
-					text += "\n\n" + extra
-				}
-				conn.SendNotification(text)
+		for _, conn := range connMgr.AllForAgent(id) {
+			if !resolveNotify(inst.agentCfg, cfg, conn.PlatformName()).StartupNotifyEnabled() {
+				continue
 			}
+			name := conn.Username()
+			if name == "" {
+				name = "foci"
+			}
+			text := fmt.Sprintf("%s restarted at %s", name, time.Now().Format("15:04:05"))
+			if extra := diagnosis.FormatNotification(); extra != "" {
+				text += "\n\n" + extra
+			}
+			conn.SendNotification(text)
 		}
 	}
 

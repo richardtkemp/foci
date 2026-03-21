@@ -78,8 +78,9 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # ─── Agent ────────────────────────────────────────────────────────────
 # Define one or more agents. Each gets its own sessions, memory, and bot.
 #
-# Platform configuration (NEW - preferred):
-#   [agents.platforms.telegram]
+# Platform configuration:
+#   [[agents.platforms]]
+#   id = "telegram"
 #   bot = "myagent"               # bot name; token via "telegram.<bot>" secret
 #   bot_secret = "custom.key"     # override secret key (default: "telegram.<bot>")
 #   facet_bots = ["bot2", "bot3"]  # additional bots for facet
@@ -91,27 +92,24 @@ model = "anthropic/claude-haiku-4-5-20251001"
 #   stream_interval = "250ms"
 #   received_files_dir = "received"
 #
-#   [agents.platforms.discord]
+#   [[agents.platforms]]
+#   id = "discord"
 #   bot = "myagent"               # bot name; token via "discord.<bot>" secret
 #   bot_secret = "custom.key"     # override secret key (default: "discord.<bot>")
 #   allowed_users = ["12345"]     # per-agent Discord user filter
-#   guild_id = ""                 # restrict to this guild (empty = all)
 #   show_tool_calls = "off"       # off, preview, full
 #   show_thinking = "off"         # off, compact, true
 #   display_width = 60
 #   stream_output = false
 #   stream_interval = "1200ms"
 #   require_mention = true        # require @mention in guild channels
-#   auto_thread = true            # create threads for facet sessions
 #   received_files_dir = "received"
-#
-# Legacy format (still works, deprecated):
-#   telegram_bot = "myagent"
+#   [agents.platforms.discord]    # discord-specific fields
+#   guild_id = ""                 # restrict to this guild (empty = all)
+#   auto_thread = true            # create threads for facet sessions
 #   bot_secret = "custom.key"
 #   facet_bots = ["bot2", "bot3"]
 #   allowed_users = ["12345"]
-#
-# At config load time, legacy fields are migrated to the new platform config.
 
 [[agents]]
 id = "myagent"
@@ -153,36 +151,24 @@ system_files = [
   "character/CRAFT.md",
 ]
 
-# ─── Agent: Telegram Platform (NEW - preferred) ─────────────────────────
-# Configure Telegram platform for this agent. All display/visibility settings
-# can be set here, or fall back to [defaults] / [telegram] global sections.
+# ─── Agent: Platform overrides ───────────────────────────────────────
+# Per-agent platform settings override global [[platforms]] entries.
 #
-# [agents.platforms.telegram]
+# [[agents.platforms]]
+# id = "telegram"
 # bot = "myagent"                         # bot name (token from "telegram.myagent" secret)
 # bot_secret = ""                         # override secret key
-# facet_bots = []                     # additional bot names for facet
+# facet_bots = []                         # additional bot names for facet
 # allowed_users = []                      # per-agent allowed users (empty = use global)
 # show_tool_calls = "preview"             # off, preview, full
 # show_thinking = "off"                   # off, compact, true
 # display_width = 44
-# table_wrap_lines = 5
-# table_style = "pretty"
 # stream_output = false
 # stream_interval = "250ms"
 # received_files_dir = ""
-
-# ─── Agent: Legacy Telegram fields (DEPRECATED) ─────────────────────────
-# These fields are migrated to [agents.platforms.telegram] at load time.
-# Use the platform config above for new configurations.
-#
-# telegram_bot = "myagent"               # DEPRECATED: use platforms.telegram.bot
-# bot_secret = "custom.key"              # DEPRECATED: use platforms.telegram.bot_secret
-# facet_bots = ["bot2", "bot3"]      # DEPRECATED: use platforms.telegram.facet_bots
-# allowed_users = ["12345"]              # DEPRECATED: use platforms.telegram.allowed_users
-# show_tool_calls = "preview"            # DEPRECATED: use platforms.telegram.show_tool_calls
-# show_thinking = "off"                  # DEPRECATED: use platforms.telegram.show_thinking
-# display_width = 44                     # DEPRECATED: use platforms.telegram.display_width
-# received_files_dir = "received"        # DEPRECATED: use platforms.telegram.received_files_dir
+# [agents.platforms.telegram]
+# table_wrap_lines = 5
+# table_style = "pretty"
 
 # Per-agent compaction overrides:
 # compaction_threshold = 0.8
@@ -262,30 +248,46 @@ system_files = [
 # base_url = ""                           # API base URL (empty = sdk default; override for OpenRouter etc.)
 # http_timeout = "120s"                   # HTTP timeout for API calls
 
-# ─── Telegram ─────────────────────────────────────────────────────────
-[telegram]
+# ─── Platforms ────────────────────────────────────────────────────────
+# Platforms are configured as [[platforms]] array entries. Each entry has
+# an id ("telegram", "discord") and platform-specific settings.
+# Per-agent overrides use [[agents.platforms]] with the same structure.
+
+[[platforms]]
+id = "telegram"
 allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # facet_bots = ["bot2", "bot3"]       # shared facet bot pool
 # facet_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
 # message_queue_size = 64
-# long_poll_timeout = "65s"
-# received_files_dir = ""                 # save received files (per-agent overrides)
-
-# ─── Discord ──────────────────────────────────────────────────────────
-# [discord]
-# allowed_users = ["YOUR_DISCORD_USER_ID"]
-# guild_id = ""                          # restrict to a single guild (empty = all)
-# require_mention = true                 # require @mention in guild channels
-# auto_thread = true                     # create threads for facet sessions
-# startup_notify = true                  # send notification on startup
-# facet_session_ttl = "60m"              # idle TTL before thread reclaim
-# message_queue_size = 64
-# received_files_dir = ""                # save received files (per-agent overrides)
-# show_tool_calls = "off"                # off, preview, full
-# show_thinking = "off"                  # off, compact, true
+# startup_notify = true
+# show_tool_calls = "off"             # off, preview, full
+# show_thinking = "off"               # off, compact, true
 # stream_output = false
-# stream_update_interval = "1200ms"
+# stream_interval = "250ms"
+# display_width = 44
+# received_files_dir = ""             # save received files (per-agent overrides)
+# require_mention = true              # require @mention in group chats
+# [platforms.telegram]                # telegram-specific settings
+# long_poll_timeout = "65s"
+# table_wrap_lines = 5
+# table_style = "pretty"             # "pretty" or "markdown"
+
+# [[platforms]]
+# id = "discord"
+# allowed_users = ["YOUR_DISCORD_USER_ID"]
+# require_mention = true               # require @mention in guild channels
+# startup_notify = true
+# facet_session_ttl = "60m"            # idle TTL before thread reclaim
+# message_queue_size = 64
+# received_files_dir = ""              # save received files (per-agent overrides)
+# show_tool_calls = "off"              # off, preview, full
+# show_thinking = "off"                # off, compact, true
+# stream_output = false
+# stream_interval = "1200ms"
 # display_width = 60
+# [platforms.discord]                  # discord-specific settings
+# auto_thread = true                   # create threads for facet sessions
+# guild_id = ""                        # restrict to a single guild (empty = all)
 
 # ─── Sessions ─────────────────────────────────────────────────────────
 [sessions]

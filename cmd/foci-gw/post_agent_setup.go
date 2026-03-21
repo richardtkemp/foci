@@ -17,7 +17,8 @@ import (
 func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 	anyInjection := false
 	for _, acfg := range cfg.Agents {
-		if acfg.InjectAgentWarnings.Enabled() || acfg.InjectChatWarnings.Enabled() {
+		if anyNotifyEnabled(acfg, cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() }) ||
+			anyNotifyEnabled(acfg, cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() }) {
 			anyInjection = true
 			break
 		}
@@ -67,7 +68,7 @@ func setupTmuxMemoryMonitor(
 		func(msg string) {
 			for _, id := range agentOrder {
 				inst := agents[id]
-				if inst.agentCfg.InjectAgentWarnings.Enabled() {
+				if anyNotifyEnabled(inst.agentCfg, cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() }) {
 					continue
 				}
 				if conn := connMgr.Primary(id); conn != nil {
@@ -119,13 +120,16 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 // started: one primary bot per agent with a telegram token, plus all shared
 // and per-agent facet bots.
 func countTelegramBots(cfg *config.Config) int {
-	count := len(cfg.Telegram.FacetBots) // shared facet pool
+	count := 0
+	if tg := cfg.Platform("telegram"); tg != nil {
+		count += len(tg.FacetBots) // shared facet pool
+	}
 	for _, acfg := range cfg.Agents {
 		// Each agent with a resolvable telegram token gets a primary bot.
 		// We approximate by counting all enabled agents — the token check
 		// happens later, and missing tokens just mean the bot won't start.
 		count++ // primary bot
-		if tg := acfg.Platforms.Telegram; tg != nil {
+		if tg := acfg.Platform("telegram"); tg != nil {
 			count += len(tg.FacetBots) // per-agent facet bots
 		}
 	}
