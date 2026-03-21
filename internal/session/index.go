@@ -608,17 +608,18 @@ func (idx *SessionIndex) DeleteSystemState(key string) error {
 	return idx.metaDelete(systemStateTable, key)
 }
 
-// SetDefaultChat marks a chat as the default for an agent.
-// Clears any previous default for that agent (across all platforms), then sets
+// SetDefaultChat marks a chat as the default for an agent on a specific platform.
+// Clears any previous default for that agent on the same platform, then sets
 // the new one via an is_default=true row in chat_metadata.
+// Each platform maintains its own independent default.
 func (idx *SessionIndex) SetDefaultChat(agentID, platform string, chatID int64) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Clear any existing default for this agent (any platform).
+	// Clear any existing default for this agent on this platform.
 	if _, err := idx.db.Exec(
-		`DELETE FROM chat_metadata WHERE agent_id = ? AND key = 'is_default'`,
-		agentID,
+		`DELETE FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'is_default'`,
+		agentID, platform,
 	); err != nil {
 		return err
 	}
@@ -631,41 +632,81 @@ func (idx *SessionIndex) SetDefaultChat(agentID, platform string, chatID int64) 
 	return err
 }
 
-// DefaultChatForAgent returns the default chatID and platform for an agent.
-// Returns (0, "") if no default is set.
-func (idx *SessionIndex) DefaultChatForAgent(agentID string) (chatID int64, platform string) {
+// DefaultChatForAgent returns the default chatID for an agent on a specific platform.
+// Returns 0 if no default is set for that platform.
+func (idx *SessionIndex) DefaultChatForAgent(agentID, platform string) int64 {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
+	var chatID int64
 	err := idx.db.QueryRow(
-		`SELECT chat_id, platform FROM chat_metadata WHERE agent_id = ? AND key = 'is_default' AND value = 'true'`,
-		agentID,
-	).Scan(&chatID, &platform)
+		`SELECT chat_id FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'is_default' AND value = 'true'`,
+		agentID, platform,
+	).Scan(&chatID)
 	if err != nil {
-		return 0, ""
+		return 0
 	}
-	return chatID, platform
+	return chatID
 }
 
-// ClearDefaultChat removes the default chat for an agent.
-func (idx *SessionIndex) ClearDefaultChat(agentID string) error {
+// ClearDefaultChat removes the default chat for an agent on a specific platform.
+func (idx *SessionIndex) ClearDefaultChat(agentID, platform string) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	_, err := idx.db.Exec(
-		`DELETE FROM chat_metadata WHERE agent_id = ? AND key = 'is_default'`,
-		agentID,
+		`DELETE FROM chat_metadata WHERE agent_id = ? AND platform = ? AND key = 'is_default'`,
+		agentID, platform,
 	)
 	return err
 }
 
+// DefaultChatIDs returns all default chat IDs for an agent across all platforms.
+// Used by /sessions to mark defaults with ★ regardless of which platform the
+// command is invoked from.
+func (idx *SessionIndex) DefaultChatIDs(agentID string) map[int64]bool {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT chat_id FROM chat_metadata WHERE agent_id = ? AND key = 'is_default' AND value = 'true'`,
+		agentID,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close() //nolint:errcheck
+
+	result := make(map[int64]bool)
+	for rows.Next() {
+		var chatID int64
+		if err := rows.Scan(&chatID); err == nil {
+			result[chatID] = true
+		}
+	}
+	return result
+}
+
 // DefaultSessionKeyForAgent resolves the most recently active session key for
-// an agent. First checks for a default chat (is_default flag), then falls back
-// to chat_metadata session keys, and finally queries session_index for the most
-// recently active root session.
+// an agent. First checks for default chats (is_default flag, any platform),
+// picking the one with the most recent activity. Falls back to chat_metadata
+// session keys, and finally queries session_index for the most recently active
+// root session.
 func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
-	// Try default chat first.
-	chatID, _ := idx.DefaultChatForAgent(agentID)
+	// Try default chats (any platform) — pick the one with most recent activity.
+	idx.mu.Lock()
+	var chatID int64
+	_ = idx.db.QueryRow(
+		`SELECT cm.chat_id FROM chat_metadata cm
+		 LEFT JOIN chat_metadata sk
+		   ON sk.agent_id = cm.agent_id AND sk.chat_id = cm.chat_id AND sk.key = 'session_key'
+		 LEFT JOIN session_index si ON si.session_key = sk.value
+		 WHERE cm.agent_id = ? AND cm.key = 'is_default'
+		 ORDER BY si.last_activity_at DESC NULLS LAST
+		 LIMIT 1`,
+		agentID,
+	).Scan(&chatID)
+	idx.mu.Unlock()
 	if chatID != 0 {
 		// Look up the session key for this chat.
 		if sk, err := idx.GetChatMetadataAnyPlatform(agentID, chatID, "session_key"); err == nil && sk != "" {

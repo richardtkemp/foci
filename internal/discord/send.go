@@ -64,7 +64,7 @@ func (b *Bot) clearStaleChannel(channelIDStr string) {
 
 	// If this was the default channel, clear it so periodic tasks stop targeting it.
 	if b.DefaultChatID() == channelID && b.sessionIndex != nil && b.agentID != "" {
-		if err := b.sessionIndex.ClearDefaultChat(b.agentID); err != nil {
+		if err := b.sessionIndex.ClearDefaultChat(b.agentID, platformName); err != nil {
 			b.logger().Errorf("failed to clear stale default channel: %v", err)
 		} else {
 			b.logger().Warnf("cleared stale default channel %s for agent %s", channelIDStr, b.agentID)

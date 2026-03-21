@@ -95,8 +95,8 @@ type SessionIndex interface {
 	SetChatMetadata(agentID, platform string, chatID int64, key, value string) error
 	SetAgentMetadata(agentID, key, value string) error
 	SetDefaultChat(agentID, platform string, chatID int64) error
-	DefaultChatForAgent(agentID string) (chatID int64, platform string)
-	ClearDefaultChat(agentID string) error
+	DefaultChatForAgent(agentID, platform string) int64
+	ClearDefaultChat(agentID, platform string) error
 }
 
 type SendOptions struct {

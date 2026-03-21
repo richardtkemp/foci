@@ -66,17 +66,13 @@ func (r *Resolver) UpdateSessionKey(chatID int64, newKey string) {
 	}
 }
 
-// DefaultChatID returns the default chat ID for this agent.
-// Returns 0 if no default is set or the default belongs to a different platform.
+// DefaultChatID returns the default chat ID for this agent on this platform.
+// Returns 0 if no default is set.
 func (r *Resolver) DefaultChatID() int64 {
 	if r == nil || r.Index == nil || r.AgentID == "" {
 		return 0
 	}
-	chatID, plat := r.Index.DefaultChatForAgent(r.AgentID)
-	if plat != "" && plat != r.PlatformName {
-		return 0
-	}
-	return chatID
+	return r.Index.DefaultChatForAgent(r.AgentID, r.PlatformName)
 }
 
 // RecordUsername persists the username for a chat ID (for /sessions display).

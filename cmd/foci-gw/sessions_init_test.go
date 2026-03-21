@@ -70,7 +70,7 @@ func TestCleanupStaleSessionMetadata_PreservesOtherMetadata(t *testing.T) {
 		t.Errorf("expected first_run_completed=true, got %q (err=%v)", val, err)
 	}
 
-	chatID, _ := idx.DefaultChatForAgent("fotini")
+	chatID := idx.DefaultChatForAgent("fotini", "telegram")
 	if chatID != 12345 {
 		t.Errorf("expected default chat=12345, got %d", chatID)
 	}
