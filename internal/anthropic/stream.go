@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/provider"
 
@@ -27,6 +28,7 @@ func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler
 		return nil, fmt.Errorf("streaming requires SDK transport (use_sdk = true)")
 	}
 
+	req.Model = config.StripDeveloperPrefix(req.Model)
 	stripUnsupportedParams(req)
 	return c.streamOnce(ctx, req, handler)
 }

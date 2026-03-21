@@ -290,6 +290,82 @@ func TestSpawnModelDefault(t *testing.T) {
 	}
 }
 
+func TestSpawnModelOpenRouter(t *testing.T) {
+	// Proves that a 3-segment OpenRouter model ID (openrouter/stepfun/step-3.5-flash)
+	// flows through GroupResolver → resolveSpawnGroup → OpenAI buildParams → HTTP body
+	// as the correct 2-segment OpenRouter model ID "stepfun/step-3.5-flash".
+	// This was a regression where the developer prefix was double-stripped, sending
+	// just "step-3.5-flash" which OpenRouter rejects.
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		config    string // model string in GroupsConfig.Powerful
+		wantWire  string // expected model in HTTP request body
+	}{
+		{"3-segment stepfun", "openrouter/stepfun/step-3.5-flash", "stepfun/step-3.5-flash"},
+		{"3-segment deepseek", "openrouter/deepseek/deepseek-r1", "deepseek/deepseek-r1"},
+		{"2-segment openai via openrouter", "openrouter/openai/gpt-4o", "openai/gpt-4o"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedModel string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				json.NewDecoder(r.Body).Decode(&body)
+				receivedModel, _ = body["model"].(string)
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{
+					"id":      "chatcmpl-test",
+					"object":  "chat.completion",
+					"model":   receivedModel,
+					"created": 1700000000,
+					"choices": []map[string]any{{
+						"index":         0,
+						"finish_reason": "stop",
+						"message": map[string]any{
+							"role":    "assistant",
+							"content": "ok",
+						},
+					}},
+					"usage": map[string]any{
+						"prompt_tokens":     10,
+						"completion_tokens": 5,
+						"total_tokens":      15,
+					},
+				})
+			}))
+			defer server.Close()
+
+			client := newTestOpenAIClient(server.URL, "test-key")
+			gr := config.NewGroupResolver(config.GroupsConfig{Powerful: tt.config}, nil)
+			deps := SpawnDeps{
+				Client:         client,
+				GroupResolver:  gr,
+				FallbackModel:  tt.config,
+				FallbackFormat: "openai",
+				MaxToolLoops:   10,
+			}
+			tool := NewSpawnTool(deps, nil)
+
+			params, _ := json.Marshal(map[string]string{
+				"prompt":  "test",
+				"context": "raw",
+			})
+			_, err := tool.Execute(context.Background(), params)
+			if err != nil {
+				t.Fatalf("Execute error: %v", err)
+			}
+
+			if receivedModel != tt.wantWire {
+				t.Errorf("wire model = %q, want %q", receivedModel, tt.wantWire)
+			}
+		})
+	}
+}
+
 func TestSpawnTimeout(t *testing.T) {
 	// Proves that the timeout parameter is respected: a hanging server causes the spawn to fail
 	// within the specified number of seconds rather than blocking indefinitely.

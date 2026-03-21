@@ -605,7 +605,9 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	return TextResult(result), nil
 }
 
-// resolveSpawnGroup resolves a spawn call to (client, modelID, format) using the group resolver.
+// resolveSpawnGroup resolves a spawn call to (client, model, format) using the group resolver.
+// The returned model is in developer/model_id format (e.g. "openrouter/stepfun/step-3.5-flash")
+// so that buildParams can strip exactly one prefix level.
 // userGroup is the user-provided group name (may be empty). defaultCallSite is the call site
 // constant that determines the default group.
 func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite string, clientProvider provider.ClientProvider, fallbackClient provider.Client, fallbackModel, fallbackFormat string) (provider.Client, string, string) {
@@ -619,9 +621,9 @@ func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite stri
 		}
 	}
 	if resolved == nil {
-		// Ungrouped call or nil resolver: use agent's model
-		_, modelID := config.SplitDeveloperModel(fallbackModel)
-		return fallbackClient, modelID, fallbackFormat
+		// Ungrouped call or nil resolver: use agent's model (keep developer/model_id
+		// format so buildParams strips exactly once).
+		return fallbackClient, fallbackModel, fallbackFormat
 	}
 	client := fallbackClient
 	if clientProvider != nil {
@@ -629,7 +631,7 @@ func resolveSpawnGroup(gr *config.GroupResolver, userGroup, defaultCallSite stri
 			client = c
 		}
 	}
-	return client, resolved.ModelID, resolved.Format
+	return client, resolved.Developer + "/" + resolved.ModelID, resolved.Format
 }
 
 // buildSpawnContext creates a spawn context with timeout and session/inherit markers.
