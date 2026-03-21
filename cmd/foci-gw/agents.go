@@ -66,8 +66,8 @@ type setupParams struct {
 	sessionIndex        *session.SessionIndex
 	ttsMap              map[string]voice.TTS
 	sttMap              map[string]voice.STT
-	braveKey            string
-	httpAPIKey          string
+	braveKey     string
+	gwSocketPath string // Unix socket path for same-user CLI auth (injected into child env as FOCI_GW_SOCK)
 
 	startTime       time.Time
 	ctx             context.Context

@@ -157,6 +157,9 @@ Subcommands:
 
 	startTime := time.Now()
 
+	// Resolve the Unix socket path early so agents can inject it into child env.
+	gwSocketPath := resolveSocketPath(cfg)
+
 	// ========== Per-agent setup ==========
 	agents := make(map[string]*agentInstance, len(cfg.Agents))
 	var agentOrder []string
@@ -238,8 +241,8 @@ Subcommands:
 			sessionIndex:        si.sessionIndex,
 			ttsMap:              ttsMap,
 			sttMap:              sttMap,
-			braveKey:            braveKey,
-			httpAPIKey:          sec.httpAPIKey,
+			braveKey:     braveKey,
+			gwSocketPath: gwSocketPath,
 			startTime:           startTime,
 			ctx:                 ctx,
 			agentListFn:         agentListFn,
@@ -428,6 +431,15 @@ Subcommands:
 			}
 		}
 	}()
+
+	// ========== Unix socket (same-user auth) ==========
+	sockSrv, err := startUnixSocket(gwSocketPath, mux)
+	if err != nil {
+		log.Errorf("http", "unix socket %s: %v — same-user auth unavailable", gwSocketPath, err)
+	} else {
+		defer cleanupSocket(sockSrv, gwSocketPath)
+		log.Infof("http", "unix socket listening on %s (same-user auth, no API key required)", gwSocketPath)
+	}
 
 	// Log startup
 	var agentNames []string

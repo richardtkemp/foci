@@ -192,7 +192,7 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 	proc := exec.CommandContext(ctx, execShell(), "-c", cmd)
 	proc.Dir = workDir
 
-	// Inject extra env vars (FOCI_ADDR, FOCI_API_KEY, etc.) and FOCI_SOCK
+	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.) and FOCI_SOCK
 	if len(extraEnv) > 0 || bridge != nil {
 		proc.Env = append(os.Environ(), extraEnv...)
 		if bridge != nil {
@@ -267,7 +267,7 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 	proc := exec.Command(execShell(), "-c", cmd)
 	proc.Dir = workDir
 
-	// Inject extra env vars (FOCI_ADDR, FOCI_API_KEY, etc.) and FOCI_SOCK
+	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.) and FOCI_SOCK
 	if len(extraEnv) > 0 || bridge != nil {
 		proc.Env = append(os.Environ(), extraEnv...)
 		if bridge != nil {

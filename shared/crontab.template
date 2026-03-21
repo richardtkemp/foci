@@ -3,10 +3,10 @@
 # Replace HOMEDIR with the foci user's home directory (e.g. /home/foci)
 # Add these to the foci user's crontab: crontab -e
 #
-# Prereqs: FOCI_ADDR, FOCI_API_KEY, and PATH should be set at top of crontab:
+# Prereqs: PATH should be set at top of crontab.
+# The CLI auto-discovers the gateway Unix socket at ~/data/foci-gw.sock
+# (same-user auth via kernel peer credentials — no API key needed).
 #   PATH=/usr/local/bin:/usr/bin:/bin
-#   FOCI_ADDR=127.0.0.1:18791
-#   FOCI_API_KEY=<your-http-api-key>
 
 # Weekly Mon 02:40: character review
 40 2 * * 1 foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/weekly-character-review.md 2>&1 >> HOMEDIR/logs/cron.log

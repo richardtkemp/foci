@@ -214,31 +214,40 @@ func cmdAuth(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "API key saved to %s\n", secretsPath)
 
-	// Read HTTP API key from secrets for gateway notification auth
-	httpAPIKey, _ := store.Get("http.api_key")
-
 	// Notify running gateway to hot-reload credentials.
-	notifyGatewayReload(addr, httpAPIKey)
+	// Prefer Unix socket (no API key needed), fall back to TCP with key.
+	notifyGatewayReload(addr, store)
 	return nil
 }
 
 // notifyGatewayReload sends a POST to the gateway's /-/reload-credentials endpoint.
-// Best-effort: if the gateway isn't running, prints a note and continues.
-func notifyGatewayReload(addr, apiKey string) {
-	u := fmt.Sprintf("http://%s/-/reload-credentials", addr)
+// Prefers Unix socket (same-user auth, no key needed). Falls back to TCP with
+// http.api_key from the secrets store. Best-effort: if the gateway isn't
+// running, prints a note and continues.
+func notifyGatewayReload(addr string, store *secrets.Store) {
+	c := &http.Client{Timeout: 3 * time.Second}
+
+	var u string
+	if sock := resolveGWSocket(""); sock != "" {
+		c.Transport = unixSocketTransport(sock)
+		u = "http://foci-gw/-/reload-credentials"
+	} else {
+		u = fmt.Sprintf("http://%s/-/reload-credentials", addr)
+		if apiKey, _ := store.Get("http.api_key"); apiKey != "" {
+			c.Transport = &authTransport{key: apiKey}
+		}
+	}
+
 	req, err := http.NewRequest(http.MethodPost, u, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Gateway not reachable at %s — restart to use new credentials.\n", addr)
+		fmt.Fprintf(os.Stderr, "Gateway not reachable — restart to use new credentials.\n")
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-	c := &http.Client{Timeout: 3 * time.Second}
+
 	resp, err := c.Do(req)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Gateway not reachable at %s — restart to use new credentials.\n", addr)
+		fmt.Fprintf(os.Stderr, "Gateway not reachable — restart to use new credentials.\n")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()

@@ -59,13 +59,15 @@ allowed_in_body = ["api_key"]    # only api_key can appear in request body; othe
 
 ### `http.api_key` — HTTP API authentication
 
-All HTTP endpoints (including `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.
+All TCP HTTP endpoints (including `/voice`) require authentication via `http.api_key`. This key is **auto-generated** on first startup as a 5-word passphrase (~52 bits entropy, e.g. `maple-thunder-basket-olive-crane`) and saved to `secrets.toml`.
 
-**CLI usage:** The `foci` CLI reads the key from `--api-key` flag or `FOCI_API_KEY` env var and sends it as `Authorization: Bearer <key>` on every request.
+**Same-user auth (Unix socket):** The gateway also listens on a Unix domain socket at `~/data/foci-gw.sock` (configurable via `[http] socket_path`). Connections over this socket are authenticated by the kernel using `SO_PEERCRED` — no API key is needed. The CLI auto-discovers the socket and prefers it, so **same-user access requires no credentials at all**. This eliminates the need to store secrets in crontab or child process environments.
 
-**Crontab:** Set `FOCI_API_KEY=<key>` at the top of the foci user's crontab so scheduled jobs authenticate automatically.
+**TCP auth (remote/cross-user):** For remote access or connections from a different user, the API key is required. The `foci` CLI reads the key from `--api-key` flag or `FOCI_API_KEY` env var and sends it as `Authorization: Bearer <key>`.
 
-**Request format:** Either `Authorization: Bearer <key>` header or `api_key=<key>` query param (for WebSocket compat).
+**Crontab:** No API key needed — the CLI auto-discovers the Unix socket at `~/data/foci-gw.sock`. The gateway also injects `FOCI_GW_SOCK` (socket path, not a secret) into child process environments.
+
+**Request format:** Either `Authorization: Bearer <key>` header or `api_key=<key>` query param (for WebSocket compat). Unix socket connections skip key validation entirely.
 
 ### Referencing secrets
 
