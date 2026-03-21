@@ -14,10 +14,9 @@ import (
 func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *provider.MessageResponse, cost float64, now time.Time, maxOutput int) { // nolint:unparam
 
 	// Cache bust detection: cache_read dropped significantly vs previous request.
-	// Only relevant for Anthropic — other providers have different caching semantics.
-	format := a.SessionFormat(sessionKey)
-	isAnthropic := format == "" || format == "anthropic"
-	if a.CacheBustDetect && isAnthropic && len(a.CacheBustAlert) > 0 && sm.prevCacheRead > 0 {
+	// Works for any provider that reports CacheReadInputTokens (Anthropic, OpenAI).
+	// The prevCacheRead > 0 guard ensures we only fire when there was prior cache data.
+	if a.CacheBustDetect && len(a.CacheBustAlert) > 0 && sm.prevCacheRead > 0 {
 		idleThresh := a.CacheBustIdleThreshold
 		if idleThresh == 0 {
 			idleThresh = 10 * time.Minute

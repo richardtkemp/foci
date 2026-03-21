@@ -314,10 +314,10 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 	}
 }
 
-func TestCacheBustSkippedForNonAnthropicFormat(t *testing.T) {
-	// Cache bust detection only applies to Anthropic. Other providers (Gemini,
-	// OpenAI) have different caching semantics and shouldn't trigger warnings.
-	for _, format := range []string{"gemini", "openai"} {
+func TestCacheBustFiresForAllFormats(t *testing.T) {
+	// Cache bust detection is format-agnostic: any provider that reports
+	// CacheReadInputTokens should trigger alerts when cache reads drop.
+	for _, format := range []string{"gemini", "openai", "anthropic"} {
 		t.Run(format, func(t *testing.T) {
 			callCount := 0
 			client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -357,8 +357,8 @@ func TestCacheBustSkippedForNonAnthropicFormat(t *testing.T) {
 			ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
 			ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
 
-			if len(alerts) != 0 {
-				t.Fatalf("expected 0 alerts for %s format, got %d: %v", format, len(alerts), alerts)
+			if len(alerts) != 1 {
+				t.Fatalf("expected 1 alert for %s format, got %d: %v", format, len(alerts), alerts)
 			}
 		})
 	}
