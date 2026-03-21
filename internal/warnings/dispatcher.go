@@ -142,8 +142,10 @@ func (d *Dispatcher) dispatchDrained() {
 
 	d.log.Infof("dispatching %d proactive warnings", len(warnings))
 
+	d.queue.Suppress()
 	go func() {
 		defer func() {
+			d.queue.Unsuppress()
 			d.mu.Lock()
 			d.dispatching = false
 			d.mu.Unlock()

@@ -288,6 +288,46 @@ func TestDispatcher_FiresWhenNotProcessing(t *testing.T) {
 	}
 }
 
+func TestDispatcher_SuppressesFeedbackLoop(t *testing.T) {
+	// Proves that warnings generated during dispatch don't re-enter the same
+	// queue. This prevents a feedback loop: dispatch fails → logs warning →
+	// warning collected → next dispatch grows indefinitely.
+	q := NewQueue(0, 0)
+	var mu sync.Mutex
+	calls := 0
+
+	d := NewDispatcher(DispatcherConfig{
+		Queue:            q,
+		ActiveInterval:   0,
+		InactiveInterval: 0,
+		DispatchFn: func(text string) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			// Simulate what happens when Discord has no channel:
+			// the send path logs a warning that would normally be
+			// captured by the warn hook and pushed back into the queue.
+			q.Push("WARN", "discord", "no channel ID for notification: "+text)
+		},
+	})
+
+	q.Push("WARN", "startup", "skills dir not found")
+	d.MaybeFire()
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("dispatch calls = %d, want 1", got)
+	}
+
+	// The re-entrant push during dispatch should have been suppressed.
+	if q.Pending() {
+		t.Error("queue should be empty — re-entrant push during dispatch must be suppressed")
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		found := false
