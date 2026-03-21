@@ -294,6 +294,49 @@ func TestModelCapabilities(t *testing.T) {
 	}
 }
 
+func TestModelStringConfigToWire(t *testing.T) {
+	// Proves end-to-end that a model string from config produces the correct
+	// wire model ID after ResolveModel + reconstitution + StripDeveloperPrefix.
+	// This is the chain that all provider clients use before sending to the API.
+	// The critical case is 3-segment OpenRouter models like
+	// "openrouter/stepfun/step-3.5-flash" where the developer prefix is "openrouter"
+	// and the remaining "stepfun/step-3.5-flash" is the OpenRouter model ID.
+	t.Parallel()
+	tests := []struct {
+		name      string
+		config    string // model string from TOML config
+		wantWire  string // expected model in API request body
+	}{
+		{"anthropic native", "anthropic/claude-opus-4-6", "claude-opus-4-6"},
+		{"openai native", "openai/gpt-4o", "gpt-4o"},
+		{"google native", "google/gemini-2.5-flash", "gemini-2.5-flash"},
+		{"third-party auto-routed", "deepseek/deepseek-chat", "deepseek-chat"},
+		{"openrouter 3-segment", "openrouter/stepfun/step-3.5-flash", "stepfun/step-3.5-flash"},
+		{"openrouter anthropic model", "openrouter/anthropic/claude-opus-4-6", "anthropic/claude-opus-4-6"},
+		{"openrouter deepseek model", "openrouter/deepseek/deepseek-r1", "deepseek/deepseek-r1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolved, err := ResolveModel(tt.config, "", nil)
+			if err != nil {
+				t.Fatalf("ResolveModel(%q): %v", tt.config, err)
+			}
+
+			// Reconstitute the full model string (as agents.go does)
+			fullModel := resolved.Developer + "/" + resolved.ModelID
+
+			// Strip prefix (as buildParams/buildSDKParams does)
+			wireModel := StripDeveloperPrefix(fullModel)
+
+			if wireModel != tt.wantWire {
+				t.Errorf("config %q → resolve → reconstitute %q → strip → %q, want %q",
+					tt.config, fullModel, wireModel, tt.wantWire)
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || (len(s) > 0 && len(substr) > 0 && hasSubstring(s, substr)))
 }

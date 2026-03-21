@@ -284,6 +284,10 @@ func (c *Client) sendOnceRaw(ctx context.Context, body []byte, speed string) (*M
 // SendMessage sends a message request and returns the response.
 // Retry logic is handled by the provider layer.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6").
+	// Done once here so both raw and SDK paths get the bare model ID.
+	req.Model = config.StripDeveloperPrefix(req.Model)
+
 	// Strip params the target model doesn't support (avoids 400 errors).
 	// Done here so both raw and SDK paths benefit.
 	stripUnsupportedParams(req)
