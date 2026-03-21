@@ -57,12 +57,12 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	}
 
 	// groups
-	add("groups", "powerful", cfg.Groups.Powerful)
-	if cfg.Groups.Fast != "" {
-		add("groups", "fast", cfg.Groups.Fast)
+	add("groups", "powerful", DerefStr(cfg.Groups.Powerful))
+	if DerefStr(cfg.Groups.Fast) != "" {
+		add("groups", "fast", DerefStr(cfg.Groups.Fast))
 	}
-	if cfg.Groups.Cheap != "" {
-		add("groups", "cheap", cfg.Groups.Cheap)
+	if DerefStr(cfg.Groups.Cheap) != "" {
+		add("groups", "cheap", DerefStr(cfg.Groups.Cheap))
 	}
 
 	// defaults
@@ -428,6 +428,15 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	}
 	if len(agent.Mana.Thresholds) > 0 {
 		add("mana.thresholds", agent.Mana.Thresholds)
+	}
+	if agent.Groups.Powerful != nil {
+		add("groups.powerful", *agent.Groups.Powerful)
+	}
+	if agent.Groups.Fast != nil {
+		add("groups.fast", *agent.Groups.Fast)
+	}
+	if agent.Groups.Cheap != nil {
+		add("groups.cheap", *agent.Groups.Cheap)
 	}
 	if agent.Keepalive.Enabled != nil {
 		add("keepalive.enabled", *agent.Keepalive.Enabled)

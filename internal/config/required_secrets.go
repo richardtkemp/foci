@@ -161,7 +161,7 @@ func conventionSecretRefs(cfg *Config) []SecretRef {
 	// Skip "anthropic" — it has its own credential resolution (api_key, CC creds).
 	// Resolve from model groups (powerful/fast/cheap) instead of per-agent models.
 	usedEndpoints := make(map[string]bool)
-	for _, groupModel := range []string{cfg.Groups.Powerful, cfg.Groups.Fast, cfg.Groups.Cheap} {
+	for _, groupModel := range []string{DerefStr(cfg.Groups.Powerful), DerefStr(cfg.Groups.Fast), DerefStr(cfg.Groups.Cheap)} {
 		if groupModel == "" {
 			continue
 		}

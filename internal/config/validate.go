@@ -77,11 +77,11 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate groups.powerful is set and resolves successfully
-	if cfg.Groups.Powerful == "" {
+	if DerefStr(cfg.Groups.Powerful) == "" {
 		return fmt.Errorf("[groups] powerful is required — set it in foci.toml")
 	}
-	if _, err := ResolveModel(cfg.Groups.Powerful, "", cfg.Models); err != nil {
-		return fmt.Errorf("[groups] powerful = %q: %w", cfg.Groups.Powerful, err)
+	if _, err := ResolveModel(DerefStr(cfg.Groups.Powerful), "", cfg.Models); err != nil {
+		return fmt.Errorf("[groups] powerful = %q: %w", DerefStr(cfg.Groups.Powerful), err)
 	}
 
 	// Validate endpoint configs
@@ -287,8 +287,14 @@ func validate(cfg *Config) error {
 		return err
 	}
 	for _, a := range cfg.Agents {
-		if err := validateFallbacks(fmt.Sprintf("agent %q model_fallbacks", a.ID), a.ModelFallbacks, cfg.Models); err != nil {
+		if err := validateFallbacks(fmt.Sprintf("agent %q groups.fallbacks", a.ID), a.Groups.Fallbacks, cfg.Models); err != nil {
 			return err
+		}
+		// Validate per-agent groups.powerful if set
+		if p := DerefStr(a.Groups.Powerful); p != "" {
+			if _, err := ResolveModel(p, "", cfg.Models); err != nil {
+				return fmt.Errorf("agent %q [groups] powerful = %q: %w", a.ID, p, err)
+			}
 		}
 	}
 

@@ -81,8 +81,13 @@ type setupParams struct {
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
+	// Merge per-agent and global groups config (per-agent overrides global)
+	gc := config.Merge(acfg.Groups, p.cfg.Groups)
+	gc.Calls = config.MergeMaps(p.cfg.Groups.Calls, acfg.Groups.Calls)
+	gc.Fallbacks = config.MergeMaps(p.cfg.Groups.Fallbacks, acfg.Groups.Fallbacks)
+
 	// Create group resolver for multi-model routing (powerful model is the agent's primary)
-	groupResolver := config.NewGroupResolver(p.cfg.Groups, p.cfg.Models)
+	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
 
 	// Resolve agent's default endpoint and format from powerful group
 	powerfulResolved := groupResolver.ResolveGroup(config.GroupPowerful)
@@ -94,7 +99,7 @@ func setupAgent(p setupParams) *agentInstance {
 	}
 
 	// Create fallback resolver for automatic model failover
-	fallbackResolver := config.NewFallbackResolver(p.cfg.Groups.Fallbacks, acfg.ModelFallbacks, p.cfg.Models)
+	fallbackResolver := config.NewFallbackResolver(gc.Fallbacks, nil, p.cfg.Models)
 
 	// Build provider-level fallback function from config resolver.
 	// This bridges config (which doesn't import provider) to the provider package.
@@ -328,7 +333,7 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
-		webhooks:          mergeWebhooks(p.cfg.Defaults.Webhooks, acfg.Defaults.Webhooks),
+		webhooks:          config.MergeMaps(p.cfg.Defaults.Webhooks, acfg.Defaults.Webhooks),
 		tmuxClearAll:      coreResult.tmuxClearAll,
 		tmuxWatchCount:    coreResult.tmuxWatchCount,
 		tmuxMigrateKey:    coreResult.tmuxMigrateKey,

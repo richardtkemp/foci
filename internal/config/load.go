@@ -167,7 +167,7 @@ func Load(path string) (*Config, error) {
 	// for endpoints the user doesn't use (e.g. openai.api_key when no group
 	// references OpenAI).
 	usedEndpoints := make(map[string]bool)
-	for _, groupModel := range []string{cfg.Groups.Powerful, cfg.Groups.Fast, cfg.Groups.Cheap} {
+	for _, groupModel := range []string{DerefStr(cfg.Groups.Powerful), DerefStr(cfg.Groups.Fast), DerefStr(cfg.Groups.Cheap)} {
 		if groupModel == "" {
 			continue
 		}

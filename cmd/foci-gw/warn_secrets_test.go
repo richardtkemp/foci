@@ -121,7 +121,7 @@ func TestNonPlatformSecretNeverDowngraded(t *testing.T) {
 			},
 		},
 		Groups: config.GroupsConfig{
-			Powerful: "openrouter/some-model",
+			Powerful: config.Ptr("openrouter/some-model"),
 		},
 		Endpoints: map[string]config.EndpointConfig{
 			"openrouter": {Format: "openai"},
