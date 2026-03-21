@@ -81,7 +81,11 @@ func (b *Bot) sendNotificationImmediate(text string) {
 		b.chatMu.Unlock()
 	}
 	if chatID == 0 {
-		b.logger().Warnf("no chat ID for notification: %s", text)
+		truncated := text
+		if len(truncated) > 40 {
+			truncated = truncated[:40] + "..."
+		}
+		b.logger().Warnf("no chat ID for notification: %s", truncated)
 		return
 	}
 

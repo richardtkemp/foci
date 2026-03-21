@@ -145,7 +145,11 @@ func (b *Bot) sendNotificationImmediate(text string) {
 		b.channelMu.Unlock()
 	}
 	if channelID == 0 {
-		b.logger().Warnf("no channel ID for notification: %s", text)
+		truncated := text
+		if len(truncated) > 40 {
+			truncated = truncated[:40] + "..."
+		}
+		b.logger().Warnf("no channel ID for notification: %s", truncated)
 		return
 	}
 
