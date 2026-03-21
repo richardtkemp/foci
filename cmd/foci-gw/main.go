@@ -87,6 +87,16 @@ Subcommands:
 		log.Fatalf("main", "load config: %v", err)
 	}
 
+	// ========== Workspace directories ==========
+	// Ensure each agent's workspace .data directory exists before any init
+	// function (logging, memory, etc.) tries to open databases there.
+	for _, acfg := range cfg.Agents {
+		dataDir := filepath.Join(acfg.Workspace, ".data")
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			log.Fatalf("main", "create workspace data dir %s: %v", dataDir, err)
+		}
+	}
+
 	// ========== Logging ==========
 	// Re-init with full config (level, API log, payload log, etc.).
 	logCleanup := initLogging(cfg)

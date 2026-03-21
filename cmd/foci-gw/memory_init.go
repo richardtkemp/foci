@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -64,12 +62,6 @@ type memoryResult struct {
 func initStandaloneStores(cfg *config.Config, result memoryResult, closers *[]io.Closer) memoryResult {
 	for _, acfg := range cfg.Agents {
 		id := acfg.ID
-
-		// Ensure workspace .data directory exists
-		dataDir := filepath.Join(acfg.Workspace, ".data")
-		if err := os.MkdirAll(dataDir, 0755); err != nil {
-			log.Fatalf("main", "create agent data dir %s: %v", dataDir, err)
-		}
 
 		rs, err := memory.NewReminderStore(config.AgentDataPath(acfg.Workspace, "reminders.db"))
 		if err != nil {
