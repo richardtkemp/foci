@@ -75,10 +75,10 @@ func (m *mockIndex) SetDefaultChat(_ string, _ string, chatID int64) error {
 	m.defaultChatID = chatID
 	return nil
 }
-func (m *mockIndex) DefaultChatForAgent(string) (int64, string) {
-	return m.defaultChatID, "discord"
+func (m *mockIndex) DefaultChatForAgent(string, string) int64 {
+	return m.defaultChatID
 }
-func (m *mockIndex) ClearDefaultChat(string) error {
+func (m *mockIndex) ClearDefaultChat(string, string) error {
 	m.defaultChatID = 0
 	return nil
 }

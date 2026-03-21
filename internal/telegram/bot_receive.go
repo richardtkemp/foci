@@ -89,7 +89,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 
 	// Per-chat session routing: set default chat on first message, record username
 	if !b.isSecondary && b.agentID != "" && b.sessionIndex != nil {
-		if chatID, _ := b.sessionIndex.DefaultChatForAgent(b.agentID); chatID == 0 {
+		if chatID := b.sessionIndex.DefaultChatForAgent(b.agentID, platformName); chatID == 0 {
 			if err := b.sessionIndex.SetDefaultChat(b.agentID, platformName, msg.Chat.Id); err != nil {
 				b.logger().Errorf("set default chat: %v", err)
 			} else {

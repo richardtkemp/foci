@@ -174,9 +174,9 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 		return "No chat sessions yet.", nil
 	}
 
-	var defaultChat int64
+	var defaultChats map[int64]bool
 	if cc.SessionIndex != nil {
-		defaultChat, _ = cc.SessionIndex.DefaultChatForAgent(cc.AgentConfig.ID)
+		defaultChats = cc.SessionIndex.DefaultChatIDs(cc.AgentConfig.ID)
 	}
 
 	type row struct {
@@ -207,7 +207,7 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 		if cs.ChatID == currentChatID {
 			flags = append(flags, "◉")
 		}
-		if cs.ChatID == defaultChat {
+		if defaultChats[cs.ChatID] {
 			flags = append(flags, "★")
 		}
 		r.flags = strings.Join(flags, " ")
@@ -264,9 +264,10 @@ func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
 		return "Not in a chat context.", nil
 	}
 
-	var defaultChat int64
+	var isDefault bool
 	if cc.SessionIndex != nil {
-		defaultChat, _ = cc.SessionIndex.DefaultChatForAgent(cc.AgentConfig.ID)
+		defaultChats := cc.SessionIndex.DefaultChatIDs(cc.AgentConfig.ID)
+		isDefault = defaultChats[chatID]
 	}
 
 	chatSessions, err := cc.Sessions.ListChatSessions(cc.AgentConfig.ID)
@@ -276,7 +277,7 @@ func sessionsInfoCmd(cc CommandContext, chatID int64) (string, error) {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Chat ID: %d\n", chatID)
-	if chatID == defaultChat {
+	if isDefault {
 		sb.WriteString("Default: yes\n")
 	} else {
 		sb.WriteString("Default: no\n")

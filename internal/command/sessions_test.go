@@ -144,7 +144,7 @@ func TestSessionsDefaultValid(t *testing.T) {
 	}
 
 	// Verify the session index was updated
-	defaultChat, _ := ss.DefaultChatForAgent("test-agent")
+	defaultChat := ss.DefaultChatForAgent("test-agent", "")
 	if defaultChat != 987654321 {
 		t.Errorf("expected default chat=987654321, got %d", defaultChat)
 	}
@@ -202,7 +202,7 @@ func TestSessionsDefaultNoArg(t *testing.T) {
 	if !strings.Contains(result.Text, "555") {
 		t.Errorf("expected confirmation with chat ID 555, got %q", result.Text)
 	}
-	defaultChat, _ := ss.DefaultChatForAgent("test-agent")
+	defaultChat := ss.DefaultChatForAgent("test-agent", "")
 	if defaultChat != 555 {
 		t.Errorf("expected default chat=555, got %d", defaultChat)
 	}
