@@ -577,7 +577,7 @@ func buildDiffSummary(ctx context.Context, cc CommandContext, customText, defaul
 
 	if cc.GroupResolver != nil {
 		if resolved := cc.GroupResolver.ResolveCall(config.CallPromptDiff); resolved != nil {
-			cheapModel = resolved.ModelID
+			cheapModel = resolved.Developer + "/" + resolved.ModelID
 			if cc.ClientProvider != nil {
 				if c := cc.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format); c != nil {
 					diffClient = c

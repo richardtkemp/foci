@@ -30,7 +30,7 @@ func NewSummaryTool(defaultClient provider.Client, clientProvider provider.Clien
 				client = c
 			}
 		}
-		return client, resolved.ModelID, resolved.Format
+		return client, resolved.Developer + "/" + resolved.ModelID, resolved.Format
 	}
 
 	return &Tool{
