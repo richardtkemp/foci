@@ -24,7 +24,7 @@ func TestTmuxStartAutoWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autowatch", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autowatch", false, 30, 0, "")
 
 	name := "foci-test-autowatch"
 	tmuxSetup(t, name)
@@ -85,7 +85,7 @@ func TestTmuxStartWatchFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-nowatch", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-nowatch", false, 30, 0, "")
 
 	name := "foci-test-nowatch"
 	tmuxSetup(t, name)
@@ -122,7 +122,7 @@ func TestTmuxStartAutoWatchNoNotifier(t *testing.T) {
 	// Verifies that auto-watch is silently skipped when no notifier is configured, so the session starts successfully without watch-related output.
 	t.Parallel()
 	tmuxAvailable(t)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-autowatch-nonotif"
 	tmuxSetup(t, name)
@@ -166,7 +166,7 @@ func TestTmuxAutopilotAutoUnwatch(t *testing.T) {
 	}
 
 	// autopilot=true, threshold=2s for fast test
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-unwatch", true, 2, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-unwatch", true, 2, 0, "")
 
 	name := "foci-test-ap-unwatch"
 	tmuxSetup(t, name)
@@ -222,7 +222,7 @@ func TestTmuxAutopilotAutoWatchOnSend(t *testing.T) {
 	}
 
 	// autopilot=true
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-send", true, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-autopilot-send", true, 30, 0, "")
 
 	name := "foci-test-ap-send"
 	tmuxSetup(t, name)
@@ -290,7 +290,7 @@ func TestTmuxAutopilotDisabled(t *testing.T) {
 	}
 
 	// autopilot=false
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-autopilot", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-no-autopilot", false, 30, 0, "")
 
 	name := "foci-test-no-ap"
 	tmuxSetup(t, name)

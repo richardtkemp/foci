@@ -79,7 +79,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 				tmuxSessionTTL = d
 			}
 		}
-		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.sessionIndex, acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL)
+		result.tmuxWatchCount, result.tmuxTool, result.tmuxClearAll, result.tmuxMigrateKey = tools.NewTmuxTool(p.cfg.Tools.TmuxCols, p.cfg.Tools.TmuxRows, notifier, p.sessionIndex, acfg.ID, tmuxAutopilot, tmuxWatchThresholdSec, tmuxSessionTTL, "")
 		registry.Register(result.tmuxTool)
 	}
 

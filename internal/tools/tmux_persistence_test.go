@@ -24,7 +24,7 @@ func TestTmuxPersistOwnedSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, "")
 
 	name := "foci-test-persist"
 	tmuxSetup(t, name)
@@ -80,7 +80,7 @@ func TestTmuxRestoreOwnedSessions(t *testing.T) {
 	}
 
 	// Create tool with session index - should restore owned sessions
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, "")
 
 	// Read should succeed because the session is in the restored owned set
 	params, _ := json.Marshal(map[string]interface{}{
@@ -106,17 +106,12 @@ func TestTmuxPersistOnKill(t *testing.T) {
 		exec.Command("tmux", "-S", sock, "kill-server").Run()
 	})
 
-	orig := tmuxSocketPath
-	tmuxSocketPath = sock
-
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
-
-	tmuxSocketPath = orig
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
 	t.Parallel()
 
 	name := "foci-test-persistkill"
@@ -179,9 +174,6 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		exec.Command("tmux", "-S", sock, "kill-server").Run()
 	})
 
-	orig := tmuxSocketPath
-	tmuxSocketPath = sock
-
 	idx, err := session.NewSessionIndex(filepath.Join(dir, "state.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -193,9 +185,7 @@ func TestTmuxPersistClearedOnStaleSessions(t *testing.T) {
 		t.Fatalf("set state: %v", err)
 	}
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0)
-
-	tmuxSocketPath = orig
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, idx, "test-agent", false, 30, 0, sock)
 	t.Parallel()
 
 	// List should detect stale sessions and clear persisted state
@@ -227,7 +217,7 @@ func TestTmuxNoSessionIndex(t *testing.T) {
 	tmuxAvailable(t)
 
 	// Create tool without session index (nil)
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-nostate"
 	tmuxSetup(t, name)
@@ -268,7 +258,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool1, _, _ := NewTmuxTool(300, 30, nil, idx1, "test-agent", false, 30, 0)
+	_, tool1, _, _ := NewTmuxTool(300, 30, nil, idx1, "test-agent", false, 30, 0, "")
 
 	name := "foci-test-roundtrip"
 	tmuxSetup(t, name)
@@ -297,7 +287,7 @@ func TestTmuxStateFileRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool2, _, _ := NewTmuxTool(300, 30, nil, idx2, "test-agent", false, 30, 0)
+	_, tool2, _, _ := NewTmuxTool(300, 30, nil, idx2, "test-agent", false, 30, 0, "")
 
 	// Read should work because session was restored from state
 	params, _ = json.Marshal(map[string]interface{}{
@@ -322,7 +312,7 @@ func TestTmuxPersistWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 
 	name := "foci-test-persist-watch"
 	tmuxSetup(t, name)
@@ -408,7 +398,7 @@ func TestTmuxRestoreWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, _, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	_, _, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 
 	// Verify the watch was restored by checking the state is still persisted
 	// (if the session was alive, it stays in the map; if stale, it gets cleaned)
@@ -451,7 +441,7 @@ func TestTmuxRestoreWatchesStaleSessions(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 
 	// Stale watch should have been cleaned from state
 	rawW, errW := idx.GetAgentMetadata("test-agent", "tmux_watches")
@@ -479,7 +469,7 @@ func TestTmuxUnwatchPersists(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 
 	name := "foci-test-unwatch-persist"
 	tmuxSetup(t, name)
@@ -552,7 +542,7 @@ func TestTmuxClearAllPersistsWatches(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	_, tool, cleanup, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 
 	name := "foci-test-clearall-watch"
 	tmuxSetup(t, name)
@@ -614,7 +604,7 @@ func TestTmuxOwnsAfterRotation(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-owns-rotation"
 	tmuxSetup(t, name)
@@ -670,7 +660,7 @@ func TestTmuxListAfterRotation(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-list-rotation"
 	tmuxSetup(t, name)
@@ -719,7 +709,7 @@ func TestTmuxMigrateSessionKey(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool, _, migrate := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	_, tool, _, migrate := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 
 	name := "foci-test-migrate"
 	tmuxSetup(t, name)
@@ -794,7 +784,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 	}
 
 	notifier := NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {})
-	_, tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0)
+	_, tool1, cleanup1, _ := NewTmuxTool(300, 30, notifier, idx, "test-agent", false, 30, 0, "")
 	defer cleanup1()
 
 	name := "foci-test-unwatch-restart"
@@ -850,7 +840,7 @@ func TestTmuxUnwatchNotRestoredOnRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, idx2, "test-agent", false, 30, 0)
+	_, tool2, cleanup2, _ := NewTmuxTool(300, 30, notifier, idx2, "test-agent", false, 30, 0, "")
 	defer cleanup2()
 
 	// The unwatched session should NOT be restored — verify by trying to unwatch

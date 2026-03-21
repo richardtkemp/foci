@@ -76,11 +76,15 @@ type tmuxInstance struct {
 // autopilot enables auto-unwatch on inactivity and auto-watch on send.
 // watchThresholdSec sets the default watch threshold in seconds.
 // sessionTTL sets the auto-kill TTL for idle tmux sessions (0 disables).
+// socketPath overrides the tmux socket (-S flag); empty uses the package default.
 // The returned cleanup function clears all watches and owned sessions (used by
 // the tmux memory monitor after kill-server).
-func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, sessionIndex *session.SessionIndex, agentID string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration) (func() int, *Tool, func(), func(string, string)) {
+func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, sessionIndex *session.SessionIndex, agentID string, autopilot bool, watchThresholdSec int, sessionTTL time.Duration, socketPath string) (func() int, *Tool, func(), func(string, string)) {
 	if watchThresholdSec < 1 {
 		watchThresholdSec = 30
+	}
+	if socketPath == "" {
+		socketPath = tmuxSocketPath
 	}
 	inst := &tmuxInstance{
 		watched:           make(map[string]*watchedSession),
@@ -95,7 +99,7 @@ func NewTmuxTool(cols, rows int, notifier *AsyncNotifier, sessionIndex *session.
 		lastSend:          make(map[string]time.Time),
 		lastAccess:        make(map[string]time.Time),
 		sessionTTL:        sessionTTL,
-		socketPath:        tmuxSocketPath,
+		socketPath:        socketPath,
 	}
 
 	// Restore owned sessions from persistent state

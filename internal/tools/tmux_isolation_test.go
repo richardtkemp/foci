@@ -14,8 +14,8 @@ func TestTmuxInstanceIsolation(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	_, toolA, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
-	_, toolB, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolA, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	_, toolB, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	nameA := "foci-test-iso-a"
 	nameB := "foci-test-iso-b"
@@ -122,10 +122,10 @@ func TestTmuxWakeRoutesToCorrectAgent(t *testing.T) {
 	var wakeA, wakeB atomic.Int32
 	_, toolA, _, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeA.Add(1)
-	}), nil, "", false, 30, 0)
+	}), nil, "", false, 30, 0, "")
 	_, toolB, _, _ := NewTmuxTool(300, 30, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		wakeB.Add(1)
-	}), nil, "", false, 30, 0)
+	}), nil, "", false, 30, 0, "")
 
 	nameA := "foci-test-wakeroute-a"
 	nameB := "foci-test-wakeroute-b"
@@ -212,9 +212,9 @@ func TestTmuxWatchIsolation(t *testing.T) {
 	t.Parallel()
 	tmuxAvailable(t)
 
-	_, toolA, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolA, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
-	_, toolB, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0)
+	_, toolB, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
 
 	name := "foci-test-watchiso"
 	tmuxSetup(t, name)
