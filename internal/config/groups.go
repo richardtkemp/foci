@@ -65,23 +65,24 @@ type GroupResolver struct {
 // Powerful must be set in config (validated by Validate). Fast/Cheap default
 // to Powerful when not set.
 func NewGroupResolver(groups GroupsConfig, models map[string]ModelConfig) *GroupResolver {
+	powerful := DerefStr(groups.Powerful)
 	gr := &GroupResolver{
 		models:        models,
 		callOverrides: groups.Calls,
 		groups: map[string]string{
-			GroupPowerful: groups.Powerful,
+			GroupPowerful: powerful,
 		},
 	}
 
-	if groups.Fast != "" {
-		gr.groups[GroupFast] = groups.Fast
+	if fast := DerefStr(groups.Fast); fast != "" {
+		gr.groups[GroupFast] = fast
 	} else {
-		gr.groups[GroupFast] = groups.Powerful
+		gr.groups[GroupFast] = powerful
 	}
-	if groups.Cheap != "" {
-		gr.groups[GroupCheap] = groups.Cheap
+	if cheap := DerefStr(groups.Cheap); cheap != "" {
+		gr.groups[GroupCheap] = cheap
 	} else {
-		gr.groups[GroupCheap] = groups.Powerful
+		gr.groups[GroupCheap] = powerful
 	}
 
 	return gr

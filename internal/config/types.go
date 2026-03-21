@@ -223,20 +223,20 @@ type ModelConfig struct {
 }
 
 // GroupsConfig assigns named models to groups and call sites.
+// String fields are pointers for Merge-based per-agent override resolution.
 type GroupsConfig struct {
-	Powerful  string            `toml:"powerful"`
-	Fast      string            `toml:"fast"`
-	Cheap     string            `toml:"cheap"`
+	Powerful  *string           `toml:"powerful"`
+	Fast      *string           `toml:"fast"`
+	Cheap     *string           `toml:"cheap"`
 	Calls     map[string]string `toml:"calls"`
 	Fallbacks map[string]string `toml:"fallbacks"`
 }
 
 type AgentConfig struct {
-	ID             string            `toml:"id"`
-	Name           string            `toml:"name"`              // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
-	Emoji          string            `toml:"emoji"`             // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
-	ModelFallbacks map[string]string `toml:"model_fallbacks"`   // per-agent fallback overrides (model → fallback model); aliases supported
-	Workspace      string            `toml:"workspace"`
+	ID        string `toml:"id"`
+	Name      string `toml:"name"`      // human-readable name (e.g. "Clutch"); used in voice endpoint agent list
+	Emoji     string `toml:"emoji"`     // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
+	Workspace string `toml:"workspace"`
 
 	Memory    AgentMemoryConfig `toml:"memory"`    // per-agent memory sources (combined with global [memory])
 	Platforms []PlatformConfig  `toml:"platforms"` // per-agent platform configurations
@@ -252,6 +252,7 @@ type AgentConfig struct {
 	Background      BackgroundConfig      `toml:"background"`       // overrides from [background]
 	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // overrides from [memory_formation]
 	Mana            ManaConfig            `toml:"mana"`             // overrides from [mana]
+	Groups          GroupsConfig          `toml:"groups"`           // overrides from [groups]
 
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)

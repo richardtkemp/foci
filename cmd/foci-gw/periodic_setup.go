@@ -30,8 +30,13 @@ type periodicParams struct {
 // setupPeriodic creates and starts a periodic runner for an agent instance.
 // Returns the runner (also set on inst.kaRunner), or nil if not needed.
 func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
+	// Merge per-agent and global groups config (per-agent overrides global)
+	gc := config.Merge(acfg.Groups, p.cfg.Groups)
+	gc.Calls = config.MergeMaps(p.cfg.Groups.Calls, acfg.Groups.Calls)
+	gc.Fallbacks = config.MergeMaps(p.cfg.Groups.Fallbacks, acfg.Groups.Fallbacks)
+
 	// Resolve model from powerful group to get endpoint information
-	groupResolver := config.NewGroupResolver(p.cfg.Groups, p.cfg.Models)
+	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
 	resolved := groupResolver.ResolveGroup(config.GroupPowerful)
 	var endpoint string
 	var client provider.Client

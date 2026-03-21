@@ -152,8 +152,8 @@ func TestConventionEndpointAPIKey(t *testing.T) {
 			{ID: "a1"},
 		},
 		Groups: GroupsConfig{
-			Powerful: "anthropic/claude-sonnet-4-5-20250929",
-			Cheap:    "deepseek/deepseek-chat", // resolves to openrouter endpoint
+			Powerful: Ptr("anthropic/claude-sonnet-4-5-20250929"),
+			Cheap:    Ptr("deepseek/deepseek-chat"), // resolves to openrouter endpoint
 		},
 		Endpoints: map[string]EndpointConfig{
 			"openrouter": {Format: "openai"},
@@ -173,7 +173,7 @@ func TestConventionEndpointExplicitAPIKey(t *testing.T) {
 			{ID: "a1"},
 		},
 		Groups: GroupsConfig{
-			Powerful: "openrouter/some-model",
+			Powerful: Ptr("openrouter/some-model"),
 		},
 		Endpoints: map[string]EndpointConfig{
 			"openrouter": {Format: "openai", APIKey: "or.key"},
@@ -254,8 +254,8 @@ func TestDeduplication(t *testing.T) {
 			{ID: "a2"},
 		},
 		Groups: GroupsConfig{
-			Powerful: "openrouter/some-model",
-			Cheap:    "openrouter/another-model",
+			Powerful: Ptr("openrouter/some-model"),
+			Cheap:    Ptr("openrouter/another-model"),
 		},
 		Endpoints: map[string]EndpointConfig{
 			"openrouter": {Format: "openai"},

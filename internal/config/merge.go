@@ -100,6 +100,28 @@ func SuperveneSlice[T any](agent, global []T, keyFn func(T) string) []T {
 	return result
 }
 
+// MergeMaps merges two string maps with the overlay taking priority.
+// Returns nil if both are nil/empty.
+func MergeMaps(base, overlay map[string]string) map[string]string {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	if len(base) == 0 {
+		return overlay
+	}
+	if len(overlay) == 0 {
+		return base
+	}
+	result := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		result[k] = v
+	}
+	for k, v := range overlay {
+		result[k] = v
+	}
+	return result
+}
+
 func Merge[T any](configs ...T) T {
 	var result T
 	rv := reflect.ValueOf(&result).Elem()

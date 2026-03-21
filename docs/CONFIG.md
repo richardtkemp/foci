@@ -461,7 +461,7 @@ Model group assignments, call site overrides, and fallbacks. Group values can be
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Must be a `developer/model_id` string or `[models.*]` alias. All agents use this model. Other groups default to this model unless explicitly overridden. |
+| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Must be a `developer/model_id` string or `[models.*]` alias. Other groups default to this model unless explicitly overridden. Can be overridden per-agent via `[agents.groups]`. |
 | `fast` | string | `""` | Model name for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
 | `cheap` | string | `""` | Model name for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
 
@@ -490,13 +490,16 @@ sonnet = "haiku"                                         # chains: opus → sonn
 "google/gemini-2.5-pro" = "anthropic/claude-sonnet-4-6"  # cross-endpoint fallback
 ```
 
-Per-agent overrides via `model_fallbacks` in `[[agents]]`:
+All `[groups]` fields can be overridden per-agent via `[agents.groups]`. Per-agent values override global; `calls` and `fallbacks` maps are merged (per-agent keys win).
 
 ```toml
 [[agents]]
 id = "research"
-[agents.model_fallbacks]
-opus = "google/gemini-2.5-pro"   # override global fallback for this agent
+[agents.groups]
+powerful = "anthropic/claude-opus-4-6"  # this agent uses opus instead of global powerful
+cheap = "google/gemini-2.5-flash"       # different cheap model for this agent
+[agents.groups.fallbacks]
+opus = "google/gemini-2.5-pro"          # override global fallback for this agent
 ```
 
 ### `[endpoints]`

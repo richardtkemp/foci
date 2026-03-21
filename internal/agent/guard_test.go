@@ -357,7 +357,7 @@ func TestGuardToolResult_SkipsSummaryAboveMaxSummaryChars(t *testing.T) {
 		ToolResultTempDir:   tmpDir,
 		Client:              stubClient{},
 		AutoSummarise:       true,
-		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}, nil),
+		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: config.Ptr("anthropic/claude-haiku-4-5")}, nil),
 		MaxSummaryChars:     50, // result (200 chars) exceeds this → skip summary
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
@@ -378,7 +378,7 @@ func TestGuardToolResult_FallbackOnNilClient(t *testing.T) {
 		ToolResultTempDir:   tmpDir,
 		AutoSummarise:       true,
 		Client:              nil, // no client → skip summary
-		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}, nil),
+		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: config.Ptr("anthropic/claude-haiku-4-5")}, nil),
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}
@@ -528,7 +528,7 @@ func TestGuardToolResult_SkipsSummaryWhenAutoSummariseDisabled(t *testing.T) {
 		ToolResultTempDir:   tmpDir,
 		Client:              stubClient{},
 		AutoSummarise:       false, // disabled → skip summary
-		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: "anthropic/claude-haiku-4-5"}, nil),
+		GroupResolver:       config.NewGroupResolver(config.GroupsConfig{Powerful: config.Ptr("anthropic/claude-haiku-4-5")}, nil),
 		SummaryContextTurns: 5,
 		SummaryContextChars: 6000,
 	}

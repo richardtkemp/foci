@@ -578,18 +578,3 @@ func logRegisteredTools(registry *tools.Registry, serverTools []provider.ToolDef
 	}
 }
 
-// mergeWebhooks merges global and per-agent webhook maps.
-// Per-agent entries override global entries with the same key.
-func mergeWebhooks(globalWebhooks, agentWebhooks map[string]string) map[string]string {
-	if len(globalWebhooks) == 0 && len(agentWebhooks) == 0 {
-		return nil
-	}
-	webhooks := make(map[string]string, len(globalWebhooks)+len(agentWebhooks))
-	for k, v := range globalWebhooks {
-		webhooks[k] = v
-	}
-	for k, v := range agentWebhooks {
-		webhooks[k] = v
-	}
-	return webhooks
-}
