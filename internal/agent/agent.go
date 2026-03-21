@@ -384,8 +384,8 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	})
 
 	// Repair missing assistant messages (consecutive user messages or empty
-	// assistant content). Caused by API errors where the defer safety-net
-	// flushed the user message without a matching assistant response.
+	// assistant content). Legacy sessions may have this from bare restart
+	// marker injection (fixed: restart notifications now go through HandleMessage).
 	// Persisted via Replace so the warning fires only once per corruption.
 	if repaired, n := repairMissingAssistantMessages(messages); n > 0 {
 		messages = repaired
