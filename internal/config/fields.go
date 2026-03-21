@@ -247,7 +247,6 @@ var configFields = []ConfigField{
 	{"agent", "memory_formation.compaction_enabled", FieldBool, "memory capture before compaction"},
 
 	// anthropic
-	{"anthropic", "streaming", FieldBool, "use streaming API"},
 	{"anthropic", "http_timeout", FieldDuration, "HTTP timeout for API calls"},
 
 	// gemini

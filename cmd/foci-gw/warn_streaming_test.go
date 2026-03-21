@@ -6,10 +6,9 @@ import (
 )
 
 // TestCheckStreamOutputWithoutStreaming verifies that warnings are produced
-// when stream_output is enabled for Telegram but the provider's streaming is
-// disabled, and that no warnings appear when the config is consistent.
-// Covers: global platform default, per-agent overrides, per-agent streaming
-// override, and use_sdk=false forcing streaming off.
+// when stream_output is enabled for Telegram but streaming is disabled,
+// and that no warnings appear when the config is consistent.
+// Covers: global default, per-agent overrides, per-agent streaming override.
 func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 	trueVal := true
 	falseVal := false
@@ -22,7 +21,6 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "agent platform stream_output on, streaming off — warns",
 			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: true, Streaming: false},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
@@ -34,23 +32,11 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 			wantWarning: true,
 		},
 		{
-			name: "per-agent stream_output on via platform, streaming off — warns",
+			name: "stream_output on, streaming on via global defaults — no warning",
 			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: true, Streaming: false},
-				Agents: []config.AgentConfig{{
-					ID: "bot1",
-					Platforms: []config.PlatformConfig{{
-						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
-					}},
-				}},
-			},
-			wantWarning: true,
-		},
-		{
-			name: "stream_output on, streaming on — no warning",
-			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: true, Streaming: true},
+				Defaults: config.DefaultsConfig{
+					DisplayConfig: config.DisplayConfig{Streaming: &trueVal},
+				},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
@@ -64,7 +50,6 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "stream_output off — no warning",
 			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: true, Streaming: false},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
@@ -78,7 +63,6 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "per-agent stream_output explicitly off — no warning",
 			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: true, Streaming: false},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
@@ -92,7 +76,6 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "per-agent streaming override on — no warning",
 			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: true, Streaming: false},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Defaults: config.AgentDefaultsOverride{
@@ -107,11 +90,16 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 			wantWarning: false,
 		},
 		{
-			name: "use_sdk false forces streaming off — warns",
+			name: "global streaming on, per-agent override off — warns",
 			cfg: &config.Config{
-				Anthropic: config.AnthropicConfig{UseSDK: false, Streaming: true},
+				Defaults: config.DefaultsConfig{
+					DisplayConfig: config.DisplayConfig{Streaming: &trueVal},
+				},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
+					Defaults: config.AgentDefaultsOverride{
+						DisplayConfig: config.DisplayConfig{Streaming: &falseVal},
+					},
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
 						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
