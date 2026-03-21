@@ -96,6 +96,10 @@ func (idx *Index) Reindex() error {
 
 	// Index each source directory
 	for sourceName, sourceCfg := range idx.sources {
+		if _, err := os.Stat(sourceCfg.Dir); os.IsNotExist(err) {
+			log.Infof("memory", "fts5: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
+			continue
+		}
 		if err := filepath.Walk(sourceCfg.Dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return err
@@ -284,15 +288,9 @@ func (idx *Index) Watch() error {
 	idx.watcher = watcher
 	idx.mu.Unlock()
 
-	// Add all source directories to watcher
-	for _, cfg := range idx.sources {
-		if err := watcher.Add(cfg.Dir); err != nil {
-			_ = watcher.Close()
-			return fmt.Errorf("watch %s: %w", cfg.Dir, err)
-		}
+	if err := watchSources(watcher, idx.sources); err != nil {
+		return err
 	}
-
-	// Start event handler goroutine
 	go idx.handleFileEvents()
 	return nil
 }

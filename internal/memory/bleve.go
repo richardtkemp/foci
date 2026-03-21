@@ -136,6 +136,10 @@ func (b *BleveIndex) Reindex() error {
 	// Index all source directories using a batch
 	batch := b.index.NewBatch()
 	for sourceName, sourceCfg := range b.sources {
+		if _, err := os.Stat(sourceCfg.Dir); os.IsNotExist(err) {
+			log.Infof("memory", "bleve: skipping source %q: directory %s does not exist yet", sourceName, sourceCfg.Dir)
+			continue
+		}
 		if err := filepath.Walk(sourceCfg.Dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return err
@@ -638,11 +642,8 @@ func (b *BleveIndex) Watch() error {
 	b.watcher = watcher
 	b.mu.Unlock()
 
-	for _, cfg := range b.sources {
-		if err := watcher.Add(cfg.Dir); err != nil {
-			_ = watcher.Close()
-			return fmt.Errorf("watch %s: %w", cfg.Dir, err)
-		}
+	if err := watchSources(watcher, b.sources); err != nil {
+		return err
 	}
 
 	go b.handleFileEvents()

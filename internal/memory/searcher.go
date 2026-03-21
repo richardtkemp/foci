@@ -1,6 +1,12 @@
 package memory
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/fsnotify/fsnotify"
+)
 
 // SearchOptions contains optional parameters for memory search.
 type SearchOptions struct {
@@ -16,4 +22,19 @@ type Searcher interface {
 	// sort controls result ordering: "relevance" (default), "newest", or "oldest".
 	// opts provides optional filtering parameters (may be nil).
 	Search(query, sort string, opts *SearchOptions) ([]Result, error)
+}
+
+// watchSources adds each existing source directory to the watcher, skipping
+// directories that don't exist yet. On any other error the watcher is closed.
+func watchSources(watcher *fsnotify.Watcher, sources map[string]SourceConfig) error {
+	for _, cfg := range sources {
+		if _, err := os.Stat(cfg.Dir); os.IsNotExist(err) {
+			continue
+		}
+		if err := watcher.Add(cfg.Dir); err != nil {
+			_ = watcher.Close()
+			return fmt.Errorf("watch %s: %w", cfg.Dir, err)
+		}
+	}
+	return nil
 }

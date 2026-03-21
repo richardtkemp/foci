@@ -88,12 +88,14 @@ Subcommands:
 	}
 
 	// ========== Workspace directories ==========
-	// Ensure each agent's workspace .data directory exists before any init
-	// function (logging, memory, etc.) tries to open databases there.
+	// Ensure each agent's workspace directories exist before any init
+	// function (logging, memory, etc.) tries to open databases or index files.
 	for _, acfg := range cfg.Agents {
-		dataDir := filepath.Join(acfg.Workspace, ".data")
-		if err := os.MkdirAll(dataDir, 0755); err != nil {
-			log.Fatalf("main", "create workspace data dir %s: %v", dataDir, err)
+		for _, sub := range []string{".data", "memory"} {
+			dir := filepath.Join(acfg.Workspace, sub)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				log.Fatalf("main", "create workspace dir %s: %v", dir, err)
+			}
 		}
 	}
 
