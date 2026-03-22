@@ -109,7 +109,7 @@ When idle, a lightweight branch session fires to keep the cache prefix warm — 
 When a single API call writes more than a configurable threshold of cache tokens, foci sends an immediate Telegram notification. This is a plain Telegram message, not an agent turn — zero tokens spent.
 
 ```toml
-[logging]
+[debug]
 cache_bust_detect = true           # alert when cache_read drops vs previous request
 cache_bust_idle_minutes = 10       # suppress alert if session idle > N minutes (cache expired naturally)
 ```

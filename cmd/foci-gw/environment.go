@@ -55,8 +55,8 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	fmt.Fprintf(&b, "- Workspace: %s\n", acfg.Workspace)
 	fmt.Fprintf(&b, "- Agent ID: %s\n", acfg.ID)
 	b.WriteString("- Platform: foci (https://github.com/richardtkemp/foci)\n")
-	if cfg.Environment.DocsPath != "" {
-		fmt.Fprintf(&b, "- Platform docs: %s\n", cfg.Environment.DocsPath)
+	if rc.Environment.DocsPath != "" {
+		fmt.Fprintf(&b, "- Platform docs: %s\n", rc.Environment.DocsPath)
 	}
 	if len(activePlatforms) > 0 {
 		fmt.Fprintf(&b, "- Messaging: %s\n", strings.Join(activePlatforms, ", "))

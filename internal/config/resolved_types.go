@@ -183,14 +183,30 @@ func resolveCompaction(m CompactionConfig) ResolvedCompaction {
 }
 
 type ResolvedDebug struct {
-	LogAPIKeySuffix bool
-	MessagesInLog   bool
+	LogAPIKeySuffix      bool
+	MessagesInLog        bool
+	CacheBustDetect      bool
+	CacheBustIdleMinutes int
 }
 
 func resolveDebug(m DebugConfig) ResolvedDebug {
 	return ResolvedDebug{
-		LogAPIKeySuffix: DerefBool(m.LogAPIKeySuffix),
-		MessagesInLog:   DerefBool(m.MessagesInLog),
+		LogAPIKeySuffix:      DerefBool(m.LogAPIKeySuffix),
+		MessagesInLog:        DerefBool(m.MessagesInLog),
+		CacheBustDetect:      DerefBool(m.CacheBustDetect),
+		CacheBustIdleMinutes: DerefInt(m.CacheBustIdleMinutes),
+	}
+}
+
+type ResolvedEnvironment struct {
+	Enabled  bool
+	DocsPath string
+}
+
+func resolveEnvironment(m EnvironmentConfig) ResolvedEnvironment {
+	return ResolvedEnvironment{
+		Enabled:  DerefBool(m.Enabled),
+		DocsPath: DerefStr(m.DocsPath),
 	}
 }
 
@@ -347,6 +363,7 @@ type ResolvedNotify struct {
 	CompactionNotify    bool           // default true
 	TaskListNotify      bool           // default true
 	CompactionDebug     bool           // default false
+	WarningMaxPerWindow int            // default 3
 }
 
 func resolveNotify(m NotifyConfig) ResolvedNotify {
@@ -357,5 +374,6 @@ func resolveNotify(m NotifyConfig) ResolvedNotify {
 		CompactionNotify:    m.CompactionNotifyEnabled(),
 		TaskListNotify:      m.TaskListNotifyEnabled(),
 		CompactionDebug:     m.CompactionDebugEnabled(),
+		WarningMaxPerWindow: DerefInt(m.WarningMaxPerWindow),
 	}
 }

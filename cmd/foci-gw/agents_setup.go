@@ -407,7 +407,7 @@ func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *con
 
 	agentLevel := maxInjectionLevel(rc, cfg, func(n config.ResolvedNotify) config.InjectionLevel { return n.InjectAgentWarnings })
 	if agentLevel.Enabled() {
-		ag.WarningQueue = warnings.NewQueue(config.DerefInt(cfg.Logging.WarningMaxPerWindow), warningWindow)
+		ag.WarningQueue = warnings.NewQueue(rc.Notify.WarningMaxPerWindow, warningWindow)
 		if !agentLevel.IncludeWarnings() {
 			ag.WarningQueue.SetErrorsOnly(true)
 		}
@@ -415,7 +415,7 @@ func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *con
 
 	chatLevel := maxInjectionLevel(rc, cfg, func(n config.ResolvedNotify) config.InjectionLevel { return n.InjectChatWarnings })
 	if chatLevel.Enabled() {
-		ag.ChatWarningQueue = warnings.NewQueue(config.DerefInt(cfg.Logging.WarningMaxPerWindow), warningWindow)
+		ag.ChatWarningQueue = warnings.NewQueue(rc.Notify.WarningMaxPerWindow, warningWindow)
 		if !chatLevel.IncludeWarnings() {
 			ag.ChatWarningQueue.SetErrorsOnly(true)
 		}

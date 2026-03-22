@@ -254,6 +254,7 @@ type AgentConfig struct {
 	Sessions        AgentSessionsOverride `toml:"sessions"`          // overrides from [sessions]
 	Tools           AgentToolsOverride    `toml:"tools"`             // overrides from [tools]
 	Debug           DebugConfig           `toml:"debug"`             // overrides from [debug]
+	Environment     EnvironmentConfig     `toml:"environment"`       // overrides from [environment]
 	Browser         BrowserConfig         `toml:"browser"`           // overrides from [browser]
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`         // overrides from [keepalive]
 	Background      BackgroundConfig      `toml:"background"`        // overrides from [background]
@@ -419,12 +420,13 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                desc:"inject warnings into agent session: all, errors, off"` // inject warnings/errors into agent session
-	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                 desc:"send warnings as chat notifications: all, errors, off"` // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"        default:"true" desc:"send notification on startup"` // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"     default:"true" desc:"send notification on compaction"` // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"      default:"true" desc:"send notification on task list changes"` // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"                     desc:"send compaction summary as file attachment"` // send compaction summary as file attachment
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"                   desc:"inject warnings into agent session: all, errors, off"` // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"                    desc:"send warnings as chat notifications: all, errors, off"` // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"           default:"true" desc:"send notification on startup"` // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"        default:"true" desc:"send notification on compaction"` // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"         default:"true" desc:"send notification on task list changes"` // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"                        desc:"send compaction summary as file attachment"` // send compaction summary as file attachment
+	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"max identical warnings per window before suppression"` // max identical warnings per window before suppression (default 3)
 }
 
 // StartupNotifyEnabled returns the resolved value (default: true).
@@ -617,10 +619,7 @@ type LoggingConfig struct {
 
 	FullPayload          bool   `toml:"full_payload"                         desc:"write full API payloads to file"` // write full API payloads to api-payload.jsonl
 	PayloadFile          string `toml:"payload_file"             default:"logs/api-payload.jsonl"` // path for full API payload log
-	CacheBustDetect      bool   `toml:"cache_bust_detect"                    desc:"alert on cache_read drop"` // alert when cache_read drops >50% vs previous request
-	CacheBustIdleMinutes *int   `toml:"cache_bust_idle_minutes" default:"10" desc:"suppress cache bust alert if idle > N minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 
-	WarningMaxPerWindow               *int   `toml:"warning_max_per_window"               default:"3"   desc:"max identical warnings per window before suppression"` // max identical warnings per window before suppression (default 3)
 	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"  desc:"time window for warning dedup" type:"duration"` // time window for warning dedup (default "5m")
 	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"  desc:"min interval between proactive warnings (active user)" type:"duration"` // min interval between proactive warning turns when user is active (default "5m")
 	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"  desc:"min interval between proactive warnings (inactive user)" type:"duration"` // min interval when user is inactive (default "1h")
@@ -675,8 +674,8 @@ type CacheConfig struct {
 
 
 type EnvironmentConfig struct {
-	Enabled  *bool  `toml:"enabled"    default:"true"         desc:"inject environment block"` // inject environment block as first system block (default true)
-	DocsPath string `toml:"docs_path" default:"shared/docs"   desc:"path to platform docs directory"` // path to platform docs directory; relative paths resolve against $HOME
+	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"inject environment block"` // inject environment block as first system block (default true)
+	DocsPath *string `toml:"docs_path"  default:"shared/docs"  desc:"path to platform docs directory"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
 type SkillsConfig struct {
@@ -845,8 +844,10 @@ type BackgroundConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
-	LogAPIKeySuffix *bool `toml:"log_api_key_suffix" desc:"log last 4 chars of API keys on provider calls"` // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog   *bool `toml:"messages_in_log"    desc:"log user message content"` // log user message content to event log (default false for privacy)
+	LogAPIKeySuffix      *bool `toml:"log_api_key_suffix"      desc:"log last 4 chars of API keys on provider calls"` // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog        *bool `toml:"messages_in_log"         desc:"log user message content"` // log user message content to event log (default false for privacy)
+	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"alert on cache_read drop"` // alert when cache_read drops >50% vs previous request
+	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"suppress cache bust alert if idle > N minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 }
 
 type Config struct {
