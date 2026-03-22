@@ -116,7 +116,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 				log.Errorf("main", "%s not found in secrets — endpoint %q (openai format) unavailable", apiKeyName, endpointName)
 				return
 			}
-			httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(r.cfg.OpenAI.HTTPTimeout, 120*time.Second))
+			httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(r.cfg.OpenAI.HTTPTimeout, 0))
 			opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
 			url := epCfg.URLForFormat("openai")
 			if url == "" && endpointName == "openai" {
