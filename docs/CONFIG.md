@@ -282,7 +282,7 @@ Memory system (full-text search over markdown files + conversation history).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `search_backends` | string[] | `["bleve"]` | Active search backends. Valid values: `"fts5"` (SQLite FTS5), `"bleve"` (blevesearch/bleve). Both can run simultaneously for A/B comparison. |
+| `search_backend` | string | `"bleve"` | Search backend: `"fts5"` (SQLite FTS5) or `"bleve"` (blevesearch/bleve). |
 | `reindex_debounce` | string | `"0s"` | Delay before reindexing after file changes. Go duration format. |
 | `conversation_weight` | float | `0.1` | Weight multiplier for conversation search results (0.0–1.0). Lower = conversation appears further down in results. FTS5 only — bleve does not index conversations. |
 | `search_limit` | int | `20` | Maximum number of search results to return. |

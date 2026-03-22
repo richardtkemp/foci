@@ -9,15 +9,7 @@ import (
 
 // Default-setting helpers for fields that need runtime context (IsDefined checks).
 // Most defaults are now expressed as `default:"value"` struct tags in types.go,
-// applied by ApplyTagDefaults. Only setStringDefaultDefined remains for fields
-// whose defaults depend on runtime values (e.g. DataPath).
-
-// setStringDefaultDefined sets *p to def when *p is empty AND the key was not explicitly defined.
-func setStringDefaultDefined(p *string, def string, defined bool) {
-	if *p == "" && !defined {
-		*p = def
-	}
-}
+// applied by ApplyTagDefaults.
 
 // validateDurations checks that each value parses as a Go duration string.
 // Returns the first error found, with section and key in the message.

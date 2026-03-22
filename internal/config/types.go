@@ -588,22 +588,13 @@ type MemorySource struct {
 
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackends     []string       `toml:"search_backends"`     // active search backends: "fts5", "bleve" (default ["bleve"])
+	SearchBackend      string         `toml:"search_backend"       default:"bleve"` // search backend: "fts5" or "bleve"
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
 	ConversationWeight float64        `toml:"conversation_weight" default:"0.1"` // weight multiplier for conversation search results (default 0.1)
 	SearchLimit        int            `toml:"search_limit"        default:"20"`  // max search results to return (default 20)
 	SweepInterval      string         `toml:"sweep_interval"      default:"1h"`  // periodic full reindex interval (default "1h", "0" disables)
 }
 
-// HasBackend reports whether the given search backend is enabled.
-func (m MemoryConfig) HasBackend(name string) bool {
-	for _, b := range m.SearchBackends {
-		if b == name {
-			return true
-		}
-	}
-	return false
-}
 
 type DatabaseConfig struct {
 	BusyTimeout string `toml:"busy_timeout" default:"5s"` // SQLite busy timeout for concurrent access (default "5s")
@@ -621,11 +612,11 @@ type LoggingConfig struct {
 	Level            string `toml:"level"      default:"INFO"`
 	EventFile        string `toml:"event_file" default:"logs/foci.log"`
 	APIFile          string `toml:"api_file"   default:"logs/api.jsonl"`
-	APIDB            string `toml:"api_db"` // SQLite API call log path (empty = disabled, default: {data_dir}/api.db)
+	APIDB            string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
 	ConversationFile string `toml:"conversation_file"`
 
 	FullPayload          bool   `toml:"full_payload"`            // write full API payloads to api-payload.jsonl
-	PayloadFile          string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
+	PayloadFile          string `toml:"payload_file"             default:"logs/api-payload.jsonl"` // path for full API payload log
 	CacheBustDetect      bool   `toml:"cache_bust_detect"`       // alert when cache_read drops >50% vs previous request
 	CacheBustIdleMinutes *int   `toml:"cache_bust_idle_minutes" default:"10"` // suppress cache bust alert if session idle > N minutes (default 10)
 

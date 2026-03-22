@@ -13,14 +13,17 @@ import (
 
 // NewMemorySearchTool creates the memory_search tool backed by one or more search backends.
 // backends maps backend names (e.g. "fts5", "bleve") to their Searcher implementation.
-// order is the config-specified backend order — the first entry is the default.
-// If only one backend is configured, the "backend" parameter is hidden from the tool schema.
+// defaultBackend is the preferred backend name. If only one backend exists,
+// the "backend" parameter is hidden from the tool schema.
 // convReader provides conversation context lookup (may be nil).
-func NewMemorySearchTool(backends map[string]memory.Searcher, order []string, convReader *memory.ConversationReader) *Tool {
-	// Use config order; only include names that are actually in the backends map.
-	names := make([]string, 0, len(order))
-	for _, n := range order {
-		if _, ok := backends[n]; ok {
+func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend string, convReader *memory.ConversationReader) *Tool {
+	// Build ordered name list: default first, then others.
+	names := make([]string, 0, len(backends))
+	if _, ok := backends[defaultBackend]; ok {
+		names = append(names, defaultBackend)
+	}
+	for n := range backends {
+		if n != defaultBackend {
 			names = append(names, n)
 		}
 	}

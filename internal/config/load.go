@@ -214,16 +214,9 @@ func Load(path string) (*Config, error) {
 		home, _ := os.UserHomeDir()
 		cfg.DataDir = filepath.Join(home, "data")
 	}
-	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
-		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
-	}
-	setStringDefaultDefined(&cfg.Logging.APIDB, cfg.DataPath("api.db"), md.IsDefined("logging", "api_db"))
 	// GoroutineMonitorThreshold: 0 means auto (30 + 25×agents + 5×telegram_bots), computed at startup.
 	if len(cfg.Defaults.Behavior.StopAliases) == 0 {
 		cfg.Defaults.Behavior.StopAliases = []string{"stop", "wait"}
-	}
-	if len(cfg.Memory.SearchBackends) == 0 {
-		cfg.Memory.SearchBackends = []string{"bleve"}
 	}
 
 	// Apply convention-based defaults before path resolution.

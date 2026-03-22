@@ -157,8 +157,8 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	}
 
-	wantFTS5 := cfg.Memory.HasBackend("fts5")
-	wantBleve := cfg.Memory.HasBackend("bleve")
+	wantFTS5 := cfg.Memory.SearchBackend == "fts5"
+	wantBleve := cfg.Memory.SearchBackend == "bleve"
 
 	// memoryBackend abstracts over FTS5 and bleve for shared init logic.
 	type memoryBackend interface {
@@ -239,7 +239,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if bleveIdx != nil {
 				result.agentBleve[acfg.ID] = bleveIdx
 			}
-			log.Infof("main", "agent %q: memory backends %v with %d sources", acfg.ID, cfg.Memory.SearchBackends, len(combined))
+			log.Infof("main", "agent %q: memory backend %s with %d sources", acfg.ID, cfg.Memory.SearchBackend, len(combined))
 		}
 
 		// Conversation hook: route to agent's indices by session key prefix
