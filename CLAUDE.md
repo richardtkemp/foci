@@ -108,7 +108,7 @@ All tests are self-contained. Run `make test` — should pass in ~1s.
 - **Tests:** Write tests for all new functionality. Cover happy path, edge cases, and error conditions. Every test function must start with a comment explaining its *purpose* — what it's trying to prove and how. Keep it concise. Don't quote the test code itself.
 - **Docs:** Update `docs/CONFIG.md` for any new config options. Update `docs/WIRING.md` for any architectural or flow changes.
 - **Config:** No magic numbers in code. Thresholds, intervals, model names, percentages, limits — anything that might reasonably vary per deployment — must be a config field with a sensible default. Add fields to the relevant config struct with TOML tags.
-- **Config scope:** All config keys should be available both globally (in `[defaults]` or top-level sections) AND per-agent (in `[[agents]]`), unless it genuinely doesn't make sense per-agent (e.g. `workspace`, `id`). Per-agent values override global. This is the design principle — don't add global-only config unless there's a clear reason.
+- **Config scope:** Every config group is an independent TOML section (e.g. `[agent_loop]`, `[notify]`, `[debug]`) with a matching per-agent override (`[[agents]].agent_loop.*`, `[[agents]].notify.*`). Per-agent values override global. Don't add global-only config unless there's a clear reason. Some groups (notify, debug, display) also cascade through `[[platforms]]` for per-platform resolution.
 
 ## Debugging
 

@@ -4,14 +4,15 @@ Webhooks let external systems trigger agent turns via HTTP. Each webhook has a *
 
 ## Configuration
 
-Declare webhooks in `[defaults]` (global) or `[[agents]]` (per-agent). Per-agent entries merge with global — agent keys override matching global keys, unmatched global keys are preserved.
+Declare webhooks in `[system]` (global) or `[[agents]].system` (per-agent). Per-agent entries merge with global — agent keys override matching global keys, unmatched global keys are preserved.
 
 ```toml
-[defaults]
+[system]
 webhooks = { new_commit = "new_commit.md", deploy = "deploy.md" }
 
 [[agents]]
 id = "scout"
+[agents.system]
 webhooks = { alert = "alert-handler.md" }
 # Result: scout has { new_commit = "new_commit.md", deploy = "deploy.md", alert = "alert-handler.md" }
 ```

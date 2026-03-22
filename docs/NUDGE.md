@@ -70,7 +70,7 @@ All nudge blocks are prefixed with a header that tells the model to treat them a
 
 ## Configuration
 
-All options are available in both `[defaults]` and `[[agents]]` (per-agent overrides global).
+All options are available in both `[nudge]` (global) and `[[agents]].nudge.*` (per-agent overrides global).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

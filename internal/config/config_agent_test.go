@@ -325,7 +325,7 @@ nudge_default_braindead_prompt = "custom warning"
 }
 
 func TestNudgeDefaultBraindeadThresholdPerAgent(t *testing.T) {
-	// Proves that a global nudge_default_braindead_threshold in [defaults] is inherited by agents
+	// Proves that a global nudge_default_braindead_threshold in [nudge] is inherited by agents
 	// that don't override it, while agents with explicit values keep their own.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
@@ -372,7 +372,7 @@ nudge_default_braindead_prompt = "agent prompt"
 }
 
 func TestNudgeDefaultBraindeadThresholdDisabled(t *testing.T) {
-	// Proves that setting nudge_default_braindead_threshold = 0 in [defaults] disables the
+	// Proves that setting nudge_default_braindead_threshold = 0 in [nudge] disables the
 	// feature (threshold remains 0, not overridden by the built-in default).
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
