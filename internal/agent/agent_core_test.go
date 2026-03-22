@@ -614,6 +614,5 @@ func TestIsNoResponse(t *testing.T) {
 }
 
 // newTestClientWithBase creates a test client with a custom base URL.
-// Uses SDK transport (useSDK=true) to match production behavior.
 
 

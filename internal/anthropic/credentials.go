@@ -52,7 +52,6 @@ type AnthropicResolver struct {
 	mu            sync.Mutex
 	httpTimeout   time.Duration
 	usageCacheTTL time.Duration
-	useSDK        bool
 }
 
 // NewResolver creates and initializes an AnthropicResolver.
@@ -97,7 +96,6 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 		credHolders:   make(map[string]*tokenHolder),
 		httpTimeout:   httpTimeout,
 		usageCacheTTL: usageCacheTTL,
-		useSDK:        config.DerefBool(anthropicCfg.UseSDK),
 	}, nil
 }
 
@@ -120,7 +118,6 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
-		c.SetUseSDK(r.useSDK)
 		return c, nil
 	}
 
@@ -131,7 +128,6 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
-		c.SetUseSDK(r.useSDK)
 		return c, nil
 	}
 

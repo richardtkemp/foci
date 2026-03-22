@@ -149,6 +149,7 @@ func TestSummaryTool_Success(t *testing.T) {
 			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 20},
 			StopReason: "end_turn",
 		}
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
@@ -211,6 +212,7 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 			Content: []provider.ContentBlock{{Type: "text", Text: "ok"}},
 			Usage:   provider.Usage{InputTokens: 10, OutputTokens: 5},
 		}
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()

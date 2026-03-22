@@ -48,7 +48,6 @@ Anthropic API settings. API keys go in `secrets.toml` — see [AUTH.md](AUTH.md)
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 | `usage_cache_ttl` | string | `"10m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. On fetch errors, retries use exponential backoff (starting at cache TTL, doubling up to 1h). |
 | `cc_expiry_threshold` | string | `"5m"` | How far before expiry to trigger a proactive token refresh. Credentials are read lazily from `~/.claude/.credentials.json` on each API call. |
-| `use_sdk` | bool | `true` | Use official Anthropic SDK for API transport. When `false`, falls back to hand-rolled HTTP (legacy). Anthropic streaming requires SDK transport. |
 See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
 ### `[gemini]`
@@ -759,7 +758,7 @@ Models are configured via `[groups]` (group assignments with `developer/model_id
 |-----|------|---------|---------|-------------|
 | `max_output_tokens` | int | `16384` | `[defaults.loop]` | Maximum tokens in model response. Larger values allow longer responses. |
 | `max_tool_loops` | int | `25` | `[defaults.loop]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
-| `streaming` | bool | `false` | `[defaults.display]` | Use streaming API. Text and thinking deltas are delivered incrementally. Works with any provider that implements streaming (Anthropic, OpenAI). Anthropic streaming requires `use_sdk = true`. |
+| `streaming` | bool | `false` | `[defaults.display]` | Use streaming API. Text and thinking deltas are delivered incrementally. Works with any provider that implements streaming (Anthropic, OpenAI). |
 | `cache_ttl` | string | `""` | `[defaults.loop]` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
 | `system_files` | string[] | see below | `[defaults.system]` | Ordered list of workspace files to load as system prompt blocks. |
 

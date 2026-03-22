@@ -307,7 +307,6 @@ system_files = [
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
 # usage_cache_ttl = "10m"                # cache TTL for usage API responses
 # cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
-# use_sdk = true                         # use SDK transport (false = raw HTTP fallback)
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.

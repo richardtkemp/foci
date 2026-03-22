@@ -281,7 +281,6 @@ func TestCompactStreaming(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
-	client.SetUseSDK(true)
 
 	store := session.NewStore(t.TempDir())
 	sessionKey := "test/imain/1000000000"

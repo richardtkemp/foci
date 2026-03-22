@@ -37,7 +37,6 @@ var boolKeys = map[string]bool{
 	"ws_enabled":            true,
 	"enabled":               true,
 	"skip_security_checks":  true,
-	"use_sdk":               true,
 	"streaming":             true,
 	"interval_enabled":      true,
 	"consolidation_enabled": true,
