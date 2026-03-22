@@ -13,6 +13,8 @@ func TestGenerateConfig(t *testing.T) {
 	agentBlock := `[[agents]]
 id = "fotini"
 workspace = "/home/foci/fotini"
+
+[agents.defaults]
 system_files = ["character/SOUL.md", "character/CRAFT.md"]
 `
 	opts := SetupOptions{

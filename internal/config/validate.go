@@ -173,7 +173,7 @@ func validate(cfg *Config) error {
 
 	// Mana warnings thresholds
 	for i, t := range cfg.Mana.Thresholds {
-		if err := validateIntRange(t, 0, 100, fmt.Sprintf("[usage_warnings] thresholds[%d]", i)); err != nil {
+		if err := validateIntRange(t, 0, 100, fmt.Sprintf("[mana] thresholds[%d]", i)); err != nil {
 			return err
 		}
 	}

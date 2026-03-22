@@ -38,12 +38,10 @@ Fields that exist only at the top level or in dedicated global sections. These c
 
 ### `[anthropic]`
 
-Anthropic API credentials. Prefer `secrets.toml` for tokens. See [AUTH.md](AUTH.md) for setup guide.
+Anthropic API settings. API keys go in `secrets.toml` — see [AUTH.md](AUTH.md) for setup guide.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `api_key` | string | `""` | Anthropic API key. Overridden by `secrets.toml` `[anthropic] api_key`. |
-| `brave_api_key` | string | `""` | Brave Search API key for `web_search` tool. Overridden by `secrets.toml` `[brave] api_key`. |
 | `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 | `usage_cache_ttl` | string | `"10m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. On fetch errors, retries use exponential backoff (starting at cache TTL, doubling up to 1h). |
@@ -444,10 +442,7 @@ Developer and debugging knobs. All off by default.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `log_api_key_suffix` | bool | `false` | Log the last 4 characters of API keys at DEBUG level on each provider API call. Applies to all providers (Anthropic, OpenAI, Gemini, voice) and secrets used in `http_request` tool calls. Useful for diagnosing which credential is being used when multiple keys are configured. |
-| `messages_in_log` | bool | `false` | Log user message content to event log. Off by default for privacy. |
-| `inject_agent_warnings` | string | `"off"` | Inject warnings into agent session: `"all"`, `"errors"`, `"off"`. Cascades through platforms. |
-| `inject_chat_warnings` | string | `"off"` | Send warnings as chat notifications: `"all"`, `"errors"`, `"off"`. Cascades through platforms. |
-| `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
+| `messages_in_log` | bool | `false` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent override via `[agents.debug]`. |
 
 ### `[database]`
 
@@ -611,7 +606,7 @@ The `summary` tool uses the **cheap** model group (call site: `summarize-file`).
 
 Tmux memory monitoring detects runaway memory from long-running tmux sessions (glibc malloc fragmentation). Notifications are sent to agents whose `inject_agent_warnings` is `"off"` — agents with injection enabled already see log warnings in their session.
 
-### `[tools.browser]`
+### `[browser]`
 
 Browser automation tool configuration. Enabled by default. Agents get a `browser` tool that uses accessibility tree snapshots with element refs for interaction.
 
@@ -626,11 +621,11 @@ Browser automation tool configuration. Enabled by default. Agents get a `browser
 | `dom_stable_sec` | float | `1.0` | DOM stability check interval in seconds before capturing auto-snapshots. |
 | `dom_stable_diff` | float | `0.2` | DOM change threshold (0.0–1.0) for stability detection. Lower = stricter. |
 
-Per-agent override: `browser_enabled` in `[[agents]]` overrides `tools.browser.enabled`.
+Per-agent override: `[agents.browser] enabled` overrides `[browser] enabled`.
 
 Example:
 ```toml
-[tools.browser]
+[browser]
 enabled = true
 headless = true
 timeout_sec = 30
@@ -899,12 +894,13 @@ Notification fields (`startup_notify`, `compaction_notify`, `task_list_notify`) 
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `messages_in_log` | bool | `false` | `[debug]` / `[platforms.debug]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
-| `steer_mode` | bool | `true` | `[behavior]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
-| `group_throttle` | string | `""` | `[behavior]` | Group chat throttle window. Non-mention messages accumulate silently and are delivered as a batch when the timer fires. @mentions flush all buffered messages immediately and reset the timer. Go duration format (e.g. `"30s"`, `"1m"`). Empty or `"0"` disables (default). Works with both `require_mention = true` (non-mentions buffered instead of dropped) and `false` (non-mentions buffered instead of processed immediately). |
-| `stream_output` | bool | `false` | `[platforms.display]` | Stream model output in real-time. Requires `streaming = true` for API-level delta callbacks. |
-| `stream_interval` | string | `"250ms"`/`"1200ms"` | `[platforms.display]` | Duration between message edits during streaming. Default varies by platform. |
-| `facet_no_compact` | bool | `true` | `[sessions]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
+| `messages_in_log` | bool | `false` | `[debug]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent override via `[agents.debug]`. |
+| `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
+| `group_throttle` | string | `""` | `[defaults]` | Group chat throttle window. Non-mention messages accumulate silently and are delivered as a batch when the timer fires. @mentions flush all buffered messages immediately and reset the timer. Go duration format (e.g. `"30s"`, `"1m"`). Empty or `"0"` disables (default). Works with both `require_mention = true` (non-mentions buffered instead of dropped) and `false` (non-mentions buffered instead of processed immediately). |
+| `stream_output` | bool | `false` | `[[platforms]]` | Stream model output in real-time. Requires `streaming = true` for API-level delta callbacks. |
+| `stream_interval` | string | `"250ms"`/`"1200ms"` | `[[platforms]]` | Duration between message edits during streaming. Default varies by platform. |
+| `compaction_debug` | bool | `false` | `[defaults]` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. Part of `NotifyConfig` — follows the 5-level cascade. |
+| `facet_no_compact` | bool | `true` | `[defaults]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 
 ### Per-agent platform overrides
 
@@ -944,12 +940,15 @@ Mana-gated background work timer. Fires when the user is idle, there are open ba
 - `background.interval > keepalive.interval` — keepalive resets the cache timer; background work may never trigger.
 - `keepalive.interval > [cache] ttl` — cache may expire between keepalives (default TTL is 1 hour).
 
-### Mana (`[mana]`)
+### Mana (`[mana]` / `[[agents.mana]]`)
 
-Controls mana budget behavior. Global-only (not overridable per-agent).
+Controls mana budget behavior and usage warning thresholds. All fields overridable per-agent.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `name` | string | `"mana"` | What to call the quota in user-facing messages (e.g. `"mana"`, `"juice"`). |
+| `thresholds` | int[] | `[]` | Mana percentages to warn at (e.g. `[50, 25, 10, 5]`). Per-agent values completely replace global. |
+| `restore_threshold` | int | `0` | Inject session notice when mana restores to 100% after being below this threshold. `0` disables. Range: 0–100. |
 | `invest_interval` | string | `"30m"` | Quiet period after mana reset before spending. The manamometer prevents background work from running during this period to allow cache building. |
 
 See [HEARTBEAT.md](HEARTBEAT.md) for full details on the manamometer and timer logic.
@@ -984,14 +983,16 @@ All prompt fields use 3-state resolution: `""` or `"default"` → embedded defau
 
 **Compaction** fires immediately before compaction summarises and replaces context. Creates a branch from the pre-compaction session so the memory agent sees the full conversation history that's about to be summarised. The branch is created synchronously (capturing the branch point) before compaction starts; the memory agent runs asynchronously in a goroutine.
 
-### Usage Warnings (`[[agents.usage_warnings]]`)
+### Per-Agent Mana (`[[agents.mana]]`)
 
-Per-agent mana warning thresholds. When set, completely replaces the global `[usage_warnings] thresholds` for this agent.
+Per-agent mana overrides. When set, completely replaces the global `[mana]` values for this agent.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `thresholds` | int[] | `[]` | Mana warning thresholds. `[]` inherits from global `[usage_warnings]`. When set, completely replaces global thresholds for this agent. |
+| `name` | string | `""` | Override quota name. `""` inherits from global `[mana]`. |
+| `thresholds` | int[] | `[]` | Mana warning thresholds. `[]` inherits from global `[mana]`. When set, completely replaces global thresholds for this agent. |
 | `restore_threshold` | int | `0` | Inject session notice when mana restores to 100% after being below this threshold. `0` disables. |
+| `invest_interval` | string | `""` | Override invest interval. `""` inherits from global `[mana]`. |
 
 ### Skills & Message Transforms
 

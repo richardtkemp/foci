@@ -5,7 +5,7 @@
 
 # ─── Top-level ────────────────────────────────────────────────────────
 # data_dir = "/home/foci/data"            # directory for databases, sessions, state (default: $HOME/data)
-# welcome_file = "WELCOME.md"             # changelog/welcome file injected on startup
+# welcome_file = "data/WELCOME.md"        # changelog/welcome file injected on startup
 # skip_security_checks = false            # skip startup security checks for secrets.toml
 
 # ─── Groups ──────────────────────────────────────────────────────────
@@ -17,6 +17,10 @@
 powerful = "haiku"
 # fast = "haiku"
 # cheap = "haiku"
+# [groups.calls]                          # override call site → group mapping
+# spawn-explore = "cheap"
+# [groups.fallbacks]                      # automatic model failover on transient errors
+# opus = "sonnet"
 
 # ─── Models ──────────────────────────────────────────────────────────
 # Named model definitions with per-model settings.
@@ -26,58 +30,35 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # thinking = "adaptive"                  # adaptive (default for anthropic), off
 # effort = "low"                         # low, medium, high
 # speed = ""                             # fast or empty (Opus only, 6x pricing)
-# enable_keepalive                       # omit for auto-detect, true/false for explicit
+# context = "200k"                       # context window size (int or "Nk"/"Nm")
+# endpoint = ""                          # explicit endpoint override (empty = auto-detect)
+# enable_keepalive = nil                 # nil=auto-detect, true/false=explicit
 # prompt_cache_ttl = ""                  # Go duration, empty=auto-detect
 
-# ─── Agent Loop ──────────────────────────────────────────────────────
-# Settings consumed by the agent loop (HandleTurn). Per-agent: [[agents]].agent_loop.*
-# [agent_loop]
+# ─── Defaults ─────────────────────────────────────────────────────────
+# Global defaults inherited by all agents. Per-agent overrides in [agents.defaults].
+[defaults]
+# streaming = false                        # use streaming API
 # max_tool_loops = 25
 # max_output_tokens = 16384
-# duplicate_messages = false              # send user text twice per API call
-# batch_partial_assistant_messages = false # accumulate mid-turn text; send on turn end
-# batch_partial_joiner = ""               # separator between batched partial messages
-# cache_ttl = ""                          # per-agent Anthropic cache TTL override ("5m" or "1h")
-
-# ─── Behavior ───────────────────────────────────────────────────────
-# Agent behavioral settings. Per-agent: [[agents]].behavior.*
-# [behavior]
-# steer_mode = true                       # inject user messages between tool calls (default true)
-# group_throttle = ""                     # group chat throttle window (e.g. "30s", "0" disables)
-# turn_lock_warn_threshold = "3m"         # warn if turn lock wait exceeds this duration
-# enable_stop_aliases = true              # enable stop command aliases
-# stop_aliases = ["stop", "wait"]         # aliases for /stop command
-
-# ─── Notify ─────────────────────────────────────────────────────────
-# Notification settings. Per-agent: [[agents]].notify.*
-# [notify]
-# startup_notify = true
-# compaction_notify = true
-# task_list_notify = true
-
-# ─── Display ────────────────────────────────────────────────────────
-# Display defaults (also settable per-platform in [[platforms]]). Per-agent: [[agents]].display.*
-# [display]
-# streaming = false                        # use streaming API (per-agent override)
+# nudge_default_braindead_threshold = 10   # consecutive tool loops before warning (0 = disabled)
+# nudge_default_braindead_prompt = ""      # warning text injected at threshold
+# turn_lock_warn_threshold = "3m"          # warn if turn lock wait exceeds this duration
+# duplicate_messages = false               # send user text twice per API call
+# batch_partial_assistant_messages = false  # accumulate mid-turn text; send on turn end
+# batch_partial_joiner = ""                # separator between batched partial messages
+# inject_agent_warnings = "off"            # inject warnings into agent session: "all", "errors", "off"
+# inject_chat_warnings = "off"             # send warnings as chat notifications: "all", "errors", "off"
+# startup_notify = true                    # send startup notification
+# compaction_notify = true                 # send notification on compaction
+# compaction_debug = false                 # send compaction summary as file attachment
+# task_list_notify = true                  # send notification on task list changes
+# steer_mode = true                        # inject user messages between tool calls (default true)
 # injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
-
-# ─── Voice ──────────────────────────────────────────────────────────
-# TTS/STT settings. Per-agent: [[agents]].voice.*
-# [voice]
-# tts = ""                                # override TTS entry by id (empty = default)
-# stt = ""                                # override STT entry by id (empty = default)
-# tts_rate = 0.0                          # speech rate multiplier (0 = use entry rate)
-
-# ─── Nudge ──────────────────────────────────────────────────────────
-# Nudge system settings. Per-agent: [[agents]].nudge.*
-# [nudge]
-# nudge_default_braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
-# nudge_default_braindead_prompt = ""                   # warning text injected at threshold
-
-# ─── System ─────────────────────────────────────────────────────────
-# System-level agent settings. Per-agent: [[agents]].system.*
-# [system]
-# system_files = ["character/SOUL.md"]    # default system file list
+# system_files = ["character/SOUL.md"]     # default system file list
+# tts_rate = 0.0                           # TTS speech rate multiplier
+# stop_aliases = ["stop", "wait"]          # aliases for /stop command
+# enable_stop_aliases = true               # enable stop command aliases
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
 # ─── More model examples ─────────────────────────────────────────────
@@ -142,8 +123,13 @@ id = "myagent"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 
-# Per-agent section overrides (each prefix matches its global TOML section):
-# [agents.agent_loop]
+# Per-agent defaults overrides (from [defaults]):
+[agents.defaults]
+system_files = [
+  "character/SOUL.md",
+  "character/CRAFT.md",
+]
+# streaming = false
 # max_tool_loops = 25
 # max_output_tokens = 16384
 # duplicate_messages = false
@@ -168,31 +154,49 @@ system_files = [
 # messages_in_log = false                 # log user message content (privacy)
 # inject_agent_warnings = "off"           # "all", "errors", "off"
 # inject_chat_warnings = "off"            # "all", "errors", "off"
+# startup_notify = true
+# compaction_notify = true
+# compaction_debug = false
+# tts_rate = 0.0
 
-# Per-agent session overrides:
+# Per-agent session overrides (from [sessions]):
 # [agents.sessions]
-# branch_orientation_facet_prompt = "prompts/orient-facet.md"  # prompt for user-attached facet branches
-# branch_orientation_headless_prompt = "prompts/orient-headless.md"   # prompt for headless branches (cron, spawn, keepalive)
-# compaction_effort = "high"              # effort for compaction API calls
+# compaction_threshold = 0.8
+# compaction_summary_prompt = "prompts/compaction-summary.md"
+# compaction_handoff_msg = ""
+# compaction_preserve_messages = 25
+# compaction_effort = "high"
+# branch_orientation_facet_prompt = "prompts/orient-facet.md"
+# branch_orientation_headless_prompt = "prompts/orient-headless.md"
 
-# Per-agent tool overrides:
+# Per-agent tool overrides (from [tools]):
 # [agents.tools]
-# exec_auto_background = 10              # seconds before auto-backgrounding exec
+# exec_auto_background = 10
 # max_concurrent_spawns = 3
-# explore_max_depth = 100                # max tool loops for explore spawn mode
+# explore_max_depth = 100
 # max_upload_file_size = 52428800         # 50MB
 # tmux_autopilot = true
 # tmux_watch_threshold = "30s"
-# tmux_session_ttl = "24h"               # auto-kill idle tmux sessions ("0" disables)
-# max_result_chars = 15000               # override [tools] value
-# max_summary_chars = 300000             # override [tools] value
-# auto_summarise = true                  # override [tools] value
+# tmux_session_ttl = "24h"
+# max_result_chars = 15000
+# max_summary_chars = 300000
+# auto_summarise = true
 # summary_context_turns = 5
 # summary_context_chars = 6000
+# search_provider = "brave"
+# fetch_provider = "builtin"
 
-# ─── Agent: Platform overrides ───────────────────────────────────────
-# Per-agent platform settings override global [[platforms]] entries.
-#
+# Per-agent debug overrides (from [debug]):
+# [agents.debug]
+# messages_in_log = false                 # log user message content (privacy)
+
+# Per-agent group overrides (from [groups]):
+# [agents.groups]
+# powerful = "opus"
+# [agents.groups.fallbacks]
+# opus = "sonnet"
+
+# Per-agent platform overrides:
 # [[agents.platforms]]
 # id = "telegram"
 # bot = "myagent"                         # bot name (token from "telegram.myagent" secret)
@@ -211,16 +215,6 @@ system_files = [
 # table_wrap_lines = 5
 # table_style = "pretty"
 
-# Per-agent compaction overrides:
-# compaction_threshold = 0.8
-# compaction_summary_prompt = "prompts/compaction-summary.md"
-# compaction_handoff_msg = ""
-# compaction_preserve_messages = 25
-# [agents.notify]
-# compaction_notify = true
-# [agents.debug]
-# compaction_debug = false                 # per-agent override; global moved to [debug]
-
 # Per-agent blocked paths (replaces global):
 # [[agents.blocked_paths]]
 # path = "/home/foci/myagent/code"
@@ -237,8 +231,8 @@ system_files = [
 # dir = "memory/docs"
 # weight = 0.8
 
-# Per-agent usage warnings:
-# [agents.usage_warnings]
+# Per-agent mana overrides:
+# [agents.mana]
 # thresholds = [50, 25, 10, 5]
 # restore_threshold = 40                  # override global restore_threshold
 
@@ -254,6 +248,10 @@ system_files = [
 # interval = "55m"
 # prompt = ""                             # empty = embedded default, "none" = disabled
 
+# Per-agent browser overrides:
+# [agents.browser]
+# enabled = true
+
 # Per-agent memory formation:
 # [agents.memory_formation]
 # interval_enabled = true
@@ -264,6 +262,8 @@ system_files = [
 # consolidation_prompt = ""
 # session_end_enabled = true
 # session_end_prompt = ""
+# compaction_enabled = true
+# compaction_prompt = ""
 
 # ─── Anthropic ────────────────────────────────────────────────────────
 # API keys go in secrets.toml. These are non-secret settings only.
@@ -274,7 +274,6 @@ system_files = [
 # usage_cache_ttl = "10m"                # cache TTL for usage API responses
 # cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
 # use_sdk = true                         # use SDK transport (false = raw HTTP fallback)
-# streaming = false                      # use streaming API (requires use_sdk)
 
 # ─── Gemini ────────────────────────────────────────────────────────────
 # API keys go in secrets.toml as gemini.api_key.
@@ -347,11 +346,16 @@ compaction_threshold = 0.8
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
 # compaction_preserve_messages = 25
+# compaction_effort = ""                   # effort for compaction API calls (default: session effort)
+# facet_no_compact = true                  # set no_compact on facet sessions
+# autocompact_before_mana_refresh = true   # compact before mana refresh
+# autocompact_before_mana_refresh_threshold = "5m"
+# autocompact_before_mana_refresh_factor = 0.5
+# autocompact_before_mana_refresh_preserve_pct = 0.5
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
-# branch_orientation_prompt = ""                                  # deprecated: sets both facet and headless
-# branch_orientation_facet_prompt = ""                        # prompt for user-attached facet branches
-# branch_orientation_headless_prompt = ""                         # prompt for headless branches (cron, spawn, keepalive)
+# branch_orientation_facet_prompt = ""     # prompt for user-attached facet branches
+# branch_orientation_headless_prompt = ""  # prompt for headless branches (cron, spawn, keepalive)
 # archive_after = "24h"                   # gzip idle sessions after 24 hours
 
 # ─── Skills ───────────────────────────────────────────────────────────
@@ -378,7 +382,7 @@ compaction_threshold = 0.8
 # ─── Debug ─────────────────────────────────────────────────────────────
 # [debug]
 # log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
-# compaction_debug = false                 # send compaction summary as Telegram file
+# messages_in_log = false                  # log user message content (privacy)
 
 # ─── HTTP ─────────────────────────────────────────────────────────────
 [http]
@@ -386,16 +390,17 @@ port = 18791
 bind = "127.0.0.1"
 # graceful_shutdown_timeout = "30s"
 # ws_enabled = false                      # enable /voice WebSocket endpoint
+# socket_path = ""                        # Unix socket path (default: auto-resolved)
 
 # ─── Logging ──────────────────────────────────────────────────────────
 # [logging]
 # level = "info"                          # debug, info, warn, error
-# event_file = "foci.log"
-# api_file = "api.jsonl"
+# event_file = "logs/foci.log"
+# api_file = "logs/api.jsonl"
 # api_db = ""                             # SQLite API call log (default: {data_dir}/api.db, empty = disabled)
 # conversation_file = ""
 # full_payload = false
-# payload_file = "api-payload.jsonl"
+# payload_file = "logs/api-payload.jsonl"
 # cache_bust_detect = false
 # cache_bust_idle_minutes = 10
 # warning_max_per_window = 3
@@ -408,7 +413,7 @@ bind = "127.0.0.1"
 # retention_period = "48h"
 # rotation_max_line_size = "64MB"
 # archive_dir = ""                        # default: log_dir/archive/
-# messages_in_log = false
+# log_file_mode = "0600"                  # octal file permissions for log files
 
 # ─── TTS (text-to-speech) ─────────────────────────────────────────────
 # First entry is the default. Agents override by id via tts = "id".
@@ -451,11 +456,12 @@ bind = "127.0.0.1"
 # strategy = "auto"                       # auto or explicit
 # ttl = "1h"                              # Anthropic prompt cache TTL: "5m" or "1h"
 
-# ─── Usage Warnings ──────────────────────────────────────────────────
-# [usage_warnings]
-# name = "mana"
-# thresholds = [50, 25, 10, 5]
-# restore_threshold = 40                  # inject session notice when mana restores to 100% after being below this (0=disabled)
+# ─── Mana ────────────────────────────────────────────────────────────
+# [mana]
+# name = "mana"                           # what to call quota in messages
+# thresholds = [50, 25, 10, 5]            # mana percentages to warn at
+# restore_threshold = 40                  # inject session notice when mana restores (0=disabled)
+# invest_interval = "30m"                 # quiet period after mana reset before spending
 
 # ─── Environment ─────────────────────────────────────────────────────
 # [environment]
@@ -465,13 +471,17 @@ bind = "127.0.0.1"
 # ─── Tools ────────────────────────────────────────────────────────────
 # [tools]
 # max_result_chars = 15000
-# temp_dir = "/tmp/foci-tool-results"
+# max_summary_chars = 300000
+# auto_summarise = true
+# summary_context_turns = 5
+# summary_context_chars = 6000
+# max_summary_input_chars = 100000
+# max_image_pixels = 2073600               # max pixels before downscaling (default 1920x1080)
+# temp_dir = "/tmp/foci/tool-results"
 # tmux_cols = 300
 # tmux_rows = 30
 # exec_auto_background = 10
 # exec_default_timeout = 30
-# max_summary_chars = 300000
-# auto_summarise = true
 # tmux_command_timeout = "5s"
 # web_fetch_timeout = "30s"
 # web_fetch_max_bytes = 1048576
@@ -487,16 +497,26 @@ bind = "127.0.0.1"
 # tmux_watch_threshold = "30s"
 # tmux_session_ttl = "24h"
 # max_upload_file_size = 52428800
-# summary_context_turns = 5
-# summary_context_chars = 6000
-# search_provider = "brave"                  # "brave" (client-side, default) or "anthropic" (server-side, high token cost)
-# fetch_provider = "builtin"                  # "builtin" (client-side, default) or "anthropic" (server-side)
-# web_search_max_uses = 0                    # max searches per API call (0 = unlimited, anthropic provider only)
-# web_search_allowed_domains = []            # domain whitelist (mutually exclusive with blocked)
-# web_search_blocked_domains = []            # domain blacklist
-# web_fetch_max_uses = 0                     # max fetches per API call (0 = unlimited, anthropic provider only)
+# search_provider = "brave"              # "brave" (client-side, default) or "anthropic" (server-side, high token cost)
+# fetch_provider = "builtin"             # "builtin" (client-side, default) or "anthropic" (server-side)
+# todo_format = "lines"                  # "lines" (default) or "table"
+# web_search_max_uses = 0                # max searches per API call (0 = unlimited, anthropic provider only)
+# web_search_allowed_domains = []        # domain whitelist (mutually exclusive with blocked)
+# web_search_blocked_domains = []        # domain blacklist
+# web_fetch_max_uses = 0                 # max fetches per API call (0 = unlimited, anthropic provider only)
 # web_fetch_allowed_domains = []
 # web_fetch_blocked_domains = []
+
+# ─── Browser ──────────────────────────────────────────────────────────
+# [browser]
+# enabled = true                         # enable browser tool
+# headless = true                        # run headless (false for debugging)
+# timeout_sec = 30                       # page operation timeout in seconds
+# user_data_dir = ""                     # Chrome user data dir (empty = temp profile)
+# executable_path = ""                   # Chrome binary (empty = auto-detect)
+# incognito = true                       # use incognito mode
+# dom_stable_sec = 1.0                   # DOM stability check interval
+# dom_stable_diff = 0.2                  # DOM stability diff threshold
 
 # ─── Resources ────────────────────────────────────────────────────────
 # [resources]
@@ -505,16 +525,14 @@ bind = "127.0.0.1"
 # memory_warn_percent = 25
 # memory_kill_percent = 40
 # memory_pressure_threshold = 10.0
+# goroutine_monitor_interval = "60s"
+# goroutine_monitor_threshold = 0        # 0 = auto: 30 + 25×agents + 5×telegram_bots
 
 # ─── Global Background ───────────────────────────────────────────────
 # [background]
 # enabled = false
 # interval = "15m"
 # prompt = ""
-
-# ─── Mana ────────────────────────────────────────────────────────────
-# [mana]
-# invest_interval = "30m"                 # quiet period after mana reset before spending
 
 # ─── Global Keepalive ────────────────────────────────────────────────
 # [keepalive]
@@ -532,6 +550,8 @@ bind = "127.0.0.1"
 # consolidation_prompt = ""
 # session_end_enabled = true
 # session_end_prompt = ""
+# compaction_enabled = true
+# compaction_prompt = ""
 
 # ─── Blocked Paths ───────────────────────────────────────────────────
 # Soft guardrails for write/edit tools. Returns rebuke as tool result (not error).
