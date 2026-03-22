@@ -6,35 +6,15 @@ import (
 	"testing"
 )
 
-// findTOMLTag recursively searches a struct type for a field with the given
-// TOML tag, including fields in inline-embedded structs.
-func findTOMLTag(st reflect.Type, key string) bool {
-	for i := 0; i < st.NumField(); i++ {
-		f := st.Field(i)
-		tag := f.Tag.Get("toml")
-		// Strip options after comma
-		if idx := strings.IndexByte(tag, ','); idx >= 0 {
-			tag = tag[:idx]
-		}
-		if tag == key {
-			return true
-		}
-		// Recurse into inline-embedded structs
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			if findTOMLTag(f.Type, key) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func TestFieldsNonEmpty(t *testing.T) {
-	// Proves configFields returns a non-empty registry where every entry has Section,
-	// Key, and Description populated.
-	fields := configFields
+func TestBuildFieldRegistryNonEmpty(t *testing.T) {
+	// Proves buildFieldRegistry returns a non-empty registry where every entry
+	// has Section, Key, and Description populated.
+	fields, constraints := buildFieldRegistry()
 	if len(fields) == 0 {
-		t.Fatal("configFields returned empty slice")
+		t.Fatal("buildFieldRegistry returned empty fields slice")
+	}
+	if len(constraints) == 0 {
+		t.Fatal("buildFieldRegistry returned empty constraints map")
 	}
 	for i, f := range fields {
 		if f.Section == "" {
@@ -44,6 +24,39 @@ func TestFieldsNonEmpty(t *testing.T) {
 			t.Errorf("field %d: empty Key", i)
 		}
 		// Descriptions are optional — auto-discovered fields may have none.
+	}
+}
+
+func TestDescTagsCoverAllSections(t *testing.T) {
+	// Proves that every section in globalSections produces at least one field,
+	// and that agent-level fields are also generated.
+	sections := FieldSections()
+	sectionSet := make(map[string]bool, len(sections))
+	for _, s := range sections {
+		sectionSet[s] = true
+	}
+
+	for section := range globalSections {
+		if !sectionSet[section] {
+			t.Errorf("globalSections has %q but no fields were generated for it", section)
+		}
+	}
+
+	// Agent section must also be present
+	if !sectionSet["agent"] {
+		t.Error("no agent-level fields were generated")
+	}
+}
+
+func TestNoDuplicateFields(t *testing.T) {
+	// Proves there are no duplicate section.key entries in the registry.
+	seen := make(map[string]bool)
+	for _, f := range configFields {
+		key := f.Section + "." + f.Key
+		if seen[key] {
+			t.Errorf("duplicate field: %s", key)
+		}
+		seen[key] = true
 	}
 }
 
@@ -206,8 +219,8 @@ func TestConstraintHint(t *testing.T) {
 		field string
 		want  string
 	}{
-		{"sessions.compaction_threshold", "0–1"},
-		{"http.port", "1–65535"},
+		{"sessions.compaction_threshold", "0\u20131"},
+		{"http.port", "1\u201365535"},
 		{"sessions.compaction_max_tokens", ">= 0"},
 		{"logging.level", "DEBUG, INFO, WARN, ERROR"},
 		{"mana.name", ""},
@@ -223,81 +236,70 @@ func TestConstraintHint(t *testing.T) {
 	}
 }
 
-func TestFieldsMatchStructTags(t *testing.T) {
-	// Proves every field registered in configFields corresponds to a real TOML-tagged
-	// struct field in the relevant config struct, guarding against registry drift.
-
-	// Map section names to the struct types they represent.
-	sectionStructs := map[string]reflect.Type{
-		"agent_loop":       reflect.TypeOf(AgentLoopConfig{}),
-		"notify":           reflect.TypeOf(NotifyConfig{}),
-		"nudge":            reflect.TypeOf(NudgeConfig{}),
-		"behavior":         reflect.TypeOf(BehaviorConfig{}),
-		"display":          reflect.TypeOf(DisplayConfig{}),
-		"voice":            reflect.TypeOf(VoiceConfig{}),
-		"agent":            reflect.TypeOf(AgentConfig{}),
-		"anthropic":        reflect.TypeOf(AnthropicConfig{}),
-		"gemini":           reflect.TypeOf(GeminiConfig{}),
-		"openai":           reflect.TypeOf(OpenAIConfig{}),
-		"sessions":         reflect.TypeOf(SessionsConfig{}),
-		"platforms":        reflect.TypeOf(PlatformConfig{}),
-		"tools":            reflect.TypeOf(ToolsConfig{}),
-		"logging":          reflect.TypeOf(LoggingConfig{}),
-		"memory":           reflect.TypeOf(MemoryConfig{}),
-		"keepalive":        reflect.TypeOf(KeepaliveConfig{}),
-		"background":       reflect.TypeOf(BackgroundConfig{}),
-		"mana":             reflect.TypeOf(ManaConfig{}),
-		"memory_formation": reflect.TypeOf(MemoryFormationConfig{}),
-		"environment":      reflect.TypeOf(EnvironmentConfig{}),
-		"cache":            reflect.TypeOf(CacheConfig{}),
-		"debug":            reflect.TypeOf(DebugConfig{}),
-		"database":         reflect.TypeOf(DatabaseConfig{}),
-		"http":             reflect.TypeOf(HTTPConfig{}),
-		"browser":          reflect.TypeOf(BrowserConfig{}),
+func TestAllDescTagsRegistered(t *testing.T) {
+	// Proves that every struct field with a `desc` tag in the globalSections
+	// structs appears in the registry.
+	fieldSet := make(map[string]bool)
+	for _, f := range configFields {
+		fieldSet[f.Section+"."+f.Key] = true
 	}
 
-	for _, f := range configFields {
-		st, ok := sectionStructs[f.Section]
-		if !ok {
-			t.Errorf("field %s.%s: section %q has no mapped struct", f.Section, f.Key, f.Section)
+	for section, typ := range globalSections {
+		checkDescTags(t, typ, section, "", fieldSet)
+	}
+}
+
+// checkDescTags recursively checks that every field with a desc tag in typ
+// has a corresponding entry in fieldSet.
+func checkDescTags(t *testing.T, typ reflect.Type, section, prefix string, fieldSet map[string]bool) {
+	t.Helper()
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+
+		if f.Anonymous {
+			ft := f.Type
+			if ft.Kind() == reflect.Ptr {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == reflect.Struct {
+				checkDescTags(t, ft, section, prefix, fieldSet)
+			}
 			continue
 		}
 
-		key := f.Key
-		// Dotted keys like "keepalive.enabled" or "defaults.nudge.nudge_enable"
-		// need to resolve through nested structs iteratively.
-		for strings.Contains(key, ".") {
-			dotIdx := strings.Index(key, ".")
-			prefix := key[:dotIdx]
-			suffix := key[dotIdx+1:]
-			// Find the nested struct by its TOML tag.
-			found := false
-			for i := 0; i < st.NumField(); i++ {
-				tag := st.Field(i).Tag.Get("toml")
-				ft := st.Field(i).Type
-				if ft.Kind() == reflect.Ptr {
-					ft = ft.Elem()
-				}
-				if tag == prefix && ft.Kind() == reflect.Struct {
-					st = ft
-					key = suffix
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("field %s.%s: nested struct %q not found in %s", f.Section, f.Key, prefix, st.Name())
-				break
-			}
+		tomlTag := f.Tag.Get("toml")
+		if tomlTag == "" || tomlTag == "-" {
+			continue
 		}
-		if strings.Contains(key, ".") {
-			continue // resolution failed above, error already reported
+		if idx := strings.IndexByte(tomlTag, ','); idx >= 0 {
+			tomlTag = tomlTag[:idx]
 		}
 
-		// Look for the TOML tag in the struct, including inline embedded structs.
-		tagFound := findTOMLTag(st, key)
-		if !tagFound {
-			t.Errorf("field %s.%s: TOML tag %q not found in struct %s", f.Section, f.Key, key, st.Name())
+		ft := f.Type
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		if ft.Kind() == reflect.Struct {
+			newPrefix := tomlTag
+			if prefix != "" {
+				newPrefix = prefix + "." + tomlTag
+			}
+			checkDescTags(t, ft, section, newPrefix, fieldSet)
+			continue
+		}
+
+		desc := f.Tag.Get("desc")
+		if desc == "" {
+			continue
+		}
+
+		key := tomlTag
+		if prefix != "" {
+			key = prefix + "." + tomlTag
+		}
+		fullKey := section + "." + key
+		if !fieldSet[fullKey] {
+			t.Errorf("field %s has desc tag but is not in registry", fullKey)
 		}
 	}
 }
