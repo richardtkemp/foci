@@ -15,15 +15,7 @@ import (
 
 // checkSystemPromptSizes logs warnings if system prompt files exceed thresholds.
 func checkSystemPromptSizes(bootstrap *workspace.Bootstrap, sess config.SessionsConfig, agentID string) {
-	maxFile := sess.MaxSystemPromptFile
-	if maxFile == 0 {
-		maxFile = 20000
-	}
-	maxTotal := sess.MaxSystemPromptTotal
-	if maxTotal == 0 {
-		maxTotal = 80000
-	}
-	for _, w := range bootstrap.CheckSizes(maxFile, maxTotal) {
+	for _, w := range bootstrap.CheckSizes(sess.MaxSystemPromptFile, sess.MaxSystemPromptTotal) {
 		log.Warnf(agentID, "%s", w)
 	}
 }

@@ -216,6 +216,8 @@ func Load(path string) (*Config, error) {
 
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
+	setIntDefault(&cfg.Sessions.MaxSystemPromptFile, 20000)
+	setIntDefault(&cfg.Sessions.MaxSystemPromptTotal, 80000)
 
 	// Apply debug.log_api_key_suffix to the log package global.
 	log.DebugLogKeySuffix = DerefBool(cfg.Debug.LogAPIKeySuffix)
