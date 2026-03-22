@@ -63,13 +63,13 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate webhook keys contain no path separators (defense in depth)
-	for k := range cfg.Defaults.Webhooks {
+	for k := range cfg.System.Webhooks {
 		if strings.ContainsAny(k, "/\\") {
-			return fmt.Errorf("[defaults] webhooks: key %q must not contain path separators", k)
+			return fmt.Errorf("[system] webhooks: key %q must not contain path separators", k)
 		}
 	}
 	for _, a := range cfg.Agents {
-		for k := range a.Defaults.Webhooks {
+		for k := range a.System.Webhooks {
 			if strings.ContainsAny(k, "/\\") {
 				return fmt.Errorf("agent %q webhooks: key %q must not contain path separators", a.ID, k)
 			}
@@ -148,12 +148,12 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("[cache] ttl = %q: must be \"5m\" or \"1h\"", cfg.Cache.TTL)
 	}
 	for _, a := range cfg.Agents {
-		if a.Defaults.CacheTTL != nil && !validCacheTTLs[*a.Defaults.CacheTTL] {
-			return fmt.Errorf("agent %q cache_ttl = %q: must be \"5m\" or \"1h\"", a.ID, *a.Defaults.CacheTTL)
+		if a.AgentLoop.CacheTTL != nil && !validCacheTTLs[*a.AgentLoop.CacheTTL] {
+			return fmt.Errorf("agent %q cache_ttl = %q: must be \"5m\" or \"1h\"", a.ID, *a.AgentLoop.CacheTTL)
 		}
 	}
-	if cfg.Defaults.CacheTTL != nil && !validCacheTTLs[*cfg.Defaults.CacheTTL] {
-		return fmt.Errorf("[defaults] cache_ttl = %q: must be \"5m\" or \"1h\"", *cfg.Defaults.CacheTTL)
+	if cfg.AgentLoop.CacheTTL != nil && !validCacheTTLs[*cfg.AgentLoop.CacheTTL] {
+		return fmt.Errorf("[agent_loop] cache_ttl = %q: must be \"5m\" or \"1h\"", *cfg.AgentLoop.CacheTTL)
 	}
 
 	// Memory sources

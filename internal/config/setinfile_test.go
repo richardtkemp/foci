@@ -13,7 +13,7 @@ func TestSetInFile_UpdateExistingKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	content := `# comment
-[defaults]
+[agent_loop]
 model = "old-model"
 max_tool_loops = 25
 
@@ -22,7 +22,7 @@ dir = "/tmp/sessions"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	old, err := SetInFile(path, SetTarget{Section: "defaults", Key: "model"}, `"new-model"`)
+	old, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "model"}, `"new-model"`)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestSetInFile_InsertNewKey(t *testing.T) {
 	// empty old value, and places the key within the correct section boundaries.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	content := `[defaults]
+	content := `[agent_loop]
 model = "haiku"
 
 [sessions]
@@ -60,7 +60,7 @@ dir = "/tmp"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	old, err := SetInFile(path, SetTarget{Section: "defaults", Key: "max_tool_loops"}, "50")
+	old, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "max_tool_loops"}, "50")
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -74,12 +74,12 @@ dir = "/tmp"
 	if !strings.Contains(result, "max_tool_loops = 50") {
 		t.Errorf("new key not found in output:\n%s", result)
 	}
-	// Must be in the defaults section, not after [sessions]
-	defaultsIdx := strings.Index(result, "[defaults]")
+	// Must be in the agent_loop section, not after [sessions]
+	agentLoopIdx := strings.Index(result, "[agent_loop]")
 	sessionsIdx := strings.Index(result, "[sessions]")
 	keyIdx := strings.Index(result, "max_tool_loops")
-	if keyIdx < defaultsIdx || keyIdx > sessionsIdx {
-		t.Errorf("new key inserted outside [defaults] section")
+	if keyIdx < agentLoopIdx || keyIdx > sessionsIdx {
+		t.Errorf("new key inserted outside [agent_loop] section")
 	}
 }
 
@@ -88,7 +88,7 @@ func TestSetInFile_CreateNewSection(t *testing.T) {
 	// when the target section does not yet exist in the file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	content := `[defaults]
+	content := `[agent_loop]
 model = "haiku"
 `
 	os.WriteFile(path, []byte(content), 0o644)
@@ -114,7 +114,7 @@ func TestSetInFile_NewSectionBeforeAgents(t *testing.T) {
 	// to maintain the conventional ordering of the config file.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	content := `[defaults]
+	content := `[agent_loop]
 model = "haiku"
 
 [[agents]]
@@ -143,7 +143,7 @@ func TestSetInFile_AgentBlock(t *testing.T) {
 	// leaving other agents' values unchanged, and returns the old value.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	content := `[defaults]
+	content := `[agent_loop]
 model = "haiku"
 
 [[agents]]
@@ -291,7 +291,7 @@ func TestSetInFile_PreserveComments(t *testing.T) {
 	path := filepath.Join(dir, "foci.toml")
 	content := `# Top-level comment
 
-[defaults]
+[agent_loop]
 # Model configuration
 model = "haiku"
 # Tool loops
@@ -303,7 +303,7 @@ dir = "/tmp"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	_, err := SetInFile(path, SetTarget{Section: "defaults", Key: "model"}, `"opus"`)
+	_, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "model"}, `"opus"`)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}

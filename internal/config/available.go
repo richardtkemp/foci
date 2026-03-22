@@ -21,7 +21,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	var opts []availableOption
 
 	// Agent fields
-	if len(agent.Defaults.SystemFiles) == 0 && len(cfg.Defaults.SystemFiles) == 0 {
+	if len(agent.System.SystemFiles) == 0 && len(cfg.System.SystemFiles) == 0 {
 		opts = append(opts, availableOption{"agent", "system_files", "[]", "workspace file order for system prompt"})
 	}
 	if agent.Sessions.BranchOrientationFacetPrompt == nil && cfg.Sessions.BranchOrientationFacetPrompt == nil {
@@ -37,18 +37,18 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if tg == nil || len(tg.FacetBots) == 0 {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "facet_bots", "[]", "additional bot names for facet"})
 	}
-	if agent.Defaults.TTSRate == nil {
+	if agent.Voice.TTSRate == nil {
 		opts = append(opts, availableOption{"agent", "tts_rate", "0", "per-agent TTS speech rate multiplier (0 = use entry rate)"})
 	}
 	// Only show agent override options when the global fallback isn't covering them.
 	globalTg := cfg.Platform("telegram")
-	if agent.Defaults.StartupNotify == nil && (globalTg == nil || globalTg.StartupNotify == nil || !*globalTg.StartupNotify) {
+	if agent.Notify.StartupNotify == nil && (globalTg == nil || globalTg.StartupNotify == nil || !*globalTg.StartupNotify) {
 		opts = append(opts, availableOption{"agent", "startup_notify", "(platform)", "send startup notification (nil = use platform)"})
 	}
-	if agent.Defaults.ShowToolCalls == nil && (globalTg == nil || globalTg.ShowToolCalls == nil || *globalTg.ShowToolCalls == ToolCallOff) {
+	if agent.Display.ShowToolCalls == nil && (globalTg == nil || globalTg.ShowToolCalls == nil || *globalTg.ShowToolCalls == ToolCallOff) {
 		opts = append(opts, availableOption{"agent", "show_tool_calls", "(platform)", "tool call display mode: off, preview, full"})
 	}
-	if agent.Defaults.ShowThinking == nil && (globalTg == nil || globalTg.ShowThinking == nil || *globalTg.ShowThinking == ShowThinkingOff) {
+	if agent.Display.ShowThinking == nil && (globalTg == nil || globalTg.ShowThinking == nil || *globalTg.ShowThinking == ShowThinkingOff) {
 		opts = append(opts, availableOption{"agent", "show_thinking", "(platform)", "thinking display mode: off, compact, true"})
 	}
 	if tg == nil || tg.DisplayWidth == nil {
@@ -89,8 +89,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if cfg.Sessions.CompactionHandoffMsg == nil {
 		opts = append(opts, availableOption{"sessions", "compaction_handoff_msg", "\"\"", "handoff message after compaction"})
 	}
-	if cfg.Defaults.CompactionNotify == nil {
-		opts = append(opts, availableOption{"defaults", "compaction_notify", "true", "send notification on compaction"})
+	if cfg.Notify.CompactionNotify == nil {
+		opts = append(opts, availableOption{"notify", "compaction_notify", "true", "send notification on compaction"})
 	}
 	if cfg.Sessions.MaxSystemPromptFile == 0 {
 		opts = append(opts, availableOption{"sessions", "max_system_prompt_chars_file", "20000", "per-file char warning threshold"})
