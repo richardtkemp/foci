@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -144,6 +145,34 @@ func TestSessionModel(t *testing.T) {
 	ag.SetSessionModel("s1", "", "", "", nil)
 	if got := ag.SessionModel("s1"); got != "anthropic/claude-haiku-4-5" {
 		t.Errorf("SessionModel after clear = %q, want %q", got, "anthropic/claude-haiku-4-5")
+	}
+}
+
+func TestSessionContextLimit(t *testing.T) {
+	// Proves that SessionContextLimit returns config-defined context when
+	// ModelMetaFn matches, and falls back to modelinfo registry otherwise.
+	ag := &Agent{Model: "openrouter/z-ai/glm-5-turbo"}
+
+	// No ModelMetaFn — falls back to registry (200k default for unknown models)
+	if got := ag.SessionContextLimit("s1"); got != 200_000 {
+		t.Errorf("SessionContextLimit without meta = %d, want 200000", got)
+	}
+
+	// Set ModelMetaFn with config-defined context
+	ag.ModelMetaFn = func(model string) modelinfo.ModelMeta {
+		if model == "openrouter/z-ai/glm-5-turbo" {
+			return modelinfo.ModelMeta{ContextWindow: 202_000}
+		}
+		return modelinfo.ModelMeta{}
+	}
+	if got := ag.SessionContextLimit("s1"); got != 202_000 {
+		t.Errorf("SessionContextLimit with meta = %d, want 202000", got)
+	}
+
+	// Session with per-session model override — falls back to registry
+	ag.SetSessionModel("s2", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
+	if got := ag.SessionContextLimit("s2"); got != 200_000 {
+		t.Errorf("SessionContextLimit for opus = %d, want 200000", got)
 	}
 }
 

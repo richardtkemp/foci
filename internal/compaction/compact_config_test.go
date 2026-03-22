@@ -50,27 +50,27 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	}
 }
 
-func TestModelDefaultsFn(t *testing.T) {
-	// Verifies that ModelDefaultsFn is nil by default and can be set
-	// to provide per-model defaults.
+func TestModelParamsFn(t *testing.T) {
+	// Verifies that ModelParamsFn is nil by default and can be set
+	// to provide per-model API params.
 	c := NewCompactor(nil, 0.8)
-	if c.ModelDefaultsFn != nil {
-		t.Error("initial ModelDefaultsFn should be nil")
+	if c.ModelParamsFn != nil {
+		t.Error("initial ModelParamsFn should be nil")
 	}
 
-	c.ModelDefaultsFn = func(model string) (string, string, string) {
+	c.ModelParamsFn = func(model string) (string, string, string) {
 		if model == "anthropic/claude-opus-4-6" {
 			return "adaptive", "high", ""
 		}
 		return "", "", ""
 	}
-	thinking, effort, speed := c.ModelDefaultsFn("anthropic/claude-opus-4-6")
+	thinking, effort, speed := c.ModelParamsFn("anthropic/claude-opus-4-6")
 	if thinking != "adaptive" || effort != "high" || speed != "" {
-		t.Errorf("ModelDefaultsFn(opus) = (%q, %q, %q), want (adaptive, high, \"\")", thinking, effort, speed)
+		t.Errorf("ModelParamsFn(opus) = (%q, %q, %q), want (adaptive, high, \"\")", thinking, effort, speed)
 	}
-	thinking, effort, speed = c.ModelDefaultsFn("anthropic/claude-haiku-4-5")
+	thinking, effort, speed = c.ModelParamsFn("anthropic/claude-haiku-4-5")
 	if thinking != "" || effort != "" || speed != "" {
-		t.Errorf("ModelDefaultsFn(haiku) = (%q, %q, %q), want all empty", thinking, effort, speed)
+		t.Errorf("ModelParamsFn(haiku) = (%q, %q, %q), want all empty", thinking, effort, speed)
 	}
 }
 

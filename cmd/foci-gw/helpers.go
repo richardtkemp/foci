@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/modelinfo"
 )
 
 // parseDurationDefault parses a Go duration string, returning fallback on error or empty.
@@ -81,10 +82,10 @@ func resolveShowToolCalls(acfg config.AgentConfig, cfg *config.Config) string {
 	return string(config.ToolCallOff)
 }
 
-// modelDefaultsFn returns a function that looks up per-model defaults
+// modelParamsFn returns a function that looks up per-model API params
 // (thinking, effort, speed) from [models.*] config by matching the
 // developer/model_id string.
-func modelDefaultsFn(models map[string]config.ModelConfig) func(string) (string, string, string) {
+func modelParamsFn(models map[string]config.ModelConfig) func(string) (string, string, string) {
 	if len(models) == 0 {
 		return nil
 	}
@@ -95,6 +96,22 @@ func modelDefaultsFn(models map[string]config.ModelConfig) func(string) (string,
 			}
 		}
 		return "", "", ""
+	}
+}
+
+// modelMetaFn returns a function that looks up structural model metadata
+// (context window) from [models.*] config by matching the developer/model_id string.
+func modelMetaFn(models map[string]config.ModelConfig) func(string) modelinfo.ModelMeta {
+	if len(models) == 0 {
+		return nil
+	}
+	return func(model string) modelinfo.ModelMeta {
+		for _, mc := range models {
+			if mc.Model == model {
+				return modelinfo.ModelMeta{ContextWindow: int(mc.Context)}
+			}
+		}
+		return modelinfo.ModelMeta{}
 	}
 }
 

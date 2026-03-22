@@ -8,6 +8,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/memory"
+	"foci/internal/modelinfo"
 	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -95,6 +96,9 @@ type CommandContext struct {
 	StartTime           time.Time
 	CompactionThreshold float64
 
+	// Model metadata (config-defined overrides for model properties)
+	ModelMetaFn func(model string) modelinfo.ModelMeta
+
 	// Secrets
 	SecretsStore     SecretsStore       // interface defined in command package
 	BitwardenStore   BitwardenStoreInfo // interface defined in command package
@@ -170,4 +174,15 @@ func (c *TokenCountCache) Set(msgCount, sysChars int, counts *TokenCounts) {
 	c.msgCount = msgCount
 	c.sysChars = sysChars
 	c.counts = counts
+}
+
+// resolveContextLimit returns the context window for a model, preferring the
+// config-defined value (via ModelMetaFn) over the modelinfo registry default.
+func resolveContextLimit(cc CommandContext, model string) int {
+	if cc.ModelMetaFn != nil {
+		if meta := cc.ModelMetaFn(model); meta.ContextWindow > 0 {
+			return meta.ContextWindow
+		}
+	}
+	return modelinfo.ContextWindow(model)
 }

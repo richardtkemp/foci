@@ -13,6 +13,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
+	"foci/internal/modelinfo"
 	"foci/internal/nudge"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -129,7 +130,8 @@ type Agent struct {
 	ShowToolCalls                 string                       // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
 	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
-	ModelDefaultsFn               func(model string) (thinking, effort, speed string) // returns per-model defaults from [models.*] config; nil = no model defaults
+	ModelParamsFn                 func(model string) (thinking, effort, speed string) // returns per-model API params from [models.*] config; nil = no model defaults
+	ModelMetaFn                   func(model string) modelinfo.ModelMeta             // returns structural metadata from [models.*] config; nil = use registry defaults
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey             func() string                // returns the main/default session key; reminders only inject into this session
@@ -407,10 +409,10 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	turnThinking := a.SessionThinking(sessionKey)
 	turnSpeed := a.SessionSpeed(sessionKey)
 
-	// Apply per-model defaults from [models.*] config as fallback
+	// Apply per-model params from [models.*] config as fallback
 	// when no session-level override is set.
-	if a.ModelDefaultsFn != nil {
-		mdThinking, mdEffort, mdSpeed := a.ModelDefaultsFn(turnModel)
+	if a.ModelParamsFn != nil {
+		mdThinking, mdEffort, mdSpeed := a.ModelParamsFn(turnModel)
 		if turnEffort == "" {
 			turnEffort = mdEffort
 		}

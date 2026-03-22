@@ -3,6 +3,7 @@ package compaction
 import (
 	"testing"
 
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -41,9 +42,10 @@ func TestEstimateTokens(t *testing.T) {
 }
 
 func TestContextLimit(t *testing.T) {
-	// Verifies model-family context limits: Claude (200k), Gemini 2.x (1M),
-	// Gemini 1.5 (2M), unknown models (200k default). Tests both the internal
-	// contextLimit function and the exported ContextLimit wrapper.
+	// Verifies Compactor.ContextLimit falls back to modelinfo registry
+	// defaults when no ModelMetaFn is set: Claude (200k), Gemini 2.x (1M),
+	// Gemini 1.5 (2M), unknown models (200k default).
+	c := NewCompactor(nil, 0.8)
 	tests := []struct {
 		model string
 		want  int
@@ -68,13 +70,31 @@ func TestContextLimit(t *testing.T) {
 			name = "empty"
 		}
 		t.Run(name, func(t *testing.T) {
-			if got := contextLimit(tt.model); got != tt.want {
-				t.Errorf("contextLimit(%q) = %d, want %d", tt.model, got, tt.want)
-			}
-			if got := ContextLimit(tt.model); got != tt.want {
+			if got := c.ContextLimit(tt.model); got != tt.want {
 				t.Errorf("ContextLimit(%q) = %d, want %d", tt.model, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestContextLimitWithModelMetaFn(t *testing.T) {
+	// Verifies that ModelMetaFn overrides the registry default when it
+	// returns a non-zero ContextWindow, and falls back otherwise.
+	c := NewCompactor(nil, 0.8)
+	c.ModelMetaFn = func(model string) modelinfo.ModelMeta {
+		if model == "openrouter/z-ai/glm-5-turbo" {
+			return modelinfo.ModelMeta{ContextWindow: 202_000}
+		}
+		return modelinfo.ModelMeta{}
+	}
+
+	// Config-defined override
+	if got := c.ContextLimit("openrouter/z-ai/glm-5-turbo"); got != 202_000 {
+		t.Errorf("ContextLimit(glm-5-turbo) = %d, want 202000", got)
+	}
+	// Falls back to registry
+	if got := c.ContextLimit("claude-opus-4-6"); got != 200_000 {
+		t.Errorf("ContextLimit(claude-opus-4-6) = %d, want 200000", got)
 	}
 }
 

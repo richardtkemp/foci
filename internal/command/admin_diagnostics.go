@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/compaction"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/mana"
@@ -99,7 +98,7 @@ func StatusCommand() *Command {
 				}
 			}
 
-			contextLimit := compaction.ContextLimit(model)
+			contextLimit := resolveContextLimit(cc, model)
 
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "🤖 %s — %s\n", cc.AgentConfig.ID, model)

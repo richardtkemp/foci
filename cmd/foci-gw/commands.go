@@ -144,6 +144,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		ManaName:            config.DerefStr(p.cfg.Mana.Name),
 		StartTime:           p.startTime,
 		CompactionThreshold: p.compactionThreshold,
+		ModelMetaFn:         modelMetaFn(p.cfg.Models),
 		SecretsStore:        p.store,
 		BitwardenStore:      p.bwStore,
 		BitwardenEnabled:    p.cfg.Bitwarden.Enabled,
