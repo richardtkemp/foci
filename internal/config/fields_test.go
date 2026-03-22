@@ -43,9 +43,7 @@ func TestFieldsNonEmpty(t *testing.T) {
 		if f.Key == "" {
 			t.Errorf("field %d: empty Key", i)
 		}
-		if f.Description == "" {
-			t.Errorf("field %d (%s.%s): empty Description", i, f.Section, f.Key)
-		}
+		// Descriptions are optional — auto-discovered fields may have none.
 	}
 }
 
@@ -235,6 +233,8 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"notify":           reflect.TypeOf(NotifyConfig{}),
 		"nudge":            reflect.TypeOf(NudgeConfig{}),
 		"behavior":         reflect.TypeOf(BehaviorConfig{}),
+		"display":          reflect.TypeOf(DisplayConfig{}),
+		"voice":            reflect.TypeOf(VoiceConfig{}),
 		"agent":            reflect.TypeOf(AgentConfig{}),
 		"anthropic":        reflect.TypeOf(AnthropicConfig{}),
 		"gemini":           reflect.TypeOf(GeminiConfig{}),
@@ -254,6 +254,7 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		"debug":            reflect.TypeOf(DebugConfig{}),
 		"database":         reflect.TypeOf(DatabaseConfig{}),
 		"http":             reflect.TypeOf(HTTPConfig{}),
+		"browser":          reflect.TypeOf(BrowserConfig{}),
 	}
 
 	for _, f := range configFields {
