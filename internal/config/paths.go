@@ -104,11 +104,6 @@ func (c *Config) ResolveAllPaths() {
 	if c.Logging.ArchiveDir != "" {
 		c.Logging.ArchiveDir = ResolvePath(c.Logging.ArchiveDir)
 	}
-	if c.Logging.ConversationFile == "" {
-		c.Logging.ConversationFile = c.DataPath("conversation.db")
-	} else {
-		c.Logging.ConversationFile = ResolvePath(c.Logging.ConversationFile)
-	}
 	if filepath.IsAbs(c.Logging.APIDB) {
 		// Explicit absolute path — use as-is.
 	} else if c.Logging.APIDB != "" {

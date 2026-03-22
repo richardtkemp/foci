@@ -193,10 +193,9 @@ id = "test"
 		t.Errorf("APIFile = %q, want %q", cfg.Logging.APIFile, wantAPIFile)
 	}
 
-	// Conversation file should default to $HOME/data/conversation.db
-	wantConvFile := filepath.Join(home, "data/conversation.db")
-	if cfg.Logging.ConversationFile != wantConvFile {
-		t.Errorf("ConversationFile = %q, want %q", cfg.Logging.ConversationFile, wantConvFile)
+	// Conversation log should default to true
+	if !DerefBool(cfg.Logging.ConversationLog) {
+		t.Error("ConversationLog should default to true")
 	}
 
 	// Sessions dir should default to $HOME/data/sessions
@@ -229,8 +228,6 @@ id = "test"
 [logging]
 event_file = "/var/log/foci.log"
 api_file = "/var/log/api.jsonl"
-conversation_file = "/var/data/conv.db"
-
 [sessions]
 dir = "/var/sessions"
 `
@@ -247,9 +244,6 @@ dir = "/var/sessions"
 	}
 	if cfg.Logging.APIFile != "/var/log/api.jsonl" {
 		t.Errorf("APIFile = %q, want /var/log/api.jsonl", cfg.Logging.APIFile)
-	}
-	if cfg.Logging.ConversationFile != "/var/data/conv.db" {
-		t.Errorf("ConversationFile = %q, want /var/data/conv.db", cfg.Logging.ConversationFile)
 	}
 	if cfg.Sessions.Dir != "/var/sessions" {
 		t.Errorf("Sessions.Dir = %q, want /var/sessions", cfg.Sessions.Dir)

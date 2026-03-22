@@ -232,7 +232,7 @@ Logging and diagnostics. The `messages_in_log` field can be overridden per-agent
 | `event_file` | string | `"logs/foci.log"` | Path to event log file. Relative paths resolve against `$HOME`. |
 | `api_file` | string | `"logs/api.jsonl"` | Path to API call log (JSONL). One entry per API call with tokens, cost, duration. Relative paths resolve against `$HOME`. |
 | `api_db` | string | `$data_dir/api.db` | SQLite API call log. All API calls logged with `call_type` (conversation, compaction, summary, spawn). `""` disables. |
-| `conversation_file` | string | `$data_dir/conversation.db` | Base path for per-agent conversation SQLite logs. Each agent's database is stored at `workspace/.data/conversation.db`. Set to `""` to disable conversation logging. On startup, databases at the old shared location (`conversation-{agentID}.db` in `data_dir`) are automatically migrated to the workspace. |
+| `conversation_log` | bool | `true` | Enable per-agent conversation logging. Each agent's database is stored at `workspace/.data/conversation.db`. |
 | `full_payload` | bool | `false` | Write full API request/response bodies to `payload_file`. |
 | `payload_file` | string | `"logs/api-payload.jsonl"` | Path for full payload log. Only used when `full_payload = true`. Relative paths resolve against `$HOME`. |
 
@@ -1208,7 +1208,7 @@ Any field set to an absolute path overrides all resolution:
 [logging]
 event_file = "/var/log/foci/foci.log"
 api_file = "/var/log/foci/api.jsonl"
-conversation_file = "/var/data/foci/conversation.db"
+conversation_log = true
 
 [sessions]
 dir = "/var/data/foci/sessions"
@@ -1241,7 +1241,7 @@ dir = "/home/foci/data/sessions"
 [logging]
 event_file = "/home/foci/logs/foci.log"
 api_file = "/home/foci/logs/api.jsonl"
-conversation_file = "/home/foci/data/conversation.db"
+conversation_log = true
 
 [skills]
 dir = "/home/foci/shared/skills"
@@ -1408,7 +1408,7 @@ bind = "127.0.0.1"
 level = "INFO"
 event_file = "/home/foci/foci.log"
 api_file = "/home/foci/api.jsonl"
-conversation_file = "/home/foci/conversation.db"
+conversation_log = true
 full_payload = true
 payload_file = "/home/foci/api-payload.jsonl"
 
