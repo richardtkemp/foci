@@ -413,7 +413,7 @@ func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *con
 		warningWindow = 5 * time.Minute
 	}
 
-	agentLevel := maxInjectionLevel(rc, cfg, config.NotifyConfig.InjectAgentWarningsLevel)
+	agentLevel := maxInjectionLevel(rc, cfg, func(n config.ResolvedNotify) config.InjectionLevel { return n.InjectAgentWarnings })
 	if agentLevel.Enabled() {
 		ag.WarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
 		if !agentLevel.IncludeWarnings() {
@@ -421,7 +421,7 @@ func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *con
 		}
 	}
 
-	chatLevel := maxInjectionLevel(rc, cfg, config.NotifyConfig.InjectChatWarningsLevel)
+	chatLevel := maxInjectionLevel(rc, cfg, func(n config.ResolvedNotify) config.InjectionLevel { return n.InjectChatWarnings })
 	if chatLevel.Enabled() {
 		ag.ChatWarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
 		if !chatLevel.IncludeWarnings() {

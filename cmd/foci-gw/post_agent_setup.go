@@ -17,8 +17,8 @@ import (
 func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 	anyInjection := false
 	for _, inst := range agents {
-		if anyNotifyEnabled(inst.resolved, cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() }) ||
-			anyNotifyEnabled(inst.resolved, cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() }) {
+		if anyNotifyEnabled(inst.resolved, cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() }) ||
+			anyNotifyEnabled(inst.resolved, cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() }) {
 			anyInjection = true
 			break
 		}
@@ -68,7 +68,7 @@ func setupTmuxMemoryMonitor(
 		func(msg string) {
 			for _, id := range agentOrder {
 				inst := agents[id]
-				if anyNotifyEnabled(inst.resolved, cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() }) {
+				if anyNotifyEnabled(inst.resolved, cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() }) {
 					continue
 				}
 				if conn := connMgr.Primary(id); conn != nil {

@@ -26,29 +26,27 @@ type ResolvedAgentConfig struct {
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
 	Webhooks map[string]string
 
-	// Per-platform resolved display and notify (pointer-based for PATCH semantics).
-	platformDisplay map[string]DisplayConfig
-	platformNotify  map[string]NotifyConfig
+	// Per-platform 4-layer resolved display and notify.
+	platformDisplay map[string]ResolvedDisplay
+	platformNotify  map[string]ResolvedNotify
 }
 
-// PlatformDisplay returns the 4-layer resolved DisplayConfig for a platform.
-// Returns pointer-based type for use in ApplyAgentDisplaySettings PATCH patterns.
-// Falls back to zero DisplayConfig if the platform has no specific resolution.
-func (r *ResolvedAgentConfig) PlatformDisplay(name string) DisplayConfig {
+// PlatformDisplay returns the 4-layer resolved display config for a platform.
+// Zero-value fields mean "not configured at any cascade level".
+func (r *ResolvedAgentConfig) PlatformDisplay(name string) ResolvedDisplay {
 	if d, ok := r.platformDisplay[name]; ok {
 		return d
 	}
-	return DisplayConfig{}
+	return ResolvedDisplay{}
 }
 
-// PlatformNotify returns the 4-layer resolved NotifyConfig for a platform.
-// Returns pointer-based type — callers use accessor methods (StartupNotifyEnabled, etc.).
-// Falls back to zero NotifyConfig if the platform has no specific resolution.
-func (r *ResolvedAgentConfig) PlatformNotify(name string) NotifyConfig {
+// PlatformNotify returns the 4-layer resolved notify config for a platform.
+// Defaults (e.g. StartupNotify=true) are baked in.
+func (r *ResolvedAgentConfig) PlatformNotify(name string) ResolvedNotify {
 	if n, ok := r.platformNotify[name]; ok {
 		return n
 	}
-	return NotifyConfig{}
+	return ResolvedNotify{}
 }
 
 // Resolve computes a ResolvedAgentConfig by merging all config sections
@@ -75,21 +73,21 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		platformNames[p.ID] = true
 	}
 
-	platformDisplay := make(map[string]DisplayConfig, len(platformNames))
-	platformNotify := make(map[string]NotifyConfig, len(platformNames))
+	platformDisplay := make(map[string]ResolvedDisplay, len(platformNames))
+	platformNotify := make(map[string]ResolvedNotify, len(platformNames))
 	for name := range platformNames {
-		platformDisplay[name] = Merge(
+		platformDisplay[name] = resolveDisplay(Merge(
 			acfg.Platform(name).SafeDisplay(),
 			acfg.Display,
 			cfg.Platform(name).SafeDisplay(),
 			cfg.Defaults.Display,
-		)
-		platformNotify[name] = Merge(
+		))
+		platformNotify[name] = resolveNotify(Merge(
 			acfg.Platform(name).SafeNotify(),
 			acfg.Notify,
 			cfg.Platform(name).SafeNotify(),
 			cfg.Defaults.Notify,
-		)
+		))
 	}
 
 	return &ResolvedAgentConfig{

@@ -24,7 +24,7 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 
 // anyNotifyEnabled checks if any platform for this agent has the given
 // notification feature enabled, using pre-resolved per-platform notify.
-func anyNotifyEnabled(rc *config.ResolvedAgentConfig, cfg *config.Config, checker func(config.NotifyConfig) bool) bool {
+func anyNotifyEnabled(rc *config.ResolvedAgentConfig, cfg *config.Config, checker func(config.ResolvedNotify) bool) bool {
 	for _, p := range cfg.Platforms {
 		if checker(rc.PlatformNotify(p.ID)) {
 			return true
@@ -35,7 +35,7 @@ func anyNotifyEnabled(rc *config.ResolvedAgentConfig, cfg *config.Config, checke
 
 // maxInjectionLevel returns the most permissive InjectionLevel across all
 // platforms for a given extractor, using pre-resolved per-platform notify.
-func maxInjectionLevel(rc *config.ResolvedAgentConfig, cfg *config.Config, extract func(config.NotifyConfig) config.InjectionLevel) config.InjectionLevel {
+func maxInjectionLevel(rc *config.ResolvedAgentConfig, cfg *config.Config, extract func(config.ResolvedNotify) config.InjectionLevel) config.InjectionLevel {
 	best := config.InjectionOff
 	for _, p := range cfg.Platforms {
 		level := extract(rc.PlatformNotify(p.ID))

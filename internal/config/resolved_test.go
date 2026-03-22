@@ -230,26 +230,26 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 
 	// Per-platform display: agent-telegram → agent → global-telegram → global
 	pd := rc.PlatformDisplay("telegram")
-	if pd.ShowToolCalls == nil || string(*pd.ShowToolCalls) != "full" {
-		t.Error("PlatformDisplay(telegram).ShowToolCalls should be 'full' (global-platform)")
+	if pd.ShowToolCalls != "full" {
+		t.Errorf("PlatformDisplay(telegram).ShowToolCalls = %q, want \"full\" (global-platform)", pd.ShowToolCalls)
 	}
-	if got := DerefInt(pd.DisplayWidth); got != 80 {
-		t.Error("PlatformDisplay(telegram).DisplayWidth should be 80 (agent fallback)")
+	if pd.DisplayWidth != 80 {
+		t.Errorf("PlatformDisplay(telegram).DisplayWidth = %d, want 80 (agent fallback)", pd.DisplayWidth)
 	}
 
 	// Per-platform notify: agent-telegram → agent → global-telegram → global
 	pn := rc.PlatformNotify("telegram")
-	if got := DerefBool(pn.CompactionNotify); got != true {
+	if !pn.CompactionNotify {
 		t.Error("PlatformNotify(telegram).CompactionNotify should be true (agent-platform)")
 	}
-	if got := DerefBool(pn.StartupNotify); got != true {
-		t.Error("PlatformNotify(telegram).StartupNotify should be true (global fallback)")
+	if !pn.StartupNotify {
+		t.Error("PlatformNotify(telegram).StartupNotify should be true (default)")
 	}
 
-	// Unknown platform returns zero NotifyConfig (no fallback to base).
-	// Callers should use rc.Notify for the base resolved config.
-	if pnUnk := rc.PlatformNotify("unknown"); pnUnk.StartupNotify != nil {
-		t.Errorf("PlatformNotify(unknown).StartupNotify should be nil, got %v", *pnUnk.StartupNotify)
+	// Unknown platform returns zero ResolvedNotify (defaults baked in by resolveNotify).
+	pnUnk := rc.PlatformNotify("unknown")
+	if pnUnk.StartupNotify {
+		t.Error("PlatformNotify(unknown).StartupNotify should be false (zero value, no cascade)")
 	}
 }
 
