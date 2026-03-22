@@ -392,7 +392,6 @@ type AnthropicConfig struct {
 	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s"`  // HTTP timeout for usage API calls (default "10s")
 	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m"`  // cache TTL for usage API responses (default "10m")
 	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"`   // how far before expiry to trigger proactive token refresh (default "5m")
-	UseSDK            *bool  `toml:"use_sdk"             default:"true"` // use SDK transport (default true; false = raw HTTP)
 }
 
 // DisplayConfig holds display-related settings that can be set at any level

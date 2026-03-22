@@ -1,11 +1,9 @@
 package anthropic
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -20,19 +18,12 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/packages/param"
 )
 
-
-// CountTokensResponse is the response from the /v1/messages/count_tokens endpoint.
-type CountTokensResponse struct {
-	InputTokens int `json:"input_tokens"`
-}
-
 // Client is an Anthropic API client with prompt caching support.
 type Client struct {
 	tokenFunc      func() (string, error) // returns the current Bearer token
 	httpClient     *http.Client
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for server error retries; 0 = default 2s
-	useSDK         bool          // use SDK transport (true) or raw HTTP (false)
 
 	overloadMu      sync.Mutex
 	overloadRecover chan struct{} // closed to signal recovery from 529; nil when not overloaded
@@ -60,13 +51,7 @@ func NewClient(tokenFunc func() (string, error), timeout time.Duration) *Client 
 		tokenFunc:  tokenFunc,
 		httpClient: &http.Client{Timeout: timeout},
 		baseURL:    "https://api.anthropic.com",
-		useSDK:     true,
 	}
-}
-
-// SetUseSDK configures whether the client uses the SDK transport (true) or raw HTTP (false).
-func (c *Client) SetUseSDK(useSDK bool) {
-	c.useSDK = useSDK
 }
 
 // SetBaseURL overrides the API base URL. Must be called before any API requests.
@@ -183,16 +168,8 @@ func (c *Client) overloadMaxDuration() time.Duration {
 	return 2 * time.Hour
 }
 
-// sendOnce dispatches to SDK or raw HTTP transport based on c.useSDK.
-func (c *Client) sendOnce(ctx context.Context, body []byte, req *MessageRequest) (*MessageResponse, error) {
-	if c.useSDK {
-		return c.sendOnceSDK(ctx, req)
-	}
-	return c.sendOnceRaw(ctx, body, req.Speed)
-}
-
-// sendOnceSDK sends a message using the official Anthropic SDK.
-func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
+// sendOnce sends a message using the official Anthropic SDK.
+func (c *Client) sendOnce(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, fmt.Errorf("resolve token: %w", err)
@@ -222,87 +199,16 @@ func (c *Client) sendOnceSDK(ctx context.Context, req *MessageRequest) (*Message
 	return resp, nil
 }
 
-// sendOnceRaw performs a single HTTP request to the messages API and returns the
-// parsed response, or an error. The original hand-rolled transport.
-func (c *Client) sendOnceRaw(ctx context.Context, body []byte, speed string) (*MessageResponse, error) {
-	token, err := c.resolveToken()
-	if err != nil {
-		return nil, fmt.Errorf("resolve token: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	betaHeader := "oauth-2025-04-20"
-	if speed == "fast" {
-		betaHeader += ",fast-mode-2026-02-01"
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("anthropic-beta", betaHeader)
-
-	deadline, hasDeadline := ctx.Deadline()
-	httpTimeout := c.httpClient.Timeout
-	log.Debugf("anthropic", "http_call_start: url=%s http_timeout=%s ctx_has_deadline=%v ctx_deadline=%v body_bytes=%d", c.baseURL+"/v1/messages", httpTimeout, hasDeadline, deadline, len(body))
-	callStart := time.Now()
-
-	httpResp, err := c.httpClient.Do(httpReq)
-
-	callDur := time.Since(callStart)
-	if err != nil {
-		log.Debugf("anthropic", "http_call_error: duration=%s error=%v ctx_err=%v", callDur, err, ctx.Err())
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-	log.Debugf("anthropic", "http_call_done: duration=%s status=%d", callDur, httpResp.StatusCode)
-
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if httpResp.StatusCode != http.StatusOK {
-		return nil, &APIError{
-			StatusCode: httpResp.StatusCode,
-			Body:       string(respBody),
-			RetryAfter: httpResp.Header.Get("Retry-After"),
-		}
-	}
-
-	var resp MessageResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	resp.KeySuffix = log.FormatKeySuffix(token)
-	return &resp, nil
-}
-
 // SendMessage sends a message request and returns the response.
 // Retry logic is handled by the provider layer.
 func (c *Client) SendMessage(ctx context.Context, req *MessageRequest) (*MessageResponse, error) {
 	// Strip developer prefix (e.g., "anthropic/claude-opus-4-6" → "claude-opus-4-6").
-	// Done once here so both raw and SDK paths get the bare model ID.
 	req.Model = config.StripDeveloperPrefix(req.Model)
 
 	// Strip params the target model doesn't support (avoids 400 errors).
-	// Done here so both raw and SDK paths benefit.
 	stripUnsupportedParams(req)
 
-	// For raw transport, pre-marshal the body once. SDK transport uses req directly.
-	var body []byte
-	if !c.useSDK {
-		var err error
-		body, err = json.Marshal(req)
-		if err != nil {
-			return nil, fmt.Errorf("marshal request: %w", err)
-		}
-	}
-
-	return c.sendOnce(ctx, body, req)
+	return c.sendOnce(ctx, req)
 }
 
 // stripUnsupportedParams removes API parameters that the target model
@@ -321,23 +227,9 @@ func stripUnsupportedParams(req *MessageRequest) {
 	}
 }
 
-
 // CountTokens calls the /v1/messages/count_tokens endpoint to get exact
 // input token counts for a request. The endpoint is free (no tokens billed).
 func (c *Client) CountTokens(ctx context.Context, req *MessageRequest) (int, error) {
-	if c.useSDK {
-		return c.countTokensSDK(ctx, req)
-	}
-	return c.countTokensRaw(ctx, req)
-}
-
-// IsCachingAvailable returns true as Anthropic prompt caching is always available.
-func (c *Client) IsCachingAvailable() bool {
-	return true
-}
-
-// countTokensSDK counts tokens using the SDK.
-func (c *Client) countTokensSDK(ctx context.Context, req *MessageRequest) (int, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return 0, fmt.Errorf("resolve token: %w", err)
@@ -353,65 +245,13 @@ func (c *Client) countTokensSDK(ctx context.Context, req *MessageRequest) (int, 
 	return int(result.InputTokens), nil
 }
 
-// countTokensRaw counts tokens using raw HTTP.
-func (c *Client) countTokensRaw(ctx context.Context, req *MessageRequest) (int, error) {
-	token, err := c.resolveToken()
-	if err != nil {
-		return 0, fmt.Errorf("resolve token: %w", err)
-	}
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return 0, fmt.Errorf("marshal request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/v1/messages/count_tokens", bytes.NewReader(body))
-	if err != nil {
-		return 0, fmt.Errorf("create request: %w", err)
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("anthropic-beta", "oauth-2025-04-20")
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return 0, fmt.Errorf("send request: %w", err)
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("read response: %w", err)
-	}
-
-	if httpResp.StatusCode != http.StatusOK {
-		return 0, &APIError{
-			StatusCode: httpResp.StatusCode,
-			Body:       string(respBody),
-			RetryAfter: httpResp.Header.Get("Retry-After"),
-		}
-	}
-
-	var resp CountTokensResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return 0, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	return resp.InputTokens, nil
+// IsCachingAvailable returns true as Anthropic prompt caching is always available.
+func (c *Client) IsCachingAvailable() bool {
+	return true
 }
 
 // ListModels calls the /v1/models endpoint to list available models.
 func (c *Client) ListModels() ([]ModelInfo, error) {
-	if c.useSDK {
-		return c.listModelsSDK()
-	}
-	return c.listModelsRaw()
-}
-
-// listModelsSDK lists models using the SDK.
-func (c *Client) listModelsSDK() ([]ModelInfo, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, fmt.Errorf("resolve token: %w", err)
@@ -431,56 +271,6 @@ func (c *Client) listModelsSDK() ([]ModelInfo, error) {
 			ID:        m.ID,
 			CreatedAt: m.CreatedAt,
 		})
-	}
-	return models, nil
-}
-
-// listModelsRaw lists models using raw HTTP.
-func (c *Client) listModelsRaw() ([]ModelInfo, error) {
-	token, err := c.resolveToken()
-	if err != nil {
-		return nil, fmt.Errorf("resolve token: %w", err)
-	}
-
-	httpReq, err := http.NewRequest("GET", c.baseURL+"/v1/models?limit=100", nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("send request: %w", err)
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if httpResp.StatusCode != http.StatusOK {
-		return nil, &APIError{
-			StatusCode: httpResp.StatusCode,
-			Body:       string(respBody),
-		}
-	}
-
-	var resp struct {
-		Data []struct {
-			ID        string    `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
-	}
-
-	models := make([]ModelInfo, len(resp.Data))
-	for i, m := range resp.Data {
-		models[i] = ModelInfo{ID: m.ID, CreatedAt: m.CreatedAt}
 	}
 	return models, nil
 }

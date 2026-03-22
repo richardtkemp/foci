@@ -5,30 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/provider"
 )
-
-func TestStreamMessageRequiresSDK(t *testing.T) {
-	// Proves that StreamMessage returns a clear error when useSDK is false, guarding against misconfigured clients accidentally calling the streaming path.
-	client := newTestClientWithBase("http://localhost", "test-key")
-	// newTestClientWithBase sets useSDK=false
-
-	_, err := client.StreamMessage(context.Background(), &MessageRequest{
-		Model:     "claude-haiku-4-5",
-		MaxTokens: 256,
-		Messages:  []Message{{Role: "user", Content: TextContent("hi")}},
-	}, nil)
-
-	if err == nil {
-		t.Fatal("expected error when streaming without SDK")
-	}
-	if !strings.Contains(err.Error(), "streaming requires SDK") {
-		t.Errorf("error = %q, want streaming requires SDK", err.Error())
-	}
-}
 
 func TestStreamMessageSSESuccess(t *testing.T) {
 	// Proves that StreamMessage correctly reassembles text deltas from a sequence of SSE events, invokes OnTextDelta for each delta, and produces a complete MessageResponse with the right ID, stop reason, and concatenated text.
@@ -67,8 +48,8 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-key")
-	client.useSDK = true
+	client := NewClient(StaticToken("test-key"), 120*time.Second)
+	client.SetBaseURL(server.URL)
 
 	var textDeltas []string
 	handler := &provider.StreamHandler{
@@ -148,8 +129,8 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-key")
-	client.useSDK = true
+	client := NewClient(StaticToken("test-key"), 120*time.Second)
+	client.SetBaseURL(server.URL)
 
 	var thinkingDeltas []string
 	var textDeltas []string
@@ -222,8 +203,8 @@ data: {"type":"message_stop"}`,
 	}))
 	defer server.Close()
 
-	client := newTestClientWithBase(server.URL, "test-key")
-	client.useSDK = true
+	client := NewClient(StaticToken("test-key"), 120*time.Second)
+	client.SetBaseURL(server.URL)
 
 	resp, err := client.StreamMessage(context.Background(), &MessageRequest{
 		Model:     "claude-haiku-4-5",

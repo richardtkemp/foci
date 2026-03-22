@@ -21,13 +21,7 @@ var _ provider.StreamingClient = (*Client)(nil)
 //
 // Retry logic is handled by the provider layer. Pre-stream errors (before any deltas)
 // are retryable. Mid-stream errors (after deltas have been emitted) are not retryable.
-//
-// Requires useSDK=true. Returns an error if called with useSDK=false.
 func (c *Client) StreamMessage(ctx context.Context, req *MessageRequest, handler *provider.StreamHandler) (*MessageResponse, error) {
-	if !c.useSDK {
-		return nil, fmt.Errorf("streaming requires SDK transport (use_sdk = true)")
-	}
-
 	req.Model = config.StripDeveloperPrefix(req.Model)
 	stripUnsupportedParams(req)
 	return c.streamOnce(ctx, req, handler)
