@@ -26,7 +26,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # thinking = "adaptive"                  # adaptive (default for anthropic), off
 # effort = "low"                         # low, medium, high
 # speed = ""                             # fast or empty (Opus only, 6x pricing)
-# enable_keepalive = nil                 # nil=auto-detect, true/false=explicit
+# enable_keepalive                       # omit for auto-detect, true/false for explicit
 # prompt_cache_ttl = ""                  # Go duration, empty=auto-detect
 
 # ─── Agent Loop ──────────────────────────────────────────────────────
