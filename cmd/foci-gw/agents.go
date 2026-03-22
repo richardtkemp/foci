@@ -37,6 +37,7 @@ type agentInstance struct {
 	bootstrap         *workspace.Bootstrap
 	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
+	resolved          *config.ResolvedAgentConfig // pre-merged agent+global config
 	promptSearchDirs  []string         // directories to search for prompt files
 	tmuxClearAll      func()               // clears tmux tool state (watches, owned sessions)
 	tmuxWatchCount    func() int           // returns number of active tmux watches
@@ -50,6 +51,7 @@ type agentInstance struct {
 type setupParams struct {
 	acfg                config.AgentConfig
 	cfg                 *config.Config
+	resolved            *config.ResolvedAgentConfig
 	configPath          string
 	client              provider.Client
 	clientProvider      provider.ClientProvider
@@ -81,10 +83,10 @@ type setupParams struct {
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
-	// Merge per-agent and global groups config (per-agent overrides global)
-	gc := config.Merge(acfg.Groups, p.cfg.Groups)
-	gc.Calls = config.MergeMaps(p.cfg.Groups.Calls, acfg.Groups.Calls)
-	gc.Fallbacks = config.MergeMaps(p.cfg.Groups.Fallbacks, acfg.Groups.Fallbacks)
+	// Pre-resolve the 2-layer agent→global config cascade once.
+	p.resolved = config.Resolve(p.cfg, acfg)
+
+	gc := p.resolved.Groups
 
 	// Create group resolver for multi-model routing (powerful model is the agent's primary)
 	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
@@ -165,12 +167,11 @@ func setupAgent(p setupParams) *agentInstance {
 		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, crontabCount, p.plat.ActivePlatformNames())
 	}
 
-	// Per-agent agent struct
-	// Resolve each embedded config group once via Merge cascade.
-	al := config.Merge(acfg.Loop, p.cfg.Defaults.Loop)
-	sc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
-	cpc := config.Merge(acfg.Sessions.CompactionConfig, p.cfg.Sessions.CompactionConfig)
-	bc := config.Merge(acfg.Behavior, p.cfg.Defaults.Behavior)
+	// Per-agent agent struct — read from pre-resolved config.
+	al := p.resolved.Loop
+	sc := p.resolved.Summary
+	cpc := p.resolved.Compaction
+	bc := p.resolved.Behavior
 
 	ag = &agent.Agent{
 		Log:                            log.NewComponentLogger("agent/" + acfg.ID),
@@ -243,7 +244,7 @@ func setupAgent(p setupParams) *agentInstance {
 	})
 
 	// Post-creation agent configuration
-	setupNudgeSystem(ag, acfg, p.cfg, defaultSessionKey, registry, bs.skillRegistry)
+	setupNudgeSystem(ag, acfg, p.resolved.Nudge, defaultSessionKey, registry, bs.skillRegistry)
 	setupRedaction(ag, p, agentStore)
 	setupWarningQueue(ag, acfg, p.cfg)
 	setupManaWatcher(ag, p)
@@ -289,6 +290,7 @@ func setupAgent(p setupParams) *agentInstance {
 		connMgr:             connMgr,
 		groupResolver:       groupResolver,
 		fallbackFn:          fallbackFn,
+		resolved:            p.resolved,
 		configureFacet: func(conn platform.Connection) {
 			if configureFacet != nil {
 				configureFacet(conn)
@@ -333,8 +335,9 @@ func setupAgent(p setupParams) *agentInstance {
 		bootstrap:         bs.bootstrap,
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
+		resolved:          p.resolved,
 		promptSearchDirs:  promptSearchDirs,
-		webhooks:          config.MergeMaps(p.cfg.Defaults.System.Webhooks, acfg.System.Webhooks),
+		webhooks:          p.resolved.Webhooks,
 		tmuxClearAll:      coreResult.tmuxClearAll,
 		tmuxWatchCount:    coreResult.tmuxWatchCount,
 		tmuxMigrateKey:    coreResult.tmuxMigrateKey,

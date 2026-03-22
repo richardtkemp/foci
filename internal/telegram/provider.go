@@ -74,6 +74,7 @@ func (p *telegramProvider) SetupAgentConnection(params platform.AgentConnectionP
 		ResolveSTT:      p.deps.ResolveSTT,
 		ReclaimHook:       params.ReclaimHook,
 		DisplayOverrideFn: params.DisplayOverrideFn,
+		Resolved:          params.Resolved,
 	})
 }
 

@@ -39,8 +39,8 @@ type coreToolsResult struct {
 func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc) coreToolsResult {
 	acfg := p.acfg
 
-	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
-	sc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
+	tc := p.resolved.Tools
+	sc := p.resolved.Summary
 	execAutoBg := config.DerefInt(tc.ExecAutoBackground)
 	maxUploadSize := config.DerefInt64(tc.MaxUploadFileSize)
 	spillThreshold := config.DerefInt(sc.MaxResultChars)
@@ -86,7 +86,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	}
 
 	// Only register browser tool if enabled
-	bc := config.Merge(acfg.Browser, p.cfg.Browser)
+	bc := p.resolved.Browser
 	if config.DerefBool(bc.Enabled) {
 		browserMgr := tools.NewBrowserManager(&bc)
 		registry.Register(tools.NewBrowserTool(browserMgr))
@@ -108,10 +108,9 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 // registerWebTools registers web search and fetch tools.
 // Returns server-side tool definitions for provider-hosted tools.
 func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDef {
-	acfg := p.acfg
 	var serverTools []provider.ToolDef
 
-	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
+	tc := p.resolved.Tools
 	searchProvider := config.DerefStr(tc.SearchProvider)
 	if searchProvider == "anthropic" {
 		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
@@ -195,8 +194,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
-	bsc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
-	maxRC := config.DerefInt(bsc.MaxResultChars)
+	maxRC := config.DerefInt(p.resolved.Summary.MaxResultChars)
 	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
 
 	return bootstrapResult{
@@ -210,8 +208,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 // buildCompactor creates a Compactor configured for this agent.
 // Returns the compactor and the resolved compaction threshold.
 func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compaction.Compactor, float64) {
-	acfg := p.acfg
-	cc := config.Merge(acfg.Sessions.CompactionConfig, p.cfg.Sessions.CompactionConfig)
+	cc := p.resolved.Compaction
 	compactionThreshold := config.DerefFloat(cc.CompactionThreshold)
 	if compactionThreshold == 0 {
 		compactionThreshold = 0.8 // code default
@@ -227,7 +224,7 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 	compactor.ModelMetaFn = modelMetaFn(p.cfg.Models)
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
-	compactor.AgentID = acfg.ID
+	compactor.AgentID = p.acfg.ID
 	compactor.FallbackFunc = fallbackFn
 	compactor.ClientProvider = p.clientProvider
 
@@ -239,7 +236,7 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platform.ConnectionManager, notifier *tools.AsyncNotifier) (voice.TTS, map[string]string) {
 	acfg := p.acfg
 
-	vc := config.Merge(acfg.Voice, p.cfg.Defaults.Voice)
+	vc := p.resolved.Voice
 	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls)
 	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
@@ -261,8 +258,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Config, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
-	nc := config.Merge(acfg.Nudge, cfg.Defaults.Nudge)
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeConfig, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
 	nudgeEnabled := nc.NudgeEnable == nil || *nc.NudgeEnable                       // default true
 	nudgeDefaultEnabled := nc.NudgeDefaultEnable == nil || *nc.NudgeDefaultEnable  // default true
 	braindeadThreshold := config.DerefInt(nc.NudgeDefaultBraindeadThreshold)
@@ -439,7 +435,7 @@ func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Con
 
 // setupManaWatcher configures mana threshold warnings on the agent.
 func setupManaWatcher(ag *agent.Agent, p setupParams) {
-	mc := config.Merge(p.acfg.Mana, p.cfg.Mana)
+	mc := p.resolved.Mana
 	if len(mc.Thresholds) == 0 {
 		return
 	}
@@ -455,8 +451,8 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 	acfg := p.acfg
 
 	spawnOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	al := config.Merge(acfg.Loop, p.cfg.Defaults.Loop)
-	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
+	al := p.resolved.Loop
+	tc := p.resolved.Tools
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
 		ClientProvider:  p.clientProvider,
@@ -505,7 +501,7 @@ func setupPlatformConnections(
 	reclaimMfCfg := acfg.MemoryFormation
 	reclaimSearchDirs := promptSearchDirs
 
-	vc := config.Merge(acfg.Voice, p.cfg.Defaults.Voice)
+	vc := p.resolved.Voice
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
 		AgentID:        acfg.ID,
 		Handler:        ag,
@@ -528,6 +524,7 @@ func setupPlatformConnections(
 				DisplayWidth:  ag.SessionDisplayWidth(sessionKey),
 			}
 		},
+		Resolved: p.resolved,
 	})
 	var sessionKeyFns []func() string
 	for _, r := range results {

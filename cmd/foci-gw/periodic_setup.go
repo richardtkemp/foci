@@ -30,10 +30,7 @@ type periodicParams struct {
 // setupPeriodic creates and starts a periodic runner for an agent instance.
 // Returns the runner (also set on inst.kaRunner), or nil if not needed.
 func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
-	// Merge per-agent and global groups config (per-agent overrides global)
-	gc := config.Merge(acfg.Groups, p.cfg.Groups)
-	gc.Calls = config.MergeMaps(p.cfg.Groups.Calls, acfg.Groups.Calls)
-	gc.Fallbacks = config.MergeMaps(p.cfg.Groups.Fallbacks, acfg.Groups.Fallbacks)
+	gc := inst.resolved.Groups
 
 	// Resolve model from powerful group to get endpoint information
 	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
@@ -49,6 +46,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	// 1. Per-model auto-detection (OpenAI/DeepSeek have auto caching)
 	// 2. Client-reported caching availability (Anthropic/Gemini)
 	var cachingOverride *bool
+	ka := inst.resolved.Keepalive
 	if resolved != nil {
 		modelKAEnabled, modelKAInterval := config.ResolveModelKeepalive(resolved)
 		if modelKAEnabled {
@@ -57,15 +55,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			cachingOverride = &t
 			if modelKAInterval > 0 {
 				s := modelKAInterval.String()
-				acfg.Keepalive.Interval = &s
+				ka.Interval = &s // override on local copy, not the resolved config
 			}
 		}
 	}
 
-	// Merge per-agent and global configs for keepalive, background, memory formation.
-	ka := config.Merge(acfg.Keepalive, p.cfg.Keepalive)
-	bg := config.Merge(acfg.Background, p.cfg.Background)
-	mf := config.Merge(acfg.MemoryFormation, p.cfg.MemoryFormation)
+	bg := inst.resolved.Background
+	mf := inst.resolved.MemoryFormation
 
 	cachingAvailable := true
 	if cachingOverride != nil {
