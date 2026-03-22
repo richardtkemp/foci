@@ -29,7 +29,6 @@ max_tool_loops = 50
 max_output_tokens = 16384
 
 [anthropic]
-http_timeout = "180s"
 usage_api_timeout = "15s"
 
 [[platforms]]
@@ -72,9 +71,6 @@ web_search_timeout = "20s"
 	}
 	if DerefInt(cfg.Agents[0].Loop.MaxOutputTokens) != 16384 {
 		t.Errorf("Agent.Defaults.Loop.MaxOutputTokens = %d, want 16384", cfg.Agents[0].Loop.MaxOutputTokens)
-	}
-	if cfg.Anthropic.HTTPTimeout != "180s" {
-		t.Errorf("Anthropic.HTTPTimeout = %q, want 180s", cfg.Anthropic.HTTPTimeout)
 	}
 	if cfg.Anthropic.UsageAPITimeout != "15s" {
 		t.Errorf("Anthropic.UsageAPITimeout = %q, want 15s", cfg.Anthropic.UsageAPITimeout)
@@ -154,9 +150,6 @@ id = "test"
 	}
 	if cfg.Agents[0].Loop.MaxOutputTokens != nil {
 		t.Errorf("default Agent.Defaults.Loop.MaxOutputTokens should be nil (use-time resolution), got %v", cfg.Agents[0].Loop.MaxOutputTokens)
-	}
-	if cfg.Anthropic.HTTPTimeout != "600s" {
-		t.Errorf("default Anthropic.HTTPTimeout = %q, want 600s", cfg.Anthropic.HTTPTimeout)
 	}
 	if cfg.Anthropic.UsageAPITimeout != "10s" {
 		t.Errorf("default Anthropic.UsageAPITimeout = %q, want 10s", cfg.Anthropic.UsageAPITimeout)

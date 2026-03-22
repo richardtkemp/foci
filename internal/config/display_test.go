@@ -10,7 +10,6 @@ import (
 func testConfig() (*Config, AgentConfig) {
 	cfg := &Config{
 		Anthropic: AnthropicConfig{
-			HTTPTimeout:     "120s",
 			UsageAPITimeout: "10s",
 		},
 		Platforms: []PlatformConfig{{

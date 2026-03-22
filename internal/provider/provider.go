@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Client is the interface that all LLM providers implement.
@@ -76,7 +77,8 @@ type CredentialResolver interface {
 	// ResolveClient returns a configured Client for the given endpoint.
 	// apiKeyName is the secret name for the API key (e.g., "anthropic.api_key").
 	// baseURL is the endpoint base URL (empty = default).
-	ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string) (Client, error)
+	// httpTimeout is the HTTP client timeout from the endpoint config.
+	ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string, httpTimeout time.Duration) (Client, error)
 
 	// ResolveUsageClient returns a configured UsageClient for the given endpoint,
 	// or nil if usage tracking is not supported or credentials are unavailable.

@@ -44,7 +44,6 @@ Anthropic API settings. API keys go in `secrets.toml` — see [AUTH.md](AUTH.md)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `http_timeout` | string | `"600s"` | HTTP timeout for Anthropic API calls. Go duration format. Increased to support extended thinking responses. |
 | `usage_api_timeout` | string | `"10s"` | HTTP timeout for usage API calls. Go duration format. |
 | `usage_cache_ttl` | string | `"10m"` | Cache TTL for usage API responses. All callers (mana monitor, turn metadata, /mana command) share a single cache. On fetch errors, retries use exponential backoff (starting at cache TTL, doubling up to 1h). |
 | `cc_expiry_threshold` | string | `"5m"` | How far before expiry to trigger a proactive token refresh. Credentials are read lazily from `~/.claude/.credentials.json` on each API call. |
@@ -56,7 +55,6 @@ Google Gemini API configuration.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `http_timeout` | string | `"120s"` | HTTP timeout for Gemini API calls. Go duration format. |
 | `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
 
 Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-flash"` in `[groups]` to use.
@@ -68,7 +66,6 @@ OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRoute
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
-| `http_timeout` | string | `"120s"` | HTTP timeout for OpenAI API calls. Go duration format. |
 
 Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[groups]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
@@ -556,13 +553,13 @@ Format is auto-inferred from model name: `claude-*` → anthropic, `gemini-*` �
 | `openai_url` | string | `""` | OpenAI-format URL for multi-format endpoints. |
 | `gemini_url` | string | `""` | Gemini-format URL for multi-format endpoints. |
 | `api_key` | string | `""` | Secret name in secrets store (e.g. `"openrouter.api_key"`). |
-| `http_timeout` | string | `""` | HTTP timeout. Go duration format. Empty uses format-specific default. |
+| `http_timeout` | string | varies | HTTP timeout. Go duration format. Default `"120s"` for most endpoints, `"600s"` for anthropic (extended thinking). |
 
 Built-in endpoint defaults:
-- `anthropic` — `format = "anthropic"`, `api_key = "anthropic.api_key"`
-- `gemini` — `format = "gemini"`, `api_key = "gemini.api_key"`
-- `openai` — `format = "openai"`, `api_key = "openai.api_key"`
-- `openrouter` — multi-format (`anthropic_url` + `openai_url` both set to `https://openrouter.ai/api/v1`), `api_key = "openrouter.api_key"`
+- `anthropic` — `format = "anthropic"`, `api_key = "anthropic.api_key"`, `http_timeout = "600s"`
+- `gemini` — `format = "gemini"`, `api_key = "gemini.api_key"`, `http_timeout = "120s"`
+- `openai` — `format = "openai"`, `api_key = "openai.api_key"`, `http_timeout = "120s"`
+- `openrouter` — multi-format (`anthropic_url` + `openai_url` both set to `https://openrouter.ai/api/v1`), `api_key = "openrouter.api_key"`, `http_timeout = "120s"`
 
 Example custom endpoint:
 ```toml

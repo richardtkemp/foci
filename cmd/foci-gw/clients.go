@@ -64,12 +64,13 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 			apiKeyName = endpointName + ".api_key"
 		}
 
-		// Resolve base URL for endpoint
+		// Resolve base URL and timeout for endpoint
 		baseURL := epCfg.URLForFormat(format)
+		httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, 120*time.Second)
 
 		// Check if format has a custom resolver (e.g., anthropic)
 		if resolver, ok := formatResolvers[format]; ok {
-			client, err := resolver.ResolveClient(r.ctx, endpointName, apiKeyName, baseURL)
+			client, err := resolver.ResolveClient(r.ctx, endpointName, apiKeyName, baseURL, httpTimeout)
 			if err != nil {
 				log.Errorf("main", "resolve %s client for endpoint %q: %v", format, endpointName, err)
 				return
@@ -88,10 +89,6 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 				if apiKey == "" {
 					log.Errorf("main", "gemini.api_key not found in secrets — gemini endpoint unavailable")
 					return
-				}
-				httpTimeout, err := time.ParseDuration(r.cfg.Gemini.HTTPTimeout)
-				if err != nil {
-					httpTimeout = 120 * time.Second
 				}
 				opts := []gemini.Option{gemini.WithHTTPTimeout(httpTimeout)}
 				if r.cfg.Gemini.CacheTTL != "0" {
@@ -116,12 +113,8 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 				log.Errorf("main", "%s not found in secrets — endpoint %q (openai format) unavailable", apiKeyName, endpointName)
 				return
 			}
-			httpTimeout := parseDurationDefault(epCfg.HTTPTimeout, parseDurationDefault(r.cfg.OpenAI.HTTPTimeout, 0))
 			opts := []oai.Option{oai.WithHTTPTimeout(httpTimeout)}
 			url := epCfg.URLForFormat("openai")
-			if url == "" && endpointName == "openai" {
-				url = r.cfg.OpenAI.BaseURL
-			}
 			if url != "" {
 				opts = append(opts, oai.WithBaseURL(url))
 			}

@@ -309,7 +309,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("database", "busy_timeout", cfg.Database.BusyTimeout)
 
 	// anthropic
-	add("anthropic", "http_timeout", cfg.Anthropic.HTTPTimeout)
 	add("anthropic", "usage_api_timeout", cfg.Anthropic.UsageAPITimeout)
 	add("anthropic", "usage_cache_ttl", cfg.Anthropic.UsageCacheTTL)
 
@@ -566,7 +565,6 @@ type displayConfig struct {
 }
 
 type displayAnthropic struct {
-	HTTPTimeout     string `toml:"http_timeout"`
 	UsageAPITimeout string `toml:"usage_api_timeout"`
 	UsageCacheTTL   string `toml:"usage_cache_ttl"`
 }
@@ -591,7 +589,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Debug:         cfg.Debug,
 		Database:      cfg.Database,
 		Anthropic: displayAnthropic{
-			HTTPTimeout:     cfg.Anthropic.HTTPTimeout,
 			UsageAPITimeout: cfg.Anthropic.UsageAPITimeout,
 			UsageCacheTTL:   cfg.Anthropic.UsageCacheTTL,
 		},

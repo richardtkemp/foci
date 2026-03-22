@@ -183,13 +183,14 @@ func Load(path string) (*Config, error) {
 		cfg  EndpointConfig
 	}
 	for _, d := range []epDefault{
-		{"anthropic", EndpointConfig{Format: "anthropic", APIKey: "anthropic.api_key"}},
-		{"gemini", EndpointConfig{Format: "gemini", APIKey: "gemini.api_key"}},
-		{"openai", EndpointConfig{Format: "openai", APIKey: "openai.api_key"}},
+		{"anthropic", EndpointConfig{Format: "anthropic", APIKey: "anthropic.api_key", HTTPTimeout: "600s"}},
+		{"gemini", EndpointConfig{Format: "gemini", APIKey: "gemini.api_key", HTTPTimeout: "120s"}},
+		{"openai", EndpointConfig{Format: "openai", APIKey: "openai.api_key", HTTPTimeout: "120s"}},
 		{"openrouter", EndpointConfig{
 			AnthropicURL: "https://openrouter.ai/api/v1",
 			OpenAIURL:    "https://openrouter.ai/api/v1",
 			APIKey:       "openrouter.api_key",
+			HTTPTimeout:  "120s",
 		}},
 	} {
 		if usedEndpoints[d.name] {
