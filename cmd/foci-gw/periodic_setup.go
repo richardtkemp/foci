@@ -70,8 +70,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 	kaEnabled := ka.Enabled && cachingAvailable
 
-	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() })
-	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() })
+	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
+	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
 	if !kaEnabled && !bg.Enabled && !hasMemoryFormation(mf) && !hasAgentWarnings && !hasChatWarnings {
 		return nil
 	}

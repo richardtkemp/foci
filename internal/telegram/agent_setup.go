@@ -270,31 +270,31 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 
 // ApplyAgentDisplaySettings sets per-agent display settings on a bot
 // using pre-resolved config values.
-func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.ResolvedDebug, tg *config.PlatformConfig) {
+func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.ResolvedDebug, tg *config.PlatformConfig) {
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
-	if dc.ShowToolCalls != nil {
-		d.ShowToolCalls = string(*dc.ShowToolCalls)
+	if dc.ShowToolCalls != "" {
+		d.ShowToolCalls = dc.ShowToolCalls
 	}
-	if dc.ShowThinking != nil {
-		d.ShowThinking = string(*dc.ShowThinking)
+	if dc.ShowThinking != "" {
+		d.ShowThinking = dc.ShowThinking
 	}
-	if dc.DisplayWidth != nil {
-		d.DisplayWidth = *dc.DisplayWidth
+	if dc.DisplayWidth != 0 {
+		d.DisplayWidth = dc.DisplayWidth
 	}
-	if dc.ReceivedFilesDir != nil && *dc.ReceivedFilesDir != "" {
-		d.ReceivedFilesDir = *dc.ReceivedFilesDir
+	if dc.ReceivedFilesDir != "" {
+		d.ReceivedFilesDir = dc.ReceivedFilesDir
 	}
-	if dc.StreamOutput != nil {
-		d.StreamOutput = *dc.StreamOutput
+	if dc.StreamOutput {
+		d.StreamOutput = true
 	}
-	if dc.StreamInterval != nil {
-		if dur, err := time.ParseDuration(*dc.StreamInterval); err == nil && dur > 0 {
+	if dc.StreamInterval != "" {
+		if dur, err := time.ParseDuration(dc.StreamInterval); err == nil && dur > 0 {
 			d.StreamUpdateInterval = dur
 		}
 	}
-	if dc.InjectedMessageHeader != nil {
-		d.InjectedMessageHeader = *dc.InjectedMessageHeader
+	if dc.InjectedMessageHeader != "" {
+		d.InjectedMessageHeader = dc.InjectedMessageHeader
 	}
 
 	// Telegram-specific fields (not in DisplayConfig)
