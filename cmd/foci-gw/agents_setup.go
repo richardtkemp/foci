@@ -223,7 +223,8 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 		p.cfg.Sessions.CompactionMinMessages,
 		preserveMessages,
 	)
-	compactor.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
+	compactor.ModelParamsFn = modelParamsFn(p.cfg.Models)
+	compactor.ModelMetaFn = modelMetaFn(p.cfg.Models)
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
 	compactor.AgentID = acfg.ID

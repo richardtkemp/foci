@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
 
@@ -166,6 +167,18 @@ func (a *Agent) SetSessionSpeed(sessionKey, value string) { a.setStringSetting(s
 
 // SessionModel returns the effective model for the session.
 func (a *Agent) SessionModel(sessionKey string) string { return a.getStringSetting(sessionKey, settingModel) }
+
+// SessionContextLimit returns the context window size for the session's model.
+// Checks ModelMetaFn (config-defined) first, falls back to modelinfo registry.
+func (a *Agent) SessionContextLimit(sessionKey string) int {
+	model := a.SessionModel(sessionKey)
+	if a.ModelMetaFn != nil {
+		if meta := a.ModelMetaFn(model); meta.ContextWindow > 0 {
+			return meta.ContextWindow
+		}
+	}
+	return modelinfo.ContextWindow(model)
+}
 
 // SetSessionModel sets the per-session model, endpoint, format, and client override and persists it.
 // client may be nil to fall back to the agent's default client.

@@ -23,7 +23,8 @@ type Compactor struct {
 	maxTokens        int
 	minMessages      int
 	preserveMessages int                // preserve last N messages through compaction (0 disables)
-	ModelDefaultsFn  func(model string) (thinking, effort, speed string) // per-model defaults from [models.*] config
+	ModelParamsFn    func(model string) (thinking, effort, speed string)  // per-model API params from [models.*] config
+	ModelMetaFn      func(model string) modelinfo.ModelMeta             // structural metadata from [models.*] config; nil = use registry
 	Scratchpad       *memory.Scratchpad         // nil disables scratchpad injection
 	TaskListStore    *memory.TaskListStore      // nil disables task list injection
 	AgentID          string                     // agent ID for per-agent store queries
@@ -59,14 +60,14 @@ func (c *Compactor) WithConfig(maxTokens, minMessages, preserveMessages int) *Co
 // SetLogger replaces the component logger (e.g. after AgentID is known).
 func (c *Compactor) SetLogger(l *log.ComponentLogger) { c.log = l }
 
-// contextLimit returns the approximate context window for a model.
-// Accepts both bare ("claude-opus-4-6") and full ("anthropic/claude-opus-4-6") model IDs.
-func contextLimit(model string) int {
-	return modelinfo.ContextWindow(model)
-}
-
-// ContextLimit returns the approximate context window for a model (exported).
-func ContextLimit(model string) int {
+// ContextLimit returns the context window for a model, preferring the
+// config-defined value (via ModelMetaFn) over the modelinfo registry default.
+func (c *Compactor) ContextLimit(model string) int {
+	if c.ModelMetaFn != nil {
+		if meta := c.ModelMetaFn(model); meta.ContextWindow > 0 {
+			return meta.ContextWindow
+		}
+	}
 	return modelinfo.ContextWindow(model)
 }
 
@@ -200,7 +201,7 @@ func estimateTokens(messages []provider.Message) int {
 // model is used to determine context window size. Use ShouldCompactWithLimit
 // to supply an explicit limit instead.
 func (c *Compactor) ShouldCompact(model, sessionKey string, messages []provider.Message, lastUsage *provider.Usage) bool {
-	return c.ShouldCompactWithLimit(sessionKey, messages, lastUsage, contextLimit(model))
+	return c.ShouldCompactWithLimit(sessionKey, messages, lastUsage, c.ContextLimit(model))
 }
 
 // ShouldCompactWithLimit returns true if the session likely exceeds the threshold,
@@ -324,10 +325,10 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		Content: provider.TextContent(summaryPrompt),
 	})
 
-	// Apply per-model defaults from [models.*] config.
+	// Apply per-model params from [models.*] config.
 	var mdEffort, mdThinking string
-	if c.ModelDefaultsFn != nil {
-		mdThinking, mdEffort, _ = c.ModelDefaultsFn(model)
+	if c.ModelParamsFn != nil {
+		mdThinking, mdEffort, _ = c.ModelParamsFn(model)
 	}
 
 	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s thinking=%s", model, c.maxTokens, len(summaryMessages), mdEffort, mdThinking)

@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"foci/internal/compaction"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -518,7 +517,7 @@ func buildContextInfo(cc CommandContext) ContextInfo {
 		SessionKey:       sk,
 		Model:            model,
 		CompactionThresh: cc.CompactionThreshold,
-		ContextLimit:     compaction.ContextLimit(model),
+		ContextLimit:     resolveContextLimit(cc, model),
 		SystemSections:   sections,
 		EnvironmentChars: len(cc.Agent.EnvironmentBlock),
 		SkillsChars:      skillsChars,

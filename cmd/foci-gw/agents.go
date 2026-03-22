@@ -227,7 +227,8 @@ func setupAgent(p setupParams) *agentInstance {
 		ShowToolCalls:                  resolveShowToolCalls(acfg, p.cfg),
 		CacheTTL:                       config.DerefStr(al.CacheTTL),
 		Streaming:                      resolveStreamingConfig(acfg, p.cfg),
-		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
+		ModelParamsFn:                  modelParamsFn(p.cfg.Models),
+		ModelMetaFn:                    modelMetaFn(p.cfg.Models),
 		ManaInvestInterval:             parseDurationDefault(config.DerefStr(p.cfg.Mana.InvestInterval), 30*time.Minute),
 	}
 

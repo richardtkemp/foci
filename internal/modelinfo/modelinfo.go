@@ -129,6 +129,13 @@ func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
 		float64(cacheWrite)/mtok*m.CacheWritePer1M
 }
 
+// ModelMeta holds structural metadata about a model from [models.*] config.
+// Used at runtime to override registry defaults (e.g. when config defines
+// a custom context window for a third-party model).
+type ModelMeta struct {
+	ContextWindow int // 0 = unknown, fall back to registry
+}
+
 // IsOpenAI returns true if the model name looks like an OpenAI model.
 func IsOpenAI(model string) bool {
 	bare := stripPrefix(model)

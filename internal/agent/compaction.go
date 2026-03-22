@@ -20,8 +20,7 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 	}
 
 	totalTokens := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-	effectiveModel := a.SessionModel(sessionKey)
-	ctxLimit := compaction.ContextLimit(effectiveModel)
+	ctxLimit := a.SessionContextLimit(sessionKey)
 
 	// Check mana-refresh trigger: compact at a lower threshold when mana
 	// reset is imminent so the new window starts with a smaller context.

@@ -318,7 +318,7 @@ func TestCompactOrphanedToolUseInHistory(t *testing.T) {
 }
 
 func TestCompactWithModelDefaults(t *testing.T) {
-	// Verifies that ModelDefaultsFn provides effort to the compaction API
+	// Verifies that ModelParamsFn provides effort to the compaction API
 	// request for models that support it (Sonnet), and that the effort is
 	// stripped for models that do not (Haiku).
 	var capturedBody []byte
@@ -347,7 +347,7 @@ func TestCompactWithModelDefaults(t *testing.T) {
 
 	// Sonnet supports effort — model defaults should apply
 	c := NewCompactor(store, 0.8)
-	c.ModelDefaultsFn = func(model string) (string, string, string) {
+	c.ModelParamsFn = func(model string) (string, string, string) {
 		return "", "high", "" // thinking, effort, speed
 	}
 	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-sonnet-4-6", "anthropic", nil, "", "", false)
@@ -367,7 +367,7 @@ func TestCompactWithModelDefaults(t *testing.T) {
 		store2.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 	c2 := NewCompactor(store2, 0.8)
-	c2.ModelDefaultsFn = func(model string) (string, string, string) {
+	c2.ModelParamsFn = func(model string) (string, string, string) {
 		return "", "high", ""
 	}
 	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
