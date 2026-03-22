@@ -89,7 +89,7 @@ id = "test"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].Defaults.Notify.StartupNotify != nil {
+		if cfg.Agents[0].Notify.StartupNotify != nil {
 			t.Error("StartupNotify should default to nil (use global)")
 		}
 	})
@@ -103,7 +103,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[agents.defaults.notify]
+[agents.notify]
 startup_notify = true
 `
 		os.WriteFile(path, []byte(toml), 0644)
@@ -112,7 +112,7 @@ startup_notify = true
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].Defaults.Notify.StartupNotify == nil || !*cfg.Agents[0].Defaults.Notify.StartupNotify {
+		if cfg.Agents[0].Notify.StartupNotify == nil || !*cfg.Agents[0].Notify.StartupNotify {
 			t.Error("StartupNotify should be true")
 		}
 	})
@@ -126,7 +126,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[agents.defaults.notify]
+[agents.notify]
 startup_notify = false
 `
 		os.WriteFile(path, []byte(toml), 0644)
@@ -135,7 +135,7 @@ startup_notify = false
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].Defaults.Notify.StartupNotify == nil || *cfg.Agents[0].Defaults.Notify.StartupNotify {
+		if cfg.Agents[0].Notify.StartupNotify == nil || *cfg.Agents[0].Notify.StartupNotify {
 			t.Error("StartupNotify should be false")
 		}
 	})
@@ -195,7 +195,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "a"
-[agents.defaults.display]
+[agents.display]
 show_tool_calls = "full"
 
 [[agents]]
@@ -205,15 +205,15 @@ id = "b"
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].Defaults.Display.ShowToolCalls == nil {
+		if cfg.Agents[0].Display.ShowToolCalls == nil {
 			t.Fatal("agent a: ShowToolCalls should be non-nil")
 		}
-		if *cfg.Agents[0].Defaults.Display.ShowToolCalls != ToolCallFull {
-			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].Defaults.Display.ShowToolCalls, ToolCallFull)
+		if *cfg.Agents[0].Display.ShowToolCalls != ToolCallFull {
+			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].Display.ShowToolCalls, ToolCallFull)
 		}
 		// Agent b has no show_tool_calls set — should be nil (resolved at runtime via telegram config)
-		if cfg.Agents[1].Defaults.Display.ShowToolCalls != nil {
-			t.Errorf("agent b: ShowToolCalls = %q, want nil (not set)", *cfg.Agents[1].Defaults.Display.ShowToolCalls)
+		if cfg.Agents[1].Display.ShowToolCalls != nil {
+			t.Errorf("agent b: ShowToolCalls = %q, want nil (not set)", *cfg.Agents[1].Display.ShowToolCalls)
 		}
 	})
 
@@ -227,18 +227,18 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "a"
-[agents.defaults.display]
+[agents.display]
 show_tool_calls = true
 `), 0644)
 		cfg, err := Load(path)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.Agents[0].Defaults.Display.ShowToolCalls == nil {
+		if cfg.Agents[0].Display.ShowToolCalls == nil {
 			t.Fatal("agent a: ShowToolCalls should be non-nil")
 		}
-		if *cfg.Agents[0].Defaults.Display.ShowToolCalls != ToolCallPreview {
-			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].Defaults.Display.ShowToolCalls, ToolCallPreview)
+		if *cfg.Agents[0].Display.ShowToolCalls != ToolCallPreview {
+			t.Errorf("agent a: ShowToolCalls = %q, want %q", *cfg.Agents[0].Display.ShowToolCalls, ToolCallPreview)
 		}
 	})
 

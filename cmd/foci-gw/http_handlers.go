@@ -322,14 +322,14 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			msgs, err := d.sessions.Load(key)
 			return err == nil && msgs != nil
 		},
-		STT: resolveSTT(d.sttMap, d.cfg.STT, "", d.cfg.Voice.STTReplacements),
+		STT: resolveSTT(d.sttMap, d.cfg.STT, "", d.cfg.Defaults.Voice.STTReplacements),
 		AgentTTS: func(agentID string) voice.TTS {
 			inst, ok := d.agents[agentID]
 			if !ok {
-				return resolveTTS(d.ttsMap, d.cfg.TTS, "", 0, d.cfg.Voice.TTSReplacements)
+				return resolveTTS(d.ttsMap, d.cfg.TTS, "", 0, d.cfg.Defaults.Voice.TTSReplacements)
 			}
-			vc := config.Merge(inst.agentCfg.Voice, d.cfg.Voice)
-			ttsRepls := voice.MergeReplacements(d.cfg.Voice.TTSReplacements, inst.agentCfg.Voice.TTSReplacements)
+			vc := config.Merge(inst.agentCfg.Voice, d.cfg.Defaults.Voice)
+			ttsRepls := voice.MergeReplacements(d.cfg.Defaults.Voice.TTSReplacements, inst.agentCfg.Voice.TTSReplacements)
 			return resolveTTS(d.ttsMap, d.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls)
 		},
 	}

@@ -36,29 +36,58 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # prompt_cache_ttl = ""                  # Go duration, empty=auto-detect
 
 # ─── Defaults ─────────────────────────────────────────────────────────
-# Global defaults inherited by all agents. Per-agent overrides in [agents.defaults].
-[defaults]
-# streaming = false                        # use streaming API
+# Global defaults inherited by all agents. Per-agent overrides in [agents.defaults.*].
+# Each sub-section groups related settings.
+
+# [defaults.loop]
 # max_tool_loops = 25
 # max_output_tokens = 16384
-# nudge_default_braindead_threshold = 10   # consecutive tool loops before warning (0 = disabled)
-# nudge_default_braindead_prompt = ""      # warning text injected at threshold
-# turn_lock_warn_threshold = "3m"          # warn if turn lock wait exceeds this duration
 # duplicate_messages = false               # send user text twice per API call
 # batch_partial_assistant_messages = false  # accumulate mid-turn text; send on turn end
 # batch_partial_joiner = ""                # separator between batched partial messages
+# cache_ttl = ""                           # per-agent Anthropic cache TTL override ("5m" or "1h")
+
+# [defaults.display]
+# streaming = false                        # use streaming API
+# injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
+
+# [defaults.notify]
 # inject_agent_warnings = "off"            # inject warnings into agent session: "all", "errors", "off"
 # inject_chat_warnings = "off"             # send warnings as chat notifications: "all", "errors", "off"
 # startup_notify = true                    # send startup notification
 # compaction_notify = true                 # send notification on compaction
 # compaction_debug = false                 # send compaction summary as file attachment
 # task_list_notify = true                  # send notification on task list changes
-# steer_mode = true                        # inject user messages between tool calls (default true)
-# injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
-# system_files = ["character/SOUL.md"]     # default system file list
-# tts_rate = 0.0                           # TTS speech rate multiplier
+
+# [defaults.nudge]
+# nudge_enable = true                      # enable mid-turn behavioral reminders
+# nudge_auto_extract = true                # auto-extract rules from character files via LLM
+# nudge_cooldown = 5                       # min tool calls between repeating same reminder
+# nudge_max_per_batch = 1                  # max reminders injected per tool batch
+# nudge_pre_answer_gate = false            # enable pre-answer verification gate
+# nudge_pre_answer_min_tools = 2           # min tool calls before pre-answer gate fires
+# nudge_default_enable = true              # enable built-in tool/skill reminders
+# nudge_default_frequency = 50             # user turns between tool/skill reminders
+# nudge_default_scratchpad_frequency = 20  # user turns between scratchpad review reminders
+# nudge_default_braindead_threshold = 10   # consecutive tool loops before warning (0 = disabled)
+# nudge_default_braindead_prompt = ""      # warning text injected at threshold
+
+# [defaults.behavior]
+# steer_mode = true                        # inject user messages between tool calls
+# turn_lock_warn_threshold = "3m"          # warn if turn lock wait exceeds this duration
+# group_throttle = ""                      # group chat throttle window (e.g. "30s", "" = disabled)
 # stop_aliases = ["stop", "wait"]          # aliases for /stop command
 # enable_stop_aliases = true               # enable stop command aliases
+
+# [defaults.voice]
+# tts = ""                                 # TTS provider id (empty = default entry)
+# stt = ""                                 # STT provider id (empty = default entry)
+# tts_rate = 0.0                           # TTS speech rate multiplier
+# tts_replacements = {}                    # TTS word replacements (e.g. { foci = "foki" })
+# stt_replacements = {}                    # STT word replacements
+
+# [defaults.system]
+# system_files = ["character/SOUL.md"]     # default system file list
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
 # ─── More model examples ─────────────────────────────────────────────
@@ -123,40 +152,37 @@ id = "myagent"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
 # skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 
-# Per-agent defaults overrides (from [defaults]):
-[agents.defaults]
-system_files = [
-  "character/SOUL.md",
-  "character/CRAFT.md",
-]
-# streaming = false
-# max_tool_loops = 25
-# max_output_tokens = 16384
-# duplicate_messages = false
-# [agents.behavior]
-# turn_lock_warn_threshold = "3m"
-# [agents.nudge]
-# nudge_default_braindead_threshold = 10
-# nudge_default_braindead_prompt = ""
-# [agents.notify]
-# startup_notify = true                   # send startup notification (nil = use global)
-# [agents.display]
-# streaming = false                        # per-agent streaming override
-# [agents.voice]
-# tts_rate = 0.0
+# Per-agent overrides (from [defaults.*]):
 [agents.system]
 system_files = [
   "character/SOUL.md",
   "character/CRAFT.md",
 ]
-# webhooks = {}
-# [agents.debug]
-# messages_in_log = false                 # log user message content (privacy)
+# webhooks = { alert = "alert.md" }
+
+# [agents.loop]
+# max_tool_loops = 25
+# max_output_tokens = 16384
+# duplicate_messages = false
+
+# [agents.display]
+# streaming = false
+
+# [agents.notify]
 # inject_agent_warnings = "off"           # "all", "errors", "off"
 # inject_chat_warnings = "off"            # "all", "errors", "off"
 # startup_notify = true
 # compaction_notify = true
 # compaction_debug = false
+
+# [agents.nudge]
+# nudge_default_braindead_threshold = 10
+# nudge_default_braindead_prompt = ""
+
+# [agents.behavior]
+# turn_lock_warn_threshold = "3m"
+
+# [agents.voice]
 # tts_rate = 0.0
 
 # Per-agent session overrides (from [sessions]):

@@ -139,7 +139,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot.requireMention = reqMention
 
 	// Resolve behavior config via Merge cascade.
-	bc := config.Merge(acfg.Defaults.Behavior, cfg.Defaults.Behavior)
+	bc := config.Merge(acfg.Behavior, cfg.Defaults.Behavior)
 	throttleStr := config.DerefStr(bc.GroupThrottle)
 	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
@@ -205,8 +205,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			continue
 		}
 		ConfigureFacetBot(facetBot, FacetBotConfig{
-			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Defaults.Voice.STT), voice.MergeReplacements(cfg.Defaults.Voice.STTReplacements, acfg.Defaults.Voice.STTReplacements)),
-			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Defaults.Voice.TTS), config.DerefFloat(acfg.Defaults.Voice.TTSRate), voice.MergeReplacements(cfg.Defaults.Voice.TTSReplacements, acfg.Defaults.Voice.TTSReplacements)),
+			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Defaults.Voice.STTReplacements, acfg.Voice.STTReplacements)),
+			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			ToolDetailStore: p.ToolDetailStore,
@@ -272,7 +272,7 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 	tg := acfg.Platform("telegram")
 	dc := config.Merge(
 		tg.SafeDisplay(),
-		acfg.Defaults.Display,
+		acfg.Display,
 		cfg.Platform("telegram").SafeDisplay(),
 		cfg.Defaults.Display,
 	)

@@ -24,7 +24,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[agents.defaults.loop]
+[agents.loop]
 max_tool_loops = 50
 max_output_tokens = 16384
 
@@ -67,11 +67,11 @@ web_search_timeout = "20s"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if DerefInt(cfg.Agents[0].Defaults.Loop.MaxToolLoops) != 50 {
-		t.Errorf("Agent.Defaults.Loop.MaxToolLoops = %d, want 50", cfg.Agents[0].Defaults.Loop.MaxToolLoops)
+	if DerefInt(cfg.Agents[0].Loop.MaxToolLoops) != 50 {
+		t.Errorf("Agent.Defaults.Loop.MaxToolLoops = %d, want 50", cfg.Agents[0].Loop.MaxToolLoops)
 	}
-	if DerefInt(cfg.Agents[0].Defaults.Loop.MaxOutputTokens) != 16384 {
-		t.Errorf("Agent.Defaults.Loop.MaxOutputTokens = %d, want 16384", cfg.Agents[0].Defaults.Loop.MaxOutputTokens)
+	if DerefInt(cfg.Agents[0].Loop.MaxOutputTokens) != 16384 {
+		t.Errorf("Agent.Defaults.Loop.MaxOutputTokens = %d, want 16384", cfg.Agents[0].Loop.MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "180s" {
 		t.Errorf("Anthropic.HTTPTimeout = %q, want 180s", cfg.Anthropic.HTTPTimeout)
@@ -149,11 +149,11 @@ id = "test"
 	}
 
 	// MaxToolLoops and MaxOutputTokens are nil on agent when unset — defaults resolve at use time
-	if cfg.Agents[0].Defaults.Loop.MaxToolLoops != nil {
-		t.Errorf("default Agent.Defaults.Loop.MaxToolLoops should be nil (use-time resolution), got %v", cfg.Agents[0].Defaults.Loop.MaxToolLoops)
+	if cfg.Agents[0].Loop.MaxToolLoops != nil {
+		t.Errorf("default Agent.Defaults.Loop.MaxToolLoops should be nil (use-time resolution), got %v", cfg.Agents[0].Loop.MaxToolLoops)
 	}
-	if cfg.Agents[0].Defaults.Loop.MaxOutputTokens != nil {
-		t.Errorf("default Agent.Defaults.Loop.MaxOutputTokens should be nil (use-time resolution), got %v", cfg.Agents[0].Defaults.Loop.MaxOutputTokens)
+	if cfg.Agents[0].Loop.MaxOutputTokens != nil {
+		t.Errorf("default Agent.Defaults.Loop.MaxOutputTokens should be nil (use-time resolution), got %v", cfg.Agents[0].Loop.MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "600s" {
 		t.Errorf("default Anthropic.HTTPTimeout = %q, want 600s", cfg.Anthropic.HTTPTimeout)
@@ -238,8 +238,8 @@ id = "override"
 
 	// Bare agent has nil fields — values resolve via Merge with defaults at use time.
 	bare := cfg.Agents[0]
-	if bare.Defaults.Loop.MaxToolLoops != nil {
-		t.Errorf("bare Defaults.Loop.MaxToolLoops should be nil, got %v", bare.Defaults.Loop.MaxToolLoops)
+	if bare.Loop.MaxToolLoops != nil {
+		t.Errorf("bare Defaults.Loop.MaxToolLoops should be nil, got %v", bare.Loop.MaxToolLoops)
 	}
 
 	// Verify defaults config was parsed correctly
@@ -266,7 +266,7 @@ id = "override"
 	}
 
 	// Merge resolves bare agent fields from defaults
-	al := Merge(bare.Defaults.Loop, cfg.Defaults.Loop)
+	al := Merge(bare.Loop, cfg.Defaults.Loop)
 	if DerefInt(al.MaxToolLoops) != 50 {
 		t.Errorf("Merge resolved MaxToolLoops = %v, want 50", al.MaxToolLoops)
 	}

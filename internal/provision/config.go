@@ -20,7 +20,7 @@ func GenerateAgentBlock(spec AgentSpec) string {
 	if len(sysFiles) == 0 {
 		sysFiles = DefaultSystemFiles
 	}
-	sb.WriteString("\n[agents.defaults]\n")
+	sb.WriteString("\n[agents.system]\n")
 	sb.WriteString("system_files = [")
 	for i, f := range sysFiles {
 		if i > 0 {

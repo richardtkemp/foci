@@ -145,7 +145,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 			resolveString(derefStr(acfg.Sessions.CompactionHandoffMsg), derefStr(cfg.Sessions.CompactionHandoffMsg)),
 			prompts.CompactionHandoff()),
 		inlinePromptInfo("braindead_warning",
-			derefStr(acfg.Defaults.Nudge.NudgeDefaultBraindeadPrompt), ""),
+			derefStr(acfg.Nudge.NudgeDefaultBraindeadPrompt), ""),
 	)
 
 	embedded := map[string]string{
@@ -187,7 +187,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		resolvedTexts["compaction_handoff"] = handoffVal
 	}
 	defaultTexts["compaction_handoff"] = prompts.CompactionHandoff()
-	bdp := derefStr(acfg.Defaults.Nudge.NudgeDefaultBraindeadPrompt)
+	bdp := derefStr(acfg.Nudge.NudgeDefaultBraindeadPrompt)
 	if bdp != "" && bdp != "none" {
 		resolvedTexts["braindead_warning"] = bdp
 	}

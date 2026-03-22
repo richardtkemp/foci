@@ -165,7 +165,7 @@ func TestAgentTTSRateRecognized(t *testing.T) {
 	tomlData := `
 [[agents]]
 id = "clutch"
-[agents.defaults.voice]
+[agents.voice]
 tts_rate = 1.3
 `
 	var cfg Config
@@ -184,8 +184,8 @@ tts_rate = 1.3
 	if len(cfg.Agents) != 1 {
 		t.Fatalf("expected 1 agent, got %d", len(cfg.Agents))
 	}
-	if cfg.Agents[0].Defaults.Voice.TTSRate == nil || *cfg.Agents[0].Defaults.Voice.TTSRate != 1.3 {
-		t.Errorf("TTSRate = %v, want 1.3", cfg.Agents[0].Defaults.Voice.TTSRate)
+	if cfg.Agents[0].Voice.TTSRate == nil || *cfg.Agents[0].Voice.TTSRate != 1.3 {
+		t.Errorf("TTSRate = %v, want 1.3", cfg.Agents[0].Voice.TTSRate)
 	}
 }
 
@@ -290,8 +290,8 @@ id = "test"
 	}
 
 	// NudgeDefaultBraindeadThreshold is nil when unset — code default (10) applied at use time
-	if cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold != nil {
-		t.Errorf("NudgeDefaultBraindeadThreshold should be nil (code default at use time), got %v", cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold)
+	if cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold != nil {
+		t.Errorf("NudgeDefaultBraindeadThreshold should be nil (code default at use time), got %v", cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold)
 	}
 }
 
@@ -306,7 +306,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[agents.defaults.nudge]
+[agents.nudge]
 nudge_default_braindead_threshold = 5
 nudge_default_braindead_prompt = "custom warning"
 `), 0644)
@@ -316,11 +316,11 @@ nudge_default_braindead_prompt = "custom warning"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if DerefInt(cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold) != 5 {
-		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 5", cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold)
+	if DerefInt(cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold) != 5 {
+		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 5", cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold)
 	}
-	if DerefStr(cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadPrompt) != "custom warning" {
-		t.Errorf("NudgeDefaultBraindeadPrompt = %v, want %q", cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadPrompt, "custom warning")
+	if DerefStr(cfg.Agents[0].Nudge.NudgeDefaultBraindeadPrompt) != "custom warning" {
+		t.Errorf("NudgeDefaultBraindeadPrompt = %v, want %q", cfg.Agents[0].Nudge.NudgeDefaultBraindeadPrompt, "custom warning")
 	}
 }
 
@@ -342,7 +342,7 @@ id = "a"
 
 [[agents]]
 id = "b"
-[agents.defaults.nudge]
+[agents.nudge]
 nudge_default_braindead_threshold = 5
 nudge_default_braindead_prompt = "agent prompt"
 `), 0644)
@@ -353,7 +353,7 @@ nudge_default_braindead_prompt = "agent prompt"
 	}
 
 	// Agent "a" has no override — Merge resolves from defaults
-	resolvedA := Merge(cfg.Agents[0].Defaults.Nudge, cfg.Defaults.Nudge)
+	resolvedA := Merge(cfg.Agents[0].Nudge, cfg.Defaults.Nudge)
 	if DerefInt(resolvedA.NudgeDefaultBraindeadThreshold) != 15 {
 		t.Errorf("agent a resolved threshold = %d, want 15", DerefInt(resolvedA.NudgeDefaultBraindeadThreshold))
 	}
@@ -362,7 +362,7 @@ nudge_default_braindead_prompt = "agent prompt"
 	}
 
 	// Agent "b" overrides
-	resolvedB := Merge(cfg.Agents[1].Defaults.Nudge, cfg.Defaults.Nudge)
+	resolvedB := Merge(cfg.Agents[1].Nudge, cfg.Defaults.Nudge)
 	if DerefInt(resolvedB.NudgeDefaultBraindeadThreshold) != 5 {
 		t.Errorf("agent b resolved threshold = %d, want 5", DerefInt(resolvedB.NudgeDefaultBraindeadThreshold))
 	}
@@ -392,8 +392,8 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if DerefInt(cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold) != 0 {
-		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 0 (disabled)", cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold)
+	if DerefInt(cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold) != 0 {
+		t.Errorf("NudgeDefaultBraindeadThreshold = %d, want 0 (disabled)", cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold)
 	}
 }
 
@@ -412,7 +412,7 @@ nudge_default_braindead_threshold = 15
 
 [[agents]]
 id = "explicit-zero"
-[agents.defaults.nudge]
+[agents.nudge]
 nudge_default_braindead_threshold = 0
 
 [[agents]]
@@ -425,12 +425,12 @@ id = "inherits"
 	}
 
 	// Agent that explicitly set 0 should keep 0
-	if DerefInt(cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold) != 0 {
-		t.Errorf("explicit-zero agent: NudgeDefaultBraindeadThreshold = %d, want 0", cfg.Agents[0].Defaults.Nudge.NudgeDefaultBraindeadThreshold)
+	if DerefInt(cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold) != 0 {
+		t.Errorf("explicit-zero agent: NudgeDefaultBraindeadThreshold = %d, want 0", cfg.Agents[0].Nudge.NudgeDefaultBraindeadThreshold)
 	}
 
 	// Agent that didn't set it should get 15 via Merge with defaults
-	resolved := Merge(cfg.Agents[1].Defaults.Nudge, cfg.Defaults.Nudge)
+	resolved := Merge(cfg.Agents[1].Nudge, cfg.Defaults.Nudge)
 	if DerefInt(resolved.NudgeDefaultBraindeadThreshold) != 15 {
 		t.Errorf("inherits agent: resolved threshold = %d, want 15", DerefInt(resolved.NudgeDefaultBraindeadThreshold))
 	}
