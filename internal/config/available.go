@@ -120,8 +120,8 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if !cfg.Logging.FullPayload {
 		opts = append(opts, availableOption{"logging", "full_payload", "false", "write full API payloads to file"})
 	}
-	if !cfg.Logging.CacheBustDetect {
-		opts = append(opts, availableOption{"logging", "cache_bust_detect", "false", "alert on cache_read drop"})
+	if !DerefBool(cfg.Debug.CacheBustDetect) {
+		opts = append(opts, availableOption{"debug", "cache_bust_detect", "false", "alert on cache_read drop"})
 	}
 
 	// Voice fields
@@ -133,7 +133,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Environment fields
-	if cfg.Environment.DocsPath == "" {
+	if DerefStr(cfg.Environment.DocsPath) == "" {
 		opts = append(opts, availableOption{"environment", "docs_path", "\"\"", "path to platform docs directory"})
 	}
 

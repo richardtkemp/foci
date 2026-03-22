@@ -162,7 +162,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent environment block
 	var envBlock string
-	if config.DerefBool(p.cfg.Environment.Enabled) {
+	if p.resolved.Environment.Enabled {
 		crontabCount := countCrontabJobs()
 		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames())
 	}
@@ -195,8 +195,8 @@ func setupAgent(p setupParams) *agentInstance {
 		Endpoint:                       defaultEndpoint,
 		ExtraSystemBlocks:              bs.extraSystemBlocks,
 		CacheStrategy:                  p.cfg.Cache.Strategy,
-		CacheBustDetect:                p.cfg.Logging.CacheBustDetect,
-		CacheBustIdleThreshold:         time.Duration(*p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
+		CacheBustDetect:                p.resolved.Debug.CacheBustDetect,
+		CacheBustIdleThreshold:         time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:              al.DuplicateMessages,
 		BatchPartialAssistantMessages:  al.BatchPartialAssistantMessages,
 		BatchPartialJoiner:             al.BatchPartialJoiner,

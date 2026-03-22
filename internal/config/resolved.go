@@ -14,6 +14,7 @@ type ResolvedAgentConfig struct {
 	Summary         ResolvedSummary
 	Compaction      ResolvedCompaction
 	Debug           ResolvedDebug
+	Environment     ResolvedEnvironment
 	Groups          ResolvedGroups
 	Keepalive       ResolvedKeepalive
 	Background      ResolvedBackground
@@ -100,6 +101,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Summary:         resolveSummary(Merge(acfg.Tools.SummaryConfig, cfg.Tools.SummaryConfig)),
 		Compaction:      resolveCompaction(Merge(acfg.Sessions.CompactionConfig, cfg.Sessions.CompactionConfig)),
 		Debug:           resolveDebug(Merge(acfg.Debug, cfg.Debug)),
+		Environment:     resolveEnvironment(Merge(acfg.Environment, cfg.Environment)),
 		Groups:          resolveGroups(gc),
 		Keepalive:       resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive)),
 		Background:      resolveBackground(Merge(acfg.Background, cfg.Background)),

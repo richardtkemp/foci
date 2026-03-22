@@ -58,6 +58,7 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # compaction_notify = true                 # send notification on compaction
 # compaction_debug = false                 # send compaction summary as file attachment
 # task_list_notify = true                  # send notification on task list changes
+# warning_max_per_window = 3               # max identical warnings per window before suppression
 
 # [defaults.nudge]
 # nudge_enable = true                      # enable mid-turn behavioral reminders
@@ -215,6 +216,13 @@ system_files = [
 # Per-agent debug overrides (from [debug]):
 # [agents.debug]
 # messages_in_log = false                 # log user message content (privacy)
+# cache_bust_detect = false               # alert on cache_read drop
+# cache_bust_idle_minutes = 10            # suppress cache bust alert if idle > N minutes
+
+# Per-agent environment overrides (from [environment]):
+# [agents.environment]
+# enabled = true                          # inject environment block
+# docs_path = "shared/docs"              # path to platform docs directory
 
 # Per-agent group overrides (from [groups]):
 # [agents.groups]
@@ -409,6 +417,8 @@ compaction_threshold = 0.8
 # [debug]
 # log_api_key_suffix = false               # log last 4 chars of API keys on provider calls
 # messages_in_log = false                  # log user message content (privacy)
+# cache_bust_detect = false                # alert on cache_read drop >50% vs previous request
+# cache_bust_idle_minutes = 10             # suppress cache bust alert if idle > N minutes
 
 # ─── HTTP ─────────────────────────────────────────────────────────────
 [http]
@@ -427,9 +437,6 @@ bind = "127.0.0.1"
 # conversation_file = ""
 # full_payload = false
 # payload_file = "logs/api-payload.jsonl"
-# cache_bust_detect = false
-# cache_bust_idle_minutes = 10
-# warning_max_per_window = 3
 # warning_window_duration = "5m"
 # warning_proactive_active_interval = "5m"   # min interval between proactive warning turns when user is active
 # warning_proactive_inactive_interval = "1h" # min interval when user is inactive

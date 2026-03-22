@@ -177,6 +177,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 			CompactionConfig: CompactionConfig{CompactionThreshold: ptrFloat(0.5)},
 		},
 		Debug:           DebugConfig{MessagesInLog: Ptr(true)},
+		Environment:     EnvironmentConfig{Enabled: Ptr(true), DocsPath: Ptr("docs")},
 		Groups:          GroupsConfig{Powerful: Ptr("x")},
 		Keepalive:       KeepaliveConfig{Enabled: Ptr(true)},
 		Background:      BackgroundConfig{Enabled: Ptr(true)},

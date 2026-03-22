@@ -46,7 +46,6 @@ func testConfig() (*Config, AgentConfig) {
 			EventFile:             "/logs/foci.log",
 			APIFile:               "/logs/api.jsonl",
 			ConversationFile:      "/data/conversation.db",
-			WarningMaxPerWindow:   Ptr[int](3),
 			WarningWindowDuration: "5m",
 		},
 		Tools: ToolsConfig{
@@ -209,12 +208,12 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.CompactionPreserveMessages = &preserve25
 	cfg.Memory.ReindexDebounce = "2s"
 	cfg.Debug.MessagesInLog = Ptr[bool](true)
+	cfg.Debug.CacheBustDetect = Ptr[bool](true)
+	cfg.Debug.CacheBustIdleMinutes = Ptr[int](10)
 	cfg.Logging.FullPayload = true
-	cfg.Logging.CacheBustDetect = true
-	cfg.Logging.CacheBustIdleMinutes = Ptr[int](10)
 	cfg.TTS = []TTSConfig{{ID: "edge", Format: "edge-tts", Voice: "en-US-AriaNeural"}}
 	cfg.STT = []STTConfig{{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com", Model: "whisper-large-v3"}}
-	cfg.Environment.DocsPath = "/docs"
+	cfg.Environment.DocsPath = Ptr[string]("/docs")
 	cfg.Skills.Dir = "/skills"
 	cfg.Mana.Thresholds = []int{50, 25, 10}
 

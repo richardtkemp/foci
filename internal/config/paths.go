@@ -124,9 +124,7 @@ func (c *Config) ResolveAllPaths() {
 	ResolvePathPtr(c.Sessions.CompactionSummaryPrompt)
 	// Keepalive.Prompt and Background.Prompt: path resolution handled by prompts.ResolvePrompt at runtime.
 	c.WelcomeFile = ResolvePath(c.WelcomeFile)
-	if c.Environment.DocsPath != "" {
-		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)
-	}
+	ResolvePathPtr(c.Environment.DocsPath)
 	for i := range c.Platforms {
 		ResolvePathPtr(c.Platforms[i].Display.ReceivedFilesDir)
 	}

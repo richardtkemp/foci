@@ -81,6 +81,9 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Defaults.Notify.InjectChatWarnings != nil && cfg.Defaults.Notify.InjectChatWarningsLevel().Enabled() {
 		add("defaults", "inject_chat_warnings", string(*cfg.Defaults.Notify.InjectChatWarnings))
 	}
+	if cfg.Defaults.Notify.WarningMaxPerWindow != nil {
+		add("defaults", "warning_max_per_window", *cfg.Defaults.Notify.WarningMaxPerWindow)
+	}
 	if cfg.Sessions.FacetNoCompact != nil {
 		add("sessions", "facet_no_compact", *cfg.Sessions.FacetNoCompact)
 	}
@@ -206,9 +209,8 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("logging", "payload_file", cfg.Logging.PayloadFile)
 	}
 	add("debug", "messages_in_log", cfg.Debug.MessagesInLog)
-	add("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
-	add("logging", "cache_bust_idle_minutes", DerefInt(cfg.Logging.CacheBustIdleMinutes))
-	add("logging", "warning_max_per_window", DerefInt(cfg.Logging.WarningMaxPerWindow))
+	add("debug", "cache_bust_detect", DerefBool(cfg.Debug.CacheBustDetect))
+	add("debug", "cache_bust_idle_minutes", DerefInt(cfg.Debug.CacheBustIdleMinutes))
 	add("logging", "warning_window_duration", cfg.Logging.WarningWindowDuration)
 	add("logging", "log_rotation", DerefBool(cfg.Logging.LogRotation))
 	add("logging", "rotation_period", cfg.Logging.RotationPeriod)
@@ -250,8 +252,8 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 
 	// environment
 	add("environment", "enabled", DerefBool(cfg.Environment.Enabled))
-	if cfg.Environment.DocsPath != "" {
-		add("environment", "docs_path", cfg.Environment.DocsPath)
+	if docsPath := DerefStr(cfg.Environment.DocsPath); docsPath != "" {
+		add("environment", "docs_path", docsPath)
 	}
 
 	// skills
@@ -389,6 +391,9 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Notify.CompactionDebug != nil {
 		add("compaction_debug", *agent.Notify.CompactionDebug)
 	}
+	if agent.Notify.WarningMaxPerWindow != nil {
+		add("warning_max_per_window", *agent.Notify.WarningMaxPerWindow)
+	}
 	if agent.Behavior.SteerMode != nil {
 		add("steer_mode", *agent.Behavior.SteerMode)
 	}
@@ -413,8 +418,20 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Debug.MessagesInLog != nil {
 		add("messages_in_log", *agent.Debug.MessagesInLog)
 	}
-	if tg != nil && tg.Display.ReceivedFilesDir != nil && *tg.Display.ReceivedFilesDir != "" {
-		add("platforms.telegram.received_files_dir", *tg.Display.ReceivedFilesDir)
+	if agent.Debug.CacheBustDetect != nil {
+		add("cache_bust_detect", *agent.Debug.CacheBustDetect)
+	}
+	if agent.Debug.CacheBustIdleMinutes != nil {
+		add("cache_bust_idle_minutes", *agent.Debug.CacheBustIdleMinutes)
+	}
+	if agent.Environment.Enabled != nil {
+		add("environment.enabled", *agent.Environment.Enabled)
+	}
+	if agent.Environment.DocsPath != nil {
+		add("environment.docs_path", *agent.Environment.DocsPath)
+	}
+	if tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != "" {
+		add("platforms.telegram.received_files_dir", *tg.ReceivedFilesDir)
 	}
 	if agent.Display.InjectedMessageHeader != nil && *agent.Display.InjectedMessageHeader != "" {
 		add("injected_message_header", *agent.Display.InjectedMessageHeader)
