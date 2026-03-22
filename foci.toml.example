@@ -107,7 +107,9 @@ model = "anthropic/claude-haiku-4-5-20251001"
 #   bot = "myagent"               # bot name; token via "telegram.<bot>" secret
 #   bot_secret = "custom.key"     # override secret key (default: "telegram.<bot>")
 #   facet_bots = ["bot2", "bot3"]  # additional bots for facet
+#   [agents.platforms.access]
 #   allowed_users = ["12345"]     # per-agent Telegram user filter
+#   [agents.platforms.display]
 #   show_tool_calls = "preview"   # off, preview, full
 #   show_thinking = "off"         # off, compact, true
 #   display_width = 44
@@ -119,27 +121,25 @@ model = "anthropic/claude-haiku-4-5-20251001"
 #   id = "discord"
 #   bot = "myagent"               # bot name; token via "discord.<bot>" secret
 #   bot_secret = "custom.key"     # override secret key (default: "discord.<bot>")
+#   [agents.platforms.access]
 #   allowed_users = ["12345"]     # per-agent Discord user filter
+#   require_mention = true        # require @mention in guild channels
+#   [agents.platforms.display]
 #   show_tool_calls = "off"       # off, preview, full
 #   show_thinking = "off"         # off, compact, true
 #   display_width = 60
 #   stream_output = false
 #   stream_interval = "1200ms"
-#   require_mention = true        # require @mention in guild channels
 #   received_files_dir = "received"
 #   [agents.platforms.discord]    # discord-specific fields
 #   guild_id = ""                 # restrict to this guild (empty = all)
 #   auto_thread = true            # create threads for facet sessions
-#   bot_secret = "custom.key"
-#   facet_bots = ["bot2", "bot3"]
-#   allowed_users = ["12345"]
 
 [[agents]]
 id = "myagent"
 # name = "My Agent"                       # human-readable name (default: capitalised id)
 # emoji = "🤖"
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
-# messages_in_log = false                 # log user message content (privacy)
 # skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 
 # Per-agent section overrides (each prefix matches its global TOML section):
@@ -165,6 +165,7 @@ system_files = [
 ]
 # webhooks = {}
 # [agents.debug]
+# messages_in_log = false                 # log user message content (privacy)
 # inject_agent_warnings = "off"           # "all", "errors", "off"
 # inject_chat_warnings = "off"            # "all", "errors", "off"
 
@@ -197,7 +198,9 @@ system_files = [
 # bot = "myagent"                         # bot name (token from "telegram.myagent" secret)
 # bot_secret = ""                         # override secret key
 # facet_bots = []                         # additional bot names for facet
+# [agents.platforms.access]
 # allowed_users = []                      # per-agent allowed users (empty = use global)
+# [agents.platforms.display]
 # show_tool_calls = "preview"             # off, preview, full
 # show_thinking = "off"                   # off, compact, true
 # display_width = 44
@@ -212,9 +215,11 @@ system_files = [
 # compaction_threshold = 0.8
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
-# compaction_notify = true
-# compaction_debug = false                 # per-agent override; global moved to [debug]
 # compaction_preserve_messages = 25
+# [agents.notify]
+# compaction_notify = true
+# [agents.debug]
+# compaction_debug = false                 # per-agent override; global moved to [debug]
 
 # Per-agent blocked paths (replaces global):
 # [[agents.blocked_paths]]
@@ -293,18 +298,21 @@ system_files = [
 
 [[platforms]]
 id = "telegram"
-allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # facet_bots = ["bot2", "bot3"]       # shared facet bot pool
 # facet_session_ttl = "60m"           # idle TTL before bot reclaim ("0" disables)
 # message_queue_size = 64
+[platforms.access]
+allowed_users = ["YOUR_TELEGRAM_USER_ID"]
+# require_mention = true              # require @mention in group chats
+# [platforms.notify]
 # startup_notify = true
+# [platforms.display]
 # show_tool_calls = "off"             # off, preview, full
 # show_thinking = "off"               # off, compact, true
 # stream_output = false
 # stream_interval = "250ms"
 # display_width = 44
 # received_files_dir = ""             # save received files (per-agent overrides)
-# require_mention = true              # require @mention in group chats
 # [platforms.telegram]                # telegram-specific settings
 # long_poll_timeout = "65s"
 # table_wrap_lines = 5
@@ -312,17 +320,20 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 
 # [[platforms]]
 # id = "discord"
-# allowed_users = ["YOUR_DISCORD_USER_ID"]
-# require_mention = true               # require @mention in guild channels
-# startup_notify = true
 # facet_session_ttl = "60m"            # idle TTL before thread reclaim
 # message_queue_size = 64
-# received_files_dir = ""              # save received files (per-agent overrides)
+# [platforms.access]
+# allowed_users = ["YOUR_DISCORD_USER_ID"]
+# require_mention = true               # require @mention in guild channels
+# [platforms.notify]
+# startup_notify = true
+# [platforms.display]
 # show_tool_calls = "off"              # off, preview, full
 # show_thinking = "off"                # off, compact, true
 # stream_output = false
 # stream_interval = "1200ms"
 # display_width = 60
+# received_files_dir = ""              # save received files (per-agent overrides)
 # [platforms.discord]                  # discord-specific settings
 # auto_thread = true                   # create threads for facet sessions
 # guild_id = ""                        # restrict to a single guild (empty = all)
@@ -335,8 +346,6 @@ compaction_threshold = 0.8
 # compaction_min_messages = 4
 # compaction_summary_prompt = "prompts/compaction-summary.md"
 # compaction_handoff_msg = ""
-# compaction_notify = true
-# compaction_debug = false                 # deprecated: moved to [debug] section
 # compaction_preserve_messages = 25
 # max_system_prompt_chars_file = 20000
 # max_system_prompt_chars_total = 80000
