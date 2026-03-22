@@ -100,9 +100,7 @@ func AgentDataPath(workspace, filename string) string {
 func (c *Config) ResolveAllPaths() {
 	c.Logging.EventFile = ResolvePath(c.Logging.EventFile)
 	c.Logging.APIFile = ResolvePath(c.Logging.APIFile)
-	if c.Logging.PayloadFile != "" {
-		c.Logging.PayloadFile = ResolvePath(c.Logging.PayloadFile)
-	}
+	c.Logging.PayloadFile = ResolvePath(c.Logging.PayloadFile)
 	if c.Logging.ArchiveDir != "" {
 		c.Logging.ArchiveDir = ResolvePath(c.Logging.ArchiveDir)
 	}
@@ -110,6 +108,11 @@ func (c *Config) ResolveAllPaths() {
 		c.Logging.ConversationFile = c.DataPath("conversation.db")
 	} else {
 		c.Logging.ConversationFile = ResolvePath(c.Logging.ConversationFile)
+	}
+	if filepath.IsAbs(c.Logging.APIDB) {
+		// Explicit absolute path — use as-is.
+	} else if c.Logging.APIDB != "" {
+		c.Logging.APIDB = c.DataPath(c.Logging.APIDB)
 	}
 	if c.Sessions.Dir == "" {
 		c.Sessions.Dir = c.DataPath("sessions")

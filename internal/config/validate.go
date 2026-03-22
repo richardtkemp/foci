@@ -159,10 +159,8 @@ func validate(cfg *Config) error {
 			return err
 		}
 	}
-	for _, backend := range cfg.Memory.SearchBackends {
-		if backend != "fts5" && backend != "bleve" {
-			return fmt.Errorf("[memory] search_backends: unknown backend %q (must be \"fts5\" or \"bleve\")", backend)
-		}
+	if b := cfg.Memory.SearchBackend; b != "fts5" && b != "bleve" {
+		return fmt.Errorf("[memory] search_backend: unknown backend %q (must be \"fts5\" or \"bleve\")", b)
 	}
 	if err := validateRange(cfg.Memory.ConversationWeight, 0.0, 1.0, "[memory] conversation_weight"); err != nil {
 		return err

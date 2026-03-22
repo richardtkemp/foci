@@ -31,7 +31,7 @@ func testMemoryTool(t *testing.T) (*Tool, string) {
 	t.Cleanup(func() { idx.Close() })
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	return NewMemorySearchTool(backends, []string{"fts5"}, nil), memDir
+	return NewMemorySearchTool(backends, "fts5", nil), memDir
 }
 
 func TestMemorySearch(t *testing.T) {
@@ -51,7 +51,7 @@ func TestMemorySearch(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool2 := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool2 := NewMemorySearchTool(backends, "fts5", nil)
 	params, _ := json.Marshal(map[string]string{"query": "buy"})
 
 	result, err := tool2.Execute(context.Background(), params)
@@ -84,7 +84,7 @@ func TestMemorySearchNoMatches(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 	params, _ := json.Marshal(map[string]string{"query": "xyzzy"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -126,7 +126,7 @@ func TestMemorySearchShowsSource(t *testing.T) {
 	idx.IndexConversation("We talked about the weather yesterday", "main/i0/0", 1)
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 	params, _ := json.Marshal(map[string]string{"query": "weather"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -158,7 +158,7 @@ func TestMemorySearchSortParam(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 
 	// Test with sort=newest
 	params, _ := json.Marshal(map[string]string{"query": "sorting", "sort": "newest"})
@@ -233,7 +233,7 @@ func TestMemorySearchBackendParam(t *testing.T) {
 		"fts5":  fts5Idx,
 		"bleve": bleveIdx,
 	}
-	tool := NewMemorySearchTool(backends, []string{"fts5", "bleve"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 
 	// Tool schema should include "backend" parameter when multiple backends
 	schemaStr := string(tool.Parameters)
@@ -290,7 +290,7 @@ func TestMemorySearchSingleBackendHidesParam(t *testing.T) {
 
 	// Single backend — schema should NOT include "backend" parameter
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 
 	schemaStr := string(tool.Parameters)
 	if strings.Contains(schemaStr, "backend") {
@@ -317,7 +317,7 @@ func TestMemorySearchExcludesCurrentSession(t *testing.T) {
 	idx.IndexConversation("The platypus lays eggs unlike most mammals", otherSession, 2)
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 	params, _ := json.Marshal(map[string]string{"query": "platypus"})
 
 	// Search WITH session context — should exclude current session
@@ -370,7 +370,7 @@ func TestMemorySearchDateRange(t *testing.T) {
 	idx.Reindex()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 
 	// Search without date filter should find both
 	params, _ := json.Marshal(map[string]string{"query": "project"})
@@ -428,7 +428,7 @@ func TestMemorySearchDateRangeInvalid(t *testing.T) {
 	defer idx.Close()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 
 	// Invalid date_from format
 	params, _ := json.Marshal(map[string]string{"query": "test", "date_from": "2024/01/15"})
@@ -472,7 +472,7 @@ func TestMemorySearchBleveRowID(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	backends := map[string]memory.Searcher{"bleve": bleveIdx}
-	tool := NewMemorySearchTool(backends, []string{"bleve"}, nil)
+	tool := NewMemorySearchTool(backends, "bleve", nil)
 	params, _ := json.Marshal(map[string]string{"query": "platypus"})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -551,7 +551,7 @@ func TestMemorySearchDirectLookup(t *testing.T) {
 	idx, _ := memory.NewIndex(filepath.Join(dir, "memory.db"), sources, 0, 0.1)
 	defer idx.Close()
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, convReader)
+	tool := NewMemorySearchTool(backends, "fts5", convReader)
 
 	// Row 3 is "the important message about permissions"
 	params, _ := json.Marshal(map[string]string{"query": fmt.Sprintf("%s#3", session)})
@@ -610,7 +610,7 @@ func TestMemorySearchLinesParam(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	backends := map[string]memory.Searcher{"bleve": bleveIdx}
-	tool := NewMemorySearchTool(backends, []string{"bleve"}, convReader)
+	tool := NewMemorySearchTool(backends, "bleve", convReader)
 
 	// Search with lines=4 to get context
 	params, _ := json.Marshal(map[string]interface{}{
@@ -643,7 +643,7 @@ func TestMemorySearchDirectLookupNoReader(t *testing.T) {
 	defer idx.Close()
 
 	backends := map[string]memory.Searcher{"fts5": idx}
-	tool := NewMemorySearchTool(backends, []string{"fts5"}, nil)
+	tool := NewMemorySearchTool(backends, "fts5", nil)
 
 	params, _ := json.Marshal(map[string]string{"query": "agent/c100/1000#42"})
 	_, err := tool.Execute(context.Background(), params)
