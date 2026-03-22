@@ -15,10 +15,10 @@ Secrets are loaded from `secrets.toml` in the same directory as the config file.
 Config fields fall into three categories based on where they can be set:
 
 1. **Global-only** — set at the top level or in a dedicated section. Not overridable per-agent.
-2. **Global-or-agent** — set globally (in `[defaults]` or a parent section like `[sessions]`, `[tools]`) and optionally overridden per-agent in `[[agents]]`. Documented once below.
+2. **Global-or-agent** — set globally (in a dedicated section like `[agent_loop]`, `[behavior]`, `[sessions]`, `[tools]`, etc.) and optionally overridden per-agent in `[[agents]]`. Documented once below.
 3. **Agent-only** — set only per-agent in `[[agents]]`. No global equivalent.
 
-**Resolution order** for global-or-agent fields: agent value > `[defaults]` value > global section value > hardcoded default.
+**Resolution order** for global-or-agent fields: agent section override > global section value > hardcoded default.
 
 **Unset convention:** Throughout this document, `unset` means the field is not present in TOML. For optional/pointer fields, `unset` triggers inheritance from the parent section. For value fields, the listed default applies. Zero values (`0`, `""`, `[]`) that mean "inherit from global" are noted explicitly in the description.
 
@@ -75,16 +75,16 @@ Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in
 
 ### `[cache]`
 
-Prompt caching strategy and TTL. The `strategy` field is global-only. The `ttl` field is global-or-agent (overridable per-agent via `cache_ttl` in `[defaults]` or `[[agents]]`).
+Prompt caching strategy and TTL. The `strategy` field is global-only. The `ttl` field is global-or-agent (overridable per-agent via `cache_ttl` in `[agent_loop]` or `[[agents]].agent_loop`).
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `strategy` | string | `"auto"` | Cache strategy: `"auto"` (top-level, lets the API decide breakpoints) or `"explicit"` (manual breakpoints on system prompt and second-to-last message). |
-| `ttl` | string | `"1h"` | Anthropic prompt cache TTL. Must be `"5m"` (5 minutes) or `"1h"` (1 hour). Only applied to Anthropic API requests — other providers ignore it. Default `"1h"` maximises cache lifetime and is recommended for most deployments. Per-agent override via `cache_ttl` in `[defaults]` or `[[agents]]`. |
+| `ttl` | string | `"1h"` | Anthropic prompt cache TTL. Must be `"5m"` (5 minutes) or `"1h"` (1 hour). Only applied to Anthropic API requests — other providers ignore it. Default `"1h"` maximises cache lifetime and is recommended for most deployments. Per-agent override via `cache_ttl` in `[agent_loop]` or `[[agents]].agent_loop`. |
 
 ### `[[platforms]]`
 
-Platform configuration. Each entry defines a platform (telegram, discord, etc.) with an `id` field. All fields follow the 5-level cascade: per-agent platform → per-agent → global platform → `[defaults]` → code default.
+Platform configuration. Each entry defines a platform (telegram, discord, etc.) with an `id` field. All fields follow the cascade: per-agent platform → per-agent section → global platform → global section → code default.
 
 ```toml
 [[platforms]]
@@ -698,34 +698,36 @@ Invalid regex patterns are logged as errors and skipped.
 
 Fields that can be set globally and overridden per-agent in `[[agents]]`. Each field is documented once.
 
-**Resolution order:** agent value > `[defaults]` value > global section value > hardcoded default.
+**Resolution order:** agent section override > global section value > hardcoded default.
 
-Set global defaults in `[defaults]`:
+Set global defaults in their respective sections:
 ```toml
-[defaults]
-model = "anthropic/claude-sonnet-4-6"
+[agent_loop]
 max_tool_loops = 50
+
+[system]
 system_files = ["IDENTITY.md", "SOUL.md", "COHERENCE.md"]
 ```
 
-Effort, thinking, and speed defaults are set directly in `[defaults]` or per-agent in `[[agents]]`. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once. Override at runtime via `/effort`, `/thinking`, `/speed`.
+Effort, thinking, and speed are per-model settings in `[models.*]`. At runtime, unsupported params are skipped with a warning; if a model returns a 400 error about thinking/effort/speed, the params are stripped and the request is retried once. Override at runtime via `/effort`, `/thinking`, `/speed`.
 
-Override per-agent in `[[agents]]`:
+Override per-agent using the matching section prefix:
 ```toml
 [[agents]]
 id = "research"
+[agents.agent_loop]
 max_tool_loops = 25
 ```
 
 ### Model & Response
 
-Models are configured via `[groups]` (group assignments with `developer/model_id` strings). See [`[groups]`](#groups). Thinking, effort, and speed are set in `[defaults]` or per-agent in `[[agents]]`. `max_output_tokens` and other fields are set in `[defaults]`.
+Models are configured via `[groups]` (group assignments with `developer/model_id` strings). See [`[groups]`](#groups). Thinking, effort, and speed are per-model settings in `[models.*]`. `max_output_tokens` and other agent loop fields are set in `[agent_loop]`.
 
 | Key | Type | Default | Section | Description |
 |-----|------|---------|---------|-------------|
-| `max_output_tokens` | int | `16384` | `[defaults]` | Maximum tokens in model response. Larger values allow longer responses. |
-| `max_tool_loops` | int | `25` | `[defaults]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
-| `streaming` | bool | `false` | `[defaults]` | Use streaming API. Text and thinking deltas are delivered incrementally. Works with any provider that implements streaming (Anthropic, OpenAI). Anthropic streaming requires `use_sdk = true`. |
+| `max_output_tokens` | int | `16384` | `[agent_loop]` | Maximum tokens in model response. Larger values allow longer responses. |
+| `max_tool_loops` | int | `25` | `[agent_loop]` | Maximum tool iterations per agent turn. Complex tasks may need more. |
+| `streaming` | bool | `false` | `[display]` | Use streaming API. Text and thinking deltas are delivered incrementally. Works with any provider that implements streaming (Anthropic, OpenAI). Anthropic streaming requires `use_sdk = true`. |
 | `cache_ttl` | string | `""` | Anthropic prompt cache TTL override. Must be `"5m"` or `"1h"`. Empty inherits from `[cache] ttl` (default `"1h"`). Only applied to Anthropic API requests. |
 | `system_files` | string[] | see below | Ordered list of workspace files to load as system prompt blocks. |
 
@@ -738,7 +740,7 @@ Missing files are silently skipped. The last file gets the cache breakpoint mark
 
 ### Braindead Warning
 
-Implemented as a built-in nudge rule with an `every_n_tools` trigger. When tool calls reach the threshold, a warning is injected via the nudge system. Subject to the same cooldown and rate-limiting as other nudge rules. Set in `[defaults]`, overridable per-agent.
+Implemented as a built-in nudge rule with an `every_n_tools` trigger. When tool calls reach the threshold, a warning is injected via the nudge system. Subject to the same cooldown and rate-limiting as other nudge rules. Set in `[nudge]`, overridable per-agent via `[[agents]].nudge`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -750,7 +752,7 @@ Implemented as a built-in nudge rule with an `every_n_tools` trigger. When tool 
 
 Mid-turn behavioral reminders extracted from character files. Rules are extracted by an LLM from the agent's character files (system prompt) and stored in `{workspace}/nudge-rules.json` (or `{workspace}/character/nudge-rules.json` if the `character/` directory exists). Rules are re-extracted when character files change (detected via content hash on `/reload` or compaction).
 
-Available in both `[defaults]` and `[[agents]]`.
+Available in both `[nudge]` and `[[agents]].nudge`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -793,7 +795,7 @@ Supported keys: `show_tool_calls`, `show_thinking`, `stream_output`, `display_wi
 
 ### Message Handling
 
-Set in `[defaults]`, overridable per-agent.
+Set in `[agent_loop]`, overridable per-agent via `[[agents]].agent_loop`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -845,35 +847,35 @@ autocompact_before_mana_refresh_preserve = 50     # preserve last 50 messages
 
 ### Tool Behavior
 
-Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-agent. Per-agent `0` inherits from `[tools]`.
+Global defaults set in `[tools]`, overridable per-agent via `[[agents]].tools`. Per-agent `0` inherits from `[tools]`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). Global: `[tools]` or `[defaults]`. |
-| `max_summary_chars` | int | `300000` | Max chars to auto-summarise via the cheap model. Results larger than this are saved to file with hints but skip the summary call. Global: `[tools]` or `[defaults]`. |
-| `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via the cheap model. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]` or `[defaults]`. Per-agent `unset` inherits from `[tools]`. |
-| `max_summary_input_chars` | int | `100000` | Max chars of tool result text embedded in the summary prompt. Larger results are truncated in the prompt (the full output is on disk). Prevents excessive memory use and token cost during auto-summarisation. Global: `[tools]` or `[defaults]`. |
-| `max_image_pixels` | int | `2073600` | Max pixels (width × height) for images before downscaling. Images exceeding this are proportionally resized and re-encoded as JPEG (quality 85). Default is 1920×1080. `0` disables downscaling. Global: `[tools]` or `[defaults]`. |
+| `max_result_chars` | int | `15000` | Max characters in a tool result before writing to a temp file and returning a guard message (no partial content). Global: `[tools]`. |
+| `max_summary_chars` | int | `300000` | Max chars to auto-summarise via the cheap model. Results larger than this are saved to file with hints but skip the summary call. Global: `[tools]`. |
+| `auto_summarise` | bool | `true` | Auto-summarise oversized tool results via the cheap model. `false` skips summary calls entirely (results are saved to file with hints instead). Global: `[tools]`. Per-agent `unset` inherits from `[tools]`. |
+| `max_summary_input_chars` | int | `100000` | Max chars of tool result text embedded in the summary prompt. Larger results are truncated in the prompt (the full output is on disk). Prevents excessive memory use and token cost during auto-summarisation. Global: `[tools]`. |
+| `max_image_pixels` | int | `2073600` | Max pixels (width × height) for images before downscaling. Images exceeding this are proportionally resized and re-encoded as JPEG (quality 85). Default is 1920×1080. `0` disables downscaling. Global: `[tools]`. |
 | `exec_auto_background` | int | `10` | Seconds before auto-backgrounding long-running exec and http_request calls. `0` disables. Global: `[tools]`. |
 | `max_concurrent_spawns` | int | `3` | Max concurrent `spawn` clone sessions per agent. Global: `[tools]`. |
 | `explore_max_depth` | int | `100` | Max tool loops for `spawn` explore mode. Explore agents do multi-step research so this is higher than the default `max_tool_loops`. Global: `[tools]`. |
 | `max_upload_file_size` | int | `52428800` | Max file size in bytes for multipart/form-data file uploads (default 50MB). Global: `[tools]`. |
-| `search_provider` | string | `"brave"` | Web search provider: `"brave"` (client-side, needs `brave_api_key`) or `"anthropic"` (server-side). Brave is recommended: Anthropic's server-side search returns encrypted content blobs that massively inflate token counts (observed: 256k tokens from just two searches) and bypass the tool result size guard entirely. Brave results are client-side, guardable, and far more token-efficient. Global: `[tools]` or `[defaults]`. |
-| `fetch_provider` | string | `"builtin"` | Web fetch provider. See [TOOLS.md](TOOLS.md) for provider details. Global: `[tools]` or `[defaults]`. |
-| `todo_format` | string | `"lines"` | Todo list rendering format: `"lines"` (one item per line) or `"table"` (tabular layout). Global: `[defaults]`. |
+| `search_provider` | string | `"brave"` | Web search provider: `"brave"` (client-side, needs `brave_api_key`) or `"anthropic"` (server-side). Brave is recommended: Anthropic's server-side search returns encrypted content blobs that massively inflate token counts (observed: 256k tokens from just two searches) and bypass the tool result size guard entirely. Brave results are client-side, guardable, and far more token-efficient. Global: `[tools]`. |
+| `fetch_provider` | string | `"builtin"` | Web fetch provider. See [TOOLS.md](TOOLS.md) for provider details. Global: `[tools]`. |
+| `todo_format` | string | `"lines"` | Todo list rendering format: `"lines"` (one item per line) or `"table"` (tabular layout). Global: `[tools]`. |
 
 ### Notifications & Logging
 
-Notification fields (`startup_notify`, `compaction_notify`, `task_list_notify`) are part of `NotifyConfig` and follow the 5-level cascade: per-agent platform → per-agent defaults → global platform (`[[platforms]]`) → `[defaults]` → code default. Debug fields (`inject_agent_warnings`, `inject_chat_warnings`, `compaction_debug`) are part of `DebugConfig` and follow the same cascade: per-agent platform → per-agent `[debug]` → global platform → global `[debug]` → code default.
+Notification fields (`startup_notify`, `compaction_notify`, `task_list_notify`) are part of `NotifyConfig` and follow the cascade: per-agent platform → per-agent `[notify]` → global platform (`[[platforms]]`) → global `[notify]` → code default. Debug fields (`inject_agent_warnings`, `inject_chat_warnings`, `compaction_debug`) are part of `DebugConfig` and follow the same cascade: per-agent platform → per-agent `[debug]` → global platform → global `[debug]` → code default.
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
 | `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
-| `steer_mode` | bool | `true` | `[defaults]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
-| `group_throttle` | string | `""` | `[defaults]` | Group chat throttle window. Non-mention messages accumulate silently and are delivered as a batch when the timer fires. @mentions flush all buffered messages immediately and reset the timer. Go duration format (e.g. `"30s"`, `"1m"`). Empty or `"0"` disables (default). Works with both `require_mention = true` (non-mentions buffered instead of dropped) and `false` (non-mentions buffered instead of processed immediately). |
+| `steer_mode` | bool | `true` | `[behavior]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
+| `group_throttle` | string | `""` | `[behavior]` | Group chat throttle window. Non-mention messages accumulate silently and are delivered as a batch when the timer fires. @mentions flush all buffered messages immediately and reset the timer. Go duration format (e.g. `"30s"`, `"1m"`). Empty or `"0"` disables (default). Works with both `require_mention = true` (non-mentions buffered instead of dropped) and `false` (non-mentions buffered instead of processed immediately). |
 | `stream_output` | bool | `false` | `[[platforms]]` | Stream model output in real-time. Requires `streaming = true` for API-level delta callbacks. |
 | `stream_interval` | string | `"250ms"`/`"1200ms"` | `[[platforms]]` | Duration between message edits during streaming. Default varies by platform. |
-| `facet_no_compact` | bool | `true` | `[defaults]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
+| `facet_no_compact` | bool | `true` | `[sessions]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 
 ### Per-agent platform overrides
 
@@ -883,11 +885,11 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `tts_rate` | float | `0` | `[defaults]` | Per-agent TTS speech rate multiplier. Combined with entry rate: effective = entry.rate × agent.tts_rate (0 treated as 1.0). |
-| `tts` | string | `""` | `[defaults]` | Override TTS entry by id (empty = default entry). |
-| `stt` | string | `""` | `[defaults]` | Override STT entry by id (empty = default entry). |
-| `tts_replacements` | map | `{}` | `[defaults]` | TTS word replacements (merged with `[[tts]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
-| `stt_replacements` | map | `{}` | `[defaults]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
+| `tts_rate` | float | `0` | `[voice]` | Per-agent TTS speech rate multiplier. Combined with entry rate: effective = entry.rate × agent.tts_rate (0 treated as 1.0). |
+| `tts` | string | `""` | `[voice]` | Override TTS entry by id (empty = default entry). |
+| `stt` | string | `""` | `[voice]` | Override STT entry by id (empty = default entry). |
+| `tts_replacements` | map | `{}` | `[voice]` | TTS word replacements (merged with `[[tts]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
+| `stt_replacements` | map | `{}` | `[voice]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 
@@ -974,17 +976,18 @@ Per-agent mana warning thresholds. When set, completely replaces the global `[us
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `webhooks` | map[string]string | `{}` | `[defaults]` | Maps webhook hook IDs to prompt file paths. Used by `POST /webhook/{agent}/{hookid}`. Per-agent merges with global (agent keys override matching global keys; unmatched global keys are preserved). |
+| `webhooks` | map[string]string | `{}` | `[system]` | Maps webhook hook IDs to prompt file paths. Used by `POST /webhook/{agent}/{hookid}`. Per-agent merges with global (agent keys override matching global keys; unmatched global keys are preserved). |
 
 Prompt paths are resolved via `prompts.ResolvePrompt`: bare filenames (e.g. `"deploy.md"`) are searched in `{workspace}/shared/prompts/` then `{shared}/prompts/`; absolute paths are read directly.
 
 ```toml
-[defaults]
+[system]
 webhooks = { new_commit = "new_commit.md", deploy = "deploy.md" }
 
 [[agents]]
 id = "scout"
-webhooks = { alert = "alert-handler.md" }  # adds alert; inherits new_commit, deploy from defaults
+[agents.system]
+webhooks = { alert = "alert-handler.md" }  # adds alert; inherits new_commit, deploy from [system]
 ```
 
 ---
@@ -1030,7 +1033,7 @@ Agent-specific fields:
 | `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"<platform>.<bot>"`. |
 | `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"<platform>.<bot>"`. |
 
-All other fields (display, access, notification, platform-specific) inherit from the global `[[platforms]]` entry with the same ID, then from `[defaults]`, then from code defaults.
+All other fields (display, access, notification, platform-specific) inherit from the global `[[platforms]]` entry with the same ID, then from the relevant global section (`[display]`, `[notify]`, etc.), then from code defaults.
 
 ### Memory (`[[agents.memory.sources]]`)
 

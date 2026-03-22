@@ -823,7 +823,7 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 - **Lazy start:** No goroutine or message until the first delta. If the agent returns no text (e.g. pure tool calls), the stream writer does nothing.
 - **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
 
-**Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[defaults]`, or `stream_output` and `stream_interval` in `[agents.platforms.telegram]`.
+**Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[display]` or `[[platforms]]`, or `stream_output` and `stream_interval` in `[[agents.platforms]]`.
 
 ## Discord Bot (`discord/`)
 
@@ -901,7 +901,7 @@ audio_start{sample_rate} → binary frames (raw PCM) → audio_end
 - `turnMu` — serializes agent turns (prevents concurrent STT→agent→TTS pipelines)
 - `audioMu` — protects recording state and audio buffer
 
-**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → defaults → agent, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
+**Wiring in `main.go`:** Callback-based (`HandlerConfig`) — `ListAgents` reads `agents` map + `agentOrder`, `HandleMessage` calls `inst.ag.HandleMessage` with `voice` trigger, `AgentTTS` resolves per-agent TTS via `resolveTTS(ttsMap, cfg.TTS, agentTTSID, agentRate, replacements)` which also wraps with word replacements (entry → `[voice]` → per-agent `[voice]`, merged). Gate: `cfg.HTTP.WSEnabled && len(sttMap) > 0`.
 
 ## Facet (`telegram/pool.go`, `telegram/manager.go`, `telegram/bot.go`)
 
@@ -971,7 +971,7 @@ Endpoints for external integration. All endpoints accept an optional `agent` par
 - `GET /status` — dispatches `/status` for the specified agent
 - `POST /command` — dispatches slash command (bypasses agent context)
 - `POST /wake` — branch from default session (activity-gated, supports `no_compact`/`no_reset_hook`). Returns 412 if no default session.
-- `POST /webhook/{agent}/{hookid}` — trigger agent turn from external events. `{hookid}` must be declared in the agent's `webhooks` config map (global `[defaults]` merged with per-agent `[[agents]]`). The mapped prompt path is resolved via `prompts.ResolvePrompt()` (agent workspace/prompts → shared workspace/prompts). Reads request body as payload (max 1 MB), combines prompt + payload under a `## Webhook Payload` heading, and sends to the agent's default session. Async (202) by default; `?sync=true` for synchronous response. Supports `?if_active`/`?if_inactive` activity gates. Returns 404 if hookid not in config or prompt file not found, 412 if no default session.
+- `POST /webhook/{agent}/{hookid}` — trigger agent turn from external events. `{hookid}` must be declared in the agent's `webhooks` config map (global `[system]` merged with per-agent `[[agents]].system`). The mapped prompt path is resolved via `prompts.ResolvePrompt()` (agent workspace/prompts → shared workspace/prompts). Reads request body as payload (max 1 MB), combines prompt + payload under a `## Webhook Payload` heading, and sends to the agent's default session. Async (202) by default; `?sync=true` for synchronous response. Supports `?if_active`/`?if_inactive` activity gates. Returns 404 if hookid not in config or prompt file not found, 412 if no default session.
 - `GET /voice` — WebSocket upgrade for real-time voice conversation. Enabled when `[http] ws_enabled = true`.
 - `POST /-/reload-credentials` — hot-reload API credentials from `secrets.toml`. Called by `foci auth` after saving a new token. Only registered when using static token auth (setup-token or API key), not OAuth fallback.
 

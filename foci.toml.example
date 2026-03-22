@@ -29,32 +29,55 @@ model = "anthropic/claude-haiku-4-5-20251001"
 # enable_keepalive = nil                 # nil=auto-detect, true/false=explicit
 # prompt_cache_ttl = ""                  # Go duration, empty=auto-detect
 
-# ─── Defaults ─────────────────────────────────────────────────────────
-# Global defaults inherited by all agents. Per-agent values override these.
-[defaults]
-# streaming = false                        # use streaming API (per-agent override)
+# ─── Agent Loop ──────────────────────────────────────────────────────
+# Settings consumed by the agent loop (HandleTurn). Per-agent: [[agents]].agent_loop.*
+# [agent_loop]
 # max_tool_loops = 25
-# nudge_default_braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
-# nudge_default_braindead_prompt = ""                   # warning text injected at threshold
-# turn_lock_warn_threshold = "3m"         # warn if turn lock wait exceeds this duration
+# max_output_tokens = 16384
 # duplicate_messages = false              # send user text twice per API call
 # batch_partial_assistant_messages = false # accumulate mid-turn text; send on turn end
 # batch_partial_joiner = ""               # separator between batched partial messages
-# inject_agent_warnings = "off"           # inject warnings into agent session: "all", "errors", "off"
-# inject_chat_warnings = "off"            # send warnings as chat notifications: "all", "errors", "off"
+# cache_ttl = ""                          # per-agent Anthropic cache TTL override ("5m" or "1h")
+
+# ─── Behavior ───────────────────────────────────────────────────────
+# Agent behavioral settings. Per-agent: [[agents]].behavior.*
+# [behavior]
 # steer_mode = true                       # inject user messages between tool calls (default true)
-# injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
-# system_files = ["character/SOUL.md"]    # default system file list
-# max_result_chars = 15000               # max chars before writing to file
-# max_summary_chars = 300000             # max chars to auto-summarise
-# auto_summarise = true                  # auto-summarise oversized results
-# summary_context_turns = 5              # recent turns for auto-summary context
-# summary_context_chars = 6000           # max chars of context for auto-summary
-# search_provider = "brave"              # "brave" (default) or "anthropic"
-# fetch_provider = "builtin"            # "builtin" (default) or "anthropic"
-# todo_format = "lines"                 # "lines" (default) or "table"
-# stop_aliases = ["stop", "wait"]         # aliases for /stop command
+# group_throttle = ""                     # group chat throttle window (e.g. "30s", "0" disables)
+# turn_lock_warn_threshold = "3m"         # warn if turn lock wait exceeds this duration
 # enable_stop_aliases = true              # enable stop command aliases
+# stop_aliases = ["stop", "wait"]         # aliases for /stop command
+
+# ─── Notify ─────────────────────────────────────────────────────────
+# Notification settings. Per-agent: [[agents]].notify.*
+# [notify]
+# startup_notify = true
+# compaction_notify = true
+# task_list_notify = true
+
+# ─── Display ────────────────────────────────────────────────────────
+# Display defaults (also settable per-platform in [[platforms]]). Per-agent: [[agents]].display.*
+# [display]
+# streaming = false                        # use streaming API (per-agent override)
+# injected_message_header = "[[ System message ]]"  # header for system messages (empty disables)
+
+# ─── Voice ──────────────────────────────────────────────────────────
+# TTS/STT settings. Per-agent: [[agents]].voice.*
+# [voice]
+# tts = ""                                # override TTS entry by id (empty = default)
+# stt = ""                                # override STT entry by id (empty = default)
+# tts_rate = 0.0                          # speech rate multiplier (0 = use entry rate)
+
+# ─── Nudge ──────────────────────────────────────────────────────────
+# Nudge system settings. Per-agent: [[agents]].nudge.*
+# [nudge]
+# nudge_default_braindead_threshold = 10               # consecutive tool loops before warning (0 = disabled)
+# nudge_default_braindead_prompt = ""                   # warning text injected at threshold
+
+# ─── System ─────────────────────────────────────────────────────────
+# System-level agent settings. Per-agent: [[agents]].system.*
+# [system]
+# system_files = ["character/SOUL.md"]    # default system file list
 # webhooks = { deploy = "deploy.md", alert = "alert.md" }  # webhook hook ID → prompt path
 
 # ─── More model examples ─────────────────────────────────────────────
@@ -115,24 +138,44 @@ model = "anthropic/claude-haiku-4-5-20251001"
 id = "myagent"
 # name = "My Agent"                       # human-readable name (default: capitalised id)
 # emoji = "🤖"
-# streaming = false                        # per-agent streaming override
 # workspace = "/home/foci/myagent"        # working directory (default: $HOME/id)
+# messages_in_log = false                 # log user message content (privacy)
+# skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
+
+# Per-agent section overrides (each prefix matches its global TOML section):
+# [agents.agent_loop]
 # max_tool_loops = 25
 # max_output_tokens = 16384
+# duplicate_messages = false
+# [agents.behavior]
+# turn_lock_warn_threshold = "3m"
+# [agents.nudge]
 # nudge_default_braindead_threshold = 10
 # nudge_default_braindead_prompt = ""
-# turn_lock_warn_threshold = "3m"
-# duplicate_messages = false
+# [agents.notify]
+# startup_notify = true                   # send startup notification (nil = use global)
+# [agents.display]
+# streaming = false                        # per-agent streaming override
+# [agents.voice]
+# tts_rate = 0.0
+[agents.system]
+system_files = [
+  "character/SOUL.md",
+  "character/CRAFT.md",
+]
+# webhooks = {}
+# [agents.debug]
 # inject_agent_warnings = "off"           # "all", "errors", "off"
 # inject_chat_warnings = "off"            # "all", "errors", "off"
-# startup_notify = true                   # send startup notification (nil = use global)
-# tts_rate = 0.0
-# messages_in_log = false                 # log user message content (privacy)
-# branch_orientation_prompt = ""                                  # deprecated: sets both facet and headless
+
+# Per-agent session overrides:
+# [agents.sessions]
 # branch_orientation_facet_prompt = "prompts/orient-facet.md"  # prompt for user-attached facet branches
 # branch_orientation_headless_prompt = "prompts/orient-headless.md"   # prompt for headless branches (cron, spawn, keepalive)
-# skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 # compaction_effort = "high"              # effort for compaction API calls
+
+# Per-agent tool overrides:
+# [agents.tools]
 # exec_auto_background = 10              # seconds before auto-backgrounding exec
 # max_concurrent_spawns = 3
 # explore_max_depth = 100                # max tool loops for explore spawn mode
@@ -145,11 +188,6 @@ id = "myagent"
 # auto_summarise = true                  # override [tools] value
 # summary_context_turns = 5
 # summary_context_chars = 6000
-
-system_files = [
-  "character/SOUL.md",
-  "character/CRAFT.md",
-]
 
 # ─── Agent: Platform overrides ───────────────────────────────────────
 # Per-agent platform settings override global [[platforms]] entries.
