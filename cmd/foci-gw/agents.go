@@ -197,37 +197,37 @@ func setupAgent(p setupParams) *agentInstance {
 		CacheStrategy:                  p.cfg.Cache.Strategy,
 		CacheBustDetect:                p.cfg.Logging.CacheBustDetect,
 		CacheBustIdleThreshold:         time.Duration(p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
-		DuplicateMessages:              config.DerefBool(al.DuplicateMessages),
-		BatchPartialAssistantMessages:  config.DerefBool(al.BatchPartialAssistantMessages),
-		BatchPartialJoiner:             config.DerefStr(al.BatchPartialJoiner),
-		MaxResultChars:                 config.DerefInt(sc.MaxResultChars),
+		DuplicateMessages:              al.DuplicateMessages,
+		BatchPartialAssistantMessages:  al.BatchPartialAssistantMessages,
+		BatchPartialJoiner:             al.BatchPartialJoiner,
+		MaxResultChars:                 sc.MaxResultChars,
 		ToolResultTempDir:              p.cfg.Tools.TempDir,
 		GroupResolver:                  groupResolver,
 		FallbackFunc:                   fallbackFn,
-		SummaryContextTurns:            config.DerefInt(sc.SummaryContextTurns),
-		SummaryContextChars:            config.DerefInt(sc.SummaryContextChars),
-		MaxSummaryChars:                config.DerefInt(sc.MaxSummaryChars),
-		MaxSummaryInputChars:           config.DerefInt(sc.MaxSummaryInputChars),
-		MaxImagePixels:                 config.DerefInt(sc.MaxImagePixels),
-		AutoSummarise:                  sc.AutoSummarise == nil || *sc.AutoSummarise, // default true
+		SummaryContextTurns:            sc.SummaryContextTurns,
+		SummaryContextChars:            sc.SummaryContextChars,
+		MaxSummaryChars:                sc.MaxSummaryChars,
+		MaxSummaryInputChars:           sc.MaxSummaryInputChars,
+		MaxImagePixels:                 sc.MaxImagePixels,
+		AutoSummarise:                  sc.AutoSummarise,
 		SessionIndex:                   p.sessionIndex,
 		UsageClient:                    p.usageClientProvider.GetUsageClient(defaultEndpoint),
 		UsageClientProvider:            p.usageClientProvider,
 		MessageTransforms:              agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
-		CompactionSummaryPromptPath:    config.DerefStr(cpc.CompactionSummaryPrompt),
-		CompactionHandoffMsg:           config.DerefStr(cpc.CompactionHandoffMsg),
-		AutocompactBeforeManaRefresh:          config.DerefBool(cpc.AutocompactBeforeManaRefresh),
-		AutocompactBeforeManaRefreshThreshold: config.DerefStr(cpc.AutocompactBeforeManaRefreshThreshold),
-		AutocompactBeforeManaRefreshFactor:    config.DerefFloat(cpc.AutocompactBeforeManaRefreshFactor),
+		CompactionSummaryPromptPath:    cpc.CompactionSummaryPrompt,
+		CompactionHandoffMsg:           cpc.CompactionHandoffMsg,
+		AutocompactBeforeManaRefresh:          cpc.AutocompactBeforeManaRefresh,
+		AutocompactBeforeManaRefreshThreshold: cpc.AutocompactBeforeManaRefreshThreshold,
+		AutocompactBeforeManaRefreshFactor:    cpc.AutocompactBeforeManaRefreshFactor,
 		AutocompactBeforeManaRefreshPreserve:    cpc.AutocompactBeforeManaRefreshPreserve,
-		AutocompactBeforeManaRefreshPreservePct: config.DerefFloat(cpc.AutocompactBeforeManaRefreshPreservePct),
+		AutocompactBeforeManaRefreshPreservePct: cpc.AutocompactBeforeManaRefreshPreservePct,
 		PromptSearchDirs:               promptSearchDirs,
-		MaxToolLoops:                   config.DerefInt(al.MaxToolLoops),
-		MaxOutputTokens:                config.DerefInt(al.MaxOutputTokens),
-		TurnLockWarnThreshold:          parseDurationDefault(config.DerefStr(bc.TurnLockWarnThreshold), 3*time.Minute),
+		MaxToolLoops:                   al.MaxToolLoops,
+		MaxOutputTokens:                al.MaxOutputTokens,
+		TurnLockWarnThreshold:          parseDurationDefault(bc.TurnLockWarnThreshold, 3*time.Minute),
 		ShowToolCalls:                  resolveShowToolCalls(p.resolved),
-		CacheTTL:                       config.DerefStr(al.CacheTTL),
-		Streaming:                      config.DerefBool(p.resolved.Display.Streaming),
+		CacheTTL:                       al.CacheTTL,
+		Streaming:                      p.resolved.Display.Streaming,
 		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
 		ManaInvestInterval:             parseDurationDefault(config.DerefStr(p.cfg.Mana.InvestInterval), 30*time.Minute),
 	}
@@ -425,12 +425,7 @@ func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.B
 }
 
 // hasMemoryFormation returns true if any memory formation feature is enabled.
-// All three default to true (nil *bool = true), so returns false only when
-// all are explicitly disabled.
-func hasMemoryFormation(mf config.MemoryFormationConfig) bool {
-	intervalEnabled := mf.IntervalEnabled == nil || *mf.IntervalEnabled
-	consolidationEnabled := mf.ConsolidationEnabled == nil || *mf.ConsolidationEnabled
-	sessionEndEnabled := mf.SessionEndEnabled == nil || *mf.SessionEndEnabled
-	compactionEnabled := mf.CompactionEnabled == nil || *mf.CompactionEnabled
-	return intervalEnabled || consolidationEnabled || sessionEndEnabled || compactionEnabled
+// All four default to true, so returns false only when all are explicitly disabled.
+func hasMemoryFormation(mf config.ResolvedMemoryFormation) bool {
+	return mf.IntervalEnabled || mf.ConsolidationEnabled || mf.SessionEndEnabled || mf.CompactionEnabled
 }

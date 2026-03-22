@@ -41,9 +41,9 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 
 	tc := p.resolved.Tools
 	sc := p.resolved.Summary
-	execAutoBg := config.DerefInt(tc.ExecAutoBackground)
-	maxUploadSize := config.DerefInt64(tc.MaxUploadFileSize)
-	spillThreshold := config.DerefInt(sc.MaxResultChars)
+	execAutoBg := tc.ExecAutoBackground
+	maxUploadSize := tc.MaxUploadFileSize
+	spillThreshold := sc.MaxResultChars
 
 	// Inject FOCI_ADDR and FOCI_GW_SOCK so agents can run foci CLI commands
 	// (send, branch, ping, etc.) without sourcing vars manually.
@@ -68,13 +68,13 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 
 	// Only register tmux tool if tmux is available in PATH
 	if _, err := exec.LookPath("tmux"); err == nil {
-		tmuxAutopilot := config.DerefBool(tc.TmuxAutopilot)
-		tmuxWatchThreshold := config.DerefStr(tc.TmuxWatchThreshold)
+		tmuxAutopilot := tc.TmuxAutopilot
+		tmuxWatchThreshold := tc.TmuxWatchThreshold
 		tmuxWatchThresholdSec := 30
 		if d, err := time.ParseDuration(tmuxWatchThreshold); err == nil {
 			tmuxWatchThresholdSec = int(d.Seconds())
 		}
-		tmuxSessionTTLStr := config.DerefStr(tc.TmuxSessionTTL)
+		tmuxSessionTTLStr := tc.TmuxSessionTTL
 		var tmuxSessionTTL time.Duration
 		if tmuxSessionTTLStr != "0" {
 			if d, err := time.ParseDuration(tmuxSessionTTLStr); err == nil {
@@ -87,7 +87,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 
 	// Only register browser tool if enabled
 	bc := p.resolved.Browser
-	if config.DerefBool(bc.Enabled) {
+	if bc.Enabled {
 		browserMgr := tools.NewBrowserManager(&bc)
 		registry.Register(tools.NewBrowserTool(browserMgr))
 	}
@@ -111,7 +111,7 @@ func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDe
 	var serverTools []provider.ToolDef
 
 	tc := p.resolved.Tools
-	searchProvider := config.DerefStr(tc.SearchProvider)
+	searchProvider := tc.SearchProvider
 	if searchProvider == "anthropic" {
 		serverTools = append(serverTools, buildServerTool("web_search_20250305", "web_search",
 			p.cfg.Tools.WebSearchMaxUses, p.cfg.Tools.WebSearchAllowedDomains, p.cfg.Tools.WebSearchBlockedDomains))
@@ -119,7 +119,7 @@ func registerWebTools(registry *tools.Registry, p setupParams) []provider.ToolDe
 		registry.Register(tools.NewWebSearchTool(p.braveKey))
 	}
 
-	fetchProvider := config.DerefStr(tc.FetchProvider)
+	fetchProvider := tc.FetchProvider
 	if fetchProvider == "anthropic" {
 		serverTools = append(serverTools, buildServerTool("web_fetch_20250910", "web_fetch",
 			p.cfg.Tools.WebFetchMaxUses, p.cfg.Tools.WebFetchAllowedDomains, p.cfg.Tools.WebFetchBlockedDomains))
@@ -194,7 +194,7 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 		}
 		log.Infof("main", "agent %q: loaded %d skills", acfg.ID, skillRegistry.Len())
 	}
-	maxRC := config.DerefInt(p.resolved.Summary.MaxResultChars)
+	maxRC := p.resolved.Summary.MaxResultChars
 	checkSkillSizes(skillRegistry, maxRC, acfg.ID)
 
 	return bootstrapResult{
@@ -209,11 +209,8 @@ func setupBootstrapAndSkills(p setupParams, agentStore *secrets.Store) bootstrap
 // Returns the compactor and the resolved compaction threshold.
 func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compaction.Compactor, float64) {
 	cc := p.resolved.Compaction
-	compactionThreshold := config.DerefFloat(cc.CompactionThreshold)
-	if compactionThreshold == 0 {
-		compactionThreshold = 0.8 // code default
-	}
-	preserveMessages := config.DerefInt(cc.CompactionPreserveMessages)
+	compactionThreshold := cc.CompactionThreshold
+	preserveMessages := cc.CompactionPreserveMessages
 	compactor := compaction.NewCompactor(p.sessions, compactionThreshold)
 	compactor.WithConfig(
 		p.cfg.Sessions.CompactionMaxTokens,
@@ -238,7 +235,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 
 	vc := p.resolved.Voice
 	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
-	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
 		if conn == nil {
@@ -258,17 +255,17 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeConfig, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
-	nudgeEnabled := nc.NudgeEnable == nil || *nc.NudgeEnable                       // default true
-	nudgeDefaultEnabled := nc.NudgeDefaultEnable == nil || *nc.NudgeDefaultEnable  // default true
-	braindeadThreshold := config.DerefInt(nc.NudgeDefaultBraindeadThreshold)
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
+	nudgeEnabled := nc.NudgeEnable
+	nudgeDefaultEnabled := nc.NudgeDefaultEnable
+	braindeadThreshold := nc.NudgeDefaultBraindeadThreshold
 	hasBraindead := braindeadThreshold > 0
 	if !nudgeEnabled && !nudgeDefaultEnabled && !hasBraindead {
 		return
 	}
 
 	// Braindead warning rule (fires every N tool calls).
-	braindeadRules := nudge.BraindeadRule(braindeadThreshold, config.DerefStr(nc.NudgeDefaultBraindeadPrompt))
+	braindeadRules := nudge.BraindeadRule(braindeadThreshold, nc.NudgeDefaultBraindeadPrompt)
 
 	// Load character-derived rules.
 	var charRules []nudge.Rule
@@ -296,7 +293,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeC
 				skillSummaries = append(skillSummaries, nudge.SkillSummary{Name: s.Name, Description: s.Description})
 			}
 		}
-		freq := config.DerefInt(nc.NudgeDefaultFrequency)
+		freq := nc.NudgeDefaultFrequency
 		if freq <= 0 {
 			freq = 50
 		}
@@ -304,7 +301,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeC
 	}
 
 	// Scratchpad staleness reminder: fires every N turns, but only when entries exist.
-	scratchpadFreq := config.DerefInt(nc.NudgeDefaultScratchpadFrequency)
+	scratchpadFreq := nc.NudgeDefaultScratchpadFrequency
 	var scratchpadRules []nudge.Rule
 	if nudgeDefaultEnabled && ag.ScratchpadStore != nil && scratchpadFreq > 0 {
 		agentID := ag.AgentID
@@ -316,8 +313,8 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeC
 	}
 
 	// Braindead first (highest effective priority), then character, then defaults, then scratchpad.
-	cooldown := config.DerefInt(nc.NudgeCooldown)
-	maxPerBatch := config.DerefInt(nc.NudgeMaxPerBatch)
+	cooldown := nc.NudgeCooldown
+	maxPerBatch := nc.NudgeMaxPerBatch
 	allRules := append(braindeadRules, append(charRules, append(defaultRules, scratchpadRules...)...)...)
 	if len(allRules) > 0 {
 		rs := &nudge.RuleSet{Rules: allRules}
@@ -325,8 +322,8 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeC
 		log.Infof("main", "agent %s: loaded %d nudge rules (%d braindead, %d character, %d default, %d scratchpad)", acfg.ID, len(allRules), len(braindeadRules), len(charRules), len(defaultRules), len(scratchpadRules))
 	}
 
-	ag.NudgePreAnswerGate = config.DerefBool(nc.NudgePreAnswerGate)
-	preAnswerMinTools := config.DerefInt(nc.NudgePreAnswerMinTools)
+	ag.NudgePreAnswerGate = nc.NudgePreAnswerGate
+	preAnswerMinTools := nc.NudgePreAnswerMinTools
 	if preAnswerMinTools <= 0 {
 		preAnswerMinTools = 2
 	}
@@ -342,7 +339,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.NudgeC
 	if len(fileOrder) == 0 {
 		fileOrder = workspace.DefaultFileOrder
 	}
-	autoExtract := nc.NudgeAutoExtract == nil || *nc.NudgeAutoExtract // default true
+	autoExtract := nc.NudgeAutoExtract
 	nudgeReloadFromDisk := func() {
 		rs, err := nudge.LoadRules(rulesPath)
 		if err != nil {
@@ -440,10 +437,10 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 		return
 	}
 
-	ag.ManaWatcher = agent.NewManaWatcher(config.DerefStr(mc.Name), mc.Thresholds)
+	ag.ManaWatcher = agent.NewManaWatcher(mc.Name, mc.Thresholds)
 	ag.ManaWatcher.SetSessionIndex(p.sessionIndex, p.acfg.ID)
 	ag.ManaWatcher.Restore()
-	ag.ManaWatcher.SetRestoreThreshold(config.DerefInt(mc.RestoreThreshold))
+	ag.ManaWatcher.SetRestoreThreshold(mc.RestoreThreshold)
 }
 
 // registerSpawnTool registers the spawn tool for forking sub-agents.
@@ -464,9 +461,9 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 		FallbackFunc:    fallbackFn,
 		FallbackModel:   groupResolver.PowerfulModel(),
 		FallbackFormat:  defaultFormat,
-		MaxInherit:      config.DerefInt(tc.MaxConcurrentSpawns),
-		MaxToolLoops:    config.DerefInt(al.MaxToolLoops),
-		ExploreMaxDepth: config.DerefInt(tc.ExploreMaxDepth),
+		MaxInherit:      tc.MaxConcurrentSpawns,
+		MaxToolLoops:    al.MaxToolLoops,
+		ExploreMaxDepth: tc.ExploreMaxDepth,
 		Notifier:        notifier,
 		OrientationBuilder: func(branchKey, parentKey string) string {
 			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
@@ -498,7 +495,7 @@ func setupPlatformConnections(
 	var result platformConnectionResult
 
 	reclaimOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	reclaimMfCfg := acfg.MemoryFormation
+	reclaimMfCfg := p.resolved.MemoryFormation
 	reclaimSearchDirs := promptSearchDirs
 
 	vc := p.resolved.Voice
@@ -509,8 +506,8 @@ func setupPlatformConnections(
 		CommandContext: cc,
 		LastMsgStore:   lastMsgStore,
 		AgentConfig:    acfg,
-		STT:            resolveSTT(p.sttMap, p.cfg.STT, config.DerefStr(vc.STT), voice.MergeReplacements(p.cfg.Defaults.Voice.STTReplacements, acfg.Voice.STTReplacements)),
-		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls),
+		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Defaults.Voice.STTReplacements, acfg.Voice.STTReplacements)),
+		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
 			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
 				return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)

@@ -15,8 +15,8 @@ import (
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
 // work branches which set NoResetHook but should still get memory formation).
-func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
-	if mfCfg.SessionEndEnabled != nil && !*mfCfg.SessionEndEnabled {
+func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.ResolvedMemoryFormation, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
+	if !mfCfg.SessionEndEnabled {
 		return
 	}
 
@@ -26,7 +26,7 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(config.DerefStr(mfCfg.SessionEndPrompt), "memory-formation.md", prompts.MemoryFormation(), searchDirs...)
+	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "memory-formation.md", prompts.MemoryFormation(), searchDirs...)
 	if prompt == "" {
 		return
 	}

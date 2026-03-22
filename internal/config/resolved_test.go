@@ -34,22 +34,22 @@ func TestResolve_AgentOverridesGlobal(t *testing.T) {
 
 	rc := Resolve(cfg, acfg)
 
-	if got := DerefInt(rc.Loop.MaxToolLoops); got != 50 {
+	if got := rc.Loop.MaxToolLoops; got != 50 {
 		t.Errorf("Loop.MaxToolLoops = %d, want 50 (agent override)", got)
 	}
-	if got := DerefBool(rc.Behavior.SteerMode); got != true {
+	if got := rc.Behavior.SteerMode; got != true {
 		t.Errorf("Behavior.SteerMode = %v, want true (agent override)", got)
 	}
-	if got := DerefInt(rc.Tools.ExecAutoBackground); got != 60 {
+	if got := rc.Tools.ExecAutoBackground; got != 60 {
 		t.Errorf("Tools.ExecAutoBackground = %d, want 60 (agent override)", got)
 	}
-	if got := DerefFloat(rc.Compaction.CompactionThreshold); got != 0.5 {
+	if got := rc.Compaction.CompactionThreshold; got != 0.5 {
 		t.Errorf("Compaction.CompactionThreshold = %v, want 0.5 (agent override)", got)
 	}
-	if got := DerefBool(rc.Keepalive.Enabled); got != true {
+	if got := rc.Keepalive.Enabled; got != true {
 		t.Errorf("Keepalive.Enabled = %v, want true (agent override)", got)
 	}
-	if got := DerefBool(rc.Browser.Headless); got != false {
+	if got := rc.Browser.Headless; got != false {
 		t.Errorf("Browser.Headless = %v, want false (agent override)", got)
 	}
 }
@@ -71,22 +71,22 @@ func TestResolve_FallsBackToGlobal(t *testing.T) {
 
 	rc := Resolve(cfg, acfg)
 
-	if got := DerefInt(rc.Loop.MaxToolLoops); got != 50 {
+	if got := rc.Loop.MaxToolLoops; got != 50 {
 		t.Errorf("Loop.MaxToolLoops = %d, want 50 (agent)", got)
 	}
-	if got := DerefStr(rc.Loop.CacheTTL); got != "5m" {
+	if got := rc.Loop.CacheTTL; got != "5m" {
 		t.Errorf("Loop.CacheTTL = %q, want \"5m\" (global fallback)", got)
 	}
-	if got := DerefStr(rc.Voice.TTS); got != "groq-playai" {
+	if got := rc.Voice.TTS; got != "groq-playai" {
 		t.Errorf("Voice.TTS = %q, want \"groq-playai\" (global fallback)", got)
 	}
-	if got := DerefBool(rc.Nudge.NudgeEnable); got != true {
+	if got := rc.Nudge.NudgeEnable; got != true {
 		t.Errorf("Nudge.NudgeEnable = %v, want true (global fallback)", got)
 	}
-	if got := DerefBool(rc.Debug.MessagesInLog); got != true {
+	if got := rc.Debug.MessagesInLog; got != true {
 		t.Errorf("Debug.MessagesInLog = %v, want true (global fallback)", got)
 	}
-	if got := DerefStr(rc.Mana.Name); got != "mana" {
+	if got := rc.Mana.Name; got != "mana" {
 		t.Errorf("Mana.Name = %q, want \"mana\" (global fallback)", got)
 	}
 }
@@ -110,7 +110,7 @@ func TestResolve_GroupsMergeMaps(t *testing.T) {
 
 	rc := Resolve(cfg, acfg)
 
-	if got := DerefStr(rc.Groups.Powerful); got != "claude" {
+	if got := rc.Groups.Powerful; got != "claude" {
 		t.Errorf("Groups.Powerful = %q, want \"claude\" (global)", got)
 	}
 	// Calls: agent overrides "code", global's "search" remains
@@ -176,12 +176,12 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Sessions: SessionsConfig{
 			CompactionConfig: CompactionConfig{CompactionThreshold: ptrFloat(0.5)},
 		},
-		Debug:           DebugConfig{MessagesInLog: Ptr(false)},
+		Debug:           DebugConfig{MessagesInLog: Ptr(true)},
 		Groups:          GroupsConfig{Powerful: Ptr("x")},
-		Keepalive:       KeepaliveConfig{Enabled: Ptr(false)},
-		Background:      BackgroundConfig{Enabled: Ptr(false)},
-		MemoryFormation: MemoryFormationConfig{IntervalEnabled: Ptr(false)},
-		Browser:         BrowserConfig{Enabled: Ptr(false)},
+		Keepalive:       KeepaliveConfig{Enabled: Ptr(true)},
+		Background:      BackgroundConfig{Enabled: Ptr(true)},
+		MemoryFormation: MemoryFormationConfig{IntervalEnabled: Ptr(true)},
+		Browser:         BrowserConfig{Enabled: Ptr(true)},
 		Mana:            ManaConfig{Name: Ptr("m")},
 	}
 	acfg := AgentConfig{} // all nil — global values should fill in
@@ -221,10 +221,10 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 	rc := Resolve(cfg, acfg)
 
 	// Base display: agent → global → all platform defaults
-	if got := DerefBool(rc.Display.Streaming); got != true {
+	if got := rc.Display.Streaming; got != true {
 		t.Error("Display.Streaming should be true (global)")
 	}
-	if got := DerefInt(rc.Display.DisplayWidth); got != 80 {
+	if got := rc.Display.DisplayWidth; got != 80 {
 		t.Error("Display.DisplayWidth should be 80 (agent)")
 	}
 
@@ -246,9 +246,10 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 		t.Error("PlatformNotify(telegram).StartupNotify should be true (global fallback)")
 	}
 
-	// Unknown platform falls back to base
-	if got := DerefBool(rc.PlatformNotify("unknown").StartupNotify); got != true {
-		t.Error("PlatformNotify(unknown) should fall back to base Notify")
+	// Unknown platform returns zero NotifyConfig (no fallback to base).
+	// Callers should use rc.Notify for the base resolved config.
+	if pnUnk := rc.PlatformNotify("unknown"); pnUnk.StartupNotify != nil {
+		t.Errorf("PlatformNotify(unknown).StartupNotify should be nil, got %v", *pnUnk.StartupNotify)
 	}
 }
 

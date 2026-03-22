@@ -206,7 +206,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 
 	// Stop aliases (e.g. "wait" → same as "stop")
 	bc := p.resolved.Behavior
-	if bc.EnableStopAliases == nil || *bc.EnableStopAliases { // default true
+	if bc.EnableStopAliases {
 		stopCmd := cmds.Get("stop")
 		for _, alias := range bc.StopAliases {
 			if alias != "stop" {

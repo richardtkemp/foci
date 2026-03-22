@@ -54,8 +54,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			t := true
 			cachingOverride = &t
 			if modelKAInterval > 0 {
-				s := modelKAInterval.String()
-				ka.Interval = &s // override on local copy, not the resolved config
+				ka.Interval = modelKAInterval.String() // override on local copy, not the resolved config
 			}
 		}
 	}
@@ -69,11 +68,11 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	} else if client != nil {
 		cachingAvailable = client.IsCachingAvailable()
 	}
-	kaEnabled := config.DerefBool(ka.Enabled) && cachingAvailable
+	kaEnabled := ka.Enabled && cachingAvailable
 
 	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() })
 	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() })
-	if !kaEnabled && !config.DerefBool(bg.Enabled) && !hasMemoryFormation(mf) && !hasAgentWarnings && !hasChatWarnings {
+	if !kaEnabled && !bg.Enabled && !hasMemoryFormation(mf) && !hasAgentWarnings && !hasChatWarnings {
 		return nil
 	}
 
@@ -161,7 +160,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		})
 	}
 
-	ka.Enabled = &kaEnabled
+	ka.Enabled = kaEnabled
 	runner := periodic.New(periodic.RunnerConfig{
 		AgentID:            acfg.ID,
 		Client:             client,
@@ -195,6 +194,6 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	runner.Start(p.ctx)
 	inst.kaRunner = runner
 
-	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, config.DerefBool(bg.Enabled))
+	log.Infof("main", "agent %q periodic runner started (ka=%v bg=%v)", acfg.ID, kaEnabled, bg.Enabled)
 	return runner
 }

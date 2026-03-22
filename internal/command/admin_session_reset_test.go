@@ -27,15 +27,15 @@ func TestResetCommand_UsesReqSessionKey(t *testing.T) {
 
 	defaultKey := "testagent/c99999/1000000000"
 
-	disabled := false
 	ag := &agent.Agent{}
 	cc := CommandContext{
-		Agent:    ag,
-		Sessions: store,
-		Config:   &config.Config{},
-		AgentConfig: config.AgentConfig{
-			MemoryFormation: config.MemoryFormationConfig{
-				SessionEndEnabled: &disabled,
+		Agent:       ag,
+		Sessions:    store,
+		Config:      &config.Config{},
+		AgentConfig: config.AgentConfig{},
+		Resolved: &config.ResolvedAgentConfig{
+			MemoryFormation: config.ResolvedMemoryFormation{
+				SessionEndEnabled: false,
 			},
 		},
 		Bootstrap:         workspace.NewBootstrap(t.TempDir(), nil),
@@ -63,15 +63,15 @@ func TestResetCommand_FallsBackToDefaultSessionKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	disabled := false
 	ag := &agent.Agent{}
 	cc := CommandContext{
-		Agent:    ag,
-		Sessions: store,
-		Config:   &config.Config{},
-		AgentConfig: config.AgentConfig{
-			MemoryFormation: config.MemoryFormationConfig{
-				SessionEndEnabled: &disabled,
+		Agent:       ag,
+		Sessions:    store,
+		Config:      &config.Config{},
+		AgentConfig: config.AgentConfig{},
+		Resolved: &config.ResolvedAgentConfig{
+			MemoryFormation: config.ResolvedMemoryFormation{
+				SessionEndEnabled: false,
 			},
 		},
 		Bootstrap:         workspace.NewBootstrap(t.TempDir(), nil),

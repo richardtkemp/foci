@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/config"
 	"foci/internal/display"
 	"foci/internal/memory"
 	"foci/internal/tools"
@@ -351,8 +350,8 @@ func TodoCommand() *Command {
 // resolveTodoFormat returns the effective todo list format: "table" or "lines".
 func resolveTodoFormat(cc CommandContext) string {
 	if cc.Resolved != nil {
-		if f := config.DerefStr(cc.Resolved.Tools.TodoFormat); f != "" {
-			return f
+		if cc.Resolved.Tools.TodoFormat != "" {
+			return cc.Resolved.Tools.TodoFormat
 		}
 	}
 	return "lines"

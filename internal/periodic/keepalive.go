@@ -55,9 +55,9 @@ type Runner struct {
 	agentID            string
 	client             provider.Client // for checking caching availability at runtime
 	cachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override
-	kaCfg              config.KeepaliveConfig
-	bgCfg              config.BackgroundConfig
-	mfCfg              config.MemoryFormationConfig
+	kaCfg              config.ResolvedKeepalive
+	bgCfg              config.ResolvedBackground
+	mfCfg              config.ResolvedMemoryFormation
 	manaInvestInterval string // mana invest interval (Go duration string)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
@@ -95,9 +95,9 @@ type RunnerConfig struct {
 	AgentID            string
 	Client             provider.Client // for checking caching availability at runtime
 	CachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override (for OpenAI/DeepSeek)
-	Keepalive          config.KeepaliveConfig
-	Background         config.BackgroundConfig
-	MemoryFormation    config.MemoryFormationConfig
+	Keepalive          config.ResolvedKeepalive
+	Background         config.ResolvedBackground
+	MemoryFormation    config.ResolvedMemoryFormation
 	ManaInvestInterval string                // mana invest interval (Go duration string, default: "30m")
 	PromptSearchDirs   []string              // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
@@ -220,7 +220,7 @@ func (r *Runner) run(ctx context.Context) {
 }
 
 func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
-	if !config.DerefBool(r.kaCfg.Enabled) {
+	if !r.kaCfg.Enabled {
 		return
 	}
 
@@ -245,7 +245,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	interval, ok := r.parseDuration("keepalive interval", config.DerefStr(r.kaCfg.Interval))
+	interval, ok := r.parseDuration("keepalive interval", r.kaCfg.Interval)
 	if !ok {
 		return
 	}
@@ -264,7 +264,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(config.DerefStr(r.kaCfg.Prompt), "keepalive.md", prompts.Keepalive(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.kaCfg.Prompt, "keepalive.md", prompts.Keepalive(), r.promptSearchDirs...)
 
 	r.mu.Lock()
 	r.keepaliveRunning = true
@@ -284,7 +284,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 }
 
 func (r *Runner) maybeBackgroundWork(ctx context.Context) {
-	if !config.DerefBool(r.bgCfg.Enabled) {
+	if !r.bgCfg.Enabled {
 		return
 	}
 
@@ -295,7 +295,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}()
 
-	interval, ok := r.parseDuration("background interval", config.DerefStr(r.bgCfg.Interval))
+	interval, ok := r.parseDuration("background interval", r.bgCfg.Interval)
 	if !ok {
 		return
 	}
@@ -356,7 +356,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}
 
-	promptText := prompts.ResolvePrompt(config.DerefStr(r.bgCfg.Prompt), "background.md", prompts.Background(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background.md", prompts.Background(), r.promptSearchDirs...)
 
 	r.mu.Lock()
 	r.backgroundRunning = true
@@ -377,7 +377,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 }
 
 func (r *Runner) maybeMemoryFormation() {
-	if r.mfCfg.IntervalEnabled != nil && !*r.mfCfg.IntervalEnabled {
+	if !r.mfCfg.IntervalEnabled {
 		return
 	}
 
@@ -388,7 +388,7 @@ func (r *Runner) maybeMemoryFormation() {
 		}
 	}()
 
-	interval, ok := r.parseDuration("memory formation interval", config.DerefStr(r.mfCfg.Interval))
+	interval, ok := r.parseDuration("memory formation interval", r.mfCfg.Interval)
 	if !ok {
 		return
 	}
@@ -431,7 +431,7 @@ func (r *Runner) maybeMemoryFormation() {
 		}
 	}
 
-	promptText := prompts.ResolvePrompt(config.DerefStr(r.mfCfg.IntervalPrompt), "memory-formation.md", prompts.MemoryFormation(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
@@ -454,7 +454,7 @@ func (r *Runner) maybeMemoryFormation() {
 }
 
 func (r *Runner) maybeConsolidation() {
-	if r.mfCfg.ConsolidationEnabled != nil && !*r.mfCfg.ConsolidationEnabled {
+	if !r.mfCfg.ConsolidationEnabled {
 		return
 	}
 
@@ -465,7 +465,7 @@ func (r *Runner) maybeConsolidation() {
 		}
 	}()
 
-	interval, ok := r.parseDuration("consolidation interval", config.DerefStr(r.mfCfg.ConsolidationInterval))
+	interval, ok := r.parseDuration("consolidation interval", r.mfCfg.ConsolidationInterval)
 	if !ok {
 		return
 	}
@@ -503,7 +503,7 @@ func (r *Runner) maybeConsolidation() {
 		}
 	}
 
-	promptText := prompts.ResolvePrompt(config.DerefStr(r.mfCfg.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
