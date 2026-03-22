@@ -86,7 +86,7 @@ func initLogging(cfg *config.Config) func() {
 	}
 
 	// Conversation log (per-agent SQLite databases in workspace .data)
-	if cfg.Logging.ConversationFile != "" {
+	if config.DerefBool(cfg.Logging.ConversationLog) {
 		var agentIDs []string
 		for _, acfg := range cfg.Agents {
 			agentIDs = append(agentIDs, acfg.ID)

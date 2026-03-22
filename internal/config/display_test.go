@@ -45,7 +45,7 @@ func testConfig() (*Config, AgentConfig) {
 			Level:                 "INFO",
 			EventFile:             "/logs/foci.log",
 			APIFile:               "/logs/api.jsonl",
-			ConversationFile:      "/data/conversation.db",
+			ConversationLog:       Ptr(true),
 			WarningWindowDuration: "5m",
 		},
 		Tools: ToolsConfig{

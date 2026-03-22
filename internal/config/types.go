@@ -615,7 +615,7 @@ type LoggingConfig struct {
 	EventFile        string `toml:"event_file" default:"logs/foci.log"`
 	APIFile          string `toml:"api_file"   default:"logs/api.jsonl"`
 	APIDB            string `toml:"api_db" default:"api.db"` // SQLite API call log path (relative to data_dir)
-	ConversationFile string `toml:"conversation_file"`
+	ConversationLog *bool `toml:"conversation_log" default:"true" desc:"enable per-agent conversation logging"`
 
 	FullPayload          bool   `toml:"full_payload"                         desc:"write full API payloads to file"` // write full API payloads to api-payload.jsonl
 	PayloadFile          string `toml:"payload_file"             default:"logs/api-payload.jsonl"` // path for full API payload log
