@@ -223,14 +223,14 @@ func validate(cfg *Config) error {
 	}
 
 	// Resources
-	if err := validateIntRange(cfg.Resources.MemoryWarnPercent, 0, 100, "[resources] memory_warn_percent"); err != nil {
+	if err := validateIntRange(DerefInt(cfg.Resources.MemoryWarnPercent), 0, 100, "[resources] memory_warn_percent"); err != nil {
 		return err
 	}
-	if err := validateIntRange(cfg.Resources.MemoryKillPercent, 0, 100, "[resources] memory_kill_percent"); err != nil {
+	if err := validateIntRange(DerefInt(cfg.Resources.MemoryKillPercent), 0, 100, "[resources] memory_kill_percent"); err != nil {
 		return err
 	}
-	if cfg.Resources.MemoryPressureThreshold < 0 {
-		return fmt.Errorf("[resources] memory_pressure_threshold = %g: must not be negative", cfg.Resources.MemoryPressureThreshold)
+	if DerefFloat(cfg.Resources.MemoryPressureThreshold) < 0 {
+		return fmt.Errorf("[resources] memory_pressure_threshold = %g: must not be negative", DerefFloat(cfg.Resources.MemoryPressureThreshold))
 	}
 
 	// Table-driven duration validation — all fields that must be valid Go durations

@@ -207,10 +207,10 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	}
 	add("debug", "messages_in_log", cfg.Debug.MessagesInLog)
 	add("logging", "cache_bust_detect", cfg.Logging.CacheBustDetect)
-	add("logging", "cache_bust_idle_minutes", cfg.Logging.CacheBustIdleMinutes)
-	add("logging", "warning_max_per_window", cfg.Logging.WarningMaxPerWindow)
+	add("logging", "cache_bust_idle_minutes", DerefInt(cfg.Logging.CacheBustIdleMinutes))
+	add("logging", "warning_max_per_window", DerefInt(cfg.Logging.WarningMaxPerWindow))
 	add("logging", "warning_window_duration", cfg.Logging.WarningWindowDuration)
-	add("logging", "log_rotation", cfg.Logging.LogRotation)
+	add("logging", "log_rotation", DerefBool(cfg.Logging.LogRotation))
 	add("logging", "rotation_period", cfg.Logging.RotationPeriod)
 	add("logging", "retention_period", cfg.Logging.RetentionPeriod)
 	add("logging", "rotation_max_line_size", cfg.Logging.RotationMaxLineSize)
@@ -249,7 +249,7 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("tools", "tmux_watch_threshold", cfg.Tools.TmuxWatchThreshold)
 
 	// environment
-	add("environment", "enabled", cfg.Environment.Enabled)
+	add("environment", "enabled", DerefBool(cfg.Environment.Enabled))
 	if cfg.Environment.DocsPath != "" {
 		add("environment", "docs_path", cfg.Environment.DocsPath)
 	}

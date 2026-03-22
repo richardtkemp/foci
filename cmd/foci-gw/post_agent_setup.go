@@ -90,7 +90,7 @@ func setupTmuxMemoryMonitor(
 
 // setupMemoryGuard starts the system memory guard if enabled. Returns a stop function (may be nil).
 func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx context.Context) func() {
-	if !cfg.Resources.MemoryGuardEnabled {
+	if !config.DerefBool(cfg.Resources.MemoryGuardEnabled) {
 		return nil
 	}
 	guardInterval, _ := time.ParseDuration(cfg.Resources.MemoryGuardInterval)
@@ -100,9 +100,9 @@ func setupMemoryGuard(agents map[string]*agentInstance, cfg *config.Config, ctx 
 	memGuard := resources.NewMemoryGuard(
 		resources.MemoryGuardConfig{
 			Interval:          guardInterval,
-			WarnPercent:       cfg.Resources.MemoryWarnPercent,
-			KillPercent:       cfg.Resources.MemoryKillPercent,
-			PressureThreshold: cfg.Resources.MemoryPressureThreshold,
+			WarnPercent:       config.DerefInt(cfg.Resources.MemoryWarnPercent),
+			KillPercent:       config.DerefInt(cfg.Resources.MemoryKillPercent),
+			PressureThreshold: config.DerefFloat(cfg.Resources.MemoryPressureThreshold),
 		},
 		func(msg string) {
 			for _, inst := range agents {

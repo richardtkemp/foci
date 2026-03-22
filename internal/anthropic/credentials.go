@@ -97,7 +97,7 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 		credHolders:   make(map[string]*tokenHolder),
 		httpTimeout:   httpTimeout,
 		usageCacheTTL: usageCacheTTL,
-		useSDK:        anthropicCfg.UseSDK,
+		useSDK:        config.DerefBool(anthropicCfg.UseSDK),
 	}, nil
 }
 

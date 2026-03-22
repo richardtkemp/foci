@@ -218,14 +218,6 @@ func Load(path string) (*Config, error) {
 		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
 	}
 	setStringDefaultDefined(&cfg.Logging.APIDB, cfg.DataPath("api.db"), md.IsDefined("logging", "api_db"))
-	setIntDefaultDefined(&cfg.Logging.CacheBustIdleMinutes, 10, md.IsDefined("logging", "cache_bust_idle_minutes"))
-	setIntDefaultDefined(&cfg.Logging.WarningMaxPerWindow, 3, md.IsDefined("logging", "warning_max_per_window"))
-	setBoolDefaultDefined(&cfg.Logging.LogRotation, true, md.IsDefined("logging", "log_rotation"))
-	// Resources: bool/int fields needing IsDefined
-	setBoolDefaultDefined(&cfg.Resources.MemoryGuardEnabled, true, md.IsDefined("resources", "memory_guard_enabled"))
-	setIntDefaultDefined(&cfg.Resources.MemoryWarnPercent, 25, md.IsDefined("resources", "memory_warn_percent"))
-	setIntDefaultDefined(&cfg.Resources.MemoryKillPercent, 40, md.IsDefined("resources", "memory_kill_percent"))
-	setFloatDefaultDefined(&cfg.Resources.MemoryPressureThreshold, 10.0, md.IsDefined("resources", "memory_pressure_threshold"))
 	// GoroutineMonitorThreshold: 0 means auto (30 + 25×agents + 5×telegram_bots), computed at startup.
 	if len(cfg.Defaults.Behavior.StopAliases) == 0 {
 		cfg.Defaults.Behavior.StopAliases = []string{"stop", "wait"}
@@ -233,8 +225,6 @@ func Load(path string) (*Config, error) {
 	if len(cfg.Memory.SearchBackends) == 0 {
 		cfg.Memory.SearchBackends = []string{"bleve"}
 	}
-	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
-	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
 
 	// Apply convention-based defaults before path resolution.
 	for i := range cfg.Agents {

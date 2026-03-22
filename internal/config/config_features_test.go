@@ -353,10 +353,10 @@ log_rotation = "false"
 	if tgPlat == nil || tgPlat.Notify.StartupNotify == nil || *tgPlat.Notify.StartupNotify {
 		t.Error("StartupNotify should be false (from \"off\")")
 	}
-	if !cfg.Environment.Enabled {
+	if !DerefBool(cfg.Environment.Enabled) {
 		t.Error("Environment.Enabled should be true (from \"true\")")
 	}
-	if cfg.Logging.LogRotation {
+	if DerefBool(cfg.Logging.LogRotation) {
 		t.Error("Logging.LogRotation should be false (from \"false\")")
 	}
 }
