@@ -109,13 +109,13 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 
 	// Visibility: resolve effective show_tool_calls and show_thinking.
 	dc := rc.Display
-	toolCalls := config.ToolCallOff
-	if dc.ShowToolCalls != nil {
-		toolCalls = *dc.ShowToolCalls
+	toolCalls := config.ToolCallDisplay(dc.ShowToolCalls)
+	if toolCalls == "" {
+		toolCalls = config.ToolCallOff
 	}
-	thinking := config.ShowThinkingOff
-	if dc.ShowThinking != nil {
-		thinking = *dc.ShowThinking
+	thinking := config.ShowThinking(dc.ShowThinking)
+	if thinking == "" {
+		thinking = config.ShowThinkingOff
 	}
 	var toolDesc, thinkDesc string
 	switch toolCalls {

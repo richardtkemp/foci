@@ -21,9 +21,9 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		hasActiveWorkFn: func() int { return activeCount },
@@ -67,9 +67,9 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 		log:                log.NewComponentLogger("keepalive:test"),
 		agentID:            "test",
 		manaInvestInterval: "invalid",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -93,8 +93,9 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.MemoryFormationConfig{
-			Interval: config.Ptr("1h"),
+		mfCfg: config.ResolvedMemoryFormation{
+			IntervalEnabled: true,
+			Interval:        "1h",
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
@@ -123,8 +124,9 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.MemoryFormationConfig{
-			ConsolidationInterval: config.Ptr("1h"),
+		mfCfg: config.ResolvedMemoryFormation{
+			ConsolidationEnabled:  true,
+			ConsolidationInterval: "1h",
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
@@ -152,9 +154,9 @@ func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {

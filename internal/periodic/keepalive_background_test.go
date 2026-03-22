@@ -20,9 +20,9 @@ func TestBackgroundRunningGuard(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second), // idle for 2s (> 1s interval)
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -64,9 +64,9 @@ func TestBackgroundCooldown(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -107,9 +107,9 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-5 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {
@@ -145,9 +145,9 @@ func TestBackgroundNoSelfChaining(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		bgCfg: config.BackgroundConfig{
-			Enabled:  config.Ptr(true),
-			Interval: config.Ptr("1s"),
+		bgCfg: config.ResolvedBackground{
+			Enabled:  true,
+			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		branchFn: func(branchType, promptText string, noCompact bool) {

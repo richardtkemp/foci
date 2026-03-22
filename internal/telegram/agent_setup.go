@@ -142,8 +142,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Resolve behavior config from pre-merged config.
 	bc := p.Resolved.Behavior
-	throttleStr := config.DerefStr(bc.GroupThrottle)
-	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
+	if dur, err := time.ParseDuration(bc.GroupThrottle); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
 			for _, m := range msgs {
 				primaryBot.mq.PushFlushed(m)
@@ -153,8 +152,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		log.Infof("telegram", "agent %q: group throttle = %v", acfg.ID, dur)
 	}
 	primaryBot.mq.SetRequireMention(reqMention)
-	steerMode := bc.SteerMode == nil || *bc.SteerMode // default true
-	primaryBot.mq.SetSteerMode(steerMode)
+	primaryBot.mq.SetSteerMode(bc.SteerMode)
 
 	primaryBot.SetCommandContext(p.CommandContext)
 
@@ -272,7 +270,7 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 
 // ApplyAgentDisplaySettings sets per-agent display settings on a bot
 // using pre-resolved config values.
-func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.DebugConfig, tg *config.PlatformConfig) {
+func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.ResolvedDebug, tg *config.PlatformConfig) {
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
 	if dc.ShowToolCalls != nil {
@@ -309,7 +307,7 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.Deb
 		}
 	}
 
-	d.MessagesInLog = config.DerefBool(dbg.MessagesInLog)
+	d.MessagesInLog = dbg.MessagesInLog
 
 	bot.display = d
 }

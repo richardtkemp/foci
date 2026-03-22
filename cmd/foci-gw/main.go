@@ -242,7 +242,13 @@ Subcommands:
 		}
 
 		// Resolve model from [groups] powerful group
-		groupResolver := config.NewGroupResolver(cfg.Groups, cfg.Models)
+		groupResolver := config.NewGroupResolver(config.ResolvedGroups{
+			Powerful:  config.DerefStr(cfg.Groups.Powerful),
+			Fast:      config.DerefStr(cfg.Groups.Fast),
+			Cheap:     config.DerefStr(cfg.Groups.Cheap),
+			Calls:     cfg.Groups.Calls,
+			Fallbacks: cfg.Groups.Fallbacks,
+		}, cfg.Models)
 		resolved := groupResolver.ResolveGroup(config.GroupPowerful)
 		if resolved == nil {
 			log.Errorf("main", "agent %q: cannot resolve powerful model %q (agent skipped)", acfg.ID, config.DerefStr(cfg.Groups.Powerful))
@@ -341,7 +347,7 @@ Subcommands:
 					inst := agents[id]
 					if strings.HasPrefix(sessionKey, id+"/") {
 						orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt))
-						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.agentCfg.MemoryFormation, func(bk, pk, bt string) string {
+						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.resolved.MemoryFormation, func(bk, pk, bt string) string {
 							return prompts.BuildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
 						}, inst.promptSearchDirs, ctx, false)
 						return

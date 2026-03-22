@@ -170,11 +170,9 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	// Resolve behavior config from pre-merged config.
 	bc := p.Resolved.Behavior
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
-	steerMode := bc.SteerMode == nil || *bc.SteerMode // default true
-	primaryBot.mq.SetSteerMode(steerMode)
+	primaryBot.mq.SetSteerMode(bc.SteerMode)
 
-	throttleStr := config.DerefStr(bc.GroupThrottle)
-	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
+	if dur, err := time.ParseDuration(bc.GroupThrottle); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
 			for _, m := range msgs {
 				primaryBot.mq.PushFlushed(m)
@@ -236,7 +234,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 
 // ApplyAgentDisplaySettings sets per-agent display settings on a bot
 // using pre-resolved config values.
-func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.DebugConfig) {
+func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.ResolvedDebug) {
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
 	if dc.ShowToolCalls != nil {
@@ -263,7 +261,7 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.Deb
 		d.InjectedMessageHeader = *dc.InjectedMessageHeader
 	}
 
-	d.MessagesInLog = config.DerefBool(dbg.MessagesInLog)
+	d.MessagesInLog = dbg.MessagesInLog
 
 	bot.display = d
 }

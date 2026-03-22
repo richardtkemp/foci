@@ -20,14 +20,14 @@ type BrowserManager struct {
 	mu         sync.Mutex
 	browser    *rod.Browser
 	page       *rod.Page
-	config     *config.BrowserConfig
+	config     *config.ResolvedBrowser
 	logger     *log.ComponentLogger
 	snapshot   *Snapshot
 	generation int
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
-func NewBrowserManager(cfg *config.BrowserConfig) *BrowserManager {
+func NewBrowserManager(cfg *config.ResolvedBrowser) *BrowserManager {
 	return &BrowserManager{
 		config: cfg,
 		logger: log.NewComponentLogger("browser"),
@@ -50,12 +50,12 @@ func (m *BrowserManager) Start() error {
 		return nil
 	}
 
-	l := launcher.New().Headless(config.DerefBool(m.config.Headless))
-	if ep := config.DerefStr(m.config.ExecutablePath); ep != "" {
-		l = l.Bin(ep)
+	l := launcher.New().Headless(m.config.Headless)
+	if m.config.ExecutablePath != "" {
+		l = l.Bin(m.config.ExecutablePath)
 	}
-	if ud := config.DerefStr(m.config.UserDataDir); ud != "" && !config.DerefBool(m.config.Incognito) {
-		l = l.UserDataDir(ud)
+	if m.config.UserDataDir != "" && !m.config.Incognito {
+		l = l.UserDataDir(m.config.UserDataDir)
 	}
 
 	url, err := l.Launch()
@@ -64,7 +64,7 @@ func (m *BrowserManager) Start() error {
 	}
 
 	m.browser = rod.New().ControlURL(url).MustConnect()
-	m.logger.Infof("Browser started (headless=%v, incognito=%v)", config.DerefBool(m.config.Headless), config.DerefBool(m.config.Incognito))
+	m.logger.Infof("Browser started (headless=%v, incognito=%v)", m.config.Headless, m.config.Incognito)
 	return nil
 }
 
@@ -123,7 +123,7 @@ func (m *BrowserManager) getPage() (*rod.Page, error) {
 
 // Timeout returns the configured browser timeout.
 func (m *BrowserManager) Timeout() time.Duration {
-	return ResolveTimeout(config.DerefInt(m.config.TimeoutSec), TimeoutConfig{DefaultSec: 30})
+	return ResolveTimeout(m.config.TimeoutSec, TimeoutConfig{DefaultSec: 30})
 }
 
 func (m *BrowserManager) withTimeout(page *rod.Page, timeoutMs int) *rod.Page {
@@ -168,14 +168,8 @@ func (m *BrowserManager) LatestSnapshot() *Snapshot {
 // WaitDOMStable waits for the DOM to stabilize by comparing page content
 // hashes at intervals. Uses config dom_stable_sec and dom_stable_diff.
 func (m *BrowserManager) WaitDOMStable(page *rod.Page) {
-	interval := config.DerefFloat(m.config.DOMStableSec)
-	if interval <= 0 {
-		interval = 1.0
-	}
-	diff := config.DerefFloat(m.config.DOMStableDiff)
-	if diff <= 0 {
-		diff = 0.2
-	}
+	interval := m.config.DOMStableSec
+	diff := m.config.DOMStableDiff
 	_ = page.WaitDOMStable(time.Duration(interval*float64(time.Second)), diff)
 }
 

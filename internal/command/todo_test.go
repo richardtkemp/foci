@@ -431,7 +431,7 @@ func TestTodoListTableFormat(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
 	cc.Resolved = &config.ResolvedAgentConfig{
-		Tools: config.ToolConfig{TodoFormat: config.Ptr[string]("table")},
+		Tools: config.ResolvedTool{TodoFormat: "table"},
 	}
 	cmd := TodoCommand()
 
@@ -468,7 +468,7 @@ func TestTodoListGlobalFormat(t *testing.T) {
 	store := newTestTodoStore(t)
 	cc := newTestCC(store)
 	cc.Resolved = &config.ResolvedAgentConfig{
-		Tools: config.ToolConfig{TodoFormat: config.Ptr[string]("table")},
+		Tools: config.ResolvedTool{TodoFormat: "table"},
 	}
 	cmd := TodoCommand()
 

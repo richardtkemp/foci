@@ -52,8 +52,8 @@ func maxInjectionLevel(rc *config.ResolvedAgentConfig, cfg *config.Config, extra
 // resolveShowToolCalls resolves the effective show_tool_calls value from
 // the pre-resolved display config.
 func resolveShowToolCalls(rc *config.ResolvedAgentConfig) string {
-	if rc.Display.ShowToolCalls != nil {
-		return string(*rc.Display.ShowToolCalls)
+	if rc.Display.ShowToolCalls != "" {
+		return rc.Display.ShowToolCalls
 	}
 	return string(config.ToolCallOff)
 }
