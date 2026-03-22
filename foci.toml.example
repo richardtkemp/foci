@@ -317,8 +317,7 @@ system_files = [
 # API keys go in secrets.toml as openai.api_key.
 # Also works with OpenAI-compatible endpoints (OpenRouter, Together, Groq, etc.)
 # Model params (reasoning/thinking) are now per-model in [models.*].
-[openai]
-# base_url = ""                           # API base URL (empty = sdk default; override for OpenRouter etc.)
+# base_url is configured per-endpoint via [endpoints.openai].url (or custom endpoints).
 
 # ─── Platforms ────────────────────────────────────────────────────────
 # Platforms are configured as [[platforms]] array entries. Each entry has

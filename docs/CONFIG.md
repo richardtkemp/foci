@@ -61,13 +61,7 @@ Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-
 
 ### `[openai]`
 
-OpenAI API configuration. Also works with OpenAI-compatible endpoints (OpenRouter, Together, Groq, etc.) via `base_url`.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `base_url` | string | `""` | API base URL. Empty uses the SDK default (`https://api.openai.com`). Override for OpenRouter (`https://openrouter.ai/api/v1`), Together, Groq, local LLMs, etc. |
-
-Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[groups]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
+OpenAI API configuration. No fields — `base_url` is configured per-endpoint via `[endpoints.openai].url` (or custom endpoints). Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[groups]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
 ### `[cache]`
 

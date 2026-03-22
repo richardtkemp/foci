@@ -54,7 +54,6 @@ var globalSections = map[string]reflect.Type{
 	"environment":      reflect.TypeOf(EnvironmentConfig{}),
 	"anthropic":        reflect.TypeOf(AnthropicConfig{}),
 	"gemini":           reflect.TypeOf(GeminiConfig{}),
-	"openai":           reflect.TypeOf(OpenAIConfig{}),
 	"platforms":        reflect.TypeOf(PlatformConfig{}),
 	"resources":        reflect.TypeOf(ResourcesConfig{}),
 }

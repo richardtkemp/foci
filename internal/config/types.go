@@ -381,10 +381,6 @@ type GeminiConfig struct {
 	CacheTTL string `toml:"cache_ttl" default:"1h" desc:"context cache TTL" type:"duration"` // context cache TTL (default "1h", "0" disables)
 }
 
-type OpenAIConfig struct {
-	BaseURL string `toml:"base_url" desc:"API base URL (empty = sdk default)"` // override for OpenRouter/Together/etc.
-}
-
 type AnthropicConfig struct {
 	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s" desc:"HTTP timeout for usage API calls" type:"duration"`
 	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m" desc:"cache TTL for usage API responses" type:"duration"`
@@ -861,7 +857,6 @@ type Config struct {
 	Agents             []AgentConfig             `toml:"agents"`    // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`
 	Gemini             GeminiConfig              `toml:"gemini"`
-	OpenAI             OpenAIConfig              `toml:"openai"`
 	Platforms          []PlatformConfig          `toml:"platforms"`
 	Sessions           SessionsConfig            `toml:"sessions"`
 	Memory             MemoryConfig              `toml:"memory"`
