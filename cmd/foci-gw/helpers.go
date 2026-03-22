@@ -79,7 +79,7 @@ func maxInjectionLevel(acfg config.AgentConfig, cfg *config.Config, extract func
 func resolveDisplay(acfg config.AgentConfig, cfg *config.Config) config.DisplayConfig {
 	layers := []config.DisplayConfig{acfg.Display, cfg.Display}
 	for _, p := range cfg.Platforms {
-		layers = append(layers, p.DisplayConfig)
+		layers = append(layers, p.Display)
 	}
 	return config.Merge(layers...)
 }

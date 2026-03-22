@@ -49,6 +49,7 @@ enable_stop_aliases = false
 
 [[platforms]]
 id = "telegram"
+[platforms.notify]
 startup_notify = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -64,7 +65,7 @@ startup_notify = false
 	if tgPlat == nil {
 		t.Fatal("Platform(telegram) = nil")
 	}
-	if tgPlat.StartupNotify == nil || *tgPlat.StartupNotify {
+	if tgPlat.Notify.StartupNotify == nil || *tgPlat.Notify.StartupNotify {
 		t.Error("StartupNotify should be false when explicitly set")
 	}
 }
@@ -251,6 +252,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[platforms]]
 id = "telegram"
+[platforms.display]
 show_tool_calls = "full"
 `), 0644)
 		cfg, err := Load(path)
@@ -258,7 +260,7 @@ show_tool_calls = "full"
 			t.Fatalf("Load: %v", err)
 		}
 		tgPlat := cfg.Platform("telegram")
-		if tgPlat == nil || tgPlat.ShowToolCalls == nil || *tgPlat.ShowToolCalls != ToolCallFull {
+		if tgPlat == nil || tgPlat.Display.ShowToolCalls == nil || *tgPlat.Display.ShowToolCalls != ToolCallFull {
 			t.Errorf("Platform(telegram).ShowToolCalls want %q", ToolCallFull)
 		}
 	})
@@ -276,8 +278,8 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 			t.Fatalf("Load: %v", err)
 		}
 		// Without ApplyProviderDefaults, there are no platform entries
-		if tg := cfg.Platform("telegram"); tg != nil && tg.ShowToolCalls != nil {
-			t.Errorf("Platform(telegram).ShowToolCalls should be nil without provider defaults, got %v", *tg.ShowToolCalls)
+		if tg := cfg.Platform("telegram"); tg != nil && tg.Display.ShowToolCalls != nil {
+			t.Errorf("Platform(telegram).ShowToolCalls should be nil without provider defaults, got %v", *tg.Display.ShowToolCalls)
 		}
 	})
 
@@ -331,6 +333,7 @@ enable_stop_aliases = "on"
 
 [[platforms]]
 id = "telegram"
+[platforms.notify]
 startup_notify = "off"
 
 [environment]
@@ -347,7 +350,7 @@ log_rotation = "false"
 		t.Error("EnableStopAliases should be true (from \"on\")")
 	}
 	tgPlat := cfg.Platform("telegram")
-	if tgPlat == nil || tgPlat.StartupNotify == nil || *tgPlat.StartupNotify {
+	if tgPlat == nil || tgPlat.Notify.StartupNotify == nil || *tgPlat.Notify.StartupNotify {
 		t.Error("StartupNotify should be false (from \"off\")")
 	}
 	if !cfg.Environment.Enabled {

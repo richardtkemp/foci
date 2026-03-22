@@ -25,7 +25,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
+						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
 			},
@@ -39,7 +39,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
+						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
 			},
@@ -52,7 +52,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &falseVal},
+						Display: config.DisplayConfig{StreamOutput: &falseVal},
 					}},
 				}},
 			},
@@ -65,7 +65,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &falseVal},
+						Display: config.DisplayConfig{StreamOutput: &falseVal},
 					}},
 				}},
 			},
@@ -79,7 +79,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					Display: config.DisplayConfig{Streaming: &trueVal},
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
+						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
 			},
@@ -94,7 +94,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 					Display: config.DisplayConfig{Streaming: &falseVal},
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
-						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
+						Display: config.DisplayConfig{StreamOutput: &trueVal},
 					}},
 				}},
 			},

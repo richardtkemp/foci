@@ -42,19 +42,19 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 	// Only show agent override options when the global fallback isn't covering them.
 	globalTg := cfg.Platform("telegram")
-	if agent.Notify.StartupNotify == nil && (globalTg == nil || globalTg.StartupNotify == nil || !*globalTg.StartupNotify) {
+	if agent.Notify.StartupNotify == nil && (globalTg == nil || globalTg.Notify.StartupNotify == nil || !*globalTg.Notify.StartupNotify) {
 		opts = append(opts, availableOption{"agent", "startup_notify", "(platform)", "send startup notification (nil = use platform)"})
 	}
-	if agent.Display.ShowToolCalls == nil && (globalTg == nil || globalTg.ShowToolCalls == nil || *globalTg.ShowToolCalls == ToolCallOff) {
+	if agent.Display.ShowToolCalls == nil && (globalTg == nil || globalTg.Display.ShowToolCalls == nil || *globalTg.Display.ShowToolCalls == ToolCallOff) {
 		opts = append(opts, availableOption{"agent", "show_tool_calls", "(platform)", "tool call display mode: off, preview, full"})
 	}
-	if agent.Display.ShowThinking == nil && (globalTg == nil || globalTg.ShowThinking == nil || *globalTg.ShowThinking == ShowThinkingOff) {
+	if agent.Display.ShowThinking == nil && (globalTg == nil || globalTg.Display.ShowThinking == nil || *globalTg.Display.ShowThinking == ShowThinkingOff) {
 		opts = append(opts, availableOption{"agent", "show_thinking", "(platform)", "thinking display mode: off, compact, true"})
 	}
-	if tg == nil || tg.DisplayWidth == nil {
+	if tg == nil || tg.Display.DisplayWidth == nil {
 		dw := 44
-		if globalTg != nil && globalTg.DisplayWidth != nil {
-			dw = *globalTg.DisplayWidth
+		if globalTg != nil && globalTg.Display.DisplayWidth != nil {
+			dw = *globalTg.Display.DisplayWidth
 		}
 		opts = append(opts, availableOption{"agent.platforms.telegram", "display_width", fmt.Sprintf("%d", dw), "display width for dividers"})
 	}
@@ -72,13 +72,13 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 		}
 		opts = append(opts, availableOption{"agent.platforms.telegram", "table_style", fmt.Sprintf("%q", ts), "table style: pretty or markdown"})
 	}
-	hasRecvDir := tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != ""
-	globalHasRecvDir := globalTg != nil && globalTg.ReceivedFilesDir != nil && *globalTg.ReceivedFilesDir != ""
+	hasRecvDir := tg != nil && tg.Display.ReceivedFilesDir != nil && *tg.Display.ReceivedFilesDir != ""
+	globalHasRecvDir := globalTg != nil && globalTg.Display.ReceivedFilesDir != nil && *globalTg.Display.ReceivedFilesDir != ""
 	if !hasRecvDir && !globalHasRecvDir {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "received_files_dir", "\"\"", "save received files to this directory"})
 	}
-	globalHasAllowed := globalTg != nil && len(globalTg.AllowedUsers) > 0
-	if (tg == nil || len(tg.AllowedUsers) == 0) && !globalHasAllowed {
+	globalHasAllowed := globalTg != nil && len(globalTg.Access.AllowedUsers) > 0
+	if (tg == nil || len(tg.Access.AllowedUsers) == 0) && !globalHasAllowed {
 		opts = append(opts, availableOption{"agent.platforms.telegram", "allowed_users", "(global)", "per-agent allowed Telegram user IDs (empty = use global)"})
 	}
 

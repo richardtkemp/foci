@@ -293,8 +293,8 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 		} else {
 			// Check platforms for default
 			for _, p := range cc.Config.Platforms {
-				if p.ShowToolCalls != nil {
-					effective = string(*p.ShowToolCalls)
+				if p.Display.ShowToolCalls != nil {
+					effective = string(*p.Display.ShowToolCalls)
 					break
 				}
 			}
@@ -310,8 +310,8 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			effective = string(*cc.AgentConfig.Display.ShowThinking)
 		} else {
 			for _, p := range cc.Config.Platforms {
-				if p.ShowThinking != nil {
-					effective = string(*p.ShowThinking)
+				if p.Display.ShowThinking != nil {
+					effective = string(*p.Display.ShowThinking)
 					break
 				}
 			}
@@ -329,7 +329,7 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 		effective = "off"
 		// Check agent platform config for stream_output
 		for _, p := range cc.AgentConfig.Platforms {
-			if p.StreamOutput != nil && *p.StreamOutput {
+			if p.Display.StreamOutput != nil && *p.Display.StreamOutput {
 				effective = "on"
 				break
 			}
@@ -341,10 +341,10 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "44"
-		if tg := cc.AgentConfig.Platform("telegram"); tg != nil && tg.DisplayWidth != nil {
-			effective = fmt.Sprintf("%d", *tg.DisplayWidth)
-		} else if gp := cc.Config.Platform("telegram"); gp != nil && gp.DisplayWidth != nil {
-			effective = fmt.Sprintf("%d", *gp.DisplayWidth)
+		if tg := cc.AgentConfig.Platform("telegram"); tg != nil && tg.Display.DisplayWidth != nil {
+			effective = fmt.Sprintf("%d", *tg.Display.DisplayWidth)
+		} else if gp := cc.Config.Platform("telegram"); gp != nil && gp.Display.DisplayWidth != nil {
+			effective = fmt.Sprintf("%d", *gp.Display.DisplayWidth)
 		}
 		return "", effective
 	}

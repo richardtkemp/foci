@@ -212,7 +212,7 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 			cfg := &config.Config{
 				Platforms: []config.PlatformConfig{{
 					ID: "telegram",
-					DisplayConfig: config.DisplayConfig{
+					Display: config.DisplayConfig{
 						ShowToolCalls: &tt.toolCalls,
 						ShowThinking:  &tt.thinking,
 					},
@@ -249,7 +249,7 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 	cfg := &config.Config{
 		Platforms: []config.PlatformConfig{{
 			ID: "telegram",
-			DisplayConfig: config.DisplayConfig{
+			Display: config.DisplayConfig{
 				ShowToolCalls: config.Ptr(config.ToolCallOff),
 				ShowThinking:  config.Ptr(config.ShowThinkingOff),
 			},

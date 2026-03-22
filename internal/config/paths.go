@@ -125,11 +125,11 @@ func (c *Config) ResolveAllPaths() {
 		c.Environment.DocsPath = ResolvePath(c.Environment.DocsPath)
 	}
 	for i := range c.Platforms {
-		ResolvePathPtr(c.Platforms[i].ReceivedFilesDir)
+		ResolvePathPtr(c.Platforms[i].Display.ReceivedFilesDir)
 	}
 	for i := range c.Agents {
 		for j := range c.Agents[i].Platforms {
-			ResolvePathPtr(c.Agents[i].Platforms[j].ReceivedFilesDir)
+			ResolvePathPtr(c.Agents[i].Platforms[j].Display.ReceivedFilesDir)
 		}
 	}
 }

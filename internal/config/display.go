@@ -86,11 +86,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	}
 	// Platform display settings
 	for _, p := range cfg.Platforms {
-		if p.ShowToolCalls != nil {
-			add("platforms."+p.ID, "show_tool_calls", string(*p.ShowToolCalls))
+		if p.Display.ShowToolCalls != nil {
+			add("platforms."+p.ID, "show_tool_calls", string(*p.Display.ShowToolCalls))
 		}
-		if p.ShowThinking != nil {
-			add("platforms."+p.ID, "show_thinking", string(*p.ShowThinking))
+		if p.Display.ShowThinking != nil {
+			add("platforms."+p.ID, "show_thinking", string(*p.Display.ShowThinking))
 		}
 	}
 	if cfg.Display.InjectedMessageHeader != nil && *cfg.Display.InjectedMessageHeader != "" {
@@ -126,22 +126,22 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	// platforms
 	for _, p := range cfg.Platforms {
 		sec := "platforms." + p.ID
-		if len(p.AllowedUsers) > 0 {
-			add(sec, "allowed_users", p.AllowedUsers)
+		if len(p.Access.AllowedUsers) > 0 {
+			add(sec, "allowed_users", p.Access.AllowedUsers)
 		}
 		if len(p.FacetBots) > 0 {
 			add(sec, "facet_bots", p.FacetBots)
 		}
-		if p.StartupNotify != nil {
-			add(sec, "startup_notify", *p.StartupNotify)
+		if p.Notify.StartupNotify != nil {
+			add(sec, "startup_notify", *p.Notify.StartupNotify)
 		}
 		add(sec, "facet_session_ttl", p.FacetSessionTTL)
 		add(sec, "message_queue_size", p.MessageQueueSize)
-		if p.ReceivedFilesDir != nil && *p.ReceivedFilesDir != "" {
-			add(sec, "received_files_dir", *p.ReceivedFilesDir)
+		if p.Display.ReceivedFilesDir != nil && *p.Display.ReceivedFilesDir != "" {
+			add(sec, "received_files_dir", *p.Display.ReceivedFilesDir)
 		}
-		if p.DisplayWidth != nil {
-			add(sec, "display_width", *p.DisplayWidth)
+		if p.Display.DisplayWidth != nil {
+			add(sec, "display_width", *p.Display.DisplayWidth)
 		}
 		if p.Telegram != nil {
 			add(sec, "long_poll_timeout", p.Telegram.LongPollTimeout)
@@ -401,8 +401,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Display.ShowThinking != nil {
 		add("show_thinking", string(*agent.Display.ShowThinking))
 	}
-	if tg != nil && tg.DisplayWidth != nil {
-		add("platforms.telegram.display_width", *tg.DisplayWidth)
+	if tg != nil && tg.Display.DisplayWidth != nil {
+		add("platforms.telegram.display_width", *tg.Display.DisplayWidth)
 	}
 	if tg != nil && tg.Telegram != nil && tg.Telegram.TableWrapLines != nil {
 		add("platforms.telegram.table_wrap_lines", *tg.Telegram.TableWrapLines)
@@ -413,14 +413,14 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Debug.MessagesInLog != nil {
 		add("messages_in_log", *agent.Debug.MessagesInLog)
 	}
-	if tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != "" {
-		add("platforms.telegram.received_files_dir", *tg.ReceivedFilesDir)
+	if tg != nil && tg.Display.ReceivedFilesDir != nil && *tg.Display.ReceivedFilesDir != "" {
+		add("platforms.telegram.received_files_dir", *tg.Display.ReceivedFilesDir)
 	}
 	if agent.Display.InjectedMessageHeader != nil && *agent.Display.InjectedMessageHeader != "" {
 		add("injected_message_header", *agent.Display.InjectedMessageHeader)
 	}
-	if tg != nil && len(tg.AllowedUsers) > 0 {
-		add("platforms.telegram.allowed_users", tg.AllowedUsers)
+	if tg != nil && len(tg.Access.AllowedUsers) > 0 {
+		add("platforms.telegram.allowed_users", tg.Access.AllowedUsers)
 	}
 	_ = tg // suppress unused warning if no telegram-specific fields above
 	if agent.Sessions.CompactionPreserveMessages != nil {

@@ -96,10 +96,10 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 func resolveDiscordAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
 	var agentUsers, globalUsers []string
 	if p := acfg.Platform("discord"); p != nil {
-		agentUsers = p.AllowedUsers
+		agentUsers = p.Access.AllowedUsers
 	}
 	if gp := cfg.Platform("discord"); gp != nil {
-		globalUsers = gp.AllowedUsers
+		globalUsers = gp.Access.AllowedUsers
 	}
 	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
 }
@@ -154,8 +154,8 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	requireMention := true
-	if dc.RequireMention != nil {
-		requireMention = *dc.RequireMention
+	if dc.Access.RequireMention != nil {
+		requireMention = *dc.Access.RequireMention
 	}
 	primaryBot.requireMention = requireMention
 

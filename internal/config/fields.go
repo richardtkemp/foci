@@ -56,8 +56,8 @@ var fieldConstraints = map[string]Constraint{
 	"logging.level":            {Choices: []string{"DEBUG", "INFO", "WARN", "ERROR"}},
 	"cache.strategy":           {Choices: []string{"auto", "explicit"}},
 	"cache.ttl":                {Choices: []string{"5m", "1h"}},
-	"platforms.show_tool_calls":        {Choices: []string{"off", "preview", "full"}},
-	"platforms.show_thinking":          {Choices: []string{"off", "compact", "true"}},
+	"platforms.display.show_tool_calls":        {Choices: []string{"off", "preview", "full"}},
+	"platforms.display.show_thinking":          {Choices: []string{"off", "compact", "true"}},
 	"platforms.telegram.table_style":   {Choices: []string{"pretty", "markdown"}},
 	"tools.todo_format":        {Choices: []string{"lines", "table"}},
 	"agent.display.show_tool_calls":     {Choices: []string{"off", "preview", "full"}},
@@ -189,11 +189,11 @@ var configFields = []ConfigField{
 	{"debug", "inject_agent_warnings", FieldString, "inject warnings into agent session: all, errors, off"},
 	{"debug", "inject_chat_warnings", FieldString, "send warnings as chat notifications: all, errors, off"},
 	{"debug", "compaction_debug", FieldBool, "send compaction summary as file attachment"},
-	{"platforms", "show_tool_calls", FieldString, "tool call display: off, preview, full"},
-	{"platforms", "show_thinking", FieldString, "thinking display: off, compact, true"},
+	{"platforms", "display.show_tool_calls", FieldString, "tool call display: off, preview, full"},
+	{"platforms", "display.show_thinking", FieldString, "thinking display: off, compact, true"},
 	{"behavior", "steer_mode", FieldBool, "inject user messages between tool calls"},
-	{"platforms", "stream_output", FieldBool, "stream model output"},
-	{"platforms", "stream_interval", FieldDuration, "interval between stream edits"},
+	{"platforms", "display.stream_output", FieldBool, "stream model output"},
+	{"platforms", "display.stream_interval", FieldDuration, "interval between stream edits"},
 	{"nudge", "nudge_default_braindead_threshold", FieldInt, "consecutive tool loops before warning (0=disabled)"},
 	{"nudge", "nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
 	{"nudge", "nudge_auto_extract", FieldBool, "auto-extract rules from character files via LLM"},
@@ -265,13 +265,13 @@ var configFields = []ConfigField{
 	{"sessions", "max_system_prompt_chars_total", FieldInt, "total system prompt char warning threshold"},
 
 	// platforms
-	{"platforms", "startup_notify", FieldBool, "send notification on startup"},
+	{"platforms", "notify.startup_notify", FieldBool, "send notification on startup"},
 
 	// behavior — stop aliases
 	{"behavior", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
 	{"platforms", "facet_session_ttl", FieldDuration, "idle TTL before facet reclaim"},
 	{"platforms", "message_queue_size", FieldInt, "message queue buffer size"},
-	{"platforms", "display_width", FieldInt, "display width for dividers"},
+	{"platforms", "display.display_width", FieldInt, "display width for dividers"},
 	{"platforms", "telegram.table_wrap_lines", FieldInt, "max wrapped lines per table cell"},
 	{"platforms", "telegram.table_style", FieldString, "table style: pretty or markdown"},
 

@@ -37,7 +37,7 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 		},
 		Platforms: []config.PlatformConfig{{
 			ID: "telegram",
-			DisplayConfig: config.DisplayConfig{
+			Display: config.DisplayConfig{
 				ShowToolCalls:    config.Ptr(config.ToolCallFull),
 				ShowThinking:     config.Ptr(config.ShowThinkingCompact),
 				DisplayWidth:     config.Ptr(80),
@@ -49,7 +49,7 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	cfg := &config.Config{
 		Platforms: []config.PlatformConfig{{
 			ID: "telegram",
-			DisplayConfig: config.DisplayConfig{
+			Display: config.DisplayConfig{
 				ShowToolCalls:    config.Ptr(config.ToolCallOff),
 				ShowThinking:     config.Ptr(config.ShowThinkingOff),
 				DisplayWidth:     config.Ptr(44),
@@ -90,7 +90,7 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 	acfg := config.AgentConfig{
 		Platforms: []config.PlatformConfig{{
 			ID: "telegram",
-			DisplayConfig: config.DisplayConfig{
+			Display: config.DisplayConfig{
 				ShowToolCalls:    config.Ptr(config.ToolCallPreview),
 				ShowThinking:     config.Ptr(config.ShowThinkingTrue),
 				DisplayWidth:     config.Ptr(60),
@@ -190,7 +190,7 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 		},
 		Platforms: []config.PlatformConfig{{
 			ID: "telegram",
-			DisplayConfig: config.DisplayConfig{
+			Display: config.DisplayConfig{
 				ShowToolCalls: config.Ptr(config.ToolCallOff),
 				ShowThinking:  config.Ptr(config.ShowThinkingCompact),
 				DisplayWidth:  config.Ptr(44),

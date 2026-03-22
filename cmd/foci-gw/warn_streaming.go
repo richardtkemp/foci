@@ -27,8 +27,8 @@ func checkStreamOutputWithoutStreaming(cfg *config.Config) []string {
 
 		// Resolve effective stream_output for each platform.
 		streamOutput := false
-		if tg := acfg.Platform("telegram"); tg != nil && tg.StreamOutput != nil {
-			streamOutput = *tg.StreamOutput
+		if tg := acfg.Platform("telegram"); tg != nil && tg.Display.StreamOutput != nil {
+			streamOutput = *tg.Display.StreamOutput
 		}
 
 		if streamOutput {
