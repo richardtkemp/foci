@@ -655,7 +655,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent(nudgeHeader + reminder),
+						Content: provider.TextContent(nudgeHeader + reminder + "\n\nIf your answer stands as-is, respond with `" + NoResponseSentinel + "` and nothing else."),
 					}
 					messages = append(messages, verifyMsg)
 					newMessages = append(newMessages, verifyMsg)
