@@ -378,20 +378,17 @@ type ToolConfig struct {
 }
 
 type GeminiConfig struct {
-	HTTPTimeout string `toml:"http_timeout" default:"120s" desc:"HTTP timeout for API calls" type:"duration"` // HTTP timeout for API calls (default "120s")
-	CacheTTL    string `toml:"cache_ttl"    default:"1h"   desc:"context cache TTL" type:"duration"`          // context cache TTL (default "1h", "0" disables)
+	CacheTTL string `toml:"cache_ttl" default:"1h" desc:"context cache TTL" type:"duration"` // context cache TTL (default "1h", "0" disables)
 }
 
 type OpenAIConfig struct {
-	BaseURL     string `toml:"base_url"`                                                  // API base URL (default: "https://api.openai.com", override for OpenRouter/Together/etc.)
-	HTTPTimeout string `toml:"http_timeout" default:"120s" desc:"HTTP timeout for API calls" type:"duration"` // HTTP timeout for API calls (default "120s")
+	BaseURL string `toml:"base_url" desc:"API base URL (empty = sdk default)"` // override for OpenRouter/Together/etc.
 }
 
 type AnthropicConfig struct {
-	HTTPTimeout       string `toml:"http_timeout"        default:"600s" desc:"HTTP timeout for API calls" type:"duration"` // HTTP timeout for API calls (default "600s")
-	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s"`  // HTTP timeout for usage API calls (default "10s")
-	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m"`  // cache TTL for usage API responses (default "10m")
-	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"`   // how far before expiry to trigger proactive token refresh (default "5m")
+	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s" desc:"HTTP timeout for usage API calls" type:"duration"`
+	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m" desc:"cache TTL for usage API responses" type:"duration"`
+	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"  desc:"proactive token refresh threshold" type:"duration"`
 }
 
 // DisplayConfig holds display-related settings that can be set at any level

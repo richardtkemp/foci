@@ -303,7 +303,6 @@ system_files = [
 # API keys go in secrets.toml. These are non-secret settings only.
 # Model params (thinking, effort, speed) are now per-model in [models.*].
 [anthropic]
-# http_timeout = "600s"                   # HTTP timeout for API calls
 # usage_api_timeout = "10s"              # HTTP timeout for usage API
 # usage_cache_ttl = "10m"                # cache TTL for usage API responses
 # cc_expiry_threshold = "5m"            # how far before expiry to trigger proactive token refresh
@@ -312,7 +311,6 @@ system_files = [
 # API keys go in secrets.toml as gemini.api_key.
 # Model params (thinking) are now per-model in [models.*].
 [gemini]
-# http_timeout = "120s"                   # HTTP timeout for API calls
 # cache_ttl = "1h"                        # context cache TTL ("0" disables)
 
 # ─── OpenAI ────────────────────────────────────────────────────────────
@@ -321,7 +319,6 @@ system_files = [
 # Model params (reasoning/thinking) are now per-model in [models.*].
 [openai]
 # base_url = ""                           # API base URL (empty = sdk default; override for OpenRouter etc.)
-# http_timeout = "120s"                   # HTTP timeout for API calls
 
 # ─── Platforms ────────────────────────────────────────────────────────
 # Platforms are configured as [[platforms]] array entries. Each entry has

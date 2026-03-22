@@ -319,14 +319,15 @@ func TestValidateNewDurationFields(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "invalid http_timeout",
+			name: "invalid endpoint http_timeout",
 			toml: `
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[anthropic]
+[endpoints.anthropic]
+format = "anthropic"
 http_timeout = "invalid"
 `,
 			wantErr: "http_timeout",

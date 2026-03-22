@@ -50,7 +50,6 @@ type AnthropicResolver struct {
 	ccSrc         *CCTokenSource
 	credHolders   map[string]*tokenHolder
 	mu            sync.Mutex
-	httpTimeout   time.Duration
 	usageCacheTTL time.Duration
 }
 
@@ -58,12 +57,6 @@ type AnthropicResolver struct {
 // Initializes the shared CCTokenSource and sets up the refresh callback
 // for proactive token renewal.
 func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, store SecretsStore) (*AnthropicResolver, error) {
-	httpTimeout, err := time.ParseDuration(anthropicCfg.HTTPTimeout)
-	if err != nil {
-		log.Warnf("anthropic", "invalid http_timeout, using default: %v", err)
-		httpTimeout = 600 * time.Second
-	}
-
 	usageCacheTTL, err := time.ParseDuration(anthropicCfg.UsageCacheTTL)
 	if err != nil {
 		log.Warnf("anthropic", "invalid usage_cache_ttl, using default: %v", err)
@@ -94,7 +87,6 @@ func NewResolver(ctx context.Context, anthropicCfg *config.AnthropicConfig, stor
 		store:         store,
 		ccSrc:         ccSrc,
 		credHolders:   make(map[string]*tokenHolder),
-		httpTimeout:   httpTimeout,
 		usageCacheTTL: usageCacheTTL,
 	}, nil
 }
@@ -105,7 +97,7 @@ func (r *AnthropicResolver) Close() {}
 
 // ResolveClient implements provider.CredentialResolver.
 // Priority: (1) API key, (2) Claude Code credentials.
-func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string) (provider.Client, error) {
+func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, apiKeyName, baseURL string, httpTimeout time.Duration) (provider.Client, error) {
 	// Priority 1: API key
 	apiKey, ok := r.store.Get(apiKeyName)
 	if ok && apiKey != "" {
@@ -114,7 +106,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 		r.mu.Lock()
 		r.credHolders[endpointName] = holder
 		r.mu.Unlock()
-		c := NewClient(holder.Get, r.httpTimeout)
+		c := NewClient(holder.Get, httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
@@ -124,7 +116,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 	// Priority 2: Claude Code credentials (lazy disk reads, no polling)
 	if r.ccSrc != nil {
 		log.Infof("anthropic", "using CC credentials from ~/.claude/.credentials.json (endpoint %q, lazy)", endpointName)
-		c := NewClient(r.ccSrc.Token, r.httpTimeout)
+		c := NewClient(r.ccSrc.Token, httpTimeout)
 		if baseURL != "" {
 			c.SetBaseURL(baseURL)
 		}
