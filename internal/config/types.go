@@ -241,24 +241,25 @@ type AgentConfig struct {
 	Memory    AgentMemoryConfig `toml:"memory"`    // per-agent memory sources (combined with global [memory])
 	Platforms []PlatformConfig  `toml:"platforms"` // per-agent platform configurations
 
-	// Per-agent section overrides — each prefix matches its global TOML section.
-	// Resolved via Merge at use time (e.g. config.Merge(acfg.Display, cfg.Display)).
-	Notify          NotifyConfig          `toml:"notify"`           // overrides from [notify]
-	Display         DisplayConfig         `toml:"display"`          // overrides from [display]
-	Nudge           NudgeConfig           `toml:"nudge"`            // overrides from [nudge]
-	Voice           VoiceConfig           `toml:"voice"`            // overrides from [voice]
-	AgentLoop       AgentLoopConfig       `toml:"agent_loop"`       // overrides from [agent_loop]
-	Behavior        BehaviorConfig        `toml:"behavior"`         // overrides from [behavior]
-	System          SystemConfig          `toml:"system"`           // overrides from [system]
-	Sessions        AgentSessionsOverride `toml:"sessions"`         // overrides from [sessions]
-	Tools           AgentToolsOverride    `toml:"tools"`            // overrides from [tools]
-	Debug           DebugConfig           `toml:"debug"`            // overrides from [debug]
-	Browser         BrowserConfig         `toml:"browser"`          // overrides from [browser]
-	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // overrides from [keepalive]
-	Background      BackgroundConfig      `toml:"background"`       // overrides from [background]
-	MemoryFormation MemoryFormationConfig `toml:"memory_formation"` // overrides from [memory_formation]
-	Mana            ManaConfig            `toml:"mana"`             // overrides from [mana]
-	Groups          GroupsConfig          `toml:"groups"`           // overrides from [groups]
+	// Per-agent overrides — resolved via Merge at use time
+	// (e.g. config.Merge(acfg.Nudge, cfg.Defaults.Nudge)).
+	Notify   NotifyConfig    `toml:"notify"`   // overrides from [defaults.notify]
+	Display  DisplayConfig   `toml:"display"`  // overrides from [defaults.display]
+	Nudge    NudgeConfig     `toml:"nudge"`    // overrides from [defaults.nudge]
+	Voice    VoiceConfig     `toml:"voice"`    // overrides from [defaults.voice]
+	Loop     AgentLoopConfig `toml:"loop"`     // overrides from [defaults.loop]
+	Behavior BehaviorConfig  `toml:"behavior"` // overrides from [defaults.behavior]
+	System   SystemConfig    `toml:"system"`   // overrides from [defaults.system]
+
+	Sessions        AgentSessionsOverride `toml:"sessions"`          // overrides from [sessions]
+	Tools           AgentToolsOverride    `toml:"tools"`             // overrides from [tools]
+	Debug           DebugConfig           `toml:"debug"`             // overrides from [debug]
+	Browser         BrowserConfig         `toml:"browser"`           // overrides from [browser]
+	Keepalive       KeepaliveConfig       `toml:"keepalive"`         // overrides from [keepalive]
+	Background      BackgroundConfig      `toml:"background"`        // overrides from [background]
+	MemoryFormation MemoryFormationConfig `toml:"memory_formation"`  // overrides from [memory_formation]
+	Mana            ManaConfig            `toml:"mana"`              // overrides from [mana]
+	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
 
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)
@@ -755,6 +756,17 @@ type CommandConfig struct {
 	Timeout     int    `toml:"timeout"` // seconds, default 10
 }
 
+// DefaultsConfig provides global defaults for agent-specific fields.
+// All config groups use Merge[T] for resolution at use time.
+type DefaultsConfig struct {
+	Notify   NotifyConfig    `toml:"notify"`
+	Display  DisplayConfig   `toml:"display"`
+	Nudge    NudgeConfig     `toml:"nudge"`
+	Voice    VoiceConfig     `toml:"voice"`
+	Loop     AgentLoopConfig `toml:"loop"`
+	Behavior BehaviorConfig  `toml:"behavior"`
+	System   SystemConfig    `toml:"system"`
+}
 
 
 // EndpointConfig describes a model API endpoint.

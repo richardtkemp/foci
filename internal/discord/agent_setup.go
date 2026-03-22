@@ -166,7 +166,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot.autoThread = autoThread
 
 	// Resolve behavior config via Merge cascade.
-	bc := config.Merge(acfg.Defaults.Behavior, cfg.Defaults.Behavior)
+	bc := config.Merge(acfg.Behavior, cfg.Defaults.Behavior)
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
 	steerMode := bc.SteerMode == nil || *bc.SteerMode // default true
 	primaryBot.mq.SetSteerMode(steerMode)
@@ -237,7 +237,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Config) {
 	dpc := config.Merge(
 		acfg.Platform("discord").SafeDisplay(),
-		acfg.Defaults.Display,
+		acfg.Display,
 		cfg.Platform("discord").SafeDisplay(),
 		cfg.Defaults.Display,
 	)

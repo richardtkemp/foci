@@ -279,8 +279,8 @@ func Load(path string) (*Config, error) {
 	if cfg.Tools.FetchProvider == nil {
 		cfg.Tools.FetchProvider = Ptr[string]("builtin")
 	}
-	if len(cfg.Behavior.StopAliases) == 0 {
-		cfg.Behavior.StopAliases = []string{"stop", "wait"}
+	if len(cfg.Defaults.Behavior.StopAliases) == 0 {
+		cfg.Defaults.Behavior.StopAliases = []string{"stop", "wait"}
 	}
 	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
 	if len(cfg.Memory.SearchBackends) == 0 {

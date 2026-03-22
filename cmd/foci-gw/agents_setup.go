@@ -239,8 +239,8 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platform.ConnectionManager, notifier *tools.AsyncNotifier) (voice.TTS, map[string]string) {
 	acfg := p.acfg
 
-	vc := config.Merge(acfg.Voice, p.cfg.Voice)
-	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
+	vc := config.Merge(acfg.Voice, p.cfg.Defaults.Voice)
+	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls)
 	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
@@ -262,7 +262,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
 func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Config, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
-	nc := config.Merge(acfg.Nudge, cfg.Nudge)
+	nc := config.Merge(acfg.Nudge, cfg.Defaults.Nudge)
 	nudgeEnabled := nc.NudgeEnable == nil || *nc.NudgeEnable                       // default true
 	nudgeDefaultEnabled := nc.NudgeDefaultEnable == nil || *nc.NudgeDefaultEnable  // default true
 	braindeadThreshold := config.DerefInt(nc.NudgeDefaultBraindeadThreshold)
@@ -455,7 +455,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 	acfg := p.acfg
 
 	spawnOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	al := config.Merge(acfg.AgentLoop, p.cfg.AgentLoop)
+	al := config.Merge(acfg.Loop, p.cfg.Defaults.Loop)
 	tc := config.Merge(acfg.Tools.ToolConfig, p.cfg.Tools.ToolConfig)
 	spawnDeps := tools.SpawnDeps{
 		Client:          p.client,
@@ -505,7 +505,7 @@ func setupPlatformConnections(
 	reclaimMfCfg := acfg.MemoryFormation
 	reclaimSearchDirs := promptSearchDirs
 
-	vc := config.Merge(acfg.Voice, p.cfg.Voice)
+	vc := config.Merge(acfg.Voice, p.cfg.Defaults.Voice)
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
 		AgentID:        acfg.ID,
 		Handler:        ag,
@@ -513,7 +513,7 @@ func setupPlatformConnections(
 		CommandContext: cc,
 		LastMsgStore:   lastMsgStore,
 		AgentConfig:    acfg,
-		STT:            resolveSTT(p.sttMap, p.cfg.STT, config.DerefStr(vc.STT), voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
+		STT:            resolveSTT(p.sttMap, p.cfg.STT, config.DerefStr(vc.STT), voice.MergeReplacements(p.cfg.Defaults.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, config.DerefStr(vc.TTS), config.DerefFloat(vc.TTSRate), ttsRepls),
 		ReclaimHook: func(sessionKey string) {
 			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
