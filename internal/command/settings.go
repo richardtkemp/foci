@@ -288,8 +288,8 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "off"
-		if cc.AgentConfig.Defaults.ShowToolCalls != nil {
-			effective = string(*cc.AgentConfig.Defaults.ShowToolCalls)
+		if cc.AgentConfig.Display.ShowToolCalls != nil {
+			effective = string(*cc.AgentConfig.Display.ShowToolCalls)
 		} else {
 			// Check platforms for default
 			for _, p := range cc.Config.Platforms {
@@ -306,8 +306,8 @@ func displayFieldValue(sessionKey string, cc CommandContext, key string) (overri
 			return override, override
 		}
 		effective = "off"
-		if cc.AgentConfig.Defaults.ShowThinking != nil {
-			effective = string(*cc.AgentConfig.Defaults.ShowThinking)
+		if cc.AgentConfig.Display.ShowThinking != nil {
+			effective = string(*cc.AgentConfig.Display.ShowThinking)
 		} else {
 			for _, p := range cc.Config.Platforms {
 				if p.ShowThinking != nil {
