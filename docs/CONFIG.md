@@ -89,40 +89,71 @@ Platform configuration. Each entry defines a platform (telegram, discord, etc.) 
 ```toml
 [[platforms]]
 id = "telegram"
+[platforms.access]
 allowed_users = ["123456"]
+[platforms.display]
 show_tool_calls = "preview"
-telegram.long_poll_timeout = "65s"
+[platforms.telegram]
+long_poll_timeout = "65s"
 
 [[platforms]]
 id = "discord"
+[platforms.access]
 allowed_users = ["789012"]
-discord.auto_thread = true
+[platforms.discord]
+auto_thread = true
 ```
 
-#### Shared fields (all platforms)
+#### Direct fields (no subsection)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `id` | string | required | Platform identifier: `"telegram"`, `"discord"`, etc. |
-| `allowed_users` | string[] | `[]` | User IDs allowed to interact with the bot. |
-| `require_mention` | bool | `true` | Require @mention in group chats. DMs are always processed. |
-| `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. |
+| `bot` | string | `""` | Bot name. Token resolved from secret `"<platform>.<bot>"`. |
+| `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"<platform>.<bot>"`. |
 | `facet_bots` | string[] | `[]` | Shared facet bot pool. Bot tokens resolved via `"<platform>.<name>"` secret convention. |
 | `facet_session_ttl` | string | `"60m"` | Idle TTL before a facet bot/thread can be reclaimed. `"0"` disables. |
 | `message_queue_size` | int | `64` | Message queue buffer size. |
+
+#### Access fields (`[platforms.access]`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `allowed_users` | string[] | `[]` | User IDs allowed to interact with the bot. |
+| `require_mention` | bool | `true` | Require @mention in group chats. DMs are always processed. |
+
+#### Display fields (`[platforms.display]`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
 | `show_tool_calls` | string | `"off"` | Tool call display: `"off"`, `"preview"`, `"full"`. |
 | `show_thinking` | string | `"off"` | Thinking display: `"off"`, `"compact"`, `"true"`. |
 | `display_width` | int | `44`/`60` | Character width for dividers. Default varies by platform. |
 | `stream_output` | bool | `false` | Stream model output in real-time. |
 | `stream_interval` | string | `"250ms"`/`"1200ms"` | Duration between message edits during streaming. Default varies by platform. |
+| `streaming` | bool | `false` | Use streaming API. Per-platform override for `[display] streaming`. |
+| `received_files_dir` | string | `""` | Save received files to this directory. Empty disables. |
+| `injected_message_header` | string | `"[[ System message ]]"` | Header prepended to injected/system messages. Empty disables. |
+
+#### Notify fields (`[platforms.notify]`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
 | `startup_notify` | bool | `true` | Send notification on startup. |
 | `compaction_notify` | bool | `true` | Send notification on compaction. |
 | `task_list_notify` | bool | `true` | Send notification on task list changes. |
+
+#### Debug fields (`[platforms.debug]`)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
 | `inject_agent_warnings` | string | `"off"` | Inject warnings into agent session: `"all"`, `"errors"`, `"off"`. From `[debug]`. |
 | `inject_chat_warnings` | string | `"off"` | Send warnings as chat notifications: `"all"`, `"errors"`, `"off"`. From `[debug]`. |
 | `compaction_debug` | bool | `false` | Send compaction summary as file attachment. From `[debug]`. |
+| `log_api_key_suffix` | bool | `false` | Log last 4 chars of API keys. From `[debug]`. |
+| `messages_in_log` | bool | `false` | Log user message content. From `[debug]`. |
 
-#### Telegram-specific fields (`telegram.*` subsection)
+#### Telegram-specific fields (`[platforms.telegram]`)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -130,7 +161,7 @@ discord.auto_thread = true
 | `table_wrap_lines` | int | `5` | Max wrapped lines per table cell. `0` truncates with `…`. |
 | `table_style` | string | `"pretty"` | Table style: `"pretty"` or `"markdown"`. |
 
-#### Discord-specific fields (`discord.*` subsection)
+#### Discord-specific fields (`[platforms.discord]`)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -775,7 +806,7 @@ Available in both `[nudge]` and `[[agents]].nudge`.
 
 ### Display
 
-Set in `[[platforms]]`, overridable per-agent via `[[agents.platforms]]`. At runtime, the `/display` command sets per-session overrides without modifying the config file:
+Set in `[platforms.display]`, overridable per-agent via `[agents.platforms.display]`. At runtime, the `/display` command sets per-session overrides without modifying the config file:
 
 ```
 /display                          # show current effective values
@@ -812,8 +843,6 @@ Global defaults set in `[sessions]`, overridable per-agent. Per-agent `unset` in
 | `compaction_threshold` | float | `0.8` | Trigger compaction when context usage exceeds this fraction (0.0–1.0). |
 | `compaction_summary_prompt` | string | `""` | Path to prompt file for compaction summary. Read live at compaction time (edits take effect immediately). `""` uses embedded default. |
 | `compaction_handoff_msg` | string | see below | Message injected after the summary to orient the agent post-compaction. |
-| `compaction_notify` | bool | `true` | Send a Telegram notification when compaction occurs. |
-| `task_list_notify` | bool | `true` | Send Telegram notifications when task list entries are created, started, or completed. Shows progress like "✅ 3/5: Fixed token counting". |
 | `compaction_preserve_messages` | int | `25` | Preserve the last N messages through compaction. Preserved messages are appended verbatim after the summary + handoff, keeping their original roles. `0` disables (summary only). The summarizer only sees messages *before* the preserved window. |
 | `compaction_effort` | string | `""` | Effort level for compaction API calls: `"low"`, `"medium"`, `"high"`. `""` uses session effort. Useful when agent uses low effort for chat but needs higher quality for compaction. |
 | `autocompact_before_mana_refresh` | bool | `true` | Master switch for mana-refresh compaction. `false` disables entirely (replaces the old `"0"` disable convention). |
@@ -866,20 +895,20 @@ Global defaults set in `[tools]`, overridable per-agent via `[[agents]].tools`. 
 
 ### Notifications & Logging
 
-Notification fields (`startup_notify`, `compaction_notify`, `task_list_notify`) are part of `NotifyConfig` and follow the cascade: per-agent platform → per-agent `[notify]` → global platform (`[[platforms]]`) → global `[notify]` → code default. Debug fields (`inject_agent_warnings`, `inject_chat_warnings`, `compaction_debug`) are part of `DebugConfig` and follow the same cascade: per-agent platform → per-agent `[debug]` → global platform → global `[debug]` → code default.
+Notification fields (`startup_notify`, `compaction_notify`, `task_list_notify`) are part of `NotifyConfig` and follow the cascade: per-agent platform `[agents.platforms.notify]` → per-agent `[agents.notify]` → global platform `[platforms.notify]` → global `[notify]` → code default. Debug fields (`inject_agent_warnings`, `inject_chat_warnings`, `compaction_debug`, `log_api_key_suffix`, `messages_in_log`) are part of `DebugConfig` and follow the same cascade: per-agent platform `[agents.platforms.debug]` → per-agent `[agents.debug]` → global platform `[platforms.debug]` → global `[debug]` → code default. Display fields (`show_tool_calls`, `show_thinking`, `stream_output`, `stream_interval`, `display_width`, `received_files_dir`, `injected_message_header`, `streaming`) use `[platforms.display]`. Access fields (`allowed_users`, `require_mention`) use `[platforms.access]`.
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
-| `messages_in_log` | bool | `false` | `[logging]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
+| `messages_in_log` | bool | `false` | `[debug]` / `[platforms.debug]` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent `unset` inherits from global. |
 | `steer_mode` | bool | `true` | `[behavior]` | When enabled and the agent is mid-turn (executing tool calls), user messages are injected between tool calls at the next tool boundary as `[user]` content blocks instead of queuing behind the turn lock. This lets users redirect a runaway agent without `/stop`. System messages (keepalive, warnings) are unaffected. |
 | `group_throttle` | string | `""` | `[behavior]` | Group chat throttle window. Non-mention messages accumulate silently and are delivered as a batch when the timer fires. @mentions flush all buffered messages immediately and reset the timer. Go duration format (e.g. `"30s"`, `"1m"`). Empty or `"0"` disables (default). Works with both `require_mention = true` (non-mentions buffered instead of dropped) and `false` (non-mentions buffered instead of processed immediately). |
-| `stream_output` | bool | `false` | `[[platforms]]` | Stream model output in real-time. Requires `streaming = true` for API-level delta callbacks. |
-| `stream_interval` | string | `"250ms"`/`"1200ms"` | `[[platforms]]` | Duration between message edits during streaming. Default varies by platform. |
+| `stream_output` | bool | `false` | `[platforms.display]` | Stream model output in real-time. Requires `streaming = true` for API-level delta callbacks. |
+| `stream_interval` | string | `"250ms"`/`"1200ms"` | `[platforms.display]` | Duration between message edits during streaming. Default varies by platform. |
 | `facet_no_compact` | bool | `true` | `[sessions]` | Set `no_compact` on facet sessions. Facet sessions are short-lived parallel forks that shouldn't trigger compaction. Set to `false` if you want facet sessions to compact normally. |
 
 ### Per-agent platform overrides
 
-All platform fields from `[[platforms]]` can be overridden per-agent via `[[agents.platforms]]`. The 5-level cascade handles resolution. See the `[[platforms]]` section for the full list of available fields.
+All platform fields from `[[platforms]]` can be overridden per-agent via `[[agents.platforms]]`, using the same subsection structure (`[agents.platforms.display]`, `[agents.platforms.access]`, `[agents.platforms.notify]`, `[agents.platforms.debug]`). The 5-level cascade handles resolution. See the `[[platforms]]` section for the full list of available fields.
 
 ### Voice
 
@@ -1015,15 +1044,20 @@ id = "myagent"
 id = "telegram"
 bot = "myagent"
 facet_bots = ["spare1"]
+[agents.platforms.display]
 show_tool_calls = "preview"
+[agents.platforms.notify]
 startup_notify = true
-telegram.table_wrap_lines = 5
+[agents.platforms.telegram]
+table_wrap_lines = 5
 
 [[agents.platforms]]
 id = "discord"
 bot = "myagent"
+[agents.platforms.notify]
 startup_notify = false
-discord.auto_thread = false
+[agents.platforms.discord]
+auto_thread = false
 ```
 
 Agent-specific fields:
@@ -1033,7 +1067,7 @@ Agent-specific fields:
 | `bot` | string | `$id` | Bot name for this agent. Token resolved from secret `"<platform>.<bot>"`. |
 | `bot_secret` | string | `""` | Override secret key for bot token. `""` uses `"<platform>.<bot>"`. |
 
-All other fields (display, access, notification, platform-specific) inherit from the global `[[platforms]]` entry with the same ID, then from the relevant global section (`[display]`, `[notify]`, etc.), then from code defaults.
+All other fields (under `[agents.platforms.display]`, `[agents.platforms.access]`, `[agents.platforms.notify]`, `[agents.platforms.debug]`, and platform-specific subsections) inherit from the global `[[platforms]]` entry with the same ID, then from the relevant global section (`[display]`, `[notify]`, `[debug]`, etc.), then from code defaults.
 
 ### Memory (`[[agents.memory.sources]]`)
 
@@ -1306,6 +1340,7 @@ workspace = "/home/foci/character"
 
 [[platforms]]
 id = "telegram"
+[platforms.access]
 allowed_users = ["123456789"]
 
 [sessions]
@@ -1340,6 +1375,7 @@ system_files = ["IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md", "M
 
 [[platforms]]
 id = "telegram"
+[platforms.access]
 allowed_users = ["123456789"]
 
 [sessions]
