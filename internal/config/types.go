@@ -421,12 +421,9 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"` // inject warnings/errors into agent session
-	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"`  // send warnings/errors as chat notifications
-	StartupNotify       *bool           `toml:"startup_notify"`        // send startup notification
-	CompactionNotify    *bool           `toml:"compaction_notify"`     // send notification on compaction
-	TaskListNotify      *bool           `toml:"task_list_notify"`      // send notification on task list changes
-	CompactionDebug     *bool           `toml:"compaction_debug"`      // send compaction summary as file attachment
+	StartupNotify    *bool `toml:"startup_notify"`    // send startup notification
+	CompactionNotify *bool `toml:"compaction_notify"`  // send notification on compaction
+	TaskListNotify   *bool `toml:"task_list_notify"`   // send notification on task list changes
 }
 
 // StartupNotifyEnabled returns the resolved value (default: true).
@@ -453,30 +450,6 @@ func (n NotifyConfig) TaskListNotifyEnabled() bool {
 	return true
 }
 
-// CompactionDebugEnabled returns the resolved value (default: false).
-func (n NotifyConfig) CompactionDebugEnabled() bool {
-	if n.CompactionDebug != nil {
-		return *n.CompactionDebug
-	}
-	return false
-}
-
-// InjectAgentWarningsLevel returns the resolved InjectionLevel (default: off).
-func (n NotifyConfig) InjectAgentWarningsLevel() InjectionLevel {
-	if n.InjectAgentWarnings != nil {
-		return *n.InjectAgentWarnings
-	}
-	return InjectionOff
-}
-
-// InjectChatWarningsLevel returns the resolved InjectionLevel (default: off).
-func (n NotifyConfig) InjectChatWarningsLevel() InjectionLevel {
-	if n.InjectChatWarnings != nil {
-		return *n.InjectChatWarnings
-	}
-	return InjectionOff
-}
-
 // PlatformConfig is the unified platform configuration used for both global
 // [[platforms]] entries and per-agent [[agents.platforms]] overrides.
 type PlatformConfig struct {
@@ -484,6 +457,7 @@ type PlatformConfig struct {
 
 	// Embedded config groups (cascade via Merge)
 	NotifyConfig  `toml:",inline"`
+	DebugConfig   `toml:",inline"`
 	DisplayConfig `toml:",inline"`
 	AccessConfig  `toml:",inline"`
 
@@ -527,6 +501,14 @@ func (p *PlatformConfig) SafeNotify() NotifyConfig {
 	return p.NotifyConfig
 }
 
+// SafeDebug returns the DebugConfig from a *PlatformConfig, or zero if nil.
+func (p *PlatformConfig) SafeDebug() DebugConfig {
+	if p == nil {
+		return DebugConfig{}
+	}
+	return p.DebugConfig
+}
+
 // SafeDisplay returns the DisplayConfig from a *PlatformConfig, or zero if nil.
 func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 	if p == nil {
@@ -551,6 +533,7 @@ type DiscordSpecific struct {
 // ApplyDefaults fills zero-value fields from the given defaults.
 func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 	p.NotifyConfig = Merge(p.NotifyConfig, defaults.NotifyConfig)
+	p.DebugConfig = Merge(p.DebugConfig, defaults.DebugConfig)
 	p.DisplayConfig = Merge(p.DisplayConfig, defaults.DisplayConfig)
 	p.AccessConfig = Merge(p.AccessConfig, defaults.AccessConfig)
 	if p.FacetSessionTTL == "" {
@@ -867,11 +850,39 @@ type BackgroundConfig struct {
 	Prompt   *string `toml:"prompt"`   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
-// DebugConfig holds developer/debugging knobs.
-// Embed in Config (global) and AgentConfig (per-agent) for Merge-based resolution.
+// DebugConfig holds developer/debugging knobs that can be configured at
+// any scope level. Resolution follows the 5-level cascade via Merge.
+// All fields are nillable so nil means "not set, inherit from wider scope."
 type DebugConfig struct {
-	LogAPIKeySuffix *bool `toml:"log_api_key_suffix"` // log last 4 chars of API keys on each provider call (default false)
-	MessagesInLog   *bool `toml:"messages_in_log"`    // log user message content to event log (default false for privacy)
+	LogAPIKeySuffix     *bool           `toml:"log_api_key_suffix"`    // log last 4 chars of API keys on each provider call (default false)
+	MessagesInLog       *bool           `toml:"messages_in_log"`       // log user message content to event log (default false for privacy)
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"` // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"`  // send warnings/errors as chat notifications
+	CompactionDebug     *bool           `toml:"compaction_debug"`      // send compaction summary as file attachment
+}
+
+// CompactionDebugEnabled returns the resolved value (default: false).
+func (d DebugConfig) CompactionDebugEnabled() bool {
+	if d.CompactionDebug != nil {
+		return *d.CompactionDebug
+	}
+	return false
+}
+
+// InjectAgentWarningsLevel returns the resolved InjectionLevel (default: off).
+func (d DebugConfig) InjectAgentWarningsLevel() InjectionLevel {
+	if d.InjectAgentWarnings != nil {
+		return *d.InjectAgentWarnings
+	}
+	return InjectionOff
+}
+
+// InjectChatWarningsLevel returns the resolved InjectionLevel (default: off).
+func (d DebugConfig) InjectChatWarningsLevel() InjectionLevel {
+	if d.InjectChatWarnings != nil {
+		return *d.InjectChatWarnings
+	}
+	return InjectionOff
 }
 
 type Config struct {

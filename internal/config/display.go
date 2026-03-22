@@ -75,11 +75,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if cfg.Defaults.DuplicateMessages != nil && *cfg.Defaults.DuplicateMessages {
 		add("defaults", "duplicate_messages", true)
 	}
-	if cfg.Defaults.InjectAgentWarnings != nil && cfg.Defaults.InjectAgentWarningsLevel().Enabled() {
-		add("defaults", "inject_agent_warnings", string(*cfg.Defaults.InjectAgentWarnings))
+	if cfg.Debug.InjectAgentWarnings != nil && cfg.Debug.InjectAgentWarningsLevel().Enabled() {
+		add("debug", "inject_agent_warnings", string(*cfg.Debug.InjectAgentWarnings))
 	}
-	if cfg.Defaults.InjectChatWarnings != nil && cfg.Defaults.InjectChatWarningsLevel().Enabled() {
-		add("defaults", "inject_chat_warnings", string(*cfg.Defaults.InjectChatWarnings))
+	if cfg.Debug.InjectChatWarnings != nil && cfg.Debug.InjectChatWarningsLevel().Enabled() {
+		add("debug", "inject_chat_warnings", string(*cfg.Debug.InjectChatWarnings))
 	}
 	if cfg.Sessions.FacetNoCompact != nil {
 		add("sessions", "facet_no_compact", *cfg.Sessions.FacetNoCompact)
@@ -371,11 +371,11 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Defaults.TTSRate != nil {
 		add("tts_rate", *agent.Defaults.TTSRate)
 	}
-	if agent.Defaults.InjectAgentWarnings != nil {
-		add("inject_agent_warnings", string(*agent.Defaults.InjectAgentWarnings))
+	if agent.Debug.InjectAgentWarnings != nil {
+		add("inject_agent_warnings", string(*agent.Debug.InjectAgentWarnings))
 	}
-	if agent.Defaults.InjectChatWarnings != nil {
-		add("inject_chat_warnings", string(*agent.Defaults.InjectChatWarnings))
+	if agent.Debug.InjectChatWarnings != nil {
+		add("inject_chat_warnings", string(*agent.Debug.InjectChatWarnings))
 	}
 	if agent.Defaults.StartupNotify != nil {
 		add("startup_notify", *agent.Defaults.StartupNotify)
@@ -386,8 +386,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Defaults.TaskListNotify != nil {
 		add("task_list_notify", *agent.Defaults.TaskListNotify)
 	}
-	if agent.Defaults.CompactionDebug != nil {
-		add("compaction_debug", *agent.Defaults.CompactionDebug)
+	if agent.Debug.CompactionDebug != nil {
+		add("compaction_debug", *agent.Debug.CompactionDebug)
 	}
 	if agent.Defaults.SteerMode != nil {
 		add("steer_mode", *agent.Defaults.SteerMode)

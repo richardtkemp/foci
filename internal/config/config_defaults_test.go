@@ -209,8 +209,10 @@ max_tool_loops = 50
 nudge_default_braindead_threshold = 20
 nudge_default_braindead_prompt = "watch it"
 duplicate_messages = true
-inject_agent_warnings = true
 system_files = ["A.md", "B.md"]
+
+[debug]
+inject_agent_warnings = true
 
 [sessions]
 compaction_effort = "low"
@@ -249,8 +251,8 @@ id = "override"
 	if !DerefBool(cfg.Defaults.DuplicateMessages) {
 		t.Error("Defaults.DuplicateMessages should be true")
 	}
-	if cfg.Defaults.InjectAgentWarnings == nil || *cfg.Defaults.InjectAgentWarnings != InjectionAll {
-		t.Errorf("Defaults.InjectAgentWarnings = %v, want %q", cfg.Defaults.InjectAgentWarnings, InjectionAll)
+	if cfg.Debug.InjectAgentWarnings == nil || *cfg.Debug.InjectAgentWarnings != InjectionAll {
+		t.Errorf("Debug.InjectAgentWarnings = %v, want %q", cfg.Debug.InjectAgentWarnings, InjectionAll)
 	}
 	if len(cfg.Defaults.SystemFiles) != 2 || cfg.Defaults.SystemFiles[0] != "A.md" {
 		t.Errorf("Defaults.SystemFiles = %v", cfg.Defaults.SystemFiles)

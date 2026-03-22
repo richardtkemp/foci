@@ -118,7 +118,7 @@ func wireAgentPlatformCallbacks(
 		if c == nil {
 			return
 		}
-		if !resolveNotify(acfg, cfg, c.PlatformName()).CompactionDebugEnabled() {
+		if !resolveDebug(acfg, cfg, c.PlatformName()).CompactionDebugEnabled() {
 			return
 		}
 		f, err := os.CreateTemp(tempdir.Dir(), "compaction-summary-*.md")

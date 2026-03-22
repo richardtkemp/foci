@@ -116,11 +116,11 @@ discord.auto_thread = true
 | `stream_output` | bool | `false` | Stream model output in real-time. |
 | `stream_interval` | string | `"250ms"`/`"1200ms"` | Duration between message edits during streaming. Default varies by platform. |
 | `startup_notify` | bool | `true` | Send notification on startup. |
-| `inject_agent_warnings` | string | `"off"` | Inject warnings into agent session: `"all"`, `"errors"`, `"off"`. |
-| `inject_chat_warnings` | string | `"off"` | Send warnings as chat notifications: `"all"`, `"errors"`, `"off"`. |
 | `compaction_notify` | bool | `true` | Send notification on compaction. |
 | `task_list_notify` | bool | `true` | Send notification on task list changes. |
-| `compaction_debug` | bool | `false` | Send compaction summary as file attachment. |
+| `inject_agent_warnings` | string | `"off"` | Inject warnings into agent session: `"all"`, `"errors"`, `"off"`. From `[debug]`. |
+| `inject_chat_warnings` | string | `"off"` | Send warnings as chat notifications: `"all"`, `"errors"`, `"off"`. From `[debug]`. |
+| `compaction_debug` | bool | `false` | Send compaction summary as file attachment. From `[debug]`. |
 
 #### Telegram-specific fields (`telegram.*` subsection)
 
@@ -413,6 +413,9 @@ Developer and debugging knobs. All off by default.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `log_api_key_suffix` | bool | `false` | Log the last 4 characters of API keys at DEBUG level on each provider API call. Applies to all providers (Anthropic, OpenAI, Gemini, voice) and secrets used in `http_request` tool calls. Useful for diagnosing which credential is being used when multiple keys are configured. |
+| `messages_in_log` | bool | `false` | Log user message content to event log. Off by default for privacy. |
+| `inject_agent_warnings` | string | `"off"` | Inject warnings into agent session: `"all"`, `"errors"`, `"off"`. Cascades through platforms. |
+| `inject_chat_warnings` | string | `"off"` | Send warnings as chat notifications: `"all"`, `"errors"`, `"off"`. Cascades through platforms. |
 | `compaction_debug` | bool | `false` | Send the compaction summary to Telegram as a markdown file attachment after compaction completes. Useful for verifying what survived the cut. |
 
 ### `[database]`
@@ -861,7 +864,7 @@ Global defaults set in `[tools]` (or `[defaults]` where noted), overridable per-
 
 ### Notifications & Logging
 
-Notification fields (`startup_notify`, `inject_agent_warnings`, etc.) are part of `NotifyConfig` and follow the 5-level cascade: per-agent platform → per-agent → global platform (`[[platforms]]`) → `[defaults]` → code default. See the `[[platforms]]` section for the full list.
+Notification fields (`startup_notify`, `compaction_notify`, `task_list_notify`) are part of `NotifyConfig` and follow the 5-level cascade: per-agent platform → per-agent defaults → global platform (`[[platforms]]`) → `[defaults]` → code default. Debug fields (`inject_agent_warnings`, `inject_chat_warnings`, `compaction_debug`) are part of `DebugConfig` and follow the same cascade: per-agent platform → per-agent `[debug]` → global platform → global `[debug]` → code default.
 
 | Key | Type | Default | Global location | Description |
 |-----|------|---------|-----------------|-------------|
