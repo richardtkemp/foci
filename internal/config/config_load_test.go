@@ -131,8 +131,8 @@ id = "test"
 }
 
 func TestLoadCustomManaName(t *testing.T) {
-	// Proves that a custom usage_warnings name and threshold list are loaded from
-	// the [usage_warnings] section and override the default "mana" name.
+	// Proves that a custom mana name and threshold list are loaded from
+	// the [mana] section and override the default "mana" name.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
 	toml := `
