@@ -127,6 +127,49 @@ func TestValidateDurations(t *testing.T) {
 	})
 }
 
+func TestApplyTagDefaults(t *testing.T) {
+	// Proves ApplyTagDefaults sets nil pointer fields from their `default` tags
+	// and preserves non-nil values.
+	type inner struct {
+		A *bool    `default:"true"`
+		B *string  `default:"hello"`
+		C *int     `default:"42"`
+		D *float64 `default:"0.5"`
+		E *bool    // no default tag — should stay nil
+	}
+	type outer struct {
+		X inner
+	}
+	v := outer{}
+	ApplyTagDefaults(&v)
+
+	if v.X.A == nil || !*v.X.A {
+		t.Error("A should be true from tag default")
+	}
+	if v.X.B == nil || *v.X.B != "hello" {
+		t.Error("B should be 'hello' from tag default")
+	}
+	if v.X.C == nil || *v.X.C != 42 {
+		t.Error("C should be 42 from tag default")
+	}
+	if v.X.D == nil || *v.X.D != 0.5 {
+		t.Error("D should be 0.5 from tag default")
+	}
+	if v.X.E != nil {
+		t.Error("E should be nil (no default tag)")
+	}
+
+	// Non-nil values should be preserved.
+	v2 := outer{X: inner{A: Ptr(false), C: Ptr(0)}}
+	ApplyTagDefaults(&v2)
+	if *v2.X.A != false {
+		t.Error("A should preserve explicit false")
+	}
+	if *v2.X.C != 0 {
+		t.Error("C should preserve explicit 0")
+	}
+}
+
 func TestKeepaliveConfigMerge(t *testing.T) {
 	// Proves that Merge fills all fields from the global config when the local
 	// config is a zero value, and only fills nil fields when the local config

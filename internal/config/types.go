@@ -125,10 +125,10 @@ func (il InjectionLevel) IncludeWarnings() bool {
 // Embed in Config (global, TOML [mana]) and AgentConfig (per-agent).
 // All fields are pointer/slice types for Merge-based resolution.
 type ManaConfig struct {
-	Name             *string `toml:"name"`              // what to call quota (default "mana")
-	Thresholds       []int   `toml:"thresholds"`        // mana percentages to warn at (e.g. [50, 25, 10, 5])
-	RestoreThreshold *int    `toml:"restore_threshold"` // inject session notice when mana restores to 100% after being below this (0=disabled)
-	InvestInterval   *string `toml:"invest_interval"`   // quiet period after mana reset before spending (default "30m")
+	Name             *string `toml:"name"              default:"mana"` // what to call quota
+	Thresholds       []int   `toml:"thresholds"`                       // mana percentages to warn at (e.g. [50, 25, 10, 5])
+	RestoreThreshold *int    `toml:"restore_threshold"`                // inject session notice when mana restores to 100% after being below this (0=disabled)
+	InvestInterval   *string `toml:"invest_interval"   default:"30m"` // quiet period after mana reset before spending
 }
 
 // AgentMemoryConfig holds per-agent memory sources.
@@ -282,7 +282,7 @@ type AgentToolsOverride struct {
 
 // CompactionConfig holds compaction settings. Embed in SessionsConfig (global) and AgentConfig (per-agent).
 type CompactionConfig struct {
-	CompactionThreshold                     *float64 `toml:"compaction_threshold"`
+	CompactionThreshold                     *float64 `toml:"compaction_threshold"  default:"0.8"`
 	CompactionSummaryPrompt                 *string  `toml:"compaction_summary_prompt"`
 	CompactionHandoffMsg                    *string  `toml:"compaction_handoff_msg"`
 	CompactionPreserveMessages              *int     `toml:"compaction_preserve_messages"`
@@ -298,13 +298,13 @@ type CompactionConfig struct {
 // NudgeConfig holds nudge system settings.
 // Global: [nudge], per-agent: [[agents]].nudge.*
 type NudgeConfig struct {
-	NudgeEnable                     *bool   `toml:"nudge_enable"`
-	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"`
+	NudgeEnable                     *bool   `toml:"nudge_enable"                      default:"true"`
+	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"                default:"true"`
 	NudgeCooldown                   *int    `toml:"nudge_cooldown"`
 	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"`
 	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"`
 	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"`
-	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"`
+	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"`
 	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"`
 	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"`
 	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"`
@@ -316,7 +316,7 @@ type NudgeConfig struct {
 type SummaryConfig struct {
 	MaxResultChars       *int  `toml:"max_result_chars"`
 	MaxSummaryChars      *int  `toml:"max_summary_chars"`
-	AutoSummarise        *bool `toml:"auto_summarise"`
+	AutoSummarise        *bool `toml:"auto_summarise"         default:"true"`
 	SummaryContextTurns  *int  `toml:"summary_context_turns"`
 	SummaryContextChars  *int  `toml:"summary_context_chars"`
 	MaxSummaryInputChars *int  `toml:"max_summary_input_chars"`
@@ -347,10 +347,10 @@ type AgentLoopConfig struct {
 // BehaviorConfig holds agent behavioral settings.
 // Global: [behavior], per-agent: [[agents]].behavior.*
 type BehaviorConfig struct {
-	SteerMode             *bool    `toml:"steer_mode"`
+	SteerMode             *bool    `toml:"steer_mode"          default:"true"`
 	GroupThrottle         *string  `toml:"group_throttle"`
 	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold"`
-	EnableStopAliases     *bool    `toml:"enable_stop_aliases"`
+	EnableStopAliases     *bool    `toml:"enable_stop_aliases" default:"true"`
 	StopAliases           []string `toml:"stop_aliases"`
 }
 
@@ -364,15 +364,15 @@ type SystemConfig struct {
 // ToolConfig holds per-agent tool behavioral overrides.
 // Embed in ToolsConfig (global home) and AgentConfig (per-agent).
 type ToolConfig struct {
-	ExecAutoBackground  *int    `toml:"exec_auto_background"`
-	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns"`
-	ExploreMaxDepth     *int    `toml:"explore_max_depth"`
-	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"`
-	TmuxAutopilot       *bool   `toml:"tmux_autopilot"`
-	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"`
-	TmuxSessionTTL      *string `toml:"tmux_session_ttl"`
-	SearchProvider      *string `toml:"search_provider"`
-	FetchProvider       *string `toml:"fetch_provider"`
+	ExecAutoBackground  *int    `toml:"exec_auto_background"  default:"10"`
+	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"`
+	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"`
+	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"` // 50MB
+	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"`
+	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"`
+	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"`
+	SearchProvider      *string `toml:"search_provider"       default:"brave"`
+	FetchProvider       *string `toml:"fetch_provider"        default:"builtin"`
 	TodoFormat          *string `toml:"todo_format"`
 }
 
@@ -419,9 +419,12 @@ type AccessConfig struct {
 // any scope level. Resolution follows the 5-level cascade via Merge.
 // All fields are nillable so nil means "not set, inherit from wider scope."
 type NotifyConfig struct {
-	StartupNotify    *bool `toml:"startup_notify"`    // send startup notification
-	CompactionNotify *bool `toml:"compaction_notify"`  // send notification on compaction
-	TaskListNotify   *bool `toml:"task_list_notify"`   // send notification on task list changes
+	InjectAgentWarnings *InjectionLevel `toml:"inject_agent_warnings"`                // inject warnings/errors into agent session
+	InjectChatWarnings  *InjectionLevel `toml:"inject_chat_warnings"`                 // send warnings/errors as chat notifications
+	StartupNotify       *bool           `toml:"startup_notify"        default:"true"` // send startup notification
+	CompactionNotify    *bool           `toml:"compaction_notify"     default:"true"` // send notification on compaction
+	TaskListNotify      *bool           `toml:"task_list_notify"      default:"true"` // send notification on task list changes
+	CompactionDebug     *bool           `toml:"compaction_debug"`                     // send compaction summary as file attachment
 }
 
 // StartupNotifyEnabled returns the resolved value (default: true).
@@ -704,14 +707,14 @@ type ResourcesConfig struct {
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 // TOML: [browser] globally, [[agents]].browser per-agent.
 type BrowserConfig struct {
-	Enabled        *bool    `toml:"enabled"`          // enable browser tool (default true)
-	Headless       *bool    `toml:"headless"`          // run headless (default true)
-	TimeoutSec     *int     `toml:"timeout_sec"`       // page operation timeout in seconds (default 30)
-	UserDataDir    *string  `toml:"user_data_dir"`     // Chrome user data dir (empty = temp profile)
-	ExecutablePath *string  `toml:"executable_path"`   // Chrome executable path (empty = auto-detect)
-	Incognito      *bool    `toml:"incognito"`          // use incognito mode (default true)
-	DOMStableSec   *float64 `toml:"dom_stable_sec"`    // DOM stability wait interval in seconds (default 1)
-	DOMStableDiff  *float64 `toml:"dom_stable_diff"`   // DOM stability diff threshold (default 0.2)
+	Enabled        *bool    `toml:"enabled"         default:"true"` // enable browser tool
+	Headless       *bool    `toml:"headless"        default:"true"` // run headless
+	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"`   // page operation timeout in seconds
+	UserDataDir    *string  `toml:"user_data_dir"`                  // Chrome user data dir (empty = temp profile)
+	ExecutablePath *string  `toml:"executable_path"`                // Chrome executable path (empty = auto-detect)
+	Incognito      *bool    `toml:"incognito"       default:"true"` // use incognito mode
+	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"`    // DOM stability wait interval in seconds
+	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"`  // DOM stability diff threshold
 }
 
 type ToolsConfig struct {
@@ -820,32 +823,32 @@ func (e EndpointConfig) URLForFormat(f string) string {
 // KeepaliveConfig controls the cache keepalive timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type KeepaliveConfig struct {
-	Enabled  *bool   `toml:"enabled"`  // enable keepalive timer (default: false)
-	Interval *string `toml:"interval"` // time since cache last warmed before firing (default: "55m")
-	Prompt   *string `toml:"prompt"`   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Enabled  *bool   `toml:"enabled"`                  // enable keepalive timer
+	Interval *string `toml:"interval" default:"55m"`   // time since cache last warmed before firing
+	Prompt   *string `toml:"prompt"`                   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
 // MemoryFormationConfig controls automatic memory capture and consolidation.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type MemoryFormationConfig struct {
-	IntervalEnabled       *bool   `toml:"interval_enabled"`       // periodic capture on timer (nil = true)
-	Interval              *string `toml:"interval"`               // time between captures (default "1h")
-	IntervalPrompt        *string `toml:"interval_prompt"`        // prompt override (nil = embedded, "none" = disabled)
-	ConsolidationEnabled  *bool   `toml:"consolidation_enabled"`  // curate MEMORY.md periodically (nil = true)
-	ConsolidationInterval *string `toml:"consolidation_interval"` // min time between consolidations (default "20h")
-	ConsolidationPrompt   *string `toml:"consolidation_prompt"`   // prompt override (nil = embedded, "none" = disabled)
-	SessionEndEnabled     *bool   `toml:"session_end_enabled"`    // capture on /reset and reclaim (nil = true)
-	SessionEndPrompt      *string `toml:"session_end_prompt"`     // prompt override (nil = embedded, "none" = disabled)
-	CompactionEnabled     *bool   `toml:"compaction_enabled"`     // capture before compaction (nil = true)
-	CompactionPrompt      *string `toml:"compaction_prompt"`      // prompt override (nil = embedded, "none" = disabled)
+	IntervalEnabled       *bool   `toml:"interval_enabled"       default:"true"` // periodic capture on timer
+	Interval              *string `toml:"interval"               default:"1h"`   // time between captures
+	IntervalPrompt        *string `toml:"interval_prompt"`                       // prompt override (nil = embedded, "none" = disabled)
+	ConsolidationEnabled  *bool   `toml:"consolidation_enabled"  default:"true"` // curate MEMORY.md periodically
+	ConsolidationInterval *string `toml:"consolidation_interval" default:"20h"`  // min time between consolidations
+	ConsolidationPrompt   *string `toml:"consolidation_prompt"`                  // prompt override (nil = embedded, "none" = disabled)
+	SessionEndEnabled     *bool   `toml:"session_end_enabled"    default:"true"` // capture on /reset and reclaim
+	SessionEndPrompt      *string `toml:"session_end_prompt"`                    // prompt override (nil = embedded, "none" = disabled)
+	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true"` // capture before compaction
+	CompactionPrompt      *string `toml:"compaction_prompt"`                     // prompt override (nil = embedded, "none" = disabled)
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
 // All fields are pointer types for Merge-based resolution (per-agent → global).
 type BackgroundConfig struct {
-	Enabled  *bool   `toml:"enabled"`  // enable background work timer (default: false)
-	Interval *string `toml:"interval"` // time since last interaction before firing (default: "15m")
-	Prompt   *string `toml:"prompt"`   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
+	Enabled  *bool   `toml:"enabled"`                  // enable background work timer
+	Interval *string `toml:"interval" default:"15m"`   // time since last interaction before firing
+	Prompt   *string `toml:"prompt"`                   // prompt file path (nil = embedded default, "none" = disabled, "default" = embedded)
 }
 
 // DebugConfig holds developer/debugging knobs that can be configured at

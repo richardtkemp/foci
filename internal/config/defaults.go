@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"reflect"
+	"strconv"
 	"time"
 )
 
@@ -71,5 +73,74 @@ func validateDurations(entries []durationEntry) error {
 
 type durationEntry struct {
 	Section, Key, Value string
+}
+
+// ApplyTagDefaults walks a struct (by pointer) and sets nil pointer fields
+// to the value specified in their `default` tag. Recurses into nested structs.
+// Supports *bool, *int, *int64, *float64, *string, and *InjectionLevel.
+//
+// This keeps defaults co-located with field definitions in types.go:
+//
+//	SteerMode *bool `toml:"steer_mode" default:"true"`
+//
+// Call on global config paths (not per-agent — agent fields must stay nil
+// for Merge to work correctly).
+func ApplyTagDefaults(v any) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return
+	}
+	applyTagDefaults(rv)
+}
+
+func applyTagDefaults(rv reflect.Value) {
+	rt := rv.Type()
+	for i := 0; i < rv.NumField(); i++ {
+		f := rv.Field(i)
+		ft := rt.Field(i)
+
+		// Recurse into embedded and named struct fields.
+		if f.Kind() == reflect.Struct {
+			applyTagDefaults(f)
+			continue
+		}
+
+		// Only handle nil pointer fields with a default tag.
+		if f.Kind() != reflect.Ptr || !f.IsNil() {
+			continue
+		}
+		tag := ft.Tag.Get("default")
+		if tag == "" {
+			continue
+		}
+
+		setTagDefault(f, tag)
+	}
+}
+
+func setTagDefault(f reflect.Value, tag string) {
+	elemType := f.Type().Elem()
+	switch elemType.Kind() {
+	case reflect.Bool:
+		v, _ := strconv.ParseBool(tag)
+		f.Set(reflect.ValueOf(&v))
+	case reflect.Int:
+		v, _ := strconv.Atoi(tag)
+		f.Set(reflect.ValueOf(&v))
+	case reflect.Int64:
+		v, _ := strconv.ParseInt(tag, 10, 64)
+		f.Set(reflect.ValueOf(&v))
+	case reflect.Float64:
+		v, _ := strconv.ParseFloat(tag, 64)
+		f.Set(reflect.ValueOf(&v))
+	case reflect.String:
+		// Handle named string types (e.g., InjectionLevel)
+		val := reflect.New(elemType)
+		val.Elem().SetString(tag)
+		f.Set(val)
+	}
 }
 

@@ -162,16 +162,16 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 	cfg := &Config{
 		Defaults: DefaultsConfig{
 			Loop:     AgentLoopConfig{MaxToolLoops: Ptr(1)},
-			Behavior: BehaviorConfig{SteerMode: Ptr(false)},
+			Behavior: BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}},
 			Voice:    VoiceConfig{TTS: Ptr("test")},
-			Nudge:    NudgeConfig{NudgeEnable: Ptr(false)},
+			Nudge:    NudgeConfig{NudgeEnable: Ptr(true), NudgeCooldown: Ptr(1)},
 			System:   SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},
 			Display:  DisplayConfig{Streaming: Ptr(true)},
 			Notify:   NotifyConfig{StartupNotify: Ptr(true)},
 		},
 		Tools: ToolsConfig{
 			ToolConfig:    ToolConfig{ExecAutoBackground: Ptr(1)},
-			SummaryConfig: SummaryConfig{MaxResultChars: Ptr(1)},
+			SummaryConfig: SummaryConfig{MaxResultChars: Ptr(1), AutoSummarise: Ptr(true)},
 		},
 		Sessions: SessionsConfig{
 			CompactionConfig: CompactionConfig{CompactionThreshold: ptrFloat(0.5)},

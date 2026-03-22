@@ -27,8 +27,8 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Defaults.Behavior.EnableStopAliases != nil {
-		t.Errorf("EnableStopAliases should be nil (code default true at use time), got %v", cfg.Defaults.Behavior.EnableStopAliases)
+	if cfg.Defaults.Behavior.EnableStopAliases == nil || !*cfg.Defaults.Behavior.EnableStopAliases {
+		t.Errorf("EnableStopAliases should be true (via tag default), got %v", cfg.Defaults.Behavior.EnableStopAliases)
 	}
 }
 
