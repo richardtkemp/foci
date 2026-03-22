@@ -67,6 +67,9 @@ type cmdRegParams struct {
 	// Model groups
 	groupResolver *config.GroupResolver
 	fallbackFn    provider.FallbackFunc
+
+	// Pre-resolved agent+global config
+	resolved *config.ResolvedAgentConfig
 }
 
 // registerAgentCommands creates and populates the command registry for an agent.
@@ -156,8 +159,9 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		SecretsDeps:         secretsDeps,
 		SkillsDirs:          p.skillsDirs,
 		TokenCountCache:     command.NewTokenCountCache(),
-		ConfigureFacet:  p.configureFacet,
+		ConfigureFacet:      p.configureFacet,
 		UsageClientProvider: p.usageClientProvider,
+		Resolved:            p.resolved,
 	}
 
 	// Register all commands
@@ -201,7 +205,7 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	cmds.Register(command.DoneCommand())
 
 	// Stop aliases (e.g. "wait" → same as "stop")
-	bc := config.Merge(p.acfg.Behavior, p.cfg.Defaults.Behavior)
+	bc := p.resolved.Behavior
 	if bc.EnableStopAliases == nil || *bc.EnableStopAliases { // default true
 		stopCmd := cmds.Get("stop")
 		for _, alias := range bc.StopAliases {

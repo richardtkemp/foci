@@ -275,6 +275,9 @@ type AgentConnectionParams struct {
 	// Empty fields mean "not overridden — use config default".
 	// May be nil if per-session display overrides are not supported.
 	DisplayOverrideFn func(sessionKey string) DisplaySettings
+
+	// Resolved holds the pre-merged agent+global config.
+	Resolved *config.ResolvedAgentConfig
 }
 
 // SharedFacetParams holds parameters for setting up shared facet bots.

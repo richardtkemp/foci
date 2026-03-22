@@ -45,6 +45,9 @@ type AgentSetupParams struct {
 
 	// ResolveSTT resolves the STT provider for a given agent config.
 	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
+
+	// Resolved holds the pre-merged agent+global config.
+	Resolved *config.ResolvedAgentConfig
 }
 
 // SetupAgent creates and registers platform bots for an agent.
@@ -138,8 +141,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 	primaryBot.requireMention = reqMention
 
-	// Resolve behavior config via Merge cascade.
-	bc := config.Merge(acfg.Behavior, cfg.Defaults.Behavior)
+	// Resolve behavior config from pre-merged config.
+	bc := p.Resolved.Behavior
 	throttleStr := config.DerefStr(bc.GroupThrottle)
 	if dur, err := time.ParseDuration(throttleStr); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {

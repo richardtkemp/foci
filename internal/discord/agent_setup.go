@@ -46,6 +46,9 @@ type AgentSetupParams struct {
 
 	// ResolveSTT resolves the STT provider for a given agent config.
 	ResolveSTT func(sttMap map[string]voice.STT, sttEntries []config.STTConfig, agentSTT string, replacements map[string]string) voice.STT
+
+	// Resolved holds the pre-merged agent+global config.
+	Resolved *config.ResolvedAgentConfig
 }
 
 // SetupAgent creates and registers Discord bots for an agent.
@@ -165,8 +168,8 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 	primaryBot.autoThread = autoThread
 
-	// Resolve behavior config via Merge cascade.
-	bc := config.Merge(acfg.Behavior, cfg.Defaults.Behavior)
+	// Resolve behavior config from pre-merged config.
+	bc := p.Resolved.Behavior
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
 	steerMode := bc.SteerMode == nil || *bc.SteerMode // default true
 	primaryBot.mq.SetSteerMode(steerMode)

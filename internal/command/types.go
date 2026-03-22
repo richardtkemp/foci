@@ -142,6 +142,10 @@ type CommandContext struct {
 
 	// Usage client provider (for mana command)
 	UsageClientProvider provider.UsageClientProvider
+
+	// Resolved holds the pre-merged agent+global config. Prefer reading
+	// from here instead of calling config.Merge() at runtime.
+	Resolved *config.ResolvedAgentConfig
 }
 
 // TokenCountCache caches token counting results so /context doesn't re-count every call.
