@@ -168,7 +168,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		Keepalive:          ka,
 		Background:         bg,
 		MemoryFormation:    mf,
-		ManaInvestInterval: config.DerefStr(p.cfg.Mana.InvestInterval),
+		ManaInvestInterval: inst.resolved.Mana.InvestInterval,
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,
 		SessionIndex:       p.sessionIndex,

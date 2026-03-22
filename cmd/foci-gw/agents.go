@@ -196,7 +196,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ExtraSystemBlocks:              bs.extraSystemBlocks,
 		CacheStrategy:                  p.cfg.Cache.Strategy,
 		CacheBustDetect:                p.cfg.Logging.CacheBustDetect,
-		CacheBustIdleThreshold:         time.Duration(config.DerefInt(p.cfg.Logging.CacheBustIdleMinutes)) * time.Minute,
+		CacheBustIdleThreshold:         time.Duration(*p.cfg.Logging.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:              al.DuplicateMessages,
 		BatchPartialAssistantMessages:  al.BatchPartialAssistantMessages,
 		BatchPartialJoiner:             al.BatchPartialJoiner,
@@ -224,12 +224,12 @@ func setupAgent(p setupParams) *agentInstance {
 		PromptSearchDirs:               promptSearchDirs,
 		MaxToolLoops:                   al.MaxToolLoops,
 		MaxOutputTokens:                al.MaxOutputTokens,
-		TurnLockWarnThreshold:          parseDurationDefault(bc.TurnLockWarnThreshold, 3*time.Minute),
+		TurnLockWarnThreshold:          parseDurationDefault(bc.TurnLockWarnThreshold, 0),
 		ShowToolCalls:                  resolveShowToolCalls(p.resolved),
 		CacheTTL:                       al.CacheTTL,
 		Streaming:                      p.resolved.Display.Streaming,
 		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
-		ManaInvestInterval:             parseDurationDefault(config.DerefStr(p.cfg.Mana.InvestInterval), 30*time.Minute),
+		ManaInvestInterval:             parseDurationDefault(p.resolved.Mana.InvestInterval, 0),
 	}
 
 	// Pre-compaction memory formation hook
