@@ -80,11 +80,9 @@ func testConfig() (*Config, AgentConfig) {
 	agent := AgentConfig{
 		ID:        "test-agent",
 		Workspace: "/home/user/workspace",
-		Defaults: AgentDefaultsOverride{
-			AgentLoopConfig: AgentLoopConfig{
-				MaxToolLoops:    Ptr[int](25),
-				MaxOutputTokens: Ptr[int](16384),
-			},
+		AgentLoop: AgentLoopConfig{
+			MaxToolLoops:    Ptr[int](25),
+			MaxOutputTokens: Ptr[int](16384),
 		},
 	}
 	return cfg, agent
@@ -168,7 +166,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	// returns an "all set" message rather than listing any remaining options.
 	cfg, agent := testConfig()
 	// Set all optional agent fields
-	agent.Defaults.SystemFiles = []string{"IDENTITY.md"}
+	agent.System.SystemFiles = []string{"IDENTITY.md"}
 	agent.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orientation-facet.md")
 	agent.Sessions.BranchOrientationHeadlessPrompt = Ptr("/tmp/orientation-headless.md")
 	displayWidth := 44
@@ -190,19 +188,19 @@ func TestFormatAvailableAllSet(t *testing.T) {
 		},
 	}}
 	ttsRate := 1.3
-	agent.Defaults.TTSRate = &ttsRate
+	agent.Voice.TTSRate = &ttsRate
 	boolTrue := true
-	agent.Defaults.StartupNotify = &boolTrue
+	agent.Notify.StartupNotify = &boolTrue
 	showPreview := ToolCallPreview
-	agent.Defaults.ShowToolCalls = &showPreview
+	agent.Display.ShowToolCalls = &showPreview
 	showCompact := ShowThinkingCompact
-	agent.Defaults.ShowThinking = &showCompact
+	agent.Display.ShowThinking = &showCompact
 	// Set optional global fields
 	summaryPrompt := "/tmp/summary.md"
 	cfg.Sessions.CompactionSummaryPrompt = &summaryPrompt
 	handoff := "handoff"
 	cfg.Sessions.CompactionHandoffMsg = &handoff
-	cfg.Defaults.CompactionNotify = &boolTrue
+	cfg.Notify.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
 	cfg.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orient-facet.md")
@@ -234,11 +232,9 @@ func TestFormatConfigGrouped(t *testing.T) {
 	cfg.Agents = []AgentConfig{agent, {
 		ID:        "second-agent",
 		Workspace: "/home/user/workspace2",
-		Defaults: AgentDefaultsOverride{
-			AgentLoopConfig: AgentLoopConfig{
-				MaxToolLoops:    Ptr[int](25),
-				MaxOutputTokens: Ptr[int](16384),
-			},
+		AgentLoop: AgentLoopConfig{
+			MaxToolLoops:    Ptr[int](25),
+			MaxOutputTokens: Ptr[int](16384),
 		},
 	}}
 
@@ -288,28 +284,24 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// Set defaults as Load() would.
 	mtl := 25
 	mot := 16384
-	cfg.Defaults = DefaultsConfig{
-		AgentLoopConfig: AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot},
-	}
+	cfg.AgentLoop = AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot}
 	cfg.Groups.Powerful = Ptr("claude-haiku-4-5")
 	// Agent overrides max_output_tokens from the default.
 	agent := AgentConfig{
 		ID:        "test-agent",
 		Workspace: "/home/user/workspace",
-		Defaults: AgentDefaultsOverride{
-			AgentLoopConfig: AgentLoopConfig{
-				MaxToolLoops:    Ptr[int](25),
-				MaxOutputTokens: Ptr[int](32768),
-			},
+		AgentLoop: AgentLoopConfig{
+			MaxToolLoops:    Ptr[int](25),
+			MaxOutputTokens: Ptr[int](32768),
 		},
 	}
 	cfg.Agents = []AgentConfig{agent}
 
 	// Simulate TOML metadata: max_output_tokens is explicitly set, some others are not (hardcoded default).
 	cfg.DefinedKeys = map[string]bool{
-		"defaults":                     true,
-		"defaults.max_output_tokens":   true,
-		"defaults.max_tool_loops":      true,
+		"agent_loop":                     true,
+		"agent_loop.max_output_tokens":   true,
+		"agent_loop.max_tool_loops":      true,
 		"groups":                       true,
 		"groups.powerful":              true,
 		"telegram":                     true,
@@ -390,8 +382,8 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	cfg.Sessions.BranchOrientationFacetPrompt = nil
 	cfg.Sessions.BranchOrientationHeadlessPrompt = nil
 	// Ensure both agent and defaults have system_files unset
-	agent.Defaults.SystemFiles = nil
-	cfg.Defaults.SystemFiles = nil
+	agent.System.SystemFiles = nil
+	cfg.System.SystemFiles = nil
 
 	result := FormatAvailable(cfg, agent)
 

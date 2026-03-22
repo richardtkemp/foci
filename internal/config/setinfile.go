@@ -10,7 +10,7 @@ import (
 
 // SetTarget specifies where to write a key in the TOML config file.
 type SetTarget struct {
-	Section string // TOML section: "defaults", "sessions", "agents", etc.
+	Section string // TOML section: "agent_loop", "sessions", "agents", etc.
 	AgentID string // non-empty only when Section == "agents"
 	Key     string // TOML key within the section
 }

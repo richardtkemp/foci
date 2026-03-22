@@ -20,7 +20,7 @@ const (
 
 // ConfigField describes a single settable config key.
 type ConfigField struct {
-	Section     string    // TOML section: "defaults", "sessions", etc.
+	Section     string    // TOML section: "agent_loop", "sessions", etc.
 	Key         string    // TOML key within the section
 	Type        FieldType // value type
 	Description string    // one-line description
@@ -178,31 +178,32 @@ func FieldsInSection(section string) []ConfigField {
 }
 
 var configFields = []ConfigField{
-	// defaults — global defaults inherited by agents
-	{"defaults", "max_output_tokens", FieldInt, "max tokens in model response"},
-	{"defaults", "max_tool_loops", FieldInt, "max tool iterations per turn"},
-	{"defaults", "duplicate_messages", FieldBool, "send user text twice per API call"},
-	{"defaults", "startup_notify", FieldBool, "send notification on startup"},
-	{"defaults", "compaction_notify", FieldBool, "send notification on compaction"},
-	{"defaults", "task_list_notify", FieldBool, "send notification on task list changes"},
+	// agent_loop — global agent loop defaults inherited by agents
+	{"agent_loop", "max_output_tokens", FieldInt, "max tokens in model response"},
+	{"agent_loop", "max_tool_loops", FieldInt, "max tool iterations per turn"},
+	{"agent_loop", "duplicate_messages", FieldBool, "send user text twice per API call"},
+	// notify — global notification defaults
+	{"notify", "startup_notify", FieldBool, "send notification on startup"},
+	{"notify", "compaction_notify", FieldBool, "send notification on compaction"},
+	{"notify", "task_list_notify", FieldBool, "send notification on task list changes"},
 	{"debug", "inject_agent_warnings", FieldString, "inject warnings into agent session: all, errors, off"},
 	{"debug", "inject_chat_warnings", FieldString, "send warnings as chat notifications: all, errors, off"},
 	{"debug", "compaction_debug", FieldBool, "send compaction summary as file attachment"},
 	{"platforms", "show_tool_calls", FieldString, "tool call display: off, preview, full"},
 	{"platforms", "show_thinking", FieldString, "thinking display: off, compact, true"},
-	{"defaults", "steer_mode", FieldBool, "inject user messages between tool calls"},
+	{"behavior", "steer_mode", FieldBool, "inject user messages between tool calls"},
 	{"platforms", "stream_output", FieldBool, "stream model output"},
 	{"platforms", "stream_interval", FieldDuration, "interval between stream edits"},
-	{"defaults", "nudge_default_braindead_threshold", FieldInt, "consecutive tool loops before warning (0=disabled)"},
-	{"defaults", "nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
-	{"defaults", "nudge_auto_extract", FieldBool, "auto-extract rules from character files via LLM"},
-	{"defaults", "nudge_cooldown", FieldInt, "min tool calls between repeating same reminder"},
-	{"defaults", "nudge_max_per_batch", FieldInt, "max reminders injected per tool batch"},
-	{"defaults", "nudge_pre_answer_gate", FieldBool, "enable pre-answer verification gate"},
-	{"defaults", "nudge_pre_answer_min_tools", FieldInt, "min tool calls before pre-answer gate fires"},
-	{"defaults", "nudge_default_enable", FieldBool, "enable built-in tool/skill reminders"},
-	{"defaults", "nudge_default_frequency", FieldInt, "turns between tool/skill reminders (default 50)"},
-	{"defaults", "nudge_default_scratchpad_frequency", FieldInt, "turns between scratchpad review reminders (0=disabled, default 20)"},
+	{"nudge", "nudge_default_braindead_threshold", FieldInt, "consecutive tool loops before warning (0=disabled)"},
+	{"nudge", "nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
+	{"nudge", "nudge_auto_extract", FieldBool, "auto-extract rules from character files via LLM"},
+	{"nudge", "nudge_cooldown", FieldInt, "min tool calls between repeating same reminder"},
+	{"nudge", "nudge_max_per_batch", FieldInt, "max reminders injected per tool batch"},
+	{"nudge", "nudge_pre_answer_gate", FieldBool, "enable pre-answer verification gate"},
+	{"nudge", "nudge_pre_answer_min_tools", FieldInt, "min tool calls before pre-answer gate fires"},
+	{"nudge", "nudge_default_enable", FieldBool, "enable built-in tool/skill reminders"},
+	{"nudge", "nudge_default_frequency", FieldInt, "turns between tool/skill reminders (default 50)"},
+	{"nudge", "nudge_default_scratchpad_frequency", FieldInt, "turns between scratchpad review reminders (0=disabled, default 20)"},
 	{"tools", "max_result_chars", FieldInt, "max chars before writing result to file"},
 	{"tools", "auto_summarise", FieldBool, "auto-summarise oversized tool results"},
 	{"tools", "search_provider", FieldString, "web search: brave or anthropic"},
@@ -211,24 +212,24 @@ var configFields = []ConfigField{
 	{"sessions", "facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
 
 	// agent — per-agent fields (written to [[agents]] block)
-	{"agent", "defaults.max_tool_loops", FieldInt, "max tool iterations per turn"},
-	{"agent", "defaults.max_output_tokens", FieldInt, "max tokens in model response"},
-	{"agent", "defaults.duplicate_messages", FieldBool, "send user text twice per API call"},
-	{"agent", "defaults.steer_mode", FieldBool, "inject user messages between tool calls"},
-	{"agent", "defaults.nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
-	{"agent", "defaults.nudge_auto_extract", FieldBool, "auto-extract rules from character files via LLM"},
-	{"agent", "defaults.nudge_cooldown", FieldInt, "min tool calls between repeating same reminder"},
-	{"agent", "defaults.nudge_max_per_batch", FieldInt, "max reminders injected per tool batch"},
-	{"agent", "defaults.nudge_pre_answer_gate", FieldBool, "enable pre-answer verification gate"},
-	{"agent", "defaults.nudge_pre_answer_min_tools", FieldInt, "min tool calls before pre-answer gate fires"},
-	{"agent", "defaults.nudge_default_enable", FieldBool, "enable built-in tool/skill reminders"},
-	{"agent", "defaults.nudge_default_frequency", FieldInt, "turns between tool/skill reminders (default 50)"},
-	{"agent", "defaults.nudge_default_scratchpad_frequency", FieldInt, "turns between scratchpad review reminders (0=disabled, default 20)"},
+	{"agent", "agent_loop.max_tool_loops", FieldInt, "max tool iterations per turn"},
+	{"agent", "agent_loop.max_output_tokens", FieldInt, "max tokens in model response"},
+	{"agent", "agent_loop.duplicate_messages", FieldBool, "send user text twice per API call"},
+	{"agent", "behavior.steer_mode", FieldBool, "inject user messages between tool calls"},
+	{"agent", "nudge.nudge_enable", FieldBool, "enable mid-turn behavioral reminders"},
+	{"agent", "nudge.nudge_auto_extract", FieldBool, "auto-extract rules from character files via LLM"},
+	{"agent", "nudge.nudge_cooldown", FieldInt, "min tool calls between repeating same reminder"},
+	{"agent", "nudge.nudge_max_per_batch", FieldInt, "max reminders injected per tool batch"},
+	{"agent", "nudge.nudge_pre_answer_gate", FieldBool, "enable pre-answer verification gate"},
+	{"agent", "nudge.nudge_pre_answer_min_tools", FieldInt, "min tool calls before pre-answer gate fires"},
+	{"agent", "nudge.nudge_default_enable", FieldBool, "enable built-in tool/skill reminders"},
+	{"agent", "nudge.nudge_default_frequency", FieldInt, "turns between tool/skill reminders (default 50)"},
+	{"agent", "nudge.nudge_default_scratchpad_frequency", FieldInt, "turns between scratchpad review reminders (0=disabled, default 20)"},
 	{"agent", "debug.inject_agent_warnings", FieldString, "inject warnings into agent session: all, errors, off"},
 	{"agent", "debug.inject_chat_warnings", FieldString, "send warnings as chat notifications: all, errors, off"},
 	{"agent", "debug.compaction_debug", FieldBool, "send compaction summary as file attachment"},
-	{"agent", "defaults.show_tool_calls", FieldString, "tool call display: off, preview, full"},
-	{"agent", "defaults.show_thinking", FieldString, "thinking display: off, compact, true"},
+	{"agent", "display.show_tool_calls", FieldString, "tool call display: off, preview, full"},
+	{"agent", "display.show_thinking", FieldString, "thinking display: off, compact, true"},
 	{"agent", "tools.exec_auto_background", FieldInt, "seconds before auto-backgrounding exec"},
 	{"agent", "tools.max_result_chars", FieldInt, "max chars before writing result to file"},
 	{"agent", "tools.auto_summarise", FieldBool, "auto-summarise oversized tool results"},
@@ -236,9 +237,9 @@ var configFields = []ConfigField{
 	{"agent", "tools.fetch_provider", FieldString, "web fetch: anthropic or builtin"},
 	{"agent", "tools.todo_format", FieldString, "todo list format: lines or table"},
 	{"agent", "sessions.facet_no_compact", FieldBool, "set no_compact on facet sessions (default true)"},
-	{"agent", "defaults.tts", FieldString, "TTS provider id"},
-	{"agent", "defaults.stt", FieldString, "STT provider id"},
-	{"agent", "defaults.tts_rate", FieldFloat, "TTS speech rate multiplier"},
+	{"agent", "voice.tts", FieldString, "TTS provider id"},
+	{"agent", "voice.stt", FieldString, "STT provider id"},
+	{"agent", "voice.tts_rate", FieldFloat, "TTS speech rate multiplier"},
 	{"agent", "keepalive.enabled", FieldBool, "enable keepalive timer"},
 	{"agent", "keepalive.interval", FieldDuration, "keepalive interval"},
 	{"agent", "background.enabled", FieldBool, "enable background work timer"},
@@ -266,8 +267,8 @@ var configFields = []ConfigField{
 	// platforms
 	{"platforms", "startup_notify", FieldBool, "send notification on startup"},
 
-	// defaults — stop aliases
-	{"defaults", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
+	// behavior — stop aliases
+	{"behavior", "enable_stop_aliases", FieldBool, "enable stop command aliases"},
 	{"platforms", "facet_session_ttl", FieldDuration, "idle TTL before facet reclaim"},
 	{"platforms", "message_queue_size", FieldInt, "message queue buffer size"},
 	{"platforms", "display_width", FieldInt, "display width for dividers"},

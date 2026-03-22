@@ -54,16 +54,16 @@ func TestLookupField(t *testing.T) {
 	// and returns false for unknown paths.
 
 	// Known field
-	f, ok := LookupField("defaults.max_output_tokens")
+	f, ok := LookupField("agent_loop.max_output_tokens")
 	if !ok {
-		t.Fatal("LookupField(defaults.max_output_tokens) returned false")
+		t.Fatal("LookupField(agent_loop.max_output_tokens) returned false")
 	}
-	if f.Key != "max_output_tokens" || f.Section != "defaults" {
+	if f.Key != "max_output_tokens" || f.Section != "agent_loop" {
 		t.Errorf("got section=%q key=%q", f.Section, f.Key)
 	}
 
 	// Case insensitive
-	f2, ok := LookupField("DEFAULTS.MAX_OUTPUT_TOKENS")
+	f2, ok := LookupField("AGENT_LOOP.MAX_OUTPUT_TOKENS")
 	if !ok {
 		t.Fatal("LookupField case-insensitive returned false")
 	}
@@ -96,7 +96,7 @@ func TestFieldSections(t *testing.T) {
 	}
 
 	// Should include well-known sections
-	for _, want := range []string{"defaults", "agent", "sessions", "tools", "logging"} {
+	for _, want := range []string{"agent_loop", "agent", "sessions", "tools", "logging"} {
 		if !seen[want] {
 			t.Errorf("missing expected section %q", want)
 		}
@@ -106,18 +106,18 @@ func TestFieldSections(t *testing.T) {
 func TestFieldsInSection(t *testing.T) {
 	// Proves FieldsInSection returns only entries for the requested section,
 	// is case-insensitive, and returns empty for unknown section names.
-	fields := FieldsInSection("defaults")
+	fields := FieldsInSection("agent_loop")
 	if len(fields) == 0 {
-		t.Fatal("FieldsInSection(defaults) returned empty")
+		t.Fatal("FieldsInSection(agent_loop) returned empty")
 	}
 	for _, f := range fields {
-		if f.Section != "defaults" {
-			t.Errorf("unexpected section %q in defaults results", f.Section)
+		if f.Section != "agent_loop" {
+			t.Errorf("unexpected section %q in agent_loop results", f.Section)
 		}
 	}
 
 	// Case insensitive
-	fields2 := FieldsInSection("DEFAULTS")
+	fields2 := FieldsInSection("AGENT_LOOP")
 	if len(fields2) != len(fields) {
 		t.Errorf("case-insensitive returned %d fields vs %d", len(fields2), len(fields))
 	}
@@ -231,7 +231,10 @@ func TestFieldsMatchStructTags(t *testing.T) {
 
 	// Map section names to the struct types they represent.
 	sectionStructs := map[string]reflect.Type{
-		"defaults":         reflect.TypeOf(DefaultsConfig{}),
+		"agent_loop":       reflect.TypeOf(AgentLoopConfig{}),
+		"notify":           reflect.TypeOf(NotifyConfig{}),
+		"nudge":            reflect.TypeOf(NudgeConfig{}),
+		"behavior":         reflect.TypeOf(BehaviorConfig{}),
 		"agent":            reflect.TypeOf(AgentConfig{}),
 		"anthropic":        reflect.TypeOf(AnthropicConfig{}),
 		"gemini":           reflect.TypeOf(GeminiConfig{}),

@@ -35,8 +35,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 // (overridden) tag; all fields get (default) if they weren't explicitly set.
 func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
 	overrides := map[string]bool{
-		"defaults.max_tool_loops":    DerefInt(agent.Defaults.MaxToolLoops) != DerefInt(cfg.Defaults.MaxToolLoops),
-		"defaults.max_output_tokens": DerefInt(agent.Defaults.MaxOutputTokens) != DerefInt(cfg.Defaults.MaxOutputTokens),
+		"agent_loop.max_tool_loops":    DerefInt(agent.AgentLoop.MaxToolLoops) != DerefInt(cfg.AgentLoop.MaxToolLoops),
+		"agent_loop.max_output_tokens": DerefInt(agent.AgentLoop.MaxOutputTokens) != DerefInt(cfg.AgentLoop.MaxOutputTokens),
 	}
 	for i := range rows {
 		path := rows[i].Section + "." + rows[i].Key
@@ -65,15 +65,15 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("groups", "cheap", DerefStr(cfg.Groups.Cheap))
 	}
 
-	// defaults
-	if cfg.Defaults.MaxOutputTokens != nil {
-		add("defaults", "max_output_tokens", *cfg.Defaults.MaxOutputTokens)
+	// agent_loop
+	if cfg.AgentLoop.MaxOutputTokens != nil {
+		add("agent_loop", "max_output_tokens", *cfg.AgentLoop.MaxOutputTokens)
 	}
-	if cfg.Defaults.MaxToolLoops != nil {
-		add("defaults", "max_tool_loops", *cfg.Defaults.MaxToolLoops)
+	if cfg.AgentLoop.MaxToolLoops != nil {
+		add("agent_loop", "max_tool_loops", *cfg.AgentLoop.MaxToolLoops)
 	}
-	if cfg.Defaults.DuplicateMessages != nil && *cfg.Defaults.DuplicateMessages {
-		add("defaults", "duplicate_messages", true)
+	if cfg.AgentLoop.DuplicateMessages != nil && *cfg.AgentLoop.DuplicateMessages {
+		add("agent_loop", "duplicate_messages", true)
 	}
 	if cfg.Debug.InjectAgentWarnings != nil && cfg.Debug.InjectAgentWarningsLevel().Enabled() {
 		add("debug", "inject_agent_warnings", string(*cfg.Debug.InjectAgentWarnings))
@@ -93,11 +93,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 			add("platforms."+p.ID, "show_thinking", string(*p.ShowThinking))
 		}
 	}
-	if cfg.Defaults.InjectedMessageHeader != nil && *cfg.Defaults.InjectedMessageHeader != "" {
-		add("defaults", "injected_message_header", *cfg.Defaults.InjectedMessageHeader)
+	if cfg.Display.InjectedMessageHeader != nil && *cfg.Display.InjectedMessageHeader != "" {
+		add("display", "injected_message_header", *cfg.Display.InjectedMessageHeader)
 	}
-	if len(cfg.Defaults.SystemFiles) > 0 {
-		add("defaults", "system_files", cfg.Defaults.SystemFiles)
+	if len(cfg.System.SystemFiles) > 0 {
+		add("system", "system_files", cfg.System.SystemFiles)
 	}
 
 	// keepalive
@@ -153,11 +153,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 			}
 		}
 	}
-	if len(cfg.Defaults.StopAliases) > 0 {
-		add("defaults", "stop_aliases", cfg.Defaults.StopAliases)
+	if len(cfg.Behavior.StopAliases) > 0 {
+		add("behavior", "stop_aliases", cfg.Behavior.StopAliases)
 	}
-	if cfg.Defaults.EnableStopAliases != nil {
-		add("defaults", "enable_stop_aliases", *cfg.Defaults.EnableStopAliases)
+	if cfg.Behavior.EnableStopAliases != nil {
+		add("behavior", "enable_stop_aliases", *cfg.Behavior.EnableStopAliases)
 	}
 
 	// sessions
@@ -336,10 +336,10 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	add("id", agent.ID)
 	add("workspace", agent.Workspace)
 
-	if len(agent.Defaults.SystemFiles) > 0 {
-		add("system_files", agent.Defaults.SystemFiles)
+	if len(agent.System.SystemFiles) > 0 {
+		add("system_files", agent.System.SystemFiles)
 	}
-	add("duplicate_messages", agent.Defaults.DuplicateMessages)
+	add("duplicate_messages", agent.AgentLoop.DuplicateMessages)
 	if agent.Sessions.BranchOrientationFacetPrompt != nil {
 		add("branch_orientation_facet_prompt", *agent.Sessions.BranchOrientationFacetPrompt)
 	}
@@ -356,20 +356,20 @@ func collectAgentRows(agent AgentConfig) []configRow {
 		}
 	}
 	tg := agent.Platform("telegram")
-	if agent.Defaults.MaxToolLoops != nil {
-		add("max_tool_loops", *agent.Defaults.MaxToolLoops)
+	if agent.AgentLoop.MaxToolLoops != nil {
+		add("max_tool_loops", *agent.AgentLoop.MaxToolLoops)
 	}
-	if agent.Defaults.MaxOutputTokens != nil {
-		add("max_output_tokens", *agent.Defaults.MaxOutputTokens)
+	if agent.AgentLoop.MaxOutputTokens != nil {
+		add("max_output_tokens", *agent.AgentLoop.MaxOutputTokens)
 	}
-	if agent.Defaults.TTS != nil {
-		add("tts", *agent.Defaults.TTS)
+	if agent.Voice.TTS != nil {
+		add("tts", *agent.Voice.TTS)
 	}
-	if agent.Defaults.STT != nil {
-		add("stt", *agent.Defaults.STT)
+	if agent.Voice.STT != nil {
+		add("stt", *agent.Voice.STT)
 	}
-	if agent.Defaults.TTSRate != nil {
-		add("tts_rate", *agent.Defaults.TTSRate)
+	if agent.Voice.TTSRate != nil {
+		add("tts_rate", *agent.Voice.TTSRate)
 	}
 	if agent.Debug.InjectAgentWarnings != nil {
 		add("inject_agent_warnings", string(*agent.Debug.InjectAgentWarnings))
@@ -377,29 +377,29 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Debug.InjectChatWarnings != nil {
 		add("inject_chat_warnings", string(*agent.Debug.InjectChatWarnings))
 	}
-	if agent.Defaults.StartupNotify != nil {
-		add("startup_notify", *agent.Defaults.StartupNotify)
+	if agent.Notify.StartupNotify != nil {
+		add("startup_notify", *agent.Notify.StartupNotify)
 	}
-	if agent.Defaults.CompactionNotify != nil {
-		add("compaction_notify", *agent.Defaults.CompactionNotify)
+	if agent.Notify.CompactionNotify != nil {
+		add("compaction_notify", *agent.Notify.CompactionNotify)
 	}
-	if agent.Defaults.TaskListNotify != nil {
-		add("task_list_notify", *agent.Defaults.TaskListNotify)
+	if agent.Notify.TaskListNotify != nil {
+		add("task_list_notify", *agent.Notify.TaskListNotify)
 	}
 	if agent.Debug.CompactionDebug != nil {
 		add("compaction_debug", *agent.Debug.CompactionDebug)
 	}
-	if agent.Defaults.SteerMode != nil {
-		add("steer_mode", *agent.Defaults.SteerMode)
+	if agent.Behavior.SteerMode != nil {
+		add("steer_mode", *agent.Behavior.SteerMode)
 	}
 	if agent.Sessions.FacetNoCompact != nil {
 		add("facet_no_compact", *agent.Sessions.FacetNoCompact)
 	}
-	if agent.Defaults.ShowToolCalls != nil {
-		add("show_tool_calls", string(*agent.Defaults.ShowToolCalls))
+	if agent.Display.ShowToolCalls != nil {
+		add("show_tool_calls", string(*agent.Display.ShowToolCalls))
 	}
-	if agent.Defaults.ShowThinking != nil {
-		add("show_thinking", string(*agent.Defaults.ShowThinking))
+	if agent.Display.ShowThinking != nil {
+		add("show_thinking", string(*agent.Display.ShowThinking))
 	}
 	if tg != nil && tg.DisplayWidth != nil {
 		add("platforms.telegram.display_width", *tg.DisplayWidth)
@@ -416,8 +416,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != "" {
 		add("platforms.telegram.received_files_dir", *tg.ReceivedFilesDir)
 	}
-	if agent.Defaults.InjectedMessageHeader != nil && *agent.Defaults.InjectedMessageHeader != "" {
-		add("injected_message_header", *agent.Defaults.InjectedMessageHeader)
+	if agent.Display.InjectedMessageHeader != nil && *agent.Display.InjectedMessageHeader != "" {
+		add("injected_message_header", *agent.Display.InjectedMessageHeader)
 	}
 	if tg != nil && len(tg.AllowedUsers) > 0 {
 		add("platforms.telegram.allowed_users", tg.AllowedUsers)
