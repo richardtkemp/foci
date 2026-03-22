@@ -391,7 +391,7 @@ type AnthropicConfig struct {
 	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s"`  // HTTP timeout for usage API calls (default "10s")
 	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m"`  // cache TTL for usage API responses (default "10m")
 	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"`   // how far before expiry to trigger proactive token refresh (default "5m")
-	UseSDK            bool   `toml:"use_sdk"`            // use SDK transport (default true; false = raw HTTP)
+	UseSDK            *bool  `toml:"use_sdk"             default:"true"` // use SDK transport (default true; false = raw HTTP)
 }
 
 // DisplayConfig holds display-related settings that can be set at any level
@@ -627,15 +627,15 @@ type LoggingConfig struct {
 	FullPayload          bool   `toml:"full_payload"`            // write full API payloads to api-payload.jsonl
 	PayloadFile          string `toml:"payload_file"`            // path to api-payload.jsonl (default: api-payload.jsonl)
 	CacheBustDetect      bool   `toml:"cache_bust_detect"`       // alert when cache_read drops >50% vs previous request
-	CacheBustIdleMinutes int    `toml:"cache_bust_idle_minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
+	CacheBustIdleMinutes *int   `toml:"cache_bust_idle_minutes" default:"10"` // suppress cache bust alert if session idle > N minutes (default 10)
 
-	WarningMaxPerWindow               int    `toml:"warning_max_per_window"`               // max identical warnings per window before suppression (default 3)
+	WarningMaxPerWindow               *int   `toml:"warning_max_per_window"               default:"3"` // max identical warnings per window before suppression (default 3)
 	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"`  // time window for warning dedup (default "5m")
 	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"`  // min interval between proactive warning turns when user is active (default "5m")
 	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"`  // min interval when user is inactive (default "1h")
 	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m"` // user is "active" if last message within this window (default "10m")
 
-	LogRotation         bool   `toml:"log_rotation"`           // enable built-in log rotation (default true)
+	LogRotation         *bool  `toml:"log_rotation"            default:"true"` // enable built-in log rotation (default true)
 	RotationPeriod      string `toml:"rotation_period"        default:"24h"`  // how often to rotate (default "24h")
 	RetentionPeriod     string `toml:"retention_period"       default:"48h"`  // keep lines newer than this (default "48h")
 	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"` // max line size for scanner buffer (default "64MB")
@@ -685,7 +685,7 @@ type CacheConfig struct {
 
 
 type EnvironmentConfig struct {
-	Enabled  bool   `toml:"enabled"`   // inject environment block as first system block (default true)
+	Enabled  *bool  `toml:"enabled"    default:"true"` // inject environment block as first system block (default true)
 	DocsPath string `toml:"docs_path" default:"shared/docs"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
@@ -694,11 +694,11 @@ type SkillsConfig struct {
 }
 
 type ResourcesConfig struct {
-	MemoryGuardEnabled      bool    `toml:"memory_guard_enabled"`      // enable system memory guard (default true)
+	MemoryGuardEnabled      *bool   `toml:"memory_guard_enabled"      default:"true"` // enable system memory guard (default true)
 	MemoryGuardInterval     string  `toml:"memory_guard_interval"     default:"60s"` // check interval (default "60s")
-	MemoryWarnPercent       int     `toml:"memory_warn_percent"`       // warn threshold as % of total RAM (default 25)
-	MemoryKillPercent       int     `toml:"memory_kill_percent"`       // kill threshold as % of total RAM (default 40)
-	MemoryPressureThreshold float64 `toml:"memory_pressure_threshold"` // PSI avg10 threshold to require before acting (default 10.0)
+	MemoryWarnPercent       *int    `toml:"memory_warn_percent"       default:"25"` // warn threshold as % of total RAM (default 25)
+	MemoryKillPercent       *int    `toml:"memory_kill_percent"       default:"40"` // kill threshold as % of total RAM (default 40)
+	MemoryPressureThreshold *float64 `toml:"memory_pressure_threshold" default:"10"` // PSI avg10 threshold to require before acting (default 10.0)
 	GoroutineMonitorInterval  string `toml:"goroutine_monitor_interval"  default:"60s"` // goroutine count check interval (default "60s")
 	GoroutineMonitorThreshold int    `toml:"goroutine_monitor_threshold"` // warn when goroutine count exceeds this (0 = auto: 30 + 25×agents + 5×telegram_bots)
 }

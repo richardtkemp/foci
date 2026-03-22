@@ -31,7 +31,7 @@ func initLogging(cfg *config.Config) func() {
 	cleanups = append(cleanups, log.Close)
 
 	// Log rotation
-	if cfg.Logging.LogRotation {
+	if config.DerefBool(cfg.Logging.LogRotation) {
 		rotPeriod, _ := time.ParseDuration(cfg.Logging.RotationPeriod)
 		retPeriod, _ := time.ParseDuration(cfg.Logging.RetentionPeriod)
 		maxLineSize, _ := config.ParseByteSize(cfg.Logging.RotationMaxLineSize)

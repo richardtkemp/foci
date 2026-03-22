@@ -8,35 +8,13 @@ import (
 )
 
 // Default-setting helpers for fields that need runtime context (IsDefined checks).
-// Simple defaults are now expressed as `default:"value"` struct tags in types.go,
-// applied by ApplyTagDefaults.
+// Most defaults are now expressed as `default:"value"` struct tags in types.go,
+// applied by ApplyTagDefaults. Only setStringDefaultDefined remains for fields
+// whose defaults depend on runtime values (e.g. DataPath).
 
 // setStringDefaultDefined sets *p to def when *p is empty AND the key was not explicitly defined.
 func setStringDefaultDefined(p *string, def string, defined bool) {
 	if *p == "" && !defined {
-		*p = def
-	}
-}
-
-// setBoolDefaultDefined sets *p to def when the key was not explicitly defined in config.
-// Use this for bool fields where the Go zero (false) is valid and we need
-// metadata to distinguish "not set" from "set to false".
-func setBoolDefaultDefined(p *bool, def bool, defined bool) { // nolint:unparam
-	if !defined {
-		*p = def
-	}
-}
-
-// setIntDefaultDefined sets *p to def when *p is zero AND the key was not explicitly defined.
-func setIntDefaultDefined(p *int, def int, defined bool) {
-	if *p == 0 && !defined {
-		*p = def
-	}
-}
-
-// setFloatDefaultDefined sets *p to def when *p is zero AND the key was not explicitly defined.
-func setFloatDefaultDefined(p *float64, def float64, defined bool) {
-	if *p == 0 && !defined {
 		*p = def
 	}
 }

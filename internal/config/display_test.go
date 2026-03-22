@@ -46,7 +46,7 @@ func testConfig() (*Config, AgentConfig) {
 			EventFile:             "/logs/foci.log",
 			APIFile:               "/logs/api.jsonl",
 			ConversationFile:      "/data/conversation.db",
-			WarningMaxPerWindow:   3,
+			WarningMaxPerWindow:   Ptr[int](3),
 			WarningWindowDuration: "5m",
 		},
 		Tools: ToolsConfig{
@@ -73,7 +73,7 @@ func testConfig() (*Config, AgentConfig) {
 			TmuxMemoryCritical:      "20%",
 			TmuxMemoryKill:          "30%",
 		},
-		Environment:  EnvironmentConfig{Enabled: true},
+		Environment:  EnvironmentConfig{Enabled: Ptr[bool](true)},
 		Mana: ManaConfig{},
 		Database:     DatabaseConfig{BusyTimeout: "5s"},
 	}
@@ -211,7 +211,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Debug.MessagesInLog = Ptr[bool](true)
 	cfg.Logging.FullPayload = true
 	cfg.Logging.CacheBustDetect = true
-	cfg.Logging.CacheBustIdleMinutes = 10
+	cfg.Logging.CacheBustIdleMinutes = Ptr[int](10)
 	cfg.TTS = []TTSConfig{{ID: "edge", Format: "edge-tts", Voice: "en-US-AriaNeural"}}
 	cfg.STT = []STTConfig{{ID: "groq", Format: "openai", Endpoint: "https://api.groq.com", Model: "whisper-large-v3"}}
 	cfg.Environment.DocsPath = "/docs"

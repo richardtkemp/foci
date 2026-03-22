@@ -2,51 +2,6 @@ package config
 
 import "testing"
 
-func TestSetBoolDefaultDefined(t *testing.T) {
-	// Proves that setBoolDefaultDefined applies the default only when the field has
-	// not been explicitly set (defined=false), and preserves the value when defined.
-	t.Run("sets when not defined", func(t *testing.T) {
-		v := false
-		setBoolDefaultDefined(&v, true, false)
-		if !v {
-			t.Error("expected true when not defined")
-		}
-	})
-	t.Run("preserves when defined", func(t *testing.T) {
-		v := false
-		setBoolDefaultDefined(&v, true, true)
-		if v {
-			t.Error("should preserve false when defined")
-		}
-	})
-}
-
-func TestSetIntDefaultDefined(t *testing.T) {
-	// Proves that setIntDefaultDefined distinguishes between "zero because unset"
-	// (applies default) and "zero because explicitly set" (preserves zero).
-	t.Run("sets when zero and not defined", func(t *testing.T) {
-		v := 0
-		setIntDefaultDefined(&v, 10, false)
-		if v != 10 {
-			t.Errorf("got %d, want 10", v)
-		}
-	})
-	t.Run("preserves non-zero even when not defined", func(t *testing.T) {
-		v := 5
-		setIntDefaultDefined(&v, 10, false)
-		if v != 5 {
-			t.Errorf("got %d, want 5", v)
-		}
-	})
-	t.Run("preserves zero when defined", func(t *testing.T) {
-		v := 0
-		setIntDefaultDefined(&v, 10, true)
-		if v != 0 {
-			t.Errorf("got %d, want 0", v)
-		}
-	})
-}
-
 func TestValidateDurations(t *testing.T) {
 	// Proves that validateDurations accepts valid Go duration strings without error
 	// and returns an error identifying the field when an invalid duration is found.

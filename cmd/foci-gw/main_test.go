@@ -277,7 +277,7 @@ func TestBuildEnvironmentBlock_CrontabInfo(t *testing.T) {
 	}
 	cfg := &config.Config{
 		Environment: config.EnvironmentConfig{
-			Enabled: true,
+			Enabled: config.Ptr[bool](true),
 		},
 		Logging: config.LoggingConfig{
 			EventFile: "/tmp/foci.log",
