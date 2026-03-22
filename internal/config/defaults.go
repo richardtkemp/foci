@@ -7,28 +7,9 @@ import (
 	"time"
 )
 
-// Default-setting helpers to reduce boilerplate in Load().
-// Each function sets the target to the default value only when
-// the current value is the zero value for its type.
-
-func setStringDefault(p *string, def string) {
-	if *p == "" {
-		*p = def
-	}
-}
-
-func setIntDefault(p *int, def int) {
-	if *p == 0 {
-		*p = def
-	}
-}
-
-
-func setFloatDefault(p *float64, def float64) {
-	if *p == 0 {
-		*p = def
-	}
-}
+// Default-setting helpers for fields that need runtime context (IsDefined checks).
+// Simple defaults are now expressed as `default:"value"` struct tags in types.go,
+// applied by ApplyTagDefaults.
 
 // setStringDefaultDefined sets *p to def when *p is empty AND the key was not explicitly defined.
 func setStringDefaultDefined(p *string, def string, defined bool) {
@@ -75,16 +56,17 @@ type durationEntry struct {
 	Section, Key, Value string
 }
 
-// ApplyTagDefaults walks a struct (by pointer) and sets nil pointer fields
-// to the value specified in their `default` tag. Recurses into nested structs.
-// Supports *bool, *int, *int64, *float64, *string, and *InjectionLevel.
+// ApplyTagDefaults walks a struct (by pointer) and sets fields to the value
+// specified in their `default` tag. For pointer fields, applies when nil.
+// For non-pointer scalar fields, applies when zero. Recurses into nested structs.
 //
 // This keeps defaults co-located with field definitions in types.go:
 //
-//	SteerMode *bool `toml:"steer_mode" default:"true"`
+//	SteerMode        *bool `toml:"steer_mode"         default:"true"`
+//	MaxSystemPrompt  int   `toml:"max_system_prompt"  default:"20000"`
 //
-// Call on global config paths (not per-agent — agent fields must stay nil
-// for Merge to work correctly).
+// Call on global config paths (not per-agent — agent pointer fields must
+// stay nil for Merge to work correctly).
 func ApplyTagDefaults(v any) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Ptr {
@@ -108,20 +90,28 @@ func applyTagDefaults(rv reflect.Value) {
 			continue
 		}
 
-		// Only handle nil pointer fields with a default tag.
-		if f.Kind() != reflect.Ptr || !f.IsNil() {
-			continue
-		}
 		tag := ft.Tag.Get("default")
 		if tag == "" {
 			continue
 		}
 
-		setTagDefault(f, tag)
+		// Pointer fields: apply when nil.
+		if f.Kind() == reflect.Ptr {
+			if !f.IsNil() {
+				continue
+			}
+			setTagDefaultPtr(f, tag)
+			continue
+		}
+
+		// Non-pointer scalar fields: apply when zero.
+		if f.IsZero() {
+			setTagDefaultScalar(f, tag)
+		}
 	}
 }
 
-func setTagDefault(f reflect.Value, tag string) {
+func setTagDefaultPtr(f reflect.Value, tag string) {
 	elemType := f.Type().Elem()
 	switch elemType.Kind() {
 	case reflect.Bool:
@@ -141,6 +131,22 @@ func setTagDefault(f reflect.Value, tag string) {
 		val := reflect.New(elemType)
 		val.Elem().SetString(tag)
 		f.Set(val)
+	}
+}
+
+func setTagDefaultScalar(f reflect.Value, tag string) {
+	switch f.Kind() {
+	case reflect.Bool:
+		v, _ := strconv.ParseBool(tag)
+		f.SetBool(v)
+	case reflect.Int, reflect.Int64:
+		v, _ := strconv.ParseInt(tag, 10, 64)
+		f.SetInt(v)
+	case reflect.Float64:
+		v, _ := strconv.ParseFloat(tag, 64)
+		f.SetFloat(v)
+	case reflect.String:
+		f.SetString(tag)
 	}
 }
 

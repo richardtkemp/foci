@@ -200,130 +200,41 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Apply struct tag defaults to global config paths.
-	// Per-agent fields stay nil for Merge to work correctly.
-	ApplyTagDefaults(&cfg.Defaults)
-	ApplyTagDefaults(&cfg.Tools.ToolConfig)
-	ApplyTagDefaults(&cfg.Tools.SummaryConfig)
-	ApplyTagDefaults(&cfg.Sessions.CompactionConfig)
-	ApplyTagDefaults(&cfg.Browser)
-	ApplyTagDefaults(&cfg.Keepalive)
-	ApplyTagDefaults(&cfg.Background)
-	ApplyTagDefaults(&cfg.MemoryFormation)
-	ApplyTagDefaults(&cfg.Mana)
-	ApplyTagDefaults(&cfg.Debug)
-	ApplyTagDefaults(&cfg.Groups)
-
-	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
-	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
-	setIntDefault(&cfg.Sessions.MaxSystemPromptFile, 20000)
-	setIntDefault(&cfg.Sessions.MaxSystemPromptTotal, 80000)
+	// Apply struct tag defaults to all global config sections.
+	// Recursion handles nested structs; slices (Agents, Platforms) and
+	// maps (Models, Endpoints) are skipped — per-agent pointer fields
+	// stay nil for Merge to work correctly.
+	ApplyTagDefaults(&cfg)
 
 	// Apply debug.log_api_key_suffix to the log package global.
 	log.DebugLogKeySuffix = DerefBool(cfg.Debug.LogAPIKeySuffix)
 
-	setStringDefault(&cfg.Sessions.ArchiveAfter, "24h")
-	setIntDefault(&cfg.HTTP.Port, 18791)
-	setStringDefault(&cfg.HTTP.Bind, "127.0.0.1")
+	// Dynamic defaults that can't be expressed as struct tags.
 	if cfg.DataDir == "" {
 		home, _ := os.UserHomeDir()
 		cfg.DataDir = filepath.Join(home, "data")
 	}
-	setStringDefault(&cfg.Logging.Level, "INFO")
-	setStringDefault(&cfg.Logging.EventFile, "logs/foci.log")
-	setStringDefault(&cfg.Logging.APIFile, "logs/api.jsonl")
 	if cfg.Logging.FullPayload && cfg.Logging.PayloadFile == "" {
 		cfg.Logging.PayloadFile = "logs/api-payload.jsonl"
 	}
 	setStringDefaultDefined(&cfg.Logging.APIDB, cfg.DataPath("api.db"), md.IsDefined("logging", "api_db"))
 	setIntDefaultDefined(&cfg.Logging.CacheBustIdleMinutes, 10, md.IsDefined("logging", "cache_bust_idle_minutes"))
 	setIntDefaultDefined(&cfg.Logging.WarningMaxPerWindow, 3, md.IsDefined("logging", "warning_max_per_window"))
-	setStringDefault(&cfg.Logging.WarningWindowDuration, "5m")
-	setStringDefault(&cfg.Logging.WarningProactiveActiveInterval, "5m")
-	setStringDefault(&cfg.Logging.WarningProactiveInactiveInterval, "1h")
-	setStringDefault(&cfg.Logging.WarningProactiveActivityThreshold, "10m")
 	setBoolDefaultDefined(&cfg.Logging.LogRotation, true, md.IsDefined("logging", "log_rotation"))
-	setStringDefault(&cfg.Logging.RotationPeriod, "24h")
-	setStringDefault(&cfg.Logging.RetentionPeriod, "48h")
-	setStringDefault(&cfg.Logging.RotationMaxLineSize, "64MB")
-	setStringDefault(&cfg.Logging.LogFileMode, "0600")
-	// Resources defaults
+	// Resources: bool/int fields needing IsDefined
 	setBoolDefaultDefined(&cfg.Resources.MemoryGuardEnabled, true, md.IsDefined("resources", "memory_guard_enabled"))
-	setStringDefault(&cfg.Resources.MemoryGuardInterval, "60s")
 	setIntDefaultDefined(&cfg.Resources.MemoryWarnPercent, 25, md.IsDefined("resources", "memory_warn_percent"))
 	setIntDefaultDefined(&cfg.Resources.MemoryKillPercent, 40, md.IsDefined("resources", "memory_kill_percent"))
 	setFloatDefaultDefined(&cfg.Resources.MemoryPressureThreshold, 10.0, md.IsDefined("resources", "memory_pressure_threshold"))
-	setStringDefault(&cfg.Resources.GoroutineMonitorInterval, "60s")
 	// GoroutineMonitorThreshold: 0 means auto (30 + 25×agents + 5×telegram_bots), computed at startup.
-	// Bitwarden defaults
-	setStringDefault(&cfg.Bitwarden.SessionFile, "/home/bitwarden/.bw_session")
-	setStringDefault(&cfg.Bitwarden.RefreshInterval, "15m")
-	setStringDefault(&cfg.Bitwarden.SecretTTL, "30m")
-	setStringDefault(&cfg.Bitwarden.CleanupInterval, "1m")
-
-	setStringDefault(&cfg.Cache.Strategy, "auto")
-	setStringDefault(&cfg.Cache.TTL, "1h")
-	// SummaryConfig fields (MaxResultChars etc.) are now pointers — defaults at use time via Merge
-	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci/tool-results")
-	setIntDefault(&cfg.Tools.TmuxCols, 300)
-	setIntDefault(&cfg.Tools.TmuxRows, 30)
-	// ToolConfig pointer defaults now in struct tags (applied by ApplyTagDefaults above)
 	if len(cfg.Defaults.Behavior.StopAliases) == 0 {
 		cfg.Defaults.Behavior.StopAliases = []string{"stop", "wait"}
 	}
-	setStringDefault(&cfg.WelcomeFile, "data/WELCOME.md")
 	if len(cfg.Memory.SearchBackends) == 0 {
 		cfg.Memory.SearchBackends = []string{"bleve"}
 	}
-	setFloatDefault(&cfg.Memory.ConversationWeight, 0.1)
-	setIntDefault(&cfg.Memory.SearchLimit, 20)
-	setStringDefault(&cfg.Memory.SweepInterval, "1h")
-
-	// Database defaults
-	setStringDefault(&cfg.Database.BusyTimeout, "5s")
-
-	// Anthropic defaults
-	setStringDefault(&cfg.Anthropic.HTTPTimeout, "600s") // 10 min — thinking responses can take several minutes
-	setStringDefault(&cfg.Anthropic.UsageAPITimeout, "10s")
-	setStringDefault(&cfg.Anthropic.UsageCacheTTL, "10m")
-	setStringDefault(&cfg.Anthropic.CCExpiryThreshold, "5m")
 	setBoolDefaultDefined(&cfg.Anthropic.UseSDK, true, md.IsDefined("anthropic", "use_sdk"))
-
-	// Gemini defaults
-	setStringDefault(&cfg.Gemini.HTTPTimeout, "120s")
-	setStringDefault(&cfg.Gemini.CacheTTL, "1h")
-
-	// OpenAI defaults
-	setStringDefault(&cfg.OpenAI.HTTPTimeout, "120s")
-
-	// Tools defaults
-	setIntDefault(&cfg.Tools.ExecDefaultTimeout, 30)
-	// MaxSummaryChars now in SummaryConfig — default at use time
-	setStringDefault(&cfg.Tools.TmuxCommandTimeout, "5s")
-	setStringDefault(&cfg.Tools.WebFetchTimeout, "30s")
-	setIntDefault(&cfg.Tools.WebFetchMaxBytes, 1048576) // 1MB
-	setStringDefault(&cfg.Tools.WebSearchTimeout, "15s")
-	setIntDefault(&cfg.Tools.ToolCallPreviewChars, 450)
-	setStringDefault(&cfg.Tools.TmuxMemoryCheckInterval, "5m")
-	setStringDefault(&cfg.Tools.TmuxMemoryWarn, "10%")
-	setStringDefault(&cfg.Tools.TmuxMemoryCritical, "20%")
-	setStringDefault(&cfg.Tools.TmuxMemoryKill, "30%")
-	// SummaryContextTurns, SummaryContextChars, MaxSummaryInputChars, MaxImagePixels
-	// now in SummaryConfig — defaults at use time
-
-	// Browser pointer defaults now in struct tags (applied by ApplyTagDefaults above)
-
-	// HTTP defaults
-	setStringDefault(&cfg.HTTP.GracefulShutdownTimeout, "30s")
-
-	// Bool defaults: default to true unless explicitly set to false in config.
 	setBoolDefaultDefined(&cfg.Environment.Enabled, true, md.IsDefined("environment", "enabled"))
-	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
-	// EnableStopAliases now in BehaviorConfig — code default at use time
-
-	// Keepalive/background/memory-formation pointer defaults now in struct tags
-
-	// Keepalive/background/memory-formation: resolved via Merge at use time (no load-time copying)
 
 	// Apply convention-based defaults before path resolution.
 	for i := range cfg.Agents {
