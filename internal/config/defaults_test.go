@@ -2,63 +2,6 @@ package config
 
 import "testing"
 
-func TestSetStringDefault(t *testing.T) {
-	// Proves that setStringDefault sets the value when the target is empty and
-	// preserves the existing value when it is already non-empty.
-	t.Run("sets when empty", func(t *testing.T) {
-		v := ""
-		setStringDefault(&v, "hello")
-		if v != "hello" {
-			t.Errorf("got %q, want %q", v, "hello")
-		}
-	})
-	t.Run("preserves non-empty", func(t *testing.T) {
-		v := "existing"
-		setStringDefault(&v, "hello")
-		if v != "existing" {
-			t.Errorf("got %q, want %q", v, "existing")
-		}
-	})
-}
-
-func TestSetIntDefault(t *testing.T) {
-	// Proves that setIntDefault sets the value when the target is zero and
-	// preserves the existing value when it is already non-zero.
-	t.Run("sets when zero", func(t *testing.T) {
-		v := 0
-		setIntDefault(&v, 42)
-		if v != 42 {
-			t.Errorf("got %d, want %d", v, 42)
-		}
-	})
-	t.Run("preserves non-zero", func(t *testing.T) {
-		v := 10
-		setIntDefault(&v, 42)
-		if v != 10 {
-			t.Errorf("got %d, want %d", v, 10)
-		}
-	})
-}
-
-func TestSetFloatDefault(t *testing.T) {
-	// Proves that setFloatDefault sets the value when the target is zero and
-	// preserves an existing non-zero float value.
-	t.Run("sets when zero", func(t *testing.T) {
-		v := 0.0
-		setFloatDefault(&v, 0.5)
-		if v != 0.5 {
-			t.Errorf("got %f, want %f", v, 0.5)
-		}
-	})
-	t.Run("preserves non-zero", func(t *testing.T) {
-		v := 0.25
-		setFloatDefault(&v, 0.5)
-		if v != 0.25 {
-			t.Errorf("got %f, want %f", v, 0.25)
-		}
-	})
-}
-
 func TestSetBoolDefaultDefined(t *testing.T) {
 	// Proves that setBoolDefaultDefined applies the default only when the field has
 	// not been explicitly set (defined=false), and preserves the value when defined.
@@ -128,14 +71,19 @@ func TestValidateDurations(t *testing.T) {
 }
 
 func TestApplyTagDefaults(t *testing.T) {
-	// Proves ApplyTagDefaults sets nil pointer fields from their `default` tags
-	// and preserves non-nil values.
+	// Proves ApplyTagDefaults sets nil pointer fields from their `default` tags,
+	// sets zero-value non-pointer scalar fields, and preserves non-nil/non-zero values.
 	type inner struct {
 		A *bool    `default:"true"`
 		B *string  `default:"hello"`
 		C *int     `default:"42"`
 		D *float64 `default:"0.5"`
 		E *bool    // no default tag — should stay nil
+		// Non-pointer scalar fields
+		F int     `default:"100"`
+		G string  `default:"world"`
+		H float64 `default:"3.14"`
+		I int     // no default tag — should stay 0
 	}
 	type outer struct {
 		X inner
@@ -158,8 +106,20 @@ func TestApplyTagDefaults(t *testing.T) {
 	if v.X.E != nil {
 		t.Error("E should be nil (no default tag)")
 	}
+	if v.X.F != 100 {
+		t.Errorf("F should be 100 from tag default, got %d", v.X.F)
+	}
+	if v.X.G != "world" {
+		t.Errorf("G should be 'world' from tag default, got %q", v.X.G)
+	}
+	if v.X.H != 3.14 {
+		t.Errorf("H should be 3.14 from tag default, got %f", v.X.H)
+	}
+	if v.X.I != 0 {
+		t.Errorf("I should be 0 (no default tag), got %d", v.X.I)
+	}
 
-	// Non-nil values should be preserved.
+	// Non-nil pointer values should be preserved.
 	v2 := outer{X: inner{A: Ptr(false), C: Ptr(0)}}
 	ApplyTagDefaults(&v2)
 	if *v2.X.A != false {
@@ -167,6 +127,16 @@ func TestApplyTagDefaults(t *testing.T) {
 	}
 	if *v2.X.C != 0 {
 		t.Error("C should preserve explicit 0")
+	}
+
+	// Non-zero scalar values should be preserved.
+	v3 := outer{X: inner{F: 7, G: "custom"}}
+	ApplyTagDefaults(&v3)
+	if v3.X.F != 7 {
+		t.Errorf("F should preserve explicit 7, got %d", v3.X.F)
+	}
+	if v3.X.G != "custom" {
+		t.Errorf("G should preserve explicit 'custom', got %q", v3.X.G)
 	}
 }
 

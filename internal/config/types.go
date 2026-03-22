@@ -377,20 +377,20 @@ type ToolConfig struct {
 }
 
 type GeminiConfig struct {
-	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
-	CacheTTL    string `toml:"cache_ttl"`    // context cache TTL (default "1h", "0" disables)
+	HTTPTimeout string `toml:"http_timeout" default:"120s"` // HTTP timeout for API calls (default "120s")
+	CacheTTL    string `toml:"cache_ttl"    default:"1h"`   // context cache TTL (default "1h", "0" disables)
 }
 
 type OpenAIConfig struct {
-	BaseURL     string `toml:"base_url"`     // API base URL (default: "https://api.openai.com", override for OpenRouter/Together/etc.)
-	HTTPTimeout string `toml:"http_timeout"` // HTTP timeout for API calls (default "120s")
+	BaseURL     string `toml:"base_url"`                    // API base URL (default: "https://api.openai.com", override for OpenRouter/Together/etc.)
+	HTTPTimeout string `toml:"http_timeout" default:"120s"` // HTTP timeout for API calls (default "120s")
 }
 
 type AnthropicConfig struct {
-	HTTPTimeout       string `toml:"http_timeout"`       // HTTP timeout for API calls (default "600s")
-	UsageAPITimeout   string `toml:"usage_api_timeout"`  // HTTP timeout for usage API calls (default "10s")
-	UsageCacheTTL     string `toml:"usage_cache_ttl"`    // cache TTL for usage API responses (default "10m")
-	CCExpiryThreshold string `toml:"cc_expiry_threshold"` // how far before expiry to trigger proactive token refresh (default "5m")
+	HTTPTimeout       string `toml:"http_timeout"        default:"600s"` // HTTP timeout for API calls (default "600s")
+	UsageAPITimeout   string `toml:"usage_api_timeout"   default:"10s"`  // HTTP timeout for usage API calls (default "10s")
+	UsageCacheTTL     string `toml:"usage_cache_ttl"     default:"10m"`  // cache TTL for usage API responses (default "10m")
+	CCExpiryThreshold string `toml:"cc_expiry_threshold" default:"5m"`   // how far before expiry to trigger proactive token refresh (default "5m")
 	UseSDK            bool   `toml:"use_sdk"`            // use SDK transport (default true; false = raw HTTP)
 }
 
@@ -569,15 +569,15 @@ type SessionsConfig struct {
 	Dir string `toml:"dir"`
 
 	CompactionConfig  // compaction settings (global defaults, overridable per-agent)
-	CompactionMaxTokens   int `toml:"compaction_max_tokens"`         // max output tokens for summary (default 4096)
-	CompactionMinMessages int `toml:"compaction_min_messages"`       // min messages before compacting (default 4)
-	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"`  // per-file char threshold for warnings (default 20000)
-	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total"` // total system prompt char threshold (default 80000)
+	CompactionMaxTokens   int `toml:"compaction_max_tokens"         default:"4096"`  // max output tokens for summary
+	CompactionMinMessages int `toml:"compaction_min_messages"       default:"4"`     // min messages before compacting
+	MaxSystemPromptFile   int `toml:"max_system_prompt_chars_file"  default:"20000"` // per-file char threshold for warnings
+	MaxSystemPromptTotal  int `toml:"max_system_prompt_chars_total" default:"80000"` // total system prompt char threshold
 
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`    // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"` // path to prompt file for headless branches (cron, spawn, keepalive)
 
-	ArchiveAfter string `toml:"archive_after"` // gzip idle sessions after this duration (default "24h")
+	ArchiveAfter string `toml:"archive_after" default:"24h"` // gzip idle sessions after this duration (default "24h")
 }
 
 type MemorySource struct {
@@ -590,9 +590,9 @@ type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
 	SearchBackends     []string       `toml:"search_backends"`     // active search backends: "fts5", "bleve" (default ["bleve"])
 	ReindexDebounce    string         `toml:"reindex_debounce"`    // delay before reindex (e.g., "500ms", "2s"), default "0s"
-	ConversationWeight float64        `toml:"conversation_weight"` // weight multiplier for conversation search results (default 0.1)
-	SearchLimit        int            `toml:"search_limit"`        // max search results to return (default 20)
-	SweepInterval      string         `toml:"sweep_interval"`      // periodic full reindex interval (default "1h", "0" disables)
+	ConversationWeight float64        `toml:"conversation_weight" default:"0.1"` // weight multiplier for conversation search results (default 0.1)
+	SearchLimit        int            `toml:"search_limit"        default:"20"`  // max search results to return (default 20)
+	SweepInterval      string         `toml:"sweep_interval"      default:"1h"`  // periodic full reindex interval (default "1h", "0" disables)
 }
 
 // HasBackend reports whether the given search backend is enabled.
@@ -606,21 +606,21 @@ func (m MemoryConfig) HasBackend(name string) bool {
 }
 
 type DatabaseConfig struct {
-	BusyTimeout string `toml:"busy_timeout"` // SQLite busy timeout for concurrent access (default "5s")
+	BusyTimeout string `toml:"busy_timeout" default:"5s"` // SQLite busy timeout for concurrent access (default "5s")
 }
 
 type HTTPConfig struct {
-	Port                    int    `toml:"port"`
-	Bind                    string `toml:"bind"`
-	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout"` // time to wait for in-flight requests on shutdown (default "30s")
+	Port                    int    `toml:"port" default:"18791"`
+	Bind                    string `toml:"bind" default:"127.0.0.1"`
+	GracefulShutdownTimeout string `toml:"graceful_shutdown_timeout" default:"30s"` // time to wait for in-flight requests on shutdown (default "30s")
 	WSEnabled               bool   `toml:"ws_enabled"`                // enable /voice WebSocket endpoint (default false)
 	SocketPath              string `toml:"socket_path"`               // Unix socket path for same-user auth (default: auto-resolved to data dir)
 }
 
 type LoggingConfig struct {
-	Level            string `toml:"level"`
-	EventFile        string `toml:"event_file"`
-	APIFile          string `toml:"api_file"`
+	Level            string `toml:"level"      default:"INFO"`
+	EventFile        string `toml:"event_file" default:"logs/foci.log"`
+	APIFile          string `toml:"api_file"   default:"logs/api.jsonl"`
 	APIDB            string `toml:"api_db"` // SQLite API call log path (empty = disabled, default: {data_dir}/api.db)
 	ConversationFile string `toml:"conversation_file"`
 
@@ -630,17 +630,17 @@ type LoggingConfig struct {
 	CacheBustIdleMinutes int    `toml:"cache_bust_idle_minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 
 	WarningMaxPerWindow               int    `toml:"warning_max_per_window"`               // max identical warnings per window before suppression (default 3)
-	WarningWindowDuration             string `toml:"warning_window_duration"`              // time window for warning dedup (default "5m")
-	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"`    // min interval between proactive warning turns when user is active (default "5m")
-	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"`  // min interval when user is inactive (default "1h")
-	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold"` // user is "active" if last message within this window (default "10m")
+	WarningWindowDuration             string `toml:"warning_window_duration"              default:"5m"`  // time window for warning dedup (default "5m")
+	WarningProactiveActiveInterval    string `toml:"warning_proactive_active_interval"    default:"5m"`  // min interval between proactive warning turns when user is active (default "5m")
+	WarningProactiveInactiveInterval  string `toml:"warning_proactive_inactive_interval"  default:"1h"`  // min interval when user is inactive (default "1h")
+	WarningProactiveActivityThreshold string `toml:"warning_proactive_activity_threshold" default:"10m"` // user is "active" if last message within this window (default "10m")
 
 	LogRotation         bool   `toml:"log_rotation"`           // enable built-in log rotation (default true)
-	RotationPeriod      string `toml:"rotation_period"`        // how often to rotate (default "24h")
-	RetentionPeriod     string `toml:"retention_period"`       // keep lines newer than this (default "48h")
-	RotationMaxLineSize string `toml:"rotation_max_line_size"` // max line size for scanner buffer (default "64MB")
+	RotationPeriod      string `toml:"rotation_period"        default:"24h"`  // how often to rotate (default "24h")
+	RetentionPeriod     string `toml:"retention_period"       default:"48h"`  // keep lines newer than this (default "48h")
+	RotationMaxLineSize string `toml:"rotation_max_line_size" default:"64MB"` // max line size for scanner buffer (default "64MB")
 	ArchiveDir          string `toml:"archive_dir"`            // gzip archive directory (default: log_dir/archive/)
-	LogFileMode         string `toml:"log_file_mode"`          // octal file permissions for log files (default "0600")
+	LogFileMode         string `toml:"log_file_mode"          default:"0600"` // octal file permissions for log files (default "0600")
 
 }
 
@@ -672,21 +672,21 @@ type STTConfig struct {
 
 type BitwardenConfig struct {
 	Enabled         bool   `toml:"enabled"`
-	RefreshInterval string `toml:"refresh_interval"` // how often to refresh item metadata (default "15m")
-	SecretTTL       string `toml:"secret_ttl"`       // how long unlocked values stay cached (default "30m")
-	SessionFile     string `toml:"session_file"`     // path to BW session file read by bitwarden user (default "/home/bitwarden/.bw_session")
-	CleanupInterval string `toml:"cleanup_interval"` // how often to purge expired values (default "1m")
+	RefreshInterval string `toml:"refresh_interval" default:"15m"`                       // how often to refresh item metadata (default "15m")
+	SecretTTL       string `toml:"secret_ttl"       default:"30m"`                       // how long unlocked values stay cached (default "30m")
+	SessionFile     string `toml:"session_file"     default:"/home/bitwarden/.bw_session"` // path to BW session file read by bitwarden user (default "/home/bitwarden/.bw_session")
+	CleanupInterval string `toml:"cleanup_interval" default:"1m"`                        // how often to purge expired values (default "1m")
 }
 
 type CacheConfig struct {
-	Strategy string `toml:"strategy"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
-	TTL      string `toml:"ttl"`      // Anthropic prompt cache TTL: "5m" or "1h" (default "1h")
+	Strategy string `toml:"strategy" default:"auto"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
+	TTL      string `toml:"ttl"      default:"1h"`   // Anthropic prompt cache TTL: "5m" or "1h" (default "1h")
 }
 
 
 type EnvironmentConfig struct {
 	Enabled  bool   `toml:"enabled"`   // inject environment block as first system block (default true)
-	DocsPath string `toml:"docs_path"` // path to platform docs directory; relative paths resolve against $HOME
+	DocsPath string `toml:"docs_path" default:"shared/docs"` // path to platform docs directory; relative paths resolve against $HOME
 }
 
 type SkillsConfig struct {
@@ -695,11 +695,11 @@ type SkillsConfig struct {
 
 type ResourcesConfig struct {
 	MemoryGuardEnabled      bool    `toml:"memory_guard_enabled"`      // enable system memory guard (default true)
-	MemoryGuardInterval     string  `toml:"memory_guard_interval"`     // check interval (default "60s")
+	MemoryGuardInterval     string  `toml:"memory_guard_interval"     default:"60s"` // check interval (default "60s")
 	MemoryWarnPercent       int     `toml:"memory_warn_percent"`       // warn threshold as % of total RAM (default 25)
 	MemoryKillPercent       int     `toml:"memory_kill_percent"`       // kill threshold as % of total RAM (default 40)
 	MemoryPressureThreshold float64 `toml:"memory_pressure_threshold"` // PSI avg10 threshold to require before acting (default 10.0)
-	GoroutineMonitorInterval  string `toml:"goroutine_monitor_interval"`  // goroutine count check interval (default "60s")
+	GoroutineMonitorInterval  string `toml:"goroutine_monitor_interval"  default:"60s"` // goroutine count check interval (default "60s")
 	GoroutineMonitorThreshold int    `toml:"goroutine_monitor_threshold"` // warn when goroutine count exceeds this (0 = auto: 30 + 25×agents + 5×telegram_bots)
 }
 
@@ -721,19 +721,19 @@ type ToolsConfig struct {
 	SummaryConfig // global summary/tool-result defaults (resolved via Merge with per-agent)
 	ToolConfig    // global tool behavioral defaults (resolved via Merge with per-agent)
 
-	TempDir                 string   `toml:"temp_dir"`                   // where to write large tool results (default /tmp/foci/tool-results)
-	TmuxCols                int      `toml:"tmux_cols"`                  // tmux window columns on start (default 300)
-	TmuxRows                int      `toml:"tmux_rows"`                  // tmux window rows on start (default 30)
-	ExecDefaultTimeout      int      `toml:"exec_default_timeout"`       // default timeout for exec commands in seconds (default 30)
-	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"`       // timeout for tmux control commands (default "5s")
-	WebFetchTimeout         string   `toml:"web_fetch_timeout"`          // HTTP timeout for web fetch (default "30s")
-	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"`        // max bytes to read from web fetch (default 1048576 = 1MB)
-	WebSearchTimeout        string   `toml:"web_search_timeout"`         // HTTP timeout for web search (default "15s")
-	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"`    // max chars for tool call param preview in Telegram (default 450)
-	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval"` // how often to check tmux RSS (default "5m", "0" disables)
-	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"`           // warn threshold as % of RAM or absolute (default "10%")
-	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"`       // critical threshold (default "20%")
-	TmuxMemoryKill          string   `toml:"tmux_memory_kill"`           // kill threshold (default "30%")
+	TempDir                 string   `toml:"temp_dir"                   default:"/tmp/foci/tool-results"` // where to write large tool results (default /tmp/foci/tool-results)
+	TmuxCols                int      `toml:"tmux_cols"                  default:"300"`                   // tmux window columns on start (default 300)
+	TmuxRows                int      `toml:"tmux_rows"                  default:"30"`                    // tmux window rows on start (default 30)
+	ExecDefaultTimeout      int      `toml:"exec_default_timeout"       default:"30"`                    // default timeout for exec commands in seconds (default 30)
+	TmuxCommandTimeout      string   `toml:"tmux_command_timeout"       default:"5s"`                    // timeout for tmux control commands (default "5s")
+	WebFetchTimeout         string   `toml:"web_fetch_timeout"          default:"30s"`                   // HTTP timeout for web fetch (default "30s")
+	WebFetchMaxBytes        int      `toml:"web_fetch_max_bytes"        default:"1048576"`               // max bytes to read from web fetch (default 1048576 = 1MB)
+	WebSearchTimeout        string   `toml:"web_search_timeout"         default:"15s"`                   // HTTP timeout for web search (default "15s")
+	ToolCallPreviewChars    int      `toml:"tool_call_preview_chars"    default:"450"`                   // max chars for tool call param preview in Telegram (default 450)
+	TmuxMemoryCheckInterval string   `toml:"tmux_memory_check_interval" default:"5m"`                    // how often to check tmux RSS (default "5m", "0" disables)
+	TmuxMemoryWarn          string   `toml:"tmux_memory_warn"           default:"10%"`                   // warn threshold as % of RAM or absolute (default "10%")
+	TmuxMemoryCritical      string   `toml:"tmux_memory_critical"       default:"20%"`                   // critical threshold (default "20%")
+	TmuxMemoryKill          string   `toml:"tmux_memory_kill"           default:"30%"`                   // kill threshold (default "30%")
 	WebSearchMaxUses        int      `toml:"web_search_max_uses"`        // max searches per API call (0 = unlimited)
 	WebSearchAllowedDomains []string `toml:"web_search_allowed_domains"` // domain whitelist (mutually exclusive with blocked)
 	WebSearchBlockedDomains []string `toml:"web_search_blocked_domains"` // domain blacklist
@@ -925,7 +925,7 @@ type Config struct {
 	Commands           []CommandConfig           `toml:"commands"`
 	MessageTransforms  []MessageTransform        `toml:"message_transforms"`   // regex find/replace rules applied to inbound messages
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`        // path prefixes that write/edit tools refuse (with rebuke message)
-	WelcomeFile        string                    `toml:"welcome_file"`         // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
+	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md"` // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
 	SkipSecurityChecks bool                      `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 	DefinedKeys        map[string]bool           `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
 	UndefinedKeys      []string                  `toml:"-"`                    // unrecognised TOML keys (populated by Load, logged by caller)
