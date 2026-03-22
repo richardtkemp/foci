@@ -33,11 +33,23 @@ func resolveNotify(acfg config.AgentConfig, cfg *config.Config, platformName str
 	)
 }
 
-// anyNotifyEnabled checks if any platform for this agent has the given
-// notification feature enabled.
-func anyNotifyEnabled(acfg config.AgentConfig, cfg *config.Config, checker func(config.NotifyConfig) bool) bool {
+// resolveDebug returns the effective DebugConfig for a platform connection
+// by resolving the 5-level cascade: per-agent platform → per-agent debug →
+// global platform → global [debug].
+func resolveDebug(acfg config.AgentConfig, cfg *config.Config, platformName string) config.DebugConfig {
+	return config.Merge(
+		acfg.Platform(platformName).SafeDebug(),
+		acfg.Debug,
+		cfg.Platform(platformName).SafeDebug(),
+		cfg.Debug,
+	)
+}
+
+// anyDebugEnabled checks if any platform for this agent has the given
+// debug feature enabled.
+func anyDebugEnabled(acfg config.AgentConfig, cfg *config.Config, checker func(config.DebugConfig) bool) bool {
 	for _, p := range cfg.Platforms {
-		if checker(resolveNotify(acfg, cfg, p.ID)) {
+		if checker(resolveDebug(acfg, cfg, p.ID)) {
 			return true
 		}
 	}
@@ -46,10 +58,10 @@ func anyNotifyEnabled(acfg config.AgentConfig, cfg *config.Config, checker func(
 
 // maxInjectionLevel returns the most permissive InjectionLevel across all
 // platforms for a given extractor.
-func maxInjectionLevel(acfg config.AgentConfig, cfg *config.Config, extract func(config.NotifyConfig) config.InjectionLevel) config.InjectionLevel {
+func maxInjectionLevel(acfg config.AgentConfig, cfg *config.Config, extract func(config.DebugConfig) config.InjectionLevel) config.InjectionLevel {
 	best := config.InjectionOff
 	for _, p := range cfg.Platforms {
-		level := extract(resolveNotify(acfg, cfg, p.ID))
+		level := extract(resolveDebug(acfg, cfg, p.ID))
 		if level == config.InjectionAll {
 			return config.InjectionAll
 		}

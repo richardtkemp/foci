@@ -634,8 +634,6 @@ id = "a"
 
 [debug]
 log_api_key_suffix = true
-
-[defaults]
 compaction_debug = true
 `), 0644)
 		cfg, err := Load(filepath.Join(dir, "foci.toml"))
@@ -645,8 +643,8 @@ compaction_debug = true
 		if !DerefBool(cfg.Debug.LogAPIKeySuffix) {
 			t.Error("expected log_api_key_suffix = true")
 		}
-		if !cfg.Defaults.CompactionDebugEnabled() {
-			t.Error("expected compaction_debug = true (via defaults NotifyConfig)")
+		if !cfg.Debug.CompactionDebugEnabled() {
+			t.Error("expected compaction_debug = true (via [debug])")
 		}
 	})
 
@@ -667,7 +665,7 @@ id = "a"
 		if DerefBool(cfg.Debug.LogAPIKeySuffix) {
 			t.Error("expected log_api_key_suffix default false")
 		}
-		if cfg.Defaults.CompactionDebugEnabled() {
+		if cfg.Debug.CompactionDebugEnabled() {
 			t.Error("expected compaction_debug default false")
 		}
 	})
