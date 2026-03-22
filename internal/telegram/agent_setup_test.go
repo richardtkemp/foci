@@ -28,11 +28,9 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 	bot := newBotForTest()
 	recvDir := "/agent/files"
 	acfg := config.AgentConfig{
-		Defaults: config.AgentDefaultsOverride{
-			Display: config.DisplayConfig{
-				ShowToolCalls: config.Ptr(config.ToolCallFull),
-				ShowThinking:  config.Ptr(config.ShowThinkingCompact),
-			},
+		Display: config.DisplayConfig{
+			ShowToolCalls: config.Ptr(config.ToolCallFull),
+			ShowThinking:  config.Ptr(config.ShowThinkingCompact),
 		},
 		Debug: config.DebugConfig{
 			MessagesInLog: config.Ptr(true),
@@ -187,10 +185,8 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 	bot := newBotForTest()
 	// Only override ShowToolCalls at agent level; rest comes from platform config.
 	acfg := config.AgentConfig{
-		Defaults: config.AgentDefaultsOverride{
-			Display: config.DisplayConfig{
-				ShowToolCalls: config.Ptr(config.ToolCallFull),
-			},
+		Display: config.DisplayConfig{
+			ShowToolCalls: config.Ptr(config.ToolCallFull),
 		},
 		Platforms: []config.PlatformConfig{{
 			ID: "telegram",
