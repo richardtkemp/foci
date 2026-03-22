@@ -227,7 +227,7 @@ Subcommands:
 		// Seed default character files for agents without explicit system_files.
 		// This ensures non-provisioned agents (added with just id= in config)
 		// get the same default character files as provisioned ones.
-		if len(acfg.Defaults.SystemFiles) == 0 {
+		if len(acfg.System.SystemFiles) == 0 {
 			sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared")
 			if err := provision.SeedCharacterFiles(sharedDir, acfg.Workspace); err != nil {
 				log.Warnf("main", "agent %q: seed character files: %v", acfg.ID, err)

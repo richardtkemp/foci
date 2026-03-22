@@ -90,7 +90,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	// Session Structure
 	b.WriteString("\n## Session Structure\n")
 	b.WriteString("Your context is assembled from: this environment block, character files, a secrets list, and the conversation history.\n")
-	sysFiles := acfg.Defaults.SystemFiles
+	sysFiles := acfg.System.SystemFiles
 	if len(sysFiles) == 0 {
 		sysFiles = workspace.DefaultFileOrder
 	}

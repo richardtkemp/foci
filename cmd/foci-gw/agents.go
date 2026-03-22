@@ -167,10 +167,10 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent agent struct
 	// Resolve each embedded config group once via Merge cascade.
-	al := config.Merge(acfg.Defaults.AgentLoopConfig, p.cfg.Defaults.AgentLoopConfig)
+	al := config.Merge(acfg.AgentLoop, p.cfg.AgentLoop)
 	sc := config.Merge(acfg.Tools.SummaryConfig, p.cfg.Tools.SummaryConfig)
 	cpc := config.Merge(acfg.Sessions.CompactionConfig, p.cfg.Sessions.CompactionConfig)
-	bc := config.Merge(acfg.Defaults.BehaviorConfig, p.cfg.Defaults.BehaviorConfig)
+	bc := config.Merge(acfg.Behavior, p.cfg.Behavior)
 
 	ag = &agent.Agent{
 		Log:                            log.NewComponentLogger("agent/" + acfg.ID),
@@ -334,7 +334,7 @@ func setupAgent(p setupParams) *agentInstance {
 		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		promptSearchDirs:  promptSearchDirs,
-		webhooks:          config.MergeMaps(p.cfg.Defaults.Webhooks, acfg.Defaults.Webhooks),
+		webhooks:          config.MergeMaps(p.cfg.System.Webhooks, acfg.System.Webhooks),
 		tmuxClearAll:      coreResult.tmuxClearAll,
 		tmuxWatchCount:    coreResult.tmuxWatchCount,
 		tmuxMigrateKey:    coreResult.tmuxMigrateKey,
