@@ -26,6 +26,7 @@ workspace = "/tmp/workspace"
 
 [[platforms]]
 id = "telegram"
+[platforms.access]
 allowed_users = ["111", "222"]
 
 [sessions]
@@ -55,7 +56,7 @@ api_file = "/tmp/api.jsonl"
 		t.Errorf("Agents[0].Workspace = %q", cfg.Agents[0].Workspace)
 	}
 	tgPlat := cfg.Platform("telegram")
-	if tgPlat == nil || len(tgPlat.AllowedUsers) != 2 || tgPlat.AllowedUsers[0] != "111" {
+	if tgPlat == nil || len(tgPlat.Access.AllowedUsers) != 2 || tgPlat.Access.AllowedUsers[0] != "111" {
 		t.Errorf("Platform(telegram).AllowedUsers = %v", tgPlat)
 	}
 	if cfg.Sessions.Dir != "/tmp/sessions" {
@@ -455,10 +456,12 @@ id = "telegram"
 bot = "my_bot"
 bot_secret = "custom.secret"
 facet_bots = ["extra1", "extra2"]
+[agents.platforms.access]
 allowed_users = ["123", "456"]
 
 [[platforms]]
 id = "telegram"
+[platforms.access]
 allowed_users = ["789"]
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -487,8 +490,8 @@ allowed_users = ["789"]
 	if len(tg.FacetBots) != 2 || tg.FacetBots[0] != "extra1" {
 		t.Errorf("Platform(telegram).FacetBots = %v, want [extra1 extra2]", tg.FacetBots)
 	}
-	if len(tg.AllowedUsers) != 2 || tg.AllowedUsers[0] != "123" {
-		t.Errorf("Platform(telegram).AllowedUsers = %v, want [123 456]", tg.AllowedUsers)
+	if len(tg.Access.AllowedUsers) != 2 || tg.Access.AllowedUsers[0] != "123" {
+		t.Errorf("Platform(telegram).AllowedUsers = %v, want [123 456]", tg.Access.AllowedUsers)
 	}
 }
 
@@ -509,7 +512,9 @@ id = "newbot"
 id = "telegram"
 bot = "new_bot"
 bot_secret = "new.secret"
+[agents.platforms.access]
 allowed_users = ["999"]
+[agents.platforms.display]
 stream_output = false
 `
 	os.WriteFile(path, []byte(toml), 0644)
@@ -535,10 +540,10 @@ stream_output = false
 	if tg.BotSecret != "new.secret" {
 		t.Errorf("Platform(telegram).BotSecret = %q, want %q", tg.BotSecret, "new.secret")
 	}
-	if len(tg.AllowedUsers) != 1 || tg.AllowedUsers[0] != "999" {
-		t.Errorf("Platform(telegram).AllowedUsers = %v, want [999]", tg.AllowedUsers)
+	if len(tg.Access.AllowedUsers) != 1 || tg.Access.AllowedUsers[0] != "999" {
+		t.Errorf("Platform(telegram).AllowedUsers = %v, want [999]", tg.Access.AllowedUsers)
 	}
-	if tg.StreamOutput == nil || *tg.StreamOutput != false {
-		t.Errorf("Platform(telegram).StreamOutput = %v, want false", tg.StreamOutput)
+	if tg.Display.StreamOutput == nil || *tg.Display.StreamOutput != false {
+		t.Errorf("Platform(telegram).StreamOutput = %v, want false", tg.Display.StreamOutput)
 	}
 }

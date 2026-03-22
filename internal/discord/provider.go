@@ -23,7 +23,7 @@ func (p *discordProvider) Name() string { return "discord" }
 
 func (p *discordProvider) IsConfigured(cfg *config.Config) bool {
 	dc := cfg.Platform("discord")
-	return dc != nil && len(dc.AllowedUsers) > 0
+	return dc != nil && len(dc.Access.AllowedUsers) > 0
 }
 
 func (p *discordProvider) Init(deps platform.ProviderDeps) error {
@@ -130,17 +130,17 @@ func (p *discordProvider) DefaultPlatformConfig() config.PlatformConfig {
 	at := true
 	return config.PlatformConfig{
 		ID: "discord",
-		NotifyConfig: config.NotifyConfig{
+		Notify: config.NotifyConfig{
 			StartupNotify: &sn,
 		},
-		DisplayConfig: config.DisplayConfig{
+		Display: config.DisplayConfig{
 			ShowToolCalls:  &off,
 			ShowThinking:   &thinkOff,
 			StreamOutput:   &so,
 			StreamInterval: config.Ptr[string]("1200ms"),
 			DisplayWidth:   &dw,
 		},
-		AccessConfig: config.AccessConfig{
+		Access: config.AccessConfig{
 			RequireMention: &rm,
 		},
 		FacetSessionTTL:  "60m",

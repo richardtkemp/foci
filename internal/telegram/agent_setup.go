@@ -99,10 +99,10 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 func resolveAllowedUsers(acfg config.AgentConfig, cfg *config.Config) []string {
 	var agentUsers, globalUsers []string
 	if p := acfg.Platform("telegram"); p != nil {
-		agentUsers = p.AllowedUsers
+		agentUsers = p.Access.AllowedUsers
 	}
 	if gp := cfg.Platform("telegram"); gp != nil {
-		globalUsers = gp.AllowedUsers
+		globalUsers = gp.Access.AllowedUsers
 	}
 	return config.SuperveneSlice(agentUsers, globalUsers, func(s string) string { return s })
 }
@@ -133,8 +133,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 
 	// Resolve require_mention: per-agent platform > global platform (default true).
 	reqMention := true
-	if tg.RequireMention != nil {
-		reqMention = *tg.RequireMention
+	if tg.Access.RequireMention != nil {
+		reqMention = *tg.Access.RequireMention
 	}
 	primaryBot.requireMention = reqMention
 

@@ -15,13 +15,13 @@ func testConfig() (*Config, AgentConfig) {
 		},
 		Platforms: []PlatformConfig{{
 			ID: "telegram",
-			NotifyConfig:  NotifyConfig{StartupNotify: Ptr[bool](true)},
-			DisplayConfig: DisplayConfig{
+			Notify:  NotifyConfig{StartupNotify: Ptr[bool](true)},
+			Display: DisplayConfig{
 				ShowToolCalls: Ptr[ToolCallDisplay](ToolCallPreview),
 				ShowThinking:  Ptr[ShowThinking](ShowThinkingOff),
 				DisplayWidth:  Ptr[int](44),
 			},
-			AccessConfig: AccessConfig{AllowedUsers: []string{"alice"}},
+			Access: AccessConfig{AllowedUsers: []string{"alice"}},
 			FacetSessionTTL:  "60m",
 			MessageQueueSize: 64,
 			Telegram: &TelegramSpecific{LongPollTimeout: "65s"},
@@ -177,11 +177,11 @@ func TestFormatAvailableAllSet(t *testing.T) {
 		ID:  "telegram",
 		Bot: "primary",
 		FacetBots: []string{"mb1"},
-		DisplayConfig: DisplayConfig{
+		Display: DisplayConfig{
 			DisplayWidth:     &displayWidth,
 			ReceivedFilesDir: &recvDir,
 		},
-		AccessConfig: AccessConfig{AllowedUsers: []string{"123"}},
+		Access: AccessConfig{AllowedUsers: []string{"123"}},
 		Telegram: &TelegramSpecific{
 			TableWrapLines: &tableWrapLines,
 			TableStyle:     &tableStyle,

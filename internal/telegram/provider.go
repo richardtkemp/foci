@@ -25,7 +25,7 @@ func (p *telegramProvider) Name() string { return "telegram" }
 
 func (p *telegramProvider) IsConfigured(cfg *config.Config) bool {
 	tg := cfg.Platform("telegram")
-	return tg != nil && len(tg.AllowedUsers) > 0
+	return tg != nil && len(tg.Access.AllowedUsers) > 0
 }
 
 func (p *telegramProvider) Init(deps platform.ProviderDeps) error {
@@ -95,7 +95,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			log.Errorf("telegram", "shared facet bot %q: token not found", botName)
 			continue
 		}
-		facetBot, err := NewBot(facetToken, tgPlat.AllowedUsers,
+		facetBot, err := NewBot(facetToken, tgPlat.Access.AllowedUsers,
 			params.FirstHandler, cmds, command.NewLastMessageStore(), "")
 		if err != nil {
 			log.Errorf("telegram", "shared facet bot %q: create: %v", botName, err)
@@ -175,17 +175,17 @@ func (p *telegramProvider) DefaultPlatformConfig() config.PlatformConfig {
 	sn := true
 	return config.PlatformConfig{
 		ID: "telegram",
-		NotifyConfig: config.NotifyConfig{
+		Notify: config.NotifyConfig{
 			StartupNotify: &sn,
 		},
-		DisplayConfig: config.DisplayConfig{
+		Display: config.DisplayConfig{
 			ShowToolCalls:  &off,
 			ShowThinking:   &thinkOff,
 			StreamOutput:   &so,
 			StreamInterval: config.Ptr[string]("250ms"),
 			DisplayWidth:   &dw,
 		},
-		AccessConfig: config.AccessConfig{
+		Access: config.AccessConfig{
 			RequireMention: &rm,
 		},
 		FacetSessionTTL:  "60m",

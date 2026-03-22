@@ -99,8 +99,8 @@ func ensureAgentPlatform(agent *AgentConfig, platformID string, _ *Config) {
 		p.Bot = agent.ID
 	}
 	dir := filepath.Join(agent.Workspace, "received_files")
-	if p.ReceivedFilesDir == nil {
-		p.ReceivedFilesDir = &dir
+	if p.Display.ReceivedFilesDir == nil {
+		p.Display.ReceivedFilesDir = &dir
 	}
 }
 
@@ -390,7 +390,7 @@ func Load(path string) (*Config, error) {
 		// defaults to $workspace/received_files.
 		ensureAgentPlatform(&cfg.Agents[i], "telegram", &cfg)
 		// Discord: only auto-create if discord is configured globally.
-		if p := cfg.Platform("discord"); p != nil && len(p.AllowedUsers) > 0 {
+		if p := cfg.Platform("discord"); p != nil && len(p.Access.AllowedUsers) > 0 {
 			ensureAgentPlatform(&cfg.Agents[i], "discord", &cfg)
 		}
 

@@ -452,11 +452,11 @@ func (n NotifyConfig) TaskListNotifyEnabled() bool {
 type PlatformConfig struct {
 	ID string `toml:"id"`
 
-	// Embedded config groups (cascade via Merge)
-	NotifyConfig  `toml:",inline"`
-	DebugConfig   `toml:",inline"`
-	DisplayConfig `toml:",inline"`
-	AccessConfig  `toml:",inline"`
+	// Config groups (cascade via Merge)
+	Notify  NotifyConfig  `toml:"notify"`
+	Debug   DebugConfig   `toml:"debug"`
+	Display DisplayConfig `toml:"display"`
+	Access  AccessConfig  `toml:"access"`
 
 	// Shared platform fields
 	Bot              string   `toml:"bot"`
@@ -495,7 +495,7 @@ func (p *PlatformConfig) SafeNotify() NotifyConfig {
 	if p == nil {
 		return NotifyConfig{}
 	}
-	return p.NotifyConfig
+	return p.Notify
 }
 
 // SafeDebug returns the DebugConfig from a *PlatformConfig, or zero if nil.
@@ -503,7 +503,7 @@ func (p *PlatformConfig) SafeDebug() DebugConfig {
 	if p == nil {
 		return DebugConfig{}
 	}
-	return p.DebugConfig
+	return p.Debug
 }
 
 // SafeDisplay returns the DisplayConfig from a *PlatformConfig, or zero if nil.
@@ -511,7 +511,7 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 	if p == nil {
 		return DisplayConfig{}
 	}
-	return p.DisplayConfig
+	return p.Display
 }
 
 // TelegramSpecific holds Telegram-only config fields.
@@ -529,10 +529,10 @@ type DiscordSpecific struct {
 
 // ApplyDefaults fills zero-value fields from the given defaults.
 func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
-	p.NotifyConfig = Merge(p.NotifyConfig, defaults.NotifyConfig)
-	p.DebugConfig = Merge(p.DebugConfig, defaults.DebugConfig)
-	p.DisplayConfig = Merge(p.DisplayConfig, defaults.DisplayConfig)
-	p.AccessConfig = Merge(p.AccessConfig, defaults.AccessConfig)
+	p.Notify = Merge(p.Notify, defaults.Notify)
+	p.Debug = Merge(p.Debug, defaults.Debug)
+	p.Display = Merge(p.Display, defaults.Display)
+	p.Access = Merge(p.Access, defaults.Access)
 	if p.FacetSessionTTL == "" {
 		p.FacetSessionTTL = defaults.FacetSessionTTL
 	}
