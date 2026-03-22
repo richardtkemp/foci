@@ -71,8 +71,8 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 	kaEnabled := config.DerefBool(ka.Enabled) && cachingAvailable
 
-	hasAgentWarnings := anyDebugEnabled(acfg, p.cfg, func(d config.DebugConfig) bool { return d.InjectAgentWarningsLevel().Enabled() })
-	hasChatWarnings := anyDebugEnabled(acfg, p.cfg, func(d config.DebugConfig) bool { return d.InjectChatWarningsLevel().Enabled() })
+	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() })
+	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() })
 	if !kaEnabled && !config.DerefBool(bg.Enabled) && !hasMemoryFormation(mf) && !hasAgentWarnings && !hasChatWarnings {
 		return nil
 	}

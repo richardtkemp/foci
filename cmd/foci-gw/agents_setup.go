@@ -410,13 +410,13 @@ func setupRedaction(ag *agent.Agent, p setupParams, agentStore *secrets.Store) {
 // setupWarningQueue configures warning injection queues on the agent.
 // Creates separate queues for agent session injection and chat notifications,
 // each with independent severity filtering based on their InjectionLevel.
-func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Config) {
+func setupWarningQueue(ag *agent.Agent, rc *config.ResolvedAgentConfig, cfg *config.Config) {
 	warningWindow, err := time.ParseDuration(cfg.Logging.WarningWindowDuration)
 	if err != nil {
 		warningWindow = 5 * time.Minute
 	}
 
-	agentLevel := maxInjectionLevel(acfg, cfg, config.DebugConfig.InjectAgentWarningsLevel)
+	agentLevel := maxInjectionLevel(rc, cfg, config.NotifyConfig.InjectAgentWarningsLevel)
 	if agentLevel.Enabled() {
 		ag.WarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
 		if !agentLevel.IncludeWarnings() {
@@ -424,7 +424,7 @@ func setupWarningQueue(ag *agent.Agent, acfg config.AgentConfig, cfg *config.Con
 		}
 	}
 
-	chatLevel := maxInjectionLevel(acfg, cfg, config.DebugConfig.InjectChatWarningsLevel)
+	chatLevel := maxInjectionLevel(rc, cfg, config.NotifyConfig.InjectChatWarningsLevel)
 	if chatLevel.Enabled() {
 		ag.ChatWarningQueue = warnings.NewQueue(cfg.Logging.WarningMaxPerWindow, warningWindow)
 		if !chatLevel.IncludeWarnings() {
@@ -554,7 +554,7 @@ func setupPlatformConnections(
 		}
 	}
 
-	wireAgentPlatformCallbacks(ag, acfg, p.cfg, p.plat, p.connMgr, p.sessionIndex, tmuxMigrateKey)
+	wireAgentPlatformCallbacks(ag, acfg, p.resolved, p.plat, p.connMgr, p.sessionIndex, tmuxMigrateKey)
 
 	return result
 }

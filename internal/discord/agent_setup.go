@@ -55,7 +55,6 @@ type AgentSetupParams struct {
 // Returns the result containing a DefaultSessionKeyFn, or nil if no platform was configured.
 func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	acfg := p.AgentConfig
-	cfg := p.GlobalConfig
 
 	setupDiscordBots(mgr, p)
 
@@ -73,7 +72,7 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			dBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			dBot.SetCommandContext(p.CommandContext)
-			ApplyAgentDisplaySettings(dBot, acfg, cfg)
+			ApplyAgentDisplaySettings(dBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
 			soStr := "off"
@@ -201,7 +200,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		primaryBot.SetTTS(p.TTS)
 	}
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
-	ApplyAgentDisplaySettings(primaryBot, acfg, cfg)
+	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug)
 
 	if p.DisplayOverrideFn != nil {
 		overrideFn := p.DisplayOverrideFn
@@ -235,43 +234,35 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 }
 
-// ApplyAgentDisplaySettings sets per-agent display settings on a bot,
-// resolving the full 4-level cascade for DisplayConfig via Merge.
-func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Config) {
-	dpc := config.Merge(
-		acfg.Platform("discord").SafeDisplay(),
-		acfg.Display,
-		cfg.Platform("discord").SafeDisplay(),
-		cfg.Defaults.Display,
-	)
+// ApplyAgentDisplaySettings sets per-agent display settings on a bot
+// using pre-resolved config values.
+func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.DebugConfig) {
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
-	if dpc.ShowToolCalls != nil {
-		d.ShowToolCalls = string(*dpc.ShowToolCalls)
+	if dc.ShowToolCalls != nil {
+		d.ShowToolCalls = string(*dc.ShowToolCalls)
 	}
-	if dpc.ShowThinking != nil {
-		d.ShowThinking = string(*dpc.ShowThinking)
+	if dc.ShowThinking != nil {
+		d.ShowThinking = string(*dc.ShowThinking)
 	}
-	if dpc.DisplayWidth != nil {
-		d.DisplayWidth = *dpc.DisplayWidth
+	if dc.DisplayWidth != nil {
+		d.DisplayWidth = *dc.DisplayWidth
 	}
-	if dpc.ReceivedFilesDir != nil && *dpc.ReceivedFilesDir != "" {
-		d.ReceivedFilesDir = *dpc.ReceivedFilesDir
+	if dc.ReceivedFilesDir != nil && *dc.ReceivedFilesDir != "" {
+		d.ReceivedFilesDir = *dc.ReceivedFilesDir
 	}
-	if dpc.StreamOutput != nil {
-		d.StreamOutput = *dpc.StreamOutput
+	if dc.StreamOutput != nil {
+		d.StreamOutput = *dc.StreamOutput
 	}
-	if dpc.StreamInterval != nil {
-		if dur, err := time.ParseDuration(*dpc.StreamInterval); err == nil && dur > 0 {
+	if dc.StreamInterval != nil {
+		if dur, err := time.ParseDuration(*dc.StreamInterval); err == nil && dur > 0 {
 			d.StreamUpdateInterval = dur
 		}
 	}
-	if dpc.InjectedMessageHeader != nil {
-		d.InjectedMessageHeader = *dpc.InjectedMessageHeader
+	if dc.InjectedMessageHeader != nil {
+		d.InjectedMessageHeader = *dc.InjectedMessageHeader
 	}
 
-	// MessagesInLog is not in DisplayConfig — resolve via Merge.
-	dbg := config.Merge(acfg.Debug, cfg.Debug)
 	d.MessagesInLog = config.DerefBool(dbg.MessagesInLog)
 
 	bot.display = d

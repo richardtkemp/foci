@@ -20,7 +20,7 @@ import (
 func wireAgentPlatformCallbacks(
 	ag *agent.Agent,
 	acfg config.AgentConfig,
-	cfg *config.Config,
+	resolved *config.ResolvedAgentConfig,
 	plat *platform.Messaging,
 	connMgr platform.ConnectionManager,
 	sessionIndex *session.SessionIndex,
@@ -65,12 +65,12 @@ func wireAgentPlatformCallbacks(
 	// Task list notify — per-platform resolution.
 	ag.TaskListNotifyFunc.Add(func(sk, msg string) {
 		if c := connMgr.ForSession(sk); c != nil {
-			if resolveNotify(acfg, cfg, c.PlatformName()).TaskListNotifyEnabled() {
+			if resolved.PlatformNotify(c.PlatformName()).TaskListNotifyEnabled() {
 				c.SendNotification(msg)
 			}
 		} else {
 			for _, conn := range connMgr.AllForAgent(acfg.ID) {
-				if resolveNotify(acfg, cfg, conn.PlatformName()).TaskListNotifyEnabled() {
+				if resolved.PlatformNotify(conn.PlatformName()).TaskListNotifyEnabled() {
 					conn.SendNotification(msg)
 				}
 			}
@@ -82,12 +82,12 @@ func wireAgentPlatformCallbacks(
 	// so ⏳ arrives before the compaction completes (not batched with ✅).
 	ag.CompactionStartFunc.Add(func(sk, msg string) {
 		if c := connMgr.ForSession(sk); c != nil {
-			if resolveNotify(acfg, cfg, c.PlatformName()).CompactionNotifyEnabled() {
+			if resolved.PlatformNotify(c.PlatformName()).CompactionNotifyEnabled() {
 				c.SendNotificationDirect(msg)
 			}
 		} else {
 			for _, conn := range connMgr.AllForAgent(acfg.ID) {
-				if resolveNotify(acfg, cfg, conn.PlatformName()).CompactionNotifyEnabled() {
+				if resolved.PlatformNotify(conn.PlatformName()).CompactionNotifyEnabled() {
 					conn.SendNotificationDirect(msg)
 				}
 			}
@@ -95,14 +95,14 @@ func wireAgentPlatformCallbacks(
 	})
 	ag.CompactionNotifyFunc.Add(func(sk, msg string) {
 		if c := connMgr.ForSession(sk); c != nil {
-			if resolveNotify(acfg, cfg, c.PlatformName()).CompactionNotifyEnabled() {
+			if resolved.PlatformNotify(c.PlatformName()).CompactionNotifyEnabled() {
 				log.Debugf("agent", "compaction notify session=%s → session-specific connection", sk)
 				c.SendNotification(msg)
 			}
 		} else {
 			log.Debugf("agent", "compaction notify session=%s → agent broadcast (%s)", sk, acfg.ID)
 			for _, conn := range connMgr.AllForAgent(acfg.ID) {
-				if resolveNotify(acfg, cfg, conn.PlatformName()).CompactionNotifyEnabled() {
+				if resolved.PlatformNotify(conn.PlatformName()).CompactionNotifyEnabled() {
 					conn.SendNotification(msg)
 				}
 			}
@@ -118,7 +118,7 @@ func wireAgentPlatformCallbacks(
 		if c == nil {
 			return
 		}
-		if !resolveDebug(acfg, cfg, c.PlatformName()).CompactionDebugEnabled() {
+		if !resolved.PlatformNotify(c.PlatformName()).CompactionDebugEnabled() {
 			return
 		}
 		f, err := os.CreateTemp(tempdir.Dir(), "compaction-summary-*.md")

@@ -223,7 +223,8 @@ func restoreFacetSessions(
 				if cc, ok := commandContext.(command.CommandContext); ok {
 					bot.SetCommandContext(cc)
 				}
-				ApplyAgentDisplaySettings(bot, acfg, cfg)
+				rc := config.Resolve(cfg, acfg)
+				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("discord"), rc.Debug)
 			}
 
 			if agentID != "" {

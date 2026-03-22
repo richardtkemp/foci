@@ -349,20 +349,11 @@ func TodoCommand() *Command {
 }
 
 // resolveTodoFormat returns the effective todo list format: "table" or "lines".
-// Resolved via pre-merged config; falls back to manual Merge if Resolved is nil.
 func resolveTodoFormat(cc CommandContext) string {
-	var tc config.ToolConfig
 	if cc.Resolved != nil {
-		tc = cc.Resolved.Tools
-	} else {
-		var global config.ToolConfig
-		if cc.Config != nil {
-			global = cc.Config.Tools.ToolConfig
+		if f := config.DerefStr(cc.Resolved.Tools.TodoFormat); f != "" {
+			return f
 		}
-		tc = config.Merge(cc.AgentConfig.Tools.ToolConfig, global)
-	}
-	if f := config.DerefStr(tc.TodoFormat); f != "" {
-		return f
 	}
 	return "lines"
 }

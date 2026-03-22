@@ -164,7 +164,7 @@ func setupAgent(p setupParams) *agentInstance {
 	var envBlock string
 	if p.cfg.Environment.Enabled {
 		crontabCount := countCrontabJobs()
-		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, crontabCount, p.plat.ActivePlatformNames())
+		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames())
 	}
 
 	// Per-agent agent struct — read from pre-resolved config.
@@ -225,11 +225,10 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxToolLoops:                   config.DerefInt(al.MaxToolLoops),
 		MaxOutputTokens:                config.DerefInt(al.MaxOutputTokens),
 		TurnLockWarnThreshold:          parseDurationDefault(config.DerefStr(bc.TurnLockWarnThreshold), 3*time.Minute),
-		ShowToolCalls:                  resolveShowToolCalls(acfg, p.cfg),
+		ShowToolCalls:                  resolveShowToolCalls(p.resolved),
 		CacheTTL:                       config.DerefStr(al.CacheTTL),
-		Streaming:                      resolveStreamingConfig(acfg, p.cfg),
-		ModelParamsFn:                  modelParamsFn(p.cfg.Models),
-		ModelMetaFn:                    modelMetaFn(p.cfg.Models),
+		Streaming:                      config.DerefBool(p.resolved.Display.Streaming),
+		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
 		ManaInvestInterval:             parseDurationDefault(config.DerefStr(p.cfg.Mana.InvestInterval), 30*time.Minute),
 	}
 
@@ -246,7 +245,7 @@ func setupAgent(p setupParams) *agentInstance {
 	// Post-creation agent configuration
 	setupNudgeSystem(ag, acfg, p.resolved.Nudge, defaultSessionKey, registry, bs.skillRegistry)
 	setupRedaction(ag, p, agentStore)
-	setupWarningQueue(ag, acfg, p.cfg)
+	setupWarningQueue(ag, p.resolved, p.cfg)
 	setupManaWatcher(ag, p)
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)

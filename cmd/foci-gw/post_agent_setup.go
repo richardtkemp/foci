@@ -16,9 +16,9 @@ import (
 // Pushes to both agent session queues and chat notification queues when configured.
 func setupWarningHooks(agents map[string]*agentInstance, cfg *config.Config) {
 	anyInjection := false
-	for _, acfg := range cfg.Agents {
-		if anyDebugEnabled(acfg, cfg, func(d config.DebugConfig) bool { return d.InjectAgentWarningsLevel().Enabled() }) ||
-			anyDebugEnabled(acfg, cfg, func(d config.DebugConfig) bool { return d.InjectChatWarningsLevel().Enabled() }) {
+	for _, inst := range agents {
+		if anyNotifyEnabled(inst.resolved, cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() }) ||
+			anyNotifyEnabled(inst.resolved, cfg, func(n config.NotifyConfig) bool { return n.InjectChatWarningsLevel().Enabled() }) {
 			anyInjection = true
 			break
 		}
@@ -68,7 +68,7 @@ func setupTmuxMemoryMonitor(
 		func(msg string) {
 			for _, id := range agentOrder {
 				inst := agents[id]
-				if anyDebugEnabled(inst.agentCfg, cfg, func(d config.DebugConfig) bool { return d.InjectAgentWarningsLevel().Enabled() }) {
+				if anyNotifyEnabled(inst.resolved, cfg, func(n config.NotifyConfig) bool { return n.InjectAgentWarningsLevel().Enabled() }) {
 					continue
 				}
 				if conn := connMgr.Primary(id); conn != nil {

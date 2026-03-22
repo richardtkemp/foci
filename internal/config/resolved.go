@@ -1,13 +1,8 @@
 package config
 
-// ResolvedAgentConfig holds all config sections that participate in the
-// standard 2-layer merge (per-agent → global). Computed once per agent at
-// startup via Resolve(). Consumers read from this instead of calling Merge()
-// themselves.
-//
-// Platform-aware 4-layer cascades (Display, Notify) are NOT included here;
-// they have genuinely different resolution logic and remain as separate
-// Merge calls at their use sites.
+// ResolvedAgentConfig holds all config sections pre-merged via the
+// agent→global cascade. Computed once per agent at startup via Resolve().
+// Consumers read from this instead of calling Merge() themselves.
 type ResolvedAgentConfig struct {
 	Loop            AgentLoopConfig
 	Behavior        BehaviorConfig
@@ -25,17 +20,82 @@ type ResolvedAgentConfig struct {
 	Browser         BrowserConfig
 	Mana            ManaConfig
 
+	// Display is the multi-platform fallback display config:
+	// agent → global defaults → all platform defaults (any platform).
+	Display DisplayConfig
+
+	// Notify is the base 2-layer notify config (agent → global defaults).
+	Notify NotifyConfig
+
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
 	Webhooks map[string]string
+
+	// Per-platform resolved display and notify (4-layer cascade).
+	platformDisplay map[string]DisplayConfig
+	platformNotify  map[string]NotifyConfig
 }
 
-// Resolve computes a ResolvedAgentConfig by merging each 2-layer config
-// section (per-agent → global). Call once per agent at startup; the result
-// is treated as immutable.
+// PlatformDisplay returns the 4-layer resolved DisplayConfig for a platform.
+// Falls back to the base Display if the platform has no specific resolution.
+func (r *ResolvedAgentConfig) PlatformDisplay(name string) DisplayConfig {
+	if d, ok := r.platformDisplay[name]; ok {
+		return d
+	}
+	return r.Display
+}
+
+// PlatformNotify returns the 4-layer resolved NotifyConfig for a platform.
+// Falls back to the base Notify if the platform has no specific resolution.
+func (r *ResolvedAgentConfig) PlatformNotify(name string) NotifyConfig {
+	if n, ok := r.platformNotify[name]; ok {
+		return n
+	}
+	return r.Notify
+}
+
+// Resolve computes a ResolvedAgentConfig by merging all config sections
+// (per-agent → global). Call once per agent at startup; the result is
+// treated as immutable.
 func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 	gc := Merge(acfg.Groups, cfg.Groups)
 	gc.Calls = MergeMaps(cfg.Groups.Calls, acfg.Groups.Calls)
 	gc.Fallbacks = MergeMaps(cfg.Groups.Fallbacks, acfg.Groups.Fallbacks)
+
+	// Base 2-layer notify.
+	baseNotify := Merge(acfg.Notify, cfg.Defaults.Notify)
+
+	// Multi-platform fallback display: agent → global → all platform defaults.
+	displayLayers := []DisplayConfig{acfg.Display, cfg.Defaults.Display}
+	for _, p := range cfg.Platforms {
+		displayLayers = append(displayLayers, p.DisplayConfig)
+	}
+	fallbackDisplay := Merge(displayLayers...)
+
+	// Per-platform 4-layer resolution for display and notify.
+	platformNames := make(map[string]bool)
+	for _, p := range acfg.Platforms {
+		platformNames[p.ID] = true
+	}
+	for _, p := range cfg.Platforms {
+		platformNames[p.ID] = true
+	}
+
+	platformDisplay := make(map[string]DisplayConfig, len(platformNames))
+	platformNotify := make(map[string]NotifyConfig, len(platformNames))
+	for name := range platformNames {
+		platformDisplay[name] = Merge(
+			acfg.Platform(name).SafeDisplay(),
+			acfg.Display,
+			cfg.Platform(name).SafeDisplay(),
+			cfg.Defaults.Display,
+		)
+		platformNotify[name] = Merge(
+			acfg.Platform(name).SafeNotify(),
+			acfg.Notify,
+			cfg.Platform(name).SafeNotify(),
+			cfg.Defaults.Notify,
+		)
+	}
 
 	return &ResolvedAgentConfig{
 		Loop:            Merge(acfg.Loop, cfg.Defaults.Loop),
@@ -53,6 +113,10 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		MemoryFormation: Merge(acfg.MemoryFormation, cfg.MemoryFormation),
 		Browser:         Merge(acfg.Browser, cfg.Browser),
 		Mana:            Merge(acfg.Mana, cfg.Mana),
+		Display:         fallbackDisplay,
+		Notify:          baseNotify,
 		Webhooks:        MergeMaps(cfg.Defaults.System.Webhooks, acfg.System.Webhooks),
+		platformDisplay: platformDisplay,
+		platformNotify:  platformNotify,
 	}
 }

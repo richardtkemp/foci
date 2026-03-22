@@ -51,7 +51,7 @@ func countCrontabJobs() int {
 
 // buildEnvironmentBlock generates the environment system block content
 // from config values known at startup.
-func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config, crontabCount int, activePlatforms []string) string {
+func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string) string {
 	logDir := filepath.Dir(cfg.Logging.EventFile)
 
 	var b strings.Builder
@@ -108,7 +108,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
 
 	// Visibility: resolve effective show_tool_calls and show_thinking.
-	dc := resolveDisplay(acfg, cfg)
+	dc := rc.Display
 	toolCalls := config.ToolCallOff
 	if dc.ShowToolCalls != nil {
 		toolCalls = *dc.ShowToolCalls

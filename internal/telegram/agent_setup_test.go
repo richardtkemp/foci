@@ -61,7 +61,8 @@ func TestApplyAgentDisplaySettings_AgentOverridesGlobal(t *testing.T) {
 		},
 	}
 
-	ApplyAgentDisplaySettings(bot, acfg, cfg)
+	rc := config.Resolve(cfg, acfg)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
 
 	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "full" {
@@ -105,7 +106,8 @@ func TestApplyAgentDisplaySettings_FallsBackToDefaults(t *testing.T) {
 		},
 	}
 
-	ApplyAgentDisplaySettings(bot, acfg, cfg)
+	rc := config.Resolve(cfg, acfg)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
 
 	stc, st, dw, mil, rfd, _ := bot.DisplaySettings()
 	if stc != "preview" {
@@ -140,7 +142,8 @@ func TestApplyAgentDisplaySettings_ReceivedFilesDirBothEmpty(t *testing.T) {
 	}
 	cfg := &config.Config{}
 
-	ApplyAgentDisplaySettings(bot, acfg, cfg)
+	rc := config.Resolve(cfg, acfg)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
 
 	_, _, _, _, rfd, _ := bot.DisplaySettings()
 	if rfd != "/pre-existing" {
@@ -204,7 +207,8 @@ func TestApplyAgentDisplaySettings_PartialOverride(t *testing.T) {
 		},
 	}
 
-	ApplyAgentDisplaySettings(bot, acfg, cfg)
+	rc := config.Resolve(cfg, acfg)
+	ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
 
 	stc, st, dw, mil, _, _ := bot.DisplaySettings()
 	// Per-agent platform config (most specific) takes precedence over agent-level

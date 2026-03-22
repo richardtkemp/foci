@@ -58,7 +58,6 @@ type AgentSetupParams struct {
 // not here — this keeps the platform layer decoupled from agent internals.
 func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 	acfg := p.AgentConfig
-	cfg := p.GlobalConfig
 
 	setupTelegramBots(mgr, p)
 
@@ -76,7 +75,7 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			}
 			tBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			tBot.SetCommandContext(p.CommandContext)
-			ApplyAgentDisplaySettings(tBot, acfg, cfg)
+			ApplyAgentDisplaySettings(tBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram"))
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
 			soStr := "off"
@@ -173,7 +172,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		primaryBot.SetTTS(p.TTS)
 	}
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
-	ApplyAgentDisplaySettings(primaryBot, acfg, cfg)
+	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram"))
 
 	if p.DisplayOverrideFn != nil {
 		overrideFn := p.DisplayOverrideFn
@@ -212,6 +211,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
+			Resolved:        p.Resolved,
 			ToolDetailStore: p.ToolDetailStore,
 			SessionIndex:    p.SessionIndex,
 		})
@@ -240,6 +240,7 @@ type FacetBotConfig struct {
 	TTSProvider     voice.TTS
 	AgentConfig     config.AgentConfig
 	GlobalConfig    *config.Config
+	Resolved        *config.ResolvedAgentConfig
 	ToolDetailStore *tooldetail.Store
 	SessionIndex    *session.SessionIndex
 }
@@ -252,7 +253,7 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	if mc.TTSProvider != nil {
 		bot.SetTTS(mc.TTSProvider)
 	}
-	ApplyAgentDisplaySettings(bot, mc.AgentConfig, mc.GlobalConfig)
+	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.AgentConfig.Platform("telegram"))
 	if mc.ToolDetailStore != nil {
 		bot.SetToolDetailStore(mc.ToolDetailStore)
 	}
@@ -269,16 +270,9 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 	}
 }
 
-// ApplyAgentDisplaySettings sets per-agent display settings on a bot,
-// resolving the full 4-level cascade for DisplayConfig via Merge.
-func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Config) {
-	tg := acfg.Platform("telegram")
-	dc := config.Merge(
-		tg.SafeDisplay(),
-		acfg.Display,
-		cfg.Platform("telegram").SafeDisplay(),
-		cfg.Defaults.Display,
-	)
+// ApplyAgentDisplaySettings sets per-agent display settings on a bot
+// using pre-resolved config values.
+func ApplyAgentDisplaySettings(bot *Bot, dc config.DisplayConfig, dbg config.DebugConfig, tg *config.PlatformConfig) {
 	d := bot.display // start from current (preserves ToolCallPreviewChars set earlier)
 
 	if dc.ShowToolCalls != nil {
@@ -315,8 +309,6 @@ func ApplyAgentDisplaySettings(bot *Bot, acfg config.AgentConfig, cfg *config.Co
 		}
 	}
 
-	// MessagesInLog is not in DisplayConfig — resolve via Merge.
-	dbg := config.Merge(acfg.Debug, cfg.Debug)
 	d.MessagesInLog = config.DerefBool(dbg.MessagesInLog)
 
 	bot.display = d
