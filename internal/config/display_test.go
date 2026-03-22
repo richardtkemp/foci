@@ -80,9 +80,11 @@ func testConfig() (*Config, AgentConfig) {
 	agent := AgentConfig{
 		ID:        "test-agent",
 		Workspace: "/home/user/workspace",
-		AgentLoop: AgentLoopConfig{
-			MaxToolLoops:    Ptr[int](25),
-			MaxOutputTokens: Ptr[int](16384),
+		Defaults: AgentDefaultsOverride{
+			Loop: AgentLoopConfig{
+				MaxToolLoops:    Ptr[int](25),
+				MaxOutputTokens: Ptr[int](16384),
+			},
 		},
 	}
 	return cfg, agent
@@ -166,7 +168,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	// returns an "all set" message rather than listing any remaining options.
 	cfg, agent := testConfig()
 	// Set all optional agent fields
-	agent.System.SystemFiles = []string{"IDENTITY.md"}
+	agent.Defaults.System.SystemFiles = []string{"IDENTITY.md"}
 	agent.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orientation-facet.md")
 	agent.Sessions.BranchOrientationHeadlessPrompt = Ptr("/tmp/orientation-headless.md")
 	displayWidth := 44
@@ -188,19 +190,19 @@ func TestFormatAvailableAllSet(t *testing.T) {
 		},
 	}}
 	ttsRate := 1.3
-	agent.Voice.TTSRate = &ttsRate
+	agent.Defaults.Voice.TTSRate = &ttsRate
 	boolTrue := true
-	agent.Notify.StartupNotify = &boolTrue
+	agent.Defaults.Notify.StartupNotify = &boolTrue
 	showPreview := ToolCallPreview
-	agent.Display.ShowToolCalls = &showPreview
+	agent.Defaults.Display.ShowToolCalls = &showPreview
 	showCompact := ShowThinkingCompact
-	agent.Display.ShowThinking = &showCompact
+	agent.Defaults.Display.ShowThinking = &showCompact
 	// Set optional global fields
 	summaryPrompt := "/tmp/summary.md"
 	cfg.Sessions.CompactionSummaryPrompt = &summaryPrompt
 	handoff := "handoff"
 	cfg.Sessions.CompactionHandoffMsg = &handoff
-	cfg.Notify.CompactionNotify = &boolTrue
+	cfg.Defaults.Notify.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
 	cfg.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orient-facet.md")
@@ -232,9 +234,11 @@ func TestFormatConfigGrouped(t *testing.T) {
 	cfg.Agents = []AgentConfig{agent, {
 		ID:        "second-agent",
 		Workspace: "/home/user/workspace2",
-		AgentLoop: AgentLoopConfig{
-			MaxToolLoops:    Ptr[int](25),
-			MaxOutputTokens: Ptr[int](16384),
+		Defaults: AgentDefaultsOverride{
+			Loop: AgentLoopConfig{
+				MaxToolLoops:    Ptr[int](25),
+				MaxOutputTokens: Ptr[int](16384),
+			},
 		},
 	}}
 
@@ -284,15 +288,19 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// Set defaults as Load() would.
 	mtl := 25
 	mot := 16384
-	cfg.AgentLoop = AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot}
+	cfg.Defaults = DefaultsConfig{
+		Loop: AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot},
+	}
 	cfg.Groups.Powerful = Ptr("claude-haiku-4-5")
 	// Agent overrides max_output_tokens from the default.
 	agent := AgentConfig{
 		ID:        "test-agent",
 		Workspace: "/home/user/workspace",
-		AgentLoop: AgentLoopConfig{
-			MaxToolLoops:    Ptr[int](25),
-			MaxOutputTokens: Ptr[int](32768),
+		Defaults: AgentDefaultsOverride{
+			Loop: AgentLoopConfig{
+				MaxToolLoops:    Ptr[int](25),
+				MaxOutputTokens: Ptr[int](32768),
+			},
 		},
 	}
 	cfg.Agents = []AgentConfig{agent}
@@ -382,8 +390,8 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	cfg.Sessions.BranchOrientationFacetPrompt = nil
 	cfg.Sessions.BranchOrientationHeadlessPrompt = nil
 	// Ensure both agent and defaults have system_files unset
-	agent.System.SystemFiles = nil
-	cfg.System.SystemFiles = nil
+	agent.Defaults.System.SystemFiles = nil
+	cfg.Defaults.System.SystemFiles = nil
 
 	result := FormatAvailable(cfg, agent)
 
