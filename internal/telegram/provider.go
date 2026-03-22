@@ -107,6 +107,7 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			TTSProvider:     sharedTTS,
 			AgentConfig:     firstACfg,
 			GlobalConfig:    cfg,
+			Resolved:        config.Resolve(cfg, firstACfg),
 			ToolDetailStore: p.toolDetailStore,
 			SessionIndex:    p.deps.SessionIndex,
 		})
@@ -270,7 +271,8 @@ func restoreFacetSessions(
 				if cc, ok := commandContext.(command.CommandContext); ok {
 					bot.SetCommandContext(cc)
 				}
-				ApplyAgentDisplaySettings(bot, acfg, cfg)
+				rc := config.Resolve(cfg, acfg)
+				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
 			}
 
 			if agentID != "" {

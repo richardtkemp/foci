@@ -166,6 +166,8 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 			Voice:    VoiceConfig{TTS: Ptr("test")},
 			Nudge:    NudgeConfig{NudgeEnable: Ptr(false)},
 			System:   SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},
+			Display:  DisplayConfig{Streaming: Ptr(true)},
+			Notify:   NotifyConfig{StartupNotify: Ptr(true)},
 		},
 		Tools: ToolsConfig{
 			ToolConfig:    ToolConfig{ExecAutoBackground: Ptr(1)},
@@ -193,6 +195,60 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		if f.IsZero() {
 			t.Errorf("ResolvedAgentConfig.%s is zero — Resolve() may not be setting it", rt.Field(i).Name)
 		}
+	}
+}
+
+func TestResolve_PlatformDisplayNotify(t *testing.T) {
+	// Proves per-platform 4-layer resolution for Display and Notify:
+	// agent-platform → agent → global-platform → global-defaults.
+	tcd := ToolCallFull
+	cfg := &Config{
+		Defaults: DefaultsConfig{
+			Display: DisplayConfig{Streaming: Ptr(true)},
+			Notify:  NotifyConfig{StartupNotify: Ptr(true)},
+		},
+		Platforms: []PlatformConfig{
+			{ID: "telegram", DisplayConfig: DisplayConfig{ShowToolCalls: &tcd}},
+		},
+	}
+	acfg := AgentConfig{
+		Display: DisplayConfig{DisplayWidth: Ptr(80)},
+		Platforms: []PlatformConfig{
+			{ID: "telegram", NotifyConfig: NotifyConfig{CompactionNotify: Ptr(true)}},
+		},
+	}
+
+	rc := Resolve(cfg, acfg)
+
+	// Base display: agent → global → all platform defaults
+	if got := DerefBool(rc.Display.Streaming); got != true {
+		t.Error("Display.Streaming should be true (global)")
+	}
+	if got := DerefInt(rc.Display.DisplayWidth); got != 80 {
+		t.Error("Display.DisplayWidth should be 80 (agent)")
+	}
+
+	// Per-platform display: agent-telegram → agent → global-telegram → global
+	pd := rc.PlatformDisplay("telegram")
+	if pd.ShowToolCalls == nil || string(*pd.ShowToolCalls) != "full" {
+		t.Error("PlatformDisplay(telegram).ShowToolCalls should be 'full' (global-platform)")
+	}
+	if got := DerefInt(pd.DisplayWidth); got != 80 {
+		t.Error("PlatformDisplay(telegram).DisplayWidth should be 80 (agent fallback)")
+	}
+
+	// Per-platform notify: agent-telegram → agent → global-telegram → global
+	pn := rc.PlatformNotify("telegram")
+	if got := DerefBool(pn.CompactionNotify); got != true {
+		t.Error("PlatformNotify(telegram).CompactionNotify should be true (agent-platform)")
+	}
+	if got := DerefBool(pn.StartupNotify); got != true {
+		t.Error("PlatformNotify(telegram).StartupNotify should be true (global fallback)")
+	}
+
+	// Unknown platform falls back to base
+	if got := DerefBool(rc.PlatformNotify("unknown").StartupNotify); got != true {
+		t.Error("PlatformNotify(unknown) should fall back to base Notify")
 	}
 }
 
