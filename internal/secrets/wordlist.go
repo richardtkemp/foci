@@ -1,7 +1,8 @@
 package secrets
 
-// effShortWordlist is the EFF Short Wordlist 1.0 (1,296 words).
+// effShortWordlist is the EFF Short Wordlist 1.0 (1,295 words).
 // https://www.eff.org/dice
+// "yo-yo" is excluded because the hyphen breaks our hyphen-delimited passphrase format.
 // Used for generating human-readable passphrases with ~10.3 bits of entropy per word.
 var effShortWordlist = [...]string{
 	"acid", "acorn", "acre", "acts", "afar", "affix", "aged", "agent", "agile", "aging",
@@ -132,6 +133,6 @@ var effShortWordlist = [...]string{
 	"width", "wife", "wifi", "wilt", "wimp", "wind", "wing", "wink", "wipe", "wired",
 	"wiry", "wise", "wish", "wispy", "wok", "wolf", "womb", "wool", "woozy", "word",
 	"work", "worry", "wound", "woven", "wrath", "wreck", "wrist", "xerox", "yahoo", "yam",
-	"yard", "year", "yeast", "yelp", "yield", "yo-yo", "yodel", "yoga", "yoyo", "yummy", "zebra",
+	"yard", "year", "yeast", "yelp", "yield", "yodel", "yoga", "yoyo", "yummy", "zebra",
 	"zero", "zesty", "zippy", "zone", "zoom",
 }

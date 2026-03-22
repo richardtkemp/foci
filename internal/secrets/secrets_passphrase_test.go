@@ -55,10 +55,10 @@ func TestGeneratePassphrase(t *testing.T) {
 }
 
 func TestEFFWordlistSize(t *testing.T) {
-	// Proves the embedded EFF short wordlist contains exactly 1296
-	// words, matching the official EFF specification for 4-dice (6^4) lookups.
-	if len(effShortWordlist) != 1296 {
-		t.Errorf("EFF short wordlist has %d words, expected 1296", len(effShortWordlist))
+	// Proves the embedded EFF short wordlist contains exactly 1295
+	// words (official 1296 minus "yo-yo" which breaks the hyphen delimiter).
+	if len(effShortWordlist) != 1295 {
+		t.Errorf("EFF short wordlist has %d words, expected 1295", len(effShortWordlist))
 	}
 }
 
