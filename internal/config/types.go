@@ -303,9 +303,9 @@ type NudgeConfig struct {
 	NudgeCooldown                   *int    `toml:"nudge_cooldown"`
 	NudgeMaxPerBatch                *int    `toml:"nudge_max_per_batch"`
 	NudgePreAnswerGate              *bool   `toml:"nudge_pre_answer_gate"`
-	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"`
+	NudgePreAnswerMinTools          *int    `toml:"nudge_pre_answer_min_tools"          default:"2"`
 	NudgeDefaultEnable              *bool   `toml:"nudge_default_enable"              default:"true"`
-	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"`
+	NudgeDefaultFrequency           *int    `toml:"nudge_default_frequency"             default:"50"`
 	NudgeDefaultScratchpadFrequency *int    `toml:"nudge_default_scratchpad_frequency"`
 	NudgeDefaultBraindeadThreshold  *int    `toml:"nudge_default_braindead_threshold"`
 	NudgeDefaultBraindeadPrompt     *string `toml:"nudge_default_braindead_prompt"`
@@ -349,7 +349,7 @@ type AgentLoopConfig struct {
 type BehaviorConfig struct {
 	SteerMode             *bool    `toml:"steer_mode"          default:"true"`
 	GroupThrottle         *string  `toml:"group_throttle"`
-	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold"`
+	TurnLockWarnThreshold *string  `toml:"turn_lock_warn_threshold" default:"3m"`
 	EnableStopAliases     *bool    `toml:"enable_stop_aliases" default:"true"`
 	StopAliases           []string `toml:"stop_aliases"`
 }

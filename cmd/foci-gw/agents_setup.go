@@ -293,11 +293,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 				skillSummaries = append(skillSummaries, nudge.SkillSummary{Name: s.Name, Description: s.Description})
 			}
 		}
-		freq := nc.NudgeDefaultFrequency
-		if freq <= 0 {
-			freq = 50
-		}
-		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, freq)
+		defaultRules = nudge.DefaultRules(toolNames, skillSummaries, nc.NudgeDefaultFrequency)
 	}
 
 	// Scratchpad staleness reminder: fires every N turns, but only when entries exist.
@@ -323,11 +319,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 	}
 
 	ag.NudgePreAnswerGate = nc.NudgePreAnswerGate
-	preAnswerMinTools := nc.NudgePreAnswerMinTools
-	if preAnswerMinTools <= 0 {
-		preAnswerMinTools = 2
-	}
-	ag.NudgePreAnswerMinTools = preAnswerMinTools
+	ag.NudgePreAnswerMinTools = nc.NudgePreAnswerMinTools
 
 	if !nudgeEnabled {
 		return // no character rules → no reload/extraction logic needed
