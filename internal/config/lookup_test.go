@@ -21,9 +21,9 @@ func TestLookupValueGlobalSection(t *testing.T) {
 // field using the AgentConfig, not the global Config.
 func TestLookupValueAgentSection(t *testing.T) {
 	cfg := &Config{}
-	agent := AgentConfig{AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr[int](30)}}
+	agent := AgentConfig{Defaults: AgentDefaultsOverride{Loop: AgentLoopConfig{MaxToolLoops: Ptr[int](30)}}}
 
-	got := LookupValue(cfg, agent, "agent", "agent_loop.max_tool_loops")
+	got := LookupValue(cfg, agent, "agent", "defaults.loop.max_tool_loops")
 	if got != "30" {
 		t.Errorf("LookupValue(agent, agent_loop.max_tool_loops) = %q, want %q", got, "30")
 	}

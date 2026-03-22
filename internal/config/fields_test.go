@@ -52,16 +52,16 @@ func TestLookupField(t *testing.T) {
 	// and returns false for unknown paths.
 
 	// Known field
-	f, ok := LookupField("agent_loop.max_output_tokens")
+	f, ok := LookupField("defaults.loop.max_output_tokens")
 	if !ok {
-		t.Fatal("LookupField(agent_loop.max_output_tokens) returned false")
+		t.Fatal("LookupField(defaults.loop.max_output_tokens) returned false")
 	}
-	if f.Key != "max_output_tokens" || f.Section != "agent_loop" {
+	if f.Key != "loop.max_output_tokens" || f.Section != "defaults" {
 		t.Errorf("got section=%q key=%q", f.Section, f.Key)
 	}
 
 	// Case insensitive
-	f2, ok := LookupField("AGENT_LOOP.MAX_OUTPUT_TOKENS")
+	f2, ok := LookupField("DEFAULTS.LOOP.MAX_OUTPUT_TOKENS")
 	if !ok {
 		t.Fatal("LookupField case-insensitive returned false")
 	}
@@ -264,8 +264,10 @@ func TestFieldsMatchStructTags(t *testing.T) {
 		}
 
 		key := f.Key
-		// Dotted keys like "keepalive.enabled" need to resolve the nested struct.
-		if dotIdx := strings.Index(key, "."); dotIdx >= 0 {
+		// Dotted keys like "keepalive.enabled" or "defaults.nudge.nudge_enable"
+		// need to resolve through nested structs iteratively.
+		for strings.Contains(key, ".") {
+			dotIdx := strings.Index(key, ".")
 			prefix := key[:dotIdx]
 			suffix := key[dotIdx+1:]
 			// Find the nested struct by its TOML tag.
@@ -285,8 +287,11 @@ func TestFieldsMatchStructTags(t *testing.T) {
 			}
 			if !found {
 				t.Errorf("field %s.%s: nested struct %q not found in %s", f.Section, f.Key, prefix, st.Name())
-				continue
+				break
 			}
+		}
+		if strings.Contains(key, ".") {
+			continue // resolution failed above, error already reported
 		}
 
 		// Look for the TOML tag in the struct, including inline embedded structs.

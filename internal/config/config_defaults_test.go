@@ -24,7 +24,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 
 [[agents]]
 id = "test"
-[agents.agent_loop]
+[agents.defaults.loop]
 max_tool_loops = 50
 max_output_tokens = 16384
 
@@ -67,11 +67,11 @@ web_search_timeout = "20s"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if DerefInt(cfg.Agents[0].AgentLoop.MaxToolLoops) != 50 {
-		t.Errorf("Agent.AgentLoop.MaxToolLoops = %d, want 50", cfg.Agents[0].AgentLoop.MaxToolLoops)
+	if DerefInt(cfg.Agents[0].Defaults.Loop.MaxToolLoops) != 50 {
+		t.Errorf("Agent.Defaults.Loop.MaxToolLoops = %d, want 50", cfg.Agents[0].Defaults.Loop.MaxToolLoops)
 	}
-	if DerefInt(cfg.Agents[0].AgentLoop.MaxOutputTokens) != 16384 {
-		t.Errorf("Agent.AgentLoop.MaxOutputTokens = %d, want 16384", cfg.Agents[0].AgentLoop.MaxOutputTokens)
+	if DerefInt(cfg.Agents[0].Defaults.Loop.MaxOutputTokens) != 16384 {
+		t.Errorf("Agent.Defaults.Loop.MaxOutputTokens = %d, want 16384", cfg.Agents[0].Defaults.Loop.MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "180s" {
 		t.Errorf("Anthropic.HTTPTimeout = %q, want 180s", cfg.Anthropic.HTTPTimeout)
@@ -149,11 +149,11 @@ id = "test"
 	}
 
 	// MaxToolLoops and MaxOutputTokens are nil on agent when unset — defaults resolve at use time
-	if cfg.Agents[0].AgentLoop.MaxToolLoops != nil {
-		t.Errorf("default Agent.AgentLoop.MaxToolLoops should be nil (use-time resolution), got %v", cfg.Agents[0].AgentLoop.MaxToolLoops)
+	if cfg.Agents[0].Defaults.Loop.MaxToolLoops != nil {
+		t.Errorf("default Agent.Defaults.Loop.MaxToolLoops should be nil (use-time resolution), got %v", cfg.Agents[0].Defaults.Loop.MaxToolLoops)
 	}
-	if cfg.Agents[0].AgentLoop.MaxOutputTokens != nil {
-		t.Errorf("default Agent.AgentLoop.MaxOutputTokens should be nil (use-time resolution), got %v", cfg.Agents[0].AgentLoop.MaxOutputTokens)
+	if cfg.Agents[0].Defaults.Loop.MaxOutputTokens != nil {
+		t.Errorf("default Agent.Defaults.Loop.MaxOutputTokens should be nil (use-time resolution), got %v", cfg.Agents[0].Defaults.Loop.MaxOutputTokens)
 	}
 	if cfg.Anthropic.HTTPTimeout != "600s" {
 		t.Errorf("default Anthropic.HTTPTimeout = %q, want 600s", cfg.Anthropic.HTTPTimeout)
@@ -203,16 +203,19 @@ func TestApplyDefaultsReflect(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-opus-4-6"
 
-[agent_loop]
+[defaults.loop]
 max_output_tokens = 16384
 max_tool_loops = 50
 duplicate_messages = true
 
-[nudge]
+[defaults.nudge]
 nudge_default_braindead_threshold = 20
 nudge_default_braindead_prompt = "watch it"
 
-[system]
+[defaults.notify]
+inject_agent_warnings = true
+
+[defaults.system]
 system_files = ["A.md", "B.md"]
 
 [debug]
@@ -235,35 +238,35 @@ id = "override"
 
 	// Bare agent has nil fields — values resolve via Merge with defaults at use time.
 	bare := cfg.Agents[0]
-	if bare.AgentLoop.MaxToolLoops != nil {
-		t.Errorf("bare AgentLoop.MaxToolLoops should be nil, got %v", bare.AgentLoop.MaxToolLoops)
+	if bare.Defaults.Loop.MaxToolLoops != nil {
+		t.Errorf("bare Defaults.Loop.MaxToolLoops should be nil, got %v", bare.Defaults.Loop.MaxToolLoops)
 	}
 
-	// Verify global config sections were parsed correctly
-	if DerefInt(cfg.AgentLoop.MaxToolLoops) != 50 {
-		t.Errorf("AgentLoop.MaxToolLoops = %v, want 50", cfg.AgentLoop.MaxToolLoops)
+	// Verify defaults config was parsed correctly
+	if DerefInt(cfg.Defaults.Loop.MaxToolLoops) != 50 {
+		t.Errorf("Defaults.Loop.MaxToolLoops = %v, want 50", cfg.Defaults.Loop.MaxToolLoops)
 	}
-	if DerefInt(cfg.AgentLoop.MaxOutputTokens) != 16384 {
-		t.Errorf("AgentLoop.MaxOutputTokens = %v, want 16384", cfg.AgentLoop.MaxOutputTokens)
+	if DerefInt(cfg.Defaults.Loop.MaxOutputTokens) != 16384 {
+		t.Errorf("Defaults.Loop.MaxOutputTokens = %v, want 16384", cfg.Defaults.Loop.MaxOutputTokens)
 	}
-	if DerefInt(cfg.Nudge.NudgeDefaultBraindeadThreshold) != 20 {
-		t.Errorf("Nudge.NudgeDefaultBraindeadThreshold = %v, want 20", cfg.Nudge.NudgeDefaultBraindeadThreshold)
+	if DerefInt(cfg.Defaults.Nudge.NudgeDefaultBraindeadThreshold) != 20 {
+		t.Errorf("Defaults.Nudge.NudgeDefaultBraindeadThreshold = %v, want 20", cfg.Defaults.Nudge.NudgeDefaultBraindeadThreshold)
 	}
-	if DerefStr(cfg.Nudge.NudgeDefaultBraindeadPrompt) != "watch it" {
-		t.Errorf("Nudge.NudgeDefaultBraindeadPrompt = %v", cfg.Nudge.NudgeDefaultBraindeadPrompt)
+	if DerefStr(cfg.Defaults.Nudge.NudgeDefaultBraindeadPrompt) != "watch it" {
+		t.Errorf("Defaults.Nudge.NudgeDefaultBraindeadPrompt = %v", cfg.Defaults.Nudge.NudgeDefaultBraindeadPrompt)
 	}
-	if !DerefBool(cfg.AgentLoop.DuplicateMessages) {
-		t.Error("AgentLoop.DuplicateMessages should be true")
+	if !DerefBool(cfg.Defaults.Loop.DuplicateMessages) {
+		t.Error("Defaults.Loop.DuplicateMessages should be true")
 	}
-	if cfg.Debug.InjectAgentWarnings == nil || *cfg.Debug.InjectAgentWarnings != InjectionAll {
-		t.Errorf("Debug.InjectAgentWarnings = %v, want %q", cfg.Debug.InjectAgentWarnings, InjectionAll)
+	if cfg.Defaults.Notify.InjectAgentWarnings == nil || *cfg.Defaults.Notify.InjectAgentWarnings != InjectionAll {
+		t.Errorf("Defaults.Notify.InjectAgentWarnings = %v, want %q", cfg.Defaults.Notify.InjectAgentWarnings, InjectionAll)
 	}
-	if len(cfg.System.SystemFiles) != 2 || cfg.System.SystemFiles[0] != "A.md" {
-		t.Errorf("System.SystemFiles = %v", cfg.System.SystemFiles)
+	if len(cfg.Defaults.System.SystemFiles) != 2 || cfg.Defaults.System.SystemFiles[0] != "A.md" {
+		t.Errorf("Defaults.System.SystemFiles = %v", cfg.Defaults.System.SystemFiles)
 	}
 
 	// Merge resolves bare agent fields from defaults
-	al := Merge(bare.AgentLoop, cfg.AgentLoop)
+	al := Merge(bare.Defaults.Loop, cfg.Defaults.Loop)
 	if DerefInt(al.MaxToolLoops) != 50 {
 		t.Errorf("Merge resolved MaxToolLoops = %v, want 50", al.MaxToolLoops)
 	}
