@@ -34,10 +34,10 @@ type ResolvedBehavior struct {
 
 func resolveBehavior(m BehaviorConfig) ResolvedBehavior {
 	return ResolvedBehavior{
-		SteerMode:             m.SteerMode == nil || *m.SteerMode,
+		SteerMode:             DerefBool(m.SteerMode),
 		GroupThrottle:         DerefStr(m.GroupThrottle),
 		TurnLockWarnThreshold: DerefStr(m.TurnLockWarnThreshold),
-		EnableStopAliases:     m.EnableStopAliases == nil || *m.EnableStopAliases,
+		EnableStopAliases:     DerefBool(m.EnableStopAliases),
 		StopAliases:           m.StopAliases,
 	}
 }
@@ -76,13 +76,13 @@ type ResolvedNudge struct {
 
 func resolveNudge(m NudgeConfig) ResolvedNudge {
 	return ResolvedNudge{
-		NudgeEnable:                     m.NudgeEnable == nil || *m.NudgeEnable,
-		NudgeAutoExtract:                m.NudgeAutoExtract == nil || *m.NudgeAutoExtract,
+		NudgeEnable:                     DerefBool(m.NudgeEnable),
+		NudgeAutoExtract:                DerefBool(m.NudgeAutoExtract),
 		NudgeCooldown:                   DerefInt(m.NudgeCooldown),
 		NudgeMaxPerBatch:                DerefInt(m.NudgeMaxPerBatch),
 		NudgePreAnswerGate:              DerefBool(m.NudgePreAnswerGate),
 		NudgePreAnswerMinTools:          DerefInt(m.NudgePreAnswerMinTools),
-		NudgeDefaultEnable:              m.NudgeDefaultEnable == nil || *m.NudgeDefaultEnable,
+		NudgeDefaultEnable:              DerefBool(m.NudgeDefaultEnable),
 		NudgeDefaultFrequency:           DerefInt(m.NudgeDefaultFrequency),
 		NudgeDefaultScratchpadFrequency: DerefInt(m.NudgeDefaultScratchpadFrequency),
 		NudgeDefaultBraindeadThreshold:  DerefInt(m.NudgeDefaultBraindeadThreshold),
@@ -144,7 +144,7 @@ func resolveSummary(m SummaryConfig) ResolvedSummary {
 	return ResolvedSummary{
 		MaxResultChars:       DerefInt(m.MaxResultChars),
 		MaxSummaryChars:      DerefInt(m.MaxSummaryChars),
-		AutoSummarise:        m.AutoSummarise == nil || *m.AutoSummarise,
+		AutoSummarise:        DerefBool(m.AutoSummarise),
 		SummaryContextTurns:  DerefInt(m.SummaryContextTurns),
 		SummaryContextChars:  DerefInt(m.SummaryContextChars),
 		MaxSummaryInputChars: DerefInt(m.MaxSummaryInputChars),
@@ -167,12 +167,8 @@ type ResolvedCompaction struct {
 }
 
 func resolveCompaction(m CompactionConfig) ResolvedCompaction {
-	threshold := DerefFloat(m.CompactionThreshold)
-	if threshold == 0 {
-		threshold = 0.8
-	}
 	return ResolvedCompaction{
-		CompactionThreshold:                     threshold,
+		CompactionThreshold:                     DerefFloat(m.CompactionThreshold),
 		CompactionSummaryPrompt:                 DerefStr(m.CompactionSummaryPrompt),
 		CompactionHandoffMsg:                    DerefStr(m.CompactionHandoffMsg),
 		CompactionPreserveMessages:              DerefInt(m.CompactionPreserveMessages),
@@ -259,15 +255,15 @@ type ResolvedMemoryFormation struct {
 
 func resolveMemoryFormation(m MemoryFormationConfig) ResolvedMemoryFormation {
 	return ResolvedMemoryFormation{
-		IntervalEnabled:       m.IntervalEnabled == nil || *m.IntervalEnabled,
+		IntervalEnabled:       DerefBool(m.IntervalEnabled),
 		Interval:              DerefStr(m.Interval),
 		IntervalPrompt:        DerefStr(m.IntervalPrompt),
-		ConsolidationEnabled:  m.ConsolidationEnabled == nil || *m.ConsolidationEnabled,
+		ConsolidationEnabled:  DerefBool(m.ConsolidationEnabled),
 		ConsolidationInterval: DerefStr(m.ConsolidationInterval),
 		ConsolidationPrompt:   DerefStr(m.ConsolidationPrompt),
-		SessionEndEnabled:     m.SessionEndEnabled == nil || *m.SessionEndEnabled,
+		SessionEndEnabled:     DerefBool(m.SessionEndEnabled),
 		SessionEndPrompt:      DerefStr(m.SessionEndPrompt),
-		CompactionEnabled:     m.CompactionEnabled == nil || *m.CompactionEnabled,
+		CompactionEnabled:     DerefBool(m.CompactionEnabled),
 		CompactionPrompt:      DerefStr(m.CompactionPrompt),
 	}
 }
@@ -284,14 +280,6 @@ type ResolvedBrowser struct {
 }
 
 func resolveBrowser(m BrowserConfig) ResolvedBrowser {
-	domStable := DerefFloat(m.DOMStableSec)
-	if domStable <= 0 {
-		domStable = 1.0
-	}
-	domDiff := DerefFloat(m.DOMStableDiff)
-	if domDiff <= 0 {
-		domDiff = 0.2
-	}
 	return ResolvedBrowser{
 		Enabled:        DerefBool(m.Enabled),
 		Headless:       DerefBool(m.Headless),
@@ -299,8 +287,8 @@ func resolveBrowser(m BrowserConfig) ResolvedBrowser {
 		UserDataDir:    DerefStr(m.UserDataDir),
 		ExecutablePath: DerefStr(m.ExecutablePath),
 		Incognito:      DerefBool(m.Incognito),
-		DOMStableSec:   domStable,
-		DOMStableDiff:  domDiff,
+		DOMStableSec:   DerefFloat(m.DOMStableSec),
+		DOMStableDiff:  DerefFloat(m.DOMStableDiff),
 	}
 }
 

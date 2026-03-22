@@ -200,8 +200,20 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// CompactionConfig fields are now pointer-typed in CompactionConfig.
-	// Defaults are resolved at use time via Merge + code defaults.
+	// Apply struct tag defaults to global config paths.
+	// Per-agent fields stay nil for Merge to work correctly.
+	ApplyTagDefaults(&cfg.Defaults)
+	ApplyTagDefaults(&cfg.Tools.ToolConfig)
+	ApplyTagDefaults(&cfg.Tools.SummaryConfig)
+	ApplyTagDefaults(&cfg.Sessions.CompactionConfig)
+	ApplyTagDefaults(&cfg.Browser)
+	ApplyTagDefaults(&cfg.Keepalive)
+	ApplyTagDefaults(&cfg.Background)
+	ApplyTagDefaults(&cfg.MemoryFormation)
+	ApplyTagDefaults(&cfg.Mana)
+	ApplyTagDefaults(&cfg.Debug)
+	ApplyTagDefaults(&cfg.Groups)
+
 	setIntDefault(&cfg.Sessions.CompactionMaxTokens, 4096)
 	setIntDefault(&cfg.Sessions.CompactionMinMessages, 4)
 
@@ -249,36 +261,11 @@ func Load(path string) (*Config, error) {
 
 	setStringDefault(&cfg.Cache.Strategy, "auto")
 	setStringDefault(&cfg.Cache.TTL, "1h")
-	if cfg.Mana.Name == nil {
-		cfg.Mana.Name = Ptr[string]("mana")
-	}
-	if cfg.Mana.InvestInterval == nil {
-		cfg.Mana.InvestInterval = Ptr[string]("30m")
-	}
 	// SummaryConfig fields (MaxResultChars etc.) are now pointers — defaults at use time via Merge
 	setStringDefault(&cfg.Tools.TempDir, "/tmp/foci/tool-results")
 	setIntDefault(&cfg.Tools.TmuxCols, 300)
 	setIntDefault(&cfg.Tools.TmuxRows, 30)
-	// ToolConfig fields are pointers — nil means "not set" (no IsDefined needed).
-	if cfg.Tools.ExecAutoBackground == nil {
-		cfg.Tools.ExecAutoBackground = Ptr[int](10)
-	}
-	// AutoSummarise now in SummaryConfig — default at use time
-	if cfg.Tools.TmuxAutopilot == nil {
-		cfg.Tools.TmuxAutopilot = Ptr[bool](true)
-	}
-	if cfg.Tools.TmuxWatchThreshold == nil {
-		cfg.Tools.TmuxWatchThreshold = Ptr[string]("30s")
-	}
-	if cfg.Tools.TmuxSessionTTL == nil {
-		cfg.Tools.TmuxSessionTTL = Ptr[string]("24h")
-	}
-	if cfg.Tools.SearchProvider == nil {
-		cfg.Tools.SearchProvider = Ptr[string]("brave")
-	}
-	if cfg.Tools.FetchProvider == nil {
-		cfg.Tools.FetchProvider = Ptr[string]("builtin")
-	}
+	// ToolConfig pointer defaults now in struct tags (applied by ApplyTagDefaults above)
 	if len(cfg.Defaults.Behavior.StopAliases) == 0 {
 		cfg.Defaults.Behavior.StopAliases = []string{"stop", "wait"}
 	}
@@ -314,15 +301,6 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Tools.WebFetchTimeout, "30s")
 	setIntDefault(&cfg.Tools.WebFetchMaxBytes, 1048576) // 1MB
 	setStringDefault(&cfg.Tools.WebSearchTimeout, "15s")
-	if cfg.Tools.MaxConcurrentSpawns == nil {
-		cfg.Tools.MaxConcurrentSpawns = Ptr[int](3)
-	}
-	if cfg.Tools.ExploreMaxDepth == nil {
-		cfg.Tools.ExploreMaxDepth = Ptr[int](100)
-	}
-	if cfg.Tools.MaxUploadFileSize == nil {
-		cfg.Tools.MaxUploadFileSize = Ptr[int64](50 * 1024 * 1024) // 50MB
-	}
 	setIntDefault(&cfg.Tools.ToolCallPreviewChars, 450)
 	setStringDefault(&cfg.Tools.TmuxMemoryCheckInterval, "5m")
 	setStringDefault(&cfg.Tools.TmuxMemoryWarn, "10%")
@@ -331,25 +309,7 @@ func Load(path string) (*Config, error) {
 	// SummaryContextTurns, SummaryContextChars, MaxSummaryInputChars, MaxImagePixels
 	// now in SummaryConfig — defaults at use time
 
-	// Browser defaults (BrowserConfig is now top-level with all-pointer fields)
-	if cfg.Browser.Enabled == nil {
-		cfg.Browser.Enabled = Ptr[bool](true)
-	}
-	if cfg.Browser.Headless == nil {
-		cfg.Browser.Headless = Ptr[bool](true)
-	}
-	if cfg.Browser.TimeoutSec == nil {
-		cfg.Browser.TimeoutSec = Ptr[int](30)
-	}
-	if cfg.Browser.Incognito == nil {
-		cfg.Browser.Incognito = Ptr[bool](true)
-	}
-	if cfg.Browser.DOMStableSec == nil {
-		cfg.Browser.DOMStableSec = Ptr[float64](1.0)
-	}
-	if cfg.Browser.DOMStableDiff == nil {
-		cfg.Browser.DOMStableDiff = Ptr[float64](0.2)
-	}
+	// Browser pointer defaults now in struct tags (applied by ApplyTagDefaults above)
 
 	// HTTP defaults
 	setStringDefault(&cfg.HTTP.GracefulShutdownTimeout, "30s")
@@ -359,22 +319,7 @@ func Load(path string) (*Config, error) {
 	setStringDefault(&cfg.Environment.DocsPath, "shared/docs")
 	// EnableStopAliases now in BehaviorConfig — code default at use time
 
-	// Keepalive/background defaults (pointer — resolved via Merge at use time)
-	if cfg.Keepalive.Interval == nil {
-		cfg.Keepalive.Interval = Ptr[string]("55m")
-	}
-	if cfg.Background.Interval == nil {
-		cfg.Background.Interval = Ptr[string]("15m")
-	}
-
-	// Memory formation defaults
-	if cfg.MemoryFormation.Interval == nil {
-		cfg.MemoryFormation.Interval = Ptr[string]("1h")
-	}
-	if cfg.MemoryFormation.ConsolidationInterval == nil {
-		cfg.MemoryFormation.ConsolidationInterval = Ptr[string]("20h")
-	}
-	// IntervalEnabled/ConsolidationEnabled/SessionEndEnabled: nil = true (resolved at runtime)
+	// Keepalive/background/memory-formation pointer defaults now in struct tags
 
 	// Keepalive/background/memory-formation: resolved via Merge at use time (no load-time copying)
 
