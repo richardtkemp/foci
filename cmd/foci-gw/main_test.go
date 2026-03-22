@@ -241,11 +241,9 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 	acfg := config.AgentConfig{
 		ID:        "test",
 		Workspace: "/tmp/test",
-		Defaults: config.AgentDefaultsOverride{
-			DisplayConfig: config.DisplayConfig{
-				ShowToolCalls: config.Ptr(config.ToolCallFull),
-				ShowThinking:  config.Ptr(config.ShowThinkingTrue),
-			},
+		Display: config.DisplayConfig{
+			ShowToolCalls: config.Ptr(config.ToolCallFull),
+			ShowThinking:  config.Ptr(config.ShowThinkingTrue),
 		},
 	}
 	cfg := &config.Config{

@@ -34,9 +34,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "stream_output on, streaming on via global defaults — no warning",
 			cfg: &config.Config{
-				Defaults: config.DefaultsConfig{
-					DisplayConfig: config.DisplayConfig{Streaming: &trueVal},
-				},
+				Display: config.DisplayConfig{Streaming: &trueVal},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
@@ -78,9 +76,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 			cfg: &config.Config{
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
-					Defaults: config.AgentDefaultsOverride{
-						DisplayConfig: config.DisplayConfig{Streaming: &trueVal},
-					},
+					Display: config.DisplayConfig{Streaming: &trueVal},
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
 						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},
@@ -92,14 +88,10 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "global streaming on, per-agent override off — warns",
 			cfg: &config.Config{
-				Defaults: config.DefaultsConfig{
-					DisplayConfig: config.DisplayConfig{Streaming: &trueVal},
-				},
+				Display: config.DisplayConfig{Streaming: &trueVal},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
-					Defaults: config.AgentDefaultsOverride{
-						DisplayConfig: config.DisplayConfig{Streaming: &falseVal},
-					},
+					Display: config.DisplayConfig{Streaming: &falseVal},
 					Platforms: []config.PlatformConfig{{
 						ID:            "telegram",
 						DisplayConfig: config.DisplayConfig{StreamOutput: &trueVal},

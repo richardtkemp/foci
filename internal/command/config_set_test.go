@@ -39,7 +39,7 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	w := newConfigSetWizard(deps)
 
 	// Step 0: section
-	resp, done := w.Handle("defaults")
+	resp, done := w.Handle("agent_loop")
 	if done {
 		t.Fatal("should not be done after section")
 	}
@@ -67,14 +67,14 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	if !done {
 		t.Fatal("should be done after value")
 	}
-	if !strings.Contains(resp, "Set defaults.max_output_tokens") {
+	if !strings.Contains(resp, "Set agent_loop.max_output_tokens") {
 		t.Errorf("expected confirmation, got %q", resp)
 	}
 	if !strings.Contains(resp, "Restart") {
 		t.Errorf("expected restart hint, got %q", resp)
 	}
 
-	if captured.Section != "defaults" {
+	if captured.Section != "agent_loop" {
 		t.Errorf("target.Section = %q", captured.Section)
 	}
 	if captured.Key != "max_output_tokens" {
@@ -122,7 +122,7 @@ func TestConfigSetWizardAgentSection(t *testing.T) {
 	w := newConfigSetWizard(deps)
 
 	w.Handle("agent")
-	w.Handle("defaults.max_output_tokens")
+	w.Handle("agent_loop.max_output_tokens")
 	w.Handle("32768")
 
 	if captured.Section != "agents" {
@@ -135,7 +135,7 @@ func TestConfigSetWizardAgentSection(t *testing.T) {
 
 // TestConfigSetWizardInvalidSection verifies that entering a nonexistent section
 // name does not terminate the wizard, returns an "Unknown section" error with a
-// list of valid sections (including "defaults"), and allows the user to retry.
+// list of valid sections, and allows the user to retry.
 func TestConfigSetWizardInvalidSection(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
@@ -147,7 +147,7 @@ func TestConfigSetWizardInvalidSection(t *testing.T) {
 	if !strings.Contains(resp, "Unknown section") {
 		t.Errorf("expected unknown section error, got %q", resp)
 	}
-	if !strings.Contains(resp, "defaults") {
+	if !strings.Contains(resp, "agent_loop") {
 		t.Errorf("expected section listing, got %q", resp)
 	}
 }
@@ -159,7 +159,7 @@ func TestConfigSetWizardInvalidKey(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
 
-	w.Handle("defaults")
+	w.Handle("agent_loop")
 
 	resp, done := w.Handle("nonexistent_key")
 	if done {
@@ -177,7 +177,7 @@ func TestConfigSetWizardInvalidValue(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
 
-	w.Handle("defaults")
+	w.Handle("agent_loop")
 	w.Handle("max_tool_loops") // FieldInt
 
 	resp, done := w.Handle("not-a-number")
@@ -204,15 +204,15 @@ func TestConfigSetDirect(t *testing.T) {
 		return "", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "defaults.max_output_tokens=32768")
+	resp, err := ConfigSetDirect(deps, "agent_loop.max_output_tokens=32768")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
-	if !strings.Contains(resp, "Set defaults.max_output_tokens") {
+	if !strings.Contains(resp, "Set agent_loop.max_output_tokens") {
 		t.Errorf("response = %q", resp)
 	}
 
-	if captured.Section != "defaults" || captured.Key != "max_output_tokens" {
+	if captured.Section != "agent_loop" || captured.Key != "max_output_tokens" {
 		t.Errorf("target = %+v", captured)
 	}
 	if capturedValue != "32768" {
@@ -230,7 +230,7 @@ func TestConfigSetDirectAgent(t *testing.T) {
 		return "", nil
 	})
 
-	_, err := ConfigSetDirect(deps, "agent.defaults.max_tool_loops=50")
+	_, err := ConfigSetDirect(deps, "agent.agent_loop.max_tool_loops=50")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestConfigSetDirectAgent(t *testing.T) {
 	if captured.Section != "agents" || captured.AgentID != "test-agent" {
 		t.Errorf("target = %+v", captured)
 	}
-	if captured.Key != "defaults.max_tool_loops" {
+	if captured.Key != "agent_loop.max_tool_loops" {
 		t.Errorf("target.Key = %q", captured.Key)
 	}
 }
@@ -259,12 +259,12 @@ func TestConfigSetDirectUnknownField(t *testing.T) {
 }
 
 // TestConfigSetDirectMissingEquals verifies that direct mode returns an error when the input
-// string lacks an "=" separator (e.g. "defaults.model" without "=value"), ensuring the parser
+// string lacks an "=" separator (e.g. "agent_loop.max_tool_loops" without "=value"), ensuring the parser
 // rejects malformed input rather than silently misinterpreting it.
 func TestConfigSetDirectMissingEquals(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 
-	_, err := ConfigSetDirect(deps, "defaults.model")
+	_, err := ConfigSetDirect(deps, "agent_loop.max_tool_loops")
 	if err == nil {
 		t.Fatal("expected error for missing =")
 	}
@@ -300,7 +300,7 @@ func TestConfigSetDirectInt(t *testing.T) {
 		return "", nil
 	})
 
-	_, err := ConfigSetDirect(deps, "defaults.max_tool_loops=50")
+	_, err := ConfigSetDirect(deps, "agent_loop.max_tool_loops=50")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestConfigSetDirectShowsOldValue(t *testing.T) {
 		return "16384", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "defaults.max_output_tokens=32768")
+	resp, err := ConfigSetDirect(deps, "agent_loop.max_output_tokens=32768")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -337,14 +337,14 @@ func TestConfigSetSectionKey(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	deps.Registry = registry
 
-	text, err := configSet(&deps, "defaults max_output_tokens")
+	text, err := configSet(&deps, "agent_loop max_output_tokens")
 	if err != nil {
 		t.Fatalf("configSet: %v", err)
 	}
 	if !strings.Contains(text, "New value") {
 		t.Errorf("expected value prompt, got %q", text)
 	}
-	if !strings.Contains(text, "defaults") {
+	if !strings.Contains(text, "agent_loop") {
 		t.Errorf("expected section in prompt, got %q", text)
 	}
 }

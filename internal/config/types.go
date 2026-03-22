@@ -242,11 +242,17 @@ type AgentConfig struct {
 	Platforms []PlatformConfig  `toml:"platforms"` // per-agent platform configurations
 
 	// Per-agent section overrides — each prefix matches its global TOML section.
-	// Resolved via Merge at use time (e.g. config.Merge(acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig)).
-	Defaults AgentDefaultsOverride  `toml:"defaults"`          // overrides from [defaults]
-	Sessions AgentSessionsOverride  `toml:"sessions"`          // overrides from [sessions]
-	Tools    AgentToolsOverride     `toml:"tools"`             // overrides from [tools]
-	Debug    DebugConfig            `toml:"debug"`             // overrides from [debug]
+	// Resolved via Merge at use time (e.g. config.Merge(acfg.Display, cfg.Display)).
+	Notify          NotifyConfig          `toml:"notify"`           // overrides from [notify]
+	Display         DisplayConfig         `toml:"display"`          // overrides from [display]
+	Nudge           NudgeConfig           `toml:"nudge"`            // overrides from [nudge]
+	Voice           VoiceConfig           `toml:"voice"`            // overrides from [voice]
+	AgentLoop       AgentLoopConfig       `toml:"agent_loop"`       // overrides from [agent_loop]
+	Behavior        BehaviorConfig        `toml:"behavior"`         // overrides from [behavior]
+	System          SystemConfig          `toml:"system"`           // overrides from [system]
+	Sessions        AgentSessionsOverride `toml:"sessions"`         // overrides from [sessions]
+	Tools           AgentToolsOverride    `toml:"tools"`            // overrides from [tools]
+	Debug           DebugConfig           `toml:"debug"`            // overrides from [debug]
 	Browser         BrowserConfig         `toml:"browser"`          // overrides from [browser]
 	Keepalive       KeepaliveConfig       `toml:"keepalive"`        // overrides from [keepalive]
 	Background      BackgroundConfig      `toml:"background"`       // overrides from [background]
@@ -258,17 +264,6 @@ type AgentConfig struct {
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)
 	BlockedPaths      []BlockedPath      `toml:"blocked_paths"`      // path prefixes that write/edit tools refuse (empty = use global)
-}
-
-// AgentDefaultsOverride groups the 7 config groups whose global home is [defaults].
-type AgentDefaultsOverride struct {
-	NotifyConfig
-	DisplayConfig
-	NudgeConfig
-	VoiceConfig
-	AgentLoopConfig
-	BehaviorConfig
-	SystemConfig
 }
 
 // AgentSessionsOverride groups the config from [sessions] that can be overridden per-agent.
@@ -299,7 +294,8 @@ type CompactionConfig struct {
 	AutocompactBeforeManaRefreshPreservePct *float64 `toml:"autocompact_before_mana_refresh_preserve_pct"`
 }
 
-// NudgeConfig holds nudge system settings. Embed in DefaultsConfig (global) and AgentConfig (per-agent).
+// NudgeConfig holds nudge system settings.
+// Global: [nudge], per-agent: [[agents]].nudge.*
 type NudgeConfig struct {
 	NudgeEnable                     *bool   `toml:"nudge_enable"`
 	NudgeAutoExtract                *bool   `toml:"nudge_auto_extract"`
@@ -315,7 +311,7 @@ type NudgeConfig struct {
 }
 
 // SummaryConfig holds tool result summarisation settings.
-// Embed in ToolsConfig (global), DefaultsConfig (defaults), and AgentConfig (per-agent).
+// Embed in ToolsConfig (global) and AgentToolsOverride (per-agent).
 type SummaryConfig struct {
 	MaxResultChars       *int  `toml:"max_result_chars"`
 	MaxSummaryChars      *int  `toml:"max_summary_chars"`
@@ -326,7 +322,8 @@ type SummaryConfig struct {
 	MaxImagePixels       *int  `toml:"max_image_pixels"`
 }
 
-// VoiceConfig holds TTS/STT settings. Embed in DefaultsConfig and AgentConfig.
+// VoiceConfig holds TTS/STT settings.
+// Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
 	TTS             *string           `toml:"tts"`
 	STT             *string           `toml:"stt"`
@@ -336,7 +333,7 @@ type VoiceConfig struct {
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
-// Embed in DefaultsConfig and AgentConfig.
+// Global: [agent_loop], per-agent: [[agents]].agent_loop.*
 type AgentLoopConfig struct {
 	MaxOutputTokens               *int    `toml:"max_output_tokens"`
 	MaxToolLoops                  *int    `toml:"max_tool_loops"`
@@ -347,7 +344,7 @@ type AgentLoopConfig struct {
 }
 
 // BehaviorConfig holds agent behavioral settings.
-// Embed in DefaultsConfig and AgentConfig.
+// Global: [behavior], per-agent: [[agents]].behavior.*
 type BehaviorConfig struct {
 	SteerMode             *bool    `toml:"steer_mode"`
 	GroupThrottle         *string  `toml:"group_throttle"`
@@ -357,7 +354,7 @@ type BehaviorConfig struct {
 }
 
 // SystemConfig holds system-level agent settings.
-// Embed in DefaultsConfig and AgentConfig.
+// Global: [system], per-agent: [[agents]].system.*
 type SystemConfig struct {
 	SystemFiles []string          `toml:"system_files"`
 	Webhooks    map[string]string `toml:"webhooks"`
@@ -758,17 +755,6 @@ type CommandConfig struct {
 	Timeout     int    `toml:"timeout"` // seconds, default 10
 }
 
-// DefaultsConfig provides global defaults for agent-specific fields.
-// All embedded config groups use Merge[T] for resolution at use time.
-type DefaultsConfig struct {
-	NotifyConfig    // notification defaults
-	DisplayConfig   // display defaults
-	NudgeConfig     // nudge system defaults
-	VoiceConfig     // TTS/STT defaults
-	AgentLoopConfig // agent loop defaults
-	BehaviorConfig  // behavioral defaults
-	SystemConfig    // system defaults
-}
 
 
 // EndpointConfig describes a model API endpoint.
@@ -887,8 +873,14 @@ func (d DebugConfig) InjectChatWarningsLevel() InjectionLevel {
 
 type Config struct {
 	DataDir            string                       `toml:"data_dir"`  // directory for databases, sessions, state (default: $HOME/data)
-	Defaults           DefaultsConfig               `toml:"defaults"`  // global defaults for agent-specific fields
-	Groups             GroupsConfig                  `toml:"groups"`    // model group assignments and fallbacks
+	Notify             NotifyConfig                  `toml:"notify"`      // global notification defaults
+	Display            DisplayConfig                 `toml:"display"`     // global display defaults
+	Nudge              NudgeConfig                   `toml:"nudge"`       // global nudge defaults
+	Voice              VoiceConfig                   `toml:"voice"`       // global voice defaults
+	AgentLoop          AgentLoopConfig               `toml:"agent_loop"`  // global agent loop defaults
+	Behavior           BehaviorConfig                `toml:"behavior"`    // global behavior defaults
+	System             SystemConfig                  `toml:"system"`      // global system defaults
+	Groups             GroupsConfig                  `toml:"groups"`      // model group assignments and fallbacks
 	Models             map[string]ModelConfig        `toml:"models"`    // named model definitions with per-model settings
 	Endpoints          map[string]EndpointConfig     `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
 	Agents             []AgentConfig             `toml:"agents"`    // multi-agent: array of agents

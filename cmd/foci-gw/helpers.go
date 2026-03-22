@@ -27,9 +27,9 @@ func parseDurationDefault(s string, fallback time.Duration) time.Duration {
 func resolveNotify(acfg config.AgentConfig, cfg *config.Config, platformName string) config.NotifyConfig {
 	return config.Merge(
 		acfg.Platform(platformName).SafeNotify(),
-		acfg.Defaults.NotifyConfig,
+		acfg.Notify,
 		cfg.Platform(platformName).SafeNotify(),
-		cfg.Defaults.NotifyConfig,
+		cfg.Notify,
 	)
 }
 
@@ -77,7 +77,7 @@ func maxInjectionLevel(acfg config.AgentConfig, cfg *config.Config, extract func
 // This is for agent-level resolution (environment block, agent struct);
 // platform-specific display resolution is done in ApplyAgentDisplaySettings.
 func resolveDisplay(acfg config.AgentConfig, cfg *config.Config) config.DisplayConfig {
-	layers := []config.DisplayConfig{acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig}
+	layers := []config.DisplayConfig{acfg.Display, cfg.Display}
 	for _, p := range cfg.Platforms {
 		layers = append(layers, p.DisplayConfig)
 	}
@@ -130,7 +130,7 @@ func modelMetaFn(models map[string]config.ModelConfig) func(string) modelinfo.Mo
 // resolveStreamingConfig resolves the streaming setting for an agent.
 // Cascade: per-agent → global defaults → false.
 func resolveStreamingConfig(acfg config.AgentConfig, cfg *config.Config) bool {
-	dc := config.Merge(acfg.Defaults.DisplayConfig, cfg.Defaults.DisplayConfig)
+	dc := config.Merge(acfg.Display, cfg.Display)
 	if dc.Streaming != nil {
 		return *dc.Streaming
 	}
