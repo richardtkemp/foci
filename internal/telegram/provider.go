@@ -86,8 +86,8 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 
 	cmds, _ := params.FirstCommands.(*command.Registry)
 	firstACfg := params.FirstAgentConfig
-	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, config.DerefStr(firstACfg.Defaults.STT), voice.MergeReplacements(cfg.Defaults.STTReplacements, firstACfg.Defaults.STTReplacements))
-	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, config.DerefStr(firstACfg.Defaults.TTS), config.DerefFloat(firstACfg.Defaults.TTSRate), voice.MergeReplacements(cfg.Defaults.TTSReplacements, firstACfg.Defaults.TTSReplacements))
+	sharedSTT := p.deps.ResolveSTT(p.deps.STTMap, cfg.STT, config.DerefStr(firstACfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, firstACfg.Voice.STTReplacements))
+	sharedTTS := p.deps.ResolveTTS(p.deps.TTSMap, cfg.TTS, config.DerefStr(firstACfg.Voice.TTS), config.DerefFloat(firstACfg.Voice.TTSRate), voice.MergeReplacements(cfg.Voice.TTSReplacements, firstACfg.Voice.TTSReplacements))
 
 	for _, botName := range tgPlat.FacetBots {
 		facetToken := config.ResolveBotToken(botName, "", p.deps.SecretStore)
