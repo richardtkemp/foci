@@ -189,11 +189,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	if len(cfg.Memory.Sources) > 0 {
 		add("memory", "sources", fmt.Sprintf("(%d configured)", len(cfg.Memory.Sources)))
 	}
-	if cfg.Memory.ReindexDebounce != "" {
-		add("memory", "reindex_debounce", cfg.Memory.ReindexDebounce)
+	if d := DerefStr(cfg.Memory.ReindexDebounce); d != "" {
+		add("memory", "reindex_debounce", d)
 	}
-	add("memory", "conversation_weight", cfg.Memory.ConversationWeight)
-	add("memory", "search_limit", cfg.Memory.SearchLimit)
+	add("memory", "conversation_weight", DerefFloat(cfg.Memory.ConversationWeight))
+	add("memory", "search_limit", DerefInt(cfg.Memory.SearchLimit))
 
 	// logging
 	add("logging", "level", cfg.Logging.Level)

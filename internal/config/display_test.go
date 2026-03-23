@@ -32,8 +32,8 @@ func testConfig() (*Config, AgentConfig) {
 			CompactionMinMessages: 4,
 		},
 		Memory: MemoryConfig{
-			ConversationWeight: 0.1,
-			SearchLimit:        20,
+			ConversationWeight: Ptr(0.1),
+			SearchLimit:        Ptr(20),
 		},
 		HTTP: HTTPConfig{
 			Bind:                    "127.0.0.1",
@@ -205,7 +205,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.BranchOrientationHeadlessPrompt = Ptr("/tmp/orient-headless.md")
 	preserve25 := 25
 	cfg.Sessions.CompactionPreserveMessages = &preserve25
-	cfg.Memory.ReindexDebounce = "2s"
+	cfg.Memory.ReindexDebounce = Ptr("2s")
 	cfg.Debug.MessagesInLog = Ptr[bool](true)
 	cfg.Debug.CacheBustDetect = Ptr[bool](true)
 	cfg.Debug.CacheBustIdleMinutes = Ptr[int](10)

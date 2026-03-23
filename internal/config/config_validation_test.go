@@ -237,8 +237,8 @@ id = "test"
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Memory.ConversationWeight != 0.1 {
-		t.Errorf("ConversationWeight = %f, want default 0.1", cfg.Memory.ConversationWeight)
+	if DerefFloat(cfg.Memory.ConversationWeight) != 0.1 {
+		t.Errorf("ConversationWeight = %f, want default 0.1", DerefFloat(cfg.Memory.ConversationWeight))
 	}
 }
 
@@ -264,8 +264,8 @@ conversation_weight = 0.25
 		t.Fatalf("Load: %v", err)
 	}
 
-	if cfg.Memory.ConversationWeight != 0.25 {
-		t.Errorf("ConversationWeight = %f, want 0.25", cfg.Memory.ConversationWeight)
+	if DerefFloat(cfg.Memory.ConversationWeight) != 0.25 {
+		t.Errorf("ConversationWeight = %f, want 0.25", DerefFloat(cfg.Memory.ConversationWeight))
 	}
 }
 

@@ -1065,15 +1065,20 @@ Agent-specific fields:
 
 All other fields (display, access, notification, platform-specific) inherit from the global `[[platforms]]` entry with the same ID, then from `[defaults.*]`, then from code defaults.
 
-### Memory (`[[agents.memory.sources]]`)
+### Memory (`[[agents]].memory`)
 
-Agents can have their own memory directories in addition to the global sources. Global `[[memory.sources]]` are always prepended to each agent's sources — agents inherit global sources automatically. When any agent has per-agent memory configured, each agent gets its own FTS5 index (`memory-{agentID}.db`) combining global + agent-specific sources.
+All `[memory]` settings can be overridden per-agent. Sources are combined additively (global + agent-specific); all other fields use the standard Merge cascade (per-agent → global).
 
-Agent-specific sources automatically receive a weight boost of +1.0, so they rank higher than global sources with the same base weight. Source names are prefixed with `agent/` in search results.
+When any agent has per-agent memory sources or overrides index-creation settings (`search_backend`, `reindex_debounce`, `conversation_weight`, `sweep_interval`), each agent gets its own index. Agent-specific sources automatically receive a weight boost of +1.0 and are prefixed with `agent/` in results.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `memory.sources` | array | see below | Per-agent memory directories. Combined with global `[memory]` sources. When empty, defaults to a single source: `{name: $id, dir: $workspace/memory, weight: 1.0}`. |
+| `memory.search_backend` | string | (inherit) | Override search backend for this agent (`"fts5"` or `"bleve"`). |
+| `memory.reindex_debounce` | string | (inherit) | Override reindex debounce delay for this agent. |
+| `memory.conversation_weight` | float | (inherit) | Override conversation search weight for this agent. |
+| `memory.search_limit` | int | (inherit) | Override max search results for this agent. |
+| `memory.sweep_interval` | string | (inherit) | Override periodic reindex interval for this agent. |
 
 Each source entry:
 
@@ -1083,7 +1088,7 @@ Each source entry:
 | `dir` | string | required | Directory path to index. |
 | `weight` | float | `1.0` | Base weight (boosted by +1.0 automatically). |
 
-When no agent has per-agent memory sources, a single shared index (`memory.db`) is used — fully backward compatible.
+When no agent has per-agent memory sources or setting overrides, a single shared index (`memory.db`) is used — fully backward compatible.
 
 ### Multi-Agent Example
 
@@ -1123,6 +1128,9 @@ workspace = "/home/foci/character"
 id = "telegram"
 bot = "secondary"
 # no facet_bots — uses shared pool only
+
+[agents.memory]
+conversation_weight = 0.3  # research agent weighs conversations higher
 
 [[agents.memory.sources]]
 name = "workspace"

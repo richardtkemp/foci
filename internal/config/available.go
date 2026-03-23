@@ -109,7 +109,7 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	}
 
 	// Memory fields
-	if cfg.Memory.ReindexDebounce == "" || cfg.Memory.ReindexDebounce == "0s" {
+	if d := DerefStr(cfg.Memory.ReindexDebounce); d == "" || d == "0s" {
 		opts = append(opts, availableOption{"memory", "reindex_debounce", "\"0s\"", "delay before reindex"})
 	}
 
