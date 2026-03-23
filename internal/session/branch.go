@@ -3,14 +3,19 @@ package session
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"foci/internal/log"
 	"foci/internal/provider"
 )
+
+// errBranchFileExists is returned when a branch file already exists (key collision).
+var errBranchFileExists = errors.New("branch file already exists")
 
 // BranchMeta is stored as the first line of a branch session file.
 type BranchMeta struct {
@@ -28,7 +33,40 @@ type BranchOptions struct {
 }
 
 // CreateBranchWithOptions creates a branch session with additional options.
-func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts BranchOptions) error {
+// Returns the actual branch key used — this may differ from branchKey if a
+// same-second collision forced a retry with a fresh timestamp.
+func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts BranchOptions) (string, error) {
+	const maxRetries = 3
+	actualKey := branchKey
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Second)
+			newKey, err := BranchFromSession(parentKey)
+			if err != nil {
+				return "", fmt.Errorf("regenerate branch key: %w", err)
+			}
+			if opts.OrientationMessage != "" {
+				opts.OrientationMessage = strings.ReplaceAll(opts.OrientationMessage, actualKey, newKey)
+			}
+			log.Warnf("session", "branch key collision key=%s, retrying with %s (attempt %d/%d)", actualKey, newKey, attempt, maxRetries)
+			actualKey = newKey
+		}
+
+		err := s.createBranchFile(parentKey, actualKey, opts)
+		if err == nil {
+			return actualKey, nil
+		}
+		if !errors.Is(err, errBranchFileExists) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("branch creation failed: key collision after %d attempts (parent=%s)", maxRetries+1, parentKey)
+}
+
+// createBranchFile performs a single attempt to create a branch file with
+// exclusive semantics. Returns errBranchFileExists if the file already exists.
+func (s *Store) createBranchFile(parentKey, branchKey string, opts BranchOptions) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -53,8 +91,11 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		return fmt.Errorf("create branch dir: %w", err)
 	}
 
-	f, err := s.createFile(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, s.fileMode)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errBranchFileExists
+		}
 		return fmt.Errorf("create branch file: %w", err)
 	}
 	defer func() { _ = f.Close() }()

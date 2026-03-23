@@ -8,7 +8,7 @@ import (
 )
 
 // SessionKey represents a structured session identifier.
-// Format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]
+// Format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}]
 type SessionKey struct {
 	AgentID   string
 	Type      rune   // 'c' (chat) or 'i' (independent)
@@ -16,7 +16,6 @@ type SessionKey struct {
 	VersionTS int64  // version timestamp (creation or compaction time)
 	ChildType rune   // 'b' (branch) or 'i' (independent spawn), 0 for root
 	ChildTS   int64  // child timestamp, 0 for root
-	Collision int    // collision counter, 0 for first
 }
 
 // parseTypeID extracts a single-character type code and the remaining string ID.
@@ -60,26 +59,11 @@ func (k SessionKey) String() string {
 		sb.WriteString(strconv.FormatInt(k.ChildTS, 10))
 	}
 
-	// Collision suffix: .N
-	if k.Collision > 0 {
-		sb.WriteRune('.')
-		sb.WriteString(strconv.Itoa(k.Collision))
-	}
-
 	return sb.String()
 }
 
 // ParseSessionKey parses a string into a SessionKey.
 func ParseSessionKey(s string) (SessionKey, error) {
-	// Handle collision suffix
-	var collision int
-	if idx := strings.LastIndex(s, "."); idx > 0 {
-		if n, err := strconv.Atoi(s[idx+1:]); err == nil && n > 0 {
-			collision = n
-			s = s[:idx]
-		}
-	}
-
 	parts := strings.Split(s, "/")
 	if len(parts) < 3 {
 		return SessionKey{}, fmt.Errorf("invalid session key format: %q (need at least agentID/typeID/versionTS)", s)
@@ -104,7 +88,6 @@ func ParseSessionKey(s string) (SessionKey, error) {
 		Type:      typ,
 		ID:        id,
 		VersionTS: versionTS,
-		Collision: collision,
 	}
 
 	// Check for child suffix (4th part)
@@ -156,7 +139,6 @@ func (k SessionKey) WithVersion(versionTS int64) SessionKey {
 	k.VersionTS = versionTS
 	k.ChildType = 0
 	k.ChildTS = 0
-	k.Collision = 0
 	return k
 }
 

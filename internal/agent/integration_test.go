@@ -102,7 +102,7 @@ func TestBranchCacheSharing(t *testing.T) {
 
 	// --- Step 3: Create branch ---
 	branchKey := "cachetest/imain/1000000000/b1000000001"
-	if err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{}); err != nil {
+	if _, err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{}); err != nil {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
 	t.Log("=== Step 3: Branch created ===")

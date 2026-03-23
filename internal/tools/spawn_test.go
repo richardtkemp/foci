@@ -42,11 +42,11 @@ type mockSessionBrancher struct {
 	err       error
 }
 
-func (m *mockSessionBrancher) CreateBranch(parentKey, branchKey string, opts BranchOptions) error {
+func (m *mockSessionBrancher) CreateBranch(parentKey, branchKey string, opts BranchOptions) (string, error) {
 	m.parentKey = parentKey
 	m.branchKey = branchKey
 	m.opts = opts
-	return m.err
+	return branchKey, m.err
 }
 
 func (m *mockSessionBrancher) SessionPath(key string) (string, error) {
