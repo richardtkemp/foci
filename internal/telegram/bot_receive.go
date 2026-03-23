@@ -74,7 +74,7 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (queuedMessage, bool) {
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
-	if !b.allowedUsers[userID] {
+	if len(b.allowedUsers) > 0 && !b.allowedUsers[userID] {
 		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.From))
 		return queuedMessage{}, false
 	}
