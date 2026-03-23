@@ -79,7 +79,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	kaOrientPrompt := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	orientTemplate := prompts.ResolveOrientationTemplate(kaOrientPrompt, false, inst.promptSearchDirs...)
 	branchFn := buildBranchFunc(
-		acfg.ID, inst.ag, p.sessions, inst.defaultSessionKey,
+		acfg.ID, inst.ag, p.sessions,
 		orientTemplate, p.ctx,
 		func(branchType, branchKey string) {
 			if branchType != "background" {

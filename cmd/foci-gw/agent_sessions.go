@@ -13,24 +13,22 @@ import (
 // branch type and the branch session key.
 type BranchDoneFunc func(branchType, branchKey string)
 
-// buildBranchFunc returns a function that creates a branch session from the
-// agent's default session and runs a single turn with the given prompt.
+// buildBranchFunc returns a function that creates a branch session from a
+// caller-specified parent session and runs a single turn with the given prompt.
 // If onDone is non-nil, it is called after the turn completes with the
 // branch type and branch session key.
 func buildBranchFunc(
 	agentID string,
 	ag *agent.Agent,
 	sessions *session.Store,
-	defaultSessionKey func() string,
 	orientTemplate string,
 	ctx context.Context,
 	onDone BranchDoneFunc,
 ) periodic.BranchFunc {
-	return func(branchType, promptText string, noCompact bool) {
-		parentKey := defaultSessionKey()
+	return func(branchType, parentKey, promptText string, noCompact bool) bool {
 		if parentKey == "" {
-			log.Warnf(branchType, "[%s] no default session, skipping", agentID)
-			return
+			log.Warnf(branchType, "[%s] no parent session, skipping", agentID)
+			return false
 		}
 
 		branchKey, err := sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
@@ -40,7 +38,7 @@ func buildBranchFunc(
 		})
 		if err != nil {
 			log.Errorf(branchType, "[%s] branch error: %v", agentID, err)
-			return
+			return false
 		}
 
 		turnCtx := agent.WithTrigger(ctx, branchType)
@@ -51,12 +49,13 @@ func buildBranchFunc(
 		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
 		if err != nil {
 			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, branchKey, err)
-			return
+			return false
 		}
 		_ = resp
 
 		if onDone != nil {
 			onDone(branchType, branchKey)
 		}
+		return true
 	}
 }

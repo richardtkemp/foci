@@ -25,11 +25,13 @@ func TestBackgroundRunningGuard(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second), // idle for 2s (> 1s interval)
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		sessionKeyFn:    func() string { return "test/c1/1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			mu.Lock()
 			calls++
 			mu.Unlock()
 			time.Sleep(100 * time.Millisecond)
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -69,10 +71,12 @@ func TestBackgroundCooldown(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		sessionKeyFn:    func() string { return "test/c1/1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			mu.Lock()
 			calls++
 			mu.Unlock()
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -112,12 +116,14 @@ func TestBackgroundCooldownFromEndNotStart(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-5 * time.Second),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		sessionKeyFn:    func() string { return "test/c1/1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			mu.Lock()
 			calls++
 			mu.Unlock()
 			// Simulate a session that runs longer than the interval
 			time.Sleep(100 * time.Millisecond)
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -150,8 +156,10 @@ func TestBackgroundNoSelfChaining(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		sessionKeyFn:    func() string { return "test/c1/1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			// no-op
+			return true
 		},
 		done: make(chan struct{}),
 	}

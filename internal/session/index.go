@@ -104,6 +104,12 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// Migration: add last_activity_at column if missing (idempotent).
 	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`)
 
+	// Migration: add last_memory_formation column if missing (idempotent).
+	// Backfill existing rows to now so we don't stampede all sessions on first run.
+	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_memory_formation TEXT`)
+	_, _ = db.Exec(`UPDATE session_index SET last_memory_formation = ? WHERE last_memory_formation IS NULL`,
+		time.Now().UTC().Format(time.RFC3339))
+
 	// Migration: add platform column to chat_metadata if missing (idempotent).
 	// Detects old schema by checking column count, then rebuilds the table in a transaction.
 	migrateChatMetadataPlatform(db)
@@ -173,6 +179,50 @@ func (idx *SessionIndex) UpdateActivity(sessionKey string, activityAt time.Time)
 	if err != nil {
 		log.Warnf("session", "update activity for %q: %v", sessionKey, err)
 	}
+}
+
+// StampMemoryFormation records when memory formation was dispatched for a session.
+func (idx *SessionIndex) StampMemoryFormation(sessionKey string, at time.Time) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	stamp := at.UTC().Format(time.RFC3339)
+	_, err := idx.db.Exec(
+		`UPDATE session_index SET last_memory_formation = ? WHERE session_key = ?`,
+		stamp,
+		sessionKey,
+	)
+	if err != nil {
+		log.Warnf("session", "stamp memory formation for %q: %v", sessionKey, err)
+	}
+}
+
+// SessionsNeedingFormation returns active chat session keys for an agent where
+// activity has occurred since the last memory formation (or formation has never run).
+func (idx *SessionIndex) SessionsNeedingFormation(agentID string) ([]string, error) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(
+		`SELECT session_key FROM session_index
+		 WHERE session_key LIKE ? AND session_type = 'chat' AND status = 'active'
+		   AND (last_memory_formation IS NULL OR last_activity_at > last_memory_formation)`,
+		agentID+"/%",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() // nolint:errcheck
+
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
 }
 
 // Get retrieves a session index entry by key.

@@ -21,8 +21,9 @@ func TestMaybeKeepalive_Disabled(t *testing.T) {
 			Enabled: false,
 		},
 		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -44,8 +45,9 @@ func TestMaybeKeepalive_BadInterval(t *testing.T) {
 			Interval: "invalid",
 		},
 		lastCacheWarmed: time.Now().Add(-1 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -68,8 +70,9 @@ func TestMaybeKeepalive_RecentCache(t *testing.T) {
 			Interval: "1h",
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -93,8 +96,10 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 			Prompt:   "keepalive.md",
 		},
 		lastCacheWarmed: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		sessionKeyFn:    func() string { return "test/c1/1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -120,8 +125,9 @@ func TestMaybeKeepalive_AlreadyRunning(t *testing.T) {
 		},
 		lastCacheWarmed:  time.Now().Add(-10 * time.Minute),
 		keepaliveRunning: true,
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -142,8 +148,9 @@ func TestMaybeBackgroundWork_Disabled(t *testing.T) {
 			Enabled: false,
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -166,8 +173,9 @@ func TestMaybeBackgroundWork_BadInterval(t *testing.T) {
 			Interval: "invalid",
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -190,8 +198,9 @@ func TestMaybeBackgroundWork_RecentInteraction(t *testing.T) {
 			Interval: "1h",
 		},
 		lastInteraction: time.Now().Add(-10 * time.Minute),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -213,8 +222,9 @@ func TestMaybeMemoryFormation_Disabled(t *testing.T) {
 		},
 		lastInteraction:     time.Now().Add(-1 * time.Hour),
 		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -238,8 +248,9 @@ func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
 		},
 		lastInteraction:     time.Now().Add(-1 * time.Hour),
 		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -252,9 +263,27 @@ func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
 
 func TestMaybeMemoryFormation_Fires(t *testing.T) {
 	// Verifies that maybeMemoryFormation dispatches a "memory-formation" branch when enabled,
-	// there has been recent activity, and the interval since the last formation has elapsed.
+	// there has been recent activity, and the session has activity newer than its last formation.
 	var calls int
+	var gotParentKey string
 	now := time.Now()
+
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	// Insert an active chat session with activity newer than its formation stamp.
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  "test/c1/1",
+		FilePath:    "/tmp/test.jsonl",
+		CreatedAt:   now.Add(-24 * time.Hour),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	idx.UpdateActivity("test/c1/1", now.Add(-30*time.Minute))
+	idx.StampMemoryFormation("test/c1/1", now.Add(-2*time.Hour))
+
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
@@ -263,13 +292,16 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 			Interval:        "1h",
 			IntervalPrompt:  "memory-formation.md",
 		},
+		sessionIndex:        idx,
 		lastInteraction:     now.Add(-30 * time.Minute),
 		lastMemoryFormation: now.Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			if branchType != "memory-formation" {
 				t.Errorf("expected branch type 'memory-formation', got %q", branchType)
 			}
+			gotParentKey = parentKey
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -279,6 +311,9 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 
 	if calls != 1 {
 		t.Errorf("memory formation not called, expected 1 call, got %d", calls)
+	}
+	if gotParentKey != "test/c1/1" {
+		t.Errorf("parent key = %q, want test/c1/1", gotParentKey)
 	}
 }
 
@@ -293,8 +328,9 @@ func TestMaybeConsolidation_Disabled(t *testing.T) {
 		},
 		lastInteraction:   time.Now(),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -318,8 +354,9 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 		},
 		lastInteraction:   time.Now(),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -343,13 +380,15 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 			ConsolidationInterval: "1h",
 			ConsolidationPrompt:   "memory-consolidation.md",
 		},
+		sessionKeyFn:      func() string { return "test/c1/1" },
 		lastInteraction:   now.Add(-30 * time.Minute),
 		lastConsolidation: now.Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			if branchType != "consolidation" {
 				t.Errorf("expected branch type 'consolidation', got %q", branchType)
 			}
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -375,8 +414,9 @@ func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
 		},
 		lastInteraction:     time.Now().Add(-2 * time.Hour),
 		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -401,8 +441,9 @@ func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
 		lastInteraction:        time.Now().Add(-30 * time.Minute),
 		lastMemoryFormation:    time.Now().Add(-2 * time.Hour),
 		memoryFormationRunning: true,
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -426,8 +467,9 @@ func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 		},
 		lastInteraction:   time.Now().Add(-3 * time.Hour),
 		lastConsolidation: time.Now().Add(-2 * time.Hour),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -452,8 +494,9 @@ func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
 		lastInteraction:      time.Now().Add(-30 * time.Minute),
 		lastConsolidation:    time.Now().Add(-2 * time.Hour),
 		consolidationRunning: true,
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -479,7 +522,7 @@ func TestNew(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		BranchFunc: func(branchType, promptText string, noCompact bool) {},
+		BranchFunc: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
 	}
 
 	r := New(cfg)
@@ -513,7 +556,7 @@ func TestNew_WithSessionIndex(t *testing.T) {
 	cfg := RunnerConfig{
 		AgentID:      "test-agent",
 		SessionIndex: idx,
-		BranchFunc:   func(branchType, promptText string, noCompact bool) {},
+		BranchFunc:   func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
 	}
 
 	r := New(cfg)
@@ -575,7 +618,7 @@ func TestStartStop(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		BranchFunc: func(branchType, promptText string, noCompact bool) {},
+		BranchFunc: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -591,7 +634,7 @@ func TestStop_WithoutStart(t *testing.T) {
 	// Verifies that calling Stop on a Runner that was never Started does not panic.
 	r := New(RunnerConfig{
 		AgentID:    "test",
-		BranchFunc: func(branchType, promptText string, noCompact bool) {},
+		BranchFunc: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
 	})
 
 	r.Stop() // Should not panic
@@ -613,7 +656,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		branchFn: func(branchType, promptText string, noCompact bool) {},
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool { return true },
 		done:     make(chan struct{}),
 	}
 
