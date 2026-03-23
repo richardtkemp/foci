@@ -62,9 +62,9 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 	}
 
 	// Multi-platform fallback display: agent → global → all platform defaults.
-	displayLayers := []DisplayConfig{acfg.Display, cfg.Defaults.Display}
+	displayLayers := []DisplayConfig{acfg.Display, cfg.Display}
 	for _, p := range cfg.Platforms {
-		displayLayers = append(displayLayers, p.DisplayConfig)
+		displayLayers = append(displayLayers, p.Display)
 	}
 
 	// Per-platform 4-layer resolution for display and notify.
@@ -83,22 +83,22 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 			acfg.Platform(name).SafeDisplay(),
 			acfg.Display,
 			cfg.Platform(name).SafeDisplay(),
-			cfg.Defaults.Display,
+			cfg.Display,
 		))
 		platformNotify[name] = resolveNotify(Merge(
 			acfg.Platform(name).SafeNotify(),
 			acfg.Notify,
 			cfg.Platform(name).SafeNotify(),
-			cfg.Defaults.Notify,
+			cfg.Notify,
 		))
 	}
 
 	return &ResolvedAgentConfig{
-		Loop:            resolveLoop(Merge(acfg.Loop, cfg.Defaults.Loop)),
-		Behavior:        resolveBehavior(Merge(acfg.Behavior, cfg.Defaults.Behavior)),
-		Voice:           resolveVoice(Merge(acfg.Voice, cfg.Defaults.Voice)),
-		Nudge:           resolveNudge(Merge(acfg.Nudge, cfg.Defaults.Nudge)),
-		System:          resolveSystem(Merge(acfg.System, cfg.Defaults.System)),
+		Loop:            resolveLoop(Merge(acfg.Loop, cfg.AgentLoop)),
+		Behavior:        resolveBehavior(Merge(acfg.Behavior, cfg.Behavior)),
+		Voice:           resolveVoice(Merge(acfg.Voice, cfg.Voice)),
+		Nudge:           resolveNudge(Merge(acfg.Nudge, cfg.Nudge)),
+		System:          resolveSystem(Merge(acfg.System, cfg.System)),
 		Tools:           resolveTool(Merge(acfg.Tools.ToolConfig, cfg.Tools.ToolConfig)),
 		Summary:         resolveSummary(Merge(acfg.Tools.SummaryConfig, cfg.Tools.SummaryConfig)),
 		Compaction:      resolveCompaction(Merge(acfg.Sessions.CompactionConfig, cfg.Sessions.CompactionConfig)),
@@ -111,8 +111,8 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Browser:         resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
 		Mana:            resolveMana(Merge(acfg.Mana, cfg.Mana)),
 		Display:         resolveDisplay(Merge(displayLayers...)),
-		Notify:          resolveNotify(Merge(acfg.Notify, cfg.Defaults.Notify)),
-		Webhooks:        MergeMaps(cfg.Defaults.System.Webhooks, acfg.System.Webhooks),
+		Notify:          resolveNotify(Merge(acfg.Notify, cfg.Notify)),
+		Webhooks:        MergeMaps(cfg.System.Webhooks, acfg.System.Webhooks),
 		platformDisplay: platformDisplay,
 		platformNotify:  platformNotify,
 	}

@@ -27,8 +27,8 @@ id = "test"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Defaults.Behavior.EnableStopAliases == nil || !*cfg.Defaults.Behavior.EnableStopAliases {
-		t.Errorf("EnableStopAliases should be true (via tag default), got %v", cfg.Defaults.Behavior.EnableStopAliases)
+	if cfg.Behavior.EnableStopAliases == nil || !*cfg.Behavior.EnableStopAliases {
+		t.Errorf("EnableStopAliases should be true (via tag default), got %v", cfg.Behavior.EnableStopAliases)
 	}
 }
 
@@ -44,7 +44,7 @@ powerful = "anthropic/claude-haiku-4-5-20251001"
 [[agents]]
 id = "test"
 
-[defaults.behavior]
+[behavior]
 enable_stop_aliases = false
 
 [[platforms]]
@@ -58,7 +58,7 @@ startup_notify = false
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if DerefBool(cfg.Defaults.Behavior.EnableStopAliases) {
+	if DerefBool(cfg.Behavior.EnableStopAliases) {
 		t.Error("EnableStopAliases should be false when explicitly set")
 	}
 	tgPlat := cfg.Platform("telegram")
@@ -328,7 +328,7 @@ func TestBoolStringConfigLoad(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[defaults.behavior]
+[behavior]
 enable_stop_aliases = "on"
 
 [[platforms]]
@@ -346,7 +346,7 @@ log_rotation = "false"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if !DerefBool(cfg.Defaults.Behavior.EnableStopAliases) {
+	if !DerefBool(cfg.Behavior.EnableStopAliases) {
 		t.Error("EnableStopAliases should be true (from \"on\")")
 	}
 	tgPlat := cfg.Platform("telegram")
@@ -638,7 +638,7 @@ id = "a"
 [debug]
 log_api_key_suffix = true
 
-[defaults.notify]
+[notify]
 compaction_debug = true
 `), 0644)
 		cfg, err := Load(filepath.Join(dir, "foci.toml"))
@@ -648,7 +648,7 @@ compaction_debug = true
 		if !DerefBool(cfg.Debug.LogAPIKeySuffix) {
 			t.Error("expected log_api_key_suffix = true")
 		}
-		if !cfg.Defaults.Notify.CompactionDebugEnabled() {
+		if !cfg.Notify.CompactionDebugEnabled() {
 			t.Error("expected compaction_debug = true (via defaults NotifyConfig)")
 		}
 	})
@@ -670,7 +670,7 @@ id = "a"
 		if DerefBool(cfg.Debug.LogAPIKeySuffix) {
 			t.Error("expected log_api_key_suffix default false")
 		}
-		if cfg.Defaults.Notify.CompactionDebugEnabled() {
+		if cfg.Notify.CompactionDebugEnabled() {
 			t.Error("expected compaction_debug default false")
 		}
 	})

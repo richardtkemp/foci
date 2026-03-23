@@ -198,7 +198,7 @@ func TestFormatAvailableAllSet(t *testing.T) {
 	cfg.Sessions.CompactionSummaryPrompt = &summaryPrompt
 	handoff := "handoff"
 	cfg.Sessions.CompactionHandoffMsg = &handoff
-	cfg.Defaults.Notify.CompactionNotify = &boolTrue
+	cfg.Notify.CompactionNotify = &boolTrue
 	cfg.Sessions.MaxSystemPromptFile = 20000
 	cfg.Sessions.MaxSystemPromptTotal = 80000
 	cfg.Sessions.BranchOrientationFacetPrompt = Ptr("/tmp/orient-facet.md")
@@ -282,9 +282,7 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	// Set defaults as Load() would.
 	mtl := 25
 	mot := 16384
-	cfg.Defaults = DefaultsConfig{
-		Loop: AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot},
-	}
+	cfg.AgentLoop = AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot}
 	cfg.Groups.Groups = map[string]string{"powerful": "claude-haiku-4-5"}
 	// Agent overrides max_output_tokens from the default.
 	agent := AgentConfig{
@@ -383,7 +381,7 @@ func TestFormatAvailableDeduplication(t *testing.T) {
 	cfg.Sessions.BranchOrientationHeadlessPrompt = nil
 	// Ensure both agent and defaults have system_files unset
 	agent.System.SystemFiles = nil
-	cfg.Defaults.System.SystemFiles = nil
+	cfg.System.SystemFiles = nil
 
 	result := FormatAvailable(cfg, agent)
 

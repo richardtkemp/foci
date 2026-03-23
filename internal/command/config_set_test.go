@@ -48,7 +48,7 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	}
 
 	// Step 1: key
-	resp, done = w.Handle("loop.max_output_tokens")
+	resp, done = w.Handle("max_output_tokens")
 	if done {
 		t.Fatal("should not be done after key")
 	}
@@ -67,7 +67,7 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	if !done {
 		t.Fatal("should be done after value")
 	}
-	if !strings.Contains(resp, "Set defaults.loop.max_output_tokens") {
+	if !strings.Contains(resp, "Set agent_loop.max_output_tokens") {
 		t.Errorf("expected confirmation, got %q", resp)
 	}
 	if !strings.Contains(resp, "Restart") {
@@ -77,7 +77,7 @@ func TestConfigSetWizardHappyPath(t *testing.T) {
 	if captured.Section != "agent_loop" {
 		t.Errorf("target.Section = %q", captured.Section)
 	}
-	if captured.Key != "loop.max_output_tokens" {
+	if captured.Key != "max_output_tokens" {
 		t.Errorf("target.Key = %q", captured.Key)
 	}
 	if capturedValue != "32768" {
@@ -177,8 +177,8 @@ func TestConfigSetWizardInvalidValue(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	w := newConfigSetWizard(deps)
 
-	w.Handle("defaults")
-	w.Handle("loop.max_tool_loops") // FieldInt
+	w.Handle("agent_loop")
+	w.Handle("max_tool_loops") // FieldInt
 
 	resp, done := w.Handle("not-a-number")
 	if done {
@@ -204,15 +204,15 @@ func TestConfigSetDirect(t *testing.T) {
 		return "", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "defaults.loop.max_output_tokens=32768")
+	resp, err := ConfigSetDirect(deps, "agent_loop.max_output_tokens=32768")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
-	if !strings.Contains(resp, "Set defaults.loop.max_output_tokens") {
+	if !strings.Contains(resp, "Set agent_loop.max_output_tokens") {
 		t.Errorf("response = %q", resp)
 	}
 
-	if captured.Section != "defaults" || captured.Key != "loop.max_output_tokens" {
+	if captured.Section != "agent_loop" || captured.Key != "max_output_tokens" {
 		t.Errorf("target = %+v", captured)
 	}
 	if capturedValue != "32768" {
@@ -300,7 +300,7 @@ func TestConfigSetDirectInt(t *testing.T) {
 		return "", nil
 	})
 
-	_, err := ConfigSetDirect(deps, "defaults.loop.max_tool_loops=50")
+	_, err := ConfigSetDirect(deps, "agent_loop.max_tool_loops=50")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestConfigSetDirectShowsOldValue(t *testing.T) {
 		return "16384", nil
 	})
 
-	resp, err := ConfigSetDirect(deps, "defaults.loop.max_output_tokens=32768")
+	resp, err := ConfigSetDirect(deps, "agent_loop.max_output_tokens=32768")
 	if err != nil {
 		t.Fatalf("ConfigSetDirect: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestConfigSetSectionKey(t *testing.T) {
 	deps := testConfigSetDeps(nil)
 	deps.Registry = registry
 
-	text, err := configSet(&deps, "defaults loop.max_output_tokens")
+	text, err := configSet(&deps, "agent_loop max_output_tokens")
 	if err != nil {
 		t.Fatalf("configSet: %v", err)
 	}

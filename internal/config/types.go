@@ -417,6 +417,22 @@ type NotifyConfig struct {
 	WarningMaxPerWindow *int            `toml:"warning_max_per_window"   default:"3"    desc:"max identical warnings per window before suppression"` // max identical warnings per window before suppression (default 3)
 }
 
+// InjectAgentWarningsLevel returns the resolved injection level (default: off).
+func (n NotifyConfig) InjectAgentWarningsLevel() InjectionLevel {
+	if n.InjectAgentWarnings != nil {
+		return *n.InjectAgentWarnings
+	}
+	return InjectionOff
+}
+
+// InjectChatWarningsLevel returns the resolved injection level (default: off).
+func (n NotifyConfig) InjectChatWarningsLevel() InjectionLevel {
+	if n.InjectChatWarnings != nil {
+		return *n.InjectChatWarnings
+	}
+	return InjectionOff
+}
+
 // StartupNotifyEnabled returns the resolved value (default: true).
 func (n NotifyConfig) StartupNotifyEnabled() bool {
 	if n.StartupNotify != nil {
@@ -439,6 +455,14 @@ func (n NotifyConfig) TaskListNotifyEnabled() bool {
 		return *n.TaskListNotify
 	}
 	return true
+}
+
+// CompactionDebugEnabled returns the resolved value (default: false).
+func (n NotifyConfig) CompactionDebugEnabled() bool {
+	if n.CompactionDebug != nil {
+		return *n.CompactionDebug
+	}
+	return false
 }
 
 // PlatformConfig is the unified platform configuration used for both global

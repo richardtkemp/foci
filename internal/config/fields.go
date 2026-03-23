@@ -37,7 +37,12 @@ type Constraint struct {
 // globalSections maps TOML section names to their Go struct types.
 // Used by the reflection-based field registry builder.
 var globalSections = map[string]reflect.Type{
-	"defaults":         reflect.TypeOf(DefaultsConfig{}),
+	"notify":           reflect.TypeOf(NotifyConfig{}),
+	"display":          reflect.TypeOf(DisplayConfig{}),
+	"nudge":            reflect.TypeOf(NudgeConfig{}),
+	"voice":            reflect.TypeOf(VoiceConfig{}),
+	"agent_loop":       reflect.TypeOf(AgentLoopConfig{}),
+	"behavior":         reflect.TypeOf(BehaviorConfig{}),
 	"sessions":         reflect.TypeOf(SessionsConfig{}),
 	"tools":            reflect.TypeOf(ToolsConfig{}),
 	"browser":          reflect.TypeOf(BrowserConfig{}),

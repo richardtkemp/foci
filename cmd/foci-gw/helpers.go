@@ -58,6 +58,24 @@ func resolveShowToolCalls(rc *config.ResolvedAgentConfig) string {
 	return string(config.ToolCallOff)
 }
 
+// modelMetaFn returns a function that looks up per-model metadata
+// from [models.*] config by matching the developer/model_id string.
+func modelMetaFn(models map[string]config.ModelConfig) func(string) modelinfo.ModelMeta {
+	if len(models) == 0 {
+		return nil
+	}
+	return func(model string) modelinfo.ModelMeta {
+		for _, mc := range models {
+			if mc.Model == model {
+				return modelinfo.ModelMeta{
+					ContextWindow: int(mc.Context),
+				}
+			}
+		}
+		return modelinfo.ModelMeta{}
+	}
+}
+
 // modelDefaultsFn returns a function that looks up per-model defaults
 // from [models.*] config by matching the developer/model_id string.
 func modelDefaultsFn(models map[string]config.ModelConfig) func(string) config.ModelDefaults {

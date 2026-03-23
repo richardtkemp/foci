@@ -221,8 +221,8 @@ func Load(path string) (*Config, error) {
 		cfg.DataDir = filepath.Join(home, "data")
 	}
 	// GoroutineMonitorThreshold: 0 means auto (30 + 25×agents + 5×telegram_bots), computed at startup.
-	if len(cfg.Defaults.Behavior.StopAliases) == 0 {
-		cfg.Defaults.Behavior.StopAliases = []string{"stop", "wait"}
+	if len(cfg.Behavior.StopAliases) == 0 {
+		cfg.Behavior.StopAliases = []string{"stop", "wait"}
 	}
 
 	// Apply convention-based defaults before path resolution.

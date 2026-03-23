@@ -35,8 +35,8 @@ func FormatConfigGrouped(cfg *Config, agent AgentConfig) []string {
 // (overridden) tag; all fields get (default) if they weren't explicitly set.
 func annotateGlobalRows(rows []configRow, cfg *Config, agent AgentConfig) {
 	overrides := map[string]bool{
-		"defaults.max_tool_loops":    DerefInt(agent.Loop.MaxToolLoops) != DerefInt(cfg.Defaults.Loop.MaxToolLoops),
-		"defaults.max_output_tokens": DerefInt(agent.Loop.MaxOutputTokens) != DerefInt(cfg.Defaults.Loop.MaxOutputTokens),
+		"agent_loop.max_tool_loops":    DerefInt(agent.Loop.MaxToolLoops) != DerefInt(cfg.AgentLoop.MaxToolLoops),
+		"agent_loop.max_output_tokens": DerefInt(agent.Loop.MaxOutputTokens) != DerefInt(cfg.AgentLoop.MaxOutputTokens),
 	}
 	for i := range rows {
 		path := rows[i].Section + "." + rows[i].Key
@@ -61,24 +61,25 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("groups", name, model)
 	}
 
-	// defaults
-	if cfg.Defaults.Loop.MaxOutputTokens != nil {
-		add("defaults", "max_output_tokens", *cfg.Defaults.Loop.MaxOutputTokens)
+	// agent_loop
+	if cfg.AgentLoop.MaxOutputTokens != nil {
+		add("agent_loop", "max_output_tokens", *cfg.AgentLoop.MaxOutputTokens)
 	}
-	if cfg.Defaults.Loop.MaxToolLoops != nil {
-		add("defaults", "max_tool_loops", *cfg.Defaults.Loop.MaxToolLoops)
+	if cfg.AgentLoop.MaxToolLoops != nil {
+		add("agent_loop", "max_tool_loops", *cfg.AgentLoop.MaxToolLoops)
 	}
-	if cfg.Defaults.Loop.DuplicateMessages != nil && *cfg.Defaults.Loop.DuplicateMessages {
-		add("defaults", "duplicate_messages", true)
+	if cfg.AgentLoop.DuplicateMessages != nil && *cfg.AgentLoop.DuplicateMessages {
+		add("agent_loop", "duplicate_messages", true)
 	}
-	if cfg.Defaults.Notify.InjectAgentWarnings != nil && cfg.Defaults.Notify.InjectAgentWarningsLevel().Enabled() {
-		add("defaults", "inject_agent_warnings", string(*cfg.Defaults.Notify.InjectAgentWarnings))
+	// notify
+	if cfg.Notify.InjectAgentWarnings != nil && cfg.Notify.InjectAgentWarnings.Enabled() {
+		add("notify", "inject_agent_warnings", string(*cfg.Notify.InjectAgentWarnings))
 	}
-	if cfg.Defaults.Notify.InjectChatWarnings != nil && cfg.Defaults.Notify.InjectChatWarningsLevel().Enabled() {
-		add("defaults", "inject_chat_warnings", string(*cfg.Defaults.Notify.InjectChatWarnings))
+	if cfg.Notify.InjectChatWarnings != nil && cfg.Notify.InjectChatWarnings.Enabled() {
+		add("notify", "inject_chat_warnings", string(*cfg.Notify.InjectChatWarnings))
 	}
-	if cfg.Defaults.Notify.WarningMaxPerWindow != nil {
-		add("defaults", "warning_max_per_window", *cfg.Defaults.Notify.WarningMaxPerWindow)
+	if cfg.Notify.WarningMaxPerWindow != nil {
+		add("notify", "warning_max_per_window", *cfg.Notify.WarningMaxPerWindow)
 	}
 	if cfg.Sessions.FacetNoCompact != nil {
 		add("sessions", "facet_no_compact", *cfg.Sessions.FacetNoCompact)
@@ -92,11 +93,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 			add("platforms."+p.ID, "show_thinking", string(*p.Display.ShowThinking))
 		}
 	}
-	if cfg.Defaults.Display.InjectedMessageHeader != nil && *cfg.Defaults.Display.InjectedMessageHeader != "" {
-		add("defaults", "injected_message_header", *cfg.Defaults.Display.InjectedMessageHeader)
+	if cfg.Display.InjectedMessageHeader != nil && *cfg.Display.InjectedMessageHeader != "" {
+		add("display", "injected_message_header", *cfg.Display.InjectedMessageHeader)
 	}
-	if len(cfg.Defaults.System.SystemFiles) > 0 {
-		add("defaults", "system_files", cfg.Defaults.System.SystemFiles)
+	if len(cfg.System.SystemFiles) > 0 {
+		add("system", "system_files", cfg.System.SystemFiles)
 	}
 
 	// keepalive
@@ -152,11 +153,11 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 			}
 		}
 	}
-	if len(cfg.Defaults.Behavior.StopAliases) > 0 {
-		add("defaults", "stop_aliases", cfg.Defaults.Behavior.StopAliases)
+	if len(cfg.Behavior.StopAliases) > 0 {
+		add("behavior", "stop_aliases", cfg.Behavior.StopAliases)
 	}
-	if cfg.Defaults.Behavior.EnableStopAliases != nil {
-		add("defaults", "enable_stop_aliases", *cfg.Defaults.Behavior.EnableStopAliases)
+	if cfg.Behavior.EnableStopAliases != nil {
+		add("behavior", "enable_stop_aliases", *cfg.Behavior.EnableStopAliases)
 	}
 
 	// sessions
@@ -421,8 +422,8 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Environment.DocsPath != nil {
 		add("environment.docs_path", *agent.Environment.DocsPath)
 	}
-	if tg != nil && tg.ReceivedFilesDir != nil && *tg.ReceivedFilesDir != "" {
-		add("platforms.telegram.received_files_dir", *tg.ReceivedFilesDir)
+	if tg != nil && tg.Display.ReceivedFilesDir != nil && *tg.Display.ReceivedFilesDir != "" {
+		add("platforms.telegram.received_files_dir", *tg.Display.ReceivedFilesDir)
 	}
 	if agent.Display.InjectedMessageHeader != nil && *agent.Display.InjectedMessageHeader != "" {
 		add("injected_message_header", *agent.Display.InjectedMessageHeader)

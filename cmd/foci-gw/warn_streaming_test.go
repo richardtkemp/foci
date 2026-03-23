@@ -34,9 +34,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "stream_output on, streaming on via global defaults — no warning",
 			cfg: &config.Config{
-				Defaults: config.DefaultsConfig{
-					Display: config.DisplayConfig{Streaming: &trueVal},
-				},
+				Display: config.DisplayConfig{Streaming: &trueVal},
 				Agents: []config.AgentConfig{{
 					ID: "bot1",
 					Platforms: []config.PlatformConfig{{
@@ -90,9 +88,7 @@ func TestCheckStreamOutputWithoutStreaming(t *testing.T) {
 		{
 			name: "global streaming on, per-agent override off — warns",
 			cfg: &config.Config{
-				Defaults: config.DefaultsConfig{
-					Display: config.DisplayConfig{Streaming: &trueVal},
-				},
+				Display: config.DisplayConfig{Streaming: &trueVal},
 				Agents: []config.AgentConfig{{
 					ID:      "bot1",
 					Display: config.DisplayConfig{Streaming: &falseVal},

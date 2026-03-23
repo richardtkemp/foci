@@ -24,6 +24,7 @@ type Compactor struct {
 	maxTokens        int
 	minMessages      int
 	preserveMessages int                // preserve last N messages through compaction (0 disables)
+	ModelMetaFn      func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
 	ModelDefaultsFn  func(model string) config.ModelDefaults // per-model defaults from [models.*] config
 	Scratchpad       *memory.Scratchpad         // nil disables scratchpad injection
 	TaskListStore    *memory.TaskListStore      // nil disables task list injection
