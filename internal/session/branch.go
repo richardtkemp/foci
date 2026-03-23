@@ -53,7 +53,7 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 		return fmt.Errorf("create branch dir: %w", err)
 	}
 
-	f, err := os.Create(path)
+	f, err := s.createFile(path)
 	if err != nil {
 		return fmt.Errorf("create branch file: %w", err)
 	}

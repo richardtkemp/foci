@@ -39,7 +39,7 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 		return fmt.Errorf("create dir for decompressed session: %w", err)
 	}
 
-	out, err := os.Create(jsonlPath)
+	out, err := s.createFile(jsonlPath)
 	if err != nil {
 		return fmt.Errorf("create decompressed session %s: %w", jsonlPath, err)
 	}
@@ -177,7 +177,7 @@ func (s *Store) ReplaceAndRotate(oldKey string, msgs []provider.Message) (string
 		return "", fmt.Errorf("create session dir: %w", err)
 	}
 
-	f, err := os.Create(newPath)
+	f, err := s.createFile(newPath)
 	if err != nil {
 		return "", fmt.Errorf("create session file: %w", err)
 	}
@@ -279,7 +279,7 @@ func (s *Store) replaceInternal(key string, msgs []provider.Message) error {
 		log.Infof("session", "session rotated key=%s archive=%s", key, filepath.Base(archivePath))
 	}
 
-	f, err := os.Create(path)
+	f, err := s.createFile(path)
 	if err != nil {
 		return fmt.Errorf("create session file: %w", err)
 	}

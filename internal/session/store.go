@@ -34,14 +34,32 @@ type SessionMeta struct {
 
 // Store is a JSONL-backed session store.
 type Store struct {
-	dir     string
-	mu      sync.Mutex
-	onEvent func(SessionEvent)
+	dir      string
+	fileMode os.FileMode
+	mu       sync.Mutex
+	onEvent  func(SessionEvent)
 }
 
 // NewStore creates a session store rooted at dir.
+// Session files are created with mode 0600 by default; call SetFileMode to override.
 func NewStore(dir string) *Store {
-	return &Store{dir: dir}
+	return &Store{dir: dir, fileMode: 0600}
+}
+
+// SetFileMode sets the permission bits used when creating session files.
+func (s *Store) SetFileMode(mode os.FileMode) {
+	s.fileMode = mode
+}
+
+// createFile creates a new file with the configured file mode.
+func (s *Store) createFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, s.fileMode)
+}
+
+// openFileAppend opens a file for appending, creating it with the configured
+// file mode if it doesn't exist.
+func (s *Store) openFileAppend(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, s.fileMode)
 }
 
 // SessionWriter restricts all session write operations to a single session,
@@ -265,7 +283,7 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 		exists = true
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - session file, needs group write access
+	f, err := s.openFileAppend(path)
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}
@@ -378,7 +396,7 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 		buf.WriteByte('\n')
 	}
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // #nosec G302 - session file
+	f, err := s.openFileAppend(path)
 	if err != nil {
 		return fmt.Errorf("open session file: %w", err)
 	}

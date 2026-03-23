@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 
 	"foci/internal/provider"
@@ -230,6 +231,52 @@ func TestAppendAllAtomicOnMarshalError(t *testing.T) {
 	}
 	if provider.TextOf(msgs[0].Content) != "existing" {
 		t.Errorf("unexpected message content: %q", provider.TextOf(msgs[0].Content))
+	}
+}
+
+func TestFileMode(t *testing.T) {
+	// Proves that SetFileMode controls the permissions on session files created
+	// via Append (new session), CreateBranch, and Replace.
+	s := NewStore(t.TempDir())
+	s.SetFileMode(0640)
+
+	key := "test/imain/1000000000"
+	branchKey := "test/imain/1000000000/b1000000001"
+
+	// Append creates a new session file
+	s.TestAppend(key, msg("user", "hello"))
+	checkMode(t, s, key, 0640)
+
+	// Branch file
+	s.CreateBranchWithOptions(key, branchKey, BranchOptions{})
+	checkMode(t, s, branchKey, 0640)
+
+	// Replace rewrites with the configured mode
+	s.TestReplace(key, []provider.Message{msg("user", "replaced")})
+	checkMode(t, s, key, 0640)
+}
+
+func TestFileModeDefault(t *testing.T) {
+	// Proves that NewStore defaults to 0600 without explicit SetFileMode.
+	s := NewStore(t.TempDir())
+	key := "test/imain/1000000000"
+	s.TestAppend(key, msg("user", "hello"))
+	checkMode(t, s, key, 0600)
+}
+
+func checkMode(t *testing.T, s *Store, key string, want os.FileMode) {
+	t.Helper()
+	path, err := s.SessionPath(key)
+	if err != nil {
+		t.Fatalf("SessionPath(%s): %v", key, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s): %v", path, err)
+	}
+	got := info.Mode().Perm()
+	if got != want {
+		t.Errorf("file mode for %s = %04o, want %04o", key, got, want)
 	}
 }
 
