@@ -11,9 +11,10 @@ import (
 
 // AgentNewDeps holds dependencies for the /agents new wizard.
 type AgentNewDeps struct {
-	ConfigPath   string // path to foci.toml
-	DefaultsDir  string // path to shared/
-	HomeDir      string // base dir for workspaces (e.g. /home/foci)
+	ConfigPath   string      // path to foci.toml
+	DefaultsDir  string      // path to shared/
+	HomeDir      string      // base dir for workspaces (e.g. /home/foci)
+	FileMode     os.FileMode // permission bits for created files (0 → 0640)
 	ListFn       func() []AgentInfo
 	PreFlightFn  func(agentID string) []string // platform pre-flight warnings
 	ResolveModel func(string) string
@@ -148,6 +149,7 @@ func createAgent(w *agentWizard) (string, error) {
 		DefaultsDir: w.deps.DefaultsDir,
 		CharMode:    w.charMode,
 		CopyFrom:    w.copyFrom,
+		FileMode:    w.deps.FileMode,
 	}
 
 	// Count existing agents for crontab staggering
@@ -181,7 +183,7 @@ func createAgent(w *agentWizard) (string, error) {
 	}
 
 	// Append to foci.toml
-	if err := appendToFile(w.deps.ConfigPath, result.ConfigBlock); err != nil {
+	if err := appendToFile(w.deps.ConfigPath, result.ConfigBlock, w.deps.FileMode); err != nil {
 		return "", fmt.Errorf("update config: %w", err)
 	}
 	fmt.Fprintf(&sb, "✅ Config: appended to %s\n", w.deps.ConfigPath)
@@ -204,8 +206,11 @@ func createAgent(w *agentWizard) (string, error) {
 }
 
 // appendToFile appends text to a file.
-func appendToFile(path, text string) error {
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644) // #nosec G302 - appending to existing config file
+func appendToFile(path, text string, mode os.FileMode) error {
+	if mode == 0 {
+		mode = 0640
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}

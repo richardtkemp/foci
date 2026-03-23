@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -89,6 +90,7 @@ type Bot struct {
 	chatmeta     *chatmeta.Resolver   // shared session key management
 
 	display     BotDisplayConfig
+	fileMode    os.FileMode      // permission bits for saved files (media, etc.)
 	toolResults sync.Map         // message ID (int64) → toolResultEntry; for inline keyboard expansion
 	thinkingStore sync.Map       // message ID (int64) → thinkingEntry; ephemeral, for inline keyboard expansion
 	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite

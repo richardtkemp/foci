@@ -121,6 +121,12 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	if cfg.Sessions.FileMode != "" {
+		if _, err := ParseFileMode(cfg.Sessions.FileMode); err != nil {
+			return fmt.Errorf("[sessions] file_mode = %q: %w", cfg.Sessions.FileMode, err)
+		}
+	}
+
 	// HTTP
 	if err := validateIntRange(cfg.HTTP.Port, 1, 65535, "[http] port"); err != nil {
 		return err
@@ -137,6 +143,11 @@ func validate(cfg *Config) error {
 	}
 	if _, err := ParseFileMode(cfg.Logging.LogFileMode); err != nil {
 		return fmt.Errorf("[logging] log_file_mode = %q: %w", cfg.Logging.LogFileMode, err)
+	}
+
+	// Global file mode
+	if _, err := ParseFileMode(cfg.FileMode); err != nil {
+		return fmt.Errorf("file_mode = %q: %w", cfg.FileMode, err)
 	}
 
 	// Model cache settings

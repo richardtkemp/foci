@@ -13,7 +13,7 @@ import (
 // that don't already exist. Each skill is a subdirectory containing at least
 // SKILL.md, plus optional references/ subdirectories.
 // Users can edit seeded copies — files are never overwritten.
-func seedDefaultSkills(dir string) {
+func seedDefaultSkills(dir string, fileMode os.FileMode) {
 	_ = fs.WalkDir(skills.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || path == "." {
 			return nil
@@ -42,7 +42,7 @@ func seedDefaultSkills(dir string) {
 			log.Warnf("main", "seed skills: mkdir %s: %v", filepath.Dir(dest), err)
 			return nil
 		}
-		if err := os.WriteFile(dest, data, 0644); err != nil {
+		if err := os.WriteFile(dest, data, fileMode); err != nil {
 			log.Warnf("main", "seed skills: write %s: %v", dest, err)
 			return nil
 		}

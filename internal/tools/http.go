@@ -38,7 +38,7 @@ type fileAttachment struct {
 // autoBackgroundSecs is the threshold after which a running request is auto-backgrounded
 // (0 disables). notifier delivers results when an auto-backgrounded request finishes.
 // maxUploadFileSize is the max file size in bytes for multipart uploads (0 = 50MB default).
-func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) *Tool {
+func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "http_request",
 		ExecExport:  true,
@@ -124,12 +124,12 @@ func NewHTTPRequestTool(store *secrets.Store, bwStore *bitwarden.Store, tempDir 
 			"required": ["url"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, notifier)
+			return executeHTTPRequest(ctx, params, store, bwStore, tempDir, autoBackgroundSecs, maxUploadFileSize, notifier, fileMode)
 		},
 	}
 }
 
-func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier) (ToolResult, error) {
+func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secrets.Store, bwStore *bitwarden.Store, tempDir string, autoBackgroundSecs int, maxUploadFileSize int64, notifier *AsyncNotifier, fileMode os.FileMode) (ToolResult, error) {
 	var p struct {
 		URL              string            `json:"url"`
 		Method           string            `json:"method"`
@@ -228,7 +228,7 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			return ToolResult{}, fmt.Errorf("request failed: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
-		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore)
+		return processHTTPResponse(SessionKeyFromContext(ctx), resp, p.URL, p.Method, p.SaveTo, p.SaveFromJSONPath, p.MaxResponseBytes, tempDir, store, bwStore, fileMode)
 	}
 
 	displayURL := formatDisplayURL(p.URL, p.Method)
@@ -243,7 +243,10 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 }
 
 // processHTTPResponse reads and formats an HTTP response.
-func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store) (ToolResult, error) {
+func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method, saveTo, saveFromJSONPath string, maxResponseBytes int64, tempDir string, store *secrets.Store, bwStore *bitwarden.Store, fileMode os.FileMode) (ToolResult, error) {
+	if fileMode == 0 {
+		fileMode = 0640
+	}
 	bodyLimit := getResponseBodyLimit(resp.Header.Get("Content-Type"), saveTo, maxResponseBytes)
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
@@ -308,7 +311,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
 			return ToolResult{}, fmt.Errorf("create parent dirs for save_to: %w", err)
 		}
-		if err := os.WriteFile(savePath, saveData, 0644); err != nil {
+		if err := os.WriteFile(savePath, saveData, fileMode); err != nil {
 			return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, err)
 		}
 		log.Debugf("http_request", "session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)

@@ -248,7 +248,8 @@ func setupAgent(p setupParams) *agentInstance {
 	})
 
 	// Post-creation agent configuration
-	setupNudgeSystem(ag, acfg, p.resolved.Nudge, defaultSessionKey, registry, bs.skillRegistry)
+	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
+	setupNudgeSystem(ag, acfg, p.resolved.Nudge, defaultSessionKey, registry, bs.skillRegistry, wsFileMode)
 	setupRedaction(ag, p, agentStore)
 	setupWarningQueue(ag, p.resolved, p.cfg)
 	setupManaWatcher(ag, p)

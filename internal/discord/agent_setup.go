@@ -73,6 +73,7 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			dBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			dBot.SetCommandContext(p.CommandContext)
 			ApplyAgentDisplaySettings(dBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug)
+			dBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
 			soStr := "off"
@@ -199,6 +200,7 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	}
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
 	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("discord"), p.Resolved.Debug)
+	primaryBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 
 	if p.DisplayOverrideFn != nil {
 		overrideFn := p.DisplayOverrideFn

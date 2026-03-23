@@ -66,7 +66,7 @@ func LoadRules(path string) (*RuleSet, error) {
 }
 
 // SaveRules writes a RuleSet to the given path as indented JSON.
-func SaveRules(path string, rs *RuleSet) error {
+func SaveRules(path string, rs *RuleSet, mode os.FileMode) error {
 	data, err := json.MarshalIndent(rs, "", "\t")
 	if err != nil {
 		return fmt.Errorf("marshal nudge rules: %w", err)
@@ -74,7 +74,7 @@ func SaveRules(path string, rs *RuleSet) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create nudge rules dir: %w", err)
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, mode)
 }
 
 // ContentHash computes a SHA-256 hash of file contents concatenated together.

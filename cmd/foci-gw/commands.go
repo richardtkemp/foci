@@ -84,7 +84,10 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		SectionsFn:      config.FieldSections,
 		FieldsInSection: config.FieldsInSection,
 		LookupFn:        config.LookupField,
-		SetInFileFn: config.SetInFile,
+		SetInFileFn: func(path string, target config.SetTarget, value string) (string, error) {
+			fm, _ := config.ParseFileMode(p.cfg.FileMode)
+			return config.SetInFile(path, target, value, fm)
+		},
 		EffectiveValueFn: func(section, key string) string {
 			return config.LookupValue(p.cfg, p.acfg, section, key)
 		},
@@ -97,11 +100,13 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	}
 
 	// Build AgentNewDeps
+	cmdFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 	agentNewDeps := &command.AgentNewDeps{
 		Registry:    cmds,
 		ConfigPath:  p.configPath,
 		DefaultsDir: filepath.Join(filepath.Dir(p.acfg.Workspace), "shared"),
 		HomeDir:     filepath.Dir(p.acfg.Workspace),
+		FileMode:    cmdFileMode,
 		ListFn:      p.agentListFn,
 		PreFlightFn: func(agentID string) []string {
 			if p.plat == nil {

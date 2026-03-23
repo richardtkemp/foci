@@ -47,6 +47,7 @@ type PromptsData struct {
 	EmbeddedPrompts     map[string]string  // filename → embedded text (for reinstall)
 	ResolvedTexts       map[string]string  // label → resolved text (for diff)
 	DefaultTexts        map[string]string  // label → embedded default text (for diff)
+	FileMode            os.FileMode        // permission bits for written files
 }
 
 // PromptsCommand returns a /prompts command showing prompt config and files.
@@ -229,6 +230,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 	}
 	knownFilenames["first-run.md"] = true
 
+	fileMode, _ := config.ParseFileMode(cfg.FileMode)
 	return PromptsData{
 		AgentID:             acfg.ID,
 		Prompts:             allPrompts,
@@ -240,6 +242,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		EmbeddedPrompts:     embedded,
 		ResolvedTexts:       resolvedTexts,
 		DefaultTexts:        defaultTexts,
+		FileMode:            fileMode,
 	}
 }
 
@@ -447,13 +450,17 @@ func promptsReinstall(data PromptsData, args string) (Response, error) {
 			action := fields[1]
 			name := names[idx]
 			content := data.EmbeddedPrompts[name]
+			fm := data.FileMode
+			if fm == 0 {
+				fm = 0640
+			}
 
 			switch action {
 			case "agent":
 				if err := os.MkdirAll(wsDir, 0o755); err != nil {
 					return Response{}, fmt.Errorf("create prompts dir: %w", err)
 				}
-				if err := os.WriteFile(filepath.Join(wsDir, name), []byte(content), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(wsDir, name), []byte(content), fm); err != nil {
 					return Response{}, fmt.Errorf("write %s: %w", name, err)
 				}
 				actionMsg = fmt.Sprintf("Wrote %s → agent dir", name)
@@ -465,7 +472,7 @@ func promptsReinstall(data PromptsData, args string) (Response, error) {
 				if err := os.MkdirAll(sharedDir, 0o755); err != nil {
 					return Response{}, fmt.Errorf("create shared prompts dir: %w", err)
 				}
-				if err := os.WriteFile(filepath.Join(sharedDir, name), []byte(content), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(sharedDir, name), []byte(content), fm); err != nil {
 					return Response{}, fmt.Errorf("write %s: %w", name, err)
 				}
 				actionMsg = fmt.Sprintf("Wrote %s → shared dir", name)

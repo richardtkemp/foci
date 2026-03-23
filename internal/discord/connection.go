@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,7 @@ type Bot struct {
 	chatmeta     *chatmeta.Resolver
 
 	display         BotDisplayConfig
+	fileMode        os.FileMode      // permission bits for saved files (media, etc.)
 	toolResults     sync.Map         // message ID (int64) -> toolResultEntry; for button expansion
 	thinkingStore   sync.Map         // message ID (int64) -> thinkingEntry; ephemeral
 	toolDetailStore *tooldetail.Store // nil = no persistence; write-through to SQLite

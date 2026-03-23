@@ -37,6 +37,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 | `data_dir` | string | `$HOME/data` | Directory for shared databases (api.db, state.db), sessions, and state files. Per-agent databases (reminders, scratchpad, todo, tasklist, conversation, memory indices) are stored in each agent's `workspace/.data/` directory. Relative paths resolve against `$HOME`. Absolute paths used as-is. |
 | `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
 | `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [SECRETS.md](SECRETS.md). |
+| `file_mode` | string | `"0640"` | Octal file permissions for workspace and content files (character files, prompts, skills, tool-written files, media saves, config edits). Session files have their own `[sessions] file_mode`. |
 
 ### `[anthropic]`
 

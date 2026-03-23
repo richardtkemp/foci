@@ -61,13 +61,15 @@ Respond with ONLY the JSON array. No explanation, no preamble, no markdown forma
 type Extractor struct {
 	workspaceDir string
 	fileOrder    []string
+	fileMode     os.FileMode
 }
 
 // NewExtractor creates an Extractor for the given workspace.
-func NewExtractor(workspaceDir string, fileOrder []string) *Extractor {
+func NewExtractor(workspaceDir string, fileOrder []string, fileMode os.FileMode) *Extractor {
 	return &Extractor{
 		workspaceDir: workspaceDir,
 		fileOrder:    fileOrder,
+		fileMode:     fileMode,
 	}
 }
 
@@ -124,7 +126,7 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 		Rules:       rules,
 	}
 	rulesPath := RulesPath(e.workspaceDir)
-	if err := SaveRules(rulesPath, rs); err != nil {
+	if err := SaveRules(rulesPath, rs, e.fileMode); err != nil {
 		return fmt.Errorf("save nudge rules: %w", err)
 	}
 

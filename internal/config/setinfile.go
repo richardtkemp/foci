@@ -22,7 +22,7 @@ type SetTarget struct {
 // For [[agents]] blocks, it matches the block containing id = "<agentID>".
 //
 // Returns the previous value (if the key existed) and any error.
-func SetInFile(path string, target SetTarget, value string) (string, error) {
+func SetInFile(path string, target SetTarget, value string, mode os.FileMode) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read config: %w", err)
@@ -44,7 +44,7 @@ func SetInFile(path string, target SetTarget, value string) (string, error) {
 
 	// Atomic write: temp file + rename.
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(output), 0o644); err != nil {
+	if err := os.WriteFile(tmpPath, []byte(output), mode); err != nil {
 		return "", fmt.Errorf("write temp: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {

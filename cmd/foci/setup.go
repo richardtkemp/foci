@@ -110,12 +110,12 @@ func cmdSetup(args []string) error {
 	// Seed shared/ from repo to disk if available, then fill gaps from embedded defaults.
 	targetSharedDir := filepath.Join(flags.homeDir, "shared")
 	if repoSharedDir := findRepoShared(); repoSharedDir != "" {
-		if err := provision.SeedDefaults(os.DirFS(repoSharedDir), targetSharedDir); err != nil {
+		if err := provision.SeedDefaults(os.DirFS(repoSharedDir), targetSharedDir, 0640); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not seed defaults from repo: %v\n", err)
 		}
 	}
 	// Always seed from embedded defaults (no-ops for files already on disk)
-	if err := provision.SeedDefaults(shared.DefaultsFS, targetSharedDir); err != nil {
+	if err := provision.SeedDefaults(shared.DefaultsFS, targetSharedDir, 0640); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not seed embedded defaults: %v\n", err)
 	}
 
@@ -394,7 +394,7 @@ func copyMDFiles(srcDir, destDir string) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
-		if err := os.WriteFile(dst, data, 0644); err != nil {
+		if err := os.WriteFile(dst, data, 0640); err != nil {
 			return fmt.Errorf("write %s: %w", entry.Name(), err)
 		}
 		count++
@@ -615,7 +615,7 @@ func writeSetupFiles(f setupFlags, configOpts config.SetupOptions, store *secret
 			configContent += "\n"
 		}
 	}
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0640); err != nil {
 		return fmt.Errorf("write foci.toml: %w", err)
 	}
 	fmt.Printf("  → %s\n", configPath)
