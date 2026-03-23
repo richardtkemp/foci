@@ -35,11 +35,12 @@ func FireCompactionMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		return
 	}
 	orientText := buildOrientation(branchKey, sessionKey, "compaction-memory")
-	if err := sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
+	branchKey, err = sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
 		NoResetHook:        true,
 		OrientationMessage: orientText,
-	}); err != nil {
-		log.Errorf("compaction-memory", "branch error for session %s → %s: %v", sessionKey, branchKey, err)
+	})
+	if err != nil {
+		log.Errorf("compaction-memory", "branch error for session %s: %v", sessionKey, err)
 		return
 	}
 

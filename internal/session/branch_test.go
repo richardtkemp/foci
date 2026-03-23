@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"foci/internal/provider"
@@ -20,7 +22,7 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "good"))
 
 	// Create branch at current point (4 messages)
-	if err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
+	if _, err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{}); err != nil {
 		t.Fatalf("CreateBranch: %v", err)
 	}
 
@@ -154,7 +156,7 @@ func TestCreateBranchWithOptionsNoResetHook(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
-	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{NoResetHook: true})
+	_, err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{NoResetHook: true})
 	if err != nil {
 		t.Fatalf("CreateBranchWithOptions: %v", err)
 	}
@@ -183,7 +185,7 @@ func TestCreateBranchWithOptionsDefault(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
-	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
+	_, err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{})
 	if err != nil {
 		t.Fatalf("CreateBranchWithOptions: %v", err)
 	}
@@ -228,7 +230,6 @@ func TestGetBranchMetaNonexistent(t *testing.T) {
 	}
 }
 
-
 func TestBranchDoesNotContaminateParent(t *testing.T) {
 	// Proves that messages appended to a branch are not visible in the parent
 	// session — branches are one-way forks that never write back.
@@ -263,7 +264,7 @@ func TestCreateBranchWithOrientationMessage(t *testing.T) {
 	s.TestAppend(parentKey, msg("assistant", "hi"))
 
 	orientText := "You are a cron branch. Do not message Telegram directly."
-	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
+	_, err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
 		OrientationMessage: orientText,
 	})
 	if err != nil {
@@ -302,7 +303,7 @@ func TestCreateBranchWithoutOrientationMessage(t *testing.T) {
 
 	s.TestAppend(parentKey, msg("user", "hello"))
 
-	err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
+	_, err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
 		OrientationMessage: "", // empty — no orientation
 	})
 	if err != nil {
@@ -316,5 +317,61 @@ func TestCreateBranchWithoutOrientationMessage(t *testing.T) {
 	}
 	if len(msgs) != 1 {
 		t.Fatalf("len = %d, want 1 (1 parent, no orientation)", len(msgs))
+	}
+}
+
+func TestCreateBranchCollision(t *testing.T) {
+	// Proves that CreateBranchWithOptions rejects a duplicate key rather than
+	// silently overwriting the existing branch file. The original branch's
+	// metadata must be preserved intact.
+	s := NewStore(t.TempDir())
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/ibranch/1000000000"
+
+	s.TestAppend(parentKey, msg("user", "hello"))
+
+	// First creation succeeds.
+	key1, err := s.CreateBranchWithOptions(parentKey, branchKey, BranchOptions{
+		OrientationMessage: "first branch orientation",
+	})
+	if err != nil {
+		t.Fatalf("first CreateBranchWithOptions: %v", err)
+	}
+	if key1 != branchKey {
+		t.Errorf("first key = %q, want %q", key1, branchKey)
+	}
+
+	// Second creation with the same key must fail (collision detected).
+	// Use createBranchFile directly to avoid the retry+sleep loop.
+	err = s.createBranchFile(parentKey, branchKey, BranchOptions{
+		OrientationMessage: "OVERWRITE ATTEMPT",
+	})
+	if err == nil {
+		t.Fatal("expected error on duplicate branch key, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("expected 'already exists' error, got: %v", err)
+	}
+
+	// Original branch metadata is intact.
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("branch meta is nil after collision attempt")
+	}
+	if meta.Orientation != "first branch orientation" {
+		t.Errorf("orientation = %q, want %q", meta.Orientation, "first branch orientation")
+	}
+
+	// Verify the file on disk was not truncated.
+	path, _ := s.SessionPath(branchKey)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat branch file: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("branch file was truncated to zero")
 	}
 }

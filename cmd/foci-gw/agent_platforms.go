@@ -164,7 +164,7 @@ type sessionBranchAdapter struct {
 	store *session.Store
 }
 
-func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, opts tools.BranchOptions) error {
+func (a *sessionBranchAdapter) CreateBranch(parentKey, branchKey string, opts tools.BranchOptions) (string, error) {
 	return a.store.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		NoResetHook:        opts.NoResetHook,
 		OrientationMessage: opts.OrientationMessage,

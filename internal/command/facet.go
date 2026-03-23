@@ -42,9 +42,10 @@ func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error
 		cc.AgentConfig.Sessions.BranchOrientationFacetPrompt, cc.Config.Sessions.BranchOrientationFacetPrompt,
 	))
 	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "facet", true, cc.PromptSearchDirs)
-	if err := cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+	branchKey, err = cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 		OrientationMessage: orientText,
-	}); err != nil {
+	})
+	if err != nil {
 		secConn.SetSessionKey("")
 		return "", fmt.Errorf("create branch: %w", err)
 	}

@@ -40,7 +40,7 @@ func buildBranchFunc(
 		}
 
 		orientText := buildOrientation(branchKey, parentKey, branchType)
-		err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+		branchKey, err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        true,
 			OrientationMessage: orientText,
 		})

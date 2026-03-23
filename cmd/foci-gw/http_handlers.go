@@ -253,12 +253,12 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 
 		orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
 		orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
-		branchErr := d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+		branchKey, err = d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
 			NoResetHook:        req.NoResetHook,
 			OrientationMessage: orientText,
 		})
-		if branchErr != nil {
-			log.Errorf("wake", "branch error: %v", branchErr)
+		if err != nil {
+			log.Errorf("wake", "branch error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

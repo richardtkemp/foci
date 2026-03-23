@@ -148,7 +148,7 @@ func (w *sessionWriter) Clear(key string) error {
 }
 
 // SessionPath converts a session key to a file path.
-// Key format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}][.{n}]
+// Key format: {agentID}/{type}{id}/{versionTS}[/{childType}{childTS}]
 // Root path: {dir}/{key}/root.jsonl
 // Child path: {dir}/{key}.jsonl
 func (s *Store) SessionPath(key string) (string, error) {
@@ -160,11 +160,6 @@ func (s *Store) SessionPath(key string) (string, error) {
 	}
 
 	lastSegment := parts[len(parts)-1]
-
-	// Check for collision suffix
-	if idx := strings.Index(lastSegment, "."); idx > 0 {
-		lastSegment = lastSegment[:idx]
-	}
 
 	// If last segment is pure number, it's a root session
 	if _, err := strconv.ParseInt(lastSegment, 10, 64); err == nil {

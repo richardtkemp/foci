@@ -25,19 +25,6 @@ func TestSessionKeyString(t *testing.T) {
 			want: "main/c123/1709590000/b1709596800",
 		},
 		{
-			name: "collision",
-			key: SessionKey{
-				AgentID:   "main",
-				Type:      'c',
-				ID:        "123",
-				VersionTS: 1709590000,
-				ChildType: 'b',
-				ChildTS:   1709596800,
-				Collision: 1,
-			},
-			want: "main/c123/1709590000/b1709596800.1",
-		},
-		{
 			name: "independent root",
 			key: SessionKey{
 				AgentID:   "main",
@@ -121,19 +108,6 @@ func TestParseSessionKey(t *testing.T) {
 				VersionTS: 1709590000,
 				ChildType: 'i',
 				ChildTS:   1709596801,
-			},
-		},
-		{
-			name:  "collision",
-			input: "main/c123/1709590000/b1709596800.1",
-			want: SessionKey{
-				AgentID:   "main",
-				Type:      'c',
-				ID:        "123",
-				VersionTS: 1709590000,
-				ChildType: 'b',
-				ChildTS:   1709596800,
-				Collision: 1,
 			},
 		},
 		{
@@ -228,11 +202,6 @@ func TestChatIDFromKey(t *testing.T) {
 			key:  "not-a-session-key",
 			want: 0,
 		},
-		{
-			name: "collision suffix",
-			key:  "main/c999/1709590000/b1709596800.2",
-			want: 999,
-		},
 	}
 
 	for _, tt := range tests {
@@ -256,7 +225,6 @@ func TestSessionKeyBase(t *testing.T) {
 		{name: "rotated key", key: "main/c123/1700100000", want: "main/c123"},
 		{name: "branch key", key: "main/c123/1700000000/b1700050000", want: "main/c123"},
 		{name: "independent", key: "main/i1700000000/1700000000", want: "main/i1700000000"},
-		{name: "collision", key: "main/c123/1700000000/b1700050000.1", want: "main/c123"},
 		{name: "empty", key: "", want: ""},
 		{name: "single segment", key: "main", want: "main"},
 	}
