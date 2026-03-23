@@ -98,8 +98,8 @@ web_search_timeout = "20s"
 	if cfg.HTTP.GracefulShutdownTimeout != "10s" {
 		t.Errorf("HTTP.GracefulShutdownTimeout = %q, want 10s", cfg.HTTP.GracefulShutdownTimeout)
 	}
-	if cfg.Memory.SearchLimit != 50 {
-		t.Errorf("Memory.SearchLimit = %d, want 50", cfg.Memory.SearchLimit)
+	if DerefInt(cfg.Memory.SearchLimit) != 50 {
+		t.Errorf("Memory.SearchLimit = %d, want 50", DerefInt(cfg.Memory.SearchLimit))
 	}
 	if cfg.Database.BusyTimeout != "10s" {
 		t.Errorf("Database.BusyTimeout = %q, want 10s", cfg.Database.BusyTimeout)
@@ -160,8 +160,8 @@ id = "test"
 	if cfg.HTTP.GracefulShutdownTimeout != "30s" {
 		t.Errorf("default HTTP.GracefulShutdownTimeout = %q, want 30s", cfg.HTTP.GracefulShutdownTimeout)
 	}
-	if cfg.Memory.SearchLimit != 20 {
-		t.Errorf("default Memory.SearchLimit = %d, want 20", cfg.Memory.SearchLimit)
+	if DerefInt(cfg.Memory.SearchLimit) != 20 {
+		t.Errorf("default Memory.SearchLimit = %d, want 20", DerefInt(cfg.Memory.SearchLimit))
 	}
 	if cfg.Database.BusyTimeout != "5s" {
 		t.Errorf("default Database.BusyTimeout = %q, want 5s", cfg.Database.BusyTimeout)

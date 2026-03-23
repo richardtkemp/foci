@@ -131,12 +131,6 @@ type ManaConfig struct {
 	InvestInterval   *string `toml:"invest_interval"   default:"30m"  desc:"quiet period after mana reset" type:"duration"` // quiet period after mana reset before spending
 }
 
-// AgentMemoryConfig holds per-agent memory sources.
-// These are combined with global [memory] sources, with agent-specific
-// sources receiving an automatic weight boost.
-type AgentMemoryConfig struct {
-	Sources []MemorySource `toml:"sources"` // agent-specific memory directories
-}
 
 // ContextWindow represents a model's context window size in tokens.
 // Accepts plain integers or strings with k/K suffix (1k = 1000 tokens).
@@ -239,7 +233,7 @@ type AgentConfig struct {
 	Emoji     string `toml:"emoji"`     // emoji for agent (e.g. "🥔"); used in voice endpoint agent list
 	Workspace string `toml:"workspace"`
 
-	Memory    AgentMemoryConfig `toml:"memory"`    // per-agent memory sources (combined with global [memory])
+	Memory    MemoryConfig      `toml:"memory"`    // per-agent memory overrides (sources combined with global [memory])
 	Platforms []PlatformConfig  `toml:"platforms"` // per-agent platform configurations
 
 	// Per-agent overrides — resolved via Merge at use time
@@ -602,13 +596,17 @@ type MemorySource struct {
 	Weight float64 `toml:"weight"` // weight multiplier: 0.0-1.0 (1.0 = highest priority)
 }
 
+// MemoryConfig holds memory system settings. Used both at global ([memory])
+// and per-agent ([[agents]].memory) scope. All non-source fields are pointer
+// types for Merge-based resolution (per-agent → global).
+// Sources are combined additively (not merged) — see load.go.
 type MemoryConfig struct {
 	Sources            []MemorySource `toml:"sources"`
-	SearchBackend      string         `toml:"search_backend"       default:"bleve" desc:"search backend: fts5 or bleve"` // search backend: "fts5" or "bleve"
-	ReindexDebounce    string         `toml:"reindex_debounce"     desc:"delay before reindex" type:"duration"` // delay before reindex (e.g., "500ms", "2s"), default "0s"
-	ConversationWeight float64        `toml:"conversation_weight" default:"0.1"   desc:"weight for conversation search results" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
-	SearchLimit        int            `toml:"search_limit"        default:"20"    desc:"max search results to return"` // max search results to return (default 20)
-	SweepInterval      string         `toml:"sweep_interval"      default:"1h"    desc:"periodic full reindex interval" type:"duration"` // periodic full reindex interval (default "1h", "0" disables)
+	SearchBackend      *string        `toml:"search_backend"      default:"bleve" desc:"search backend: fts5 or bleve"` // search backend: "fts5" or "bleve"
+	ReindexDebounce    *string        `toml:"reindex_debounce"    desc:"delay before reindex" type:"duration"` // delay before reindex (e.g., "500ms", "2s"), default "0s"
+	ConversationWeight *float64       `toml:"conversation_weight" default:"0.1"   desc:"weight for conversation search results" min:"0" max:"1"` // weight multiplier for conversation search results (default 0.1)
+	SearchLimit        *int           `toml:"search_limit"        default:"20"    desc:"max search results to return"` // max search results to return (default 20)
+	SweepInterval      *string        `toml:"sweep_interval"      default:"1h"    desc:"periodic full reindex interval" type:"duration"` // periodic full reindex interval (default "1h", "0" disables)
 }
 
 

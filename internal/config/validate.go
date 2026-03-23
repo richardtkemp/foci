@@ -164,10 +164,10 @@ func validate(cfg *Config) error {
 			return err
 		}
 	}
-	if b := cfg.Memory.SearchBackend; b != "fts5" && b != "bleve" {
+	if b := DerefStr(cfg.Memory.SearchBackend); b != "fts5" && b != "bleve" {
 		return fmt.Errorf("[memory] search_backend: unknown backend %q (must be \"fts5\" or \"bleve\")", b)
 	}
-	if err := validateRange(cfg.Memory.ConversationWeight, 0.0, 1.0, "[memory] conversation_weight"); err != nil {
+	if err := validateRange(DerefFloat(cfg.Memory.ConversationWeight), 0.0, 1.0, "[memory] conversation_weight"); err != nil {
 		return err
 	}
 

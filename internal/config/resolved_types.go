@@ -265,6 +265,24 @@ func resolveMemoryFormation(m MemoryFormationConfig) ResolvedMemoryFormation {
 	}
 }
 
+type ResolvedMemorySearch struct {
+	SearchBackend      string
+	ReindexDebounce    string
+	ConversationWeight float64
+	SearchLimit        int
+	SweepInterval      string
+}
+
+func resolveMemorySearch(m MemoryConfig) ResolvedMemorySearch {
+	return ResolvedMemorySearch{
+		SearchBackend:      DerefStr(m.SearchBackend),
+		ReindexDebounce:    DerefStr(m.ReindexDebounce),
+		ConversationWeight: DerefFloat(m.ConversationWeight),
+		SearchLimit:        DerefInt(m.SearchLimit),
+		SweepInterval:      DerefStr(m.SweepInterval),
+	}
+}
+
 type ResolvedBrowser struct {
 	Enabled        bool
 	Headless       bool

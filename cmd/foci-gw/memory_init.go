@@ -41,18 +41,18 @@ func buildAgentMemorySources(globalSources map[string]memory.SourceConfig, agent
 
 // memoryResult holds the outputs of initMemorySystem.
 type memoryResult struct {
-	sharedBackends  map[string]memory.Searcher            // backend name -> searcher (shared mode)
-	agentBackends   map[string]map[string]memory.Searcher // agentID -> backend name -> searcher
-	sharedFTS5      *memory.Index                         // for conversation hook (shared mode)
-	agentFTS5       map[string]*memory.Index              // for conversation hook (per-agent mode)
-	sharedBleve     *memory.BleveIndex                    // for conversation hook (shared mode)
-	agentBleve      map[string]*memory.BleveIndex         // for conversation hook (per-agent mode)
-	convReader      *memory.ConversationReader             // for conversation context lookup
-	reminderStores  map[string]*memory.ReminderStore
+	sharedBackends   map[string]memory.Searcher            // backend name -> searcher (shared mode)
+	agentBackends    map[string]map[string]memory.Searcher // agentID -> backend name -> searcher
+	sharedFTS5       *memory.Index                         // for conversation hook (shared mode)
+	agentFTS5        map[string]*memory.Index              // for conversation hook (per-agent mode)
+	sharedBleve      *memory.BleveIndex                    // for conversation hook (shared mode)
+	agentBleve       map[string]*memory.BleveIndex         // for conversation hook (per-agent mode)
+	convReader       *memory.ConversationReader            // for conversation context lookup
+	reminderStores   map[string]*memory.ReminderStore
 	scratchpadStores map[string]*memory.Scratchpad
-	todoStores      map[string]*memory.TodoStore
-	taskListStores  map[string]*memory.TaskListStore
-	cleanup         func()
+	todoStores       map[string]*memory.TodoStore
+	taskListStores   map[string]*memory.TaskListStore
+	cleanup          func()
 }
 
 // initStandaloneStores creates per-agent standalone memory stores (reminder,
@@ -95,6 +95,25 @@ func initStandaloneStores(cfg *config.Config, result memoryResult, closers *[]io
 	return result
 }
 
+// hasAgentMemoryOverrides returns true if any agent has per-agent memory
+// sources or overrides index-creation settings (search_backend,
+// reindex_debounce, conversation_weight, sweep_interval).
+func hasAgentMemoryOverrides(agents []config.AgentConfig) bool {
+	for _, acfg := range agents {
+		m := acfg.Memory
+		if len(m.Sources) > 0 || m.SearchBackend != nil || m.ReindexDebounce != nil || m.ConversationWeight != nil || m.SweepInterval != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// resolvedMemorySettings resolves per-agent memory settings by merging
+// the agent's memory config with the global memory config.
+func resolvedMemorySettings(cfg *config.Config, acfg config.AgentConfig) config.ResolvedMemorySearch {
+	return config.Resolve(cfg, acfg).MemorySearch
+}
+
 // initMemorySystem sets up memory indices, reminder/scratchpad/todo stores,
 // and conversation hooks. Returns a memoryResult with a cleanup function
 // that closes all opened resources.
@@ -118,25 +137,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		globalMemSources[src.Name] = memory.SourceConfig{Dir: src.Dir, Weight: src.Weight}
 	}
 
-	// Parse debounce delay
-	var memDebounce time.Duration
-	if cfg.Memory.ReindexDebounce != "" {
-		var err error
-		memDebounce, err = time.ParseDuration(cfg.Memory.ReindexDebounce)
-		if err != nil {
-			log.Fatalf("main", "invalid reindex_debounce: %v", err)
-		}
-	}
-
-	// Check if any agent has per-agent memory sources
-	hasPerAgentMemory := false
-	for _, acfg := range cfg.Agents {
-		if len(acfg.Memory.Sources) > 0 {
-			hasPerAgentMemory = true
-			break
-		}
-	}
-
+	hasPerAgentMemory := hasAgentMemoryOverrides(cfg.Agents)
 	memoryEnabled := len(globalMemSources) > 0 || hasPerAgentMemory
 
 	// Always create standalone stores (scratchpad, todo, reminders, task list)
@@ -147,19 +148,6 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		return result
 	}
 
-	// Parse sweep interval ("0" disables)
-	var sweepInterval time.Duration
-	if cfg.Memory.SweepInterval != "" && cfg.Memory.SweepInterval != "0" {
-		var err error
-		sweepInterval, err = time.ParseDuration(cfg.Memory.SweepInterval)
-		if err != nil {
-			log.Fatalf("main", "invalid sweep_interval: %v", err)
-		}
-	}
-
-	wantFTS5 := cfg.Memory.SearchBackend == "fts5"
-	wantBleve := cfg.Memory.SearchBackend == "bleve"
-
 	// memoryBackend abstracts over FTS5 and bleve for shared init logic.
 	type memoryBackend interface {
 		memory.Searcher
@@ -169,13 +157,13 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		StartSweep(initial, interval time.Duration)
 	}
 
-	// initOne creates, reindexes, watches, and registers a single backend.
-	initOne := func(label string, b memoryBackend) {
+	// initOne reindexes, watches, and registers a single backend.
+	initOne := func(label string, b memoryBackend, debounce, sweepInterval time.Duration) {
 		closers = append(closers, b)
 		if err := b.Reindex(); err != nil {
 			log.Errorf("main", "reindex %s: %v", label, err)
 		}
-		if memDebounce > 0 || len(globalMemSources) > 0 || hasPerAgentMemory {
+		if debounce > 0 || len(globalMemSources) > 0 || hasPerAgentMemory {
 			if err := b.Watch(); err != nil {
 				log.Errorf("main", "start %s file watching: %v", label, err)
 			}
@@ -185,30 +173,46 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 	}
 
-	// initBackends creates FTS5 and/or bleve backends for a given set of sources,
-	// returning the backend map and (optionally) the typed indices for conversation hooks.
+	// parseDurationOr parses a duration string, fataling on invalid input.
+	// Returns 0 for empty or "0" values.
+	parseDurationOr := func(s, label string) time.Duration {
+		if s == "" || s == "0" {
+			return 0
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			log.Fatalf("main", "invalid %s: %v", label, err)
+		}
+		return d
+	}
+
+	// initBackends creates FTS5 and/or bleve backends for a given set of sources
+	// using the provided resolved memory settings.
 	// dbPath and blevePath must be fully resolved absolute paths.
-	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPath string, blevePath string) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex) {
+	initBackends := func(label string, sources map[string]memory.SourceConfig, dbPath, blevePath string, rm config.ResolvedMemorySearch) (map[string]memory.Searcher, *memory.Index, *memory.BleveIndex) {
 		backends := make(map[string]memory.Searcher)
 		var fts5Idx *memory.Index
 		var bleveIdx *memory.BleveIndex
 
-		if wantFTS5 {
-			idx, err := memory.NewIndex(dbPath, sources, memDebounce, cfg.Memory.ConversationWeight)
+		debounce := parseDurationOr(rm.ReindexDebounce, fmt.Sprintf("reindex_debounce for %s", label))
+		sweepInterval := parseDurationOr(rm.SweepInterval, fmt.Sprintf("sweep_interval for %s", label))
+
+		if rm.SearchBackend == "fts5" {
+			idx, err := memory.NewIndex(dbPath, sources, debounce, rm.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create FTS5 index (%s): %v", label, err)
 			}
-			initOne(fmt.Sprintf("FTS5 (%s)", label), idx)
+			initOne(fmt.Sprintf("FTS5 (%s)", label), idx, debounce, sweepInterval)
 			backends["fts5"] = idx
 			fts5Idx = idx
 		}
 
-		if wantBleve {
-			bidx, err := memory.NewBleveIndex(blevePath, sources, memDebounce, cfg.Memory.ConversationWeight)
+		if rm.SearchBackend == "bleve" {
+			bidx, err := memory.NewBleveIndex(blevePath, sources, debounce, rm.ConversationWeight)
 			if err != nil {
 				log.Fatalf("main", "create bleve index (%s): %v", label, err)
 			}
-			initOne(fmt.Sprintf("bleve (%s)", label), bidx)
+			initOne(fmt.Sprintf("bleve (%s)", label), bidx, debounce, sweepInterval)
 			backends["bleve"] = bidx
 			bleveIdx = bidx
 		}
@@ -217,12 +221,15 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	}
 
 	if hasPerAgentMemory {
-		// Per-agent indices: each agent gets global + agent-specific sources
+		// Per-agent indices: each agent gets global + agent-specific sources,
+		// with per-agent resolved settings (backend, debounce, weight, sweep).
 		for _, acfg := range cfg.Agents {
 			combined := buildAgentMemorySources(globalMemSources, acfg.Memory.Sources)
 			if len(combined) == 0 {
 				continue
 			}
+
+			rm := resolvedMemorySettings(cfg, acfg)
 
 			fts5Path := config.AgentDataPath(acfg.Workspace, "memory.db")
 			blevePath := config.AgentDataPath(acfg.Workspace, "search.bleve")
@@ -231,6 +238,7 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 				combined,
 				fts5Path,
 				blevePath,
+				rm,
 			)
 			result.agentBackends[acfg.ID] = backends
 			if fts5Idx != nil {
@@ -239,11 +247,11 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			if bleveIdx != nil {
 				result.agentBleve[acfg.ID] = bleveIdx
 			}
-			log.Infof("main", "agent %q: memory backend %s with %d sources", acfg.ID, cfg.Memory.SearchBackend, len(combined))
+			log.Infof("main", "agent %q: memory backend %s with %d sources", acfg.ID, rm.SearchBackend, len(combined))
 		}
 
 		// Conversation hook: route to agent's indices by session key prefix
-		if wantFTS5 || wantBleve {
+		if len(result.agentFTS5) > 0 || len(result.agentBleve) > 0 {
 			log.ConversationHook = func(text, session string, rowID int64) {
 				for agentID, idx := range result.agentFTS5 {
 					if strings.HasPrefix(session, agentID+"/") {
@@ -260,8 +268,10 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 			}
 		}
 	} else {
-		// Shared indices — no agent has per-agent memory
-		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, cfg.DataPath("memory.db"), cfg.DataPath("search.bleve"))
+		// Shared indices — no agent overrides memory settings.
+		// Resolve from global config (empty agent = no overrides).
+		rm := resolvedMemorySettings(cfg, config.AgentConfig{})
+		backends, fts5Idx, bleveIdx := initBackends("shared", globalMemSources, cfg.DataPath("memory.db"), cfg.DataPath("search.bleve"), rm)
 		result.sharedBackends = backends
 		result.sharedFTS5 = fts5Idx
 		result.sharedBleve = bleveIdx
@@ -281,19 +291,17 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 	}
 
 	// Wire todo stores to bleve indices for full-text search
-	if wantBleve {
-		for agentID, ts := range result.todoStores {
-			var idx *memory.BleveIndex
-			if bleveIdx, ok := result.agentBleve[agentID]; ok {
-				idx = bleveIdx
-			} else if result.sharedBleve != nil {
-				idx = result.sharedBleve
-			}
-			if idx != nil {
-				ts.SetSearchIndex(idx)
-				if err := ts.IndexAllTodos(agentID); err != nil {
-					log.Errorf("main", "index todos for agent %s: %v", agentID, err)
-				}
+	for agentID, ts := range result.todoStores {
+		var idx *memory.BleveIndex
+		if bleveIdx, ok := result.agentBleve[agentID]; ok {
+			idx = bleveIdx
+		} else if result.sharedBleve != nil {
+			idx = result.sharedBleve
+		}
+		if idx != nil {
+			ts.SetSearchIndex(idx)
+			if err := ts.IndexAllTodos(agentID); err != nil {
+				log.Errorf("main", "index todos for agent %s: %v", agentID, err)
 			}
 		}
 	}
@@ -307,8 +315,9 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 
 	// Backfill historical conversations into bleve indices.
 	// Runs in a goroutine to avoid blocking startup.
+	hasAnyBleve := result.sharedBleve != nil || len(result.agentBleve) > 0
 	var backfillWG sync.WaitGroup
-	if wantBleve {
+	if hasAnyBleve {
 		backfillWG.Add(1)
 		go func() {
 			defer backfillWG.Done()

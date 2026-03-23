@@ -138,7 +138,7 @@ func registerMemoryAndExtTools(registry *tools.Registry, p setupParams, agLazy f
 	acfg := p.acfg
 
 	if len(p.memBackends) > 0 {
-		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.cfg.Memory.SearchBackend, p.convReader))
+		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))
 	}
 	if p.scratchpadStore != nil {
 		registry.Register(tools.NewScratchpadTool(p.scratchpadStore, acfg.ID))
