@@ -2,12 +2,14 @@ package periodic
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/session"
 )
 
 func TestBackgroundBlockedByActiveWork(t *testing.T) {
@@ -94,6 +96,22 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 	// false (e.g. insufficient mana), no branch is dispatched even when all other conditions are met.
 	called := false
 	now := time.Now()
+
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+	idx.Upsert(session.SessionIndexEntry{
+		SessionKey:  "test/c123/1000000000",
+		FilePath:    "/tmp/test.jsonl",
+		CreatedAt:   now.Add(-24 * time.Hour),
+		SessionType: session.SessionTypeChat,
+		Status:      session.SessionStatusActive,
+	})
+	idx.UpdateActivity("test/c123/1000000000", now.Add(-30*time.Minute))
+	idx.StampMemoryFormation("test/c123/1000000000", now.Add(-2*time.Hour))
+
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
@@ -101,6 +119,7 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
+		sessionIndex: idx,
 		sessionKeyFn: func() string { return "test/c123/1000000000" },
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
 			return false, "rate limited"
