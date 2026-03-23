@@ -150,7 +150,7 @@ main
  ├── tools         → anthropic, config, display, log, memory, modelinfo, platform, provider, secrets, secrets/bitwarden, session, state, tempdir, tools/browserjs, voice
  ├── workspace     → log, provider
  ├── nudge         → log (leaf — rule extraction, scheduling, file I/O)
- ├── prompts       (top-level package, not internal) → log (embedded .md files + BuildBranchOrientation helpers)
+ ├── prompts       (top-level package, not internal) → log (embedded .md files + ResolveOrientationTemplate helpers)
  ├── modelinfo     (no deps — stdlib-only leaf package for model attributes: context window, capabilities, pricing)
  ├── compaction    → log, memory, modelinfo, provider, session, tools
  ├── tempdir       (no deps — stdlib-only leaf package for canonical temp dir)
@@ -925,7 +925,7 @@ facet_bots = ["spare1"]          # shared pool (fallback)
                → try per-agent pool first (pool.Acquire())
                → if busy/empty, try shared pool (shared.Acquire())
            → bot.SetHandlerAndCommands(handler, cmds)  // re-wire shared bots
-           → sessions.CreateBranch(parent) → parent/b{TIMESTAMP}
+           → sessions.CreateBranchWithOptions(parent, opts) → parent/b{TIMESTAMP}
            → bot.SetSessionKey(branchKey)
            → bot.SendNotification("🎱 Forked from main.")
 ```

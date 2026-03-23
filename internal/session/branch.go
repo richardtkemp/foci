@@ -68,7 +68,7 @@ func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (s
 			log.Warnf("session", "branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
 		}
 
-		branchKey, err := BranchFromSession(parentKey)
+		branchKey, err := branchFromSession(parentKey)
 		if err != nil {
 			return "", fmt.Errorf("generate branch key: %w", err)
 		}
