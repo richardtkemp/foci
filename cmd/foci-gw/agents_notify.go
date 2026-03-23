@@ -14,6 +14,26 @@ import (
 	"foci/shared/prompts"
 )
 
+// mostRecentSessionKey returns the session key with the most recent user activity
+// across all platform connections for the agent. Returns "" if no active sessions.
+func mostRecentSessionKey(ag *agent.Agent, connMgr platform.ConnectionManager, agentID string) string {
+	conns := connMgr.AllForAgent(agentID)
+	var bestKey string
+	var bestTime time.Time
+	for _, conn := range conns {
+		sk := conn.DefaultSessionKey()
+		if sk == "" {
+			continue
+		}
+		t := ag.LastUserMessageTime(sk)
+		if t.After(bestTime) {
+			bestKey = sk
+			bestTime = t
+		}
+	}
+	return bestKey
+}
+
 // newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.
 // getAgent is a lazy getter since the agent is nil at creation time.
 func newAsyncNotifier(
@@ -26,6 +46,9 @@ func newAsyncNotifier(
 	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
 		go func() {
 			target := targetSession
+			if target == "" {
+				target = mostRecentSessionKey(getAgent(), connMgr, agentID)
+			}
 			if target == "" {
 				target = defaultSessionKey()
 			}
@@ -273,16 +296,20 @@ func setupWakeScheduler(
 	var wakesMu sync.Mutex
 	wakes := make(map[int64]context.CancelFunc)
 
-	wakeScheduleFn := func(id int64, delay time.Duration, message string) error {
+	wakeScheduleFn := func(id int64, delay time.Duration, message, sessionKey string) error {
 		wakeCtx, wakeCancel := context.WithCancel(context.Background())
 		go func() {
 			select {
 			case <-time.After(delay):
 				log.Infof("remind", "firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
 				_ = reminderStore.Dismiss(id)
-				sk := defaultSessionKey()
+				// Use the originating session key if stored, otherwise fall back.
+				sk := sessionKey
 				if sk == "" {
-					log.Warnf("remind", "no default session for agent %s, skipping", agentID)
+					sk = defaultSessionKey()
+				}
+				if sk == "" {
+					log.Warnf("remind", "no session for agent %s, skipping", agentID)
 					return
 				}
 				// Wait for any active agent turn to finish before injecting.
@@ -322,7 +349,7 @@ func setupWakeScheduler(
 			if delay < 0 {
 				delay = 0
 			}
-			_ = wakeScheduleFn(r.ID, delay, r.Text)
+			_ = wakeScheduleFn(r.ID, delay, r.Text, r.SessionKey)
 		}
 		log.Infof("remind", "restored %d pending wake(s) for agent %s", len(pending), agentID)
 	}

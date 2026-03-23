@@ -11,11 +11,12 @@ import (
 
 // Reminder is a deferred thought for later.
 type Reminder struct {
-	ID      int64
-	Text    string
-	DueAt   time.Time
-	DueTag  string // original tag: "next_keepalive", "tomorrow", etc.
-	Created time.Time
+	ID         int64
+	Text       string
+	DueAt      time.Time
+	DueTag     string // original tag: "next_keepalive", "tomorrow", etc.
+	Created    time.Time
+	SessionKey string // originating session (wake reminders only; empty for legacy rows)
 }
 
 // ReminderStore manages deferred thoughts in SQLite.
@@ -45,6 +46,13 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		return nil, fmt.Errorf("add wake column: %w", err)
 	}
 
+	// Idempotent migration: add session_key for platform-aware wake routing.
+	_, err = db.Exec(`ALTER TABLE reminders ADD COLUMN session_key TEXT NOT NULL DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		_ = db.Close()
+		return nil, fmt.Errorf("add session_key column: %w", err)
+	}
+
 	return &ReminderStore{db: db}, nil
 }
 
@@ -65,13 +73,15 @@ func (rs *ReminderStore) Add(agentID, text, when string) error {
 }
 
 // AddWake creates a wake reminder (wake=1) and returns its row ID.
-func (rs *ReminderStore) AddWake(agentID, text, when string) (int64, error) {
+// sessionKey records which session the reminder was created from so
+// the wake fires on the correct platform.
+func (rs *ReminderStore) AddWake(agentID, sessionKey, text, when string) (int64, error) {
 	dueAt := resolveWhen(when)
 	now := time.Now().UTC()
 
 	result, err := rs.db.Exec(
-		"INSERT INTO reminders (agent_id, text, due_at, due_tag, created, wake) VALUES (?, ?, ?, ?, ?, 1)",
-		agentID, text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339),
+		"INSERT INTO reminders (agent_id, text, due_at, due_tag, created, wake, session_key) VALUES (?, ?, ?, ?, ?, 1, ?)",
+		agentID, text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339), sessionKey,
 	)
 	if err != nil {
 		return 0, err
@@ -82,7 +92,7 @@ func (rs *ReminderStore) AddWake(agentID, text, when string) (int64, error) {
 // PendingWakes returns all wake reminders for the given agent, ordered by due time.
 func (rs *ReminderStore) PendingWakes(agentID string) ([]Reminder, error) {
 	rows, err := rs.db.Query(
-		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND wake = 1 ORDER BY due_at",
+		"SELECT id, text, due_at, due_tag, created, session_key FROM reminders WHERE agent_id = ? AND wake = 1 ORDER BY due_at",
 		agentID,
 	)
 	if err != nil {
@@ -94,7 +104,7 @@ func (rs *ReminderStore) PendingWakes(agentID string) ([]Reminder, error) {
 	for rows.Next() {
 		var r Reminder
 		var dueAt, created string
-		if err := rows.Scan(&r.ID, &r.Text, &dueAt, &r.DueTag, &created); err != nil {
+		if err := rows.Scan(&r.ID, &r.Text, &dueAt, &r.DueTag, &created, &r.SessionKey); err != nil {
 			return nil, err
 		}
 		r.DueAt, _ = time.Parse(time.RFC3339, dueAt)
