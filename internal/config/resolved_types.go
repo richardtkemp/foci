@@ -208,23 +208,6 @@ func resolveEnvironment(m EnvironmentConfig) ResolvedEnvironment {
 	}
 }
 
-type ResolvedGroups struct {
-	Powerful  string
-	Fast      string
-	Cheap     string
-	Calls     map[string]string
-	Fallbacks map[string]string
-}
-
-func resolveGroups(m GroupsConfig) ResolvedGroups {
-	return ResolvedGroups{
-		Powerful:  DerefStr(m.Powerful),
-		Fast:      DerefStr(m.Fast),
-		Cheap:     DerefStr(m.Cheap),
-		Calls:     m.Calls,
-		Fallbacks: m.Fallbacks,
-	}
-}
 
 type ResolvedKeepalive struct {
 	Enabled  bool

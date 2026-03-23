@@ -254,7 +254,7 @@ func setupAgent(p setupParams) *agentInstance {
 	setupManaWatcher(ag, p)
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
-	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, defaultFormat, fallbackFn)
+	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
 	setupWakeScheduler(agLazy, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Per-agent slash commands

@@ -436,7 +436,7 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 }
 
 // registerSpawnTool registers the spawn tool for forking sub-agents.
-func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, defaultFormat string, fallbackFn provider.FallbackFunc) {
+func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, resolvedModel, defaultFormat string, fallbackFn provider.FallbackFunc) {
 	acfg := p.acfg
 
 	spawnOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
@@ -451,7 +451,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 		AgentID:         acfg.ID,
 		GroupResolver:   groupResolver,
 		FallbackFunc:    fallbackFn,
-		FallbackModel:   groupResolver.PowerfulModel(),
+		FallbackModel:   resolvedModel,
 		FallbackFormat:  defaultFormat,
 		MaxInherit:      tc.MaxConcurrentSpawns,
 		MaxToolLoops:    al.MaxToolLoops,

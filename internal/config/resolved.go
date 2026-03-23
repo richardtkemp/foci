@@ -15,7 +15,7 @@ type ResolvedAgentConfig struct {
 	Compaction      ResolvedCompaction
 	Debug           ResolvedDebug
 	Environment     ResolvedEnvironment
-	Groups          ResolvedGroups
+	Groups          GroupsConfig
 	Keepalive       ResolvedKeepalive
 	Background      ResolvedBackground
 	MemoryFormation ResolvedMemoryFormation
@@ -54,10 +54,12 @@ func (r *ResolvedAgentConfig) PlatformNotify(name string) ResolvedNotify {
 // (per-agent → global), dereferencing pointer fields, and applying defaults.
 // Call once per agent at startup; the result is treated as immutable.
 func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
-	// Merge and resolve groups with per-key map merge.
-	gc := Merge(acfg.Groups, cfg.Groups)
-	gc.Calls = MergeMaps(cfg.Groups.Calls, acfg.Groups.Calls)
-	gc.Fallbacks = MergeMaps(cfg.Groups.Fallbacks, acfg.Groups.Fallbacks)
+	// Merge groups: agent groups overlay global groups (per-key map merge).
+	gc := GroupsConfig{
+		Groups:    MergeMaps(cfg.Groups.Groups, acfg.Groups.Groups),
+		Calls:     MergeMaps(cfg.Groups.Calls, acfg.Groups.Calls),
+		Fallbacks: MergeMaps(cfg.Groups.Fallbacks, acfg.Groups.Fallbacks),
+	}
 
 	// Multi-platform fallback display: agent → global → all platform defaults.
 	displayLayers := []DisplayConfig{acfg.Display, cfg.Defaults.Display}
@@ -102,7 +104,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Compaction:      resolveCompaction(Merge(acfg.Sessions.CompactionConfig, cfg.Sessions.CompactionConfig)),
 		Debug:           resolveDebug(Merge(acfg.Debug, cfg.Debug)),
 		Environment:     resolveEnvironment(Merge(acfg.Environment, cfg.Environment)),
-		Groups:          resolveGroups(gc),
+		Groups:          gc,
 		Keepalive:       resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive)),
 		Background:      resolveBackground(Merge(acfg.Background, cfg.Background)),
 		MemoryFormation: resolveMemoryFormation(Merge(acfg.MemoryFormation, cfg.MemoryFormation)),

@@ -241,17 +241,11 @@ Subcommands:
 			agentBackends = mem.sharedBackends
 		}
 
-		// Resolve model from [groups] powerful group
-		groupResolver := config.NewGroupResolver(config.ResolvedGroups{
-			Powerful:  config.DerefStr(cfg.Groups.Powerful),
-			Fast:      config.DerefStr(cfg.Groups.Fast),
-			Cheap:     config.DerefStr(cfg.Groups.Cheap),
-			Calls:     cfg.Groups.Calls,
-			Fallbacks: cfg.Groups.Fallbacks,
-		}, cfg.Models)
-		resolved := groupResolver.ResolveGroup(config.GroupPowerful)
+		// Resolve agent's primary model via call-site routing
+		groupResolver := config.NewGroupResolver(cfg.Groups, cfg.Models)
+		resolved := groupResolver.ResolveCall(config.CallChat)
 		if resolved == nil {
-			log.Errorf("main", "agent %q: cannot resolve powerful model %q (agent skipped)", acfg.ID, config.DerefStr(cfg.Groups.Powerful))
+			log.Errorf("main", "agent %q: cannot resolve chat model (agent skipped)", acfg.ID)
 			continue
 		}
 

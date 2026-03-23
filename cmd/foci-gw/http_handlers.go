@@ -440,16 +440,12 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 // applyModelOverride resolves a model value (group name, alias, or developer/model_id)
 // and sets it as a per-session override on the agent instance.
 func applyModelOverride(inst *agentInstance, sessionKey, value string, models map[string]config.ModelConfig) error {
-	// Check if value is a known group name (powerful/fast/cheap)
-	switch value {
-	case config.GroupPowerful, config.GroupFast, config.GroupCheap:
-		if resolved := inst.ag.GroupResolver.ResolveGroup(value); resolved != nil {
-			client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
-			model := resolved.Developer + "/" + resolved.ModelID
-			inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
-			return nil
-		}
-		// In single-model mode, ResolveGroup returns nil — fall through to alias resolution
+	// Check if value is a group name (built-in or user-defined)
+	if resolved := inst.ag.GroupResolver.ResolveGroup(value); resolved != nil {
+		client := inst.ag.ClientProvider.ResolveEndpointClient(resolved.Endpoint, resolved.Format)
+		model := resolved.Developer + "/" + resolved.ModelID
+		inst.ag.SetSessionModel(sessionKey, model, resolved.Endpoint, resolved.Format, client)
+		return nil
 	}
 
 	// Resolve as alias or developer/model_id
