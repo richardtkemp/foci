@@ -178,6 +178,12 @@ func (s *Store) TestAppend(key string, msg provider.Message) error {
 	return s.appendUnlocked(key, msg)
 }
 
+// TestCreateBranch is for testing only - creates a branch file with a specific key.
+// Production code should use CreateBranchWithOptions which generates the key internally.
+func (s *Store) TestCreateBranch(parentKey, branchKey string) error {
+	return s.createBranchFile(parentKey, branchKey, false, "")
+}
+
 // TestAppendAll is for testing only - appends multiple messages without SessionWriter guard.
 // Tests should use this when setting up state, not For().AppendAll().
 func (s *Store) TestAppendAll(key string, msgs []provider.Message) error {

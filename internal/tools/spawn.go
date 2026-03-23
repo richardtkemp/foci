@@ -14,7 +14,6 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/provider"
-	"foci/internal/session"
 	"foci/internal/tempdir"
 )
 
@@ -24,14 +23,16 @@ type SystemBlocksProvider interface {
 }
 
 // BranchOptions configures optional behavior for a new branch session (tools-side mirror).
+// BranchOptions configures a new branch session.
 type BranchOptions struct {
-	NoResetHook        bool
-	OrientationMessage string
+	NoResetHook         bool
+	BranchType          string
+	OrientationTemplate string
 }
 
 // SessionBrancher is the session ops needed by spawn inherit mode.
 type SessionBrancher interface {
-	CreateBranch(parentKey, branchKey string, opts BranchOptions) (string, error)
+	CreateBranch(parentKey string, opts BranchOptions) (string, error)
 	SessionPath(key string) (string, error)
 }
 
@@ -95,7 +96,7 @@ type SpawnDeps struct {
 	MaxToolLoops       int                                      // max tool loops for raw/character spawns
 	ExploreMaxDepth    int                                      // max tool loops for explore spawns
 	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
-	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
+	OrientationTemplate string                                  // orientation template for branch sessions ({branch_key}, {parent_key}, {branch_type} resolved at creation)
 	SetNoCompact       func(sessionKey string, value bool)      // marks branch sessions as no_compact (prevents compaction)
 	FileMode           os.FileMode                              // permission bits for files created by spawned sessions
 }
@@ -511,23 +512,11 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		return ToolResult{}, fmt.Errorf("spawn inherit: no parent session in context")
 	}
 
-	// Build unique branch key.
-	// spawnInherit always creates branches (clone spawns)
-	branchKey, err := session.BranchFromSession(parentSession)
-	if err != nil {
-		return ToolResult{}, fmt.Errorf("create spawn key: %w", err)
-	}
-
-	// Build orientation text for the branch.
-	var orientText string
-	if deps.OrientationBuilder != nil {
-		orientText = deps.OrientationBuilder(branchKey, parentSession)
-	}
-
 	// Create branch with NoResetHook (ephemeral session).
-	branchKey, err = deps.Sessions.CreateBranch(parentSession, branchKey, BranchOptions{
-		NoResetHook:        true,
-		OrientationMessage: orientText,
+	branchKey, err := deps.Sessions.CreateBranch(parentSession, BranchOptions{
+		NoResetHook:         true,
+		BranchType:          "spawn",
+		OrientationTemplate: deps.OrientationTemplate,
 	})
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("spawn inherit: create branch: %w", err)

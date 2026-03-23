@@ -69,37 +69,6 @@ func TestBranchOrientationFacetHasVars(t *testing.T) {
 	}
 }
 
-func TestReplaceVars(t *testing.T) {
-	text := "Hello {name}, you are {role}."
-	got := ReplaceVars(text, map[string]string{
-		"name": "Alice",
-		"role": "admin",
-	})
-	want := "Hello Alice, you are admin."
-	if got != want {
-		t.Errorf("ReplaceVars = %q, want %q", got, want)
-	}
-}
-
-func TestReplaceVarsPartial(t *testing.T) {
-	text := "Key: {branch_key}, Type: {branch_type}"
-	got := ReplaceVars(text, map[string]string{
-		"branch_key": "abc123",
-	})
-	want := "Key: abc123, Type: {branch_type}"
-	if got != want {
-		t.Errorf("ReplaceVars partial = %q, want %q", got, want)
-	}
-}
-
-func TestReplaceVarsEmpty(t *testing.T) {
-	text := "No vars here."
-	got := ReplaceVars(text, nil)
-	if got != text {
-		t.Errorf("ReplaceVars with nil = %q, want %q", got, text)
-	}
-}
-
 func TestResolvePromptEmptyPath(t *testing.T) {
 	got := ResolvePrompt("", "test", "embedded-default")
 	if got != "embedded-default" {

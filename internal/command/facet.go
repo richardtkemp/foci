@@ -32,18 +32,13 @@ func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error
 		return "", fmt.Errorf("no active session to fork from")
 	}
 
-	branchKey, err := session.BranchFromSession(parentKey)
-	if err != nil {
-		secConn.SetSessionKey("")
-		return "", fmt.Errorf("create facet key: %w", err)
-	}
-
 	orientPath := config.DerefStr(config.First(
 		cc.AgentConfig.Sessions.BranchOrientationFacetPrompt, cc.Config.Sessions.BranchOrientationFacetPrompt,
 	))
-	orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "facet", true, cc.PromptSearchDirs)
-	branchKey, err = cc.Sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
-		OrientationMessage: orientText,
+	orientTemplate := prompts.ResolveOrientationTemplate(orientPath, true, cc.PromptSearchDirs...)
+	branchKey, err := cc.Sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
+		BranchType:          "facet",
+		OrientationTemplate: orientTemplate,
 	})
 	if err != nil {
 		secConn.SetSessionKey("")

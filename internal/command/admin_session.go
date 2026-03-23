@@ -73,9 +73,9 @@ func ResetCommand() *Command {
 			resetOrientPath := config.DerefStr(config.First(
 				cc.AgentConfig.Sessions.BranchOrientationHeadlessPrompt, cc.Config.Sessions.BranchOrientationHeadlessPrompt,
 			))
-			agent.FireSessionEndMemory(cc.Agent, cc.Sessions, sk, cc.Resolved.MemoryFormation, func(bk, pk, bt string) string {
-				return prompts.BuildBranchOrientation(resetOrientPath, bk, pk, bt, false, cc.PromptSearchDirs)
-			}, cc.PromptSearchDirs, ctx, false)
+			orientTemplate := prompts.ResolveOrientationTemplate(resetOrientPath, false, cc.PromptSearchDirs...)
+			agent.FireSessionEndMemory(cc.Agent, cc.Sessions, sk, cc.Resolved.MemoryFormation,
+				orientTemplate, cc.PromptSearchDirs, ctx, false)
 			newKey, err := cc.Sessions.RotateKey(sk)
 			if err != nil {
 				return Response{}, err

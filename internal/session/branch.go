@@ -26,36 +26,57 @@ type BranchMeta struct {
 	Orientation string `json:"orientation,omitempty"`    // orientation text for first turn
 }
 
-// BranchOptions configures optional behavior for a new branch session.
+// Template placeholders for orientation text. These are substituted by
+// CreateBranchWithOptions when creating the branch file.
+const (
+	BranchKeyVar  = "{branch_key}"
+	ParentKeyVar  = "{parent_key}"
+	BranchTypeVar = "{branch_type}"
+)
+
+// BranchOptions configures a new branch session.
 type BranchOptions struct {
-	NoResetHook        bool   // skip pre-reset memory hook when this branch is reclaimed
-	OrientationMessage string // if non-empty, written as first user message in the branch
+	NoResetHook         bool   // skip pre-reset memory hook when this branch is reclaimed
+	BranchType          string // e.g. "cron", "compaction-memory" — resolves {branch_type}
+	OrientationTemplate string // template with {branch_key}, {parent_key}, {branch_type} placeholders
 }
 
-// CreateBranchWithOptions creates a branch session with additional options.
-// Returns the actual branch key used — this may differ from branchKey if a
-// same-second collision forced a retry with a fresh timestamp.
-func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts BranchOptions) (string, error) {
+// resolveOrientation substitutes template placeholders in the orientation text.
+func resolveOrientation(template, branchKey, parentKey, branchType string) string {
+	if template == "" {
+		return ""
+	}
+	r := strings.NewReplacer(
+		BranchKeyVar, branchKey,
+		ParentKeyVar, parentKey,
+		BranchTypeVar, branchType,
+	)
+	return r.Replace(template)
+}
+
+// CreateBranchWithOptions creates a branch session from parentKey.
+// Generates the branch key internally, resolves orientation template
+// placeholders, and writes the branch file. On same-second key collision,
+// sleeps past the second boundary and retries with a fresh key.
+// Returns the branch key used.
+func (s *Store) CreateBranchWithOptions(parentKey string, opts BranchOptions) (string, error) {
 	const maxRetries = 3
-	actualKey := branchKey
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Second)
-			newKey, err := BranchFromSession(parentKey)
-			if err != nil {
-				return "", fmt.Errorf("regenerate branch key: %w", err)
-			}
-			if opts.OrientationMessage != "" {
-				opts.OrientationMessage = strings.ReplaceAll(opts.OrientationMessage, actualKey, newKey)
-			}
-			log.Warnf("session", "branch key collision key=%s, retrying with %s (attempt %d/%d)", actualKey, newKey, attempt, maxRetries)
-			actualKey = newKey
+			log.Warnf("session", "branch key collision on %s, retrying (attempt %d/%d)", parentKey, attempt, maxRetries)
 		}
 
-		err := s.createBranchFile(parentKey, actualKey, opts)
+		branchKey, err := BranchFromSession(parentKey)
+		if err != nil {
+			return "", fmt.Errorf("generate branch key: %w", err)
+		}
+
+		orientation := resolveOrientation(opts.OrientationTemplate, branchKey, parentKey, opts.BranchType)
+		err = s.createBranchFile(parentKey, branchKey, opts.NoResetHook, orientation)
 		if err == nil {
-			return actualKey, nil
+			return branchKey, nil
 		}
 		if !errors.Is(err, errBranchFileExists) {
 			return "", err
@@ -66,7 +87,7 @@ func (s *Store) CreateBranchWithOptions(parentKey, branchKey string, opts Branch
 
 // createBranchFile performs a single attempt to create a branch file with
 // exclusive semantics. Returns errBranchFileExists if the file already exists.
-func (s *Store) createBranchFile(parentKey, branchKey string, opts BranchOptions) error {
+func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, orientation string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -79,8 +100,8 @@ func (s *Store) createBranchFile(parentKey, branchKey string, opts BranchOptions
 		Type:        "branch_meta",
 		ParentKey:   parentKey,
 		BranchPoint: len(parentMsgs),
-		NoResetHook: opts.NoResetHook,
-		Orientation: opts.OrientationMessage,
+		NoResetHook: noResetHook,
+		Orientation: orientation,
 	}
 
 	path, err := s.SessionPath(branchKey)
@@ -110,7 +131,7 @@ func (s *Store) createBranchFile(parentKey, branchKey string, opts BranchOptions
 	}
 
 	log.Infof("session", "branch created key=%s parent=%s branch_point=%d no_reset_hook=%v orientation=%v",
-		branchKey, parentKey, meta.BranchPoint, opts.NoResetHook, opts.OrientationMessage != "")
+		branchKey, parentKey, meta.BranchPoint, noResetHook, orientation != "")
 	s.fireEvent(SessionEvent{
 		Key:       branchKey,
 		Type:      ClassifySessionKey(branchKey),

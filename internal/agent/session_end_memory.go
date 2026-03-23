@@ -15,7 +15,7 @@ import (
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
 // work branches which set NoResetHook but should still get memory formation).
-func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.ResolvedMemoryFormation, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
+func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.ResolvedMemoryFormation, orientTemplate string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
 	if !mfCfg.SessionEndEnabled {
 		return
 	}
@@ -42,15 +42,10 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		}
 	}
 
-	branchKey, err := session.BranchFromSession(sessionKey)
-	if err != nil {
-		log.Errorf("session-end-memory", "create branch key for session %s: %v", sessionKey, err)
-		return
-	}
-	orientText := buildOrientation(branchKey, sessionKey, "session-end-memory")
-	branchKey, err = sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
-		NoResetHook:        true,
-		OrientationMessage: orientText,
+	branchKey, err := sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
+		NoResetHook:         true,
+		BranchType:          "session-end-memory",
+		OrientationTemplate: orientTemplate,
 	})
 	if err != nil {
 		log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)

@@ -244,18 +244,12 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
 			return
 		}
-		branchKey, err := session.BranchFromSession(parentKey)
-		if err != nil {
-			log.Warnf("http", "POST /run-cron-hook create branch key: %v", err)
-			http.Error(w, fmt.Sprintf("create branch key: %v", err), http.StatusInternalServerError)
-			return
-		}
-
 		orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
-		orientText := prompts.BuildBranchOrientation(orientPath, branchKey, parentKey, "cron", false, inst.promptSearchDirs)
-		branchKey, err = d.sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
-			NoResetHook:        req.NoResetHook,
-			OrientationMessage: orientText,
+		orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
+		branchKey, err := d.sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
+			NoResetHook:         req.NoResetHook,
+			BranchType:          "cron",
+			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
 			log.Errorf("wake", "branch error: %v", err)

@@ -13,7 +13,7 @@ import (
 // FireCompactionMemory runs memory formation on the session immediately before
 // compaction summarises and replaces the history. Creates an async branch so
 // the memory agent sees the full pre-compaction context.
-func FireCompactionMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, buildOrientation func(branchKey, parentKey, branchType string) string, searchDirs []string, parentCtx context.Context) {
+func FireCompactionMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.MemoryFormationConfig, orientTemplate string, searchDirs []string, parentCtx context.Context) {
 	if mfCfg.CompactionEnabled != nil && !*mfCfg.CompactionEnabled {
 		return
 	}
@@ -29,15 +29,10 @@ func FireCompactionMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		return
 	}
 
-	branchKey, err := session.BranchFromSession(sessionKey)
-	if err != nil {
-		log.Errorf("compaction-memory", "create branch key for session %s: %v", sessionKey, err)
-		return
-	}
-	orientText := buildOrientation(branchKey, sessionKey, "compaction-memory")
-	branchKey, err = sessions.CreateBranchWithOptions(sessionKey, branchKey, session.BranchOptions{
-		NoResetHook:        true,
-		OrientationMessage: orientText,
+	branchKey, err := sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
+		NoResetHook:         true,
+		BranchType:          "compaction-memory",
+		OrientationTemplate: orientTemplate,
 	})
 	if err != nil {
 		log.Errorf("compaction-memory", "branch error for session %s: %v", sessionKey, err)

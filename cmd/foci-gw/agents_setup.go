@@ -365,13 +365,9 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 					log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
 					return
 				}
-				branchKey, err := session.BranchFromSession(parentKey)
-				if err != nil {
-					log.Warnf("nudge", "agent %s: create branch key: %v", acfg.ID, err)
-					return
-				}
-				branchKey, err = sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+				branchKey, err := sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
 					NoResetHook: true,
+					BranchType:  "nudge-extraction",
 				})
 				if err != nil {
 					log.Warnf("nudge", "agent %s: create branch: %v", acfg.ID, err)
@@ -467,9 +463,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 		MaxToolLoops:    al.MaxToolLoops,
 		ExploreMaxDepth: tc.ExploreMaxDepth,
 		Notifier:        notifier,
-		OrientationBuilder: func(branchKey, parentKey string) string {
-			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
-		},
+		OrientationTemplate: prompts.ResolveOrientationTemplate(spawnOrientPath, false, promptSearchDirs...),
 		SetNoCompact: setNoCompact,
 		FileMode:     fileMode,
 	}
@@ -498,6 +492,7 @@ func setupPlatformConnections(
 	var result platformConnectionResult
 
 	reclaimOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
+	reclaimOrientTemplate := prompts.ResolveOrientationTemplate(reclaimOrientPath, false, promptSearchDirs...)
 	reclaimMfCfg := p.resolved.MemoryFormation
 	reclaimSearchDirs := promptSearchDirs
 
@@ -512,9 +507,8 @@ func setupPlatformConnections(
 		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
-			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {
-				return prompts.BuildBranchOrientation(reclaimOrientPath, bk, pk, bt, false, reclaimSearchDirs)
-			}, reclaimSearchDirs, p.ctx, false)
+			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg,
+				reclaimOrientTemplate, reclaimSearchDirs, p.ctx, false)
 		},
 		DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
 			return platform.DisplaySettings{
