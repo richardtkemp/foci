@@ -34,6 +34,7 @@ COPY --from=builder /src/bin/foci-call /usr/local/bin/foci-call
 # the persistent volume on every container start (not just first run).
 COPY --from=builder /src/shared/ /opt/foci-shared/
 COPY --from=builder /src/docs/ /opt/foci-shared/docs/
+COPY --from=builder /src/README.md /opt/foci-shared/docs/README.md
 
 # Stage import directories — source paths configured via .env
 # (FOCI_CHAR_IMPORT_DIR / FOCI_MEMORY_IMPORT_DIR, defaults to docker/character/ and docker/memory/)

@@ -365,6 +365,7 @@ if $IS_SELF && ! $DRY_RUN; then
     cp -r "$SCRIPT_DIR/shared/"* "$FOCI_HOME/shared/"
     mkdir -p "$FOCI_HOME/shared/docs"
     cp -r "$SCRIPT_DIR/docs/"* "$FOCI_HOME/shared/docs/"
+    cp "$SCRIPT_DIR/README.md" "$FOCI_HOME/shared/docs/README.md"
     info "  Shared files copied to $FOCI_HOME/shared/"
 
     # Config wizard
@@ -449,6 +450,7 @@ emit "mkdir -p \"$FOCI_HOME/shared\""
 emit "cp -r \"$SCRIPT_DIR/shared/\"* \"$FOCI_HOME/shared/\""
 emit "mkdir -p \"$FOCI_HOME/shared/docs\""
 emit "cp -r \"$SCRIPT_DIR/docs/\"* \"$FOCI_HOME/shared/docs/\""
+emit "cp \"$SCRIPT_DIR/README.md\" \"$FOCI_HOME/shared/docs/README.md\""
 if ! $IS_SELF; then
     emit "chown -R \"$FOCI_USER:$FOCI_USER\" \"$FOCI_HOME/shared\""
 fi

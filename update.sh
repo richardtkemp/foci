@@ -77,9 +77,9 @@ for svcfile in /etc/systemd/system/foci*.service; do
     SVC_USER="$(grep '^User=' "$svcfile" | cut -d= -f2)" || continue
     [[ -n "$SVC_HOME" && -n "$SVC_USER" ]] || continue
 
-    DOCS_TARGET="$SVC_HOME/shared/docs/foci"
+    DOCS_TARGET="$SVC_HOME/shared/docs"
     mkdir -p "$DOCS_TARGET"
-    rsync -a --delete "$SCRIPT_DIR/docs/" "$DOCS_TARGET/docs/"
+    rsync -a --delete "$SCRIPT_DIR/docs/" "$DOCS_TARGET/"
     cp "$SCRIPT_DIR/README.md" "$DOCS_TARGET/README.md"
     chown -R "$SVC_USER:$SVC_USER" "$DOCS_TARGET"
     echo "  $(basename "$svcfile" .service): docs copied to $DOCS_TARGET"
