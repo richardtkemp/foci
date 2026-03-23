@@ -112,7 +112,7 @@ func TestRemindWakeDelay(t *testing.T) {
 	t.Parallel()
 	var gotDur time.Duration
 	var gotMsg string
-	fn := func(id int64, d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error {
 		gotDur = d
 		gotMsg = msg
 		return nil
@@ -145,7 +145,7 @@ func TestRemindWakeDelaySeconds(t *testing.T) {
 	// Verifies that sub-minute durations in seconds (e.g. "10s") are parsed and passed correctly to the schedule function.
 	t.Parallel()
 	var gotDur time.Duration
-	fn := func(id int64, d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error {
 		gotDur = d
 		return nil
 	}
@@ -169,7 +169,7 @@ func TestRemindWakeAtTimestamp(t *testing.T) {
 	// Verifies that an RFC3339 timestamp is accepted as a when value and converted to a duration that approximates the time until that point.
 	t.Parallel()
 	var gotDur time.Duration
-	fn := func(id int64, d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error {
 		gotDur = d
 		return nil
 	}
@@ -194,7 +194,7 @@ func TestRemindWakeAtTimestamp(t *testing.T) {
 func TestRemindWakePastTimestamp(t *testing.T) {
 	// Verifies that a timestamp in the past is rejected with an error mentioning "past", preventing nonsensical reminders.
 	t.Parallel()
-	fn := func(id int64, d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
@@ -216,7 +216,7 @@ func TestRemindWakePastTimestamp(t *testing.T) {
 func TestRemindWakeEmptyText(t *testing.T) {
 	// Verifies that wake reminders with empty text are rejected with a clear "text is required" error.
 	t.Parallel()
-	fn := func(id int64, d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -256,7 +256,7 @@ func TestRemindWakeNilFunction(t *testing.T) {
 func TestRemindWakeInvalidDuration(t *testing.T) {
 	// Verifies that an unparseable when value returns a "cannot parse" error rather than silently failing.
 	t.Parallel()
-	fn := func(id int64, d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -277,7 +277,7 @@ func TestRemindWakeInvalidDuration(t *testing.T) {
 func TestRemindWakeNegativeDelay(t *testing.T) {
 	// Verifies that a negative duration (e.g. "-5m") is rejected with an error requiring a positive value.
 	t.Parallel()
-	fn := func(id int64, d time.Duration, msg string) error { return nil }
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error { return nil }
 	tool := testRemindToolWithWake(t, fn)
 
 	params, _ := json.Marshal(map[string]interface{}{
@@ -298,7 +298,7 @@ func TestRemindWakeNegativeDelay(t *testing.T) {
 func TestRemindWakeCallbackError(t *testing.T) {
 	// Verifies that an error returned by the schedule callback is propagated back to the caller.
 	t.Parallel()
-	fn := func(id int64, d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error {
 		return fmt.Errorf("scheduler full")
 	}
 
@@ -322,7 +322,7 @@ func TestRemindWakeTomorrow(t *testing.T) {
 	// Verifies that "tomorrow" resolves to a duration within the next 24 hours when used as a wake trigger.
 	t.Parallel()
 	var gotDur time.Duration
-	fn := func(id int64, d time.Duration, msg string) error {
+	fn := func(id int64, d time.Duration, msg, sessionKey string) error {
 		gotDur = d
 		return nil
 	}

@@ -196,7 +196,10 @@ Subcommands:
 		var infos []command.AgentInfo
 		for _, id := range agentOrder {
 			inst := agents[id]
-			sk := inst.defaultSessionKey()
+			sk := mostRecentSessionKey(inst.ag, connMgr, id)
+			if sk == "" {
+				sk = inst.defaultSessionKey()
+			}
 			var mc int
 			var lastAct string
 			if sk != "" {
@@ -297,11 +300,24 @@ Subcommands:
 			}
 		}
 
-		// Restore per-session state and seed session meta for default session (if any).
+		// Restore per-session state and seed session meta for all connected sessions.
 		// Must happen AFTER setupAgent returns so the deferred defaultSessionKeyFn wiring has executed.
-		if sk := inst.defaultSessionKey(); sk != "" {
+		restored := map[string]bool{}
+		for _, conn := range connMgr.AllForAgent(inst.id) {
+			sk := conn.DefaultSessionKey()
+			if sk == "" || restored[sk] {
+				continue
+			}
 			inst.ag.RestoreSessionOverrides(sk)
 			inst.ag.SeedSessionMeta(sk)
+			restored[sk] = true
+		}
+		// Fall back to default session key if no connections had sessions yet.
+		if len(restored) == 0 {
+			if sk := inst.defaultSessionKey(); sk != "" {
+				inst.ag.RestoreSessionOverrides(sk)
+				inst.ag.SeedSessionMeta(sk)
+			}
 		}
 
 		setupPeriodic(inst, acfg, periodicParams{
@@ -362,7 +378,7 @@ Subcommands:
 	if stop := setupGoroutineMonitor(cfg, len(agents), ctx); stop != nil {
 		defer stop()
 	}
-	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, ctx)
+	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, connMgr, ctx)
 
 	// ========== Signal handling ==========
 	sigCh := make(chan os.Signal, 1)

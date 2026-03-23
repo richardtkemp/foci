@@ -52,9 +52,12 @@ func handleRestartAndFirstRun(
 		inst := agents[agentID]
 		agentID := agentID
 		go func() {
-			sk := inst.defaultSessionKey()
+			sk := mostRecentSessionKey(inst.ag, connMgr, agentID)
 			if sk == "" {
-				log.Warnf("main", "[%s] no default session for restart injection, skipping", agentID)
+				sk = inst.defaultSessionKey()
+			}
+			if sk == "" {
+				log.Warnf("main", "[%s] no active session for restart injection, skipping", agentID)
 				return
 			}
 
@@ -74,6 +77,18 @@ func handleRestartAndFirstRun(
 
 			msg := prompts.FormatInjectedMessage(tag, time.Now(), body)
 			deliverInjectedTurn(inst.ag, ctx, "restart", connMgr, agentID, sk, msg)
+
+			// Notify other platform connections so users see the restart
+			// regardless of which platform the agent turn was injected on.
+			short := "[" + tag + "] " + body
+			if len(short) > 200 {
+				short = short[:200] + "…"
+			}
+			for _, conn := range connMgr.AllForAgent(agentID) {
+				if connSK := conn.DefaultSessionKey(); connSK != "" && connSK != sk {
+					conn.SendNotification(short)
+				}
+			}
 		}()
 	}
 
