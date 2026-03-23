@@ -400,8 +400,9 @@ type DisplayConfig struct {
 // AccessConfig holds access control settings that can be set at any level
 // of the configuration cascade.
 type AccessConfig struct {
-	AllowedUsers   []string `toml:"allowed_users"`   // platform-specific user IDs allowed to interact
-	RequireMention *bool    `toml:"require_mention"`  // require @mention in group chats
+	AllowedUsersOnly *bool    `toml:"allowed_users_only" default:"true" desc:"require allowed_users; when false, accept messages from any user"`
+	AllowedUsers     []string `toml:"allowed_users"`                                                                                              // platform-specific user IDs allowed to interact
+	RequireMention   *bool    `toml:"require_mention"`                                                                                            // require @mention in group chats
 }
 
 // NotifyConfig holds notification/warning settings that can be configured at

@@ -92,7 +92,7 @@ type mockProvider struct {
 }
 
 func (p *mockProvider) Name() string                                            { return p.name }
-func (p *mockProvider) IsConfigured(*config.Config) bool                        { return false }
+func (p *mockProvider) IsConfigured(*config.Config) (bool, string)              { return false, "mock" }
 func (p *mockProvider) Init(ProviderDeps) error                                 { return nil }
 func (p *mockProvider) ConnectionManager() ConnectionManager                    { return &noopConnMgr{} }
 func (p *mockProvider) SetupAgentConnection(AgentConnectionParams) *SetupResult { return nil }

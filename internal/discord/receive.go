@@ -70,7 +70,7 @@ func (b *Bot) toPlatformMessage(msg *discordgo.Message, qm queuedMessage) platfo
 func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (queuedMessage, bool) {
 	userID := msg.Author.ID
 
-	if !b.allowedUsers[userID] {
+	if len(b.allowedUsers) > 0 && !b.allowedUsers[userID] {
 		b.logger().Warnf("rejected message from %s", formatUserInfo(msg.Author))
 		return queuedMessage{}, false
 	}

@@ -217,7 +217,7 @@ type StartupDiagnosis interface {
 // Providers register themselves via init() and are initialised at startup.
 type MessagingProvider interface {
 	Name() string
-	IsConfigured(cfg *config.Config) bool
+	IsConfigured(cfg *config.Config) (ok bool, reason string)
 	Init(deps ProviderDeps) error
 	ConnectionManager() ConnectionManager
 	SetupAgentConnection(params AgentConnectionParams) *SetupResult
@@ -395,8 +395,8 @@ func InitMessaging(cfg *config.Config, deps ProviderDeps) (*Messaging, error) {
 
 	var active []MessagingProvider
 	for name, p := range providers {
-		if !p.IsConfigured(cfg) {
-			log.Debugf("platform", "provider %q not configured, skipping", name)
+		if ok, reason := p.IsConfigured(cfg); !ok {
+			log.Infof("platform", "provider %q not configured, skipping: %s", name, reason)
 			continue
 		}
 		if err := p.Init(deps); err != nil {

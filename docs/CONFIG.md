@@ -94,6 +94,7 @@ auto_thread = true
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| `allowed_users_only` | bool | `true` | When true, `allowed_users` must be non-empty or the platform won't start. When false, the platform starts without `allowed_users` and accepts messages from any user. |
 | `allowed_users` | string[] | `[]` | User IDs allowed to interact with the bot. |
 | `require_mention` | bool | `true` | Require @mention in group chats. DMs are always processed. |
 

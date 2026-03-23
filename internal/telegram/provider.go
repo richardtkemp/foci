@@ -23,9 +23,15 @@ type telegramProvider struct {
 
 func (p *telegramProvider) Name() string { return "telegram" }
 
-func (p *telegramProvider) IsConfigured(cfg *config.Config) bool {
+func (p *telegramProvider) IsConfigured(cfg *config.Config) (bool, string) {
 	tg := cfg.Platform("telegram")
-	return tg != nil && len(tg.Access.AllowedUsers) > 0
+	if tg == nil {
+		return false, "no [[platforms]] entry with id=\"telegram\""
+	}
+	if (tg.Access.AllowedUsersOnly == nil || *tg.Access.AllowedUsersOnly) && len(tg.Access.AllowedUsers) == 0 {
+		return false, "access.allowed_users is empty (set allowed_users or set allowed_users_only=false)"
+	}
+	return true, ""
 }
 
 func (p *telegramProvider) Init(deps platform.ProviderDeps) error {

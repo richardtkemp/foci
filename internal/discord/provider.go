@@ -21,9 +21,15 @@ type discordProvider struct {
 
 func (p *discordProvider) Name() string { return "discord" }
 
-func (p *discordProvider) IsConfigured(cfg *config.Config) bool {
+func (p *discordProvider) IsConfigured(cfg *config.Config) (bool, string) {
 	dc := cfg.Platform("discord")
-	return dc != nil && len(dc.Access.AllowedUsers) > 0
+	if dc == nil {
+		return false, "no [[platforms]] entry with id=\"discord\""
+	}
+	if (dc.Access.AllowedUsersOnly == nil || *dc.Access.AllowedUsersOnly) && len(dc.Access.AllowedUsers) == 0 {
+		return false, "access.allowed_users is empty (set allowed_users or set allowed_users_only=false)"
+	}
+	return true, ""
 }
 
 func (p *discordProvider) Init(deps platform.ProviderDeps) error {
