@@ -586,10 +586,10 @@ func extractAllRefs(t *testing.T, snapshot, roleKeyword string) []string {
 	return refs
 }
 
-func TestBrowserSetIncognito(t *testing.T) {
-	// Verifies that the set_incognito action toggles incognito mode at runtime,
-	// stops a running browser so the next action restarts with the new mode,
-	// and reports "already" when the mode hasn't changed.
+func TestBrowserIncognitoParam(t *testing.T) {
+	// Verifies that passing incognito=false on an action changes the manager's
+	// incognito state, and that passing incognito=true restores it. No separate
+	// action needed — just a bool parameter on any browser action.
 
 	mgr := NewBrowserManager(&config.ResolvedBrowser{
 		Headless:      true,
@@ -606,56 +606,50 @@ func TestBrowserSetIncognito(t *testing.T) {
 		t.Fatal("expected default incognito=true")
 	}
 
-	// Setting to true when already true → "already" message.
-	params := marshalParams(t, map[string]any{"action": "set_incognito", "incognito": true})
-	result, err := tool.Execute(context.Background(), params)
+	// Passing incognito=true when already true → no change, action proceeds.
+	params := marshalParams(t, map[string]any{"action": "snapshot", "incognito": true})
+	_, err := tool.Execute(context.Background(), params)
 	if err != nil {
-		t.Fatalf("set_incognito: %v", err)
-	}
-	if !strings.Contains(result.Text, "already") {
-		t.Errorf("expected 'already' message, got: %s", result.Text)
-	}
-
-	// Toggle off.
-	params = marshalParams(t, map[string]any{"action": "set_incognito", "incognito": false})
-	result, err = tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("set_incognito: %v", err)
-	}
-	if !strings.Contains(result.Text, "off") {
-		t.Errorf("expected 'off' in result, got: %s", result.Text)
-	}
-	if mgr.incognito {
-		t.Fatal("expected incognito=false after toggle off")
-	}
-
-	// Toggle back on.
-	params = marshalParams(t, map[string]any{"action": "set_incognito", "incognito": true})
-	result, err = tool.Execute(context.Background(), params)
-	if err != nil {
-		t.Fatalf("set_incognito: %v", err)
-	}
-	if !strings.Contains(result.Text, "on") {
-		t.Errorf("expected 'on' in result, got: %s", result.Text)
+		t.Fatalf("snapshot: %v", err)
 	}
 	if !mgr.incognito {
-		t.Fatal("expected incognito=true after toggle on")
+		t.Fatal("incognito should still be true")
 	}
 
-	// Missing incognito param → error.
-	params = marshalParams(t, map[string]any{"action": "set_incognito"})
-	result, err = tool.Execute(context.Background(), params)
+	// Passing incognito=false → changes state.
+	params = marshalParams(t, map[string]any{"action": "snapshot", "incognito": false})
+	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
-		t.Fatalf("set_incognito: %v", err)
+		t.Fatalf("snapshot: %v", err)
 	}
-	if !strings.Contains(result.Text, "Error") {
-		t.Errorf("expected error for missing param, got: %s", result.Text)
+	if mgr.incognito {
+		t.Fatal("expected incognito=false after passing incognito=false")
+	}
+
+	// Passing incognito=true → restores.
+	params = marshalParams(t, map[string]any{"action": "snapshot", "incognito": true})
+	_, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if !mgr.incognito {
+		t.Fatal("expected incognito=true after passing incognito=true")
+	}
+
+	// Omitting incognito → no change.
+	params = marshalParams(t, map[string]any{"action": "snapshot"})
+	_, err = tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if !mgr.incognito {
+		t.Fatal("incognito should remain true when param omitted")
 	}
 }
 
-func TestBrowserSetIncognitoStopsRunning(t *testing.T) {
-	// Verifies that toggling incognito stops a running browser
-	// so the next action restarts with the new mode.
+func TestBrowserIncognitoRestartsBrowser(t *testing.T) {
+	// Verifies that changing incognito mode stops a running browser
+	// so the next action restarts with the new profile mode.
 	skipIfNoBrowser(t)
 
 	mgr := testBrowserManager(t)
@@ -672,14 +666,18 @@ func TestBrowserSetIncognitoStopsRunning(t *testing.T) {
 		t.Fatal("expected browser to be connected after navigate")
 	}
 
-	// Toggle incognito off — should stop the browser.
-	params = marshalParams(t, map[string]any{"action": "set_incognito", "incognito": false})
+	// Navigate with incognito=false — should restart the browser.
+	params = marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL, "incognito": false})
 	_, err = tool.Execute(context.Background(), params)
 	if err != nil {
-		t.Fatalf("set_incognito: %v", err)
+		t.Fatalf("navigate: %v", err)
 	}
-	if mgr.IsConnected() {
-		t.Fatal("expected browser to be stopped after incognito toggle")
+	// Browser restarts on mode change then re-launches for navigate.
+	if !mgr.IsConnected() {
+		t.Fatal("expected browser to be reconnected after navigate with new incognito mode")
+	}
+	if mgr.incognito {
+		t.Fatal("expected incognito=false")
 	}
 }
 
