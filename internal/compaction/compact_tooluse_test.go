@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -347,8 +348,8 @@ func TestCompactWithModelDefaults(t *testing.T) {
 
 	// Sonnet supports effort — model defaults should apply
 	c := NewCompactor(store, 0.8)
-	c.ModelParamsFn = func(model string) (string, string, string) {
-		return "", "high", "" // thinking, effort, speed
+	c.ModelDefaultsFn = func(model string) config.ModelDefaults {
+		return config.ModelDefaults{Effort: "high"}
 	}
 	_, _, err := c.Compact(context.Background(), noStream(client), sessionKey, "claude-sonnet-4-6", "anthropic", nil, "", "", false)
 	if err != nil {
@@ -367,8 +368,8 @@ func TestCompactWithModelDefaults(t *testing.T) {
 		store2.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("reply")})
 	}
 	c2 := NewCompactor(store2, 0.8)
-	c2.ModelParamsFn = func(model string) (string, string, string) {
-		return "", "high", ""
+	c2.ModelDefaultsFn = func(model string) config.ModelDefaults {
+		return config.ModelDefaults{Effort: "high"}
 	}
 	_, _, err = c2.Compact(context.Background(), noStream(client), sessionKey, "claude-haiku-4-5", "anthropic", nil, "", "", false)
 	if err != nil {

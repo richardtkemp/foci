@@ -34,8 +34,8 @@ func ResolveModelKeepalive(resolved *ResolvedModel) (enabled bool, interval time
 
 	// Determine TTL
 	var ttl time.Duration
-	if resolved.PromptCacheTTL != "" {
-		parsed, err := time.ParseDuration(resolved.PromptCacheTTL)
+	if resolved.CacheTTL != "" {
+		parsed, err := time.ParseDuration(resolved.CacheTTL)
 		if err != nil || parsed <= 0 {
 			return false, 0
 		}

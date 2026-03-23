@@ -119,11 +119,23 @@ func TestValidateLoggingLevel(t *testing.T) {
 	}
 }
 
-func TestValidateCacheStrategy(t *testing.T) {
-	// Proves that an unrecognized cache strategy value produces a validation error.
+func TestValidateModelCacheStrategy(t *testing.T) {
+	// Proves that an unrecognized cache_strategy on a named model produces
+	// a validation error.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nstrategy = \"invalid\""), 0644)
+	toml := `
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "test"
+
+[models.bad]
+model = "anthropic/claude-haiku-4-5-20251001"
+cache_strategy = "invalid"
+`
+	os.WriteFile(path, []byte(toml), 0644)
 
 	_, err := Load(path)
 	if err == nil {
@@ -134,35 +146,30 @@ func TestValidateCacheStrategy(t *testing.T) {
 	}
 }
 
-func TestValidateCacheTTL(t *testing.T) {
-	// Proves that a cache TTL string that is not a valid Go duration is rejected
-	// with an error mentioning the "ttl" field name.
-	dir := t.TempDir()
-	path := filepath.Join(dir, "foci.toml")
-	os.WriteFile(path, []byte("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nttl = \"30m\""), 0644)
-
-	_, err := Load(path)
-	if err == nil {
-		t.Fatal("expected error for invalid cache TTL")
-	}
-	if !strings.Contains(err.Error(), "ttl") {
-		t.Errorf("error = %q, want mention of ttl", err.Error())
-	}
-}
-
-func TestValidateCacheTTLValid(t *testing.T) {
+func TestValidateModelCacheTTL(t *testing.T) {
 	// Proves that valid Go duration strings like "5m" and "1h" are accepted as
-	// cache TTL values and stored correctly in the config struct.
+	// cache_ttl values on named model entries.
 	dir := t.TempDir()
 	for _, ttl := range []string{"5m", "1h"} {
 		path := filepath.Join(dir, "foci.toml")
-		os.WriteFile(path, []byte(fmt.Sprintf("[groups]\npowerful = \"anthropic/claude-haiku-4-5-20251001\"\n\n[[agents]]\nid = \"test\"\n[cache]\nttl = %q", ttl)), 0644)
+		toml := fmt.Sprintf(`
+[groups]
+powerful = "anthropic/claude-haiku-4-5-20251001"
+
+[[agents]]
+id = "test"
+
+[models.mymodel]
+model = "anthropic/claude-haiku-4-5-20251001"
+cache_ttl = %q
+`, ttl)
+		os.WriteFile(path, []byte(toml), 0644)
 		cfg, err := Load(path)
 		if err != nil {
-			t.Errorf("ttl=%q: unexpected error: %v", ttl, err)
+			t.Errorf("cache_ttl=%q: unexpected error: %v", ttl, err)
 		}
-		if cfg.Cache.TTL != ttl {
-			t.Errorf("ttl=%q: got %q", ttl, cfg.Cache.TTL)
+		if cfg.Models["mymodel"].CacheTTL != ttl {
+			t.Errorf("cache_ttl=%q: got %q", ttl, cfg.Models["mymodel"].CacheTTL)
 		}
 	}
 }

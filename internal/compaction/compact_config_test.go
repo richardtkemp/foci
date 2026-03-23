@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -58,19 +59,19 @@ func TestModelParamsFn(t *testing.T) {
 		t.Error("initial ModelParamsFn should be nil")
 	}
 
-	c.ModelParamsFn = func(model string) (string, string, string) {
+	c.ModelDefaultsFn = func(model string) config.ModelDefaults {
 		if model == "anthropic/claude-opus-4-6" {
-			return "adaptive", "high", ""
+			return config.ModelDefaults{Thinking: "adaptive", Effort: "high"}
 		}
-		return "", "", ""
+		return config.ModelDefaults{}
 	}
-	thinking, effort, speed := c.ModelParamsFn("anthropic/claude-opus-4-6")
-	if thinking != "adaptive" || effort != "high" || speed != "" {
-		t.Errorf("ModelParamsFn(opus) = (%q, %q, %q), want (adaptive, high, \"\")", thinking, effort, speed)
+	md := c.ModelDefaultsFn("anthropic/claude-opus-4-6")
+	if md.Thinking != "adaptive" || md.Effort != "high" || md.Speed != "" {
+		t.Errorf("ModelDefaultsFn(opus) = (%q, %q, %q), want (adaptive, high, \"\")", md.Thinking, md.Effort, md.Speed)
 	}
-	thinking, effort, speed = c.ModelParamsFn("anthropic/claude-haiku-4-5")
-	if thinking != "" || effort != "" || speed != "" {
-		t.Errorf("ModelParamsFn(haiku) = (%q, %q, %q), want all empty", thinking, effort, speed)
+	md = c.ModelDefaultsFn("anthropic/claude-haiku-4-5")
+	if md.Thinking != "" || md.Effort != "" || md.Speed != "" {
+		t.Errorf("ModelDefaultsFn(haiku) = (%q, %q, %q), want all empty", md.Thinking, md.Effort, md.Speed)
 	}
 }
 

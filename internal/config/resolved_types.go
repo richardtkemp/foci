@@ -10,7 +10,6 @@ type ResolvedLoop struct {
 	DuplicateMessages             bool
 	BatchPartialAssistantMessages bool
 	BatchPartialJoiner            string
-	CacheTTL                      string
 }
 
 func resolveLoop(m AgentLoopConfig) ResolvedLoop {
@@ -20,7 +19,6 @@ func resolveLoop(m AgentLoopConfig) ResolvedLoop {
 		DuplicateMessages:             DerefBool(m.DuplicateMessages),
 		BatchPartialAssistantMessages: DerefBool(m.BatchPartialAssistantMessages),
 		BatchPartialJoiner:            DerefStr(m.BatchPartialJoiner),
-		CacheTTL:                      DerefStr(m.CacheTTL),
 	}
 }
 

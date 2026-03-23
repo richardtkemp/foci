@@ -50,10 +50,8 @@ var globalSections = map[string]reflect.Type{
 	"memory":           reflect.TypeOf(MemoryConfig{}),
 	"http":             reflect.TypeOf(HTTPConfig{}),
 	"database":         reflect.TypeOf(DatabaseConfig{}),
-	"cache":            reflect.TypeOf(CacheConfig{}),
 	"environment":      reflect.TypeOf(EnvironmentConfig{}),
 	"anthropic":        reflect.TypeOf(AnthropicConfig{}),
-	"gemini":           reflect.TypeOf(GeminiConfig{}),
 	"platforms":        reflect.TypeOf(PlatformConfig{}),
 	"resources":        reflect.TypeOf(ResourcesConfig{}),
 }

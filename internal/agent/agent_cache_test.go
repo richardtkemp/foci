@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -40,7 +41,9 @@ func TestCacheStrategyInRequest(t *testing.T) {
 		Bootstrap:     bootstrap,
 		Model:         "claude-haiku-4-5",
 		CacheStrategy: "explicit",
-		CacheTTL:      "1h",
+		ModelDefaultsFn: func(model string) config.ModelDefaults {
+			return config.ModelDefaults{CacheTTL: "1h"}
+		},
 	}
 
 	ag.HandleMessage(context.Background(), "test/icache/1000000000", "Hello")

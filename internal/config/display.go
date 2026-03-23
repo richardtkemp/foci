@@ -261,10 +261,6 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 		add("skills", "dir", cfg.Skills.Dir)
 	}
 
-	// cache
-	add("cache", "strategy", cfg.Cache.Strategy)
-	add("cache", "ttl", cfg.Cache.TTL)
-
 	// mana
 	add("mana", "name", cfg.Mana.Name)
 	if len(cfg.Mana.Thresholds) > 0 {
@@ -555,7 +551,6 @@ type displayConfig struct {
 	Tools         ToolsConfig        `toml:"tools"`
 	Environment   EnvironmentConfig  `toml:"environment"`
 	Skills        SkillsConfig       `toml:"skills"`
-	Cache         CacheConfig        `toml:"cache"`
 	Mana          ManaConfig         `toml:"mana"`
 	TTS           []TTSConfig        `toml:"tts"`
 	STT           []STTConfig        `toml:"stt"`
@@ -582,7 +577,6 @@ func FormatConfigTOML(cfg *Config, agent AgentConfig) string {
 		Tools:         cfg.Tools,
 		Environment:   cfg.Environment,
 		Skills:        cfg.Skills,
-		Cache:         cfg.Cache,
 		Mana:          cfg.Mana,
 		TTS:           cfg.TTS,
 		STT:           cfg.STT,

@@ -91,13 +91,17 @@ func setupAgent(p setupParams) *agentInstance {
 	// Create group resolver for multi-model routing (powerful model is the agent's primary)
 	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
 
-	// Resolve agent's default endpoint and format from powerful group
-	powerfulResolved := groupResolver.ResolveGroup(config.GroupPowerful)
-	var defaultEndpoint, defaultFormat, resolvedModel string
-	if powerfulResolved != nil {
-		defaultEndpoint = powerfulResolved.Endpoint
-		defaultFormat = powerfulResolved.Format
-		resolvedModel = powerfulResolved.Developer + "/" + powerfulResolved.ModelID
+	// Resolve agent's primary model via the chat call site
+	primaryResolved := groupResolver.ResolveCall(config.CallChat)
+	var defaultEndpoint, defaultFormat, resolvedModel, primaryCacheStrategy string
+	if primaryResolved != nil {
+		defaultEndpoint = primaryResolved.Endpoint
+		defaultFormat = primaryResolved.Format
+		resolvedModel = primaryResolved.Developer + "/" + primaryResolved.ModelID
+		primaryCacheStrategy = primaryResolved.CacheStrategy
+	}
+	if primaryCacheStrategy == "" {
+		primaryCacheStrategy = "auto"
 	}
 
 	// Create fallback resolver for automatic model failover
@@ -173,6 +177,8 @@ func setupAgent(p setupParams) *agentInstance {
 	cpc := p.resolved.Compaction
 	bc := p.resolved.Behavior
 
+	mdFn := modelDefaultsFn(p.cfg.Models)
+
 	ag = &agent.Agent{
 		Log:                            log.NewComponentLogger("agent/" + acfg.ID),
 		Client:                         p.client,
@@ -194,7 +200,7 @@ func setupAgent(p setupParams) *agentInstance {
 		Format:                         defaultFormat,
 		Endpoint:                       defaultEndpoint,
 		ExtraSystemBlocks:              bs.extraSystemBlocks,
-		CacheStrategy:                  p.cfg.Cache.Strategy,
+		CacheStrategy:                  primaryCacheStrategy,
 		CacheBustDetect:                p.resolved.Debug.CacheBustDetect,
 		CacheBustIdleThreshold:         time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute,
 		DuplicateMessages:              al.DuplicateMessages,
@@ -226,9 +232,8 @@ func setupAgent(p setupParams) *agentInstance {
 		MaxOutputTokens:                al.MaxOutputTokens,
 		TurnLockWarnThreshold:          parseDurationDefault(bc.TurnLockWarnThreshold, 0),
 		ShowToolCalls:                  resolveShowToolCalls(p.resolved),
-		CacheTTL:                       al.CacheTTL,
 		Streaming:                      p.resolved.Display.Streaming,
-		ModelDefaultsFn:                modelDefaultsFn(p.cfg.Models),
+		ModelDefaultsFn:                mdFn,
 		ManaInvestInterval:             parseDurationDefault(p.resolved.Mana.InvestInterval, 0),
 	}
 

@@ -91,8 +91,9 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 					return
 				}
 				opts := []gemini.Option{gemini.WithHTTPTimeout(httpTimeout)}
-				if r.cfg.Gemini.CacheTTL != "0" {
-					if cacheTTL, err := time.ParseDuration(r.cfg.Gemini.CacheTTL); err == nil && cacheTTL > 0 {
+				cacheTTLStr := modelCacheTTLForEndpoint(r.cfg.Models, endpointName, "1h")
+				if cacheTTLStr != "0" {
+					if cacheTTL, err := time.ParseDuration(cacheTTLStr); err == nil && cacheTTL > 0 {
 						opts = append(opts, gemini.WithCacheTTL(cacheTTL))
 					}
 				}
@@ -102,7 +103,7 @@ func (r *clientRegistry) GetClient(endpointName, format string) provider.Client 
 					return
 				}
 				entry.client = gc
-				log.Infof("main", "gemini client ready (cache_ttl=%s)", r.cfg.Gemini.CacheTTL)
+				log.Infof("main", "gemini client ready (cache_ttl=%s)", cacheTTLStr)
 			} else {
 				log.Errorf("main", "gemini format on non-gemini endpoint %q not supported", endpointName)
 			}
@@ -146,4 +147,22 @@ func (r *clientRegistry) ResolveEndpointClient(endpointName, format string) prov
 		format = "openai" // universal fallback
 	}
 	return r.GetClient(endpointName, format)
+}
+
+// modelCacheTTLForEndpoint finds the cache_ttl from the first model that
+// resolves to the given endpoint. Returns fallback if no model specifies one.
+func modelCacheTTLForEndpoint(models map[string]config.ModelConfig, endpoint, fallback string) string {
+	for _, mc := range models {
+		if mc.CacheTTL == "" {
+			continue
+		}
+		rm, err := config.ResolveModel(mc.Model, "", models)
+		if err != nil {
+			continue
+		}
+		if rm.Endpoint == endpoint {
+			return mc.CacheTTL
+		}
+	}
+	return fallback
 }

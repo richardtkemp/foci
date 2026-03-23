@@ -7,6 +7,16 @@ import (
 	"foci/internal/modelinfo"
 )
 
+// ModelDefaults holds per-model settings resolved at request time from [models.*] config.
+// Used by ModelDefaultsFn callbacks in the agent and compaction packages.
+type ModelDefaults struct {
+	Thinking      string
+	Effort        string
+	Speed         string
+	CacheStrategy string
+	CacheTTL      string
+}
+
 // ResolvedModel holds the canonical resolution of a model string.
 type ResolvedModel struct {
 	Developer       string // "anthropic", "google", "openai", "deepseek", etc.
@@ -19,7 +29,8 @@ type ResolvedModel struct {
 	Speed           string // "fast" or ""
 	Context         int    // context window size in tokens (0 = unknown)
 	EnableKeepalive *bool  // nil=auto-detect, true/false=explicit
-	PromptCacheTTL  string // Go duration, empty=auto-detect
+	CacheTTL        string // cache TTL: Go duration, empty=auto-detect
+	CacheStrategy   string // "auto" or "explicit" (Anthropic only)
 }
 
 // ResolveModel takes a model string (alias or developer/model_id)
@@ -98,7 +109,8 @@ func ResolveModel(input string, endpoint string, models map[string]ModelConfig) 
 		rm.Speed = mc.Speed
 		rm.Context = int(mc.Context)
 		rm.EnableKeepalive = mc.EnableKeepalive
-		rm.PromptCacheTTL = mc.PromptCacheTTL
+		rm.CacheTTL = mc.CacheTTL
+		rm.CacheStrategy = mc.CacheStrategy
 	}
 
 	return rm, nil

@@ -58,7 +58,7 @@ func TestResolve_FallsBackToGlobal(t *testing.T) {
 	// Proves that global defaults are used when per-agent values are nil.
 	cfg := &Config{
 		Defaults: DefaultsConfig{
-			Loop:  AgentLoopConfig{MaxToolLoops: Ptr(10), CacheTTL: Ptr("5m")},
+			Loop:  AgentLoopConfig{MaxToolLoops: Ptr(10)},
 			Voice: VoiceConfig{TTS: Ptr("groq-playai")},
 			Nudge: NudgeConfig{NudgeEnable: Ptr(true)},
 		},
@@ -73,9 +73,6 @@ func TestResolve_FallsBackToGlobal(t *testing.T) {
 
 	if got := rc.Loop.MaxToolLoops; got != 50 {
 		t.Errorf("Loop.MaxToolLoops = %d, want 50 (agent)", got)
-	}
-	if got := rc.Loop.CacheTTL; got != "5m" {
-		t.Errorf("Loop.CacheTTL = %q, want \"5m\" (global fallback)", got)
 	}
 	if got := rc.Voice.TTS; got != "groq-playai" {
 		t.Errorf("Voice.TTS = %q, want \"groq-playai\" (global fallback)", got)
