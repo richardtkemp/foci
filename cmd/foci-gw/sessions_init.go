@@ -27,6 +27,15 @@ func initSessions(cfg *config.Config) sessionInfra {
 
 	// Session store
 	sessions := session.NewStore(cfg.Sessions.Dir)
+	if cfg.Sessions.FileMode != "" {
+		mode, err := strconv.ParseUint(cfg.Sessions.FileMode, 8, 32)
+		if err != nil {
+			log.Warnf("main", "invalid sessions.file_mode %q: %v (using default 0600)", cfg.Sessions.FileMode, err)
+		} else {
+			sessions.SetFileMode(os.FileMode(mode))
+			log.Debugf("main", "session file mode=%04o", mode)
+		}
+	}
 	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
 
 	// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts)

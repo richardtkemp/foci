@@ -592,7 +592,8 @@ type SessionsConfig struct {
 	BranchOrientationFacetPrompt    *string `toml:"branch_orientation_facet_prompt"`    // path to prompt file for user-attached facet branches
 	BranchOrientationHeadlessPrompt *string `toml:"branch_orientation_headless_prompt"` // path to prompt file for headless branches (cron, spawn, keepalive)
 
-	ArchiveAfter string `toml:"archive_after" default:"24h"` // gzip idle sessions after this duration (default "24h")
+	ArchiveAfter string `toml:"archive_after" default:"24h"`  // gzip idle sessions after this duration (default "24h")
+	FileMode     string `toml:"file_mode"     default:"0600"` // octal file permissions for session files (default "0600")
 }
 
 type MemorySource struct {

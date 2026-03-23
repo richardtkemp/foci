@@ -238,6 +238,7 @@ Session storage. Compaction and prompt fields that can be overridden per-agent a
 | `max_system_prompt_chars_file` | int | `20000` | Warn at startup and `/reload` if any system prompt file exceeds this many chars. `0` disables. |
 | `max_system_prompt_chars_total` | int | `80000` | Warn at startup and `/reload` if total system prompt exceeds this many chars. `0` disables. |
 | `archive_after` | string | `"24h"` | Gzip idle session files after this duration of inactivity. Go duration format. Each agent's most recently created chat session is never archived regardless of age. Sessions with active branches are also skipped. Archived sessions are transparently decompressed when accessed. `"0"` effectively disables (no sessions will be old enough). |
+| `file_mode` | string | `"0600"` | Octal file permissions for session files (branches, appends, compacted rewrites). Applied at file creation time. Example: `"0640"` for owner read/write + group read. |
 
 Sessions are stored as JSONL files at `{dir}/agent/{id}/{type}.jsonl`.
 
