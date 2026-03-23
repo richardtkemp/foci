@@ -218,8 +218,9 @@ type ModelConfig struct {
 	Effort          string        `toml:"effort"`           // "low", "medium", "high"
 	Speed           string        `toml:"speed"`            // "fast" or ""
 	Context         ContextWindow `toml:"context"`          // context window size in tokens (e.g. 262000 or "262k")
-	EnableKeepalive *bool         `toml:"enable_keepalive"` // nil=auto-detect, true/false=explicit
-	PromptCacheTTL  string        `toml:"prompt_cache_ttl"` // Go duration, empty=auto-detect
+	EnableKeepalive *bool         `toml:"enable_keepalive"`  // nil=auto-detect, true/false=explicit
+	CacheTTL        string        `toml:"cache_ttl"`         // cache TTL: Go duration, empty=auto-detect (Anthropic: "5m"/"1h"; Gemini: any duration)
+	CacheStrategy   string        `toml:"cache_strategy"`    // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
 }
 
 // GroupsConfig assigns named models to groups and call sites.
@@ -342,7 +343,6 @@ type AgentLoopConfig struct {
 	DuplicateMessages             *bool   `toml:"duplicate_messages"               desc:"send user text twice per API call"`
 	BatchPartialAssistantMessages *bool   `toml:"batch_partial_assistant_messages"  desc:"batch partial assistant messages"`
 	BatchPartialJoiner            *string `toml:"batch_partial_joiner"             desc:"joiner string for batched partial messages"`
-	CacheTTL                      *string `toml:"cache_ttl"                        desc:"cache TTL override for this agent" type:"duration"`
 }
 
 // BehaviorConfig holds agent behavioral settings.
@@ -375,10 +375,6 @@ type ToolConfig struct {
 	SearchProvider      *string `toml:"search_provider"       default:"brave"     desc:"web search: brave or anthropic" choices:"brave,anthropic"`
 	FetchProvider       *string `toml:"fetch_provider"        default:"builtin"   desc:"web fetch: anthropic or builtin" choices:"anthropic,builtin"`
 	TodoFormat          *string `toml:"todo_format"                                desc:"todo list format: lines or table" choices:"lines,table"`
-}
-
-type GeminiConfig struct {
-	CacheTTL string `toml:"cache_ttl" default:"1h" desc:"context cache TTL" type:"duration"` // context cache TTL (default "1h", "0" disables)
 }
 
 type AnthropicConfig struct {
@@ -659,11 +655,6 @@ type BitwardenConfig struct {
 	CleanupInterval string `toml:"cleanup_interval" default:"1m"`                        // how often to purge expired values (default "1m")
 }
 
-type CacheConfig struct {
-	Strategy string `toml:"strategy" default:"auto" desc:"cache strategy: auto or explicit" choices:"auto,explicit"` // "auto" (top-level, default) or "explicit" (manual breakpoints)
-	TTL      string `toml:"ttl"      default:"1h"   desc:"Anthropic prompt cache TTL: 5m or 1h" choices:"5m,1h"` // Anthropic prompt cache TTL: "5m" or "1h" (default "1h")
-}
-
 
 type EnvironmentConfig struct {
 	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"inject environment block"` // inject environment block as first system block (default true)
@@ -856,7 +847,6 @@ type Config struct {
 	Endpoints          map[string]EndpointConfig     `toml:"endpoints"` // named API endpoints (built-in: anthropic, gemini, openai, openrouter)
 	Agents             []AgentConfig             `toml:"agents"`    // multi-agent: array of agents
 	Anthropic          AnthropicConfig           `toml:"anthropic"`
-	Gemini             GeminiConfig              `toml:"gemini"`
 	Platforms          []PlatformConfig          `toml:"platforms"`
 	Sessions           SessionsConfig            `toml:"sessions"`
 	Memory             MemoryConfig              `toml:"memory"`
@@ -866,7 +856,6 @@ type Config struct {
 	TTS                []TTSConfig               `toml:"tts"`
 	STT                []STTConfig               `toml:"stt"`
 	Bitwarden          BitwardenConfig           `toml:"bitwarden"`
-	Cache              CacheConfig               `toml:"cache"`
 	Mana               ManaConfig                `toml:"mana"`
 	Environment        EnvironmentConfig         `toml:"environment"`
 	Skills             SkillsConfig              `toml:"skills"`

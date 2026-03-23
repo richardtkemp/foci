@@ -51,26 +51,11 @@ See [AUTH.md](AUTH.md) for token resolution order and setup guide.
 
 ### `[gemini]`
 
-Google Gemini API configuration.
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `cache_ttl` | string | `"1h"` | Context cache TTL. System prompt + tools are cached server-side and reused across requests. Set to `"0"` to disable. |
-
-Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-flash"` in `[groups]` to use.
+No fields remain — `cache_ttl` is now per-model via `[models.*]`. Requires `gemini.api_key` in `secrets.toml`. Set `powerful = "gemini/gemini-2.5-flash"` in `[groups]` to use.
 
 ### `[openai]`
 
-OpenAI API configuration. No fields — `base_url` is configured per-endpoint via `[endpoints.openai].url` (or custom endpoints). Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[groups]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
-
-### `[cache]`
-
-Prompt caching strategy and TTL. The `strategy` field is global-only. The `ttl` field is global-or-agent (overridable per-agent via `cache_ttl` in `[defaults.loop]` or `[agents.loop]`).
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `strategy` | string | `"auto"` | Cache strategy: `"auto"` (top-level, lets the API decide breakpoints) or `"explicit"` (manual breakpoints on system prompt and second-to-last message). |
-| `ttl` | string | `"1h"` | Anthropic prompt cache TTL. Must be `"5m"` (5 minutes) or `"1h"` (1 hour). Only applied to Anthropic API requests — other providers ignore it. Default `"1h"` maximises cache lifetime and is recommended for most deployments. Per-agent override via `cache_ttl` in `[defaults.loop]` or `[agents.loop]`. |
+No fields — `base_url` is configured per-endpoint via `[endpoints.openai].url` (or custom endpoints). Requires `openai.api_key` in `secrets.toml`. Set `powerful = "openai/gpt-4o"` in `[groups]` to use. The SDK provides built-in retries with exponential backoff on 429/5xx errors.
 
 ### `[[platforms]]`
 
@@ -474,7 +459,8 @@ enable_keepalive = true
 | `speed` | string | `""` | Speed mode: `"fast"` or empty |
 | `context` | int/string | `0` | Context window size in tokens (e.g. `262000` or `"262k"`) |
 | `enable_keepalive` | bool | `nil` | Enable keepalive pings (`nil` = auto-detect from developer) |
-| `prompt_cache_ttl` | string | `""` | Prompt cache TTL as Go duration (empty = auto-detect) |
+| `cache_ttl` | string | `""` | Cache TTL as Go duration. For Anthropic: `"5m"` or `"1h"` (sent as cache control TTL, also drives keepalive interval). For Gemini: any Go duration (context cache TTL, `"0"` disables). Empty = auto-detect from developer defaults. |
+| `cache_strategy` | string | `""` | Cache marker strategy (Anthropic only): `"auto"` (top-level, API decides breakpoints) or `"explicit"` (manual breakpoints on system prompt and second-to-last message). Empty = `"auto"`. |
 
 **Model defaults hierarchy:** Per-model settings (thinking, effort, speed) act as defaults for any session using that model. Session-level overrides via `/thinking`, `/effort`, `/speed` take precedence. Clearing a session override (e.g. `/effort none`) reverts to the model default.
 

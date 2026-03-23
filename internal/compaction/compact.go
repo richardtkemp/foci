@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/messages"
@@ -23,8 +24,7 @@ type Compactor struct {
 	maxTokens        int
 	minMessages      int
 	preserveMessages int                // preserve last N messages through compaction (0 disables)
-	ModelParamsFn    func(model string) (thinking, effort, speed string)  // per-model API params from [models.*] config
-	ModelMetaFn      func(model string) modelinfo.ModelMeta             // structural metadata from [models.*] config; nil = use registry
+	ModelDefaultsFn  func(model string) config.ModelDefaults // per-model defaults from [models.*] config
 	Scratchpad       *memory.Scratchpad         // nil disables scratchpad injection
 	TaskListStore    *memory.TaskListStore      // nil disables task list injection
 	AgentID          string                     // agent ID for per-agent store queries
@@ -325,11 +325,12 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		Content: provider.TextContent(summaryPrompt),
 	})
 
-	// Apply per-model params from [models.*] config.
-	var mdEffort, mdThinking string
-	if c.ModelParamsFn != nil {
-		mdThinking, mdEffort, _ = c.ModelParamsFn(model)
+	// Apply per-model defaults from [models.*] config.
+	var md config.ModelDefaults
+	if c.ModelDefaultsFn != nil {
+		md = c.ModelDefaultsFn(model)
 	}
+	mdThinking, mdEffort := md.Thinking, md.Effort
 
 	c.log.Debugf("summary request: model=%s max_tokens=%d messages=%d effort=%s thinking=%s", model, c.maxTokens, len(summaryMessages), mdEffort, mdThinking)
 	start := time.Now()

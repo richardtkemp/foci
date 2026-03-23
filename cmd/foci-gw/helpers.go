@@ -58,20 +58,25 @@ func resolveShowToolCalls(rc *config.ResolvedAgentConfig) string {
 	return string(config.ToolCallOff)
 }
 
-// modelParamsFn returns a function that looks up per-model API params
-// (thinking, effort, speed) from [models.*] config by matching the
-// developer/model_id string.
-func modelParamsFn(models map[string]config.ModelConfig) func(string) (string, string, string) {
+// modelDefaultsFn returns a function that looks up per-model defaults
+// from [models.*] config by matching the developer/model_id string.
+func modelDefaultsFn(models map[string]config.ModelConfig) func(string) config.ModelDefaults {
 	if len(models) == 0 {
 		return nil
 	}
-	return func(model string) (thinking, effort, speed string) {
+	return func(model string) config.ModelDefaults {
 		for _, mc := range models {
 			if mc.Model == model {
-				return string(mc.Thinking), mc.Effort, mc.Speed
+				return config.ModelDefaults{
+					Thinking:      string(mc.Thinking),
+					Effort:        mc.Effort,
+					Speed:         mc.Speed,
+					CacheStrategy: mc.CacheStrategy,
+					CacheTTL:      mc.CacheTTL,
+				}
 			}
 		}
-		return "", "", ""
+		return config.ModelDefaults{}
 	}
 }
 

@@ -56,7 +56,7 @@ func TestResolveModelKeepalive_AnthropicNoAutoDetect(t *testing.T) {
 
 func TestResolveModelKeepalive_ExplicitEnabled(t *testing.T) {
 	// Proves that explicit EnableKeepalive=true overrides auto-detect,
-	// using the default 5m TTL when no PromptCacheTTL is set.
+	// using the default 5m TTL when no CacheTTL is set.
 	boolTrue := true
 	resolved := &ResolvedModel{
 		Developer:       "anthropic",
@@ -88,13 +88,13 @@ func TestResolveModelKeepalive_ExplicitDisabled(t *testing.T) {
 }
 
 func TestResolveModelKeepalive_CustomTTL(t *testing.T) {
-	// Proves that an explicit PromptCacheTTL overrides the default TTL.
+	// Proves that an explicit CacheTTL overrides the default TTL.
 	boolTrue := true
 	resolved := &ResolvedModel{
 		Developer:       "openai",
 		ModelID:         "gpt-4o",
 		EnableKeepalive: &boolTrue,
-		PromptCacheTTL:  "10m",
+		CacheTTL:  "10m",
 	}
 	enabled, interval := ResolveModelKeepalive(resolved)
 	if !enabled {
@@ -107,13 +107,13 @@ func TestResolveModelKeepalive_CustomTTL(t *testing.T) {
 }
 
 func TestResolveModelKeepalive_InvalidTTL(t *testing.T) {
-	// Proves that an invalid PromptCacheTTL returns disabled.
+	// Proves that an invalid CacheTTL returns disabled.
 	boolTrue := true
 	resolved := &ResolvedModel{
 		Developer:       "openai",
 		ModelID:         "gpt-4o",
 		EnableKeepalive: &boolTrue,
-		PromptCacheTTL:  "invalid",
+		CacheTTL:  "invalid",
 	}
 	enabled, _ := ResolveModelKeepalive(resolved)
 	if enabled {
@@ -122,13 +122,13 @@ func TestResolveModelKeepalive_InvalidTTL(t *testing.T) {
 }
 
 func TestResolveModelKeepalive_ZeroTTL(t *testing.T) {
-	// Proves that a zero-value PromptCacheTTL returns disabled.
+	// Proves that a zero-value CacheTTL returns disabled.
 	boolTrue := true
 	resolved := &ResolvedModel{
 		Developer:       "openai",
 		ModelID:         "gpt-4o",
 		EnableKeepalive: &boolTrue,
-		PromptCacheTTL:  "0s",
+		CacheTTL:  "0s",
 	}
 	enabled, _ := ResolveModelKeepalive(resolved)
 	if enabled {

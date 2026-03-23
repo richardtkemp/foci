@@ -76,7 +76,7 @@ type Agent struct {
 
 	EnvironmentBlock              string                       // pre-built environment context block (prepended first in system prompt)
 	ExtraSystemBlocks             []provider.SystemBlock       // additional system blocks (e.g. skills list), injected before cache marker
-	CacheStrategy                 string                       // "auto" (top-level) or "explicit" (manual breakpoints)
+	CacheStrategy                 string                       // "auto" (top-level) or "explicit" (manual breakpoints) — from primary model config
 	CacheBustDetect               bool                         // detect cache busts (cache_read drop >50%)
 	CacheBustIdleThreshold        time.Duration                // suppress cache bust alert if session idle > this (default 10m)
 	CacheBustAlert                HookList[CacheBustFunc]      // callbacks for cache bust alerts
@@ -128,10 +128,8 @@ type Agent struct {
 	FirstRunMessage               atomic.Value                 // string; prepended as separate content block on first HandleMessage, then cleared
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
 	ShowToolCalls                 string                       // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
-	CacheTTL                      string                       // Anthropic prompt cache TTL: "5m" or "1h" (set on MessageRequest for translate layer)
 	Streaming                     bool                         // use streaming API when provider supports it
-	ModelParamsFn                 func(model string) (thinking, effort, speed string) // returns per-model API params from [models.*] config; nil = no model defaults
-	ModelMetaFn                   func(model string) modelinfo.ModelMeta             // returns structural metadata from [models.*] config; nil = use registry defaults
+	ModelDefaultsFn               func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	DefaultSessionKey             func() string                // returns the main/default session key; reminders only inject into this session
@@ -411,16 +409,17 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 
 	// Apply per-model params from [models.*] config as fallback
 	// when no session-level override is set.
-	if a.ModelParamsFn != nil {
-		mdThinking, mdEffort, mdSpeed := a.ModelParamsFn(turnModel)
+	var md config.ModelDefaults
+	if a.ModelDefaultsFn != nil {
+		md = a.ModelDefaultsFn(turnModel)
 		if turnEffort == "" {
-			turnEffort = mdEffort
+			turnEffort = md.Effort
 		}
 		if turnThinking == "" {
-			turnThinking = mdThinking
+			turnThinking = md.Thinking
 		}
 		if turnSpeed == "" {
-			turnSpeed = mdSpeed
+			turnSpeed = md.Speed
 		}
 	}
 
@@ -525,7 +524,7 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 			Messages:      messages,
 			Tools:         toolDefs,
 			CacheStrategy: a.CacheStrategy,
-			CacheTTL:      a.CacheTTL,
+			CacheTTL:      md.CacheTTL,
 		}
 		// Set effort/thinking unconditionally — each provider's SendMessage
 		// handles or ignores unsupported fields. The error-and-retry fallback

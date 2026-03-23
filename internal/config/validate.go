@@ -138,18 +138,11 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("[logging] log_file_mode = %q: %w", cfg.Logging.LogFileMode, err)
 	}
 
-	// Cache
-	validStrategies := map[string]bool{"auto": true, "explicit": true}
-	if !validStrategies[cfg.Cache.Strategy] {
-		return fmt.Errorf("[cache] strategy = %q: must be \"auto\" or \"explicit\"", cfg.Cache.Strategy)
-	}
-	validCacheTTLs := map[string]bool{"5m": true, "1h": true}
-	if !validCacheTTLs[cfg.Cache.TTL] {
-		return fmt.Errorf("[cache] ttl = %q: must be \"5m\" or \"1h\"", cfg.Cache.TTL)
-	}
-	for _, a := range cfg.Agents {
-		if a.Loop.CacheTTL != nil && !validCacheTTLs[*a.Loop.CacheTTL] {
-			return fmt.Errorf("agent %q cache_ttl = %q: must be \"5m\" or \"1h\"", a.ID, *a.Loop.CacheTTL)
+	// Model cache settings
+	validStrategies := map[string]bool{"": true, "auto": true, "explicit": true}
+	for name, mc := range cfg.Models {
+		if !validStrategies[mc.CacheStrategy] {
+			return fmt.Errorf("[models.%s] cache_strategy = %q: must be \"auto\" or \"explicit\"", name, mc.CacheStrategy)
 		}
 	}
 
@@ -187,13 +180,6 @@ func validate(cfg *Config) error {
 			if err := validateIntRange(*a.Mana.RestoreThreshold, 0, 100, fmt.Sprintf("agent %q [mana] restore_threshold", a.ID)); err != nil {
 				return err
 			}
-		}
-	}
-
-	// Special case: gemini cache_ttl allows "0" to disable
-	if cfg.Gemini.CacheTTL != "0" {
-		if _, err := time.ParseDuration(cfg.Gemini.CacheTTL); err != nil {
-			return fmt.Errorf("[gemini] cache_ttl = %q: %w", cfg.Gemini.CacheTTL, err)
 		}
 	}
 
