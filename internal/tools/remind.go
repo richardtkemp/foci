@@ -12,7 +12,8 @@ import (
 
 // ScheduleWakeFn is a callback to schedule a wake event.
 // The id is the DB row ID for cleanup when the wake fires.
-type ScheduleWakeFn func(id int64, delay time.Duration, message string) error
+// sessionKey is the originating session so the wake fires on the correct platform.
+type ScheduleWakeFn func(id int64, delay time.Duration, message, sessionKey string) error
 
 func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWakeFn) *Tool {
 	return &Tool{
@@ -78,12 +79,12 @@ func remindWake(sessionKey string, rs *memory.ReminderStore, agentID, text, when
 		return ToolResult{}, err
 	}
 
-	id, err := rs.AddWake(agentID, text, when)
+	id, err := rs.AddWake(agentID, sessionKey, text, when)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("store wake: %w", err)
 	}
 
-	if err := wakeFn(id, dur, text); err != nil {
+	if err := wakeFn(id, dur, text, sessionKey); err != nil {
 		_ = rs.Dismiss(id) // clean up DB row on schedule failure
 		return ToolResult{}, fmt.Errorf("schedule wake: %w", err)
 	}

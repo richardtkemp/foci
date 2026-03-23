@@ -209,6 +209,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			Agent       string `json:"agent"`
 			Text        string `json:"text"`
 			Model       string `json:"model"`
+			Session     string `json:"session"`
 			NoCompact   bool   `json:"no_compact"`
 			NoResetHook bool   `json:"no_reset_hook"`
 			IfActive    string `json:"if_active"`
@@ -239,6 +240,9 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		parentKey := inst.defaultSessionKey()
+		if req.Session != "" {
+			parentKey = session.NamedIndependentSessionKey(inst.id, req.Session)
+		}
 		if parentKey == "" {
 			log.Warnf("wake", "no default session for agent %q, skipping", inst.id)
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
@@ -403,6 +407,9 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 		}
 
 		sessionKey := inst.defaultSessionKey()
+		if s := q.Get("session"); s != "" {
+			sessionKey = session.NamedIndependentSessionKey(inst.id, s)
+		}
 		if sessionKey == "" {
 			log.Warnf("http", "POST /webhook: no default session for agent %q", inst.id)
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)

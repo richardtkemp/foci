@@ -197,10 +197,10 @@ func TestReminderMultiple(t *testing.T) {
 }
 
 func TestAddWakeAndPendingWakes(t *testing.T) {
-	// Verifies that AddWake stores a wake reminder and PendingWakes retrieves it with the correct ID and text.
+	// Verifies that AddWake stores a wake reminder and PendingWakes retrieves it with the correct ID, text, and session key.
 	rs := testReminderStore(t)
 
-	id, err := rs.AddWake("test", "check inbox", "30m")
+	id, err := rs.AddWake("test", "test/c1/1", "check inbox", "30m")
 	if err != nil {
 		t.Fatalf("AddWake: %v", err)
 	}
@@ -221,6 +221,27 @@ func TestAddWakeAndPendingWakes(t *testing.T) {
 	if wakes[0].Text != "check inbox" {
 		t.Errorf("Text = %q, want %q", wakes[0].Text, "check inbox")
 	}
+	if wakes[0].SessionKey != "test/c1/1" {
+		t.Errorf("SessionKey = %q, want %q", wakes[0].SessionKey, "test/c1/1")
+	}
+}
+
+func TestAddWakeSessionKeyEmpty(t *testing.T) {
+	// Verifies that legacy wakes without a session key return empty string (backward compat).
+	rs := testReminderStore(t)
+
+	_, err := rs.AddWake("test", "", "no session", "5m")
+	if err != nil {
+		t.Fatalf("AddWake: %v", err)
+	}
+
+	wakes, _ := rs.PendingWakes("test")
+	if len(wakes) != 1 {
+		t.Fatalf("expected 1 wake, got %d", len(wakes))
+	}
+	if wakes[0].SessionKey != "" {
+		t.Errorf("SessionKey = %q, want empty", wakes[0].SessionKey)
+	}
 }
 
 func TestDueSkipsWakes(t *testing.T) {
@@ -232,7 +253,7 @@ func TestDueSkipsWakes(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 	// Add a wake reminder (due now)
-	if _, err := rs.AddWake("test", "active", "now"); err != nil {
+	if _, err := rs.AddWake("test", "", "active", "now"); err != nil {
 		t.Fatalf("AddWake: %v", err)
 	}
 
@@ -254,7 +275,7 @@ func TestDismissAllSkipsWakes(t *testing.T) {
 
 	// Add a passive reminder (due now) and a wake reminder (due now)
 	rs.Add("test", "passive", "now")
-	wakeID, _ := rs.AddWake("test", "active", "now")
+	wakeID, _ := rs.AddWake("test", "", "active", "now")
 
 	if err := rs.DismissAll("test"); err != nil {
 		t.Fatalf("DismissAll: %v", err)
@@ -280,7 +301,7 @@ func TestDismissWorksForWakes(t *testing.T) {
 	// Verifies that Dismiss can remove a wake reminder by ID, so it no longer appears in PendingWakes.
 	rs := testReminderStore(t)
 
-	id, _ := rs.AddWake("test", "fire me", "now")
+	id, _ := rs.AddWake("test", "", "fire me", "now")
 
 	if err := rs.Dismiss(id); err != nil {
 		t.Fatalf("Dismiss wake: %v", err)
