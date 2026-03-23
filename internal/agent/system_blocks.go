@@ -7,6 +7,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // InvalidateSystemCaches clears per-session system prompt caches so the
@@ -22,13 +23,11 @@ func (a *Agent) InvalidateSystemCaches() {
 }
 
 // collectReminders returns due reminders formatted for injection into the user message.
-// Reminders only surface on the default/main session to avoid leaking into branches.
+// Reminders only surface on root chat sessions to avoid leaking into branches.
 // Returns empty string if no reminders are due or the store is nil.
 func (a *Agent) collectReminders(sessionKey string) string {
-	if a.DefaultSessionKey != nil {
-		if dsk := a.DefaultSessionKey(); dsk != "" && dsk != sessionKey {
-			return ""
-		}
+	if sk, err := session.ParseSessionKey(sessionKey); err == nil && !sk.IsRoot() {
+		return ""
 	}
 	if a.Reminders == nil {
 		return ""

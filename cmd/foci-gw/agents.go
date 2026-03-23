@@ -35,7 +35,6 @@ type agentInstance struct {
 	cc                command.CommandContext
 	registry          *tools.Registry
 	bootstrap         *workspace.Bootstrap
-	defaultSessionKey func() string // resolves current default session key
 	agentCfg          config.AgentConfig
 	resolved          *config.ResolvedAgentConfig // pre-merged agent+global config
 	promptSearchDirs  []string         // directories to search for prompt files
@@ -126,18 +125,6 @@ func setupAgent(p setupParams) *agentInstance {
 		filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts"),
 	}
 
-	// Default session key resolver — returns the session key for the agent's default chat.
-	// Before any platform message arrives, this returns "" (no default set).
-	// After the first message, it returns {id}/c{chatID}/{versionTS}.
-	// The resolver is set to use the primary connection's DefaultSessionKey once wired.
-	var defaultSessionKeyFn func() string
-	defaultSessionKey := func() string {
-		if defaultSessionKeyFn != nil {
-			return defaultSessionKeyFn()
-		}
-		return ""
-	}
-
 	connMgr := p.connMgr
 
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
@@ -194,7 +181,6 @@ func setupAgent(p setupParams) *agentInstance {
 		TaskListStore:                  p.taskListStore,
 		TodoStore:                      p.todoStore,
 		ScratchpadStore:                p.scratchpadStore,
-		DefaultSessionKey:              defaultSessionKey,
 		AgentID:                        acfg.ID,
 		Model:                          resolvedModel,
 		Format:                         defaultFormat,
@@ -248,7 +234,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Post-creation agent configuration
 	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-	setupNudgeSystem(ag, acfg, p.resolved.Nudge, defaultSessionKey, p.sessions, registry, bs.skillRegistry, wsFileMode)
+	setupNudgeSystem(ag, acfg, p.resolved.Nudge, connMgr, p.sessions, registry, bs.skillRegistry, wsFileMode)
 	setupRedaction(ag, p, agentStore)
 	setupWarningQueue(ag, p.resolved, p.cfg)
 	setupManaWatcher(ag, p)
@@ -314,7 +300,6 @@ func setupAgent(p setupParams) *agentInstance {
 	// Platform connections
 	if p.plat != nil {
 		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, ttsRepls, promptSearchDirs, coreResult.tmuxMigrateKey)
-		defaultSessionKeyFn = platResult.defaultSessionKeyFn
 		configureFacet = platResult.configureFacetFn
 		displayDefaultsFn = platResult.displayDefaultsFn
 	}
@@ -336,7 +321,6 @@ func setupAgent(p setupParams) *agentInstance {
 		cc:                cc,
 		registry:          registry,
 		bootstrap:         bs.bootstrap,
-		defaultSessionKey: defaultSessionKey,
 		agentCfg:          acfg,
 		resolved:          p.resolved,
 		promptSearchDirs:  promptSearchDirs,

@@ -257,7 +257,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, defaultSessionKey func() string, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, connMgr platform.ConnectionManager, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
 	nudgeEnabled := nc.NudgeEnable
 	nudgeDefaultEnabled := nc.NudgeDefaultEnable
 	braindeadThreshold := nc.NudgeDefaultBraindeadThreshold
@@ -360,7 +360,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		if needed {
 			go func() {
 				ctx := context.Background()
-				parentKey := defaultSessionKey()
+				parentKey := mostRecentSessionKey(ag, connMgr, acfg.ID)
 				if parentKey == "" {
 					log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
 					return
@@ -472,9 +472,8 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 
 // platformConnectionResult holds the callbacks wired by platform connection setup.
 type platformConnectionResult struct {
-	defaultSessionKeyFn func() string
-	configureFacetFn    func(platform.Connection)
-	displayDefaultsFn   func() platform.DisplaySettings
+	configureFacetFn  func(platform.Connection)
+	displayDefaultsFn func() platform.DisplaySettings
 }
 
 // setupPlatformConnections creates and registers platform connections for the agent.
@@ -520,31 +519,12 @@ func setupPlatformConnections(
 		},
 		Resolved: p.resolved,
 	})
-	var sessionKeyFns []func() string
 	for _, r := range results {
-		if r.DefaultSessionKeyFn != nil {
-			sessionKeyFns = append(sessionKeyFns, r.DefaultSessionKeyFn)
-		}
 		if r.ConfigureFacetConn != nil {
 			result.configureFacetFn = r.ConfigureFacetConn
 		}
 		if r.DisplayDefaultsFn != nil {
 			result.displayDefaultsFn = r.DisplayDefaultsFn
-		}
-	}
-	// Each platform's DefaultSessionKeyFn is scoped to its own PlatformName,
-	// so we try all of them and return the first match.
-	switch len(sessionKeyFns) {
-	case 1:
-		result.defaultSessionKeyFn = sessionKeyFns[0]
-	default:
-		result.defaultSessionKeyFn = func() string {
-			for _, fn := range sessionKeyFns {
-				if sk := fn(); sk != "" {
-					return sk
-				}
-			}
-			return ""
 		}
 	}
 

@@ -298,7 +298,7 @@ Subcommands:
 		}
 
 		// Restore per-session state and seed session meta for all connected sessions.
-		// Must happen AFTER setupAgent returns so the deferred defaultSessionKeyFn wiring has executed.
+		// Must happen AFTER setupAgent returns so platform connections are wired.
 		restored := map[string]bool{}
 		for _, conn := range connMgr.AllForAgent(inst.id) {
 			sk := conn.DefaultSessionKey()
@@ -308,13 +308,6 @@ Subcommands:
 			inst.ag.RestoreSessionOverrides(sk)
 			inst.ag.SeedSessionMeta(sk)
 			restored[sk] = true
-		}
-		// Fall back to default session key if no connections had sessions yet.
-		if len(restored) == 0 {
-			if sk := inst.defaultSessionKey(); sk != "" {
-				inst.ag.RestoreSessionOverrides(sk)
-				inst.ag.SeedSessionMeta(sk)
-			}
 		}
 
 		setupPeriodic(inst, acfg, periodicParams{
