@@ -86,7 +86,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		sessionKey := inst.defaultSessionKey()
+		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
 			// HTTP named sessions are deterministic — same name yields same session
 			sessionKey = session.NamedIndependentSessionKey(inst.id, req.Session)
@@ -150,7 +150,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
-		cmdReq := command.RequestFromText("/status", inst.defaultSessionKey(), "", 0)
+		cmdReq := command.RequestFromText("/status", mostRecentSessionKey(inst.ag, d.connMgr, inst.id), "", 0)
 		result, ok, _ := inst.cmds.Dispatch(context.Background(), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "status command not available", http.StatusInternalServerError)
@@ -184,7 +184,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
-		cmdReq := command.RequestFromText(req.Command, inst.defaultSessionKey(), "", 0)
+		cmdReq := command.RequestFromText(req.Command, mostRecentSessionKey(inst.ag, d.connMgr, inst.id), "", 0)
 		result, ok, _ := inst.cmds.Dispatch(context.Background(), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
@@ -239,7 +239,7 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			req.Text = "[WAKE]"
 		}
 
-		parentKey := inst.defaultSessionKey()
+		parentKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
 			parentKey = session.NamedIndependentSessionKey(inst.id, req.Session)
 		}
@@ -406,7 +406,7 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			combined = promptText
 		}
 
-		sessionKey := inst.defaultSessionKey()
+		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if s := q.Get("session"); s != "" {
 			sessionKey = session.NamedIndependentSessionKey(inst.id, s)
 		}

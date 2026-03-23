@@ -184,7 +184,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			inst.ag.DrainRateLimitQueue(p.ctx)
 		},
 		// Session-aware availability checking
-		SessionKeyFunc: inst.defaultSessionKey,
+		SessionKeyFunc: func() string { return mostRecentSessionKey(inst.ag, p.connMgr, agentID) },
 		CanFireFunc: func(ctx context.Context, sessionKey string) (bool, string) {
 			return inst.ag.CanFireBackgroundOperation(ctx, sessionKey)
 		},

@@ -17,6 +17,9 @@ import (
 // mostRecentSessionKey returns the session key with the most recent user activity
 // across all platform connections for the agent. Returns "" if no active sessions.
 func mostRecentSessionKey(ag *agent.Agent, connMgr platform.ConnectionManager, agentID string) string {
+	if connMgr == nil {
+		return ""
+	}
 	conns := connMgr.AllForAgent(agentID)
 	var bestKey string
 	var bestTime time.Time
@@ -26,7 +29,7 @@ func mostRecentSessionKey(ag *agent.Agent, connMgr platform.ConnectionManager, a
 			continue
 		}
 		t := ag.LastUserMessageTime(sk)
-		if t.After(bestTime) {
+		if bestKey == "" || t.After(bestTime) {
 			bestKey = sk
 			bestTime = t
 		}

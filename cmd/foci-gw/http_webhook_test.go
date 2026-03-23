@@ -14,6 +14,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -76,12 +77,18 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhook
 		sk = "test-agent/i0/0"
 	}
 
+	// Provide a stub connMgr so mostRecentSessionKey can resolve the session.
+	// "EMPTY" is a sentinel: pass it to get no session (tests the error path).
+	var cm platform.ConnectionManager = stubConnMgr{}
+	if sk != "EMPTY" {
+		cm = stubConnMgr{agentID: "test-agent", sessionKey: sk}
+	}
+
 	inst := &agentInstance{
-		id:                "test-agent",
-		ag:                ag,
-		defaultSessionKey: func() string { return sk },
-		promptSearchDirs:  []string{promptDir},
-		webhooks:          webhooks,
+		id:               "test-agent",
+		ag:               ag,
+		promptSearchDirs: []string{promptDir},
+		webhooks:         webhooks,
 	}
 
 	d := httpHandlerDeps{
@@ -89,6 +96,7 @@ func webhookTestSetup(t *testing.T, promptDir string, sessionKey string, webhook
 		agentOrder: []string{"test-agent"},
 		cfg:        &config.Config{},
 		sessions:   sessions,
+		connMgr:    cm,
 		ctx:        context.Background(),
 	}
 	return d, mock
@@ -298,8 +306,6 @@ func TestWebhook_NoSession(t *testing.T) {
 
 	webhooks := map[string]string{"test": "test.md"}
 	d, _ := webhookTestSetup(t, dir, "EMPTY", webhooks)
-	// Override to return empty session key.
-	d.agents["test-agent"].defaultSessionKey = func() string { return "" }
 
 	mux := newWebhookMux(d)
 
