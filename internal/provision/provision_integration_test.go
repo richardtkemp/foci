@@ -165,7 +165,7 @@ func TestSeedDefaults(t *testing.T) {
 	os.WriteFile(filepath.Join(src, "crontab.template"), []byte("template"), 0644)
 
 	dst := filepath.Join(t.TempDir(), "target")
-	if err := SeedDefaults(os.DirFS(src), dst); err != nil {
+	if err := SeedDefaults(os.DirFS(src), dst, 0640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,7 +180,7 @@ func TestSeedDefaults(t *testing.T) {
 
 	// Run again — existing files should not be overwritten
 	os.WriteFile(filepath.Join(dst, "crontab.template"), []byte("edited"), 0644)
-	if err := SeedDefaults(os.DirFS(src), dst); err != nil {
+	if err := SeedDefaults(os.DirFS(src), dst, 0640); err != nil {
 		t.Fatal(err)
 	}
 	data, _ = os.ReadFile(filepath.Join(dst, "crontab.template"))
@@ -365,7 +365,7 @@ func TestSeedCharacterFiles(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "new-agent")
 	os.MkdirAll(workspace, 0755)
 
-	if err := SeedCharacterFiles(sharedDir, workspace); err != nil {
+	if err := SeedCharacterFiles(sharedDir, workspace, 0640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -383,7 +383,7 @@ func TestSeedCharacterFiles(t *testing.T) {
 
 	// Existing files should not be overwritten
 	os.WriteFile(filepath.Join(workspace, "character", "SOUL.md"), []byte("custom"), 0644)
-	if err := SeedCharacterFiles(sharedDir, workspace); err != nil {
+	if err := SeedCharacterFiles(sharedDir, workspace, 0640); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(workspace, "character", "SOUL.md"))
@@ -397,7 +397,7 @@ func TestSeedCharacterFilesNoShared(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "agent")
 	os.MkdirAll(workspace, 0755)
 
-	err := SeedCharacterFiles("/nonexistent/shared", workspace)
+	err := SeedCharacterFiles("/nonexistent/shared", workspace, 0640)
 	if err != nil {
 		t.Errorf("expected nil error, got: %v", err)
 	}

@@ -116,7 +116,7 @@ func TestSpawnRawToolAllowlist(t *testing.T) {
 		})
 	}
 
-	defs, tools := spawnIsolatedToolSet(reg, spawnRawBlacklist, "/tmp/test-sandbox")
+	defs, tools := spawnIsolatedToolSet(reg, spawnRawBlacklist, "/tmp/test-sandbox", 0640)
 
 	// Build a set of tool names present in the API schema (defs).
 	defNames := make(map[string]bool, len(defs))

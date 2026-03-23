@@ -69,7 +69,7 @@ func TestSaveAndLoadRules(t *testing.T) {
 		},
 	}
 
-	if err := SaveRules(path, original); err != nil {
+	if err := SaveRules(path, original, 0640); err != nil {
 		t.Fatalf("SaveRules: %v", err)
 	}
 
@@ -138,7 +138,7 @@ func TestSaveRulesCreatesDir(t *testing.T) {
 	path := filepath.Join(dir, "sub", "deep", "nudge-rules.json")
 
 	rs := &RuleSet{ContentHash: "test", Rules: nil}
-	if err := SaveRules(path, rs); err != nil {
+	if err := SaveRules(path, rs, 0640); err != nil {
 		t.Fatalf("SaveRules: %v", err)
 	}
 
