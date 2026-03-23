@@ -949,3 +949,159 @@ func TestMetadata_IndependentOfSessionIndex(t *testing.T) {
 		t.Errorf("session upsert affected system state: got %q", v)
 	}
 }
+
+// ========== Memory formation tests ==========
+
+func TestStampMemoryFormation(t *testing.T) {
+	// Proves that StampMemoryFormation records a timestamp for a session, and that
+	// SessionsNeedingFormation no longer returns it when activity hasn't changed
+	// (i.e. last_memory_formation >= last_activity_at).
+	idx := tempIndex(t)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "bot/c100/1000000000",
+		FilePath:       "/data/sessions/bot/c100/1000000000.jsonl",
+		CreatedAt:      now.Add(-time.Hour),
+		LastActivityAt: now,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+
+	// Before stamping: session has NULL last_memory_formation, so it needs formation.
+	keys, err := idx.SessionsNeedingFormation("bot")
+	if err != nil {
+		t.Fatalf("SessionsNeedingFormation: %v", err)
+	}
+	if len(keys) != 1 || keys[0] != "bot/c100/1000000000" {
+		t.Fatalf("expected [bot/c100/1000000000] before stamp, got %v", keys)
+	}
+
+	// Stamp memory formation at or after the last activity time.
+	idx.StampMemoryFormation("bot/c100/1000000000", now)
+
+	// After stamping: last_memory_formation >= last_activity_at, so not returned.
+	keys, err = idx.SessionsNeedingFormation("bot")
+	if err != nil {
+		t.Fatalf("SessionsNeedingFormation after stamp: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected no sessions needing formation after stamp, got %v", keys)
+	}
+}
+
+func TestSessionsNeedingFormation(t *testing.T) {
+	// Proves that SessionsNeedingFormation correctly filters sessions based on
+	// activity vs formation timestamps, session type, status, and agent scoping.
+	idx := tempIndex(t)
+
+	base := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
+
+	// Case 1: Activity newer than formation — should be included.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent1/c1/1000000000",
+		FilePath:       "f1",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	idx.StampMemoryFormation("agent1/c1/1000000000", base.Add(-time.Hour))
+	idx.UpdateActivity("agent1/c1/1000000000", base)
+
+	// Case 2: Activity older than formation — should be excluded.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent1/c2/1000000000",
+		FilePath:       "f2",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	idx.StampMemoryFormation("agent1/c2/1000000000", base.Add(time.Hour))
+
+	// Case 3: NULL formation (never formed) — should be included.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent1/c3/1000000000",
+		FilePath:       "f3",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	// No StampMemoryFormation call — last_memory_formation stays NULL.
+
+	// Case 4: Non-chat session (branch) — should be excluded.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent1/c1/1000000000/b2000000000",
+		FilePath:       "f4",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeBranch,
+		Status:         SessionStatusActive,
+	})
+	// No stamp — would qualify if it were a chat session.
+
+	// Case 5: Non-active session (compacted chat) — should be excluded.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent1/c5/1000000000",
+		FilePath:       "f5",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusCompacted,
+	})
+	// No stamp — would qualify if it were active.
+
+	// Case 6: Different agent — should be excluded.
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "agent2/c6/1000000000",
+		FilePath:       "f6",
+		CreatedAt:      base,
+		LastActivityAt: base,
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+	// No stamp — would qualify if it belonged to agent1.
+
+	keys, err := idx.SessionsNeedingFormation("agent1")
+	if err != nil {
+		t.Fatalf("SessionsNeedingFormation: %v", err)
+	}
+
+	// Build a set for easy lookup.
+	got := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		got[k] = true
+	}
+
+	// Case 1: activity > formation → included.
+	if !got["agent1/c1/1000000000"] {
+		t.Errorf("case 1 (activity newer than formation): expected included, missing from %v", keys)
+	}
+	// Case 2: activity < formation → excluded.
+	if got["agent1/c2/1000000000"] {
+		t.Errorf("case 2 (activity older than formation): expected excluded, present in %v", keys)
+	}
+	// Case 3: NULL formation → included.
+	if !got["agent1/c3/1000000000"] {
+		t.Errorf("case 3 (NULL formation): expected included, missing from %v", keys)
+	}
+	// Case 4: non-chat session → excluded.
+	if got["agent1/c1/1000000000/b2000000000"] {
+		t.Errorf("case 4 (branch session): expected excluded, present in %v", keys)
+	}
+	// Case 5: non-active session → excluded.
+	if got["agent1/c5/1000000000"] {
+		t.Errorf("case 5 (compacted session): expected excluded, present in %v", keys)
+	}
+	// Case 6: different agent → excluded.
+	if got["agent2/c6/1000000000"] {
+		t.Errorf("case 6 (different agent): expected excluded, present in %v", keys)
+	}
+
+	// Exactly 2 sessions should be returned.
+	if len(keys) != 2 {
+		t.Errorf("expected exactly 2 sessions needing formation, got %d: %v", len(keys), keys)
+	}
+}
