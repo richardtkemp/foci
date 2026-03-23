@@ -133,7 +133,7 @@ func TestSeedDefaultsWalkError(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(subdir, 0755) })
 
 	dst := filepath.Join(t.TempDir(), "target")
-	err := SeedDefaults(os.DirFS(src), dst)
+	err := SeedDefaults(os.DirFS(src), dst, 0640)
 	if err == nil {
 		t.Error("expected error when source subdir is unreadable")
 	}
@@ -151,7 +151,7 @@ func TestSeedDefaultsCopyError(t *testing.T) {
 	os.Chmod(dst, 0555)
 	t.Cleanup(func() { os.Chmod(dst, 0755) })
 
-	err := SeedDefaults(os.DirFS(src), dst)
+	err := SeedDefaults(os.DirFS(src), dst, 0640)
 	if err == nil {
 		t.Error("expected error when target dir is read-only")
 	}
@@ -168,7 +168,7 @@ func TestSeedDefaultsEmbedFS(t *testing.T) {
 	fsys := os.DirFS(srcDir)
 
 	dst := filepath.Join(t.TempDir(), "target")
-	if err := SeedDefaults(fsys, dst); err != nil {
+	if err := SeedDefaults(fsys, dst, 0640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,7 +179,7 @@ func TestSeedDefaultsEmbedFS(t *testing.T) {
 
 	// Modify a file and re-seed — should not overwrite
 	os.WriteFile(filepath.Join(dst, "crontab.template"), []byte("user-edited"), 0644)
-	if err := SeedDefaults(fsys, dst); err != nil {
+	if err := SeedDefaults(fsys, dst, 0640); err != nil {
 		t.Fatal(err)
 	}
 	data, _ = os.ReadFile(filepath.Join(dst, "crontab.template"))

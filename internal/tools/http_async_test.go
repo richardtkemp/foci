@@ -22,7 +22,7 @@ func TestHTTPRequestAutoBackgroundFast(t *testing.T) {
 	var called bool
 	tool := NewHTTPRequestTool(nil, nil, "", 5, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		called = true
-	}))
+	}), 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url": srv.URL,
@@ -52,7 +52,7 @@ func TestHTTPRequestAutoBackgroundSlow(t *testing.T) {
 	completeCh := make(chan string, 1)
 	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
-	}))
+	}), 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
@@ -98,7 +98,7 @@ func TestHTTPRequestAutoBackgroundSessionKey(t *testing.T) {
 	ch := make(chan result, 1)
 	tool := NewHTTPRequestTool(nil, nil, "", 1, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		ch <- result{sk, msg}
-	}))
+	}), 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":     srv.URL,
@@ -138,7 +138,7 @@ func TestHTTPRequestExplicitBackground(t *testing.T) {
 	completeCh := make(chan string, 1)
 	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, NewAsyncNotifier(func(sk, msg, replyTo, trigger string) {
 		completeCh <- msg
-	}))
+	}), 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":        srv.URL,
@@ -174,7 +174,7 @@ func TestHTTPRequestBackgroundNoNotifier(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil)
+	tool := NewHTTPRequestTool(nil, nil, "", 0, 50*1024*1024, nil, 0640)
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"url":        srv.URL,

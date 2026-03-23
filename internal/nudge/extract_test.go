@@ -156,7 +156,7 @@ func TestNeedsExtraction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"SOUL.md"})
+	e := NewExtractor(dir, []string{"SOUL.md"}, 0640)
 
 	// First time: no rules file → needs extraction
 	hash1, needed := e.NeedsExtraction()
@@ -169,7 +169,7 @@ func TestNeedsExtraction(t *testing.T) {
 
 	// Save rules with the current hash → should NOT need extraction
 	rs := &RuleSet{ContentHash: hash1, Rules: nil}
-	if err := SaveRules(RulesPath(dir), rs); err != nil {
+	if err := SaveRules(RulesPath(dir), rs, 0640); err != nil {
 		t.Fatal(err)
 	}
 	_, needed = e.NeedsExtraction()
@@ -195,7 +195,7 @@ func TestNeedsExtractionNoFiles(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	e := NewExtractor(dir, []string{"NONEXISTENT.md"})
+	e := NewExtractor(dir, []string{"NONEXISTENT.md"}, 0640)
 
 	_, needed := e.NeedsExtraction()
 	if needed {
@@ -222,7 +222,7 @@ func TestExtractEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := NewExtractor(dir, []string{"SOUL.md"})
+	e := NewExtractor(dir, []string{"SOUL.md"}, 0640)
 	handler := &mockHandler{
 		response: `[{"text": "Verify first", "source_file": "SOUL.md", "source_text": "Always verify", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
 	}

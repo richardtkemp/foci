@@ -13,7 +13,7 @@ func TestTemplateSoulFile(t *testing.T) {
 	soulPath := filepath.Join(tmpDir, "SOUL.md")
 	os.WriteFile(soulPath, []byte("- **Name:** <!-- your name -->\n"), 0644)
 
-	if err := templateSoulFile(soulPath, "Greek Tutor"); err != nil {
+	if err := templateSoulFile(soulPath, "Greek Tutor", 0640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -25,7 +25,7 @@ func TestTemplateSoulFile(t *testing.T) {
 
 func TestTemplateSoulFileMissing(t *testing.T) {
 	// Verifies templateSoulFile silently skips missing files.
-	if err := templateSoulFile(filepath.Join(t.TempDir(), "nope.md"), "Name"); err != nil {
+	if err := templateSoulFile(filepath.Join(t.TempDir(), "nope.md"), "Name", 0640); err != nil {
 		t.Errorf("expected no error for missing file, got: %v", err)
 	}
 }
@@ -37,7 +37,7 @@ func TestTemplateSoulFileEmpty(t *testing.T) {
 	os.WriteFile(soulPath, []byte("- **Name:** <!-- your name -->\n"), 0644)
 
 	// Empty display name should not modify
-	if err := templateSoulFile(soulPath, ""); err != nil {
+	if err := templateSoulFile(soulPath, "", 0640); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(soulPath)
@@ -54,7 +54,7 @@ func TestCopyDir(t *testing.T) {
 	os.MkdirAll(filepath.Join(src, "subdir"), 0755) // should be skipped
 
 	dst := filepath.Join(t.TempDir(), "target")
-	if err := copyDir(src, dst); err != nil {
+	if err := copyDir(src, dst, 0640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestCopyDir(t *testing.T) {
 
 func TestCopyDirReadError(t *testing.T) {
 	// Tests copyDir when source doesn't exist.
-	err := copyDir("/nonexistent/source", filepath.Join(t.TempDir(), "dst"))
+	err := copyDir("/nonexistent/source", filepath.Join(t.TempDir(), "dst"), 0640)
 	if err == nil {
 		t.Error("expected error when source doesn't exist")
 	}
@@ -83,7 +83,7 @@ func TestCopyDirMkdirError(t *testing.T) {
 
 	// Try to create destination under a file (will fail)
 	dst := filepath.Join(src, "file.txt", "subdir")
-	err := copyDir(src, dst)
+	err := copyDir(src, dst, 0640)
 	if err == nil {
 		t.Error("expected error when creating destination fails")
 	}
@@ -99,7 +99,7 @@ func TestCopyDirCopyFileError(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(unreadable, 0644) })
 
 	dst := filepath.Join(t.TempDir(), "target")
-	err := copyDir(src, dst)
+	err := copyDir(src, dst, 0640)
 	if err == nil {
 		t.Error("expected error when source file is unreadable")
 	}
@@ -107,7 +107,7 @@ func TestCopyDirCopyFileError(t *testing.T) {
 
 func TestCopyFileReadError(t *testing.T) {
 	// Tests copyFile when source can't be read.
-	err := copyFile("/nonexistent/source.txt", filepath.Join(t.TempDir(), "dst.txt"))
+	err := copyFile("/nonexistent/source.txt", filepath.Join(t.TempDir(), "dst.txt"), 0640)
 	if err == nil {
 		t.Error("expected error when source doesn't exist")
 	}
@@ -120,7 +120,7 @@ func TestCopyFileCreateError(t *testing.T) {
 
 	// Destination is inside a file (can't create)
 	dst := filepath.Join(src, "nested", "dst.txt")
-	err := copyFile(src, dst)
+	err := copyFile(src, dst, 0640)
 	if err == nil {
 		t.Error("expected error when destination can't be created")
 	}
@@ -134,7 +134,7 @@ func TestTemplateSoulFileReadError(t *testing.T) {
 	os.Chmod(soulPath, 0000)
 	t.Cleanup(func() { os.Chmod(soulPath, 0644) })
 
-	err := templateSoulFile(soulPath, "Name")
+	err := templateSoulFile(soulPath, "Name", 0640)
 	if err == nil {
 		t.Error("expected error for unreadable SOUL.md")
 	}
@@ -151,7 +151,7 @@ func TestCopyDefaultFiles(t *testing.T) {
 	workspace := filepath.Join(tmpDir, "workspace")
 	os.MkdirAll(filepath.Join(workspace, "character"), 0755)
 
-	if err := copyDefaultFiles(defaultsDir, workspace); err != nil {
+	if err := copyDefaultFiles(defaultsDir, workspace, 0640); err != nil {
 		t.Fatalf("copyDefaultFiles: %v", err)
 	}
 
@@ -172,7 +172,7 @@ func TestCopyDefaultFilesNoDefaults(t *testing.T) {
 	os.MkdirAll(filepath.Join(workspace, "prompts"), 0755)
 
 	// Copy from nonexistent defaults dir should fail
-	err := copyDefaultFiles("/nonexistent/defaults", workspace)
+	err := copyDefaultFiles("/nonexistent/defaults", workspace, 0640)
 	if err == nil {
 		t.Error("expected error when defaults dir doesn't exist")
 	}

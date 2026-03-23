@@ -22,7 +22,7 @@ dir = "/tmp/sessions"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	old, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "model"}, `"new-model"`)
+	old, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "model"}, `"new-model"`, 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -60,7 +60,7 @@ dir = "/tmp"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	old, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "max_tool_loops"}, "50")
+	old, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "max_tool_loops"}, "50", 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -93,7 +93,7 @@ model = "haiku"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	_, err := SetInFile(path, SetTarget{Section: "keepalive", Key: "enabled"}, "true")
+	_, err := SetInFile(path, SetTarget{Section: "keepalive", Key: "enabled"}, "true", 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -123,7 +123,7 @@ model = "sonnet"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	_, err := SetInFile(path, SetTarget{Section: "keepalive", Key: "enabled"}, "true")
+	_, err := SetInFile(path, SetTarget{Section: "keepalive", Key: "enabled"}, "true", 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -156,7 +156,7 @@ model = "haiku"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	old, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "beta", Key: "model"}, `"opus"`)
+	old, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "beta", Key: "model"}, `"opus"`, 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -207,7 +207,7 @@ id = "alpha"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "nonexistent", Key: "model"}, `"opus"`)
+	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "nonexistent", Key: "model"}, `"opus"`, 0640)
 	if err == nil {
 		t.Fatal("expected error for missing agent")
 	}
@@ -227,7 +227,7 @@ model = "sonnet"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "effort"}, `"high"`)
+	_, err := SetInFile(path, SetTarget{Section: "agents", AgentID: "main", Key: "effort"}, `"high"`, 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -303,7 +303,7 @@ dir = "/tmp"
 `
 	os.WriteFile(path, []byte(content), 0o644)
 
-	_, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "model"}, `"opus"`)
+	_, err := SetInFile(path, SetTarget{Section: "agent_loop", Key: "model"}, `"opus"`, 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
@@ -345,7 +345,7 @@ port = 8080
 	os.WriteFile(path, []byte(content), 0o644)
 	os.MkdirAll(filepath.Join(dir, "sessions"), 0o755)
 
-	_, err := SetInFile(path, SetTarget{Section: "groups", Key: "powerful"}, `"anthropic/claude-sonnet-4-5-20250929"`)
+	_, err := SetInFile(path, SetTarget{Section: "groups", Key: "powerful"}, `"anthropic/claude-sonnet-4-5-20250929"`, 0640)
 	if err != nil {
 		t.Fatalf("SetInFile: %v", err)
 	}
