@@ -257,7 +257,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, defaultSessionKey func() string, sessions *session.Store, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
 	nudgeEnabled := nc.NudgeEnable
 	nudgeDefaultEnabled := nc.NudgeDefaultEnable
 	braindeadThreshold := nc.NudgeDefaultBraindeadThreshold
@@ -368,6 +368,13 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 				branchKey, err := session.BranchFromSession(parentKey)
 				if err != nil {
 					log.Warnf("nudge", "agent %s: create branch key: %v", acfg.ID, err)
+					return
+				}
+				branchKey, err = sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
+					NoResetHook: true,
+				})
+				if err != nil {
+					log.Warnf("nudge", "agent %s: create branch: %v", acfg.ID, err)
 					return
 				}
 				ag.SetSessionNoCompact(branchKey, true)
