@@ -147,7 +147,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Per-agent tool registry and supporting services
 	registry := tools.NewRegistry()
-	notifier := newAsyncNotifier(agLazy, defaultSessionKey, acfg.ID, p.ctx, connMgr)
+	notifier := newAsyncNotifier(agLazy, acfg.ID, p.ctx, connMgr)
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Register tools by category
@@ -255,7 +255,7 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
 	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
-	setupWakeScheduler(agLazy, defaultSessionKey, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
+	setupWakeScheduler(agLazy, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
 	// Per-agent slash commands
 	// configureFacet is set later by setupPlatform but captured
@@ -270,7 +270,6 @@ func setupAgent(p setupParams) *agentInstance {
 	cmds, cc := registerAgentCommands(cmdRegParams{
 		ag:                  ag,
 		acfg:                acfg,
-		defaultSessionKey:   defaultSessionKey,
 		bootstrap:           bs.bootstrap,
 		promptSearchDirs:    promptSearchDirs,
 		compactionThreshold: compactionThreshold,

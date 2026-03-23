@@ -29,7 +29,6 @@ type cmdRegParams struct {
 	// Per-agent state
 	ag                  *agent.Agent
 	acfg                config.AgentConfig
-	defaultSessionKey   func() string
 	bootstrap           *workspace.Bootstrap
 	promptSearchDirs    []string
 	compactionThreshold float64
@@ -131,7 +130,9 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 		SessionIndex:        p.sessionIndex,
 		Config:              p.cfg,
 		AgentConfig:         p.acfg,
-		DefaultSessionKey:   p.defaultSessionKey,
+		DefaultSessionKey: func() string {
+			return mostRecentSessionKey(p.ag, p.connMgr, p.acfg.ID)
+		},
 		Client:              p.client,
 		ClientProvider:      p.clientProvider,
 		ConnMgr:             p.connMgr,

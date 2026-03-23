@@ -38,7 +38,6 @@ func mostRecentSessionKey(ag *agent.Agent, connMgr platform.ConnectionManager, a
 // getAgent is a lazy getter since the agent is nil at creation time.
 func newAsyncNotifier(
 	getAgent func() *agent.Agent,
-	defaultSessionKey func() string,
 	agentID string,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
@@ -48,9 +47,6 @@ func newAsyncNotifier(
 			target := targetSession
 			if target == "" {
 				target = mostRecentSessionKey(getAgent(), connMgr, agentID)
-			}
-			if target == "" {
-				target = defaultSessionKey()
 			}
 			if trigger == "" {
 				trigger = "async_notify"
@@ -282,7 +278,6 @@ func deliverInjectedTurn(
 // Returns the wakeScheduleFn for use by other components.
 func setupWakeScheduler(
 	getAgent func() *agent.Agent,
-	defaultSessionKey func() string,
 	registry *tools.Registry,
 	reminderStore *memory.ReminderStore,
 	agentID string,
@@ -303,10 +298,11 @@ func setupWakeScheduler(
 			case <-time.After(delay):
 				log.Infof("remind", "firing wake id=%d after %v for agent %s: %q", id, delay, agentID, message)
 				_ = reminderStore.Dismiss(id)
-				// Use the originating session key if stored, otherwise fall back.
+				// Use the originating session key if stored, otherwise
+				// pick the most recently active session.
 				sk := sessionKey
 				if sk == "" {
-					sk = defaultSessionKey()
+					sk = mostRecentSessionKey(getAgent(), connMgr, agentID)
 				}
 				if sk == "" {
 					log.Warnf("remind", "no session for agent %s, skipping", agentID)
