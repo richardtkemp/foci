@@ -9,10 +9,8 @@ func TestResolve_AgentOverridesGlobal(t *testing.T) {
 	// Proves that per-agent values take priority over global defaults
 	// for every standard 2-layer config section.
 	cfg := &Config{
-		Defaults: DefaultsConfig{
-			Loop:     AgentLoopConfig{MaxToolLoops: Ptr(10)},
-			Behavior: BehaviorConfig{SteerMode: Ptr(false)},
-		},
+		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(10)},
+		Behavior:  BehaviorConfig{SteerMode: Ptr(false)},
 		Tools: ToolsConfig{
 			ToolConfig:    ToolConfig{ExecAutoBackground: Ptr(30)},
 			SummaryConfig: SummaryConfig{MaxResultChars: Ptr(5000)},
@@ -57,13 +55,11 @@ func TestResolve_AgentOverridesGlobal(t *testing.T) {
 func TestResolve_FallsBackToGlobal(t *testing.T) {
 	// Proves that global defaults are used when per-agent values are nil.
 	cfg := &Config{
-		Defaults: DefaultsConfig{
-			Loop:  AgentLoopConfig{MaxToolLoops: Ptr(10)},
-			Voice: VoiceConfig{TTS: Ptr("groq-playai")},
-			Nudge: NudgeConfig{NudgeEnable: Ptr(true)},
-		},
-		Debug: DebugConfig{MessagesInLog: Ptr(true)},
-		Mana:  ManaConfig{Name: Ptr("mana")},
+		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(10)},
+		Voice:     VoiceConfig{TTS: Ptr("groq-playai")},
+		Nudge:     NudgeConfig{NudgeEnable: Ptr(true)},
+		Debug:     DebugConfig{MessagesInLog: Ptr(true)},
+		Mana:      ManaConfig{Name: Ptr("mana")},
 	}
 	acfg := AgentConfig{
 		Loop: AgentLoopConfig{MaxToolLoops: Ptr(50)}, // override only MaxToolLoops
@@ -130,10 +126,8 @@ func TestResolve_WebhooksMerge(t *testing.T) {
 	// Proves Webhooks uses MergeMaps with global defaults as base and agent
 	// as overlay — agent keys override global, global-only keys are kept.
 	cfg := &Config{
-		Defaults: DefaultsConfig{
-			System: SystemConfig{
-				Webhooks: map[string]string{"on_start": "/shared/start.md", "on_error": "/shared/error.md"},
-			},
+		System: SystemConfig{
+			Webhooks: map[string]string{"on_start": "/shared/start.md", "on_error": "/shared/error.md"},
 		},
 	}
 	acfg := AgentConfig{
@@ -157,15 +151,13 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 	// is called with non-zero agent and global configs. This catches new
 	// fields being added to the struct without updating Resolve().
 	cfg := &Config{
-		Defaults: DefaultsConfig{
-			Loop:     AgentLoopConfig{MaxToolLoops: Ptr(1)},
-			Behavior: BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}},
-			Voice:    VoiceConfig{TTS: Ptr("test")},
-			Nudge:    NudgeConfig{NudgeEnable: Ptr(true), NudgeCooldown: Ptr(1)},
-			System:   SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},
-			Display:  DisplayConfig{Streaming: Ptr(true)},
-			Notify:   NotifyConfig{StartupNotify: Ptr(true)},
-		},
+		AgentLoop: AgentLoopConfig{MaxToolLoops: Ptr(1)},
+		Behavior:  BehaviorConfig{SteerMode: Ptr(true), GroupThrottle: Ptr("1s"), EnableStopAliases: Ptr(true), StopAliases: []string{"stop"}},
+		Voice:     VoiceConfig{TTS: Ptr("test")},
+		Nudge:     NudgeConfig{NudgeEnable: Ptr(true), NudgeCooldown: Ptr(1)},
+		System:    SystemConfig{SystemFiles: []string{"a.md"}, Webhooks: map[string]string{"hook": "path"}},
+		Display:   DisplayConfig{Streaming: Ptr(true)},
+		Notify:    NotifyConfig{StartupNotify: Ptr(true)},
 		Tools: ToolsConfig{
 			ToolConfig:    ToolConfig{ExecAutoBackground: Ptr(1)},
 			SummaryConfig: SummaryConfig{MaxResultChars: Ptr(1), AutoSummarise: Ptr(true)},
@@ -201,18 +193,16 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 	// agent-platform → agent → global-platform → global-defaults.
 	tcd := ToolCallFull
 	cfg := &Config{
-		Defaults: DefaultsConfig{
-			Display: DisplayConfig{Streaming: Ptr(true)},
-			Notify:  NotifyConfig{StartupNotify: Ptr(true)},
-		},
+		Display: DisplayConfig{Streaming: Ptr(true)},
+		Notify:  NotifyConfig{StartupNotify: Ptr(true)},
 		Platforms: []PlatformConfig{
-			{ID: "telegram", DisplayConfig: DisplayConfig{ShowToolCalls: &tcd}},
+			{ID: "telegram", Display: DisplayConfig{ShowToolCalls: &tcd}},
 		},
 	}
 	acfg := AgentConfig{
 		Display: DisplayConfig{DisplayWidth: Ptr(80)},
 		Platforms: []PlatformConfig{
-			{ID: "telegram", NotifyConfig: NotifyConfig{CompactionNotify: Ptr(true)}},
+			{ID: "telegram", Notify: NotifyConfig{CompactionNotify: Ptr(true)}},
 		},
 	}
 

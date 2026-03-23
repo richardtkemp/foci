@@ -205,8 +205,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			continue
 		}
 		ConfigureFacetBot(facetBot, FacetBotConfig{
-			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Defaults.Voice.STTReplacements, acfg.Voice.STTReplacements)),
-			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),
+			STTProvider:     p.ResolveSTT(p.STTMap, cfg.STT, config.DerefStr(acfg.Voice.STT), voice.MergeReplacements(cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
+			TTSProvider:     p.ResolveTTS(p.TTSMap, cfg.TTS, config.DerefStr(acfg.Voice.TTS), config.DerefFloat(acfg.Voice.TTSRate), voice.MergeReplacements(cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)),
 			AgentConfig:     acfg,
 			GlobalConfig:    cfg,
 			Resolved:        p.Resolved,

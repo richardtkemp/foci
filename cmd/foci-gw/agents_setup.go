@@ -217,7 +217,7 @@ func buildCompactor(p setupParams, fallbackFn provider.FallbackFunc) (*compactio
 		p.cfg.Sessions.CompactionMinMessages,
 		preserveMessages,
 	)
-	compactor.ModelParamsFn = modelParamsFn(p.cfg.Models)
+	compactor.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
 	compactor.ModelMetaFn = modelMetaFn(p.cfg.Models)
 	compactor.Scratchpad = p.scratchpadStore
 	compactor.TaskListStore = p.taskListStore
@@ -234,7 +234,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 	acfg := p.acfg
 
 	vc := p.resolved.Voice
-	ttsRepls := voice.MergeReplacements(p.cfg.Defaults.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
+	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
 	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
@@ -498,7 +498,7 @@ func setupPlatformConnections(
 		CommandContext: cc,
 		LastMsgStore:   lastMsgStore,
 		AgentConfig:    acfg,
-		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Defaults.Voice.STTReplacements, acfg.Voice.STTReplacements)),
+		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
 			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg, func(bk, pk, bt string) string {

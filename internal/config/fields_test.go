@@ -65,16 +65,16 @@ func TestLookupField(t *testing.T) {
 	// and returns false for unknown paths.
 
 	// Known field
-	f, ok := LookupField("defaults.loop.max_output_tokens")
+	f, ok := LookupField("agent_loop.max_output_tokens")
 	if !ok {
-		t.Fatal("LookupField(defaults.loop.max_output_tokens) returned false")
+		t.Fatal("LookupField(agent_loop.max_output_tokens) returned false")
 	}
-	if f.Key != "loop.max_output_tokens" || f.Section != "defaults" {
+	if f.Key != "max_output_tokens" || f.Section != "agent_loop" {
 		t.Errorf("got section=%q key=%q", f.Section, f.Key)
 	}
 
 	// Case insensitive
-	f2, ok := LookupField("DEFAULTS.LOOP.MAX_OUTPUT_TOKENS")
+	f2, ok := LookupField("AGENT_LOOP.MAX_OUTPUT_TOKENS")
 	if !ok {
 		t.Fatal("LookupField case-insensitive returned false")
 	}

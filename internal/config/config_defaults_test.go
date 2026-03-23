@@ -196,19 +196,19 @@ func TestApplyDefaultsReflect(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-opus-4-6"
 
-[defaults.loop]
+[agent_loop]
 max_output_tokens = 16384
 max_tool_loops = 50
 duplicate_messages = true
 
-[defaults.nudge]
+[nudge]
 nudge_default_braindead_threshold = 20
 nudge_default_braindead_prompt = "watch it"
 
-[defaults.notify]
+[notify]
 inject_agent_warnings = true
 
-[defaults.system]
+[system]
 system_files = ["A.md", "B.md"]
 
 [debug]
@@ -235,31 +235,31 @@ id = "override"
 		t.Errorf("bare Defaults.Loop.MaxToolLoops should be nil, got %v", bare.Loop.MaxToolLoops)
 	}
 
-	// Verify defaults config was parsed correctly
-	if DerefInt(cfg.Defaults.Loop.MaxToolLoops) != 50 {
-		t.Errorf("Defaults.Loop.MaxToolLoops = %v, want 50", cfg.Defaults.Loop.MaxToolLoops)
+	// Verify top-level config was parsed correctly
+	if DerefInt(cfg.AgentLoop.MaxToolLoops) != 50 {
+		t.Errorf("AgentLoop.MaxToolLoops = %v, want 50", cfg.AgentLoop.MaxToolLoops)
 	}
-	if DerefInt(cfg.Defaults.Loop.MaxOutputTokens) != 16384 {
-		t.Errorf("Defaults.Loop.MaxOutputTokens = %v, want 16384", cfg.Defaults.Loop.MaxOutputTokens)
+	if DerefInt(cfg.AgentLoop.MaxOutputTokens) != 16384 {
+		t.Errorf("AgentLoop.MaxOutputTokens = %v, want 16384", cfg.AgentLoop.MaxOutputTokens)
 	}
-	if DerefInt(cfg.Defaults.Nudge.NudgeDefaultBraindeadThreshold) != 20 {
-		t.Errorf("Defaults.Nudge.NudgeDefaultBraindeadThreshold = %v, want 20", cfg.Defaults.Nudge.NudgeDefaultBraindeadThreshold)
+	if DerefInt(cfg.Nudge.NudgeDefaultBraindeadThreshold) != 20 {
+		t.Errorf("Nudge.NudgeDefaultBraindeadThreshold = %v, want 20", cfg.Nudge.NudgeDefaultBraindeadThreshold)
 	}
-	if DerefStr(cfg.Defaults.Nudge.NudgeDefaultBraindeadPrompt) != "watch it" {
-		t.Errorf("Defaults.Nudge.NudgeDefaultBraindeadPrompt = %v", cfg.Defaults.Nudge.NudgeDefaultBraindeadPrompt)
+	if DerefStr(cfg.Nudge.NudgeDefaultBraindeadPrompt) != "watch it" {
+		t.Errorf("Nudge.NudgeDefaultBraindeadPrompt = %v", cfg.Nudge.NudgeDefaultBraindeadPrompt)
 	}
-	if !DerefBool(cfg.Defaults.Loop.DuplicateMessages) {
-		t.Error("Defaults.Loop.DuplicateMessages should be true")
+	if !DerefBool(cfg.AgentLoop.DuplicateMessages) {
+		t.Error("AgentLoop.DuplicateMessages should be true")
 	}
-	if cfg.Defaults.Notify.InjectAgentWarnings == nil || *cfg.Defaults.Notify.InjectAgentWarnings != InjectionAll {
-		t.Errorf("Defaults.Notify.InjectAgentWarnings = %v, want %q", cfg.Defaults.Notify.InjectAgentWarnings, InjectionAll)
+	if cfg.Notify.InjectAgentWarnings == nil || *cfg.Notify.InjectAgentWarnings != InjectionAll {
+		t.Errorf("Notify.InjectAgentWarnings = %v, want %q", cfg.Notify.InjectAgentWarnings, InjectionAll)
 	}
-	if len(cfg.Defaults.System.SystemFiles) != 2 || cfg.Defaults.System.SystemFiles[0] != "A.md" {
-		t.Errorf("Defaults.System.SystemFiles = %v", cfg.Defaults.System.SystemFiles)
+	if len(cfg.System.SystemFiles) != 2 || cfg.System.SystemFiles[0] != "A.md" {
+		t.Errorf("System.SystemFiles = %v", cfg.System.SystemFiles)
 	}
 
 	// Merge resolves bare agent fields from defaults
-	al := Merge(bare.Loop, cfg.Defaults.Loop)
+	al := Merge(bare.Loop, cfg.AgentLoop)
 	if DerefInt(al.MaxToolLoops) != 50 {
 		t.Errorf("Merge resolved MaxToolLoops = %v, want 50", al.MaxToolLoops)
 	}

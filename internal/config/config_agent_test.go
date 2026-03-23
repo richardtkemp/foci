@@ -333,7 +333,7 @@ func TestNudgeDefaultBraindeadThresholdPerAgent(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[defaults.nudge]
+[nudge]
 nudge_default_braindead_threshold = 15
 nudge_default_braindead_prompt = "defaults prompt"
 
@@ -353,7 +353,7 @@ nudge_default_braindead_prompt = "agent prompt"
 	}
 
 	// Agent "a" has no override — Merge resolves from defaults
-	resolvedA := Merge(cfg.Agents[0].Nudge, cfg.Defaults.Nudge)
+	resolvedA := Merge(cfg.Agents[0].Nudge, cfg.Nudge)
 	if DerefInt(resolvedA.NudgeDefaultBraindeadThreshold) != 15 {
 		t.Errorf("agent a resolved threshold = %d, want 15", DerefInt(resolvedA.NudgeDefaultBraindeadThreshold))
 	}
@@ -362,7 +362,7 @@ nudge_default_braindead_prompt = "agent prompt"
 	}
 
 	// Agent "b" overrides
-	resolvedB := Merge(cfg.Agents[1].Nudge, cfg.Defaults.Nudge)
+	resolvedB := Merge(cfg.Agents[1].Nudge, cfg.Nudge)
 	if DerefInt(resolvedB.NudgeDefaultBraindeadThreshold) != 5 {
 		t.Errorf("agent b resolved threshold = %d, want 5", DerefInt(resolvedB.NudgeDefaultBraindeadThreshold))
 	}
@@ -380,7 +380,7 @@ func TestNudgeDefaultBraindeadThresholdDisabled(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[defaults.nudge]
+[nudge]
 nudge_default_braindead_threshold = 0
 
 [[agents]]
@@ -407,7 +407,7 @@ func TestAgentExplicitZeroNotOverwritten(t *testing.T) {
 [groups]
 powerful = "anthropic/claude-haiku-4-5-20251001"
 
-[defaults.nudge]
+[nudge]
 nudge_default_braindead_threshold = 15
 
 [[agents]]
@@ -430,7 +430,7 @@ id = "inherits"
 	}
 
 	// Agent that didn't set it should get 15 via Merge with defaults
-	resolved := Merge(cfg.Agents[1].Nudge, cfg.Defaults.Nudge)
+	resolved := Merge(cfg.Agents[1].Nudge, cfg.Nudge)
 	if DerefInt(resolved.NudgeDefaultBraindeadThreshold) != 15 {
 		t.Errorf("inherits agent: resolved threshold = %d, want 15", DerefInt(resolved.NudgeDefaultBraindeadThreshold))
 	}

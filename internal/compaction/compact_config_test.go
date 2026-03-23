@@ -51,12 +51,12 @@ func TestWithConfigEmptyValues(t *testing.T) {
 	}
 }
 
-func TestModelParamsFn(t *testing.T) {
-	// Verifies that ModelParamsFn is nil by default and can be set
+func TestModelDefaultsFn(t *testing.T) {
+	// Verifies that ModelDefaultsFn is nil by default and can be set
 	// to provide per-model API params.
 	c := NewCompactor(nil, 0.8)
-	if c.ModelParamsFn != nil {
-		t.Error("initial ModelParamsFn should be nil")
+	if c.ModelDefaultsFn != nil {
+		t.Error("initial ModelDefaultsFn should be nil")
 	}
 
 	c.ModelDefaultsFn = func(model string) config.ModelDefaults {

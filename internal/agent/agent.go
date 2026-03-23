@@ -129,6 +129,7 @@ type Agent struct {
 	TurnLockWarnThreshold         time.Duration                // warn if turn lock wait exceeds this (default 3m)
 	ShowToolCalls                 string                       // agent-level default: "off"/"preview"/"full" (per-session overrides via /display)
 	Streaming                     bool                         // use streaming API when provider supports it
+	ModelMetaFn                   func(model string) modelinfo.ModelMeta  // per-model meta from config (context window)
 	ModelDefaultsFn               func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client

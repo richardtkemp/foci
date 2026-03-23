@@ -63,7 +63,7 @@ func validate(cfg *Config) error {
 	}
 
 	// Validate webhook keys contain no path separators (defense in depth)
-	for k := range cfg.Defaults.System.Webhooks {
+	for k := range cfg.System.Webhooks {
 		if strings.ContainsAny(k, "/\\") {
 			return fmt.Errorf("[system] webhooks: key %q must not contain path separators", k)
 		}
