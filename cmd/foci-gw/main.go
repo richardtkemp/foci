@@ -197,9 +197,6 @@ Subcommands:
 		for _, id := range agentOrder {
 			inst := agents[id]
 			sk := mostRecentSessionKey(inst.ag, connMgr, id)
-			if sk == "" {
-				sk = inst.defaultSessionKey()
-			}
 			var mc int
 			var lastAct string
 			if sk != "" {

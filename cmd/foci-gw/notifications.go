@@ -54,9 +54,6 @@ func handleRestartAndFirstRun(
 		go func() {
 			sk := mostRecentSessionKey(inst.ag, connMgr, agentID)
 			if sk == "" {
-				sk = inst.defaultSessionKey()
-			}
-			if sk == "" {
 				log.Warnf("main", "[%s] no active session for restart injection, skipping", agentID)
 				return
 			}
