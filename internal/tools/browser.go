@@ -26,14 +26,16 @@ type BrowserManager struct {
 	snapshot   *Snapshot
 	generation int
 	FileMode   os.FileMode // permission bits for saved files (screenshots, PDFs)
+	incognito  bool // runtime-toggleable; default true
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
 func NewBrowserManager(cfg *config.ResolvedBrowser, fileMode os.FileMode) *BrowserManager {
 	return &BrowserManager{
-		config:   cfg,
-		FileMode: fileMode,
-		logger: log.NewComponentLogger("browser"),
+		config:    cfg,
+		FileMode:  fileMode,
+		logger:    log.NewComponentLogger("browser"),
+		incognito: true,
 	}
 }
 
@@ -57,7 +59,7 @@ func (m *BrowserManager) Start() error {
 	if m.config.ExecutablePath != "" {
 		l = l.Bin(m.config.ExecutablePath)
 	}
-	if m.config.UserDataDir != "" && !m.config.Incognito {
+	if m.config.UserDataDir != "" && !m.incognito {
 		l = l.UserDataDir(m.config.UserDataDir)
 	}
 
@@ -67,7 +69,7 @@ func (m *BrowserManager) Start() error {
 	}
 
 	m.browser = rod.New().ControlURL(url).MustConnect()
-	m.logger.Infof("Browser started (headless=%v, incognito=%v)", m.config.Headless, m.config.Incognito)
+	m.logger.Infof("Browser started (headless=%v, incognito=%v)", m.config.Headless, m.incognito)
 	return nil
 }
 
@@ -196,7 +198,7 @@ func NewBrowserTool(mgr *BrowserManager) *Tool {
 				"action": {
 					"type": "string",
 					"description": "Action to perform",
-					"enum": ["snapshot", "navigate", "click", "fill", "select", "press", "go_back", "go_forward", "reload", "screenshot", "pdf", "evaluate", "wait", "close"]
+					"enum": ["snapshot", "navigate", "click", "fill", "select", "press", "go_back", "go_forward", "reload", "screenshot", "pdf", "evaluate", "wait", "close", "set_incognito"]
 				},
 				"url": {"type": "string", "description": "URL to navigate to"},
 				"ref": {"type": "string", "description": "Element ref from snapshot (e.g., s1e5)"},
@@ -209,7 +211,8 @@ func NewBrowserTool(mgr *BrowserManager) *Tool {
 				"script": {"type": "string", "description": "JavaScript to evaluate"},
 				"waitType": {"type": "string", "description": "Wait type: load or idle"},
 				"fullPage": {"type": "boolean", "description": "Capture full page screenshot"},
-				"returnPath": {"type": "boolean", "description": "Return file path instead of base64"}
+				"returnPath": {"type": "boolean", "description": "Return file path instead of base64"},
+				"incognito": {"type": "boolean", "description": "Enable or disable incognito mode (for set_incognito)"}
 			},
 			"required": ["action"]
 		}`),
@@ -237,8 +240,9 @@ type browserParams struct {
 	Key      string      `json:"key"`
 	Script   string      `json:"script"`
 	WaitType string      `json:"waitType"`
-	FullPage bool        `json:"fullPage"`
-	RetPath  bool        `json:"returnPath"`
+	FullPage  bool        `json:"fullPage"`
+	RetPath   bool        `json:"returnPath"`
+	Incognito *bool       `json:"incognito"`
 }
 
 func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *BrowserManager) (ToolResult, error) {
@@ -276,6 +280,8 @@ func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *Browse
 		return browserWait(mgr, p)
 	case "close":
 		return browserClose(mgr)
+	case "set_incognito":
+		return browserSetIncognito(mgr, p)
 	default:
 		return ToolResult{Text: fmt.Sprintf("Unknown action: %q", p.Action)}, nil
 	}

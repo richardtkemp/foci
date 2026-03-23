@@ -444,6 +444,31 @@ func browserWait(mgr *BrowserManager, p browserParams) (ToolResult, error) {
 	return ToolResult{Text: fmt.Sprintf("Wait completed: %s", p.WaitType)}, nil
 }
 
+func browserSetIncognito(mgr *BrowserManager, p browserParams) (ToolResult, error) {
+	if p.Incognito == nil {
+		return ToolResult{Text: "Error: incognito parameter required (true or false)"}, nil
+	}
+	want := *p.Incognito
+	if want == mgr.incognito {
+		mode := "on"
+		if !want {
+			mode = "off"
+		}
+		return ToolResult{Text: fmt.Sprintf("Incognito mode is already %s", mode)}, nil
+	}
+	mgr.incognito = want
+	if mgr.IsConnected() {
+		if err := mgr.Stop(); err != nil {
+			return ToolResult{Text: fmt.Sprintf("Error stopping browser: %v", err)}, nil
+		}
+	}
+	mode := "on"
+	if !want {
+		mode = "off"
+	}
+	return ToolResult{Text: fmt.Sprintf("Incognito mode set to %s. Browser will use new mode on next action.", mode)}, nil
+}
+
 func browserClose(mgr *BrowserManager) (ToolResult, error) {
 	if err := mgr.Stop(); err != nil {
 		return ToolResult{Text: fmt.Sprintf("Error: %v", err)}, nil

@@ -289,7 +289,6 @@ type ResolvedBrowser struct {
 	TimeoutSec     int
 	UserDataDir    string
 	ExecutablePath string
-	Incognito      bool
 	DOMStableSec   float64 // default 1.0
 	DOMStableDiff  float64 // default 0.2
 }
@@ -301,7 +300,6 @@ func resolveBrowser(m BrowserConfig) ResolvedBrowser {
 		TimeoutSec:     DerefInt(m.TimeoutSec),
 		UserDataDir:    DerefStr(m.UserDataDir),
 		ExecutablePath: DerefStr(m.ExecutablePath),
-		Incognito:      DerefBool(m.Incognito),
 		DOMStableSec:   DerefFloat(m.DOMStableSec),
 		DOMStableDiff:  DerefFloat(m.DOMStableDiff),
 	}

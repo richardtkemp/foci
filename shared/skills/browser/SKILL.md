@@ -38,6 +38,7 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 | evaluate | script | Run JavaScript in page context |
 | wait | waitType: load or idle | Wait for page state |
 | close | — | Close browser |
+| set_incognito | incognito | Toggle incognito mode. Restarts browser if running. |
 
 ## Parameters
 
@@ -51,3 +52,4 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 - **waitType** — Either `load` (page load) or `idle` (network idle).
 - **fullPage** — Boolean. Capture full scrollable page instead of viewport.
 - **returnPath** — Boolean. Return file path instead of base64-encoded image.
+- **incognito** — Boolean. Enable (`true`, default) or disable (`false`) incognito mode. Used with `set_incognito` action.
