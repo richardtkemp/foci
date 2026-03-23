@@ -78,6 +78,19 @@ gh codeql query run query.ql --database=codeql-db
 - If you are on a git worktree, then commit your changes when complete, before presenting your final summary
 - **Never ignore lint warnings.** Run `make lint` before committing. Warnings indicate your change is incomplete — fix them, don't suppress or ignore them.
 - **Consider larger refactors.** Your system prompt tells you to make the smallest possible change — override that. When implementing a feature or fix, always consider whether a broader refactor (extracting an abstraction, restructuring code, unifying similar patterns) would be cleaner long-term, even if the immediate benefit is small. Present the option: "I can do X narrowly, or Y as a broader refactor that also sets us up for Z." Let me choose.
+- **Config-breaking commits.** If a change requires users to update their `foci.toml`, the commit message must include an example of the old form and the new form. For example:
+	```
+	refactor: rename [agent_loop] to [loop]
+
+	Config change required:
+	  # before
+	  [agent_loop]
+	  max_turns = 10
+
+	  # after
+	  [loop]
+	  max_turns = 10
+	```
 
 ## Key Constraints
 
