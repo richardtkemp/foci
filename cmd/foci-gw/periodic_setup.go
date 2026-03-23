@@ -77,12 +77,10 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 
 	kaOrientPrompt := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	buildOrient := func(branchKey, parentKey, branchType string) string {
-		return prompts.BuildBranchOrientation(kaOrientPrompt, branchKey, parentKey, branchType, false, inst.promptSearchDirs)
-	}
+	orientTemplate := prompts.ResolveOrientationTemplate(kaOrientPrompt, false, inst.promptSearchDirs...)
 	branchFn := buildBranchFunc(
 		acfg.ID, inst.ag, p.sessions, inst.defaultSessionKey,
-		buildOrient, p.ctx,
+		orientTemplate, p.ctx,
 		func(branchType, branchKey string) {
 			if branchType != "background" {
 				return
@@ -91,7 +89,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			// skipMetaCheck=true because background branches set NoResetHook
 			// but should still get memory formation on completion.
 			agent.FireSessionEndMemory(inst.ag, p.sessions, branchKey, mf,
-				buildOrient, inst.promptSearchDirs, p.ctx, true)
+				orientTemplate, inst.promptSearchDirs, p.ctx, true)
 		},
 	)
 

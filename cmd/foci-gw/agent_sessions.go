@@ -22,7 +22,7 @@ func buildBranchFunc(
 	ag *agent.Agent,
 	sessions *session.Store,
 	defaultSessionKey func() string,
-	buildOrientation func(branchKey, parentKey, branchType string) string,
+	orientTemplate string,
 	ctx context.Context,
 	onDone BranchDoneFunc,
 ) periodic.BranchFunc {
@@ -33,16 +33,10 @@ func buildBranchFunc(
 			return
 		}
 
-		branchKey, branchErr := session.BranchFromSession(parentKey)
-		if branchErr != nil {
-			log.Errorf(branchType, "[%s] branch key error (parent=%s): %v", agentID, parentKey, branchErr)
-			return
-		}
-
-		orientText := buildOrientation(branchKey, parentKey, branchType)
-		branchKey, err := sessions.CreateBranchWithOptions(parentKey, branchKey, session.BranchOptions{
-			NoResetHook:        true,
-			OrientationMessage: orientText,
+		branchKey, err := sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
+			NoResetHook:         true,
+			BranchType:          branchType,
+			OrientationTemplate: orientTemplate,
 		})
 		if err != nil {
 			log.Errorf(branchType, "[%s] branch error: %v", agentID, err)
@@ -66,4 +60,3 @@ func buildBranchFunc(
 		}
 	}
 }
-

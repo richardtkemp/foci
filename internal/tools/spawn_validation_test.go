@@ -154,25 +154,20 @@ func TestSpawnNoRecursiveInherit(t *testing.T) {
 	}
 }
 
-func TestSpawnInheritOrientationBuilder(t *testing.T) {
-	// Proves that the OrientationBuilder callback is called with the correct branch and parent keys
-	// and that its returned message is stored in the branch options.
+func TestSpawnInheritOrientationTemplate(t *testing.T) {
+	// Proves that the OrientationTemplate is passed through to the session brancher
+	// with the correct branch type.
 	t.Parallel()
 	mockAgent := &mockSpawnAgent{response: "Done."}
 	mockSessions := &mockSessionBrancher{}
 
-	var builderBranch, builderParent string
 	deps := SpawnDeps{
-		Sessions:       mockSessions,
-		AgentID:        "test",
-		FallbackModel:  "anthropic/claude-haiku-4-5",
-		FallbackFormat: "anthropic",
-		MaxInherit:     3,
-		OrientationBuilder: func(branchKey, parentKey string) string {
-			builderBranch = branchKey
-			builderParent = parentKey
-			return "You are a spawn branch. Do not message Telegram."
-		},
+		Sessions:            mockSessions,
+		AgentID:             "test",
+		FallbackModel:       "anthropic/claude-haiku-4-5",
+		FallbackFormat:      "anthropic",
+		MaxInherit:          3,
+		OrientationTemplate: "Type: {branch_type}, key: {branch_key}, parent: {parent_key}.",
 	}
 	tool := NewSpawnTool(deps, func() SpawnAgent { return mockAgent })
 
@@ -187,17 +182,15 @@ func TestSpawnInheritOrientationBuilder(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	// OrientationBuilder should have been called with correct keys
-	if builderParent != "test/imain/1000000000" {
-		t.Errorf("builder parentKey = %q, want agent:test:main", builderParent)
+	// Template should be passed through to session brancher
+	if mockSessions.opts.OrientationTemplate != deps.OrientationTemplate {
+		t.Errorf("orientation template = %q, want %q", mockSessions.opts.OrientationTemplate, deps.OrientationTemplate)
 	}
-	if !strings.HasPrefix(builderBranch, "test/imain/1000000000/b") {
-		t.Errorf("builder branchKey = %q, want prefix agent:test:spawn:spawn-", builderBranch)
+	if mockSessions.opts.BranchType != "spawn" {
+		t.Errorf("branch type = %q, want %q", mockSessions.opts.BranchType, "spawn")
 	}
-
-	// Orientation message should be passed through to session brancher
-	if mockSessions.opts.OrientationMessage != "You are a spawn branch. Do not message Telegram." {
-		t.Errorf("orientation = %q", mockSessions.opts.OrientationMessage)
+	if mockSessions.parentKey != "test/imain/1000000000" {
+		t.Errorf("parent key = %q, want %q", mockSessions.parentKey, "test/imain/1000000000")
 	}
 }
 

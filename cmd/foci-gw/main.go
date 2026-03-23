@@ -342,9 +342,9 @@ Subcommands:
 					inst := agents[id]
 					if strings.HasPrefix(sessionKey, id+"/") {
 						orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt))
-						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.resolved.MemoryFormation, func(bk, pk, bt string) string {
-							return prompts.BuildBranchOrientation(orientPath, bk, pk, bt, false, inst.promptSearchDirs)
-						}, inst.promptSearchDirs, ctx, false)
+						orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
+						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.resolved.MemoryFormation,
+							orientTemplate, inst.promptSearchDirs, ctx, false)
 						return
 					}
 				}

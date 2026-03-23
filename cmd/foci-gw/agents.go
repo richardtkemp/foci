@@ -241,10 +241,9 @@ func setupAgent(p setupParams) *agentInstance {
 	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	compactMemMfCfg := acfg.MemoryFormation
 	compactMemSearchDirs := promptSearchDirs
+	compactMemOrientTemplate := prompts.ResolveOrientationTemplate(compactMemOrientPath, false, compactMemSearchDirs...)
 	ag.CompactionMemoryFunc.Add(func(sessionKey string) {
-		agent.FireCompactionMemory(ag, p.sessions, sessionKey, compactMemMfCfg, func(bk, pk, bt string) string {
-			return prompts.BuildBranchOrientation(compactMemOrientPath, bk, pk, bt, false, compactMemSearchDirs)
-		}, compactMemSearchDirs, p.ctx)
+		agent.FireCompactionMemory(ag, p.sessions, sessionKey, compactMemMfCfg, compactMemOrientTemplate, compactMemSearchDirs, p.ctx)
 	})
 
 	// Post-creation agent configuration
