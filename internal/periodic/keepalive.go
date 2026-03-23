@@ -45,9 +45,10 @@ func (r *Runner) parseDuration(field string, s string) (time.Duration, bool) {
 }
 
 // BranchFunc is called to dispatch a branch session. It receives the branch type
-// ("keepalive" or "background"), the prompt text, and whether to skip compaction.
-// It must handle branch creation and agent execution internally.
-type BranchFunc func(branchType, promptText string, noCompact bool)
+// ("keepalive", "background", "memory-formation", "consolidation"), the parent
+// session key to branch from, the prompt text, and whether to skip compaction.
+// Returns true if the branch was created and the agent turn completed successfully.
+type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) bool
 
 // Runner manages keepalive, background work, and memory formation timers for an agent.
 type Runner struct {
@@ -191,6 +192,14 @@ func (r *Runner) NotifyTurnEnd() {
 	}
 }
 
+// defaultParentKey returns the default session key, or "" if unavailable.
+func (r *Runner) defaultParentKey() string {
+	if r.sessionKeyFn == nil {
+		return ""
+	}
+	return r.sessionKeyFn()
+}
+
 func (r *Runner) run(ctx context.Context) {
 	defer close(r.done)
 
@@ -267,6 +276,12 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 		return
 	}
 
+	parentKey := r.defaultParentKey()
+	if parentKey == "" {
+		skip = "no default session"
+		return
+	}
+
 	promptText := prompts.ResolvePrompt(r.kaCfg.Prompt, "keepalive.md", prompts.Keepalive(), r.promptSearchDirs...)
 
 	r.mu.Lock()
@@ -282,7 +297,7 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 			r.keepaliveRunning = false
 			r.mu.Unlock()
 		}()
-		r.branchFn("keepalive", promptText, true)
+		r.branchFn("keepalive", parentKey, promptText, true)
 	}()
 }
 
@@ -359,6 +374,12 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		}
 	}
 
+	parentKey := r.defaultParentKey()
+	if parentKey == "" {
+		skip = "no default session"
+		return
+	}
+
 	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background.md", prompts.Background(), r.promptSearchDirs...)
 
 	r.mu.Lock()
@@ -375,7 +396,7 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 			r.lastBackgroundEnded = time.Now()
 			r.mu.Unlock()
 		}()
-		r.branchFn("background", promptText, true)
+		r.branchFn("background", parentKey, promptText, true)
 	}()
 }
 
@@ -402,7 +423,6 @@ func (r *Runner) maybeMemoryFormation() {
 	lastFormation := r.lastMemoryFormation
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.memoryFormationRunning
-	hasActivity := r.lastInteraction.After(r.lastMemoryFormation)
 	r.mu.Unlock()
 
 	nextFire := lastFormation.Truncate(interval).Add(interval)
@@ -414,13 +434,24 @@ func (r *Runner) maybeMemoryFormation() {
 		skip = fmt.Sprintf("too soon (next at %s)", nextFire.Format("15:04:05"))
 		return
 	}
-	if !hasActivity {
-		skip = "no activity since last formation"
-		return
-	}
 
 	if sinceLastInteraction > interval {
 		skip = fmt.Sprintf("idle %s > interval %s", sinceLastInteraction.Round(time.Second), interval)
+		return
+	}
+
+	// Query DB for sessions with activity since their last formation.
+	if r.sessionIndex == nil {
+		skip = "no session index"
+		return
+	}
+	keys, err := r.sessionIndex.SessionsNeedingFormation(r.agentID)
+	if err != nil {
+		skip = fmt.Sprintf("query sessions: %v", err)
+		return
+	}
+	if len(keys) == 0 {
+		skip = "no sessions need formation"
 		return
 	}
 
@@ -443,7 +474,7 @@ func (r *Runner) maybeMemoryFormation() {
 	r.memoryFormationRunning = true
 	r.mu.Unlock()
 
-	r.log.Infof("firing memory formation for agent %s", r.agentID)
+	r.log.Infof("firing memory formation for agent %s (%d sessions)", r.agentID, len(keys))
 
 	go func() {
 		defer func() {
@@ -452,7 +483,12 @@ func (r *Runner) maybeMemoryFormation() {
 			r.lastMemoryFormation = time.Now()
 			r.mu.Unlock()
 		}()
-		r.branchFn("memory-formation", promptText, true)
+		for _, key := range keys {
+			t := time.Now()
+			if r.branchFn("memory-formation", key, promptText, true) {
+				r.sessionIndex.StampMemoryFormation(key, t)
+			}
+		}
 	}()
 }
 
@@ -511,6 +547,12 @@ func (r *Runner) maybeConsolidation() {
 		}
 	}
 
+	parentKey := r.defaultParentKey()
+	if parentKey == "" {
+		skip = "no default session"
+		return
+	}
+
 	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
@@ -534,6 +576,6 @@ func (r *Runner) maybeConsolidation() {
 				}
 			}
 		}()
-		r.branchFn("consolidation", promptText, true)
+		r.branchFn("consolidation", parentKey, promptText, true)
 	}()
 }

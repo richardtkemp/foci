@@ -1012,17 +1012,22 @@ Memory formation and consolidation run in the keepalive timer loop (30s ticks):
 
 **Interval memory formation** (`maybeMemoryFormation`):
 1. Check `interval_enabled` (nil = true)
-2. Check interval elapsed and activity occurred since last formation
-3. Resolve prompt via `prompts.ResolvePrompt`
-4. Fire branch: `branchFn("memory-formation", promptText, true)`
+2. Check wall-clock interval elapsed and user not idle
+3. Query `session_index` for active chat sessions with `last_activity_at > last_memory_formation` (per-session tracking)
+4. Resolve prompt via `prompts.ResolvePrompt`
+5. Iterate all matching sessions: `branchFn("memory-formation", sessionKey, promptText, true)` for each
+6. On success per session: stamp `last_memory_formation` at branch creation time
+
+Formation runs before consolidation so the latest memory content is available. Consolidation is blocked while formation is running.
 
 **Consolidation** (`maybeConsolidation`):
 1. Check `consolidation_enabled` (nil = true)
 2. Check consolidation interval elapsed (persisted in state store)
 3. Check recent user activity (within 1h)
-4. Resolve prompt via `prompts.ResolvePrompt`
-5. Fire branch: `branchFn("consolidation", promptText, true)`
-6. On completion: persist timestamp to state store
+4. Check memory formation is not running
+5. Resolve prompt via `prompts.ResolvePrompt`
+6. Fire branch on default session: `branchFn("consolidation", parentKey, promptText, true)`
+7. On completion: persist timestamp to state store
 
 **Proactive warning dispatch** (`warnings.Dispatcher.MaybeFire`):
 1. Check `queue != nil` and `dispatchFn != nil` — skip if no injection configured

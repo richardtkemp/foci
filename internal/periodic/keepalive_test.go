@@ -26,11 +26,13 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
+		sessionKeyFn:    func() string { return "test/c1/1" },
 		hasActiveWorkFn: func() int { return activeCount },
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			mu.Lock()
 			calls++
 			mu.Unlock()
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -72,8 +74,10 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 			Interval: "1s",
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		sessionKeyFn:    func() string { return "test/c1/1" },
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
+			return true
 		},
 		done: make(chan struct{}),
 	}
@@ -101,8 +105,9 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
 			return false, "rate limited"
 		},
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			called = true
+			return true
 		},
 		lastMemoryFormation: now.Add(-2 * time.Hour),
 		lastInteraction:     now.Add(-30 * time.Minute),
@@ -132,8 +137,9 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
 			return false, "rate limited"
 		},
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			called = true
+			return true
 		},
 		lastConsolidation: now.Add(-2 * time.Hour),
 		lastInteraction:   now.Add(-30 * time.Minute),
@@ -162,8 +168,9 @@ func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
 		canFireFn: func(ctx context.Context, sk string) (bool, string) {
 			return false, "mana insufficient"
 		},
-		branchFn: func(branchType, promptText string, noCompact bool) {
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			called = true
+			return true
 		},
 		lastInteraction: time.Now().Add(-2 * time.Second),
 		todoStore:       nil, // skip todo check

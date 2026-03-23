@@ -169,11 +169,12 @@ Keepalive runners are stopped first during graceful shutdown, before the HTTP se
 
 ## Package
 
-The implementation lives in `keepalive/keepalive.go`:
+The implementation lives in `periodic/keepalive.go`:
 
 - `Runner` — manages timer state and tick loop
-- `ManaIsGood()` — exported manamometer function (used in tests)
-- `BuildBranchFunc()` — creates the bridge between keepalive package and main's agent/session infrastructure
+- `BranchFunc` — callback type; receives branch type, parent session key, prompt, and returns success bool
 - `RunnerConfig` — dependency injection struct
+
+`buildBranchFunc()` in `cmd/foci-gw/agent_sessions.go` creates the bridge between the periodic package and main's agent/session infrastructure.
 
 Tests in `keepalive/keepalive_test.go` cover manamometer edge cases (invest period, mid-window, near-reset, past-reset, zero data).
