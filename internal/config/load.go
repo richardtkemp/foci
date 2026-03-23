@@ -48,7 +48,6 @@ var boolKeys = map[string]bool{
 	"nudge_default_enable":   true,
 	"browser_enabled":       true,
 	"headless":              true,
-	"incognito":                          true,
 	"autocompact_before_mana_refresh":     true,
 }
 

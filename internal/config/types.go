@@ -708,7 +708,6 @@ type BrowserConfig struct {
 	TimeoutSec     *int     `toml:"timeout_sec"     default:"30"   desc:"page operation timeout in seconds"` // page operation timeout in seconds
 	UserDataDir    *string  `toml:"user_data_dir"                  desc:"Chrome user data dir (empty = temp profile)"` // Chrome user data dir (empty = temp profile)
 	ExecutablePath *string  `toml:"executable_path"                desc:"Chrome executable path (empty = auto-detect)"` // Chrome executable path (empty = auto-detect)
-	Incognito      *bool    `toml:"incognito"       default:"true" desc:"use incognito mode"` // use incognito mode
 	DOMStableSec   *float64 `toml:"dom_stable_sec"  default:"1"    desc:"DOM stability wait interval in seconds"` // DOM stability wait interval in seconds
 	DOMStableDiff  *float64 `toml:"dom_stable_diff" default:"0.2"  desc:"DOM stability diff threshold"` // DOM stability diff threshold
 }
