@@ -29,10 +29,12 @@ func TestSpawnContextRaw(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	gr := config.NewGroupResolver(config.ResolvedGroups{
-		Powerful: "anthropic/claude-opus-4-6",
-		Fast:     "anthropic/claude-sonnet-4-6",
-		Cheap:    "anthropic/claude-haiku-4-5",
+	gr := config.NewGroupResolver(config.GroupsConfig{
+		Groups: map[string]string{
+			"powerful": "anthropic/claude-opus-4-6",
+			"fast":     "anthropic/claude-sonnet-4-6",
+			"cheap":    "anthropic/claude-haiku-4-5",
+		},
 	}, nil)
 	deps := SpawnDeps{
 		Client: client,
@@ -91,8 +93,10 @@ func TestSpawnContextCharacter(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	gr := config.NewGroupResolver(config.ResolvedGroups{
-		Powerful: "anthropic/claude-opus-4-6",
+	gr := config.NewGroupResolver(config.GroupsConfig{
+		Groups: map[string]string{
+			"powerful": "anthropic/claude-opus-4-6",
+		},
 	}, nil)
 	deps := SpawnDeps{
 		Client: client,
@@ -272,10 +276,12 @@ func TestSpawnExploreMode(t *testing.T) {
 	})
 
 	client := newTestAnthropicClient(server.URL, "test-token")
-	gr := config.NewGroupResolver(config.ResolvedGroups{
-		Powerful: "anthropic/claude-opus-4-6",
-		Fast:     "anthropic/claude-sonnet-4-6",
-		Cheap:    "anthropic/claude-haiku-4-5",
+	gr := config.NewGroupResolver(config.GroupsConfig{
+		Groups: map[string]string{
+			"powerful": "anthropic/claude-opus-4-6",
+			"fast":     "anthropic/claude-sonnet-4-6",
+			"cheap":    "anthropic/claude-haiku-4-5",
+		},
 	}, nil)
 	deps := SpawnDeps{
 		Client:          client,

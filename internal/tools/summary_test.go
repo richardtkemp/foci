@@ -16,7 +16,11 @@ import (
 
 // testGroupResolver creates a GroupResolver that resolves all groups to the given model.
 func testGroupResolver(model string) *config.GroupResolver {
-	return config.NewGroupResolver(config.ResolvedGroups{Powerful: model}, nil)
+	return config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{
+		"powerful": model,
+		"fast":     model,
+		"cheap":    model,
+	}}, nil)
 }
 
 func TestSummaryTool_MissingParams(t *testing.T) {
@@ -155,7 +159,11 @@ func TestSummaryTool_Success(t *testing.T) {
 	defer server.Close()
 
 	client := newTestAnthropicClient(server.URL, "test-key")
-	gr := config.NewGroupResolver(config.ResolvedGroups{Powerful: "anthropic/claude-haiku-4-5"}, nil)
+	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{
+		"powerful": "anthropic/claude-haiku-4-5",
+		"fast":     "anthropic/claude-haiku-4-5",
+		"cheap":    "anthropic/claude-haiku-4-5",
+	}}, nil)
 	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{
@@ -219,7 +227,11 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 
 	client := newTestAnthropicClient(server.URL, "test-key")
 	// Use full model string in Powerful group
-	gr := config.NewGroupResolver(config.ResolvedGroups{Powerful: "anthropic/claude-haiku-4-5-custom"}, nil)
+	gr := config.NewGroupResolver(config.GroupsConfig{Groups: map[string]string{
+		"powerful": "anthropic/claude-haiku-4-5-custom",
+		"fast":     "anthropic/claude-haiku-4-5-custom",
+		"cheap":    "anthropic/claude-haiku-4-5-custom",
+	}}, nil)
 	tool := NewSummaryTool(client, nil, gr, "", nil)
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})
