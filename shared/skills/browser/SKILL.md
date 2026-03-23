@@ -23,6 +23,7 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 
 | Action | Params | Notes |
 |---|---|---|
+| start | incognito | Explicitly start the browser. Pass incognito=false to use persistent profile. |
 | snapshot | — | Capture current page accessibility tree |
 | navigate | url | Go to URL. Auto-snapshot. |
 | click | ref, element | Click element. Auto-snapshot. |
@@ -51,4 +52,4 @@ Each interactive element gets a ref like [ref=s1e5]. Use these refs to interact.
 - **waitType** — Either `load` (page load) or `idle` (network idle).
 - **fullPage** — Boolean. Capture full scrollable page instead of viewport.
 - **returnPath** — Boolean. Return file path instead of base64-encoded image.
-- **incognito** — Boolean. Enable (`true`, default) or disable (`false`) incognito mode. Can be passed on any action. Restarts the browser if the mode changes.
+- **incognito** — Boolean. Enable (`true`, default) or disable (`false`) incognito mode. Used with `start` action.

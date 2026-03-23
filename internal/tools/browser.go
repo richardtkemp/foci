@@ -198,7 +198,7 @@ func NewBrowserTool(mgr *BrowserManager) *Tool {
 				"action": {
 					"type": "string",
 					"description": "Action to perform",
-					"enum": ["snapshot", "navigate", "click", "fill", "select", "press", "go_back", "go_forward", "reload", "screenshot", "pdf", "evaluate", "wait", "close"]
+					"enum": ["start", "snapshot", "navigate", "click", "fill", "select", "press", "go_back", "go_forward", "reload", "screenshot", "pdf", "evaluate", "wait", "close"]
 				},
 				"url": {"type": "string", "description": "URL to navigate to"},
 				"ref": {"type": "string", "description": "Element ref from snapshot (e.g., s1e5)"},
@@ -212,7 +212,7 @@ func NewBrowserTool(mgr *BrowserManager) *Tool {
 				"waitType": {"type": "string", "description": "Wait type: load or idle"},
 				"fullPage": {"type": "boolean", "description": "Capture full page screenshot"},
 				"returnPath": {"type": "boolean", "description": "Return file path instead of base64"},
-				"incognito": {"type": "boolean", "description": "Use incognito mode (default true). Restarts the browser if mode changes."}
+				"incognito": {"type": "boolean", "description": "Use incognito mode (default true). Only applies to start action."}
 			},
 			"required": ["action"]
 		}`),
@@ -251,17 +251,9 @@ func executeBrowserTool(ctx context.Context, params json.RawMessage, mgr *Browse
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	// Apply incognito mode change before any action that may start the browser.
-	if p.Incognito != nil && *p.Incognito != mgr.incognito {
-		mgr.incognito = *p.Incognito
-		if mgr.IsConnected() {
-			if err := mgr.Stop(); err != nil {
-				return ToolResult{Text: fmt.Sprintf("Error restarting browser for incognito change: %v", err)}, nil
-			}
-		}
-	}
-
 	switch p.Action {
+	case "start":
+		return browserStart(mgr, p)
 	case "snapshot":
 		return browserSnapshot(mgr)
 	case "navigate":
