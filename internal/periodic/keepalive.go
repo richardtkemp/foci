@@ -207,6 +207,9 @@ func (r *Runner) run(ctx context.Context) {
 			}
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
+			// Formation runs before consolidation so that all the latest
+			// memory content is available when consolidation curates MEMORY.md.
+			// Consolidation also skips if formation is still running.
 			r.maybeMemoryFormation()
 			r.maybeConsolidation()
 			if r.warningDispatcher != nil {
@@ -438,7 +441,6 @@ func (r *Runner) maybeMemoryFormation() {
 
 	r.mu.Lock()
 	r.memoryFormationRunning = true
-	r.lastMemoryFormation = now
 	r.mu.Unlock()
 
 	r.log.Infof("firing memory formation for agent %s", r.agentID)
@@ -447,6 +449,7 @@ func (r *Runner) maybeMemoryFormation() {
 		defer func() {
 			r.mu.Lock()
 			r.memoryFormationRunning = false
+			r.lastMemoryFormation = time.Now()
 			r.mu.Unlock()
 		}()
 		r.branchFn("memory-formation", promptText, true)
@@ -476,11 +479,16 @@ func (r *Runner) maybeConsolidation() {
 	lastConsolidation := r.lastConsolidation
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.consolidationRunning
+	memFormRunning := r.memoryFormationRunning
 	r.mu.Unlock()
 
 	nextFire := lastConsolidation.Truncate(interval).Add(interval)
 	if running {
 		skip = "already running"
+		return
+	}
+	if memFormRunning {
+		skip = "memory formation running"
 		return
 	}
 	if now.Before(nextFire) {
