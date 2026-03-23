@@ -282,7 +282,11 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string)
 	}
 	filename := fmt.Sprintf("%s_%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), mediaType, chatID, ext)
 	path := filepath.Join(b.display.ReceivedFilesDir, filename)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	mode := b.fileMode
+	if mode == 0 {
+		mode = 0640
+	}
+	if err := os.WriteFile(path, data, mode); err != nil {
 		return "", fmt.Errorf("write media: %w", err)
 	}
 	return path, nil

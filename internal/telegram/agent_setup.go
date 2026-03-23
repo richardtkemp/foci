@@ -76,6 +76,7 @@ func SetupAgent(mgr *BotManager, p AgentSetupParams) *platform.SetupResult {
 			tBot.SetHandlerAndCommands(p.Agent, p.Commands)
 			tBot.SetCommandContext(p.CommandContext)
 			ApplyAgentDisplaySettings(tBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram"))
+			tBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 		},
 		DisplayDefaultsFn: func() platform.DisplaySettings {
 			soStr := "off"
@@ -171,6 +172,7 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 	primaryBot.display.ToolCallPreviewChars = cfg.Tools.ToolCallPreviewChars
 	ApplyAgentDisplaySettings(primaryBot, p.Resolved.PlatformDisplay("telegram"), p.Resolved.Debug, acfg.Platform("telegram"))
+	primaryBot.fileMode, _ = config.ParseFileMode(p.GlobalConfig.FileMode)
 
 	if p.DisplayOverrideFn != nil {
 		overrideFn := p.DisplayOverrideFn
@@ -252,6 +254,7 @@ func ConfigureFacetBot(bot *Bot, mc FacetBotConfig) {
 		bot.SetTTS(mc.TTSProvider)
 	}
 	ApplyAgentDisplaySettings(bot, mc.Resolved.PlatformDisplay("telegram"), mc.Resolved.Debug, mc.AgentConfig.Platform("telegram"))
+	bot.fileMode, _ = config.ParseFileMode(mc.GlobalConfig.FileMode)
 	if mc.ToolDetailStore != nil {
 		bot.SetToolDetailStore(mc.ToolDetailStore)
 	}

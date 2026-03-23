@@ -121,7 +121,8 @@ Subcommands:
 	}
 
 	// ========== Seed shared defaults ==========
-	seedSharedDefaults()
+	wsFileMode, _ := config.ParseFileMode(cfg.FileMode)
+	seedSharedDefaults(wsFileMode)
 
 	// ========== Secrets & Bitwarden ==========
 	sec := initSecrets(configPath, cfg)
@@ -229,7 +230,7 @@ Subcommands:
 		// get the same default character files as provisioned ones.
 		if len(acfg.System.SystemFiles) == 0 {
 			sharedDir := filepath.Join(filepath.Dir(acfg.Workspace), "shared")
-			if err := provision.SeedCharacterFiles(sharedDir, acfg.Workspace); err != nil {
+			if err := provision.SeedCharacterFiles(sharedDir, acfg.Workspace, wsFileMode); err != nil {
 				log.Warnf("main", "agent %q: seed character files: %v", acfg.ID, err)
 			}
 		}

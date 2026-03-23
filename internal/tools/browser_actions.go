@@ -369,7 +369,7 @@ func browserScreenshot(mgr *BrowserManager, p browserParams) (ToolResult, error)
 	}
 
 	path := filepath.Join(tempdir.Dir(), fmt.Sprintf("browser-screenshot-%d.png", time.Now().Unix()))
-	if err := os.WriteFile(path, buf, 0644); err != nil {
+	if err := os.WriteFile(path, buf, mgr.FileMode); err != nil {
 		return ToolResult{Text: fmt.Sprintf("Error: save screenshot failed: %v", err)}, nil
 	}
 
@@ -398,7 +398,7 @@ func browserPDF(mgr *BrowserManager) (ToolResult, error) {
 	}
 
 	path := filepath.Join(tempdir.Dir(), fmt.Sprintf("browser-page-%d.pdf", time.Now().Unix()))
-	if err := os.WriteFile(path, buf, 0644); err != nil {
+	if err := os.WriteFile(path, buf, mgr.FileMode); err != nil {
 		return ToolResult{Text: fmt.Sprintf("Error: save pdf failed: %v", err)}, nil
 	}
 

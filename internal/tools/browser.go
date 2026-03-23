@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -24,12 +25,14 @@ type BrowserManager struct {
 	logger     *log.ComponentLogger
 	snapshot   *Snapshot
 	generation int
+	FileMode   os.FileMode // permission bits for saved files (screenshots, PDFs)
 }
 
 // NewBrowserManager creates a new browser manager with the given config.
-func NewBrowserManager(cfg *config.ResolvedBrowser) *BrowserManager {
+func NewBrowserManager(cfg *config.ResolvedBrowser, fileMode os.FileMode) *BrowserManager {
 	return &BrowserManager{
-		config: cfg,
+		config:   cfg,
+		FileMode: fileMode,
 		logger: log.NewComponentLogger("browser"),
 	}
 }

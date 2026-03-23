@@ -279,6 +279,7 @@ func restoreFacetSessions(
 				}
 				rc := config.Resolve(cfg, acfg)
 				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("telegram"), rc.Debug, acfg.Platform("telegram"))
+				bot.fileMode, _ = config.ParseFileMode(cfg.FileMode)
 			}
 
 			if agentID != "" {

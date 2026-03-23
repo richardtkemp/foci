@@ -300,7 +300,7 @@ func importMDFiles(reader *bufio.Reader, srcDir, destDir string, opts mdImportOp
 			fmt.Printf("  Warning: could not read %s: %v\n", f.name, err)
 			continue
 		}
-		if err := os.WriteFile(dst, data, 0644); err != nil {
+		if err := os.WriteFile(dst, data, 0640); err != nil {
 			fmt.Printf("  Warning: could not write %s: %v\n", f.name, err)
 			continue
 		}

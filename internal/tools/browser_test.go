@@ -65,7 +65,7 @@ func testBrowserManager(t *testing.T) *BrowserManager {
 		Incognito:     true,
 		DOMStableSec:  0.1,
 		DOMStableDiff: 0.5,
-	})
+	}, 0640)
 	t.Cleanup(func() { mgr.Stop() })
 	return mgr
 }

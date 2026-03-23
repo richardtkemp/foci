@@ -44,7 +44,7 @@ func NewReadTool(store *secrets.Store, workspace string) *Tool {
 	}
 }
 
-func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath) *Tool {
+func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
@@ -63,12 +63,12 @@ func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, store, "", workspace, blockedPaths)
+			return writeFile(ctx, params, store, "", workspace, fileMode, blockedPaths)
 		},
 	}
 }
 
-func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath) *Tool {
+func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -91,7 +91,7 @@ func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.B
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, store, "", workspace, blockedPaths)
+			return editFile(ctx, params, store, "", workspace, fileMode, blockedPaths)
 		},
 	}
 }
@@ -107,7 +107,7 @@ func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 	}
 }
 
-func NewIsolatedWriteTool(store *secrets.Store, baseDir string) *Tool {
+func NewIsolatedWriteTool(store *secrets.Store, baseDir string, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "write",
 		Description: "Create or overwrite a file with the given content.",
@@ -126,12 +126,12 @@ func NewIsolatedWriteTool(store *secrets.Store, baseDir string) *Tool {
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, store, baseDir, "")
+			return writeFile(ctx, params, store, baseDir, "", fileMode)
 		},
 	}
 }
 
-func NewIsolatedEditTool(store *secrets.Store, baseDir string) *Tool {
+func NewIsolatedEditTool(store *secrets.Store, baseDir string, fileMode os.FileMode) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -154,7 +154,7 @@ func NewIsolatedEditTool(store *secrets.Store, baseDir string) *Tool {
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, store, baseDir, "")
+			return editFile(ctx, params, store, baseDir, "", fileMode)
 		},
 	}
 }
@@ -384,7 +384,10 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 	return TextResult(out.String()), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, fileMode os.FileMode, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+	if fileMode == 0 {
+		fileMode = 0640
+	}
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -408,14 +411,17 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 		}
 	}
 
-	if err := os.WriteFile(resolved, []byte(p.Content), 0644); err != nil {
+	if err := os.WriteFile(resolved, []byte(p.Content), fileMode); err != nil {
 		return ToolResult{}, fmt.Errorf("write file: %w", err)
 	}
 
 	return TextResult(fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path)), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, fileMode os.FileMode, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+	if fileMode == 0 {
+		fileMode = 0640
+	}
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
@@ -464,7 +470,7 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		}
 	}
 
-	if err := os.WriteFile(resolved, []byte(newContent), 0644); err != nil {
+	if err := os.WriteFile(resolved, []byte(newContent), fileMode); err != nil {
 		return ToolResult{}, fmt.Errorf("write file: %w", err)
 	}
 

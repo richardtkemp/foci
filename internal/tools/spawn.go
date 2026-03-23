@@ -97,6 +97,7 @@ type SpawnDeps struct {
 	Notifier           *AsyncNotifier                           // async result delivery for inherit mode
 	OrientationBuilder func(branchKey, parentKey string) string // builds orientation text for branch sessions
 	SetNoCompact       func(sessionKey string, value bool)      // marks branch sessions as no_compact (prevents compaction)
+	FileMode           os.FileMode                              // permission bits for files created by spawned sessions
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.
@@ -158,7 +159,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
-				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir)
+				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir, deps.FileMode)
 				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
@@ -229,7 +230,7 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef,
 	return defs, tools
 }
 
-func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir string) ([]provider.ToolDef, map[string]*Tool) {
+func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir string, fileMode os.FileMode) ([]provider.ToolDef, map[string]*Tool) {
 	if reg == nil {
 		return nil, nil
 	}
@@ -248,9 +249,9 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 		case "read":
 			tools[t.Name] = NewIsolatedReadTool(nil, baseDir)
 		case "write":
-			tools[t.Name] = NewIsolatedWriteTool(nil, baseDir)
+			tools[t.Name] = NewIsolatedWriteTool(nil, baseDir, fileMode)
 		case "edit":
-			tools[t.Name] = NewIsolatedEditTool(nil, baseDir)
+			tools[t.Name] = NewIsolatedEditTool(nil, baseDir, fileMode)
 		case "http_request":
 			tools[t.Name] = NewIsolatedHTTPRequestTool(t)
 		default:

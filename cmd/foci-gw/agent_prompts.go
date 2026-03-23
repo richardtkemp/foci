@@ -10,7 +10,7 @@ import (
 
 // seedDefaultPrompts writes embedded prompt files to dir if they don't already
 // exist. This gives users editable copies they can customise.
-func seedDefaultPrompts(dir string) {
+func seedDefaultPrompts(dir string, fileMode os.FileMode) {
 	promptFiles := map[string]func() string{
 		"keepalive.md":                    prompts.Keepalive,
 		"background.md":                   prompts.Background,
@@ -34,7 +34,7 @@ func seedDefaultPrompts(dir string) {
 		if _, err := os.Stat(path); err == nil {
 			continue // already exists
 		}
-		if err := os.WriteFile(path, []byte(fn()+"\n"), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(fn()+"\n"), fileMode); err != nil {
 			log.Warnf("main", "seed prompts: write %s: %v", path, err)
 			continue
 		}

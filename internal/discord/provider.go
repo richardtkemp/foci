@@ -231,6 +231,7 @@ func restoreFacetSessions(
 				}
 				rc := config.Resolve(cfg, acfg)
 				ApplyAgentDisplaySettings(bot, rc.PlatformDisplay("discord"), rc.Debug)
+				bot.fileMode, _ = config.ParseFileMode(cfg.FileMode)
 			}
 
 			if agentID != "" {

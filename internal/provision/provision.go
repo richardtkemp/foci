@@ -32,13 +32,14 @@ var DefaultCharacterFileNames = []string{
 
 // AgentSpec describes the inputs needed to provision a new agent workspace.
 type AgentSpec struct {
-	ID          string // slug: "greek-tutor"
-	DisplayName string // "Greek Tutor" (optional)
-	HomeDir     string // workspace parent: /home/foci
-	DefaultsDir string // shared/ root (in repo or on disk)
-	CharMode    string // "defaults", "openclaw", "copy", "import", "blank"
-	CopyFrom    string // source agent ID when CharMode=="copy"
-	SystemFiles []string // nil → DefaultSystemFiles
+	ID          string      // slug: "greek-tutor"
+	DisplayName string      // "Greek Tutor" (optional)
+	HomeDir     string      // workspace parent: /home/foci
+	DefaultsDir string      // shared/ root (in repo or on disk)
+	CharMode    string      // "defaults", "openclaw", "copy", "import", "blank"
+	CopyFrom    string      // source agent ID when CharMode=="copy"
+	SystemFiles []string    // nil → DefaultSystemFiles
+	FileMode    os.FileMode // permission bits for created files (0 → 0640)
 }
 
 // Result holds the outputs of a successful Provision call.
@@ -51,6 +52,14 @@ type Result struct {
 // workspacePath returns the full workspace directory path.
 func (s AgentSpec) workspacePath() string {
 	return filepath.Join(s.HomeDir, s.ID)
+}
+
+// fileMode returns the configured file permissions, defaulting to 0640.
+func (s AgentSpec) fileMode() os.FileMode {
+	if s.FileMode == 0 {
+		return 0640
+	}
+	return s.FileMode
 }
 
 // Provision creates an agent workspace and returns config/crontab data.
@@ -68,25 +77,25 @@ func Provision(spec AgentSpec) (*Result, error) {
 	// 2. Character files based on CharMode
 	switch spec.CharMode {
 	case "defaults":
-		if err := copyDefaultFiles(spec.DefaultsDir, workspace); err != nil {
+		if err := copyDefaultFiles(spec.DefaultsDir, workspace, spec.fileMode()); err != nil {
 			return nil, fmt.Errorf("copy defaults: %w", err)
 		}
-		if err := templateSoulFile(filepath.Join(workspace, "character", "SOUL.md"), spec.DisplayName); err != nil {
+		if err := templateSoulFile(filepath.Join(workspace, "character", "SOUL.md"), spec.DisplayName, spec.fileMode()); err != nil {
 			return nil, fmt.Errorf("template SOUL.md: %w", err)
 		}
 
 	case "openclaw":
 		openclawDir := filepath.Join(spec.DefaultsDir, "openclaw")
-		if err := copyDir(openclawDir, filepath.Join(workspace, "character")); err != nil {
+		if err := copyDir(openclawDir, filepath.Join(workspace, "character"), spec.fileMode()); err != nil {
 			return nil, fmt.Errorf("copy openclaw: %w", err)
 		}
-		if err := templateSoulFile(filepath.Join(workspace, "character", "SOUL.md"), spec.DisplayName); err != nil {
+		if err := templateSoulFile(filepath.Join(workspace, "character", "SOUL.md"), spec.DisplayName, spec.fileMode()); err != nil {
 			return nil, fmt.Errorf("template SOUL.md: %w", err)
 		}
 
 	case "copy":
 		sourceWorkspace := filepath.Join(spec.HomeDir, spec.CopyFrom)
-		if err := copyDir(filepath.Join(sourceWorkspace, "character"), filepath.Join(workspace, "character")); err != nil {
+		if err := copyDir(filepath.Join(sourceWorkspace, "character"), filepath.Join(workspace, "character"), spec.fileMode()); err != nil {
 			return nil, fmt.Errorf("copy from %s: %w", spec.CopyFrom, err)
 		}
 
@@ -96,7 +105,7 @@ func Provision(spec AgentSpec) (*Result, error) {
 	case "blank":
 		for _, name := range DefaultCharacterFileNames {
 			path := filepath.Join(workspace, "character", name)
-			if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+			if err := os.WriteFile(path, []byte(""), spec.fileMode()); err != nil {
 				return nil, fmt.Errorf("create %s: %w", name, err)
 			}
 		}
@@ -123,16 +132,16 @@ func Provision(spec AgentSpec) (*Result, error) {
 }
 
 // copyDefaultFiles copies default character files to a new workspace.
-func copyDefaultFiles(defaultsDir, workspace string) error {
+func copyDefaultFiles(defaultsDir, workspace string, mode os.FileMode) error {
 	charSrc := filepath.Join(defaultsDir, "character")
 	charDst := filepath.Join(workspace, "character")
-	return copyDir(charSrc, charDst)
+	return copyDir(charSrc, charDst, mode)
 }
 
 // SeedDefaults walks srcFS and copies files to targetDir on disk,
 // creating directories as needed. Files that already exist on disk are skipped.
 // Callers pass os.DirFS(path) for a repo checkout or an embed.FS for binary-only installs.
-func SeedDefaults(srcFS fs.FS, targetDir string) error {
+func SeedDefaults(srcFS fs.FS, targetDir string, mode os.FileMode) error {
 	return fs.WalkDir(srcFS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -159,7 +168,7 @@ func SeedDefaults(srcFS fs.FS, targetDir string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0644)
+		return os.WriteFile(target, data, mode)
 	})
 }
 
@@ -168,12 +177,12 @@ func SeedDefaults(srcFS fs.FS, targetDir string) error {
 // This ensures non-provisioned agents (those with only id= in config) get
 // the same default character files as provisioned agents.
 // Returns nil if the shared character directory does not exist.
-func SeedCharacterFiles(sharedDir, workspaceDir string) error {
+func SeedCharacterFiles(sharedDir, workspaceDir string, mode os.FileMode) error {
 	charSrc := filepath.Join(sharedDir, "character")
 	if _, err := os.Stat(charSrc); os.IsNotExist(err) {
 		return nil
 	}
-	return SeedDefaults(os.DirFS(charSrc), filepath.Join(workspaceDir, "character"))
+	return SeedDefaults(os.DirFS(charSrc), filepath.Join(workspaceDir, "character"), mode)
 }
 
 // TitleCase converts a hyphenated slug to title case.

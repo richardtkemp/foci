@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	execAutoBg := tc.ExecAutoBackground
 	maxUploadSize := tc.MaxUploadFileSize
 	spillThreshold := sc.MaxResultChars
+	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 
 	// Inject FOCI_ADDR and FOCI_GW_SOCK so agents can run foci CLI commands
 	// (send, branch, ping, etc.) without sourcing vars manually.
@@ -88,7 +90,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	// Only register browser tool if enabled
 	bc := p.resolved.Browser
 	if bc.Enabled {
-		browserMgr := tools.NewBrowserManager(&bc)
+		browserMgr := tools.NewBrowserManager(&bc, fileMode)
 		registry.Register(tools.NewBrowserTool(browserMgr))
 	}
 
@@ -97,10 +99,10 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
 	}
 	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
-	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths))
-	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths))
+	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
+	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
 	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, groupResolver, acfg.Workspace, fallbackFn))
-	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier))
+	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier, fileMode))
 
 	return result
 }
@@ -255,7 +257,7 @@ func registerSessionTools(registry *tools.Registry, p setupParams, connMgr platf
 }
 
 // setupNudgeSystem configures the nudge scheduler and reload logic on the agent.
-func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry) {
+func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.ResolvedNudge, defaultSessionKey func() string, toolRegistry *tools.Registry, skillRegistry *skills.Registry, fileMode os.FileMode) {
 	nudgeEnabled := nc.NudgeEnable
 	nudgeDefaultEnabled := nc.NudgeDefaultEnable
 	braindeadThreshold := nc.NudgeDefaultBraindeadThreshold
@@ -353,7 +355,7 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 			nudgeReloadFromDisk()
 			return
 		}
-		extractor := nudge.NewExtractor(acfg.Workspace, fileOrder)
+		extractor := nudge.NewExtractor(acfg.Workspace, fileOrder, fileMode)
 		_, needed := extractor.NeedsExtraction()
 		if needed {
 			go func() {
@@ -438,6 +440,7 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 // registerSpawnTool registers the spawn tool for forking sub-agents.
 func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, resolvedModel, defaultFormat string, fallbackFn provider.FallbackFunc) {
 	acfg := p.acfg
+	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 
 	spawnOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	al := p.resolved.Loop
@@ -461,6 +464,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 			return prompts.BuildBranchOrientation(spawnOrientPath, branchKey, parentKey, "spawn", false, promptSearchDirs)
 		},
 		SetNoCompact: setNoCompact,
+		FileMode:     fileMode,
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, agLazy))
 }
