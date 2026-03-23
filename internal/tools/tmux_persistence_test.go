@@ -601,13 +601,21 @@ func TestTmuxOwnsAfterRotation(t *testing.T) {
 	// Proves that owns() returns true when the stored session key has a different
 	// version timestamp (simulating compaction rotation) but the same base key
 	// (agentID/typeID).
-	t.Parallel()
 	tmuxAvailable(t)
 
-	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, "")
+	// Isolated tmux server so the kill path's maybeKillTmuxServer
+	// can't race with other parallel tests on the shared server.
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "tmux.sock")
+	exec.Command("tmux", "-S", sock, "start-server").Run()
+	t.Cleanup(func() {
+		exec.Command("tmux", "-S", sock, "kill-server").Run()
+	})
+
+	_, tool, _, _ := NewTmuxTool(300, 30, nil, nil, "", false, 30, 0, sock)
+	t.Parallel()
 
 	name := "foci-test-owns-rotation"
-	tmuxSetup(t, name)
 
 	oldKey := "agent1/c123/1700000000"
 	newKey := "agent1/c123/1700100000"
