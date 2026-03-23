@@ -46,9 +46,25 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 	var reasoning strings.Builder
 	deltasEmitted := false
 
+	// The SDK accumulator sums usage fields across all chunks (+=). Per the
+	// OpenAI spec, only the final chunk carries usage — but we've observed
+	// providers (OpenRouter/GLM-5) where intermediate chunks also carry small
+	// non-zero cached_tokens values. The accumulator inflates cache_read by
+	// summing those, which causes our cache-bust detector to see phantom
+	// drops on the next turn. We're not 100% certain this is the root cause
+	// (it could also be provider-side token-counting variance), but capturing
+	// the last chunk's usage directly is strictly more correct regardless.
+	var lastUsage openai.CompletionUsage
+	var hasUsage bool
+
 	for stream.Next() {
 		chunk := stream.Current()
 		acc.AddChunk(chunk)
+
+		if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			lastUsage = chunk.Usage
+			hasUsage = true
+		}
 
 		if len(chunk.Choices) == 0 {
 			continue
@@ -85,6 +101,11 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 			return nil, fmt.Errorf("mid-stream error (deltas already emitted): %w", streamErr)
 		}
 		return nil, streamErr
+	}
+
+	// Override accumulated usage with the final chunk's authoritative value.
+	if hasUsage {
+		acc.ChatCompletion.Usage = lastUsage
 	}
 
 	result, err := responseFromOpenAI(&acc.ChatCompletion, req.Model)
