@@ -138,15 +138,24 @@ func ParseFlags() string {
 }
 
 // UnknownKeys returns the list of unrecognised key names from the TOML metadata.
+// groupNames filters out [groups] string keys that were extracted separately
+// (they appear undecoded because GroupsConfig uses toml:"-" for the Groups map).
 // Exported for testing; Load() calls this internally and logs warnings.
-func UnknownKeys(md toml.MetaData) []string {
+func UnknownKeys(md toml.MetaData, groupNames map[string]string) []string {
 	undecoded := md.Undecoded()
 	if len(undecoded) == 0 {
 		return nil
 	}
-	keys := make([]string, len(undecoded))
-	for i, key := range undecoded {
-		keys[i] = strings.Join(key, ".")
+	var keys []string
+	for _, key := range undecoded {
+		path := strings.Join(key, ".")
+		// Skip [groups] string keys — extracted by extractGroupNames.
+		if len(key) == 2 && key[0] == "groups" && groupNames != nil {
+			if _, ok := groupNames[key[1]]; ok {
+				continue
+			}
+		}
+		keys = append(keys, path)
 	}
 	return keys
 }

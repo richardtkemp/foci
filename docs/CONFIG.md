@@ -466,15 +466,19 @@ enable_keepalive = true
 
 ### `[groups]`
 
-Model group assignments, call site overrides, and fallbacks. Group values can be `developer/model_id` strings or `[models.*]` alias names.
+Model group assignments, call site overrides, and fallbacks. Group names are arbitrary string keys; values are `developer/model_id` strings or `[models.*]` alias names.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `powerful` | string | *(required)* | Model for primary tasks (chat, compaction, memory). Must be a `developer/model_id` string or `[models.*]` alias. Other groups default to this model unless explicitly overridden. Can be overridden per-agent via `[agents.groups]`. |
-| `fast` | string | `""` | Model name for fast tasks (spawn-raw, spawn-character). Defaults to `powerful` when unset. |
-| `cheap` | string | `""` | Model name for cheap tasks (spawn-explore, summarize-tool, summarize-file, prompt-diff). Defaults to `powerful` when unset. |
+The three built-in groups are `powerful` (required), `fast`, and `cheap`. `fast` and `cheap` default to `powerful` when unset. You can also define custom groups.
 
-**`[groups.calls]`** — Override which group a specific call site uses. Keys are call site names, values are group names (`powerful`, `fast`, `cheap`).
+```toml
+[groups]
+powerful = "haiku"
+fast = "haiku"
+cheap = "haiku"
+reasoning = "opus"      # user-defined group
+```
+
+**`[groups.calls]`** — Override which group a specific call site uses. Keys are call site names, values are group names (including user-defined ones).
 
 Default call site → group assignments:
 
@@ -499,7 +503,7 @@ sonnet = "haiku"                                         # chains: opus → sonn
 "google/gemini-2.5-pro" = "anthropic/claude-sonnet-4-6"  # cross-endpoint fallback
 ```
 
-All `[groups]` fields can be overridden per-agent via `[agents.groups]`. Per-agent values override global; `calls` and `fallbacks` maps are merged (per-agent keys win).
+All `[groups]` keys can be overridden per-agent via `[agents.groups]`. Per-agent group values override global; `calls` and `fallbacks` maps are merged (per-agent keys win).
 
 ```toml
 [[agents]]

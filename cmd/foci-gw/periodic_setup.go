@@ -32,9 +32,9 @@ type periodicParams struct {
 func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParams) *periodic.Runner {
 	gc := inst.resolved.Groups
 
-	// Resolve model from powerful group to get endpoint information
+	// Resolve model from chat call site to get endpoint information
 	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
-	resolved := groupResolver.ResolveGroup(config.GroupPowerful)
+	resolved := groupResolver.ResolveCall(config.CallChat)
 	var endpoint string
 	var client provider.Client
 	if resolved != nil {

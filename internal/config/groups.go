@@ -62,30 +62,13 @@ type GroupResolver struct {
 }
 
 // NewGroupResolver creates a GroupResolver from config.
-// Powerful must be set in config (validated by Validate). Fast/Cheap default
-// to Powerful when not set.
-func NewGroupResolver(groups ResolvedGroups, models map[string]ModelConfig) *GroupResolver {
-	powerful := groups.Powerful
-	gr := &GroupResolver{
+// groups maps group name → model name. calls maps call site → group override.
+func NewGroupResolver(gc GroupsConfig, models map[string]ModelConfig) *GroupResolver {
+	return &GroupResolver{
 		models:        models,
-		callOverrides: groups.Calls,
-		groups: map[string]string{
-			GroupPowerful: powerful,
-		},
+		callOverrides: gc.Calls,
+		groups:        gc.Groups,
 	}
-
-	if groups.Fast != "" {
-		gr.groups[GroupFast] = groups.Fast
-	} else {
-		gr.groups[GroupFast] = powerful
-	}
-	if groups.Cheap != "" {
-		gr.groups[GroupCheap] = groups.Cheap
-	} else {
-		gr.groups[GroupCheap] = powerful
-	}
-
-	return gr
 }
 
 // GroupNames returns the names of all configured groups.
@@ -117,17 +100,17 @@ func (gr *GroupResolver) ResolveCall(callSite string) *ResolvedModel {
 }
 
 // ResolveGroup resolves a group name to a concrete model.
-// Falls back to the powerful group if the group name is unknown.
+// Returns nil if the group name is unknown — use for user-provided group names.
 func (gr *GroupResolver) ResolveGroup(groupName string) *ResolvedModel {
 	return gr.resolveGroup(groupName)
 }
 
 // resolveGroup resolves a group name to a ResolvedModel.
+// Returns nil if the group name is not found.
 func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 	model, ok := gr.groups[groupName]
 	if !ok {
-		// Unknown group — fall back to powerful
-		model = gr.groups[GroupPowerful]
+		return nil
 	}
 	resolved, err := ResolveModel(model, "", gr.models)
 	if err != nil {
@@ -136,7 +119,3 @@ func (gr *GroupResolver) resolveGroup(groupName string) *ResolvedModel {
 	return resolved
 }
 
-// PowerfulModel returns the model string for the powerful group.
-func (gr *GroupResolver) PowerfulModel() string {
-	return gr.groups[GroupPowerful]
-}

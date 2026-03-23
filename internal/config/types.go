@@ -224,13 +224,13 @@ type ModelConfig struct {
 }
 
 // GroupsConfig assigns named models to groups and call sites.
-// String fields are pointers for Merge-based per-agent override resolution.
+// Groups is populated from top-level string keys in [groups] by load.go
+// (not decoded by TOML directly since the section mixes string keys with sub-tables).
+// Users can define arbitrary groups; "powerful" is required, "fast"/"cheap" default to it.
 type GroupsConfig struct {
-	Powerful  *string           `toml:"powerful"`
-	Fast      *string           `toml:"fast"`
-	Cheap     *string           `toml:"cheap"`
-	Calls     map[string]string `toml:"calls"`
-	Fallbacks map[string]string `toml:"fallbacks"`
+	Groups    map[string]string `toml:"-"`          // group name → model (populated by load.go from TOML metadata)
+	Calls     map[string]string `toml:"calls"`      // call site → group overrides
+	Fallbacks map[string]string `toml:"fallbacks"`  // model → fallback model
 }
 
 type AgentConfig struct {
