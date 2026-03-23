@@ -196,8 +196,8 @@ func SessionKeyBase(key string) string {
 	return parts[0] + "/" + parts[1]
 }
 
-// BranchFromSession creates a branch child key from a parent session key string.
-func BranchFromSession(parentKey string) (string, error) {
+// branchFromSession creates a branch child key from a parent session key string.
+func branchFromSession(parentKey string) (string, error) {
 	parent, err := ParseSessionKey(parentKey)
 	if err != nil {
 		return "", err
