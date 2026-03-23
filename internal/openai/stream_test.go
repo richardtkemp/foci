@@ -341,6 +341,63 @@ func TestStreamMessagePreStreamError(t *testing.T) {
 	}
 }
 
+func TestStreamUsageNotInflatedByIntermediateChunks(t *testing.T) {
+	// Proves that when a provider sends non-zero usage on intermediate chunks
+	// (in addition to the final usage chunk), we use the last chunk's values
+	// rather than the SDK accumulator's sum. Without this fix, cached_tokens
+	// gets inflated, causing false cache-bust alerts on subsequent turns.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+
+		chunks := []string{
+			// Normal content delta
+			`data: {"id":"chatcmpl-usage","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}`,
+			// Intermediate chunk with partial/spurious usage (observed from OpenRouter)
+			`data: {"id":"chatcmpl-usage","object":"chat.completion.chunk","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"cached_tokens":1}}}`,
+			// Final usage chunk with authoritative values
+			`data: {"id":"chatcmpl-usage","object":"chat.completion.chunk","model":"gpt-4o","choices":[],"usage":{"prompt_tokens":500,"completion_tokens":3,"total_tokens":503,"prompt_tokens_details":{"cached_tokens":450}}}`,
+			`data: [DONE]`,
+		}
+
+		for _, chunk := range chunks {
+			fmt.Fprintf(w, "%s\n\n", chunk)
+			flusher.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	c := NewClient("test-key", WithBaseURL(srv.URL))
+
+	resp, err := c.StreamMessage(context.Background(), &provider.MessageRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 256,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hi")},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+
+	// Without the fix, the accumulator would sum cached_tokens: 1 + 450 = 451.
+	// With the fix, we take the final chunk's value: 450.
+	if resp.Usage.CacheReadInputTokens != 450 {
+		t.Errorf("CacheReadInputTokens = %d, want 450 (not 451 from accumulator sum)", resp.Usage.CacheReadInputTokens)
+	}
+	if resp.Usage.InputTokens != 500 {
+		t.Errorf("InputTokens = %d, want 500", resp.Usage.InputTokens)
+	}
+	if resp.Usage.OutputTokens != 3 {
+		t.Errorf("OutputTokens = %d, want 3", resp.Usage.OutputTokens)
+	}
+
+	// Content should still be correct (accumulator works fine for deltas).
+	if text := provider.TextOf(resp.Content); text != "Hi" {
+		t.Errorf("text = %q, want Hi", text)
+	}
+}
+
 func TestStreamingClientInterface(t *testing.T) {
 	// Proves that *Client satisfies the provider.StreamingClient interface at
 	// runtime (compile-time assertion exists in stream.go; this documents the
