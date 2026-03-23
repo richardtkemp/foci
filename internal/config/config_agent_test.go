@@ -174,7 +174,7 @@ tts_rate = 1.3
 		t.Fatalf("Decode: %v", err)
 	}
 
-	keys := UnknownKeys(md)
+	keys := UnknownKeys(md, nil)
 	for _, k := range keys {
 		if strings.Contains(k, "tts_rate") {
 			t.Errorf("tts_rate should not be flagged as unknown, got: %v", keys)

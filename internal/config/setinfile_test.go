@@ -354,7 +354,7 @@ port = 8080
 	if err != nil {
 		t.Fatalf("Load after set: %v", err)
 	}
-	if DerefStr(cfg.Groups.Powerful) != "anthropic/claude-sonnet-4-5-20250929" {
-		t.Errorf("groups.powerful = %q after round-trip", DerefStr(cfg.Groups.Powerful))
+	if cfg.Groups.Groups["powerful"] != "anthropic/claude-sonnet-4-5-20250929" {
+		t.Errorf("groups.powerful = %q after round-trip", cfg.Groups.Groups["powerful"])
 	}
 }

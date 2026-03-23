@@ -144,9 +144,15 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
+	// Extract group names from [groups] section. String-valued keys in [groups]
+	// are group definitions (e.g. powerful = "haiku"); sub-tables (calls, fallbacks)
+	// are decoded normally by TOML. We extract groups from undecoded keys since
+	// the Groups map uses toml:"-" (mixed string keys + sub-tables).
+	cfg.Groups.Groups = extractGroupNames(data)
+
 	// Collect unknown config keys for the caller to log after logging is
 	// fully initialised (the early log init gets rotated away on startup).
-	cfg.UndefinedKeys = UnknownKeys(md)
+	cfg.UndefinedKeys = UnknownKeys(md, cfg.Groups.Groups)
 
 	// Record which keys were explicitly set in the TOML file.
 	cfg.DefinedKeys = make(map[string]bool)
@@ -166,7 +172,7 @@ func Load(path string) (*Config, error) {
 	// for endpoints the user doesn't use (e.g. openai.api_key when no group
 	// references OpenAI).
 	usedEndpoints := make(map[string]bool)
-	for _, groupModel := range []string{DerefStr(cfg.Groups.Powerful), DerefStr(cfg.Groups.Fast), DerefStr(cfg.Groups.Cheap)} {
+	for _, groupModel := range cfg.Groups.Groups {
 		if groupModel == "" {
 			continue
 		}
@@ -283,4 +289,35 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// extractGroupNames extracts string-valued keys from the [groups] TOML section.
+// These are group definitions (e.g. powerful = "haiku") that can't be decoded
+// directly because GroupsConfig uses toml:"-" for the Groups map (the section
+// mixes string keys with sub-table keys like [groups.calls]).
+func extractGroupNames(rawData []byte) map[string]string {
+	// Decode [groups] as a raw map to get all string-valued keys.
+	var raw struct {
+		Groups map[string]interface{} `toml:"groups"`
+	}
+	_, _ = toml.Decode(string(rawData), &raw)
+
+	groups := make(map[string]string)
+	for k, v := range raw.Groups {
+		if s, ok := v.(string); ok {
+			groups[k] = s
+		}
+	}
+
+	// Default fast/cheap to powerful when absent.
+	if _, ok := groups[GroupPowerful]; ok {
+		if _, ok := groups[GroupFast]; !ok {
+			groups[GroupFast] = groups[GroupPowerful]
+		}
+		if _, ok := groups[GroupCheap]; !ok {
+			groups[GroupCheap] = groups[GroupPowerful]
+		}
+	}
+
+	return groups
 }

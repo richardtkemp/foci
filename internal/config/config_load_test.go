@@ -367,7 +367,7 @@ some_key = "value"
 		t.Fatalf("Decode: %v", err)
 	}
 
-	keys := UnknownKeys(md)
+	keys := UnknownKeys(md, nil)
 	if len(keys) == 0 {
 		t.Fatal("expected unknown keys, got none")
 	}

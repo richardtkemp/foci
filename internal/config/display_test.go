@@ -285,7 +285,7 @@ func TestFormatConfigGroupedAnnotations(t *testing.T) {
 	cfg.Defaults = DefaultsConfig{
 		Loop: AgentLoopConfig{MaxToolLoops: &mtl, MaxOutputTokens: &mot},
 	}
-	cfg.Groups.Powerful = Ptr("claude-haiku-4-5")
+	cfg.Groups.Groups = map[string]string{"powerful": "claude-haiku-4-5"}
 	// Agent overrides max_output_tokens from the default.
 	agent := AgentConfig{
 		ID:        "test-agent",

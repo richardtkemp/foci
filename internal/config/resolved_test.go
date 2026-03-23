@@ -93,22 +93,22 @@ func TestResolve_GroupsMergeMaps(t *testing.T) {
 	// overlay on global base) rather than whole-map replacement.
 	cfg := &Config{
 		Groups: GroupsConfig{
-			Powerful: Ptr("claude"),
-			Calls:    map[string]string{"search": "fast", "code": "powerful"},
+			Groups:    map[string]string{"powerful": "claude"},
+			Calls:     map[string]string{"search": "fast", "code": "powerful"},
 			Fallbacks: map[string]string{"claude": "gpt4"},
 		},
 	}
 	acfg := AgentConfig{
 		Groups: GroupsConfig{
-			Calls:    map[string]string{"code": "cheap"}, // override "code", keep "search"
+			Calls:     map[string]string{"code": "cheap"}, // override "code", keep "search"
 			Fallbacks: map[string]string{"gpt4": "llama"}, // add new key
 		},
 	}
 
 	rc := Resolve(cfg, acfg)
 
-	if got := rc.Groups.Powerful; got != "claude" {
-		t.Errorf("Groups.Powerful = %q, want \"claude\" (global)", got)
+	if got := rc.Groups.Groups["powerful"]; got != "claude" {
+		t.Errorf("Groups.Groups[powerful] = %q, want \"claude\" (global)", got)
 	}
 	// Calls: agent overrides "code", global's "search" remains
 	if got := rc.Groups.Calls["code"]; got != "cheap" {
@@ -175,7 +175,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		},
 		Debug:           DebugConfig{MessagesInLog: Ptr(true)},
 		Environment:     EnvironmentConfig{Enabled: Ptr(true), DocsPath: Ptr("docs")},
-		Groups:          GroupsConfig{Powerful: Ptr("x")},
+		Groups:          GroupsConfig{Groups: map[string]string{"powerful": "x"}},
 		Keepalive:       KeepaliveConfig{Enabled: Ptr(true)},
 		Background:      BackgroundConfig{Enabled: Ptr(true)},
 		MemoryFormation: MemoryFormationConfig{IntervalEnabled: Ptr(true)},
