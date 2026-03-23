@@ -123,7 +123,17 @@ func normalizePaneContent(content string) string {
 func tmuxWatchMonitor(ws *watchedSession, inst *tmuxInstance, key string) {
 	defer close(ws.done)
 
-	ticker := time.NewTicker(2 * time.Second)
+	// Poll at threshold/3 so we get multiple observations per threshold
+	// window — avoids boundary races where poll interval ≈ threshold.
+	// Clamped to [500ms, 2s] for sensible bounds.
+	pollInterval := ws.threshold / 3
+	if pollInterval < 500*time.Millisecond {
+		pollInterval = 500 * time.Millisecond
+	}
+	if pollInterval > 2*time.Second {
+		pollInterval = 2 * time.Second
+	}
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
