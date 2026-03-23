@@ -163,6 +163,7 @@ func setupToolDetailCleanup(
 	toolDetailStore platform.ToolDetailStore,
 	agents map[string]*agentInstance,
 	agentOrder []string,
+	connMgr platform.ConnectionManager,
 	ctx context.Context,
 ) {
 	if toolDetailStore == nil {
@@ -179,7 +180,7 @@ func setupToolDetailCleanup(
 				allIdle := true
 				for _, id := range agentOrder {
 					inst := agents[id]
-					sk := inst.defaultSessionKey()
+					sk := mostRecentSessionKey(inst.ag, connMgr, id)
 					if sk == "" {
 						continue
 					}
