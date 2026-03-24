@@ -3,6 +3,8 @@ package command
 import (
 	"context"
 	"testing"
+
+	"foci/internal/tools"
 )
 
 func TestStopCommand_NilStopFunc(t *testing.T) {
@@ -58,8 +60,7 @@ func TestDoneCommand_SecondaryIdleBotSolomon(t *testing.T) {
 	// returns "already idle".
 	cmd := DoneCommand()
 	cc := CommandContext{
-		IsSecondaryBot:    true,
-		DefaultSessionKey: func() string { return "" },
+		IsSecondaryBot: true,
 	}
 	resp, err := cmd.Execute(context.Background(), Request{}, cc)
 	if err != nil {
@@ -78,12 +79,12 @@ func TestDoneCommand_SecondaryBotWithSession(t *testing.T) {
 
 	cmd := DoneCommand()
 	cc := CommandContext{
-		IsSecondaryBot:    true,
-		DefaultSessionKey: func() string { return "agent:main:facet:f-1" },
-		StopFunc:          func() { stopCalled = true },
-		ReleaseFunc:       func() { releaseCalled = true },
+		IsSecondaryBot: true,
+		StopFunc:       func() { stopCalled = true },
+		ReleaseFunc:    func() { releaseCalled = true },
 	}
-	resp, err := cmd.Execute(context.Background(), Request{}, cc)
+	ctx := tools.WithSessionKey(context.Background(), "agent:main:facet:f-1")
+	resp, err := cmd.Execute(ctx, Request{}, cc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,11 +104,11 @@ func TestDoneCommand_NilFuncs(t *testing.T) {
 	// on a secondary bot with a session.
 	cmd := DoneCommand()
 	cc := CommandContext{
-		IsSecondaryBot:    true,
-		DefaultSessionKey: func() string { return "agent:main:facet:f-1" },
+		IsSecondaryBot: true,
 		// StopFunc and ReleaseFunc are nil
 	}
-	resp, err := cmd.Execute(context.Background(), Request{}, cc)
+	ctx := tools.WithSessionKey(context.Background(), "agent:main:facet:f-1")
+	resp, err := cmd.Execute(ctx, Request{}, cc)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
