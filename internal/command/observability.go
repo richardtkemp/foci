@@ -10,6 +10,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/tools"
 )
 
 // categoryCosts computes per-category cost breakdown from API log entries,
@@ -302,14 +303,11 @@ func ContextCommand() *Command {
 		Description: "Context window breakdown: system prompt, conversation, compaction status",
 		Category:    "observability",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
-			if req.SessionKey != "" {
-				cc.DefaultSessionKey = func() string { return req.SessionKey }
-			}
 			infoFn := cc.ContextInfoFn
 			if infoFn == nil {
 				infoFn = buildContextInfo
 			}
-			info := infoFn(cc)
+			info := infoFn(ctx, cc)
 
 			entries := log.ReadAPILog(cc.APILogPath)
 			var lastInput, lastCacheRead, lastCacheWrite, lastOutput int
@@ -441,8 +439,8 @@ func ContextCommand() *Command {
 }
 
 // buildContextInfo constructs ContextInfo from CommandContext.
-func buildContextInfo(cc CommandContext) ContextInfo {
-	sk := cc.DefaultSessionKey()
+func buildContextInfo(ctx context.Context, cc CommandContext) ContextInfo {
+	sk := tools.SessionKeyFromContext(ctx)
 	model := cc.Agent.SessionModel(sk)
 
 	var sections []SystemSection
