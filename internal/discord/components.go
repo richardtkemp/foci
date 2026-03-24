@@ -66,11 +66,10 @@ func singleButton(label, customID string) []discordgo.MessageComponent {
 }
 
 // sendCommandKeyboard sends a message with command keyboard buttons.
-func (b *Bot) sendCommandKeyboard(channelID, cmdName string, opts []command.KeyboardOption) {
-	label := fmt.Sprintf("/%s:", cmdName)
+func (b *Bot) sendCommandKeyboard(channelID, cmdName string, header string, opts []command.KeyboardOption) {
 	buttons := buildCommandButtons(cmdName, opts)
 	_, _ = b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:    label,
+		Content:    header,
 		Components: buttons,
 	})
 }

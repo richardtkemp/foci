@@ -29,8 +29,8 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 
 	// Check for keyboard display before dispatch so commands with keyboards
 	// don't execute their bare form (which is typically just usage text).
-	if name, opts, ok := b.dispatcher.LookupKeyboard(ctx, lookupText); ok {
-		b.sendCommandKeyboard(msg.Chat.Id, name, opts)
+	if name, header, opts, ok := b.dispatcher.LookupKeyboard(ctx, lookupText, msg.Chat.Id); ok {
+		b.sendCommandKeyboard(msg.Chat.Id, name, header, opts)
 		return true
 	}
 

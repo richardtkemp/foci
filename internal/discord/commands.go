@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -29,8 +30,9 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *discordgo.Messa
 
 	// Check for keyboard display before dispatch so commands with keyboards
 	// don't execute their bare form (which is typically just usage text).
-	if name, opts, ok := b.dispatcher.LookupKeyboard(ctx, lookupText); ok {
-		b.sendCommandKeyboard(msg.ChannelID, name, opts)
+	chatID, _ := strconv.ParseInt(msg.ChannelID, 10, 64)
+	if name, header, opts, ok := b.dispatcher.LookupKeyboard(ctx, lookupText, chatID); ok {
+		b.sendCommandKeyboard(msg.ChannelID, name, header, opts)
 		return true
 	}
 

@@ -283,6 +283,95 @@ func TestNewSessionSettingCommandShowModelDefault(t *testing.T) {
 	}
 }
 
+// TestNewSessionSettingCommandKeyboardHeader verifies that KeyboardHeader returns
+// the current effective value for display above the keyboard buttons.
+func TestNewSessionSettingCommandKeyboardHeader(t *testing.T) {
+	var stored string
+	cmd := newSessionSettingCommand(sessionSettingDef{
+		Name:        "effort",
+		Description: "test effort",
+		OptionsHint: "Options: 1) low  2) medium  3) high",
+		EmptyShow:   "not set",
+		InvalidName: "effort level",
+		Get:         func(_ CommandContext, _ string) string { return stored },
+		Set:         func(_ CommandContext, _ string, v string) { stored = v },
+		Choices: []settingChoice{
+			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
+			{Label: "high", Aliases: []string{"3"}, SetValue: "high", Response: "Effort set to: high"},
+		},
+	})
+
+	if cmd.KeyboardHeader == nil {
+		t.Fatal("KeyboardHeader should be set by newSessionSettingCommand")
+	}
+
+	ctx := context.Background()
+	cc := CommandContext{}
+	req := Request{SessionKey: "test"}
+
+	// No value → shows empty display
+	header := cmd.KeyboardHeader(ctx, req, cc)
+	if header != "/effort — Effort: not set" {
+		t.Errorf("header with no value = %q", header)
+	}
+
+	// After setting a value → shows that value
+	stored = "high"
+	header = cmd.KeyboardHeader(ctx, req, cc)
+	if header != "/effort — Effort: high" {
+		t.Errorf("header with value = %q", header)
+	}
+}
+
+// TestNewSessionSettingCommandKeyboardHeaderModelDefault verifies that
+// KeyboardHeader shows model defaults with annotation when no session override is set.
+func TestNewSessionSettingCommandKeyboardHeaderModelDefault(t *testing.T) {
+	ag := &agent.Agent{
+		Model: "openrouter/qwen/qwen3.5-397b-a17b",
+		ModelDefaultsFn: func(model string) config.ModelDefaults {
+			if model == "openrouter/qwen/qwen3.5-397b-a17b" {
+				return config.ModelDefaults{Effort: "high"}
+			}
+			return config.ModelDefaults{}
+		},
+	}
+	sk := "test-session"
+	cc := modelCC(ag)
+
+	cmd := newSessionSettingCommand(sessionSettingDef{
+		Name:         "effort",
+		Description:  "test effort",
+		OptionsHint:  "Options: 1) low  2) medium  3) high",
+		ModelDefault: func(md config.ModelDefaults) string { return md.Effort },
+		EmptyShow:    "not set",
+		InvalidName:  "effort level",
+		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
+		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		Choices: []settingChoice{
+			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
+			{Label: "high", Aliases: []string{"3"}, SetValue: "high", Response: "Effort set to: high"},
+		},
+	})
+
+	ctx := context.Background()
+	req := Request{SessionKey: sk}
+
+	// No session override → shows model default with annotation
+	header := cmd.KeyboardHeader(ctx, req, cc)
+	want := "/effort — Effort: high (model default)"
+	if header != want {
+		t.Errorf("header with model default:\ngot  %q\nwant %q", header, want)
+	}
+
+	// Session override takes precedence
+	ag.SetSessionEffort(sk, "low")
+	header = cmd.KeyboardHeader(ctx, req, cc)
+	want = "/effort — Effort: low"
+	if header != want {
+		t.Errorf("header with session override:\ngot  %q\nwant %q", header, want)
+	}
+}
+
 // TestNewSessionSettingCommandNilCapability verifies that when Capability is nil,
 // the Visible callback is not set (command is always visible).
 func TestNewSessionSettingCommandNilCapability(t *testing.T) {

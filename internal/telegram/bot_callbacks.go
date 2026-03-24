@@ -68,9 +68,8 @@ func singleButtonKeyboard(text, callbackData string) gotgbot.InlineKeyboardMarku
 	}
 }
 
-func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, opts []command.KeyboardOption) {
-	label := fmt.Sprintf("/%s:", cmdName)
-	_, _ = b.client.SendMessage(chatID, label, &gotgbot.SendMessageOpts{
+func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, header string, opts []command.KeyboardOption) {
+	_, _ = b.client.SendMessage(chatID, header, &gotgbot.SendMessageOpts{
 		ReplyMarkup: buildCommandKeyboard(cmdName, opts),
 	})
 }
