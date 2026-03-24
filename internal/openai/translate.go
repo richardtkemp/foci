@@ -32,10 +32,18 @@ func buildParams(req *provider.MessageRequest) openai.ChatCompletionNewParams {
 		params.Tools = tools
 	}
 
-	// OpenRouter reasoning support: inject reasoning param when thinking is enabled.
-	if req.Thinking != nil {
+	// OpenRouter reasoning support: inject reasoning params for thinking and/or effort.
+	// On OpenRouter, both "enabled" and "effort" live inside a top-level "reasoning" object.
+	if req.Thinking != nil || (req.Output != nil && req.Output.Effort != "") {
+		reasoning := map[string]any{}
+		if req.Thinking != nil {
+			reasoning["enabled"] = true
+		}
+		if req.Output != nil && req.Output.Effort != "" {
+			reasoning["effort"] = req.Output.Effort
+		}
 		params.SetExtraFields(map[string]any{
-			"reasoning": map[string]any{"enabled": true},
+			"reasoning": reasoning,
 		})
 	}
 
