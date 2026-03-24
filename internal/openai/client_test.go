@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/messages"
 	"foci/internal/provider"
 
 	"github.com/openai/openai-go/v3"
@@ -610,7 +611,7 @@ func responseFromOpenAIHelper(resp *openaiChatCompletion, model string) (*provid
 		result.Content = provider.TextContent("")
 	}
 
-	if hasToolUse(result.Content) {
+	if messages.BlocksHaveToolUse(result.Content) {
 		result.StopReason = "tool_use"
 	}
 

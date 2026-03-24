@@ -5,27 +5,18 @@ import (
 )
 
 func TestInjectionLevel_UnmarshalTOML(t *testing.T) {
-	// Proves that InjectionLevel correctly normalises bool and string inputs
-	// to canonical values, and rejects invalid strings.
+	// Proves that InjectionLevel correctly normalises string inputs
+	// to canonical values, and rejects invalid strings and non-string types.
 	tests := []struct {
 		name    string
 		input   any
 		want    InjectionLevel
 		wantErr bool
 	}{
-		// Bool inputs
-		{"bool true", true, InjectionAll, false},
-		{"bool false", false, InjectionOff, false},
-
 		// String inputs — canonical values
 		{"string all", "all", InjectionAll, false},
 		{"string errors", "errors", InjectionErrors, false},
 		{"string off", "off", InjectionOff, false},
-
-		// String inputs — aliases
-		{"string on", "on", InjectionAll, false},
-		{"string true", "true", InjectionAll, false},
-		{"string false", "false", InjectionOff, false},
 
 		// Case insensitive
 		{"string ALL", "ALL", InjectionAll, false},
@@ -38,6 +29,7 @@ func TestInjectionLevel_UnmarshalTOML(t *testing.T) {
 		// Invalid
 		{"string invalid", "warn", InjectionLevel(""), true},
 		{"int type", int64(42), InjectionLevel(""), true},
+		{"bool type", true, InjectionLevel(""), true},
 	}
 
 	for _, tt := range tests {

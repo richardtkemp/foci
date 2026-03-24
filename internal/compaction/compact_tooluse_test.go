@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"foci/internal/config"
+	"foci/internal/messages"
 	"foci/internal/provider"
 	"foci/internal/session"
 )
@@ -19,10 +20,10 @@ func TestHasToolUse(t *testing.T) {
 	// Verifies that hasToolUse correctly distinguishes between a plain text
 	// assistant message (no tool_use) and an assistant message that contains a tool_use
 	// content block.
-	if hasToolUse(provider.Message{Role: "user", Content: provider.TextContent("hi")}) {
+	if messages.HasToolUse(provider.Message{Role: "user", Content: provider.TextContent("hi")}) {
 		t.Error("plain user message should not have tool_use")
 	}
-	if !hasToolUse(toolUseMsg("toolu_1")) {
+	if !messages.HasToolUse(toolUseMsg("toolu_1")) {
 		t.Error("tool_use message should be detected")
 	}
 }
@@ -30,7 +31,7 @@ func TestHasToolUse(t *testing.T) {
 func TestToolUseIDs(t *testing.T) {
 	// Verifies that toolUseIDs extracts all tool call IDs from an assistant
 	// message in order, including messages with multiple tool_use blocks.
-	ids := toolUseIDs(toolUseMsg("toolu_A", "toolu_B"))
+	ids := messages.ToolUseIDs(toolUseMsg("toolu_A", "toolu_B"))
 	if len(ids) != 2 || ids[0] != "toolu_A" || ids[1] != "toolu_B" {
 		t.Errorf("toolUseIDs = %v, want [toolu_A, toolu_B]", ids)
 	}
@@ -39,7 +40,7 @@ func TestToolUseIDs(t *testing.T) {
 func TestToolResultIDs(t *testing.T) {
 	// Verifies that toolResultIDs returns a set containing all tool_use IDs
 	// whose results appear in a user message, enabling O(1) lookup for orphan detection.
-	ids := toolResultIDs(toolResultMsg("toolu_X", "toolu_Y"))
+	ids := messages.ToolResultIDs(toolResultMsg("toolu_X", "toolu_Y"))
 	if !ids["toolu_X"] || !ids["toolu_Y"] || len(ids) != 2 {
 		t.Errorf("toolResultIDs = %v, want {toolu_X, toolu_Y}", ids)
 	}
@@ -263,7 +264,7 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 		if msg.Role != "assistant" {
 			continue
 		}
-		ids := toolUseIDs(msg)
+		ids := messages.ToolUseIDs(msg)
 		if len(ids) == 0 {
 			continue
 		}
@@ -271,7 +272,7 @@ func TestCompactSplitBreaksToolUsePair(t *testing.T) {
 			t.Fatalf("assistant tool_use at end of compacted session (index %d)", i)
 		}
 		next := msgs[i+1]
-		resultIDs := toolResultIDs(next)
+		resultIDs := messages.ToolResultIDs(next)
 		for _, id := range ids {
 			if !resultIDs[id] {
 				t.Errorf("orphaned tool_use %s at index %d — no matching tool_result", id, i)

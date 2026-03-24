@@ -206,13 +206,13 @@ nudge_default_braindead_threshold = 20
 nudge_default_braindead_prompt = "watch it"
 
 [notify]
-inject_agent_warnings = true
+inject_agent_warnings = "all"
 
 [system]
 system_files = ["A.md", "B.md"]
 
 [debug]
-inject_agent_warnings = true
+inject_agent_warnings = "all"
 
 [sessions]
 compaction_effort = "low"

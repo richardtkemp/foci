@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/toolformat"
 
@@ -168,8 +169,18 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 	}
 
 	// Record the message for // (repeat) command
-	if qm.text != "" && !strings.HasPrefix(qm.text, "/") && !strings.HasPrefix(qm.text, ".") {
+	if qm.text != "" && !strings.HasPrefix(qm.text, "/") {
 		b.lastMsgStore.Record(qm.userID, qm.text)
+	}
+
+	// Drop stale slash commands (e.g. replayed from the event queue after a
+	// restart). Agent messages are still delivered since the agent can reason
+	// about timeliness, but slash commands execute unconditionally.
+	if qm.text != "" && strings.HasPrefix(qm.text, "/") && !qm.msg.Timestamp.IsZero() {
+		if age := time.Since(qm.msg.Timestamp); age > 30*time.Second {
+			log.Warnf("discord", "dropping stale command %q (age=%s)", strings.ToLower(qm.text), age.Truncate(time.Second))
+			return true
+		}
 	}
 
 	// Try dispatching the original message as a command (slash or dot-prefix).
