@@ -241,15 +241,17 @@ func TestFileMode(t *testing.T) {
 	s.SetFileMode(0640)
 
 	key := "test/imain/1000000000"
-	branchKey := "test/imain/1000000000/b1000000001"
 
 	// Append creates a new session file
 	s.TestAppend(key, msg("user", "hello"))
 	checkMode(t, s, key, 0640)
 
 	// Branch file
-	s.CreateBranchWithOptions(key, branchKey, BranchOptions{})
-	checkMode(t, s, branchKey, 0640)
+	bk, err := s.CreateBranchWithOptions(key, BranchOptions{})
+	if err != nil {
+		t.Fatalf("create branch: %v", err)
+	}
+	checkMode(t, s, bk, 0640)
 
 	// Replace rewrites with the configured mode
 	s.TestReplace(key, []provider.Message{msg("user", "replaced")})
