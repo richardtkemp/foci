@@ -707,6 +707,86 @@ func TestBuildParams_NoReasoningByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildParams_WithEffort(t *testing.T) {
+	// Proves that when Output.Effort is set, buildParams injects
+	// reasoning.effort into the serialized params for OpenRouter.
+	req := &provider.MessageRequest{
+		Model:     "openrouter/qwen/qwen3.5-397b-a17b",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+		Output: &provider.OutputConfig{Effort: "high"},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	reasoning, ok := raw["reasoning"]
+	if !ok {
+		t.Fatal("expected reasoning field in params")
+	}
+	rm, ok := reasoning.(map[string]any)
+	if !ok {
+		t.Fatalf("reasoning is %T, want map", reasoning)
+	}
+	if rm["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want %q", rm["effort"], "high")
+	}
+	// enabled should not be present when only effort is set (no thinking)
+	if _, ok := rm["enabled"]; ok {
+		t.Error("reasoning.enabled should not be present when Thinking is nil")
+	}
+}
+
+func TestBuildParams_WithThinkingAndEffort(t *testing.T) {
+	// Proves that when both Thinking and Effort are set, buildParams combines
+	// them into a single reasoning object with both enabled and effort fields.
+	req := &provider.MessageRequest{
+		Model:     "openrouter/qwen/qwen3.5-397b-a17b",
+		MaxTokens: 4096,
+		Messages: []provider.Message{
+			{Role: "user", Content: provider.TextContent("hello")},
+		},
+		Thinking: &provider.ThinkingConfig{Type: "adaptive"},
+		Output:   &provider.OutputConfig{Effort: "high"},
+	}
+
+	params := buildParams(req)
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	reasoning, ok := raw["reasoning"]
+	if !ok {
+		t.Fatal("expected reasoning field in params")
+	}
+	rm, ok := reasoning.(map[string]any)
+	if !ok {
+		t.Fatalf("reasoning is %T, want map", reasoning)
+	}
+	if rm["enabled"] != true {
+		t.Errorf("reasoning.enabled = %v, want true", rm["enabled"])
+	}
+	if rm["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want %q", rm["effort"], "high")
+	}
+}
+
 func TestExtractReasoningText(t *testing.T) {
 	// Proves that extractReasoningText handles string, array-of-objects, and
 	// fallback formats for reasoning_details from various OpenRouter models.
