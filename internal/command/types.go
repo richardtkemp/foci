@@ -65,9 +65,6 @@ type CommandContext struct {
 	Config       *config.Config
 	AgentConfig  config.AgentConfig
 
-	// Session key resolver (dynamic — changes as messages arrive)
-	DefaultSessionKey func() string
-
 	// Provider clients
 	Client         provider.Client
 	ClientProvider provider.ClientProvider // GetClient, PeekClient, ResolveEndpointClient

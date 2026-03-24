@@ -35,12 +35,11 @@ func DoneCommand() *Command {
 		Description: "Detach a secondary bot from its session",
 		Category:    "operations",
 		Hidden:      true,
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
 			if !cc.IsSecondaryBot {
 				return Response{Text: "Nothing to detach — this is the main session."}, nil
 			}
-			sk := cc.DefaultSessionKey()
-			if sk == "" {
+			if tools.SessionKeyFromContext(ctx) == "" {
 				return Response{Text: "Already idle."}, nil
 			}
 			if cc.StopFunc != nil {

@@ -48,9 +48,8 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 
 	// Wire CC with secondary bot state — mirrors SetCommandContext logic
 	cc := command.CommandContext{
-		StopFunc:          b.cancelTurn,
-		IsSecondaryBot:    true,
-		DefaultSessionKey: b.SessionKey,
+		StopFunc:       b.cancelTurn,
+		IsSecondaryBot: true,
 		ReleaseFunc: func() {
 			pool.Release(b)
 		},
