@@ -50,6 +50,6 @@ func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string, chatID int
 }
 
 // LookupChainKeyboard checks if a command has a chained keyboard to display.
-func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string) (string, []command.KeyboardOption, bool) {
-	return d.inner.LookupChainKeyboard(ctx, text)
+func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string, chatID int64) (string, []command.KeyboardOption, bool) {
+	return d.inner.LookupChainKeyboard(ctx, text, chatID)
 }

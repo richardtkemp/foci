@@ -284,15 +284,17 @@ func TmuxCommand() *Command {
 			if err != nil || result.Text == "No tmux sessions." {
 				return nil
 			}
+			// The tool's list operation already filters to sessions owned by the
+			// current session key (from context), so every row is a valid target.
 			var opts []KeyboardOption
 			seen := make(map[string]bool)
 			for _, line := range strings.Split(result.Text, "\n") {
 				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "SESSION") {
+				if line == "" || strings.HasPrefix(line, "SESSION") || strings.HasPrefix(line, "|") {
 					continue
 				}
 				fields := strings.Fields(line)
-				if len(fields) == 0 {
+				if len(fields) == 0 || fields[0] == "|" {
 					continue
 				}
 				name := fields[0]
@@ -300,16 +302,10 @@ func TmuxCommand() *Command {
 					continue
 				}
 				seen[name] = true
-				status := ""
-				if len(fields) >= 4 {
-					status = fields[3]
-				}
-				if status == "owned" || status == "watched" {
-					opts = append(opts, KeyboardOption{
-						Label: name,
-						Data:  subcommand + " " + name,
-					})
-				}
+				opts = append(opts, KeyboardOption{
+					Label: name,
+					Data:  subcommand + " " + name,
+				})
 			}
 			return opts
 		},

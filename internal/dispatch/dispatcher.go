@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/command"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // Dispatcher routes pre-extracted command text to the command registry.
@@ -74,16 +75,20 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 // LookupKeyboard checks if a command has a keyboard to display.
 func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string, chatID int64) (string, string, []command.KeyboardOption, bool) {
 	sessionKey := d.sessionKeyForChat(chatID)
+	ctx = tools.WithSessionKey(ctx, sessionKey)
 	return d.registry.LookupKeyboard(ctx, text, sessionKey, d.cc)
 }
 
 // LookupChainKeyboard checks if a command has a chained keyboard to display.
-func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string) (string, []command.KeyboardOption, bool) {
+func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string, chatID int64) (string, []command.KeyboardOption, bool) {
+	sessionKey := d.sessionKeyForChat(chatID)
+	ctx = tools.WithSessionKey(ctx, sessionKey)
 	return d.registry.LookupChainKeyboard(ctx, text, d.cc)
 }
 
 // dispatchRequest dispatches a command request and wraps the result.
 func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey, userID string, chatID int64) Result {
+	ctx = tools.WithSessionKey(ctx, sessionKey)
 	req := command.Request{
 		Name:       name,
 		Args:       args,

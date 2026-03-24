@@ -35,7 +35,7 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 	}
 
 	// Check for chain keyboard (e.g. /config set → section buttons).
-	if name, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText); ok {
+	if name, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText, msg.Chat.Id); ok {
 		label := text + ":"
 		_, _ = b.client.SendMessage(msg.Chat.Id, label, &gotgbot.SendMessageOpts{
 			ReplyMarkup: buildCommandKeyboard(name, opts),

@@ -119,7 +119,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	}
 
 	// Check for chained keyboard
-	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText); ok {
+	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText, chatID); ok {
 		display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
 		buttons := buildCommandButtons(parentName, opts)
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
