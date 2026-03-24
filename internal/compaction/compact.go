@@ -97,23 +97,14 @@ func ManaResetImminent(manaResetsAt time.Time, threshold time.Duration) bool {
 	return untilReset > 0 && untilReset < threshold
 }
 
-// hasToolUse returns true if the message contains any tool_use content blocks.
-func hasToolUse(msg provider.Message) bool { return messages.HasToolUse(msg) }
-
-// toolUseIDs returns the IDs of all tool_use blocks in the message.
-func toolUseIDs(msg provider.Message) []string { return messages.ToolUseIDs(msg) }
-
-// toolResultIDs returns the tool_use_id values of all tool_result blocks in the message.
-func toolResultIDs(msg provider.Message) map[string]bool { return messages.ToolResultIDs(msg) }
-
 // safeSplitPoint adjusts splitIdx backward (up to maxWalkBack steps) so that
 // tool_use/tool_result pairs are not broken across the split boundary.
 // An assistant message with tool_use blocks must be followed by a user message
 // with matching tool_result blocks — splitting between them creates orphans.
-func safeSplitPoint(messages []provider.Message, splitIdx, maxWalkBack int) int {
+func safeSplitPoint(msgs []provider.Message, splitIdx, maxWalkBack int) int {
 	for steps := 0; steps < maxWalkBack && splitIdx > 0; steps++ {
-		prev := messages[splitIdx-1]
-		if prev.Role != "assistant" || !hasToolUse(prev) {
+		prev := msgs[splitIdx-1]
+		if prev.Role != "assistant" || !messages.HasToolUse(prev) {
 			break
 		}
 		// The message before the split is an assistant with tool_use.
@@ -126,22 +117,22 @@ func safeSplitPoint(messages []provider.Message, splitIdx, maxWalkBack int) int 
 // repairOrphanedToolUse scans messages for assistant tool_use blocks that lack
 // matching tool_result blocks in the immediately following user message, and
 // injects synthetic error tool_results. Returns a new slice; the input is not modified.
-func repairOrphanedToolUse(messages []provider.Message) []provider.Message {
-	result := make([]provider.Message, 0, len(messages))
-	for i := 0; i < len(messages); i++ {
-		msg := messages[i]
+func repairOrphanedToolUse(msgs []provider.Message) []provider.Message {
+	result := make([]provider.Message, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		msg := msgs[i]
 		result = append(result, msg)
 
-		if msg.Role != "assistant" || !hasToolUse(msg) {
+		if msg.Role != "assistant" || !messages.HasToolUse(msg) {
 			continue
 		}
 
-		useIDs := toolUseIDs(msg)
+		useIDs := messages.ToolUseIDs(msg)
 
 		// Collect tool_result IDs from the next message (if it's a user message).
 		var matched map[string]bool
-		if i+1 < len(messages) && messages[i+1].Role == "user" {
-			matched = toolResultIDs(messages[i+1])
+		if i+1 < len(msgs) && msgs[i+1].Role == "user" {
+			matched = messages.ToolResultIDs(msgs[i+1])
 		}
 
 		// Find unmatched tool_use IDs.
@@ -167,8 +158,8 @@ func repairOrphanedToolUse(messages []provider.Message) []provider.Message {
 
 		// If the next message is a user message, clone it and prepend the
 		// synthetic results so the pair stays together.
-		if i+1 < len(messages) && messages[i+1].Role == "user" {
-			next := messages[i+1]
+		if i+1 < len(msgs) && msgs[i+1].Role == "user" {
+			next := msgs[i+1]
 			combined := make([]provider.ContentBlock, 0, len(synthetic)+len(next.Content))
 			combined = append(combined, synthetic...)
 			combined = append(combined, next.Content...)

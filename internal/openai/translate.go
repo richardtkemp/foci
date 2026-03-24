@@ -308,7 +308,7 @@ func responseFromOpenAI(resp *openai.ChatCompletion, model string) (*provider.Me
 	}
 
 	// Override stop reason when response contains tool calls (same pattern as Gemini).
-	if hasToolUse(result.Content) {
+	if messages.BlocksHaveToolUse(result.Content) {
 		result.StopReason = "tool_use"
 	}
 
@@ -330,9 +330,6 @@ func mapFinishReason(reason string) string {
 		return "end_turn"
 	}
 }
-
-// hasToolUse checks if any content blocks are tool_use.
-func hasToolUse(blocks []provider.ContentBlock) bool { return messages.BlocksHaveToolUse(blocks) }
 
 // extractReasoningText best-effort extracts human-readable thinking text from
 // OpenRouter reasoning_details JSON. The format varies by model:
