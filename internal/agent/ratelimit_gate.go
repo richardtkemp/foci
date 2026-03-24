@@ -213,14 +213,13 @@ func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey strin
 		return false, fmt.Sprintf("rate limited on %s (resets %s)", endpoint, resetStr)
 	}
 
-	// Check 2: Mana availability (session-aware)
+	// Check 2: Mana availability (session-aware).
+	// NewMonitor(nil).IsGoodFor() returns false — no usage client means we
+	// can't verify mana, so we conservatively block background work.
 	if a.ManaInvestInterval > 0 {
-		usageClient := a.SessionUsageClient(sessionKey)
-		if usageClient != nil {
-			monitor := mana.NewMonitor(usageClient)
-			if !monitor.IsGoodFor(ctx, a.ManaInvestInterval) {
-				return false, "mana insufficient"
-			}
+		monitor := mana.NewMonitor(a.SessionUsageClient(sessionKey))
+		if !monitor.IsGoodFor(ctx, a.ManaInvestInterval) {
+			return false, "mana insufficient"
 		}
 	}
 

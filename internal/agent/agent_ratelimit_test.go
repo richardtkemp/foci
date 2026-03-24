@@ -191,8 +191,9 @@ func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
 }
 
 func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
-	// Proves that when no UsageClient is available for the session's endpoint, the
-	// mana check is skipped and the operation is allowed to proceed.
+	// Proves that when no UsageClient is available for the session's endpoint
+	// (non-Anthropic provider), background ops are blocked — no usage client
+	// means we can't verify mana, so we conservatively refuse.
 	ag := &Agent{
 		UsageClient:        nil,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
@@ -201,11 +202,11 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
 
-	if !canFire {
-		t.Errorf("expected canFire=true for non-Anthropic endpoint, got false: %s", reason)
+	if canFire {
+		t.Error("expected canFire=false for non-Anthropic endpoint (no usage client)")
 	}
-	if reason != "" {
-		t.Errorf("expected empty reason, got: %s", reason)
+	if reason != "mana insufficient" {
+		t.Errorf("expected 'mana insufficient', got: %s", reason)
 	}
 }
 
@@ -241,14 +242,12 @@ func TestCanFireBackgroundOperation_ManaInsufficient(t *testing.T) {
 }
 
 func TestCanFireBackgroundOperation_Success(t *testing.T) {
-	// Proves the full success path: gate open, valid session key, and no UsageClient
-	// (mana check skipped) all combine to return canFire=true with no reason string.
-	// Test the success path by having no usage client (mana check skipped)
-	// This is the common path for non-Anthropic endpoints
+	// Proves the full success path: gate open, valid session key, and mana tracking
+	// disabled (ManaInvestInterval=0) all combine to return canFire=true.
 	ag := &Agent{
 		UsageClient:        nil,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
-		ManaInvestInterval: 30 * time.Minute,
+		ManaInvestInterval: 0, // disabled — bypasses mana check
 	}
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
@@ -295,9 +294,10 @@ func TestGetOrCreateRateLimitGate(t *testing.T) {
 func TestPerEndpointRateLimiting(t *testing.T) {
 	// Proves that rate-limit gates are isolated per endpoint: closing the anthropic gate
 	// blocks only anthropic sessions while gemini sessions remain unaffected.
+	// ManaInvestInterval=0 disables mana gating so we isolate the rate-limit test.
 	ag := &Agent{
 		Endpoint:           "anthropic",
-		ManaInvestInterval: 30 * time.Minute,
+		ManaInvestInterval: 0,
 	}
 
 	// Create two sessions with different endpoints
