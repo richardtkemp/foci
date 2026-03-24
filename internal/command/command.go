@@ -193,7 +193,7 @@ func (r *Registry) All() []*Command {
 // Returns (command_name, header, options, true) if a keyboard should be shown,
 // or ("", "", nil, false) otherwise. The header is contextual text to display above
 // the keyboard (e.g. current value); it defaults to "/<name>:" when KeyboardHeader is nil.
-func (r *Registry) LookupKeyboard(ctx context.Context, text string, sessionKey string, cc CommandContext) (string, string, []KeyboardOption, bool) {
+func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandContext) (string, string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
 		return "", "", nil, false
@@ -212,7 +212,7 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string, sessionKey s
 	if cmd == nil || cmd.KeyboardOptions == nil {
 		return "", "", nil, false
 	}
-	req := Request{Name: name, SessionKey: sessionKey}
+	req := Request{Name: name}
 	if cmd.Visible != nil && !cmd.Visible(ctx, req, cc) {
 		return "", "", nil, false
 	}

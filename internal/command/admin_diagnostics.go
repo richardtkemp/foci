@@ -153,13 +153,13 @@ func ManaCommand(name string) *Command {
 }
 
 // manaCheck fetches and formats the current mana/quota status.
-func manaCheck(ctx context.Context, req Request, cc CommandContext, manaName string) string {
+func manaCheck(ctx context.Context, _ Request, cc CommandContext, manaName string) string {
 	emojis := []string{"🔮", "✨", "🌙", "⚡", "🪄", "💎", "🌟", "🔥", "🧿", "🪬", "💫", "🌀", "🎇"}
 	// Deterministic selection based on time (second-level jitter is fine)
 	emoji := emojis[time.Now().UnixNano()%int64(len(emojis))]
 	displayName := strings.ToUpper(manaName[:1]) + manaName[1:]
 
-	usageClient := cc.Agent.SessionUsageClient(req.SessionKey)
+	usageClient := cc.Agent.SessionUsageClient(tools.SessionKeyFromContext(ctx))
 	if usageClient == nil {
 		return fmt.Sprintf("%s %s: No usage data (provider does not support usage API)", emoji, displayName)
 	}

@@ -187,7 +187,7 @@ func TestLookupKeyboard(t *testing.T) {
 	cc := CommandContext{}
 
 	// Bare command with keyboard options → returns keyboard
-	name, header, opts, ok := r.LookupKeyboard(ctx, "/model", "", cc)
+	name, header, opts, ok := r.LookupKeyboard(ctx, "/model", cc)
 	if !ok {
 		t.Fatal("expected keyboard for bare /model")
 	}
@@ -205,25 +205,25 @@ func TestLookupKeyboard(t *testing.T) {
 	}
 
 	// Command with args → no keyboard (execute normally)
-	_, _, _, ok = r.LookupKeyboard(ctx, "/model sonnet", "", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/model sonnet", cc)
 	if ok {
 		t.Error("should not return keyboard when args provided")
 	}
 
 	// Command without keyboard options → no keyboard
-	_, _, _, ok = r.LookupKeyboard(ctx, "/ping", "", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/ping", cc)
 	if ok {
 		t.Error("should not return keyboard for command without KeyboardOptions")
 	}
 
 	// Unknown command → no keyboard
-	_, _, _, ok = r.LookupKeyboard(ctx, "/unknown", "", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/unknown", cc)
 	if ok {
 		t.Error("should not return keyboard for unknown command")
 	}
 
 	// Not a command → no keyboard
-	_, _, _, ok = r.LookupKeyboard(ctx, "regular message", "", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "regular message", cc)
 	if ok {
 		t.Error("should not return keyboard for non-command")
 	}
@@ -249,7 +249,7 @@ func TestLookupKeyboardCaseInsensitive(t *testing.T) {
 		},
 	})
 
-	_, _, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT", "", CommandContext{})
+	_, _, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT", CommandContext{})
 	if !ok {
 		t.Error("keyboard lookup should be case-insensitive")
 	}
@@ -270,7 +270,7 @@ func TestLookupKeyboardCustomHeader(t *testing.T) {
 		},
 	})
 
-	_, header, _, ok := r.LookupKeyboard(context.Background(), "/speed", "", CommandContext{})
+	_, header, _, ok := r.LookupKeyboard(context.Background(), "/speed", CommandContext{})
 	if !ok {
 		t.Fatal("expected keyboard for /speed")
 	}
