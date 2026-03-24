@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/tools"
 )
 
 // TestNewSessionSettingCommandShowEmpty verifies that the factory-generated
@@ -199,17 +200,17 @@ func TestNewSessionSettingCommandVisibility(t *testing.T) {
 	if cmd.Visible == nil {
 		t.Fatal("Visible should be set when Capability is provided")
 	}
-	ctx := context.Background()
+	skCtx := tools.WithSessionKey(context.Background(), sk)
 
 	// No capability, no model default → not visible
 	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
-	if cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+	if cmd.Visible(skCtx, Request{}, cc) {
 		t.Error("should not be visible for haiku (no effort support)")
 	}
 
 	// Has capability → visible
 	ag.SetSessionModel(sk, "anthropic/claude-sonnet-4-6", "", "", nil)
-	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+	if !cmd.Visible(skCtx, Request{}, cc) {
 		t.Error("should be visible for sonnet (has effort support)")
 	}
 
@@ -221,7 +222,7 @@ func TestNewSessionSettingCommandVisibility(t *testing.T) {
 		return config.ModelDefaults{}
 	}
 	ag.SetSessionModel(sk, "openrouter/qwen/qwen3.5-397b-a17b", "", "", nil)
-	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+	if !cmd.Visible(skCtx, Request{}, cc) {
 		t.Error("should be visible when model config has effort set")
 	}
 }
@@ -256,8 +257,10 @@ func TestNewSessionSettingCommandShowModelDefault(t *testing.T) {
 		},
 	})
 
+	skCtx := tools.WithSessionKey(context.Background(), sk)
+
 	// No session override → shows model default with annotation
-	resp, err := cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	resp, err := cmd.Execute(skCtx, Request{}, cc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +271,7 @@ func TestNewSessionSettingCommandShowModelDefault(t *testing.T) {
 
 	// Session override takes precedence
 	ag.SetSessionEffort(sk, "low")
-	resp, _ = cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	resp, _ = cmd.Execute(skCtx, Request{}, cc)
 	want = "Effort: low\nOptions: 1) low  2) medium  3) high"
 	if resp.Text != want {
 		t.Errorf("show session override:\ngot  %q\nwant %q", resp.Text, want)
@@ -276,7 +279,7 @@ func TestNewSessionSettingCommandShowModelDefault(t *testing.T) {
 
 	// After clearing, model default reappears
 	ag.SetSessionEffort(sk, "")
-	resp, _ = cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	resp, _ = cmd.Execute(skCtx, Request{}, cc)
 	want = "Effort: high (model default)\nOptions: 1) low  2) medium  3) high"
 	if resp.Text != want {
 		t.Errorf("show after clear:\ngot  %q\nwant %q", resp.Text, want)
@@ -305,19 +308,19 @@ func TestNewSessionSettingCommandKeyboardHeader(t *testing.T) {
 		t.Fatal("KeyboardHeader should be set by newSessionSettingCommand")
 	}
 
-	ctx := context.Background()
+	skCtx := tools.WithSessionKey(context.Background(), "test")
 	cc := CommandContext{}
-	req := Request{SessionKey: "test"}
+	req := Request{}
 
 	// No value → shows empty display
-	header := cmd.KeyboardHeader(ctx, req, cc)
+	header := cmd.KeyboardHeader(skCtx, req, cc)
 	if header != "/effort — Effort: not set" {
 		t.Errorf("header with no value = %q", header)
 	}
 
 	// After setting a value → shows that value
 	stored = "high"
-	header = cmd.KeyboardHeader(ctx, req, cc)
+	header = cmd.KeyboardHeader(skCtx, req, cc)
 	if header != "/effort — Effort: high" {
 		t.Errorf("header with value = %q", header)
 	}
@@ -353,11 +356,11 @@ func TestNewSessionSettingCommandKeyboardHeaderModelDefault(t *testing.T) {
 		},
 	})
 
-	ctx := context.Background()
-	req := Request{SessionKey: sk}
+	skCtx := tools.WithSessionKey(context.Background(), sk)
+	req := Request{}
 
 	// No session override → shows model default with annotation
-	header := cmd.KeyboardHeader(ctx, req, cc)
+	header := cmd.KeyboardHeader(skCtx, req, cc)
 	want := "/effort — Effort: high (model default)"
 	if header != want {
 		t.Errorf("header with model default:\ngot  %q\nwant %q", header, want)
@@ -365,7 +368,7 @@ func TestNewSessionSettingCommandKeyboardHeaderModelDefault(t *testing.T) {
 
 	// Session override takes precedence
 	ag.SetSessionEffort(sk, "low")
-	header = cmd.KeyboardHeader(ctx, req, cc)
+	header = cmd.KeyboardHeader(skCtx, req, cc)
 	want = "/effort — Effort: low"
 	if header != want {
 		t.Errorf("header with session override:\ngot  %q\nwant %q", header, want)

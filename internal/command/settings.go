@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/tools"
 )
 
 // ModelCommand returns a /model command to show or switch the model.
@@ -16,9 +17,10 @@ func ModelCommand() *Command {
 		Name:        "model",
 		Description: "Show or switch model (supports endpoint:alias syntax, e.g. gemini:flash)",
 		Category:    "operations",
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			sk := tools.SessionKeyFromContext(ctx)
 			if req.Args == "" {
-				current := cc.Agent.SessionModel(req.SessionKey)
+				current := cc.Agent.SessionModel(sk)
 				return Response{Text: fmt.Sprintf("Current model: %s", current)}, nil
 			}
 			resolved, err := config.ResolveModel(req.Args, "", nil)
@@ -36,9 +38,9 @@ func ModelCommand() *Command {
 			_ = client // ResolveEndpointClient handled below
 			if endpoint != "" && format != "" && cc.ClientProvider != nil {
 				provClient := cc.ClientProvider.ResolveEndpointClient(endpoint, format)
-				cc.Agent.SetSessionModel(req.SessionKey, model, endpoint, format, provClient)
+				cc.Agent.SetSessionModel(sk, model, endpoint, format, provClient)
 			} else {
-				cc.Agent.SetSessionModel(req.SessionKey, model, endpoint, format, nil)
+				cc.Agent.SetSessionModel(sk, model, endpoint, format, nil)
 			}
 			display := model
 			if endpoint != "" && endpoint != resolved.Developer {
@@ -122,8 +124,8 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 	}
 
 	if def.Capability != nil {
-		cmd.Visible = func(_ context.Context, req Request, cc CommandContext) bool {
-			model := cc.Agent.SessionModel(req.SessionKey)
+		cmd.Visible = func(ctx context.Context, req Request, cc CommandContext) bool {
+			model := cc.Agent.SessionModel(tools.SessionKeyFromContext(ctx))
 			if def.Capability(config.ModelCapabilities(model)) {
 				return true
 			}
@@ -135,10 +137,11 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 		}
 	}
 
-	cmd.Execute = func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+	cmd.Execute = func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+		sk := tools.SessionKeyFromContext(ctx)
 		// Gate: reject if current model doesn't support this setting.
 		if def.GateExecute && def.Capability != nil {
-			m := cc.Agent.SessionModel(req.SessionKey)
+			m := cc.Agent.SessionModel(sk)
 			if !def.Capability(config.ModelCapabilities(m)) {
 				return Response{Text: fmt.Sprintf(def.GateMsg, m)}, nil
 			}
@@ -146,7 +149,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 
 		// No args: show effective value (session override → model default → empty).
 		if req.Args == "" {
-			display, source := effectiveDisplay(&def, cc, req.SessionKey)
+			display, source := effectiveDisplay(&def, cc, sk)
 			title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
 			return Response{Text: fmt.Sprintf("%s: %s%s\n%s", title, display, source, def.OptionsHint)}, nil
 		}
@@ -154,7 +157,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 		// Normalize and match input.
 		arg := strings.ToLower(strings.TrimSpace(req.Args))
 		if c, ok := choiceMap[arg]; ok {
-			def.Set(cc, req.SessionKey, c.SetValue)
+			def.Set(cc, sk, c.SetValue)
 			return Response{Text: c.Response}, nil
 		}
 
@@ -171,8 +174,8 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 		return opts
 	}
 
-	cmd.KeyboardHeader = func(_ context.Context, req Request, cc CommandContext) string {
-		display, source := effectiveDisplay(&def, cc, req.SessionKey)
+	cmd.KeyboardHeader = func(ctx context.Context, req Request, cc CommandContext) string {
+		display, source := effectiveDisplay(&def, cc, tools.SessionKeyFromContext(ctx))
 		title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
 		return fmt.Sprintf("/%s — %s: %s%s", def.Name, title, display, source)
 	}
@@ -256,25 +259,26 @@ func DisplayCommand() *Command {
 		Name:        "display",
 		Description: "Show or set display options (show_tool_calls, show_thinking, stream_output, display_width)",
 		Category:    "operations",
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			sk := tools.SessionKeyFromContext(ctx)
 			args := strings.TrimSpace(req.Args)
 
 			if args == "reset" {
-				cc.Agent.ClearSessionDisplayOverrides(req.SessionKey)
+				cc.Agent.ClearSessionDisplayOverrides(sk)
 				return Response{Text: "Display overrides cleared — using config defaults."}, nil
 			}
 
 			if args == "" {
-				return Response{Text: formatDisplayStatus(req.SessionKey, cc)}, nil
+				return Response{Text: formatDisplayStatus(sk, cc)}, nil
 			}
 
 			parts := strings.SplitN(args, " ", 2)
 			key := strings.ToLower(parts[0])
 			if len(parts) == 1 {
-				return formatSingleDisplay(req.SessionKey, cc, key)
+				return formatSingleDisplay(sk, cc, key)
 			}
 			value := strings.TrimSpace(parts[1])
-			return applyDisplaySetting(req.SessionKey, cc, key, value)
+			return applyDisplaySetting(sk, cc, key, value)
 		},
 		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
 			return []KeyboardOption{
@@ -438,15 +442,15 @@ func OverridesCommand() *Command {
 		Name:        "overrides",
 		Description: "Show or manage per-session setting overrides",
 		Category:    "operations",
-		DefaultExecute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			return formatOverridesStatus(req.SessionKey, cc), nil
+		DefaultExecute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			return formatOverridesStatus(tools.SessionKeyFromContext(ctx), cc), nil
 		},
 		Subcommands: []Subcommand{
 			{
 				Name:        "reset",
 				Description: "Clear all overrides for this session",
-				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-					cc.Agent.ClearAllSessionOverrides(req.SessionKey)
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					cc.Agent.ClearAllSessionOverrides(tools.SessionKeyFromContext(ctx))
 					return Response{Text: "All session overrides cleared."}, nil
 				},
 			},
@@ -454,12 +458,12 @@ func OverridesCommand() *Command {
 				Name:        "delete",
 				Description: "Clear a single override by key",
 				Hidden:      true,
-				Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 					key := strings.ToLower(strings.TrimSpace(req.Args))
 					if key == "" {
 						return Response{Text: "Usage: /overrides delete <key>"}, nil
 					}
-					return deleteOverride(req.SessionKey, cc, key)
+					return deleteOverride(tools.SessionKeyFromContext(ctx), cc, key)
 				},
 			},
 		},

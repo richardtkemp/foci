@@ -16,6 +16,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/tools"
 	"foci/internal/voice"
 	"foci/shared/prompts"
 )
@@ -108,7 +109,8 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 
 		if strings.HasPrefix(req.Text, "/") {
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
-			if result, ok, _ := inst.cmds.Dispatch(d.ctx, cmdReq, inst.cc); ok {
+			cmdCtx := tools.WithSessionKey(d.ctx, sessionKey)
+			if result, ok, _ := inst.cmds.Dispatch(cmdCtx, cmdReq, inst.cc); ok {
 				w.Header().Set("Content-Type", "application/json")
 				if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
 					log.Errorf("http", "encode response: %v", err)
@@ -150,8 +152,9 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 			http.Error(w, fmt.Sprintf("unknown agent: %q", agentID), http.StatusBadRequest)
 			return
 		}
-		cmdReq := command.RequestFromText("/status", mostRecentSessionKey(inst.ag, d.connMgr, inst.id), "", 0)
-		result, ok, _ := inst.cmds.Dispatch(context.Background(), cmdReq, inst.cc)
+		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
+		cmdReq := command.RequestFromText("/status", sk, "", 0)
+		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(context.Background(), sk), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "status command not available", http.StatusInternalServerError)
 			return
@@ -184,8 +187,9 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 			http.Error(w, fmt.Sprintf("unknown agent: %q", req.Agent), http.StatusBadRequest)
 			return
 		}
-		cmdReq := command.RequestFromText(req.Command, mostRecentSessionKey(inst.ag, d.connMgr, inst.id), "", 0)
-		result, ok, _ := inst.cmds.Dispatch(context.Background(), cmdReq, inst.cc)
+		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
+		cmdReq := command.RequestFromText(req.Command, sk, "", 0)
+		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(context.Background(), sk), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
