@@ -234,11 +234,17 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 	return a.Client
 }
 
-// SessionUsageClient returns the usage client for a session's active endpoint,
-// falling back to the agent's default if not overridden. When the session has
-// been explicitly switched to a non-Anthropic endpoint, usageClientSet is true
-// but usageClient is nil — we return nil (no mana tracking for that endpoint)
-// instead of falling back to the agent's default Anthropic client.
+// SessionUsageClient returns the usage client for a session's active endpoint.
+// When the session has been explicitly configured (via SetSessionModel or
+// RestoreSessionOverrides), usageClientSet is true and we return the resolved
+// client (nil for non-Anthropic endpoints — no mana tracking).
+//
+// When usageClientSet is false (session using agent defaults, never explicitly
+// configured), we resolve from the session's effective endpoint via
+// UsageClientProvider rather than blindly returning a.UsageClient. This
+// prevents returning the agent's Anthropic usage client for sessions that are
+// actually using a non-Anthropic endpoint. The resolved value is cached so
+// subsequent calls don't re-resolve.
 func (a *Agent) SessionUsageClient(sessionKey string) provider.UsageClient {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
@@ -246,7 +252,17 @@ func (a *Agent) SessionUsageClient(sessionKey string) provider.UsageClient {
 	if sm.usageClientSet {
 		return sm.usageClient // may be nil for non-Anthropic endpoints
 	}
-	return a.UsageClient
+	// Not explicitly set — resolve from the session's effective endpoint.
+	if a.UsageClientProvider != nil {
+		endpoint := sm.modelEndpoint
+		if endpoint == "" {
+			endpoint = a.Endpoint
+		}
+		sm.usageClient = a.UsageClientProvider.GetUsageClient(endpoint)
+		sm.usageClientSet = true
+		return sm.usageClient
+	}
+	return nil
 }
 
 // SessionNoCompact returns the effective no_compact setting for the session.

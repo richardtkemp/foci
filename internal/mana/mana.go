@@ -128,7 +128,8 @@ type Monitor struct {
 	getClient   func() provider.UsageClient                // dynamic client getter (for session-aware)
 }
 
-// NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor always returns true.
+// NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor returns false
+// (no client means we can't verify mana availability — conservatively assume insufficient).
 func NewMonitor(usageClient provider.UsageClient) *Monitor {
 	return &Monitor{
 		log:         log.NewComponentLogger("mana"),
@@ -147,7 +148,7 @@ func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) b
 	}
 
 	if client == nil {
-		return true // no usage client = no rate limiting
+		return false // no usage client = can't verify mana; assume insufficient
 	}
 
 	usage, err := client.GetUsage(ctx)
