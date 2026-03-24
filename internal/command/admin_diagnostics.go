@@ -12,6 +12,7 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/tools"
 )
 
 // LogCommand returns a /log command showing recent event log lines.
@@ -71,11 +72,8 @@ func StatusCommand() *Command {
 		Name:        "status",
 		Description: "Dashboard overview",
 		Category:    "observability",
-		Execute: func(_ context.Context, req Request, cc CommandContext) (Response, error) {
-			sk := req.SessionKey
-			if sk == "" {
-				sk = cc.DefaultSessionKey()
-			}
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			sk := tools.SessionKeyFromContext(ctx)
 			model := cc.Agent.SessionModel(sk)
 			mc := sessionMessageCount(cc, sk)
 

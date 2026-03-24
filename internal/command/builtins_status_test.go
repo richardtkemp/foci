@@ -11,6 +11,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // TestStatusCommand verifies status output contains all required session info,
@@ -45,11 +46,11 @@ func TestStatusCommand(t *testing.T) {
 		AgentConfig:         config.AgentConfig{ID: "main"},
 		StartTime:           startTime,
 		CompactionThreshold: 0.8,
-		DefaultSessionKey:   func() string { return sk },
 	}
 
+	ctx := tools.WithSessionKey(context.Background(), sk)
 	cmd := StatusCommand()
-	result, err := cmd.Execute(context.Background(), Request{}, cc)
+	result, err := cmd.Execute(ctx, Request{}, cc)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -84,16 +85,16 @@ func TestStatusCommandBusy(t *testing.T) {
 	ag.SetProcessingForTest(1) // mark agent as busy
 
 	cc := CommandContext{
-		Agent:             ag,
-		Sessions:          store,
-		APILogPath:        path,
-		AgentConfig:       config.AgentConfig{ID: "test"},
-		StartTime:         time.Now(),
-		DefaultSessionKey: func() string { return sk },
+		Agent:       ag,
+		Sessions:    store,
+		APILogPath:  path,
+		AgentConfig: config.AgentConfig{ID: "test"},
+		StartTime:   time.Now(),
 	}
 
+	ctx := tools.WithSessionKey(context.Background(), sk)
 	cmd := StatusCommand()
-	result, _ := cmd.Execute(context.Background(), Request{}, cc)
+	result, _ := cmd.Execute(ctx, Request{}, cc)
 	if !strings.Contains(result.Text, "processing") {
 		t.Errorf("expected 'processing', got:\n%s", result.Text)
 	}

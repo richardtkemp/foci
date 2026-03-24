@@ -9,6 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/tempdir"
+	"foci/internal/tools"
 	"foci/shared/prompts"
 )
 
@@ -63,10 +64,7 @@ func ResetCommand() *Command {
 			if cc.Agent.IsProcessing() {
 				return Response{}, fmt.Errorf("agent is processing — send stop first, then reset")
 			}
-			sk := req.SessionKey
-			if sk == "" {
-				sk = cc.DefaultSessionKey()
-			}
+			sk := tools.SessionKeyFromContext(ctx)
 			if sk == "" {
 				return Response{}, fmt.Errorf("no active session to reset")
 			}
@@ -90,14 +88,11 @@ func ResetCommand() *Command {
 
 // CompactCommand creates a /compact command that triggers manual session compaction.
 func CompactCommand() *Command {
-	compactExec := func(ctx context.Context, req Request, cc CommandContext, dryRun bool) (Response, error) {
+	compactExec := func(ctx context.Context, _ Request, cc CommandContext, dryRun bool) (Response, error) {
 		if cc.Agent.Compactor == nil {
 			return Response{}, fmt.Errorf("compaction is not configured")
 		}
-		sk := req.SessionKey
-		if sk == "" {
-			sk = cc.DefaultSessionKey()
-		}
+		sk := tools.SessionKeyFromContext(ctx)
 		oldCount, err := runCompaction(ctx, cc, sk, dryRun)
 		if err != nil {
 			return Response{}, err

@@ -6,11 +6,12 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/session"
+	"foci/internal/tools"
 	"foci/shared/prompts"
 )
 
 // forkFacet forks the current session to a secondary facet connection.
-func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error) {
+func forkFacet(ctx context.Context, _ Request, cc CommandContext) (string, error) {
 	if cc.ConnMgr == nil || !cc.ConnMgr.HasFacet(cc.AgentConfig.ID) {
 		return "", fmt.Errorf("no facet bots configured")
 	}
@@ -23,10 +24,7 @@ func forkFacet(_ context.Context, req Request, cc CommandContext) (string, error
 		cc.ConfigureFacet(secConn)
 	}
 
-	parentKey := req.SessionKey
-	if parentKey == "" {
-		parentKey = cc.DefaultSessionKey()
-	}
+	parentKey := tools.SessionKeyFromContext(ctx)
 	if parentKey == "" {
 		secConn.SetSessionKey("")
 		return "", fmt.Errorf("no active session to fork from")

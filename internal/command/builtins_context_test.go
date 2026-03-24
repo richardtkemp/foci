@@ -15,7 +15,7 @@ import (
 func contextCC(apiLogPath string, info ContextInfo) CommandContext {
 	return CommandContext{
 		APILogPath: apiLogPath,
-		ContextInfoFn: func(_ CommandContext) ContextInfo {
+		ContextInfoFn: func(_ context.Context, _ CommandContext) ContextInfo {
 			return info
 		},
 	}

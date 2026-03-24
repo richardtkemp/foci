@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -126,7 +127,7 @@ type CommandContext struct {
 
 	// ContextInfoFn overrides the default buildContextInfo for testing.
 	// When nil, buildContextInfo is used.
-	ContextInfoFn func(cc CommandContext) ContextInfo
+	ContextInfoFn func(ctx context.Context, cc CommandContext) ContextInfo
 
 	// PromptsDataFn overrides buildPromptsData for testing.
 	// When nil, buildPromptsData is used.
