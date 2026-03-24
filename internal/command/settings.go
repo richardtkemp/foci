@@ -78,6 +78,30 @@ type sessionSettingDef struct {
 	Choices      []settingChoice
 }
 
+// effectiveDisplay computes the display string and source annotation for a
+// session setting's current value. Used by both Execute (no-args) and KeyboardHeader.
+func effectiveDisplay(def *sessionSettingDef, cc CommandContext, sessionKey string) (display, source string) {
+	current := def.Get(cc, sessionKey)
+	display = current
+	if current == "" && def.ModelDefault != nil && cc.Agent != nil && cc.Agent.ModelDefaultsFn != nil {
+		md := cc.Agent.ModelDefaultsFn(cc.Agent.SessionModel(sessionKey))
+		if v := def.ModelDefault(md); v != "" {
+			display = v
+			source = " (model default)"
+		}
+	}
+	if display == "" {
+		if def.EmptyShow != "" {
+			display = def.EmptyShow
+		} else {
+			display = def.DefaultShow
+		}
+	} else if display == def.DefaultShow {
+		display = def.DefaultShow
+	}
+	return display, source
+}
+
 // newSessionSettingCommand builds a Command from a sessionSettingDef, eliminating
 // the boilerplate shared by /effort, /thinking, /speed, and similar commands.
 func newSessionSettingCommand(def sessionSettingDef) *Command {
@@ -122,25 +146,7 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 
 		// No args: show effective value (session override → model default → empty).
 		if req.Args == "" {
-			current := def.Get(cc, req.SessionKey)
-			display := current
-			source := ""
-			if current == "" && def.ModelDefault != nil && cc.Agent.ModelDefaultsFn != nil {
-				md := cc.Agent.ModelDefaultsFn(cc.Agent.SessionModel(req.SessionKey))
-				if v := def.ModelDefault(md); v != "" {
-					display = v
-					source = " (model default)"
-				}
-			}
-			if display == "" {
-				if def.EmptyShow != "" {
-					display = def.EmptyShow
-				} else {
-					display = def.DefaultShow
-				}
-			} else if display == def.DefaultShow {
-				display = def.DefaultShow
-			}
+			display, source := effectiveDisplay(&def, cc, req.SessionKey)
 			title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
 			return Response{Text: fmt.Sprintf("%s: %s%s\n%s", title, display, source, def.OptionsHint)}, nil
 		}
@@ -163,6 +169,12 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 			}
 		}
 		return opts
+	}
+
+	cmd.KeyboardHeader = func(_ context.Context, req Request, cc CommandContext) string {
+		display, source := effectiveDisplay(&def, cc, req.SessionKey)
+		title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
+		return fmt.Sprintf("/%s — %s: %s%s", def.Name, title, display, source)
 	}
 
 	return cmd

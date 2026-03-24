@@ -187,12 +187,15 @@ func TestLookupKeyboard(t *testing.T) {
 	cc := CommandContext{}
 
 	// Bare command with keyboard options → returns keyboard
-	name, opts, ok := r.LookupKeyboard(ctx, "/model", cc)
+	name, header, opts, ok := r.LookupKeyboard(ctx, "/model", "", cc)
 	if !ok {
 		t.Fatal("expected keyboard for bare /model")
 	}
 	if name != "model" {
 		t.Errorf("name = %q, want model", name)
+	}
+	if header != "/model:" {
+		t.Errorf("header = %q, want /model: (default when no KeyboardHeader)", header)
 	}
 	if len(opts) != 3 {
 		t.Fatalf("got %d options, want 3", len(opts))
@@ -202,25 +205,25 @@ func TestLookupKeyboard(t *testing.T) {
 	}
 
 	// Command with args → no keyboard (execute normally)
-	_, _, ok = r.LookupKeyboard(ctx, "/model sonnet", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/model sonnet", "", cc)
 	if ok {
 		t.Error("should not return keyboard when args provided")
 	}
 
 	// Command without keyboard options → no keyboard
-	_, _, ok = r.LookupKeyboard(ctx, "/ping", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/ping", "", cc)
 	if ok {
 		t.Error("should not return keyboard for command without KeyboardOptions")
 	}
 
 	// Unknown command → no keyboard
-	_, _, ok = r.LookupKeyboard(ctx, "/unknown", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "/unknown", "", cc)
 	if ok {
 		t.Error("should not return keyboard for unknown command")
 	}
 
 	// Not a command → no keyboard
-	_, _, ok = r.LookupKeyboard(ctx, "regular message", cc)
+	_, _, _, ok = r.LookupKeyboard(ctx, "regular message", "", cc)
 	if ok {
 		t.Error("should not return keyboard for non-command")
 	}
@@ -246,9 +249,33 @@ func TestLookupKeyboardCaseInsensitive(t *testing.T) {
 		},
 	})
 
-	_, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT", CommandContext{})
+	_, _, _, ok := r.LookupKeyboard(context.Background(), "/EFFORT", "", CommandContext{})
 	if !ok {
 		t.Error("keyboard lookup should be case-insensitive")
+	}
+}
+
+// TestLookupKeyboardCustomHeader verifies that KeyboardHeader text is returned
+// when set, and the default "/<name>:" is used when KeyboardHeader is nil.
+func TestLookupKeyboardCustomHeader(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name:    "speed",
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) { return Response{}, nil },
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
+			return []KeyboardOption{{Label: "fast", Data: "fast"}}
+		},
+		KeyboardHeader: func(_ context.Context, req Request, _ CommandContext) string {
+			return "/speed — Speed: standard"
+		},
+	})
+
+	_, header, _, ok := r.LookupKeyboard(context.Background(), "/speed", "", CommandContext{})
+	if !ok {
+		t.Fatal("expected keyboard for /speed")
+	}
+	if header != "/speed — Speed: standard" {
+		t.Errorf("header = %q, want custom header", header)
 	}
 }
 

@@ -45,8 +45,8 @@ func (d *Dispatcher) DispatchCallback(ctx context.Context, chatID int64, cmdText
 }
 
 // LookupKeyboard checks if a command has a keyboard to display.
-func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string) (string, []command.KeyboardOption, bool) {
-	return d.inner.LookupKeyboard(ctx, text)
+func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string, chatID int64) (string, string, []command.KeyboardOption, bool) {
+	return d.inner.LookupKeyboard(ctx, text, chatID)
 }
 
 // LookupChainKeyboard checks if a command has a chained keyboard to display.

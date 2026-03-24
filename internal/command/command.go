@@ -48,6 +48,7 @@ type Command struct {
 	DefaultExecute func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 
 	KeyboardOptions func(ctx context.Context, cc CommandContext) []KeyboardOption
+	KeyboardHeader  func(ctx context.Context, req Request, cc CommandContext) string // text shown above keyboard (e.g. current value)
 	ChainKeyboard   func(ctx context.Context, subcommand string, cc CommandContext) []KeyboardOption
 }
 
@@ -189,11 +190,13 @@ func (r *Registry) All() []*Command {
 }
 
 // LookupKeyboard checks if a bare command (no args) has inline keyboard options.
-// Returns (command_name, options, true) if a keyboard should be shown, or ("", nil, false) otherwise.
-func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandContext) (string, []KeyboardOption, bool) {
+// Returns (command_name, header, options, true) if a keyboard should be shown,
+// or ("", "", nil, false) otherwise. The header is contextual text to display above
+// the keyboard (e.g. current value); it defaults to "/<name>:" when KeyboardHeader is nil.
+func (r *Registry) LookupKeyboard(ctx context.Context, text string, sessionKey string, cc CommandContext) (string, string, []KeyboardOption, bool) {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "/") {
-		return "", nil, false
+		return "", "", nil, false
 	}
 
 	stripped := text[1:]
@@ -202,23 +205,31 @@ func (r *Registry) LookupKeyboard(ctx context.Context, text string, cc CommandCo
 	args = strings.TrimSpace(args)
 
 	if args != "" {
-		return "", nil, false
+		return "", "", nil, false
 	}
 
 	cmd := r.commands[name]
 	if cmd == nil || cmd.KeyboardOptions == nil {
-		return "", nil, false
+		return "", "", nil, false
 	}
-	if cmd.Visible != nil && !cmd.Visible(ctx, Request{Name: name}, cc) {
-		return "", nil, false
+	req := Request{Name: name, SessionKey: sessionKey}
+	if cmd.Visible != nil && !cmd.Visible(ctx, req, cc) {
+		return "", "", nil, false
 	}
 
 	opts := cmd.KeyboardOptions(ctx, cc)
 	if len(opts) == 0 {
-		return "", nil, false
+		return "", "", nil, false
 	}
 
-	return name, opts, true
+	header := fmt.Sprintf("/%s:", name)
+	if cmd.KeyboardHeader != nil {
+		if h := cmd.KeyboardHeader(ctx, req, cc); h != "" {
+			header = h
+		}
+	}
+
+	return name, header, opts, true
 }
 
 // LookupChainKeyboard checks if a command callback text (e.g. "/tmux kill") needs
