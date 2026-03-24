@@ -178,21 +178,22 @@ func TestNewSessionSettingCommandHiddenChoice(t *testing.T) {
 }
 
 // TestNewSessionSettingCommandVisibility verifies that the Visible callback
-// delegates to the capability check.
+// delegates to the capability check and falls back to model config defaults.
 func TestNewSessionSettingCommandVisibility(t *testing.T) {
 	ag := &agent.Agent{}
 	sk := "test-session"
 	cc := modelCC(ag)
 
 	cmd := newSessionSettingCommand(sessionSettingDef{
-		Name:        "test",
-		Description: "test",
-		OptionsHint: "",
-		Capability:  func(c config.ModelCaps) bool { return c.Effort },
-		InvalidName: "test",
-		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
-		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
-		Choices:     []settingChoice{{Label: "a", SetValue: "a", Response: "a"}},
+		Name:         "test",
+		Description:  "test",
+		OptionsHint:  "",
+		Capability:   func(c config.ModelCaps) bool { return c.Effort },
+		ModelDefault: func(md config.ModelDefaults) string { return md.Effort },
+		InvalidName:  "test",
+		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
+		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		Choices:      []settingChoice{{Label: "a", SetValue: "a", Response: "a"}},
 	})
 
 	if cmd.Visible == nil {
@@ -200,7 +201,7 @@ func TestNewSessionSettingCommandVisibility(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// No capability → not visible
+	// No capability, no model default → not visible
 	ag.SetSessionModel(sk, "anthropic/claude-haiku-4-5-20251001", "", "", nil)
 	if cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
 		t.Error("should not be visible for haiku (no effort support)")
@@ -210,6 +211,75 @@ func TestNewSessionSettingCommandVisibility(t *testing.T) {
 	ag.SetSessionModel(sk, "anthropic/claude-sonnet-4-6", "", "", nil)
 	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
 		t.Error("should be visible for sonnet (has effort support)")
+	}
+
+	// No capability but model config has effort → visible
+	ag.ModelDefaultsFn = func(model string) config.ModelDefaults {
+		if model == "openrouter/qwen/qwen3.5-397b-a17b" {
+			return config.ModelDefaults{Effort: "high"}
+		}
+		return config.ModelDefaults{}
+	}
+	ag.SetSessionModel(sk, "openrouter/qwen/qwen3.5-397b-a17b", "", "", nil)
+	if !cmd.Visible(ctx, Request{SessionKey: sk}, cc) {
+		t.Error("should be visible when model config has effort set")
+	}
+}
+
+// TestNewSessionSettingCommandShowModelDefault verifies that the display shows
+// the effective value from model config when no session override is set.
+func TestNewSessionSettingCommandShowModelDefault(t *testing.T) {
+	ag := &agent.Agent{
+		Model: "openrouter/qwen/qwen3.5-397b-a17b",
+		ModelDefaultsFn: func(model string) config.ModelDefaults {
+			if model == "openrouter/qwen/qwen3.5-397b-a17b" {
+				return config.ModelDefaults{Effort: "high"}
+			}
+			return config.ModelDefaults{}
+		},
+	}
+	sk := "test-session"
+	cc := modelCC(ag)
+
+	cmd := newSessionSettingCommand(sessionSettingDef{
+		Name:         "effort",
+		Description:  "test effort",
+		OptionsHint:  "Options: 1) low  2) medium  3) high",
+		ModelDefault: func(md config.ModelDefaults) string { return md.Effort },
+		EmptyShow:    "not set",
+		InvalidName:  "effort level",
+		Get:          func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
+		Set:          func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
+		Choices: []settingChoice{
+			{Label: "low", Aliases: []string{"1"}, SetValue: "low", Response: "Effort set to: low"},
+			{Label: "high", Aliases: []string{"3"}, SetValue: "high", Response: "Effort set to: high"},
+		},
+	})
+
+	// No session override → shows model default with annotation
+	resp, err := cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Effort: high (model default)\nOptions: 1) low  2) medium  3) high"
+	if resp.Text != want {
+		t.Errorf("show model default:\ngot  %q\nwant %q", resp.Text, want)
+	}
+
+	// Session override takes precedence
+	ag.SetSessionEffort(sk, "low")
+	resp, _ = cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	want = "Effort: low\nOptions: 1) low  2) medium  3) high"
+	if resp.Text != want {
+		t.Errorf("show session override:\ngot  %q\nwant %q", resp.Text, want)
+	}
+
+	// After clearing, model default reappears
+	ag.SetSessionEffort(sk, "")
+	resp, _ = cmd.Execute(context.Background(), Request{SessionKey: sk}, cc)
+	want = "Effort: high (model default)\nOptions: 1) low  2) medium  3) high"
+	if resp.Text != want {
+		t.Errorf("show after clear:\ngot  %q\nwant %q", resp.Text, want)
 	}
 }
 
