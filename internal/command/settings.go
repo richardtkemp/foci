@@ -63,18 +63,19 @@ type settingChoice struct {
 
 // sessionSettingDef configures a session setting command built by newSessionSettingCommand.
 type sessionSettingDef struct {
-	Name        string
-	Description string
-	OptionsHint string                        // shown below current value (e.g. "Options: 1) low  2) medium  3) high")
-	Capability  func(config.ModelCaps) bool   // model capability check for Visible (nil = always visible)
-	GateExecute bool                          // also reject in Execute when capability is false
-	GateMsg     string                        // rejection message format (%s = model name)
-	EmptyShow   string                        // display when getter returns "" and no args (e.g. "not set (using API default)")
-	DefaultShow string                        // display when getter returns "" or matches this value (e.g. "off", "standard")
-	InvalidName string                        // noun for error messages (e.g. "effort level", "thinking mode")
-	Get         func(CommandContext, string) string
-	Set         func(CommandContext, string, string)
-	Choices     []settingChoice
+	Name         string
+	Description  string
+	OptionsHint  string                                    // shown below current value (e.g. "Options: 1) low  2) medium  3) high")
+	Capability   func(config.ModelCaps) bool               // model capability check for Visible (nil = always visible)
+	ModelDefault func(config.ModelDefaults) string          // extract this setting from ModelDefaults (nil = no model default fallback)
+	GateExecute  bool                                      // also reject in Execute when capability is false
+	GateMsg      string                                    // rejection message format (%s = model name)
+	EmptyShow    string                                    // display when effective value is "" (e.g. "not set")
+	DefaultShow  string                                    // display when getter returns "" or matches this value (e.g. "off", "standard")
+	InvalidName  string                                    // noun for error messages (e.g. "effort level", "thinking mode")
+	Get          func(CommandContext, string) string
+	Set          func(CommandContext, string, string)
+	Choices      []settingChoice
 }
 
 // newSessionSettingCommand builds a Command from a sessionSettingDef, eliminating
@@ -98,7 +99,15 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 
 	if def.Capability != nil {
 		cmd.Visible = func(_ context.Context, req Request, cc CommandContext) bool {
-			return def.Capability(config.ModelCapabilities(cc.Agent.SessionModel(req.SessionKey)))
+			model := cc.Agent.SessionModel(req.SessionKey)
+			if def.Capability(config.ModelCapabilities(model)) {
+				return true
+			}
+			// Also visible if model config explicitly configures this setting.
+			if def.ModelDefault != nil && cc.Agent.ModelDefaultsFn != nil {
+				return def.ModelDefault(cc.Agent.ModelDefaultsFn(model)) != ""
+			}
+			return false
 		}
 	}
 
@@ -111,21 +120,29 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 			}
 		}
 
-		// No args: show current value.
+		// No args: show effective value (session override → model default → empty).
 		if req.Args == "" {
 			current := def.Get(cc, req.SessionKey)
 			display := current
-			if current == "" {
+			source := ""
+			if current == "" && def.ModelDefault != nil && cc.Agent.ModelDefaultsFn != nil {
+				md := cc.Agent.ModelDefaultsFn(cc.Agent.SessionModel(req.SessionKey))
+				if v := def.ModelDefault(md); v != "" {
+					display = v
+					source = " (model default)"
+				}
+			}
+			if display == "" {
 				if def.EmptyShow != "" {
 					display = def.EmptyShow
 				} else {
 					display = def.DefaultShow
 				}
-			} else if current == def.DefaultShow {
+			} else if display == def.DefaultShow {
 				display = def.DefaultShow
 			}
 			title := strings.ToUpper(def.Name[:1]) + def.Name[1:]
-			return Response{Text: fmt.Sprintf("%s: %s\n%s", title, display, def.OptionsHint)}, nil
+			return Response{Text: fmt.Sprintf("%s: %s%s\n%s", title, display, source, def.OptionsHint)}, nil
 		}
 
 		// Normalize and match input.
@@ -154,11 +171,12 @@ func newSessionSettingCommand(def sessionSettingDef) *Command {
 // EffortCommand returns a /effort command to show or set the effort level.
 func EffortCommand() *Command {
 	return newSessionSettingCommand(sessionSettingDef{
-		Name:        "effort",
-		Description: "Show or set effort level (low/medium/high)",
-		OptionsHint: "Options: 1) low  2) medium  3) high",
-		Capability:  func(c config.ModelCaps) bool { return c.Effort },
-		EmptyShow:   "not set (using model default)",
+		Name:         "effort",
+		Description:  "Show or set effort level (low/medium/high)",
+		OptionsHint:  "Options: 1) low  2) medium  3) high",
+		Capability:   func(c config.ModelCaps) bool { return c.Effort },
+		ModelDefault: func(md config.ModelDefaults) string { return md.Effort },
+		EmptyShow:    "not set",
 		InvalidName: "effort level",
 		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionEffort(sk) },
 		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionEffort(sk, v) },
@@ -175,11 +193,12 @@ func EffortCommand() *Command {
 // ThinkingCommand returns a /thinking command to show or set the thinking mode.
 func ThinkingCommand() *Command {
 	return newSessionSettingCommand(sessionSettingDef{
-		Name:        "thinking",
-		Description: "Show or set thinking mode (off/adaptive)",
-		OptionsHint: "Options: 0) off  1) adaptive",
-		Capability:  func(c config.ModelCaps) bool { return c.Thinking },
-		DefaultShow: "off",
+		Name:         "thinking",
+		Description:  "Show or set thinking mode (off/adaptive)",
+		OptionsHint:  "Options: 0) off  1) adaptive",
+		Capability:   func(c config.ModelCaps) bool { return c.Thinking },
+		ModelDefault: func(md config.ModelDefaults) string { return md.Thinking },
+		DefaultShow:  "off",
 		InvalidName: "thinking mode",
 		Get:         func(cc CommandContext, sk string) string { return cc.Agent.SessionThinking(sk) },
 		Set:         func(cc CommandContext, sk, v string) { cc.Agent.SetSessionThinking(sk, v) },
@@ -193,11 +212,12 @@ func ThinkingCommand() *Command {
 // SpeedCommand returns a /speed command to show or set Anthropic fast mode.
 func SpeedCommand() *Command {
 	return newSessionSettingCommand(sessionSettingDef{
-		Name:        "speed",
-		Description: "Show or set speed mode (standard/fast)",
-		OptionsHint: "Options: 0) standard  1) fast",
-		Capability:  func(c config.ModelCaps) bool { return c.Speed },
-		GateExecute: true,
+		Name:         "speed",
+		Description:  "Show or set speed mode (standard/fast)",
+		OptionsHint:  "Options: 0) standard  1) fast",
+		Capability:   func(c config.ModelCaps) bool { return c.Speed },
+		ModelDefault: func(md config.ModelDefaults) string { return md.Speed },
+		GateExecute:  true,
 		GateMsg:     "Speed is not supported by %s (Opus only)",
 		DefaultShow: "standard",
 		InvalidName: "speed mode",
