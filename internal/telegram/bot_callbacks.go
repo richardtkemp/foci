@@ -117,7 +117,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 	}
 
 	// Check if this bare subcommand needs a chained keyboard (e.g. /tmux kill → pick session)
-	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText); ok {
+	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText, chatID); ok {
 		b.editMessageWithKeyboard(chatID, msgID, parentName, cmdText, opts)
 		return
 	}

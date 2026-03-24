@@ -37,7 +37,7 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *discordgo.Messa
 	}
 
 	// Check for chain keyboard.
-	if _, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText); ok {
+	if _, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText, chatID); ok {
 		label := text + ":"
 		buttons := buildCommandButtons("", opts)
 		_, _ = b.session.ChannelMessageSendComplex(msg.ChannelID, &discordgo.MessageSend{
