@@ -1026,6 +1026,8 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
+| `backend` | string | `""` | Backend selection. Empty or `"api"` = traditional agent loop (Foci calls API, executes tools). A coding agent name (`"claude-code"`, `"codex"`, `"opencode"`) delegates entire turns to an external agent subprocess. |
+| `backend_config` | table | `{}` | Backend-specific settings. Interpreted by the backend implementation. See [Coding Agent Backends](#coding-agent-backends). |
 
 ### Per-agent platform configuration (`[[agents.platforms]]`)
 
@@ -1138,6 +1140,54 @@ weight = 1.0
 ```
 
 **Facet acquisition priority:** When `/facet` is invoked, per-agent pool is tried first. If all per-agent bots are busy (or none configured), the shared pool is used as fallback. Released bots return to whichever pool they came from.
+
+---
+
+## Coding Agent Backends
+
+Instead of calling an LLM API directly (the default `"api"` backend), an agent can delegate entire turns to a coding agent subprocess. The coding agent handles inference, tool execution, and context management; Foci handles platform delivery, prompt enrichment (metadata, reminders, nudges), and command dispatch.
+
+Set `backend` on an `[[agents]]` entry to enable:
+
+```toml
+[[agents]]
+id = "coder"
+backend = "claude-code"
+workspace = "/home/coder/projects/myapp"
+
+[agents.backend_config]
+# Backend-specific settings (optional).
+# socket_path = ""    # tmux socket override (empty = default)
+```
+
+### Available backends
+
+| Backend | Description |
+|---|---|
+| `"api"` (default) | Traditional agent loop — Foci calls LLM API, executes tools, manages sessions. |
+| `"claude-code"` | Claude Code running interactively in a tmux pane. Input via tmux paste-buffer, output via session JSONL file watcher. |
+
+Codex and OpenCode backends are planned but not yet implemented.
+
+### How it works (Claude Code)
+
+1. On startup, Foci spawns `claude` in a tmux window (`cc-{agentID}`) in the agent's workspace directory, passing the concatenated system prompt via `--system-prompt`.
+2. User messages are enriched with Foci's `[meta]`, `[reminders]`, `[state]`, and nudge blocks, then pasted into the tmux pane.
+3. Foci watches Claude Code's session JSONL file (`~/.claude/projects/<slug>/<session-id>.jsonl`) for new entries via fsnotify.
+4. Assistant text, tool calls, and turn completion are streamed to the platform in real-time.
+5. Claude Code owns its own session, tools, and context management. Foci does not manage conversation history for backend agents.
+
+### What still applies
+
+Reminders, scratchpad, todos, task list, nudges, platform connections, command dispatch, message transforms, and keepalive all work with backend agents. Metadata and state are injected into each prompt.
+
+### What's skipped
+
+Tool registry, compactor, cache management, fallback chain, server tools, MCP, spawn — these are handled by the coding agent or not applicable.
+
+### Command passthrough
+
+`/model` and `/compact` commands should be forwarded to the backend via `SendCommand()`. Other Foci commands (`/sessions`, `/config`, `/mana`, etc.) are handled normally.
 
 ---
 

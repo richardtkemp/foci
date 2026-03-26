@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"foci/internal/backend"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -133,6 +134,7 @@ type Agent struct {
 	ModelDefaultsFn               func(model string) config.ModelDefaults // returns per-model defaults from [models.*] config; nil = no model defaults
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
+	Backend                       backend.Backend              // nil = traditional agent loop; non-nil = coding agent backend (Claude Code, Codex, etc.)
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
 	platformMu sync.RWMutex               // protects platforms map access
@@ -277,6 +279,10 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 // (images, PDFs, or convertible documents like docx/xlsx/pptx/HTML/CSV).
 // Multiple texts are batched into a single turn with separate content blocks.
 func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
+	if a.Backend != nil {
+		return a.handleViaBackend(ctx, sessionKey, texts)
+	}
+
 	// Gate check: resolve session's endpoint and check its gate.
 	// Only that endpoint's sessions are blocked when rate-limited.
 	sm := a.getSessionMeta(sessionKey)

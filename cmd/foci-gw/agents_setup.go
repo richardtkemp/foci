@@ -37,7 +37,7 @@ type coreToolsResult struct {
 }
 
 // registerCoreTools registers exec, tmux, browser, file I/O, summary, and HTTP tools.
-func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc) coreToolsResult {
+func registerCoreTools(registry *tools.Registry, p setupParams, client provider.Client, agentStore *secrets.Store, notifier *tools.AsyncNotifier, groupResolver *config.GroupResolver, fallbackFn provider.FallbackFunc) coreToolsResult {
 	acfg := p.acfg
 
 	tc := p.resolved.Tools
@@ -101,7 +101,7 @@ func registerCoreTools(registry *tools.Registry, p setupParams, agentStore *secr
 	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
 	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
 	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
-	registry.Register(tools.NewSummaryTool(p.client, p.clientProvider, groupResolver, acfg.Workspace, fallbackFn))
+	registry.Register(tools.NewSummaryTool(client, p.clientProvider, groupResolver, acfg.Workspace, fallbackFn))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier, fileMode))
 
 	return result
@@ -286,8 +286,10 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 	var defaultRules []nudge.Rule
 	if nudgeDefaultEnabled {
 		var toolNames []string
-		for _, t := range toolRegistry.All() {
-			toolNames = append(toolNames, t.Name)
+		if toolRegistry != nil {
+			for _, t := range toolRegistry.All() {
+				toolNames = append(toolNames, t.Name)
+			}
 		}
 		var skillSummaries []nudge.SkillSummary
 		if skillRegistry != nil {
@@ -441,7 +443,7 @@ func setupManaWatcher(ag *agent.Agent, p setupParams) {
 }
 
 // registerSpawnTool registers the spawn tool for forking sub-agents.
-func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, resolvedModel, defaultFormat string, fallbackFn provider.FallbackFunc) {
+func registerSpawnTool(registry *tools.Registry, p setupParams, client provider.Client, bootstrap *workspace.Bootstrap, agLazy func() tools.SpawnAgent, notifier *tools.AsyncNotifier, promptSearchDirs []string, setNoCompact func(string, bool), groupResolver *config.GroupResolver, resolvedModel, defaultFormat string, fallbackFn provider.FallbackFunc) {
 	acfg := p.acfg
 	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 
@@ -449,7 +451,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, bootstrap *works
 	al := p.resolved.Loop
 	tc := p.resolved.Tools
 	spawnDeps := tools.SpawnDeps{
-		Client:          p.client,
+		Client:          client,
 		ClientProvider:  p.clientProvider,
 		Bootstrap:       bootstrap,
 		Registry:        registry,

@@ -14,8 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	_ "foci/internal/discord"  // register discord messaging provider
-	_ "foci/internal/telegram" // register telegram messaging provider
+	_ "foci/internal/backend/claudecode" // register claude-code backend
+	_ "foci/internal/discord"            // register discord messaging provider
+	_ "foci/internal/telegram"           // register telegram messaging provider
 
 	"foci/internal/agent"
 	"foci/internal/command"
@@ -242,25 +243,10 @@ Subcommands:
 			agentBackends = mem.sharedBackends
 		}
 
-		// Resolve agent's primary model via call-site routing
-		groupResolver := config.NewGroupResolver(cfg.Groups, cfg.Models)
-		resolved := groupResolver.ResolveCall(config.CallChat)
-		if resolved == nil {
-			log.Errorf("main", "agent %q: cannot resolve chat model (agent skipped)", acfg.ID)
-			continue
-		}
-
-		agentClient := clients.GetClient(resolved.Endpoint, resolved.Format)
-		if agentClient == nil {
-			log.Errorf("main", "agent %q: endpoint %q unavailable for model %q (format: %s)", acfg.ID, resolved.Endpoint, resolved.ModelID, resolved.Format)
-			continue
-		}
-
 		inst := setupAgent(setupParams{
 			acfg:                acfg,
 			cfg:                 cfg,
 			configPath:          configPath,
-			client:              agentClient,
 			clientProvider:      clients,
 			usageClientProvider: usageClients,
 			sessions:            si.sessions,
@@ -284,6 +270,10 @@ Subcommands:
 			connMgr:             connMgr,
 			plat:                plat,
 		})
+		if inst == nil {
+			log.Errorf("main", "agent %q: setup failed (agent skipped)", acfg.ID)
+			continue
+		}
 		agents[acfg.ID] = inst
 		agentOrder = append(agentOrder, acfg.ID)
 
@@ -331,8 +321,7 @@ Subcommands:
 				func() { inst.kaRunner.NotifyTurnEnd() })
 		}
 
-		powerfulModel := resolved.Developer + "/" + resolved.ModelID
-		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, powerfulModel, acfg.Workspace)
+		log.Infof("main", "agent %q ready (model=%s, workspace=%s)", acfg.ID, inst.ag.Model, acfg.Workspace)
 	}
 
 	// ========== Post-agent setup ==========
