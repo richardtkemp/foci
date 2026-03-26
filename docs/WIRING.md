@@ -168,7 +168,7 @@ main
  ├── mana          → anthropic, log, provider (mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── backend       (no deps — Backend interface, registry, StartOptions, EventHandler)
- │   └── backend/claudecode → backend, tempdir, fsnotify (Claude Code implementation; registers via init())
+ │   └── backend/claudecode → backend, fsnotify (Claude Code implementation; registers via init())
  ├── agent         → backend, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
  ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
@@ -236,7 +236,7 @@ The core of the system. Two entry points:
 - `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithAttachments`
 - `HandleMessageWithAttachments(ctx, sessionKey, text, attachments)` — full version with optional image/document attachments
 
-**Backend agents:** When `Agent.Backend != nil`, `HandleMessageWithAttachments` branches to `handleViaBackend` (`backend_turn.go`) instead of the traditional loop below. The backend path composes a prompt (metadata, reminders, nudges, state dashboard, user text), sends it to the coding agent via `Backend.SendTurn()`, and streams events back to the platform via `EventHandler` → `TurnCallbacks`. The coding agent owns inference, tool execution, and session state. See [docs/CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
+**Backend agents:** When `Agent.Backend != nil`, `HandleMessageWithAttachments` branches to `handleViaBackend` (`backend_turn.go`) instead of the traditional loop below. The backend path composes a prompt (metadata, reminders, nudges, state dashboard, attachment paths, user text) via the shared `composeTurnText` (`turn_common.go`), sends it to the coding agent via `Backend.SendTurn()` (fire-and-forget), and returns immediately. Output is delivered asynchronously: the backend's session file watcher calls `SetReplyFunc` which routes text to the correct platform connection via `connMgr.ForSessionOrPrimary()`. Permission prompts are detected by scraping the tmux pane and forwarded to the user. See [docs/CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
 
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`

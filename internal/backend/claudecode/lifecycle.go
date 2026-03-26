@@ -3,6 +3,8 @@ package claudecode
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"foci/internal/backend"
@@ -20,10 +22,26 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	// Build claude command arguments.
 	var args []string
 	if opts.SystemPrompt != "" {
-		args = append(args, "--system-prompt", opts.SystemPrompt)
+		// Write system prompt to a file — it can be arbitrarily large,
+		// exceeding tmux's command length limit if passed inline.
+		promptFile := filepath.Join(opts.WorkDir, "character", ".full-prompt")
+		if err := os.WriteFile(promptFile, []byte(opts.SystemPrompt), 0600); err != nil {
+			return fmt.Errorf("write system prompt file: %w", err)
+		}
+		args = append(args, "--system-prompt-file", promptFile)
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
+	}
+
+	// Permission handling. skip_permissions bypasses all prompts (unattended).
+	// allowed_tools pre-approves specific tools but CC may still prompt for
+	// directory access etc. — those are detected and forwarded to the user.
+	if v, ok := b.cfg["skip_permissions"].(bool); ok && v {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" {
+		args = append(args, "--allowedTools", v)
 	}
 
 	// Create the tmux pane.
@@ -39,7 +57,8 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		pid, err := b.pane.readPanePID(ctx)
 		if err == nil && pid > 0 {
 			b.pane.pid = pid
-			return b.discoverSession(ctx)
+			b.discoverSession() // best-effort; falls back to lazy discovery
+			return nil
 		}
 		// Process is gone — kill stale window and recreate.
 		_ = b.pane.kill(ctx)
@@ -49,30 +68,27 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		return fmt.Errorf("create tmux pane: %w", err)
 	}
 
-	// Read the pane PID — this is the shell PID, not claude's PID.
-	// Claude is a child of this shell. We need to wait for claude to
-	// create its PID file. The PID file name is claude's PID, which
-	// we can discover by waiting for a new file in ~/.claude/sessions/.
+	// Read the pane PID (the login shell). Claude is a child of this.
 	panePID, err := b.pane.readPanePID(ctx)
 	if err != nil {
 		return fmt.Errorf("read pane PID: %w", err)
 	}
 	b.pane.pid = panePID
 
-	// Wait for claude to start and create its session.
-	// Claude is launched by the shell in the tmux pane, so it's a child
-	// of panePID. We poll for the child's PID file.
-	if err := b.waitForSession(ctx); err != nil {
-		return fmt.Errorf("wait for session: %w", err)
-	}
-
+	// Session discovery is deferred — CC may not write the session file
+	// until the first message is received. The watcher is created lazily
+	// on the first SendTurn call via ensureWatcher.
 	return nil
 }
 
-// waitForSession waits for the Claude Code session file to appear and
-// sets up the watcher. It finds the claude child process of the tmux pane
-// shell and looks up its PID file in ~/.claude/sessions/.
-func (b *Backend) waitForSession(ctx context.Context) error {
+// ensureWatcher discovers the CC session and creates the file watcher
+// if not already set up. Called lazily on the first SendTurn — CC may not
+// write the session file until it receives a message. Polls with a timeout.
+func (b *Backend) ensureWatcher(ctx context.Context) error {
+	if b.watcher != nil {
+		return nil
+	}
+
 	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -84,40 +100,125 @@ func (b *Backend) waitForSession(ctx context.Context) error {
 		case <-deadline.Done():
 			return fmt.Errorf("timeout waiting for claude session (30s)")
 		case <-ticker.C:
-			// Find the claude process (child of the tmux pane shell).
 			childPID, err := findChildPID(b.pane.pid)
 			if err != nil {
-				continue // claude hasn't started yet
+				continue
 			}
-			// Look up its session file.
 			sessionID, jsonlPath, err := discoverSessionFile(childPID, b.workDir)
 			if err != nil {
-				continue // session file not written yet
+				continue
+			}
+			if err := b.startWatcher(jsonlPath); err != nil {
+				continue
 			}
 			b.sessionID = sessionID
-			return b.startWatcher(jsonlPath)
+			return nil
 		}
 	}
 }
 
-// discoverSession finds an existing CC session and starts the watcher.
-func (b *Backend) discoverSession(_ context.Context) error {
+// discoverSession tries to find an existing CC session and start the watcher.
+// If the session file doesn't exist yet, defers to lazy discovery via ensureWatcher.
+func (b *Backend) discoverSession() {
 	sessionID, jsonlPath, err := discoverSessionFile(b.pane.pid, b.workDir)
 	if err != nil {
-		return fmt.Errorf("discover session: %w", err)
+		return // will be discovered lazily on first SendTurn
+	}
+	if err := b.startWatcher(jsonlPath); err != nil {
+		return
 	}
 	b.sessionID = sessionID
-	return b.startWatcher(jsonlPath)
 }
 
-// startWatcher initializes the JSONL file watcher.
+// startWatcher initializes the JSONL file watcher and starts the
+// long-lived watch loop goroutine.
 func (b *Backend) startWatcher(jsonlPath string) error {
 	w, err := newSessionWatcher(jsonlPath)
 	if err != nil {
 		return fmt.Errorf("init watcher: %w", err)
 	}
+
+	// When CC emits stop_reason: "tool_use", it may be blocked waiting
+	// for permission approval. Poll the tmux pane and notify the user
+	// via their platform so they can approve or deny.
+	w.onToolUseBlock = func() {
+		b.checkPermissionPrompt()
+	}
+
 	b.watcher = w
+
+	// Set persistent handler that delegates to the current turn's replyFunc.
+	w.setHandler(&backend.EventHandler{
+		OnText: func(text string) {
+			b.replyMu.Lock()
+			fn := b.replyFunc
+			b.replyMu.Unlock()
+			if fn != nil {
+				fn(text)
+			}
+		},
+	})
+
+	// Start long-lived watch loop — lives until Close() cancels watchCtx.
+	b.watchCtx, b.watchStop = context.WithCancel(context.Background())
+	go w.watchLoop(b.watchCtx)
 	return nil
+}
+
+// checkPermissionPrompt polls the tmux pane for a CC permission prompt
+// and forwards it to the user via the platform. The user's reply will
+// arrive as a normal message and be sent to the pane via SendTurn.
+// Deduplicates: won't send the same prompt text twice in a row.
+func (b *Backend) checkPermissionPrompt() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pane := b.pane
+	if pane == nil {
+		return
+	}
+
+	for i := 0; i < 10; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+
+		content, err := pane.capturePane(ctx)
+		if err != nil {
+			continue
+		}
+		prompt := extractPermissionPrompt(content)
+		if prompt == "" {
+			continue
+		}
+
+		// Skip if this is the same prompt we already sent.
+		b.lastPromptMu.Lock()
+		if prompt == b.lastPrompt {
+			b.lastPromptMu.Unlock()
+			return
+		}
+		b.lastPrompt = prompt
+		b.lastPromptMu.Unlock()
+
+		b.replyMu.Lock()
+		fn := b.replyFunc
+		b.replyMu.Unlock()
+		if fn != nil {
+			fn("⚠️ Claude Code needs permission:\n\n" + prompt + "\n\nReply with your choice (1, 2, 3, etc.)")
+		}
+		return
+	}
+}
+
+// clearLastPrompt resets the deduplication state so the next permission
+// prompt is always forwarded. Called when user input is sent to the pane.
+func (b *Backend) clearLastPrompt() {
+	b.lastPromptMu.Lock()
+	b.lastPrompt = ""
+	b.lastPromptMu.Unlock()
 }
 
 func (b *Backend) IsRunning() bool {
@@ -145,10 +246,13 @@ func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Stop the watcher.
+	// Stop the watch loop and close fsnotify.
 	if b.watchStop != nil {
 		b.watchStop()
 		b.watchStop = nil
+	}
+	if b.watcher != nil {
+		b.watcher.close()
 	}
 
 	if b.pane == nil {
@@ -159,7 +263,7 @@ func (b *Backend) Close() error {
 	defer cancel()
 
 	// Try graceful exit first.
-	_ = b.pane.sendKeys(ctx, "/exit")
+	_ = b.pane.sendText(ctx, "/exit")
 	time.Sleep(500 * time.Millisecond)
 
 	// Force kill if still alive.

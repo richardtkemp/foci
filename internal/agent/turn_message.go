@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"strings"
-	"time"
 	"unicode/utf8"
 
 	"foci/internal/log"
@@ -22,41 +20,24 @@ import (
 // user text — this is how branch orientation is delivered on the first turn
 // instead of being a separate user message (which would cause consecutive users).
 func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts []string, turnModel string, attachments []platform.Attachment, duplicateMessages bool, orientation string) provider.Message {
-	now := time.Now()
-	sm := a.getSessionMeta(sessionKey)
+	trigger := TriggerFromContext(ctx)
+
+	// Resolve mana for both meta prefix and watcher.
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
 
-	userMessage := texts[0]
-
-	// Check mana thresholds and notify user for active conversations only
-	var manaRestoreNote string
-	if a.ManaWatcher != nil && !isSystemMessage(userMessage) {
+	// Shared prompt composition (metadata, reminders, state, attachment paths, nudges).
+	tp := a.composeTurnText(ctx, sessionKey, turnModel, manaStr, manaGood, texts, attachments)
+	if a.ManaWatcher != nil && len(texts) > 0 && !isSystemMessage(texts[0]) {
 		a.ManaWatcher.CheckAndWarn(manaStr, manaReset, func(warn string) {
 			for _, fn := range a.ManaWarnFunc {
 				fn(warn)
 			}
 		})
 		if msg := a.ManaWatcher.CheckRestore(manaStr); msg != "" {
-			manaRestoreNote = "[" + msg + "]"
+			tp.ManaRestore = "[" + msg + "]"
 			log.Infof("mana", "session=%s restore: %s", sessionKey, msg)
 		}
 	}
-
-	// Annotate with saved attachment paths so the agent knows where files are
-	var attachmentParts []string
-	for _, att := range attachments {
-		if att.SavedPath != "" {
-			label := labelForMIME(att.MimeType)
-			attachmentParts = append(attachmentParts, "["+label+" saved to: "+att.SavedPath+"]")
-		}
-	}
-	attachmentPaths := strings.Join(attachmentParts, "\n")
-
-	trigger := TriggerFromContext(ctx)
-	plat := triggerToPlatform(trigger)
-	metaPrefix := buildMetaPrefix(now, turnModel, plat, manaStr, manaGood, sm)
-	reminderBlock := a.collectReminders(sessionKey)
-	stateBlock := a.collectStateDashboard(sessionKey)
 
 	// Build content blocks: binary attachments first
 	const maxPDFSize = 32 * 1024 * 1024 // 32MB Anthropic API limit for documents
@@ -92,33 +73,35 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: frm})
 	}
 
-	// Metadata, reminders, and state dashboard as separate content blocks.
-	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: metaPrefix})
-	if reminderBlock != "" {
-		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: reminderBlock})
+	// Common text parts as separate content blocks.
+	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.MetaPrefix})
+	if tp.Reminders != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.Reminders})
 	}
-	if stateBlock != "" {
-		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: stateBlock})
+	if tp.StateDashboard != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.StateDashboard})
 	}
-
-	// Mana restore notification and attachment paths as separate blocks.
-	if manaRestoreNote != "" {
-		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: manaRestoreNote})
+	if tp.ManaRestore != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.ManaRestore})
 	}
-	if attachmentPaths != "" {
-		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: attachmentPaths})
+	if tp.AttachmentPaths != "" {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.AttachmentPaths})
 	}
 
-	// Branch orientation (first turn only — delivered as a content block
-	// instead of a separate user message to maintain role alternation).
+	// Nudge blocks.
+	for _, n := range tp.Nudges {
+		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: n})
+	}
+
+	// Branch orientation (first turn only).
 	if orientation != "" {
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: orientation})
 	}
 
 	// Primary user text
-	userText := userMessage
+	userText := texts[0]
 	if duplicateMessages && isUserTrigger(trigger) {
-		userText = userMessage + "\n\n" + userMessage
+		userText = texts[0] + "\n\n" + texts[0]
 	}
 	contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: userText})
 
@@ -157,7 +140,7 @@ func (a *Agent) convertAttachmentToText(sessionKey string, att platform.Attachme
 	// Apply size guard: if converted text exceeds MaxResultChars, truncate with hint
 	if a.MaxResultChars > 0 && utf8.RuneCountInString(text) > a.MaxResultChars {
 		a.logger().Infof("session=%s converted %s text too large (%d chars, limit %d), truncating", sessionKey, label, utf8.RuneCountInString(text), a.MaxResultChars)
-		text = text[:a.MaxResultChars] // byte slice; may split a multi-byte rune
+		text = text[:a.MaxResultChars]
 		truncNote := fmt.Sprintf("\n[... truncated — full document is on disk")
 		if att.SavedPath != "" {
 			truncNote += " at " + att.SavedPath

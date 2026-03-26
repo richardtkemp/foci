@@ -135,6 +135,7 @@ type Agent struct {
 	ManaInvestInterval            time.Duration                // invest interval for mana good/bad indicator; 0 = no indicator
 	ServerTools                   []provider.ToolDef           // server-side tools (web_search, web_fetch) — executed by Anthropic, not client
 	Backend                       backend.Backend              // nil = traditional agent loop; non-nil = coding agent backend (Claude Code, Codex, etc.)
+	BackendSendFunc               func(sessionKey, text string) // sends text to the user's chat for a given session; set during agent setup
 
 	platforms  map[string]platform.Sender // per-agent platforms (telegram, discord, etc.); key = platform name
 	platformMu sync.RWMutex               // protects platforms map access
@@ -280,7 +281,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 // Multiple texts are batched into a single turn with separate content blocks.
 func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
 	if a.Backend != nil {
-		return a.handleViaBackend(ctx, sessionKey, texts)
+		return a.handleViaBackend(ctx, sessionKey, texts, attachments)
 	}
 
 	// Gate check: resolve session's endpoint and check its gate.

@@ -248,10 +248,12 @@ func registerAgentCommands(p cmdRegParams, lastMsgStore *command.LastMessageStor
 	}
 
 	// Skill slash commands (command + script in frontmatter)
-	for _, s := range p.skillRegistry.All() {
-		if s.Command != "" && s.Script != "" {
-			name := strings.TrimPrefix(s.Command, "/")
-			cmds.Register(command.ScriptCommand(name, s.Description, s.Script, 30))
+	if p.skillRegistry != nil {
+		for _, s := range p.skillRegistry.All() {
+			if s.Command != "" && s.Script != "" {
+				name := strings.TrimPrefix(s.Command, "/")
+				cmds.Register(command.ScriptCommand(name, s.Description, s.Script, 30))
+			}
 		}
 	}
 
