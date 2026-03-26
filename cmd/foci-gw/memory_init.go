@@ -157,12 +157,16 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		StartSweep(initial, interval time.Duration)
 	}
 
-	// initOne reindexes, watches, and registers a single backend.
+	// initOne watches, starts sweep, and kicks off an async initial reindex.
 	initOne := func(label string, b memoryBackend, debounce, sweepInterval time.Duration) {
 		closers = append(closers, b)
-		if err := b.Reindex(); err != nil {
-			log.Errorf("main", "reindex %s: %v", label, err)
-		}
+		go func() {
+			if err := b.Reindex(); err != nil {
+				log.Errorf("main", "initial reindex %s: %v", label, err)
+			} else {
+				log.Infof("main", "%s: initial reindex complete", label)
+			}
+		}()
 		if debounce > 0 || len(globalMemSources) > 0 || hasPerAgentMemory {
 			if err := b.Watch(); err != nil {
 				log.Errorf("main", "start %s file watching: %v", label, err)

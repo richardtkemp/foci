@@ -154,6 +154,9 @@ id = "myagent"
 # skills_dir = "skills"                   # per-agent skills directory (default: $workspace/skills/)
 # backend = "api"                         # "api" (default) or a coding agent: "claude-code", "codex", "opencode"
 # [agents.backend_config]                 # backend-specific settings (see docs/CONFIG.md)
+# model = "sonnet"                        #   CC model name (omit for default)
+# skip_permissions = true                 #   skip all permission prompts
+# allowed_tools = "Bash,Read,Edit,Write"  #   pre-approve specific tools
 
 # Per-agent overrides (from [defaults.*]):
 [agents.system]

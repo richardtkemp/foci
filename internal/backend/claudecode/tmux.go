@@ -23,11 +23,13 @@ type tmuxPane struct {
 // create creates a new tmux window running the claude command.
 // The window is named windowName and started in workDir.
 func (p *tmuxPane) create(ctx context.Context, claudeArgs []string) error {
-	// Build the shell command: claude [args...]
-	shellCmd := "claude"
+	// Wrap in a login shell so the user's PATH is available (e.g. ~/.local/bin/claude).
+	// tmux's default shell gets a bare system PATH that excludes user-installed binaries.
+	innerCmd := "claude"
 	for _, a := range claudeArgs {
-		shellCmd += " " + shellQuote(a)
+		innerCmd += " " + shellQuote(a)
 	}
+	shellCmd := "sh -l -c " + shellQuote(innerCmd)
 
 	args := []string{"new-window", "-d", "-n", p.windowName}
 	if p.workDir != "" {
@@ -43,17 +45,17 @@ func (p *tmuxPane) create(ctx context.Context, claudeArgs []string) error {
 			sessArgs = append(sessArgs, "-c", p.workDir)
 		}
 		sessArgs = append(sessArgs, shellCmd)
-		_, err = p.runTmux(ctx, sessArgs...)
+		out, err := p.runTmux(ctx, sessArgs...)
 		if err != nil {
-			return fmt.Errorf("tmux new-session: %w", err)
+			return fmt.Errorf("tmux new-session: %s: %w", strings.TrimSpace(out), err)
 		}
 	}
 	return nil
 }
 
-// sendKeys sends text to the pane followed by Enter.
+// sendText sends text to the pane followed by Enter.
 // Uses load-buffer/paste-buffer for reliable handling of long and multi-line input.
-func (p *tmuxPane) sendKeys(ctx context.Context, text string) error {
+func (p *tmuxPane) sendText(ctx context.Context, text string) error {
 	target := p.target()
 
 	if text != "" {
@@ -158,6 +160,49 @@ func findChildPID(parentPID int) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no child process found for PID %d", parentPID)
+}
+
+// capturePane returns the visible text content of the pane.
+func (p *tmuxPane) capturePane(ctx context.Context) (string, error) {
+	out, err := p.runTmux(ctx, "capture-pane", "-t", p.target(), "-p")
+	if err != nil {
+		return "", fmt.Errorf("capture-pane: %w", err)
+	}
+	return out, nil
+}
+
+// extractPermissionPrompt checks if the pane is showing a CC permission prompt.
+// Returns the prompt text (tool description + choices) if detected, empty string otherwise.
+func extractPermissionPrompt(paneContent string) string {
+	// Look for the "Do you want to proceed?" marker.
+	idx := strings.Index(paneContent, "Do you want to proceed?")
+	if idx < 0 {
+		return ""
+	}
+
+	// Walk backward to find the start of the permission block.
+	// CC renders a horizontal rule (─) above the prompt.
+	start := idx
+	lines := strings.Split(paneContent[:idx], "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], "───") {
+			start = 0
+			for j := 0; j <= i; j++ {
+				start += len(lines[j]) + 1
+			}
+			break
+		}
+	}
+
+	// Walk forward to capture the choices after the prompt.
+	rest := paneContent[idx:]
+	end := strings.Index(rest, "Esc to cancel")
+	if end < 0 {
+		end = len(rest)
+	}
+
+	block := strings.TrimSpace(paneContent[start : idx+end])
+	return block
 }
 
 // kill destroys the tmux window.

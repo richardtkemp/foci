@@ -2,7 +2,6 @@ package main
 
 import (
 	"foci/internal/backend"
-	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/workspace"
 )
@@ -25,16 +24,28 @@ func setupBackendAgent(p setupParams, be backend.Backend) *agentInstance {
 		systemPrompt += block.Text
 	}
 
-	// Resolve model for backend startup.
+	// Model for the backend — from backend_config, not from the group resolver
+	// (which holds API-routed models like OpenRouter IDs that CC doesn't understand).
 	model := ""
-	if primary := shared.groupResolver.ResolveCall(config.CallChat); primary != nil {
-		model = primary.ModelID
+	if v, ok := p.acfg.BackendConfig["model"].(string); ok {
+		model = v
 	}
 
 	// Build the agent with backend and shared fields.
 	ag := shared.newAgent()
 	ag.Backend = be
 	ag.Model = p.acfg.Backend // display the backend name as the "model"
+
+	// Wire BackendSendFunc to deliver text to the correct chat via connMgr.
+	connMgr := p.connMgr
+	agentID := p.acfg.ID
+	ag.BackendSendFunc = func(sessionKey, text string) {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+		if conn == nil {
+			return
+		}
+		_ = conn.SendText(text)
+	}
 
 	// Start the backend subprocess.
 	if err := be.Start(p.ctx, backend.StartOptions{

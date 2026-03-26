@@ -1156,8 +1156,10 @@ backend = "claude-code"
 workspace = "/home/coder/projects/myapp"
 
 [agents.backend_config]
-# Backend-specific settings (optional).
-# socket_path = ""    # tmux socket override (empty = default)
+# model = "sonnet"            # CC model name (optional — omit for CC default)
+# skip_permissions = true     # --dangerously-skip-permissions (no approval prompts)
+# allowed_tools = "Bash,Read,Edit,Write,Glob,Grep"  # --allowedTools (pre-approve specific tools)
+# socket_path = ""            # tmux socket override (empty = default)
 ```
 
 ### Available backends
@@ -1171,15 +1173,19 @@ Codex and OpenCode backends are planned but not yet implemented.
 
 ### How it works (Claude Code)
 
-1. On startup, Foci spawns `claude` in a tmux window (`cc-{agentID}`) in the agent's workspace directory, passing the concatenated system prompt via `--system-prompt`.
-2. User messages are enriched with Foci's `[meta]`, `[reminders]`, `[state]`, and nudge blocks, then pasted into the tmux pane.
-3. Foci watches Claude Code's session JSONL file (`~/.claude/projects/<slug>/<session-id>.jsonl`) for new entries via fsnotify.
-4. Assistant text, tool calls, and turn completion are streamed to the platform in real-time.
+1. On startup, Foci spawns `claude` in a tmux window (`cc-{agentID}`) in the agent's workspace directory via a login shell (`sh -l -c`). The concatenated system prompt is written to `{workspace}/character/.full-prompt` and passed via `--system-prompt-file`.
+2. User messages are enriched with Foci's `[meta]`, `[reminders]`, `[state]`, and nudge blocks, then pasted into the tmux pane via `load-buffer`/`paste-buffer` (piped from stdin — no temp files).
+3. Foci watches Claude Code's session JSONL file (`~/.claude/projects/<slug>/<session-id>.jsonl`) for new entries via fsnotify. Session discovery is lazy — the watcher is created on the first message, not at startup.
+4. Assistant text is streamed to the platform in real-time via the platform connection (`connMgr.ForSessionOrPrimary`). Output delivery is asynchronous — `SendTurn` is fire-and-forget.
 5. Claude Code owns its own session, tools, and context management. Foci does not manage conversation history for backend agents.
+
+### Permissions
+
+When `skip_permissions` is not set, CC may prompt for tool or directory access approval. Foci detects permission prompts by scraping the tmux pane (polling for "Do you want to proceed?") and forwards them to the user via their platform. The user's reply is sent to the pane as normal input.
 
 ### What still applies
 
-Reminders, scratchpad, todos, task list, nudges, platform connections, command dispatch, message transforms, and keepalive all work with backend agents. Metadata and state are injected into each prompt.
+Reminders, scratchpad, todos, task list, nudges, platform connections, command dispatch, message transforms, and keepalive all work with backend agents. Metadata and state are injected into each prompt. Attachment path annotations (`[Image saved to: ...]`) are included so CC can read received files.
 
 ### What's skipped
 

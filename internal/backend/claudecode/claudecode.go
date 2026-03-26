@@ -28,12 +28,21 @@ type Backend struct {
 	cfg        map[string]any
 	socketPath string // tmux socket override (empty = default)
 
-	mu        sync.Mutex
-	pane      *tmuxPane
-	watcher   *sessionWatcher
-	watchCtx  context.Context
-	watchStop context.CancelFunc
+	mu             sync.Mutex
+	pane           *tmuxPane
+	watcher        *sessionWatcher
+	watchCtx       context.Context
+	watchStop      context.CancelFunc
 	sessionID string // CC session UUID
-	agentID   string // foci agent ID
-	workDir   string // workspace directory
+	agentID        string                // foci agent ID
+	workDir        string                // workspace directory
+
+	// replyFunc delivers text to the user's platform chat. Set once via
+	// SetReplyFunc when the session/connection is established.
+	replyMu   sync.Mutex
+	replyFunc func(string)
+
+	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
+	lastPromptMu sync.Mutex
+	lastPrompt   string
 }

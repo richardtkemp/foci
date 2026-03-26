@@ -33,9 +33,20 @@ type Backend interface {
 	// Restart kills and relaunches the agent subprocess.
 	Restart(ctx context.Context) error
 
+	// SetReplyFunc sets the function used to deliver text to the user's
+	// platform chat. Called when the session/connection is known. The backend
+	// uses this for all asynchronous output (streamed responses, permission
+	// prompts, etc.).
+	SetReplyFunc(fn ReplyFunc)
+
 	// Close shuts down the agent subprocess gracefully.
 	Close() error
 }
+
+// ReplyFunc sends text to the user's platform chat. Set by the agent layer
+// so the backend can deliver asynchronous output (session file watcher events,
+// permission prompts, etc.) without depending on per-turn context.
+type ReplyFunc func(text string)
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {

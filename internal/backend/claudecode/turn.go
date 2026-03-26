@@ -7,54 +7,41 @@ import (
 	"foci/internal/backend"
 )
 
+// SendTurn sends a prompt to the Claude Code pane. It does not block waiting
+// for a response — output is delivered asynchronously via the persistent
+// watcher handler using the ReplyFunc set by SetReplyFunc. Returns immediately.
 func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
 	b.mu.Lock()
-	if b.pane == nil || b.watcher == nil {
+	if b.pane == nil {
 		b.mu.Unlock()
 		return nil, fmt.Errorf("claude-code backend not started")
 	}
 	pane := b.pane
-	watcher := b.watcher
 	b.mu.Unlock()
 
-	// Reset turn state so we don't carry over from a previous turn.
-	watcher.resetTurn()
+	// Clear permission prompt dedup so the next prompt is forwarded.
+	b.clearLastPrompt()
 
-	// Set up a completion channel — the watcher will signal when
-	// stop_reason == "end_turn" is seen.
-	done := make(chan *backend.TurnResult, 1)
-	wrappedHandler := &backend.EventHandler{
-		OnText:      handler.OnText,
-		OnToolStart: handler.OnToolStart,
-		OnToolEnd:   handler.OnToolEnd,
-		OnTurnComplete: func(result *backend.TurnResult) {
-			if handler.OnTurnComplete != nil {
-				handler.OnTurnComplete(result)
-			}
-			select {
-			case done <- result:
-			default:
-			}
-		},
-	}
-
-	// Start watching for output.
-	watchCtx, watchCancel := context.WithCancel(ctx)
-	defer watchCancel()
-	go watcher.watchLoop(watchCtx, wrappedHandler)
-
-	// Send the prompt.
-	if err := pane.sendKeys(ctx, prompt); err != nil {
+	// Send the prompt to the pane.
+	if err := pane.sendText(ctx, prompt); err != nil {
 		return nil, fmt.Errorf("send prompt: %w", err)
 	}
 
-	// Wait for the turn to complete.
-	select {
-	case result := <-done:
-		return result, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	// Lazily discover the session and start the long-lived watch loop.
+	b.mu.Lock()
+	if err := b.ensureWatcher(ctx); err != nil {
+		b.mu.Unlock()
+		return nil, fmt.Errorf("session discovery: %w", err)
 	}
+	b.mu.Unlock()
+
+	return &backend.TurnResult{}, nil
+}
+
+func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) {
+	b.replyMu.Lock()
+	defer b.replyMu.Unlock()
+	b.replyFunc = fn
 }
 
 func (b *Backend) SendCommand(ctx context.Context, command string) error {
@@ -65,5 +52,5 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	if pane == nil {
 		return fmt.Errorf("claude-code backend not started")
 	}
-	return pane.sendKeys(ctx, command)
+	return pane.sendText(ctx, command)
 }

@@ -20,11 +20,22 @@ type sessionWatcher struct {
 	path    string
 	fsnot   *fsnotify.Watcher
 	mu      sync.Mutex
-	offset  int64 // current read position in the file
+	offset  int64                // current read position in the file
+	handler *backend.EventHandler // current turn's handler (nil between turns)
+
+	// onToolUseBlock is called when the session shows stop_reason: "tool_use",
+	// indicating CC may be waiting for permission. The Backend sets this to
+	// poll the tmux pane and auto-approve.
+	onToolUseBlock func()
 
 	// turnState tracks the current turn's accumulated text and tool calls.
 	turnText  string
 	turnTools int
+}
+
+// close shuts down the fsnotify watcher.
+func (w *sessionWatcher) close() {
+	w.fsnot.Close()
 }
 
 // newSessionWatcher creates a watcher for the given JSONL file path.
@@ -53,10 +64,9 @@ func newSessionWatcher(path string) (*sessionWatcher, error) {
 }
 
 // watchLoop blocks until the context is cancelled, reading new JSONL entries
-// as they are appended to the session file.
-func (w *sessionWatcher) watchLoop(ctx context.Context, handler *backend.EventHandler) {
-	defer w.fsnot.Close()
-
+// as they are appended to the session file. The handler is swapped per-turn
+// via setHandler; the fsnotify watcher lives for the lifetime of the backend.
+func (w *sessionWatcher) watchLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -66,15 +76,26 @@ func (w *sessionWatcher) watchLoop(ctx context.Context, handler *backend.EventHa
 				return
 			}
 			if event.Has(fsnotify.Write) {
-				w.readNew(handler)
+				w.mu.Lock()
+				h := w.handler
+				w.mu.Unlock()
+				if h != nil {
+					w.readNew(h)
+				}
 			}
 		case _, ok := <-w.fsnot.Errors:
 			if !ok {
 				return
 			}
-			// fsnotify errors are transient; keep watching.
 		}
 	}
+}
+
+// setHandler sets the event handler for the current turn.
+func (w *sessionWatcher) setHandler(h *backend.EventHandler) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.handler = h
 }
 
 // readNew reads any new lines appended since the last read and processes them.
@@ -137,9 +158,6 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
-			// CC writes incremental entries — each new assistant text entry
-			// replaces the previous content for the same requestId. We emit
-			// the full text each time; the platform streaming handler diffs.
 			if b.Text != "" {
 				w.turnText = b.Text
 				if handler.OnText != nil {
@@ -155,8 +173,16 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 		}
 	}
 
-	// Check for turn completion.
-	if entry.Message.StopReason != nil && *entry.Message.StopReason == "end_turn" {
+	// CC is waiting for tool execution (may need permission approval).
+	stopReason := ""
+	if entry.Message.StopReason != nil {
+		stopReason = *entry.Message.StopReason
+	}
+	if stopReason == "tool_use" && w.onToolUseBlock != nil {
+		go w.onToolUseBlock()
+	}
+
+	if stopReason == "end_turn" {
 		result := &backend.TurnResult{
 			Text:      w.turnText,
 			ToolCalls: w.turnTools,
@@ -174,10 +200,3 @@ func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *backend.Even
 	// so this is just here for future use.
 }
 
-// resetTurn resets the per-turn accumulator state.
-func (w *sessionWatcher) resetTurn() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.turnText = ""
-	w.turnTools = 0
-}
