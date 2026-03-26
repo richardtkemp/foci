@@ -152,6 +152,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Anthropic Claude | ✅ | ✅ | ✅ |
 | Other popular platforms | ✅ Gemini, OpenAI-compatible (OpenRouter, DeepSeek, etc.) | ✅ | ✅ |
+| Coding agent backends | ✅ Claude Code (Codex, OpenCode planned) | ❌ | ❌ |
 | Model failover chain | ❌ | ✅ ordered fallbacks | ❌ |
 | Model aliasing | ✅ | ✅ | ✅ |
 | Per-session model switch | ✅ | ✅ | ❌ |

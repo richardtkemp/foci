@@ -225,6 +225,12 @@ type AgentConfig struct {
 	Mana            ManaConfig            `toml:"mana"`              // overrides from [mana]
 	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
 
+	// Backend selection: empty or "api" = traditional agent loop.
+	// A coding agent name (e.g. "claude-code", "codex", "opencode") delegates
+	// entire turns to an external agent subprocess.
+	Backend       string         `toml:"backend"`
+	BackendConfig map[string]any `toml:"backend_config"` // backend-specific settings
+
 	// Per-agent skills and message transforms (empty = use global)
 	SkillsDir         string             `toml:"skills_dir"`         // per-agent skills directory (default: $workspace/skills/)
 	MessageTransforms []MessageTransform `toml:"message_transforms"` // regex find/replace rules (empty = use global)

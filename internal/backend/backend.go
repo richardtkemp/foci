@@ -1,0 +1,61 @@
+// Package backend defines the interface for coding agent backends
+// (Claude Code, Codex, OpenCode, etc.) that handle entire agent turns
+// including inference and tool execution. This is fundamentally different
+// from provider.Client, which handles only the inference call while Foci
+// executes tools.
+package backend
+
+import "context"
+
+// Backend is the interface that all coding agent backends implement.
+// A Backend owns the entire turn: inference, tool execution, and context
+// management. Foci sends composed prompts (with metadata, nudges, reminders)
+// via SendTurn and receives streaming events back.
+type Backend interface {
+	// Start launches the coding agent subprocess.
+	// Called once during agent setup. The backend should be ready to
+	// accept turns after Start returns.
+	Start(ctx context.Context, opts StartOptions) error
+
+	// SendTurn sends a composed prompt to the coding agent and streams
+	// events back via the handler. Blocks until the turn completes.
+	// The prompt includes Foci's metadata, nudges, reminders, etc.
+	SendTurn(ctx context.Context, prompt string, handler *EventHandler) (*TurnResult, error)
+
+	// SendCommand sends a slash command directly to the agent
+	// (e.g. "/compact ...", "/model opus"). These bypass Foci's prompt
+	// composition — they're raw commands sent verbatim.
+	SendCommand(ctx context.Context, command string) error
+
+	// IsRunning reports whether the agent subprocess is alive.
+	IsRunning() bool
+
+	// Restart kills and relaunches the agent subprocess.
+	Restart(ctx context.Context) error
+
+	// Close shuts down the agent subprocess gracefully.
+	Close() error
+}
+
+// StartOptions configures the backend at launch time.
+type StartOptions struct {
+	WorkDir      string // agent workspace directory (becomes cwd)
+	SystemPrompt string // concatenated character/system files
+	Model        string // initial model (e.g. "opus", "sonnet")
+	AgentID      string // foci agent ID (used for tmux window naming, etc.)
+}
+
+// EventHandler receives streaming events during a turn.
+// All callbacks are optional — nil callbacks are silently skipped.
+type EventHandler struct {
+	OnText         func(text string)                                    // new text content from the agent
+	OnToolStart    func(name string, input string)                      // tool execution began
+	OnToolEnd      func(name string, output string, isError bool)       // tool execution finished
+	OnTurnComplete func(result *TurnResult)                             // turn finished
+}
+
+// TurnResult is the outcome of a completed turn.
+type TurnResult struct {
+	Text      string // final response text
+	ToolCalls int    // number of tool calls executed during the turn
+}

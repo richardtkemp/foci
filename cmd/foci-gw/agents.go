@@ -3,12 +3,11 @@ package main
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/backend"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -52,7 +51,6 @@ type setupParams struct {
 	cfg                 *config.Config
 	resolved            *config.ResolvedAgentConfig
 	configPath          string
-	client              provider.Client
 	clientProvider      provider.ClientProvider
 	usageClientProvider provider.UsageClientProvider
 	sessions            *session.Store
@@ -82,32 +80,53 @@ type setupParams struct {
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
 
-	// Pre-resolve the 2-layer agent→global config cascade once.
-	p.resolved = config.Resolve(p.cfg, acfg)
+	// Backend agents take a completely separate setup path.
+	if acfg.Backend != "" && acfg.Backend != "api" {
+		be, err := backend.New(acfg.Backend, acfg.BackendConfig)
+		if err != nil {
+			log.Errorf("agent/"+acfg.ID, "backend %q creation failed: %v", acfg.Backend, err)
+			return nil
+		}
+		if be == nil {
+			log.Errorf("agent/"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
+			return nil
+		}
+		return setupBackendAgent(p, be)
+	}
+
+	// --- Shared preamble ---
+	shared := resolveSharedSetup(p)
+	p = shared.p // p.resolved is now set
+	groupResolver := shared.groupResolver
+	promptSearchDirs := shared.promptSearchDirs
 
 	gc := p.resolved.Groups
 
-	// Create group resolver for multi-model routing (powerful model is the agent's primary)
-	groupResolver := config.NewGroupResolver(gc, p.cfg.Models)
-
 	// Resolve agent's primary model via the chat call site
 	primaryResolved := groupResolver.ResolveCall(config.CallChat)
-	var defaultEndpoint, defaultFormat, resolvedModel, primaryCacheStrategy string
-	if primaryResolved != nil {
-		defaultEndpoint = primaryResolved.Endpoint
-		defaultFormat = primaryResolved.Format
-		resolvedModel = primaryResolved.Developer + "/" + primaryResolved.ModelID
-		primaryCacheStrategy = primaryResolved.CacheStrategy
+	if primaryResolved == nil {
+		log.Errorf("agent/"+acfg.ID, "cannot resolve chat model (agent skipped)")
+		return nil
 	}
+	defaultEndpoint := primaryResolved.Endpoint
+	defaultFormat := primaryResolved.Format
+	resolvedModel := primaryResolved.Developer + "/" + primaryResolved.ModelID
+	primaryCacheStrategy := primaryResolved.CacheStrategy
 	if primaryCacheStrategy == "" {
 		primaryCacheStrategy = "auto"
+	}
+
+	// Resolve the API client for this agent's endpoint+format
+	client := p.clientProvider.GetClient(defaultEndpoint, defaultFormat)
+	if client == nil {
+		log.Errorf("agent/"+acfg.ID, "endpoint %q unavailable for model %q (format: %s)", defaultEndpoint, primaryResolved.ModelID, defaultFormat)
+		return nil
 	}
 
 	// Create fallback resolver for automatic model failover
 	fallbackResolver := config.NewFallbackResolver(gc.Fallbacks, nil, p.cfg.Models)
 
 	// Build provider-level fallback function from config resolver.
-	// This bridges config (which doesn't import provider) to the provider package.
 	var fallbackFn provider.FallbackFunc
 	if fallbackResolver != nil {
 		fallbackFn = func(model string) (string, string, string, bool) {
@@ -119,16 +138,9 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 	}
 
-	// Prompt search directories: agent workspace first, then shared.
-	promptSearchDirs := []string{
-		filepath.Join(acfg.Workspace, "prompts"),
-		filepath.Join(filepath.Dir(acfg.Workspace), "shared", "prompts"),
-	}
-
 	connMgr := p.connMgr
 
 	// Declare ag early so closures (tmux wake, etc.) can capture it.
-	// Assigned later in this function.
 	var ag *agent.Agent
 	agLazy := func() *agent.Agent { return ag }
 
@@ -138,7 +150,7 @@ func setupAgent(p setupParams) *agentInstance {
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Register tools by category
-	coreResult := registerCoreTools(registry, p, agentStore, notifier, groupResolver, fallbackFn)
+	coreResult := registerCoreTools(registry, p, client, agentStore, notifier, groupResolver, fallbackFn)
 	serverTools := registerWebTools(registry, p)
 	mcpMgr := registerMemoryAndExtTools(registry, p, agLazy)
 
@@ -158,70 +170,57 @@ func setupAgent(p setupParams) *agentInstance {
 		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames())
 	}
 
-	// Per-agent agent struct — read from pre-resolved config.
+	// Per-agent agent struct — start with shared fields, add API-specific ones.
 	al := p.resolved.Loop
 	sc := p.resolved.Summary
 	cpc := p.resolved.Compaction
 	bc := p.resolved.Behavior
-
 	mdFn := modelDefaultsFn(p.cfg.Models)
 
-	ag = &agent.Agent{
-		Log:                            log.NewComponentLogger("agent/" + acfg.ID),
-		Client:                         p.client,
-		ClientProvider:                 p.clientProvider,
-		Sessions:                       p.sessions,
-		Tools:                          registry,
-		ServerTools:                    serverTools,
-		EnvironmentBlock:               envBlock,
-		Bootstrap:                      bs.bootstrap,
-		Compactor:                      compactor,
-		AsyncNotifier:                  notifier,
-		Reminders:                      p.reminderStore,
-		TaskListStore:                  p.taskListStore,
-		TodoStore:                      p.todoStore,
-		ScratchpadStore:                p.scratchpadStore,
-		AgentID:                        acfg.ID,
-		Model:                          resolvedModel,
-		Format:                         defaultFormat,
-		Endpoint:                       defaultEndpoint,
-		ExtraSystemBlocks:              bs.extraSystemBlocks,
-		CacheStrategy:                  primaryCacheStrategy,
-		CacheBustDetect:                p.resolved.Debug.CacheBustDetect,
-		CacheBustIdleThreshold:         time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute,
-		DuplicateMessages:              al.DuplicateMessages,
-		BatchPartialAssistantMessages:  al.BatchPartialAssistantMessages,
-		BatchPartialJoiner:             al.BatchPartialJoiner,
-		MaxResultChars:                 sc.MaxResultChars,
-		ToolResultTempDir:              p.cfg.Tools.TempDir,
-		GroupResolver:                  groupResolver,
-		FallbackFunc:                   fallbackFn,
-		SummaryContextTurns:            sc.SummaryContextTurns,
-		SummaryContextChars:            sc.SummaryContextChars,
-		MaxSummaryChars:                sc.MaxSummaryChars,
-		MaxSummaryInputChars:           sc.MaxSummaryInputChars,
-		MaxImagePixels:                 sc.MaxImagePixels,
-		AutoSummarise:                  sc.AutoSummarise,
-		SessionIndex:                   p.sessionIndex,
-		UsageClient:                    p.usageClientProvider.GetUsageClient(defaultEndpoint),
-		UsageClientProvider:            p.usageClientProvider,
-		MessageTransforms:              agent.CompileTransforms(resolveMessageTransforms(acfg, p.cfg)),
-		CompactionSummaryPromptPath:    cpc.CompactionSummaryPrompt,
-		CompactionHandoffMsg:           cpc.CompactionHandoffMsg,
-		AutocompactBeforeManaRefresh:          cpc.AutocompactBeforeManaRefresh,
-		AutocompactBeforeManaRefreshThreshold: cpc.AutocompactBeforeManaRefreshThreshold,
-		AutocompactBeforeManaRefreshFactor:    cpc.AutocompactBeforeManaRefreshFactor,
-		AutocompactBeforeManaRefreshPreserve:    cpc.AutocompactBeforeManaRefreshPreserve,
-		AutocompactBeforeManaRefreshPreservePct: cpc.AutocompactBeforeManaRefreshPreservePct,
-		PromptSearchDirs:               promptSearchDirs,
-		MaxToolLoops:                   al.MaxToolLoops,
-		MaxOutputTokens:                al.MaxOutputTokens,
-		TurnLockWarnThreshold:          parseDurationDefault(bc.TurnLockWarnThreshold, 0),
-		ShowToolCalls:                  resolveShowToolCalls(p.resolved),
-		Streaming:                      p.resolved.Display.Streaming,
-		ModelDefaultsFn:                mdFn,
-		ManaInvestInterval:             parseDurationDefault(p.resolved.Mana.InvestInterval, 0),
-	}
+	ag = shared.newAgent()
+	ag.Client = client
+	ag.ClientProvider = p.clientProvider
+	ag.Tools = registry
+	ag.ServerTools = serverTools
+	ag.EnvironmentBlock = envBlock
+	ag.Bootstrap = bs.bootstrap
+	ag.Compactor = compactor
+	ag.AsyncNotifier = notifier
+	ag.Model = resolvedModel
+	ag.Format = defaultFormat
+	ag.Endpoint = defaultEndpoint
+	ag.ExtraSystemBlocks = bs.extraSystemBlocks
+	ag.CacheStrategy = primaryCacheStrategy
+	ag.CacheBustDetect = p.resolved.Debug.CacheBustDetect
+	ag.CacheBustIdleThreshold = time.Duration(p.resolved.Debug.CacheBustIdleMinutes) * time.Minute
+	ag.DuplicateMessages = al.DuplicateMessages
+	ag.BatchPartialAssistantMessages = al.BatchPartialAssistantMessages
+	ag.BatchPartialJoiner = al.BatchPartialJoiner
+	ag.MaxResultChars = sc.MaxResultChars
+	ag.ToolResultTempDir = p.cfg.Tools.TempDir
+	ag.GroupResolver = groupResolver
+	ag.FallbackFunc = fallbackFn
+	ag.SummaryContextTurns = sc.SummaryContextTurns
+	ag.SummaryContextChars = sc.SummaryContextChars
+	ag.MaxSummaryChars = sc.MaxSummaryChars
+	ag.MaxSummaryInputChars = sc.MaxSummaryInputChars
+	ag.MaxImagePixels = sc.MaxImagePixels
+	ag.AutoSummarise = sc.AutoSummarise
+	ag.UsageClient = p.usageClientProvider.GetUsageClient(defaultEndpoint)
+	ag.UsageClientProvider = p.usageClientProvider
+	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
+	ag.CompactionHandoffMsg = cpc.CompactionHandoffMsg
+	ag.AutocompactBeforeManaRefresh = cpc.AutocompactBeforeManaRefresh
+	ag.AutocompactBeforeManaRefreshThreshold = cpc.AutocompactBeforeManaRefreshThreshold
+	ag.AutocompactBeforeManaRefreshFactor = cpc.AutocompactBeforeManaRefreshFactor
+	ag.AutocompactBeforeManaRefreshPreserve = cpc.AutocompactBeforeManaRefreshPreserve
+	ag.AutocompactBeforeManaRefreshPreservePct = cpc.AutocompactBeforeManaRefreshPreservePct
+	ag.MaxToolLoops = al.MaxToolLoops
+	ag.MaxOutputTokens = al.MaxOutputTokens
+	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)
+	ag.Streaming = p.resolved.Display.Streaming
+	ag.ModelDefaultsFn = mdFn
+	ag.ManaInvestInterval = parseDurationDefault(p.resolved.Mana.InvestInterval, 0)
 
 	// Pre-compaction memory formation hook
 	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
@@ -232,104 +231,34 @@ func setupAgent(p setupParams) *agentInstance {
 		agent.FireCompactionMemory(ag, p.sessions, sessionKey, compactMemMfCfg, compactMemOrientTemplate, compactMemSearchDirs, p.ctx)
 	})
 
-	// Post-creation agent configuration
-	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
-	setupNudgeSystem(ag, acfg, p.resolved.Nudge, connMgr, p.sessions, registry, bs.skillRegistry, wsFileMode)
+	// Post-creation agent configuration (API-specific)
 	setupRedaction(ag, p, agentStore)
 	setupWarningQueue(ag, p.resolved, p.cfg)
 	setupManaWatcher(ag, p)
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
-	registerSpawnTool(registry, p, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
+	registerSpawnTool(registry, p, client, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
 	setupWakeScheduler(agLazy, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
-	// Per-agent slash commands
-	// configureFacet is set later by setupPlatform but captured
-	// by the closure below, which is only called at runtime (forkFacet).
-	var configureFacet func(platform.Connection)
-
-	// displayDefaultsFn is set after platform setup — provides resolved
-	// display defaults from the platform (lazy-forward pattern).
-	var displayDefaultsFn func() platform.DisplaySettings
-
-	lastMsgStore := command.NewLastMessageStore()
-	cmds, cc := registerAgentCommands(cmdRegParams{
-		ag:                  ag,
-		acfg:                acfg,
+	// --- Shared postamble ---
+	return shared.finalize(ag, finalizeParams{
 		bootstrap:           bs.bootstrap,
-		promptSearchDirs:    promptSearchDirs,
-		compactionThreshold: compactionThreshold,
-		cfg:                 p.cfg,
-		configPath:          p.configPath,
-		sessions:            p.sessions,
-		sessionIndex:        p.sessionIndex,
-		client:              p.client,
+		registry:            registry,
+		skillRegistry:       bs.skillRegistry,
+		serverTools:         serverTools,
+		client:              client,
 		clientProvider:      p.clientProvider,
 		usageClientProvider: p.usageClientProvider,
-		store:               p.store,
-		bwStore:             p.bwStore,
-		startTime:           p.startTime,
-		todoStore:           p.todoStore,
-		registry:            registry,
-		tmuxTool:            coreResult.tmuxTool,
-		skillsDirs:          bs.skillsDirs,
-		skillRegistry:       bs.skillRegistry,
-		agentListFn:         p.agentListFn,
-		plat:                p.plat,
-		connMgr:             connMgr,
-		groupResolver:       groupResolver,
 		fallbackFn:          fallbackFn,
-		resolved:            p.resolved,
-		configureFacet: func(conn platform.Connection) {
-			if configureFacet != nil {
-				configureFacet(conn)
-			}
-		},
-		displayDefaultsFn: func() platform.DisplaySettings {
-			if displayDefaultsFn != nil {
-				return displayDefaultsFn()
-			}
-			return platform.DisplaySettings{}
-		},
-	}, lastMsgStore)
-
-	// Finalize tools and log
-	registry.FinalizeShellDescription()
-	logRegisteredTools(registry, serverTools, acfg.ID)
-
-	// Platform connections
-	if p.plat != nil {
-		platResult := setupPlatformConnections(ag, p, cmds, cc, lastMsgStore, ttsRepls, promptSearchDirs, coreResult.tmuxMigrateKey)
-		configureFacet = platResult.configureFacetFn
-		displayDefaultsFn = platResult.displayDefaultsFn
-	}
-
-	// Nudge: trigger initial extraction on first message.
-	if ag.NudgeReloadFunc != nil {
-		var nudgeInitOnce sync.Once
-		ag.OnActivity.Add(func(sessionKey string) {
-			nudgeInitOnce.Do(func() {
-				ag.NudgeReloadFunc()
-			})
-		})
-	}
-
-	return &agentInstance{
-		id:                acfg.ID,
-		ag:                ag,
-		cmds:              cmds,
-		cc:                cc,
-		registry:          registry,
-		bootstrap:         bs.bootstrap,
-		agentCfg:          acfg,
-		resolved:          p.resolved,
-		promptSearchDirs:  promptSearchDirs,
-		webhooks:          p.resolved.Webhooks,
-		tmuxClearAll:      coreResult.tmuxClearAll,
-		tmuxWatchCount:    coreResult.tmuxWatchCount,
-		tmuxMigrateKey:    coreResult.tmuxMigrateKey,
-		mcpManager:        mcpMgr,
-	}
+		compactionThreshold: compactionThreshold,
+		tmuxTool:            coreResult.tmuxTool,
+		tmuxClearAll:        coreResult.tmuxClearAll,
+		tmuxWatchCount:      coreResult.tmuxWatchCount,
+		tmuxMigrateKey:      coreResult.tmuxMigrateKey,
+		ttsRepls:            ttsRepls,
+		mcpManager:          mcpMgr,
+		skillsDirs:          bs.skillsDirs,
+	})
 }
 
 // checkFirstRun determines whether a first-run onboarding prompt should be

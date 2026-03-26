@@ -45,22 +45,31 @@ config.Load(path)                                        ← validates values; l
 
    Per-agent loop (for each cfg.Agents[i]):
    → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
-     → tools.NewAsyncNotifier()                             ← shared by exec + http_request + tmux, routes by session key
-     → tools.NewRegistry() + register all tools             ← per-agent registry (incl. bitwarden_search/unlock, browser if enabled)
-     → mcp.NewManagerForAgent(configDir, agentID)           ← dynamic MCP; re-reads mcp.toml on each tool call
-     → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
-     → buildEnvironmentBlock(acfg, configPath, cfg)           ← if [environment] enabled
-     → skills.ResolveDirs(home, workspace, cfg.Skills.Dir, acfg.SkillsDir)
-     → skills.Load(resolvedDirs)                              ← shared first, then per-agent (overrides on collision)
-     → compaction.NewCompactor(sessions, model, threshold)
-     → config.NewFallbackResolver(global, perAgent, aliases)  ← nil if no fallbacks configured
-     → agent.Agent{Client, Sessions, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}
-     → registerAgentCommands(cmdRegParams)                  ← commands.go — all slash command registration
-     → plat.SetupAgentConnection(AgentConnectionParams)     ← creates platform connections (bots) for all active providers
-       → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureFacetConn
-     → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
-       → ag.AddPlatform() for each connection
-       → wires CacheBustAlert, ManaWarnFunc, RateLimitFunc, etc. using plat.NotifyAgent()
+     → resolveSharedSetup(params)                           ← agents_shared.go — config cascade, prompt dirs, group resolver
+     → IF backend agent (acfg.Backend != "" && != "api"):
+       → setupBackendAgent(params, backend)                 ← agents_backend.go
+         → backend.New(name, config)                        ← create backend via registry
+         → workspace.NewBootstrap → system prompt            ← concatenate workspace *.md files
+         → backend.Start(ctx, opts)                         ← spawn coding agent in tmux pane
+         → shared.finalize(ag, params)                      ← commands, platform, nudge (shared postamble)
+     → ELSE (traditional API agent):
+       → tools.NewAsyncNotifier()                           ← shared by exec + http_request + tmux, routes by session key
+       → tools.NewRegistry() + register all tools           ← per-agent registry (incl. bitwarden_search/unlock, browser if enabled)
+       → mcp.NewManagerForAgent(configDir, agentID)         ← dynamic MCP; re-reads mcp.toml on each tool call
+       → workspace.NewBootstrap(agent.Workspace, agent.SystemFiles)
+       → buildEnvironmentBlock(acfg, configPath, cfg)       ← if [environment] enabled
+       → skills.ResolveDirs(home, workspace, cfg.Skills.Dir, acfg.SkillsDir)
+       → skills.Load(resolvedDirs)                          ← shared first, then per-agent (overrides on collision)
+       → compaction.NewCompactor(sessions, model, threshold)
+       → config.NewFallbackResolver(global, perAgent, aliases) ← nil if no fallbacks configured
+       → agent.Agent{shared fields + Client, Tools, Bootstrap, EnvironmentBlock, FallbackResolver, ...}
+       → shared.finalize(ag, params)                        ← commands, platform, nudge (shared postamble)
+         → registerAgentCommands(cmdRegParams)              ← commands.go — all slash command registration
+         → plat.SetupAgentConnection(AgentConnectionParams) ← creates platform connections (bots) for all active providers
+           → returns []*platform.SetupResult with DefaultSessionKeyFn + ConfigureFacetConn
+         → wireAgentPlatformCallbacks(ag, acfg, cfg, plat, connMgr, sessionIndex)
+           → ag.AddPlatform() for each connection
+           → wires CacheBustAlert, ManaWarnFunc, RateLimitFunc, etc. using plat.NotifyAgent()
   → agent.RestoreSessionOverrides(defaultSessionKey())   ← restore per-session effort/thinking/model from state store (main.go, after setupAgent)
   → agent.SeedSessionMeta(defaultSessionKey())           ← seed gap from session history (correct gap after restart)
 
@@ -141,7 +150,7 @@ main
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
  ├── session       → provider, log, sqlite
- ├── memory        → sqlite, fsnotify/v4, blevesearch/bleve/v2 (FTS5 + bleve backends)
+ ├── memory        → sqlite, fsnotify, blevesearch/bleve/v2 (FTS5 + bleve backends)
  ├── voice         → config, log, session, tempdir, gorilla/websocket
  ├── skills        → log (leaf package)
  ├── startup       → log, state (leaf package for crash detection)
@@ -158,7 +167,9 @@ main
  ├── command       → agent, compaction, config, display, log, mana, memory, platform, provider, provision, session, skills, state, tempdir, tools, workspace
  ├── mana          → anthropic, log, provider (mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
- ├── agent         → compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
+ ├── backend       (no deps — Backend interface, registry, StartOptions, EventHandler)
+ │   └── backend/claudecode → backend, tempdir, fsnotify (Claude Code implementation; registers via init())
+ ├── agent         → backend, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
  ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → display, log, toolformat (shared turn rendering + tool call tracking for all platforms)
@@ -224,6 +235,8 @@ All commands use a unified signature: `Execute(ctx context.Context, req Request,
 The core of the system. Two entry points:
 - `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithAttachments`
 - `HandleMessageWithAttachments(ctx, sessionKey, text, attachments)` — full version with optional image/document attachments
+
+**Backend agents:** When `Agent.Backend != nil`, `HandleMessageWithAttachments` branches to `handleViaBackend` (`backend_turn.go`) instead of the traditional loop below. The backend path composes a prompt (metadata, reminders, nudges, state dashboard, user text), sends it to the coding agent via `Backend.SendTurn()`, and streams events back to the platform via `EventHandler` → `TurnCallbacks`. The coding agent owns inference, tool execution, and session state. See [docs/CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
 
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
