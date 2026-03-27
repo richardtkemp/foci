@@ -1,1 +1,1 @@
-[KEEPALIVE] Cache keepalive ping.
+[KEEPALIVE] Cache keepalive ping. Respond with `[[NO_RESPONSE]]` and nothing else.
