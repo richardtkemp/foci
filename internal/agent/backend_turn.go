@@ -31,9 +31,9 @@ func (a *Agent) handleViaBackend(ctx context.Context, sessionKey string, texts [
 		Session:   sessionKey,
 	})
 
-	// Update session metadata so gap calculation and keepalive work correctly.
+	// Get session metadata — composeTurnText reads lastMessageTime for the
+	// gap calculation, so we must NOT update it until after composition.
 	sm := a.getSessionMeta(sessionKey)
-	sm.lastMessageTime = time.Now()
 
 	// Get or create the Backend for this session.
 	be, err := a.BackendManager.Get(ctx, sessionKey)
@@ -43,6 +43,10 @@ func (a *Agent) handleViaBackend(ctx context.Context, sessionKey string, texts [
 
 	parts := a.composeTurnText(ctx, sessionKey, a.Model, "", false, texts, attachments)
 	prompt := parts.JoinPrompt()
+
+	// Update lastMessageTime AFTER composition so the gap is calculated
+	// against the previous message, not the current one.
+	sm.lastMessageTime = time.Now()
 
 	_, err = be.SendTurn(ctx, prompt, &backend.EventHandler{})
 	if err != nil {
