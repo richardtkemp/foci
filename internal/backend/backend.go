@@ -53,7 +53,8 @@ type StartOptions struct {
 	WorkDir      string // agent workspace directory (becomes cwd)
 	SystemPrompt string // concatenated character/system files
 	Model        string // initial model (e.g. "opus", "sonnet")
-	AgentID      string // foci agent ID (used for tmux window naming, etc.)
+	AgentID      string // foci agent ID
+	Label        string // unique label for this instance (used for tmux window naming); falls back to AgentID
 }
 
 // EventHandler receives streaming events during a turn.

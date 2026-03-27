@@ -82,16 +82,11 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Backend agents take a completely separate setup path.
 	if acfg.Backend != "" && acfg.Backend != "api" {
-		be, err := backend.New(acfg.Backend, acfg.BackendConfig)
-		if err != nil {
-			log.Errorf("agent/"+acfg.ID, "backend %q creation failed: %v", acfg.Backend, err)
-			return nil
-		}
-		if be == nil {
+		if !backend.IsRegistered(acfg.Backend) {
 			log.Errorf("agent/"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
 			return nil
 		}
-		return setupBackendAgent(p, be)
+		return setupBackendAgent(p, acfg.Backend, acfg.BackendConfig)
 	}
 
 	// --- Shared preamble ---

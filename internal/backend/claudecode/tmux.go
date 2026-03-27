@@ -173,9 +173,9 @@ func (p *tmuxPane) capturePane(ctx context.Context) (string, error) {
 
 // extractPermissionPrompt checks if the pane is showing a CC permission prompt.
 // Returns the prompt text (tool description + choices) if detected, empty string otherwise.
+// Matches various CC prompt forms: "Do you want to proceed?", "Do you want to create X?", etc.
 func extractPermissionPrompt(paneContent string) string {
-	// Look for the "Do you want to proceed?" marker.
-	idx := strings.Index(paneContent, "Do you want to proceed?")
+	idx := strings.Index(paneContent, "Do you want to ")
 	if idx < 0 {
 		return ""
 	}
