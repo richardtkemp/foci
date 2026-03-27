@@ -5,26 +5,46 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
 	"foci/internal/session"
 )
 
+// DefaultIdleTimeout is the default duration after which idle backends are closed.
+const DefaultIdleTimeout = 24 * time.Hour
+
 // BackendManager creates and manages per-session Backend instances lazily.
 // Each session key gets its own Backend (own tmux pane, own CC session).
+// Idle backends are closed after IdleTimeout and resumed on next message.
 type BackendManager struct {
 	mu       sync.Mutex
-	backends map[string]backend.Backend // sessionKeyBase → Backend
+	backends map[string]*managedBackend // sessionKeyBase → managed backend
 
 	// NewBackend creates a fresh Backend instance (does not start it).
 	NewBackend func() (backend.Backend, error)
 
 	// StartOpts returns the StartOptions for a new Backend.
-	// Label is set by the manager based on the session key.
+	// Label and ResumeSessionID are set by the manager.
 	StartOpts backend.StartOptions
 
 	// SendFunc routes text to the correct platform chat for a session key.
 	SendFunc func(sessionKey, text string)
+
+	// IdleTimeout is how long a backend can be idle before being closed.
+	// Zero uses DefaultIdleTimeout.
+	IdleTimeout time.Duration
+
+	// reaperStop cancels the idle reaper goroutine.
+	reaperStop context.CancelFunc
+}
+
+// managedBackend wraps a Backend with idle tracking and resume state.
+type managedBackend struct {
+	be         backend.Backend
+	lastActive time.Time
+	sessionKey string // full session key from last message (for reply routing)
 }
 
 // Get returns the Backend for the given session key, creating and starting
@@ -34,29 +54,28 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	base := session.SessionKeyBase(sessionKey)
 
 	m.mu.Lock()
-	if be, ok := m.backends[base]; ok {
+	if mb, ok := m.backends[base]; ok {
+		mb.lastActive = time.Now()
+		mb.sessionKey = sessionKey
 		m.mu.Unlock()
-		return be, nil
+		return mb.be, nil
 	}
+
+	// Check if we have a saved session UUID to resume.
+	resumeID := m.getResumeID(base)
+	m.mu.Unlock()
 
 	// Create and start a new Backend for this session.
 	be, err := m.NewBackend()
 	if err != nil {
-		m.mu.Unlock()
 		return nil, fmt.Errorf("create backend for %s: %w", base, err)
 	}
 
 	opts := m.StartOpts
-	// Label for tmux window: replace / with - for a clean window name.
 	opts.Label = strings.ReplaceAll(base, "/", "-")
+	opts.ResumeSessionID = resumeID
 
-	if m.backends == nil {
-		m.backends = make(map[string]backend.Backend)
-	}
-	m.backends[base] = be
-	m.mu.Unlock()
-
-	// Set the reply function before starting so the watcher can deliver output.
+	// Set the reply function before starting.
 	sk := sessionKey
 	if m.SendFunc != nil {
 		be.SetReplyFunc(func(text string) {
@@ -65,21 +84,44 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	}
 
 	if err := be.Start(ctx, opts); err != nil {
-		m.mu.Lock()
-		delete(m.backends, base)
-		m.mu.Unlock()
 		return nil, fmt.Errorf("start backend for %s: %w", base, err)
+	}
+
+	m.mu.Lock()
+	if m.backends == nil {
+		m.backends = make(map[string]*managedBackend)
+	}
+	m.backends[base] = &managedBackend{
+		be:         be,
+		lastActive: time.Now(),
+		sessionKey: sessionKey,
+	}
+
+	// Start the idle reaper on first backend creation.
+	if m.reaperStop == nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		m.reaperStop = cancel
+		go m.idleReaper(ctx)
+	}
+	m.mu.Unlock()
+
+	if resumeID != "" {
+		log.Infof("backend", "resumed session %s for %s", resumeID, base)
 	}
 
 	return be, nil
 }
 
-// Close shuts down all managed backends.
+// Close shuts down all managed backends and the idle reaper.
 func (m *BackendManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for key, be := range m.backends {
-		_ = be.Close()
+	if m.reaperStop != nil {
+		m.reaperStop()
+		m.reaperStop = nil
+	}
+	for key, mb := range m.backends {
+		_ = mb.be.Close()
 		delete(m.backends, key)
 	}
 }
@@ -89,4 +131,69 @@ func (m *BackendManager) Count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.backends)
+}
+
+// resumeIDs stores CC session UUIDs for closed backends, keyed by sessionKeyBase.
+// These are used to resume sessions when a new message arrives.
+var (
+	resumeMu  sync.Mutex
+	resumeIDs = make(map[string]string) // sessionKeyBase → CC session UUID
+)
+
+// saveResumeID stores the CC session UUID for later resumption.
+func saveResumeID(base, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	resumeMu.Lock()
+	defer resumeMu.Unlock()
+	resumeIDs[base] = sessionID
+}
+
+// getResumeID returns and clears a saved CC session UUID.
+func (m *BackendManager) getResumeID(base string) string {
+	resumeMu.Lock()
+	defer resumeMu.Unlock()
+	id := resumeIDs[base]
+	delete(resumeIDs, base)
+	return id
+}
+
+// idleReaper periodically checks for idle backends and closes them.
+func (m *BackendManager) idleReaper(ctx context.Context) {
+	timeout := m.IdleTimeout
+	if timeout == 0 {
+		timeout = DefaultIdleTimeout
+	}
+	// Check every 10 minutes.
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.closeIdle(timeout)
+		}
+	}
+}
+
+// closeIdle closes backends that have been idle longer than timeout.
+func (m *BackendManager) closeIdle(timeout time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	for base, mb := range m.backends {
+		if now.Sub(mb.lastActive) < timeout {
+			continue
+		}
+		// Save the CC session UUID for resumption.
+		saveResumeID(base, mb.be.SessionID())
+		log.Infof("backend", "closing idle backend %s (idle %s, session %s)",
+			base, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
+		_ = mb.be.Close()
+		delete(m.backends, base)
+	}
 }
