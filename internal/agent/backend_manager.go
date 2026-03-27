@@ -155,6 +155,25 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	return be, nil
 }
 
+// ResetSession closes the backend for a specific session key WITHOUT saving
+// the resume ID, so the next Get() creates a completely fresh CC session.
+func (m *BackendManager) ResetSession(sessionKey string) {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.backends[base]
+	if !ok {
+		return
+	}
+	_ = mb.be.Close()
+	delete(m.backends, base)
+	// Clear any saved resume ID so next session starts fresh.
+	if m.SessionIndex != nil {
+		_ = m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base))
+	}
+	log.Infof("backend", "reset session %s (backend closed, resume ID cleared)", base)
+}
+
 // Close shuts down all managed backends and the idle reaper.
 func (m *BackendManager) Close() {
 	m.mu.Lock()

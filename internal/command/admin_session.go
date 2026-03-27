@@ -9,6 +9,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/tempdir"
+	"foci/internal/platform"
 	"foci/internal/tools"
 	"foci/shared/prompts"
 )
@@ -67,6 +68,14 @@ func ResetCommand() *Command {
 			if sk == "" {
 				return Response{}, fmt.Errorf("no active session to reset")
 			}
+
+			// Backend mode: memory formation runs IN the CC session (can't branch),
+			// then the CC session is destroyed and a fresh one started.
+			if cc.Agent.BackendManager != nil {
+				return resetBackendSession(ctx, sk, cc)
+			}
+
+			// Traditional mode: fire memory formation as a branch, then rotate.
 			resetOrientPath := config.DerefStr(config.First(
 				cc.AgentConfig.Sessions.BranchOrientationHeadlessPrompt, cc.Config.Sessions.BranchOrientationHeadlessPrompt,
 			))
@@ -83,6 +92,46 @@ func ResetCommand() *Command {
 			return Response{Text: "Session cleared."}, nil
 		},
 	}
+}
+
+// resetBackendSession handles /reset for backend-managed agents (CC mode).
+// Sends memory formation prompt to the live CC session, waits for completion,
+// then destroys the CC session and starts fresh.
+func resetBackendSession(ctx context.Context, sk string, cc CommandContext) (Response, error) {
+	// Notify user — this takes a moment.
+	if cc.ConnMgr != nil {
+		if conn := cc.ConnMgr.ForSessionOrPrimary(sk, cc.AgentConfig.ID); conn != nil {
+			_ = platform.SendText(conn, "⏳ Session reset in progress — writing memories, please wait...")
+		}
+	}
+
+	// Send memory formation prompt to the live CC session.
+	if cc.Resolved.MemoryFormation.SessionEndEnabled {
+		prompt := prompts.ResolvePrompt(
+			cc.Resolved.MemoryFormation.SessionEndPrompt,
+			"memory-formation.md", prompts.MemoryFormation(),
+			cc.PromptSearchDirs...)
+		if prompt != "" {
+			log.Infof("reset", "sending memory formation to backend session %s", sk)
+			if _, err := cc.Agent.HandleMessage(ctx, sk, prompt); err != nil {
+				log.Warnf("reset", "memory formation failed for %s: %v", sk, err)
+			}
+		}
+	}
+
+	// Close the CC session WITHOUT saving resume ID (fresh start).
+	cc.Agent.BackendManager.ResetSession(sk)
+
+	// Rotate foci session key, reload, invalidate caches.
+	newKey, err := cc.Sessions.RotateKey(sk)
+	if err != nil {
+		return Response{}, err
+	}
+	cc.Agent.RotateSession(sk, newKey)
+	cc.Bootstrap.Reload()
+	cc.Agent.InvalidateSystemCaches()
+
+	return Response{Text: "Session reset — memories saved, fresh CC session will start on next message."}, nil
 }
 
 // CompactCommand creates a /compact command that triggers manual session compaction.
