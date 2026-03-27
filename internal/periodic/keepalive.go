@@ -71,8 +71,9 @@ type Runner struct {
 	drainFn            func() // called each tick to drain rate-limit queues
 
 	// Session-aware availability checking
-	sessionKeyFn func() string                                                   // returns the session key these operations will run on
-	canFireFn    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
+	sessionKeyFn   func() string                                                   // returns the session key these operations will run on
+	canFireFn      func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
+	isBackendAgent bool // memory formation needs quiet period in backend mode
 
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
@@ -113,6 +114,11 @@ type RunnerConfig struct {
 	// Session-aware availability checking
 	SessionKeyFunc func() string                                                   // returns the session key these operations will run on
 	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
+
+	// IsBackendAgent indicates this agent uses a coding agent backend (CC).
+	// When true, memory formation requires a quiet period (no recent user
+	// activity) because formation runs IN the live session, not as a branch.
+	IsBackendAgent bool
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -138,6 +144,7 @@ func New(cfg RunnerConfig) *Runner {
 		drainFn:            cfg.DrainFn,
 		sessionKeyFn:       cfg.SessionKeyFunc,
 		canFireFn:          cfg.CanFireFunc,
+		isBackendAgent:     cfg.IsBackendAgent,
 		lastCacheWarmed:    now,
 		lastInteraction:    now,
 		lastMemoryFormation: now,
@@ -438,6 +445,16 @@ func (r *Runner) maybeMemoryFormation() {
 	if sinceLastInteraction > interval {
 		skip = fmt.Sprintf("idle %s > interval %s", sinceLastInteraction.Round(time.Second), interval)
 		return
+	}
+
+	// In backend mode, memory formation runs IN the live CC session (not as
+	// a branch), so wait for user to be quiet before interrupting.
+	if r.isBackendAgent {
+		quietPeriod, qOk := r.parseDuration("backend_quiet_period", r.mfCfg.BackendQuietPeriod)
+		if qOk && sinceLastInteraction < quietPeriod {
+			skip = fmt.Sprintf("backend: user active (idle %s < quiet %s)", sinceLastInteraction.Round(time.Second), quietPeriod)
+			return
+		}
 	}
 
 	// Query DB for sessions with activity since their last formation.

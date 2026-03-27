@@ -248,6 +248,7 @@ type ResolvedMemoryFormation struct {
 	SessionEndPrompt      string
 	CompactionEnabled     bool // default true
 	CompactionPrompt      string
+	BackendQuietPeriod    string // default "5m"
 }
 
 func resolveMemoryFormation(m MemoryFormationConfig) ResolvedMemoryFormation {
@@ -262,6 +263,7 @@ func resolveMemoryFormation(m MemoryFormationConfig) ResolvedMemoryFormation {
 		SessionEndPrompt:      DerefStr(m.SessionEndPrompt),
 		CompactionEnabled:     DerefBool(m.CompactionEnabled),
 		CompactionPrompt:      DerefStr(m.CompactionPrompt),
+		BackendQuietPeriod:    DerefStr(m.BackendQuietPeriod),
 	}
 }
 

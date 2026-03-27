@@ -810,6 +810,7 @@ type MemoryFormationConfig struct {
 	SessionEndPrompt      *string `toml:"session_end_prompt"                    desc:"session end capture prompt file path"` // prompt override (nil = embedded, "none" = disabled)
 	CompactionEnabled     *bool   `toml:"compaction_enabled"     default:"true" desc:"memory capture before compaction"` // capture before compaction
 	CompactionPrompt      *string `toml:"compaction_prompt"                     desc:"compaction capture prompt file path"` // prompt override (nil = embedded, "none" = disabled)
+	BackendQuietPeriod    *string `toml:"backend_quiet_period"   default:"5m"   desc:"min idle time before formation in backend mode" type:"duration"` // min idle before firing in backend mode
 }
 
 // BackgroundConfig controls the mana-gated background work timer.
