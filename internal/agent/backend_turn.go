@@ -9,9 +9,9 @@ import (
 	"foci/internal/platform"
 )
 
-// handleViaBackend processes a user message through the coding agent backend.
-// Sends the composed prompt to the backend and returns immediately — output
-// is delivered asynchronously via the watcher's streaming handler.
+// handleViaBackend processes a user message through a coding agent backend.
+// Gets or creates a per-session Backend, sends the composed prompt, and
+// returns immediately — output is delivered asynchronously via the watcher.
 func (a *Agent) handleViaBackend(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
 	for _, fn := range a.OnActivity {
 		fn(sessionKey)
@@ -30,25 +30,19 @@ func (a *Agent) handleViaBackend(ctx context.Context, sessionKey string, texts [
 		Session:   sessionKey,
 	})
 
-	parts := a.composeTurnText(ctx, sessionKey, a.Model, "", false, texts, attachments)
-	prompt := parts.JoinPrompt()
-
-	// Update the backend's reply function to target this session's chat.
-	// The reply func is long-lived (outlives this call) — the watcher uses
-	// it to deliver all asynchronous output until the next message arrives
-	// from a possibly different session.
-	if a.BackendSendFunc != nil {
-		sk := sessionKey
-		a.Backend.SetReplyFunc(func(text string) {
-			a.BackendSendFunc(sk, text)
-		})
-	}
-
-	_, err := a.Backend.SendTurn(ctx, prompt, &backend.EventHandler{})
+	// Get or create the Backend for this session.
+	be, err := a.BackendManager.Get(ctx, sessionKey)
 	if err != nil {
 		return "", err
 	}
 
-	// Response is delivered asynchronously via streaming — return empty.
+	parts := a.composeTurnText(ctx, sessionKey, a.Model, "", false, texts, attachments)
+	prompt := parts.JoinPrompt()
+
+	_, err = be.SendTurn(ctx, prompt, &backend.EventHandler{})
+	if err != nil {
+		return "", err
+	}
+
 	return "", nil
 }

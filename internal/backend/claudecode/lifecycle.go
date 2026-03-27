@@ -17,7 +17,11 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	b.agentID = opts.AgentID
 	b.workDir = opts.WorkDir
 
-	windowName := "cc-" + opts.AgentID
+	label := opts.Label
+	if label == "" {
+		label = opts.AgentID
+	}
+	windowName := "cc-" + label
 
 	// Build claude command arguments.
 	var args []string
