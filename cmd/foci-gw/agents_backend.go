@@ -17,6 +17,7 @@ import (
 // instance (own tmux pane, own CC session), created lazily on first message.
 func setupBackendAgent(p setupParams, backendName string, backendConfig map[string]any) *agentInstance {
 	shared := resolveSharedSetup(p)
+	p = shared.p // p.resolved is now set
 
 	// Bootstrap for building the system prompt (workspace *.md files).
 	bs := workspace.NewBootstrap(p.acfg.Workspace, nil)
