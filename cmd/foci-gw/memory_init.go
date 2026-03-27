@@ -304,9 +304,11 @@ func initMemorySystem(cfg *config.Config) memoryResult {
 		}
 		if idx != nil {
 			ts.SetSearchIndex(idx)
-			if err := ts.IndexAllTodos(agentID); err != nil {
-				log.Errorf("main", "index todos for agent %s: %v", agentID, err)
-			}
+			go func(aid string) {
+				if err := ts.IndexAllTodos(aid); err != nil {
+					log.Errorf("main", "index todos for agent %s: %v", aid, err)
+				}
+			}(agentID)
 		}
 	}
 
