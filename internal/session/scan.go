@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -97,35 +98,44 @@ func (s *Store) ListChatSessions(agentID string) ([]ChatSessionInfo, error) {
 // Current (non-archive) files are always marked active.
 // Numbered archive files (e.g. .1.jsonl) are returned as compacted entries.
 // Gzipped files (.jsonl.gz) are returned as archived entries.
+// ScanAllSessions walks the session directory and returns index entries for
+// all session files. Uses WalkDir for efficiency and parallelizes per-file
+// metadata reads for active sessions (the I/O-bound part).
 func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Phase 1: Walk the directory tree collecting file info.
+	// No store lock needed — this is read-only and runs at startup before
+	// any message processing starts.
+	type fileInfo struct {
+		path    string
+		name    string
+		modTime time.Time
+		isGz    bool
+	}
+	var activeFiles []fileInfo
+	var staticEntries []SessionIndexEntry
 
-	var entries []SessionIndexEntry
-	err := filepath.Walk(s.dir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(s.dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
-		if info.IsDir() {
-			return nil
-		}
 
-		name := filepath.Base(path)
-
-		// Handle gzipped (archived) session files
 		if strings.HasSuffix(name, ".jsonl.gz") {
 			rel, err := filepath.Rel(s.dir, path)
 			if err != nil {
 				return nil
 			}
-			rel = strings.TrimSuffix(rel, ".jsonl.gz")
-			key := pathToKey(rel)
-			stype := ClassifySessionKey(key)
-			entries = append(entries, SessionIndexEntry{
+			key := pathToKey(strings.TrimSuffix(rel, ".jsonl.gz"))
+			staticEntries = append(staticEntries, SessionIndexEntry{
 				SessionKey:  key,
 				FilePath:    path,
 				CreatedAt:   info.ModTime(),
-				SessionType: stype,
+				SessionType: ClassifySessionKey(key),
 				Status:      SessionStatusArchived,
 			})
 			return nil
@@ -135,69 +145,91 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 			return nil
 		}
 
-		// Handle numbered archive files (e.g. 5970082313.1.jsonl)
 		if isArchiveFile(name) {
 			rel, err := filepath.Rel(s.dir, path)
 			if err != nil {
 				return nil
 			}
-			rel = strings.TrimSuffix(rel, ".jsonl")
-			key := pathToKey(rel)
-			// Derive parent key: remove the archive suffix
+			key := pathToKey(strings.TrimSuffix(rel, ".jsonl"))
 			parentKey := archiveParentKey(key)
-			stype := ClassifySessionKey(parentKey)
-			entries = append(entries, SessionIndexEntry{
+			staticEntries = append(staticEntries, SessionIndexEntry{
 				SessionKey:       key,
 				FilePath:         path,
 				CreatedAt:        info.ModTime(),
 				ParentSessionKey: parentKey,
-				SessionType:      stype,
+				SessionType:      ClassifySessionKey(parentKey),
 				Status:           SessionStatusCompacted,
 			})
 			return nil
 		}
 
-		// Current (non-archive) session file — always active
-		rel, err := filepath.Rel(s.dir, path)
-		if err != nil {
-			return nil
-		}
-		rel = strings.TrimSuffix(rel, ".jsonl")
-		key := pathToKey(rel)
-
-		stype := ClassifySessionKey(key)
-
-		// Determine created_at from session metadata or file mtime
-		var createdAt time.Time
-		if meta := s.getStoredCreatedAt(key); meta != "" {
-			if t, err := time.Parse(time.RFC3339, meta); err == nil {
-				createdAt = t
-			}
-		}
-		if createdAt.IsZero() {
-			createdAt = info.ModTime()
-		}
-
-		// Determine parent from branch_meta
-		var parentKey string
-		bm, _ := s.readBranchMeta(key)
-		if bm != nil {
-			parentKey = bm.ParentKey
-		}
-
-		entries = append(entries, SessionIndexEntry{
-			SessionKey:       key,
-			FilePath:         path,
-			CreatedAt:        createdAt,
-			ParentSessionKey: parentKey,
-			SessionType:      stype,
-			Status:           SessionStatusActive,
+		// Active session file — needs metadata read (phase 2).
+		activeFiles = append(activeFiles, fileInfo{
+			path:    path,
+			name:    name,
+			modTime: info.ModTime(),
 		})
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
-		return entries, err
+		return nil, err
 	}
+
+	// Phase 2: Read metadata for active files in parallel.
+	// Each goroutine reads the first line of a file for created_at/branch_meta.
+	type result struct {
+		idx   int
+		entry SessionIndexEntry
+	}
+	results := make([]SessionIndexEntry, len(activeFiles))
+	ch := make(chan int, len(activeFiles))
+	for i := range activeFiles {
+		ch <- i
+	}
+	close(ch)
+
+	const workers = 8
+	var wg sync.WaitGroup
+	for w := 0; w < workers && w < len(activeFiles); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range ch {
+				af := activeFiles[i]
+				rel, err := filepath.Rel(s.dir, af.path)
+				if err != nil {
+					continue
+				}
+				key := pathToKey(strings.TrimSuffix(rel, ".jsonl"))
+
+				createdAt := af.modTime
+				if meta := s.getStoredCreatedAt(key); meta != "" {
+					if t, err := time.Parse(time.RFC3339, meta); err == nil {
+						createdAt = t
+					}
+				}
+
+				var parentKey string
+				if bm, _ := s.readBranchMeta(key); bm != nil {
+					parentKey = bm.ParentKey
+				}
+
+				results[i] = SessionIndexEntry{
+					SessionKey:       key,
+					FilePath:         af.path,
+					CreatedAt:        createdAt,
+					ParentSessionKey: parentKey,
+					SessionType:      ClassifySessionKey(key),
+					Status:           SessionStatusActive,
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	entries := make([]SessionIndexEntry, 0, len(staticEntries)+len(results))
+	entries = append(entries, staticEntries...)
+	entries = append(entries, results...)
 	return entries, nil
 }
 

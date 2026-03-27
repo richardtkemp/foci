@@ -3,6 +3,7 @@ package session
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -360,19 +361,80 @@ func (idx *SessionIndex) TouchActivity(sessionKey string) {
 	idx.UpdateActivity(sessionKey, time.Now())
 }
 
-// RebuildIndex scans all session files and rebuilds the index.
+// RebuildIndex clears and repopulates the session index from the given entries.
+// Preserves last_memory_formation timestamps across the rebuild.
+// Wrapped in a single transaction for performance (~3000x fewer fsyncs).
 func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	if _, err := idx.db.Exec(`DELETE FROM session_index`); err != nil {
+	// Preserve last_memory_formation before clearing — the rebuild can't
+	// reconstruct this from disk, and losing it resets memory formation
+	// scheduling for all sessions.
+	savedFormation := make(map[string]string)
+	rows, err := idx.db.Query(`SELECT session_key, last_memory_formation FROM session_index WHERE last_memory_formation IS NOT NULL`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var key, formation string
+			if rows.Scan(&key, &formation) == nil {
+				savedFormation[key] = formation
+			}
+		}
+	}
+
+	tx, err := idx.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback() // no-op after commit
+
+	if _, err := tx.Exec(`DELETE FROM session_index`); err != nil {
 		return 0, fmt.Errorf("clear index: %w", err)
 	}
 
+	stmt, err := tx.Prepare(
+		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare insert: %w", err)
+	}
+	defer stmt.Close()
+
 	count := 0
 	for _, e := range entries {
-		idx.upsertLocked(e)
+		activityAt := e.LastActivityAt
+		if activityAt.IsZero() {
+			activityAt = e.CreatedAt
+		}
+		_, err := stmt.Exec(
+			e.SessionKey,
+			e.FilePath,
+			e.CreatedAt.UTC().Format(time.RFC3339),
+			activityAt.UTC().Format(time.RFC3339),
+			nullableString(e.ParentSessionKey),
+			e.SessionType,
+			e.Status,
+		)
+		if err != nil {
+			log.Errorf("session", "insert index entry %q: %v", e.SessionKey, err)
+		}
 		count++
+	}
+
+	// Restore preserved last_memory_formation timestamps.
+	if len(savedFormation) > 0 {
+		updateStmt, err := tx.Prepare(`UPDATE session_index SET last_memory_formation = ? WHERE session_key = ?`)
+		if err == nil {
+			defer updateStmt.Close()
+			for key, formation := range savedFormation {
+				_, _ = updateStmt.Exec(formation, key)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
 	}
 	return count, nil
 }
@@ -384,6 +446,49 @@ func (idx *SessionIndex) Rebuild(store *Store) (int, error) {
 		return 0, err
 	}
 	return idx.RebuildIndex(entries)
+}
+
+// IndexCount returns the number of entries in the session index.
+func (idx *SessionIndex) IndexCount() int {
+	if idx == nil || idx.db == nil {
+		return 0
+	}
+	var count int
+	_ = idx.db.QueryRow(`SELECT COUNT(*) FROM session_index`).Scan(&count)
+	return count
+}
+
+// PruneOrphans removes index entries for session files that no longer exist on disk.
+// Safe to call concurrently — acquires its own lock.
+func (idx *SessionIndex) PruneOrphans() int {
+	if idx == nil || idx.db == nil {
+		return 0
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	rows, err := idx.db.Query(`SELECT session_key, file_path FROM session_index WHERE status = 'active'`)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+
+	var orphans []string
+	for rows.Next() {
+		var key, path string
+		if rows.Scan(&key, &path) != nil {
+			continue
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			orphans = append(orphans, key)
+		}
+	}
+
+	for _, key := range orphans {
+		_, _ = idx.db.Exec(`DELETE FROM session_index WHERE session_key = ?`, key)
+		log.Infof("session", "pruned orphan index entry: %s", key)
+	}
+	return len(orphans)
 }
 
 // nullableString returns nil for empty strings, the string otherwise.
