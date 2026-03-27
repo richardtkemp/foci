@@ -20,7 +20,6 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode) {
 		"compaction-handoff.md":           prompts.CompactionHandoff,
 		"branch-orientation-headless.md":  prompts.BranchOrientationHeadless,
 		"branch-orientation-facet.md": prompts.BranchOrientationFacet,
-		"keepalive-cron.md":              prompts.KeepaliveCron,
 		"weekly-character-review.md":     prompts.WeeklyCharacterReview,
 	}
 
