@@ -20,7 +20,24 @@ func StopCommand() *Command {
 		Name:        "stop",
 		Description: "Cancel the current agent turn",
 		Category:    "operations",
-		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+			// Backend mode: send Escape×2 + Ctrl-C to CC's TUI.
+			if cc.Agent != nil && cc.Agent.BackendManager != nil {
+				sk := tools.SessionKeyFromContext(ctx)
+				if sk == "" {
+					return Response{}, fmt.Errorf("no active session")
+				}
+				if err := cc.Agent.BackendManager.StopSession(ctx, sk); err != nil {
+					return Response{}, fmt.Errorf("stop backend: %w", err)
+				}
+				// Also cancel foci's side.
+				if cc.StopFunc != nil {
+					cc.StopFunc()
+				}
+				return Response{Text: "Stopped."}, nil
+			}
+
+			// Traditional mode: cancel the Go context.
 			if cc.StopFunc != nil {
 				cc.StopFunc()
 			}

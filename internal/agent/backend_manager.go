@@ -155,6 +155,27 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	return be, nil
 }
 
+// StopSession sends Escape twice to cancel CC's current operation, then
+// clears the input box. Returns an error if no backend exists for the session.
+func (m *BackendManager) StopSession(ctx context.Context, sessionKey string) error {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("no backend for session %s", base)
+	}
+	// Escape twice to cancel the current operation and return to input.
+	for i := 0; i < 2; i++ {
+		if err := mb.be.SendSpecialKey(ctx, "Escape"); err != nil {
+			return err
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	// Ctrl-C discards the current input (including multiline).
+	return mb.be.SendSpecialKey(ctx, "C-c")
+}
+
 // ResetSession closes the backend for a specific session key WITHOUT saving
 // the resume ID, so the next Get() creates a completely fresh CC session.
 func (m *BackendManager) ResetSession(sessionKey string) {

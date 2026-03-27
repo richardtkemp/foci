@@ -72,6 +72,16 @@ func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
 	return pane.sendKeystroke(ctx, key)
 }
 
+func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
+	b.mu.Lock()
+	pane := b.pane
+	b.mu.Unlock()
+	if pane == nil {
+		return fmt.Errorf("claude-code backend not started")
+	}
+	return pane.sendSpecial(ctx, key)
+}
+
 func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	b.mu.Lock()
 	pane := b.pane
