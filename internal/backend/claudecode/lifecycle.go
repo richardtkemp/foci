@@ -61,12 +61,20 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	}
 
 	// Create the exec bridge before the pane so we can inject env vars.
+	// Use a stable socket path derived from the session key so the bridge
+	// survives foci restarts — the CC session keeps the same FOCI_SOCK path.
 	if reg, ok := opts.ExecRegistry.(*tools.Registry); ok && reg != nil {
 		bridgeCtx := context.Background()
 		if opts.SessionKey != "" {
 			bridgeCtx = tools.WithSessionKey(bridgeCtx, opts.SessionKey)
 		}
-		bridge, err := tools.NewExecBridge(reg, bridgeCtx)
+		var bridge *tools.ExecBridge
+		var err error
+		if opts.SessionKey != "" {
+			bridge, err = tools.NewExecBridgeStable(reg, bridgeCtx, opts.SessionKey)
+		} else {
+			bridge, err = tools.NewExecBridge(reg, bridgeCtx)
+		}
 		if err != nil {
 			log.Warnf("backend/cc", "exec bridge creation failed (continuing without): %v", err)
 		} else {

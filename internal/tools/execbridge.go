@@ -34,10 +34,32 @@ type ExecBridge struct {
 // NewExecBridge creates a unix socket and shell functions file. The bridge
 // accepts connections until Close is called. ctx carries the session key
 // from the calling agent (used by tools that need session identity).
+// Socket paths are PID-based and ephemeral — suitable for per-command bridges.
 func NewExecBridge(registry *Registry, ctx context.Context) (*ExecBridge, error) {
 	n := bridgeCounter.Add(1)
 	sockPath := fmt.Sprintf("%s/exec-%d-%d.sock", tempdir.Dir(), os.Getpid(), n)
 	funcsPath := fmt.Sprintf("%s/exec-%d-%d-funcs.sh", tempdir.Dir(), os.Getpid(), n)
+	return newExecBridge(registry, ctx, sockPath, funcsPath)
+}
+
+// NewExecBridgeStable creates an exec bridge with a stable socket path derived
+// from stableID (typically a foci session key). The socket survives process
+// restarts: on creation, any existing stale socket at the same path is removed
+// and a new listener is started. This allows long-lived backend sessions (e.g.
+// Claude Code) to reconnect after a foci restart without needing new env vars.
+func NewExecBridgeStable(registry *Registry, ctx context.Context, stableID string) (*ExecBridge, error) {
+	// Sanitize: session keys may contain slashes (e.g. "telegram/c123/456")
+	safe := strings.ReplaceAll(stableID, "/", "-")
+	sockPath := fmt.Sprintf("%s/exec-%s.sock", tempdir.Dir(), safe)
+	funcsPath := fmt.Sprintf("%s/exec-%s-funcs.sh", tempdir.Dir(), safe)
+
+	// Remove stale socket from a previous process (if any).
+	_ = os.Remove(sockPath)
+
+	return newExecBridge(registry, ctx, sockPath, funcsPath)
+}
+
+func newExecBridge(registry *Registry, ctx context.Context, sockPath, funcsPath string) (*ExecBridge, error) {
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
