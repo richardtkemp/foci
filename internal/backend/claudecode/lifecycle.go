@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
+	"foci/internal/tools"
 )
 
 func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
@@ -58,20 +60,52 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		workDir:    opts.WorkDir,
 	}
 
-	// Check if a window already exists (crash recovery).
+	// Create the exec bridge before the pane so we can inject env vars.
+	if reg, ok := opts.ExecRegistry.(*tools.Registry); ok && reg != nil {
+		bridgeCtx := context.Background()
+		if opts.SessionKey != "" {
+			bridgeCtx = tools.WithSessionKey(bridgeCtx, opts.SessionKey)
+		}
+		bridge, err := tools.NewExecBridge(reg, bridgeCtx)
+		if err != nil {
+			log.Warnf("backend/cc", "exec bridge creation failed (continuing without): %v", err)
+		} else {
+			b.bridge = bridge
+			log.Infof("backend/cc", "exec bridge started: sock=%s funcs=%s", bridge.SockPath(), bridge.FuncsPath())
+		}
+	}
+
+	// Build env vars to inject into the tmux pane.
+	var paneEnv []string
+	if b.bridge != nil {
+		paneEnv = append(paneEnv,
+			"FOCI_SOCK="+b.bridge.SockPath(),
+			"BASH_ENV="+b.bridge.FuncsPath(),
+		)
+	}
+
+	// Check if a session already exists (crash recovery).
 	if b.pane.isAlive(ctx) {
-		// Reuse existing window — check if claude is still running.
 		pid, err := b.pane.readPanePID(ctx)
 		if err == nil && pid > 0 {
 			b.pane.pid = pid
-			b.discoverSession() // best-effort; falls back to lazy discovery
+			// Inject exec bridge env vars into the recovered session via
+			// tmux set-environment so new shell commands pick them up.
+			if b.bridge != nil {
+				_ = b.pane.setEnv(ctx, "FOCI_SOCK", b.bridge.SockPath())
+				_ = b.pane.setEnv(ctx, "BASH_ENV", b.bridge.FuncsPath())
+			}
+			b.discoverSession()
 			return nil
 		}
-		// Process is gone — kill stale window and recreate.
 		_ = b.pane.kill(ctx)
 	}
 
-	if err := b.pane.create(ctx, args); err != nil {
+	if err := b.pane.create(ctx, args, paneEnv...); err != nil {
+		if b.bridge != nil {
+			b.bridge.Close()
+			b.bridge = nil
+		}
 		return fmt.Errorf("create tmux pane: %w", err)
 	}
 
@@ -260,6 +294,10 @@ func (b *Backend) Close() error {
 	}
 	if b.watcher != nil {
 		b.watcher.close()
+	}
+	if b.bridge != nil {
+		b.bridge.Close()
+		b.bridge = nil
 	}
 
 	if b.pane == nil {

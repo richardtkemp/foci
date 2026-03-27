@@ -74,6 +74,8 @@ type StartOptions struct {
 	AgentID         string // foci agent ID
 	Label           string // unique label for this instance (used for tmux window naming); falls back to AgentID
 	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
+	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
+	ExecRegistry    any    // *tools.Registry — if set, creates a persistent exec bridge for foci shell commands
 }
 
 // EventHandler receives streaming events during a turn.
