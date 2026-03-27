@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/platform"
 	"foci/internal/session"
 
 	"github.com/bwmarrin/discordgo"
@@ -206,10 +207,7 @@ func (b *Bot) SendStartupNotification(agentID string) {
 // SendText sends a text message to the default channel without any header.
 // Returns an error if no channel ID is available.
 // Silently skips empty or whitespace-only messages.
-func (b *Bot) SendText(text string) error {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
+func (b *Bot) RawSendText(text string) error {
 
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
@@ -237,7 +235,7 @@ func (b *Bot) SendInjected(text string) error {
 	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
 		text = b.display.InjectedMessageHeader + "\n" + text
 	}
-	return b.SendText(text)
+	return platform.SendText(b, text)
 }
 
 // SendInjectedMessage sends a system/injected text message to the channel
@@ -345,11 +343,8 @@ func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 	return err
 }
 
-// SendTextToChat sends a text message to a specific channel ID without any header.
-func (b *Bot) SendTextToChat(chatID int64, text string) error {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
+// RawSendTextToChat sends a text message to a specific channel ID without any header.
+func (b *Bot) RawSendTextToChat(chatID int64, text string) error {
 	channelIDStr := strconv.FormatInt(chatID, 10)
 	b.sendMarkdownChunks(channelIDStr, text)
 	return nil
@@ -361,7 +356,7 @@ func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
 		text = b.display.InjectedMessageHeader + "\n" + text
 	}
-	return b.SendTextToChat(chatID, text)
+	return platform.SendTextToChat(b, chatID, text)
 }
 
 // sendMediaFile is a generic helper for sending media files to Discord.

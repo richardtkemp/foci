@@ -36,7 +36,7 @@ func TestConnectionManagerInterface(t *testing.T) {
 type mockSender struct{}
 
 func (m *mockSender) SessionKey() string                                       { return "" }
-func (m *mockSender) SendText(text string) error                               { return nil }
+func (m *mockSender) RawSendText(text string) error                            { return nil }
 func (m *mockSender) SendDocument(filePath string) error                       { return nil }
 func (m *mockSender) SendVoice(filePath string) error                          { return nil }
 func (m *mockSender) SendVideo(filePath string) error                          { return nil }
@@ -44,7 +44,7 @@ func (m *mockSender) SendPhoto(filePath string) error                          {
 func (m *mockSender) SendAudio(filePath string) error                          { return nil }
 func (m *mockSender) SendAnimation(filePath string) error                      { return nil }
 func (m *mockSender) SendVoiceData(audioData []byte) error                     { return nil }
-func (m *mockSender) SendTextToChat(chatID int64, text string) error           { return nil }
+func (m *mockSender) RawSendTextToChat(chatID int64, text string) error        { return nil }
 func (m *mockSender) SendDocumentToChat(chatID int64, filePath string) error   { return nil }
 func (m *mockSender) SendVoiceToChat(chatID int64, filePath string) error      { return nil }
 func (m *mockSender) SendVideoToChat(chatID int64, filePath string) error      { return nil }

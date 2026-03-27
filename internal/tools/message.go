@@ -97,9 +97,9 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 			if p.Text != "" {
 				var err error
 				if chatID != 0 {
-					err = bot.SendTextToChat(chatID, p.Text)
+					err = platform.SendTextToChat(bot, chatID, p.Text)
 				} else {
-					err = bot.SendText(p.Text)
+					err = platform.SendText(bot, p.Text)
 				}
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("send text: %w", err)
