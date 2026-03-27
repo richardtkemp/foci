@@ -6,6 +6,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/backend"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/workspace"
 )
 
@@ -63,7 +64,7 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 				log.Warnf("agent/"+agentID, "backend: no connection for session %s", sessionKey)
 				return
 			}
-			_ = conn.SendText(text)
+			_ = platform.SendText(conn, text)
 		},
 		IdleTimeout: idleTimeout,
 	}

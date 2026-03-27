@@ -104,10 +104,44 @@ type SendOptions struct {
 	ReplyTo   string
 }
 
+// RawTextSender is implemented by platform bots for text delivery.
+// Callers should use the package-level SendText/SendTextToChat functions
+// instead of calling these methods directly — those functions filter
+// empty text and [[NO_RESPONSE]] sentinels before delegating.
+type RawTextSender interface {
+	RawSendText(text string) error
+	RawSendTextToChat(chatID int64, text string) error
+}
+
+// IsSilent returns true if text should not be sent to users.
+// Covers empty/whitespace-only text and the [[NO_RESPONSE]] sentinel
+// that agents use to indicate they have nothing to say.
+func IsSilent(text string) bool {
+	t := strings.TrimSpace(text)
+	return t == "" || t == "[[NO_RESPONSE]]"
+}
+
+// SendText filters silent text then sends via the sender's raw method.
+func SendText(s RawTextSender, text string) error {
+	if IsSilent(text) {
+		return nil
+	}
+	return s.RawSendText(text)
+}
+
+// SendTextToChat filters silent text then sends to a specific chat.
+func SendTextToChat(s RawTextSender, chatID int64, text string) error {
+	if IsSilent(text) {
+		return nil
+	}
+	return s.RawSendTextToChat(chatID, text)
+}
+
 type Sender interface {
+	RawTextSender
+
 	SessionKey() string
 
-	SendText(text string) error
 	SendDocument(filePath string) error
 	SendVoice(filePath string) error
 	SendVideo(filePath string) error
@@ -116,7 +150,6 @@ type Sender interface {
 	SendAnimation(filePath string) error
 	SendVoiceData(audioData []byte) error
 
-	SendTextToChat(chatID int64, text string) error
 	SendDocumentToChat(chatID int64, filePath string) error
 	SendVoiceToChat(chatID int64, filePath string) error
 	SendVideoToChat(chatID int64, filePath string) error

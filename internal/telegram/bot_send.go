@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/platform"
 	"foci/internal/session"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -152,10 +153,7 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 // SendText sends a text message to the default chat without any header.
 // Returns an error if no chat ID is available.
 // Silently skips empty or whitespace-only messages.
-func (b *Bot) SendText(text string) error {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
+func (b *Bot) RawSendText(text string) error {
 
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
@@ -182,7 +180,7 @@ func (b *Bot) SendInjected(text string) error {
 	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
 		text = b.display.InjectedMessageHeader + "\n" + text
 	}
-	return b.SendText(text)
+	return platform.SendText(b, text)
 }
 
 // SendInjectedMessage sends a system/injected text message to the chat
