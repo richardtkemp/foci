@@ -189,6 +189,20 @@ type Connection interface {
 	BuildTurnObservers(sessionKey string) *TurnObservers // nil when unsupported or no chat target
 }
 
+// ButtonChoice represents an inline keyboard button for interactive prompts.
+type ButtonChoice struct {
+	Label string // button text shown to user
+	Data  string // callback data sent when pressed
+}
+
+// ButtonSender is optionally implemented by Connection types that support
+// inline keyboard buttons. Use SendTextWithButtons to send a message with
+// clickable choices. If a Connection doesn't implement this, fall back to
+// plain text with the choices listed.
+type ButtonSender interface {
+	SendTextWithButtons(text string, buttons []ButtonChoice, callbackPrefix string) error
+}
+
 // ConnectionManager manages platform connection instances and facet pools.
 type ConnectionManager interface {
 	Primary(agentID string) Connection

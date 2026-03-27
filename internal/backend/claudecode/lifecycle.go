@@ -172,7 +172,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 
 // checkPermissionPrompt captures the tmux pane and checks for a CC permission
 // prompt. If found (and not a duplicate), forwards it to the user via the
-// platform. Called periodically by the watcher loop.
+// platform with inline keyboard choices. Called periodically by the watcher loop.
 func (b *Backend) checkPermissionPrompt() {
 	pane := b.pane
 	if pane == nil {
@@ -187,24 +187,36 @@ func (b *Backend) checkPermissionPrompt() {
 		return
 	}
 	prompt := extractPermissionPrompt(content)
-	if prompt == "" {
+	if prompt == nil {
 		return
 	}
 
 	// Skip if this is the same prompt we already sent.
 	b.lastPromptMu.Lock()
-	if prompt == b.lastPrompt {
+	if prompt.Raw == b.lastPrompt {
 		b.lastPromptMu.Unlock()
 		return
 	}
-	b.lastPrompt = prompt
+	b.lastPrompt = prompt.Raw
 	b.lastPromptMu.Unlock()
 
 	b.replyMu.Lock()
-	fn := b.replyFunc
+	promptFn := b.permPromptFunc
+	replyFn := b.replyFunc
 	b.replyMu.Unlock()
-	if fn != nil {
-		fn("⚠️ Claude Code needs permission:\n\n" + prompt + "\n\nReply with your choice (1, 2, 3, etc.)")
+
+	// Prefer structured prompt with keyboard; fall back to plain text.
+	if promptFn != nil && len(prompt.Choices) > 0 {
+		var choices []backend.PromptChoice
+		for _, c := range prompt.Choices {
+			choices = append(choices, backend.PromptChoice{
+				Label: c.Label,
+				Data:  c.Number,
+			})
+		}
+		promptFn("⚠️ Permission required:\n\n"+prompt.Description, choices)
+	} else if replyFn != nil {
+		replyFn("⚠️ Claude Code needs permission:\n\n" + prompt.Raw + "\n\nReply with your choice (1, 2, 3, etc.)")
 	}
 }
 

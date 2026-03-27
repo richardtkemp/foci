@@ -32,6 +32,10 @@ type BackendManager struct {
 	// SendFunc routes text to the correct platform chat for a session key.
 	SendFunc func(sessionKey, text string)
 
+	// PermissionPromptFunc sends a permission prompt with keyboard choices.
+	// If nil, backends fall back to plain text via SendFunc.
+	PermissionPromptFunc func(sessionKey, text string, choices []backend.PromptChoice)
+
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
@@ -75,11 +79,16 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	opts.Label = strings.ReplaceAll(base, "/", "-")
 	opts.ResumeSessionID = resumeID
 
-	// Set the reply function before starting.
+	// Set the reply and permission prompt functions before starting.
 	sk := sessionKey
 	if m.SendFunc != nil {
 		be.SetReplyFunc(func(text string) {
 			m.SendFunc(sk, text)
+		})
+	}
+	if m.PermissionPromptFunc != nil {
+		be.SetPermissionPromptFunc(func(text string, choices []backend.PromptChoice) {
+			m.PermissionPromptFunc(sk, text, choices)
 		})
 	}
 

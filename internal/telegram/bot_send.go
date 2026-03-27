@@ -150,9 +150,37 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 	}
 }
 
-// SendText sends a text message to the default chat without any header.
+// SendTextWithButtons sends a text message with inline keyboard buttons.
+// callbackPrefix is prepended to each button's Data for callback routing.
+func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	chatID := b.DefaultChatID()
+	if chatID == 0 {
+		b.chatMu.Lock()
+		chatID = b.chatID
+		b.chatMu.Unlock()
+	}
+	if chatID == 0 {
+		return fmt.Errorf("no chat ID — no default chat configured")
+	}
+
+	var row []gotgbot.InlineKeyboardButton
+	for _, btn := range buttons {
+		row = append(row, gotgbot.InlineKeyboardButton{
+			Text:         btn.Label,
+			CallbackData: callbackPrefix + btn.Data,
+		})
+	}
+	_, _ = b.client.SendMessage(chatID, ConvertToTelegramHTML(text, b.tableOpts()), &gotgbot.SendMessageOpts{
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row},
+		},
+	})
+	return nil
+}
+
+// RawSendText sends a text message to the default chat without any header.
 // Returns an error if no chat ID is available.
-// Silently skips empty or whitespace-only messages.
 func (b *Bot) RawSendText(text string) error {
 
 	chatID := b.DefaultChatID()
