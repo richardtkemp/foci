@@ -95,32 +95,18 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 		return
 	}
 
-	// Permission prompt callbacks: "perm:<choice>:<reason>"
-	// Send the choice as a raw keystroke to the backend's TUI.
-	if strings.HasPrefix(cq.Data, "perm:") {
-		payload := cq.Data[5:] // "1:go vet on backend" or just "1"
-		choice := payload
-		reason := ""
-		if idx := strings.IndexByte(payload, ':'); idx >= 0 {
-			choice = payload[:idx]
-			reason = payload[idx+1:]
+	// Interactive message callbacks: "im:<promptID>:<buttonIndex>"
+	if strings.HasPrefix(cq.Data, "im:") {
+		editText, _, ok := platform.HandleInteractiveCallback(cq.Data[3:])
+		if ok && editText != "" {
+			_, _, _ = b.client.EditMessageText(
+				ConvertToTelegramHTML(editText, b.tableOpts()),
+				&gotgbot.EditMessageTextOpts{
+					ChatId:    chatID,
+					MessageId: cq.Message.GetMessageId(),
+					ParseMode: "HTML",
+				})
 		}
-		if pr, ok := b.handler.(platform.PermissionResponder); ok {
-			sk := b.sessionKeyForMsg(chatID)
-			_ = pr.SendPermissionResponse(ctx, sk, choice)
-		}
-		// Edit the message to show what was approved.
-		editText := "✅ Approved"
-		if reason != "" {
-			editText = "✅ " + reason
-		}
-		_, _, _ = b.client.EditMessageText(
-			ConvertToTelegramHTML(editText, b.tableOpts()),
-			&gotgbot.EditMessageTextOpts{
-				ChatId:    chatID,
-				MessageId: cq.Message.GetMessageId(),
-				ParseMode: "HTML",
-			})
 		return
 	}
 
