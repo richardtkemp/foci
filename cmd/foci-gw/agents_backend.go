@@ -7,6 +7,7 @@ import (
 	"foci/internal/backend"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/tools"
 	"foci/internal/workspace"
 )
 
@@ -32,6 +33,11 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	if v, ok := backendConfig["model"].(string); ok {
 		model = v
 	}
+
+	// Build a tool registry with exec-exported tools so foci shell commands
+	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
+	// shell environment via the persistent exec bridge.
+	registry := buildExecRegistry(p)
 
 	// Build the agent with shared fields.
 	ag := shared.newAgent()
@@ -59,6 +65,7 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			SystemPrompt: systemPrompt,
 			Model:        model,
 			AgentID:      agentID,
+			ExecRegistry: registry,
 		},
 		SendFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
@@ -91,4 +98,39 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	return shared.finalize(ag, finalizeParams{
 		bootstrap: bs,
 	})
+}
+
+// buildExecRegistry creates a tools.Registry containing only exec-exported
+// tools. These are exposed as shell functions (foci_todo, foci_send_to_chat,
+// etc.) via the persistent exec bridge in the backend's tmux session.
+func buildExecRegistry(p setupParams) *tools.Registry {
+	registry := tools.NewRegistry()
+	acfg := p.acfg
+	connMgr := p.connMgr
+
+	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
+		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
+		if conn == nil {
+			return nil
+		}
+		return conn
+	}, nil))
+
+	if p.todoStore != nil {
+		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
+	}
+
+	if p.braveKey != "" {
+		registry.Register(tools.NewWebSearchTool(p.braveKey))
+	}
+
+	registry.Register(tools.NewWebFetchTool())
+	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, 0, 0, nil, 0o644))
+
+	if len(p.memBackends) > 0 {
+		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))
+	}
+
+	log.Infof("agent/"+acfg.ID, "exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
+	return registry
 }

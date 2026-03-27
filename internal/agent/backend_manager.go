@@ -85,6 +85,7 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	opts := m.StartOpts
 	opts.Label = strings.ReplaceAll(base, "/", "-")
 	opts.ResumeSessionID = resumeID
+	opts.SessionKey = sessionKey
 
 	// Set the reply and permission prompt functions before starting.
 	sk := sessionKey

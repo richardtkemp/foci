@@ -20,16 +20,21 @@ type tmuxPane struct {
 	pid        int    // PID of the shell process in the pane (0 = unknown)
 }
 
-// create creates a new tmux window running the claude command.
-// The window is named windowName and started in workDir.
-func (p *tmuxPane) create(ctx context.Context, claudeArgs []string) error {
-	// Wrap in a login shell so the user's PATH is available (e.g. ~/.local/bin/claude).
-	// tmux's default shell gets a bare system PATH that excludes user-installed binaries.
+// create creates a new tmux session running the claude command.
+// envVars are KEY=VALUE pairs exported before claude starts so child
+// processes (e.g. CC's Bash tool) inherit them.
+func (p *tmuxPane) create(ctx context.Context, claudeArgs []string, envVars ...string) error {
+	// Wrap in a login shell so the user's PATH is available.
 	innerCmd := "claude"
 	for _, a := range claudeArgs {
 		innerCmd += " " + shellQuote(a)
 	}
-	shellCmd := "sh -l -c " + shellQuote(innerCmd)
+	// Prepend env var exports (quoted to prevent injection).
+	var envPrefix string
+	for _, kv := range envVars {
+		envPrefix += "export " + shellQuote(kv) + "; "
+	}
+	shellCmd := "sh -l -c " + shellQuote(envPrefix+innerCmd)
 
 	// Each backend gets its own tmux session (not just a window) to prevent
 	// any cross-talk between sessions (pane capture, window listing, etc.).
@@ -230,6 +235,13 @@ func extractPermissionPrompt(paneContent string) *permissionPrompt {
 		Choices:     choices,
 		Raw:         block,
 	}
+}
+
+// setEnv sets an environment variable on the tmux session so new processes
+// spawned in this session inherit it.
+func (p *tmuxPane) setEnv(ctx context.Context, key, value string) error {
+	_, err := p.runTmux(ctx, "set-environment", "-t", p.windowName, key, value)
+	return err
 }
 
 // kill destroys the tmux session.
