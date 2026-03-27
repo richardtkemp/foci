@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"time"
 
 	"foci/internal/backend"
 	"foci/internal/log"
@@ -29,6 +30,10 @@ func (a *Agent) handleViaBackend(ctx context.Context, sessionKey string, texts [
 		Text:      strings.Join(texts, "\n"),
 		Session:   sessionKey,
 	})
+
+	// Update session metadata so gap calculation and keepalive work correctly.
+	sm := a.getSessionMeta(sessionKey)
+	sm.lastMessageTime = time.Now()
 
 	// Get or create the Backend for this session.
 	be, err := a.BackendManager.Get(ctx, sessionKey)
