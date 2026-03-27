@@ -209,7 +209,7 @@ func (b *ExecBridge) exportedToolCount() int {
 // jsonPassthroughHelper is a bash helper emitted at the top of the shell
 // functions file. Each generated function calls it as its first line:
 //
-//	_foci_json "tool" "key1 key2 key3" "$@" && return $?
+//	foci__json "tool" "key1 key2 key3" "$@" && return $?
 //
 // The guard fires only when ALL three conditions are met:
 //  1. Exactly one argument provided
@@ -218,12 +218,15 @@ func (b *ExecBridge) exportedToolCount() int {
 //
 // This prevents false positives when a single positional arg happens to
 // look like JSON (e.g. searching for a JSON string).
+//
+// Note: helpers use foci__ prefix (not _foci_) because Claude Code's shell
+// snapshot mechanism filters out underscore-prefixed functions.
 const jsonPassthroughHelper = `# Trace helper: logs to stderr when FOCI_TRACE is set.
-_foci_trace() { [ -n "${FOCI_TRACE:-}" ] && echo "FOCI_TRACE[$1]: ${*:2}" >&2; return 0; }
-export -f _foci_trace
+foci__trace() { [ -n "${FOCI_TRACE:-}" ] && echo "FOCI_TRACE[$1]: ${*:2}" >&2; return 0; }
+export -f foci__trace
 
 # JSON passthrough: if the sole arg is a JSON object with valid param keys, use it directly.
-_foci_json() {
+foci__json() {
   local tool="$1" valid_keys="$2"; shift 2
   [ $# -eq 1 ] || return 1
   [ "${1:0:1}" = "{" ] || return 1
@@ -238,7 +241,7 @@ _foci_json() {
   done
   foci-call "$(jq -nc --argjson p "$1" '{"tool":"'"$tool"'","params":$p}')"
 }
-export -f _foci_json
+export -f foci__json
 
 `
 
@@ -266,7 +269,7 @@ func (b *ExecBridge) writeShellFuncs() error {
 }
 
 // toolParamKeys extracts the property names from a tool's JSON schema Parameters.
-// Returns a space-separated string suitable for the _foci_json bash helper.
+// Returns a space-separated string suitable for the foci__json bash helper.
 func toolParamKeys(t *Tool) string {
 	var schema struct {
 		Properties map[string]json.RawMessage `json:"properties"`
@@ -290,7 +293,7 @@ func toolParamKeys(t *Tool) string {
 func generateShellFunc(t *Tool) string {
 	name := "foci_" + t.Name
 	validKeys := toolParamKeys(t)
-	guard := fmt.Sprintf("  _foci_json %q %q \"$@\" && return $?", t.Name, validKeys)
+	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
 
 	switch t.Name {
 	case "web_search", "memory_search":
@@ -381,7 +384,7 @@ func generateShellFunc(t *Tool) string {
 		return fmt.Sprintf(`%s() {
 %s
   local text="" file_path="" send_as="" read_stdin=false
-  _foci_trace "send" "args=$# tty=$([ -t 0 ] && echo yes || echo no)"
+  foci__trace "send" "args=$# tty=$([ -t 0 ] && echo yes || echo no)"
   while [ $# -gt 0 ]; do
     case "$1" in
       --file) file_path="$2"; shift 2 ;;
@@ -397,9 +400,9 @@ func generateShellFunc(t *Tool) string {
   text="${text# }"
   if [ "$read_stdin" = true ] || ([ -z "$text" ] && [ -z "$file_path" ]); then
     if [ ! -t 0 ]; then
-      _foci_trace "send" "reading stdin..."
+      foci__trace "send" "reading stdin..."
       text="$(cat)"
-      _foci_trace "send" "stdin read ${#text} bytes"
+      foci__trace "send" "stdin read ${#text} bytes"
     fi
   fi
   if [ -z "$text" ] && [ -z "$file_path" ]; then
@@ -418,7 +421,7 @@ func generateShellFunc(t *Tool) string {
   if [ -n "$send_as" ]; then
     params="$(echo "$params" | jq --arg s "$send_as" '. + {send_as: $s}')"
   fi
-  _foci_trace "send" "calling foci-call text=${#text}b file=$file_path"
+  foci__trace "send" "calling foci-call text=${#text}b file=$file_path"
   foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_to_chat","params":$p}')"
 }
 `, name, guard, name, name, name)
