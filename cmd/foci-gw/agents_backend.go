@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"foci/internal/agent"
@@ -35,6 +39,9 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	if v, ok := backendConfig["model"].(string); ok {
 		model = v
 	}
+
+	// Ensure CC has permissions to edit the workspace without prompting.
+	seedBackendPermissions(p.acfg.Workspace)
 
 	// Build a tool registry with exec-exported tools so foci shell commands
 	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
@@ -101,6 +108,91 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	return shared.finalize(ag, finalizeParams{
 		bootstrap: bs,
 	})
+}
+
+// seedBackendPermissions ensures .claude/settings.local.json in the workspace
+// has permissions allowing the CC backend to edit workspace files without
+// prompting. Merges with any existing settings; never overwrites user entries.
+func seedBackendPermissions(workspace string) {
+	settingsDir := filepath.Join(workspace, ".claude")
+	settingsPath := filepath.Join(settingsDir, "settings.local.json")
+
+	// Read existing settings (if any).
+	var settings map[string]any
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			log.Warnf("backend", "parse %s: %v — not modifying", settingsPath, err)
+			return
+		}
+	} else {
+		settings = make(map[string]any)
+	}
+
+	// Build the rules we want present.
+	absWorkspace, err := filepath.Abs(workspace)
+	if err != nil {
+		absWorkspace = workspace
+	}
+	wantRules := []string{
+		// Workspace file access
+		fmt.Sprintf("Edit(%s/**)", absWorkspace),
+		fmt.Sprintf("Write(%s/**)", absWorkspace),
+		// Foci shell functions
+		"Bash(foci_todo:*)",
+		"Bash(foci_send_to_chat:*)",
+		"Bash(foci_memory_search:*)",
+		"Bash(foci_http_request:*)",
+		"Bash(foci_web_search:*)",
+		"Bash(foci_web_fetch:*)",
+		// Basic shell commands
+		"Bash(ls:*)",
+		"Bash(echo:*)",
+		// Exec bridge temp files
+		"Read(/tmp/foci/**)",
+	}
+
+	// Get or create the permissions.allow array.
+	perms, _ := settings["permissions"].(map[string]any)
+	if perms == nil {
+		perms = make(map[string]any)
+	}
+	allowRaw, _ := perms["allow"].([]any)
+	existing := make(map[string]bool, len(allowRaw))
+	for _, v := range allowRaw {
+		if s, ok := v.(string); ok {
+			existing[s] = true
+		}
+	}
+
+	// Add missing rules.
+	changed := false
+	for _, rule := range wantRules {
+		if !existing[rule] {
+			allowRaw = append(allowRaw, rule)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+
+	perms["allow"] = allowRaw
+	settings["permissions"] = perms
+
+	if err := os.MkdirAll(settingsDir, 0755); err != nil {
+		log.Warnf("backend", "mkdir %s: %v", settingsDir, err)
+		return
+	}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		log.Warnf("backend", "marshal settings: %v", err)
+		return
+	}
+	if err := os.WriteFile(settingsPath, append(data, '\n'), 0644); err != nil {
+		log.Warnf("backend", "write %s: %v", settingsPath, err)
+		return
+	}
+	log.Infof("backend", "seeded workspace permissions in %s", settingsPath)
 }
 
 // buildExecRegistry creates a tools.Registry containing only exec-exported
