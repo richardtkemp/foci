@@ -136,23 +136,35 @@ func (b *Backend) ensureWatcher(ctx context.Context) error {
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
+	var lastErr string
 	for {
 		select {
 		case <-deadline.Done():
-			return fmt.Errorf("timeout waiting for claude session (30s)")
+			return fmt.Errorf("timeout waiting for claude session (30s) — last: %s", lastErr)
 		case <-ticker.C:
+			// Check if the pane is still alive — if CC exited (e.g. bad --resume UUID),
+			// there's no point waiting.
+			if !b.pane.isAlive(ctx) {
+				log.Warnf("backend/cc", "claude process exited (tmux session gone), last: %s", lastErr)
+				return fmt.Errorf("claude process exited — check tmux logs (last: %s)", lastErr)
+			}
+
 			childPID, err := findChildPID(b.pane.pid)
 			if err != nil {
+				lastErr = "no child process: " + err.Error()
 				continue
 			}
 			sessionID, jsonlPath, err := discoverSessionFile(childPID, b.workDir)
 			if err != nil {
+				lastErr = fmt.Sprintf("pid %d: %v", childPID, err)
 				continue
 			}
 			if err := b.startWatcher(jsonlPath); err != nil {
+				lastErr = "watcher: " + err.Error()
 				continue
 			}
 			b.sessionID = sessionID
+			log.Infof("backend/cc", "session discovered: %s (pid %d)", sessionID, childPID)
 			return nil
 		}
 	}
