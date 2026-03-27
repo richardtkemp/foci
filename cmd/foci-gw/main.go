@@ -177,7 +177,7 @@ Subcommands:
 	connMgr := plat.ConnectionManager()
 	toolDetailStore := plat.ToolDetailStore()
 	if toolDetailStore != nil {
-		toolDetailStore.ExpireAndVacuum()
+		go toolDetailStore.ExpireAndVacuum()
 	}
 
 	startTime := time.Now()
