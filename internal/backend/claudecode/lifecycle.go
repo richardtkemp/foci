@@ -165,6 +165,9 @@ func (b *Backend) ensureWatcher(ctx context.Context) error {
 			}
 			b.sessionID = sessionID
 			log.Infof("backend/cc", "session discovered: %s (pid %d)", sessionID, childPID)
+			if b.onSessionReady != nil {
+				b.onSessionReady(sessionID)
+			}
 			return nil
 		}
 	}

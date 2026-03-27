@@ -40,9 +40,10 @@ type Backend struct {
 	bridge         *tools.ExecBridge     // persistent exec bridge for foci shell commands; nil if not configured
 
 	// replyFunc delivers text to the user's platform chat.
-	replyMu        sync.Mutex
-	replyFunc      func(string)
-	permPromptFunc func(string, string, []backend.PromptChoice)
+	replyMu            sync.Mutex
+	replyFunc          func(string)
+	permPromptFunc     func(string, string, []backend.PromptChoice)
+	onSessionReady     func(string) // called once when session ID is discovered
 
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
 	lastPromptMu sync.Mutex
