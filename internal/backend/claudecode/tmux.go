@@ -31,24 +31,17 @@ func (p *tmuxPane) create(ctx context.Context, claudeArgs []string) error {
 	}
 	shellCmd := "sh -l -c " + shellQuote(innerCmd)
 
-	args := []string{"new-window", "-d", "-n", p.windowName}
+	// Each backend gets its own tmux session (not just a window) to prevent
+	// any cross-talk between sessions (pane capture, window listing, etc.).
+	args := []string{"new-session", "-d", "-s", p.windowName}
 	if p.workDir != "" {
 		args = append(args, "-c", p.workDir)
 	}
 	args = append(args, shellCmd)
 
-	_, err := p.runTmux(ctx, args...)
+	out, err := p.runTmux(ctx, args...)
 	if err != nil {
-		// Window might not exist in any session — create a detached session first.
-		sessArgs := []string{"new-session", "-d", "-s", "foci-backend", "-n", p.windowName}
-		if p.workDir != "" {
-			sessArgs = append(sessArgs, "-c", p.workDir)
-		}
-		sessArgs = append(sessArgs, shellCmd)
-		out, err := p.runTmux(ctx, sessArgs...)
-		if err != nil {
-			return fmt.Errorf("tmux new-session: %s: %w", strings.TrimSpace(out), err)
-		}
+		return fmt.Errorf("tmux new-session %s: %s: %w", p.windowName, strings.TrimSpace(out), err)
 	}
 	return nil
 }
@@ -83,18 +76,10 @@ func (p *tmuxPane) sendSpecial(ctx context.Context, key string) error {
 	return err
 }
 
-// isAlive checks whether the tmux window still exists.
+// isAlive checks whether the tmux session still exists.
 func (p *tmuxPane) isAlive(ctx context.Context) bool {
-	out, err := p.runTmux(ctx, "list-windows", "-F", "#{window_name}")
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == p.windowName {
-			return true
-		}
-	}
-	return false
+	_, err := p.runTmux(ctx, "has-session", "-t", p.windowName)
+	return err == nil
 }
 
 // readPanePID reads the PID of the process running in the pane.
@@ -209,9 +194,9 @@ func extractPermissionPrompt(paneContent string) string {
 	return block
 }
 
-// kill destroys the tmux window.
+// kill destroys the tmux session.
 func (p *tmuxPane) kill(ctx context.Context) error {
-	_, err := p.runTmux(ctx, "kill-window", "-t", p.target())
+	_, err := p.runTmux(ctx, "kill-session", "-t", p.windowName)
 	return err
 }
 
