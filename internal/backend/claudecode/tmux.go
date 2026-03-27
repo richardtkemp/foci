@@ -180,9 +180,10 @@ func (p *tmuxPane) capturePane(ctx context.Context) (string, error) {
 
 // permissionPrompt holds a parsed CC permission prompt.
 type permissionPrompt struct {
-	Description string            // tool/action description (above "Do you want to")
-	Choices     []promptChoice    // numbered choices
-	Raw         string            // full block text (for dedup)
+	Description string         // tool/action description (above "Do you want to")
+	Summary     string         // short human-readable summary (e.g. "Edit memory/2026-03-27.md")
+	Choices     []promptChoice // numbered choices
+	Raw         string         // full block text (for dedup)
 }
 
 type promptChoice struct {
@@ -249,8 +250,62 @@ func extractPermissionPrompt(paneContent string) *permissionPrompt {
 
 	return &permissionPrompt{
 		Description: desc,
+		Summary:     buildPermissionSummary(desc),
 		Choices:     choices,
 		Raw:         block,
+	}
+}
+
+// buildPermissionSummary extracts a short summary from the permission description.
+// CC formats descriptions as:
+//
+//	"Bash command\n\n   cd ... && go vet\n   Run go vet on backend"
+//	"Edit file\n memory/2026-03-27.md\n╌╌╌\n diff\n╌╌╌"
+//	"Create file\n ../../../tmp/test.txt\n╌╌╌\n content\n╌╌╌"
+//	"Read file\n path/to/file"
+//
+// Returns e.g. "Bash: Run go vet on backend", "Edit memory/2026-03-27.md".
+func buildPermissionSummary(desc string) string {
+	lines := strings.Split(desc, "\n")
+	// Collect non-empty, non-divider lines.
+	var clean []string
+	for _, line := range lines {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "╌") || strings.HasPrefix(t, "─") {
+			if len(clean) > 0 {
+				break // stop at first divider after content (skip diff body)
+			}
+			continue
+		}
+		clean = append(clean, t)
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+
+	// First line is the tool header: "Bash command", "Edit file", "Create file", etc.
+	header := clean[0]
+	if len(clean) == 1 {
+		return header
+	}
+
+	// For file operations, the second line is the filename.
+	// For Bash, the last clean line is the description.
+	target := clean[len(clean)-1]
+
+	switch {
+	case strings.HasPrefix(header, "Edit"), strings.HasPrefix(header, "Create"),
+		strings.HasPrefix(header, "Read"), strings.HasPrefix(header, "Write"):
+		// Use the filename (second line), strip relative path prefixes.
+		fname := clean[1]
+		fname = strings.TrimPrefix(fname, "../")
+		fname = strings.TrimPrefix(fname, "../")
+		fname = strings.TrimPrefix(fname, "../")
+		return header + " " + fname
+	case strings.HasPrefix(header, "Bash"):
+		return target
+	default:
+		return header + " — " + target
 	}
 }
 

@@ -152,7 +152,8 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 
 // SendTextWithButtons sends a text message with inline keyboard buttons.
 // callbackPrefix is prepended to each button's Data for callback routing.
-func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+// Returns the platform message ID for later editing.
+func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (int64, error) {
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		b.chatMu.Lock()
@@ -160,7 +161,7 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 		b.chatMu.Unlock()
 	}
 	if chatID == 0 {
-		return fmt.Errorf("no chat ID — no default chat configured")
+		return 0, fmt.Errorf("no chat ID — no default chat configured")
 	}
 
 	var row []gotgbot.InlineKeyboardButton
@@ -170,13 +171,34 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 			CallbackData: callbackPrefix + btn.Data,
 		})
 	}
-	_, _ = b.client.SendMessage(chatID, ConvertToTelegramHTML(text, b.tableOpts()), &gotgbot.SendMessageOpts{
+	msg, err := b.client.SendMessage(chatID, ConvertToTelegramHTML(text, b.tableOpts()), &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row},
 		},
 	})
-	return nil
+	if err != nil {
+		return 0, err
+	}
+	return msg.MessageId, nil
+}
+
+// EditMessageText edits an existing message's text and removes buttons.
+func (b *Bot) EditMessageText(msgID int64, text string) error {
+	chatID := b.DefaultChatID()
+	if chatID == 0 {
+		b.chatMu.Lock()
+		chatID = b.chatID
+		b.chatMu.Unlock()
+	}
+	_, _, err := b.client.EditMessageText(
+		ConvertToTelegramHTML(text, b.tableOpts()),
+		&gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: msgID,
+			ParseMode: "HTML",
+		})
+	return err
 }
 
 // RawSendText sends a text message to the default chat without any header.

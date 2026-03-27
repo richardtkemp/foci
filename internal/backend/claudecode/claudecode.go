@@ -42,7 +42,7 @@ type Backend struct {
 	// replyFunc delivers text to the user's platform chat.
 	replyMu        sync.Mutex
 	replyFunc      func(string)
-	permPromptFunc func(string, []backend.PromptChoice)
+	permPromptFunc func(string, string, []backend.PromptChoice)
 
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
 	lastPromptMu sync.Mutex

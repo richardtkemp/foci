@@ -196,11 +196,14 @@ type ButtonChoice struct {
 }
 
 // ButtonSender is optionally implemented by Connection types that support
-// inline keyboard buttons. Use SendTextWithButtons to send a message with
-// clickable choices. If a Connection doesn't implement this, fall back to
-// plain text with the choices listed.
+// inline keyboard buttons and message editing. Platforms that implement this
+// get interactive messages (buttons with callbacks that edit the message).
 type ButtonSender interface {
-	SendTextWithButtons(text string, buttons []ButtonChoice, callbackPrefix string) error
+	// SendTextWithButtons sends a message with inline buttons.
+	// Returns the platform message ID for later editing.
+	SendTextWithButtons(text string, buttons []ButtonChoice, callbackPrefix string) (msgID int64, err error)
+	// EditMessageText edits an existing message's text (removes buttons).
+	EditMessageText(msgID int64, text string) error
 }
 
 // ConnectionManager manages platform connection instances and facet pools.
@@ -238,12 +241,6 @@ type MessageHandler interface {
 	IsProcessing() bool
 	TransformMessage(text string) string
 	Warnings() *warnings.Queue
-}
-
-// PermissionResponder is optionally implemented by MessageHandler types that
-// support backend permission prompt responses via direct keystroke.
-type PermissionResponder interface {
-	SendPermissionResponse(ctx context.Context, sessionKey string, key string) error
 }
 
 // LifecycleEvent identifies a platform lifecycle event.

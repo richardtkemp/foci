@@ -34,7 +34,7 @@ type BackendManager struct {
 
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
 	// If nil, backends fall back to plain text via SendFunc.
-	PermissionPromptFunc func(sessionKey, text string, choices []backend.PromptChoice)
+	PermissionPromptFunc func(sessionKey, text, summary string, choices []backend.PromptChoice)
 
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
@@ -95,8 +95,8 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 		})
 	}
 	if m.PermissionPromptFunc != nil {
-		be.SetPermissionPromptFunc(func(text string, choices []backend.PromptChoice) {
-			m.PermissionPromptFunc(sk, text, choices)
+		be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
+			m.PermissionPromptFunc(sk, text, summary, choices)
 		})
 	}
 

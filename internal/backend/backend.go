@@ -67,8 +67,9 @@ type PromptChoice struct {
 }
 
 // PermissionPromptFunc sends a permission prompt to the user with keyboard
-// choices. If nil, the backend falls back to sending plain text via ReplyFunc.
-type PermissionPromptFunc func(text string, choices []PromptChoice)
+// choices. summary is a short description for post-approval display (e.g.
+// "Edit memory/2026-03-27.md"). If nil, the backend falls back to plain text.
+type PermissionPromptFunc func(text, summary string, choices []PromptChoice)
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
