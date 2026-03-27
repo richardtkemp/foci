@@ -40,6 +40,13 @@ type BackendManager struct {
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
 
+	// SessionIndex persists CC session UUIDs for resume-after-restart.
+	// Nil disables persistence (resume IDs lost on restart).
+	SessionIndex *session.SessionIndex
+
+	// AgentID is used as the key prefix for state.db persistence.
+	AgentID string
+
 	// reaperStop cancels the idle reaper goroutine.
 	reaperStop context.CancelFunc
 }
@@ -65,8 +72,8 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 		return mb.be, nil
 	}
 
-	// Check if we have a saved session UUID to resume.
-	resumeID := m.getResumeID(base)
+	// Check for a saved session UUID to resume.
+	resumeID := m.loadResumeID(base)
 	m.mu.Unlock()
 
 	// Create and start a new Backend for this session.
@@ -130,6 +137,7 @@ func (m *BackendManager) Close() {
 		m.reaperStop = nil
 	}
 	for key, mb := range m.backends {
+		m.saveResumeID(key, mb.be.SessionID())
 		_ = mb.be.Close()
 		delete(m.backends, key)
 	}
@@ -142,29 +150,30 @@ func (m *BackendManager) Count() int {
 	return len(m.backends)
 }
 
-// resumeIDs stores CC session UUIDs for closed backends, keyed by sessionKeyBase.
-// These are used to resume sessions when a new message arrives.
-var (
-	resumeMu  sync.Mutex
-	resumeIDs = make(map[string]string) // sessionKeyBase → CC session UUID
-)
-
-// saveResumeID stores the CC session UUID for later resumption.
-func saveResumeID(base, sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	resumeMu.Lock()
-	defer resumeMu.Unlock()
-	resumeIDs[base] = sessionID
+// stateKey returns the agent_metadata key for a CC session UUID.
+func (m *BackendManager) stateKey(base string) string {
+	return "cc_session:" + base
 }
 
-// getResumeID returns and clears a saved CC session UUID.
-func (m *BackendManager) getResumeID(base string) string {
-	resumeMu.Lock()
-	defer resumeMu.Unlock()
-	id := resumeIDs[base]
-	delete(resumeIDs, base)
+// saveResumeID persists the CC session UUID to state.db.
+func (m *BackendManager) saveResumeID(base, sessionID string) {
+	if sessionID == "" || m.SessionIndex == nil {
+		return
+	}
+	if err := m.SessionIndex.SetAgentMetadata(m.AgentID, m.stateKey(base), sessionID); err != nil {
+		log.Warnf("backend", "save resume ID for %s: %v", base, err)
+	}
+}
+
+// loadResumeID reads a saved CC session UUID from state.db.
+func (m *BackendManager) loadResumeID(base string) string {
+	if m.SessionIndex == nil {
+		return ""
+	}
+	id, err := m.SessionIndex.GetAgentMetadata(m.AgentID, m.stateKey(base))
+	if err != nil {
+		return ""
+	}
 	return id
 }
 
@@ -198,8 +207,7 @@ func (m *BackendManager) closeIdle(timeout time.Duration) {
 		if now.Sub(mb.lastActive) < timeout {
 			continue
 		}
-		// Save the CC session UUID for resumption.
-		saveResumeID(base, mb.be.SessionID())
+		m.saveResumeID(base, mb.be.SessionID())
 		log.Infof("backend", "closing idle backend %s (idle %s, session %s)",
 			base, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
 		_ = mb.be.Close()

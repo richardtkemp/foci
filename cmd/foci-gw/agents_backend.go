@@ -49,6 +49,8 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	}
 
 	ag.BackendManager = &agent.BackendManager{
+		SessionIndex: p.sessionIndex,
+		AgentID:      agentID,
 		NewBackend: func() (backend.Backend, error) {
 			return backend.New(backendName, backendConfig)
 		},
