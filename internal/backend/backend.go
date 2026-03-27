@@ -47,9 +47,13 @@ type Backend interface {
 	// discovers its session ID. Used to persist the ID for resume-after-restart.
 	SetOnSessionReady(fn func(sessionID string))
 
-	// SendKeystroke sends a single keypress to the agent's TUI.
+	// SendKeystroke sends a single literal keypress to the agent's TUI.
 	// Used for permission prompt responses where paste+Enter doesn't work.
 	SendKeystroke(ctx context.Context, key string) error
+
+	// SendSpecialKey sends a special key sequence (e.g. "Escape", "C-c", "C-u").
+	// Unlike SendKeystroke, the key name is interpreted by tmux, not sent literally.
+	SendSpecialKey(ctx context.Context, key string) error
 
 	// SessionID returns the coding agent's session identifier (e.g. CC's UUID).
 	// Used to resume sessions after idle shutdown. Empty if unknown.
