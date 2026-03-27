@@ -43,6 +43,10 @@ type Backend interface {
 	// backend falls back to plain text via ReplyFunc.
 	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
+	// SetOnSessionReady sets a callback fired once when the backend
+	// discovers its session ID. Used to persist the ID for resume-after-restart.
+	SetOnSessionReady(fn func(sessionID string))
+
 	// SendKeystroke sends a single keypress to the agent's TUI.
 	// Used for permission prompt responses where paste+Enter doesn't work.
 	SendKeystroke(ctx context.Context, key string) error

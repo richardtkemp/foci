@@ -50,6 +50,12 @@ func (b *Backend) SetPermissionPromptFunc(fn backend.PermissionPromptFunc) {
 	b.permPromptFunc = fn
 }
 
+func (b *Backend) SetOnSessionReady(fn func(string)) {
+	b.replyMu.Lock()
+	defer b.replyMu.Unlock()
+	b.onSessionReady = fn
+}
+
 func (b *Backend) SessionID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

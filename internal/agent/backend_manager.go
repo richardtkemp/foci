@@ -99,6 +99,9 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 			m.PermissionPromptFunc(sk, text, summary, choices)
 		})
 	}
+	be.SetOnSessionReady(func(sessionID string) {
+		m.saveResumeID(base, sessionID)
+	})
 
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
