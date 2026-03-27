@@ -44,6 +44,12 @@ func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) {
 	b.replyFunc = fn
 }
 
+func (b *Backend) SetPermissionPromptFunc(fn backend.PermissionPromptFunc) {
+	b.replyMu.Lock()
+	defer b.replyMu.Unlock()
+	b.permPromptFunc = fn
+}
+
 func (b *Backend) SessionID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

@@ -66,6 +66,23 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			}
 			_ = platform.SendText(conn, text)
 		},
+		PermissionPromptFunc: func(sessionKey, text string, choices []backend.PromptChoice) {
+			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+			if conn == nil {
+				return
+			}
+			// Use inline keyboard if the platform supports it.
+			if bs, ok := conn.(platform.ButtonSender); ok {
+				var buttons []platform.ButtonChoice
+				for _, c := range choices {
+					buttons = append(buttons, platform.ButtonChoice{Label: c.Label, Data: c.Data})
+				}
+				_ = bs.SendTextWithButtons(text, buttons, "perm:")
+				return
+			}
+			// Fallback: plain text with numbered choices.
+			_ = platform.SendText(conn, text+"\n\nReply with your choice (1, 2, 3, etc.)")
+		},
 		IdleTimeout: idleTimeout,
 	}
 

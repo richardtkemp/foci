@@ -37,10 +37,10 @@ type Backend struct {
 	agentID        string                // foci agent ID
 	workDir        string                // workspace directory
 
-	// replyFunc delivers text to the user's platform chat. Set once via
-	// SetReplyFunc when the session/connection is established.
-	replyMu   sync.Mutex
-	replyFunc func(string)
+	// replyFunc delivers text to the user's platform chat.
+	replyMu        sync.Mutex
+	replyFunc      func(string)
+	permPromptFunc func(string, []backend.PromptChoice)
 
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
 	lastPromptMu sync.Mutex

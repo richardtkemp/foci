@@ -35,9 +35,13 @@ type Backend interface {
 
 	// SetReplyFunc sets the function used to deliver text to the user's
 	// platform chat. Called when the session/connection is known. The backend
-	// uses this for all asynchronous output (streamed responses, permission
-	// prompts, etc.).
+	// uses this for all asynchronous output (streamed responses, etc.).
 	SetReplyFunc(fn ReplyFunc)
+
+	// SetPermissionPromptFunc sets the function used to send permission
+	// prompts with inline keyboard choices. Optional — if not set, the
+	// backend falls back to plain text via ReplyFunc.
+	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
 	// SessionID returns the coding agent's session identifier (e.g. CC's UUID).
 	// Used to resume sessions after idle shutdown. Empty if unknown.
@@ -51,6 +55,16 @@ type Backend interface {
 // so the backend can deliver asynchronous output (session file watcher events,
 // permission prompts, etc.) without depending on per-turn context.
 type ReplyFunc func(text string)
+
+// PromptChoice represents a choice in a permission prompt.
+type PromptChoice struct {
+	Label string // button text (e.g. "Yes", "No")
+	Data  string // value to send to the pane (e.g. "1", "2")
+}
+
+// PermissionPromptFunc sends a permission prompt to the user with keyboard
+// choices. If nil, the backend falls back to sending plain text via ReplyFunc.
+type PermissionPromptFunc func(text string, choices []PromptChoice)
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {

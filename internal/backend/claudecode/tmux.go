@@ -156,21 +156,32 @@ func (p *tmuxPane) capturePane(ctx context.Context) (string, error) {
 	return out, nil
 }
 
+// permissionPrompt holds a parsed CC permission prompt.
+type permissionPrompt struct {
+	Description string            // tool/action description (above "Do you want to")
+	Choices     []promptChoice    // numbered choices
+	Raw         string            // full block text (for dedup)
+}
+
+type promptChoice struct {
+	Number string // "1", "2", "3"
+	Label  string // "Yes", "Yes, allow all edits in tmp/...", "No"
+}
+
 // extractPermissionPrompt checks if the pane is showing a CC permission prompt.
-// Returns the prompt text (tool description + choices) if detected, empty string otherwise.
 // Requires BOTH "Do you want to " AND "Esc to cancel" to be present — this avoids
-// false positives from tool output, commit messages, or other text containing similar phrases.
-func extractPermissionPrompt(paneContent string) string {
+// false positives from tool output, commit messages, or other text.
+func extractPermissionPrompt(paneContent string) *permissionPrompt {
 	if !strings.Contains(paneContent, "Esc to cancel") {
-		return ""
+		return nil
 	}
 	idx := strings.Index(paneContent, "Do you want to ")
 	if idx < 0 {
-		return ""
+		return nil
 	}
 
-	// Walk backward to find the start of the permission block.
-	// CC renders a horizontal rule (─) above the prompt.
+	// Walk backward from the "Do you want to" line to find the description.
+	// CC renders a horizontal rule (─) above the prompt block.
 	start := idx
 	lines := strings.Split(paneContent[:idx], "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -183,7 +194,7 @@ func extractPermissionPrompt(paneContent string) string {
 		}
 	}
 
-	// Walk forward to capture the choices after the prompt.
+	// Walk forward to capture choices after the prompt question.
 	rest := paneContent[idx:]
 	end := strings.Index(rest, "Esc to cancel")
 	if end < 0 {
@@ -191,7 +202,34 @@ func extractPermissionPrompt(paneContent string) string {
 	}
 
 	block := strings.TrimSpace(paneContent[start : idx+end])
-	return block
+
+	// Extract the description: everything from start to the "Do you want to" line.
+	desc := strings.TrimSpace(paneContent[start:idx])
+
+	// Parse numbered choices from the block. CC formats them as:
+	//   1. Yes
+	//   2. Yes, allow all edits in tmp/ during this session (shift+tab)
+	//   3. No
+	var choices []promptChoice
+	for _, line := range strings.Split(rest[:end], "\n") {
+		line = strings.TrimSpace(line)
+		// Strip the ❯ cursor prefix if present.
+		line = strings.TrimPrefix(line, "❯ ")
+		line = strings.TrimSpace(line)
+		// Match "N. label" pattern.
+		if len(line) >= 3 && line[0] >= '1' && line[0] <= '9' && line[1] == '.' && line[2] == ' ' {
+			choices = append(choices, promptChoice{
+				Number: string(line[0]),
+				Label:  line[3:],
+			})
+		}
+	}
+
+	return &permissionPrompt{
+		Description: desc,
+		Choices:     choices,
+		Raw:         block,
+	}
 }
 
 // kill destroys the tmux session.

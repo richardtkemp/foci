@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -91,6 +92,26 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	if strings.HasPrefix(cq.Data, "cmd:") {
 		cmdText := cq.Data[4:] // strip "cmd:" prefix
 		b.handleCommandCallback(ctx, chatID, cq.Message.GetMessageId(), cmdText)
+		return
+	}
+
+	// Permission prompt callbacks: "perm:1", "perm:2", etc.
+	// Route the choice number as a regular message to the agent.
+	if strings.HasPrefix(cq.Data, "perm:") {
+		choice := cq.Data[5:]
+		b.mq.Enqueue(platform.QueuedMessage{
+			Text:   choice,
+			ChatID: chatID,
+			UserID: fmt.Sprintf("%d", cq.From.Id),
+		})
+		// Edit the permission message to show the choice was made.
+		_, _, _ = b.client.EditMessageText(
+			ConvertToTelegramHTML("✅ Selected: "+choice, b.tableOpts()),
+			&gotgbot.EditMessageTextOpts{
+				ChatId:    chatID,
+				MessageId: cq.Message.GetMessageId(),
+				ParseMode: "HTML",
+			})
 		return
 	}
 
