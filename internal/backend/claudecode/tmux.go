@@ -52,22 +52,30 @@ func (p *tmuxPane) create(ctx context.Context, claudeArgs []string, envVars ...s
 }
 
 // sendText sends text to the pane followed by Enter.
-// Uses load-buffer/paste-buffer for reliable handling of long and multi-line input.
+// Short inputs (≤10 chars, single line) use send-keys -l for TUI compatibility.
+// Longer inputs use load-buffer/paste-buffer for reliability.
 func (p *tmuxPane) sendText(ctx context.Context, text string) error {
 	target := p.target()
 
 	if text != "" {
-		// Pipe text into tmux's buffer via stdin (load-buffer -), then paste.
-		// No temp file needed — works on Linux and macOS.
-		if err := p.loadBufferFromStdin(ctx, text); err != nil {
-			return fmt.Errorf("load-buffer: %w", err)
-		}
-		if _, err := p.runTmux(ctx, "paste-buffer", "-t", target); err != nil {
-			return fmt.Errorf("paste-buffer: %w", err)
+		if len(text) <= 10 && !strings.Contains(text, "\n") {
+			// Short single-line input: use send-keys -l (literal) which works
+			// correctly with TUI selection prompts that consume keypresses.
+			if _, err := p.runTmux(ctx, "send-keys", "-t", target, "-l", text); err != nil {
+				return fmt.Errorf("send-keys literal: %w", err)
+			}
+		} else {
+			// Longer or multi-line input: pipe via load-buffer/paste-buffer.
+			if err := p.loadBufferFromStdin(ctx, text); err != nil {
+				return fmt.Errorf("load-buffer: %w", err)
+			}
+			if _, err := p.runTmux(ctx, "paste-buffer", "-t", target); err != nil {
+				return fmt.Errorf("paste-buffer: %w", err)
+			}
 		}
 	}
 
-	// Brief pause so the TUI can process pasted input before Enter.
+	// Brief pause so the TUI can process input before Enter.
 	time.Sleep(200 * time.Millisecond)
 	if _, err := p.runTmux(ctx, "send-keys", "-t", target, "Enter"); err != nil {
 		return fmt.Errorf("send-keys Enter: %w", err)
@@ -76,8 +84,17 @@ func (p *tmuxPane) sendText(ctx context.Context, text string) error {
 }
 
 // sendSpecial sends a special key sequence (e.g. "C-c" for Ctrl-C).
+// Uses send-keys without -l so tmux interprets the key name.
 func (p *tmuxPane) sendSpecial(ctx context.Context, key string) error {
 	_, err := p.runTmux(ctx, "send-keys", "-t", p.target(), key)
+	return err
+}
+
+// sendKeystroke sends a single literal character as a keypress.
+// Unlike sendText (which uses paste-buffer), this sends via send-keys -l
+// without Enter — suitable for TUI selection prompts that react to keypresses.
+func (p *tmuxPane) sendKeystroke(ctx context.Context, key string) error {
+	_, err := p.runTmux(ctx, "send-keys", "-t", p.target(), "-l", key)
 	return err
 }
 

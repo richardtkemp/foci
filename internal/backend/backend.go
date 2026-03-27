@@ -43,6 +43,10 @@ type Backend interface {
 	// backend falls back to plain text via ReplyFunc.
 	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
+	// SendKeystroke sends a single keypress to the agent's TUI.
+	// Used for permission prompt responses where paste+Enter doesn't work.
+	SendKeystroke(ctx context.Context, key string) error
+
 	// SessionID returns the coding agent's session identifier (e.g. CC's UUID).
 	// Used to resume sessions after idle shutdown. Empty if unknown.
 	SessionID() string

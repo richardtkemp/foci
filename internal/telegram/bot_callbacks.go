@@ -96,14 +96,13 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 	}
 
 	// Permission prompt callbacks: "perm:1", "perm:2", etc.
-	// Route the choice number as a regular message to the agent.
+	// Send the choice as a raw keystroke to the backend's TUI.
 	if strings.HasPrefix(cq.Data, "perm:") {
 		choice := cq.Data[5:]
-		b.mq.Enqueue(platform.QueuedMessage{
-			Text:   choice,
-			ChatID: chatID,
-			UserID: fmt.Sprintf("%d", cq.From.Id),
-		})
+		if pr, ok := b.handler.(platform.PermissionResponder); ok {
+			sk := b.sessionKeyForMsg(chatID)
+			_ = pr.SendPermissionResponse(ctx, sk, choice)
+		}
 		// Edit the permission message to show the choice was made.
 		_, _, _ = b.client.EditMessageText(
 			ConvertToTelegramHTML("✅ Selected: "+choice, b.tableOpts()),

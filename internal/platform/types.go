@@ -240,6 +240,12 @@ type MessageHandler interface {
 	Warnings() *warnings.Queue
 }
 
+// PermissionResponder is optionally implemented by MessageHandler types that
+// support backend permission prompt responses via direct keystroke.
+type PermissionResponder interface {
+	SendPermissionResponse(ctx context.Context, sessionKey string, key string) error
+}
+
 // LifecycleEvent identifies a platform lifecycle event.
 type LifecycleEvent int
 
