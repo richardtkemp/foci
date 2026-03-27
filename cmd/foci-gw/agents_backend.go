@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"foci/internal/agent"
 	"foci/internal/backend"
 	"foci/internal/log"
@@ -37,6 +39,14 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	// Wire BackendManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
+	// Parse idle timeout from config (default 24h).
+	var idleTimeout time.Duration
+	if v, ok := backendConfig["idle_timeout"].(string); ok && v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			idleTimeout = d
+		}
+	}
+
 	ag.BackendManager = &agent.BackendManager{
 		NewBackend: func() (backend.Backend, error) {
 			return backend.New(backendName, backendConfig)
@@ -55,6 +65,7 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			}
 			_ = conn.SendText(text)
 		},
+		IdleTimeout: idleTimeout,
 	}
 
 	return shared.finalize(ag, finalizeParams{

@@ -44,6 +44,12 @@ func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) {
 	b.replyFunc = fn
 }
 
+func (b *Backend) SessionID() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionID
+}
+
 func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	b.mu.Lock()
 	pane := b.pane

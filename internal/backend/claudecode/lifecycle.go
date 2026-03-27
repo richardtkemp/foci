@@ -37,6 +37,9 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
+	if opts.ResumeSessionID != "" {
+		args = append(args, "--resume", opts.ResumeSessionID)
+	}
 
 	// Permission handling. skip_permissions bypasses all prompts (unattended).
 	// allowed_tools pre-approves specific tools but CC may still prompt for

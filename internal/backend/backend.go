@@ -39,6 +39,10 @@ type Backend interface {
 	// prompts, etc.).
 	SetReplyFunc(fn ReplyFunc)
 
+	// SessionID returns the coding agent's session identifier (e.g. CC's UUID).
+	// Used to resume sessions after idle shutdown. Empty if unknown.
+	SessionID() string
+
 	// Close shuts down the agent subprocess gracefully.
 	Close() error
 }
@@ -50,11 +54,12 @@ type ReplyFunc func(text string)
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
-	WorkDir      string // agent workspace directory (becomes cwd)
-	SystemPrompt string // concatenated character/system files
-	Model        string // initial model (e.g. "opus", "sonnet")
-	AgentID      string // foci agent ID
-	Label        string // unique label for this instance (used for tmux window naming); falls back to AgentID
+	WorkDir         string // agent workspace directory (becomes cwd)
+	SystemPrompt    string // concatenated character/system files
+	Model           string // initial model (e.g. "opus", "sonnet")
+	AgentID         string // foci agent ID
+	Label           string // unique label for this instance (used for tmux window naming); falls back to AgentID
+	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
 }
 
 // EventHandler receives streaming events during a turn.
