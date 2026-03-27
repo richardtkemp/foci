@@ -11,6 +11,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/startup"
 )
 
 type sessionInfra struct {
@@ -38,13 +39,6 @@ func initSessions(cfg *config.Config) sessionInfra {
 	}
 	log.Debugf("main", "session store dir=%s", cfg.Sessions.Dir)
 
-	// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts)
-	if n, err := sessions.RepairOrphans(); err != nil {
-		log.Warnf("main", "session repair: %v", err)
-	} else if n > 0 {
-		log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
-	}
-
 	// State database (SQLite-backed state for sessions, agents, chats, and system)
 	stateDBPath := cfg.DataPath("state.db")
 	sessionIndex, err := session.NewSessionIndex(stateDBPath)
@@ -53,14 +47,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 	} else {
 		cleanups = append(cleanups, func() { _ = sessionIndex.Close() })
 
-		// Rebuild index from disk on startup
-		if n, err := sessionIndex.Rebuild(sessions); err != nil {
-			log.Warnf("main", "rebuild session index: %v", err)
-		} else {
-			log.Infof("main", "session index: %d sessions indexed", n)
-		}
-
-		// Wire lifecycle events from session store to index
+		// Wire lifecycle events BEFORE repair so repair events update the index.
 		sessions.OnSessionEvent(func(e session.SessionEvent) {
 			switch e.Status {
 			case session.SessionStatusActive:
@@ -121,6 +108,40 @@ func initSessions(cfg *config.Config) sessionInfra {
 				sessionIndex.UpdateStatus(e.Key, session.SessionStatusCleared)
 			}
 		})
+
+		// Repair sessions with orphaned tool_use blocks (from mid-tool-call restarts).
+		// Runs after event handler is wired so repairs update the index.
+		if n, err := sessions.RepairOrphans(); err != nil {
+			log.Warnf("main", "session repair: %v", err)
+		} else if n > 0 {
+			log.Infof("main", "repaired %d orphaned session(s) with interrupted tool calls", n)
+		}
+
+		// Rebuild the session index — skip if last shutdown was clean and the
+		// DB already has entries (the lifecycle hooks kept it current).
+		cleanShutdown := startup.WasCleanShutdown(sessionIndex)
+		indexCount := sessionIndex.IndexCount()
+		if cleanShutdown && indexCount > 0 {
+			log.Infof("main", "session index: %d sessions (from db, clean shutdown)", indexCount)
+		} else {
+			reason := "crash/reboot"
+			if indexCount == 0 {
+				reason = "empty index"
+			}
+			log.Infof("main", "session index: rebuilding (%s)", reason)
+			if n, err := sessionIndex.Rebuild(sessions); err != nil {
+				log.Warnf("main", "rebuild session index: %v", err)
+			} else {
+				log.Infof("main", "session index: %d sessions indexed", n)
+			}
+		}
+
+		// Background integrity sweep — prune index entries for deleted files.
+		go func() {
+			if n := sessionIndex.PruneOrphans(); n > 0 {
+				log.Infof("main", "session index: pruned %d orphan entries", n)
+			}
+		}()
 
 		// Start archive sweep goroutine
 		archiveAfter, err := time.ParseDuration(cfg.Sessions.ArchiveAfter)

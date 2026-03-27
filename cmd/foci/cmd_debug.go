@@ -39,6 +39,8 @@ func cmdDebug(args []string) error {
 	switch subcmd {
 	case "session":
 		return cmdDebugSession(args[1:], configPath)
+	case "rebuild-index":
+		return cmdDebugRebuildIndex(configPath)
 	default:
 		return fmt.Errorf("unknown debug subcommand: %s", subcmd)
 	}
@@ -384,11 +386,46 @@ func printNewContent(path string, offset int64, format outputFormat) (int64, err
 	return newOffset, nil
 }
 
+func cmdDebugRebuildIndex(configPath string) error {
+	if configPath == "" {
+		configPath = envDefault("", "FOCI_CONFIG")
+	}
+	if configPath == "" {
+		home, _ := os.UserHomeDir()
+		configPath = filepath.Join(home, "config", "foci.toml")
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config %s: %w", configPath, err)
+	}
+
+	sessions := session.NewStore(cfg.Sessions.Dir)
+	idx, err := session.NewSessionIndex(cfg.DataPath("state.db"))
+	if err != nil {
+		return fmt.Errorf("open state.db: %w", err)
+	}
+	defer idx.Close()
+
+	fmt.Fprintf(os.Stderr, "Rebuilding session index from %s...\n", cfg.Sessions.Dir)
+	n, err := idx.Rebuild(sessions)
+	if err != nil {
+		return fmt.Errorf("rebuild: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Done: %d sessions indexed\n", n)
+
+	pruned := idx.PruneOrphans()
+	if pruned > 0 {
+		fmt.Fprintf(os.Stderr, "Pruned %d orphan entries\n", pruned)
+	}
+	return nil
+}
+
 func debugUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: foci debug <subcommand> [args...]
 
 Subcommands:
-  session <key>    Tail a session file with formatted output
+  session <key>        Tail a session file with formatted output
+  rebuild-index        Rebuild session index from disk
 
 Session key formats:
   scout                        Agent name (resolves to most recent active session)

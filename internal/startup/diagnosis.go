@@ -116,6 +116,22 @@ func RecordCleanShutdown(idx *session.SessionIndex) error {
 	return idx.SetSystemState(systemStateKeyLastCleanShutdown, strconv.FormatInt(time.Now().Unix(), 10))
 }
 
+// WasCleanShutdown returns true if the last shutdown was clean (recorded
+// within the clean window). Used to decide whether to skip the session
+// index rebuild on startup.
+func WasCleanShutdown(idx *session.SessionIndex) bool {
+	raw, err := idx.GetSystemState(systemStateKeyLastCleanShutdown)
+	if err != nil || raw == "" {
+		return false
+	}
+	ts, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return false
+	}
+	shutdownTime := time.Unix(ts, 0)
+	return time.Since(shutdownTime) < cleanShutdownWindow
+}
+
 func getSystemUptime() (time.Duration, error) {
 	data, err := os.ReadFile("/proc/uptime")
 	if err != nil {
