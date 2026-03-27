@@ -145,10 +145,8 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 		return fmt.Errorf("init watcher: %w", err)
 	}
 
-	// When CC emits stop_reason: "tool_use", it may be blocked waiting
-	// for permission approval. Poll the tmux pane and notify the user
-	// via their platform so they can approve or deny.
-	w.onToolUseBlock = func() {
+	// Periodically check the tmux pane for permission prompts.
+	w.onPermissionCheck = func() {
 		b.checkPermissionPrompt()
 	}
 
@@ -172,51 +170,41 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	return nil
 }
 
-// checkPermissionPrompt polls the tmux pane for a CC permission prompt
-// and forwards it to the user via the platform. The user's reply will
-// arrive as a normal message and be sent to the pane via SendTurn.
-// Deduplicates: won't send the same prompt text twice in a row.
+// checkPermissionPrompt captures the tmux pane and checks for a CC permission
+// prompt. If found (and not a duplicate), forwards it to the user via the
+// platform. Called periodically by the watcher loop.
 func (b *Backend) checkPermissionPrompt() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	pane := b.pane
 	if pane == nil {
 		return
 	}
 
-	for i := 0; i < 10; i++ {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(500 * time.Millisecond):
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
-		content, err := pane.capturePane(ctx)
-		if err != nil {
-			continue
-		}
-		prompt := extractPermissionPrompt(content)
-		if prompt == "" {
-			continue
-		}
-
-		// Skip if this is the same prompt we already sent.
-		b.lastPromptMu.Lock()
-		if prompt == b.lastPrompt {
-			b.lastPromptMu.Unlock()
-			return
-		}
-		b.lastPrompt = prompt
-		b.lastPromptMu.Unlock()
-
-		b.replyMu.Lock()
-		fn := b.replyFunc
-		b.replyMu.Unlock()
-		if fn != nil {
-			fn("⚠️ Claude Code needs permission:\n\n" + prompt + "\n\nReply with your choice (1, 2, 3, etc.)")
-		}
+	content, err := pane.capturePane(ctx)
+	if err != nil {
 		return
+	}
+	prompt := extractPermissionPrompt(content)
+	if prompt == "" {
+		return
+	}
+
+	// Skip if this is the same prompt we already sent.
+	b.lastPromptMu.Lock()
+	if prompt == b.lastPrompt {
+		b.lastPromptMu.Unlock()
+		return
+	}
+	b.lastPrompt = prompt
+	b.lastPromptMu.Unlock()
+
+	b.replyMu.Lock()
+	fn := b.replyFunc
+	b.replyMu.Unlock()
+	if fn != nil {
+		fn("⚠️ Claude Code needs permission:\n\n" + prompt + "\n\nReply with your choice (1, 2, 3, etc.)")
 	}
 }
 

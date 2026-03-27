@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"foci/internal/backend"
 
@@ -23,10 +24,10 @@ type sessionWatcher struct {
 	offset  int64                // current read position in the file
 	handler *backend.EventHandler // current turn's handler (nil between turns)
 
-	// onToolUseBlock is called when the session shows stop_reason: "tool_use",
-	// indicating CC may be waiting for permission. The Backend sets this to
-	// poll the tmux pane and auto-approve.
-	onToolUseBlock func()
+	// onPermissionCheck is called periodically to detect permission prompts
+	// in the tmux pane. Decoupled from session events because prompts can
+	// appear at any time (after sub-agent completion, slow tools, etc.).
+	onPermissionCheck func()
 
 	// turnState tracks the current turn's accumulated text and tool calls.
 	turnText  string
@@ -64,9 +65,14 @@ func newSessionWatcher(path string) (*sessionWatcher, error) {
 }
 
 // watchLoop blocks until the context is cancelled, reading new JSONL entries
-// as they are appended to the session file. The handler is swapped per-turn
-// via setHandler; the fsnotify watcher lives for the lifetime of the backend.
+// as they are appended to the session file. Also periodically fires
+// onPermissionCheck (if set) to detect permission prompts in the tmux pane.
 func (w *sessionWatcher) watchLoop(ctx context.Context) {
+	// Periodic permission check — catches prompts that appear after tool
+	// execution starts (sub-agents, slow tools, etc.).
+	permTicker := time.NewTicker(3 * time.Second)
+	defer permTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -82,6 +88,10 @@ func (w *sessionWatcher) watchLoop(ctx context.Context) {
 				if h != nil {
 					w.readNew(h)
 				}
+			}
+		case <-permTicker.C:
+			if w.onPermissionCheck != nil {
+				w.onPermissionCheck()
 			}
 		case _, ok := <-w.fsnot.Errors:
 			if !ok {
@@ -173,15 +183,10 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 		}
 	}
 
-	// CC is waiting for tool execution (may need permission approval).
 	stopReason := ""
 	if entry.Message.StopReason != nil {
 		stopReason = *entry.Message.StopReason
 	}
-	if stopReason == "tool_use" && w.onToolUseBlock != nil {
-		go w.onToolUseBlock()
-	}
-
 	if stopReason == "end_turn" {
 		result := &backend.TurnResult{
 			Text:      w.turnText,
