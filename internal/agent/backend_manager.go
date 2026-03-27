@@ -101,7 +101,30 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	}
 
 	if err := be.Start(ctx, opts); err != nil {
-		return nil, fmt.Errorf("start backend for %s: %w", base, err)
+		// If resume failed (e.g. stale UUID), retry without resume.
+		if resumeID != "" {
+			log.Warnf("backend", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, base, err)
+			_ = be.Close()
+			be, err = m.NewBackend()
+			if err != nil {
+				return nil, fmt.Errorf("create backend for %s (retry): %w", base, err)
+			}
+			// Re-set reply functions on the new backend.
+			if m.SendFunc != nil {
+				be.SetReplyFunc(func(text string) { m.SendFunc(sk, text) })
+			}
+			if m.PermissionPromptFunc != nil {
+				be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
+					m.PermissionPromptFunc(sk, text, summary, choices)
+				})
+			}
+			opts.ResumeSessionID = ""
+			if err := be.Start(ctx, opts); err != nil {
+				return nil, fmt.Errorf("start backend for %s (no resume): %w", base, err)
+			}
+		} else {
+			return nil, fmt.Errorf("start backend for %s: %w", base, err)
+		}
 	}
 
 	m.mu.Lock()
