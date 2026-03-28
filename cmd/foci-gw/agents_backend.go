@@ -75,6 +75,8 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			Model:        model,
 			AgentID:      agentID,
 			ExecRegistry: registry,
+			TmuxCols:     p.cfg.Tools.TmuxCols,
+			TmuxRows:     p.cfg.Tools.TmuxRows,
 		},
 		SendFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)

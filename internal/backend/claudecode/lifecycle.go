@@ -58,6 +58,8 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		socketPath: b.socketPath,
 		windowName: windowName,
 		workDir:    opts.WorkDir,
+		cols:       opts.TmuxCols,
+		rows:       opts.TmuxRows,
 	}
 
 	// Create the exec bridge before the pane so we can inject env vars.

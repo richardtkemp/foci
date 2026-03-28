@@ -18,6 +18,8 @@ type tmuxPane struct {
 	windowName string // tmux window name (e.g. "cc-main")
 	workDir    string // working directory for the pane
 	pid        int    // PID of the shell process in the pane (0 = unknown)
+	cols       int    // window width (0 = tmux default 80)
+	rows       int    // window height (0 = tmux default 24)
 }
 
 // create creates a new tmux session running the claude command.
@@ -39,6 +41,9 @@ func (p *tmuxPane) create(ctx context.Context, claudeArgs []string, envVars ...s
 	// Each backend gets its own tmux session (not just a window) to prevent
 	// any cross-talk between sessions (pane capture, window listing, etc.).
 	args := []string{"new-session", "-d", "-s", p.windowName}
+	if p.cols > 0 && p.rows > 0 {
+		args = append(args, "-x", fmt.Sprintf("%d", p.cols), "-y", fmt.Sprintf("%d", p.rows))
+	}
 	if p.workDir != "" {
 		args = append(args, "-c", p.workDir)
 	}
