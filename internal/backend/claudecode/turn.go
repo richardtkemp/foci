@@ -172,15 +172,18 @@ func (b *Backend) recordPreSendOffset() {
 	}
 
 	// Try to find the session file via the existing discovery path.
+	// If we can't find it, default to -1 (tail from end of file) rather
+	// than 0 (beginning) — replaying the entire session history would
+	// flood the user with every past response.
 	childPID, err := findChildPID(b.pane.pid)
 	if err != nil {
-		b.preSendOffset = 0 // CC not started yet — read from beginning
-		return
+		log.Warnf("backend/cc", "recordPreSendOffset: findChildPID(%d) failed: %v", b.pane.pid, err)
+		return // preSendOffset stays at -1 (default)
 	}
 	_, jsonlPath, err := discoverSessionFile(childPID, b.workDir)
 	if err != nil {
-		b.preSendOffset = 0 // session file doesn't exist yet
-		return
+		log.Warnf("backend/cc", "recordPreSendOffset: discoverSessionFile(pid=%d) failed: %v", childPID, err)
+		return // preSendOffset stays at -1 (default)
 	}
 	info, err := os.Stat(jsonlPath)
 	if err != nil {
