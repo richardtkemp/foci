@@ -10,14 +10,15 @@ import (
 
 // turnTextParts holds the common text components assembled for any turn,
 // regardless of whether it's sent to an API or a coding agent backend.
+// Nudges are NOT included — each transport handles nudge injection
+// separately via TurnContract.InjectNudges.
 type turnTextParts struct {
-	MetaPrefix     string
-	Reminders      string
-	StateDashboard string
-	ManaRestore    string
+	MetaPrefix      string
+	Reminders       string
+	StateDashboard  string
+	ManaRestore     string
 	AttachmentPaths string
-	Nudges         []string
-	UserTexts      []string // texts[0] is primary, texts[1:] are follow-ups
+	UserTexts       []string // texts[0] is primary, texts[1:] are follow-ups
 }
 
 // composeTurnText assembles the common text parts for a turn. Used by both
@@ -47,17 +48,6 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 		p.AttachmentPaths = strings.Join(attachParts, "\n")
 	}
 
-	// Nudges.
-	if a.Nudger != nil && len(texts) > 0 {
-		a.Nudger.StartTurn(texts[0])
-		for _, r := range a.Nudger.CheckTurnInterval() {
-			p.Nudges = append(p.Nudges, nudgeHeader+r)
-		}
-		for _, r := range a.Nudger.CheckRegex() {
-			p.Nudges = append(p.Nudges, nudgeHeader+r)
-		}
-	}
-
 	p.UserTexts = texts
 	return p
 }
@@ -81,7 +71,6 @@ func (p turnTextParts) JoinPrompt() string {
 	if p.AttachmentPaths != "" {
 		parts = append(parts, p.AttachmentPaths)
 	}
-	parts = append(parts, p.Nudges...)
 	if len(p.UserTexts) > 0 {
 		parts = append(parts, p.UserTexts[0])
 		for _, t := range p.UserTexts[1:] {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"foci/internal/backend"
@@ -50,9 +51,25 @@ func (t *BackendTransport) LoadAndRepairSession(ts *TurnState) error { return ni
 // BuildSystemAndTools is a no-op — system prompt and tools are set at Start time.
 func (t *BackendTransport) BuildSystemAndTools(ts *TurnState) {}
 
-// InjectNudges is a no-op — composeTurnText already includes nudges
-// in the prompt string (via turnTextParts.Nudges → JoinPrompt).
-func (t *BackendTransport) InjectNudges(ts *TurnState) {}
+// InjectNudges prepends behavioral nudge reminders to the prompt string.
+func (t *BackendTransport) InjectNudges(ts *TurnState) {
+	a := t.agent
+	if a.Nudger == nil || len(ts.Texts) == 0 {
+		return
+	}
+	a.Nudger.StartTurn(ts.Texts[0])
+
+	var nudges []string
+	for _, r := range a.Nudger.CheckTurnInterval() {
+		nudges = append(nudges, nudgeHeader+r)
+	}
+	for _, r := range a.Nudger.CheckRegex() {
+		nudges = append(nudges, nudgeHeader+r)
+	}
+	if len(nudges) > 0 {
+		ts.Prompt = strings.Join(nudges, "\n") + "\n" + ts.Prompt
+	}
+}
 
 // --- Phase 3: Core execution ---
 

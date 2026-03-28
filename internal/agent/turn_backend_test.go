@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -71,7 +72,7 @@ func TestBackendTransport_ComposePrompt(t *testing.T) {
 		t.Fatal("Prompt should not be empty")
 	}
 	// The prompt should contain the user text.
-	if !containsSubstring(ts.Prompt, "hello world") {
+	if !strings.Contains(ts.Prompt, "hello world") {
 		t.Errorf("Prompt should contain user text, got: %q", ts.Prompt)
 	}
 	// lastMessageTime should have been updated.
@@ -80,15 +81,3 @@ func TestBackendTransport_ComposePrompt(t *testing.T) {
 	}
 }
 
-func containsSubstring(s, sub string) bool {
-	return len(s) >= len(sub) && searchSubstring(s, sub)
-}
-
-func searchSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
