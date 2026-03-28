@@ -80,11 +80,23 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 		},
 		SendFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
-			if conn == nil {
-				log.Warnf("agent/"+agentID, "backend: no connection for session %s", sessionKey)
+			if conn != nil {
+				_ = platform.SendText(conn, text)
 				return
 			}
-			_ = platform.SendText(conn, text)
+			// Platform not ready yet (e.g. Discord still connecting on startup).
+			// Queue and retry until the connection is available.
+			go func() {
+				for i := 0; i < 60; i++ {
+					time.Sleep(500 * time.Millisecond)
+					conn = connMgr.ForSessionOrPrimary(sessionKey, agentID)
+					if conn != nil {
+						_ = platform.SendText(conn, text)
+						return
+					}
+				}
+				log.Warnf("agent/"+agentID, "backend: no connection for session %s after 30s, message dropped", sessionKey)
+			}()
 		},
 		PermissionPromptFunc: func(sessionKey, text, summary string, choices []backend.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
