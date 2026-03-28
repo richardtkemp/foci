@@ -219,24 +219,6 @@ func (a *Agent) ProcessingDetails() []TurnDetail {
 	return out
 }
 
-// registerTurn adds a TurnDetail and returns its ID and pointer (for tool tracking).
-func (a *Agent) registerTurn(d *TurnDetail) uint64 {
-	id := atomic.AddUint64(&a.turnIDCounter, 1)
-	a.turnDetailsMu.Lock()
-	if a.turnDetails == nil {
-		a.turnDetails = make(map[uint64]*TurnDetail)
-	}
-	a.turnDetails[id] = d
-	a.turnDetailsMu.Unlock()
-	return id
-}
-
-// unregisterTurn removes a TurnDetail by ID.
-func (a *Agent) unregisterTurn(id uint64) {
-	a.turnDetailsMu.Lock()
-	delete(a.turnDetails, id)
-	a.turnDetailsMu.Unlock()
-}
 
 // SetProcessingForTest sets the processing counter directly. Test-only.
 func (a *Agent) SetProcessingForTest(n int32) {
@@ -291,32 +273,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 }
 
 
-// toolDisplayNote returns a short system note describing whether the user can see tool results.
-func toolDisplayNote(mode string) string {
-	switch mode {
-	case "full":
-		return "[display] tool_results=visible — the user can see your tool calls, inputs, and outputs, so you may refer to those rather than restate them in full, but you should still narrate the outline of what you are doing or what you have learned."
-	case "preview":
-		return "[display] tool_results=preview — the user sees tool names and inputs briefly, but not inputs or outputs."
-	default:
-		return "[display] tool_results=hidden — the user cannot see tool calls or results. Narrate important actions and findings in your replies."
-	}
-}
-
-// logConversationSent logs an outbound conversation entry with the turn's metadata.
-func (a *Agent) logConversationSent(chatID int64, meta *TurnMetadata, sessionKey, text string) {
-	if text == "" {
-		return
-	}
-	log.Conversation(log.ConversationEntry{
-		Direction: "sent",
-		UserID:    meta.UserID,
-		Username:  meta.Username,
-		ChatID:    chatID,
-		Text:      text,
-		Session:   sessionKey,
-	})
-}
 
 // TurnResult holds the result of a single agent turn.
 // (For compaction to use.)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/config"
+	"foci/internal/log"
 	"foci/internal/provider"
 )
 
@@ -537,5 +538,77 @@ func (t *APITransport) RunCompaction(ts *TurnState) {
 		return
 	}
 	a.maybeCompact(ts.Ctx, ts.SessionKey, ts.Messages, ts.System, ts.FinalUsage, ts.SessionMeta)
+}
+
+// ---------------------------------------------------------------------------
+// API transport helpers — only called from APITransport methods above.
+// ---------------------------------------------------------------------------
+
+// logTurnLockWait logs a warning when the turn lock was held longer than the
+// configured threshold, including details about the current holder if found.
+func (a *Agent) logTurnLockWait(sessionKey string, lockDur time.Duration, waiterTrigger string) {
+	warnThreshold := a.TurnLockWarnThreshold
+	if warnThreshold <= 0 {
+		warnThreshold = 3 * time.Minute
+	}
+	if lockDur > warnThreshold && waiterTrigger != "proactive_warning" {
+		holder := ""
+		for _, td := range a.ProcessingDetails() {
+			if td.SessionKey == sessionKey {
+				holder = fmt.Sprintf(" holder_trigger=%s holder_tool=%s holder_elapsed=%s",
+					td.Trigger, td.ToolName, time.Since(td.StartTime).Truncate(time.Millisecond))
+				break
+			}
+		}
+		a.logger().Warnf("turn_lock_held session=%s waited=%s waiter_trigger=%s%s", sessionKey, lockDur, waiterTrigger, holder)
+	} else {
+		a.logger().Debugf("turn_lock_acquired session=%s waited=%s", sessionKey, lockDur)
+	}
+}
+
+// registerTurn adds a TurnDetail and returns its ID.
+func (a *Agent) registerTurn(d *TurnDetail) uint64 {
+	id := atomic.AddUint64(&a.turnIDCounter, 1)
+	a.turnDetailsMu.Lock()
+	if a.turnDetails == nil {
+		a.turnDetails = make(map[uint64]*TurnDetail)
+	}
+	a.turnDetails[id] = d
+	a.turnDetailsMu.Unlock()
+	return id
+}
+
+// unregisterTurn removes a TurnDetail by ID.
+func (a *Agent) unregisterTurn(id uint64) {
+	a.turnDetailsMu.Lock()
+	delete(a.turnDetails, id)
+	a.turnDetailsMu.Unlock()
+}
+
+// logConversationSent logs an outbound conversation entry.
+func (a *Agent) logConversationSent(chatID int64, meta *TurnMetadata, sessionKey, text string) {
+	if text == "" {
+		return
+	}
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		UserID:    meta.UserID,
+		Username:  meta.Username,
+		ChatID:    chatID,
+		Text:      text,
+		Session:   sessionKey,
+	})
+}
+
+// toolDisplayNote returns a short system note describing whether the user can see tool results.
+func toolDisplayNote(mode string) string {
+	switch mode {
+	case "full":
+		return "[display] tool_results=visible — the user can see your tool calls, inputs, and outputs, so you may refer to those rather than restate them in full, but you should still narrate the outline of what you are doing or what you have learned."
+	case "preview":
+		return "[display] tool_results=preview — the user sees tool names and inputs briefly, but not inputs or outputs."
+	default:
+		return "[display] tool_results=hidden — the user cannot see tool calls or results. Narrate important actions and findings in your replies."
+	}
 }
 
