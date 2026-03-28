@@ -479,6 +479,11 @@ func (idx *SessionIndex) PruneOrphans() int {
 		if rows.Scan(&key, &path) != nil {
 			continue
 		}
+		// Empty path = backend session (CC JSONL) that hasn't had its
+		// path populated yet. Not an orphan — skip.
+		if path == "" {
+			continue
+		}
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			orphans = append(orphans, key)
 		}
