@@ -304,22 +304,4 @@ func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
 
 // APITransport method implementations live in turn_api.go (Stage 3).
 
-// ---------------------------------------------------------------------------
-// BackendTransport stubs — Stage 4 will replace with real implementations.
-// Methods that are genuinely no-ops for the backend path return zero values
-// immediately; the backend explicitly opts out rather than silently skipping.
-// ---------------------------------------------------------------------------
-
-func (t *BackendTransport) RateLimitGate(ts *TurnState) error        { return nil }      // CC has its own rate limiting
-func (t *BackendTransport) AcquireTurnLock(ts *TurnState) func()     { return func() {} } // CC serializes internally
-func (t *BackendTransport) IncrementProcessing(ts *TurnState) func() { return func() {} } // fire-and-forget
-func (t *BackendTransport) RegisterTurn(ts *TurnState) func()        { return func() {} } // not tracked externally
-func (t *BackendTransport) ComposePrompt(ts *TurnState) error        { panic("not implemented") }
-func (t *BackendTransport) LoadAndRepairSession(ts *TurnState) error { return nil }      // CC owns its session
-func (t *BackendTransport) ResolveModelEffort(ts *TurnState)         { panic("not implemented") }
-func (t *BackendTransport) BuildSystemAndTools(ts *TurnState)        {}                  // set at Start time
-func (t *BackendTransport) InjectNudges(ts *TurnState)               { panic("not implemented") }
-func (t *BackendTransport) ExecuteTurn(ts *TurnState) error          { panic("not implemented") }
-func (t *BackendTransport) SaveSession(ts *TurnState) error          { return nil }      // CC owns its session
-func (t *BackendTransport) UpdateSessionMeta(ts *TurnState)          { panic("not implemented") }
-func (t *BackendTransport) RunCompaction(ts *TurnState)              { panic("not implemented") }
+// BackendTransport method implementations live in turn_backend.go (Stage 4).
