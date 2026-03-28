@@ -80,12 +80,23 @@ func (p *tmuxPane) sendText(ctx context.Context, text string) error {
 		}
 	}
 
-	// Pause so the TUI can process pasted input before Enter.
-	// 500ms handles slow startup where CC's input handler lags behind
-	// the paste buffer.
-	time.Sleep(500 * time.Millisecond)
-	if _, err := p.runTmux(ctx, "send-keys", "-t", target, "Enter"); err != nil {
-		return fmt.Errorf("send-keys Enter: %w", err)
+	// Send Enter with exponential backoff. On first message after startup,
+	// CC's TUI sometimes accepts pasted text but doesn't register the Enter.
+	// Retrying at increasing intervals catches slow TUI initialization.
+	// Extra Enters are harmless — CC ignores them while processing, and
+	// empty submits on the ❯ prompt are no-ops.
+	for _, delay := range []time.Duration{
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+		800 * time.Millisecond,
+		1600 * time.Millisecond,
+	} {
+		time.Sleep(delay)
+		if _, err := p.runTmux(ctx, "send-keys", "-t", target, "Enter"); err != nil {
+			return fmt.Errorf("send-keys Enter: %w", err)
+		}
 	}
 	return nil
 }
