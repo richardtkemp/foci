@@ -252,6 +252,14 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
 			return
 		}
+
+		// Backend agents: branching not supported via HTTP. Use the parent
+		// key directly (or named session key if req.Session was set).
+		if inst.ag.BackendManager != nil {
+			http.Error(w, "branching not supported for backend agents", http.StatusBadRequest)
+			return
+		}
+
 		orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, d.cfg.Sessions.BranchOrientationHeadlessPrompt))
 		orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
 		branchKey, err := d.sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{

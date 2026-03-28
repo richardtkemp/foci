@@ -42,26 +42,31 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		}
 	}
 
-	branchKey, err := sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
-		NoResetHook:         true,
-		BranchType:          "session-end-memory",
-		OrientationTemplate: orientTemplate,
-	})
-	if err != nil {
-		log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
-		return
+	// Backend agents: inject into existing session (CC has the context).
+	// API agents: create a branch so the parent session isn't modified.
+	targetKey := sessionKey
+	if ag.BackendManager == nil {
+		branchKey, err := sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
+			NoResetHook:         true,
+			BranchType:          "session-end-memory",
+			OrientationTemplate: orientTemplate,
+		})
+		if err != nil {
+			log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
+			return
+		}
+		ag.SetSessionNoCompact(branchKey, true)
+		targetKey = branchKey
 	}
 
-	ag.SetSessionNoCompact(branchKey, true)
-
-	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, branchKey)
+	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, targetKey)
 
 	go func() {
 		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
 		defer cancel()
 		hookCtx = WithTrigger(hookCtx, "session_end_memory")
-		if _, err := ag.HandleMessage(hookCtx, branchKey, prompt); err != nil {
-			log.Warnf("session-end-memory", "failed for %s: %v", branchKey, err)
+		if _, err := ag.HandleMessage(hookCtx, targetKey, prompt); err != nil {
+			log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
 		}
 	}()
 }
