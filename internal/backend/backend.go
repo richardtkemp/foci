@@ -18,9 +18,15 @@ type Backend interface {
 	Start(ctx context.Context, opts StartOptions) error
 
 	// SendTurn sends a composed prompt to the coding agent and streams
-	// events back via the handler. Blocks until the turn completes.
-	// The prompt includes Foci's metadata, nudges, reminders, etc.
+	// events back via the handler. May return before the turn completes
+	// (implementation-dependent). Use WaitForTurn to block until the
+	// turn finishes.
 	SendTurn(ctx context.Context, prompt string, handler *EventHandler) (*TurnResult, error)
+
+	// WaitForTurn blocks until the next turn completion (stop_reason
+	// "end_turn" in the session output). Returns immediately if no turn
+	// is in progress. Respects context cancellation/deadline.
+	WaitForTurn(ctx context.Context) error
 
 	// SendCommand sends a slash command directly to the agent
 	// (e.g. "/compact ...", "/model opus"). These bypass Foci's prompt

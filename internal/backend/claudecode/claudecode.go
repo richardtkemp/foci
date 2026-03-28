@@ -48,4 +48,9 @@ type Backend struct {
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
 	lastPromptMu sync.Mutex
 	lastPrompt   string
+
+	// waitMu guards waitCh. WaitForTurn creates a channel; the watcher's
+	// OnTurnComplete callback signals it. One waiter at a time.
+	waitMu sync.Mutex
+	waitCh chan struct{}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"foci/internal/agent"
 	"foci/internal/config"
@@ -122,7 +123,8 @@ func resetBackendSession(ctx context.Context, sk string, cc CommandContext) (Res
 		}
 	}
 
-	// Send memory formation prompt to the live CC session.
+	// Send memory formation prompt to the live CC session, then wait
+	// for the turn to complete before destroying the session.
 	if cc.Resolved.MemoryFormation.SessionEndEnabled {
 		prompt := prompts.ResolvePrompt(
 			cc.Resolved.MemoryFormation.SessionEndPrompt,
@@ -132,6 +134,16 @@ func resetBackendSession(ctx context.Context, sk string, cc CommandContext) (Res
 			log.Infof("reset", "sending memory formation to backend session %s", sk)
 			if _, err := cc.Agent.HandleMessage(ctx, sk, prompt); err != nil {
 				log.Warnf("reset", "memory formation failed for %s: %v", sk, err)
+			} else {
+				// HandleMessage returns immediately (SendTurn is async).
+				// Block until CC actually finishes the memory formation turn.
+				waitCtx, waitCancel := context.WithTimeout(ctx, 120*time.Second)
+				defer waitCancel()
+				if err := cc.Agent.BackendManager.WaitForTurn(waitCtx, sk); err != nil {
+					log.Warnf("reset", "timeout waiting for memory formation on %s: %v", sk, err)
+				} else {
+					log.Infof("reset", "memory formation completed for %s", sk)
+				}
 			}
 		}
 	}
