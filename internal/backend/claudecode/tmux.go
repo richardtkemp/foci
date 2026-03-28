@@ -272,6 +272,14 @@ func extractPermissionPrompt(paneContent string) *permissionPrompt {
 		}
 	}
 
+	// No numbered choices found → not a real permission prompt.
+	// CC always shows at least "1. Yes" and "3. No". Without choices,
+	// this is a false positive from scrollback content containing
+	// "Do you want to" and "Esc to cancel" strings.
+	if len(choices) == 0 {
+		return nil
+	}
+
 	return &permissionPrompt{
 		Description: desc,
 		Summary:     buildPermissionSummary(desc),
