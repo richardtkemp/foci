@@ -180,11 +180,12 @@ func (s *stubContract) LoadAndRepairSession(*TurnState) error  { return nil }
 func (s *stubContract) ResolveModelEffort(*TurnState)          {}
 func (s *stubContract) BuildSystemAndTools(*TurnState)         {}
 func (s *stubContract) InjectNudges(*TurnState)                {}
-func (s *stubContract) ExecuteTurn(*TurnState) error           { return nil }
+func (s *stubContract) ExecuteTurn(ts *TurnState) error        { close(ts.CompletionChan); return nil }
 func (s *stubContract) SaveSession(ts *TurnState) error {
 	if s.saveFn != nil {
 		s.saveFn()
 	}
+	ts.NewMessages = nil
 	return nil
 }
 func (s *stubContract) UpdateSessionMeta(*TurnState)    {}
