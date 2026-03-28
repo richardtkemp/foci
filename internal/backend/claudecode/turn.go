@@ -49,8 +49,10 @@ func (b *Backend) notifyTurnComplete() {
 	}
 }
 
-// WaitReady blocks until Claude Code's TUI is loaded and ready to accept
-// prompts. Detected by scraping the tmux pane for "Claude Code" in the output.
+// WaitReady blocks until Claude Code's TUI is ready to accept prompts.
+// Detected by scraping the tmux pane for the "❯" input prompt. CC shows
+// its "Claude Code" banner early in startup, but the input prompt only
+// appears after session loading, tool init, and auth are complete.
 func (b *Backend) WaitReady(ctx context.Context) error {
 	b.mu.Lock()
 	pane := b.pane
@@ -70,7 +72,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 			if err != nil {
 				continue
 			}
-			if strings.Contains(content, "Claude Code") {
+			if strings.Contains(content, "❯") {
 				return nil
 			}
 		}
