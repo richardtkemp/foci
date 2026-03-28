@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,12 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 )
+
+// agentCall tracks a pending Agent tool_use call.
+type agentCall struct {
+	id          string // tool_use ID
+	description string // short description from input
+}
 
 // sessionWatcher tails a Claude Code session JSONL file and emits events
 // as new entries are appended. Uses fsnotify for immediate event delivery.
@@ -29,9 +36,17 @@ type sessionWatcher struct {
 	// appear at any time (after sub-agent completion, slow tools, etc.).
 	onPermissionCheck func()
 
+	// onAgentStatus is called when agent spawn/completion status changes.
+	// Receives a formatted status string to send to the user.
+	onAgentStatus func(text string)
+
 	// turnState tracks the current turn's accumulated text and tool calls.
 	turnText  string
 	turnTools int
+
+	// agentTracking tracks pending Agent tool_use calls within a turn.
+	pendingAgents []agentCall
+	agentStart    time.Time // when the first agent in a batch was spawned
 }
 
 // close shuts down the fsnotify watcher.
@@ -151,9 +166,11 @@ func (w *sessionWatcher) processLine(line []byte, handler *backend.EventHandler)
 	switch entry.Type {
 	case "assistant":
 		w.handleAssistant(&entry, handler)
+	case "user":
+		w.handleUser(&entry)
 	case "system":
 		w.handleSystem(&entry, handler)
-	// user, progress, file-history-snapshot, queue-operation: ignored for now
+	// progress, file-history-snapshot, queue-operation: ignored for now
 	}
 }
 
@@ -165,6 +182,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 	}
 
 	blocks := parseContentBlocks(entry.Message.Content)
+	var newAgents []agentCall
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
@@ -180,7 +198,19 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 				input := string(b.Input)
 				handler.OnToolStart(b.Name, input)
 			}
+			// Track Agent tool calls for status reporting.
+			if b.Name == "Agent" {
+				desc := extractAgentDescription(b.Input)
+				newAgents = append(newAgents, agentCall{id: b.ID, description: desc})
+			}
 		}
+	}
+	if len(newAgents) > 0 {
+		w.pendingAgents = append(w.pendingAgents, newAgents...)
+		if w.agentStart.IsZero() {
+			w.agentStart = time.Now()
+		}
+		w.notifyAgentStatus()
 	}
 
 	stopReason := ""
@@ -196,6 +226,64 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 			handler.OnTurnComplete(result)
 		}
 	}
+}
+
+// handleUser processes user entries, tracking Agent tool_result completions.
+func (w *sessionWatcher) handleUser(entry *sessionEntry) {
+	if entry.Message == nil || len(w.pendingAgents) == 0 {
+		return
+	}
+	blocks := parseContentBlocks(entry.Message.Content)
+	for _, b := range blocks {
+		if b.Type != "tool_result" {
+			continue
+		}
+		// Match tool_result to a pending agent by tool_use_id.
+		resultID := b.ToolUseID
+		for i, ag := range w.pendingAgents {
+			if ag.id == resultID {
+				w.pendingAgents = append(w.pendingAgents[:i], w.pendingAgents[i+1:]...)
+				w.notifyAgentStatus()
+				break
+			}
+		}
+	}
+}
+
+// notifyAgentStatus sends an agent status update if the callback is set.
+func (w *sessionWatcher) notifyAgentStatus() {
+	if w.onAgentStatus == nil {
+		return
+	}
+	pending := len(w.pendingAgents)
+	if pending == 0 {
+		elapsed := time.Since(w.agentStart).Round(time.Second)
+		w.onAgentStatus(fmt.Sprintf("✅ Agents complete (%s)", elapsed))
+		w.agentStart = time.Time{}
+	} else {
+		var descs []string
+		for _, ag := range w.pendingAgents {
+			if ag.description != "" {
+				descs = append(descs, ag.description)
+			}
+		}
+		if len(descs) > 0 {
+			w.onAgentStatus(fmt.Sprintf("🔄 %d agent(s) running: %s", pending, strings.Join(descs, ", ")))
+		} else {
+			w.onAgentStatus(fmt.Sprintf("🔄 %d agent(s) running", pending))
+		}
+	}
+}
+
+// extractAgentDescription parses the "description" field from an Agent tool_use input.
+func extractAgentDescription(raw json.RawMessage) string {
+	var input struct {
+		Description string `json:"description"`
+	}
+	if json.Unmarshal(raw, &input) == nil {
+		return input.Description
+	}
+	return ""
 }
 
 // handleSystem processes system entries (e.g. turn_duration markers).

@@ -209,6 +209,16 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 		b.checkPermissionPrompt()
 	}
 
+	// Forward agent spawn/completion status to the user via replyFunc.
+	w.onAgentStatus = func(text string) {
+		b.replyMu.Lock()
+		fn := b.replyFunc
+		b.replyMu.Unlock()
+		if fn != nil {
+			fn(text)
+		}
+	}
+
 	b.watcher = w
 
 	// Set persistent handler that delegates to the current turn's replyFunc

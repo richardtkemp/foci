@@ -59,13 +59,14 @@ type usagePayload struct {
 
 // contentBlock is a single block in assistant message content arrays.
 type contentBlock struct {
-	Type    string          `json:"type"`
-	Text    string          `json:"text,omitempty"`
-	ID      string          `json:"id,omitempty"`      // tool_use
-	Name    string          `json:"name,omitempty"`     // tool_use
-	Input   json.RawMessage `json:"input,omitempty"`    // tool_use
-	Content json.RawMessage `json:"content,omitempty"`  // tool_result
-	IsError bool            `json:"is_error,omitempty"` // tool_result
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`          // tool_use: unique ID
+	Name      string          `json:"name,omitempty"`        // tool_use: tool name
+	Input     json.RawMessage `json:"input,omitempty"`       // tool_use: arguments
+	ToolUseID string          `json:"tool_use_id,omitempty"` // tool_result: references tool_use ID
+	Content   json.RawMessage `json:"content,omitempty"`     // tool_result
+	IsError   bool            `json:"is_error,omitempty"`    // tool_result
 }
 
 // parseContentBlocks attempts to parse the message content as an array of blocks.
