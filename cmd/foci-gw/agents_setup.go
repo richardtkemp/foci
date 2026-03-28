@@ -362,21 +362,35 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		if needed {
 			go func() {
 				ctx := context.Background()
-				parentKey := mostRecentSessionKey(ag, connMgr, acfg.ID)
-				if parentKey == "" {
-					log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
-					return
+				var extractionKey string
+				if ag.BackendManager != nil {
+					// Backend: new independent CC session for extraction.
+					extractionKey = session.SessionKey{
+						AgentID:   acfg.ID,
+						Type:      'i',
+						ID:        fmt.Sprintf("nudge-%d", time.Now().Unix()),
+						VersionTS: time.Now().Unix(),
+					}.String()
+					log.Infof("nudge", "agent %s: backend extraction on new session %s", acfg.ID, extractionKey)
+				} else {
+					// API: branch from the most recent session.
+					parentKey := mostRecentSessionKey(ag, connMgr, acfg.ID)
+					if parentKey == "" {
+						log.Warnf("nudge", "agent %s: no default session for extraction branch", acfg.ID)
+						return
+					}
+					branchKey, err := sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
+						NoResetHook: true,
+						BranchType:  "nudge-extraction",
+					})
+					if err != nil {
+						log.Warnf("nudge", "agent %s: create branch: %v", acfg.ID, err)
+						return
+					}
+					ag.SetSessionNoCompact(branchKey, true)
+					extractionKey = branchKey
 				}
-				branchKey, err := sessions.CreateBranchWithOptions(parentKey, session.BranchOptions{
-					NoResetHook: true,
-					BranchType:  "nudge-extraction",
-				})
-				if err != nil {
-					log.Warnf("nudge", "agent %s: create branch: %v", acfg.ID, err)
-					return
-				}
-				ag.SetSessionNoCompact(branchKey, true)
-				if err := extractor.Extract(ctx, ag, branchKey); err != nil {
+				if err := extractor.Extract(ctx, ag, extractionKey); err != nil {
 					log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
 					return
 				}
