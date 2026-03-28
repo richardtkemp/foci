@@ -1,11 +1,10 @@
 package agent
 
 import (
-	"context"
 	"strings"
-	"time"
 
 	"foci/internal/backend"
+	"foci/internal/provider"
 )
 
 // ---------------------------------------------------------------------------
@@ -73,9 +72,8 @@ func (t *BackendTransport) InjectNudges(ts *TurnState) {
 
 // --- Phase 3: Core execution ---
 
-// ExecuteTurn sends the composed prompt to the backend and starts an async
-// goroutine that waits for turn completion to close CompletionChan.
-// Extracted from backend_turn.go:39-56.
+// ExecuteTurn sends the composed prompt to the backend with a per-turn
+// completion handler that closes CompletionChan and captures results.
 func (t *BackendTransport) ExecuteTurn(ts *TurnState) error {
 	a := t.agent
 
@@ -85,28 +83,27 @@ func (t *BackendTransport) ExecuteTurn(ts *TurnState) error {
 	}
 	ts.Backend = be
 
-	_, err = be.SendTurn(ts.Ctx, ts.Prompt, &backend.EventHandler{})
-	if err != nil {
-		return err
+	// Per-turn handler: fires once when the watcher sees end_turn.
+	// Captures FinalText/FinalUsage and closes CompletionChan.
+	handler := &backend.EventHandler{
+		OnTurnComplete: func(result *backend.TurnResult) {
+			if result != nil {
+				ts.FinalText = result.Text
+				if result.Usage != nil {
+					ts.FinalUsage = &provider.Usage{
+						InputTokens:              result.Usage.InputTokens,
+						OutputTokens:             result.Usage.OutputTokens,
+						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
+						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+					}
+				}
+			}
+			close(ts.CompletionChan)
+		},
 	}
 
-	// Wait for turn completion asynchronously. The watcher's persistent
-	// handler calls notifyTurnComplete when it sees end_turn in the JSONL.
-	// WaitForTurn blocks until that signal arrives.
-	// NOTE: WaitForTurn uses a single per-backend channel — only one
-	// waiter is supported at a time. Stage 5 replaces this with per-turn
-	// callbacks for proper concurrency.
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-		if err := be.WaitForTurn(ctx); err == nil {
-			close(ts.CompletionChan)
-		}
-		// On timeout, CompletionChan stays open; runPostTurn's own 10min
-		// timeout will log the warning.
-	}()
-
-	return nil
+	_, err = be.SendTurn(ts.Ctx, ts.Prompt, handler)
+	return err
 }
 
 // --- Phase 4: Post-turn ---
@@ -114,11 +111,17 @@ func (t *BackendTransport) ExecuteTurn(ts *TurnState) error {
 // SaveSession is a no-op — CC owns its session file.
 func (t *BackendTransport) SaveSession(ts *TurnState) error { return nil }
 
-// UpdateSessionMeta is a stub — Stage 5 adds TurnResult.Usage to the
-// watcher so we can update cost/token tracking from the JSONL data.
+// UpdateSessionMeta updates per-session token tracking from the
+// JSONL-extracted usage. Cost calculation is not available for backend
+// turns (no logAPIResponse), so prevCost stays zero.
 func (t *BackendTransport) UpdateSessionMeta(ts *TurnState) {
-	// TODO(stage5): read ts.FinalUsage from watcher's extracted usage
-	// and update ts.SessionMeta.prevCost, prevInput, etc.
+	if ts.SessionMeta == nil || ts.FinalUsage == nil {
+		return
+	}
+	ts.SessionMeta.lastMessageTime = ts.StartedAt
+	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
+	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
+	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 }
 
 // RunCompaction is a stub — will send /compact command to CC when
