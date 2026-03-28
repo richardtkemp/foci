@@ -44,6 +44,23 @@ func (a *Agent) handleViaBackend(ctx context.Context, sessionKey string, texts [
 	parts := a.composeTurnText(ctx, sessionKey, a.Model, "", false, texts, attachments)
 	prompt := parts.JoinPrompt()
 
+	// Inject nudges — composeTurnText no longer includes them (nudge logic
+	// is owned by TurnContract.InjectNudges; this inline version keeps the
+	// live backend path working until the Stage 6 switchover).
+	if a.Nudger != nil && len(texts) > 0 {
+		a.Nudger.StartTurn(texts[0])
+		var nudges []string
+		for _, r := range a.Nudger.CheckTurnInterval() {
+			nudges = append(nudges, nudgeHeader+r)
+		}
+		for _, r := range a.Nudger.CheckRegex() {
+			nudges = append(nudges, nudgeHeader+r)
+		}
+		if len(nudges) > 0 {
+			prompt = strings.Join(nudges, "\n") + "\n" + prompt
+		}
+	}
+
 	// Update lastMessageTime AFTER composition so the gap is calculated
 	// against the previous message, not the current one.
 	sm.lastMessageTime = time.Now()

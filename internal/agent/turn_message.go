@@ -25,7 +25,8 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 	// Resolve mana for both meta prefix and watcher.
 	manaStr, manaReset, manaGood := mana.ManaAndReset(a.SessionUsageClient(sessionKey), a.ManaInvestInterval)
 
-	// Shared prompt composition (metadata, reminders, state, attachment paths, nudges).
+	// Shared prompt composition (metadata, reminders, state, attachment paths).
+	// Nudges are NOT included — handled separately by InjectNudges / lines 484-501.
 	tp := a.composeTurnText(ctx, sessionKey, turnModel, manaStr, manaGood, texts, attachments)
 	if a.ManaWatcher != nil && len(texts) > 0 && !isSystemMessage(texts[0]) {
 		a.ManaWatcher.CheckAndWarn(manaStr, manaReset, func(warn string) {
@@ -86,11 +87,6 @@ func (a *Agent) prepareUserMessage(ctx context.Context, sessionKey string, texts
 	}
 	if tp.AttachmentPaths != "" {
 		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: tp.AttachmentPaths})
-	}
-
-	// Nudge blocks.
-	for _, n := range tp.Nudges {
-		contentBlocks = append(contentBlocks, provider.ContentBlock{Type: "text", Text: n})
 	}
 
 	// Branch orientation (first turn only).
