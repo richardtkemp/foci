@@ -80,8 +80,10 @@ func (p *tmuxPane) sendText(ctx context.Context, text string) error {
 		}
 	}
 
-	// Brief pause so the TUI can process input before Enter.
-	time.Sleep(200 * time.Millisecond)
+	// Pause so the TUI can process pasted input before Enter.
+	// 500ms handles slow startup where CC's input handler lags behind
+	// the paste buffer.
+	time.Sleep(500 * time.Millisecond)
 	if _, err := p.runTmux(ctx, "send-keys", "-t", target, "Enter"); err != nil {
 		return fmt.Errorf("send-keys Enter: %w", err)
 	}
