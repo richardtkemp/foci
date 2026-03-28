@@ -20,6 +20,15 @@ func (a *Agent) RunTurn(ctx context.Context, tc TurnContract, ts *TurnState) (st
 	ts.Trigger = TriggerFromContext(ctx)
 	ts.StartedAt = time.Now()
 
+	// Safety-net: if we exit without post-turn saving (error, panic),
+	// flush any accumulated messages via the transport's SaveSession.
+	// On success, post-turn's SaveSession nils NewMessages first.
+	defer func() {
+		if len(ts.NewMessages) > 0 {
+			_ = tc.SaveSession(ts)
+		}
+	}()
+
 	// Phase 1: Pre-lock
 	if err := tc.RateLimitGate(ts); err != nil {
 		return "", err

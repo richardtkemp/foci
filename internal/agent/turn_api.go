@@ -245,26 +245,6 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 	var lastToolError bool
 	var batchedText strings.Builder
 
-	// Safety-net: flush in-flight messages on error or panic.
-	// On success, CompletionChan is closed before return — SaveSession
-	// (post-turn) handles the save. On error/panic, CompletionChan is
-	// still open, so we flush here to avoid losing messages.
-	defer func() {
-		select {
-		case <-ts.CompletionChan:
-			return // success — SaveSession will handle it
-		default:
-		}
-		if len(ts.NewMessages) > 0 {
-			writer := a.Sessions.For(ts.SessionKey)
-			if err := writer.AppendAll(ts.SessionKey, ts.NewMessages); err != nil {
-				a.logger().Errorf("session=%s flush in-flight messages: %v", ts.SessionKey, err)
-			} else {
-				a.logger().Infof("flushed %d in-flight messages for %s", len(ts.NewMessages), ts.SessionKey)
-			}
-		}
-	}()
-
 	// sendOrBatchText delivers text respecting batch mode.
 	sendOrBatchText := func(r provider.MessageResponse) {
 		if text := provider.TextOf(r.Content); text != "" && !isNoResponse(text) {
