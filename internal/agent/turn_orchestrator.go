@@ -18,6 +18,7 @@ func (a *Agent) RunTurn(ctx context.Context, tc TurnContract, ts *TurnState) (st
 		ts.Meta = &TurnMetadata{}
 	}
 	ts.Trigger = TriggerFromContext(ctx)
+	ts.StartedAt = time.Now()
 
 	// Phase 1: Pre-lock
 	if err := tc.RateLimitGate(ts); err != nil {

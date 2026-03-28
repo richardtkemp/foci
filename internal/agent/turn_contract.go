@@ -163,10 +163,15 @@ type TurnState struct {
 	TurnDetail *TurnDetail
 	TurnID     uint64
 
+	// StartedAt is when the turn began. Set once by the orchestrator.
+	// Used for lastMessageTime, cache bust idle detection, etc.
+	StartedAt time.Time
+
 	// --- Phase 3 outputs ---
 
 	FinalText  string          // response text from the completed turn
 	FinalUsage *provider.Usage // token usage from the completed turn
+	FinalCost  float64         // calculated cost from logAPIResponse
 
 	// --- Async coordination ---
 
