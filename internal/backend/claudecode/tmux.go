@@ -203,10 +203,13 @@ type promptChoice struct {
 // Requires BOTH "Do you want to " AND "Esc to cancel" to be present — this avoids
 // false positives from tool output, commit messages, or other text.
 func extractPermissionPrompt(paneContent string) *permissionPrompt {
-	if !strings.Contains(paneContent, "Esc to cancel") {
+	// Use LastIndex — with scrollback capture, earlier prompts may still
+	// be in the buffer. We want the most recent one.
+	escIdx := strings.LastIndex(paneContent, "Esc to cancel")
+	if escIdx < 0 {
 		return nil
 	}
-	idx := strings.Index(paneContent, "Do you want to ")
+	idx := strings.LastIndex(paneContent[:escIdx], "Do you want to ")
 	if idx < 0 {
 		return nil
 	}
