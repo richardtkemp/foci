@@ -43,7 +43,8 @@ type Backend struct {
 	replyMu            sync.Mutex
 	replyFunc          func(string)
 	permPromptFunc     func(string, string, []backend.PromptChoice)
-	onSessionReady     func(string) // called once when session ID is discovered
+	onSessionReady     func(string)     // called once when session ID is discovered
+	typingFunc         func(bool)       // typing indicator: true=start, false=stop
 
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
 	lastPromptMu sync.Mutex

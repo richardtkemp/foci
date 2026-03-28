@@ -53,6 +53,11 @@ type Backend interface {
 	// discovers its session ID. Used to persist the ID for resume-after-restart.
 	SetOnSessionReady(fn func(sessionID string))
 
+	// SetTypingFunc sets a callback to control the platform's typing indicator.
+	// Called with true when the backend starts working (SendTurn), and false
+	// when the turn completes (end_turn). Optional — nil means no typing.
+	SetTypingFunc(fn func(typing bool))
+
 	// SendKeystroke sends a single literal keypress to the agent's TUI.
 	// Used for permission prompt responses where paste+Enter doesn't work.
 	SendKeystroke(ctx context.Context, key string) error

@@ -104,6 +104,17 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 				return "✅ Approved"
 			})
 		},
+		TypingFunc: func(sessionKey string, typing bool) {
+			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
+			if conn == nil {
+				return
+			}
+			if typing {
+				conn.SendTyping()
+			}
+			// false = stop typing. Most platforms auto-expire typing after
+			// a message is sent, so we only need to actively signal start.
+		},
 		IdleTimeout: idleTimeout,
 	}
 
