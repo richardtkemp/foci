@@ -199,10 +199,11 @@ func (b *Backend) discoverSession() {
 // startWatcher initializes the JSONL file watcher and starts the
 // long-lived watch loop goroutine.
 func (b *Backend) startWatcher(jsonlPath string) error {
-	w, err := newSessionWatcher(jsonlPath)
+	w, err := newSessionWatcher(jsonlPath, b.preSendOffset)
 	if err != nil {
 		return fmt.Errorf("init watcher: %w", err)
 	}
+	b.preSendOffset = -1 // consumed — future watchers default to tail
 
 	// Periodically check the tmux pane for permission prompts.
 	w.onPermissionCheck = func() {

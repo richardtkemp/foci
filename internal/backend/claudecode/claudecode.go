@@ -17,7 +17,7 @@ func init() {
 }
 
 func newFromConfig(cfg map[string]any) (backend.Backend, error) {
-	b := &Backend{cfg: cfg}
+	b := &Backend{cfg: cfg, preSendOffset: -1}
 	if v, ok := cfg["socket_path"].(string); ok {
 		b.socketPath = v
 	}
@@ -58,4 +58,9 @@ type Backend struct {
 	// per-turn EventHandler; fired once by the watcher on end_turn, then nil'd.
 	turnCompleteMu sync.Mutex
 	turnCompleteFn func(*backend.TurnResult)
+
+	// preSendOffset records the JSONL file size before sendText, so the
+	// watcher starts from there and catches responses written before it starts.
+	// -1 means "use end of file" (default, for resumed sessions with existing watcher).
+	preSendOffset int64
 }

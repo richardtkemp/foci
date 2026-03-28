@@ -57,12 +57,12 @@ func (w *sessionWatcher) close() {
 
 // newSessionWatcher creates a watcher for the given JSONL file path.
 // It seeks to the end of the file so only new entries are processed.
-func newSessionWatcher(path string) (*sessionWatcher, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("stat session file: %w", err)
-	}
-
+// newSessionWatcher creates a watcher for the given JSONL file, starting
+// from startOffset. Pass -1 to start from the current end of file (tail mode).
+// Pass 0 to read from the beginning. Pass a recorded offset to resume from
+// a known position (e.g. pre-send offset to catch responses written before
+// the watcher started).
+func newSessionWatcher(path string, startOffset int64) (*sessionWatcher, error) {
 	fsnot, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("create fsnotify watcher: %w", err)
@@ -73,10 +73,20 @@ func newSessionWatcher(path string) (*sessionWatcher, error) {
 		return nil, fmt.Errorf("watch session file: %w", err)
 	}
 
+	offset := startOffset
+	if offset < 0 {
+		info, err := os.Stat(path)
+		if err != nil {
+			fsnot.Close()
+			return nil, fmt.Errorf("stat session file: %w", err)
+		}
+		offset = info.Size()
+	}
+
 	return &sessionWatcher{
 		path:   path,
 		fsnot:  fsnot,
-		offset: info.Size(),
+		offset: offset,
 	}, nil
 }
 
