@@ -176,6 +176,20 @@ func (m *BackendManager) StopSession(ctx context.Context, sessionKey string) err
 	return mb.be.SendSpecialKey(ctx, "C-c")
 }
 
+// WaitForTurn blocks until the backend for the given session key reports
+// turn completion. Returns an error if no backend exists for the session.
+// Respects context cancellation/deadline.
+func (m *BackendManager) WaitForTurn(ctx context.Context, sessionKey string) error {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("no backend for session %s", base)
+	}
+	return mb.be.WaitForTurn(ctx)
+}
+
 // ResetSession closes the backend for a specific session key WITHOUT saving
 // the resume ID, so the next Get() creates a completely fresh CC session.
 func (m *BackendManager) ResetSession(sessionKey string) {

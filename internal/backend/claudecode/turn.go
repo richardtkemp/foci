@@ -7,9 +7,48 @@ import (
 	"foci/internal/backend"
 )
 
+// WaitForTurn blocks until the watcher observes the next turn completion
+// (assistant message with stop_reason "end_turn"). Returns ctx.Err() on
+// cancellation or deadline. Safe to call after SendTurn — if the turn
+// completes between SendTurn returning and WaitForTurn being called, the
+// signal is buffered and WaitForTurn returns immediately.
+func (b *Backend) WaitForTurn(ctx context.Context) error {
+	ch := make(chan struct{}, 1)
+	b.waitMu.Lock()
+	b.waitCh = ch
+	b.waitMu.Unlock()
+
+	defer func() {
+		b.waitMu.Lock()
+		b.waitCh = nil
+		b.waitMu.Unlock()
+	}()
+
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// notifyTurnComplete signals any active WaitForTurn caller.
+func (b *Backend) notifyTurnComplete() {
+	b.waitMu.Lock()
+	ch := b.waitCh
+	b.waitMu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // SendTurn sends a prompt to the Claude Code pane. It does not block waiting
 // for a response — output is delivered asynchronously via the persistent
 // watcher handler using the ReplyFunc set by SetReplyFunc. Returns immediately.
+// Use WaitForTurn to block until the turn completes.
 func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
 	b.mu.Lock()
 	if b.pane == nil {
