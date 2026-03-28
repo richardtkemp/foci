@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"foci/internal/agent"
@@ -110,6 +111,12 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			_ = platform.SendInteractiveMessage(conn, text, buttons, func(choice platform.ButtonChoice) string {
 				// Send keystroke to CC's TUI.
 				_ = ag.SendPermissionResponse(context.Background(), sessionKey, choice.Data)
+				if strings.EqualFold(choice.Label, "No") {
+					if summary != "" {
+						return "❌ " + summary
+					}
+					return "❌ Denied"
+				}
 				if summary != "" {
 					return "✅ " + summary
 				}
