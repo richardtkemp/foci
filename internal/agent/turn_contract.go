@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/session"
 )
 
 // TurnContract defines every concern of a turn. Both APITransport and
@@ -217,13 +221,86 @@ var _ TurnContract = (*BackendTransport)(nil)
 // HandleMessageWithAttachments / handleViaBackend.
 // ---------------------------------------------------------------------------
 
-func (s *sharedTurnOps) CheckStaleContext(ts *TurnState) error { panic("not implemented") }
-func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState)    { panic("not implemented") }
-func (s *sharedTurnOps) LogConversationRecv(ts *TurnState)     { panic("not implemented") }
-func (s *sharedTurnOps) TouchActivity(ts *TurnState)           { panic("not implemented") }
-func (s *sharedTurnOps) LoadSessionMeta(ts *TurnState)         { panic("not implemented") }
-func (s *sharedTurnOps) LogConversationSent(ts *TurnState)     { panic("not implemented") }
-func (s *sharedTurnOps) TouchActivityPost(ts *TurnState)       { panic("not implemented") }
+// CheckStaleContext returns the context error if the context was cancelled
+// (e.g. while waiting for the turn lock). Extracted from agent.go:330-332.
+func (s *sharedTurnOps) CheckStaleContext(ts *TurnState) error {
+	return ts.Ctx.Err()
+}
+
+// RegisterSessionIndex ensures the session exists in the session index.
+// The API path gets this implicitly via store.Append → fireEvent → Upsert,
+// but the backend path never calls Append (CC owns its session file).
+// Calling Upsert directly covers both paths uniformly.
+func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
+	if s.agent.SessionIndex == nil {
+		return
+	}
+	now := time.Now()
+	s.agent.SessionIndex.Upsert(session.SessionIndexEntry{
+		SessionKey:     ts.SessionKey,
+		CreatedAt:      now,
+		LastActivityAt: now,
+		SessionType:    session.ClassifySessionKey(ts.SessionKey),
+		Status:         session.SessionStatusActive,
+	})
+}
+
+// LogConversationRecv logs the inbound user message. Extracted from
+// agent.go:335-350 and backend_turn.go:25-32.
+func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
+	chatID := ts.Meta.ChatID
+	if chatID == 0 {
+		chatID = session.ChatIDFromKey(ts.SessionKey)
+	}
+	ts.ConvChatID = chatID
+	log.Conversation(log.ConversationEntry{
+		Direction: "recv",
+		UserID:    ts.Meta.UserID,
+		Username:  ts.Meta.Username,
+		ChatID:    chatID,
+		Text:      strings.Join(ts.Texts, "\n"),
+		Session:   ts.SessionKey,
+	})
+}
+
+// TouchActivity fires OnActivity callbacks so session liveness is tracked.
+// Extracted from agent.go:353-355 and backend_turn.go:17-19.
+func (s *sharedTurnOps) TouchActivity(ts *TurnState) {
+	for _, fn := range s.agent.OnActivity {
+		fn(ts.SessionKey)
+	}
+}
+
+// LoadSessionMeta loads or initialises per-session metadata.
+// Extracted from agent.go:440 and backend_turn.go:36.
+func (s *sharedTurnOps) LoadSessionMeta(ts *TurnState) {
+	ts.SessionMeta = s.agent.getSessionMeta(ts.SessionKey)
+}
+
+// LogConversationSent logs the outbound response text. Extracted from
+// agent.go:825-838. Skips empty text (no-response turns).
+func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
+	if ts.FinalText == "" {
+		return
+	}
+	log.Conversation(log.ConversationEntry{
+		Direction: "sent",
+		UserID:    ts.Meta.UserID,
+		Username:  ts.Meta.Username,
+		ChatID:    ts.ConvChatID,
+		Text:      ts.FinalText,
+		Session:   ts.SessionKey,
+	})
+}
+
+// TouchActivityPost fires OnActivity callbacks after the turn completes.
+// Same as TouchActivity — separate method for contract clarity and because
+// post-turn may run asynchronously (backend path).
+func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
+	for _, fn := range s.agent.OnActivity {
+		fn(ts.SessionKey)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // APITransport stubs — Stage 3 will replace with real implementations
