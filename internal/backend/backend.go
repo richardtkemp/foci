@@ -70,6 +70,10 @@ type Backend interface {
 	// Used to resume sessions after idle shutdown. Empty if unknown.
 	SessionID() string
 
+	// SessionFilePath returns the path to the coding agent's session JSONL file.
+	// Empty if the session hasn't been discovered yet.
+	SessionFilePath() string
+
 	// WaitReady blocks until the coding agent is ready to accept prompts.
 	// Implementations should detect the agent's UI/prompt indicator.
 	// Respects context cancellation/deadline.

@@ -219,6 +219,15 @@ func (b *Backend) SessionID() string {
 	return b.sessionID
 }
 
+func (b *Backend) SessionFilePath() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.watcher != nil {
+		return b.watcher.path
+	}
+	return ""
+}
+
 func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
 	b.mu.Lock()
 	pane := b.pane

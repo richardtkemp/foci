@@ -199,6 +199,19 @@ func (m *BackendManager) StopSession(ctx context.Context, sessionKey string) err
 // WaitForTurn blocks until the backend for the given session key reports
 // turn completion. Returns an error if no backend exists for the session.
 // Respects context cancellation/deadline.
+// SessionFilePath returns the coding agent's session JSONL path for the
+// given session key. Empty if the backend hasn't discovered its session yet.
+func (m *BackendManager) SessionFilePath(sessionKey string) string {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	if !ok {
+		return ""
+	}
+	return mb.be.SessionFilePath()
+}
+
 func (m *BackendManager) WaitForTurn(ctx context.Context, sessionKey string) error {
 	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
