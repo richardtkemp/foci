@@ -246,6 +246,21 @@ Configurable globally and per-agent via `show_thinking`. The `display_width` con
 
 Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API default). The `/effort` command shows or changes the level for the current session (runtime only, not persisted to config).
 
+### Coding Agent Backends (TurnContract)
+
+Foci supports two turn-handling paths, selected per-agent via the `backend` config:
+
+- **API path (`APITransport`)** — Foci calls the LLM API directly and executes tools locally. The traditional path.
+- **Backend path (`BackendTransport`)** — A coding agent (Claude Code) runs in a tmux pane, handling inference and tool execution. Foci sends composed prompts and receives results via a JSONL session file watcher.
+
+Both implement the `TurnContract` interface (`internal/agent/turn_contract.go`) — 20 methods covering every concern of a turn (rate limiting, session registration, prompt composition, execution, saving, compaction, etc.). Adding a new concern requires adding a method to the interface, producing compile errors in both transports until implemented.
+
+The orchestrator (`RunTurn` in `turn_orchestrator.go`) calls all 20 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Seven methods are shared via `sharedTurnOps` embedding.
+
+The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; backend closes it when the watcher sees `end_turn` in the JSONL. Post-turn methods (save, metadata, compaction, logging) fire inline for API or in a goroutine for backend.
+
+See [WIRING.md — The Agent Loop](../shared/docs/WIRING.md) for the full phase-by-phase breakdown.
+
 ## Tools
 
 ### Tool System

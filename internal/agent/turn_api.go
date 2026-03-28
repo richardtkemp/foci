@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"foci/internal/config"
-	"foci/internal/mana"
 	"foci/internal/provider"
-	"foci/internal/session"
 )
 
 // ---------------------------------------------------------------------------
@@ -259,10 +257,6 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 			}
 		}
 	}
-
-	// Resolve mana for watcher.
-	manaStr, _, _ := mana.ManaAndReset(a.SessionUsageClient(ts.SessionKey), a.ManaInvestInterval)
-	_ = manaStr // used by prepareUserMessage internally; kept for parity
 
 	for i := 0; i < maxLoops; i++ {
 		ts.Messages = sanitizeEmptyTextBlocks(ts.Messages)
@@ -545,12 +539,3 @@ func (t *APITransport) RunCompaction(ts *TurnState) {
 	a.maybeCompact(ts.Ctx, ts.SessionKey, ts.Messages, ts.System, ts.FinalUsage, ts.SessionMeta)
 }
 
-// --- Helpers used internally by APITransport ---
-
-// chatIDForSession resolves the conversation chat ID from metadata or session key.
-func chatIDForSession(meta *TurnMetadata, sessionKey string) int64 {
-	if meta.ChatID != 0 {
-		return meta.ChatID
-	}
-	return session.ChatIDFromKey(sessionKey)
-}
