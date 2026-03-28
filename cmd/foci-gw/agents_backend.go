@@ -134,9 +134,10 @@ func seedBackendPermissions(workspace string) {
 		absWorkspace = workspace
 	}
 	wantRules := []string{
-		// Workspace file access
-		fmt.Sprintf("Edit(%s/**)", absWorkspace),
-		fmt.Sprintf("Write(%s/**)", absWorkspace),
+		// Workspace file access. The // prefix is required for absolute
+		// paths in CC permission rules (single / is not matched).
+		fmt.Sprintf("Edit(//%s/**)", absWorkspace),
+		fmt.Sprintf("Write(//%s/**)", absWorkspace),
 		// Foci shell functions
 		"Bash(foci_todo:*)",
 		"Bash(foci_send_to_chat:*)",
@@ -148,7 +149,7 @@ func seedBackendPermissions(workspace string) {
 		"Bash(ls:*)",
 		"Bash(echo:*)",
 		// Exec bridge temp files
-		"Read(/tmp/foci/**)",
+		"Read(//tmp/foci/**)",
 	}
 
 	// Get or create the permissions.allow array.
