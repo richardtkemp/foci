@@ -6,7 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/backend"
 	"foci/internal/provider"
+	"foci/internal/session"
+	"foci/internal/tools"
+	"foci/internal/workspace"
 )
 
 // TestRunTurn_PostTurnAsyncPath verifies that when CompletionChan is not
@@ -77,32 +81,57 @@ func TestRunTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
 	}
 }
 
-// TestRunTurn_TransportSelection verifies that HandleMessageWithAttachments
-// selects the correct transport based on BackendManager presence.
-func TestRunTurn_TransportSelection(t *testing.T) {
-	// Without BackendManager: should use APITransport.
-	// We can't easily run a full API turn without mocks, but we can verify
-	// the method exists and the routing logic compiles.
-	a := &Agent{}
-	var tc TurnContract
-	if a.BackendManager != nil {
-		tc = &BackendTransport{sharedTurnOps{agent: a}}
-	} else {
-		tc = &APITransport{sharedTurnOps{agent: a}}
-	}
-	if _, ok := tc.(*APITransport); !ok {
-		t.Fatal("nil BackendManager should select APITransport")
+// TestTransportSelection_API verifies that HandleMessageWithAttachments
+// routes through the API transport when BackendManager is nil, producing
+// a response from the mock client.
+func TestTransportSelection_API(t *testing.T) {
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		return &provider.MessageResponse{
+			ID:         "msg_api",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("API response"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  session.NewStore(t.TempDir()),
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "test-model",
 	}
 
-	// With BackendManager: should use BackendTransport.
-	a.BackendManager = &BackendManager{}
-	if a.BackendManager != nil {
-		tc = &BackendTransport{sharedTurnOps{agent: a}}
-	} else {
-		tc = &APITransport{sharedTurnOps{agent: a}}
+	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "hello")
+	if err != nil {
+		t.Fatalf("HandleMessage: %v", err)
 	}
-	if _, ok := tc.(*BackendTransport); !ok {
-		t.Fatal("non-nil BackendManager should select BackendTransport")
+	if resp != "API response" {
+		t.Errorf("response = %q, want %q", resp, "API response")
+	}
+}
+
+// TestTransportSelection_Backend verifies that HandleMessageWithAttachments
+// routes through the backend transport when BackendManager is set.
+func TestTransportSelection_Backend(t *testing.T) {
+	ag := &Agent{
+		Sessions:  session.NewStore(t.TempDir()),
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "test-model",
+		BackendManager: &BackendManager{
+			NewBackend: func() (backend.Backend, error) {
+				return nil, fmt.Errorf("no real backend in test")
+			},
+		},
+	}
+
+	// Backend path will fail (no real backend), but it should NOT fall
+	// through to the API path. The error proves backend was selected.
+	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "hello")
+	if err == nil {
+		t.Fatal("expected error from backend transport (no real backend)")
 	}
 }
 
