@@ -417,6 +417,14 @@ func (a *Agent) getSessionMeta(key string) *sessionMeta {
 	m, ok := a.meta[key]
 	if !ok {
 		m = &sessionMeta{}
+		// Hydrate lastMessageTime from the session index so that
+		// mostRecentSessionKey works correctly after a restart
+		// (in-memory meta is empty, but the DB has last_activity_at).
+		if a.SessionIndex != nil {
+			if entry, err := a.SessionIndex.Get(key); err == nil && !entry.LastActivityAt.IsZero() {
+				m.lastMessageTime = entry.LastActivityAt
+			}
+		}
 		a.meta[key] = m
 	}
 	return m
