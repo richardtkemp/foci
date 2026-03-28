@@ -236,13 +236,20 @@ func (s *sharedTurnOps) CheckStaleContext(ts *TurnState) error {
 // The API path gets this implicitly via store.Append → fireEvent → Upsert,
 // but the backend path never calls Append (CC owns its session file).
 // Calling Upsert directly covers both paths uniformly.
+// For backend sessions, includes the CC JSONL file path so the pruner
+// doesn't treat the entry as an orphan (no foci session file exists).
 func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
 	if s.agent.SessionIndex == nil {
 		return
 	}
 	now := time.Now()
+	filePath := ""
+	if s.agent.BackendManager != nil {
+		filePath = s.agent.BackendManager.SessionFilePath(ts.SessionKey)
+	}
 	s.agent.SessionIndex.Upsert(session.SessionIndexEntry{
 		SessionKey:     ts.SessionKey,
+		FilePath:       filePath,
 		CreatedAt:      now,
 		LastActivityAt: now,
 		SessionType:    session.ClassifySessionKey(ts.SessionKey),
