@@ -152,6 +152,14 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 		log.Infof("backend", "resumed session %s for %s", resumeID, base)
 	}
 
+	// Wait for the coding agent to be ready to accept prompts.
+	// Without this, early SendTurn hits a CC that's still loading.
+	readyCtx, readyCancel := context.WithTimeout(ctx, 60*time.Second)
+	defer readyCancel()
+	if err := be.WaitReady(readyCtx); err != nil {
+		log.Warnf("backend", "WaitReady for %s: %v (proceeding anyway)", base, err)
+	}
+
 	return be, nil
 }
 

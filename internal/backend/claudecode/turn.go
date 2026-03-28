@@ -3,8 +3,12 @@ package claudecode
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
 )
 
 // WaitForTurn blocks until the watcher observes the next turn completion
@@ -45,6 +49,34 @@ func (b *Backend) notifyTurnComplete() {
 	}
 }
 
+// WaitReady blocks until Claude Code's TUI is loaded and ready to accept
+// prompts. Detected by scraping the tmux pane for "Claude Code" in the output.
+func (b *Backend) WaitReady(ctx context.Context) error {
+	b.mu.Lock()
+	pane := b.pane
+	b.mu.Unlock()
+	if pane == nil {
+		return fmt.Errorf("claude-code backend not started")
+	}
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for Claude Code ready: %w", ctx.Err())
+		case <-ticker.C:
+			content, err := pane.capturePane(ctx)
+			if err != nil {
+				continue
+			}
+			if strings.Contains(content, "Claude Code") {
+				return nil
+			}
+		}
+	}
+}
+
 // SendTurn sends a prompt to the Claude Code pane. It does not block waiting
 // for a response — output is delivered asynchronously via the persistent
 // watcher handler using the ReplyFunc set by SetReplyFunc. Returns immediately.
@@ -71,6 +103,11 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 
 	// Clear permission prompt dedup so the next prompt is forwarded.
 	b.clearLastPrompt()
+
+	// Record the JSONL file offset BEFORE sending, so the watcher
+	// starts from here and catches any response written between
+	// sendText and watcher start.
+	b.recordPreSendOffset()
 
 	// Send the prompt to the pane.
 	if err := pane.sendText(ctx, prompt); err != nil {
@@ -102,6 +139,37 @@ func (b *Backend) fireTurnComplete(result *backend.TurnResult) {
 
 	// Legacy WaitForTurn signal.
 	b.notifyTurnComplete()
+}
+
+// recordPreSendOffset records the current JSONL file size so the watcher
+// can start from this position. If the session file doesn't exist yet
+// (first turn, CC hasn't created it), records 0 to read from the beginning.
+func (b *Backend) recordPreSendOffset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.watcher != nil {
+		return // watcher already running, offset doesn't matter
+	}
+
+	// Try to find the session file via the existing discovery path.
+	childPID, err := findChildPID(b.pane.pid)
+	if err != nil {
+		b.preSendOffset = 0 // CC not started yet — read from beginning
+		return
+	}
+	_, jsonlPath, err := discoverSessionFile(childPID, b.workDir)
+	if err != nil {
+		b.preSendOffset = 0 // session file doesn't exist yet
+		return
+	}
+	info, err := os.Stat(jsonlPath)
+	if err != nil {
+		b.preSendOffset = 0
+		return
+	}
+	b.preSendOffset = info.Size()
+	log.Debugf("backend/cc", "recorded pre-send offset: %d bytes", b.preSendOffset)
 }
 
 func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) {
