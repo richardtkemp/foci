@@ -176,7 +176,10 @@ func findChildPID(parentPID int) (int, error) {
 
 // capturePane returns the visible text content of the pane.
 func (p *tmuxPane) capturePane(ctx context.Context) (string, error) {
-	out, err := p.runTmux(ctx, "capture-pane", "-t", p.target(), "-p")
+	// -S -500: capture 500 lines of scrollback, not just the visible area.
+	// Permission prompts for large edits push the diff above the visible
+	// window — scrollback ensures we capture the full content.
+	out, err := p.runTmux(ctx, "capture-pane", "-t", p.target(), "-p", "-S", "-500")
 	if err != nil {
 		return "", fmt.Errorf("capture-pane: %w", err)
 	}
