@@ -114,6 +114,14 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 		return nil, fmt.Errorf("send prompt: %w", err)
 	}
 
+	// Signal typing indicator — CC is now working.
+	b.replyMu.Lock()
+	typFn := b.typingFunc
+	b.replyMu.Unlock()
+	if typFn != nil {
+		typFn(true)
+	}
+
 	// Lazily discover the session and start the long-lived watch loop.
 	b.mu.Lock()
 	if err := b.ensureWatcher(ctx); err != nil {
@@ -126,8 +134,17 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 }
 
 // fireTurnComplete fires the per-turn callback (if set) with the given
-// result, then nils it (one-shot). Also notifies any WaitForTurn caller.
+// result, then nils it (one-shot). Also notifies any WaitForTurn caller
+// and stops the typing indicator.
 func (b *Backend) fireTurnComplete(result *backend.TurnResult) {
+	// Stop typing indicator — CC is done.
+	b.replyMu.Lock()
+	typFn := b.typingFunc
+	b.replyMu.Unlock()
+	if typFn != nil {
+		typFn(false)
+	}
+
 	// Per-turn callback (one-shot).
 	b.turnCompleteMu.Lock()
 	fn := b.turnCompleteFn
@@ -188,6 +205,12 @@ func (b *Backend) SetOnSessionReady(fn func(string)) {
 	b.replyMu.Lock()
 	defer b.replyMu.Unlock()
 	b.onSessionReady = fn
+}
+
+func (b *Backend) SetTypingFunc(fn func(bool)) {
+	b.replyMu.Lock()
+	defer b.replyMu.Unlock()
+	b.typingFunc = fn
 }
 
 func (b *Backend) SessionID() string {

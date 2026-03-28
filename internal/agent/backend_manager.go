@@ -36,6 +36,10 @@ type BackendManager struct {
 	// If nil, backends fall back to plain text via SendFunc.
 	PermissionPromptFunc func(sessionKey, text, summary string, choices []backend.PromptChoice)
 
+	// TypingFunc controls the platform typing indicator for a session.
+	// Called with true when CC starts working, false on turn complete.
+	TypingFunc func(sessionKey string, typing bool)
+
 	// IdleTimeout is how long a backend can be idle before being closed.
 	// Zero uses DefaultIdleTimeout.
 	IdleTimeout time.Duration
@@ -99,6 +103,11 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 			m.PermissionPromptFunc(sk, text, summary, choices)
 		})
 	}
+	if m.TypingFunc != nil {
+		be.SetTypingFunc(func(typing bool) {
+			m.TypingFunc(sk, typing)
+		})
+	}
 	be.SetOnSessionReady(func(sessionID string) {
 		m.saveResumeID(base, sessionID)
 	})
@@ -120,6 +129,9 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 				be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
 					m.PermissionPromptFunc(sk, text, summary, choices)
 				})
+			}
+			if m.TypingFunc != nil {
+				be.SetTypingFunc(func(typing bool) { m.TypingFunc(sk, typing) })
 			}
 			opts.ResumeSessionID = ""
 			if err := be.Start(ctx, opts); err != nil {
