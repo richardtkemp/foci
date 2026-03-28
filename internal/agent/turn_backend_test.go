@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestBackendTransport_NoOps verifies that no-op methods don't panic and
@@ -63,6 +64,7 @@ func TestBackendTransport_ComposePrompt(t *testing.T) {
 	ts.Meta = &TurnMetadata{}
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
 	ts.TurnModel = a.Model
+	ts.StartedAt = time.Now()
 
 	if err := tr.ComposePrompt(ts); err != nil {
 		t.Fatalf("ComposePrompt: %v", err)

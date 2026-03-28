@@ -40,7 +40,7 @@ func (t *BackendTransport) ComposePrompt(ts *TurnState) error {
 
 	// Update lastMessageTime AFTER composition so the gap is calculated
 	// against the previous message, not the current one.
-	ts.SessionMeta.lastMessageTime = time.Now()
+	ts.SessionMeta.lastMessageTime = ts.StartedAt
 
 	return nil
 }

@@ -245,8 +245,6 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 	var lastToolError bool
 	var batchedText strings.Builder
 
-	now := time.Now()
-
 	// Safety-net: flush in-flight messages on early return / panic.
 	defer func() {
 		if len(ts.NewMessages) > 0 {
@@ -370,7 +368,7 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 		}
 
 		cost := a.logAPIResponse(ts.SessionKey, ts.TurnModel, start, duration, req, resp, len(ts.Messages))
-		a.processAPIResponse(ts.SessionKey, ts.SessionMeta, resp, cost, now, maxOutput)
+		a.processAPIResponse(ts.SessionKey, ts.SessionMeta, resp, cost, ts.StartedAt, maxOutput)
 
 		assistantMsg := provider.Message{
 			Role:    resp.Role,
@@ -402,25 +400,10 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 				}
 			}
 
-			// Turn complete — save, update metadata, set results.
-			writer := a.Sessions.For(ts.SessionKey)
-			if err := writer.AppendAll(ts.SessionKey, ts.NewMessages); err != nil {
-				return fmt.Errorf("save session: %w", err)
-			}
-			ts.NewMessages = nil // saved — defer won't double-save
-
-			endStats := provider.ComputeSessionStats(ts.Messages)
-			a.logger().Debugf("turn_end session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
-				ts.SessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
-
-			// Per-turn metadata update.
-			ts.SessionMeta.lastMessageTime = now
-			ts.SessionMeta.prevCost = cost
-			ts.SessionMeta.prevInput = resp.Usage.InputTokens
-			ts.SessionMeta.prevOutput = resp.Usage.OutputTokens
-			ts.SessionMeta.prevCacheWrite = resp.Usage.CacheCreationInputTokens
-
+			// Turn complete — set results. Save and metadata update
+			// happen in post-turn (SaveSession / UpdateSessionMeta).
 			ts.FinalUsage = &resp.Usage
+			ts.FinalCost = cost
 			ts.FinalText = provider.TextOf(resp.Content)
 			if isNoResponse(ts.FinalText) {
 				ts.FinalText = ""
@@ -523,16 +506,6 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 	}
 	a.logger().Warnf("max tool call depth reached for session %s", sessionFile)
 
-	writer := a.Sessions.For(ts.SessionKey)
-	if err := writer.AppendAll(ts.SessionKey, ts.NewMessages); err != nil {
-		return fmt.Errorf("save session: %w", err)
-	}
-	ts.NewMessages = nil // saved — defer won't double-save
-
-	endStats := provider.ComputeSessionStats(ts.Messages)
-	a.logger().Debugf("turn_end session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
-		ts.SessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
-
 	ts.FinalText = "Max tool call depth reached."
 	close(ts.CompletionChan)
 	return nil
@@ -540,22 +513,39 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 
 // --- Phase 4: Post-turn ---
 
-// SaveSession persists new messages. For the API path, the messages
-// are already saved by ExecuteTurn (inline on success, safety-net on error).
-// This method handles any edge case where NewMessages survived.
+// SaveSession persists new messages accumulated during the turn.
+// On success, nils NewMessages so the safety-net defer in ExecuteTurn
+// won't double-save.
 func (t *APITransport) SaveSession(ts *TurnState) error {
 	if len(ts.NewMessages) == 0 {
 		return nil
 	}
 	a := t.agent
 	writer := a.Sessions.For(ts.SessionKey)
-	return writer.AppendAll(ts.SessionKey, ts.NewMessages)
+	if err := writer.AppendAll(ts.SessionKey, ts.NewMessages); err != nil {
+		return err
+	}
+	ts.NewMessages = nil // saved — ExecuteTurn's safety-net defer won't double-save
+
+	endStats := provider.ComputeSessionStats(ts.Messages)
+	a.logger().Debugf("turn_end session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
+		ts.SessionKey, endStats.Messages, endStats.Blocks, endStats.ApproxBytes, endStats.ApproxTokens())
+	return nil
 }
 
-// UpdateSessionMeta is a no-op for the API path — metadata is already
-// updated inside ExecuteTurn after each API response (processAPIResponse)
-// and on turn completion (sm.prevCost, sm.prevInput, etc.).
-func (t *APITransport) UpdateSessionMeta(ts *TurnState) {}
+// UpdateSessionMeta updates per-session cost/token tracking from the
+// completed turn. Per-iteration cache tracking (processAPIResponse)
+// still happens inside ExecuteTurn's loop; this handles the final update.
+func (t *APITransport) UpdateSessionMeta(ts *TurnState) {
+	if ts.SessionMeta == nil || ts.FinalUsage == nil {
+		return
+	}
+	ts.SessionMeta.lastMessageTime = ts.StartedAt
+	ts.SessionMeta.prevCost = ts.FinalCost
+	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
+	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
+	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
+}
 
 // RunCompaction checks if compaction is needed and runs it.
 // Extracted from agent.go:690.
