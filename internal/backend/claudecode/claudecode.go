@@ -53,4 +53,9 @@ type Backend struct {
 	// OnTurnComplete callback signals it. One waiter at a time.
 	waitMu sync.Mutex
 	waitCh chan struct{}
+
+	// turnCompleteMu guards turnCompleteFn. Set by SendTurn from the
+	// per-turn EventHandler; fired once by the watcher on end_turn, then nil'd.
+	turnCompleteMu sync.Mutex
+	turnCompleteFn func(*backend.TurnResult)
 }

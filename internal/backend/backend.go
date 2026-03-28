@@ -110,6 +110,16 @@ type EventHandler struct {
 
 // TurnResult is the outcome of a completed turn.
 type TurnResult struct {
-	Text      string // final response text
-	ToolCalls int    // number of tool calls executed during the turn
+	Text      string     // final response text
+	ToolCalls int        // number of tool calls executed during the turn
+	Usage     *TurnUsage // token usage (nil if unavailable)
+}
+
+// TurnUsage holds token counts from a completed backend turn,
+// extracted from the session JSONL's usage payload.
+type TurnUsage struct {
+	InputTokens              int
+	OutputTokens             int
+	CacheCreationInputTokens int
+	CacheReadInputTokens     int
 }

@@ -49,6 +49,10 @@ func (b *Backend) notifyTurnComplete() {
 // for a response — output is delivered asynchronously via the persistent
 // watcher handler using the ReplyFunc set by SetReplyFunc. Returns immediately.
 // Use WaitForTurn to block until the turn completes.
+//
+// If handler.OnTurnComplete is set, it is registered as a per-turn callback
+// that fires once when the watcher sees end_turn, then auto-nils. This is
+// the preferred mechanism for TurnContract's CompletionChan pattern.
 func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
 	b.mu.Lock()
 	if b.pane == nil {
@@ -57,6 +61,13 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 	}
 	pane := b.pane
 	b.mu.Unlock()
+
+	// Register per-turn completion callback (if provided).
+	if handler != nil && handler.OnTurnComplete != nil {
+		b.turnCompleteMu.Lock()
+		b.turnCompleteFn = handler.OnTurnComplete
+		b.turnCompleteMu.Unlock()
+	}
 
 	// Clear permission prompt dedup so the next prompt is forwarded.
 	b.clearLastPrompt()
@@ -75,6 +86,22 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 	b.mu.Unlock()
 
 	return &backend.TurnResult{}, nil
+}
+
+// fireTurnComplete fires the per-turn callback (if set) with the given
+// result, then nils it (one-shot). Also notifies any WaitForTurn caller.
+func (b *Backend) fireTurnComplete(result *backend.TurnResult) {
+	// Per-turn callback (one-shot).
+	b.turnCompleteMu.Lock()
+	fn := b.turnCompleteFn
+	b.turnCompleteFn = nil
+	b.turnCompleteMu.Unlock()
+	if fn != nil {
+		fn(result)
+	}
+
+	// Legacy WaitForTurn signal.
+	b.notifyTurnComplete()
 }
 
 func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) {

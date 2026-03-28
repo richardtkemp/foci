@@ -222,7 +222,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	b.watcher = w
 
 	// Set persistent handler that delegates to the current turn's replyFunc
-	// and notifies any WaitForTurn caller on turn completion.
+	// and fires per-turn + legacy WaitForTurn callbacks on completion.
 	w.setHandler(&backend.EventHandler{
 		OnText: func(text string) {
 			b.replyMu.Lock()
@@ -233,7 +233,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 			}
 		},
 		OnTurnComplete: func(result *backend.TurnResult) {
-			b.notifyTurnComplete()
+			b.fireTurnComplete(result)
 		},
 	})
 
