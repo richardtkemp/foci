@@ -302,24 +302,7 @@ func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// APITransport stubs — Stage 3 will replace with real implementations
-// extracted from HandleMessageWithAttachments.
-// ---------------------------------------------------------------------------
-
-func (t *APITransport) RateLimitGate(ts *TurnState) error          { panic("not implemented") }
-func (t *APITransport) AcquireTurnLock(ts *TurnState) func()       { panic("not implemented") }
-func (t *APITransport) IncrementProcessing(ts *TurnState) func()   { panic("not implemented") }
-func (t *APITransport) RegisterTurn(ts *TurnState) func()          { panic("not implemented") }
-func (t *APITransport) ComposePrompt(ts *TurnState) error          { panic("not implemented") }
-func (t *APITransport) LoadAndRepairSession(ts *TurnState) error   { panic("not implemented") }
-func (t *APITransport) ResolveModelEffort(ts *TurnState)           { panic("not implemented") }
-func (t *APITransport) BuildSystemAndTools(ts *TurnState)          { panic("not implemented") }
-func (t *APITransport) InjectNudges(ts *TurnState)                 { panic("not implemented") }
-func (t *APITransport) ExecuteTurn(ts *TurnState) error            { panic("not implemented") }
-func (t *APITransport) SaveSession(ts *TurnState) error            { panic("not implemented") }
-func (t *APITransport) UpdateSessionMeta(ts *TurnState)            { panic("not implemented") }
-func (t *APITransport) RunCompaction(ts *TurnState)                { panic("not implemented") }
+// APITransport method implementations live in turn_api.go (Stage 3).
 
 // ---------------------------------------------------------------------------
 // BackendTransport stubs — Stage 4 will replace with real implementations.
