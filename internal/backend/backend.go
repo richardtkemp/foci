@@ -127,6 +127,7 @@ type TurnResult struct {
 	Text      string     // final response text
 	ToolCalls int        // number of tool calls executed during the turn
 	Usage     *TurnUsage // token usage (nil if unavailable)
+	Model     string     // model used (e.g. "claude-opus-4-6")
 }
 
 // TurnUsage holds token counts from a completed backend turn,

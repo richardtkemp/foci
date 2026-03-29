@@ -2,8 +2,10 @@ package agent
 
 import (
 	"strings"
+	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
 	"foci/internal/provider"
 )
 
@@ -84,11 +86,13 @@ func (t *BackendTransport) ExecuteTurn(ts *TurnState) error {
 	ts.Backend = be
 
 	// Per-turn handler: fires once when the watcher sees end_turn.
-	// Captures FinalText/FinalUsage and closes CompletionChan.
+	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
+	bt := t
 	handler := &backend.EventHandler{
 		OnTurnComplete: func(result *backend.TurnResult) {
 			if result != nil {
 				ts.FinalText = result.Text
+				ts.FinalModel = result.Model
 				if result.Usage != nil {
 					ts.FinalUsage = &provider.Usage{
 						InputTokens:              result.Usage.InputTokens,
@@ -98,6 +102,7 @@ func (t *BackendTransport) ExecuteTurn(ts *TurnState) error {
 					}
 				}
 			}
+			bt.LogUsage(ts)
 			close(ts.CompletionChan)
 		},
 	}
@@ -122,6 +127,47 @@ func (t *BackendTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
 	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
+}
+
+// LogUsage records backend turn usage to the API database.
+// Self-invoked from the post-turn path after FinalUsage is populated.
+func (t *BackendTransport) LogUsage(ts *TurnState) {
+	if ts.FinalUsage == nil {
+		return
+	}
+	a := t.agent
+	model := ts.FinalModel
+	if model == "" {
+		model = ts.TurnModel
+	}
+	cost := log.CalculateCost(model,
+		ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens,
+		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens)
+	ts.FinalCost = cost
+
+	sessionFile := ""
+	if ts.Backend != nil {
+		sessionFile = ts.Backend.SessionFilePath()
+	}
+	log.API(log.APIEntry{
+		Timestamp:   ts.StartedAt.UTC(),
+		Provider:    "anthropic",
+		Session:     ts.SessionKey,
+		Model:       model,
+		Input:       ts.FinalUsage.InputTokens,
+		Output:      ts.FinalUsage.OutputTokens,
+		CacheRead:   ts.FinalUsage.CacheReadInputTokens,
+		CacheWrite:  ts.FinalUsage.CacheCreationInputTokens,
+		CostUSD:     cost,
+		DurationMS:  time.Since(ts.StartedAt).Milliseconds(),
+		StopReason:  "end_turn",
+		CallType:    "backend_turn",
+		SessionFile: sessionFile,
+	})
+
+	a.logger().Infof("session=%s model=%s input=%d output=%d cache_read=%d cache_write=%d cost=$%.4f (backend)",
+		ts.SessionKey, model, ts.FinalUsage.InputTokens, ts.FinalUsage.OutputTokens,
+		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens, cost)
 }
 
 // RunCompaction is a stub — will send /compact command to CC when

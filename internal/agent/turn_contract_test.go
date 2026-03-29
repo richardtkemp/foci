@@ -189,6 +189,7 @@ func (s *stubContract) SaveSession(ts *TurnState) error {
 	return nil
 }
 func (s *stubContract) UpdateSessionMeta(*TurnState)    {}
+func (s *stubContract) LogUsage(*TurnState)              {}
 func (s *stubContract) RunCompaction(*TurnState)         {}
 func (s *stubContract) LogConversationSent(*TurnState)   {}
 func (s *stubContract) TouchActivityPost(*TurnState)     {}

@@ -172,8 +172,9 @@ func (s *asyncStubContract) SaveSession(ts *TurnState) error {
 	ts.NewMessages = nil
 	return nil
 }
-func (s *asyncStubContract) UpdateSessionMeta(*TurnState) {}
-func (s *asyncStubContract) RunCompaction(*TurnState)      {}
+func (s *asyncStubContract) UpdateSessionMeta(*TurnState)  {}
+func (s *asyncStubContract) LogUsage(*TurnState)            {}
+func (s *asyncStubContract) RunCompaction(*TurnState)       {}
 func (s *asyncStubContract) LogConversationSent(*TurnState) {}
 func (s *asyncStubContract) TouchActivityPost(*TurnState)   {}
 
@@ -206,7 +207,8 @@ func (s *errorStubContract) SaveSession(ts *TurnState) error {
 	ts.NewMessages = nil
 	return nil
 }
-func (s *errorStubContract) UpdateSessionMeta(*TurnState) {}
-func (s *errorStubContract) RunCompaction(*TurnState)      {}
+func (s *errorStubContract) UpdateSessionMeta(*TurnState)  {}
+func (s *errorStubContract) LogUsage(*TurnState)            {}
+func (s *errorStubContract) RunCompaction(*TurnState)       {}
 func (s *errorStubContract) LogConversationSent(*TurnState) {}
 func (s *errorStubContract) TouchActivityPost(*TurnState)   {}
