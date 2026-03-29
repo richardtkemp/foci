@@ -109,10 +109,18 @@ func TestCLIIntegration(t *testing.T) {
 		{"branch unknown agent", []string{"branch", "-a", "nonexistent"}, "unknown agent", true},
 	}
 
+	// Minimal env to avoid inheriting FOCI_TOKEN and other vars that
+	// could cause the binary to hit the live server instead of the mock.
+	baseEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"FOCI_ADDR=" + addr,
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(testBinary, tt.args...)
-			cmd.Env = append(os.Environ(), "FOCI_ADDR="+addr)
+			cmd.Env = baseEnv
 
 			out, err := cmd.CombinedOutput()
 			output := strings.TrimSpace(string(out))
@@ -161,10 +169,18 @@ func TestCLIMessageFile(t *testing.T) {
 		{"branch -mt and -mf", []string{"branch", "-mt", "text", "-mf", msgFile}, "cannot specify both", true},
 	}
 
+	// Minimal env to avoid inheriting FOCI_TOKEN and other vars that
+	// could cause the binary to hit the live server instead of the mock.
+	baseEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"FOCI_ADDR=" + addr,
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(testBinary, tt.args...)
-			cmd.Env = append(os.Environ(), "FOCI_ADDR="+addr)
+			cmd.Env = baseEnv
 
 			out, err := cmd.CombinedOutput()
 			output := strings.TrimSpace(string(out))
