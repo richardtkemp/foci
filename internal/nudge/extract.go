@@ -79,6 +79,12 @@ type BranchHandler interface {
 	HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error)
 }
 
+// OneShotRunner executes a one-shot prompt and returns the response.
+// BackendManager implements this via claude --print.
+type OneShotRunner interface {
+	RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error)
+}
+
 // NeedsExtraction checks if character files have changed since the last extraction.
 // Returns the current content hash and true if extraction is needed.
 func (e *Extractor) NeedsExtraction() (string, bool) {
@@ -114,6 +120,40 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 	response, err := handler.HandleMessage(ctx, sessionKey, ExtractionPrompt)
 	if err != nil {
 		return fmt.Errorf("nudge extraction: %w", err)
+	}
+
+	rules, err := ParseExtractionResponse(response)
+	if err != nil {
+		return fmt.Errorf("parse nudge extraction: %w", err)
+	}
+
+	rs := &RuleSet{
+		ContentHash: hash,
+		Rules:       rules,
+	}
+	rulesPath := RulesPath(e.workspaceDir)
+	if err := SaveRules(rulesPath, rs, e.fileMode); err != nil {
+		return fmt.Errorf("save nudge rules: %w", err)
+	}
+
+	log.Infof("nudge", "extracted %d nudge rules → %s", len(rules), rulesPath)
+	return nil
+}
+
+// ExtractViaRunOnce runs rule extraction using a one-shot runner (claude --print).
+// This is the backend-agent path: no interactive session, no platform delivery.
+func (e *Extractor) ExtractViaRunOnce(ctx context.Context, runner OneShotRunner) error {
+	hash, needed := e.NeedsExtraction()
+	if !needed {
+		log.Infof("nudge", "character files unchanged, skipping extraction")
+		return nil
+	}
+
+	log.Infof("nudge", "extracting nudge rules via RunOnce (hash=%s)", hash[:16])
+
+	response, err := runner.RunOnce(ctx, ExtractionPrompt, "")
+	if err != nil {
+		return fmt.Errorf("nudge extraction (RunOnce): %w", err)
 	}
 
 	rules, err := ParseExtractionResponse(response)

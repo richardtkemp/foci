@@ -362,16 +362,14 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		if needed {
 			go func() {
 				ctx := context.Background()
-				var extractionKey string
 				if ag.BackendManager != nil {
-					// Backend: new independent CC session for extraction.
-					extractionKey = session.SessionKey{
-						AgentID:   acfg.ID,
-						Type:      'i',
-						ID:        fmt.Sprintf("nudge-%d", time.Now().Unix()),
-						VersionTS: time.Now().Unix(),
-					}.String()
-					log.Infof("nudge", "agent %s: backend extraction on new session %s", acfg.ID, extractionKey)
+					// Backend: use claude --print for one-shot extraction.
+					// No interactive session, no platform delivery, no session index.
+					log.Infof("nudge", "agent %s: backend extraction via RunOnce", acfg.ID)
+					if err := extractor.ExtractViaRunOnce(ctx, ag.BackendManager); err != nil {
+						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
+						return
+					}
 				} else {
 					// API: branch from the most recent session.
 					parentKey := mostRecentSessionKey(ag, connMgr, acfg.ID)
@@ -388,11 +386,10 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 						return
 					}
 					ag.SetSessionNoCompact(branchKey, true)
-					extractionKey = branchKey
-				}
-				if err := extractor.Extract(ctx, ag, extractionKey); err != nil {
-					log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
-					return
+					if err := extractor.Extract(ctx, ag, branchKey); err != nil {
+						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
+						return
+					}
 				}
 				nudgeReloadFromDisk()
 				log.Infof("nudge", "agent %s: refreshed rules after extraction", acfg.ID)

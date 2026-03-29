@@ -74,6 +74,7 @@ type Runner struct {
 	sessionKeyFn   func() string                                                   // returns the session key these operations will run on
 	canFireFn      func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
 	isBackendAgent bool // memory formation needs quiet period in backend mode
+	runOnceFn      func(ctx context.Context, prompt, systemPrompt string) (string, error)
 
 	mu                    sync.Mutex
 	lastCacheWarmed       time.Time
@@ -119,6 +120,12 @@ type RunnerConfig struct {
 	// When true, memory formation requires a quiet period (no recent user
 	// activity) because formation runs IN the live session, not as a branch.
 	IsBackendAgent bool
+
+	// RunOnceFunc executes a one-shot prompt via claude --print.
+	// If set, used for consolidation (and other independent tasks) instead of
+	// BranchFunc, avoiding interactive session overhead and platform delivery.
+	// The systemPrompt parameter is passed via --system-prompt (empty = default).
+	RunOnceFunc func(ctx context.Context, prompt, systemPrompt string) (string, error)
 }
 
 // New creates a runner. Call Start() to begin the timer loop.
@@ -145,6 +152,7 @@ func New(cfg RunnerConfig) *Runner {
 		sessionKeyFn:       cfg.SessionKeyFunc,
 		canFireFn:          cfg.CanFireFunc,
 		isBackendAgent:     cfg.IsBackendAgent,
+		runOnceFn:          cfg.RunOnceFunc,
 		lastCacheWarmed:    now,
 		lastInteraction:    now,
 		lastMemoryFormation: now,
@@ -593,6 +601,17 @@ func (r *Runner) maybeConsolidation() {
 				}
 			}
 		}()
-		r.branchFn("consolidation", parentKey, promptText, true)
+		if r.runOnceFn != nil {
+			// Backend: one-shot via claude --print with full character as system prompt.
+			resp, err := r.runOnceFn(context.Background(), promptText, "")
+			if err != nil {
+				r.log.Warnf("consolidation RunOnce failed: %v", err)
+				return
+			}
+			_ = resp // consolidation writes to files directly via tools
+			r.log.Infof("consolidation RunOnce complete")
+		} else {
+			r.branchFn("consolidation", parentKey, promptText, true)
+		}
 	}()
 }
