@@ -170,6 +170,16 @@ func seedBackendPermissions(workspace string) {
 		// paths in CC permission rules (single / is not matched).
 		fmt.Sprintf("Edit(//%s/**)", absWorkspace),
 		fmt.Sprintf("Write(//%s/**)", absWorkspace),
+		// Read-only tools — blanket access everywhere.
+		"Search",
+		"Glob",
+		"Grep",
+		"Read",
+		"WebSearch",
+		"WebFetch",
+		// Basic shell commands — blanket access.
+		"Bash(ls:*)",
+		"Bash(echo:*)",
 		// Foci shell functions
 		"Bash(foci_todo:*)",
 		"Bash(foci_send_to_chat:*)",
@@ -177,11 +187,6 @@ func seedBackendPermissions(workspace string) {
 		"Bash(foci_http_request:*)",
 		"Bash(foci_web_search:*)",
 		"Bash(foci_web_fetch:*)",
-		// Basic shell commands
-		"Bash(ls:*)",
-		"Bash(echo:*)",
-		// Exec bridge temp files
-		"Read(//tmp/foci/**)",
 	}
 
 	// Get or create the permissions.allow array.
