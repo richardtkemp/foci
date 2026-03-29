@@ -85,6 +85,9 @@ type Bot struct {
 	requireMention bool   // require @mention in guild channels
 	autoThread     bool   // create threads for facets
 	botUserID      string // the bot's own user ID (for mention stripping)
+
+	typingMu     sync.Mutex
+	typingCancel context.CancelFunc // non-nil while typing ticker is running
 }
 
 // BotDisplayConfig groups all display-related settings. Write-once at startup

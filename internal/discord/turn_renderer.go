@@ -110,7 +110,7 @@ func (b *discordBackend) FormatStreamPreview(preview string) string {
 }
 
 func (b *discordBackend) SendTyping() {
-	_ = b.bot.session.ChannelTyping(b.channelID)
+	b.bot.SetTyping(true)
 }
 
 func (b *discordBackend) Logger() *log.ComponentLogger {

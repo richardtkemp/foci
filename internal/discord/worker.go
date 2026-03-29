@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"time"
 
 	"foci/internal/agent"
 	"foci/internal/platform"
@@ -91,21 +90,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		}
 	}()
 
-	// Send typing indicator and keep it alive throughout the agent turn.
-	// Discord typing expires after ~10s, so we re-send every 8s.
-	_ = b.session.ChannelTyping(channelIDStr)
-	typingTicker := time.NewTicker(8 * time.Second)
-	go func() {
-		for {
-			select {
-			case <-typingTicker.C:
-				_ = b.session.ChannelTyping(channelIDStr)
-			case <-turnCtx.Done():
-				return
-			}
-		}
-	}()
-	defer typingTicker.Stop()
+	// Start typing indicator — SetTyping handles the periodic refresh.
+	b.SetTyping(true)
+	defer b.SetTyping(false)
 
 	d := b.resolveDisplay(sk)
 	tracker := newToolCallTracker(b, channelIDStr, d)

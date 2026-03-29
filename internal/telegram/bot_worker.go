@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"foci/internal/agent"
 	"foci/internal/platform"
@@ -87,21 +86,10 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		}
 	}()
 
-	// Send typing indicator and keep it alive throughout the agent turn.
-	// Telegram typing expires after ~5s, so we re-send every 4s.
-	_, _ = b.client.SendChatAction(first.ChatID, "typing", nil)
-	typingTicker := time.NewTicker(4 * time.Second)
-	go func() {
-		for {
-			select {
-			case <-typingTicker.C:
-				_, _ = b.client.SendChatAction(first.ChatID, "typing", nil)
-			case <-turnCtx.Done():
-				return
-			}
-		}
-	}()
-	defer typingTicker.Stop()
+	// Start typing indicator — SetTyping handles the periodic refresh.
+	// Stopped when turn ends (deferred below) or when a message is sent.
+	b.SetTyping(true)
+	defer b.SetTyping(false)
 
 	d := b.resolveDisplay(sk)
 	tracker := newToolCallTracker(b, first.ChatID, d)

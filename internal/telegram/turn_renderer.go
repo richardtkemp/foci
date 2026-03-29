@@ -122,7 +122,7 @@ func (b *telegramBackend) FormatStreamPreview(preview string) string {
 }
 
 func (b *telegramBackend) SendTyping() {
-	_, _ = b.bot.client.SendChatAction(b.chatID, "typing", nil)
+	b.bot.SetTyping(true)
 }
 
 func (b *telegramBackend) Logger() *log.ComponentLogger {

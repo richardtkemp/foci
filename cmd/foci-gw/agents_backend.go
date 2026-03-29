@@ -129,7 +129,7 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 				return
 			}
 			if typing {
-				conn.SendTyping()
+				conn.SetTyping(true)
 			}
 			// false = stop typing. Most platforms auto-expire typing after
 			// a message is sent, so we only need to actively signal start.

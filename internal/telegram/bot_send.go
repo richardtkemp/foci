@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -58,9 +59,41 @@ func (b *Bot) SendNotification(text string) {
 	b.sendNotificationImmediate(text)
 }
 
-// SendTyping sends a "typing" chat action to the bot's default chat.
-func (b *Bot) SendTyping() {
+// SetTyping starts or stops the typing indicator. When true, sends an
+// immediate typing action and starts a 4-second ticker (Telegram's typing
+// expires after ~5s). When false, stops the ticker.
+func (b *Bot) SetTyping(typing bool) {
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+
+	if !typing {
+		if b.typingCancel != nil {
+			b.typingCancel()
+			b.typingCancel = nil
+		}
+		return
+	}
+
+	// Already typing — don't start a second ticker.
+	if b.typingCancel != nil {
+		return
+	}
+
 	_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	b.typingCancel = cancel
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // SendNotificationDirect sends a notification immediately, bypassing the
