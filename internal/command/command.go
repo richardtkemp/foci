@@ -6,14 +6,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"foci/internal/platform"
 )
 
-// KeyboardOption represents a button in an inline keyboard for a command.
-type KeyboardOption struct {
-	Label string // Button text shown to user
-	Data  string // Callback data suffix (appended to "cmd:/name ")
-	Row   int    // Which row this button goes in (0-indexed)
-}
+// KeyboardOption is an alias for platform.ButtonChoice.
+// Command keyboards use the same ButtonChoice type that all button rendering uses.
+type KeyboardOption = platform.ButtonChoice
 
 // Subcommand declares a named subcommand within a parent command.
 // When Command.Subcommands is populated, Execute and KeyboardOptions

@@ -4,21 +4,21 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/command"
+	"foci/internal/platform"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// TestBuildCommandButtons verifies that keyboard options are converted into
+// TestBuildButtonComponents verifies that ButtonChoice slices are converted into
 // Discord action rows with correct button labels, styles, and custom IDs.
-func TestBuildCommandButtons(t *testing.T) {
-	opts := []command.KeyboardOption{
+func TestBuildButtonComponents(t *testing.T) {
+	opts := []platform.ButtonChoice{
 		{Label: "Haiku", Data: "haiku", Row: 0},
 		{Label: "Opus", Data: "opus", Row: 0},
 		{Label: "Cancel", Data: "cancel", Row: 1},
 	}
 
-	components := buildCommandButtons("model", opts)
+	components := buildButtonComponents(opts, "cmd:")
 	if len(components) != 2 {
 		t.Fatalf("expected 2 action rows, got %d", len(components))
 	}
@@ -39,8 +39,8 @@ func TestBuildCommandButtons(t *testing.T) {
 	if btn.Label != "Haiku" {
 		t.Errorf("expected label Haiku, got %q", btn.Label)
 	}
-	if btn.CustomID != "cmd:/model haiku" {
-		t.Errorf("expected custom ID cmd:/model haiku, got %q", btn.CustomID)
+	if btn.CustomID != "cmd:haiku" {
+		t.Errorf("expected custom ID cmd:haiku, got %q", btn.CustomID)
 	}
 
 	// Row 1 should have 1 button
@@ -53,15 +53,15 @@ func TestBuildCommandButtons(t *testing.T) {
 	}
 }
 
-// TestBuildCommandButtonsMax5PerRow verifies that rows with >5 buttons are split
+// TestBuildButtonComponentsMax5PerRow verifies that rows with >5 buttons are split
 // into multiple action rows (Discord's 5-button limit).
-func TestBuildCommandButtonsMax5PerRow(t *testing.T) {
-	opts := make([]command.KeyboardOption, 7)
+func TestBuildButtonComponentsMax5PerRow(t *testing.T) {
+	opts := make([]platform.ButtonChoice, 7)
 	for i := range opts {
-		opts[i] = command.KeyboardOption{Label: "B", Data: "d", Row: 0}
+		opts[i] = platform.ButtonChoice{Label: "B", Data: "d", Row: 0}
 	}
 
-	components := buildCommandButtons("cmd", opts)
+	components := buildButtonComponents(opts, "cmd:")
 	if len(components) != 2 {
 		t.Fatalf("expected 2 action rows for 7 buttons, got %d", len(components))
 	}
@@ -76,9 +76,10 @@ func TestBuildCommandButtonsMax5PerRow(t *testing.T) {
 	}
 }
 
-// TestSingleButton verifies the singleButton helper creates a proper action row.
-func TestSingleButton(t *testing.T) {
-	components := singleButton("Show full", "tc:show")
+// TestBuildButtonComponentsSingleButton verifies a single-element ButtonChoice
+// creates a proper action row.
+func TestBuildButtonComponentsSingleButton(t *testing.T) {
+	components := buildButtonComponents([]platform.ButtonChoice{{Label: "Show full", Data: "show"}}, "tc:")
 	if len(components) != 1 {
 		t.Fatalf("expected 1 action row, got %d", len(components))
 	}
@@ -101,8 +102,8 @@ func TestSingleButton(t *testing.T) {
 	if btn.CustomID != "tc:show" {
 		t.Errorf("expected custom ID 'tc:show', got %q", btn.CustomID)
 	}
-	if btn.Style != discordgo.SecondaryButton {
-		t.Errorf("expected SecondaryButton style, got %d", btn.Style)
+	if btn.Style != discordgo.PrimaryButton {
+		t.Errorf("expected PrimaryButton style, got %d", btn.Style)
 	}
 }
 

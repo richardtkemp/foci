@@ -156,7 +156,7 @@ See [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) for full details.
 
 ## Stats
 
-~52k lines of Go (~128k with tests) · 1,200+ commits · 15 dependencies · 37 packages
+~67k lines of Go (~158k with tests) · 1,670+ commits · 15 dependencies · 47 packages
 
 ## License
 

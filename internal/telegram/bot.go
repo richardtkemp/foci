@@ -21,6 +21,7 @@ import (
 )
 
 var _ platform.Sender = (*Bot)(nil)
+var _ platform.ButtonSender = (*Bot)(nil)
 
 // botClient abstracts Telegram API methods for testability.
 type botClient interface {

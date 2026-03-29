@@ -37,9 +37,7 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 	// Check for chain keyboard (e.g. /config set → section buttons).
 	if name, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText, msg.Chat.Id); ok {
 		label := text + ":"
-		_, _ = b.client.SendMessage(msg.Chat.Id, label, &gotgbot.SendMessageOpts{
-			ReplyMarkup: buildCommandKeyboard(name, opts),
-		})
+		_, _ = b.SendTextWithButtons(label, cmdButtons(name, opts), "cmd:")
 		return true
 	}
 
@@ -55,9 +53,7 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 			text = strings.Join(result.Response.Parts, "\n\n")
 		}
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(lookupText), "/"), " ")
-		_, _ = b.client.SendMessage(msg.Chat.Id, text, &gotgbot.SendMessageOpts{
-			ReplyMarkup: buildCommandKeyboard(cmdName, result.Response.Keyboard),
-		})
+		_, _ = b.SendTextWithButtons(text, cmdButtons(cmdName, result.Response.Keyboard), "cmd:")
 	} else if len(result.Response.Parts) > 0 {
 		for _, part := range result.Response.Parts {
 			b.sendReply(msg, part)

@@ -411,3 +411,111 @@ func (b *Bot) SendAudioToChat(chatID int64, filePath string) error {
 func (b *Bot) SendAnimationToChat(chatID int64, filePath string) error {
 	return b.sendMediaFile(chatID, filePath)
 }
+
+// SendTextWithButtons sends a text message with inline buttons to the default channel.
+// Returns the message ID (as string) for later editing.
+func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
+	channelID := b.DefaultChatID()
+	if channelID == 0 {
+		b.channelMu.Lock()
+		channelID = b.channelID
+		b.channelMu.Unlock()
+	}
+	if channelID == 0 {
+		return "", fmt.Errorf("no channel ID -- no default channel configured")
+	}
+
+	channelIDStr := strconv.FormatInt(channelID, 10)
+	components := buildButtonComponents(buttons, callbackPrefix)
+	msg, err := b.session.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
+		Content:    text,
+		Components: components,
+	})
+	if err != nil {
+		return "", err
+	}
+	return msg.ID, nil
+}
+
+// EditMessageText edits an existing message's text and removes buttons.
+func (b *Bot) EditMessageText(msgID string, text string) error {
+	channelID := b.DefaultChatID()
+	if channelID == 0 {
+		b.channelMu.Lock()
+		channelID = b.channelID
+		b.channelMu.Unlock()
+	}
+	if channelID == 0 {
+		return fmt.Errorf("no channel ID -- no default channel configured")
+	}
+
+	channelIDStr := strconv.FormatInt(channelID, 10)
+	noComponents := []discordgo.MessageComponent{}
+	_, err := b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    channelIDStr,
+		ID:         msgID,
+		Content:    &text,
+		Components: &noComponents,
+	})
+	return err
+}
+
+// EditMessageWithButtons edits an existing message's text and replaces its buttons.
+func (b *Bot) EditMessageWithButtons(msgID string, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	channelID := b.DefaultChatID()
+	if channelID == 0 {
+		b.channelMu.Lock()
+		channelID = b.channelID
+		b.channelMu.Unlock()
+	}
+	if channelID == 0 {
+		return fmt.Errorf("no channel ID -- no default channel configured")
+	}
+
+	channelIDStr := strconv.FormatInt(channelID, 10)
+	components := buildButtonComponents(buttons, callbackPrefix)
+	_, err := b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		Channel:    channelIDStr,
+		ID:         msgID,
+		Content:    &text,
+		Components: &components,
+	})
+	return err
+}
+
+// buildButtonComponents converts platform.ButtonChoice slices into Discord message components.
+// Buttons are grouped by their Row field, with each row containing at most 5 buttons.
+func buildButtonComponents(buttons []platform.ButtonChoice, callbackPrefix string) []discordgo.MessageComponent {
+	rowMap := make(map[int][]discordgo.MessageComponent)
+	maxRow := 0
+	for _, btn := range buttons {
+		rowMap[btn.Row] = append(rowMap[btn.Row], discordgo.Button{
+			Label:    btn.Label,
+			Style:    discordgo.PrimaryButton,
+			CustomID: callbackPrefix + btn.Data,
+		})
+		if btn.Row > maxRow {
+			maxRow = btn.Row
+		}
+	}
+
+	var components []discordgo.MessageComponent
+	for i := 0; i <= maxRow; i++ {
+		btns, ok := rowMap[i]
+		if !ok {
+			continue
+		}
+		// Discord allows at most 5 buttons per action row
+		for len(btns) > 0 {
+			end := 5
+			if end > len(btns) {
+				end = len(btns)
+			}
+			components = append(components, discordgo.ActionsRow{
+				Components: btns[:end],
+			})
+			btns = btns[end:]
+		}
+	}
+	return components
+}

@@ -48,18 +48,28 @@ type Result struct {
 // platform-specific message type.
 func (d *Dispatcher) DispatchText(ctx context.Context, text string, chatID int64, userID string) Result {
 	sessionKey := d.sessionKeyForChat(chatID)
+	trimmed := strings.TrimSpace(text)
 
-	if strings.HasPrefix(text, ".") && len(text) > 1 && text[1] >= 'a' && text[1] <= 'z' {
-		if result := d.dispatchDotCommand(ctx, text, sessionKey, userID, chatID); result.Handled {
-			return result
-		}
+	isDot := len(trimmed) > 1 && trimmed[0] == '.' &&
+		(trimmed[1] >= 'a' && trimmed[1] <= 'z' || trimmed[1] >= 'A' && trimmed[1] <= 'Z')
+	isSlash := strings.HasPrefix(trimmed, "/")
+
+	if !isDot && !isSlash {
+		return Result{}
 	}
 
-	if strings.HasPrefix(text, "/") {
-		return d.dispatchSlashCommand(ctx, text, sessionKey, userID, chatID)
+	body := trimmed[1:]
+	name, _, _ := strings.Cut(body, " ")
+	name = strings.ToLower(strings.TrimSpace(name))
+	args := extractArgs(body)
+
+	// Dot commands must match a registered command — otherwise fall through
+	// as normal text (e.g. ".something" in a sentence).
+	if isDot && d.registry.Get(name) == nil {
+		return Result{}
 	}
 
-	return Result{}
+	return d.dispatchRequest(ctx, name, args, sessionKey, userID, chatID)
 }
 
 // DispatchCallback dispatches a command from a button/callback interaction.
@@ -102,25 +112,6 @@ func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey
 	return Result{Handled: handled, Response: resp, SessionKey: sessionKey, UserID: userID}
 }
 
-func (d *Dispatcher) dispatchDotCommand(ctx context.Context, text, sessionKey, userID string, chatID int64) Result {
-	dotText := strings.TrimSpace(text)[1:]
-	cmdName, _, _ := strings.Cut(strings.ToLower(dotText), " ")
-
-	if d.registry.Get(cmdName) == nil {
-		return Result{}
-	}
-
-	return d.dispatchRequest(ctx, cmdName, extractArgs(dotText), sessionKey, userID, chatID)
-}
-
-func (d *Dispatcher) dispatchSlashCommand(ctx context.Context, text, sessionKey, userID string, chatID int64) Result {
-	stripped := text[1:]
-	name, args, _ := strings.Cut(stripped, " ")
-	name = strings.ToLower(strings.TrimSpace(name))
-	args = strings.TrimSpace(args)
-
-	return d.dispatchRequest(ctx, name, args, sessionKey, userID, chatID)
-}
 
 func (d *Dispatcher) sessionKeyForChat(chatID int64) string {
 	if d.sessionKeyFn != nil {

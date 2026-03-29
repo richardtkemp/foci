@@ -99,6 +99,10 @@ Per-agent facet pools are configured in the agent's `facet_bots` list. A shared 
 
 **Restart survival:** The `bot → session_key` mapping is persisted in the state store. On restart, mappings are restored if the session file still exists on disk. Stale mappings are cleaned up automatically.
 
+### Platform Button Abstraction
+
+`platform.ButtonSender` is the single interface for sending messages with interactive buttons. Both Telegram (inline keyboards) and Discord (message components) implement it. `command.KeyboardOption` is aliased to `platform.ButtonChoice` (fields: Label, Data, Row). All button construction — command keyboards, permission prompts, tool result expansion — flows through centralized helpers on `ButtonSender`. Discord uses `"im:"` callback data prefix routing for interactive messages (e.g. permission prompts from backend agents).
+
 ### Voice (Telegram Voice Notes)
 
 **Inbound:** Receive Telegram voice notes → transcribe via STT provider (OpenAI-compatible, e.g. Groq Whisper) → inject transcript as the user message with a `[voice]` tag. The agent sees text, doesn't need to handle audio.
@@ -258,6 +262,15 @@ Both implement the `TurnContract` interface (`internal/agent/turn_contract.go`) 
 The orchestrator (`RunTurn` in `turn_orchestrator.go`) calls all 20 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Seven methods are shared via `sharedTurnOps` embedding.
 
 The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; backend closes it when the watcher sees `end_turn` in the JSONL. Post-turn methods (save, metadata, compaction, logging) fire inline for API or in a goroutine for backend.
+
+**RunOnce mode:** `BackendManager.RunOnce(ctx, prompt, systemPrompt)` runs `claude --print` synchronously for headless tasks (nudge extraction, consolidation). No tmux, no watcher — one-shot subprocess with stdout capture.
+
+**Session lifecycle:**
+- **Session ID persistence:** CC session UUID is persisted on discovery. On restart, `--resume <sessionID>` reconnects to the existing session.
+- **Branch rejection:** Backend agents return HTTP 400 for `/branch`. Three strategies by task type: inject into main session (memory-formation, compaction-memory), spawn independent `RunOnce` process (consolidation, background, nudge extraction), or reject (HTTP endpoint).
+- **/reset:** Sends memory formation prompt, waits for completion, kills tmux pane, starts fresh CC session.
+- **/stop:** Sends Escape×2 + Ctrl-C to the CC TUI to interrupt the current turn.
+- **Stable exec bridge sockets:** Socket path derived from session key (not random), so CC keeps the same `FOCI_SOCK` path across foci restarts.
 
 See [WIRING.md — The Agent Loop](../shared/docs/WIRING.md) for the full phase-by-phase breakdown.
 

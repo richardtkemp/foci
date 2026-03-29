@@ -193,6 +193,7 @@ type Connection interface {
 type ButtonChoice struct {
 	Label string // button text shown to user
 	Data  string // callback data sent when pressed
+	Row   int    // which row this button goes in (0-indexed)
 }
 
 // ButtonSender is optionally implemented by Connection types that support
@@ -200,10 +201,12 @@ type ButtonChoice struct {
 // get interactive messages (buttons with callbacks that edit the message).
 type ButtonSender interface {
 	// SendTextWithButtons sends a message with inline buttons.
-	// Returns the platform message ID for later editing.
-	SendTextWithButtons(text string, buttons []ButtonChoice, callbackPrefix string) (msgID int64, err error)
+	// Returns the platform message ID (as string) for later editing.
+	SendTextWithButtons(text string, buttons []ButtonChoice, callbackPrefix string) (msgID string, err error)
 	// EditMessageText edits an existing message's text (removes buttons).
-	EditMessageText(msgID int64, text string) error
+	EditMessageText(msgID string, text string) error
+	// EditMessageWithButtons edits an existing message's text and replaces its buttons.
+	EditMessageWithButtons(msgID string, text string, buttons []ButtonChoice, callbackPrefix string) error
 }
 
 // ConnectionManager manages platform connection instances and facet pools.

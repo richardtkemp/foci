@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/turn"
 
 	"github.com/bwmarrin/discordgo"
@@ -63,7 +64,7 @@ func (b *discordBackend) SendWithThinkingButton(formatted, thinkingText string) 
 			b.bot.sendMarkdownChunks(b.channelID, chunk)
 			continue
 		}
-		buttons := singleButton("Show thinking", "th:show")
+		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 		sent, err := b.bot.session.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
 			Content:    chunk,
 			Components: buttons,
@@ -81,7 +82,7 @@ func (b *discordBackend) SendWithThinkingButton(formatted, thinkingText string) 
 }
 
 func (b *discordBackend) EditWithThinkingButton(msgID, formatted, thinkingText string) error {
-	buttons := singleButton("Show thinking", "th:show")
+	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	_, err := b.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    b.channelID,
 		ID:         msgID,

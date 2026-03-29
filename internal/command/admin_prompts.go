@@ -138,7 +138,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 			"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
 		resolvePromptInfo("memory_session_end",
 			derefStr(acfg.MemoryFormation.SessionEndPrompt),
-			"memory-formation.md", prompts.MemoryFormation(), dirs),
+			"memory-session-end.md", prompts.MemoryFormation(), dirs),
 	}
 
 	allPrompts = append(allPrompts,
@@ -172,7 +172,7 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		{"background", derefStr(acfg.Background.Prompt), "background.md", prompts.Background()},
 		{"memory_formation", derefStr(acfg.MemoryFormation.IntervalPrompt), "memory-formation.md", prompts.MemoryFormation()},
 		{"memory_consolidation", derefStr(acfg.MemoryFormation.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
-		{"memory_session_end", derefStr(acfg.MemoryFormation.SessionEndPrompt), "memory-formation.md", prompts.MemoryFormation()},
+		{"memory_session_end", derefStr(acfg.MemoryFormation.SessionEndPrompt), "memory-session-end.md", prompts.MemoryFormation()},
 	}
 	resolvedTexts := make(map[string]string, len(fileDefs)+2)
 	defaultTexts := make(map[string]string, len(fileDefs)+2)

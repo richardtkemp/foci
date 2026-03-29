@@ -10,29 +10,6 @@ import (
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
-// buildCommandKeyboard groups KeyboardOptions by row and returns an
-// InlineKeyboardMarkup with callback data prefixed by "cmd:/cmdName ".
-// Rows with more than 3 buttons are auto-split into multiple rows.
-func buildCommandKeyboard(cmdName string, opts []command.KeyboardOption) gotgbot.InlineKeyboardMarkup {
-	rowMap := make(map[int][]gotgbot.InlineKeyboardButton)
-	maxRow := 0
-	for _, opt := range opts {
-		rowMap[opt.Row] = append(rowMap[opt.Row], gotgbot.InlineKeyboardButton{
-			Text:         opt.Label,
-			CallbackData: fmt.Sprintf("cmd:/%s %s", cmdName, opt.Data),
-		})
-		if opt.Row > maxRow {
-			maxRow = opt.Row
-		}
-	}
-	var rows [][]gotgbot.InlineKeyboardButton
-	for i := 0; i <= maxRow; i++ {
-		if buttons, ok := rowMap[i]; ok {
-			rows = append(rows, layoutButtons(buttons)...)
-		}
-	}
-	return gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows}
-}
 
 // layoutButtons splits a slice of buttons into rows of reasonable width.
 // It uses at most 3 buttons per row, dropping to 2 if any button label
@@ -60,19 +37,22 @@ func layoutButtons(buttons []gotgbot.InlineKeyboardButton) [][]gotgbot.InlineKey
 	return rows
 }
 
-// singleButtonKeyboard returns an InlineKeyboardMarkup with one button.
-func singleButtonKeyboard(text, callbackData string) gotgbot.InlineKeyboardMarkup {
-	return gotgbot.InlineKeyboardMarkup{
-		InlineKeyboard: [][]gotgbot.InlineKeyboardButton{{
-			{Text: text, CallbackData: callbackData},
-		}},
+// cmdButtons converts command keyboard options to platform.ButtonChoice with
+// callback data formatted as "/cmdName optData".
+func cmdButtons(cmdName string, opts []command.KeyboardOption) []platform.ButtonChoice {
+	btns := make([]platform.ButtonChoice, len(opts))
+	for i, opt := range opts {
+		btns[i] = platform.ButtonChoice{
+			Label: opt.Label,
+			Data:  fmt.Sprintf("/%s %s", cmdName, opt.Data),
+			Row:   opt.Row,
+		}
 	}
+	return btns
 }
 
 func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, header string, opts []command.KeyboardOption) {
-	_, _ = b.client.SendMessage(chatID, header, &gotgbot.SendMessageOpts{
-		ReplyMarkup: buildCommandKeyboard(cmdName, opts),
-	})
+	_, _ = b.SendTextWithButtons(header, cmdButtons(cmdName, opts), "cmd:")
 }
 
 // handleCallbackQuery processes inline keyboard button presses for tool result
@@ -159,19 +139,19 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 	// If the response includes a keyboard, edit with both text and keyboard.
 	if len(dr.Response.Keyboard) > 0 {
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(cmdText, "/"), " ")
-		kb := buildCommandKeyboard(cmdName, dr.Response.Keyboard)
+		rows := buildButtonRows(cmdButtons(cmdName, dr.Response.Keyboard), "cmd:")
 		_, _, err := b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 			ChatId:      chatID,
 			MessageId:   msgID,
 			ParseMode:   "HTML",
-			ReplyMarkup: kb,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows},
 		})
 		if err != nil {
 			b.logger().Debugf("command callback HTML+keyboard edit failed: %v, retrying as plain text", err)
 			_, _, _ = b.client.EditMessageText(result, &gotgbot.EditMessageTextOpts{
 				ChatId:      chatID,
 				MessageId:   msgID,
-				ReplyMarkup: kb,
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows},
 			})
 		}
 		return
@@ -194,11 +174,11 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 // editMessageWithKeyboard replaces the message with a chained inline keyboard.
 func (b *Bot) editMessageWithKeyboard(chatID, msgID int64, parentName, cmdText string, opts []command.KeyboardOption) {
 	display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
-	kb := buildCommandKeyboard(parentName, opts)
+	rows := buildButtonRows(cmdButtons(parentName, opts), "cmd:")
 	_, _, _ = b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
-		ChatId:    chatID,
-		MessageId: msgID,
-		ReplyMarkup: kb,
+		ChatId:      chatID,
+		MessageId:   msgID,
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{InlineKeyboard: rows},
 	})
 }
 
@@ -223,22 +203,26 @@ func (b *Bot) handleToolCallCallback(chatID int64, action string, msgID int64) {
 		stored.expanded = true
 		stored.chatID = chatID
 		b.toolResults.Store(msgID, stored)
-		kb := singleButtonKeyboard("Hide", "tc:hide")
+		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Hide", Data: "hide"}}, "tc:")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: kb,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: rows,
+			},
 		})
 	case "hide":
 		stored.expanded = false
 		b.toolResults.Store(msgID, stored)
-		kb := singleButtonKeyboard("Show full", "tc:show")
+		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Show full", Data: "show"}}, "tc:")
 		_, _, _ = b.client.EditMessageText(stored.compactText, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: kb,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: rows,
+			},
 		})
 	}
 }
@@ -254,20 +238,24 @@ func (b *Bot) handleThinkingCallback(chatID int64, action string, msgID int64) {
 	switch action {
 	case "show":
 		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseHTML, b.resolveDisplay(b.sessionKeyForMsg(chatID)).DisplayWidth)
-		kb := singleButtonKeyboard("Hide thinking", "th:hide")
+		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Hide thinking", Data: "hide"}}, "th:")
 		_, _, _ = b.client.EditMessageText(expanded, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: kb,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: rows,
+			},
 		})
 	case "hide":
-		kb := singleButtonKeyboard("Show thinking", "th:show")
+		rows := buildButtonRows([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 		_, _, _ = b.client.EditMessageText(entry.responseHTML, &gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
 			MessageId: msgID,
 			ParseMode: "HTML",
-			ReplyMarkup: kb,
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: rows,
+			},
 		})
 	}
 }

@@ -238,6 +238,47 @@ The core of the system. Two entry points:
 
 **Backend agents:** When `Agent.Backend != nil`, `HandleMessageWithAttachments` branches to `handleViaBackend` (`backend_turn.go`) instead of the traditional loop below. The backend path composes a prompt (metadata, reminders, nudges, state dashboard, attachment paths, user text) via the shared `composeTurnText` (`turn_common.go`), sends it to the coding agent via `Backend.SendTurn()` (fire-and-forget), and returns immediately. Output is delivered asynchronously: the backend's session file watcher calls `SetReplyFunc` which routes text to the correct platform connection via `connMgr.ForSessionOrPrimary()`. Permission prompts are detected by scraping the tmux pane and forwarded to the user. See [docs/CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
 
+### RunOnce Mode (`BackendManager.RunOnce`)
+
+Non-interactive backend execution for headless tasks. `RunOnce(ctx, prompt, systemPrompt)` spawns `claude --print --dangerously-skip-permissions --no-session-persistence --model sonnet`, captures stdout synchronously, and returns the response text. No tmux pane, no watcher, no session index — a one-shot subprocess call.
+
+Used by:
+- **Nudge extraction** — `ExtractViaRunOnce` sends conversation context to the model and parses structured nudge rules from the response.
+- **Consolidation** — The periodic `Runner` is wired with a `RunOnceFunc` for memory consolidation tasks that don't need an interactive session.
+
+### Backend Watcher (`internal/backend/claudecode/watcher.go`)
+
+The session watcher tails Claude Code's JSONL session file via fsnotify. It converts raw JSONL events into structured callbacks (assistant text, turn completion, usage, agent status).
+
+**Pre-send offset:** Before `SendTurn` pastes the prompt into the tmux pane, the watcher records the current JSONL file size. The watcher starts reading from this offset so it doesn't replay old content from earlier turns. Falls back to `-1` (tail from end of file) if the offset discovery fails.
+
+**Synthetic response filter:** Claude Code emits synthetic messages (model: `<synthetic>`) such as `"No response requested."` and `"[[NO_RESPONSE]]"`. The watcher filters these at the event level — they never reach the reply callback.
+
+**Typing indicator:** `SetTypingFunc` on the Backend registers a callback. Set to `true` on `SendTurn` (prompt pasted), set to `false` when `fireTurnComplete` fires (end_turn seen). Platforms use this for typing indicators.
+
+**Usage extraction:** Assistant messages in the JSONL carry a `usage` payload. The watcher extracts `TurnUsage` (InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens) from the last assistant message in each turn. This is reported via `TurnState.FinalUsage` on completion.
+
+**Per-turn completion callbacks:** `SendTurn` registers a one-shot `turnCompleteFn` that fires when the watcher sees `end_turn` in the JSONL. The callback sets `TurnState.FinalText` and `TurnState.FinalUsage`, then closes `TurnState.CompletionChan` — triggering the post-turn goroutine (save, metadata, compaction, logging).
+
+**Agent spawn tracking:** The watcher tracks pending `tool_use` calls for the Agent tool. When a sub-agent is spawned, status is reported via the `onAgentStatus` callback, allowing the platform to show agent activity state.
+
+**Permission prompt detection:** A periodic check (every 3s) captures the tmux pane content and scans for Claude Code permission prompts ("Do you want to proceed?"). Detected prompts are forwarded to the user via the platform connection with an inline keyboard of choices. The user's selection is sent to the tmux pane as input.
+
+### Backend Session Lifecycle
+
+**Session ID persistence:** `SetOnSessionReady` registers a callback that fires when the watcher discovers the CC session UUID from the JSONL path. The UUID is persisted in the state store. On restart, `--resume <sessionID>` is passed to the `claude` command to reconnect to the existing CC session rather than starting fresh.
+
+**Stable exec bridge sockets:** The exec bridge socket path for backend agents is derived from the session key (not a random value). This means CC retains the same `FOCI_SOCK` environment variable path across foci restarts — shell functions piped through the bridge continue to work without re-sourcing.
+
+**Branch rejection:** Backend agents return HTTP 400 for `/branch` endpoint requests. The three task-type strategies:
+- **Inject into main session** — memory-formation and compaction-memory prompts are sent directly into the running CC session (no branch needed).
+- **New independent CC session** — consolidation, background tasks, and nudge extraction use `RunOnce` (see above), which spawns an independent headless CC process.
+- **Reject** — the HTTP `/branch` endpoint is explicitly rejected since backend agents don't support session branching.
+
+**/reset:** Sends the memory formation prompt to the CC session, waits for completion, kills the tmux pane, and starts a fresh CC session. The session ID is cleared from the state store and a new one is persisted on reconnection.
+
+**/stop:** Sends Escape×2 + Ctrl-C to the CC TUI via tmux `send-keys` to interrupt the current turn. This halts the in-flight inference/tool execution inside Claude Code.
+
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
 - If exceeded, writes full result to temp file and returns a guard message (no partial content)
@@ -360,7 +401,7 @@ Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCall
 - `handleCallbackQuery` processes `tc:show:<msgID>` / `tc:hide:<msgID>` button presses, editing the message and answering the callback query. Also handles `cmd:/name args` for inline keyboard command selections.
 - `pollUpdates` requests `AllowedUpdates: ["message", "callback_query"]` to receive button press events.
 
-**Inline keyboard commands:** Commands with a `KeyboardOptions` field (`/model`, `/thinking`, `/effort`, `/config`, `/sessions`, `/tmux`) show an inline keyboard when invoked bare. `LookupKeyboard()` checks for this before `Dispatch()`. `sendCommandKeyboard()` builds and sends the keyboard. Callback data format: `cmd:/name args`. `handleCommandCallback()` executes the command and edits the message to show the result.
+**Inline keyboard commands:** Commands with a `KeyboardOptions` field (`/model`, `/thinking`, `/effort`, `/config`, `/sessions`, `/tmux`) show an inline keyboard when invoked bare. `LookupKeyboard()` checks for this before `Dispatch()`. `sendCommandKeyboard()` builds and sends the keyboard via `platform.ButtonSender`. Callback data format: `cmd:/name args`. `handleCommandCallback()` executes the command and edits the message to show the result. `command.KeyboardOption` is aliased to `platform.ButtonChoice` (Label, Data, Row fields) — the same type used for all button interactions across both Telegram and Discord.
 
 ## Thought Queue (Reminders)
 
@@ -850,7 +891,7 @@ Same two-goroutine architecture as Telegram (receiver + agent worker), connected
 - **Formatting:** Discord speaks Markdown natively — no HTML conversion needed. Pass-through from agent output.
 - **Streaming:** Default edit interval 1200ms (vs 250ms) due to stricter rate limits. Max 1900 chars per edit.
 - **Attachments:** Direct CDN URL download (vs Telegram file API with file ID → download URL).
-- **Interactive UI:** Discord message components (buttons) vs Telegram inline keyboards. Same callback data format (`tc:show`, `tc:hide`, `th:show`, `th:hide`, `cmd:/name`).
+- **Interactive UI:** Discord message components (buttons) vs Telegram inline keyboards. Same callback data format (`tc:show`, `tc:hide`, `th:show`, `th:hide`, `cmd:/name`). Both platforms implement `platform.ButtonSender` — the single button abstraction. Discord uses `"im:"` callback data prefix for interactive messages (permission prompts from backend agents).
 - **Facets:** Thread-based (vs separate bot tokens). `auto_thread = true` creates private threads for facet sessions.
 - **Routing:** `onMessageCreate` routes to correct agent's `Bot` based on channel/DM/user. `onInteractionCreate` handles button callbacks and slash commands.
 
