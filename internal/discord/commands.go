@@ -37,13 +37,9 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *discordgo.Messa
 	}
 
 	// Check for chain keyboard.
-	if _, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText, chatID); ok {
+	if name, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, lookupText, chatID); ok {
 		label := text + ":"
-		buttons := buildCommandButtons("", opts)
-		_, _ = b.session.ChannelMessageSendComplex(msg.ChannelID, &discordgo.MessageSend{
-			Content:    label,
-			Components: buttons,
-		})
+		_, _ = b.SendTextWithButtons(label, cmdButtons(name, opts), "cmd:")
 		return true
 	}
 
@@ -59,11 +55,7 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *discordgo.Messa
 			responseText = strings.Join(result.Response.Parts, "\n\n")
 		}
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(lookupText), "/"), " ")
-		buttons := buildCommandButtons(cmdName, result.Response.Keyboard)
-		_, _ = b.session.ChannelMessageSendComplex(msg.ChannelID, &discordgo.MessageSend{
-			Content:    responseText,
-			Components: buttons,
-		})
+		_, _ = b.SendTextWithButtons(responseText, cmdButtons(cmdName, result.Response.Keyboard), "cmd:")
 	} else if len(result.Response.Parts) > 0 {
 		for _, part := range result.Response.Parts {
 			b.sendReply(msg, part)

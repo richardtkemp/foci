@@ -263,13 +263,24 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 // backend path (BackendTransport) via the TurnContract interface.
 func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
 	var tc TurnContract
-	if a.BackendManager != nil {
+	isBackend := a.BackendManager != nil
+	if isBackend {
 		tc = &BackendTransport{sharedTurnOps{agent: a}}
 	} else {
 		tc = &APITransport{sharedTurnOps{agent: a}}
 	}
 	ts := NewTurnState(ctx, sessionKey, texts, attachments)
-	return a.RunTurn(ctx, tc, ts)
+	_, err := a.RunTurn(ctx, tc, ts)
+	if err != nil {
+		return "", err
+	}
+	// Backend agents deliver responses via the session watcher (replyFunc),
+	// not via RunTurn's return value. Return empty so the platform renderer
+	// treats this as a no-op — avoiding duplicate delivery.
+	if isBackend {
+		return "", nil
+	}
+	return ts.FinalText, nil
 }
 
 

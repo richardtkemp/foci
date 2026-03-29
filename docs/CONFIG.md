@@ -1181,7 +1181,18 @@ Codex and OpenCode backends are planned but not yet implemented.
 
 ### Permissions
 
-When `skip_permissions` is not set, CC may prompt for tool or directory access approval. Foci detects permission prompts by scraping the tmux pane (polling for "Do you want to proceed?") and forwards them to the user via their platform. The user's reply is sent to the pane as normal input.
+When `skip_permissions` is not set, CC may prompt for tool or directory access approval. Foci detects permission prompts by scraping the tmux pane (polling every 3s for "Do you want to proceed?") and forwards them to the user via their platform with an inline keyboard of choices. The user's selection is sent to the pane as input.
+
+### Permission Seeding
+
+On first start, backend agents auto-seed blanket permissions into Claude Code's `settings.local.json` (in CC's project config directory). This avoids repeated approval prompts for safe operations:
+
+- **Read-only tools:** Search, Glob, Grep, Read, WebSearch, WebFetch
+- **Workspace mutation:** Edit and Write (scoped to the agent's workspace)
+- **Foci shell functions:** All `foci_*` exec bridge functions
+- **Database queries:** `sqlite3 -readonly` for read-only database access
+
+The seeded permissions are additive — existing `settings.local.json` entries are preserved. The file is written only if it doesn't already contain the expected entries.
 
 ### What still applies
 

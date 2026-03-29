@@ -20,6 +20,7 @@ import (
 )
 
 var _ platform.Sender = (*Bot)(nil)
+var _ platform.ButtonSender = (*Bot)(nil)
 
 // attachment is a downloaded file ready for the agent (image, PDF, or convertible document).
 type attachment struct {

@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/display"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -66,9 +67,12 @@ func (b *telegramBackend) EditMessage(msgID, formatted string) error {
 }
 
 func (b *telegramBackend) SendWithThinkingButton(formatted, thinkingText string) error {
+	thinkingRows := buildButtonRows([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	sendOpts := &gotgbot.SendMessageOpts{
-		ParseMode:   "HTML",
-		ReplyMarkup: singleButtonKeyboard("Show thinking", "th:show"),
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: thinkingRows,
+		},
 	}
 	chunks := splitMessage(formatted, 4096)
 	for i, chunk := range chunks {
@@ -90,12 +94,14 @@ func (b *telegramBackend) SendWithThinkingButton(formatted, thinkingText string)
 
 func (b *telegramBackend) EditWithThinkingButton(msgID, formatted, thinkingText string) error {
 	id := parseTelegramMsgID(msgID)
-	kb := singleButtonKeyboard("Show thinking", "th:show")
+	thinkingRows := buildButtonRows([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 	_, _, err := b.bot.client.EditMessageText(formatted, &gotgbot.EditMessageTextOpts{
-		ChatId:      b.chatID,
-		MessageId:   id,
-		ParseMode:   "HTML",
-		ReplyMarkup: kb,
+		ChatId:    b.chatID,
+		MessageId: id,
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: thinkingRows,
+		},
 	})
 	if err != nil {
 		return err

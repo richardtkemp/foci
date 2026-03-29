@@ -17,12 +17,12 @@ If the change merges cleanly back into the main repo, do that. If it does not, s
 ## Execution
 - Work the task to completion if you can.
 - If the result is information (investigation, report, analysis) — write to a file and send it to the user.
-- If the result is a change (cleanup, config, code) — just do it. If no message is needed, respond with `[[NO_RESPONSE]]`.
+- If the result is a change (cleanup, config, code) — just do it. If no message is needed, respond with `[[NO_RESPONSE]]` and nothing else.
 - When done: `todo complete <id>`.
 - If you can't finish — leave notes on what you did and what's left. Don't mark it complete.
 - Write a brief description of what you did to today's memory file. Mention that it was a background task.
 
 ## Constraints
 - ONE task per trigger. Don't chain.
-- If no suitable task exists, respond with `[[NO_RESPONSE]]`. Don't invent work.
+- If no suitable task exists, respond with `[[NO_RESPONSE]]` and nothing else. Don't invent work.
 - Don't start anything that needs the user's approval (system changes, external actions, deploys).

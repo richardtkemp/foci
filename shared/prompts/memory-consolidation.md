@@ -16,4 +16,4 @@ DO NOT add:
 - Technical details of specific fixes
 - Session-specific context
 
-MEMORY.md has a hard limit of 20,000 characters. Check `wc -c` before and after editing. If it's over 15,000 characters, prune before adding — move completed projects and stale context to dated memory files. If nothing qualifies for addition, respond with `[[NO_RESPONSE]]`.
+MEMORY.md has a hard limit of 20,000 characters. Check `wc -c` before and after editing. If it's over 15,000 characters, prune before adding — move completed projects and stale context to dated memory files. If nothing qualifies for addition, respond with `[[NO_RESPONSE]]` and nothing else.

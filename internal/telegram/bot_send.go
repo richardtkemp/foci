@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -152,8 +153,8 @@ func (b *Bot) SendStartupNotificationWithDiagnosis(agentID string, diagnosis Sta
 
 // SendTextWithButtons sends a text message with inline keyboard buttons.
 // callbackPrefix is prepended to each button's Data for callback routing.
-// Returns the platform message ID for later editing.
-func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (int64, error) {
+// Returns the platform message ID (as string) for later editing.
+func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, callbackPrefix string) (string, error) {
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		b.chatMu.Lock()
@@ -161,44 +162,85 @@ func (b *Bot) SendTextWithButtons(text string, buttons []platform.ButtonChoice, 
 		b.chatMu.Unlock()
 	}
 	if chatID == 0 {
-		return 0, fmt.Errorf("no chat ID — no default chat configured")
+		return "", fmt.Errorf("no chat ID — no default chat configured")
 	}
 
-	var row []gotgbot.InlineKeyboardButton
-	for _, btn := range buttons {
-		row = append(row, gotgbot.InlineKeyboardButton{
-			Text:         btn.Label,
-			CallbackData: callbackPrefix + btn.Data,
-		})
-	}
+	rows := buildButtonRows(buttons, callbackPrefix)
 	msg, err := b.client.SendMessage(chatID, ConvertToTelegramHTML(text, b.tableOpts()), &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{row},
+			InlineKeyboard: rows,
 		},
 	})
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	return msg.MessageId, nil
+	return strconv.FormatInt(msg.MessageId, 10), nil
 }
 
 // EditMessageText edits an existing message's text and removes buttons.
-func (b *Bot) EditMessageText(msgID int64, text string) error {
+func (b *Bot) EditMessageText(msgID string, text string) error {
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		b.chatMu.Lock()
 		chatID = b.chatID
 		b.chatMu.Unlock()
 	}
+	id, _ := strconv.ParseInt(msgID, 10, 64)
 	_, _, err := b.client.EditMessageText(
 		ConvertToTelegramHTML(text, b.tableOpts()),
 		&gotgbot.EditMessageTextOpts{
 			ChatId:    chatID,
-			MessageId: msgID,
+			MessageId: id,
 			ParseMode: "HTML",
 		})
 	return err
+}
+
+// EditMessageWithButtons edits an existing message's text and replaces its buttons.
+func (b *Bot) EditMessageWithButtons(msgID string, text string, buttons []platform.ButtonChoice, callbackPrefix string) error {
+	chatID := b.DefaultChatID()
+	if chatID == 0 {
+		b.chatMu.Lock()
+		chatID = b.chatID
+		b.chatMu.Unlock()
+	}
+	id, _ := strconv.ParseInt(msgID, 10, 64)
+	rows := buildButtonRows(buttons, callbackPrefix)
+	_, _, err := b.client.EditMessageText(
+		ConvertToTelegramHTML(text, b.tableOpts()),
+		&gotgbot.EditMessageTextOpts{
+			ChatId:    chatID,
+			MessageId: id,
+			ParseMode: "HTML",
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: rows,
+			},
+		})
+	return err
+}
+
+// buildButtonRows converts platform.ButtonChoice slices into Telegram inline keyboard rows.
+// Buttons are grouped by their Row field, and each row is auto-laid-out via layoutButtons.
+func buildButtonRows(buttons []platform.ButtonChoice, callbackPrefix string) [][]gotgbot.InlineKeyboardButton {
+	rowMap := make(map[int][]gotgbot.InlineKeyboardButton)
+	maxRow := 0
+	for _, btn := range buttons {
+		rowMap[btn.Row] = append(rowMap[btn.Row], gotgbot.InlineKeyboardButton{
+			Text:         btn.Label,
+			CallbackData: callbackPrefix + btn.Data,
+		})
+		if btn.Row > maxRow {
+			maxRow = btn.Row
+		}
+	}
+	var rows [][]gotgbot.InlineKeyboardButton
+	for i := 0; i <= maxRow; i++ {
+		if btns, ok := rowMap[i]; ok {
+			rows = append(rows, layoutButtons(btns)...)
+		}
+	}
+	return rows
 }
 
 // RawSendText sends a text message to the default chat without any header.

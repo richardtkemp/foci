@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -240,15 +241,15 @@ func TestNoStream_ToolCallPreviewEdit(t *testing.T) {
 	}
 }
 
-// Verify the EditMessageTextOpts ReplyMarkup field type is compatible.
-func TestSingleButtonKeyboard_ReturnsMarkup(t *testing.T) {
-	// Verifies that singleButtonKeyboard creates a valid inline keyboard
-	// with the expected button text and callback data.
-	kb := singleButtonKeyboard("Test", "cb:data")
-	if len(kb.InlineKeyboard) != 1 || len(kb.InlineKeyboard[0]) != 1 {
-		t.Fatalf("expected 1x1 keyboard, got %v", kb.InlineKeyboard)
+// Verify buildButtonRows creates valid single-button rows.
+func TestBuildButtonRows_SingleButton(t *testing.T) {
+	// Verifies that buildButtonRows with a single ButtonChoice creates a valid
+	// inline keyboard row with the expected button text and callback data.
+	rows := buildButtonRows([]platform.ButtonChoice{{Label: "Test", Data: "data"}}, "cb:")
+	if len(rows) != 1 || len(rows[0]) != 1 {
+		t.Fatalf("expected 1x1 keyboard, got %v", rows)
 	}
-	btn := kb.InlineKeyboard[0][0]
+	btn := rows[0][0]
 	if btn.Text != "Test" {
 		t.Errorf("button text = %q, want %q", btn.Text, "Test")
 	}

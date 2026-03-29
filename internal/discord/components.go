@@ -7,71 +7,28 @@ import (
 	"strings"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// buildCommandButtons creates Discord message component action rows from keyboard options.
-// Buttons use custom IDs prefixed with "cmd:/cmdName " for routing.
-func buildCommandButtons(cmdName string, opts []command.KeyboardOption) []discordgo.MessageComponent {
-	// Group by row
-	rowMap := make(map[int][]discordgo.MessageComponent)
-	maxRow := 0
-	for _, opt := range opts {
-		btn := discordgo.Button{
-			Label:    opt.Label,
-			Style:    discordgo.PrimaryButton,
-			CustomID: fmt.Sprintf("cmd:/%s %s", cmdName, opt.Data),
-		}
-		rowMap[opt.Row] = append(rowMap[opt.Row], btn)
-		if opt.Row > maxRow {
-			maxRow = opt.Row
+// cmdButtons converts command keyboard options to platform.ButtonChoice with
+// callback data formatted as "/cmdName optData".
+func cmdButtons(cmdName string, opts []command.KeyboardOption) []platform.ButtonChoice {
+	btns := make([]platform.ButtonChoice, len(opts))
+	for i, opt := range opts {
+		btns[i] = platform.ButtonChoice{
+			Label: opt.Label,
+			Data:  fmt.Sprintf("/%s %s", cmdName, opt.Data),
+			Row:   opt.Row,
 		}
 	}
-
-	var components []discordgo.MessageComponent
-	for i := 0; i <= maxRow; i++ {
-		buttons, ok := rowMap[i]
-		if !ok {
-			continue
-		}
-		// Discord allows at most 5 buttons per action row
-		for len(buttons) > 0 {
-			end := 5
-			if end > len(buttons) {
-				end = len(buttons)
-			}
-			components = append(components, discordgo.ActionsRow{
-				Components: buttons[:end],
-			})
-			buttons = buttons[end:]
-		}
-	}
-	return components
-}
-
-// singleButton returns a slice of message components with one action row and one button.
-func singleButton(label, customID string) []discordgo.MessageComponent {
-	return []discordgo.MessageComponent{
-		discordgo.ActionsRow{
-			Components: []discordgo.MessageComponent{
-				discordgo.Button{
-					Label:    label,
-					Style:    discordgo.SecondaryButton,
-					CustomID: customID,
-				},
-			},
-		},
-	}
+	return btns
 }
 
 // sendCommandKeyboard sends a message with command keyboard buttons.
 func (b *Bot) sendCommandKeyboard(channelID, cmdName string, header string, opts []command.KeyboardOption) {
-	buttons := buildCommandButtons(cmdName, opts)
-	_, _ = b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content:    header,
-		Components: buttons,
-	})
+	_, _ = b.SendTextWithButtons(header, cmdButtons(cmdName, opts), "cmd:")
 }
 
 // handleComponentInteraction dispatches button interactions.
@@ -93,6 +50,21 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 	if strings.HasPrefix(data.CustomID, "cmd:") {
 		cmdText := data.CustomID[4:] // strip "cmd:" prefix
 		b.handleCommandCallback(ctx, channelID, i.Message.ID, cmdText, chatID)
+		return
+	}
+
+	// Interactive message callbacks: "im:<promptID>:<buttonIndex>"
+	if strings.HasPrefix(data.CustomID, "im:") {
+		editText, _, ok := platform.HandleInteractiveCallback(data.CustomID[3:])
+		if ok && editText != "" {
+			noComponents := []discordgo.MessageComponent{}
+			_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				Channel:    channelID,
+				ID:         i.Message.ID,
+				Content:    &editText,
+				Components: &noComponents,
+			})
+		}
 		return
 	}
 
@@ -121,7 +93,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	// Check for chained keyboard
 	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText, chatID); ok {
 		display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
-		buttons := buildCommandButtons(parentName, opts)
+		buttons := buildButtonComponents(cmdButtons(parentName, opts), "cmd:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
@@ -151,7 +123,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	// If the response includes a keyboard, edit with both text and buttons.
 	if len(dr.Response.Keyboard) > 0 {
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(cmdText, "/"), " ")
-		buttons := buildCommandButtons(cmdName, dr.Response.Keyboard)
+		buttons := buildButtonComponents(cmdButtons(cmdName, dr.Response.Keyboard), "cmd:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
@@ -190,10 +162,10 @@ func (b *Bot) handleToolCallCallback(channelID, action, msgID string) {
 		stored.expanded = true
 		stored.channelID = channelID
 		b.toolResults.Store(msgIDInt, stored)
-		buttons := singleButton("Hide", "tc:hide")
 		if len(expanded) > discordMaxChars {
 			expanded = expanded[:discordMaxChars-4] + "\n..."
 		}
+		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Hide", Data: "hide"}}, "tc:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
@@ -203,7 +175,7 @@ func (b *Bot) handleToolCallCallback(channelID, action, msgID string) {
 	case "hide":
 		stored.expanded = false
 		b.toolResults.Store(msgIDInt, stored)
-		buttons := singleButton("Show full", "tc:show")
+		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show full", Data: "show"}}, "tc:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
@@ -226,10 +198,10 @@ func (b *Bot) handleThinkingCallback(channelID, action, msgID string) {
 	switch action {
 	case "show":
 		expanded := formatThinkingExpanded(entry.thinkingText, entry.responseText, dw)
-		buttons := singleButton("Hide thinking", "th:hide")
 		if len(expanded) > discordMaxChars {
 			expanded = expanded[:discordMaxChars-4] + "\n..."
 		}
+		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Hide thinking", Data: "hide"}}, "th:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
@@ -237,7 +209,7 @@ func (b *Bot) handleThinkingCallback(channelID, action, msgID string) {
 			Components: &buttons,
 		})
 	case "hide":
-		buttons := singleButton("Show thinking", "th:show")
+		buttons := buildButtonComponents([]platform.ButtonChoice{{Label: "Show thinking", Data: "show"}}, "th:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,

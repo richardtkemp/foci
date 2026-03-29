@@ -125,7 +125,7 @@ func TestLayoutButtons_Exactly14CharsStaysAt3(t *testing.T) {
 	}
 }
 
-func TestBuildCommandKeyboard_ExplicitRows(t *testing.T) {
+func TestBuildButtonRows_ExplicitRows(t *testing.T) {
 	// Verifies that buttons with different explicit Row values
 	// are kept in separate rows (not merged or reordered).
 	opts := []command.KeyboardOption{
@@ -134,19 +134,19 @@ func TestBuildCommandKeyboard_ExplicitRows(t *testing.T) {
 		{Label: "C", Data: "c", Row: 1},
 		{Label: "D", Data: "d", Row: 1},
 	}
-	kb := buildCommandKeyboard("test", opts)
-	if len(kb.InlineKeyboard) != 2 {
-		t.Fatalf("got %d rows, want 2", len(kb.InlineKeyboard))
+	rows := buildButtonRows(opts, "cmd:")
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
 	}
-	if len(kb.InlineKeyboard[0]) != 2 {
-		t.Errorf("row 0: got %d buttons, want 2", len(kb.InlineKeyboard[0]))
+	if len(rows[0]) != 2 {
+		t.Errorf("row 0: got %d buttons, want 2", len(rows[0]))
 	}
-	if len(kb.InlineKeyboard[1]) != 2 {
-		t.Errorf("row 1: got %d buttons, want 2", len(kb.InlineKeyboard[1]))
+	if len(rows[1]) != 2 {
+		t.Errorf("row 1: got %d buttons, want 2", len(rows[1]))
 	}
 }
 
-func TestBuildCommandKeyboard_AutoLayoutDefaultRow(t *testing.T) {
+func TestBuildButtonRows_AutoLayoutDefaultRow(t *testing.T) {
 	// Verifies that 8 short-label buttons all on row 0 get auto-split
 	// into rows of 3.
 	opts := make([]command.KeyboardOption, 8)
@@ -156,20 +156,20 @@ func TestBuildCommandKeyboard_AutoLayoutDefaultRow(t *testing.T) {
 			Data:  string(rune('a' + i)),
 		}
 	}
-	kb := buildCommandKeyboard("test", opts)
-	if len(kb.InlineKeyboard) != 3 {
-		t.Fatalf("got %d rows, want 3 (8 buttons at 3 per row)", len(kb.InlineKeyboard))
+	rows := buildButtonRows(opts, "cmd:")
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3 (8 buttons at 3 per row)", len(rows))
 	}
 	// First two rows should have 3, last should have 2.
-	if len(kb.InlineKeyboard[0]) != 3 || len(kb.InlineKeyboard[1]) != 3 {
+	if len(rows[0]) != 3 || len(rows[1]) != 3 {
 		t.Errorf("first rows should have 3 buttons each")
 	}
-	if len(kb.InlineKeyboard[2]) != 2 {
-		t.Errorf("last row should have 2 buttons, got %d", len(kb.InlineKeyboard[2]))
+	if len(rows[2]) != 2 {
+		t.Errorf("last row should have 2 buttons, got %d", len(rows[2]))
 	}
 }
 
-func TestBuildCommandKeyboard_MixedExplicitAndLargeRow(t *testing.T) {
+func TestBuildButtonRows_MixedExplicitAndLargeRow(t *testing.T) {
 	// Verifies that auto-layout applies per-row: explicit rows with few
 	// buttons stay as-is, while a large default row gets split.
 	opts := []command.KeyboardOption{
@@ -180,14 +180,14 @@ func TestBuildCommandKeyboard_MixedExplicitAndLargeRow(t *testing.T) {
 		{Label: "E", Data: "e", Row: 0},
 		{Label: "F", Data: "f", Row: 1},
 	}
-	kb := buildCommandKeyboard("test", opts)
+	rows := buildButtonRows(opts, "cmd:")
 	// Row 0 (5 buttons) → split into [3, 2]. Row 1 (1 button) → [1].
-	if len(kb.InlineKeyboard) != 3 {
-		t.Fatalf("got %d rows, want 3", len(kb.InlineKeyboard))
+	if len(rows) != 3 {
+		t.Fatalf("got %d rows, want 3", len(rows))
 	}
 }
 
-func TestBuildCommandKeyboard_CallbackDataFormat(t *testing.T) {
+func TestBuildButtonRows_CallbackDataFormat(t *testing.T) {
 	// Verifies callback data is correctly formatted after auto-layout.
 	opts := []command.KeyboardOption{
 		{Label: "X", Data: "val1"},
@@ -195,15 +195,15 @@ func TestBuildCommandKeyboard_CallbackDataFormat(t *testing.T) {
 		{Label: "Z", Data: "val3"},
 		{Label: "W", Data: "val4"},
 	}
-	kb := buildCommandKeyboard("cmd", opts)
+	rows := buildButtonRows(opts, "cmd:")
 	// Collect all callback data across rows.
 	var data []string
-	for _, row := range kb.InlineKeyboard {
+	for _, row := range rows {
 		for _, btn := range row {
 			data = append(data, btn.CallbackData)
 		}
 	}
-	want := []string{"cmd:/cmd val1", "cmd:/cmd val2", "cmd:/cmd val3", "cmd:/cmd val4"}
+	want := []string{"cmd:val1", "cmd:val2", "cmd:val3", "cmd:val4"}
 	if len(data) != len(want) {
 		t.Fatalf("got %d buttons, want %d", len(data), len(want))
 	}

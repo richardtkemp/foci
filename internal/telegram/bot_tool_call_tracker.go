@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -61,10 +62,12 @@ func (b *telegramTrackerBackend) Send(text string) (string, error) {
 }
 
 func (b *telegramTrackerBackend) SendWithButton(text, btnLabel, btnData string) (string, error) {
-	kb := singleButtonKeyboard(btnLabel, btnData)
+	rows := buildButtonRows([]platform.ButtonChoice{{Label: btnLabel, Data: btnData}}, "")
 	sent, err := b.bot.client.SendMessage(b.chatID, text, &gotgbot.SendMessageOpts{
-		ParseMode:   "HTML",
-		ReplyMarkup: kb,
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: rows,
+		},
 	})
 	if err != nil {
 		return "", err
@@ -84,12 +87,14 @@ func (b *telegramTrackerBackend) Edit(msgID, text string) error {
 
 func (b *telegramTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData string) error {
 	id, _ := strconv.ParseInt(msgID, 10, 64)
-	kb := singleButtonKeyboard(btnLabel, btnData)
+	rows := buildButtonRows([]platform.ButtonChoice{{Label: btnLabel, Data: btnData}}, "")
 	_, _, err := b.bot.client.EditMessageText(text, &gotgbot.EditMessageTextOpts{
-		ChatId:      b.chatID,
-		MessageId:   id,
-		ParseMode:   "HTML",
-		ReplyMarkup: kb,
+		ChatId:    b.chatID,
+		MessageId: id,
+		ParseMode: "HTML",
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: rows,
+		},
 	})
 	return err
 }

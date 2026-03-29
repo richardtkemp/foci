@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/toolformat"
 	"foci/internal/turn"
@@ -62,7 +63,7 @@ func (b *discordTrackerBackend) Send(text string) (string, error) {
 }
 
 func (b *discordTrackerBackend) SendWithButton(text, btnLabel, btnData string) (string, error) {
-	buttons := singleButton(btnLabel, btnData)
+	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: btnLabel, Data: btnData}}, "")
 	sent, err := b.bot.session.ChannelMessageSendComplex(b.channelID, &discordgo.MessageSend{
 		Content:    text,
 		Components: buttons,
@@ -79,7 +80,7 @@ func (b *discordTrackerBackend) Edit(msgID, text string) error {
 }
 
 func (b *discordTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData string) error {
-	buttons := singleButton(btnLabel, btnData)
+	buttons := buildButtonComponents([]platform.ButtonChoice{{Label: btnLabel, Data: btnData}}, "")
 	_, err := b.bot.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		Channel:    b.channelID,
 		ID:         msgID,
