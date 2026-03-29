@@ -254,7 +254,7 @@ The session watcher tails Claude Code's JSONL session file via fsnotify. It conv
 
 **Synthetic response filter:** Claude Code emits synthetic messages (model: `<synthetic>`) such as `"No response requested."` and `"[[NO_RESPONSE]]"`. The watcher filters these at the event level — they never reach the reply callback.
 
-**Typing indicator:** `SetTypingFunc` on the Backend registers a callback. Set to `true` on `SendTurn` (prompt pasted), set to `false` when `fireTurnComplete` fires (end_turn seen). Platforms use this for typing indicators.
+**Typing indicator:** `SetTypingFunc` on the Backend registers a callback. Set to `true` on `SendTurn` (prompt pasted), set to `false` when `fireTurnComplete` fires (end_turn seen). The platform `Connection.SetTyping(bool)` is stateful — `true` starts a periodic ticker (Telegram: 4s, Discord: 9s) that keeps the indicator alive until `false` is called. This replaces the per-platform manual tickers that previously lived in the bot workers.
 
 **Usage extraction:** Assistant messages in the JSONL carry a `usage` payload. The watcher extracts `TurnUsage` (InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens) from the last assistant message in each turn. This is reported via `TurnState.FinalUsage` on completion.
 
