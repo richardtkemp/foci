@@ -110,6 +110,13 @@ type TurnContract interface {
 	// Backend: from JSONL watcher usage.
 	UpdateSessionMeta(ts *TurnState)
 
+	// LogUsage records API usage to the usage database.
+	// NOT called by the orchestrator — each transport invokes it at the
+	// appropriate time. Present on the interface for compile-time enforcement.
+	// API: per-call inside ExecuteTurn (via logAPIResponse; this method is a no-op).
+	// Backend: called from OnTurnComplete callback after FinalUsage is populated.
+	LogUsage(ts *TurnState)
+
 	// RunCompaction checks if compaction is needed and runs it.
 	// API: direct maybeCompact call.
 	// Backend: sends /compact command to CC.
@@ -172,6 +179,7 @@ type TurnState struct {
 	FinalText  string          // response text from the completed turn
 	FinalUsage *provider.Usage // token usage from the completed turn
 	FinalCost  float64         // calculated cost from logAPIResponse
+	FinalModel string          // model used (backend: from JSONL; API: from TurnModel)
 
 	// --- Async coordination ---
 

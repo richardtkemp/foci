@@ -530,6 +530,10 @@ func (t *APITransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 }
 
+// LogUsage is a no-op for API — usage is logged per-call inside ExecuteTurn
+// via logAPIResponse. Self-invoked contract method, not called by orchestrator.
+func (t *APITransport) LogUsage(ts *TurnState) {}
+
 // RunCompaction checks if compaction is needed and runs it.
 // Extracted from agent.go:690.
 func (t *APITransport) RunCompaction(ts *TurnState) {

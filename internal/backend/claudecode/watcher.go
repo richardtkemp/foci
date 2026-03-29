@@ -52,6 +52,7 @@ type sessionWatcher struct {
 	turnText  string
 	turnTools int
 	turnUsage *backend.TurnUsage // usage from the last assistant message
+	turnModel string             // model from the last assistant message
 
 	// agentTracking tracks pending Agent tool_use calls within a turn.
 	pendingAgents []agentCall
@@ -232,7 +233,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 		w.notifyAgentStatus()
 	}
 
-	// Extract usage from the assistant message (last one wins per turn).
+	// Extract usage and model from the assistant message (last one wins per turn).
 	if entry.Message.Usage != nil {
 		w.turnUsage = &backend.TurnUsage{
 			InputTokens:              entry.Message.Usage.InputTokens,
@@ -240,6 +241,9 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 			CacheCreationInputTokens: entry.Message.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     entry.Message.Usage.CacheReadInputTokens,
 		}
+	}
+	if entry.Message.Model != "" {
+		w.turnModel = entry.Message.Model
 	}
 
 	stopReason := ""
@@ -251,8 +255,10 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 			Text:      w.turnText,
 			ToolCalls: w.turnTools,
 			Usage:     w.turnUsage,
+			Model:     w.turnModel,
 		}
-		w.turnUsage = nil // reset for next turn
+		w.turnUsage = nil  // reset for next turn
+		w.turnModel = ""
 		if handler.OnTurnComplete != nil {
 			handler.OnTurnComplete(result)
 		}
