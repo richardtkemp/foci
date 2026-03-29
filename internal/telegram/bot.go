@@ -102,6 +102,9 @@ type Bot struct {
 	displayOverrideFn DisplayOverrideFn // per-session display override callback; nil = use bot defaults
 
 	requireMention bool // require @mention in group chats (Telegram)
+
+	typingMu     sync.Mutex
+	typingCancel context.CancelFunc // non-nil while typing ticker is running
 }
 
 // BotDisplayConfig groups all display-related settings. Write-once at startup

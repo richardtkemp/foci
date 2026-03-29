@@ -2,6 +2,7 @@ package discord
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -113,17 +114,51 @@ func (b *Bot) SendNotification(text string) {
 	b.sendNotificationImmediate(text)
 }
 
-// SendTyping sends a typing indicator to the current channel.
-func (b *Bot) SendTyping() {
+// SetTyping starts or stops the typing indicator. When true, sends an
+// immediate typing action and starts a 9-second ticker (Discord's typing
+// expires after ~10s). When false, stops the ticker.
+func (b *Bot) SetTyping(typing bool) {
+	b.typingMu.Lock()
+	defer b.typingMu.Unlock()
+
+	if !typing {
+		if b.typingCancel != nil {
+			b.typingCancel()
+			b.typingCancel = nil
+		}
+		return
+	}
+
+	if b.typingCancel != nil {
+		return
+	}
+
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
 		b.channelMu.Lock()
 		channelID = b.channelID
 		b.channelMu.Unlock()
 	}
-	if channelID != 0 {
-		_ = b.session.ChannelTyping(fmt.Sprintf("%d", channelID))
+	if channelID == 0 {
+		return
 	}
+
+	chID := fmt.Sprintf("%d", channelID)
+	_ = b.session.ChannelTyping(chID)
+	ctx, cancel := context.WithCancel(context.Background())
+	b.typingCancel = cancel
+	go func() {
+		ticker := time.NewTicker(9 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = b.session.ChannelTyping(chID)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // SendNotificationDirect sends a notification immediately, bypassing the

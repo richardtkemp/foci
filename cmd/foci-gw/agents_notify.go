@@ -107,7 +107,7 @@ func newAsyncNotifier(
 						}
 					},
 					ActivityFunc: func() {
-						conn.SendTyping()
+						conn.SetTyping(true)
 					},
 				}
 				defer wireTurnObservers(conn, target, cb)()
@@ -196,14 +196,14 @@ func newSessionNotifyFn(
 // startTypingTicker sends an initial typing indicator and keeps it alive
 // every 4 seconds until the returned cancel function is called.
 func startTypingTicker(ctx context.Context, conn platform.Connection) (cancel func()) {
-	conn.SendTyping()
+	conn.SetTyping(true)
 	typingCtx, typingCancel := context.WithCancel(ctx)
 	typingTicker := time.NewTicker(4 * time.Second)
 	go func() {
 		for {
 			select {
 			case <-typingTicker.C:
-				conn.SendTyping()
+				conn.SetTyping(true)
 			case <-typingCtx.Done():
 				return
 			}
@@ -253,7 +253,7 @@ func deliverInjectedTurn(
 				}
 			},
 			ActivityFunc: func() {
-				conn.SendTyping()
+				conn.SetTyping(true)
 			},
 		}
 		defer wireTurnObservers(conn, sessionKey, cb)()

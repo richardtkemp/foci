@@ -63,7 +63,7 @@ func (c *stubConn) SendInjectedMessage(string, string) error        { return nil
 func (c *stubConn) SendToSession(string, string) error              { return nil }
 func (c *stubConn) SendNotification(string)                         {}
 func (c *stubConn) SendNotificationDirect(string)                   {}
-func (c *stubConn) SendTyping()                                     {}
+func (c *stubConn) SetTyping(bool)                                   {}
 func (c *stubConn) BuildTurnObservers(string) *platform.TurnObservers { return nil }
 
 func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {

@@ -183,7 +183,7 @@ type Connection interface {
 	SendToSession(sessionKey, text string) error       // sends without header (for agent replies)
 	SendNotification(text string)
 	SendNotificationDirect(text string) // sends immediately, bypassing turn buffering
-	SendTyping()                        // sends a "typing" indicator to the user
+	SetTyping(typing bool)              // true starts typing indicator, false stops it
 
 	// Observers
 	BuildTurnObservers(sessionKey string) *TurnObservers // nil when unsupported or no chat target
