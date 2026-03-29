@@ -251,3 +251,66 @@ func TestExtractEndToEnd(t *testing.T) {
 		t.Fatalf("second Extract: %v", err)
 	}
 }
+
+// mockRunner implements OneShotRunner for testing.
+type mockRunner struct {
+	response    string
+	err         error
+	gotPrompt   string
+	gotSysPrompt string
+}
+
+func (m *mockRunner) RunOnce(_ context.Context, prompt string, systemPrompt string) (string, error) {
+	m.gotPrompt = prompt
+	m.gotSysPrompt = systemPrompt
+	return m.response, m.err
+}
+
+func TestExtractViaRunOnce(t *testing.T) {
+	// Verifies ExtractViaRunOnce uses OneShotRunner and saves rules.
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CRAFT.md"), []byte("Check before acting"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e := NewExtractor(dir, []string{"CRAFT.md"}, 0640)
+	runner := &mockRunner{
+		response: `[{"text": "Check first", "source_file": "CRAFT.md", "source_text": "Check before acting", "trigger": {"type": "pre_answer"}, "priority": "high"}]`,
+	}
+
+	if err := e.ExtractViaRunOnce(context.Background(), runner); err != nil {
+		t.Fatalf("ExtractViaRunOnce: %v", err)
+	}
+
+	// Verify the prompt was the extraction prompt.
+	if runner.gotPrompt != ExtractionPrompt {
+		t.Errorf("expected ExtractionPrompt, got %q", runner.gotPrompt[:50])
+	}
+	// Verify empty system prompt for extraction.
+	if runner.gotSysPrompt != "" {
+		t.Errorf("expected empty system prompt, got %q", runner.gotSysPrompt)
+	}
+
+	// Verify rules were saved.
+	rs, err := LoadRules(RulesPath(dir))
+	if err != nil {
+		t.Fatalf("LoadRules: %v", err)
+	}
+	if rs == nil || len(rs.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %v", rs)
+	}
+	if rs.Rules[0].Text != "Check first" {
+		t.Errorf("rule text: %q", rs.Rules[0].Text)
+	}
+
+	// Second call: hash matches → should skip.
+	runner2 := &mockRunner{response: "should not be called"}
+	if err := e.ExtractViaRunOnce(context.Background(), runner2); err != nil {
+		t.Fatalf("second ExtractViaRunOnce: %v", err)
+	}
+	if runner2.gotPrompt != "" {
+		t.Error("expected RunOnce not to be called on unchanged files")
+	}
+}

@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -309,6 +311,43 @@ func (m *BackendManager) idleReaper(ctx context.Context) {
 			m.closeIdle(timeout)
 		}
 	}
+}
+
+// RunOnce executes a one-shot prompt via claude --print and returns the
+// response synchronously. No tmux session, no watcher, no session index
+// entry, no platform delivery. Ideal for internal tasks like nudge
+// extraction and memory consolidation.
+//
+// systemPrompt is passed via --system-prompt; empty uses CC's default.
+func (m *BackendManager) RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+	args := []string{
+		"--print",
+		"--dangerously-skip-permissions",
+		"--no-session-persistence",
+		"--model", "sonnet",
+	}
+	if systemPrompt != "" {
+		args = append(args, "--system-prompt", systemPrompt)
+	}
+
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = m.StartOpts.WorkDir
+	cmd.Stdin = strings.NewReader(prompt)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	log.Infof("backend", "RunOnce: starting claude --print (workdir=%s, system_prompt=%d bytes)",
+		m.StartOpts.WorkDir, len(systemPrompt))
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	result := strings.TrimSpace(stdout.String())
+	log.Infof("backend", "RunOnce: complete (%d bytes)", len(result))
+	return result, nil
 }
 
 // closeIdle closes backends that have been idle longer than timeout.

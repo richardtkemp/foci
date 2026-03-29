@@ -401,6 +401,49 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 	}
 }
 
+func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
+	// Verifies that when runOnceFn is set, consolidation uses it instead of branchFn.
+	var branchCalls int
+	var runOnceCalls int
+	var gotPrompt string
+	now := time.Now()
+	r := &Runner{
+		log:     log.NewComponentLogger("keepalive:test"),
+		agentID: "test",
+		mfCfg: config.ResolvedMemoryFormation{
+			ConsolidationEnabled:  true,
+			ConsolidationInterval: "1h",
+			ConsolidationPrompt:   "memory-consolidation.md",
+		},
+		sessionKeyFn:      func() string { return "test/c1/1" },
+		lastInteraction:   now.Add(-30 * time.Minute),
+		lastConsolidation: now.Add(-2 * time.Hour),
+		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
+			branchCalls++
+			return true
+		},
+		runOnceFn: func(_ context.Context, prompt, systemPrompt string) (string, error) {
+			runOnceCalls++
+			gotPrompt = prompt
+			return "done", nil
+		},
+		done: make(chan struct{}),
+	}
+
+	r.maybeConsolidation()
+	time.Sleep(50 * time.Millisecond)
+
+	if branchCalls != 0 {
+		t.Errorf("branchFn should not be called when runOnceFn is set, got %d calls", branchCalls)
+	}
+	if runOnceCalls != 1 {
+		t.Errorf("expected 1 runOnceFn call, got %d", runOnceCalls)
+	}
+	if gotPrompt == "" {
+		t.Error("expected non-empty prompt")
+	}
+}
+
 func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
 	// Verifies that maybeMemoryFormation requires recent interaction activity; if the last
 	// interaction is also older than the interval, formation is skipped.
