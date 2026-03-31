@@ -111,9 +111,12 @@ func TestCLIIntegration(t *testing.T) {
 
 	// Minimal env to avoid inheriting FOCI_TOKEN and other vars that
 	// could cause the binary to hit the live server instead of the mock.
+	// FOCI_GW_SOCK=/nonexistent prevents resolveGWSocket from finding
+	// $HOME/data/foci-gw.sock and bypassing the mock FOCI_ADDR.
 	baseEnv := []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
+		"FOCI_GW_SOCK=/nonexistent",
 		"FOCI_ADDR=" + addr,
 	}
 
@@ -171,9 +174,12 @@ func TestCLIMessageFile(t *testing.T) {
 
 	// Minimal env to avoid inheriting FOCI_TOKEN and other vars that
 	// could cause the binary to hit the live server instead of the mock.
+	// FOCI_GW_SOCK=/nonexistent prevents resolveGWSocket from finding
+	// $HOME/data/foci-gw.sock and bypassing the mock FOCI_ADDR.
 	baseEnv := []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
+		"FOCI_GW_SOCK=/nonexistent",
 		"FOCI_ADDR=" + addr,
 	}
 
