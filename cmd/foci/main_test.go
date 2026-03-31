@@ -276,8 +276,10 @@ func TestCLIEnvVars(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(testBinary, tt.args...)
-			// Start with minimal env to avoid inheriting FOCI_ vars
-			env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME")}
+			// Start with minimal env to avoid inheriting FOCI_ vars.
+			// FOCI_GW_SOCK=/nonexistent prevents resolveGWSocket from finding
+			// $HOME/data/foci-gw.sock and bypassing the mock FOCI_ADDR.
+			env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "FOCI_GW_SOCK=/nonexistent"}
 			if tt.env != nil {
 				env = append(env, tt.env...)
 			}
