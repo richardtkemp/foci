@@ -122,6 +122,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		return nil
 	}
 
+	// Cache session file path BEFORE SendToPane — the OnTurnComplete callback
+	// may fire inside ensureWatcher (which holds b.mu), and SessionFilePath()
+	// also needs b.mu, causing a deadlock.
+	ts.sessionFilePath = be.SessionFilePath()
+
 	// Per-turn handler: fires once when the watcher sees end_turn.
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
@@ -191,10 +196,9 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens)
 	ts.FinalCost = cost
 
-	sessionFile := ""
-	if ts.Backend != nil {
-		sessionFile = ts.Backend.SessionFilePath()
-	}
+	// Use cached path — SessionFilePath() takes b.mu which may be held
+	// by ensureWatcher when this is called from the OnTurnComplete callback.
+	sessionFile := ts.sessionFilePath
 	log.API(log.APIEntry{
 		Timestamp:   ts.StartedAt,
 		Provider:    "anthropic",
