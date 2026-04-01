@@ -4,10 +4,8 @@ import (
 	"testing"
 )
 
-func TestBotForSession_NoFacetMatchReturnsNil(t *testing.T) {
-	// Verifies that BotForSession returns nil for a regular (non-facet) session key
-	// even when a primary bot is registered. BotForSession must only match facet pool
-	// entries, never fall back to the primary — that's BotForSessionOrPrimary's job.
+func TestBotForSession_NoBotMatchReturnsNil(t *testing.T) {
+	// Verifies that BotForSession returns nil when no bot's SessionKey matches.
 	mgr := NewBotManager()
 	primary := &Bot{agentID: "clutch"}
 	mgr.AddPrimary("clutch", primary)
@@ -15,11 +13,24 @@ func TestBotForSession_NoFacetMatchReturnsNil(t *testing.T) {
 	facet := &Bot{agentID: "clutch"}
 	mgr.AddFacet("clutch", facet)
 
-	// New-format key that parses successfully — before the fix this would
-	// have returned the primary bot via the agentID fallback.
 	found := mgr.BotForSession("clutch/c12345/1709590000")
 	if found != nil {
-		t.Errorf("BotForSession should return nil when no facet matches, got %v", found)
+		t.Errorf("BotForSession should return nil when no bot has this session key, got %v", found)
+	}
+}
+
+func TestBotForSession_MatchesPrimaryBot(t *testing.T) {
+	// Verifies that BotForSession returns the primary bot when its SessionKey matches.
+	mgr := NewBotManager()
+	primary := &Bot{agentID: "clutch", sessionKey: "clutch/c12345/1709590000"}
+	mgr.AddPrimary("clutch", primary)
+
+	facet := &Bot{agentID: "clutch"}
+	mgr.AddFacet("clutch", facet)
+
+	found := mgr.BotForSession("clutch/c12345/1709590000")
+	if found != primary {
+		t.Errorf("BotForSession should return primary bot when its SessionKey matches")
 	}
 }
 

@@ -53,7 +53,7 @@ func (a *aggregatingConnMgr) AllForAgent(agentID string) []Connection {
 }
 
 func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
-	// Try platform-aware routing: extract agentID and chatID from the session key,
+	// Platform-aware routing: extract agentID and chatID from the session key,
 	// look up which platform owns it, and dispatch directly.
 	if a.chatPlatformFn != nil {
 		agentID, chatID := extractSessionInfo(sessionKey)
