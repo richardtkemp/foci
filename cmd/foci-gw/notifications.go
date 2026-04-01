@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -38,6 +39,28 @@ func handleRestartAndFirstRun(
 		diagnosis.Class != startup.ClassClean &&
 		diagnosis.Class != startup.ClassUnknown
 
+	// Platform-level notification: short "restarted at ..." message to the user.
+	if needsRestart {
+		for _, id := range agentOrder {
+			inst := agents[id]
+			for _, conn := range connMgr.AllForAgent(id) {
+				if !inst.resolved.PlatformNotify(conn.PlatformName()).StartupNotify {
+					continue
+				}
+				name := conn.Username()
+				if name == "" {
+					name = "foci"
+				}
+				text := fmt.Sprintf("%s restarted at %s", name, time.Now().Format("15:04:05"))
+				if extra := diagnosis.FormatNotification(); extra != "" {
+					text += "\n\n" + extra
+				}
+				conn.SendNotification(text)
+			}
+		}
+	}
+
+	// Session-level injection: restart context as a proper agent turn.
 	for i, agentID := range agentOrder {
 		isPrimary := i == 0
 		agentWelcome := ""
