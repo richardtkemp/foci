@@ -71,7 +71,7 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	// Message Metadata
 	b.WriteString("\n## Message Metadata\n")
 	b.WriteString("Every inbound message includes a `[meta]` header with:\n")
-	b.WriteString("- **time** — UTC timestamp\n")
+	b.WriteString("- **time** — timestamp with timezone offset\n")
 	b.WriteString("- **gap** — time since last message\n")
 	b.WriteString("- **model** — current model\n")
 	b.WriteString("- **via** — which transport delivered this message: `telegram` (Telegram chat), `android` (Android app), `api` (HTTP /send endpoint — replies are already delivered), `cron` (system-initiated — keepalive, scheduled wake, etc.; replies are auto-delivered to the user's platform)\n")

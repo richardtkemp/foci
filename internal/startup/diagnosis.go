@@ -169,8 +169,8 @@ func gatherDiagnostics(logsDir string, since time.Time) []string {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
-	errorPattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+(ERROR|FATAL)\s+`)
-	sinceStr := since.UTC().Format("2006-01-02T15:04:05Z")
+	errorPattern := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})\s+(ERROR|FATAL)\s+`)
+	sinceTrunc := since.Truncate(time.Second) // log timestamps have second precision
 
 	var recentErrors []string
 	for scanner.Scan() {
@@ -179,8 +179,16 @@ func gatherDiagnostics(logsDir string, since time.Time) []string {
 			continue
 		}
 
-		lineTime := line[:20]
-		if lineTime < sinceStr {
+		// Extract RFC3339 timestamp: 20 chars for "Z" suffix, 25 for "+HH:MM" offset
+		tsEnd := 20
+		if len(line) >= 25 && (line[19] == '+' || line[19] == '-') {
+			tsEnd = 25
+		}
+		lineT, err := time.Parse(time.RFC3339, line[:tsEnd])
+		if err != nil {
+			continue
+		}
+		if lineT.Before(sinceTrunc) {
 			continue
 		}
 

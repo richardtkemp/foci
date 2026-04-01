@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // Task is a single tracked task.
@@ -62,7 +63,7 @@ func NewTaskListStore(dbPath string) (*TaskListStore, error) {
 
 // Create adds a new task and returns its per-agent ID.
 func (s *TaskListStore) Create(agentID, subject, description string) (int, error) {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timeutil.FormatNano(timeutil.Now())
 	var id int
 	err := s.db.QueryRow(
 		`INSERT INTO tasks (id, agent_id, subject, description, status, created_at, updated_at)
@@ -132,7 +133,7 @@ func (s *TaskListStore) Update(agentID string, id int, subject, description, sta
 		return fmt.Errorf("nothing to update")
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timeutil.FormatNano(timeutil.Now())
 	sets = append(sets, "updated_at = ?")
 	args = append(args, now)
 	args = append(args, agentID, id)

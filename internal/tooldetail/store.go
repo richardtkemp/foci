@@ -9,6 +9,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // Compile-time check: Store satisfies platform.ToolDetailStore.
@@ -46,6 +47,7 @@ func NewStore(dbPath string) (*Store, error) {
 			result       TEXT NOT NULL,
 			created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_details_created_unix ON tool_call_details(unixepoch(created_at))`,
 	)
 	if err != nil {
 		return nil, err
@@ -75,7 +77,7 @@ func (s *Store) Store(messageID int64, compact, fullInput, result string) {
 	_, err := s.db.Exec(
 		`INSERT OR REPLACE INTO tool_call_details (message_id, compact_text, full_input, result, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		messageID, compact, fullInput, result, time.Now().UTC().Format(time.RFC3339Nano))
+		messageID, compact, fullInput, result, timeutil.FormatNano(timeutil.Now()))
 	if err != nil {
 		log.Warnf("tooldetail", "store message_id=%d: %v", messageID, err)
 	}
@@ -83,10 +85,10 @@ func (s *Store) Store(messageID int64, compact, fullInput, result string) {
 
 // LoadAll returns all entries newer than 48h. Used on startup to populate the in-memory map.
 func (s *Store) LoadAll() (map[int64]Entry, error) {
-	cutoff := time.Now().Add(-toolDetailTTL).UTC().Format(time.RFC3339Nano)
+	cutoff := timeutil.FormatNano(time.Now().Add(-toolDetailTTL))
 
 	rows, err := s.db.Query(
-		`SELECT message_id, compact_text, full_input, result FROM tool_call_details WHERE created_at > ?`,
+		`SELECT message_id, compact_text, full_input, result FROM tool_call_details WHERE unixepoch(created_at) > unixepoch(?)`,
 		cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("query tool details: %w", err)
@@ -114,8 +116,8 @@ func (s *Store) ExpireAndVacuum() {
 		return
 	}
 
-	cutoff := time.Now().Add(-toolDetailTTL).UTC().Format(time.RFC3339Nano)
-	res, err := s.db.Exec(`DELETE FROM tool_call_details WHERE created_at <= ?`, cutoff)
+	cutoff := timeutil.FormatNano(time.Now().Add(-toolDetailTTL))
+	res, err := s.db.Exec(`DELETE FROM tool_call_details WHERE unixepoch(created_at) <= unixepoch(?)`, cutoff)
 	if err != nil {
 		log.Warnf("tooldetail", "expire: %v", err)
 		return

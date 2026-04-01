@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // SessionType classifies the purpose of a session.
@@ -109,11 +110,14 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// Backfill existing rows to now so we don't stampede all sessions on first run.
 	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_memory_formation TEXT`)
 	_, _ = db.Exec(`UPDATE session_index SET last_memory_formation = ? WHERE last_memory_formation IS NULL`,
-		time.Now().UTC().Format(time.RFC3339))
+		timeutil.Format(timeutil.Now()))
 
 	// Migration: add platform column to chat_metadata if missing (idempotent).
 	// Detects old schema by checking column count, then rebuilds the table in a transaction.
 	migrateChatMetadataPlatform(db)
+
+	// Expression index for correct cross-timezone last_activity_at ordering.
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_activity_unix ON session_index(unixepoch(last_activity_at))`)
 
 	return &SessionIndex{db: db}, nil
 }
@@ -138,8 +142,8 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 	if activityAt.IsZero() {
 		activityAt = e.CreatedAt
 	}
-	activityStr := activityAt.UTC().Format(time.RFC3339)
-	createdStr := e.CreatedAt.UTC().Format(time.RFC3339)
+	activityStr := timeutil.Format(activityAt)
+	createdStr := timeutil.Format(e.CreatedAt)
 	_, err := idx.db.Exec(
 		`INSERT INTO session_index (session_key, file_path, created_at, last_activity_at, parent_session_key, session_type, status)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -147,7 +151,7 @@ func (idx *SessionIndex) upsertLocked(e SessionIndexEntry) {
 		   file_path = excluded.file_path,
 		   created_at = excluded.created_at,
 		   last_activity_at = CASE
-		     WHEN excluded.last_activity_at > session_index.last_activity_at THEN excluded.last_activity_at
+		     WHEN unixepoch(excluded.last_activity_at) > unixepoch(session_index.last_activity_at) THEN excluded.last_activity_at
 		     ELSE session_index.last_activity_at
 		   END,
 		   parent_session_key = excluded.parent_session_key,
@@ -171,7 +175,7 @@ func (idx *SessionIndex) UpdateActivity(sessionKey string, activityAt time.Time)
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	activityStr := activityAt.UTC().Format(time.RFC3339)
+	activityStr := timeutil.Format(activityAt)
 	_, err := idx.db.Exec(
 		`UPDATE session_index SET last_activity_at = ? WHERE session_key = ?`,
 		activityStr,
@@ -187,7 +191,7 @@ func (idx *SessionIndex) StampMemoryFormation(sessionKey string, at time.Time) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	stamp := at.UTC().Format(time.RFC3339)
+	stamp := timeutil.Format(at)
 	_, err := idx.db.Exec(
 		`UPDATE session_index SET last_memory_formation = ? WHERE session_key = ?`,
 		stamp,
@@ -207,7 +211,7 @@ func (idx *SessionIndex) SessionsNeedingFormation(agentID string) ([]string, err
 	rows, err := idx.db.Query(
 		`SELECT session_key FROM session_index
 		 WHERE session_key LIKE ? AND session_type = 'chat' AND status = 'active'
-		   AND (last_memory_formation IS NULL OR last_activity_at > last_memory_formation)`,
+		   AND (last_memory_formation IS NULL OR unixepoch(last_activity_at) > unixepoch(last_memory_formation))`,
 		agentID+"/%",
 	)
 	if err != nil {
@@ -283,12 +287,12 @@ func (idx *SessionIndex) Query(opts QueryOptions) ([]SessionIndexEntry, error) {
 		args = append(args, opts.Status)
 	}
 	if opts.MaxAge > 0 {
-		cutoff := time.Now().UTC().Add(-opts.MaxAge).Format(time.RFC3339)
-		query += ` AND last_activity_at >= ?`
+		cutoff := timeutil.Format(time.Now().Add(-opts.MaxAge))
+		query += ` AND unixepoch(last_activity_at) >= unixepoch(?)`
 		args = append(args, cutoff)
 	}
 
-	query += ` ORDER BY created_at DESC`
+	query += ` ORDER BY unixepoch(created_at) DESC, created_at DESC`
 
 	if opts.Limit > 0 {
 		query += ` LIMIT ?`
@@ -410,8 +414,8 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 		_, err := stmt.Exec(
 			e.SessionKey,
 			e.FilePath,
-			e.CreatedAt.UTC().Format(time.RFC3339),
-			activityAt.UTC().Format(time.RFC3339),
+			timeutil.Format(e.CreatedAt),
+			timeutil.Format(activityAt),
 			nullableString(e.ParentSessionKey),
 			e.SessionType,
 			e.Status,
@@ -862,7 +866,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
 		   ON sk.agent_id = cm.agent_id AND sk.chat_id = cm.chat_id AND sk.key = 'session_key'
 		 LEFT JOIN session_index si ON si.session_key = sk.value
 		 WHERE cm.agent_id = ? AND cm.key = 'is_default'
-		 ORDER BY si.last_activity_at DESC NULLS LAST
+		 ORDER BY unixepoch(si.last_activity_at) DESC NULLS LAST
 		 LIMIT 1`,
 		agentID,
 	).Scan(&chatID)
@@ -900,7 +904,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
 			err := idx.db.QueryRow(
 				`SELECT si.session_key FROM session_index si
 				 WHERE si.session_key IN (`+placeholders(len(candidates))+`)
-				 ORDER BY si.last_activity_at DESC
+				 ORDER BY unixepoch(si.last_activity_at) DESC
 				 LIMIT 1`,
 				toArgs(candidates)...,
 			).Scan(&best)
@@ -919,7 +923,7 @@ func (idx *SessionIndex) DefaultSessionKeyForAgent(agentID string) string {
 		`SELECT session_key FROM session_index
 		 WHERE session_key LIKE ? AND status = 'active'
 		   AND session_key NOT LIKE ?
-		 ORDER BY last_activity_at DESC, created_at DESC
+		 ORDER BY unixepoch(last_activity_at) DESC, unixepoch(created_at) DESC
 		 LIMIT 1`,
 		agentID+"/%",
 		agentID+"/%/%/%", // exclude children (4+ segments)
@@ -1052,7 +1056,7 @@ func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
 	err := idx.db.QueryRow(
 		`SELECT session_key FROM session_index
 		 WHERE session_key LIKE ? AND status = 'active'
-		 ORDER BY last_activity_at DESC, created_at DESC
+		 ORDER BY unixepoch(last_activity_at) DESC, unixepoch(created_at) DESC
 		 LIMIT 1`,
 		prefix+"%",
 	).Scan(&key)

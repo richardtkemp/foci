@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // Reminder is a deferred thought for later.
@@ -53,21 +54,24 @@ func NewReminderStore(dbPath string) (*ReminderStore, error) {
 		return nil, fmt.Errorf("add session_key column: %w", err)
 	}
 
+	// Expression index for correct cross-timezone due_at ordering.
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_reminders_due_unix ON reminders(unixepoch(due_at))`)
+
 	return &ReminderStore{db: db}, nil
 }
 
 // Add creates a new reminder. The when parameter is resolved to a concrete time:
 //   - "next_keepalive" → now (surfaced at next keepalive)
-//   - "tomorrow" → midnight tomorrow UTC
+//   - "tomorrow" → midnight tomorrow (local time)
 //   - "next_session" → now (surfaced at next message)
-//   - YYYY-MM-DD → that date at midnight UTC
+//   - YYYY-MM-DD → that date at midnight (local time)
 func (rs *ReminderStore) Add(agentID, text, when string) error {
 	dueAt := resolveWhen(when)
-	now := time.Now().UTC()
+	now := timeutil.Now()
 
 	_, err := rs.db.Exec(
 		"INSERT INTO reminders (agent_id, text, due_at, due_tag, created) VALUES (?, ?, ?, ?, ?)",
-		agentID, text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339),
+		agentID, text, timeutil.Format(dueAt), when, timeutil.Format(now),
 	)
 	return err
 }
@@ -77,11 +81,11 @@ func (rs *ReminderStore) Add(agentID, text, when string) error {
 // the wake fires on the correct platform.
 func (rs *ReminderStore) AddWake(agentID, sessionKey, text, when string) (int64, error) {
 	dueAt := resolveWhen(when)
-	now := time.Now().UTC()
+	now := timeutil.Now()
 
 	result, err := rs.db.Exec(
 		"INSERT INTO reminders (agent_id, text, due_at, due_tag, created, wake, session_key) VALUES (?, ?, ?, ?, ?, 1, ?)",
-		agentID, text, dueAt.Format(time.RFC3339), when, now.Format(time.RFC3339), sessionKey,
+		agentID, text, timeutil.Format(dueAt), when, timeutil.Format(now), sessionKey,
 	)
 	if err != nil {
 		return 0, err
@@ -92,7 +96,7 @@ func (rs *ReminderStore) AddWake(agentID, sessionKey, text, when string) (int64,
 // PendingWakes returns all wake reminders for the given agent, ordered by due time.
 func (rs *ReminderStore) PendingWakes(agentID string) ([]Reminder, error) {
 	rows, err := rs.db.Query(
-		"SELECT id, text, due_at, due_tag, created, session_key FROM reminders WHERE agent_id = ? AND wake = 1 ORDER BY due_at",
+		"SELECT id, text, due_at, due_tag, created, session_key FROM reminders WHERE agent_id = ? AND wake = 1 ORDER BY unixepoch(due_at)",
 		agentID,
 	)
 	if err != nil {
@@ -117,10 +121,10 @@ func (rs *ReminderStore) PendingWakes(agentID string) ([]Reminder, error) {
 // Due returns all passive reminders for the given agent that are due (due_at <= now).
 // Wake reminders are excluded — they fire via their own timer.
 func (rs *ReminderStore) Due(agentID string) ([]Reminder, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := timeutil.Format(timeutil.Now())
 
 	rows, err := rs.db.Query(
-		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND due_at <= ? AND wake = 0 ORDER BY due_at",
+		"SELECT id, text, due_at, due_tag, created FROM reminders WHERE agent_id = ? AND unixepoch(due_at) <= unixepoch(?) AND wake = 0 ORDER BY unixepoch(due_at)",
 		agentID, now,
 	)
 	if err != nil {
@@ -151,8 +155,8 @@ func (rs *ReminderStore) Dismiss(id int64) error {
 // DismissAll removes all due passive reminders for the given agent.
 // Wake reminders are excluded — they are dismissed explicitly by ID when they fire.
 func (rs *ReminderStore) DismissAll(agentID string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := rs.db.Exec("DELETE FROM reminders WHERE agent_id = ? AND due_at <= ? AND wake = 0", agentID, now)
+	now := timeutil.Format(timeutil.Now())
+	_, err := rs.db.Exec("DELETE FROM reminders WHERE agent_id = ? AND unixepoch(due_at) <= unixepoch(?) AND wake = 0", agentID, now)
 	return err
 }
 
@@ -163,21 +167,21 @@ func (rs *ReminderStore) Close() error {
 
 // resolveWhen converts a human tag to a concrete time.
 func resolveWhen(when string) time.Time {
-	now := time.Now().UTC()
+	now := timeutil.Now()
 
 	switch when {
 	case "next_keepalive", "next_heartbeat", "next_session", "now":
 		return now
 	case "tomorrow":
 		tomorrow := now.Add(24 * time.Hour)
-		return time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, time.UTC)
+		return time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, now.Location())
 	default:
 		// Try parsing as an ISO 8601 / RFC3339 timestamp
 		if t, err := time.Parse(time.RFC3339, when); err == nil {
 			return t
 		}
-		// Try parsing as a date
-		if t, err := time.Parse("2006-01-02", when); err == nil {
+		// Try parsing as a date (midnight local time)
+		if t, err := time.ParseInLocation("2006-01-02", when, now.Location()); err == nil {
 			return t
 		}
 		// Try parsing as a duration

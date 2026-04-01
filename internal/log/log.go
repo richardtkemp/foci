@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"foci/internal/timeutil"
 )
 
 // Level represents a log severity level.
@@ -292,7 +294,7 @@ func (l *Logger) event(level Level, component string, format string, args ...int
 	}
 
 	msg := strings.ReplaceAll(fmt.Sprintf(format, args...), "\n", "\\n")
-	ts := time.Now().UTC().Format(time.RFC3339)
+	ts := timeutil.Format(timeutil.Now())
 
 	// Pad level to 5 chars: "DEBUG", "INFO ", "WARN ", "ERROR"
 	levelStr := fmt.Sprintf("%-5s", level.String())

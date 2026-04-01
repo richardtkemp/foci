@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // TodoItem represents a single todo entry.
@@ -81,6 +82,11 @@ func NewTodoStore(dbPath string) (*TodoStore, error) {
 		return closeOnErr("migrate in_progress to started", err)
 	}
 
+	// Expression index for correct cross-timezone timestamp ordering.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_todos_created_unix ON todos(unixepoch(created_at))`); err != nil {
+		return closeOnErr("create todos created_at expression index", err)
+	}
+
 	return &TodoStore{db: db}, nil
 }
 
@@ -151,7 +157,7 @@ func (s *TodoStore) Add(agentID, text, priority, tags string) (int64, error) {
 	if priority == "" {
 		priority = "medium"
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timeutil.FormatNano(timeutil.Now())
 	var nextID int64
 	err := s.db.QueryRow(
 		`INSERT INTO todos (id, text, status, priority, tags, agent_id, created_at, updated_at)
@@ -215,11 +221,11 @@ func (s *TodoStore) List(agentID, status string, tags []string, priority, sort s
 	}
 	switch sort {
 	case "created":
-		query += fmt.Sprintf(` ORDER BY created_at %s, id %s`, dir, idDir)
+		query += fmt.Sprintf(` ORDER BY unixepoch(created_at) %s, created_at %s, id %s`, dir, dir, idDir)
 	case "updated":
-		query += fmt.Sprintf(` ORDER BY updated_at %s, id %s`, dir, idDir)
+		query += fmt.Sprintf(` ORDER BY unixepoch(updated_at) %s, updated_at %s, id %s`, dir, dir, idDir)
 	case "closed":
-		query += fmt.Sprintf(` ORDER BY completed_at %s, id %s`, dir, idDir)
+		query += fmt.Sprintf(` ORDER BY unixepoch(completed_at) %s, completed_at %s, id %s`, dir, dir, idDir)
 	default: // "priority" or empty
 		priOrder := `CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END`
 		if reverse {
@@ -264,7 +270,7 @@ func (s *TodoStore) Complete(agentID string, id int64, reason string) error {
 // Transition changes a todo item's status. For "done" and "dropped", sets
 // completed_at and close_reason. For "open", clears them.
 func (s *TodoStore) Transition(agentID string, id int64, status, reason string) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timeutil.FormatNano(timeutil.Now())
 	var res sql.Result
 	var err error
 	switch status {
@@ -331,7 +337,7 @@ func (s *TodoStore) Edit(agentID string, id int64, text, priority, tags string, 
 		return nil, fmt.Errorf("nothing to update")
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timeutil.FormatNano(timeutil.Now())
 	setClauses = append(setClauses, "updated_at = ?")
 	args = append(args, now)
 

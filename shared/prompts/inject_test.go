@@ -90,13 +90,13 @@ func TestFormatInjectedMessageDefaultContextNote(t *testing.T) {
 	}
 }
 
-func TestFormatInjectedMessageUTCConversion(t *testing.T) {
-	// Provide a non-UTC time — should be converted to UTC in output
+func TestFormatInjectedMessageTimezonePreserved(t *testing.T) {
+	// Provide a non-UTC time — should preserve original timezone offset in output
 	loc := time.FixedZone("EST", -5*3600)
-	when := time.Date(2026, 6, 15, 12, 0, 0, 0, loc) // 12:00 EST = 17:00 UTC
+	when := time.Date(2026, 6, 15, 12, 0, 0, 0, loc) // 12:00 EST
 	result := FormatInjectedMessage("TEST", when, "body")
 
-	if !strings.Contains(result, "2026-06-15T17:00:00Z") {
-		t.Errorf("expected UTC conversion, got:\n%s", result)
+	if !strings.Contains(result, "2026-06-15T12:00:00-05:00") {
+		t.Errorf("expected timezone-preserved timestamp, got:\n%s", result)
 	}
 }

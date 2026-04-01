@@ -12,6 +12,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/startup"
+	"foci/internal/timeutil"
 )
 
 type sessionInfra struct {
@@ -68,7 +69,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 						sessionIndex.Upsert(session.SessionIndexEntry{
 							SessionKey:       archiveKey,
 							FilePath:         e.ArchivePath,
-							CreatedAt:        time.Now().UTC(),
+							CreatedAt:        timeutil.Now(),
 							ParentSessionKey: e.Key,
 							SessionType:      e.Type,
 							Status:           session.SessionStatusCompacted,
@@ -85,7 +86,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 						sessionIndex.Upsert(session.SessionIndexEntry{
 							SessionKey:       archiveKey,
 							FilePath:         e.ArchivePath,
-							CreatedAt:        time.Now().UTC(),
+							CreatedAt:        timeutil.Now(),
 							ParentSessionKey: e.Key,
 							SessionType:      e.Type,
 							Status:           session.SessionStatusCompacted,
@@ -97,7 +98,7 @@ func initSessions(cfg *config.Config) sessionInfra {
 					sessionIndex.Upsert(session.SessionIndexEntry{
 						SessionKey:  e.NewKey,
 						FilePath:    e.FilePath,
-						CreatedAt:   time.Now().UTC(),
+						CreatedAt:   timeutil.Now(),
 						SessionType: e.Type,
 						Status:      session.SessionStatusActive,
 					})

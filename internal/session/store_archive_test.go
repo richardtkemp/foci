@@ -115,6 +115,9 @@ func TestIsArchiveFile(t *testing.T) {
 		{"5970082313.2026-03-04T02-30-00Z.10.jsonl", true},              // new timestamp pattern with counter
 		{"wake-111.2026-12-25T14-35-22Z.jsonl", true},                   // new timestamp pattern
 		{"wake-111.2026-12-25T14-35-22Z.3.jsonl", true},                 // new timestamp pattern with counter
+		{"5970082313.2026-03-04T02-30-00+0100.jsonl", true},             // timestamp with offset
+		{"5970082313.2026-03-04T02-30-00-0500.jsonl", true},             // timestamp with negative offset
+		{"5970082313.2026-03-04T02-30-00+0100.2.jsonl", true},           // timestamp with offset and counter
 		{"main.jsonl", false},
 		{"wake-111.jsonl", false},
 		{"wake-111.1.jsonl", true},                                      // old numbered pattern
