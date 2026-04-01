@@ -23,7 +23,7 @@ func PassCommand() *Command {
 		Name:        "pass",
 		Description: "Forward a command directly to Claude Code",
 		Category:    "operations",
-		DefaultExecute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			if cc.Agent.DelegatedManager == nil {
 				return Response{}, fmt.Errorf("/pass is only available for delegated backends (Claude Code)")
 			}
