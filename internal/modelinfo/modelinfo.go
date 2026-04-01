@@ -38,6 +38,13 @@ var registry = map[string]Model{
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
 	},
 
+	// Claude Code backend — default to largest available context window so
+	// we don't trigger spurious compaction before learning the true model.
+	// FinalModel feedback in UpdateSessionMeta corrects this downward if needed.
+	"claude-code": {
+		ContextWindow: 1_000_000,
+	},
+
 	// Gemini
 	"gemini-2.5-pro": {
 		ContextWindow: 1_000_000,

@@ -14,8 +14,9 @@ func TestContextWindow(t *testing.T) {
 		model string
 		want  int
 	}{
-		{"claude-opus-4-6", 200_000},
-		{"anthropic/claude-opus-4-6", 200_000},
+		{"claude-opus-4-6", 1_000_000},
+		{"anthropic/claude-opus-4-6", 1_000_000},
+		{"claude-code", 1_000_000},
 		{"gemini-2.5-pro", 1_000_000},
 		{"gemini-2.0-flash", 1_000_000},
 		{"gemini-1.5-pro", 2_000_000},       // family fallback
