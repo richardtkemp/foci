@@ -190,7 +190,8 @@ type TurnState struct {
 
 	// --- Delegated-specific ---
 
-	Backend backend.Backend // backend instance for this session (nil for API)
+	Backend         backend.Backend // backend instance for this session (nil for API)
+	sessionFilePath string          // cached before SendToPane to avoid deadlock in OnTurnComplete
 }
 
 // NewTurnState creates a TurnState with a properly initialised CompletionChan.
