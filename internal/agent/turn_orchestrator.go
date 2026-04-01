@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// RunTurn executes a complete turn through the TurnContract pipeline.
+// OrchestrateFullTurn executes a complete turn through the TurnContract pipeline.
 // It calls all 20 concern methods in the canonical order, handling errors
 // and cleanup at each step. The ctx is stored on ts.Ctx for use by
 // contract methods that need it.
-func (a *Agent) RunTurn(ctx context.Context, tc TurnContract, ts *TurnState) (string, error) {
+func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *TurnState) (string, error) {
 	ts.Ctx = ctx
 
 	// Derive context fields once — avoids repeated extraction in each method.
@@ -52,7 +52,7 @@ func (a *Agent) RunTurn(ctx context.Context, tc TurnContract, ts *TurnState) (st
 	tc.InjectNudges(ts)
 
 	// Phase 3: Execution
-	if err := tc.ExecuteTurn(ts); err != nil {
+	if err := tc.RunInference(ts); err != nil {
 		// Flush accumulated messages — post-turn won't run.
 		if len(ts.NewMessages) > 0 {
 			_ = tc.SaveSession(ts)
@@ -60,20 +60,36 @@ func (a *Agent) RunTurn(ctx context.Context, tc TurnContract, ts *TurnState) (st
 		return "", err
 	}
 
-	// Phase 4: Post-turn (sync for API, async for backend)
+	// Phase 4: Post-turn (sync for API, async for delegated)
 	a.runPostTurn(tc, ts)
 	return ts.FinalText, nil
 }
 
 // runPostTurn handles the sync/async split for post-turn concerns.
 //
-// API path: CompletionChan is already closed when ExecuteTurn returns,
+// API path: CompletionChan is already closed when RunInference returns,
 // so the select falls through to the inline post() call.
 //
-// Backend path: CompletionChan is still open (turn completes asynchronously).
+// Delegated path: CompletionChan is still open (turn completes asynchronously).
 // A goroutine waits for completion with a 10-minute safety timeout.
+//
+// Steered follow-up (delegated): CompletionChan is already closed by
+// RunInference (no callback registered). Falls through to inline post()
+// which no-ops (FinalUsage is nil). No goroutine spawned.
 func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
+	// Fire OnTurnDone callback — signals the platform layer that the turn
+	// is fully complete. Used to stop the typing indicator at the right time:
+	// immediately for API turns, asynchronously for delegated turns.
+	onDone := func() {
+		if ts.Ctx == nil {
+			return
+		}
+		if cb := TurnCallbacksFromContext(ts.Ctx); cb != nil && cb.OnTurnDone != nil {
+			cb.OnTurnDone()
+		}
+	}
 	post := func() {
+		onDone()
 		if err := tc.SaveSession(ts); err != nil {
 			a.logger().Errorf("session=%s post-turn save: %v", ts.SessionKey, err)
 		}
@@ -86,7 +102,7 @@ func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
 	case <-ts.CompletionChan:
 		post() // API: already done
 	default:
-		go func() { // Backend: wait for completion
+		go func() { // Delegated: wait for completion
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 			select {

@@ -17,13 +17,11 @@ import (
 	"foci/internal/workspace"
 )
 
-// setupBackendAgent wires up an agent that delegates turns to a coding agent
-// backend (Claude Code, Codex, OpenCode). Each session gets its own Backend
-// instance (own tmux pane, own CC session), created lazily on first message.
-func setupBackendAgent(p setupParams, backendName string, backendConfig map[string]any) *agentInstance {
-	shared := resolveSharedSetup(p)
-	p = shared.p // p.resolved is now set
-
+// configureDelegated sets up delegated transport agent state: DelegatedManager
+// with all callbacks, model override, permissions, and exec registry. The
+// agent's shared fields (compaction, warnings, etc.) are already set by
+// setupAgent before this is called.
+func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, backendName string, backendConfig map[string]any) (finalizeParams, bool) {
 	// Bootstrap for building the system prompt (workspace *.md files).
 	bs := workspace.NewBootstrap(p.acfg.Workspace, nil)
 	systemBlocks := bs.SystemBlocks()
@@ -42,18 +40,17 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 	}
 
 	// Ensure CC has permissions to edit the workspace without prompting.
-	seedBackendPermissions(p.acfg.Workspace)
+	seedDelegatedPermissions(p.acfg.Workspace)
 
 	// Build a tool registry with exec-exported tools so foci shell commands
 	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
 	// shell environment via the persistent exec bridge.
 	registry := buildExecRegistry(p)
 
-	// Build the agent with shared fields.
-	ag := shared.newAgent()
-	ag.Model = backendName // display the backend name as the "model"
+	// Override model display name to show the backend name.
+	ag.Model = backendName
 
-	// Wire BackendManager: lazy per-session Backend creation.
+	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
 	// Parse idle timeout from config (default 24h).
@@ -64,7 +61,7 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 		}
 	}
 
-	ag.BackendManager = &agent.BackendManager{
+	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
 		NewBackend: func() (backend.Backend, error) {
@@ -96,7 +93,7 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 						return
 					}
 				}
-				log.Warnf("agent/"+agentID, "backend: no connection for session %s after 30s, message dropped", sessionKey)
+				log.Warnf("agent/"+agentID, "delegated: no connection for session %s after 30s, message dropped", sessionKey)
 			}()
 		},
 		PermissionPromptFunc: func(sessionKey, text, summary string, choices []backend.PromptChoice) {
@@ -111,6 +108,10 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			_ = platform.SendInteractiveMessage(conn, text, buttons, func(choice platform.ButtonChoice) string {
 				// Send keystroke to CC's TUI.
 				_ = ag.SendPermissionResponse(context.Background(), sessionKey, choice.Data)
+				// Permission resolved via button press. The onPermCleared
+				// callback (wired in DelegatedManager.Get) handles clearing
+				// permPending when the prompt disappears from the TUI,
+				// which covers both button responses and CC timeouts.
 				if strings.EqualFold(choice.Label, "No") {
 					if summary != "" {
 						return "❌ " + summary
@@ -131,21 +132,23 @@ func setupBackendAgent(p setupParams, backendName string, backendConfig map[stri
 			if typing {
 				conn.SetTyping(true)
 			}
-			// false = stop typing. Most platforms auto-expire typing after
-			// a message is sent, so we only need to actively signal start.
+			// Don't propagate false here. Typing lifecycle is handled by
+			// OnTurnDone callback (set by processAgentMessage, called by
+			// runPostTurn when the turn completes). TypingFunc just starts
+			// typing when CC begins working; stopping is OnTurnDone's job.
 		},
 		IdleTimeout: idleTimeout,
 	}
 
-	return shared.finalize(ag, finalizeParams{
+	return finalizeParams{
 		bootstrap: bs,
-	})
+	}, true
 }
 
-// seedBackendPermissions ensures .claude/settings.local.json in the workspace
-// has permissions allowing the CC backend to edit workspace files without
+// seedDelegatedPermissions ensures .claude/settings.local.json in the workspace
+// has permissions allowing the delegated backend to edit workspace files without
 // prompting. Merges with any existing settings; never overwrites user entries.
-func seedBackendPermissions(workspace string) {
+func seedDelegatedPermissions(workspace string) {
 	settingsDir := filepath.Join(workspace, ".claude")
 	settingsPath := filepath.Join(settingsDir, "settings.local.json")
 
@@ -153,7 +156,7 @@ func seedBackendPermissions(workspace string) {
 	var settings map[string]any
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &settings); err != nil {
-			log.Warnf("backend", "parse %s: %v — not modifying", settingsPath, err)
+			log.Warnf("delegated", "parse %s: %v — not modifying", settingsPath, err)
 			return
 		}
 	} else {
@@ -218,24 +221,24 @@ func seedBackendPermissions(workspace string) {
 	settings["permissions"] = perms
 
 	if err := os.MkdirAll(settingsDir, 0755); err != nil {
-		log.Warnf("backend", "mkdir %s: %v", settingsDir, err)
+		log.Warnf("delegated", "mkdir %s: %v", settingsDir, err)
 		return
 	}
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
-		log.Warnf("backend", "marshal settings: %v", err)
+		log.Warnf("delegated", "marshal settings: %v", err)
 		return
 	}
 	if err := os.WriteFile(settingsPath, append(data, '\n'), 0644); err != nil {
-		log.Warnf("backend", "write %s: %v", settingsPath, err)
+		log.Warnf("delegated", "write %s: %v", settingsPath, err)
 		return
 	}
-	log.Infof("backend", "seeded workspace permissions in %s", settingsPath)
+	log.Infof("delegated", "seeded workspace permissions in %s", settingsPath)
 }
 
 // buildExecRegistry creates a tools.Registry containing only exec-exported
 // tools. These are exposed as shell functions (foci_todo, foci_send_to_chat,
-// etc.) via the persistent exec bridge in the backend's tmux session.
+// etc.) via the persistent exec bridge in the delegated backend's tmux session.
 func buildExecRegistry(p setupParams) *tools.Registry {
 	registry := tools.NewRegistry()
 	acfg := p.acfg

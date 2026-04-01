@@ -13,10 +13,10 @@ import (
 	"foci/internal/workspace"
 )
 
-// TestRunTurn_PostTurnAsyncPath verifies that when CompletionChan is not
-// immediately closed (backend path), post-turn runs asynchronously and
+// TestOrchestrateFullTurn_PostTurnAsyncPath verifies that when CompletionChan is not
+// immediately closed (delegated path), post-turn runs asynchronously and
 // completes when the channel closes.
-func TestRunTurn_PostTurnAsyncPath(t *testing.T) {
+func TestOrchestrateFullTurn_PostTurnAsyncPath(t *testing.T) {
 	a := &Agent{}
 	doneCh := make(chan struct{})
 
@@ -26,9 +26,9 @@ func TestRunTurn_PostTurnAsyncPath(t *testing.T) {
 	}
 	ts := NewTurnState(context.Background(), "test/async", []string{"hi"}, nil)
 
-	_, err := a.RunTurn(context.Background(), tc, ts)
+	_, err := a.OrchestrateFullTurn(context.Background(), tc, ts)
 	if err != nil {
-		t.Fatalf("RunTurn: %v", err)
+		t.Fatalf("OrchestrateFullTurn: %v", err)
 	}
 
 	select {
@@ -39,9 +39,9 @@ func TestRunTurn_PostTurnAsyncPath(t *testing.T) {
 	}
 }
 
-// TestRunTurn_SafetyNetOnError verifies that the orchestrator's safety-net
-// defer calls SaveSession when ExecuteTurn returns an error.
-func TestRunTurn_SafetyNetOnError(t *testing.T) {
+// TestOrchestrateFullTurn_SafetyNetOnError verifies that the orchestrator's safety-net
+// defer calls SaveSession when RunInference returns an error.
+func TestOrchestrateFullTurn_SafetyNetOnError(t *testing.T) {
 	a := &Agent{}
 	saved := false
 
@@ -51,18 +51,18 @@ func TestRunTurn_SafetyNetOnError(t *testing.T) {
 	ts := NewTurnState(context.Background(), "test/err", []string{"hi"}, nil)
 	ts.NewMessages = []provider.Message{{Role: "user"}} // simulate accumulated messages
 
-	_, err := a.RunTurn(context.Background(), tc, ts)
+	_, err := a.OrchestrateFullTurn(context.Background(), tc, ts)
 	if err == nil {
-		t.Fatal("expected error from ExecuteTurn")
+		t.Fatal("expected error from RunInference")
 	}
 	if !saved {
 		t.Fatal("safety-net should have called SaveSession on error")
 	}
 }
 
-// TestRunTurn_SafetyNetSkipsOnSuccess verifies the safety-net defer does NOT
+// TestOrchestrateFullTurn_SafetyNetSkipsOnSuccess verifies the safety-net defer does NOT
 // double-save when the turn completes successfully (NewMessages nil'd by post-turn).
-func TestRunTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
+func TestOrchestrateFullTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
 	a := &Agent{}
 	saveCount := 0
 
@@ -72,9 +72,9 @@ func TestRunTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
 	ts := NewTurnState(context.Background(), "test/ok", []string{"hi"}, nil)
 	ts.NewMessages = []provider.Message{{Role: "user"}}
 
-	_, err := a.RunTurn(context.Background(), tc, ts)
+	_, err := a.OrchestrateFullTurn(context.Background(), tc, ts)
 	if err != nil {
-		t.Fatalf("RunTurn: %v", err)
+		t.Fatalf("OrchestrateFullTurn: %v", err)
 	}
 	if saveCount != 1 {
 		t.Fatalf("SaveSession called %d times, want 1 (post-turn only, not safety-net)", saveCount)
@@ -82,7 +82,7 @@ func TestRunTurn_SafetyNetSkipsOnSuccess(t *testing.T) {
 }
 
 // TestTransportSelection_API verifies that HandleMessageWithAttachments
-// routes through the API transport when BackendManager is nil, producing
+// routes through the API transport when DelegatedManager is nil, producing
 // a response from the mock client.
 func TestTransportSelection_API(t *testing.T) {
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -112,32 +112,32 @@ func TestTransportSelection_API(t *testing.T) {
 	}
 }
 
-// TestTransportSelection_Backend verifies that HandleMessageWithAttachments
-// routes through the backend transport when BackendManager is set.
-func TestTransportSelection_Backend(t *testing.T) {
+// TestTransportSelection_Delegated verifies that HandleMessageWithAttachments
+// routes through the delegated transport when DelegatedManager is set.
+func TestTransportSelection_Delegated(t *testing.T) {
 	ag := &Agent{
 		Sessions:  session.NewStore(t.TempDir()),
 		Tools:     tools.NewRegistry(),
 		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
 		Model:     "test-model",
-		BackendManager: &BackendManager{
+		DelegatedManager: &DelegatedManager{
 			NewBackend: func() (backend.Backend, error) {
 				return nil, fmt.Errorf("no real backend in test")
 			},
 		},
 	}
 
-	// Backend path will fail (no real backend), but it should NOT fall
-	// through to the API path. The error proves backend was selected.
+	// Delegated path will fail (no real backend), but it should NOT fall
+	// through to the API path. The error proves the delegated transport was selected.
 	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "hello")
 	if err == nil {
-		t.Fatal("expected error from backend transport (no real backend)")
+		t.Fatal("expected error from delegated transport (no real backend)")
 	}
 }
 
 // --- Test stubs ---
 
-// asyncStubContract simulates a backend transport where CompletionChan
+// asyncStubContract simulates a delegated transport where CompletionChan
 // closes after a delay (async turn completion).
 type asyncStubContract struct {
 	completionDelay time.Duration
@@ -158,7 +158,7 @@ func (s *asyncStubContract) LoadAndRepairSession(*TurnState) error  { return nil
 func (s *asyncStubContract) ResolveModelEffort(*TurnState)          {}
 func (s *asyncStubContract) BuildSystemAndTools(*TurnState)         {}
 func (s *asyncStubContract) InjectNudges(*TurnState)                {}
-func (s *asyncStubContract) ExecuteTurn(ts *TurnState) error {
+func (s *asyncStubContract) RunInference(ts *TurnState) error {
 	go func() {
 		time.Sleep(s.completionDelay)
 		close(ts.CompletionChan)
@@ -178,7 +178,7 @@ func (s *asyncStubContract) RunCompaction(*TurnState)       {}
 func (s *asyncStubContract) LogConversationSent(*TurnState) {}
 func (s *asyncStubContract) TouchActivityPost(*TurnState)   {}
 
-// errorStubContract simulates ExecuteTurn returning an error.
+// errorStubContract simulates RunInference returning an error.
 type errorStubContract struct {
 	onSave func()
 }
@@ -197,7 +197,7 @@ func (s *errorStubContract) LoadAndRepairSession(*TurnState) error  { return nil
 func (s *errorStubContract) ResolveModelEffort(*TurnState)          {}
 func (s *errorStubContract) BuildSystemAndTools(*TurnState)         {}
 func (s *errorStubContract) InjectNudges(*TurnState)                {}
-func (s *errorStubContract) ExecuteTurn(*TurnState) error {
+func (s *errorStubContract) RunInference(*TurnState) error {
 	return fmt.Errorf("simulated execution error")
 }
 func (s *errorStubContract) SaveSession(ts *TurnState) error {

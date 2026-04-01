@@ -14,13 +14,14 @@ import (
 	"foci/internal/session"
 )
 
-// DefaultIdleTimeout is the default duration after which idle backends are closed.
+// DefaultIdleTimeout is the default duration after which idle delegated backends are closed.
 const DefaultIdleTimeout = 24 * time.Hour
 
-// BackendManager creates and manages per-session Backend instances lazily.
-// Each session key gets its own Backend (own tmux pane, own CC session).
-// Idle backends are closed after IdleTimeout and resumed on next message.
-type BackendManager struct {
+// DelegatedManager creates and manages per-session Backend instances lazily
+// for the delegated transport path. Each session key gets its own Backend
+// (own tmux pane, own CC session). Idle backends are closed after IdleTimeout
+// and resumed on next message.
+type DelegatedManager struct {
 	mu       sync.Mutex
 	backends map[string]*managedBackend // sessionKeyBase → managed backend
 
@@ -62,12 +63,20 @@ type managedBackend struct {
 	be         backend.Backend
 	lastActive time.Time
 	sessionKey string // full session key from last message (for reply routing)
+
+	// Permission prompt gating. When a permission prompt is outstanding,
+	// incoming messages and injections must wait — sending text to CC's
+	// tmux pane while the TUI shows a selection prompt would corrupt it.
+	// See WaitForPermission / SetPermissionPending.
+	permMu      sync.Mutex
+	permPending bool
+	permCond    *sync.Cond // lazy-init on first WaitForPermission
 }
 
 // Get returns the Backend for the given session key, creating and starting
 // one if it doesn't exist yet. The session key is collapsed to its base
 // (agentID/c12345) so that compaction-rotated keys share the same Backend.
-func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Backend, error) {
+func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.Backend, error) {
 	base := session.SessionKeyBase(sessionKey)
 
 	m.mu.Lock()
@@ -85,7 +94,7 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	// Create and start a new Backend for this session.
 	be, err := m.NewBackend()
 	if err != nil {
-		return nil, fmt.Errorf("create backend for %s: %w", base, err)
+		return nil, fmt.Errorf("create delegated backend for %s: %w", base, err)
 	}
 
 	opts := m.StartOpts
@@ -102,9 +111,13 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	}
 	if m.PermissionPromptFunc != nil {
 		be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
+			m.SetPermissionPending(sk, true)
 			m.PermissionPromptFunc(sk, text, summary, choices)
 		})
 	}
+	be.SetOnPermissionCleared(func() {
+		m.SetPermissionPending(sk, false)
+	})
 	if m.TypingFunc != nil {
 		be.SetTypingFunc(func(typing bool) {
 			m.TypingFunc(sk, typing)
@@ -117,30 +130,34 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
 		if resumeID != "" {
-			log.Warnf("backend", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, base, err)
+			log.Warnf("delegated", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, base, err)
 			_ = be.Close()
 			be, err = m.NewBackend()
 			if err != nil {
-				return nil, fmt.Errorf("create backend for %s (retry): %w", base, err)
+				return nil, fmt.Errorf("create delegated backend for %s (retry): %w", base, err)
 			}
-			// Re-set reply functions on the new backend.
+			// Re-set reply functions on the new instance.
 			if m.SendFunc != nil {
 				be.SetReplyFunc(func(text string) { m.SendFunc(sk, text) })
 			}
 			if m.PermissionPromptFunc != nil {
 				be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
+					m.SetPermissionPending(sk, true)
 					m.PermissionPromptFunc(sk, text, summary, choices)
 				})
 			}
+			be.SetOnPermissionCleared(func() {
+				m.SetPermissionPending(sk, false)
+			})
 			if m.TypingFunc != nil {
 				be.SetTypingFunc(func(typing bool) { m.TypingFunc(sk, typing) })
 			}
 			opts.ResumeSessionID = ""
 			if err := be.Start(ctx, opts); err != nil {
-				return nil, fmt.Errorf("start backend for %s (no resume): %w", base, err)
+				return nil, fmt.Errorf("start delegated backend for %s (no resume): %w", base, err)
 			}
 		} else {
-			return nil, fmt.Errorf("start backend for %s: %w", base, err)
+			return nil, fmt.Errorf("start delegated backend for %s: %w", base, err)
 		}
 	}
 
@@ -154,7 +171,7 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 		sessionKey: sessionKey,
 	}
 
-	// Start the idle reaper on first backend creation.
+	// Start the idle reaper on first delegated backend creation.
 	if m.reaperStop == nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.reaperStop = cancel
@@ -163,15 +180,15 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 	m.mu.Unlock()
 
 	if resumeID != "" {
-		log.Infof("backend", "resumed session %s for %s", resumeID, base)
+		log.Infof("delegated", "resumed session %s for %s", resumeID, base)
 	}
 
 	// Wait for the coding agent to be ready to accept prompts.
-	// Without this, early SendTurn hits a CC that's still loading.
+	// Without this, early SendToPane hits a CC that's still loading.
 	readyCtx, readyCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer readyCancel()
 	if err := be.WaitReady(readyCtx); err != nil {
-		log.Warnf("backend", "WaitReady for %s: %v (proceeding anyway)", base, err)
+		log.Warnf("delegated", "WaitReady for %s: %v (proceeding anyway)", base, err)
 	}
 
 	return be, nil
@@ -179,13 +196,13 @@ func (m *BackendManager) Get(ctx context.Context, sessionKey string) (backend.Ba
 
 // StopSession sends Escape twice to cancel CC's current operation, then
 // clears the input box. Returns an error if no backend exists for the session.
-func (m *BackendManager) StopSession(ctx context.Context, sessionKey string) error {
+func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) error {
 	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
 	mb, ok := m.backends[base]
 	m.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("no backend for session %s", base)
+		return fmt.Errorf("no delegated backend for session %s", base)
 	}
 	// Escape twice to cancel the current operation and return to input.
 	for i := 0; i < 2; i++ {
@@ -198,12 +215,101 @@ func (m *BackendManager) StopSession(ctx context.Context, sessionKey string) err
 	return mb.be.SendSpecialKey(ctx, "C-c")
 }
 
-// WaitForTurn blocks until the backend for the given session key reports
-// turn completion. Returns an error if no backend exists for the session.
+// SetPermissionPending marks a session as having an outstanding permission
+// prompt (pending=true) or clears it (pending=false). When pending, all
+// calls to WaitForPermission block until cleared.
+func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool) {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	mb.permMu.Lock()
+	mb.permPending = pending
+	if !pending && mb.permCond != nil {
+		mb.permCond.Broadcast()
+	}
+	mb.permMu.Unlock()
+	if pending {
+		log.Debugf("delegated", "permission pending for %s", base)
+	} else {
+		log.Debugf("delegated", "permission cleared for %s", base)
+	}
+}
+
+// WaitForPermission blocks until no permission prompt is outstanding for
+// the session. Returns immediately if no prompt is pending. Returns
+// ctx.Err() if the context is cancelled (e.g. /stop).
+func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey string) error {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+
+	mb.permMu.Lock()
+	if !mb.permPending {
+		mb.permMu.Unlock()
+		return nil
+	}
+
+	// Lazy-init the condition variable.
+	if mb.permCond == nil {
+		mb.permCond = sync.NewCond(&mb.permMu)
+	}
+
+	log.Infof("delegated", "waiting for permission to clear on %s", base)
+
+	// Wait with context cancellation support. sync.Cond doesn't natively
+	// support context, so we use a goroutine to broadcast on cancel.
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			mb.permCond.Broadcast() // wake up the waiter
+		case <-done:
+		}
+	}()
+
+	for mb.permPending {
+		if ctx.Err() != nil {
+			mb.permMu.Unlock()
+			close(done)
+			return ctx.Err()
+		}
+		mb.permCond.Wait()
+	}
+	mb.permMu.Unlock()
+	close(done)
+
+	log.Infof("delegated", "permission cleared on %s, proceeding", base)
+	return nil
+}
+
+// IsPermissionPending returns whether a permission prompt is outstanding.
+func (m *DelegatedManager) IsPermissionPending(sessionKey string) bool {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+	mb.permMu.Lock()
+	defer mb.permMu.Unlock()
+	return mb.permPending
+}
+
+// WaitForTurn blocks until the delegated backend for the given session key
+// reports turn completion. Returns an error if no backend exists.
 // Respects context cancellation/deadline.
 // SessionFilePath returns the coding agent's session JSONL path for the
 // given session key. Empty if the backend hasn't discovered its session yet.
-func (m *BackendManager) SessionFilePath(sessionKey string) string {
+func (m *DelegatedManager) SessionFilePath(sessionKey string) string {
 	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
 	mb, ok := m.backends[base]
@@ -214,20 +320,20 @@ func (m *BackendManager) SessionFilePath(sessionKey string) string {
 	return mb.be.SessionFilePath()
 }
 
-func (m *BackendManager) WaitForTurn(ctx context.Context, sessionKey string) error {
+func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) error {
 	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
 	mb, ok := m.backends[base]
 	m.mu.Unlock()
 	if !ok {
-		return fmt.Errorf("no backend for session %s", base)
+		return fmt.Errorf("no delegated backend for session %s", base)
 	}
 	return mb.be.WaitForTurn(ctx)
 }
 
-// ResetSession closes the backend for a specific session key WITHOUT saving
+// ResetSession closes the delegated backend for a specific session key WITHOUT saving
 // the resume ID, so the next Get() creates a completely fresh CC session.
-func (m *BackendManager) ResetSession(sessionKey string) {
+func (m *DelegatedManager) ResetSession(sessionKey string) {
 	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -235,17 +341,24 @@ func (m *BackendManager) ResetSession(sessionKey string) {
 	if !ok {
 		return
 	}
+	// Clear permission state to unblock any WaitForPermission callers.
+	mb.permMu.Lock()
+	mb.permPending = false
+	if mb.permCond != nil {
+		mb.permCond.Broadcast()
+	}
+	mb.permMu.Unlock()
 	_ = mb.be.Close()
 	delete(m.backends, base)
 	// Clear any saved resume ID so next session starts fresh.
 	if m.SessionIndex != nil {
 		_ = m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base))
 	}
-	log.Infof("backend", "reset session %s (backend closed, resume ID cleared)", base)
+	log.Infof("delegated", "reset session %s (closed, resume ID cleared)", base)
 }
 
-// Close shuts down all managed backends and the idle reaper.
-func (m *BackendManager) Close() {
+// Close shuts down all managed delegated backends and the idle reaper.
+func (m *DelegatedManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.reaperStop != nil {
@@ -253,36 +366,43 @@ func (m *BackendManager) Close() {
 		m.reaperStop = nil
 	}
 	for key, mb := range m.backends {
+		// Clear permission state to unblock any waiters before closing.
+		mb.permMu.Lock()
+		mb.permPending = false
+		if mb.permCond != nil {
+			mb.permCond.Broadcast()
+		}
+		mb.permMu.Unlock()
 		m.saveResumeID(key, mb.be.SessionID())
 		_ = mb.be.Close()
 		delete(m.backends, key)
 	}
 }
 
-// Count returns the number of active backends.
-func (m *BackendManager) Count() int {
+// Count returns the number of active delegated backends.
+func (m *DelegatedManager) Count() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.backends)
 }
 
 // stateKey returns the agent_metadata key for a CC session UUID.
-func (m *BackendManager) stateKey(base string) string {
+func (m *DelegatedManager) stateKey(base string) string {
 	return "cc_session:" + base
 }
 
 // saveResumeID persists the CC session UUID to state.db.
-func (m *BackendManager) saveResumeID(base, sessionID string) {
+func (m *DelegatedManager) saveResumeID(base, sessionID string) {
 	if sessionID == "" || m.SessionIndex == nil {
 		return
 	}
 	if err := m.SessionIndex.SetAgentMetadata(m.AgentID, m.stateKey(base), sessionID); err != nil {
-		log.Warnf("backend", "save resume ID for %s: %v", base, err)
+		log.Warnf("delegated", "save resume ID for %s: %v", base, err)
 	}
 }
 
 // loadResumeID reads a saved CC session UUID from state.db.
-func (m *BackendManager) loadResumeID(base string) string {
+func (m *DelegatedManager) loadResumeID(base string) string {
 	if m.SessionIndex == nil {
 		return ""
 	}
@@ -293,8 +413,8 @@ func (m *BackendManager) loadResumeID(base string) string {
 	return id
 }
 
-// idleReaper periodically checks for idle backends and closes them.
-func (m *BackendManager) idleReaper(ctx context.Context) {
+// idleReaper periodically checks for idle delegated backends and closes them.
+func (m *DelegatedManager) idleReaper(ctx context.Context) {
 	timeout := m.IdleTimeout
 	if timeout == 0 {
 		timeout = DefaultIdleTimeout
@@ -319,7 +439,7 @@ func (m *BackendManager) idleReaper(ctx context.Context) {
 // extraction and memory consolidation.
 //
 // systemPrompt is passed via --system-prompt; empty uses CC's default.
-func (m *BackendManager) RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error) {
+func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error) {
 	args := []string{
 		"--print",
 		"--dangerously-skip-permissions",
@@ -338,7 +458,7 @@ func (m *BackendManager) RunOnce(ctx context.Context, prompt string, systemPromp
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	log.Infof("backend", "RunOnce: starting claude --print (workdir=%s, system_prompt=%d bytes)",
+	log.Infof("delegated", "RunOnce: starting claude --print (workdir=%s, system_prompt=%d bytes)",
 		m.StartOpts.WorkDir, len(systemPrompt))
 
 	if err := cmd.Run(); err != nil {
@@ -346,12 +466,12 @@ func (m *BackendManager) RunOnce(ctx context.Context, prompt string, systemPromp
 	}
 
 	result := strings.TrimSpace(stdout.String())
-	log.Infof("backend", "RunOnce: complete (%d bytes)", len(result))
+	log.Infof("delegated", "RunOnce: complete (%d bytes)", len(result))
 	return result, nil
 }
 
-// closeIdle closes backends that have been idle longer than timeout.
-func (m *BackendManager) closeIdle(timeout time.Duration) {
+// closeIdle closes delegated backends that have been idle longer than timeout.
+func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -360,8 +480,15 @@ func (m *BackendManager) closeIdle(timeout time.Duration) {
 		if now.Sub(mb.lastActive) < timeout {
 			continue
 		}
+		// Clear permission state before closing.
+		mb.permMu.Lock()
+		mb.permPending = false
+		if mb.permCond != nil {
+			mb.permCond.Broadcast()
+		}
+		mb.permMu.Unlock()
 		m.saveResumeID(base, mb.be.SessionID())
-		log.Infof("backend", "closing idle backend %s (idle %s, session %s)",
+		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
 			base, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
 		_ = mb.be.Close()
 		delete(m.backends, base)

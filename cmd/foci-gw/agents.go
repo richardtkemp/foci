@@ -9,6 +9,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/backend"
 	"foci/internal/command"
+	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
@@ -77,21 +78,47 @@ type setupParams struct {
 }
 
 // setupAgent wires up a single agent with its own tools, commands, bootstrap, and bot.
+// This is the unified entry point for both API and delegated agents.
 func setupAgent(p setupParams) *agentInstance {
 	acfg := p.acfg
-
-	// Backend agents take a completely separate setup path.
-	if acfg.Backend != "" && acfg.Backend != "api" {
-		if !backend.IsRegistered(acfg.Backend) {
-			log.Errorf("agent/"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
-			return nil
-		}
-		return setupBackendAgent(p, acfg.Backend, acfg.BackendConfig)
-	}
 
 	// --- Shared preamble ---
 	shared := resolveSharedSetup(p)
 	p = shared.p // p.resolved is now set
+
+	ag := shared.newAgent()
+
+	// Universal configuration (compaction, warnings, model defaults, etc.)
+	compactor, compactionThreshold := buildCompactor(p, nil)
+	configureUniversal(ag, p, compactor)
+
+	// Transport-specific configuration
+	isDelegated := acfg.Backend != "" && acfg.Backend != "api"
+	var fp finalizeParams
+	var ok bool
+
+	if isDelegated {
+		if !backend.IsRegistered(acfg.Backend) {
+			log.Errorf("agent/"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
+			return nil
+		}
+		fp, ok = configureDelegated(ag, p, shared, acfg.Backend, acfg.BackendConfig)
+	} else {
+		fp, ok = configureAPI(ag, p, shared, compactor)
+	}
+	if !ok {
+		return nil
+	}
+
+	fp.compactionThreshold = compactionThreshold
+	return shared.finalize(ag, fp)
+}
+
+// configureAPI wires up API-specific agent state: model resolution, client,
+// tools, bootstrap, streaming, spawn tool, etc. Returns a finalizeParams for
+// the shared finalize postamble, and false if setup fails.
+func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, compactor *compaction.Compactor) (finalizeParams, bool) {
+	acfg := p.acfg
 	groupResolver := shared.groupResolver
 	promptSearchDirs := shared.promptSearchDirs
 
@@ -101,7 +128,7 @@ func setupAgent(p setupParams) *agentInstance {
 	primaryResolved := groupResolver.ResolveCall(config.CallChat)
 	if primaryResolved == nil {
 		log.Errorf("agent/"+acfg.ID, "cannot resolve chat model (agent skipped)")
-		return nil
+		return finalizeParams{}, false
 	}
 	defaultEndpoint := primaryResolved.Endpoint
 	defaultFormat := primaryResolved.Format
@@ -115,7 +142,7 @@ func setupAgent(p setupParams) *agentInstance {
 	client := p.clientProvider.GetClient(defaultEndpoint, defaultFormat)
 	if client == nil {
 		log.Errorf("agent/"+acfg.ID, "endpoint %q unavailable for model %q (format: %s)", defaultEndpoint, primaryResolved.ModelID, defaultFormat)
-		return nil
+		return finalizeParams{}, false
 	}
 
 	// Create fallback resolver for automatic model failover
@@ -133,10 +160,14 @@ func setupAgent(p setupParams) *agentInstance {
 		}
 	}
 
+	// Set fallback on the compactor now that we have the resolved fallbackFn
+	if compactor != nil && fallbackFn != nil {
+		compactor.FallbackFunc = fallbackFn
+	}
+
 	connMgr := p.connMgr
 
-	// Declare ag early so closures (tmux wake, etc.) can capture it.
-	var ag *agent.Agent
+	// agLazy closure for tools that need a reference to the agent
 	agLazy := func() *agent.Agent { return ag }
 
 	// Per-agent tool registry and supporting services
@@ -152,9 +183,6 @@ func setupAgent(p setupParams) *agentInstance {
 	// Bootstrap and skills
 	bs := setupBootstrapAndSkills(p, agentStore)
 
-	// Compaction
-	compactor, compactionThreshold := buildCompactor(p, fallbackFn)
-
 	// Session messaging tools (send_to_chat, send_to_session)
 	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
 
@@ -165,21 +193,15 @@ func setupAgent(p setupParams) *agentInstance {
 		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames())
 	}
 
-	// Per-agent agent struct — start with shared fields, add API-specific ones.
+	// API-specific agent fields
 	al := p.resolved.Loop
 	sc := p.resolved.Summary
-	cpc := p.resolved.Compaction
-	bc := p.resolved.Behavior
-	mdFn := modelDefaultsFn(p.cfg.Models)
 
-	ag = shared.newAgent()
 	ag.Client = client
 	ag.ClientProvider = p.clientProvider
 	ag.Tools = registry
 	ag.ServerTools = serverTools
 	ag.EnvironmentBlock = envBlock
-	ag.Bootstrap = bs.bootstrap
-	ag.Compactor = compactor
 	ag.AsyncNotifier = notifier
 	ag.Model = resolvedModel
 	ag.Format = defaultFormat
@@ -203,19 +225,9 @@ func setupAgent(p setupParams) *agentInstance {
 	ag.AutoSummarise = sc.AutoSummarise
 	ag.UsageClient = p.usageClientProvider.GetUsageClient(defaultEndpoint)
 	ag.UsageClientProvider = p.usageClientProvider
-	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
-	ag.CompactionHandoffMsg = cpc.CompactionHandoffMsg
-	ag.AutocompactBeforeManaRefresh = cpc.AutocompactBeforeManaRefresh
-	ag.AutocompactBeforeManaRefreshThreshold = cpc.AutocompactBeforeManaRefreshThreshold
-	ag.AutocompactBeforeManaRefreshFactor = cpc.AutocompactBeforeManaRefreshFactor
-	ag.AutocompactBeforeManaRefreshPreserve = cpc.AutocompactBeforeManaRefreshPreserve
-	ag.AutocompactBeforeManaRefreshPreservePct = cpc.AutocompactBeforeManaRefreshPreservePct
 	ag.MaxToolLoops = al.MaxToolLoops
 	ag.MaxOutputTokens = al.MaxOutputTokens
-	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)
 	ag.Streaming = p.resolved.Display.Streaming
-	ag.ModelDefaultsFn = mdFn
-	ag.ManaInvestInterval = parseDurationDefault(p.resolved.Mana.InvestInterval, 0)
 
 	// Pre-compaction memory formation hook
 	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
@@ -228,15 +240,12 @@ func setupAgent(p setupParams) *agentInstance {
 
 	// Post-creation agent configuration (API-specific)
 	setupRedaction(ag, p, agentStore)
-	setupWarningQueue(ag, p.resolved, p.cfg)
-	setupManaWatcher(ag, p)
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
 	registerSpawnTool(registry, p, client, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
 	setupWakeScheduler(agLazy, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
 
-	// --- Shared postamble ---
-	return shared.finalize(ag, finalizeParams{
+	return finalizeParams{
 		bootstrap:           bs.bootstrap,
 		registry:            registry,
 		skillRegistry:       bs.skillRegistry,
@@ -245,7 +254,6 @@ func setupAgent(p setupParams) *agentInstance {
 		clientProvider:      p.clientProvider,
 		usageClientProvider: p.usageClientProvider,
 		fallbackFn:          fallbackFn,
-		compactionThreshold: compactionThreshold,
 		tmuxTool:            coreResult.tmuxTool,
 		tmuxClearAll:        coreResult.tmuxClearAll,
 		tmuxWatchCount:      coreResult.tmuxWatchCount,
@@ -253,7 +261,7 @@ func setupAgent(p setupParams) *agentInstance {
 		ttsRepls:            ttsRepls,
 		mcpManager:          mcpMgr,
 		skillsDirs:          bs.skillsDirs,
-	})
+	}, true
 }
 
 // checkFirstRun determines whether a first-run onboarding prompt should be
