@@ -76,24 +76,33 @@ func StatusCommand() *Command {
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
 			sk := tools.SessionKeyFromContext(ctx)
 			model := cc.Agent.SessionModel(sk)
-			mc := sessionMessageCount(cc, sk)
 
 			status := "idle"
 			if cc.Agent.IsProcessing() {
 				status = "processing"
 			}
 
-			entries := log.ReadAPILog(cc.APILogPath)
+			// Query all session stats from api.db — works for both API
+			// and delegated (CC backend) sessions.
+			stats, _ := log.QuerySessionStats(sk)
+
+			var mc int
 			var sessionCost float64
 			var sessionCalls int
 			var contextTokens int
-			for _, e := range entries {
-				if e.Session == sk {
-					sessionCost += e.CostUSD
-					sessionCalls++
-					if e.CallType == "conversation" || e.CallType == "" {
-						contextTokens = e.Input + e.CacheRead + e.CacheWrite
-					}
+			created := "n/a"
+			active := "n/a"
+
+			if stats != nil {
+				mc = stats.TurnCount
+				sessionCost = stats.TotalCost
+				sessionCalls = stats.TotalCalls
+				contextTokens = stats.ContextTokens
+				if !stats.CreatedAt.IsZero() {
+					created = stats.CreatedAt.Local().Format("15:04")
+				}
+				if !stats.LastActivity.IsZero() {
+					active = stats.LastActivity.Local().Format("15:04")
 				}
 			}
 
@@ -103,14 +112,6 @@ func StatusCommand() *Command {
 			fmt.Fprintf(&sb, "🤖 %s — %s\n", cc.AgentConfig.ID, model)
 			sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
-			created := cc.Sessions.CreatedAt(sk)
-			if t, err := time.Parse(time.RFC3339, created); err == nil {
-				created = t.Local().Format("15:04")
-			}
-			active := cc.Sessions.LastActivity(sk)
-			if t, err := time.Parse(time.RFC3339, active); err == nil {
-				active = t.Local().Format("15:04")
-			}
 			fmt.Fprintf(&sb, "📊 Session: %s\n", sk)
 			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", mc, status)
 			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
@@ -179,16 +180,6 @@ func manaCheck(ctx context.Context, _ Request, cc CommandContext, manaName strin
 		result += fmt.Sprintf(" (resets %s)", reset)
 	}
 	return result
-}
-
-// sessionMessageCount returns the message count for a session key, logging errors.
-func sessionMessageCount(cc CommandContext, key string) int {
-	n, err := cc.Sessions.MessageCount(key)
-	if err != nil {
-		log.Warnf("main", "message count for %s: %v", key, err)
-		return 0
-	}
-	return n
 }
 
 // parseLineCount parses a line count from args, returning defaultN if empty or invalid.
