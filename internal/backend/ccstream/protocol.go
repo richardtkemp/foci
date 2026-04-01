@@ -280,9 +280,16 @@ type CompactBoundaryMessage struct {
 
 // CompactMetadata carries details about a compaction event.
 type CompactMetadata struct {
-	Trigger           string `json:"trigger"`
-	PreTokens         int    `json:"pre_tokens"`
-	PreservedSegment  string `json:"preserved_segment,omitempty"`
+	Trigger          string            `json:"trigger"`
+	PreTokens        int               `json:"pre_tokens"`
+	PreservedSegment *PreservedSegment `json:"preserved_segment,omitempty"`
+}
+
+// PreservedSegment identifies the message range preserved through compaction.
+type PreservedSegment struct {
+	HeadUUID   string `json:"head_uuid"`
+	AnchorUUID string `json:"anchor_uuid"`
+	TailUUID   string `json:"tail_uuid"`
 }
 
 // SessionStateMessage signals a change in the agent's operational state.
