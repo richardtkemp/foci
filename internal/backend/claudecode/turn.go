@@ -128,12 +128,13 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backen
 	}
 
 	// Lazily discover the session and start the long-lived watch loop.
-	b.mu.Lock()
+	// ensureWatcher may take seconds (session discovery + JSONL catchup).
+	// Do NOT hold b.mu across this — other goroutines need it for
+	// SessionFilePath, SessionID, etc. The method uses its own internal
+	// sync.Once to prevent concurrent discovery.
 	if err := b.ensureWatcher(ctx); err != nil {
-		b.mu.Unlock()
 		return nil, fmt.Errorf("session discovery: %w", err)
 	}
-	b.mu.Unlock()
 
 	return &backend.TurnResult{}, nil
 }
