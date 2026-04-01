@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"time"
 
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // ConversationEntry is a single message in the conversation log.
@@ -51,7 +51,9 @@ func openConversationLog(path string) (*ConversationLog, error) {
 		parse_mode TEXT,
 		session    TEXT,
 		error      TEXT
-	)`)
+	)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_ts_unix ON messages(unixepoch(ts))`,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +131,7 @@ func agentFromSession(session string) string {
 
 // log inserts a conversation entry and returns the SQLite row ID (0 on error).
 func (c *ConversationLog) log(entry ConversationEntry) int64 {
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	ts := timeutil.FormatNano(timeutil.Now())
 
 	c.mu.Lock()
 	defer c.mu.Unlock()

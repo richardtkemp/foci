@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
-	"time"
 
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // apiDB is the SQLite API call log (separate from the main Logger to
@@ -39,6 +39,7 @@ func InitAPIDB(path string) error {
 			session_line       INTEGER
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_api_calls_ts ON api_calls(ts)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_calls_ts_unix ON api_calls(unixepoch(ts))`,
 		`CREATE INDEX IF NOT EXISTS idx_api_calls_session ON api_calls(session)`,
 	)
 	if err != nil {
@@ -73,7 +74,7 @@ func CloseAPIDB() {
 }
 
 func (a *apiDB) insert(entry APIEntry) {
-	ts := entry.Timestamp.UTC().Format(time.RFC3339)
+	ts := timeutil.Format(entry.Timestamp)
 
 	var sessionFile *string
 	if entry.SessionFile != "" {

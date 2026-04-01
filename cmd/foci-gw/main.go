@@ -26,6 +26,7 @@ import (
 	"foci/internal/platform"
 	"foci/internal/provision"
 	"foci/internal/startup"
+	"foci/internal/timeutil"
 	"foci/shared/prompts"
 )
 
@@ -86,6 +87,17 @@ Subcommands:
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		log.Fatalf("main", "load config: %v", err)
+	}
+
+	// ========== Timezone ==========
+	// Configure timeutil before any logging or agent init uses it.
+	if cfg.Timezone != "" {
+		tz, err := time.LoadLocation(cfg.Timezone)
+		if err != nil {
+			log.Fatalf("main", "load timezone %q: %v", cfg.Timezone, err)
+		}
+		timeutil.SetLocation(tz)
+		log.Infof("main", "timezone set to %s", cfg.Timezone)
 	}
 
 	// ========== Workspace directories ==========

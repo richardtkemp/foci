@@ -27,8 +27,8 @@ func TestEventLogFormat(t *testing.T) {
 	if !strings.Contains(line, "bot started as @testbot") {
 		t.Errorf("missing message in %q", line)
 	}
-	// Timestamp should be RFC3339
-	if !strings.Contains(line, "T") || !strings.Contains(line, "Z") {
+	// Timestamp should be RFC3339 (with Z or +/-offset)
+	if !strings.Contains(line, "T") || (!strings.Contains(line, "Z") && !strings.Contains(line, "+") && !strings.Contains(line, "-")) {
 		t.Errorf("timestamp not RFC3339 in %q", line)
 	}
 	if !strings.HasSuffix(line, "\n") {

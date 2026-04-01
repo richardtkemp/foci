@@ -869,6 +869,7 @@ type Config struct {
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`        // path prefixes that write/edit tools refuse (with rebuke message)
 	FileMode           string                    `toml:"file_mode"            default:"0640"` // octal file permissions for workspace/content files (default "0640")
 	WelcomeFile        string                    `toml:"welcome_file"         default:"data/WELCOME.md"` // path to welcome/changelog file injected on startup (e.g. /home/foci/WELCOME.md)
+	Timezone           string                    `toml:"timezone"`             // IANA timezone for timestamps (e.g. "Europe/Athens", "UTC", "Local"); empty = machine local
 	SkipSecurityChecks bool                      `toml:"skip_security_checks"` // if true, skip startup security checks for secrets.toml
 	DefinedKeys        map[string]bool           `toml:"-"`                    // keys explicitly set in TOML file (populated by Load)
 	UndefinedKeys      []string                  `toml:"-"`                    // unrecognised TOML keys (populated by Load, logged by caller)

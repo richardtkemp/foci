@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"foci/internal/timeutil"
 )
 
 // defaultInjectionNote is the standard context note prepended to all injected messages.
@@ -30,7 +32,7 @@ func FormatInjectedMessage(tag string, when time.Time, body string, contextNote 
 
 	var b strings.Builder
 	b.WriteString(note)
-	fmt.Fprintf(&b, "\n[%s @ %s]", tag, when.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "\n[%s @ %s]", tag, timeutil.Format(when))
 	if body != "" {
 		b.WriteString("\n\n")
 		b.WriteString(body)

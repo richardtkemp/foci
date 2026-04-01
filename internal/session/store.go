@@ -14,6 +14,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/internal/timeutil"
 )
 
 // SessionWriter is the interface for writing to a specific session.
@@ -292,11 +293,11 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 
 	// Write session metadata on new files
 	if !exists {
-		now := time.Now().UTC()
+		now := timeutil.Now()
 		log.Infof("session", "session created key=%s", key)
 		meta := SessionMeta{
 			Type:      "session_meta",
-			CreatedAt: now.Format(time.RFC3339),
+			CreatedAt: timeutil.Format(now),
 		}
 		metaData, err := json.Marshal(meta)
 		if err != nil {
@@ -316,7 +317,7 @@ func (s *Store) appendUnlocked(key string, msg provider.Message) error {
 
 	// Stamp message with current time if not already set
 	if msg.Timestamp == nil {
-		now := time.Now().UTC()
+		now := timeutil.Now()
 		msg.Timestamp = &now
 	}
 
@@ -360,11 +361,11 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 	var buf bytes.Buffer
 
 	if !exists {
-		now := time.Now().UTC()
+		now := timeutil.Now()
 		log.Infof("session", "session created key=%s", key)
 		meta := SessionMeta{
 			Type:      "session_meta",
-			CreatedAt: now.Format(time.RFC3339),
+			CreatedAt: timeutil.Format(now),
 		}
 		metaData, err := json.Marshal(meta)
 		if err != nil {
@@ -386,7 +387,7 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 	for _, msg := range msgs {
 		// Stamp message with current time if not already set
 		if msg.Timestamp == nil {
-			now := time.Now().UTC()
+			now := timeutil.Now()
 			msg.Timestamp = &now
 		}
 		data, err := json.Marshal(msg)
@@ -512,7 +513,7 @@ func (s *Store) fileTime(key string) string {
 	if err != nil {
 		return "n/a"
 	}
-	return info.ModTime().UTC().Format("2006-01-02T15:04:05Z")
+	return timeutil.Format(info.ModTime())
 }
 
 // SessionEvent describes a lifecycle event on a session.

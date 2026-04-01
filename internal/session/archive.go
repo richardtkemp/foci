@@ -13,6 +13,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/internal/timeutil"
 )
 
 // decompressIfGzipped checks if a .jsonl.gz version of the file exists.
@@ -64,7 +65,7 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 func nextArchivePath(basePath string) string {
 	ext := filepath.Ext(basePath)
 	stem := strings.TrimSuffix(basePath, ext)
-	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+	timestamp := timeutil.FormatFilename(timeutil.Now())
 
 	// First try the basic timestamp pattern
 	candidate := fmt.Sprintf("%s.%s%s", stem, timestamp, ext)
@@ -103,8 +104,8 @@ func isArchiveFile(name string) bool {
 		return true
 	}
 
-	// For timestamp pattern: look for YYYY-MM-DDTHH-MM-SSZ
-	timestampPattern := `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$`
+	// For timestamp pattern: look for YYYY-MM-DDTHH-MM-SSZ or YYYY-MM-DDTHH-MM-SS+HHMM
+	timestampPattern := `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(Z|[+-]\d{4})$`
 
 	// Check if last part is a timestamp
 	if matched, _ := regexp.MatchString(timestampPattern, lastPart); matched {
@@ -359,7 +360,7 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 		currentKeys = nil
 	}
 
-	cutoff := time.Now().UTC().Add(-maxAge)
+	cutoff := time.Now().Add(-maxAge)
 	archived := 0
 
 	for _, entry := range candidates {

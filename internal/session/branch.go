@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/provider"
+	"foci/internal/timeutil"
 )
 
 // errBranchFileExists is returned when a branch file already exists (key collision).
@@ -138,7 +139,7 @@ func (s *Store) createBranchFile(parentKey, branchKey string, noResetHook bool, 
 		Status:    SessionStatusActive,
 		ParentKey: parentKey,
 		FilePath:  path,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: timeutil.Now(),
 	})
 	return nil
 }

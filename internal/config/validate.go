@@ -62,6 +62,13 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	// Validate timezone if configured.
+	if cfg.Timezone != "" {
+		if _, err := time.LoadLocation(cfg.Timezone); err != nil {
+			return fmt.Errorf("timezone = %q: %w", cfg.Timezone, err)
+		}
+	}
+
 	// Validate webhook keys contain no path separators (defense in depth)
 	for k := range cfg.System.Webhooks {
 		if strings.ContainsAny(k, "/\\") {

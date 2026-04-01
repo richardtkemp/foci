@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"foci/internal/sqlite"
+	"foci/internal/timeutil"
 )
 
 // ScratchpadEntry is a key-value working state entry.
@@ -46,7 +47,7 @@ func NewScratchpad(dbPath string) (*Scratchpad, error) {
 
 // Write sets or overwrites a scratchpad entry for the given agent.
 func (s *Scratchpad) Write(agentID, key, content string) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := timeutil.FormatNano(timeutil.Now())
 	_, err := s.db.Exec(
 		`INSERT INTO scratchpad (agent_id, key, content, updated) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(agent_id, key) DO UPDATE SET content = excluded.content, updated = excluded.updated`,

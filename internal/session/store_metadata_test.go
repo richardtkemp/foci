@@ -28,9 +28,9 @@ func TestCreatedAtNewSession(t *testing.T) {
 	if createdAt == "n/a" {
 		t.Error("CreatedAt after append should not be n/a")
 	}
-	// Should be a valid timestamp
-	if len(createdAt) != 20 { // "2006-01-02T15:04:05Z" length
-		t.Errorf("CreatedAt timestamp format = %q, want RFC3339 format", createdAt)
+	// Should be a valid RFC3339 timestamp (20 chars for UTC "Z" or 25 chars for offset "+01:00")
+	if _, err := time.Parse(time.RFC3339, createdAt); err != nil {
+		t.Errorf("CreatedAt timestamp format = %q, not valid RFC3339: %v", createdAt, err)
 	}
 }
 

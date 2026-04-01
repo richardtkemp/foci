@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"foci/internal/timeutil"
 )
 
 // RotationConfig controls built-in log rotation.
@@ -93,7 +95,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 		return nil
 	}
 
-	cutoff := time.Now().UTC().Add(-retention)
+	cutoff := time.Now().Add(-retention)
 
 	// Fast path: if the first line is within retention, skip the file entirely.
 	scanner := bufio.NewScanner(f)
@@ -237,8 +239,8 @@ func archiveName(path, archiveDir string, first, last time.Time) string {
 	ext := filepath.Ext(base)              // .jsonl or .log
 	name := strings.TrimSuffix(base, ext)  // api-payload or foci
 
-	startStr := first.UTC().Format("2006-01-02T15:04:05Z")
-	endStr := last.UTC().Format("2006-01-02T15:04:05Z")
+	startStr := timeutil.Format(first)
+	endStr := timeutil.Format(last)
 
 	return filepath.Join(archiveDir, fmt.Sprintf("%s-%s--%s%s.gz", name, startStr, endStr, ext))
 }
