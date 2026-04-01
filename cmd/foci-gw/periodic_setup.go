@@ -188,12 +188,12 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		CanFireFunc: func(ctx context.Context, sessionKey string) (bool, string) {
 			return inst.ag.CanFireBackgroundOperation(ctx, sessionKey)
 		},
-		IsBackendAgent: inst.ag.BackendManager != nil,
+		IsDelegatedAgent: inst.ag.DelegatedManager != nil,
 		RunOnceFunc: func() func(ctx context.Context, prompt, systemPrompt string) (string, error) {
-			if inst.ag.BackendManager == nil {
+			if inst.ag.DelegatedManager == nil {
 				return nil
 			}
-			return inst.ag.BackendManager.RunOnce
+			return inst.ag.DelegatedManager.RunOnce
 		}(),
 	})
 	runner.Start(p.ctx)

@@ -116,7 +116,21 @@ func (b *Bot) SendNotification(text string) {
 
 // SetTyping starts or stops the typing indicator. When true, sends an
 // immediate typing action and starts a 9-second ticker (Discord's typing
-// expires after ~10s). When false, stops the ticker.
+// expires after ~10s). When false, cancels the ticker goroutine.
+//
+// Typing lifecycle:
+//
+//  1. processAgentMessage starts typing and defers SetTyping(false) as a
+//     safety net. The real stop signal comes from OnTurnDone (see below).
+//  2. OnTurnDone callback (set by processAgentMessage on TurnCallbacks):
+//     called by runPostTurn when the turn actually completes. For API turns
+//     this fires inline (synchronous). For backend turns it fires
+//     asynchronously when the watcher sees end_turn. This is the primary
+//     mechanism for stopping typing at the right time.
+//  3. TypingFunc (backend only): re-establishes typing when the watcher
+//     sees CC output (after processAgentMessage's defer has already fired).
+//     Does NOT propagate false — OnTurnDone handles stopping.
+//  4. tryDispatchViaDispatcher: SetTyping(false) after command completion.
 func (b *Bot) SetTyping(typing bool) {
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()

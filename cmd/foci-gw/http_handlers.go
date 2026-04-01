@@ -253,10 +253,10 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		// Backend agents: branching not supported via HTTP. Use the parent
+		// Delegated agents: branching not supported via HTTP. Use the parent
 		// key directly (or named session key if req.Session was set).
-		if inst.ag.BackendManager != nil {
-			http.Error(w, "branching not supported for backend agents", http.StatusBadRequest)
+		if inst.ag.DelegatedManager != nil {
+			http.Error(w, "branching not supported for delegated agents", http.StatusBadRequest)
 			return
 		}
 

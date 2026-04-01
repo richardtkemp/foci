@@ -22,14 +22,14 @@ func StopCommand() *Command {
 		Description: "Cancel the current agent turn",
 		Category:    "operations",
 		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-			// Backend mode: send Escape×2 + Ctrl-C to CC's TUI.
-			if cc.Agent != nil && cc.Agent.BackendManager != nil {
+			// Delegated mode: send Escape×2 + Ctrl-C to CC's TUI.
+			if cc.Agent != nil && cc.Agent.DelegatedManager != nil {
 				sk := tools.SessionKeyFromContext(ctx)
 				if sk == "" {
 					return Response{}, fmt.Errorf("no active session")
 				}
-				if err := cc.Agent.BackendManager.StopSession(ctx, sk); err != nil {
-					return Response{}, fmt.Errorf("stop backend: %w", err)
+				if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
+					return Response{}, fmt.Errorf("stop delegated: %w", err)
 				}
 				// Also cancel foci's side.
 				if cc.StopFunc != nil {
@@ -87,9 +87,9 @@ func ResetCommand() *Command {
 				return Response{}, fmt.Errorf("no active session to reset")
 			}
 
-			// Backend mode: memory formation runs IN the CC session (can't branch),
+			// Delegated mode: memory formation runs IN the CC session (can't branch),
 			// then the CC session is destroyed and a fresh one started.
-			if cc.Agent.BackendManager != nil {
+			if cc.Agent.DelegatedManager != nil {
 				return resetBackendSession(ctx, sk, cc)
 			}
 
@@ -135,11 +135,11 @@ func resetBackendSession(ctx context.Context, sk string, cc CommandContext) (Res
 			if _, err := cc.Agent.HandleMessage(ctx, sk, prompt); err != nil {
 				log.Warnf("reset", "memory formation failed for %s: %v", sk, err)
 			} else {
-				// HandleMessage returns immediately (SendTurn is async).
+				// HandleMessage returns immediately (SendToPane is async).
 				// Block until CC actually finishes the memory formation turn.
 				waitCtx, waitCancel := context.WithTimeout(ctx, 120*time.Second)
 				defer waitCancel()
-				if err := cc.Agent.BackendManager.WaitForTurn(waitCtx, sk); err != nil {
+				if err := cc.Agent.DelegatedManager.WaitForTurn(waitCtx, sk); err != nil {
 					log.Warnf("reset", "timeout waiting for memory formation on %s: %v", sk, err)
 				} else {
 					log.Infof("reset", "memory formation completed for %s", sk)
@@ -149,7 +149,7 @@ func resetBackendSession(ctx context.Context, sk string, cc CommandContext) (Res
 	}
 
 	// Close the CC session WITHOUT saving resume ID (fresh start).
-	cc.Agent.BackendManager.ResetSession(sk)
+	cc.Agent.DelegatedManager.ResetSession(sk)
 
 	// Rotate foci session key, reload, invalidate caches.
 	newKey, err := cc.Sessions.RotateKey(sk)

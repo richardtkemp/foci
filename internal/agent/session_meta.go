@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/timeutil"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 )
@@ -566,15 +567,36 @@ func buildMetaPrefix(now time.Time, model, platform string, mana string, manaGoo
 
 	if sm.prevCost == 0 && sm.prevInput == 0 {
 		// First message in session — no previous turn data
-		return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s%s", now.UTC().Format(time.RFC3339), gap, model, platform, manaFlag)
+		return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s%s", timeutil.Format(now), gap, model, platform, manaFlag)
 	}
 
-	return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s prev_cost=$%.4f prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
-		now.UTC().Format(time.RFC3339), gap, model,
+	return fmt.Sprintf("[meta] time=%s gap=%s model=%s via=%s prev_cost=%s prev_tokens=in:%d/out:%d/cR:%d/cW:%d%s",
+		timeutil.Format(now), gap, model,
 		platform,
-		sm.prevCost,
+		formatCost(sm.prevCost),
 		sm.prevInput, sm.prevOutput, sm.prevCacheRead, sm.prevCacheWrite,
 		manaFlag)
+}
+
+// formatCost formats a dollar cost, trimming unnecessary trailing zeros.
+// $0.0000 → "$0", $1.2300 → "$1.23", $0.0016 → "$0.0016".
+func formatCost(cost float64) string {
+	if cost == 0 {
+		return "$0"
+	}
+	s := fmt.Sprintf("$%.4f", cost)
+	// Trim trailing zeros after the decimal point, but keep at least
+	// two decimal places for non-zero values (e.g. $1.20 not $1.2).
+	if i := len(s) - 1; s[i] == '0' {
+		for i > 0 && s[i] == '0' {
+			i--
+		}
+		if s[i] == '.' {
+			i-- // drop the dot too if all decimals were zero
+		}
+		s = s[:i+1]
+	}
+	return s
 }
 
 // LastUserMessageTime returns the last user message time for the session.

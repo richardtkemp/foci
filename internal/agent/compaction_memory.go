@@ -29,10 +29,10 @@ func FireCompactionMemory(ag *Agent, sessions *session.Store, sessionKey string,
 		return
 	}
 
-	// Backend agents: inject into existing session (CC has the context).
+	// Delegated agents: inject into existing session (CC has the context).
 	// API agents: create a branch so the parent session isn't modified.
 	targetKey := sessionKey
-	if ag.BackendManager == nil {
+	if ag.DelegatedManager == nil {
 		branchKey, err := sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
 			NoResetHook:         true,
 			BranchType:          "compaction-memory",

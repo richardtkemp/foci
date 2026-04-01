@@ -28,7 +28,7 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 		}
 	}
 	log.API(log.APIEntry{
-		Timestamp:   start.UTC(),
+		Timestamp:   start,
 		Provider:    a.SessionFormat(sessionKey),
 		Session:     sessionKey,
 		Model:       model,
@@ -65,7 +65,7 @@ func (a *Agent) logAPIResponse(sessionKey, model string, start time.Time, durati
 		}
 
 		log.Payload(log.PayloadEntry{
-			Timestamp:  start.UTC(),
+			Timestamp:  start,
 			Session:    sessionKey,
 			SeqNum:     seqNum,
 			Model:      model,
@@ -106,7 +106,7 @@ func (a *Agent) logErrorPayload(sessionKey, model string, start time.Time, durat
 	}
 
 	entry := log.PayloadEntry{
-		Timestamp:  start.UTC(),
+		Timestamp:  start,
 		Session:    sessionKey,
 		SeqNum:     seqNum,
 		Model:      model,

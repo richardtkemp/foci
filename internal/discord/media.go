@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"foci/internal/platform"
+	"foci/internal/timeutil"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -99,7 +100,7 @@ func (b *Bot) saveMedia(data []byte, mediaType string, ext string) (string, erro
 	if err := os.MkdirAll(b.display.ReceivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
-	filename := fmt.Sprintf("%s_%s%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), mediaType, ext)
+	filename := fmt.Sprintf("%s_%s%s", timeutil.FormatFilename(timeutil.Now()), mediaType, ext)
 	path := filepath.Join(b.display.ReceivedFilesDir, filename)
 	mode := b.fileMode
 	if mode == 0 {

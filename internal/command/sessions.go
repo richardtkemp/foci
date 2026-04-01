@@ -201,7 +201,7 @@ func sessionsListCmd(cc CommandContext, currentChatID int64) (string, error) {
 		if cs.LastActivity.IsZero() {
 			r.active = "—"
 		} else {
-			r.active = cs.LastActivity.Format("15:04 UTC")
+			r.active = cs.LastActivity.Local().Format("15:04")
 		}
 		var flags []string
 		if cs.ChatID == currentChatID {

@@ -58,6 +58,7 @@ func (b *telegramTrackerBackend) Send(text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	b.bot.refreshTyping()
 	return strconv.FormatInt(sent.MessageId, 10), nil
 }
 
@@ -72,6 +73,7 @@ func (b *telegramTrackerBackend) SendWithButton(text, btnLabel, btnData string) 
 	if err != nil {
 		return "", err
 	}
+	b.bot.refreshTyping()
 	return strconv.FormatInt(sent.MessageId, 10), nil
 }
 
@@ -82,6 +84,7 @@ func (b *telegramTrackerBackend) Edit(msgID, text string) error {
 		MessageId: id,
 		ParseMode: "HTML",
 	})
+	b.bot.refreshTyping()
 	return err
 }
 
@@ -96,6 +99,7 @@ func (b *telegramTrackerBackend) EditWithButton(msgID, text, btnLabel, btnData s
 			InlineKeyboard: rows,
 		},
 	})
+	b.bot.refreshTyping()
 	return err
 }
 

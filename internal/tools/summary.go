@@ -134,7 +134,7 @@ func summaryExecute(ctx context.Context, params json.RawMessage, client provider
 		providerFormat = "anthropic"
 	}
 	log.API(log.APIEntry{
-		Timestamp:  start.UTC(),
+		Timestamp:  start,
 		Provider:   providerFormat,
 		Session:    SessionKeyFromContext(ctx),
 		Model:      model,

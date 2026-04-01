@@ -427,7 +427,7 @@ func spawnOneShot(ctx context.Context, client provider.Client, model, format str
 			}
 		}
 		log.API(log.APIEntry{
-			Timestamp:   start.UTC(),
+			Timestamp:   start,
 			Provider:    format,
 			Session:     sessionKey,
 			Model:       model,

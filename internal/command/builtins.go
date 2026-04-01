@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/timeutil"
 )
 
 // ChildSysProcAttr is called to get the SysProcAttr for child processes.
@@ -59,7 +60,7 @@ func PingCommand() *Command {
 		Description: "Liveness check",
 		Category:    "session",
 		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
-			return Response{Text: fmt.Sprintf("pong %s", time.Now().UTC().Format(time.RFC3339))}, nil
+			return Response{Text: fmt.Sprintf("pong %s", timeutil.Format(timeutil.Now()))}, nil
 		},
 	}
 }

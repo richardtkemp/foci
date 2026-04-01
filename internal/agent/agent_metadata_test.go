@@ -54,7 +54,7 @@ func TestBuildMetaPrefix(t *testing.T) {
 	if !strings.Contains(prefix, "via=telegram") {
 		t.Errorf("missing platform in prefix: %q", prefix)
 	}
-	if !strings.Contains(prefix, "prev_cost=$0.0430") {
+	if !strings.Contains(prefix, "prev_cost=$0.043") {
 		t.Errorf("missing prev_cost in prefix: %q", prefix)
 	}
 	if !strings.Contains(prefix, "prev_tokens=in:2400/out:312/cR:18000/cW:200") {

@@ -26,6 +26,7 @@ import (
 	"foci/internal/memory"
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/timeutil"
 	"foci/internal/warnings"
 	"foci/shared/prompts"
 )
@@ -73,7 +74,7 @@ type Runner struct {
 	// Session-aware availability checking
 	sessionKeyFn   func() string                                                   // returns the session key these operations will run on
 	canFireFn      func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
-	isBackendAgent bool // memory formation needs quiet period in backend mode
+	isDelegatedAgent bool // memory formation needs quiet period in delegated mode
 	runOnceFn      func(ctx context.Context, prompt, systemPrompt string) (string, error)
 
 	mu                    sync.Mutex
@@ -116,10 +117,10 @@ type RunnerConfig struct {
 	SessionKeyFunc func() string                                                   // returns the session key these operations will run on
 	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
 
-	// IsBackendAgent indicates this agent uses a coding agent backend (CC).
+	// IsDelegatedAgent indicates this agent uses a delegated transport (CC).
 	// When true, memory formation requires a quiet period (no recent user
 	// activity) because formation runs IN the live session, not as a branch.
-	IsBackendAgent bool
+	IsDelegatedAgent bool
 
 	// RunOnceFunc executes a one-shot prompt via claude --print.
 	// If set, used for consolidation (and other independent tasks) instead of
@@ -151,7 +152,7 @@ func New(cfg RunnerConfig) *Runner {
 		drainFn:            cfg.DrainFn,
 		sessionKeyFn:       cfg.SessionKeyFunc,
 		canFireFn:          cfg.CanFireFunc,
-		isBackendAgent:     cfg.IsBackendAgent,
+		isDelegatedAgent:   cfg.IsDelegatedAgent,
 		runOnceFn:          cfg.RunOnceFunc,
 		lastCacheWarmed:    now,
 		lastInteraction:    now,
@@ -455,9 +456,9 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
-	// In backend mode, memory formation runs IN the live CC session (not as
+	// In delegated mode, memory formation runs IN the live CC session (not as
 	// a branch), so wait for user to be quiet before interrupting.
-	if r.isBackendAgent {
+	if r.isDelegatedAgent {
 		quietPeriod, qOk := r.parseDuration("backend_quiet_period", r.mfCfg.BackendQuietPeriod)
 		if qOk && sinceLastInteraction < quietPeriod {
 			skip = fmt.Sprintf("backend: user active (idle %s < quiet %s)", sinceLastInteraction.Round(time.Second), quietPeriod)
@@ -596,7 +597,7 @@ func (r *Runner) maybeConsolidation() {
 			r.consolidationRunning = false
 			r.mu.Unlock()
 			if r.sessionIndex != nil {
-				if err := r.sessionIndex.SetAgentMetadata(r.agentID, "consolidation_last", time.Now().Format(time.RFC3339)); err != nil {
+				if err := r.sessionIndex.SetAgentMetadata(r.agentID, "consolidation_last", timeutil.Format(timeutil.Now())); err != nil {
 					r.log.Warnf("persist consolidation timestamp: %v", err)
 				}
 			}
