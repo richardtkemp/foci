@@ -96,25 +96,21 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				log.Warnf("agent/"+agentID, "delegated: no connection for session %s after 30s, message dropped", sessionKey)
 			}()
 		},
-		PermissionPromptFunc: func(sessionKey, text, summary string, choices []backend.PromptChoice) {
+		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []backend.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
 				log.Warnf("agent/"+agentID, "permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
 				return
 			}
-			log.Debugf("agent/"+agentID, "permission prompt: sending via %s for session=%s summary=%q", conn.PlatformName(), sessionKey, summary)
+			log.Debugf("agent/"+agentID, "permission prompt: sending via %s for session=%s summary=%q reqID=%s", conn.PlatformName(), sessionKey, summary, requestID)
 			var buttons []platform.ButtonChoice
 			for _, c := range choices {
 				buttons = append(buttons, platform.ButtonChoice{Label: c.Label, Data: c.Data})
 			}
+			reqID := requestID // capture for closure
 			_ = platform.SendInteractiveMessage(conn, text, buttons, func(choice platform.ButtonChoice) string {
-				// Send keystroke to CC's TUI.
-				_ = ag.SendPermissionResponse(context.Background(), sessionKey, choice.Data)
-				// Permission resolved via button press. The onPermCleared
-				// callback (wired in DelegatedManager.Get) handles clearing
-				// permPending when the prompt disappears from the TUI,
-				// which covers both button responses and CC timeouts.
-				if strings.EqualFold(choice.Label, "No") {
+				_ = ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data)
+				if strings.EqualFold(choice.Data, "deny") {
 					if summary != "" {
 						return "❌ " + summary
 					}

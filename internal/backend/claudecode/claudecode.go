@@ -43,7 +43,7 @@ type Backend struct {
 	// replyFunc delivers text to the user's platform chat.
 	replyMu            sync.Mutex
 	replyFunc          func(string)
-	permPromptFunc     func(string, string, []backend.PromptChoice)
+	permPromptFunc     backend.PermissionPromptFunc
 	onSessionReady     func(string)     // called once when session ID is discovered
 	typingFunc         func(bool)       // typing indicator: true=start, false=stop
 

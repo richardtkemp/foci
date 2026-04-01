@@ -36,8 +36,9 @@ type DelegatedManager struct {
 	SendFunc func(sessionKey, text string)
 
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
+	// requestID is the CC protocol request ID (empty for tmux backends).
 	// If nil, backends fall back to plain text via SendFunc.
-	PermissionPromptFunc func(sessionKey, text, summary string, choices []backend.PromptChoice)
+	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []backend.PromptChoice)
 
 	// TypingFunc controls the platform typing indicator for a session.
 	// Called with true when CC starts working, false on turn complete.
@@ -110,9 +111,9 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 		})
 	}
 	if m.PermissionPromptFunc != nil {
-		be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
+		be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []backend.PromptChoice) {
 			m.SetPermissionPending(sk, true)
-			m.PermissionPromptFunc(sk, text, summary, choices)
+			m.PermissionPromptFunc(sk, requestID, text, summary, choices)
 		})
 	}
 	be.SetOnPermissionCleared(func() {
@@ -141,9 +142,9 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 				be.SetReplyFunc(func(text string) { m.SendFunc(sk, text) })
 			}
 			if m.PermissionPromptFunc != nil {
-				be.SetPermissionPromptFunc(func(text, summary string, choices []backend.PromptChoice) {
+				be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []backend.PromptChoice) {
 					m.SetPermissionPending(sk, true)
-					m.PermissionPromptFunc(sk, text, summary, choices)
+					m.PermissionPromptFunc(sk, requestID, text, summary, choices)
 				})
 			}
 			be.SetOnPermissionCleared(func() {

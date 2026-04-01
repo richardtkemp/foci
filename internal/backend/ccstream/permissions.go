@@ -52,7 +52,7 @@ func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
 
 	if b.permPromptFn != nil {
 		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
-		b.permPromptFn(text, summary, choices)
+		b.permPromptFn(msg.RequestID, text, summary, choices)
 	} else if b.replyFunc != nil {
 		log.Warnf("ccstream/perm", "permPromptFn nil, falling back to replyFunc for req_id=%s", msg.RequestID)
 		b.replyFunc(text)
@@ -180,15 +180,54 @@ func buildPermissionText(req *PermissionRequestBody) string {
 			b.WriteString(fmt.Sprintf(": %s", req.Title))
 		}
 		b.WriteString("\n\n")
+	} else if req.ToolName != "" {
+		b.WriteString(fmt.Sprintf("**%s**\n\n", req.ToolName))
 	}
 	if req.Description != "" {
 		b.WriteString(req.Description)
+		b.WriteString("\n\n")
+	}
+	// Show tool input (e.g. the command being run) when available.
+	if len(req.Input) > 0 && string(req.Input) != "{}" && string(req.Input) != "null" {
+		b.WriteString(formatToolInput(req.ToolName, req.Input))
 		b.WriteString("\n\n")
 	}
 	if req.DecisionReason != "" {
 		b.WriteString(fmt.Sprintf("_Reason: %s_", req.DecisionReason))
 	}
 	return b.String()
+}
+
+// formatToolInput extracts a human-readable summary from tool input JSON.
+func formatToolInput(toolName string, input json.RawMessage) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(input, &m); err != nil {
+		return fmt.Sprintf("`%s`", string(input))
+	}
+	// For Bash, show the command.
+	if cmd, ok := m["command"]; ok {
+		var s string
+		if json.Unmarshal(cmd, &s) == nil {
+			return fmt.Sprintf("`%s`", s)
+		}
+	}
+	// For Write/Edit, show the file path.
+	if fp, ok := m["file_path"]; ok {
+		var s string
+		if json.Unmarshal(fp, &s) == nil {
+			return fmt.Sprintf("File: `%s`", s)
+		}
+	}
+	// Fallback: compact JSON.
+	compact, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Sprintf("`%s`", string(input))
+	}
+	s := string(compact)
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return fmt.Sprintf("`%s`", s)
 }
 
 // buildPermissionSummary creates a short summary for post-approval display.
