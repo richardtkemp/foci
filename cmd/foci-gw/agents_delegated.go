@@ -99,8 +99,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		PermissionPromptFunc: func(sessionKey, text, summary string, choices []backend.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
+				log.Warnf("agent/"+agentID, "permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)
 				return
 			}
+			log.Debugf("agent/"+agentID, "permission prompt: sending via %s for session=%s summary=%q", conn.PlatformName(), sessionKey, summary)
 			var buttons []platform.ButtonChoice
 			for _, c := range choices {
 				buttons = append(buttons, platform.ButtonChoice{Label: c.Label, Data: c.Data})

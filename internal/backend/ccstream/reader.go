@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"foci/internal/log"
 )
 
 // Handler receives typed messages from the CC stdout reader.
@@ -28,22 +30,14 @@ type Handler interface {
 type Reader struct {
 	r       io.Reader
 	handler Handler
-	logger  func(format string, args ...interface{}) // debug logging
 }
 
 // NewReader creates a Reader that reads from r and dispatches to handler.
-// The debug logger defaults to a no-op.
 func NewReader(r io.Reader, handler Handler) *Reader {
 	return &Reader{
 		r:       r,
 		handler: handler,
-		logger:  func(string, ...interface{}) {},
 	}
-}
-
-// SetLogger sets the debug logger for the reader.
-func (rd *Reader) SetLogger(fn func(string, ...interface{})) {
-	rd.logger = fn
 }
 
 // maxTokenSize is the maximum line size the scanner will accept.
@@ -132,9 +126,10 @@ func (rd *Reader) dispatch(line []byte) {
 				rd.handler.OnError(fmt.Errorf("ccstream: unmarshal permission_request: %w", err))
 				return
 			}
+			log.Debugf("ccstream", "received permission request req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
 			rd.handler.OnPermissionRequest(&msg)
 		default:
-			rd.logger("ccstream: unknown control_request subtype %q", crEnv.Request.Subtype)
+			log.Debugf("ccstream", "unknown control_request subtype %q", crEnv.Request.Subtype)
 		}
 
 	case "control_response":
@@ -175,7 +170,7 @@ func (rd *Reader) dispatch(line []byte) {
 		// Rate limit info; api_retry (system subtype) is more actionable.
 
 	default:
-		rd.logger("ccstream: unknown message type %q", env.Type)
+		log.Debugf("ccstream", "unknown message type %q", env.Type)
 	}
 }
 

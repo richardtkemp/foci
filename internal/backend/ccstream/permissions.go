@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
 )
 
 // PermissionRequestBody is the structured body of a permission request.
@@ -27,6 +28,7 @@ type pendingPermission struct {
 // can_use_tool control request. It stores the pending permission, notifies
 // the DelegatedManager, and sends a prompt to the platform UI.
 func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
+	log.Debugf("ccstream/perm", "handlePermissionRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
 	summary := buildPermissionSummary(&msg.Request)
 	text := buildPermissionText(&msg.Request)
 	choices := buildPermissionChoices(&msg.Request)
@@ -49,9 +51,13 @@ func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
 	}
 
 	if b.permPromptFn != nil {
+		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
 		b.permPromptFn(text, summary, choices)
 	} else if b.replyFunc != nil {
+		log.Warnf("ccstream/perm", "permPromptFn nil, falling back to replyFunc for req_id=%s", msg.RequestID)
 		b.replyFunc(text)
+	} else {
+		log.Warnf("ccstream/perm", "both permPromptFn and replyFunc nil for req_id=%s", msg.RequestID)
 	}
 }
 
