@@ -114,7 +114,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// turn's handler will handle usage, compaction, etc.).
 	if be.IsTurnInFlight() {
 		log.Infof("delegated", "session=%s steered message merged into in-flight turn", ts.SessionKey)
-		if err := be.SendCommand(ts.Ctx, ts.Prompt); err != nil {
+		if err := be.SendCommand(ts.Ctx, ts.Prompt, "now"); err != nil {
 			close(ts.CompletionChan)
 			return err
 		}
@@ -301,7 +301,7 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// after processAgentMessage returns and the turn context is done).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := ts.Backend.SendCommand(ctx, cmd); err != nil {
+	if err := ts.Backend.SendCommand(ctx, cmd, ""); err != nil {
 		a.logger().Errorf("session=%s delegated compaction failed: %v", ts.SessionKey, err)
 		return
 	}

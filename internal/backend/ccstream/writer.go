@@ -52,9 +52,19 @@ func (wr *Writer) Send(msg interface{}) error {
 	return wr.enc.Encode(msg)
 }
 
-// SendUser sends a user-typed message to Claude Code.
+// SendUser sends a user-typed message to Claude Code with default priority.
 func (wr *Writer) SendUser(content string) error {
 	return wr.Send(NewUserMessage(content))
+}
+
+// SendUserWithPriority sends a user-typed message with the given priority.
+// Use PriorityNow to interrupt the current operation, PriorityNext (or "")
+// for normal queuing after the current turn, PriorityLater for deferred
+// delivery. Empty string omits the priority field (CC defaults to "next").
+func (wr *Writer) SendUserWithPriority(content, priority string) error {
+	msg := NewUserMessage(content)
+	msg.Priority = priority
+	return wr.Send(msg)
 }
 
 // SendControl sends a control request to Claude Code with the given request ID
