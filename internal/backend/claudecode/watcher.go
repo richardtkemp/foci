@@ -251,17 +251,44 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 		stopReason = *entry.Message.StopReason
 	}
 	if stopReason == "end_turn" {
-		result := &backend.TurnResult{
-			Text:      w.turnText,
-			ToolCalls: w.turnTools,
-			Usage:     w.turnUsage,
-			Model:     w.turnModel,
-		}
-		w.turnUsage = nil  // reset for next turn
-		w.turnModel = ""
-		if handler.OnTurnComplete != nil {
-			handler.OnTurnComplete(result)
-		}
+		w.fireTurnResult(handler)
+	}
+}
+
+// handleSystem processes system entries. turn_duration is a system entry
+// that CC writes after completed turns. We use it as a fallback turn
+// completion signal for turns that end with stop_sequence or other non-
+// end_turn stop reasons (which handleAssistant doesn't catch).
+//
+// ASSUMPTION (UNTESTED): every completed CC turn produces either an
+// assistant message with stop_reason=end_turn, OR a system entry with
+// subtype=turn_duration, OR both. This is based on observed JSONL data
+// but is not confirmed by CC documentation. If CC can complete a turn
+// without writing either, this watcher will miss it.
+func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *backend.EventHandler) {
+	if entry.Subtype == "turn_duration" {
+		w.fireTurnResult(handler)
+	}
+}
+
+// fireTurnResult builds a TurnResult from accumulated state and fires
+// the handler's OnTurnComplete. Called from both handleAssistant (end_turn)
+// and handleSystem (turn_duration). If both fire for the same turn, the
+// second is a safe no-op — fireTurnComplete is one-shot (nils the callback
+// after first call) and turn state is already reset.
+func (w *sessionWatcher) fireTurnResult(handler *backend.EventHandler) {
+	result := &backend.TurnResult{
+		Text:      w.turnText,
+		ToolCalls: w.turnTools,
+		Usage:     w.turnUsage,
+		Model:     w.turnModel,
+	}
+	w.turnText = ""
+	w.turnTools = 0
+	w.turnUsage = nil
+	w.turnModel = ""
+	if handler.OnTurnComplete != nil {
+		handler.OnTurnComplete(result)
 	}
 }
 
@@ -323,10 +350,5 @@ func extractAgentDescription(raw json.RawMessage) string {
 	return ""
 }
 
-// handleSystem processes system entries (e.g. turn_duration markers).
-func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *backend.EventHandler) {
-	// turn_duration is emitted after each completed turn. We use
-	// stop_reason == "end_turn" on the assistant message instead,
-	// so this is just here for future use.
-}
+
 

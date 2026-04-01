@@ -47,15 +47,19 @@ type Backend struct {
 	typingFunc         func(bool)       // typing indicator: true=start, false=stop
 
 	// lastPrompt tracks the last permission prompt sent to avoid duplicates.
-	lastPromptMu sync.Mutex
-	lastPrompt   string
+	// permissionActive tracks whether a prompt is currently displayed, so we
+	// can detect when it disappears (CC timeout, user response, Escape).
+	lastPromptMu     sync.Mutex
+	lastPrompt       string
+	permissionActive bool
+	onPermCleared    func() // called when permission prompt disappears
 
 	// waitMu guards waitCh. WaitForTurn creates a channel; the watcher's
 	// OnTurnComplete callback signals it. One waiter at a time.
 	waitMu sync.Mutex
 	waitCh chan struct{}
 
-	// turnCompleteMu guards turnCompleteFn. Set by SendTurn from the
+	// turnCompleteMu guards turnCompleteFn. Set by SendToPane from the
 	// per-turn EventHandler; fired once by the watcher on end_turn, then nil'd.
 	turnCompleteMu sync.Mutex
 	turnCompleteFn func(*backend.TurnResult)
