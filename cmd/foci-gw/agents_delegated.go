@@ -183,7 +183,46 @@ func seedDelegatedPermissions(workspace string) {
 		// Basic shell commands — blanket access.
 		"Bash(ls:*)",
 		"Bash(echo:*)",
-		// Foci shell functions
+		"Bash(cat:*)",
+		"Bash(head:*)",
+		"Bash(tail:*)",
+		"Bash(wc:*)",
+		"Bash(sort:*)",
+		"Bash(cut:*)",
+		"Bash(tr:*)",
+		"Bash(diff:*)",
+		"Bash(stat:*)",
+		"Bash(file:*)",
+		"Bash(which:*)",
+		"Bash(date:*)",
+		"Bash(pwd:*)",
+		"Bash(id:*)",
+		"Bash(uname:*)",
+		"Bash(ps:*)",
+		"Bash(ss:*)",
+		"Bash(du:*)",
+		"Bash(df:*)",
+		// Search/filter tools.
+		"Bash(grep:*)",
+		"Bash(rg:*)",
+		"Bash(ack:*)",
+		"Bash(sed -n:*)",
+		// Compressed file inspection.
+		"Bash(zcat:*)",
+		"Bash(zgrep:*)",
+		// Environment and system inspection.
+		"Bash(env:*)",
+		"Bash(crontab -l:*)",
+		"Bash(npm list:*)",
+		// System logs.
+		"Bash(journalctl:*)",
+		// Data tools.
+		"Bash(jq:*)",
+		"Bash(yq:*)",
+		"Bash(mds:*)",
+		"Bash(mdq:*)",
+		"Bash(sqlite3:*)",
+		// Foci shell functions.
 		"Bash(foci_todo:*)",
 		"Bash(foci_send_to_chat:*)",
 		"Bash(foci_memory_search:*)",
