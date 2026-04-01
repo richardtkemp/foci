@@ -5,7 +5,10 @@
 // executes tools.
 package backend
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Backend is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
@@ -92,6 +95,17 @@ type Backend interface {
 
 	// Close shuts down the agent subprocess gracefully.
 	Close() error
+}
+
+// CommandOutputCapturer is optionally implemented by backends that can
+// capture local command output from the agent's TUI by polling for stable
+// pane content. The tmux backend implements this; the stream backend
+// doesn't need it (local commands produce system messages on stdout).
+type CommandOutputCapturer interface {
+	// CaptureCommandOutput polls the agent's display until it stabilises
+	// (content unchanged for stableFor), checking every pollInterval.
+	// Returns the raw display content, or error on timeout/context cancel.
+	CaptureCommandOutput(ctx context.Context, stableFor, pollInterval time.Duration) (string, error)
 }
 
 // ReplyFunc sends text to the user's platform chat. Set by the agent layer
