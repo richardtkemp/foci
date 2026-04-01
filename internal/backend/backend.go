@@ -80,6 +80,11 @@ type Backend interface {
 	// Unlike SendKeystroke, the key name is interpreted by tmux, not sent literally.
 	SendSpecialKey(ctx context.Context, key string) error
 
+	// Interrupt cancels any in-progress agent turn. The mechanism is
+	// backend-specific: tmux sends Escape×2 + Ctrl-C; the stream backend
+	// sends an interrupt control message over stdio.
+	Interrupt(ctx context.Context) error
+
 	// SessionID returns the coding agent's session identifier (e.g. CC's UUID).
 	// Used to resume sessions after idle shutdown. Empty if unknown.
 	SessionID() string

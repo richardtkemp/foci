@@ -195,8 +195,9 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 	return be, nil
 }
 
-// StopSession sends Escape twice to cancel CC's current operation, then
-// clears the input box. Returns an error if no backend exists for the session.
+// StopSession interrupts the current agent turn. The mechanism is
+// backend-specific (tmux: Escape×2 + Ctrl-C; stream: interrupt message).
+// Returns an error if no backend exists for the session.
 func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) error {
 	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
@@ -205,15 +206,7 @@ func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) e
 	if !ok {
 		return fmt.Errorf("no delegated backend for session %s", base)
 	}
-	// Escape twice to cancel the current operation and return to input.
-	for i := 0; i < 2; i++ {
-		if err := mb.be.SendSpecialKey(ctx, "Escape"); err != nil {
-			return err
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	// Ctrl-C discards the current input (including multiline).
-	return mb.be.SendSpecialKey(ctx, "C-c")
+	return mb.be.Interrupt(ctx)
 }
 
 // SetPermissionPending marks a session as having an outstanding permission
