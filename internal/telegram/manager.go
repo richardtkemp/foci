@@ -81,39 +81,17 @@ func (m *BotManager) SharedPool() *Pool {
 	return m.shared
 }
 
-// BotForSession returns the bot that owns the given session key.
-// Checks facet pools first (exact SessionKey match), then returns the
-// primary bot for the session's agent. Returns nil if no bot on this
-// platform owns the session.
+// BotForSession returns the bot whose SessionKey matches, or nil.
 func (m *BotManager) BotForSession(sessionKey string) *Bot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Check facet pools for exact match (facets have override keys).
-	for _, pool := range m.pools {
-		if b := findInPool(pool, sessionKey); b != nil {
-			return b
-		}
-	}
-
-	if m.shared != nil {
-		if b := findInPool(m.shared, sessionKey); b != nil {
-			return b
-		}
-	}
-
-	return nil
-}
-
-// findInPool searches a pool for a bot whose SessionKey matches the given key.
-func findInPool(pool *Pool, sessionKey string) *Bot {
-	var found *Bot
-	pool.ForEach(func(b *Bot) {
+	for _, b := range m.all {
 		if b.SessionKey() == sessionKey {
-			found = b
+			return b
 		}
-	})
-	return found
+	}
+	return nil
 }
 
 // BotForSessionOrPrimary returns the facet bot owning sessionKey if any

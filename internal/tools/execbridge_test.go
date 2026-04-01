@@ -371,7 +371,7 @@ func TestToolParamKeys(t *testing.T) {
 }
 
 func TestShellFuncsContainJSONGuard(t *testing.T) {
-	// Verifies that the generated shell funcs file includes the _foci_json guard helper and that exported tools reference it with their valid parameter keys.
+	// Verifies that the generated shell funcs file includes the foci__json guard helper and that exported tools reference it with their valid parameter keys.
 	t.Parallel()
 	r := testRegistry()
 	bridge, err := NewExecBridge(r, context.Background())
@@ -386,16 +386,16 @@ func TestShellFuncsContainJSONGuard(t *testing.T) {
 	}
 	content := string(data)
 
-	// Should contain the _foci_json helper
-	if !strings.Contains(content, "_foci_json()") {
-		t.Error("funcs file should contain _foci_json() helper")
+	// Should contain the foci__json helper
+	if !strings.Contains(content, "foci__json()") {
+		t.Error("funcs file should contain foci__json() helper")
 	}
 	// Should contain export -f for the helper
-	if !strings.Contains(content, "export -f _foci_json") {
-		t.Error("funcs file should export _foci_json")
+	if !strings.Contains(content, "export -f foci__json") {
+		t.Error("funcs file should export foci__json")
 	}
 	// echo_tool should have a guard line with its valid key "text"
-	if !strings.Contains(content, `_foci_json "echo_tool" "text"`) {
+	if !strings.Contains(content, `foci__json "echo_tool" "text"`) {
 		t.Error("echo_tool guard should include valid key 'text'")
 	}
 }

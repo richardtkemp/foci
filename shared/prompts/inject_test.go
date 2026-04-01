@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"foci/internal/timeutil"
 )
 
 func TestFormatInjectedMessage(t *testing.T) {
@@ -90,13 +92,15 @@ func TestFormatInjectedMessageDefaultContextNote(t *testing.T) {
 	}
 }
 
-func TestFormatInjectedMessageTimezonePreserved(t *testing.T) {
-	// Provide a non-UTC time — should preserve original timezone offset in output
+func TestFormatInjectedMessageTimezoneConverted(t *testing.T) {
+	// timeutil.Format converts to the configured timezone. Verify the
+	// formatted timestamp represents the same instant, not the original zone.
 	loc := time.FixedZone("EST", -5*3600)
-	when := time.Date(2026, 6, 15, 12, 0, 0, 0, loc) // 12:00 EST
+	when := time.Date(2026, 6, 15, 12, 0, 0, 0, loc) // 12:00 EST = 17:00 UTC
 	result := FormatInjectedMessage("TEST", when, "body")
 
-	if !strings.Contains(result, "2026-06-15T12:00:00-05:00") {
-		t.Errorf("expected timezone-preserved timestamp, got:\n%s", result)
+	expected := timeutil.Format(when)
+	if !strings.Contains(result, expected) {
+		t.Errorf("expected converted timestamp %q, got:\n%s", expected, result)
 	}
 }
