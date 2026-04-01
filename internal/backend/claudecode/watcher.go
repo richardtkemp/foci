@@ -255,18 +255,19 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 	}
 }
 
-// handleSystem processes system entries. turn_duration is a system entry
-// that CC writes after completed turns. We use it as a fallback turn
-// completion signal for turns that end with stop_sequence or other non-
-// end_turn stop reasons (which handleAssistant doesn't catch).
+// handleSystem processes system entries.
 //
-// ASSUMPTION (UNTESTED): every completed CC turn produces either an
-// assistant message with stop_reason=end_turn, OR a system entry with
-// subtype=turn_duration, OR both. This is based on observed JSONL data
-// but is not confirmed by CC documentation. If CC can complete a turn
-// without writing either, this watcher will miss it.
+// turn_duration: written after completed turns. Fallback turn completion
+// signal for turns that end with stop_sequence or other non-end_turn stop
+// reasons (which handleAssistant doesn't catch).
+//
+// compact_boundary: written when CC completes /compact. The command doesn't
+// produce an assistant message (no end_turn) or turn_duration, so without
+// this check WaitForTurn blocks until the next real turn — causing the
+// "context compacted" notification to arrive one turn late.
 func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *backend.EventHandler) {
-	if entry.Subtype == "turn_duration" {
+	switch entry.Subtype {
+	case "turn_duration", "compact_boundary":
 		w.fireTurnResult(handler)
 	}
 }

@@ -160,6 +160,14 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
 	ts.SessionMeta.prevCacheRead = ts.FinalUsage.CacheReadInputTokens
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
+
+	// Record the actual model reported by the JSONL watcher so that
+	// SessionContextLimit uses the real context window. Without this,
+	// ag.Model is "claude-code" which defaults to 1M — correct as a
+	// starting assumption, but the watcher knows the truth each turn.
+	if ts.FinalModel != "" {
+		ts.SessionMeta.model = ts.FinalModel
+	}
 }
 
 // LogUsage records delegated turn usage to the API database.
