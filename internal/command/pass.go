@@ -53,7 +53,7 @@ func PassCommand() *Command {
 				return Response{}, fmt.Errorf("get backend: %w", err)
 			}
 
-			if err := be.SendCommand(ctx, req.Args); err != nil {
+			if err := be.SendCommand(ctx, req.Args, ""); err != nil {
 				return Response{}, fmt.Errorf("send command: %w", err)
 			}
 

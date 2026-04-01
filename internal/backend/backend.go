@@ -37,10 +37,16 @@ type Backend interface {
 	// new turn pipeline (CC treats them as part of the same turn).
 	IsTurnInFlight() bool
 
-	// SendCommand sends a slash command directly to the agent
-	// (e.g. "/compact ...", "/model opus"). These bypass Foci's prompt
-	// composition — they're raw commands sent verbatim.
-	SendCommand(ctx context.Context, command string) error
+	// SendCommand sends a slash command or steered message directly to the
+	// agent (e.g. "/compact ...", "/model opus", or a user redirect).
+	// These bypass Foci's prompt composition — they're raw commands sent
+	// verbatim.
+	//
+	// priority controls CC's processing order: "now" interrupts the
+	// current operation (tool execution), "next" queues after the current
+	// turn, "later" defers. Empty string omits priority (CC defaults to
+	// "next"). Backends that don't support priority (e.g. tmux) ignore it.
+	SendCommand(ctx context.Context, command string, priority string) error
 
 	// IsRunning reports whether the agent subprocess is alive.
 	IsRunning() bool

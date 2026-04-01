@@ -10,6 +10,20 @@ package ccstream
 import "encoding/json"
 
 // ---------------------------------------------------------------------------
+// Message priority levels
+// ---------------------------------------------------------------------------
+
+// Priority levels for user messages. CC processes messages in priority order:
+// PriorityNow interrupts the current operation (aborts tool execution),
+// PriorityNext queues after the current turn (default for user messages),
+// PriorityLater defers (used for task notifications / low-priority system messages).
+const (
+	PriorityNow   = "now"
+	PriorityNext  = "next"
+	PriorityLater = "later"
+)
+
+// ---------------------------------------------------------------------------
 // Shared / reusable types
 // ---------------------------------------------------------------------------
 

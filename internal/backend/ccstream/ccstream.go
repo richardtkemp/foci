@@ -344,7 +344,12 @@ func (b *Backend) IsTurnInFlight() bool {
 }
 
 // SendCommand sends a slash command or steered message directly to CC.
-func (b *Backend) SendCommand(ctx context.Context, command string) error {
+// priority controls CC's processing order — use PriorityNow for steer
+// messages that should interrupt tool execution, or "" for default.
+func (b *Backend) SendCommand(ctx context.Context, command string, priority string) error {
+	if priority != "" {
+		return b.writer.SendUserWithPriority(command, priority)
+	}
 	return b.writer.SendUser(command)
 }
 
