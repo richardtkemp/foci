@@ -120,9 +120,10 @@ type PromptChoice struct {
 }
 
 // PermissionPromptFunc sends a permission prompt to the user with keyboard
-// choices. summary is a short description for post-approval display (e.g.
+// choices. requestID is the CC protocol request ID (empty for tmux backends).
+// summary is a short description for post-approval display (e.g.
 // "Edit memory/2026-03-27.md"). If nil, the backend falls back to plain text.
-type PermissionPromptFunc func(text, summary string, choices []PromptChoice)
+type PermissionPromptFunc func(requestID, text, summary string, choices []PromptChoice)
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
