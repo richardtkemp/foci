@@ -13,36 +13,36 @@ import (
 )
 
 // TurnContract defines every concern of a turn. Both APITransport and
-// BackendTransport implement every method. Adding a method here produces
+// DelegatedTransport implement every method. Adding a method here produces
 // a compile error in both until implemented.
 //
 // Methods are grouped into four phases:
 //
 //	Phase 1  — Pre-lock gates and registration
 //	Phase 2  — Turn preparation (prompt, session, model resolution)
-//	Phase 3  — Core execution (API tool loop or backend SendTurn)
+//	Phase 3  — Core execution (API tool loop or delegated SendToPane)
 //	Phase 4  — Post-turn (save, metadata, compaction, logging)
 type TurnContract interface {
 	// --- Phase 1: Pre-lock gates and registration ---
 
 	// RateLimitGate checks the per-endpoint rate limit. Returns
 	// *RateLimitedError if the endpoint is gated.
-	// Backend: no-op (CC has its own rate limiting).
+	// Delegated: no-op (CC has its own rate limiting).
 	RateLimitGate(ts *TurnState) error
 
 	// AcquireTurnLock serializes turns on the same session to preserve
 	// prompt cache prefix ordering. Returns an unlock func.
-	// Backend: no-op (CC serializes internally).
+	// Delegated: no-op (CC serializes internally).
 	AcquireTurnLock(ts *TurnState) (unlock func())
 
 	// IncrementProcessing bumps the atomic processing counter.
 	// Returns a decrement func.
-	// Backend: no-op (backend turns are fire-and-forget from foci's view).
+	// Delegated: no-op (delegated turns are fire-and-forget from foci's view).
 	IncrementProcessing(ts *TurnState) (decrement func())
 
 	// RegisterTurn adds a TurnDetail for shutdown diagnostics.
 	// Returns an unregister func.
-	// Backend: no-op.
+	// Delegated: no-op.
 	RegisterTurn(ts *TurnState) (unregister func())
 
 	// CheckStaleContext returns ctx.Err() if the context was cancelled
@@ -68,58 +68,58 @@ type TurnContract interface {
 
 	// ComposePrompt builds the user-facing prompt content.
 	// API: rich content blocks via prepareUserMessage.
-	// Backend: flat text via composeTurnText + JoinPrompt.
+	// Delegated: flat text via composeTurnText + JoinPrompt.
 	ComposePrompt(ts *TurnState) error
 
 	// LoadAndRepairSession loads session history and repairs corruption.
 	// API: full load + 3 repair passes.
-	// Backend: no-op (CC owns its session file).
+	// Delegated: no-op (CC owns its session file).
 	LoadAndRepairSession(ts *TurnState) error
 
 	// ResolveModelEffort resolves model, effort, thinking, speed for this turn.
 	// API: full resolution with per-model defaults.
-	// Backend: reads agent-level model.
+	// Delegated: reads agent-level model.
 	ResolveModelEffort(ts *TurnState)
 
 	// BuildSystemAndTools builds system prompt blocks and tool definitions.
 	// API: per-turn rebuild from bootstrap.
-	// Backend: no-op (system prompt set at Start time).
+	// Delegated: no-op (system prompt set at Start time).
 	BuildSystemAndTools(ts *TurnState)
 
 	// InjectNudges prepends behavioral nudge reminders.
 	// API: content blocks in the user message.
-	// Backend: text prepended to the prompt string.
+	// Delegated: text prepended to the prompt string.
 	InjectNudges(ts *TurnState)
 
 	// --- Phase 3: Core execution ---
 
-	// ExecuteTurn runs the core turn.
+	// RunInference runs the core turn.
 	// API: multi-iteration tool loop with streaming and fallback.
-	// Backend: SendTurn to CC; watcher closes CompletionChan on end_turn.
-	ExecuteTurn(ts *TurnState) error
+	// Delegated: SendToPane to CC; watcher closes CompletionChan on end_turn.
+	RunInference(ts *TurnState) error
 
 	// --- Phase 4: Post-turn (fires after CompletionChan is closed) ---
 
 	// SaveSession persists new messages to the session file.
 	// API: AppendAll to session store.
-	// Backend: no-op (CC owns its session file).
+	// Delegated: no-op (CC owns its session file).
 	SaveSession(ts *TurnState) error
 
 	// UpdateSessionMeta updates per-session cost/token tracking.
 	// API: from provider.MessageResponse usage.
-	// Backend: from JSONL watcher usage.
+	// Delegated: from JSONL watcher usage.
 	UpdateSessionMeta(ts *TurnState)
 
 	// LogUsage records API usage to the usage database.
 	// NOT called by the orchestrator — each transport invokes it at the
 	// appropriate time. Present on the interface for compile-time enforcement.
-	// API: per-call inside ExecuteTurn (via logAPIResponse; this method is a no-op).
-	// Backend: called from OnTurnComplete callback after FinalUsage is populated.
+	// API: per-call inside RunInference (via logAPIResponse; this method is a no-op).
+	// Delegated: called from OnTurnComplete callback after FinalUsage is populated.
 	LogUsage(ts *TurnState)
 
 	// RunCompaction checks if compaction is needed and runs it.
 	// API: direct maybeCompact call.
-	// Backend: sends /compact command to CC.
+	// Delegated: sends /compact command to CC.
 	RunCompaction(ts *TurnState)
 
 	// LogConversationSent logs the outbound response. Shared.
@@ -152,7 +152,7 @@ type TurnState struct {
 	Messages    []provider.Message // loaded + repaired session history (API only)
 	NewMessages []provider.Message // messages appended this turn (API only)
 	UserMsg     provider.Message   // composed user message (API only)
-	Prompt      string             // composed flat prompt (Backend only)
+	Prompt      string             // composed flat prompt (delegated only)
 
 	TurnModel    string          // resolved model for this turn
 	TurnClient   provider.Client // resolved client for this turn
@@ -179,16 +179,16 @@ type TurnState struct {
 	FinalText  string          // response text from the completed turn
 	FinalUsage *provider.Usage // token usage from the completed turn
 	FinalCost  float64         // calculated cost from logAPIResponse
-	FinalModel string          // model used (backend: from JSONL; API: from TurnModel)
+	FinalModel string          // model used (delegated: from JSONL; API: from TurnModel)
 
 	// --- Async coordination ---
 
 	// CompletionChan is closed when the turn actually completes.
-	// API: closed before ExecuteTurn returns (synchronous).
-	// Backend: closed by the watcher's OnTurnComplete callback (async).
+	// API: closed before RunInference returns (synchronous).
+	// Delegated: closed by the watcher's OnTurnComplete callback (async).
 	CompletionChan chan struct{}
 
-	// --- Backend-specific ---
+	// --- Delegated-specific ---
 
 	Backend backend.Backend // backend instance for this session (nil for API)
 }
@@ -207,7 +207,7 @@ func NewTurnState(ctx context.Context, sessionKey string, texts []string, attach
 }
 
 // sharedTurnOps holds shared method implementations inherited by both
-// APITransport and BackendTransport via embedding.
+// APITransport and DelegatedTransport via embedding.
 type sharedTurnOps struct {
 	agent *Agent
 }
@@ -218,20 +218,20 @@ type APITransport struct {
 	sharedTurnOps
 }
 
-// BackendTransport implements TurnContract for the coding agent backend path
+// DelegatedTransport implements TurnContract for the delegated transport path
 // (Claude Code, etc. — the backend owns inference and tool execution).
-type BackendTransport struct {
+type DelegatedTransport struct {
 	sharedTurnOps
 }
 
 // Compile-time interface checks.
 var _ TurnContract = (*APITransport)(nil)
-var _ TurnContract = (*BackendTransport)(nil)
+var _ TurnContract = (*DelegatedTransport)(nil)
 
 // ---------------------------------------------------------------------------
 // Shared implementations on sharedTurnOps — inherited by both transports.
 // Stage 2 will replace panic stubs with real logic extracted from
-// HandleMessageWithAttachments / handleViaBackend.
+// HandleMessageWithAttachments / the delegated transport.
 // ---------------------------------------------------------------------------
 
 // CheckStaleContext returns the context error if the context was cancelled
@@ -242,9 +242,9 @@ func (s *sharedTurnOps) CheckStaleContext(ts *TurnState) error {
 
 // RegisterSessionIndex ensures the session exists in the session index.
 // The API path gets this implicitly via store.Append → fireEvent → Upsert,
-// but the backend path never calls Append (CC owns its session file).
+// but the delegated path never calls Append (CC owns its session file).
 // Calling Upsert directly covers both paths uniformly.
-// For backend sessions, includes the CC JSONL file path so the pruner
+// For delegated sessions, includes the CC JSONL file path so the pruner
 // doesn't treat the entry as an orphan (no foci session file exists).
 func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
 	if s.agent.SessionIndex == nil {
@@ -252,8 +252,8 @@ func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
 	}
 	now := time.Now()
 	filePath := ""
-	if s.agent.BackendManager != nil {
-		filePath = s.agent.BackendManager.SessionFilePath(ts.SessionKey)
+	if s.agent.DelegatedManager != nil {
+		filePath = s.agent.DelegatedManager.SessionFilePath(ts.SessionKey)
 	}
 	s.agent.SessionIndex.Upsert(session.SessionIndexEntry{
 		SessionKey:     ts.SessionKey,
@@ -266,7 +266,7 @@ func (s *sharedTurnOps) RegisterSessionIndex(ts *TurnState) {
 }
 
 // LogConversationRecv logs the inbound user message. Extracted from
-// agent.go:335-350 and backend_turn.go:25-32.
+// agent.go:335-350 and turn_delegated.go:25-32.
 func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 	chatID := ts.Meta.ChatID
 	if chatID == 0 {
@@ -284,7 +284,7 @@ func (s *sharedTurnOps) LogConversationRecv(ts *TurnState) {
 }
 
 // TouchActivity fires OnActivity callbacks so session liveness is tracked.
-// Extracted from agent.go:353-355 and backend_turn.go:17-19.
+// Extracted from agent.go:353-355 and turn_delegated.go:17-19.
 func (s *sharedTurnOps) TouchActivity(ts *TurnState) {
 	for _, fn := range s.agent.OnActivity {
 		fn(ts.SessionKey)
@@ -292,7 +292,7 @@ func (s *sharedTurnOps) TouchActivity(ts *TurnState) {
 }
 
 // LoadSessionMeta loads or initialises per-session metadata.
-// Extracted from agent.go:440 and backend_turn.go:36.
+// Extracted from agent.go:440 and turn_delegated.go:36.
 func (s *sharedTurnOps) LoadSessionMeta(ts *TurnState) {
 	ts.SessionMeta = s.agent.getSessionMeta(ts.SessionKey)
 }
@@ -315,7 +315,7 @@ func (s *sharedTurnOps) LogConversationSent(ts *TurnState) {
 
 // TouchActivityPost fires OnActivity callbacks after the turn completes.
 // Same as TouchActivity — separate method for contract clarity and because
-// post-turn may run asynchronously (backend path).
+// post-turn may run asynchronously (delegated path).
 func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
 	for _, fn := range s.agent.OnActivity {
 		fn(ts.SessionKey)
@@ -324,4 +324,4 @@ func (s *sharedTurnOps) TouchActivityPost(ts *TurnState) {
 
 // APITransport method implementations live in turn_api.go (Stage 3).
 
-// BackendTransport method implementations live in turn_backend.go (Stage 4).
+// DelegatedTransport method implementations live in turn_delegated.go (Stage 4).

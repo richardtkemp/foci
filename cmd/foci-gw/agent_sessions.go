@@ -29,7 +29,7 @@ var branchTypesForMainSession = map[string]bool{
 // If onDone is non-nil, it is called after the turn completes with the
 // branch type and branch session key.
 //
-// For backend agents (CC), branching is handled differently:
+// For delegated agents (CC), branching is handled differently:
 //   - Types in branchTypesForMainSession → inject into existing CC session
 //   - Other types → spin up a new CC session with an independent key
 func buildBranchFunc(
@@ -46,10 +46,10 @@ func buildBranchFunc(
 			return false
 		}
 
-		// Backend agents: CC can't branch. Either inject into the main
+		// Delegated agents: CC can't branch. Either inject into the main
 		// session or spin up a new independent CC session.
-		if ag.BackendManager != nil {
-			return handleBackendBranch(ag, agentID, branchType, parentKey, promptText, ctx)
+		if ag.DelegatedManager != nil {
+			return handleDelegatedBranch(ag, agentID, branchType, parentKey, promptText, ctx)
 		}
 
 		// API agents: create a branch session as before.
@@ -82,17 +82,17 @@ func buildBranchFunc(
 	}
 }
 
-// handleBackendBranch handles branch operations for backend (CC) agents.
+// handleDelegatedBranch handles branch operations for delegated (CC) agents.
 // For types that need conversation context, injects into the existing session.
 // For independent work, creates a new CC session.
-func handleBackendBranch(ag *agent.Agent, agentID, branchType, parentKey, promptText string, ctx context.Context) bool {
+func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, promptText string, ctx context.Context) bool {
 	turnCtx := agent.WithTrigger(ctx, branchType)
 
 	var sessionKey string
 	if branchTypesForMainSession[branchType] {
 		// Inject into existing CC session — it has the conversation context.
 		sessionKey = parentKey
-		log.Infof(branchType, "[%s] backend: injecting into main session %s", agentID, sessionKey)
+		log.Infof(branchType, "[%s] delegated: injecting into main session %s", agentID, sessionKey)
 	} else {
 		// New independent CC session for isolated work.
 		sessionKey = session.SessionKey{
@@ -101,7 +101,7 @@ func handleBackendBranch(ag *agent.Agent, agentID, branchType, parentKey, prompt
 			ID:        fmt.Sprintf("%s-%d", branchType, time.Now().Unix()),
 			VersionTS: time.Now().Unix(),
 		}.String()
-		log.Infof(branchType, "[%s] backend: new session %s", agentID, sessionKey)
+		log.Infof(branchType, "[%s] delegated: new session %s", agentID, sessionKey)
 	}
 
 	_, err := ag.HandleMessage(turnCtx, sessionKey, promptText)
@@ -111,10 +111,10 @@ func handleBackendBranch(ag *agent.Agent, agentID, branchType, parentKey, prompt
 	}
 
 	// Wait for CC to complete the turn (HandleMessage returns immediately
-	// for backend agents).
+	// for delegated agents).
 	waitCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	if err := ag.BackendManager.WaitForTurn(waitCtx, sessionKey); err != nil {
+	if err := ag.DelegatedManager.WaitForTurn(waitCtx, sessionKey); err != nil {
 		log.Warnf(branchType, "[%s] session=%s wait error: %v", agentID, sessionKey, err)
 		// Don't return false — the turn may still complete, we just can't wait.
 	}

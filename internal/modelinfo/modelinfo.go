@@ -32,7 +32,7 @@ var registry = map[string]Model{
 		CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,
 	},
 	"claude-opus-4-6": {
-		ContextWindow: 200_000,
+		ContextWindow: 1_000_000, // 1M with Claude Max subscription
 		Effort: true, Thinking: true, Speed: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,

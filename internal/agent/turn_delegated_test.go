@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-// TestBackendTransport_NoOps verifies that no-op methods don't panic and
+// TestDelegatedTransport_NoOps verifies that no-op methods don't panic and
 // return the expected zero values.
-func TestBackendTransport_NoOps(t *testing.T) {
+func TestDelegatedTransport_NoOps(t *testing.T) {
 	a := &Agent{}
-	tr := &BackendTransport{sharedTurnOps{agent: a}}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)
@@ -42,10 +42,10 @@ func TestBackendTransport_NoOps(t *testing.T) {
 	tr.RunCompaction(ts)      // no panic (stub)
 }
 
-// TestBackendTransport_ResolveModelEffort verifies it reads agent-level model.
-func TestBackendTransport_ResolveModelEffort(t *testing.T) {
+// TestDelegatedTransport_ResolveModelEffort verifies it reads agent-level model.
+func TestDelegatedTransport_ResolveModelEffort(t *testing.T) {
 	a := &Agent{Model: "anthropic/claude-opus-4-6"}
-	tr := &BackendTransport{sharedTurnOps{agent: a}}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
 
 	tr.ResolveModelEffort(ts)
@@ -55,11 +55,11 @@ func TestBackendTransport_ResolveModelEffort(t *testing.T) {
 	}
 }
 
-// TestBackendTransport_ComposePrompt verifies it produces a non-empty prompt
+// TestDelegatedTransport_ComposePrompt verifies it produces a non-empty prompt
 // and updates lastMessageTime.
-func TestBackendTransport_ComposePrompt(t *testing.T) {
+func TestDelegatedTransport_ComposePrompt(t *testing.T) {
 	a := &Agent{Model: "anthropic/claude-opus-4-6"}
-	tr := &BackendTransport{sharedTurnOps{agent: a}}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 	ts := NewTurnState(context.Background(), "test/s", []string{"hello world"}, nil)
 	ts.Meta = &TurnMetadata{}
 	ts.SessionMeta = a.getSessionMeta(ts.SessionKey)

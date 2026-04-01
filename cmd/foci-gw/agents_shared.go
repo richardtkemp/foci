@@ -6,6 +6,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/command"
+	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
 	mcpkg "foci/internal/mcp"
@@ -17,7 +18,7 @@ import (
 )
 
 // sharedAgentSetup holds resolved config and helpers shared by both the
-// traditional API agent path and the backend agent path.
+// traditional API agent path and the delegated transport path.
 type sharedAgentSetup struct {
 	p                setupParams
 	promptSearchDirs []string
@@ -44,7 +45,7 @@ func resolveSharedSetup(p setupParams) *sharedAgentSetup {
 }
 
 // newAgent creates an Agent struct with fields common to all agent types.
-// Caller sets path-specific fields (Client, Tools, Backend, etc.) before
+// Caller sets path-specific fields (Client, Tools, DelegatedManager, etc.) before
 // calling finalize.
 func (s *sharedAgentSetup) newAgent() *agent.Agent {
 	acfg := s.p.acfg
@@ -63,26 +64,50 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 	}
 }
 
+// configureUniversal sets agent fields that apply to both API and delegated
+// agents: compaction, warning queue, mana watcher, model defaults, and
+// turn-lock warning threshold. Call this after newAgent() and before the
+// transport-specific configuration (configureAPI / configureDelegated).
+func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Compactor) {
+	cpc := p.resolved.Compaction
+	bc := p.resolved.Behavior
+
+	ag.Compactor = compactor
+	ag.CompactionSummaryPromptPath = cpc.CompactionSummaryPrompt
+	ag.CompactionHandoffMsg = cpc.CompactionHandoffMsg
+	ag.AutocompactBeforeManaRefresh = cpc.AutocompactBeforeManaRefresh
+	ag.AutocompactBeforeManaRefreshThreshold = cpc.AutocompactBeforeManaRefreshThreshold
+	ag.AutocompactBeforeManaRefreshFactor = cpc.AutocompactBeforeManaRefreshFactor
+	ag.AutocompactBeforeManaRefreshPreserve = cpc.AutocompactBeforeManaRefreshPreserve
+	ag.AutocompactBeforeManaRefreshPreservePct = cpc.AutocompactBeforeManaRefreshPreservePct
+	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)
+	ag.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
+	ag.ManaInvestInterval = parseDurationDefault(p.resolved.Mana.InvestInterval, 0)
+
+	setupWarningQueue(ag, p.resolved, p.cfg)
+	setupManaWatcher(ag, p)
+}
+
 // finalizeParams holds optional values for finalize. Nil/zero fields are
 // safe — finalize skips the corresponding setup. API agents populate all
-// fields; backend agents leave most nil.
+// fields; delegated agents leave most nil.
 type finalizeParams struct {
 	bootstrap     *workspace.Bootstrap
-	registry      *tools.Registry        // nil for backend agents
-	skillRegistry *skills.Registry       // nil for backend agents
-	serverTools   []provider.ToolDef     // nil for backend agents
-	client        provider.Client        // nil for backend agents
-	clientProvider provider.ClientProvider // nil for backend agents
-	usageClientProvider provider.UsageClientProvider // nil for backend agents
-	fallbackFn    provider.FallbackFunc  // nil for backend agents
-	compactionThreshold float64          // 0 for backend agents
-	tmuxTool      *tools.Tool            // nil for backend agents
-	tmuxClearAll  func()                 // nil for backend agents
-	tmuxWatchCount func() int            // nil for backend agents
-	tmuxMigrateKey func(string, string)  // nil for backend agents
-	ttsRepls      map[string]string      // nil for backend agents
-	mcpManager    *mcpkg.Manager         // nil for backend agents
-	skillsDirs    []string               // nil for backend agents
+	registry      *tools.Registry        // nil for delegated agents
+	skillRegistry *skills.Registry       // nil for delegated agents
+	serverTools   []provider.ToolDef     // nil for delegated agents
+	client        provider.Client        // nil for delegated agents
+	clientProvider provider.ClientProvider // nil for delegated agents
+	usageClientProvider provider.UsageClientProvider // nil for delegated agents
+	fallbackFn    provider.FallbackFunc  // nil for delegated agents
+	compactionThreshold float64          // 0 for delegated agents
+	tmuxTool      *tools.Tool            // nil for delegated agents
+	tmuxClearAll  func()                 // nil for delegated agents
+	tmuxWatchCount func() int            // nil for delegated agents
+	tmuxMigrateKey func(string, string)  // nil for delegated agents
+	ttsRepls      map[string]string      // nil for delegated agents
+	mcpManager    *mcpkg.Manager         // nil for delegated agents
+	skillsDirs    []string               // nil for delegated agents
 }
 
 // finalize performs the common postamble: nudge system, slash commands,
@@ -90,6 +115,9 @@ type finalizeParams struct {
 func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentInstance {
 	acfg := s.p.acfg
 	p := s.p
+
+	// Bootstrap — needed by both API (system prompt) and delegated (slash commands, /reset).
+	ag.Bootstrap = fp.bootstrap
 
 	// Nudge system.
 	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)

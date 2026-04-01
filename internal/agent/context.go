@@ -114,6 +114,7 @@ type TurnCallbacks struct {
 	SteerCheckFunc       func() []string // non-blocking; returns nil if no pending steer
 	RetryNotifyFunc      func(endpoint string) // called on first API retry; endpoint is a human-readable name (e.g. "Anthropic API")
 	RetrySuccessFunc     func() // called when a retry succeeds (to clear/overwrite retry message)
+	OnTurnDone           func() // called when the turn is fully complete (end_turn for delegated, ExecuteTurn return for API). Platform uses this to stop typing.
 }
 
 // WithTurnCallbacks attaches TurnCallbacks to a context.

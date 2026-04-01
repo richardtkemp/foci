@@ -87,12 +87,12 @@ func TestAPITransportSatisfiesInterface(t *testing.T) {
 	}
 }
 
-// TestBackendTransportSatisfiesInterface verifies at runtime that
-// *BackendTransport satisfies the TurnContract interface.
-func TestBackendTransportSatisfiesInterface(t *testing.T) {
-	var tc TurnContract = &BackendTransport{sharedTurnOps{agent: &Agent{}}}
+// TestDelegatedTransportSatisfiesInterface verifies at runtime that
+// *DelegatedTransport satisfies the TurnContract interface.
+func TestDelegatedTransportSatisfiesInterface(t *testing.T) {
+	var tc TurnContract = &DelegatedTransport{sharedTurnOps{agent: &Agent{}}}
 	if tc == nil {
-		t.Fatal("BackendTransport should satisfy TurnContract")
+		t.Fatal("DelegatedTransport should satisfy TurnContract")
 	}
 }
 
@@ -122,7 +122,7 @@ func TestRunPostTurn_SyncPath(t *testing.T) {
 }
 
 // TestRunPostTurn_AsyncPath verifies that runPostTurn launches a goroutine
-// when CompletionChan is not yet closed (backend path), and that closing it
+// when CompletionChan is not yet closed (delegated path), and that closing it
 // triggers the post-turn methods.
 func TestRunPostTurn_AsyncPath(t *testing.T) {
 	ch := make(chan struct{})
@@ -180,7 +180,7 @@ func (s *stubContract) LoadAndRepairSession(*TurnState) error  { return nil }
 func (s *stubContract) ResolveModelEffort(*TurnState)          {}
 func (s *stubContract) BuildSystemAndTools(*TurnState)         {}
 func (s *stubContract) InjectNudges(*TurnState)                {}
-func (s *stubContract) ExecuteTurn(ts *TurnState) error        { close(ts.CompletionChan); return nil }
+func (s *stubContract) RunInference(ts *TurnState) error        { close(ts.CompletionChan); return nil }
 func (s *stubContract) SaveSession(ts *TurnState) error {
 	if s.saveFn != nil {
 		s.saveFn()

@@ -171,8 +171,8 @@ func TestSessionContextLimit(t *testing.T) {
 
 	// Session with per-session model override — falls back to registry
 	ag.SetSessionModel("s2", "anthropic/claude-opus-4-6", "anthropic", "anthropic", nil)
-	if got := ag.SessionContextLimit("s2"); got != 200_000 {
-		t.Errorf("SessionContextLimit for opus = %d, want 200000", got)
+	if got := ag.SessionContextLimit("s2"); got != 1_000_000 {
+		t.Errorf("SessionContextLimit for opus = %d, want 1000000", got)
 	}
 }
 

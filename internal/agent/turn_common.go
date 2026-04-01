@@ -9,7 +9,7 @@ import (
 )
 
 // turnTextParts holds the common text components assembled for any turn,
-// regardless of whether it's sent to an API or a coding agent backend.
+// regardless of whether it's sent via the API or delegated transport.
 // Nudges are NOT included — each transport handles nudge injection
 // separately via TurnContract.InjectNudges.
 type turnTextParts struct {
@@ -23,7 +23,7 @@ type turnTextParts struct {
 
 // composeTurnText assembles the common text parts for a turn. Used by both
 // the traditional API path (which converts these to content blocks) and the
-// backend path (which joins them into a single prompt string).
+// delegated path (which joins them into a single prompt string).
 func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnModel string, manaStr string, manaGood bool, texts []string, attachments []platform.Attachment) turnTextParts {
 	now := time.Now()
 	sm := a.getSessionMeta(sessionKey)
@@ -53,7 +53,7 @@ func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnMode
 }
 
 // JoinPrompt joins all non-empty parts into a single prompt string.
-// Used by the backend path.
+// Used by the delegated path.
 func (p turnTextParts) JoinPrompt() string {
 	var parts []string
 	if p.MetaPrefix != "" {
