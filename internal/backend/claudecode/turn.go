@@ -58,7 +58,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 	pane := b.pane
 	b.mu.Unlock()
 	if pane == nil {
-		return fmt.Errorf("claude-code backend not started")
+		return fmt.Errorf("claude-code-tmux backend not started")
 	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -249,7 +249,7 @@ func (b *Backend) SendKeystroke(ctx context.Context, key string) error {
 	pane := b.pane
 	b.mu.Unlock()
 	if pane == nil {
-		return fmt.Errorf("claude-code backend not started")
+		return fmt.Errorf("claude-code-tmux backend not started")
 	}
 	return pane.sendKeystroke(ctx, key)
 }
@@ -259,7 +259,7 @@ func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
 	pane := b.pane
 	b.mu.Unlock()
 	if pane == nil {
-		return fmt.Errorf("claude-code backend not started")
+		return fmt.Errorf("claude-code-tmux backend not started")
 	}
 	return pane.sendSpecial(ctx, key)
 }
@@ -279,7 +279,7 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	b.mu.Unlock()
 
 	if pane == nil {
-		return fmt.Errorf("claude-code backend not started")
+		return fmt.Errorf("claude-code-tmux backend not started")
 	}
 	return pane.sendText(ctx, command)
 }

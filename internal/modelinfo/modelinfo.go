@@ -41,7 +41,7 @@ var registry = map[string]Model{
 	// Claude Code backend — default to largest available context window so
 	// we don't trigger spurious compaction before learning the true model.
 	// FinalModel feedback in UpdateSessionMeta corrects this downward if needed.
-	"claude-code": {
+	"claude-code-tmux": {
 		ContextWindow: 1_000_000,
 	},
 

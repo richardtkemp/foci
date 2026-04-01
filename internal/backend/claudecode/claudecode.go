@@ -13,7 +13,7 @@ import (
 )
 
 func init() {
-	backend.Register("claude-code", newFromConfig)
+	backend.Register("claude-code-tmux", newFromConfig)
 }
 
 func newFromConfig(cfg map[string]any) (backend.Backend, error) {
