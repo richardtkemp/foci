@@ -407,6 +407,12 @@ func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
 	return fmt.Errorf("SendSpecialKey not supported by stream backend")
 }
 
+// Interrupt cancels the current agent turn by sending an interrupt control
+// message over the stdio protocol.
+func (b *Backend) Interrupt(ctx context.Context) error {
+	return b.writer.SendInterrupt()
+}
+
 // ---------------------------------------------------------------------------
 // Handler interface implementation (called by Reader goroutine)
 // ---------------------------------------------------------------------------

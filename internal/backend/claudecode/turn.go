@@ -265,6 +265,18 @@ func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
 	return pane.sendSpecial(ctx, key)
 }
 
+// Interrupt cancels the current agent turn by sending Escape×2 (cancel
+// current operation) then Ctrl-C (clear any remaining input).
+func (b *Backend) Interrupt(ctx context.Context) error {
+	for i := 0; i < 2; i++ {
+		if err := b.SendSpecialKey(ctx, "Escape"); err != nil {
+			return err
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return b.SendSpecialKey(ctx, "C-c")
+}
+
 // IsTurnInFlight reports whether a SendToPane callback is registered but
 // hasn't fired yet. A steered follow-up message should be sent via
 // SendCommand (text only, no callback) to avoid overwriting the callback.
