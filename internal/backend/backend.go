@@ -10,23 +10,29 @@ import "context"
 // Backend is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
 // management. Foci sends composed prompts (with metadata, nudges, reminders)
-// via SendTurn and receives streaming events back.
+// via SendToPane and receives streaming events back.
 type Backend interface {
 	// Start launches the coding agent subprocess.
 	// Called once during agent setup. The backend should be ready to
 	// accept turns after Start returns.
 	Start(ctx context.Context, opts StartOptions) error
 
-	// SendTurn sends a composed prompt to the coding agent and streams
+	// SendToPane sends a composed prompt to the coding agent and streams
 	// events back via the handler. May return before the turn completes
 	// (implementation-dependent). Use WaitForTurn to block until the
 	// turn finishes.
-	SendTurn(ctx context.Context, prompt string, handler *EventHandler) (*TurnResult, error)
+	SendToPane(ctx context.Context, prompt string, handler *EventHandler) (*TurnResult, error)
 
 	// WaitForTurn blocks until the next turn completion (stop_reason
 	// "end_turn" in the session output). Returns immediately if no turn
 	// is in progress. Respects context cancellation/deadline.
 	WaitForTurn(ctx context.Context) error
+
+	// IsTurnInFlight reports whether a turn callback is registered but
+	// hasn't fired yet. Used by RunInference to detect steered follow-up
+	// messages that should be pasted into the pane without creating a
+	// new turn pipeline (CC treats them as part of the same turn).
+	IsTurnInFlight() bool
 
 	// SendCommand sends a slash command directly to the agent
 	// (e.g. "/compact ...", "/model opus"). These bypass Foci's prompt
@@ -49,12 +55,17 @@ type Backend interface {
 	// backend falls back to plain text via ReplyFunc.
 	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
+	// SetOnPermissionCleared sets a callback fired when a permission prompt
+	// disappears from the TUI (user responded, CC timed out, or Escape).
+	// Used by DelegatedManager to unblock WaitForPermission.
+	SetOnPermissionCleared(fn func())
+
 	// SetOnSessionReady sets a callback fired once when the backend
 	// discovers its session ID. Used to persist the ID for resume-after-restart.
 	SetOnSessionReady(fn func(sessionID string))
 
 	// SetTypingFunc sets a callback to control the platform's typing indicator.
-	// Called with true when the backend starts working (SendTurn), and false
+	// Called with true when the backend starts working (SendToPane), and false
 	// when the turn completes (end_turn). Optional — nil means no typing.
 	SetTypingFunc(fn func(typing bool))
 

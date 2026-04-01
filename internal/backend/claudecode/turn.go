@@ -13,8 +13,8 @@ import (
 
 // WaitForTurn blocks until the watcher observes the next turn completion
 // (assistant message with stop_reason "end_turn"). Returns ctx.Err() on
-// cancellation or deadline. Safe to call after SendTurn — if the turn
-// completes between SendTurn returning and WaitForTurn being called, the
+// cancellation or deadline. Safe to call after SendToPane — if the turn
+// completes between SendToPane returning and WaitForTurn being called, the
 // signal is buffered and WaitForTurn returns immediately.
 func (b *Backend) WaitForTurn(ctx context.Context) error {
 	ch := make(chan struct{}, 1)
@@ -79,7 +79,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 	}
 }
 
-// SendTurn sends a prompt to the Claude Code pane. It does not block waiting
+// SendToPane sends a prompt to the Claude Code pane. It does not block waiting
 // for a response — output is delivered asynchronously via the persistent
 // watcher handler using the ReplyFunc set by SetReplyFunc. Returns immediately.
 // Use WaitForTurn to block until the turn completes.
@@ -87,7 +87,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // If handler.OnTurnComplete is set, it is registered as a per-turn callback
 // that fires once when the watcher sees end_turn, then auto-nils. This is
 // the preferred mechanism for TurnContract's CompletionChan pattern.
-func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
 	b.mu.Lock()
 	if b.pane == nil {
 		b.mu.Unlock()
@@ -116,7 +116,10 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 		return nil, fmt.Errorf("send prompt: %w", err)
 	}
 
-	// Signal typing indicator — CC is now working.
+	// Signal typing indicator — CC is now working. TypingFunc propagates
+	// both true (here) and false (fireTurnComplete). For backend turns,
+	// processAgentMessage has already returned, so TypingFunc owns the
+	// typing lifecycle from this point until end_turn.
 	b.replyMu.Lock()
 	typFn := b.typingFunc
 	b.replyMu.Unlock()
@@ -136,10 +139,12 @@ func (b *Backend) SendTurn(ctx context.Context, prompt string, handler *backend.
 }
 
 // fireTurnComplete fires the per-turn callback (if set) with the given
-// result, then nils it (one-shot). Also notifies any WaitForTurn caller
-// and stops the typing indicator.
+// result, then nils it (one-shot). Also notifies any WaitForTurn caller.
+// Stops the typing indicator via TypingFunc(false) — for backend turns,
+// processAgentMessage has already returned so this is the correct place
+// to stop typing (on end_turn, when CC is actually done).
 func (b *Backend) fireTurnComplete(result *backend.TurnResult) {
-	// Stop typing indicator — CC is done.
+	// Stop typing indicator — CC's turn is done.
 	b.replyMu.Lock()
 	typFn := b.typingFunc
 	b.replyMu.Unlock()
@@ -206,6 +211,12 @@ func (b *Backend) SetPermissionPromptFunc(fn backend.PermissionPromptFunc) {
 	b.permPromptFunc = fn
 }
 
+func (b *Backend) SetOnPermissionCleared(fn func()) {
+	b.lastPromptMu.Lock()
+	defer b.lastPromptMu.Unlock()
+	b.onPermCleared = fn
+}
+
 func (b *Backend) SetOnSessionReady(fn func(string)) {
 	b.replyMu.Lock()
 	defer b.replyMu.Unlock()
@@ -251,6 +262,15 @@ func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
 		return fmt.Errorf("claude-code backend not started")
 	}
 	return pane.sendSpecial(ctx, key)
+}
+
+// IsTurnInFlight reports whether a SendToPane callback is registered but
+// hasn't fired yet. A steered follow-up message should be sent via
+// SendCommand (text only, no callback) to avoid overwriting the callback.
+func (b *Backend) IsTurnInFlight() bool {
+	b.turnCompleteMu.Lock()
+	defer b.turnCompleteMu.Unlock()
+	return b.turnCompleteFn != nil
 }
 
 func (b *Backend) SendCommand(ctx context.Context, command string) error {

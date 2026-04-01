@@ -128,12 +128,12 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 
 	// Session discovery is deferred — CC may not write the session file
 	// until the first message is received. The watcher is created lazily
-	// on the first SendTurn call via ensureWatcher.
+	// on the first SendToPane call via ensureWatcher.
 	return nil
 }
 
 // ensureWatcher discovers the CC session and creates the file watcher
-// if not already set up. Called lazily on the first SendTurn — CC may not
+// if not already set up. Called lazily on the first SendToPane — CC may not
 // write the session file until it receives a message. Polls with a timeout.
 func (b *Backend) ensureWatcher(ctx context.Context) error {
 	if b.watcher != nil {
@@ -188,7 +188,7 @@ func (b *Backend) ensureWatcher(ctx context.Context) error {
 func (b *Backend) discoverSession() {
 	sessionID, jsonlPath, err := discoverSessionFile(b.pane.pid, b.workDir)
 	if err != nil {
-		return // will be discovered lazily on first SendTurn
+		return // will be discovered lazily on first SendToPane
 	}
 	if err := b.startWatcher(jsonlPath); err != nil {
 		return
@@ -224,11 +224,20 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 
 	// Set persistent handler that delegates to the current turn's replyFunc
 	// and fires per-turn + legacy WaitForTurn callbacks on completion.
+	// OnText also re-establishes the typing indicator — by the time the
+	// watcher sees CC's first output, processAgentMessage has returned and
+	// its defer has stopped typing. This restarts it for the duration of
+	// the turn (fireTurnComplete stops it via OnTurnDone).
 	w.setHandler(&backend.EventHandler{
 		OnText: func(text string) {
+			// Re-establish typing — CC is actively producing output.
 			b.replyMu.Lock()
+			typFn := b.typingFunc
 			fn := b.replyFunc
 			b.replyMu.Unlock()
+			if typFn != nil {
+				typFn(true)
+			}
 			if fn != nil {
 				fn(text)
 			}
@@ -241,12 +250,29 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	// Start long-lived watch loop — lives until Close() cancels watchCtx.
 	b.watchCtx, b.watchStop = context.WithCancel(context.Background())
 	go w.watchLoop(b.watchCtx)
+
+	// Read any entries written between recordPreSendOffset and now.
+	// fsnotify only fires for writes AFTER the watcher is added, so
+	// entries written in the gap (e.g. CC completing a turn before the
+	// watcher started) would be missed without this initial read.
+	w.mu.Lock()
+	h := w.handler
+	w.mu.Unlock()
+	if h != nil {
+		w.readNew(h)
+	}
+
 	return nil
 }
 
 // checkPermissionPrompt captures the tmux pane and checks for a CC permission
-// prompt. If found (and not a duplicate), forwards it to the user via the
-// platform with inline keyboard choices. Called periodically by the watcher loop.
+// prompt. Tracks state transitions: fires the prompt callback when a prompt
+// appears, and fires onPermCleared when it disappears (user responded, CC
+// timed out, or Escape was pressed). Called periodically by the watcher loop.
+//
+// This drives permission-gated message queuing: while a permission prompt is
+// visible, DelegatedManager.WaitForPermission blocks incoming messages and
+// injections from being sent to the tmux pane (which would corrupt the TUI).
 func (b *Backend) checkPermissionPrompt() {
 	pane := b.pane
 	if pane == nil {
@@ -261,17 +287,33 @@ func (b *Backend) checkPermissionPrompt() {
 		return
 	}
 	prompt := extractPermissionPrompt(content)
+
+	b.lastPromptMu.Lock()
+	wasActive := b.permissionActive
+
 	if prompt == nil {
+		// No prompt visible. If one was active, fire the cleared callback.
+		if wasActive {
+			b.permissionActive = false
+			b.lastPrompt = ""
+			clearedFn := b.onPermCleared
+			b.lastPromptMu.Unlock()
+			if clearedFn != nil {
+				clearedFn()
+			}
+		} else {
+			b.lastPromptMu.Unlock()
+		}
 		return
 	}
 
-	// Skip if this is the same prompt we already sent.
-	b.lastPromptMu.Lock()
+	// Prompt is visible. Skip if this is the same prompt we already sent.
 	if prompt.Raw == b.lastPrompt {
 		b.lastPromptMu.Unlock()
 		return
 	}
 	b.lastPrompt = prompt.Raw
+	b.permissionActive = true
 	b.lastPromptMu.Unlock()
 
 	b.replyMu.Lock()
