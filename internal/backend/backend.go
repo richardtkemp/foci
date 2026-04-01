@@ -153,10 +153,18 @@ type StartOptions struct {
 // EventHandler receives streaming events during a turn.
 // All callbacks are optional — nil callbacks are silently skipped.
 type EventHandler struct {
-	OnText         func(text string)                                    // new text content from the agent
-	OnToolStart    func(name string, input string)                      // tool execution began
-	OnToolEnd      func(name string, output string, isError bool)       // tool execution finished
-	OnTurnComplete func(result *TurnResult)                             // turn finished
+	OnText         func(text string)                              // new text content from the agent
+	OnToolStart    func(name string, input string)                // tool execution began
+	OnToolEnd      func(name string, output string, isError bool) // tool execution finished
+	OnTurnComplete func(result *TurnResult)                       // turn finished
+
+	// SteerCheckFunc is called by the backend at tool execution boundaries
+	// to check for pending steer messages. Non-blocking; returns nil if no
+	// steer is pending. If non-nil text is returned, the backend injects
+	// it as a "now"-priority user message to interrupt the current tool
+	// execution. Used by the delegated transport to drain steer messages
+	// buffered by the platform's MessageQueue.
+	SteerCheckFunc func() []string
 }
 
 // TurnResult is the outcome of a completed turn.

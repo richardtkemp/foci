@@ -353,6 +353,27 @@ func (b *Backend) SendCommand(ctx context.Context, command string, priority stri
 	return b.writer.SendUser(command)
 }
 
+// checkAndSendSteers drains the handler's SteerCheckFunc and sends any
+// pending steer messages to CC with "now" priority. Called at tool execution
+// boundaries (after tool_use blocks, during tool progress) so that steered
+// messages buffered by the platform MessageQueue are injected mid-turn
+// rather than waiting for the turn to complete.
+func (b *Backend) checkAndSendSteers() {
+	b.turnMu.Lock()
+	handler := b.turnHandler
+	b.turnMu.Unlock()
+	if handler == nil || handler.SteerCheckFunc == nil {
+		return
+	}
+	steers := handler.SteerCheckFunc()
+	for _, text := range steers {
+		if text == "" {
+			continue
+		}
+		_ = b.writer.SendUserWithPriority("[user] "+text, PriorityNow)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Callback setters
 // ---------------------------------------------------------------------------
@@ -439,6 +460,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	handler := b.turnHandler
 	b.turnMu.Unlock()
 
+	hasToolUse := false
 	for _, block := range msg.Message.Content {
 		switch block.Type {
 		case "text":
@@ -454,6 +476,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			}
 
 		case "tool_use":
+			hasToolUse = true
 			b.turnMu.Lock()
 			b.turnTools++
 			b.turnMu.Unlock()
@@ -466,6 +489,13 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		case "thinking":
 			// Thinking blocks are informational; optionally log.
 		}
+	}
+
+	// Check for steer messages after processing tool_use blocks. CC is about
+	// to execute tools — this is the natural injection point for redirecting
+	// the agent mid-turn.
+	if hasToolUse {
+		b.checkAndSendSteers()
 	}
 
 	// Restart typing indicator if the turn hasn't ended.
@@ -648,6 +678,9 @@ func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
+	// Check for steer messages during long-running tools. Without this,
+	// steers would only be checked between tool batches (OnAssistant).
+	b.checkAndSendSteers()
 }
 
 // OnStreamEvent handles token-level streaming events.
