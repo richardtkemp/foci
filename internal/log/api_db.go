@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"time"
 
 	"foci/internal/sqlite"
 	"foci/internal/timeutil"
@@ -71,6 +72,64 @@ func CloseAPIDB() {
 		_ = apiLog.db.Close()
 		apiLog = nil
 	}
+}
+
+// SessionStats holds aggregated session statistics from the API call log.
+type SessionStats struct {
+	TurnCount     int       // conversation + delegated_turn calls
+	TotalCalls    int       // all call types
+	TotalCost     float64   // sum of cost_usd
+	CreatedAt     time.Time // earliest timestamp
+	LastActivity  time.Time // latest timestamp
+	ContextTokens int       // input+cache from most recent turn
+}
+
+// QuerySessionStats returns aggregated stats for a session key from api.db.
+// Works for both API and delegated (CC backend) sessions.
+func QuerySessionStats(sessionKey string) (*SessionStats, error) {
+	if apiLog == nil || apiLog.db == nil {
+		return nil, fmt.Errorf("api db not initialised")
+	}
+
+	var stats SessionStats
+	var createdStr, activeStr sql.NullString
+
+	// Aggregate stats in one query.
+	err := apiLog.db.QueryRow(`
+		SELECT
+			COUNT(*) AS total_calls,
+			COUNT(CASE WHEN call_type IN ('conversation', 'delegated_turn') THEN 1 END) AS turn_count,
+			COALESCE(SUM(cost_usd), 0) AS total_cost,
+			MIN(ts) AS created_at,
+			MAX(ts) AS last_activity
+		FROM api_calls
+		WHERE session = ?`, sessionKey,
+	).Scan(&stats.TotalCalls, &stats.TurnCount, &stats.TotalCost, &createdStr, &activeStr)
+	if err != nil {
+		return nil, fmt.Errorf("query session stats: %w", err)
+	}
+
+	if createdStr.Valid {
+		stats.CreatedAt, _ = time.Parse(time.RFC3339, createdStr.String)
+	}
+	if activeStr.Valid {
+		stats.LastActivity, _ = time.Parse(time.RFC3339, activeStr.String)
+	}
+
+	// Context tokens from the most recent turn (conversation or delegated).
+	var ctxTokens sql.NullInt64
+	_ = apiLog.db.QueryRow(`
+		SELECT COALESCE(input_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+		FROM api_calls
+		WHERE session = ? AND call_type IN ('conversation', 'delegated_turn', '')
+		ORDER BY ts DESC
+		LIMIT 1`, sessionKey,
+	).Scan(&ctxTokens)
+	if ctxTokens.Valid {
+		stats.ContextTokens = int(ctxTokens.Int64)
+	}
+
+	return &stats, nil
 }
 
 func (a *apiDB) insert(entry APIEntry) {

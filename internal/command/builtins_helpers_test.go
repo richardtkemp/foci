@@ -27,6 +27,25 @@ func writeAPILog(t *testing.T, entries []log.APIEntry) string {
 	return path
 }
 
+// initAPIDB is a helper that initializes a temporary api.db and inserts entries.
+// It also writes the JSONL log for commands that still use ReadAPILog.
+// Returns the JSONL path (for APILogPath) and registers cleanup.
+func initAPIDB(t *testing.T, entries []log.APIEntry) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "api.db")
+	if err := log.InitAPIDB(dbPath); err != nil {
+		t.Fatalf("InitAPIDB: %v", err)
+	}
+	t.Cleanup(func() { log.CloseAPIDB() })
+
+	for _, e := range entries {
+		log.API(e) // writes to DB (and skips JSONL since logger has no apiFile)
+	}
+
+	return writeAPILog(t, entries)
+}
+
 // testContextInfo returns a standard ContextInfo for testing context commands.
 func testContextInfo() ContextInfo {
 	return ContextInfo{

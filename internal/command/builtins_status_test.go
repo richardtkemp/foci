@@ -9,32 +9,24 @@ import (
 	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 )
 
 // TestStatusCommand verifies status output contains all required session info,
-// API call stats, and formatting. It creates a real session store with messages
-// so that SessionModel, MessageCount, CreatedAt, and LastActivity all resolve.
+// API call stats, and formatting. Uses api.db for session stats — works for
+// both API and delegated (CC backend) sessions.
 func TestStatusCommand(t *testing.T) {
 	now := time.Now().UTC()
 	sk := "main/c1/100"
-	path := writeAPILog(t, []log.APIEntry{
-		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001},
-		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CostUSD: 0.002},
-		{Timestamp: now, Session: "other/c2/200", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005},
+	path := initAPIDB(t, []log.APIEntry{
+		{Timestamp: now, Session: sk, Model: "claude-haiku-4-5", Input: 100, Output: 50, CacheRead: 80, CacheWrite: 100, CostUSD: 0.001, CallType: "conversation"},
+		{Timestamp: now.Add(time.Minute), Session: sk, Model: "claude-haiku-4-5", Input: 200, Output: 100, CacheRead: 150, CacheWrite: 0, CostUSD: 0.002, CallType: "conversation"},
+		{Timestamp: now, Session: "other/c2/200", Model: "claude-haiku-4-5", Input: 500, Output: 200, CostUSD: 0.005, CallType: "conversation"},
 	})
 
-	// Set up a real session store with messages so MessageCount/CreatedAt/LastActivity work.
 	sessDir := t.TempDir()
 	store := session.NewStore(sessDir)
-	w := store.For(sk)
-	for i := 0; i < 42; i++ {
-		if err := w.Append(sk, provider.Message{Role: "user", Content: provider.TextContent("msg")}); err != nil {
-			t.Fatalf("Append: %v", err)
-		}
-	}
 
 	ag := &agent.Agent{Model: "claude-haiku-4-5"}
 
@@ -59,7 +51,7 @@ func TestStatusCommand(t *testing.T) {
 		"main",
 		sk,
 		"claude-haiku-4-5",
-		"42",
+		"2",       // 2 conversation turns
 		"idle",
 		"2h30m",
 		"$0.00",   // session cost
