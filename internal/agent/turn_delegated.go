@@ -28,9 +28,14 @@ func (t *DelegatedTransport) RegisterTurn(ts *TurnState) func()        { return 
 
 // --- Phase 2: Turn preparation ---
 
-// ResolveModelEffort reads the agent-level model. The delegated transport
-// doesn't do per-turn model switching — the model is set at Start time.
+// ResolveModelEffort uses the actual model learned from the JSONL watcher
+// (stored in sessionMeta by UpdateSessionMeta), falling back to the
+// agent-level model name before the first turn completes.
 func (t *DelegatedTransport) ResolveModelEffort(ts *TurnState) {
+	if m := t.agent.SessionModel(ts.SessionKey); m != "" {
+		ts.TurnModel = m
+		return
+	}
 	ts.TurnModel = t.agent.Model
 }
 
