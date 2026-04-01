@@ -114,6 +114,7 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		"--print",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
+		"--permission-prompt-tool", "stdio",
 		"--include-partial-messages",
 		"--include-hook-events",
 		"--verbose",
