@@ -45,11 +45,27 @@ func handleRestartAndFirstRun(
 			agentWelcome = welcomeContent
 		}
 
-		if !needsRestart && agentWelcome == "" {
-			continue // nothing to inject for this agent
+		inst := agents[agentID]
+
+		// Respect startup_notify config: skip restart injection if all
+		// platform connections for this agent have it disabled.
+		agentNeedsRestart := needsRestart
+		if agentNeedsRestart {
+			hasStartupNotify := false
+			for _, conn := range connMgr.AllForAgent(agentID) {
+				if inst.resolved.PlatformNotify(conn.PlatformName()).StartupNotify {
+					hasStartupNotify = true
+					break
+				}
+			}
+			if !hasStartupNotify {
+				agentNeedsRestart = false
+			}
 		}
 
-		inst := agents[agentID]
+		if !agentNeedsRestart && agentWelcome == "" {
+			continue // nothing to inject for this agent
+		}
 		agentID := agentID
 		go func() {
 			sk := mostRecentSessionKey(inst.ag, connMgr, agentID)
@@ -61,10 +77,10 @@ func handleRestartAndFirstRun(
 			tag := "SYSTEM RESTART"
 			var body string
 			switch {
-			case needsRestart && agentWelcome != "":
+			case agentNeedsRestart && agentWelcome != "":
 				// Both restart + welcome: combine into one message
 				body = agentWelcome + "\n\n---\n" + diagnosis.Summary
-			case needsRestart:
+			case agentNeedsRestart:
 				body = diagnosis.Summary
 			default:
 				// Welcome-only (clean restart with code update)
