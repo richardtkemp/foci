@@ -37,6 +37,12 @@ var registry = map[string]Model{
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
 	},
+	"claude-opus-4-6[1m]": { // CC reports model with [1m] suffix for Max subscription
+		ContextWindow: 1_000_000,
+		Effort: true, Thinking: true, Speed: true,
+		InputPer1M: 15.00, OutputPer1M: 75.00,
+		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
+	},
 
 	// Claude Code backends — default to largest available context window so
 	// we don't trigger spurious compaction before learning the true model.

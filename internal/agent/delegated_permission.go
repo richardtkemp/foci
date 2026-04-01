@@ -44,7 +44,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		if !allow {
 			msg = "User denied permission"
 		}
-		log.Debugf("agent/perm", "responding via protocol: reqID=%s allow=%v", requestID, allow)
+		log.Debugf("agent/perm", "responding via protocol: reqID=%s choice=%q allow=%v", requestID, choice, allow)
 		return pr.RespondToPermission(requestID, allow, msg)
 	}
 
