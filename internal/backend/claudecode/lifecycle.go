@@ -135,10 +135,40 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 // ensureWatcher discovers the CC session and creates the file watcher
 // if not already set up. Called lazily on the first SendToPane — CC may not
 // write the session file until it receives a message. Polls with a timeout.
+//
+// Safe to call without b.mu held — uses its own lock for the nil check.
+// The discovery loop and startWatcher run outside any lock to avoid blocking
+// other goroutines that need b.mu (e.g. SessionFilePath from RegisterSessionIndex).
 func (b *Backend) ensureWatcher(ctx context.Context) error {
+	b.mu.Lock()
 	if b.watcher != nil {
+		b.mu.Unlock()
 		return nil
 	}
+	if b.watcherStarting {
+		b.mu.Unlock()
+		// Another goroutine is already discovering — wait for it.
+		for {
+			time.Sleep(100 * time.Millisecond)
+			b.mu.Lock()
+			if b.watcher != nil || !b.watcherStarting {
+				b.mu.Unlock()
+				return nil
+			}
+			b.mu.Unlock()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+		}
+	}
+	b.watcherStarting = true
+	b.mu.Unlock()
+
+	defer func() {
+		b.mu.Lock()
+		b.watcherStarting = false
+		b.mu.Unlock()
+	}()
 
 	deadline, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -173,7 +203,9 @@ func (b *Backend) ensureWatcher(ctx context.Context) error {
 				lastErr = "watcher: " + err.Error()
 				continue
 			}
+			b.mu.Lock()
 			b.sessionID = sessionID
+			b.mu.Unlock()
 			log.Infof("backend/cc", "session discovered: %s (pid %d)", sessionID, childPID)
 			if b.onSessionReady != nil {
 				b.onSessionReady(sessionID)
@@ -199,11 +231,14 @@ func (b *Backend) discoverSession() {
 // startWatcher initializes the JSONL file watcher and starts the
 // long-lived watch loop goroutine.
 func (b *Backend) startWatcher(jsonlPath string) error {
-	w, err := newSessionWatcher(jsonlPath, b.preSendOffset)
+	b.mu.Lock()
+	offset := b.preSendOffset
+	b.mu.Unlock()
+
+	w, err := newSessionWatcher(jsonlPath, offset)
 	if err != nil {
 		return fmt.Errorf("init watcher: %w", err)
 	}
-	b.preSendOffset = -1 // consumed — future watchers default to tail
 
 	// Periodically check the tmux pane for permission prompts.
 	w.onPermissionCheck = func() {
@@ -220,7 +255,10 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 		}
 	}
 
+	b.mu.Lock()
 	b.watcher = w
+	b.preSendOffset = -1 // consumed — future watchers default to tail
+	b.mu.Unlock()
 
 	// Set persistent handler that delegates to the current turn's replyFunc
 	// and fires per-turn + legacy WaitForTurn callbacks on completion.
@@ -248,7 +286,9 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	})
 
 	// Start long-lived watch loop — lives until Close() cancels watchCtx.
+	b.mu.Lock()
 	b.watchCtx, b.watchStop = context.WithCancel(context.Background())
+	b.mu.Unlock()
 	go w.watchLoop(b.watchCtx)
 
 	// Read any entries written between recordPreSendOffset and now.

@@ -29,9 +29,10 @@ type Backend struct {
 	cfg        map[string]any
 	socketPath string // tmux socket override (empty = default)
 
-	mu             sync.Mutex
-	pane           *tmuxPane
-	watcher        *sessionWatcher
+	mu              sync.Mutex
+	pane            *tmuxPane
+	watcher         *sessionWatcher
+	watcherStarting bool // true while ensureWatcher is running (prevents concurrent discovery)
 	watchCtx       context.Context
 	watchStop      context.CancelFunc
 	sessionID string // CC session UUID
