@@ -312,7 +312,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 //
 // This drives permission-gated message queuing: while a permission prompt is
 // visible, DelegatedManager.WaitForPermission blocks incoming messages and
-// injections from being sent to the tmux pane (which would corrupt the TUI).
+// injections (sending text to the tmux pane during a prompt would corrupt the TUI).
 func (b *Backend) checkPermissionPrompt() {
 	pane := b.pane
 	if pane == nil {
