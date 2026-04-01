@@ -397,23 +397,7 @@ Subcommands:
 	if diagnosis.Class != startup.ClassClean && diagnosis.Class != startup.ClassUnknown {
 		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
 	}
-	for _, id := range agentOrder {
-		inst := agents[id]
-		for _, conn := range connMgr.AllForAgent(id) {
-			if !inst.resolved.PlatformNotify(conn.PlatformName()).StartupNotify {
-				continue
-			}
-			name := conn.Username()
-			if name == "" {
-				name = "foci"
-			}
-			text := fmt.Sprintf("%s restarted at %s", name, time.Now().Format("15:04:05"))
-			if extra := diagnosis.FormatNotification(); extra != "" {
-				text += "\n\n" + extra
-			}
-			conn.SendNotification(text)
-		}
-	}
+
 
 	// ========== HTTP server ==========
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
