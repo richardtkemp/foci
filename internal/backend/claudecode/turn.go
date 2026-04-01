@@ -284,3 +284,48 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	}
 	return pane.sendText(ctx, command)
 }
+
+// CaptureCommandOutput polls the tmux pane until content stabilises
+// (unchanged for stableFor, checked every pollInterval). Returns the
+// raw pane content. Implements backend.CommandOutputCapturer.
+func (b *Backend) CaptureCommandOutput(ctx context.Context, stableFor, pollInterval time.Duration) (string, error) {
+	b.mu.Lock()
+	pane := b.pane
+	b.mu.Unlock()
+	if pane == nil {
+		return "", fmt.Errorf("claude-code-tmux backend not started")
+	}
+
+	var lastContent string
+	var stableSince time.Time
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	// Overall timeout: stableFor + 5s grace for initial rendering.
+	deadline, cancel := context.WithTimeout(ctx, stableFor+5*time.Second)
+	defer cancel()
+
+	for {
+		select {
+		case <-deadline.Done():
+			if lastContent != "" {
+				return lastContent, nil // return what we have
+			}
+			return "", deadline.Err()
+		case <-ticker.C:
+			content, err := pane.capturePane(ctx)
+			if err != nil {
+				continue
+			}
+			if content == lastContent && lastContent != "" {
+				if time.Since(stableSince) >= stableFor {
+					return content, nil
+				}
+			} else {
+				lastContent = content
+				stableSince = time.Now()
+			}
+		}
+	}
+}
