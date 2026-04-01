@@ -59,7 +59,7 @@ type Backend interface {
 	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
 	// SetOnPermissionCleared sets a callback fired when a permission prompt
-	// disappears from the TUI (user responded, CC timed out, or Escape).
+	// is resolved (user responded, CC timed out, or cancelled).
 	// Used by DelegatedManager to unblock WaitForPermission.
 	SetOnPermissionCleared(fn func())
 

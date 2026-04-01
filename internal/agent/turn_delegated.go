@@ -100,8 +100,8 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	ts.Backend = be
 
 	// Wait for any outstanding permission prompt to resolve before sending
-	// text to the CC pane. Sending during a permission prompt would corrupt
-	// the TUI selection state. Messages queue naturally in the platform's
+	// new input. The backend cannot process messages while blocked on a
+	// permission decision. Messages queue naturally in the platform's
 	// MessageQueue channel while the worker goroutine blocks here.
 	if err := a.DelegatedManager.WaitForPermission(ts.Ctx, ts.SessionKey); err != nil {
 		return err

@@ -19,8 +19,8 @@ const DefaultIdleTimeout = 24 * time.Hour
 
 // DelegatedManager creates and manages per-session Backend instances lazily
 // for the delegated transport path. Each session key gets its own Backend
-// (own tmux pane, own CC session). Idle backends are closed after IdleTimeout
-// and resumed on next message.
+// (own CC session). Idle backends are closed after IdleTimeout and resumed
+// on next message.
 type DelegatedManager struct {
 	mu       sync.Mutex
 	backends map[string]*managedBackend // sessionKeyBase → managed backend
@@ -36,7 +36,7 @@ type DelegatedManager struct {
 	SendFunc func(sessionKey, text string)
 
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
-	// requestID is the CC protocol request ID (empty for tmux backends).
+	// requestID is the CC protocol request ID.
 	// If nil, backends fall back to plain text via SendFunc.
 	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []backend.PromptChoice)
 
@@ -66,8 +66,8 @@ type managedBackend struct {
 	sessionKey string // full session key from last message (for reply routing)
 
 	// Permission prompt gating. When a permission prompt is outstanding,
-	// incoming messages and injections must wait — sending text to CC's
-	// tmux pane while the TUI shows a selection prompt would corrupt it.
+	// incoming messages and injections must wait — the backend cannot
+	// process new input until the prompt is resolved.
 	// See WaitForPermission / SetPermissionPending.
 	permMu      sync.Mutex
 	permPending bool
