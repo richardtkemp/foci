@@ -77,12 +77,15 @@ type Backend struct {
 	lastModel     string // from assistant message
 
 	// Callbacks (set before Start, read-only after)
-	replyFunc      backend.ReplyFunc
-	permPromptFn   backend.PermissionPromptFunc
-	onPermCleared  func()
-	onPermPending  func()
-	onSessionReady func(sessionID string)
-	typingFunc     func(typing bool)
+	replyFunc          backend.ReplyFunc
+	permPromptFn       backend.PermissionPromptFunc
+	onPermCleared      func()
+	onPermPending      func()
+	onSessionReady     func(sessionID string)
+	typingFunc         func(typing bool)
+	onCompactionStart  func()            // fired when status="compacting"
+	onCompactionDone   func(preTokens int) // fired on compact_boundary
+	onAgentStatus      func(text string)   // fired on task events
 }
 
 // newRequestID generates a simple unique request ID for control messages.
@@ -361,6 +364,16 @@ func (b *Backend) SetOnSessionReady(fn func(string)) { b.onSessionReady = fn }
 // SetTypingFunc sets a callback to control the platform's typing indicator.
 func (b *Backend) SetTypingFunc(fn func(bool)) { b.typingFunc = fn }
 
+// SetOnCompactionStart sets a callback fired when CC begins compacting.
+func (b *Backend) SetOnCompactionStart(fn func()) { b.onCompactionStart = fn }
+
+// SetOnCompactionDone sets a callback fired when CC finishes compaction.
+// preTokens is the token count before compaction.
+func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) { b.onCompactionDone = fn }
+
+// SetOnAgentStatus sets a callback for agent/task lifecycle events.
+func (b *Backend) SetOnAgentStatus(fn func(string)) { b.onAgentStatus = fn }
+
 // ---------------------------------------------------------------------------
 // State methods
 // ---------------------------------------------------------------------------
@@ -523,18 +536,43 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 
 	case "status":
 		var status StatusMessage
-		_ = json.Unmarshal(raw, &status)
-		// Could track compaction state here.
+		if err := json.Unmarshal(raw, &status); err != nil {
+			return
+		}
+		if status.Status != nil && *status.Status == "compacting" {
+			if b.onCompactionStart != nil {
+				b.onCompactionStart()
+			}
+		}
 
 	case "compact_boundary":
 		var cb CompactBoundaryMessage
-		_ = json.Unmarshal(raw, &cb)
-		// Could fire compaction complete callback.
+		if err := json.Unmarshal(raw, &cb); err != nil {
+			return
+		}
+		if b.onCompactionDone != nil {
+			b.onCompactionDone(cb.CompactMetadata.PreTokens)
+		}
 
 	case "session_state_changed":
 		var ss SessionStateMessage
 		_ = json.Unmarshal(raw, &ss)
-		// Track state for diagnostics.
+
+	case "task_started", "task_progress", "task_notification":
+		var task TaskEvent
+		if err := json.Unmarshal(raw, &task); err != nil {
+			return
+		}
+		if b.onAgentStatus != nil {
+			switch subtype {
+			case "task_started":
+				b.onAgentStatus(fmt.Sprintf("🔄 Task started: %s", task.Description))
+			case "task_notification":
+				if task.Status == "completed" {
+					b.onAgentStatus(fmt.Sprintf("✅ Task complete: %s", task.Summary))
+				}
+			}
+		}
 
 	case "api_retry":
 		var retry APIRetryMessage
@@ -586,18 +624,49 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 	}
 	if json.Unmarshal(raw, &env) == nil &&
 		env.Event.Type == "content_block_delta" &&
-		env.Event.Delta.Type == "text_delta" {
-		// Could fire a text delta observer here.
-		_ = env.Event.Delta.Text
+		env.Event.Delta.Type == "text_delta" &&
+		env.Event.Delta.Text != "" {
+		b.turnMu.Lock()
+		handler := b.turnHandler
+		b.turnMu.Unlock()
+		if handler != nil && handler.OnText != nil {
+			handler.OnText(env.Event.Delta.Text)
+		}
 	}
 }
 
 // OnError handles errors from the reader (scanner errors, broken pipe, etc.).
 func (b *Backend) OnError(err error) {
-	// If the error indicates CC died, mark as not running.
 	b.mu.Lock()
 	b.running = false
 	b.mu.Unlock()
+
+	// If a turn was in-flight, fire OnTurnComplete with an error indication
+	// so the caller doesn't block forever on CompletionChan.
+	b.turnMu.Lock()
+	handler := b.turnHandler
+	b.turnHandler = nil
+	b.turnActive = false
+	resultCh := b.turnResultCh
+	b.turnMu.Unlock()
+
+	if handler != nil && handler.OnTurnComplete != nil {
+		handler.OnTurnComplete(&backend.TurnResult{
+			Text: fmt.Sprintf("Error: CC process exited unexpectedly: %v", err),
+		})
+	}
+
+	if b.typingFunc != nil {
+		b.typingFunc(false)
+	}
+
+	// Unblock WaitForTurn.
+	if resultCh != nil {
+		select {
+		case resultCh <- &ResultMessage{Subtype: "error_during_execution", IsError: true}:
+		default:
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
