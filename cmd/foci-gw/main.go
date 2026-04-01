@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "foci/internal/backend/claudecode" // register claude-code backend
+	_ "foci/internal/backend/claudecode" // register claude-code-tmux backend
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 

@@ -1026,7 +1026,7 @@ Fields that only exist per-agent in `[[agents]]`. These have no global equivalen
 | `name` | string | capitalised `id` | Human-readable name (e.g. `"Clutch"`). Defaults to capitalised agent ID (e.g. `clutch` → `Clutch`). Used in `/voice` WebSocket agent list. |
 | `emoji` | string | `""` | Emoji for agent (e.g. `"🥔"`). Used in `/voice` WebSocket agent list. |
 | `workspace` | string | `$HOME/$id` | Path to workspace directory containing character files (IDENTITY.md, SOUL.md, etc.). Defaults to `$HOME/<agent-id>` if not set. |
-| `backend` | string | `""` | Backend selection. Empty or `"api"` = traditional agent loop (Foci calls API, executes tools). A coding agent name (`"claude-code"`, `"codex"`, `"opencode"`) delegates entire turns to an external agent subprocess. |
+| `backend` | string | `""` | Backend selection. Empty or `"api"` = traditional agent loop (Foci calls API, executes tools). A coding agent name (`"claude-code-tmux"`, `"codex"`, `"opencode"`) delegates entire turns to an external agent subprocess. |
 | `backend_config` | table | `{}` | Backend-specific settings. Interpreted by the backend implementation. See [Coding Agent Backends](#coding-agent-backends). |
 
 ### Per-agent platform configuration (`[[agents.platforms]]`)
@@ -1152,7 +1152,7 @@ Set `backend` on an `[[agents]]` entry to enable:
 ```toml
 [[agents]]
 id = "coder"
-backend = "claude-code"
+backend = "claude-code-tmux"
 workspace = "/home/coder/projects/myapp"
 
 [agents.backend_config]
@@ -1167,7 +1167,7 @@ workspace = "/home/coder/projects/myapp"
 | Backend | Description |
 |---|---|
 | `"api"` (default) | Traditional agent loop — Foci calls LLM API, executes tools, manages sessions. |
-| `"claude-code"` | Claude Code running interactively in a tmux pane. Input via tmux paste-buffer, output via session JSONL file watcher. |
+| `"claude-code-tmux"` | Claude Code running interactively in a tmux pane. Input via tmux paste-buffer, output via session JSONL file watcher. |
 
 Codex and OpenCode backends are planned but not yet implemented.
 

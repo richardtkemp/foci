@@ -226,7 +226,7 @@ type AgentConfig struct {
 	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
 
 	// Backend selection: empty or "api" = traditional agent loop.
-	// A coding agent name (e.g. "claude-code", "codex", "opencode") delegates
+	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
 	// entire turns to an external agent subprocess.
 	Backend       string         `toml:"backend"`
 	BackendConfig map[string]any `toml:"backend_config"` // backend-specific settings
