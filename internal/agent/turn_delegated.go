@@ -107,14 +107,19 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		return err
 	}
 
-	// Steered follow-up: a turn is already in-flight. Paste the text into
-	// the pane without creating a new turn pipeline. CC sees it as additional
-	// input to the same turn. Close CompletionChan immediately so
-	// runPostTurn exits without doing any post-turn work (the original
-	// turn's handler will handle usage, compaction, etc.).
+	// Follow-up: a turn is already in-flight. Send the text to CC without
+	// creating a new turn pipeline. CC queues it after the current turn
+	// (priority "next"). Close CompletionChan immediately so runPostTurn
+	// exits without doing any post-turn work (the original turn's handler
+	// will handle usage, compaction, etc.).
+	//
+	// Note: urgent steers (steer_mode=true) don't reach this path — they're
+	// buffered in steerParts and injected mid-turn by the ccstream backend's
+	// checkAndSendSteers with priority "now". This path handles the
+	// steer_mode=false case where messages flow through the channel normally.
 	if be.IsTurnInFlight() {
-		log.Infof("delegated", "session=%s steered message merged into in-flight turn", ts.SessionKey)
-		if err := be.SendCommand(ts.Ctx, ts.Prompt, "now"); err != nil {
+		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
+		if err := be.SendCommand(ts.Ctx, ts.Prompt, "next"); err != nil {
 			close(ts.CompletionChan)
 			return err
 		}
@@ -147,6 +152,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			bt.LogUsage(ts)
 			close(ts.CompletionChan)
 		},
+	}
+	// Wire steer drain from the platform's MessageQueue into the backend
+	// so ccstream can inject steered messages at tool execution boundaries.
+	if cb := TurnCallbacksFromContext(ts.Ctx); cb != nil && cb.SteerCheckFunc != nil {
+		handler.SteerCheckFunc = cb.SteerCheckFunc
 	}
 
 	_, err = be.SendToPane(ts.Ctx, ts.Prompt, handler)
