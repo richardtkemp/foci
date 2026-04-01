@@ -43,8 +43,8 @@ func TestEstimateTokens(t *testing.T) {
 
 func TestContextLimit(t *testing.T) {
 	// Verifies Compactor.ContextLimit falls back to modelinfo registry
-	// defaults when no ModelMetaFn is set: Claude (200k), Gemini 2.x (1M),
-	// Gemini 1.5 (2M), unknown models (200k default).
+	// defaults when no ModelMetaFn is set: Claude haiku/sonnet (200k),
+	// Claude opus (1M), Gemini 2.x (1M), Gemini 1.5 (2M), unknown (200k).
 	c := NewCompactor(nil, 0.8)
 	tests := []struct {
 		model string
@@ -52,7 +52,7 @@ func TestContextLimit(t *testing.T) {
 	}{
 		{"claude-haiku-4-5", 200_000},
 		{"claude-sonnet-4-5", 200_000},
-		{"claude-opus-4-6", 200_000},
+		{"claude-opus-4-6", 1_000_000},
 		{"gemini-2.5-pro", 1_000_000},
 		{"gemini-2.5-flash", 1_000_000},
 		{"gemini-2.0-flash", 1_000_000},
@@ -92,9 +92,9 @@ func TestContextLimitWithModelMetaFn(t *testing.T) {
 	if got := c.ContextLimit("openrouter/z-ai/glm-5-turbo"); got != 202_000 {
 		t.Errorf("ContextLimit(glm-5-turbo) = %d, want 202000", got)
 	}
-	// Falls back to registry
-	if got := c.ContextLimit("claude-opus-4-6"); got != 200_000 {
-		t.Errorf("ContextLimit(claude-opus-4-6) = %d, want 200000", got)
+	// Falls back to registry (opus = 1M)
+	if got := c.ContextLimit("claude-opus-4-6"); got != 1_000_000 {
+		t.Errorf("ContextLimit(claude-opus-4-6) = %d, want 1000000", got)
 	}
 }
 
