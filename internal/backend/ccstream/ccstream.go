@@ -72,9 +72,10 @@ type Backend struct {
 	permMu       sync.Mutex
 	pendingPerms map[string]*pendingPermission
 
-	// Context tracking (from result messages)
-	contextWindow int    // from modelUsage.contextWindow
-	lastModel     string // from assistant message
+	// Context tracking (from result/assistant messages)
+	contextWindow int         // from modelUsage.contextWindow
+	lastModel     string      // from assistant message
+	lastUsage     *TokenUsage // per-call usage from last assistant message
 
 	// Callbacks (set before Start, read-only after)
 	replyFunc          backend.ReplyFunc
@@ -295,6 +296,10 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backen
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
+	b.mu.Lock()
+	b.lastUsage = nil // reset per-call tracking for new turn
+	b.mu.Unlock()
+
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
@@ -407,12 +412,16 @@ func (b *Backend) SendSpecialKey(ctx context.Context, key string) error {
 
 // OnAssistant handles assistant messages from CC's stdout.
 func (b *Backend) OnAssistant(msg *AssistantMessage) {
-	// Track model.
+	// Track model and per-call usage (last assistant message wins, same as
+	// the tmux watcher). The result message carries cumulative usage across
+	// all inference calls in the turn — we need per-call for context tracking.
+	b.mu.Lock()
 	if msg.Message.Model != "" {
-		b.mu.Lock()
 		b.lastModel = msg.Message.Model
-		b.mu.Unlock()
 	}
+	u := msg.Message.Usage
+	b.lastUsage = &u
+	b.mu.Unlock()
 
 	b.turnMu.Lock()
 	handler := b.turnHandler
@@ -473,8 +482,13 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	}
 
 	// Determine model: first key from ModelUsage, falling back to lastModel.
+	// Use per-call usage from the last assistant message (not the result's
+	// accumulated total) — this matches what the tmux watcher reports and
+	// gives compaction the actual context window fill, not a sum of all calls.
 	b.mu.Lock()
 	resultModel := b.lastModel
+	lastUsage := b.lastUsage
+	b.lastUsage = nil // reset for next turn
 	b.mu.Unlock()
 
 	for modelName, usage := range msg.ModelUsage {
@@ -485,16 +499,30 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		break // take first
 	}
 
-	result := &backend.TurnResult{
-		Text:      text,
-		Model:     resultModel,
-		ToolCalls: turnTools,
-		Usage: &backend.TurnUsage{
+	// Prefer per-call usage from last assistant message; fall back to
+	// result usage (which is cumulative) if no assistant messages seen.
+	var turnUsage *backend.TurnUsage
+	if lastUsage != nil {
+		turnUsage = &backend.TurnUsage{
+			InputTokens:              lastUsage.InputTokens,
+			OutputTokens:             lastUsage.OutputTokens,
+			CacheCreationInputTokens: lastUsage.CacheCreationInputTokens,
+			CacheReadInputTokens:     lastUsage.CacheReadInputTokens,
+		}
+	} else {
+		turnUsage = &backend.TurnUsage{
 			InputTokens:              msg.Usage.InputTokens,
 			OutputTokens:             msg.Usage.OutputTokens,
 			CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
 			CacheReadInputTokens:     msg.Usage.CacheReadInputTokens,
-		},
+		}
+	}
+
+	result := &backend.TurnResult{
+		Text:      text,
+		Model:     resultModel,
+		ToolCalls: turnTools,
+		Usage:     turnUsage,
 	}
 
 	// Fire handler callback OUTSIDE any lock.
