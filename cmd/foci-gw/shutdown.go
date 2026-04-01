@@ -50,10 +50,10 @@ func runShutdown(
 	// Wait for in-flight agent turns to complete naturally
 	gracefulShutdown(agents, cfg.gracefulTimeout)
 
-	// Close backend sessions (kills CC tmux panes, saves resume IDs)
+	// Close delegated sessions (kills CC tmux panes, saves resume IDs)
 	for _, inst := range agents {
-		if inst.ag.BackendManager != nil {
-			inst.ag.BackendManager.Close()
+		if inst.ag.DelegatedManager != nil {
+			inst.ag.DelegatedManager.Close()
 		}
 	}
 

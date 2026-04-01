@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"foci/internal/platform"
+	"foci/internal/timeutil"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -279,7 +280,7 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string)
 	if err := os.MkdirAll(b.display.ReceivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
-	filename := fmt.Sprintf("%s_%s_chat-%d%s", time.Now().UTC().Format("2006-01-02T15-04-05Z"), mediaType, chatID, ext)
+	filename := fmt.Sprintf("%s_%s_chat-%d%s", timeutil.FormatFilename(timeutil.Now()), mediaType, chatID, ext)
 	path := filepath.Join(b.display.ReceivedFilesDir, filename)
 	mode := b.fileMode
 	if mode == 0 {

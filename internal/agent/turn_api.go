@@ -218,10 +218,10 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 
 // --- Phase 3: Core execution ---
 
-// ExecuteTurn runs the API tool loop. This is the largest extraction —
+// RunInference runs the API tool loop. This is the largest extraction —
 // the entire for loop from agent.go:521-811 plus the safety-net defer.
 // On completion, closes ts.CompletionChan and sets ts.FinalText/FinalUsage.
-func (t *APITransport) ExecuteTurn(ts *TurnState) error {
+func (t *APITransport) RunInference(ts *TurnState) error {
 	a := t.agent
 
 	maxLoops := a.MaxToolLoops
@@ -497,7 +497,7 @@ func (t *APITransport) ExecuteTurn(ts *TurnState) error {
 // --- Phase 4: Post-turn ---
 
 // SaveSession persists new messages accumulated during the turn.
-// On success, nils NewMessages so the safety-net defer in ExecuteTurn
+// On success, nils NewMessages so the safety-net defer in RunInference
 // won't double-save.
 func (t *APITransport) SaveSession(ts *TurnState) error {
 	if len(ts.NewMessages) == 0 {
@@ -508,7 +508,7 @@ func (t *APITransport) SaveSession(ts *TurnState) error {
 	if err := writer.AppendAll(ts.SessionKey, ts.NewMessages); err != nil {
 		return err
 	}
-	ts.NewMessages = nil // saved — ExecuteTurn's safety-net defer won't double-save
+	ts.NewMessages = nil // saved — RunInference's safety-net defer won't double-save
 
 	endStats := provider.ComputeSessionStats(ts.Messages)
 	a.logger().Debugf("turn_end session=%s messages=%d blocks=%d bytes=%d tokens≈%d",
@@ -518,7 +518,7 @@ func (t *APITransport) SaveSession(ts *TurnState) error {
 
 // UpdateSessionMeta updates per-session cost/token tracking from the
 // completed turn. Per-iteration cache tracking (processAPIResponse)
-// still happens inside ExecuteTurn's loop; this handles the final update.
+// still happens inside RunInference's loop; this handles the final update.
 func (t *APITransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
@@ -530,7 +530,7 @@ func (t *APITransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 }
 
-// LogUsage is a no-op for API — usage is logged per-call inside ExecuteTurn
+// LogUsage is a no-op for API — usage is logged per-call inside RunInference
 // via logAPIResponse. Self-invoked contract method, not called by orchestrator.
 func (t *APITransport) LogUsage(ts *TurnState) {}
 

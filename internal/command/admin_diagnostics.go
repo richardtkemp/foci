@@ -12,6 +12,7 @@ import (
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/timeutil"
 	"foci/internal/tools"
 )
 
@@ -104,11 +105,11 @@ func StatusCommand() *Command {
 
 			created := cc.Sessions.CreatedAt(sk)
 			if t, err := time.Parse(time.RFC3339, created); err == nil {
-				created = t.Format("15:04 UTC")
+				created = t.Local().Format("15:04")
 			}
 			active := cc.Sessions.LastActivity(sk)
 			if t, err := time.Parse(time.RFC3339, active); err == nil {
-				active = t.Format("15:04 UTC")
+				active = t.Local().Format("15:04")
 			}
 			fmt.Fprintf(&sb, "📊 Session: %s\n", sk)
 			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", mc, status)
@@ -116,7 +117,7 @@ func StatusCommand() *Command {
 
 			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s (started %s)\n",
 				display.FormatDuration(time.Since(cc.StartTime)),
-				cc.StartTime.UTC().Format("15:04:05Z"))
+				timeutil.Format(cc.StartTime))
 
 			if contextTokens > 0 && contextLimit > 0 {
 				pct := float64(contextTokens) / float64(contextLimit) * 100

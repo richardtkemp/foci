@@ -46,6 +46,15 @@ func (b *Bot) tryDispatchViaDispatcher(ctx context.Context, msg *gotgbot.Message
 		return false
 	}
 
+	// Typing lifecycle owner for command dispatch. Commands run outside
+	// processAgentMessage, so there's no defer to clean up. Commands that
+	// trigger backend work (e.g. /reset memory formation) start typing via
+	// TypingFunc → SetTyping(true); this is the only place that cancels it.
+	// Safe to call even if no typing is active (SetTyping(false) is a no-op
+	// when the ticker isn't running).
+	// See SetTyping doc comment in bot_send.go for the full ownership model.
+	b.SetTyping(false)
+
 	// If the response includes a keyboard, send with keyboard markup.
 	if len(result.Response.Keyboard) > 0 {
 		text := result.Response.Text

@@ -101,7 +101,7 @@ Per-agent facet pools are configured in the agent's `facet_bots` list. A shared 
 
 ### Platform Button Abstraction
 
-`platform.ButtonSender` is the single interface for sending messages with interactive buttons. Both Telegram (inline keyboards) and Discord (message components) implement it. `command.KeyboardOption` is aliased to `platform.ButtonChoice` (fields: Label, Data, Row). All button construction — command keyboards, permission prompts, tool result expansion — flows through centralized helpers on `ButtonSender`. Discord uses `"im:"` callback data prefix routing for interactive messages (e.g. permission prompts from backend agents).
+`platform.ButtonSender` is the single interface for sending messages with interactive buttons. Both Telegram (inline keyboards) and Discord (message components) implement it. `command.KeyboardOption` is aliased to `platform.ButtonChoice` (fields: Label, Data, Row). All button construction — command keyboards, permission prompts, tool result expansion — flows through centralized helpers on `ButtonSender`. Discord uses `"im:"` callback data prefix routing for interactive messages (e.g. permission prompts from delegated agents).
 
 ### Voice (Telegram Voice Notes)
 
@@ -255,19 +255,19 @@ Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API defa
 Foci supports two turn-handling paths, selected per-agent via the `backend` config:
 
 - **API path (`APITransport`)** — Foci calls the LLM API directly and executes tools locally. The traditional path.
-- **Backend path (`BackendTransport`)** — A coding agent (Claude Code) runs in a tmux pane, handling inference and tool execution. Foci sends composed prompts and receives results via a JSONL session file watcher.
+- **Delegated path (`DelegatedTransport`)** — A coding agent (Claude Code) runs in a tmux pane, handling inference and tool execution. Foci sends composed prompts and receives results via a JSONL session file watcher.
 
 Both implement the `TurnContract` interface (`internal/agent/turn_contract.go`) — 20 methods covering every concern of a turn (rate limiting, session registration, prompt composition, execution, saving, compaction, etc.). Adding a new concern requires adding a method to the interface, producing compile errors in both transports until implemented.
 
-The orchestrator (`RunTurn` in `turn_orchestrator.go`) calls all 20 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Seven methods are shared via `sharedTurnOps` embedding.
+The orchestrator (`OrchestrateFullTurn` in `turn_orchestrator.go`) calls all 20 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Seven methods are shared via `sharedTurnOps` embedding.
 
-The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; backend closes it when the watcher sees `end_turn` in the JSONL. Post-turn methods (save, metadata, compaction, logging) fire inline for API or in a goroutine for backend.
+The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; delegated closes it when the watcher sees `end_turn` in the JSONL. Post-turn methods (save, metadata, compaction, logging) fire inline for API or in a goroutine for delegated.
 
-**RunOnce mode:** `BackendManager.RunOnce(ctx, prompt, systemPrompt)` runs `claude --print` synchronously for headless tasks (nudge extraction, consolidation). No tmux, no watcher — one-shot subprocess with stdout capture.
+**RunOnce mode:** `DelegatedManager.RunOnce(ctx, prompt, systemPrompt)` runs `claude --print` synchronously for headless tasks (nudge extraction, consolidation). No tmux, no watcher — one-shot subprocess with stdout capture.
 
 **Session lifecycle:**
 - **Session ID persistence:** CC session UUID is persisted on discovery. On restart, `--resume <sessionID>` reconnects to the existing session.
-- **Branch rejection:** Backend agents return HTTP 400 for `/branch`. Three strategies by task type: inject into main session (memory-formation, compaction-memory), spawn independent `RunOnce` process (consolidation, background, nudge extraction), or reject (HTTP endpoint).
+- **Branch rejection:** Delegated agents return HTTP 400 for `/branch`. Three strategies by task type: inject into main session (memory-formation, compaction-memory), spawn independent `RunOnce` process (consolidation, background, nudge extraction), or reject (HTTP endpoint).
 - **/reset:** Sends memory formation prompt, waits for completion, kills tmux pane, starts fresh CC session.
 - **/stop:** Sends Escape×2 + Ctrl-C to the CC TUI to interrupt the current turn.
 - **Stable exec bridge sockets:** Socket path derived from session key (not random), so CC keeps the same `FOCI_SOCK` path across foci restarts.
@@ -647,7 +647,7 @@ Every agent turn gets a `context.Context`. When a cancel signal arrives (new `/s
 **Stop means stop, immediately.** Not "after the current tool finishes." If shell is running a 3-minute command and the user sends `/stop`, the process is killed within seconds. This is a first-class design constraint.
 
 ```go
-func (a *Agent) RunTurn(ctx context.Context, msg string) error {
+func (a *Agent) OrchestrateFullTurn(ctx context.Context, msg string) error {
     // Every API call and tool execution passes ctx
     resp, err := a.client.Send(ctx, messages)
     if ctx.Err() != nil {

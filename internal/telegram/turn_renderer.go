@@ -25,6 +25,7 @@ func newTurnRenderer(bot *Bot, msg *gotgbot.Message, tracker *turn.ToolCallTrack
 	}
 	transport := &telegramStreamTransport{
 		client: bot.client,
+		bot:    bot,
 		chatID: msg.Chat.Id,
 		opts:   d.RenderOpts,
 	}
@@ -132,6 +133,7 @@ func (b *telegramBackend) Logger() *log.ComponentLogger {
 // telegramStreamTransport implements turn.StreamTransport for Telegram.
 type telegramStreamTransport struct {
 	client botClient
+	bot    *Bot
 	chatID int64
 	opts   display.RenderOpts
 }
@@ -141,6 +143,7 @@ func (t *telegramStreamTransport) SendInitial(text string) (string, error) {
 	msg, err := t.client.SendMessage(t.chatID, html, &gotgbot.SendMessageOpts{
 		ParseMode: "HTML",
 	})
+	t.bot.refreshTyping()
 	if err != nil {
 		// Fallback: send as plain text (malformed HTML or API error).
 		msg, err = t.client.SendMessage(t.chatID, text, nil)
@@ -166,6 +169,7 @@ func (t *telegramStreamTransport) EditStream(msgID, text string) error {
 			MessageId: id,
 		})
 	}
+	t.bot.refreshTyping()
 	return nil
 }
 

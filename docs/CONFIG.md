@@ -1176,8 +1176,8 @@ Codex and OpenCode backends are planned but not yet implemented.
 1. On startup, Foci spawns `claude` in a tmux window (`cc-{agentID}`) in the agent's workspace directory via a login shell (`sh -l -c`). The concatenated system prompt is written to `{workspace}/character/.full-prompt` and passed via `--system-prompt-file`.
 2. User messages are enriched with Foci's `[meta]`, `[reminders]`, `[state]`, and nudge blocks, then pasted into the tmux pane via `load-buffer`/`paste-buffer` (piped from stdin — no temp files).
 3. Foci watches Claude Code's session JSONL file (`~/.claude/projects/<slug>/<session-id>.jsonl`) for new entries via fsnotify. Session discovery is lazy — the watcher is created on the first message, not at startup.
-4. Assistant text is streamed to the platform in real-time via the platform connection (`connMgr.ForSessionOrPrimary`). Output delivery is asynchronous — `SendTurn` is fire-and-forget.
-5. Claude Code owns its own session, tools, and context management. Foci does not manage conversation history for backend agents.
+4. Assistant text is streamed to the platform in real-time via the platform connection (`connMgr.ForSessionOrPrimary`). Output delivery is asynchronous — `SendToPane` is fire-and-forget.
+5. Claude Code owns its own session, tools, and context management. Foci does not manage conversation history for delegated agents.
 
 ### Permissions
 
@@ -1185,7 +1185,7 @@ When `skip_permissions` is not set, CC may prompt for tool or directory access a
 
 ### Permission Seeding
 
-On first start, backend agents auto-seed blanket permissions into Claude Code's `settings.local.json` (in CC's project config directory). This avoids repeated approval prompts for safe operations:
+On first start, delegated agents auto-seed blanket permissions into Claude Code's `settings.local.json` (in CC's project config directory). This avoids repeated approval prompts for safe operations:
 
 - **Read-only tools:** Search, Glob, Grep, Read, WebSearch, WebFetch
 - **Workspace mutation:** Edit and Write (scoped to the agent's workspace)
@@ -1196,7 +1196,7 @@ The seeded permissions are additive — existing `settings.local.json` entries a
 
 ### What still applies
 
-Reminders, scratchpad, todos, task list, nudges, platform connections, command dispatch, message transforms, and keepalive all work with backend agents. Metadata and state are injected into each prompt. Attachment path annotations (`[Image saved to: ...]`) are included so CC can read received files.
+Reminders, scratchpad, todos, task list, nudges, platform connections, command dispatch, message transforms, and keepalive all work with delegated agents. Metadata and state are injected into each prompt. Attachment path annotations (`[Image saved to: ...]`) are included so CC can read received files.
 
 ### What's skipped
 

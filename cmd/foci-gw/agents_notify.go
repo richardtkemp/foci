@@ -195,6 +195,9 @@ func newSessionNotifyFn(
 
 // startTypingTicker sends an initial typing indicator and keeps it alive
 // every 4 seconds until the returned cancel function is called.
+// This is a self-contained ticker used by async notification callbacks —
+// separate from the bot-level SetTyping ticker used by agent turns and
+// command dispatch. The caller owns the lifecycle via the returned cancel func.
 func startTypingTicker(ctx context.Context, conn platform.Connection) (cancel func()) {
 	conn.SetTyping(true)
 	typingCtx, typingCancel := context.WithCancel(ctx)

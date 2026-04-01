@@ -80,7 +80,7 @@ type BranchHandler interface {
 }
 
 // OneShotRunner executes a one-shot prompt and returns the response.
-// BackendManager implements this via claude --print.
+// DelegatedManager implements this via claude --print.
 type OneShotRunner interface {
 	RunOnce(ctx context.Context, prompt string, systemPrompt string) (string, error)
 }

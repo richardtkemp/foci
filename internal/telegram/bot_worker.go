@@ -86,8 +86,11 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		}
 	}()
 
-	// Start typing indicator — SetTyping handles the periodic refresh.
-	// Stopped when turn ends (deferred below) or when a message is sent.
+	// Start typing immediately. Stopped by OnTurnDone callback when the
+	// turn actually completes — the transport layer decides when that is
+	// (immediate for API, async on end_turn for backend).
+	// The defer is a safety net for errors/cancellation where OnTurnDone
+	// might not fire.
 	b.SetTyping(true)
 	defer b.SetTyping(false)
 
@@ -106,6 +109,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		SteerCheckFunc:     b.mq.DrainSteer,
 		RetryNotifyFunc:    tracker.NotifyRetry,
 		RetrySuccessFunc:   tracker.ClearRetryNotification,
+		OnTurnDone:         func() { b.SetTyping(false) },
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
@@ -139,6 +143,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
 		response = fmt.Sprintf("Error: %s", b.sanitizeError(err))
 	}
+
 	if b.OnTurnComplete != nil {
 		b.OnTurnComplete()
 	}

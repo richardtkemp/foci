@@ -362,11 +362,11 @@ func setupNudgeSystem(ag *agent.Agent, acfg config.AgentConfig, nc config.Resolv
 		if needed {
 			go func() {
 				ctx := context.Background()
-				if ag.BackendManager != nil {
-					// Backend: use claude --print for one-shot extraction.
+				if ag.DelegatedManager != nil {
+					// Delegated: use claude --print for one-shot extraction.
 					// No interactive session, no platform delivery, no session index.
-					log.Infof("nudge", "agent %s: backend extraction via RunOnce", acfg.ID)
-					if err := extractor.ExtractViaRunOnce(ctx, ag.BackendManager); err != nil {
+					log.Infof("nudge", "agent %s: delegated extraction via RunOnce", acfg.ID)
+					if err := extractor.ExtractViaRunOnce(ctx, ag.DelegatedManager); err != nil {
 						log.Warnf("nudge", "agent %s: extraction failed: %v", acfg.ID, err)
 						return
 					}

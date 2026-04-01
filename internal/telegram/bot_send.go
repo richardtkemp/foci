@@ -23,6 +23,9 @@ func (b *Bot) sendHTMLChunks(chatID int64, html string) {
 			}
 		}
 	}
+	// Telegram auto-cancels typing when a message is sent.
+	// Re-establish it immediately if a turn is still active.
+	b.refreshTyping()
 }
 
 // sendReply sends a response back to the user, splitting long messages and
@@ -61,7 +64,23 @@ func (b *Bot) SendNotification(text string) {
 
 // SetTyping starts or stops the typing indicator. When true, sends an
 // immediate typing action and starts a 4-second ticker (Telegram's typing
-// expires after ~5s). When false, stops the ticker.
+// expires after ~5s). When false, cancels the ticker goroutine.
+//
+// Typing lifecycle:
+//
+//  1. processAgentMessage starts typing and defers SetTyping(false) as a
+//     safety net. The real stop signal comes from OnTurnDone (see below).
+//  2. OnTurnDone callback (set by processAgentMessage on TurnCallbacks):
+//     called by runPostTurn when the turn actually completes. For API turns
+//     this fires inline (synchronous). For backend turns it fires
+//     asynchronously when the watcher sees end_turn. This is the primary
+//     mechanism for stopping typing at the right time.
+//  3. TypingFunc (backend only): re-establishes typing when the watcher
+//     sees CC output (after processAgentMessage's defer has already fired).
+//     Does NOT propagate false — OnTurnDone handles stopping.
+//  4. tryDispatchViaDispatcher: SetTyping(false) after command completion.
+//  5. refreshTyping(): re-sends typing action after each message send to
+//     counter Telegram's auto-cancel-on-message behaviour.
 func (b *Bot) SetTyping(typing bool) {
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()
@@ -94,6 +113,19 @@ func (b *Bot) SetTyping(typing bool) {
 			}
 		}
 	}()
+}
+
+// refreshTyping re-sends the typing action immediately if a typing ticker
+// is active. Telegram auto-cancels typing when any message is sent to the
+// chat; this re-establishes it without waiting for the next ticker interval
+// (up to 4 seconds). No-op if typing isn't active.
+func (b *Bot) refreshTyping() {
+	b.typingMu.Lock()
+	active := b.typingCancel != nil
+	b.typingMu.Unlock()
+	if active {
+		_, _ = b.client.SendChatAction(b.chatID, "typing", nil)
+	}
 }
 
 // SendNotificationDirect sends a notification immediately, bypassing the

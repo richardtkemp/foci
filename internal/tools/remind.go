@@ -126,8 +126,8 @@ func resolveWakeDuration(when string) (time.Duration, error) {
 	// Human tags
 	switch when {
 	case "tomorrow":
-		now := time.Now().UTC()
-		tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+		now := time.Now()
+		tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 		return time.Until(tomorrow), nil
 	case "next_keepalive", "next_heartbeat", "next_session", "now":
 		return 0, nil

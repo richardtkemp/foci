@@ -352,7 +352,7 @@ func (c *Compactor) Compact(ctx context.Context, client provider.Client, session
 		resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	log.API(log.APIEntry{
-		Timestamp:   start.UTC(),
+		Timestamp:   start,
 		Provider:    format,
 		Session:     sessionKey,
 		Model:       model,

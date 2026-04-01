@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/display"
 	"foci/internal/log"
+	"foci/internal/timeutil"
 )
 
 // costUsage returns the help text for /cost subcommands.
@@ -18,9 +19,9 @@ func costUsage() string {
 
 // costToday shows today's total with per-session breakdown.
 func costToday(entries []log.APIEntry) string {
-	today := time.Now().UTC().Format("2006-01-02")
+	today := timeutil.Now().Format("2006-01-02")
 	filtered := filterEntries(entries, func(e log.APIEntry) bool {
-		return e.Timestamp.Format("2006-01-02") == today
+		return e.Timestamp.Local().Format("2006-01-02") == today
 	})
 	total, count := sumCosts(filtered)
 
@@ -80,7 +81,7 @@ func costToday(entries []log.APIEntry) string {
 
 // cost24h shows the last 24 hours with category breakdown.
 func cost24h(entries []log.APIEntry) string {
-	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	cutoff := time.Now().Add(-24 * time.Hour)
 	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return e.Timestamp.After(cutoff)
 	})
@@ -108,8 +109,8 @@ func cost24h(entries []log.APIEntry) string {
 
 // costWeek shows a 7-day summary with daily breakdown.
 func costWeek(entries []log.APIEntry) string {
-	now := time.Now().UTC()
-	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := timeutil.Now()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	cutoff := startOfToday.AddDate(0, 0, -6)
 	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return !e.Timestamp.Before(cutoff)
@@ -118,7 +119,7 @@ func costWeek(entries []log.APIEntry) string {
 	dayCosts := make(map[string]float64)
 	var total float64
 	for _, e := range filtered {
-		day := e.Timestamp.Format("2006-01-02")
+		day := e.Timestamp.Local().Format("2006-01-02")
 		dayCosts[day] += e.CostUSD
 		total += e.CostUSD
 	}
@@ -149,7 +150,7 @@ func costDays(entries []log.APIEntry, scope string) string {
 	if err != nil {
 		return "Usage: /cost [today|24h|week|<days>]"
 	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	cutoff := time.Now().AddDate(0, 0, -days)
 	filtered := filterEntries(entries, func(e log.APIEntry) bool {
 		return e.Timestamp.After(cutoff)
 	})
