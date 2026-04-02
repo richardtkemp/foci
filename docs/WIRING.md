@@ -262,7 +262,7 @@ The session watcher tails Claude Code's JSONL session file via fsnotify. It conv
 
 **Agent spawn tracking:** The watcher tracks pending `tool_use` calls for the Agent tool. When a sub-agent is spawned, status is reported via the `onAgentStatus` callback, allowing the platform to show agent activity state.
 
-**Permission prompt detection:** A periodic check (every 3s) captures the tmux pane content and scans for Claude Code permission prompts ("Do you want to proceed?"). Detected prompts are forwarded to the user via the platform connection with an inline keyboard of choices. The user's selection is sent to the tmux pane as input.
+**Permission auto-approval:** When CC sends a `can_use_tool` permission request, the ccstream backend first checks against compiled auto-approve rules (from `[permissions]` config). Rules are assembled at startup by `buildAutoApproveRules`: built-in common readonly tools/commands (if `auto_approve_common_readonly` is true), workspace-scoped Edit/Write access, and user-configured patterns from global + per-agent config (union). Matched requests are approved directly via `SendControlResponse` with an INFO log. Unmatched requests are forwarded to the user via the platform connection with an inline keyboard of choices (Allow, Deny, Always Allow).
 
 ### Backend Session Lifecycle
 

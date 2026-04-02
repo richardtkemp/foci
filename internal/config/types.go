@@ -224,6 +224,7 @@ type AgentConfig struct {
 	MemoryFormation MemoryFormationConfig `toml:"memory_formation"`  // overrides from [memory_formation]
 	Mana            ManaConfig            `toml:"mana"`              // overrides from [mana]
 	Groups          GroupsConfig          `toml:"groups"`            // overrides from [groups]
+	Permissions     PermissionsConfig     `toml:"permissions"`       // overrides from [permissions]
 
 	// Backend selection: empty or "api" = traditional agent loop.
 	// A coding agent name (e.g. "claude-code-tmux", "codex", "opencode") delegates
@@ -654,6 +655,23 @@ type BitwardenConfig struct {
 }
 
 
+// PermissionsConfig controls foci-level auto-approval of delegated backend
+// permission requests. Rules from global [permissions] and per-agent
+// [[agents]].permissions are combined (union) — both sets apply.
+// All fields are pointer/slice types for Merge-based resolution.
+type PermissionsConfig struct {
+	AutoApprove              []string `toml:"auto_approve"`                                                                    // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
+	AutoApproveCommonReadonly *bool   `toml:"auto_approve_common_readonly" default:"true" desc:"auto-approve common read-only tools and commands"` // enable built-in read-only tool/command allowlist
+}
+
+// AutoApproveCommonReadonlyEnabled returns the resolved value (default: true).
+func (p PermissionsConfig) AutoApproveCommonReadonlyEnabled() bool {
+	if p.AutoApproveCommonReadonly != nil {
+		return *p.AutoApproveCommonReadonly
+	}
+	return true
+}
+
 type EnvironmentConfig struct {
 	Enabled  *bool   `toml:"enabled"    default:"true"         desc:"inject environment block"` // inject environment block as first system block (default true)
 	DocsPath *string `toml:"docs_path"  default:"shared/docs"  desc:"path to platform docs directory"` // path to platform docs directory; relative paths resolve against $HOME
@@ -864,6 +882,7 @@ type Config struct {
 	Keepalive          KeepaliveConfig           `toml:"keepalive"`
 	Background         BackgroundConfig          `toml:"background"`
 	MemoryFormation    MemoryFormationConfig     `toml:"memory_formation"`
+	Permissions        PermissionsConfig         `toml:"permissions"`
 	Commands           []CommandConfig           `toml:"commands"`
 	MessageTransforms  []MessageTransform        `toml:"message_transforms"`   // regex find/replace rules applied to inbound messages
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`        // path prefixes that write/edit tools refuse (with rebuke message)

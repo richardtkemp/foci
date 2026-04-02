@@ -618,6 +618,29 @@ headless = true
 timeout_sec = 30
 ```
 
+### `[permissions]`
+
+Controls foci-level auto-approval of delegated backend permission requests. When a delegated coding agent (e.g. Claude Code) requests permission for a tool invocation, foci checks these rules before prompting the user. Matched requests are auto-approved silently with an INFO log entry.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `auto_approve` | string[] | `[]` | Glob patterns to auto-approve. Format: `"ToolName"` (any input) or `"ToolName:pattern"` (match input). For Bash: matches the command string. For Edit/Write: matches the file path. Patterns use `*` (any chars) and `?` (single char). Without glob chars, prefix matching with word boundary is used. |
+| `auto_approve_common_readonly` | bool | `true` | Enable built-in allowlist of read-only tools (Search, Glob, Grep, Read, WebSearch, WebFetch) and safe shell commands (ls, cat, grep, jq, etc.). |
+
+Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. The bool follows standard cascade (per-agent overrides global).
+
+Delegated backends also auto-approve workspace Edit/Write access (scoped to the agent's workspace directory).
+
+```toml
+[permissions]
+auto_approve = [
+  "Bash:cd /home/rich/git/foci && git *",
+  "Bash:git -C /home/rich/git/foci *",
+  "Bash:gcalcli *",
+]
+auto_approve_common_readonly = true   # default
+```
+
 ### `[skills]`
 
 Override for the shared skills directory. By default, skills are loaded from two directories in order:
@@ -1181,18 +1204,12 @@ Codex and OpenCode backends are planned but not yet implemented.
 
 ### Permissions
 
-When `skip_permissions` is not set, CC may prompt for tool or directory access approval. Foci detects permission prompts by scraping the tmux pane (polling every 3s for "Do you want to proceed?") and forwards them to the user via their platform with an inline keyboard of choices. The user's selection is sent to the pane as input.
+CC may prompt for tool or directory access approval. These permission requests are handled at two levels:
 
-### Permission Seeding
+1. **Auto-approval:** Foci checks against the `[permissions]` config rules (see above). Matched requests are approved automatically with an INFO log entry, without prompting the user. By default, common read-only tools and commands are auto-approved, along with workspace Edit/Write access.
+2. **User prompt:** Unmatched requests are forwarded to the user via their platform with an inline keyboard of choices (Allow, Deny, Always Allow).
 
-On first start, delegated agents auto-seed blanket permissions into Claude Code's `settings.local.json` (in CC's project config directory). This avoids repeated approval prompts for safe operations:
-
-- **Read-only tools:** Search, Glob, Grep, Read, WebSearch, WebFetch
-- **Workspace mutation:** Edit and Write (scoped to the agent's workspace)
-- **Foci shell functions:** All `foci_*` exec bridge functions
-- **Database queries:** `sqlite3 -readonly` for read-only database access
-
-The seeded permissions are additive — existing `settings.local.json` entries are preserved. The file is written only if it doesn't already contain the expected entries.
+Every auto-approval is logged at INFO level (`ccstream/perm: auto-approved: tool=... summary=...`) for visibility.
 
 ### What still applies
 

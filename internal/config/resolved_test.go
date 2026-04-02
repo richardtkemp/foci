@@ -242,4 +242,69 @@ func TestResolve_PlatformDisplayNotify(t *testing.T) {
 	}
 }
 
+func TestResolve_PermissionsUnionRules(t *testing.T) {
+	// Proves auto_approve rules are combined (union) from global + agent,
+	// not first-non-nil. Also proves the bool follows standard cascade.
+	cfg := &Config{
+		Permissions: PermissionsConfig{
+			AutoApprove:              []string{"Bash:git *", "Read"},
+			AutoApproveCommonReadonly: Ptr(true),
+		},
+	}
+	acfg := AgentConfig{
+		Permissions: PermissionsConfig{
+			AutoApprove: []string{"Bash:make *", "Read"}, // "Read" is a duplicate
+		},
+	}
+
+	rc := Resolve(cfg, acfg)
+
+	// Agent rules come first, then global, deduped.
+	want := []string{"Bash:make *", "Read", "Bash:git *"}
+	if len(rc.Permissions.AutoApproveRules) != len(want) {
+		t.Fatalf("AutoApproveRules = %v, want %v", rc.Permissions.AutoApproveRules, want)
+	}
+	for i, w := range want {
+		if rc.Permissions.AutoApproveRules[i] != w {
+			t.Errorf("AutoApproveRules[%d] = %q, want %q", i, rc.Permissions.AutoApproveRules[i], w)
+		}
+	}
+	if !rc.Permissions.AutoApproveCommonReadonly {
+		t.Error("AutoApproveCommonReadonly should be true")
+	}
+}
+
+func TestResolve_PermissionsBoolCascade(t *testing.T) {
+	// Proves agent-level auto_approve_common_readonly overrides global.
+	cfg := &Config{
+		Permissions: PermissionsConfig{
+			AutoApproveCommonReadonly: Ptr(true),
+		},
+	}
+	acfg := AgentConfig{
+		Permissions: PermissionsConfig{
+			AutoApproveCommonReadonly: Ptr(false),
+		},
+	}
+
+	rc := Resolve(cfg, acfg)
+
+	if rc.Permissions.AutoApproveCommonReadonly {
+		t.Error("AutoApproveCommonReadonly should be false (agent override)")
+	}
+}
+
+func TestResolve_PermissionsDefaultTrue(t *testing.T) {
+	// Proves auto_approve_common_readonly defaults to true when neither
+	// agent nor global set it.
+	cfg := &Config{}
+	acfg := AgentConfig{}
+
+	rc := Resolve(cfg, acfg)
+
+	if !rc.Permissions.AutoApproveCommonReadonly {
+		t.Error("AutoApproveCommonReadonly should default to true")
+	}
+}
+
 func ptrFloat(v float64) *float64 { return &v }

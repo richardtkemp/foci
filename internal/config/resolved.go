@@ -25,6 +25,8 @@ type ResolvedAgentConfig struct {
 	Display         ResolvedDisplay
 	Notify          ResolvedNotify
 
+	Permissions ResolvedPermissions
+
 	// Webhooks is the merged System.Webhooks map (global base + agent overlay).
 	Webhooks map[string]string
 
@@ -114,6 +116,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Mana:            resolveMana(Merge(acfg.Mana, cfg.Mana)),
 		Display:         resolveDisplay(Merge(displayLayers...)),
 		Notify:          resolveNotify(Merge(acfg.Notify, cfg.Notify)),
+		Permissions:     resolvePermissions(acfg.Permissions, cfg.Permissions),
 		Webhooks:        MergeMaps(cfg.System.Webhooks, acfg.System.Webhooks),
 		platformDisplay: platformDisplay,
 		platformNotify:  platformNotify,

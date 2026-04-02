@@ -2,15 +2,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"foci/internal/agent"
 	"foci/internal/backend"
+	"foci/internal/backend/ccstream"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/tools"
@@ -39,8 +38,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		model = v
 	}
 
-	// Ensure CC has permissions to edit the workspace without prompting.
-	seedDelegatedPermissions(p.acfg.Workspace)
+	// Build auto-approve rules from resolved config.
+	autoApproveRules := buildAutoApproveRules(p)
 
 	// Build a tool registry with exec-exported tools so foci shell commands
 	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
@@ -68,13 +67,14 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			return backend.New(backendName, backendConfig)
 		},
 		StartOpts: backend.StartOptions{
-			WorkDir:      p.acfg.Workspace,
-			SystemPrompt: systemPrompt,
-			Model:        model,
-			AgentID:      agentID,
-			ExecRegistry: registry,
-			TmuxCols:     p.cfg.Tools.TmuxCols,
-			TmuxRows:     p.cfg.Tools.TmuxRows,
+			WorkDir:          p.acfg.Workspace,
+			SystemPrompt:     systemPrompt,
+			Model:            model,
+			AgentID:          agentID,
+			ExecRegistry:     registry,
+			TmuxCols:         p.cfg.Tools.TmuxCols,
+			TmuxRows:         p.cfg.Tools.TmuxRows,
+			AutoApproveRules: autoApproveRules,
 		},
 		SendFunc: func(sessionKey, text string) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
@@ -143,134 +143,32 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}, true
 }
 
-// seedDelegatedPermissions ensures .claude/settings.local.json in the workspace
-// has permissions allowing the delegated backend to edit workspace files without
-// prompting. Merges with any existing settings; never overwrites user entries.
-func seedDelegatedPermissions(workspace string) {
-	settingsDir := filepath.Join(workspace, ".claude")
-	settingsPath := filepath.Join(settingsDir, "settings.local.json")
+// buildAutoApproveRules assembles the foci-level auto-approve rules for a
+// delegated backend from resolved config + workspace-scoped defaults.
+func buildAutoApproveRules(p setupParams) []string {
+	perms := p.resolved.Permissions
 
-	// Read existing settings (if any).
-	var settings map[string]any
-	if data, err := os.ReadFile(settingsPath); err == nil {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			log.Warnf("delegated", "parse %s: %v — not modifying", settingsPath, err)
-			return
-		}
-	} else {
-		settings = make(map[string]any)
+	// Start with common readonly rules if enabled.
+	var rules []string
+	if perms.AutoApproveCommonReadonly {
+		rules = append(rules, ccstream.CommonReadonlyRules...)
 	}
 
-	// Build the rules we want present.
-	absWorkspace, err := filepath.Abs(workspace)
+	// Add workspace Edit/Write rules — delegated backends always need
+	// workspace file access without prompting.
+	absWorkspace, err := filepath.Abs(p.acfg.Workspace)
 	if err != nil {
-		absWorkspace = workspace
+		absWorkspace = p.acfg.Workspace
 	}
-	wantRules := []string{
-		// Workspace file access. The // prefix is required for absolute
-		// paths in CC permission rules (single / is not matched).
-		fmt.Sprintf("Edit(//%s/**)", absWorkspace),
-		fmt.Sprintf("Write(//%s/**)", absWorkspace),
-		// Read-only tools — blanket access everywhere.
-		"Search",
-		"Glob",
-		"Grep",
-		"Read",
-		"WebSearch",
-		"WebFetch",
-		// Basic shell commands — blanket access.
-		"Bash(ls:*)",
-		"Bash(echo:*)",
-		"Bash(cat:*)",
-		"Bash(head:*)",
-		"Bash(tail:*)",
-		"Bash(wc:*)",
-		"Bash(sort:*)",
-		"Bash(cut:*)",
-		"Bash(tr:*)",
-		"Bash(diff:*)",
-		"Bash(stat:*)",
-		"Bash(file:*)",
-		"Bash(which:*)",
-		"Bash(date:*)",
-		"Bash(pwd:*)",
-		"Bash(id:*)",
-		"Bash(uname:*)",
-		"Bash(ps:*)",
-		"Bash(ss:*)",
-		"Bash(du:*)",
-		"Bash(df:*)",
-		// Search/filter tools.
-		"Bash(grep:*)",
-		"Bash(rg:*)",
-		"Bash(ack:*)",
-		"Bash(sed -n:*)",
-		// Compressed file inspection.
-		"Bash(zcat:*)",
-		"Bash(zgrep:*)",
-		// Environment and system inspection.
-		"Bash(env:*)",
-		"Bash(crontab -l:*)",
-		"Bash(npm list:*)",
-		// System logs.
-		"Bash(journalctl:*)",
-		// Data tools.
-		"Bash(jq:*)",
-		"Bash(yq:*)",
-		"Bash(mds:*)",
-		"Bash(mdq:*)",
-		"Bash(sqlite3:*)",
-		// Foci shell functions.
-		"Bash(foci_todo:*)",
-		"Bash(foci_send_to_chat:*)",
-		"Bash(foci_memory_search:*)",
-		"Bash(foci_http_request:*)",
-		"Bash(foci_web_search:*)",
-		"Bash(foci_web_fetch:*)",
-	}
+	rules = append(rules,
+		fmt.Sprintf("Edit:%s/*", absWorkspace),
+		fmt.Sprintf("Write:%s/*", absWorkspace),
+	)
 
-	// Get or create the permissions.allow array.
-	perms, _ := settings["permissions"].(map[string]any)
-	if perms == nil {
-		perms = make(map[string]any)
-	}
-	allowRaw, _ := perms["allow"].([]any)
-	existing := make(map[string]bool, len(allowRaw))
-	for _, v := range allowRaw {
-		if s, ok := v.(string); ok {
-			existing[s] = true
-		}
-	}
+	// Append user-configured rules (already merged: agent ∪ global).
+	rules = append(rules, perms.AutoApproveRules...)
 
-	// Add missing rules.
-	changed := false
-	for _, rule := range wantRules {
-		if !existing[rule] {
-			allowRaw = append(allowRaw, rule)
-			changed = true
-		}
-	}
-	if !changed {
-		return
-	}
-
-	perms["allow"] = allowRaw
-	settings["permissions"] = perms
-
-	if err := os.MkdirAll(settingsDir, 0755); err != nil {
-		log.Warnf("delegated", "mkdir %s: %v", settingsDir, err)
-		return
-	}
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		log.Warnf("delegated", "marshal settings: %v", err)
-		return
-	}
-	if err := os.WriteFile(settingsPath, append(data, '\n'), 0644); err != nil {
-		log.Warnf("delegated", "write %s: %v", settingsPath, err)
-		return
-	}
-	log.Infof("delegated", "seeded workspace permissions in %s", settingsPath)
+	return rules
 }
 
 // buildExecRegistry creates a tools.Registry containing only exec-exported
