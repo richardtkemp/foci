@@ -10,10 +10,6 @@ import (
 	"foci/internal/log"
 )
 
-// PermissionRequestBody is the structured body of a permission request.
-// Alias for the protocol type used by helper functions in this file.
-type PermissionRequestBody = PermissionRequestPayload
-
 // pendingPermission tracks an unresolved permission request from CC.
 type pendingPermission struct {
 	requestID   string
@@ -29,9 +25,9 @@ type pendingPermission struct {
 // the DelegatedManager, and sends a prompt to the platform UI.
 func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
 	log.Debugf("ccstream/perm", "handlePermissionRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
-	summary := buildPermissionSummary(&msg.Request)
-	text := buildPermissionText(&msg.Request)
-	choices := buildPermissionChoices(&msg.Request)
+	summary := msg.Request.Summary()
+	text := msg.Request.DisplayText()
+	choices := msg.Request.Choices()
 
 	pp := &pendingPermission{
 		requestID:   msg.RequestID,
@@ -175,8 +171,8 @@ func (b *Backend) removePendingPerm(requestID string) (pp *pendingPermission, fo
 // Helpers
 // ---------------------------------------------------------------------------
 
-// buildPermissionText formats the permission request for display.
-func buildPermissionText(req *PermissionRequestBody) string {
+// DisplayText formats the permission request for display.
+func (req *PermissionRequestPayload) DisplayText() string {
 	var b strings.Builder
 	b.WriteString("**Permission Required**\n\n")
 	if req.DisplayName != "" {
@@ -247,8 +243,8 @@ func friendlyReason(reason string) string {
 	return reason
 }
 
-// buildPermissionSummary creates a short summary for post-approval display.
-func buildPermissionSummary(req *PermissionRequestBody) string {
+// Summary creates a short summary for post-approval display.
+func (req *PermissionRequestPayload) Summary() string {
 	if req.Description != "" {
 		return req.Description
 	}
@@ -258,8 +254,8 @@ func buildPermissionSummary(req *PermissionRequestBody) string {
 	return req.ToolName
 }
 
-// buildPermissionChoices creates the button choices for the platform UI.
-func buildPermissionChoices(req *PermissionRequestBody) []backend.PromptChoice {
+// Choices creates the button choices for the platform UI.
+func (req *PermissionRequestPayload) Choices() []backend.PromptChoice {
 	choices := []backend.PromptChoice{
 		{Label: "Allow", Data: "allow"},
 		{Label: "Deny", Data: "deny"},
