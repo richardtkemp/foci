@@ -285,10 +285,8 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // Turn methods
 // ---------------------------------------------------------------------------
 
-// SendToPane sends a composed prompt to Claude Code and streams events back
-// via the handler. Returns immediately — the turn completes asynchronously.
-// Use WaitForTurn to block until the result is received.
-func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+// beginTurn initialises all turn-related state for a new turn.
+func (b *Backend) beginTurn(handler *backend.EventHandler) {
 	b.turnMu.Lock()
 	b.turnActive = true
 	b.turnHandler = handler
@@ -298,18 +296,30 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backen
 	b.turnMu.Unlock()
 
 	b.mu.Lock()
-	b.lastUsage = nil // reset per-call tracking for new turn
+	b.lastUsage = nil
 	b.mu.Unlock()
+}
+
+// cancelTurn reverses beginTurn on send failure.
+func (b *Backend) cancelTurn() {
+	b.turnMu.Lock()
+	b.turnActive = false
+	b.turnHandler = nil
+	b.turnMu.Unlock()
+}
+
+// SendToPane sends a composed prompt to Claude Code and streams events back
+// via the handler. Returns immediately — the turn completes asynchronously.
+// Use WaitForTurn to block until the result is received.
+func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+	b.beginTurn(handler)
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
 
 	if err := b.writer.SendUser(prompt); err != nil {
-		b.turnMu.Lock()
-		b.turnActive = false
-		b.turnHandler = nil
-		b.turnMu.Unlock()
+		b.cancelTurn()
 		return nil, fmt.Errorf("ccstream: send user message: %w", err)
 	}
 
