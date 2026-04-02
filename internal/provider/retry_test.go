@@ -76,19 +76,22 @@ func (m *retryMockRetryableClient) ServerErrorMaxDuration() time.Duration {
 }
 
 func TestRetryCallbacks(t *testing.T) {
+	t.Parallel()
 	// Verifies that retry callbacks are called exactly once per
 	// retry sequence, and success callback is called when retry succeeds.
 	attempts := &atomic.Int32{}
-	client := &retryMockClient{
-		attempts:  attempts,
-		failUntil: 2, // fail first 2 attempts, succeed on 3rd
-		failWith: &APIError{
-			StatusCode: 500,
-			Body:       "internal server error",
-		},
-		successResp: &MessageResponse{
-			ID:      "msg_ok",
-			Content: []ContentBlock{{Type: "text", Text: "hello"}},
+	client := &retryMockRetryableClient{
+		retryMockClient: retryMockClient{
+			attempts:  attempts,
+			failUntil: 2, // fail first 2 attempts, succeed on 3rd
+			failWith: &APIError{
+				StatusCode: 500,
+				Body:       "internal server error",
+			},
+			successResp: &MessageResponse{
+				ID:      "msg_ok",
+				Content: []ContentBlock{{Type: "text", Text: "hello"}},
+			},
 		},
 	}
 
@@ -133,6 +136,7 @@ func TestRetryCallbacks(t *testing.T) {
 }
 
 func TestRetryCallbacksNoRetry(t *testing.T) {
+	t.Parallel()
 	// Verifies that when request succeeds on first attempt,
 	// callbacks should not fire.
 	attempts := &atomic.Int32{}
@@ -172,6 +176,7 @@ func TestRetryCallbacksNoRetry(t *testing.T) {
 }
 
 func TestRetryCallbacks529Overload(t *testing.T) {
+	t.Parallel()
 	// Verifies callbacks work with 529 overload retries
 	// (phase 2) when using a retryableClient.
 	attempts := &atomic.Int32{}
@@ -226,6 +231,7 @@ func TestRetryCallbacks529Overload(t *testing.T) {
 }
 
 func TestRetryNonRetryableError(t *testing.T) {
+	t.Parallel()
 	// Verifies that non-retryable errors stop immediately.
 	attempts := &atomic.Int32{}
 	client := &retryMockClient{
@@ -251,18 +257,21 @@ func TestRetryNonRetryableError(t *testing.T) {
 }
 
 func TestRetryStreamingClient(t *testing.T) {
+	t.Parallel()
 	// Verifies retry works with streaming clients.
 	attempts := &atomic.Int32{}
-	client := &retryMockClient{
-		attempts:  attempts,
-		failUntil: 1, // fail once, then succeed
-		failWith: &APIError{
-			StatusCode: 503,
-			Body:       "service unavailable",
-		},
-		successResp: &MessageResponse{
-			ID:      "msg_ok",
-			Content: []ContentBlock{{Type: "text", Text: "hello"}},
+	client := &retryMockRetryableClient{
+		retryMockClient: retryMockClient{
+			attempts:  attempts,
+			failUntil: 1, // fail once, then succeed
+			failWith: &APIError{
+				StatusCode: 503,
+				Body:       "service unavailable",
+			},
+			successResp: &MessageResponse{
+				ID:      "msg_ok",
+				Content: []ContentBlock{{Type: "text", Text: "hello"}},
+			},
 		},
 	}
 
@@ -292,6 +301,7 @@ func TestRetryStreamingClient(t *testing.T) {
 }
 
 func TestEndpointNameFromURL(t *testing.T) {
+	t.Parallel()
 	// Verifies that EndpointNameFromURL extracts a readable name from
 	// various API base URL formats.
 	tests := []struct {
@@ -314,6 +324,7 @@ func TestEndpointNameFromURL(t *testing.T) {
 }
 
 func TestEndpointFromClientFallback(t *testing.T) {
+	t.Parallel()
 	// Verifies that endpointFromClient falls back to "API" for clients
 	// that don't implement endpointDescriber.
 	client := &retryMockClient{
@@ -326,6 +337,7 @@ func TestEndpointFromClientFallback(t *testing.T) {
 }
 
 func TestRetry500ExtendsWithShorterDuration(t *testing.T) {
+	t.Parallel()
 	// Verifies that 500 errors trigger phase 2 extended retry
 	// (with shorter ServerErrorMaxDuration, not the longer OverloadMaxDuration).
 	attempts := &atomic.Int32{}
@@ -362,6 +374,7 @@ func TestRetry500ExtendsWithShorterDuration(t *testing.T) {
 }
 
 func TestRetry500Recovery(t *testing.T) {
+	t.Parallel()
 	// Verifies that a 500 error recovers after retries in phase 2.
 	attempts := &atomic.Int32{}
 	client := &retryMockRetryableClient{

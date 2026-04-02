@@ -7,6 +7,7 @@ import (
 
 // TestResolveTimeoutDefault verifies that zero or negative input returns the configured default.
 func TestResolveTimeoutDefault(t *testing.T) {
+	t.Parallel()
 	cfg := TimeoutConfig{DefaultSec: 30}
 
 	for _, input := range []int{0, -1, -100} {
@@ -19,6 +20,7 @@ func TestResolveTimeoutDefault(t *testing.T) {
 
 // TestResolveTimeoutPassthrough verifies that valid values within bounds are returned as-is.
 func TestResolveTimeoutPassthrough(t *testing.T) {
+	t.Parallel()
 	cfg := TimeoutConfig{DefaultSec: 30, MaxSec: 300}
 
 	got := ResolveTimeout(60, cfg)
@@ -29,6 +31,7 @@ func TestResolveTimeoutPassthrough(t *testing.T) {
 
 // TestResolveTimeoutClamped verifies that values exceeding MaxSec are clamped.
 func TestResolveTimeoutClamped(t *testing.T) {
+	t.Parallel()
 	cfg := TimeoutConfig{DefaultSec: 30, MaxSec: 300}
 
 	got := ResolveTimeout(600, cfg)
@@ -39,6 +42,7 @@ func TestResolveTimeoutClamped(t *testing.T) {
 
 // TestResolveTimeoutUnlimitedMax verifies that MaxSec=0 means no upper bound.
 func TestResolveTimeoutUnlimitedMax(t *testing.T) {
+	t.Parallel()
 	cfg := TimeoutConfig{DefaultSec: 30, MaxSec: 0}
 
 	got := ResolveTimeout(9999, cfg)
@@ -49,6 +53,7 @@ func TestResolveTimeoutUnlimitedMax(t *testing.T) {
 
 // TestResolveTimeoutExactMax verifies that a value equal to MaxSec is not clamped.
 func TestResolveTimeoutExactMax(t *testing.T) {
+	t.Parallel()
 	cfg := TimeoutConfig{DefaultSec: 30, MaxSec: 300}
 
 	got := ResolveTimeout(300, cfg)

@@ -529,9 +529,9 @@ func TestTodoToolListWithSort(t *testing.T) {
 	tool := NewTodoTool(store, "agent1")
 
 	id1, _ := store.Add("agent1", "First", "medium", "")
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	store.Add("agent1", "Second", "medium", "")
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	store.Add("agent1", "Third", "medium", "")
 
 	// Test sort by created (default: newest first)
@@ -568,7 +568,7 @@ func TestTodoToolListWithSort(t *testing.T) {
 	}
 
 	// Test sort by updated (edit one task to make it most recent)
-	time.Sleep(1100 * time.Millisecond)
+	time.Sleep(time.Millisecond)
 	store.Edit("agent1", id1, "Updated First", "", "", false)
 	params = map[string]interface{}{
 		"action": "list",

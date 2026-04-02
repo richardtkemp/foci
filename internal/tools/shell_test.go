@@ -588,16 +588,16 @@ func TestExecAutoBackgroundCtxCancelled(t *testing.T) {
 	tool := NewExecTool(nil, nil, 10, notifier, "", nil, 0, "", nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"command": "echo ctx-cancel-result; timeout 1.5 tail -f /dev/null",
+		"command": "echo ctx-cancel-result; timeout 0.2 tail -f /dev/null",
 		"timeout": 10,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = WithSessionKey(ctx, "test/icancel-42/1000")
 
-	// Cancel the context shortly after starting
+	// Cancel the context shortly after starting but before the command finishes
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
 
