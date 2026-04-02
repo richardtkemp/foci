@@ -167,8 +167,11 @@ main
  ├── command       → agent, compaction, config, display, log, mana, memory, platform, provider, provision, session, skills, state, tempdir, tools, workspace
  ├── mana          → anthropic, log, provider (mana budget logic)
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
+ ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
+ ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── backend       (no deps — Backend interface, registry, StartOptions, EventHandler)
- │   └── backend/claudecode → backend, fsnotify (Claude Code implementation; registers via init())
+ │   ├── backend/claudecode → backend, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
+ │   └── backend/ccstream   → backend, log (stream-json Claude Code; registers "claude-code" via init())
  ├── agent         → backend, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
  ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
@@ -179,7 +182,7 @@ main
                     (registers via init() → platform.RegisterMessagingProvider; blank-imported in main.go)
 ```
 
-No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
+No circular dependencies. `provider`, `display`, `log`, `secrets`, `memory`, `skills`, `prompts`, `startup`, `resources`, `provision`, `tempdir`, `mana`, `warnings`, `modelinfo`, `messages`, `timeutil`, `turn`, `dispatch` are leaf packages. `platform` depends on leaf packages only (config, log, secrets, session, state, voice, warnings).
 
 **`provider` package:** Defines the neutral types (`Message`, `ContentBlock`, `ToolDef`, etc.) and the `Client` interface (`SendMessage`, `CountTokens`). `anthropic`, `gemini`, and `openai` all implement `provider.Client`, translating between neutral types and their wire formats.
 
@@ -236,7 +239,57 @@ The core of the system. Two entry points:
 - `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithAttachments`
 - `HandleMessageWithAttachments(ctx, sessionKey, text, attachments)` — full version with optional image/document attachments
 
-**Delegated agents:** When `Agent.DelegatedManager != nil`, `HandleMessageWithAttachments` branches to `DelegatedTransport` (`turn_delegated.go`) instead of the traditional loop below. The delegated path composes a prompt (metadata, reminders, nudges, state dashboard, attachment paths, user text) via the shared `composeTurnText` (`turn_common.go`), sends it to the coding agent via `Backend.SendToPane()` (fire-and-forget), and returns immediately. Output is delivered asynchronously: the backend's session file watcher calls `SetReplyFunc` which routes text to the correct platform connection via `connMgr.ForSessionOrPrimary()`. Permission prompts are detected by scraping the tmux pane and forwarded to the user. See [docs/CONFIG.md — Coding Agent Backends](CONFIG.md#coding-agent-backends).
+**Delegated agents:** When `Agent.DelegatedManager != nil`, `HandleMessageWithAttachments` branches to `DelegatedTransport` (`turn_delegated.go`) instead of the traditional API tool loop. See the TurnContract section below for how the transport choice is made and how turns are orchestrated.
+
+### TurnContract Abstraction (`agent/turn_contract.go`)
+
+Both transport paths (API and delegated) are unified under the `TurnContract` interface — 20 methods grouped into four phases. Adding a method to the interface produces a compile error in both transports until implemented.
+
+**Transports:**
+- `APITransport` (`turn_api.go`) — traditional API code path: direct provider calls with client-side tool execution loop.
+- `DelegatedTransport` (`turn_delegated.go`) — delegated path: the backend (Claude Code) owns inference and tool execution.
+- Both embed `sharedTurnOps` (`turn_contract.go`) for shared implementations (7 methods).
+
+**Transport selection:** In `HandleMessageWithAttachments`, if `Agent.DelegatedManager != nil` → `DelegatedTransport`; otherwise → `APITransport`.
+
+**Orchestrator:** `OrchestrateFullTurn` (`turn_orchestrator.go`) calls all 20 methods in canonical order:
+
+```
+Phase 1 — Pre-lock gates and registration:
+  RateLimitGate         API: per-endpoint rate limit gate     Delegated: no-op (CC has its own)
+  AcquireTurnLock       API: per-session serialization lock   Delegated: no-op (CC serializes)
+  IncrementProcessing   API: atomic processing counter        Delegated: no-op
+  RegisterTurn          API: TurnDetail for diagnostics       Delegated: no-op
+  CheckStaleContext     Shared: return ctx.Err() if cancelled
+
+Phase 1b — Post-lock logging and tracking:
+  RegisterSessionIndex  Shared: upsert session into index
+  LogConversationRecv   Shared: log inbound message
+  TouchActivity         Shared: fire OnActivity callbacks
+
+Phase 2 — Turn preparation:
+  LoadSessionMeta       Shared: load per-session metadata
+  LoadAndRepairSession  API: load + 3 repair passes           Delegated: no-op (CC owns session)
+  ResolveModelEffort    API: full resolution with defaults     Delegated: reads agent-level model
+  ComposePrompt         API: rich content blocks               Delegated: flat text via JoinPrompt
+  BuildSystemAndTools   API: per-turn system + tool rebuild    Delegated: no-op (set at Start)
+  InjectNudges          API: content blocks in user message    Delegated: text prepended to prompt
+
+Phase 3 — Core execution:
+  RunInference          API: multi-iteration tool loop         Delegated: SendToPane (async)
+
+Phase 4 — Post-turn:
+  SaveSession           API: AppendAll to session store        Delegated: no-op (CC owns session)
+  UpdateSessionMeta     API: from provider.Usage               Delegated: from backend TurnResult
+  LogUsage              API: no-op (logged per-call)           Delegated: called from OnTurnComplete
+  RunCompaction         API: direct maybeCompact               Delegated: sends /compact to CC
+  LogConversationSent   Shared: log outbound response
+  TouchActivityPost     Shared: fire OnActivity callbacks
+```
+
+**Post-turn sync/async split** (`runPostTurn`): API turns close `CompletionChan` before `RunInference` returns (synchronous), so post-turn runs inline. Delegated turns leave `CompletionChan` open — a goroutine waits up to 10 minutes for the backend's `OnTurnComplete` callback to close it, then runs post-turn. Steered follow-ups (delegated, `IsTurnInFlight() == true`) close `CompletionChan` immediately with no post-turn work.
+
+**Shared prompt composition** (`turn_common.go`): `composeTurnText` assembles metadata prefix, reminders, state dashboard, mana-restore text, attachment paths, and user texts into a `turnTextParts` struct. The API transport converts these to content blocks; the delegated transport joins them into a flat string via `JoinPrompt()`.
 
 ### RunOnce Mode (`DelegatedManager.RunOnce`)
 
@@ -246,23 +299,40 @@ Used by:
 - **Nudge extraction** — `ExtractViaRunOnce` sends conversation context to the model and parses structured nudge rules from the response.
 - **Consolidation** — The periodic `Runner` is wired with a `RunOnceFunc` for memory consolidation tasks that don't need an interactive session.
 
-### Backend Watcher (`internal/backend/claudecode/watcher.go`)
+### Session Lifecycle Operations (`agent/lifecycle.go`)
 
-The session watcher tails Claude Code's JSONL session file via fsnotify. It converts raw JSONL events into structured callbacks (assistant text, turn completion, usage, agent status).
+The agent exposes three lifecycle methods that encapsulate multi-step sequences previously scattered across command handlers:
+
+- **`ResetSession(ctx, sessionKey)`** — clears session history with memory formation. For API agents: fires memory formation as an async branch, rotates the session key, reloads bootstrap. For delegated agents: sends a memory formation prompt to the live backend session, waits for completion (up to 120s), destroys the backend session, rotates, and starts fresh. Returns the new session key.
+- **`CompactSession(ctx, sessionKey, dryRun)`** — triggers manual compaction. Validates message count (min 5), runs the compaction pipeline, then reloads bootstrap and resets cache baseline. When `dryRun` is true, the full pipeline runs (API call, summary generation) but the session is left unchanged — the summary is returned for inspection.
+- **`ReloadSystem()`** — reloads bootstrap (system prompt files from disk), refreshes nudge rules, invalidates system caches, and reloads extra system blocks (skills) via `ReloadSystemFn`. Returns the count of reloaded extra items.
+
+All three call `reloadAfterMutation()` internally, which reloads bootstrap, refreshes nudges, and invalidates all per-session system prompt caches.
+
+### Steer Mode Differences (API vs Delegated)
+
+When `steer_mode` is enabled and a turn is active, user messages are buffered as "steers" and injected mid-turn rather than waiting for completion:
+
+- **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. The `SteerCheckFunc` on `TurnCallbacks` returns buffered steers from the platform's `MessageQueue`.
+- **Delegated transport:** Steer messages are drained via `checkAndSendSteers()` on the ccstream backend at tool execution boundaries (after `tool_use` blocks in `OnAssistant`, and during `OnToolProgress` heartbeats). Each steer is sent as a `SendUserWithPriority(text, PriorityNow)` message — "now" priority interrupts the current tool execution. The `SteerCheckFunc` is wired from `TurnCallbacks` onto the `EventHandler` at `RunInference` time.
+
+### Backend Watcher — tmux (`internal/backend/claudecode/watcher.go`)
+
+The tmux backend's session watcher tails Claude Code's JSONL session file via fsnotify. It converts raw JSONL events into structured callbacks (assistant text, turn completion, usage, agent status). For the stream-json backend (ccstream), see the [ccstream Backend](#ccstream-backend-internalbackendccstream) section below — it receives these events directly on stdout rather than from a file watcher.
 
 **Pre-send offset:** Before `SendToPane` pastes the prompt into the tmux pane, the watcher records the current JSONL file size. The watcher starts reading from this offset so it doesn't replay old content from earlier turns. Falls back to `-1` (tail from end of file) if the offset discovery fails.
 
 **Synthetic response filter:** Claude Code emits synthetic messages (model: `<synthetic>`) such as `"No response requested."` and `"[[NO_RESPONSE]]"`. The watcher filters these at the event level — they never reach the reply callback.
 
-**Typing indicator:** `SetTypingFunc` on the Backend registers a callback. Set to `true` on `SendToPane` (prompt pasted), set to `false` when `fireTurnComplete` fires (end_turn seen). The platform `Connection.SetTyping(bool)` is stateful — `true` starts a periodic ticker (Telegram: 4s, Discord: 9s) that keeps the indicator alive until `false` is called. This replaces the per-platform manual tickers that previously lived in the bot workers.
+**Typing indicator:** Both backends use `SetTypingFunc` to register a callback. Set to `true` on `SendToPane` (tmux) or `SendToPane` (ccstream), set to `false` when `OnTurnComplete` fires. The platform `Connection.SetTyping(bool)` is stateful — `true` starts a periodic ticker (Telegram: 4s, Discord: 9s) that keeps the indicator alive until `false` is called. The ccstream backend also restarts the typing indicator on `OnAssistant` (mid-turn text) and `OnToolProgress` (heartbeats during long tools).
 
-**Usage extraction:** Assistant messages in the JSONL carry a `usage` payload. The watcher extracts `TurnUsage` (InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens) from the last assistant message in each turn. This is reported via `TurnState.FinalUsage` on completion.
+**Usage extraction:** Assistant messages in the JSONL carry a `usage` payload. The watcher extracts `TurnUsage` (InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens) from the last assistant message in each turn. This is reported via `TurnState.FinalUsage` on completion. The ccstream backend extracts the same from structured `AssistantMessage` objects on stdout.
 
-**Per-turn completion callbacks:** `SendToPane` registers a one-shot `turnCompleteFn` that fires when the watcher sees `end_turn` in the JSONL. The callback sets `TurnState.FinalText` and `TurnState.FinalUsage`, then closes `TurnState.CompletionChan` — triggering the post-turn goroutine (save, metadata, compaction, logging).
+**Per-turn completion callbacks:** `SendToPane` registers a one-shot `OnTurnComplete` handler (via `EventHandler`) that fires when the turn ends (`end_turn` in JSONL for tmux, `ResultMessage` on stdout for ccstream). The callback sets `TurnState.FinalText` and `TurnState.FinalUsage`, then closes `TurnState.CompletionChan` — triggering the post-turn goroutine (save, metadata, compaction, logging).
 
-**Agent spawn tracking:** The watcher tracks pending `tool_use` calls for the Agent tool. When a sub-agent is spawned, status is reported via the `onAgentStatus` callback, allowing the platform to show agent activity state.
+**Agent spawn tracking:** The tmux watcher tracks pending `tool_use` calls for the Agent tool. The ccstream backend receives task lifecycle events (`task_started`, `task_notification`) as system messages. Both report status via the `onAgentStatus` callback, allowing the platform to show agent activity state.
 
-**Permission auto-approval:** When CC sends a `can_use_tool` permission request, the ccstream backend's `handleToolRequest` first checks against compiled auto-approve rules (from `[permissions]` config). Rules are assembled at startup by `buildAutoApproveRules`: built-in common readonly tools/commands (if `auto_approve_common_readonly` is true), workspace-scoped Edit/Write access, and user-configured patterns from global + per-agent config (union). Matched requests are approved directly via `SendControlResponse` with an INFO log. Unmatched requests are forwarded to the user via the platform connection with an inline keyboard of choices (Allow, Deny, Always Allow).
+**Permission auto-approval:** When CC sends a `can_use_tool` permission request, the ccstream backend's `handleToolRequest` first checks against compiled auto-approve rules (from `[permissions]` config). Rules are assembled at startup by `buildAutoApproveRules`: built-in common readonly tools/commands (if `auto_approve_common_readonly` is true), workspace-scoped Edit/Write access, and user-configured patterns from global + per-agent config (union). For Bash commands, the command is split on shell operators (`&&`, `||`, `;`, `|`) and every segment must independently match at least one Bash rule — this prevents `git status && rm -rf /` from being auto-approved by a `git *` rule. Matched requests are approved directly via `SendControlResponse` with an INFO log. Unmatched requests are forwarded to the user via the platform connection with an inline keyboard of choices (Allow, Deny, Always Allow).
 
 **AskUserQuestion handling:** When CC's `AskUserQuestion` tool triggers a `can_use_tool` request, `handleToolRequest` routes it to `handleUserQuestion` (`userquestion.go`) instead of the standard permission flow. The handler parses the questions from the tool input, stores a `pendingPermission` with question state (questions, current index, accumulated answers), and presents the first question as an interactive prompt with option buttons plus Cancel. For multi-question sequences, questions are presented one at a time; each answer advances the sequence. The user can also type a custom text answer (intercepted in `RunInference` before `WaitForPermission` blocks) or cancel via the Cancel button or `/stop`. When all questions are answered, the response is sent as `PermissionAllow` with `updatedInput` containing the original input plus an `answers` map (`{question_text: answer}`). CC receives this as the tool's input and returns the formatted answers to the model.
 
@@ -277,9 +347,9 @@ The session watcher tails Claude Code's JSONL session file via fsnotify. It conv
 - **New independent CC session** — consolidation, background tasks, and nudge extraction use `RunOnce` (see above), which spawns an independent headless CC process.
 - **Reject** — the HTTP `/branch` endpoint is explicitly rejected since delegated agents don't support session branching.
 
-**/reset:** Sends the memory formation prompt to the CC session, waits for completion, kills the tmux pane, and starts a fresh CC session. The session ID is cleared from the state store and a new one is persisted on reconnection.
+**/reset:** Sends the memory formation prompt to the CC session, waits for completion, destroys the backend session (kills tmux pane or closes stream subprocess), and starts a fresh CC session. The session ID is cleared from the state store and a new one is persisted on reconnection. See `agent/lifecycle.go:resetDelegatedSession`.
 
-**/stop:** Sends Escape×2 + Ctrl-C to the CC TUI via tmux `send-keys` to interrupt the current turn. This halts the in-flight inference/tool execution inside Claude Code.
+**/stop:** Interrupts the current turn. Tmux backend: sends Escape×2 + Ctrl-C via `send-keys`. Stream backend: sends an `interrupt` control message over stdin. Both halt the in-flight inference/tool execution inside Claude Code.
 
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
@@ -287,6 +357,74 @@ The session watcher tails Claude Code's JSONL session file via fsnotify. It conv
 - Prevents large tool outputs from permanently bloating session history
 - `agent.Redact` is applied to all tool results and error messages (secret redaction)
 - Tool errors are logged as WARN in the event log
+
+### ccstream Backend (`internal/backend/ccstream/`)
+
+The ccstream backend replaces the tmux-based backend with structured NDJSON communication over stdin/stdout. CC runs as a subprocess with `--input-format stream-json --output-format stream-json --permission-prompt-tool stdio` — no pane management, no screen scraping, no JSONL file watching. Registered as `"claude-code"` via `backend.Register` in `init()`.
+
+**Protocol:** Each line on the wire is a single JSON object. The `type` field (and optionally `subtype`) discriminates the message kind. Foci writes to CC's stdin; CC writes to foci's stdout. All writes are serialised by a mutex on the `Writer` — no interleaving of JSON lines.
+
+**Message types — stdin (foci → CC):**
+| Type | Purpose |
+|------|---------|
+| `user` | Conversational turn (text or content blocks) |
+| `control_request` | Control command (initialize, interrupt, set_model, get_context_usage) |
+| `control_response` | Answer to CC's control_request (permission allow/deny) |
+| `control_cancel_request` | Cancel a pending CC control_request |
+| `keep_alive` | Heartbeat (30s interval) |
+| `update_environment_variables` | Inject env vars at runtime |
+
+**Message types — stdout (CC → foci):**
+| Type | Purpose |
+|------|---------|
+| `assistant` | Model response with content blocks (text, thinking, tool_use) |
+| `result` | Turn completion with accumulated metrics (success, error, max_turns) |
+| `system` | Lifecycle events (init, status, compact_boundary, session_state_changed, task_*, api_retry) |
+| `control_request` | CC requesting permission (subtype `can_use_tool`) |
+| `control_cancel_request` | CC cancelling a pending permission request |
+| `tool_progress` | Heartbeat during long-running tool execution |
+| `stream_event` | Token-level streaming (with `--include-partial-messages`) |
+
+**Message priority:** User messages carry an optional `priority` field. `PriorityNow` interrupts the current operation (aborts tool execution) — used for steer messages. `PriorityNext` queues after the current turn (default). `PriorityLater` defers for low-priority system messages.
+
+**Lifecycle:**
+1. `Start` spawns `claude` with stream-json flags, creates stdin/stdout/stderr pipes.
+2. Sends an `initialize` control request with the system prompt.
+3. Reader goroutine dispatches stdout lines to typed handler methods.
+4. `OnSystem("init", ...)` fires `readyOnce` (unblocks `WaitReady`) and persists session ID.
+5. Keep-alive goroutine sends heartbeats every 30s.
+6. `Close` sends interrupt + EOF, waits up to 5s, escalates SIGTERM → SIGKILL.
+7. `Restart` calls `Close`, resets state, calls `Start` with saved options.
+
+**Turn flow:**
+1. `SendToPane` calls `beginTurn` (sets handler, resets text/tools counters, creates result channel).
+2. `Writer.SendUser(prompt)` writes a user message to CC's stdin.
+3. CC processes the turn, emitting `assistant`, `tool_progress`, and `stream_event` messages.
+4. `OnAssistant` accumulates text, counts tool_use blocks, fires `OnText`/`OnToolStart` callbacks, and calls `checkAndSendSteers` after tool_use blocks.
+5. `OnResult` captures final text/usage/model, fires `OnTurnComplete`, stops typing, signals `WaitForTurn`.
+
+**Permission handling:** CC sends `control_request` with subtype `can_use_tool`. The backend first checks compiled auto-approve rules (`autoApprovePermission`). Unmatched requests are stored as `pendingPermission` entries and forwarded to the platform via `permPromptFn` (interactive buttons: Allow, Deny, Always Allow). The user's response is sent back as a `control_response` with either `PermissionAllow` or `PermissionDeny`. CC can also cancel a pending request via `control_cancel_request` (e.g. when a hook resolves it).
+
+**`DelegatedManager.WaitForPermission`:** Before `RunInference` sends a new prompt to the backend, it calls `WaitForPermission` which blocks until all pending permission prompts are resolved. Uses `sync.Cond` with a context-cancellation goroutine (since `sync.Cond` doesn't natively support context). The `onPermCleared` callback signals the condition variable when the last pending permission is resolved.
+
+**Differences from tmux backend:**
+- No tmux pane, no `send-keys`, no pane capture — all communication is structured NDJSON.
+- Permissions are handled via structured control messages rather than pane scraping.
+- `/stop` sends an interrupt control message rather than Escape×2 + Ctrl-C.
+- No `SessionFilePath` — the stream backend stores `SessionID` directly.
+- `SendKeystroke` and `SendSpecialKey` are no-ops (no TUI).
+- `CaptureCommandOutput` is not implemented — local command output arrives as system messages on stdout.
+- Typing indicator is restarted on mid-turn events (`OnAssistant`, `OnToolProgress`), not just on `SendToPane`.
+
+### Interactive Messages (`platform/interactive.go`)
+
+Platform-agnostic interactive messages with button callbacks. `SendInteractiveMessage(conn, text, buttons, callback)` sends a message with inline buttons via `ButtonSender`. When a button is pressed, the callback fires and the message is edited with the return value. Falls back to numbered text choices when the connection doesn't support buttons.
+
+Callback data format: `im:<promptID>:<buttonIndex>`. Prompt IDs are atomic uint64 counters. Callbacks are stored in a global `sync.Mutex`-protected map and auto-expire after 24h (`CleanupExpiredInteractive`). Callbacks are one-shot — removed after handling.
+
+Used by permission prompts (delegated backends), config selection menus, and other platform interactions that need structured user choices.
+
+### API Tool Loop Detail
 
 ```
 1. sessions.LoadFull(sessionKey)          ← parent[:branchPoint] + own msgs
@@ -760,9 +898,10 @@ Messages starting with `/` are intercepted at the Telegram router level before r
 **Dispatch flow:** Telegram message → auth check → if `/`: `registry.Dispatch()` → execute → reply. Never touches agent session or message history.
 
 **Two types:**
-1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`
+1. **Built-in** (code-defined in `command/builtins.go`): `/ping`, `/status`, `/cache`, `/last`, `/cost`, `/mana`, `/reset`, `/reload`, `/model`, `/session`, `/tools`, `/tmux`, `/config`, `/log`, `/errors`, `/version`, `/uptime`, `/voice`, `/facet`, `/pass`
    - `/mana` — check quota remaining (`/usage` is a hidden alias)
    - `/reload` — reload workspace files, skills, and system blocks from disk
+   - `/pass` — forward a command directly to the delegated backend (e.g. `/pass /context`, `/pass /model opus`). Bypasses foci's command dispatch so CC slash commands that would otherwise be intercepted by foci can be sent through. For tmux backends, captures and returns pane output after stabilisation. For stream backends, output arrives normally via the stdout reader. Only available for delegated agents — returns an error for API-mode agents.
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
 **`/model` endpoint switching:** Accepts `endpoint:developer/model_id` syntax (e.g. `/model gemini:google/gemini-2.5-flash`, `/model openrouter:anthropic/claude-opus-4-6`). The Execute function calls `config.ResolveModel()` to parse the `developer/model_id` string and `cc.ClientProvider.ResolveEndpointClient(endpoint, format)` to lazy-init the correct client. Calls `cc.Agent.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
