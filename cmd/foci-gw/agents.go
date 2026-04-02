@@ -231,11 +231,9 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 
 	// Pre-compaction memory formation hook
 	compactMemOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
-	compactMemMfCfg := acfg.MemoryFormation
-	compactMemSearchDirs := promptSearchDirs
-	compactMemOrientTemplate := prompts.ResolveOrientationTemplate(compactMemOrientPath, false, compactMemSearchDirs...)
+	compactMemOrientTemplate := prompts.ResolveOrientationTemplate(compactMemOrientPath, false, promptSearchDirs...)
 	ag.CompactionMemoryFunc.Add(func(sessionKey string) {
-		agent.FireCompactionMemory(ag, p.sessions, sessionKey, compactMemMfCfg, compactMemOrientTemplate, compactMemSearchDirs, p.ctx)
+		ag.FireCompactionMemory(p.ctx, sessionKey, compactMemOrientTemplate)
 	})
 
 	// Post-creation agent configuration (API-specific)

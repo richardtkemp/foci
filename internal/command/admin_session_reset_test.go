@@ -24,7 +24,14 @@ func TestResetCommand_UsesSessionKeyFromContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ag := &agent.Agent{}
+	bs := workspace.NewBootstrap(t.TempDir(), nil)
+	ag := &agent.Agent{
+		Sessions:  store,
+		Bootstrap: bs,
+		MemoryFormationConfig: config.ResolvedMemoryFormation{
+			SessionEndEnabled: false,
+		},
+	}
 	cc := CommandContext{
 		Agent:       ag,
 		Sessions:    store,
@@ -35,7 +42,7 @@ func TestResetCommand_UsesSessionKeyFromContext(t *testing.T) {
 				SessionEndEnabled: false,
 			},
 		},
-		Bootstrap: workspace.NewBootstrap(t.TempDir(), nil),
+		Bootstrap: bs,
 	}
 
 	ctx := tools.WithSessionKey(context.Background(), reqKey)

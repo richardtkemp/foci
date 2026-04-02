@@ -19,7 +19,6 @@ import (
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 
-	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -351,8 +350,7 @@ Subcommands:
 					if strings.HasPrefix(sessionKey, id+"/") {
 						orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt))
 						orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
-						agent.FireSessionEndMemory(inst.ag, si.sessions, sessionKey, inst.resolved.MemoryFormation,
-							orientTemplate, inst.promptSearchDirs, ctx, false)
+						inst.ag.FireSessionEndMemory(ctx, sessionKey, orientTemplate, false)
 						return
 					}
 				}

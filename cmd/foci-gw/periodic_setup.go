@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/agent"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/memory"
@@ -88,8 +87,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 			// Fire memory formation on the completed background branch.
 			// skipMetaCheck=true because background branches set NoResetHook
 			// but should still get memory formation on completion.
-			agent.FireSessionEndMemory(inst.ag, p.sessions, branchKey, mf,
-				orientTemplate, inst.promptSearchDirs, p.ctx, true)
+			inst.ag.FireSessionEndMemory(p.ctx, branchKey, orientTemplate, true)
 		},
 	)
 
