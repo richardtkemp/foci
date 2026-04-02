@@ -12,6 +12,71 @@ import (
 	"foci/shared/prompts"
 )
 
+// CompactResult holds the outcome of a compaction operation.
+type CompactResult struct {
+	OldMessageCount int
+	Summary         string
+	NewSessionKey   string // empty on dry-run or no rotation
+}
+
+// doCompact executes the core compaction sequence: resolve prompts, resolve
+// call site, run Compactor.Compact, rotate session on success, fire hooks.
+//
+// Callers are responsible for pre-compaction actions (threshold checks,
+// memory formation) and post-compaction cleanup (bootstrap reload, cache
+// invalidation) since those differ between auto-compaction and manual compaction.
+func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provider.SystemBlock, oldCount int, dryRun bool) (CompactResult, error) {
+	if dryRun {
+		for _, fn := range a.CompactionStartFunc {
+			fn(sessionKey, "⏳ Running compaction dry-run...")
+		}
+	} else {
+		for _, fn := range a.CompactionStartFunc {
+			fn(sessionKey, "⏳ Compacting context...")
+		}
+	}
+
+	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	handoffMsg := a.CompactionHandoffMsg
+	if handoffMsg == "" {
+		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
+	}
+
+	compactClient, compactModel, compactFormat := a.ResolveCallSite(config.CallCompaction, sessionKey)
+	summary, newKey, err := a.Compactor.Compact(ctx, compactClient, sessionKey, compactModel, compactFormat, system, summaryPrompt, handoffMsg, dryRun)
+	if err != nil {
+		return CompactResult{OldMessageCount: oldCount}, fmt.Errorf("compaction failed: %w", err)
+	}
+
+	result := CompactResult{OldMessageCount: oldCount, Summary: summary}
+
+	if dryRun {
+		if summary != "" {
+			for _, fn := range a.CompactionDebugFunc {
+				fn(sessionKey, summary)
+			}
+		}
+		for _, fn := range a.CompactionNotifyFunc {
+			fn(sessionKey, "✅ Dry-run complete — summary sent.")
+		}
+	} else {
+		if newKey != "" {
+			a.RotateSession(sessionKey, newKey)
+			result.NewSessionKey = newKey
+		}
+		for _, fn := range a.CompactionNotifyFunc {
+			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
+		}
+		if summary != "" {
+			for _, fn := range a.CompactionDebugFunc {
+				fn(sessionKey, summary)
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // maybeCompact checks whether context compaction is needed and performs it.
 // Three triggers: (1) main threshold, (2) mana-refresh, (3) user /compact.
 func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []provider.Message, system []provider.SystemBlock, usage *provider.Usage, sm *sessionMeta) {
@@ -80,36 +145,18 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 		}
 	}
 
-	oldCount := len(messages)
 	for _, fn := range a.CompactionMemoryFunc {
 		fn(sessionKey)
 	}
-	for _, fn := range a.CompactionStartFunc {
-		fn(sessionKey, "⏳ Compacting context...")
-	}
-	compactClient, compactModel, compactFormat := a.ResolveCallSite(config.CallCompaction, sessionKey)
-	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
-	handoffMsg := a.CompactionHandoffMsg
-	if handoffMsg == "" {
-		handoffMsg = prompts.ResolvePrompt("", "compaction-handoff.md", prompts.CompactionHandoff(), a.PromptSearchDirs...)
-	}
-	summary, newKey, err := a.Compactor.Compact(ctx, compactClient, sessionKey, compactModel, compactFormat, system, summaryPrompt, handoffMsg, false)
+
+	oldCount := len(messages)
+	result, err := a.doCompact(ctx, sessionKey, system, oldCount, false)
 	if err != nil {
-		a.logger().Errorf("session=%s compaction failed: %v", sessionKey, err)
-	} else {
-		if newKey != "" {
-			a.RotateSession(sessionKey, newKey)
-			a.logger().Infof("session=%s compaction rotated → %s (pre_messages=%d)", sessionKey, newKey, oldCount)
-		}
-		for _, fn := range a.CompactionNotifyFunc {
-			fn(sessionKey, fmt.Sprintf("✅ Context compacted — %d messages summarised.", oldCount))
-		}
-		if summary != "" {
-			for _, fn := range a.CompactionDebugFunc {
-				fn(sessionKey, summary)
-			}
-		}
+		a.logger().Errorf("session=%s %v", sessionKey, err)
+	} else if result.NewSessionKey != "" {
+		a.logger().Infof("session=%s compaction rotated → %s (pre_messages=%d)", sessionKey, result.NewSessionKey, oldCount)
 	}
+
 	// Reload system prompt — compaction may have changed memory files.
 	// Only invalidate THIS session's cached system blocks so other sessions
 	// keep their byte-identical prompts and don't suffer cache busts.

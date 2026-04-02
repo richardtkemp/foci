@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/shared/prompts"
@@ -15,24 +14,24 @@ import (
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
 // work branches which set NoResetHook but should still get memory formation).
-func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string, mfCfg config.ResolvedMemoryFormation, orientTemplate string, searchDirs []string, parentCtx context.Context, skipMetaCheck bool) {
-	if !mfCfg.SessionEndEnabled {
+func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) {
+	if !a.MemoryFormationConfig.SessionEndEnabled {
 		return
 	}
 
-	canFire, reason := ag.CanFireBackgroundOperation(parentCtx, sessionKey)
+	canFire, reason := a.CanFireBackgroundOperation(ctx, sessionKey)
 	if !canFire {
 		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(mfCfg.SessionEndPrompt, "memory-session-end.md", prompts.MemoryFormation(), searchDirs...)
+	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.SessionEndPrompt, "memory-session-end.md", prompts.MemoryFormation(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}
 
 	if !skipMetaCheck {
-		meta, err := sessions.GetBranchMeta(sessionKey)
+		meta, err := a.Sessions.GetBranchMeta(sessionKey)
 		if err != nil {
 			log.Warnf("session-end-memory", "check branch meta for %s: %v", sessionKey, err)
 		}
@@ -45,8 +44,8 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 	// Delegated agents: inject into existing session (CC has the context).
 	// API agents: create a branch so the parent session isn't modified.
 	targetKey := sessionKey
-	if ag.DelegatedManager == nil {
-		branchKey, err := sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
+	if a.DelegatedManager == nil {
+		branchKey, err := a.Sessions.CreateBranchWithOptions(sessionKey, session.BranchOptions{
 			NoResetHook:         true,
 			BranchType:          "session-end-memory",
 			OrientationTemplate: orientTemplate,
@@ -55,17 +54,17 @@ func FireSessionEndMemory(ag *Agent, sessions *session.Store, sessionKey string,
 			log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
 			return
 		}
-		ag.SetSessionNoCompact(branchKey, true)
+		a.SetSessionNoCompact(branchKey, true)
 		targetKey = branchKey
 	}
 
 	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, targetKey)
 
 	go func() {
-		hookCtx, cancel := context.WithTimeout(parentCtx, 120*time.Second)
+		hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
 		hookCtx = WithTrigger(hookCtx, "session_end_memory")
-		if _, err := ag.HandleMessage(hookCtx, targetKey, prompt); err != nil {
+		if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
 			log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
 		}
 	}()

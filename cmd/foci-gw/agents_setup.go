@@ -505,8 +505,6 @@ func setupPlatformConnections(
 
 	reclaimOrientPath := config.DerefStr(config.First(acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
 	reclaimOrientTemplate := prompts.ResolveOrientationTemplate(reclaimOrientPath, false, promptSearchDirs...)
-	reclaimMfCfg := p.resolved.MemoryFormation
-	reclaimSearchDirs := promptSearchDirs
 
 	vc := p.resolved.Voice
 	results := p.plat.SetupAgentConnection(platform.AgentConnectionParams{
@@ -519,8 +517,7 @@ func setupPlatformConnections(
 		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
-			agent.FireSessionEndMemory(ag, p.sessions, sessionKey, reclaimMfCfg,
-				reclaimOrientTemplate, reclaimSearchDirs, p.ctx, false)
+			ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
 		},
 		DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
 			return platform.DisplaySettings{

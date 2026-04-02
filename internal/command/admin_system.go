@@ -6,9 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
-
-	"foci/internal/provider"
-	"foci/internal/skills"
 )
 
 // BuildInfo holds version and build information.
@@ -39,20 +36,8 @@ func ReloadCommand() *Command {
 		Description: "Reload config, skills, and system prompt from disk",
 		Category:    "operations",
 		Execute: func(_ context.Context, _ Request, cc CommandContext) (Response, error) {
-			cc.Bootstrap.Reload()
-			if cc.Agent.NudgeReloadFunc != nil {
-				cc.Agent.NudgeReloadFunc()
-			}
-			cc.Agent.InvalidateSystemCaches()
-			newSkillRegistry := skills.Load(cc.SkillsDirs)
-			var newExtraSystemBlocks []provider.SystemBlock
-			if newSkillRegistry.Len() > 0 {
-				newExtraSystemBlocks = []provider.SystemBlock{
-					{Type: "text", Text: newSkillRegistry.SystemBlock(cc.AgentConfig.Workspace)},
-				}
-			}
-			cc.Agent.ExtraSystemBlocks = newExtraSystemBlocks
-			return Response{Text: fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: foci.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", newSkillRegistry.Len())}, nil
+			skillCount := cc.Agent.ReloadSystem()
+			return Response{Text: fmt.Sprintf("Reloaded:\n- workspace files (system prompt)\n- %d skills\n\nNote: foci.toml config changes require a service restart to take effect. Prompt file changes take effect immediately.", skillCount)}, nil
 		},
 	}
 }

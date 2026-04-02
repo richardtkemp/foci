@@ -15,6 +15,7 @@ import (
 	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/workspace"
+	"foci/shared/prompts"
 )
 
 // sharedAgentSetup holds resolved config and helpers shared by both the
@@ -59,8 +60,9 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		AgentID:           acfg.ID,
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
-		PromptSearchDirs:  s.promptSearchDirs,
-		ShowToolCalls:     resolveShowToolCalls(s.p.resolved),
+		PromptSearchDirs:      s.promptSearchDirs,
+		MemoryFormationConfig: s.p.resolved.MemoryFormation,
+		ShowToolCalls:         resolveShowToolCalls(s.p.resolved),
 	}
 }
 
@@ -82,6 +84,13 @@ func configureUniversal(ag *agent.Agent, p setupParams, compactor *compaction.Co
 	ag.AutocompactBeforeManaRefreshPreservePct = cpc.AutocompactBeforeManaRefreshPreservePct
 	ag.TurnLockWarnThreshold = parseDurationDefault(bc.TurnLockWarnThreshold, 0)
 	ag.ModelDefaultsFn = modelDefaultsFn(p.cfg.Models)
+
+	// Reset lifecycle: orientation template resolver (closed over config for lazy resolution).
+	resetOrientPath := config.DerefStr(config.First(p.acfg.Sessions.BranchOrientationHeadlessPrompt, p.cfg.Sessions.BranchOrientationHeadlessPrompt))
+	resetSearchDirs := ag.PromptSearchDirs
+	ag.ResetOrientTemplateFn = func() string {
+		return prompts.ResolveOrientationTemplate(resetOrientPath, false, resetSearchDirs...)
+	}
 	ag.ManaInvestInterval = parseDurationDefault(p.resolved.Mana.InvestInterval, 0)
 
 	setupWarningQueue(ag, p.resolved, p.cfg)
@@ -118,6 +127,19 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 
 	// Bootstrap — needed by both API (system prompt) and delegated (slash commands, /reset).
 	ag.Bootstrap = fp.bootstrap
+
+	// Reload lifecycle: skills/extra-blocks reload callback.
+	if fp.skillsDirs != nil {
+		reloadSkillsDirs := fp.skillsDirs
+		reloadWorkspace := acfg.Workspace
+		ag.ReloadSystemFn = func() ([]provider.SystemBlock, int) {
+			reg := skills.Load(reloadSkillsDirs)
+			if reg.Len() == 0 {
+				return nil, 0
+			}
+			return []provider.SystemBlock{{Type: "text", Text: reg.SystemBlock(reloadWorkspace)}}, reg.Len()
+		}
+	}
 
 	// Nudge system.
 	wsFileMode, _ := config.ParseFileMode(p.cfg.FileMode)
