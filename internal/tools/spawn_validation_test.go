@@ -366,7 +366,7 @@ func TestSpawnTimeout(t *testing.T) {
 	// within the specified number of seconds rather than blocking indefinitely.
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2 * time.Second) // longer than our timeout
+		time.Sleep(200 * time.Millisecond) // longer than our timeout
 	}))
 	defer server.Close()
 

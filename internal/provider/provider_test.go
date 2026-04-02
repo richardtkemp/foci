@@ -52,6 +52,7 @@ func (m *mockStreamingClient) IsCachingAvailable() bool {
 }
 
 func TestSendWithNilHandlerUsesNonStreaming(t *testing.T) {
+	t.Parallel()
 	// Proves that Send dispatches to SendMessage (not StreamMessage) when handler is nil,
 	// even when the client supports streaming.
 	mock := &mockStreamingClient{
@@ -93,6 +94,7 @@ func TestSendWithNilHandlerUsesNonStreaming(t *testing.T) {
 }
 
 func TestSendWithHandlerUsesStreaming(t *testing.T) {
+	t.Parallel()
 	// Proves that Send dispatches to StreamMessage when a handler is provided and the
 	// client supports streaming.
 	mock := &mockStreamingClient{
@@ -136,6 +138,7 @@ func TestSendWithHandlerUsesStreaming(t *testing.T) {
 }
 
 func TestSendWithNonStreamingClientAlwaysUsesSendMessage(t *testing.T) {
+	t.Parallel()
 	// Proves that Send always falls back to SendMessage when the client does not
 	// implement StreamingClient, regardless of whether a handler is provided.
 	mock := &mockClient{
@@ -174,6 +177,7 @@ func TestSendWithNonStreamingClientAlwaysUsesSendMessage(t *testing.T) {
 }
 
 func TestSendWithEmptyHandlerUsesStreaming(t *testing.T) {
+	t.Parallel()
 	// Proves that an empty StreamHandler (non-nil but with no callbacks set) still
 	// triggers the streaming path rather than falling back to SendMessage.
 	mock := &mockStreamingClient{
@@ -228,6 +232,7 @@ func (m *mockSelfRetryingClient) SendMessage(ctx context.Context, req *MessageRe
 }
 
 func TestSendWithSelfRetryingClientSkipsProviderRetry(t *testing.T) {
+	t.Parallel()
 	// Proves that Send invokes SendMessage exactly once for clients that declare they
 	// handle their own retries, bypassing the provider-level retry wrapper entirely.
 	mock := &mockSelfRetryingClient{

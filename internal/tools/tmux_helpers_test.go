@@ -20,6 +20,9 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	exec.Command("tmux", "-S", tmuxSocketPath, "kill-server").Run()
 	os.RemoveAll(dir)
+	if sharedBrowserMgr != nil {
+		sharedBrowserMgr.Stop()
+	}
 	os.Exit(code)
 }
 

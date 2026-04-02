@@ -7,6 +7,7 @@ import (
 )
 
 func TestTextContent(t *testing.T) {
+	t.Parallel()
 	// Proves that TextContent wraps a plain string into a single-element text ContentBlock slice.
 	blocks := TextContent("hello")
 	if len(blocks) != 1 || blocks[0].Type != "text" || blocks[0].Text != "hello" {
@@ -15,6 +16,7 @@ func TestTextContent(t *testing.T) {
 }
 
 func TestTextOf(t *testing.T) {
+	t.Parallel()
 	// Proves that TextOf extracts the text from the first text-typed block, ignoring
 	// non-text blocks like tool_use.
 	blocks := []ContentBlock{
@@ -27,6 +29,7 @@ func TestTextOf(t *testing.T) {
 }
 
 func TestToolResultBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that ToolResultBlock constructs a correctly typed tool_result block with
 	// the given tool use ID and content string.
 	block := ToolResultBlock("tu_123", "result", false)
@@ -36,6 +39,7 @@ func TestToolResultBlock(t *testing.T) {
 }
 
 func TestContentBlockRoundTrip(t *testing.T) {
+	t.Parallel()
 	// Proves that a tool_use ContentBlock survives a JSON marshal/unmarshal round-trip
 	// with all key fields (type, ID, name) intact.
 	block := ContentBlock{
@@ -58,6 +62,7 @@ func TestContentBlockRoundTrip(t *testing.T) {
 }
 
 func TestNewCustomToolName(t *testing.T) {
+	t.Parallel()
 	// Proves that NewCustomTool produces a ToolDef whose Name() accessor returns
 	// the name that was passed in.
 	td := NewCustomTool("exec", "run commands", json.RawMessage(`{"type":"object"}`))
@@ -67,6 +72,7 @@ func TestNewCustomToolName(t *testing.T) {
 }
 
 func TestImageBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that ImageBlock produces a ContentBlock with type "image" and a base64
 	// source populated with the given MIME type.
 	block := ImageBlock("image/jpeg", "base64data")
@@ -79,6 +85,7 @@ func TestImageBlock(t *testing.T) {
 }
 
 func TestDocumentBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that DocumentBlock produces a ContentBlock with type "document" and a
 	// base64 source populated with the given MIME type.
 	block := DocumentBlock("application/pdf", "pdfbase64data")
@@ -91,6 +98,7 @@ func TestDocumentBlock(t *testing.T) {
 }
 
 func TestNewServerTool(t *testing.T) {
+	t.Parallel()
 	// Proves that NewServerTool wraps a raw config map into a ToolDef and correctly
 	// extracts the tool name from the "name" key.
 	config := map[string]interface{}{
@@ -104,6 +112,7 @@ func TestNewServerTool(t *testing.T) {
 }
 
 func TestToolDefRaw(t *testing.T) {
+	t.Parallel()
 	// Proves that Raw() returns non-empty JSON bytes for a ToolDef created via
 	// NewCustomTool.
 	td := NewCustomTool("test", "desc", json.RawMessage(`{}`))
@@ -114,6 +123,7 @@ func TestToolDefRaw(t *testing.T) {
 }
 
 func TestAPIErrorError(t *testing.T) {
+	t.Parallel()
 	// Proves that APIError.Error() formats the status code and body into a readable
 	// string matching the expected template.
 	err := &APIError{StatusCode: 500, Body: "Internal Server Error"}
@@ -124,6 +134,7 @@ func TestAPIErrorError(t *testing.T) {
 }
 
 func TestAPIErrorIsRateLimit(t *testing.T) {
+	t.Parallel()
 	// Proves that IsRateLimit correctly identifies only HTTP 429 as a rate-limit error,
 	// returning false for other status codes.
 	tests := []struct {
@@ -143,6 +154,7 @@ func TestAPIErrorIsRateLimit(t *testing.T) {
 }
 
 func TestAPIErrorIsOverloaded(t *testing.T) {
+	t.Parallel()
 	// Proves that IsOverloaded correctly identifies only HTTP 529 as an overload error,
 	// returning false for other status codes.
 	tests := []struct {
@@ -162,6 +174,7 @@ func TestAPIErrorIsOverloaded(t *testing.T) {
 }
 
 func TestAPIErrorIsRetryable(t *testing.T) {
+	t.Parallel()
 	// Proves that IsRetryable returns true only for server-side transient codes (500,
 	// 502, 503, 529) and false for client errors and success codes.
 	tests := []struct {
@@ -185,6 +198,7 @@ func TestAPIErrorIsRetryable(t *testing.T) {
 }
 
 func TestAPIErrorIsAuthError(t *testing.T) {
+	t.Parallel()
 	// Proves that IsAuthError correctly identifies only HTTP 401 as an authentication
 	// error, not 403 or other codes.
 	tests := []struct {
@@ -204,6 +218,7 @@ func TestAPIErrorIsAuthError(t *testing.T) {
 }
 
 func TestAPIErrorRetryAfterSeconds(t *testing.T) {
+	t.Parallel()
 	// Proves that RetryAfterSeconds correctly parses numeric strings and returns 0 for
 	// empty or non-numeric values.
 	tests := []struct {
@@ -225,6 +240,7 @@ func TestAPIErrorRetryAfterSeconds(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_TextBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that a JSON text block unmarshals correctly into a ContentBlock with the
 	// right type and text fields.
 	data := []byte(`{"type":"text","text":"hello"}`)
@@ -238,6 +254,7 @@ func TestContentBlockUnmarshalJSON_TextBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultStringContent(t *testing.T) {
+	t.Parallel()
 	// Proves that a tool_result block with content as a plain JSON string unmarshals
 	// with the string value preserved in the Content field.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":"result"}`)
@@ -251,6 +268,7 @@ func TestContentBlockUnmarshalJSON_ToolResultStringContent(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultArrayContent(t *testing.T) {
+	t.Parallel()
 	// Proves that a tool_result block in SDK array format (content as an array of text
 	// blocks) is normalized to a plain string in the Content field.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[{"type":"text","text":"result"}]}`)
@@ -264,6 +282,7 @@ func TestContentBlockUnmarshalJSON_ToolResultArrayContent(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ServerTool(t *testing.T) {
+	t.Parallel()
 	// Proves that blocks with an unknown type are still accepted and that the raw JSON
 	// bytes are preserved so the block can be re-serialized faithfully.
 	data := []byte(`{"type":"web_search_tool_result","id":"ws_123","name":"web_search"}`)
@@ -281,6 +300,7 @@ func TestContentBlockUnmarshalJSON_ServerTool(t *testing.T) {
 }
 
 func TestContentBlockMarshalJSON_KnownType(t *testing.T) {
+	t.Parallel()
 	// Proves that a known-type ContentBlock marshals to valid JSON and round-trips
 	// cleanly through unmarshal.
 	cb := ContentBlock{
@@ -301,6 +321,7 @@ func TestContentBlockMarshalJSON_KnownType(t *testing.T) {
 }
 
 func TestContentBlockMarshalJSON_UnknownTypeWithRaw(t *testing.T) {
+	t.Parallel()
 	// Proves that a block with an unknown type that carries raw bytes marshals back to
 	// valid JSON using the preserved raw representation.
 	rawData := []byte(`{"type":"web_search_tool_result","id":"ws_123"}`)
@@ -320,6 +341,7 @@ func TestContentBlockMarshalJSON_UnknownTypeWithRaw(t *testing.T) {
 }
 
 func TestTextOf_MultipleBlocks(t *testing.T) {
+	t.Parallel()
 	// Proves that TextOf concatenates all text blocks with double newlines as separator,
 	// skipping non-text blocks in between.
 	blocks := []ContentBlock{
@@ -333,6 +355,7 @@ func TestTextOf_MultipleBlocks(t *testing.T) {
 }
 
 func TestTextOf_NoTextBlocks(t *testing.T) {
+	t.Parallel()
 	// Proves that TextOf returns an empty string when no text-typed blocks are present.
 	blocks := []ContentBlock{
 		{Type: "tool_use", Name: "exec"},
@@ -343,6 +366,7 @@ func TestTextOf_NoTextBlocks(t *testing.T) {
 }
 
 func TestTextOf_EmptyTextBlocks(t *testing.T) {
+	t.Parallel()
 	// Proves that TextOf skips empty text blocks when building its result, returning
 	// only the non-empty text.
 	blocks := []ContentBlock{
@@ -355,6 +379,7 @@ func TestTextOf_EmptyTextBlocks(t *testing.T) {
 }
 
 func TestToolDefMarshalJSON(t *testing.T) {
+	t.Parallel()
 	// Proves that a ToolDef created via NewCustomTool marshals to valid JSON without
 	// error.
 	td := NewCustomTool("test", "description", json.RawMessage(`{"type":"object"}`))
@@ -368,6 +393,7 @@ func TestToolDefMarshalJSON(t *testing.T) {
 }
 
 func TestToolDefUnmarshalJSON(t *testing.T) {
+	t.Parallel()
 	// Proves that a ToolDef can be unmarshaled from raw JSON and that the Name()
 	// accessor correctly returns the deserialized name.
 	rawData := []byte(`{"name":"test","description":"desc"}`)
@@ -381,6 +407,7 @@ func TestToolDefUnmarshalJSON(t *testing.T) {
 }
 
 func TestToolDefRoundTrip(t *testing.T) {
+	t.Parallel()
 	// Proves that a ToolDef survives a full marshal/unmarshal round-trip with its name
 	// preserved correctly.
 	original := NewCustomTool("myTool", "my description", json.RawMessage(`{"type":"object"}`))
@@ -404,6 +431,7 @@ func TestToolDefRoundTrip(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ImageBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that an image content block with a base64 source unmarshals correctly,
 	// including the MIME type in the Source field.
 	data := []byte(`{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"base64data"}}`)
@@ -417,6 +445,7 @@ func TestContentBlockUnmarshalJSON_ImageBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_DocumentBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that a document content block with a base64 source unmarshals correctly,
 	// including the PDF MIME type in the Source field.
 	data := []byte(`{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"pdfdata"}}`)
@@ -430,6 +459,7 @@ func TestContentBlockUnmarshalJSON_DocumentBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ThinkingBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that a thinking block unmarshals with the thinking text preserved in the
 	// Thinking field.
 	data := []byte(`{"type":"thinking","thinking":"internal reasoning"}`)
@@ -443,6 +473,7 @@ func TestContentBlockUnmarshalJSON_ThinkingBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolUseBlock(t *testing.T) {
+	t.Parallel()
 	// Proves that a tool_use block unmarshals with ID, name, and input all correctly
 	// populated.
 	data := []byte(`{"type":"tool_use","id":"tu_abc","name":"exec","input":{"command":"ls"}}`)
@@ -456,6 +487,7 @@ func TestContentBlockUnmarshalJSON_ToolUseBlock(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_RedactedThinking(t *testing.T) {
+	t.Parallel()
 	// Proves that a redacted_thinking block unmarshals correctly with its encrypted
 	// data and signature fields populated.
 	data := []byte(`{"type":"redacted_thinking","data":"encrypted","signature":"sig"}`)
@@ -469,6 +501,7 @@ func TestContentBlockUnmarshalJSON_RedactedThinking(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_InvalidJSONForKnownType(t *testing.T) {
+	t.Parallel()
 	// Proves that unmarshaling a known block type with a type-mismatched field value
 	// returns an error rather than silently accepting invalid data.
 	data := []byte(`{"type":"text","text":123}`) // text should be string
@@ -479,6 +512,7 @@ func TestContentBlockUnmarshalJSON_InvalidJSONForKnownType(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_UnknownTypeInvalidJSON(t *testing.T) {
+	t.Parallel()
 	// Proves that blocks with an unknown type tolerate unexpected field structures by
 	// falling back to raw storage rather than failing the unmarshal.
 	data := []byte(`{"type":"future_tool","id":"123","content":[1,2,3]}`) // invalid structure
@@ -492,6 +526,7 @@ func TestContentBlockUnmarshalJSON_UnknownTypeInvalidJSON(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultEmptyContent(t *testing.T) {
+	t.Parallel()
 	// Proves that a tool_result block with an empty string content field unmarshals
 	// without error and preserves the empty string in Content.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":""}`)
@@ -505,6 +540,7 @@ func TestContentBlockUnmarshalJSON_ToolResultEmptyContent(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultMultipleBlocks(t *testing.T) {
+	t.Parallel()
 	// Proves that when a tool_result's content array contains multiple text blocks,
 	// only the first block's text is extracted into the Content field.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[{"type":"text","text":"first"},{"type":"text","text":"second"}]}`)
@@ -518,6 +554,7 @@ func TestContentBlockUnmarshalJSON_ToolResultMultipleBlocks(t *testing.T) {
 }
 
 func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
+	t.Parallel()
 	// Proves that a tool_result block with an empty content array falls back to storing
 	// the raw "[]" string in Content rather than an empty string or an error.
 	data := []byte(`{"type":"tool_result","tool_use_id":"tu_123","content":[]}`)
@@ -536,6 +573,7 @@ func TestContentBlockUnmarshalJSON_ToolResultEmptyArray(t *testing.T) {
 }
 
 func TestComputeSessionStats_Empty(t *testing.T) {
+	t.Parallel()
 	// Verifies that an empty message slice returns zero stats.
 	s := ComputeSessionStats(nil)
 	if s.Messages != 0 || s.Blocks != 0 || s.ApproxBytes != 0 {
@@ -547,6 +585,7 @@ func TestComputeSessionStats_Empty(t *testing.T) {
 }
 
 func TestComputeSessionStats_MixedBlocks(t *testing.T) {
+	t.Parallel()
 	// Verifies byte counting across text, thinking,
 	// tool input, tool result content, and base64 source data.
 	msgs := []Message{
@@ -590,6 +629,7 @@ func TestComputeSessionStats_MixedBlocks(t *testing.T) {
 }
 
 func TestMarshalRaw_NoHTMLEscape(t *testing.T) {
+	t.Parallel()
 	// Proves that MarshalRaw does not escape HTML-sensitive characters (>, <, &)
 	// unlike json.Marshal which converts them to unicode escape sequences.
 	v := map[string]string{"command": "cat file 2>/dev/null"}
@@ -607,6 +647,7 @@ func TestMarshalRaw_NoHTMLEscape(t *testing.T) {
 }
 
 func TestUnescapeUnicodeJSON(t *testing.T) {
+	t.Parallel()
 	// Proves that UnescapeUnicodeJSON converts \u003e → >, \u003c → <, \u0026 → &
 	// while leaving other content untouched.
 	tests := []struct {
@@ -626,6 +667,7 @@ func TestUnescapeUnicodeJSON(t *testing.T) {
 }
 
 func TestComputeSessionStats_ApproxTokensRounding(t *testing.T) {
+	t.Parallel()
 	// Verifies integer division truncation
 	// in the token estimate.
 	msgs := []Message{

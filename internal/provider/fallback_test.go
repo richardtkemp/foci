@@ -9,6 +9,7 @@ import (
 )
 
 func TestIsFallbackEligible_DeadlineExceeded(t *testing.T) {
+	t.Parallel()
 	// Proves that context.DeadlineExceeded triggers fallback, since it
 	// indicates the primary model timed out.
 	if !IsFallbackEligible(context.DeadlineExceeded) {
@@ -17,6 +18,7 @@ func TestIsFallbackEligible_DeadlineExceeded(t *testing.T) {
 }
 
 func TestIsFallbackEligible_WrappedDeadlineExceeded(t *testing.T) {
+	t.Parallel()
 	// Proves that a wrapped DeadlineExceeded is still detected via errors.Is.
 	err := fmt.Errorf("request failed: %w", context.DeadlineExceeded)
 	if !IsFallbackEligible(err) {
@@ -25,6 +27,7 @@ func TestIsFallbackEligible_WrappedDeadlineExceeded(t *testing.T) {
 }
 
 func TestIsFallbackEligible_Overloaded529(t *testing.T) {
+	t.Parallel()
 	// Proves that 529 (Anthropic overloaded) triggers fallback.
 	err := &APIError{StatusCode: 529}
 	if !IsFallbackEligible(err) {
@@ -33,6 +36,7 @@ func TestIsFallbackEligible_Overloaded529(t *testing.T) {
 }
 
 func TestIsFallbackEligible_ServerErrors(t *testing.T) {
+	t.Parallel()
 	// Proves that 5xx server errors (500, 502, 503) trigger fallback.
 	for _, code := range []int{500, 502, 503} {
 		err := &APIError{StatusCode: code}
@@ -43,6 +47,7 @@ func TestIsFallbackEligible_ServerErrors(t *testing.T) {
 }
 
 func TestIsFallbackEligible_NotEligible(t *testing.T) {
+	t.Parallel()
 	// Proves that client errors (400, 401, 429) and non-API errors
 	// do NOT trigger fallback.
 	cases := []struct {
@@ -113,6 +118,7 @@ func (p *fallbackMockClientProvider) ResolveEndpointClient(endpoint, format stri
 }
 
 func TestSend_NilFallbackFn(t *testing.T) {
+	t.Parallel()
 	// Proves that a nil fallbackFn degrades to plain send-with-retry.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{resp: &MessageResponse{Content: TextContent("ok")}},
@@ -128,6 +134,7 @@ func TestSend_NilFallbackFn(t *testing.T) {
 }
 
 func TestSend_PrimarySucceeds(t *testing.T) {
+	t.Parallel()
 	// Proves that when the primary call succeeds, fallback is never tried.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{resp: &MessageResponse{Content: TextContent("primary ok")}},
@@ -151,6 +158,7 @@ func TestSend_PrimarySucceeds(t *testing.T) {
 }
 
 func TestSend_FallbackOnTransientError(t *testing.T) {
+	t.Parallel()
 	// Proves that a 529 on primary triggers the fallback, and the
 	// fallback model's client is resolved via clientProvider.
 	primaryClient := &fallbackMockClient{responses: []fallbackMockResponse{
@@ -188,6 +196,7 @@ func TestSend_FallbackOnTransientError(t *testing.T) {
 }
 
 func TestSend_ChainWalk(t *testing.T) {
+	t.Parallel()
 	// Proves that fallback walks the chain: primary → fb1 → fb2 succeeds.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{err: &APIError{StatusCode: 529}},                         // primary fails
@@ -215,6 +224,7 @@ func TestSend_ChainWalk(t *testing.T) {
 }
 
 func TestSend_AllFail(t *testing.T) {
+	t.Parallel()
 	// Proves that when all models in the chain fail, the last error is returned.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{err: &APIError{StatusCode: 529}},
@@ -238,6 +248,7 @@ func TestSend_AllFail(t *testing.T) {
 }
 
 func TestSend_NonTransientSkipsFallback(t *testing.T) {
+	t.Parallel()
 	// Proves that a non-transient error (401) does NOT trigger fallback.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
 		{err: &APIError{StatusCode: 401}},
@@ -258,6 +269,7 @@ func TestSend_NonTransientSkipsFallback(t *testing.T) {
 }
 
 func TestSend_StripUnsupportedParams(t *testing.T) {
+	t.Parallel()
 	// Proves that a 400 mentioning "thinking" strips the param and retries
 	// successfully on the same model.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{
@@ -281,6 +293,7 @@ func TestSend_StripUnsupportedParams(t *testing.T) {
 }
 
 func TestSend_NoFallbackConfigured(t *testing.T) {
+	t.Parallel()
 	// Proves that when a transient error triggers fallback but no fallback model
 	// is configured, the original error is returned (not nil). This was a crash:
 	// walkFallback returned (nil, nil) when fallbackFn returned ok=false on
@@ -302,6 +315,7 @@ func TestSend_NoFallbackConfigured(t *testing.T) {
 }
 
 func TestSend_StripThenFallback(t *testing.T) {
+	t.Parallel()
 	// Proves that strip-and-retry happens before fallback: a 400 strips params,
 	// retry still fails (529), then fallback kicks in.
 	mc := &fallbackMockClient{responses: []fallbackMockResponse{

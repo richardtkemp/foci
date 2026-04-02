@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	"foci/internal/config"
@@ -69,15 +70,34 @@ func testBrowserManager(t *testing.T) *BrowserManager {
 	return mgr
 }
 
+// sharedBrowserMgr is a lazily-initialized BrowserManager shared across tests
+// that only navigate+interact (no lifecycle testing). This avoids launching a
+// separate Chrome process for each test. Cleaned up via TestMain.
+var (
+	sharedBrowserOnce sync.Once
+	sharedBrowserMgr  *BrowserManager
+)
+
+func sharedBrowserManager(t *testing.T) *BrowserManager {
+	t.Helper()
+	sharedBrowserOnce.Do(func() {
+		sharedBrowserMgr = NewBrowserManager(&config.ResolvedBrowser{
+			Headless:      true,
+			TimeoutSec:    10,
+			DOMStableSec:  0.1,
+			DOMStableDiff: 0.5,
+		}, 0640)
+	})
+	return sharedBrowserMgr
+}
+
 func TestBrowserNavigateAndSnapshot(t *testing.T) {
 	// Verifies that navigating to a page and
 	// capturing a snapshot returns YAML with element refs and page metadata.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><head><title>Test Page</title></head>
 		<body><h1>Hello World</h1><button>Click Me</button></body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	params, _ := json.Marshal(map[string]any{"action": "navigate", "url": srv.URL})
@@ -109,14 +129,12 @@ func TestBrowserNavigateAndSnapshot(t *testing.T) {
 func TestBrowserClickByRef(t *testing.T) {
 	// Verifies that after navigating and getting a snapshot,
 	// we can click an element using its ref from the snapshot.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body>
 		<button onclick="document.getElementById('out').textContent='clicked'">Click Me</button>
 		<div id="out"></div>
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate first
@@ -150,14 +168,12 @@ func TestBrowserClickByRef(t *testing.T) {
 
 func TestBrowserFillByRef(t *testing.T) {
 	// Verifies that we can fill an input field using its ref.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body>
 		<label for="name">Name</label>
 		<input id="name" type="text" />
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate
@@ -192,11 +208,9 @@ func TestBrowserFillByRef(t *testing.T) {
 func TestBrowserStaleRef(t *testing.T) {
 	// Verifies that using a ref from a previous generation
 	// (stale snapshot) returns a meaningful error.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body><button>Click Me</button></body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate to get first snapshot
@@ -236,11 +250,9 @@ func TestBrowserStaleRef(t *testing.T) {
 func TestBrowserInvalidRef(t *testing.T) {
 	// Verifies that using a malformed ref string returns
 	// a validation error.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body><button>Test</button></body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate first
@@ -265,8 +277,6 @@ func TestBrowserInvalidRef(t *testing.T) {
 func TestBrowserMultiFill(t *testing.T) {
 	// Verifies that the fill action supports a "fields"
 	// array to fill multiple inputs in a single tool call with one snapshot.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="first">First</label>
@@ -276,7 +286,7 @@ func TestBrowserMultiFill(t *testing.T) {
 		</form>
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate
@@ -320,8 +330,6 @@ func TestBrowserMultiFill(t *testing.T) {
 func TestBrowserMultiFillBackwardCompat(t *testing.T) {
 	// Verifies that single ref+value fill
 	// still works after adding multi-fill support.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="email">Email</label>
@@ -329,7 +337,7 @@ func TestBrowserMultiFillBackwardCompat(t *testing.T) {
 		</form>
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
@@ -363,8 +371,6 @@ func TestBrowserMultiFillBackwardCompat(t *testing.T) {
 func TestBrowserFillScopedSnapshot(t *testing.T) {
 	// Verifies that the snapshot returned after
 	// a fill action is scoped to the form context, not the full page.
-	skipIfNoBrowser(t)
-
 	// Page with a form and lots of unrelated content
 	srv := testHTMLServer(t, `<html><body>
 		<nav><a href="/">Home</a><a href="/about">About</a><a href="/contact">Contact</a></nav>
@@ -380,7 +386,7 @@ func TestBrowserFillScopedSnapshot(t *testing.T) {
 		<footer><p>Footer content</p></footer>
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	params := marshalParams(t, map[string]any{"action": "navigate", "url": srv.URL})
@@ -423,10 +429,8 @@ func TestBrowserFillScopedSnapshot(t *testing.T) {
 func TestBrowserFillNoRefOrFields(t *testing.T) {
 	// Verifies that fill returns an error when
 	// neither ref nor fields is provided.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body><input type="text" /></body></html>`)
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate first
@@ -452,8 +456,6 @@ func TestBrowserFillPreservesFullSnapshotRefs(t *testing.T) {
 	// Verifies that after a fill (which triggers a scoped snapshot), refs from
 	// the prior full snapshot remain valid and can be used for subsequent actions
 	// like click. This is the core DOM-stamped-refs guarantee.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="name">Name</label>
@@ -463,7 +465,7 @@ func TestBrowserFillPreservesFullSnapshotRefs(t *testing.T) {
 		<div id="out"></div>
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate — produces a full snapshot with stamped refs
@@ -514,8 +516,6 @@ func TestBrowserScopedSnapshotShowsOriginalRefs(t *testing.T) {
 	// Verifies that the scoped snapshot returned after a fill action shows
 	// refs from the original full snapshot generation (e.g. s1e*), not a new
 	// generation (s2e*). This confirms DOM-stamped refs are read, not generated.
-	skipIfNoBrowser(t)
-
 	srv := testHTMLServer(t, `<html><body>
 		<form>
 			<label for="email">Email</label>
@@ -524,7 +524,7 @@ func TestBrowserScopedSnapshotShowsOriginalRefs(t *testing.T) {
 		</form>
 	</body></html>`)
 
-	mgr := testBrowserManager(t)
+	mgr := sharedBrowserManager(t)
 	tool := NewBrowserTool(mgr)
 
 	// Navigate — full snapshot, generation 1
