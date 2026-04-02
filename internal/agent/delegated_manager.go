@@ -74,6 +74,25 @@ type managedBackend struct {
 	permCond    *sync.Cond // lazy-init on first WaitForPermission
 }
 
+// getManaged looks up the managed backend for a session key under the lock.
+func (m *DelegatedManager) getManaged(sessionKey string) (*managedBackend, bool) {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	mb, ok := m.backends[base]
+	m.mu.Unlock()
+	return mb, ok
+}
+
+// clearPermission unblocks any WaitForPermission waiters on this backend.
+func (mb *managedBackend) clearPermission() {
+	mb.permMu.Lock()
+	mb.permPending = false
+	if mb.permCond != nil {
+		mb.permCond.Broadcast()
+	}
+	mb.permMu.Unlock()
+}
+
 // Get returns the Backend for the given session key, creating and starting
 // one if it doesn't exist yet. The session key is collapsed to its base
 // (agentID/c12345) so that compaction-rotated keys share the same Backend.
@@ -199,12 +218,9 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 // backend-specific (tmux: Escape×2 + Ctrl-C; stream: interrupt message).
 // Returns an error if no backend exists for the session.
 func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) error {
-	base := session.SessionKeyBase(sessionKey)
-	m.mu.Lock()
-	mb, ok := m.backends[base]
-	m.mu.Unlock()
+	mb, ok := m.getManaged(sessionKey)
 	if !ok {
-		return fmt.Errorf("no delegated backend for session %s", base)
+		return fmt.Errorf("no delegated backend for session %s", session.SessionKeyBase(sessionKey))
 	}
 	return mb.be.Interrupt(ctx)
 }
@@ -214,21 +230,17 @@ func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) e
 // calls to WaitForPermission block until cleared.
 func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool) {
 	base := session.SessionKeyBase(sessionKey)
-	m.mu.Lock()
-	mb, ok := m.backends[base]
-	m.mu.Unlock()
+	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return
 	}
-	mb.permMu.Lock()
-	mb.permPending = pending
-	if !pending && mb.permCond != nil {
-		mb.permCond.Broadcast()
-	}
-	mb.permMu.Unlock()
 	if pending {
+		mb.permMu.Lock()
+		mb.permPending = true
+		mb.permMu.Unlock()
 		log.Debugf("delegated", "permission pending for %s", base)
 	} else {
+		mb.clearPermission()
 		log.Debugf("delegated", "permission cleared for %s", base)
 	}
 }
@@ -238,9 +250,7 @@ func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool)
 // ctx.Err() if the context is cancelled (e.g. /stop).
 func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey string) error {
 	base := session.SessionKeyBase(sessionKey)
-	m.mu.Lock()
-	mb, ok := m.backends[base]
-	m.mu.Unlock()
+	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return nil
 	}
@@ -286,10 +296,7 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 
 // IsPermissionPending returns whether a permission prompt is outstanding.
 func (m *DelegatedManager) IsPermissionPending(sessionKey string) bool {
-	base := session.SessionKeyBase(sessionKey)
-	m.mu.Lock()
-	mb, ok := m.backends[base]
-	m.mu.Unlock()
+	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return false
 	}
@@ -304,10 +311,7 @@ func (m *DelegatedManager) IsPermissionPending(sessionKey string) bool {
 // SessionFilePath returns the coding agent's session JSONL path for the
 // given session key. Empty if the backend hasn't discovered its session yet.
 func (m *DelegatedManager) SessionFilePath(sessionKey string) string {
-	base := session.SessionKeyBase(sessionKey)
-	m.mu.Lock()
-	mb, ok := m.backends[base]
-	m.mu.Unlock()
+	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return ""
 	}
@@ -315,12 +319,9 @@ func (m *DelegatedManager) SessionFilePath(sessionKey string) string {
 }
 
 func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) error {
-	base := session.SessionKeyBase(sessionKey)
-	m.mu.Lock()
-	mb, ok := m.backends[base]
-	m.mu.Unlock()
+	mb, ok := m.getManaged(sessionKey)
 	if !ok {
-		return fmt.Errorf("no delegated backend for session %s", base)
+		return fmt.Errorf("no delegated backend for session %s", session.SessionKeyBase(sessionKey))
 	}
 	return mb.be.WaitForTurn(ctx)
 }
@@ -335,13 +336,7 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 	if !ok {
 		return
 	}
-	// Clear permission state to unblock any WaitForPermission callers.
-	mb.permMu.Lock()
-	mb.permPending = false
-	if mb.permCond != nil {
-		mb.permCond.Broadcast()
-	}
-	mb.permMu.Unlock()
+	mb.clearPermission()
 	_ = mb.be.Close()
 	delete(m.backends, base)
 	// Clear any saved resume ID so next session starts fresh.
@@ -360,13 +355,7 @@ func (m *DelegatedManager) Close() {
 		m.reaperStop = nil
 	}
 	for key, mb := range m.backends {
-		// Clear permission state to unblock any waiters before closing.
-		mb.permMu.Lock()
-		mb.permPending = false
-		if mb.permCond != nil {
-			mb.permCond.Broadcast()
-		}
-		mb.permMu.Unlock()
+		mb.clearPermission()
 		m.saveResumeID(key, mb.be.SessionID())
 		_ = mb.be.Close()
 		delete(m.backends, key)
@@ -474,13 +463,7 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 		if now.Sub(mb.lastActive) < timeout {
 			continue
 		}
-		// Clear permission state before closing.
-		mb.permMu.Lock()
-		mb.permPending = false
-		if mb.permCond != nil {
-			mb.permCond.Broadcast()
-		}
-		mb.permMu.Unlock()
+		mb.clearPermission()
 		m.saveResumeID(base, mb.be.SessionID())
 		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
 			base, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
