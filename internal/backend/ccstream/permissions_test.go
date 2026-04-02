@@ -263,7 +263,7 @@ func TestHandlePermissionRequest_AutoApprove(t *testing.T) {
 		},
 	}
 
-	b.handlePermissionRequest(msg)
+	b.handleToolRequest(msg)
 
 	if promptCalled {
 		t.Error("permPromptFn should not be called when auto-approved")
@@ -309,7 +309,7 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 		},
 	}
 
-	b.handlePermissionRequest(msg)
+	b.handleToolRequest(msg)
 
 	if gotReqID != "req-prompt" {
 		t.Errorf("requestID = %q, want %q", gotReqID, "req-prompt")
@@ -355,7 +355,7 @@ func TestHandlePermissionRequest_FallbackToReplyFunc(t *testing.T) {
 		},
 	}
 
-	b.handlePermissionRequest(msg)
+	b.handleToolRequest(msg)
 
 	if replyText == "" {
 		t.Error("replyFunc should have been called with display text")
@@ -385,7 +385,7 @@ func TestHandlePermissionRequest_BothCallbacksNil(t *testing.T) {
 		},
 	}
 
-	b.handlePermissionRequest(msg)
+	b.handleToolRequest(msg)
 
 	if b.PendingPermissions() != 1 {
 		t.Errorf("pending = %d, want 1", b.PendingPermissions())
@@ -416,7 +416,7 @@ func TestHandlePermissionRequest_FiresOnPermPending(t *testing.T) {
 		},
 	}
 
-	b.handlePermissionRequest(msg)
+	b.handleToolRequest(msg)
 
 	if pendingCalled != 1 {
 		t.Errorf("onPermPending called %d times, want 1", pendingCalled)
@@ -492,7 +492,7 @@ func TestHandleControlCancel_StillPending(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// PendingPermissions / hasPendingPermissions
+// PendingPermissions
 // ---------------------------------------------------------------------------
 
 func TestPendingPermissions_Count(t *testing.T) {
@@ -516,13 +516,13 @@ func TestPendingPermissions_Count(t *testing.T) {
 		t.Errorf("after 1 remove = %d, want 1", n)
 	}
 
-	if has := b.hasPendingPermissions(); !has {
-		t.Error("hasPendingPermissions = false, want true")
+	if has := b.PendingPermissions() > 0; !has {
+		t.Error("PendingPermissions = 0, want > 0")
 	}
 
 	b.removePendingPerm("b")
-	if has := b.hasPendingPermissions(); has {
-		t.Error("hasPendingPermissions = true, want false")
+	if has := b.PendingPermissions() > 0; has {
+		t.Error("PendingPermissions > 0, want 0")
 	}
 }
 
@@ -856,7 +856,7 @@ func TestPermissions_ConcurrentAccess(t *testing.T) {
 			id := strings.Repeat("x", n+1) // unique IDs
 			b.storePendingPerm(&pendingPermission{requestID: id})
 			_ = b.PendingPermissions()
-			_ = b.hasPendingPermissions()
+			_ = b.PendingPermissions() > 0
 			b.removePendingPerm(id)
 		}(i)
 	}
