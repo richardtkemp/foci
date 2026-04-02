@@ -177,10 +177,10 @@ func TestCallbackSetters(t *testing.T) {
 	// SetOnAgentStatus
 	var agentStatusText string
 	b.SetOnAgentStatus(func(text string) { agentStatusText = text })
-	if b.onAgentStatus == nil {
-		t.Error("onAgentStatus is nil after SetOnAgentStatus")
+	if b.agents.OnStatus == nil {
+		t.Error("agents.OnStatus is nil after SetOnAgentStatus")
 	}
-	b.onAgentStatus("running")
+	b.agents.OnStatus("running")
 	if agentStatusText != "running" {
 		t.Errorf("agentStatusText = %q, want %q", agentStatusText, "running")
 	}
@@ -903,6 +903,87 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 	}
 }
 
+func TestOnAssistant_AgentToolUseTracking(t *testing.T) {
+	// Verifies Agent tool_use blocks are tracked via the shared AgentTracker,
+	// mirroring the tmux backend's behavior.
+	t.Parallel()
+
+	var statusMessages []string
+	b := &Backend{}
+	b.SetOnAgentStatus(func(text string) { statusMessages = append(statusMessages, text) })
+	b.beginTurn(&backend.EventHandler{})
+
+	agentInput := json.RawMessage(`{"description":"search for patterns"}`)
+	msg := &AssistantMessage{
+		Message: BetaMessage{
+			Content: []ContentBlock{
+				{Type: "tool_use", ID: "ag1", Name: "Agent", Input: agentInput},
+			},
+			Usage: TokenUsage{},
+		},
+	}
+	b.OnAssistant(msg)
+
+	if b.agents.Pending() != 1 {
+		t.Fatalf("Pending() = %d, want 1", b.agents.Pending())
+	}
+	if len(statusMessages) != 1 {
+		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
+	}
+	if !strings.Contains(statusMessages[0], "search for patterns") {
+		t.Errorf("status = %q, want to contain description", statusMessages[0])
+	}
+}
+
+func TestOnAssistant_AgentDuplicateIgnored(t *testing.T) {
+	// Verifies the same Agent tool_use ID isn't double-counted when
+	// --include-partial-messages replays assistant messages.
+	t.Parallel()
+
+	b := &Backend{}
+	b.SetOnAgentStatus(func(string) {})
+	b.beginTurn(&backend.EventHandler{})
+
+	msg := &AssistantMessage{
+		Message: BetaMessage{
+			Content: []ContentBlock{
+				{Type: "tool_use", ID: "ag1", Name: "Agent", Input: json.RawMessage(`{"description":"task"}`)},
+			},
+			Usage: TokenUsage{},
+		},
+	}
+	b.OnAssistant(msg)
+	b.OnAssistant(msg) // replay
+
+	if b.agents.Pending() != 1 {
+		t.Fatalf("Pending() = %d, want 1 (duplicate should be ignored)", b.agents.Pending())
+	}
+}
+
+func TestOnResult_ClearsTrackedAgents(t *testing.T) {
+	// Verifies OnResult clears any remaining tracked agents as a safety net.
+	t.Parallel()
+
+	var statusMessages []string
+	b := &Backend{}
+	b.SetOnAgentStatus(func(text string) { statusMessages = append(statusMessages, text) })
+	b.agents.Add("ag1", "still running")
+	statusMessages = nil // clear Add notification
+
+	b.beginTurn(&backend.EventHandler{})
+	b.OnResult(&ResultMessage{Subtype: "success", Usage: TokenUsage{}})
+
+	if b.agents.Pending() != 0 {
+		t.Fatalf("Pending() = %d, want 0 after OnResult", b.agents.Pending())
+	}
+	if len(statusMessages) != 1 {
+		t.Fatalf("OnStatus called %d times, want 1 (completion)", len(statusMessages))
+	}
+	if !strings.Contains(statusMessages[0], "complete") {
+		t.Errorf("status = %q, want completion message", statusMessages[0])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OnResult
 // ---------------------------------------------------------------------------
@@ -1396,12 +1477,13 @@ func TestOnSystem_CompactBoundaryBadJSON(t *testing.T) {
 }
 
 func TestOnSystem_TaskStarted(t *testing.T) {
-	// Verifies OnSystem/task_started fires onAgentStatus with the correct text.
+	// task_started is a no-op — agent tracking happens in OnAssistant via
+	// tool_use detection. Verify no status is emitted.
 	t.Parallel()
 
-	var statusText string
+	var called bool
 	b := &Backend{}
-	b.SetOnAgentStatus(func(text string) { statusText = text })
+	b.SetOnAgentStatus(func(string) { called = true })
 
 	raw, _ := json.Marshal(TaskEvent{
 		Subtype:     "task_started",
@@ -1409,14 +1491,14 @@ func TestOnSystem_TaskStarted(t *testing.T) {
 	})
 	b.OnSystem("task_started", raw)
 
-	if !strings.Contains(statusText, "Fixing the bug") {
-		t.Errorf("statusText = %q, want to contain %q", statusText, "Fixing the bug")
+	if called {
+		t.Error("OnStatus should not be called for task_started (tracking is via tool_use)")
 	}
 }
 
 func TestOnSystem_TaskNotificationCompleted(t *testing.T) {
-	// Verifies OnSystem/task_notification with status="completed" fires
-	// onAgentStatus with the summary.
+	// With no tracked agents, task_notification (completed) fires a fallback
+	// message containing the summary.
 	t.Parallel()
 
 	var statusText string
@@ -1435,9 +1517,33 @@ func TestOnSystem_TaskNotificationCompleted(t *testing.T) {
 	}
 }
 
+func TestOnSystem_TaskNotificationCompleted_WithTracked(t *testing.T) {
+	// With a tracked agent, task_notification (completed) removes one from
+	// the tracker and fires the aggregated completion message.
+	t.Parallel()
+
+	var statusText string
+	b := &Backend{}
+	b.SetOnAgentStatus(func(text string) { statusText = text })
+	b.agents.Add("ag1", "fix bug")
+
+	raw, _ := json.Marshal(TaskEvent{
+		Subtype: "task_notification",
+		Status:  "completed",
+		Summary: "Bug is fixed",
+	})
+	b.OnSystem("task_notification", raw)
+
+	if b.agents.Pending() != 0 {
+		t.Errorf("Pending() = %d, want 0", b.agents.Pending())
+	}
+	if !strings.Contains(statusText, "complete") {
+		t.Errorf("statusText = %q, want completion message", statusText)
+	}
+}
+
 func TestOnSystem_TaskProgress(t *testing.T) {
-	// Verifies OnSystem/task_progress does NOT fire onAgentStatus (only
-	// task_started and completed task_notification do).
+	// Verifies OnSystem/task_progress does NOT fire OnStatus.
 	t.Parallel()
 
 	var called bool
@@ -1451,7 +1557,7 @@ func TestOnSystem_TaskProgress(t *testing.T) {
 	b.OnSystem("task_progress", raw)
 
 	if called {
-		t.Error("onAgentStatus should not be called for task_progress")
+		t.Error("OnStatus should not be called for task_progress")
 	}
 }
 

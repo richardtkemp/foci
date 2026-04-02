@@ -216,7 +216,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	}
 
 	// Forward agent spawn/completion status to the user via replyFunc.
-	w.onAgentStatus = func(text string) {
+	w.agents.OnStatus = func(text string) {
 		b.replyMu.Lock()
 		fn := b.replyFunc
 		b.replyMu.Unlock()

@@ -16,12 +16,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// agentCall tracks a pending Agent tool_use call.
-type agentCall struct {
-	id          string // tool_use ID
-	description string // short description from input
-}
-
 // sessionWatcher tails a Claude Code session JSONL file and emits events
 // as new entries are appended. Uses fsnotify for immediate event delivery.
 // isSyntheticNoResponse returns true for CC's synthetic "no response" messages
@@ -44,19 +38,15 @@ type sessionWatcher struct {
 	// appear at any time (after sub-agent completion, slow tools, etc.).
 	onPermissionCheck func()
 
-	// onAgentStatus is called when agent spawn/completion status changes.
-	// Receives a formatted status string to send to the user.
-	onAgentStatus func(text string)
+	// agents tracks pending Agent tool_use calls within a turn and emits
+	// aggregated status messages (e.g. "🔄 2 agent(s) running: ...").
+	agents backend.AgentTracker
 
 	// turnState tracks the current turn's accumulated text, tool calls, and usage.
 	turnText  string
 	turnTools int
 	turnUsage *backend.TurnUsage // usage from the last assistant message
 	turnModel string             // model from the last assistant message
-
-	// agentTracking tracks pending Agent tool_use calls within a turn.
-	pendingAgents []agentCall
-	agentStart    time.Time // when the first agent in a batch was spawned
 }
 
 // close shuts down the fsnotify watcher.
@@ -202,7 +192,6 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 	}
 
 	blocks := parseContentBlocks(entry.Message.Content)
-	var newAgents []agentCall
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
@@ -220,17 +209,10 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 			}
 			// Track Agent tool calls for status reporting.
 			if b.Name == "Agent" {
-				desc := extractAgentDescription(b.Input)
-				newAgents = append(newAgents, agentCall{id: b.ID, description: desc})
+				desc := backend.ExtractAgentDescription(b.Input)
+				w.agents.Add(b.ID, desc)
 			}
 		}
-	}
-	if len(newAgents) > 0 {
-		w.pendingAgents = append(w.pendingAgents, newAgents...)
-		if w.agentStart.IsZero() {
-			w.agentStart = time.Now()
-		}
-		w.notifyAgentStatus()
 	}
 
 	// Extract usage and model from the assistant message (last one wins per turn).
@@ -295,61 +277,17 @@ func (w *sessionWatcher) fireTurnResult(handler *backend.EventHandler) {
 
 // handleUser processes user entries, tracking Agent tool_result completions.
 func (w *sessionWatcher) handleUser(entry *sessionEntry) {
-	if entry.Message == nil || len(w.pendingAgents) == 0 {
+	if entry.Message == nil || w.agents.Pending() == 0 {
 		return
 	}
 	blocks := parseContentBlocks(entry.Message.Content)
 	for _, b := range blocks {
-		if b.Type != "tool_result" {
-			continue
-		}
-		// Match tool_result to a pending agent by tool_use_id.
-		resultID := b.ToolUseID
-		for i, ag := range w.pendingAgents {
-			if ag.id == resultID {
-				w.pendingAgents = append(w.pendingAgents[:i], w.pendingAgents[i+1:]...)
-				w.notifyAgentStatus()
-				break
-			}
+		if b.Type == "tool_result" {
+			w.agents.Remove(b.ToolUseID)
 		}
 	}
 }
 
-// notifyAgentStatus sends an agent status update if the callback is set.
-func (w *sessionWatcher) notifyAgentStatus() {
-	if w.onAgentStatus == nil {
-		return
-	}
-	pending := len(w.pendingAgents)
-	if pending == 0 {
-		elapsed := time.Since(w.agentStart).Round(time.Second)
-		w.onAgentStatus(fmt.Sprintf("✅ Agents complete (%s)", elapsed))
-		w.agentStart = time.Time{}
-	} else {
-		var descs []string
-		for _, ag := range w.pendingAgents {
-			if ag.description != "" {
-				descs = append(descs, ag.description)
-			}
-		}
-		if len(descs) > 0 {
-			w.onAgentStatus(fmt.Sprintf("🔄 %d agent(s) running: %s", pending, strings.Join(descs, ", ")))
-		} else {
-			w.onAgentStatus(fmt.Sprintf("🔄 %d agent(s) running", pending))
-		}
-	}
-}
-
-// extractAgentDescription parses the "description" field from an Agent tool_use input.
-func extractAgentDescription(raw json.RawMessage) string {
-	var input struct {
-		Description string `json:"description"`
-	}
-	if json.Unmarshal(raw, &input) == nil {
-		return input.Description
-	}
-	return ""
-}
 
 
 

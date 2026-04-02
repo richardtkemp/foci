@@ -2,7 +2,7 @@ package claudecode
 
 import (
 	"encoding/json"
-	"fmt"
+	"strings"
 	"testing"
 
 	"foci/internal/backend"
@@ -294,12 +294,12 @@ func TestHandleAssistant_NilMessage(t *testing.T) {
 }
 
 // TestHandleAssistant_AgentTracking verifies that Agent tool_use blocks
-// are tracked in pendingAgents and onAgentStatus is called.
+// are tracked via the shared AgentTracker and status is reported.
 func TestHandleAssistant_AgentTracking(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var statusMessages []string
-	w.onAgentStatus = func(text string) { statusMessages = append(statusMessages, text) }
+	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
 
 	handler := &backend.EventHandler{}
 
@@ -317,17 +317,15 @@ func TestHandleAssistant_AgentTracking(t *testing.T) {
 
 	w.handleAssistant(entry, handler)
 
-	if len(w.pendingAgents) != 1 {
-		t.Fatalf("pendingAgents = %d, want 1", len(w.pendingAgents))
-	}
-	if w.pendingAgents[0].id != "ag1" {
-		t.Errorf("pending agent ID = %q, want %q", w.pendingAgents[0].id, "ag1")
-	}
-	if w.pendingAgents[0].description != "search files" {
-		t.Errorf("pending agent description = %q, want %q", w.pendingAgents[0].description, "search files")
+	if w.agents.Pending() != 1 {
+		t.Fatalf("Pending() = %d, want 1", w.agents.Pending())
 	}
 	if len(statusMessages) != 1 {
-		t.Fatalf("onAgentStatus called %d times, want 1", len(statusMessages))
+		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
+	}
+	want := "🔄 1 agent(s) running: search files"
+	if statusMessages[0] != want {
+		t.Errorf("status = %q, want %q", statusMessages[0], want)
 	}
 }
 
@@ -337,7 +335,7 @@ func TestHandleAssistant_MultipleAgents(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var statusMessages []string
-	w.onAgentStatus = func(text string) { statusMessages = append(statusMessages, text) }
+	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
 
 	handler := &backend.EventHandler{}
 
@@ -357,11 +355,12 @@ func TestHandleAssistant_MultipleAgents(t *testing.T) {
 
 	w.handleAssistant(entry, handler)
 
-	if len(w.pendingAgents) != 2 {
-		t.Fatalf("pendingAgents = %d, want 2", len(w.pendingAgents))
+	if w.agents.Pending() != 2 {
+		t.Fatalf("Pending() = %d, want 2", w.agents.Pending())
 	}
-	if len(statusMessages) != 1 {
-		t.Fatalf("onAgentStatus should be called once for the batch, got %d", len(statusMessages))
+	// Add fires OnStatus for each agent individually.
+	if len(statusMessages) != 2 {
+		t.Fatalf("OnStatus called %d times, want 2", len(statusMessages))
 	}
 }
 
@@ -475,13 +474,11 @@ func TestHandleAssistant_EmptyTextIgnored(t *testing.T) {
 // a status update.
 func TestHandleUser_AgentCompletion(t *testing.T) {
 	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{
-		{id: "ag1", description: "task A"},
-		{id: "ag2", description: "task B"},
-	}
-
 	var statusMessages []string
-	w.onAgentStatus = func(text string) { statusMessages = append(statusMessages, text) }
+	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
+	w.agents.Add("ag1", "task A")
+	w.agents.Add("ag2", "task B")
+	statusMessages = nil // clear Add notifications
 
 	content, _ := json.Marshal([]contentBlock{
 		{Type: "tool_result", ToolUseID: "ag1"},
@@ -496,28 +493,26 @@ func TestHandleUser_AgentCompletion(t *testing.T) {
 
 	w.handleUser(entry)
 
-	if len(w.pendingAgents) != 1 {
-		t.Fatalf("pendingAgents = %d, want 1 (ag1 should be removed)", len(w.pendingAgents))
-	}
-	if w.pendingAgents[0].id != "ag2" {
-		t.Errorf("remaining agent = %q, want ag2", w.pendingAgents[0].id)
+	if w.agents.Pending() != 1 {
+		t.Fatalf("Pending() = %d, want 1 (ag1 should be removed)", w.agents.Pending())
 	}
 	if len(statusMessages) != 1 {
-		t.Fatalf("onAgentStatus called %d times, want 1", len(statusMessages))
+		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
+	}
+	want := "🔄 1 agent(s) running: task B"
+	if statusMessages[0] != want {
+		t.Errorf("status = %q, want %q", statusMessages[0], want)
 	}
 }
 
 // TestHandleUser_AllAgentsComplete verifies that when the last pending agent
-// completes, the status message includes "complete" and the agent start
-// time is reset.
+// completes, the status message includes "complete".
 func TestHandleUser_AllAgentsComplete(t *testing.T) {
 	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{
-		{id: "ag1", description: "only task"},
-	}
-
 	var statusMessages []string
-	w.onAgentStatus = func(text string) { statusMessages = append(statusMessages, text) }
+	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
+	w.agents.Add("ag1", "only task")
+	statusMessages = nil // clear Add notification
 
 	content, _ := json.Marshal([]contentBlock{
 		{Type: "tool_result", ToolUseID: "ag1"},
@@ -532,14 +527,14 @@ func TestHandleUser_AllAgentsComplete(t *testing.T) {
 
 	w.handleUser(entry)
 
-	if len(w.pendingAgents) != 0 {
-		t.Fatalf("pendingAgents = %d, want 0", len(w.pendingAgents))
+	if w.agents.Pending() != 0 {
+		t.Fatalf("Pending() = %d, want 0", w.agents.Pending())
 	}
 	if len(statusMessages) != 1 {
-		t.Fatalf("onAgentStatus called %d times, want 1", len(statusMessages))
+		t.Fatalf("OnStatus called %d times, want 1", len(statusMessages))
 	}
-	if w.agentStart.IsZero() == false {
-		t.Error("agentStart should be reset to zero after all agents complete")
+	if !strings.Contains(statusMessages[0], "complete") {
+		t.Errorf("expected completion message, got %q", statusMessages[0])
 	}
 }
 
@@ -567,14 +562,14 @@ func TestHandleUser_NoPendingAgents(t *testing.T) {
 // the entry has no message payload.
 func TestHandleUser_NilMessage(t *testing.T) {
 	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{{id: "ag1"}}
+	w.agents.Add("ag1", "")
 
 	entry := &sessionEntry{Type: "user", Message: nil}
 	w.handleUser(entry)
 
 	// Pending agents should be unchanged.
-	if len(w.pendingAgents) != 1 {
-		t.Fatalf("pendingAgents changed unexpectedly: %d", len(w.pendingAgents))
+	if w.agents.Pending() != 1 {
+		t.Fatalf("Pending() changed unexpectedly: %d", w.agents.Pending())
 	}
 }
 
@@ -582,12 +577,10 @@ func TestHandleUser_NilMessage(t *testing.T) {
 // ID that doesn't match any pending agent leaves the list unchanged.
 func TestHandleUser_UnmatchedToolResult(t *testing.T) {
 	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{
-		{id: "ag1", description: "task"},
-	}
-
 	statusCalled := false
-	w.onAgentStatus = func(text string) { statusCalled = true }
+	w.agents.OnStatus = func(text string) { statusCalled = true }
+	w.agents.Add("ag1", "task")
+	statusCalled = false // clear Add notification
 
 	content, _ := json.Marshal([]contentBlock{
 		{Type: "tool_result", ToolUseID: "unrelated-tool-id"},
@@ -602,11 +595,11 @@ func TestHandleUser_UnmatchedToolResult(t *testing.T) {
 
 	w.handleUser(entry)
 
-	if len(w.pendingAgents) != 1 {
-		t.Fatalf("pendingAgents = %d, want 1 (should not change)", len(w.pendingAgents))
+	if w.agents.Pending() != 1 {
+		t.Fatalf("Pending() = %d, want 1 (should not change)", w.agents.Pending())
 	}
 	if statusCalled {
-		t.Error("onAgentStatus should not be called for unmatched result")
+		t.Error("OnStatus should not be called for unmatched result")
 	}
 }
 
@@ -820,103 +813,6 @@ func TestFireTurnResult_NilCallback(t *testing.T) {
 	}
 }
 
-// --- extractAgentDescription tests ---
-
-// TestExtractAgentDescription verifies extraction of the description
-// field from Agent tool_use input JSON.
-func TestExtractAgentDescription(t *testing.T) {
-	tests := []struct {
-		name  string
-		input json.RawMessage
-		want  string
-	}{
-		{
-			name:  "valid description",
-			input: json.RawMessage(`{"description":"search for patterns"}`),
-			want:  "search for patterns",
-		},
-		{
-			name:  "empty description",
-			input: json.RawMessage(`{"description":""}`),
-			want:  "",
-		},
-		{
-			name:  "no description field",
-			input: json.RawMessage(`{"task":"do something"}`),
-			want:  "",
-		},
-		{
-			name:  "invalid JSON",
-			input: json.RawMessage(`not json`),
-			want:  "",
-		},
-		{
-			name:  "null input",
-			input: nil,
-			want:  "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractAgentDescription(tt.input)
-			if got != tt.want {
-				t.Errorf("extractAgentDescription = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// --- notifyAgentStatus tests ---
-
-// TestNotifyAgentStatus_RunningMessage verifies the status message format
-// when agents are still pending.
-func TestNotifyAgentStatus_RunningMessage(t *testing.T) {
-	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{
-		{id: "ag1", description: "search files"},
-		{id: "ag2", description: "run tests"},
-	}
-
-	var got string
-	w.onAgentStatus = func(text string) { got = text }
-
-	w.notifyAgentStatus()
-
-	want := fmt.Sprintf("🔄 %d agent(s) running: search files, run tests", 2)
-	if got != want {
-		t.Errorf("status = %q, want %q", got, want)
-	}
-}
-
-// TestNotifyAgentStatus_RunningNoDescriptions verifies the fallback message
-// when pending agents have no descriptions.
-func TestNotifyAgentStatus_RunningNoDescriptions(t *testing.T) {
-	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{
-		{id: "ag1"},
-		{id: "ag2"},
-	}
-
-	var got string
-	w.onAgentStatus = func(text string) { got = text }
-
-	w.notifyAgentStatus()
-
-	want := fmt.Sprintf("🔄 %d agent(s) running", 2)
-	if got != want {
-		t.Errorf("status = %q, want %q", got, want)
-	}
-}
-
-// TestNotifyAgentStatus_NilCallback verifies notifyAgentStatus is a safe
-// no-op when no callback is set.
-func TestNotifyAgentStatus_NilCallback(t *testing.T) {
-	w := &sessionWatcher{}
-	w.pendingAgents = []agentCall{{id: "ag1"}}
-	// Should not panic.
-	w.notifyAgentStatus()
-}
 
 // --- setHandler tests ---
 

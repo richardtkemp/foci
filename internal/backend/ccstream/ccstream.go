@@ -80,6 +80,9 @@ type Backend struct {
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
 
+	// Agent tracking (shared with tmux backend via AgentTracker).
+	agents backend.AgentTracker
+
 	// Callbacks (set before Start, read-only after)
 	replyFunc          backend.ReplyFunc
 	permPromptFn       backend.PermissionPromptFunc
@@ -89,7 +92,6 @@ type Backend struct {
 	typingFunc         func(typing bool)
 	onCompactionStart  func()            // fired when status="compacting"
 	onCompactionDone   func(preTokens int) // fired on compact_boundary
-	onAgentStatus      func(text string)   // fired on task events
 }
 
 // newRequestID generates a simple unique request ID for control messages.
@@ -424,7 +426,7 @@ func (b *Backend) SetOnCompactionStart(fn func()) { b.onCompactionStart = fn }
 func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) { b.onCompactionDone = fn }
 
 // SetOnAgentStatus sets a callback for agent/task lifecycle events.
-func (b *Backend) SetOnAgentStatus(fn func(string)) { b.onAgentStatus = fn }
+func (b *Backend) SetOnAgentStatus(fn func(string)) { b.agents.OnStatus = fn }
 
 // ---------------------------------------------------------------------------
 // State methods
@@ -504,6 +506,12 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			if handler != nil && handler.OnToolStart != nil {
 				inputStr := string(block.Input)
 				handler.OnToolStart(block.Name, inputStr)
+			}
+
+			// Track Agent tool calls for status reporting (same as tmux backend).
+			if block.Name == "Agent" {
+				desc := backend.ExtractAgentDescription(block.Input)
+				b.agents.Add(block.ID, desc)
 			}
 
 		case "thinking":
@@ -587,6 +595,10 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
+	// Clear any agents still tracked (safety net — task_notification should
+	// have already removed them individually during the turn).
+	b.agents.ClearAll()
+
 	// Fire handler callback OUTSIDE any lock.
 	if handler != nil && handler.OnTurnComplete != nil {
 		handler.OnTurnComplete(result)
@@ -653,13 +665,14 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if err := json.Unmarshal(raw, &task); err != nil {
 			return
 		}
-		if b.onAgentStatus != nil {
-			switch subtype {
-			case "task_started":
-				b.onAgentStatus(fmt.Sprintf("🔄 Task started: %s", task.Description))
-			case "task_notification":
-				if task.Status == "completed" {
-					b.onAgentStatus(fmt.Sprintf("✅ Task complete: %s", task.Summary))
+		switch subtype {
+		case "task_notification":
+			if task.Status == "completed" {
+				// Remove one pending agent. If the tracker had nothing
+				// (e.g. tool_use detection missed it), fire a standalone
+				// notification as fallback.
+				if !b.agents.RemoveOne() && b.agents.OnStatus != nil {
+					b.agents.OnStatus(fmt.Sprintf("✅ Task complete: %s", task.Summary))
 				}
 			}
 		}
