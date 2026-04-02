@@ -61,7 +61,7 @@ type sessionWatcher struct {
 
 // close shuts down the fsnotify watcher.
 func (w *sessionWatcher) close() {
-	w.fsnot.Close()
+	_ = w.fsnot.Close()
 }
 
 // newSessionWatcher creates a watcher for the given JSONL file path.
@@ -78,7 +78,7 @@ func newSessionWatcher(path string, startOffset int64) (*sessionWatcher, error) 
 	}
 
 	if err := fsnot.Add(path); err != nil {
-		fsnot.Close()
+		_ = fsnot.Close()
 		return nil, fmt.Errorf("watch session file: %w", err)
 	}
 
@@ -86,7 +86,7 @@ func newSessionWatcher(path string, startOffset int64) (*sessionWatcher, error) 
 	if offset < 0 {
 		info, err := os.Stat(path)
 		if err != nil {
-			fsnot.Close()
+			_ = fsnot.Close()
 			return nil, fmt.Errorf("stat session file: %w", err)
 		}
 		offset = info.Size()

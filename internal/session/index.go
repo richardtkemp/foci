@@ -378,7 +378,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	savedFormation := make(map[string]string)
 	rows, err := idx.db.Query(`SELECT session_key, last_memory_formation FROM session_index WHERE last_memory_formation IS NOT NULL`)
 	if err == nil {
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var key, formation string
 			if rows.Scan(&key, &formation) == nil {
@@ -391,7 +391,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	if err != nil {
 		return 0, fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback() // no-op after commit
+	defer func() { _ = tx.Rollback() }() // no-op after commit
 
 	if _, err := tx.Exec(`DELETE FROM session_index`); err != nil {
 		return 0, fmt.Errorf("clear index: %w", err)
@@ -403,7 +403,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	if err != nil {
 		return 0, fmt.Errorf("prepare insert: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	count := 0
 	for _, e := range entries {
@@ -430,7 +430,7 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 	if len(savedFormation) > 0 {
 		updateStmt, err := tx.Prepare(`UPDATE session_index SET last_memory_formation = ? WHERE session_key = ?`)
 		if err == nil {
-			defer updateStmt.Close()
+			defer func() { _ = updateStmt.Close() }()
 			for key, formation := range savedFormation {
 				_, _ = updateStmt.Exec(formation, key)
 			}
@@ -475,7 +475,7 @@ func (idx *SessionIndex) PruneOrphans() int {
 	if err != nil {
 		return 0
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var orphans []string
 	for rows.Next() {

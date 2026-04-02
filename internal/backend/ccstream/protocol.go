@@ -399,20 +399,6 @@ func NewUserMessageBlocks(blocks []ContentBlock) *UserMessage {
 	}
 }
 
-// NewControlRequest creates a ControlRequest with the given request ID and
-// payload. The payload is marshalled to json.RawMessage.
-func NewControlRequest(reqID string, req any) (*ControlRequest, error) {
-	raw, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	return &ControlRequest{
-		Type:      "control_request",
-		RequestID: reqID,
-		Request:   json.RawMessage(raw),
-	}, nil
-}
-
 // NewControlResponse creates a ControlResponse for the given request ID.
 func NewControlResponse(reqID string, response any) *ControlResponse {
 	return &ControlResponse{
@@ -434,11 +420,6 @@ func NewControlCancelRequest(reqID string) *ControlCancelRequest {
 	}
 }
 
-// NewKeepAlive creates a KeepAlive message.
-func NewKeepAlive() *KeepAlive {
-	return &KeepAlive{Type: "keep_alive"}
-}
-
 // NewUpdateEnvironmentVariables creates an UpdateEnvironmentVariables message.
 func NewUpdateEnvironmentVariables(vars map[string]string) *UpdateEnvironmentVariables {
 	return &UpdateEnvironmentVariables{
@@ -447,24 +428,3 @@ func NewUpdateEnvironmentVariables(vars map[string]string) *UpdateEnvironmentVar
 	}
 }
 
-// NewPermissionAllow creates a PermissionAllow response payload with no input
-// changes.
-func NewPermissionAllow(toolUseID, classification string) *PermissionAllow {
-	return &PermissionAllow{
-		Behavior:               "allow",
-		UpdatedInput:           json.RawMessage(`{}`),
-		ToolUseID:              toolUseID,
-		DecisionClassification: classification,
-	}
-}
-
-// NewPermissionDeny creates a PermissionDeny response payload.
-func NewPermissionDeny(toolUseID, message, classification string, interrupt bool) *PermissionDeny {
-	return &PermissionDeny{
-		Behavior:               "deny",
-		Message:                message,
-		Interrupt:              interrupt,
-		ToolUseID:              toolUseID,
-		DecisionClassification: classification,
-	}
-}

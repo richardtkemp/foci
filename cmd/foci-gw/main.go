@@ -368,6 +368,7 @@ Subcommands:
 	if stop := setupGoroutineMonitor(cfg, len(agents), ctx); stop != nil {
 		defer stop()
 	}
+	setupInteractiveCleanup(ctx)
 	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, connMgr, ctx)
 
 	// ========== Signal handling ==========

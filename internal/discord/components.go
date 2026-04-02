@@ -13,7 +13,7 @@ import (
 )
 
 // sendCommandKeyboard sends a message with command keyboard buttons.
-func (b *Bot) sendCommandKeyboard(channelID, cmdName string, header string, opts []command.KeyboardOption) {
+func (b *Bot) sendCommandKeyboard(cmdName string, header string, opts []command.KeyboardOption) {
 	_, _ = b.SendTextWithButtons(header, dispatch.CmdButtons(cmdName, opts), "cmd:")
 }
 

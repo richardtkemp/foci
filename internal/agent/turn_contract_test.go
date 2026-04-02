@@ -78,22 +78,16 @@ func TestCompletionChanSemantics_Timeout(t *testing.T) {
 	}
 }
 
-// TestAPITransportSatisfiesInterface verifies at runtime that *APITransport
-// satisfies the TurnContract interface.
+// TestAPITransportSatisfiesInterface verifies that *APITransport satisfies the
+// TurnContract interface (compile-time check).
 func TestAPITransportSatisfiesInterface(t *testing.T) {
-	var tc TurnContract = &APITransport{sharedTurnOps{agent: &Agent{}}}
-	if tc == nil {
-		t.Fatal("APITransport should satisfy TurnContract")
-	}
+	var _ TurnContract = &APITransport{sharedTurnOps{agent: &Agent{}}}
 }
 
-// TestDelegatedTransportSatisfiesInterface verifies at runtime that
-// *DelegatedTransport satisfies the TurnContract interface.
+// TestDelegatedTransportSatisfiesInterface verifies that *DelegatedTransport
+// satisfies the TurnContract interface (compile-time check).
 func TestDelegatedTransportSatisfiesInterface(t *testing.T) {
-	var tc TurnContract = &DelegatedTransport{sharedTurnOps{agent: &Agent{}}}
-	if tc == nil {
-		t.Fatal("DelegatedTransport should satisfy TurnContract")
-	}
+	var _ TurnContract = &DelegatedTransport{sharedTurnOps{agent: &Agent{}}}
 }
 
 // TestRunPostTurn_SyncPath verifies that runPostTurn calls post-turn methods

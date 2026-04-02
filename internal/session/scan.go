@@ -109,7 +109,6 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 		path    string
 		name    string
 		modTime time.Time
-		isGz    bool
 	}
 	var activeFiles []fileInfo
 	var staticEntries []SessionIndexEntry
@@ -177,10 +176,6 @@ func (s *Store) ScanAllSessions() ([]SessionIndexEntry, error) {
 
 	// Phase 2: Read metadata for active files in parallel.
 	// Each goroutine reads the first line of a file for created_at/branch_meta.
-	type result struct {
-		idx   int
-		entry SessionIndexEntry
-	}
 	results := make([]SessionIndexEntry, len(activeFiles))
 	ch := make(chan int, len(activeFiles))
 	for i := range activeFiles {

@@ -1,24 +1,12 @@
 package telegram
 
 import (
-	"context"
-	"fmt"
 	"strings"
 
 	"foci/internal/dispatch"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
-
-// tryDispatchCommand tries to dispatch text as a slash or dot-command.
-// Returns true if the message was handled (caller should return).
-func (b *Bot) tryDispatchCommand(ctx context.Context, msg *gotgbot.Message, text string) bool {
-	if text == "" || b.dispatcher == nil {
-		return false
-	}
-	outcome := b.dispatcher.DispatchCommand(ctx, text, msg.Chat.Id, fmt.Sprintf("%d", msg.From.Id))
-	return b.renderCommandOutcome(msg, &outcome)
-}
 
 // renderCommandOutcome renders a CommandOutcome using Telegram-native sends.
 // Returns true if the outcome was handled (i.e. not NotHandled).
@@ -28,7 +16,7 @@ func (b *Bot) renderCommandOutcome(msg *gotgbot.Message, outcome *dispatch.Comma
 	}
 
 	if outcome.Keyboard != nil {
-		b.sendCommandKeyboard(msg.Chat.Id, outcome.Keyboard.CommandName, outcome.Keyboard.Header, outcome.Keyboard.Options)
+		b.sendCommandKeyboard(outcome.Keyboard.CommandName, outcome.Keyboard.Header, outcome.Keyboard.Options)
 		return true
 	}
 
