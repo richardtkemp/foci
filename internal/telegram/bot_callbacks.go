@@ -2,10 +2,10 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"foci/internal/command"
+	"foci/internal/dispatch"
 	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -37,22 +37,8 @@ func layoutButtons(buttons []gotgbot.InlineKeyboardButton) [][]gotgbot.InlineKey
 	return rows
 }
 
-// cmdButtons converts command keyboard options to platform.ButtonChoice with
-// callback data formatted as "/cmdName optData".
-func cmdButtons(cmdName string, opts []command.KeyboardOption) []platform.ButtonChoice {
-	btns := make([]platform.ButtonChoice, len(opts))
-	for i, opt := range opts {
-		btns[i] = platform.ButtonChoice{
-			Label: opt.Label,
-			Data:  fmt.Sprintf("/%s %s", cmdName, opt.Data),
-			Row:   opt.Row,
-		}
-	}
-	return btns
-}
-
 func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, header string, opts []command.KeyboardOption) {
-	_, _ = b.SendTextWithButtons(header, cmdButtons(cmdName, opts), "cmd:")
+	_, _ = b.SendTextWithButtons(header, dispatch.CmdButtons(cmdName, opts), "cmd:")
 }
 
 // handleCallbackQuery processes inline keyboard button presses for tool result
@@ -68,40 +54,26 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 		_, _ = b.client.AnswerCallbackQuery(cq.Id, nil)
 	}()
 
-	// Command keyboard callbacks: "cmd:/name args"
-	if strings.HasPrefix(cq.Data, "cmd:") {
-		cmdText := cq.Data[4:] // strip "cmd:" prefix
-		b.handleCommandCallback(ctx, chatID, cq.Message.GetMessageId(), cmdText)
-		return
-	}
-
-	// Interactive message callbacks: "im:<promptID>:<buttonIndex>"
-	if strings.HasPrefix(cq.Data, "im:") {
-		editText, _, ok := platform.HandleInteractiveCallback(cq.Data[3:])
+	msgID := cq.Message.GetMessageId()
+	action, data := dispatch.ParseCallback(cq.Data)
+	switch action {
+	case dispatch.CallbackCommand:
+		b.handleCommandCallback(ctx, chatID, msgID, data)
+	case dispatch.CallbackInteractive:
+		editText, _, ok := platform.HandleInteractiveCallback(data)
 		if ok && editText != "" {
 			_, _, _ = b.client.EditMessageText(
 				ConvertToTelegramHTML(editText, b.tableOpts()),
 				&gotgbot.EditMessageTextOpts{
 					ChatId:    chatID,
-					MessageId: cq.Message.GetMessageId(),
+					MessageId: msgID,
 					ParseMode: "HTML",
 				})
 		}
-		return
-	}
-
-	parts := strings.SplitN(cq.Data, ":", 2)
-	if len(parts) != 2 {
-		return
-	}
-	action := parts[1] // "show" or "hide"
-	msgID := cq.Message.GetMessageId()
-
-	switch parts[0] {
-	case "tc":
-		b.handleToolCallCallback(chatID, action, msgID)
-	case "th":
-		b.handleThinkingCallback(chatID, action, msgID)
+	case dispatch.CallbackToolCall:
+		b.handleToolCallCallback(chatID, data, msgID)
+	case dispatch.CallbackThinking:
+		b.handleThinkingCallback(chatID, data, msgID)
 	}
 }
 
@@ -112,20 +84,26 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 		return
 	}
 
-	// Check if this bare subcommand needs a chained keyboard (e.g. /tmux kill → pick session)
-	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText, chatID); ok {
-		b.editMessageWithKeyboard(chatID, msgID, parentName, cmdText, opts)
+	outcome := b.dispatcher.DispatchCommandCallback(ctx, chatID, cmdText)
+
+	if outcome.Chain != nil {
+		b.editMessageWithKeyboard(chatID, msgID, outcome.Chain.CommandName, cmdText, outcome.Chain.Options)
 		return
 	}
 
-	dr := b.dispatcher.DispatchCallback(ctx, chatID, cmdText)
 	var result string
-	if len(dr.Response.Parts) > 0 {
-		result = strings.Join(dr.Response.Parts, "\n\n")
+	var resp command.Response
+	if outcome.Response != nil {
+		resp = outcome.Response.Result.Response
+		if len(resp.Parts) > 0 {
+			result = strings.Join(resp.Parts, "\n\n")
+		} else {
+			result = resp.Text
+		}
+		if !outcome.Response.Result.Handled {
+			result = "Unknown command: " + cmdText
+		}
 	} else {
-		result = dr.Response.Text
-	}
-	if !dr.Handled {
 		result = "Unknown command: " + cmdText
 	}
 
@@ -137,9 +115,9 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 	b.logger().Debugf("command callback %q dispatched", cmdText)
 
 	// If the response includes a keyboard, edit with both text and keyboard.
-	if len(dr.Response.Keyboard) > 0 {
+	if len(resp.Keyboard) > 0 {
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(cmdText, "/"), " ")
-		rows := buildButtonRows(cmdButtons(cmdName, dr.Response.Keyboard), "cmd:")
+		rows := buildButtonRows(dispatch.CmdButtons(cmdName, resp.Keyboard), "cmd:")
 		_, _, err := b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 			ChatId:      chatID,
 			MessageId:   msgID,
@@ -174,7 +152,7 @@ func (b *Bot) handleCommandCallback(ctx context.Context, chatID, msgID int64, cm
 // editMessageWithKeyboard replaces the message with a chained inline keyboard.
 func (b *Bot) editMessageWithKeyboard(chatID, msgID int64, parentName, cmdText string, opts []command.KeyboardOption) {
 	display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
-	rows := buildButtonRows(cmdButtons(parentName, opts), "cmd:")
+	rows := buildButtonRows(dispatch.CmdButtons(parentName, opts), "cmd:")
 	_, _, _ = b.client.EditMessageText(display, &gotgbot.EditMessageTextOpts{
 		ChatId:      chatID,
 		MessageId:   msgID,

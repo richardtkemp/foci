@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/log"
+	"foci/internal/dispatch"
 	"foci/internal/platform"
 	"foci/internal/toolformat"
 
@@ -160,53 +160,42 @@ func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (q
 // transforms, and secondary bot idle drops. Returns true if the message
 // was consumed and should not be enqueued.
 func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
-	// Wizard intercept -- route all messages to active wizard before normal dispatch
-	if qm.text != "" {
-		if result, ok := b.commands.HandleMessage(qm.text); ok {
-			b.sendReply(qm.msg, result)
-			return true
-		}
+	interceptor := dispatch.Interceptor{
+		Commands:     b.commands,
+		LastMsgStore: b.lastMsgStore,
+		Handler:      b.handler,
+		Dispatcher:   b.dispatcher.Inner(),
+		IsSecondary:  b.isSecondary,
+		SessionKeyFn: b.SessionKey,
+		LogWarnf:     func(f string, a ...any) { b.logger().Warnf(f, a...) },
+		LogDebugf:    func(f string, a ...any) { b.logger().Debugf(f, a...) },
 	}
-
-	// Record the message for // (repeat) command
-	if qm.text != "" && !strings.HasPrefix(qm.text, "/") {
-		b.lastMsgStore.Record(qm.userID, qm.text)
+	result := interceptor.TryIntercept(ctx, &dispatch.InterceptMessage{
+		Text:      qm.text,
+		UserID:    qm.userID,
+		ChatID:    chatIDFromMsg(qm.msg),
+		Timestamp: qm.msg.Timestamp,
+	})
+	if !result.Consumed {
+		return false
 	}
-
-	// Drop stale slash commands (e.g. replayed from the event queue after a
-	// restart). Agent messages are still delivered since the agent can reason
-	// about timeliness, but slash commands execute unconditionally.
-	if qm.text != "" && strings.HasPrefix(qm.text, "/") && !qm.msg.Timestamp.IsZero() {
-		if age := time.Since(qm.msg.Timestamp); age > 30*time.Second {
-			log.Warnf("discord", "dropping stale command %q (age=%s)", strings.ToLower(qm.text), age.Truncate(time.Second))
-			return true
-		}
-	}
-
-	// Try dispatching the original message as a command (slash or dot-prefix).
-	if b.tryDispatchCommand(ctx, qm.msg, qm.text) {
+	if result.WizardReply != "" {
+		b.sendReply(qm.msg, result.WizardReply)
 		return true
 	}
-
-	// Apply message transforms to non-command messages.
-	if b.handler != nil {
-		if transformed := b.handler.TransformMessage(qm.text); transformed != qm.text {
-			qm.text = transformed
-			if b.tryDispatchCommand(ctx, qm.msg, qm.text) {
-				return true
-			}
-		}
-	}
-
-	// Secondary bots with no session silently drop non-command messages.
-	if b.isSecondary && b.SessionKey() == "" {
-		b.logger().Debugf("dropping message to idle secondary bot from %s", formatUserInfo(qm.msg.Author))
+	if result.Outcome != nil {
+		b.renderCommandOutcome(qm.msg, result.Outcome)
 		return true
 	}
-
-	return false
+	return true // silently consumed (stale command or idle secondary)
 }
 
+
+// chatIDFromMsg extracts a numeric chat ID from a Discord message's ChannelID string.
+func chatIDFromMsg(msg *discordgo.Message) int64 {
+	id, _ := strconv.ParseInt(msg.ChannelID, 10, 64)
+	return id
+}
 
 // truncate is a package-local alias for toolformat.Truncate, used throughout
 // the discord package for log messages, stream previews, etc.

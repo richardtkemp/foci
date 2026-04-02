@@ -2,33 +2,19 @@ package discord
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 
 	"foci/internal/command"
+	"foci/internal/dispatch"
 	"foci/internal/platform"
 
 	"github.com/bwmarrin/discordgo"
 )
 
-// cmdButtons converts command keyboard options to platform.ButtonChoice with
-// callback data formatted as "/cmdName optData".
-func cmdButtons(cmdName string, opts []command.KeyboardOption) []platform.ButtonChoice {
-	btns := make([]platform.ButtonChoice, len(opts))
-	for i, opt := range opts {
-		btns[i] = platform.ButtonChoice{
-			Label: opt.Label,
-			Data:  fmt.Sprintf("/%s %s", cmdName, opt.Data),
-			Row:   opt.Row,
-		}
-	}
-	return btns
-}
-
 // sendCommandKeyboard sends a message with command keyboard buttons.
 func (b *Bot) sendCommandKeyboard(channelID, cmdName string, header string, opts []command.KeyboardOption) {
-	_, _ = b.SendTextWithButtons(header, cmdButtons(cmdName, opts), "cmd:")
+	_, _ = b.SendTextWithButtons(header, dispatch.CmdButtons(cmdName, opts), "cmd:")
 }
 
 // handleComponentInteraction dispatches button interactions.
@@ -46,40 +32,26 @@ func (b *Bot) handleComponentInteraction(ctx context.Context, i *discordgo.Inter
 		Type: discordgo.InteractionResponseDeferredMessageUpdate,
 	})
 
-	// Command button callbacks: "cmd:/name args"
-	if strings.HasPrefix(data.CustomID, "cmd:") {
-		cmdText := data.CustomID[4:] // strip "cmd:" prefix
-		b.handleCommandCallback(ctx, channelID, i.Message.ID, cmdText, chatID)
-		return
-	}
-
-	// Interactive message callbacks: "im:<promptID>:<buttonIndex>"
-	if strings.HasPrefix(data.CustomID, "im:") {
-		editText, _, ok := platform.HandleInteractiveCallback(data.CustomID[3:])
+	msgID := i.Message.ID
+	cbAction, cbData := dispatch.ParseCallback(data.CustomID)
+	switch cbAction {
+	case dispatch.CallbackCommand:
+		b.handleCommandCallback(ctx, channelID, msgID, cbData, chatID)
+	case dispatch.CallbackInteractive:
+		editText, _, ok := platform.HandleInteractiveCallback(cbData)
 		if ok && editText != "" {
 			noComponents := []discordgo.MessageComponent{}
 			_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 				Channel:    channelID,
-				ID:         i.Message.ID,
+				ID:         msgID,
 				Content:    &editText,
 				Components: &noComponents,
 			})
 		}
-		return
-	}
-
-	parts := strings.SplitN(data.CustomID, ":", 2)
-	if len(parts) != 2 {
-		return
-	}
-	action := parts[1] // "show" or "hide"
-	msgID := i.Message.ID
-
-	switch parts[0] {
-	case "tc":
-		b.handleToolCallCallback(channelID, action, msgID)
-	case "th":
-		b.handleThinkingCallback(channelID, action, msgID)
+	case dispatch.CallbackToolCall:
+		b.handleToolCallCallback(channelID, cbData, msgID)
+	case dispatch.CallbackThinking:
+		b.handleThinkingCallback(channelID, cbData, msgID)
 	}
 }
 
@@ -90,10 +62,11 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 		return
 	}
 
-	// Check for chained keyboard
-	if parentName, opts, ok := b.dispatcher.LookupChainKeyboard(ctx, cmdText, chatID); ok {
-		display := "/" + parentName + " " + strings.TrimPrefix(cmdText, "/"+parentName+" ") + ":"
-		buttons := buildButtonComponents(cmdButtons(parentName, opts), "cmd:")
+	outcome := b.dispatcher.DispatchCommandCallback(ctx, chatID, cmdText)
+
+	if outcome.Chain != nil {
+		display := "/" + outcome.Chain.CommandName + " " + strings.TrimPrefix(cmdText, "/"+outcome.Chain.CommandName+" ") + ":"
+		buttons := buildButtonComponents(dispatch.CmdButtons(outcome.Chain.CommandName, outcome.Chain.Options), "cmd:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
@@ -103,14 +76,19 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 		return
 	}
 
-	dr := b.dispatcher.DispatchCallback(ctx, chatID, cmdText)
 	var result string
-	if len(dr.Response.Parts) > 0 {
-		result = strings.Join(dr.Response.Parts, "\n\n")
+	var resp command.Response
+	if outcome.Response != nil {
+		resp = outcome.Response.Result.Response
+		if len(resp.Parts) > 0 {
+			result = strings.Join(resp.Parts, "\n\n")
+		} else {
+			result = resp.Text
+		}
+		if !outcome.Response.Result.Handled {
+			result = "Unknown command: " + cmdText
+		}
 	} else {
-		result = dr.Response.Text
-	}
-	if !dr.Handled {
 		result = "Unknown command: " + cmdText
 	}
 
@@ -121,9 +99,9 @@ func (b *Bot) handleCommandCallback(ctx context.Context, channelID, msgID, cmdTe
 	b.logger().Debugf("command callback %q dispatched", cmdText)
 
 	// If the response includes a keyboard, edit with both text and buttons.
-	if len(dr.Response.Keyboard) > 0 {
+	if len(resp.Keyboard) > 0 {
 		cmdName, _, _ := strings.Cut(strings.TrimPrefix(cmdText, "/"), " ")
-		buttons := buildButtonComponents(cmdButtons(cmdName, dr.Response.Keyboard), "cmd:")
+		buttons := buildButtonComponents(dispatch.CmdButtons(cmdName, resp.Keyboard), "cmd:")
 		_, _ = b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
 			Channel:    channelID,
 			ID:         msgID,
