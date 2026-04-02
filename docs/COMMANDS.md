@@ -159,6 +159,9 @@ Trigger manual context compaction.
 - `/compact` — compact now
 - `/compact dry-run` — show what would happen and send the summary as a document without compacting
 
+### `/pass <command>`
+Forward a raw command directly to the delegated backend (Claude Code), bypassing foci's command dispatch. Useful for running CC slash commands that foci would otherwise intercept (e.g. `/pass /context`, `/pass /model opus`, `/pass /help`). Only available for agents with a delegated backend — returns an error for API-mode agents. For tmux backends, waits for output stabilisation and returns the captured pane content. For stream backends, returns immediately (CC's response arrives asynchronously via the stdout reader).
+
 ### `/reload`
 Reload workspace files (system prompt) and skills from disk. **CLI-only**. Config file (`foci.toml`) changes still require a full service restart.
 
