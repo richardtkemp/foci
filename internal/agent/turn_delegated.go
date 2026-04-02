@@ -99,6 +99,21 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	}
 	ts.Backend = be
 
+	// Check for a pending AskUserQuestion — intercept typed text as an
+	// answer before WaitForPermission blocks. This lets users respond to
+	// questions by typing instead of clicking buttons.
+	if qr, ok := be.(backend.QuestionResponder); ok {
+		if reqID := qr.HasPendingQuestion(); reqID != "" && len(ts.Texts) > 0 {
+			text := strings.TrimSpace(ts.Texts[0])
+			if text != "" {
+				log.Debugf("delegated", "session=%s intercepting text as question answer: %q", ts.SessionKey, text)
+				_ = qr.RespondToQuestion(reqID, text)
+				close(ts.CompletionChan)
+				return nil
+			}
+		}
+	}
+
 	// Wait for any outstanding permission prompt to resolve before sending
 	// new input. The backend cannot process messages while blocked on a
 	// permission decision. Messages queue naturally in the platform's

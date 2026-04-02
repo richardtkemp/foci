@@ -110,16 +110,20 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			reqID := requestID // capture for closure
 			_ = platform.SendInteractiveMessage(conn, text, buttons, func(choice platform.ButtonChoice) string {
 				_ = ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data)
-				if strings.EqualFold(choice.Data, "deny") {
+				switch {
+				case choice.Data == "deny" || choice.Data == "qa:cancel":
 					if summary != "" {
 						return "❌ " + summary
 					}
-					return "❌ Denied"
+					return "❌ Cancelled"
+				case strings.HasPrefix(choice.Data, "qa:"):
+					return "✅ " + choice.Label
+				default:
+					if summary != "" {
+						return "✅ " + summary
+					}
+					return "✅ Approved"
 				}
-				if summary != "" {
-					return "✅ " + summary
-				}
-				return "✅ Approved"
 			})
 		},
 		TypingFunc: func(sessionKey string, typing bool) {
