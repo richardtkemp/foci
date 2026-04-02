@@ -11,6 +11,8 @@ import (
 )
 
 // pendingPermission tracks an unresolved permission request from CC.
+// For regular permissions, the question fields are zero-valued.
+// For AskUserQuestion, they hold the sequential question state.
 type pendingPermission struct {
 	requestID   string
 	toolName    string
@@ -18,13 +20,26 @@ type pendingPermission struct {
 	description string
 	summary     string
 	createdAt   time.Time
+
+	// Question-specific fields (zero values for regular permissions).
+	questions     []userQuestion      // parsed questions from AskUserQuestion input
+	currentIndex  int                 // which question is currently being presented
+	answers       map[string]string   // accumulated answers (question text → answer)
+	originalInput json.RawMessage     // preserved for building updatedInput
 }
 
-// handlePermissionRequest is called by the reader goroutine when CC sends a
-// can_use_tool control request. It stores the pending permission, notifies
-// the DelegatedManager, and sends a prompt to the platform UI.
-func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
-	log.Debugf("ccstream/perm", "handlePermissionRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
+// handleToolRequest is called by the reader goroutine when CC sends a
+// can_use_tool control request. It dispatches to tool-specific handlers
+// (AskUserQuestion gets interactive question prompts) or falls through
+// to the standard permission prompt flow.
+func (b *Backend) handleToolRequest(msg *PermissionRequest) {
+	log.Debugf("ccstream/perm", "handleToolRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
+
+	// AskUserQuestion requires user interaction — never auto-approve.
+	if msg.Request.ToolName == "AskUserQuestion" {
+		b.handleUserQuestion(msg)
+		return
+	}
 
 	// Check auto-approve rules before prompting the user.
 	if b.autoApprovePermission(msg) {
@@ -148,18 +163,20 @@ func (b *Backend) PendingPermissions() int {
 	return len(b.pendingPerms)
 }
 
-// hasPendingPermissions reports whether any permission requests are pending.
-func (b *Backend) hasPendingPermissions() bool {
-	b.permMu.Lock()
-	defer b.permMu.Unlock()
-	return len(b.pendingPerms) > 0
-}
-
 // storePendingPerm adds a pending permission under the lock.
 func (b *Backend) storePendingPerm(pp *pendingPermission) {
 	b.permMu.Lock()
 	b.pendingPerms[pp.requestID] = pp
 	b.permMu.Unlock()
+}
+
+// getPendingPerm returns a pending permission without removing it.
+// Used by sequential question flows that need to read state across steps.
+func (b *Backend) getPendingPerm(requestID string) *pendingPermission {
+	b.permMu.Lock()
+	pp := b.pendingPerms[requestID]
+	b.permMu.Unlock()
+	return pp
 }
 
 // removePendingPerm removes and returns a pending permission.

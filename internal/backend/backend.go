@@ -130,11 +130,28 @@ type PromptChoice struct {
 	Data  string // value to send to the pane (e.g. "1", "2")
 }
 
-// PermissionPromptFunc sends a permission prompt to the user with keyboard
-// choices. requestID is the CC protocol request ID (empty for tmux backends).
-// summary is a short description for post-approval display (e.g.
+// PermissionPromptFunc sends an interactive prompt to the user with keyboard
+// choices. Used for both permission requests and AskUserQuestion prompts.
+// requestID is the CC protocol request ID (empty for tmux backends).
+// summary is a short description for post-action display (e.g.
 // "Edit memory/2026-03-27.md"). If nil, the backend falls back to plain text.
 type PermissionPromptFunc func(requestID, text, summary string, choices []PromptChoice)
+
+// QuestionResponder is optionally implemented by backends that support
+// the AskUserQuestion tool. It allows the agent layer to route user
+// answers (button clicks or typed text) back to the backend.
+type QuestionResponder interface {
+	// RespondToQuestion handles a user's answer. choice is either
+	// "qa:<index>" (button click), or raw text (custom typed answer).
+	RespondToQuestion(requestID, choice string) error
+
+	// CancelQuestion cancels a pending question (sends PermissionDeny).
+	CancelQuestion(requestID string) error
+
+	// HasPendingQuestion returns the request ID of a pending
+	// AskUserQuestion, or empty string if none.
+	HasPendingQuestion() string
+}
 
 // StartOptions configures the backend at launch time.
 type StartOptions struct {

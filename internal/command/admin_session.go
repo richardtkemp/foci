@@ -20,6 +20,13 @@ func StopCommand() *Command {
 				if sk == "" {
 					return Response{}, fmt.Errorf("no active session")
 				}
+
+				// If there's a pending AskUserQuestion, cancel it
+				// instead of stopping the entire CC session.
+				if cancelled := cc.Agent.CancelPendingQuestion(ctx, sk); cancelled {
+					return Response{Text: "Question cancelled."}, nil
+				}
+
 				if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
 					return Response{}, fmt.Errorf("stop delegated: %w", err)
 				}

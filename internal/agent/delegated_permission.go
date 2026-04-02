@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"foci/internal/backend"
 	"foci/internal/log"
 )
 
@@ -18,6 +19,18 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	be, err := a.DelegatedManager.Get(ctx, sessionKey)
 	if err != nil {
 		return err
+	}
+
+	// AskUserQuestion routing — button clicks ("qa:*") and cancellation.
+	if qr, ok := be.(backend.QuestionResponder); ok && requestID != "" {
+		if choice == "qa:cancel" {
+			log.Debugf("agent/perm", "cancelling question: reqID=%s", requestID)
+			return qr.CancelQuestion(requestID)
+		}
+		if strings.HasPrefix(choice, "qa:") {
+			log.Debugf("agent/perm", "answering question: reqID=%s choice=%q", requestID, choice)
+			return qr.RespondToQuestion(requestID, choice)
+		}
 	}
 
 	// Protocol-based response (ccstream) — use RespondToPermission if available.
@@ -50,4 +63,28 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 
 	// Keystroke-based response (tmux backend).
 	return be.SendKeystroke(ctx, choice)
+}
+
+// CancelPendingQuestion cancels an outstanding AskUserQuestion if one exists
+// for the given session. Returns true if a question was cancelled.
+// Used by /stop to cancel a question without stopping the CC session.
+func (a *Agent) CancelPendingQuestion(ctx context.Context, sessionKey string) bool {
+	if a.DelegatedManager == nil {
+		return false
+	}
+	be, err := a.DelegatedManager.Get(ctx, sessionKey)
+	if err != nil {
+		return false
+	}
+	qr, ok := be.(backend.QuestionResponder)
+	if !ok {
+		return false
+	}
+	reqID := qr.HasPendingQuestion()
+	if reqID == "" {
+		return false
+	}
+	log.Debugf("agent/perm", "cancelling pending question via /stop: reqID=%s session=%s", reqID, sessionKey)
+	_ = qr.CancelQuestion(reqID)
+	return true
 }

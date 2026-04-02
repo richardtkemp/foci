@@ -670,9 +670,11 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 	}
 }
 
-// OnPermissionRequest handles permission requests from CC.
+// OnPermissionRequest handles can_use_tool control requests from CC.
+// Dispatches to tool-specific handlers (e.g. AskUserQuestion) or the
+// standard permission prompt flow.
 func (b *Backend) OnPermissionRequest(msg *PermissionRequest) {
-	b.handlePermissionRequest(msg)
+	b.handleToolRequest(msg)
 }
 
 // OnControlResponse handles responses to our control requests (e.g. initialize).
