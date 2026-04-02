@@ -158,6 +158,23 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 	return mon.Stop
 }
 
+// setupInteractiveCleanup starts periodic cleanup of expired interactive message
+// callbacks (unanswered button presses). Runs every hour.
+func setupInteractiveCleanup(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				platform.CleanupExpiredInteractive()
+			}
+		}
+	}()
+}
+
 // setupToolDetailCleanup starts periodic tool detail expiry when all users are idle.
 func setupToolDetailCleanup(
 	toolDetailStore platform.ToolDetailStore,

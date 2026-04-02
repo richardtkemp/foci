@@ -404,7 +404,7 @@ func cmdDebugRebuildIndex(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("open state.db: %w", err)
 	}
-	defer idx.Close()
+	defer func() { _ = idx.Close() }()
 
 	fmt.Fprintf(os.Stderr, "Rebuilding session index from %s...\n", cfg.Sessions.Dir)
 	n, err := idx.Rebuild(sessions)

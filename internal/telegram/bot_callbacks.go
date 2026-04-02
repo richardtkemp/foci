@@ -37,7 +37,7 @@ func layoutButtons(buttons []gotgbot.InlineKeyboardButton) [][]gotgbot.InlineKey
 	return rows
 }
 
-func (b *Bot) sendCommandKeyboard(chatID int64, cmdName string, header string, opts []command.KeyboardOption) {
+func (b *Bot) sendCommandKeyboard(cmdName string, header string, opts []command.KeyboardOption) {
 	_, _ = b.SendTextWithButtons(header, dispatch.CmdButtons(cmdName, opts), "cmd:")
 }
 

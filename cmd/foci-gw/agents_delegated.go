@@ -21,6 +21,11 @@ import (
 // agent's shared fields (compaction, warnings, etc.) are already set by
 // setupAgent before this is called.
 func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, backendName string, backendConfig map[string]any) (finalizeParams, bool) {
+	// Make prompt search dirs available for orientation template resolution
+	// (webhooks, keepalive, memory formation). Delegated agents don't need
+	// groupResolver since their model comes from backendConfig.
+	ag.PromptSearchDirs = shared.promptSearchDirs
+
 	// Bootstrap for building the system prompt (workspace *.md files).
 	bs := workspace.NewBootstrap(p.acfg.Workspace, nil)
 	systemBlocks := bs.SystemBlocks()

@@ -85,18 +85,6 @@ func parseContentBlocks(raw json.RawMessage) []contentBlock {
 	return blocks
 }
 
-// parseContentString extracts the plain text content (for user messages).
-func parseContentString(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return ""
-	}
-	return s
-}
-
 // discoverSessionFile finds the Claude Code session JSONL file for a given PID.
 // It reads the PID entry from ~/.claude/sessions/<pid>.json and derives the
 // project slug from the CWD to locate the session file.

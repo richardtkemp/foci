@@ -209,9 +209,7 @@ func newTestPipe() (*readCloserWithCancel, *writeCloserForPipe) {
 
 // cancellablePipe is a simple pipe where closing the write end unblocks the reader.
 type readCloserWithCancel struct {
-	ch     chan []byte
 	closed chan struct{}
-	buf    []byte
 }
 
 type writeCloserForPipe struct {

@@ -247,7 +247,12 @@ func TestWriterSendControlResponse(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(nopWriteCloser{&buf})
 
-	allow := NewPermissionAllow("toolu_01ABC", "user_temporary")
+	allow := &PermissionAllow{
+		Behavior:               "allow",
+		UpdatedInput:           json.RawMessage(`{}`),
+		ToolUseID:              "toolu_01ABC",
+		DecisionClassification: "user_temporary",
+	}
 	if err := w.SendControlResponse("req-77", allow); err != nil {
 		t.Fatalf("SendControlResponse: %v", err)
 	}

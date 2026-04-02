@@ -223,25 +223,37 @@ func (req *PermissionRequestPayload) DisplayText() string {
 }
 
 // formatToolInput extracts a human-readable summary from tool input JSON.
+// Uses toolName to determine which input field to display, aligned with
+// toolMatchKeys in autoapprove.go.
 func formatToolInput(toolName string, input json.RawMessage) string {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(input, &m); err != nil {
 		return fmt.Sprintf("`%s`", string(input))
 	}
-	// For Bash, show the command.
-	if cmd, ok := m["command"]; ok {
-		var s string
-		if json.Unmarshal(cmd, &s) == nil {
-			return fmt.Sprintf("`%s`", s)
+
+	// Use toolMatchKeys to find the primary input field for this tool.
+	if key, ok := toolMatchKeys[toolName]; ok {
+		if raw, ok := m[key]; ok {
+			var s string
+			if json.Unmarshal(raw, &s) == nil {
+				switch key {
+				case "command":
+					return fmt.Sprintf("`%s`", s)
+				case "file_path":
+					return fmt.Sprintf("File: `%s`", s)
+				case "pattern":
+					return fmt.Sprintf("Pattern: `%s`", s)
+				case "url":
+					return fmt.Sprintf("URL: `%s`", s)
+				case "query":
+					return fmt.Sprintf("Query: `%s`", s)
+				default:
+					return fmt.Sprintf("`%s`", s)
+				}
+			}
 		}
 	}
-	// For Write/Edit, show the file path.
-	if fp, ok := m["file_path"]; ok {
-		var s string
-		if json.Unmarshal(fp, &s) == nil {
-			return fmt.Sprintf("File: `%s`", s)
-		}
-	}
+
 	// Fallback: compact JSON.
 	compact, err := json.Marshal(m)
 	if err != nil {
