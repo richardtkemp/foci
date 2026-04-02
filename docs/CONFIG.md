@@ -624,17 +624,37 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `auto_approve` | string[] | `[]` | Glob patterns to auto-approve. Format: `"ToolName"` (any input) or `"ToolName:pattern"` (match input). For Bash: matches the command string. For Edit/Write: matches the file path. Patterns use `*` (any chars) and `?` (single char). Without glob chars, prefix matching with word boundary is used. |
+| `auto_approve` | string[] | `[]` | Patterns to auto-approve. Format: `"ToolName"` (any input) or `"ToolName:pattern"` (match input). See below for pattern matching and Bash safety details. |
 | `auto_approve_common_readonly` | bool | `true` | Enable built-in allowlist of read-only tools (Search, Glob, Grep, Read, WebSearch, WebFetch) and safe shell commands (ls, cat, grep, jq, etc.). |
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. The bool follows standard cascade (per-agent overrides global).
 
 Delegated backends also auto-approve workspace Edit/Write access (scoped to the agent's workspace directory).
 
+#### Pattern matching
+
+Each rule is `"ToolName"` (match any invocation) or `"ToolName:pattern"` (match the tool's key input field):
+
+| Tool | Matched field |
+|------|--------------|
+| Bash | `command` |
+| Read, Edit, Write, NotebookEdit | `file_path` |
+| Glob, Grep | `pattern` |
+| WebFetch | `url` |
+| WebSearch | `query` |
+
+Patterns with `*` or `?` use glob matching (`*` = any characters, `?` = single character). Without glob characters, prefix matching with word boundary is used — `ls` matches `ls -la` but not `lsblk`.
+
+#### Bash command chaining safety
+
+Bash commands containing shell operators (`&&`, `||`, `;`, `|`) are split into segments and **every segment must independently match a rule**. This means rules are composable — if `cd /tmp`, `ls`, and `git *` are all approved, then `cd /tmp && ls && git status` is also approved, but `cd /tmp && rm -rf /` is rejected because `rm -rf /` doesn't match any rule.
+
+Commands containing subshell injection (`$(...)` or backticks) are always rejected and fall through to the user prompt.
+
 ```toml
 [permissions]
 auto_approve = [
-  "Bash:cd /home/rich/git/foci && git *",
+  "Bash:cd /home/rich/git/foci",     # composable with other rules via &&
   "Bash:git -C /home/rich/git/foci *",
   "Bash:gcalcli *",
 ]
