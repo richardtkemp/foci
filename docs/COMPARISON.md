@@ -38,6 +38,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | | **Foci** | **OpenClaw** | **Nanobot** |
 |---|---|---|---|
 | Shell execution | ✅ with async execution | ✅ | ✅ |
+| Permission auto-approve | ✅ glob rules with shell-operator splitting | ❌ | ❌ |
 | File read/write/edit | ✅ syntax validation on edit | ✅ | ✅ |
 | HTTP requests | ✅ domain-locked API secret protection | ❌ | ❌ |
 | Web search | ✅ Anthropic or Brave | ✅ Brave | ✅ Brave |
@@ -152,7 +153,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 |---|---|---|---|
 | Anthropic Claude | ✅ | ✅ | ✅ |
 | Other popular platforms | ✅ Gemini, OpenAI-compatible (OpenRouter, DeepSeek, etc.) | ✅ | ✅ |
-| Coding agent backends | ✅ Claude Code (Codex, OpenCode planned) | ❌ | ❌ |
+| Coding agent backends | ✅ Claude Code via stream-JSON (Codex, OpenCode planned) | ❌ | ❌ |
 | Model failover chain | ❌ | ✅ ordered fallbacks | ❌ |
 | Model aliasing | ✅ | ✅ | ✅ |
 | Per-session model switch | ✅ | ✅ | ❌ |
@@ -202,6 +203,7 @@ Foci, [OpenClaw](https://github.com/openclaw/openclaw), and [Nanobot](https://gi
 | Interactive setup wizard | ✅ setup.sh | ✅ `openclaw onboard` | ✅ `nanobot onboard` |
 | Validation at load | ✅ warns on unknown keys | ✅ strict, blocks startup | ✅ Pydantic schema |
 | Env var substitution | ❌ | ✅ `${VAR}` syntax | ❌ |
+| Timezone override | ✅ IANA timezone per-instance | ❌ | ❌ |
 
 ## Chat Channels
 
