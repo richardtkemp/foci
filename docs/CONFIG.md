@@ -38,6 +38,7 @@ Fields that exist only at the top level or in dedicated global sections. These c
 | `welcome_file` | string | `"data/WELCOME.md"` | Path to a changelog/welcome file. If this file exists on startup, its contents are injected into the first agent's main session and the file is deleted. Relative paths resolve against `$HOME`. |
 | `skip_security_checks` | bool | `false` | Skip startup security checks for `secrets.toml` (ownership, permissions, group membership). Useful for development environments. See [SECRETS.md](SECRETS.md). |
 | `file_mode` | string | `"0640"` | Octal file permissions for workspace and content files (character files, prompts, skills, tool-written files, media saves, config edits). Session files have their own `[sessions] file_mode`. |
+| `timezone` | string | `""` | IANA timezone for timestamps (e.g. `"Europe/Athens"`, `"UTC"`, `"Local"`). Empty defaults to machine local time. |
 
 ### `[anthropic]`
 
@@ -1006,6 +1007,7 @@ Automatic memory capture and MEMORY.md consolidation. All three sub-features def
 | `session_end_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
 | `compaction_enabled` | bool | `true` | Run memory formation before compaction summarises context. |
 | `compaction_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+| `backend_quiet_period` | string | `"5m"` | Minimum idle time before memory formation fires in backend/delegated mode. Prevents formation from triggering while the backend agent is still actively working. |
 
 All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `shared/prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.
 
