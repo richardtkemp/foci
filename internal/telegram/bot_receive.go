@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"foci/internal/dispatch"
 	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -233,54 +233,33 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 // transforms, and secondary bot idle drops. Returns true if the message
 // was consumed and should not be enqueued.
 func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
-	// Wizard intercept — route all messages to active wizard before normal dispatch
-	if qm.text != "" {
-		if result, ok := b.commands.HandleMessage(qm.text); ok {
-			b.sendReply(qm.msg, result)
-			return true
-		}
+	interceptor := dispatch.Interceptor{
+		Commands:     b.commands,
+		LastMsgStore: b.lastMsgStore,
+		Handler:      b.handler,
+		Dispatcher:   b.dispatcher.Inner(),
+		IsSecondary:  b.isSecondary,
+		SessionKeyFn: b.SessionKey,
+		LogWarnf:     func(f string, a ...any) { b.logger().Warnf(f, a...) },
+		LogDebugf:    func(f string, a ...any) { b.logger().Debugf(f, a...) },
 	}
-
-	// Record the message for // (repeat) command
-	if qm.text != "" && !strings.HasPrefix(qm.text, "/") {
-		b.lastMsgStore.Record(qm.userID, qm.text)
+	result := interceptor.TryIntercept(ctx, &dispatch.InterceptMessage{
+		Text:      qm.text,
+		UserID:    qm.userID,
+		ChatID:    qm.msg.Chat.Id,
+		Timestamp: time.Unix(int64(qm.msg.Date), 0),
+	})
+	if !result.Consumed {
+		return false
 	}
-
-	// Drop stale slash commands (e.g. /restart replayed from the update
-	// queue after a crash). Agent messages are still delivered since the
-	// agent can reason about timeliness, but slash commands execute
-	// unconditionally so stale ones must be dropped.
-	if qm.text != "" && strings.HasPrefix(qm.text, "/") {
-		if age := time.Since(time.Unix(int64(qm.msg.Date), 0)); age > 30*time.Second {
-			b.logger().Warnf("dropping stale command %q (age=%s)", strings.ToLower(qm.text), age.Truncate(time.Second))
-			return true
-		}
-	}
-
-	// Try dispatching the original message as a command (slash or dot-prefix).
-	if b.tryDispatchCommand(ctx, qm.msg, qm.text) {
+	if result.WizardReply != "" {
+		b.sendReply(qm.msg, result.WizardReply)
 		return true
 	}
-
-	// Apply message transforms to non-command messages.
-	// Transforms may produce a command (e.g. "m" → "/mana").
-	if b.handler != nil {
-		if transformed := b.handler.TransformMessage(qm.text); transformed != qm.text {
-			qm.text = transformed
-			if b.tryDispatchCommand(ctx, qm.msg, qm.text) {
-				return true
-			}
-		}
-	}
-
-	// Secondary bots with no session silently drop non-command messages.
-	// Replying would cause spurious "idle" messages on restart when stale
-	// Telegram updates are replayed.
-	if b.isSecondary && b.SessionKey() == "" {
-		b.logger().Debugf("dropping message to idle secondary bot from %s", formatUserInfo(qm.msg.From))
+	if result.Outcome != nil {
+		b.renderCommandOutcome(qm.msg, result.Outcome)
 		return true
 	}
-
-	return false
+	return true // silently consumed (stale command or idle secondary)
 }
 

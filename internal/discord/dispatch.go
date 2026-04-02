@@ -23,6 +23,9 @@ func NewDispatcher(registry *command.Registry, cc command.CommandContext, agentI
 	return &Dispatcher{inner: dispatch.NewDispatcher(registry, cc, agentID)}
 }
 
+// Inner returns the underlying shared dispatcher.
+func (d *Dispatcher) Inner() *dispatch.Dispatcher { return d.inner }
+
 // SetSessionKeyFunc sets the function used to resolve stable session keys for a chat ID.
 func (d *Dispatcher) SetSessionKeyFunc(fn func(chatID int64) string) {
 	d.inner.SetSessionKeyFunc(fn)
@@ -52,4 +55,14 @@ func (d *Dispatcher) LookupKeyboard(ctx context.Context, text string, chatID int
 // LookupChainKeyboard checks if a command has a chained keyboard to display.
 func (d *Dispatcher) LookupChainKeyboard(ctx context.Context, text string, chatID int64) (string, []command.KeyboardOption, bool) {
 	return d.inner.LookupChainKeyboard(ctx, text, chatID)
+}
+
+// DispatchCommand runs the full command dispatch pipeline and returns a CommandOutcome.
+func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID int64, userID string) dispatch.CommandOutcome {
+	return d.inner.DispatchCommand(ctx, text, chatID, userID)
+}
+
+// DispatchCommandCallback runs the callback dispatch pipeline and returns a CommandOutcome.
+func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, cmdText string) dispatch.CommandOutcome {
+	return d.inner.DispatchCommandCallback(ctx, chatID, cmdText)
 }

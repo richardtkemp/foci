@@ -113,6 +113,60 @@ func (d *Dispatcher) dispatchRequest(ctx context.Context, name, args, sessionKey
 }
 
 
+// DispatchCommand runs the full command dispatch pipeline: normalize dot-commands
+// to slash form, check for keyboard display, check for chain keyboard, then dispatch.
+// Returns a CommandOutcome describing what the platform should render.
+func (d *Dispatcher) DispatchCommand(ctx context.Context, text string, chatID int64, userID string) CommandOutcome {
+	// Normalize dot-commands to slash form for keyboard lookups.
+	lookupText := text
+	if len(text) > 1 && text[0] == '.' && (text[1] >= 'a' && text[1] <= 'z' || text[1] >= 'A' && text[1] <= 'Z') {
+		lookupText = "/" + text[1:]
+	}
+
+	sessionKey := d.sessionKeyForChat(chatID)
+	ctx = tools.WithSessionKey(ctx, sessionKey)
+
+	// Check for keyboard display before dispatch so commands with keyboards
+	// don't execute their bare form (which is typically just usage text).
+	if name, header, opts, ok := d.registry.LookupKeyboard(ctx, lookupText, d.cc); ok {
+		return CommandOutcome{Keyboard: &KeyboardOutcome{CommandName: name, Header: header, Options: opts}}
+	}
+
+	// Check for chain keyboard (e.g. /config set → section buttons).
+	if name, opts, ok := d.registry.LookupChainKeyboard(ctx, lookupText, d.cc); ok {
+		return CommandOutcome{Chain: &ChainOutcome{CommandName: name, Label: text + ":", Options: opts}}
+	}
+
+	result := d.DispatchText(ctx, text, chatID, userID)
+	if !result.Handled {
+		return CommandOutcome{NotHandled: true}
+	}
+	return CommandOutcome{Response: &ResponseOutcome{Result: result, LookupText: lookupText}}
+}
+
+// DispatchCommandCallback runs the callback dispatch pipeline: check for chain
+// keyboard, then dispatch. Returns a CommandOutcome for the platform to render.
+func (d *Dispatcher) DispatchCommandCallback(ctx context.Context, chatID int64, cmdText string) CommandOutcome {
+	sessionKey := d.sessionKeyForChat(chatID)
+	ctx = tools.WithSessionKey(ctx, sessionKey)
+
+	// Check for chain keyboard before dispatch (e.g. /config set → section picker).
+	stripped := strings.TrimPrefix(cmdText, "/")
+	name, _, _ := strings.Cut(stripped, " ")
+	name = strings.ToLower(strings.TrimSpace(name))
+
+	if chainName, opts, ok := d.registry.LookupChainKeyboard(ctx, cmdText, d.cc); ok {
+		return CommandOutcome{Chain: &ChainOutcome{CommandName: chainName, Label: cmdText + ":", Options: opts}}
+	}
+
+	result := d.DispatchCallback(ctx, chatID, cmdText)
+	if !result.Handled {
+		return CommandOutcome{NotHandled: true}
+	}
+	_ = name // used only for chain keyboard lookup above
+	return CommandOutcome{Response: &ResponseOutcome{Result: result, LookupText: cmdText}}
+}
+
 func (d *Dispatcher) sessionKeyForChat(chatID int64) string {
 	if d.sessionKeyFn != nil {
 		return d.sessionKeyFn(chatID)
