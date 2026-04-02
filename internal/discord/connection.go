@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/chatmeta"
 	"foci/internal/command"
+	"foci/internal/dispatch"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -44,7 +45,7 @@ type Bot struct {
 	session            *discordgo.Session  // Discord API session (shared across bots for same token)
 	handler            platform.MessageHandler
 	commands           *command.Registry
-	dispatcher         *Dispatcher
+	dispatcher         *dispatch.Dispatcher
 	lastMsgStore       *command.LastMessageStore
 	allowedUsers       map[string]bool     // Discord user ID strings
 	agentID            string
@@ -271,7 +272,7 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 			b.logger().Infof("secondary bot released")
 		}
 	}
-	b.dispatcher = NewDispatcher(b.commands, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(b.commands, cc, b.agentID)
 	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
 }
 

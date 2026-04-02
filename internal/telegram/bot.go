@@ -10,6 +10,7 @@ import (
 
 	"foci/internal/chatmeta"
 	"foci/internal/command"
+	"foci/internal/dispatch"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -64,7 +65,7 @@ type Bot struct {
 	client             botClient    // for sending messages and files (mockable in tests)
 	handler            platform.MessageHandler
 	commands           *command.Registry
-	dispatcher         *Dispatcher               // platform-aware command dispatch (nil = use legacy dispatch)
+	dispatcher         *dispatch.Dispatcher       // platform-agnostic command dispatch
 	lastMsgStore       *command.LastMessageStore // for // repeat command
 	allowedUsers       map[string]bool
 	agentID            string                            // agent ID for session key derivation
@@ -337,7 +338,7 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 			b.logger().Infof("secondary bot released")
 		}
 	}
-	b.dispatcher = NewDispatcher(b.commands, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(b.commands, cc, b.agentID)
 	b.dispatcher.SetSessionKeyFunc(b.dispatchSessionKey)
 }
 
