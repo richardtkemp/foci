@@ -77,6 +77,9 @@ type Backend struct {
 	lastModel     string      // from assistant message
 	lastUsage     *TokenUsage // per-call usage from last assistant message
 
+	// Auto-approve rules (compiled from config, immutable after Start)
+	autoApproveRules []autoApproveRule
+
 	// Callbacks (set before Start, read-only after)
 	replyFunc          backend.ReplyFunc
 	permPromptFn       backend.PermissionPromptFunc
@@ -108,6 +111,7 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	b.label = opts.Label
 	b.model = opts.Model
 	b.systemPrompt = opts.SystemPrompt
+	b.autoApproveRules = parseAutoApproveRules(opts.AutoApproveRules)
 
 	// Build command args.
 	args := []string{

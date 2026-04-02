@@ -25,6 +25,12 @@ type pendingPermission struct {
 // the DelegatedManager, and sends a prompt to the platform UI.
 func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
 	log.Debugf("ccstream/perm", "handlePermissionRequest: req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
+
+	// Check auto-approve rules before prompting the user.
+	if b.autoApprovePermission(msg) {
+		return
+	}
+
 	summary := msg.Request.Summary()
 	text := msg.Request.DisplayText()
 	choices := msg.Request.Choices()

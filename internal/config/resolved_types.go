@@ -376,3 +376,37 @@ func resolveNotify(m NotifyConfig) ResolvedNotify {
 		WarningMaxPerWindow: DerefInt(m.WarningMaxPerWindow),
 	}
 }
+
+type ResolvedPermissions struct {
+	AutoApproveRules         []string // union of global + per-agent patterns
+	AutoApproveCommonReadonly bool     // enable built-in read-only allowlist (default true)
+}
+
+func resolvePermissions(agent, global PermissionsConfig) ResolvedPermissions {
+	// Union: both global and agent rules apply (not first-non-nil).
+	seen := make(map[string]bool, len(agent.AutoApprove)+len(global.AutoApprove))
+	var rules []string
+	for _, r := range agent.AutoApprove {
+		if !seen[r] {
+			rules = append(rules, r)
+			seen[r] = true
+		}
+	}
+	for _, r := range global.AutoApprove {
+		if !seen[r] {
+			rules = append(rules, r)
+			seen[r] = true
+		}
+	}
+
+	// Bool: standard cascade (agent → global → default true).
+	commonReadonly := true
+	if p := First(agent.AutoApproveCommonReadonly, global.AutoApproveCommonReadonly); p != nil {
+		commonReadonly = *p
+	}
+
+	return ResolvedPermissions{
+		AutoApproveRules:         rules,
+		AutoApproveCommonReadonly: commonReadonly,
+	}
+}

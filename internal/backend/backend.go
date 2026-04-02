@@ -146,8 +146,9 @@ type StartOptions struct {
 	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
 	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
 	ExecRegistry    any    // *tools.Registry — if set, creates a persistent exec bridge for foci shell commands
-	TmuxCols        int    // tmux window width (0 = use tools.tmux_cols default)
-	TmuxRows        int    // tmux window height (0 = use tools.tmux_rows default)
+	TmuxCols        int      // tmux window width (0 = use tools.tmux_cols default)
+	TmuxRows        int      // tmux window height (0 = use tools.tmux_rows default)
+	AutoApproveRules []string // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
 }
 
 // EventHandler receives streaming events during a turn.
