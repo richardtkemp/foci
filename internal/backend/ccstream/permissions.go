@@ -42,9 +42,7 @@ func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
 		createdAt:   time.Now(),
 	}
 
-	b.permMu.Lock()
-	b.pendingPerms[msg.RequestID] = pp
-	b.permMu.Unlock()
+	b.storePendingPerm(pp)
 
 	if b.onPermPending != nil {
 		b.onPermPending()
@@ -64,11 +62,7 @@ func (b *Backend) handlePermissionRequest(msg *PermissionRequest) {
 // RespondToPermission is called by the platform layer when the user responds
 // to a permission prompt. It sends an allow or deny control response to CC.
 func (b *Backend) RespondToPermission(requestID string, allow bool, message string) error {
-	b.permMu.Lock()
-	pp, ok := b.pendingPerms[requestID]
-	delete(b.pendingPerms, requestID)
-	noMorePending := len(b.pendingPerms) == 0
-	b.permMu.Unlock()
+	pp, ok, noMorePending := b.removePendingPerm(requestID)
 
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
@@ -108,11 +102,7 @@ func (b *Backend) RespondToPermission(requestID string, allow bool, message stri
 // RespondToPermissionWithRule responds with "always allow" for a given prefix,
 // including the permission suggestion in updatedPermissions.
 func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) error {
-	b.permMu.Lock()
-	pp, ok := b.pendingPerms[requestID]
-	delete(b.pendingPerms, requestID)
-	noMorePending := len(b.pendingPerms) == 0
-	b.permMu.Unlock()
+	pp, ok, noMorePending := b.removePendingPerm(requestID)
 
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
@@ -141,10 +131,7 @@ func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) e
 // handleControlCancel is called when CC cancels a permission request
 // (e.g. a hook resolved it before the user responded).
 func (b *Backend) handleControlCancel(reqID string) {
-	b.permMu.Lock()
-	delete(b.pendingPerms, reqID)
-	noMorePending := len(b.pendingPerms) == 0
-	b.permMu.Unlock()
+	_, _, noMorePending := b.removePendingPerm(reqID)
 
 	if noMorePending && b.onPermCleared != nil {
 		b.onPermCleared()
@@ -164,6 +151,24 @@ func (b *Backend) hasPendingPermissions() bool {
 	b.permMu.Lock()
 	defer b.permMu.Unlock()
 	return len(b.pendingPerms) > 0
+}
+
+// storePendingPerm adds a pending permission under the lock.
+func (b *Backend) storePendingPerm(pp *pendingPermission) {
+	b.permMu.Lock()
+	b.pendingPerms[pp.requestID] = pp
+	b.permMu.Unlock()
+}
+
+// removePendingPerm removes and returns a pending permission.
+// Returns the permission, whether it was found, and whether the map is now empty.
+func (b *Backend) removePendingPerm(requestID string) (pp *pendingPermission, found bool, noMorePending bool) {
+	b.permMu.Lock()
+	pp, found = b.pendingPerms[requestID]
+	delete(b.pendingPerms, requestID)
+	noMorePending = len(b.pendingPerms) == 0
+	b.permMu.Unlock()
+	return
 }
 
 // ---------------------------------------------------------------------------
