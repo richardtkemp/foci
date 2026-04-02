@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"foci/internal/backend"
-	"foci/internal/tools"
 )
 
 func init() {
@@ -38,7 +37,6 @@ type Backend struct {
 	sessionID string // CC session UUID
 	agentID        string                // foci agent ID
 	workDir        string                // workspace directory
-	bridge         *tools.ExecBridge     // persistent exec bridge for foci shell commands; nil if not configured
 
 	// replyFunc delivers text to the user's platform chat.
 	replyMu            sync.Mutex

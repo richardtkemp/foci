@@ -162,7 +162,8 @@ type StartOptions struct {
 	Label           string // unique label for this instance (used for tmux window naming); falls back to AgentID
 	ResumeSessionID string // resume a previous CC session (e.g. --resume <uuid>); empty = new session
 	SessionKey      string // foci session key — used by exec bridge tools for routing (e.g. send_to_chat)
-	ExecRegistry    any    // *tools.Registry — if set, creates a persistent exec bridge for foci shell commands
+	ExecRegistry    any    // *tools.Registry — if set, used by DelegatedManager to create exec bridges
+	Env             map[string]string // extra environment variables to inject (e.g. BASH_ENV, FOCI_SOCK from exec bridge)
 	TmuxCols        int      // tmux window width (0 = use tools.tmux_cols default)
 	TmuxRows        int      // tmux window height (0 = use tools.tmux_rows default)
 	AutoApproveRules []string // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")

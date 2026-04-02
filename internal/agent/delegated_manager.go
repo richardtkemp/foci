@@ -12,6 +12,7 @@ import (
 	"foci/internal/backend"
 	"foci/internal/log"
 	"foci/internal/session"
+	"foci/internal/tools"
 )
 
 // DefaultIdleTimeout is the default duration after which idle delegated backends are closed.
@@ -62,6 +63,7 @@ type DelegatedManager struct {
 // managedBackend wraps a Backend with idle tracking and resume state.
 type managedBackend struct {
 	be         backend.Backend
+	bridge     *tools.ExecBridge // exec bridge for shell functions; nil if not configured
 	lastActive time.Time
 	sessionKey string // full session key from last message (for reply routing)
 
@@ -122,6 +124,32 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
 
+	// Create the exec bridge so shell functions (foci_todo, foci_send_to_chat, etc.)
+	// are available in the backend's shell environment. The bridge is created here
+	// (not in individual backends) so all backend types get it automatically.
+	var bridge *tools.ExecBridge
+	if reg, ok := opts.ExecRegistry.(*tools.Registry); ok && reg != nil {
+		bridgeCtx := context.Background()
+		if sessionKey != "" {
+			bridgeCtx = tools.WithSessionKey(bridgeCtx, sessionKey)
+		}
+		var bridgeErr error
+		if sessionKey != "" {
+			bridge, bridgeErr = tools.NewExecBridgeStable(reg, bridgeCtx, sessionKey)
+		} else {
+			bridge, bridgeErr = tools.NewExecBridge(reg, bridgeCtx)
+		}
+		if bridgeErr != nil {
+			log.Warnf("delegated", "exec bridge creation failed for %s (continuing without): %v", base, bridgeErr)
+		} else {
+			opts.Env = map[string]string{
+				"BASH_ENV":  bridge.FuncsPath(),
+				"FOCI_SOCK": bridge.SockPath(),
+			}
+			log.Infof("delegated", "exec bridge started for %s: sock=%s funcs=%s", base, bridge.SockPath(), bridge.FuncsPath())
+		}
+	}
+
 	// Set the reply and permission prompt functions before starting.
 	sk := sessionKey
 	if m.SendFunc != nil {
@@ -154,6 +182,9 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 			_ = be.Close()
 			be, err = m.NewBackend()
 			if err != nil {
+				if bridge != nil {
+					bridge.Close()
+				}
 				return nil, fmt.Errorf("create delegated backend for %s (retry): %w", base, err)
 			}
 			// Re-set reply functions on the new instance.
@@ -174,9 +205,15 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 			}
 			opts.ResumeSessionID = ""
 			if err := be.Start(ctx, opts); err != nil {
+				if bridge != nil {
+					bridge.Close()
+				}
 				return nil, fmt.Errorf("start delegated backend for %s (no resume): %w", base, err)
 			}
 		} else {
+			if bridge != nil {
+				bridge.Close()
+			}
 			return nil, fmt.Errorf("start delegated backend for %s: %w", base, err)
 		}
 	}
@@ -187,6 +224,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 	}
 	m.backends[base] = &managedBackend{
 		be:         be,
+		bridge:     bridge,
 		lastActive: time.Now(),
 		sessionKey: sessionKey,
 	}
@@ -338,6 +376,9 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 	}
 	mb.clearPermission()
 	_ = mb.be.Close()
+	if mb.bridge != nil {
+		mb.bridge.Close()
+	}
 	delete(m.backends, base)
 	// Clear any saved resume ID so next session starts fresh.
 	if m.SessionIndex != nil {
@@ -358,6 +399,9 @@ func (m *DelegatedManager) Close() {
 		mb.clearPermission()
 		m.saveResumeID(key, mb.be.SessionID())
 		_ = mb.be.Close()
+		if mb.bridge != nil {
+			mb.bridge.Close()
+		}
 		delete(m.backends, key)
 	}
 }
@@ -468,6 +512,9 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
 			base, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
 		_ = mb.be.Close()
+		if mb.bridge != nil {
+			mb.bridge.Close()
+		}
 		delete(m.backends, base)
 	}
 }

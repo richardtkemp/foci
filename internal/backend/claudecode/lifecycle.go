@@ -9,7 +9,6 @@ import (
 
 	"foci/internal/backend"
 	"foci/internal/log"
-	"foci/internal/tools"
 )
 
 func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
@@ -62,36 +61,12 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		rows:       opts.TmuxRows,
 	}
 
-	// Create the exec bridge before the pane so we can inject env vars.
-	// Use a stable socket path derived from the session key so the bridge
-	// survives foci restarts — the CC session keeps the same FOCI_SOCK path.
-	if reg, ok := opts.ExecRegistry.(*tools.Registry); ok && reg != nil {
-		bridgeCtx := context.Background()
-		if opts.SessionKey != "" {
-			bridgeCtx = tools.WithSessionKey(bridgeCtx, opts.SessionKey)
-		}
-		var bridge *tools.ExecBridge
-		var err error
-		if opts.SessionKey != "" {
-			bridge, err = tools.NewExecBridgeStable(reg, bridgeCtx, opts.SessionKey)
-		} else {
-			bridge, err = tools.NewExecBridge(reg, bridgeCtx)
-		}
-		if err != nil {
-			log.Warnf("backend/cc", "exec bridge creation failed (continuing without): %v", err)
-		} else {
-			b.bridge = bridge
-			log.Infof("backend/cc", "exec bridge started: sock=%s funcs=%s", bridge.SockPath(), bridge.FuncsPath())
-		}
-	}
-
-	// Build env vars to inject into the tmux pane.
+	// Build env vars to inject into the tmux pane from StartOptions.Env.
+	// The exec bridge (BASH_ENV, FOCI_SOCK) is created by DelegatedManager
+	// and passed here via opts.Env so all backend types get it automatically.
 	var paneEnv []string
-	if b.bridge != nil {
-		paneEnv = append(paneEnv,
-			"FOCI_SOCK="+b.bridge.SockPath(),
-			"BASH_ENV="+b.bridge.FuncsPath(),
-		)
+	for k, v := range opts.Env {
+		paneEnv = append(paneEnv, k+"="+v)
 	}
 
 	// Check if a session already exists (crash recovery).
@@ -99,11 +74,10 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 		pid, err := b.pane.readPanePID(ctx)
 		if err == nil && pid > 0 {
 			b.pane.pid = pid
-			// Inject exec bridge env vars into the recovered session via
+			// Inject env vars into the recovered session via
 			// tmux set-environment so new shell commands pick them up.
-			if b.bridge != nil {
-				_ = b.pane.setEnv(ctx, "FOCI_SOCK", b.bridge.SockPath())
-				_ = b.pane.setEnv(ctx, "BASH_ENV", b.bridge.FuncsPath())
+			for k, v := range opts.Env {
+				_ = b.pane.setEnv(ctx, k, v)
 			}
 			b.discoverSession()
 			return nil
@@ -112,10 +86,6 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	}
 
 	if err := b.pane.create(ctx, args, paneEnv...); err != nil {
-		if b.bridge != nil {
-			b.bridge.Close()
-			b.bridge = nil
-		}
 		return fmt.Errorf("create tmux pane: %w", err)
 	}
 
@@ -416,10 +386,6 @@ func (b *Backend) Close() error {
 	}
 	if b.watcher != nil {
 		b.watcher.close()
-	}
-	if b.bridge != nil {
-		b.bridge.Close()
-		b.bridge = nil
 	}
 
 	if b.pane == nil {

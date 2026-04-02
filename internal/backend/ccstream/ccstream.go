@@ -136,6 +136,12 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	cmd.Dir = opts.WorkDir
 	cmd.Env = os.Environ()
 
+	// Apply extra environment variables from StartOptions (e.g. BASH_ENV,
+	// FOCI_SOCK from the exec bridge created by DelegatedManager).
+	for k, v := range opts.Env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+
 	// Get pipes.
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
