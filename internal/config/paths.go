@@ -96,7 +96,7 @@ func AgentDataPath(workspace, filename string) string {
 }
 
 // ResolveAllPaths resolves all path config fields in one place.
-// Called at the end of Load(), before validate().
+// Called at the end of Load(), before Validate().
 func (c *Config) ResolveAllPaths() {
 	c.Logging.EventFile = ResolvePath(c.Logging.EventFile)
 	c.Logging.APIFile = ResolvePath(c.Logging.APIFile)

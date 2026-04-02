@@ -48,7 +48,7 @@ var reservedAgentIDs = map[string]bool{
 	"shared":     true,
 }
 
-func validate(cfg *Config) error {
+func (cfg *Config) Validate() error {
 	// Validate agent IDs don't collide with reserved directory names
 	for _, a := range cfg.Agents {
 		if a.ID == "" {

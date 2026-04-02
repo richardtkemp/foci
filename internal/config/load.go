@@ -283,7 +283,7 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	if err := validate(&cfg); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
