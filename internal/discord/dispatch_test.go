@@ -5,8 +5,7 @@ import (
 	"testing"
 
 	"foci/internal/command"
-
-	"github.com/bwmarrin/discordgo"
+	"foci/internal/dispatch"
 )
 
 // TestDispatchDotCommand verifies that dot-prefix commands (.model) are routed correctly.
@@ -19,15 +18,9 @@ func TestDispatchDotCommand(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   ".model",
-		ChannelID: "12345",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), ".model", 12345, "user1")
 	if !result.Handled {
 		t.Fatal("expected dot command to be handled")
 	}
@@ -46,15 +39,9 @@ func TestDispatchDotCommandWithArgs(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   ".model opus",
-		ChannelID: "12345",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), ".model opus", 12345, "user1")
 	if !result.Handled {
 		t.Fatal("expected dot command to be handled")
 	}
@@ -73,15 +60,9 @@ func TestDispatchSlashCommand(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   "/status",
-		ChannelID: "99999",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), "/status", 99999, "user1")
 	if !result.Handled {
 		t.Fatal("expected slash command to be handled")
 	}
@@ -94,15 +75,9 @@ func TestDispatchSlashCommand(t *testing.T) {
 func TestDispatchSlashStopHandled(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.Register(command.StopCommand())
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   "/stop",
-		ChannelID: "12345",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), "/stop", 12345, "user1")
 	if !result.Handled {
 		t.Error("expected /stop to be handled by dispatcher")
 	}
@@ -115,15 +90,9 @@ func TestDispatchSlashStopHandled(t *testing.T) {
 func TestDispatchSlashDoneHandled(t *testing.T) {
 	reg := command.NewRegistry()
 	reg.Register(command.DoneCommand())
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   "/done",
-		ChannelID: "12345",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), "/done", 12345, "user1")
 	if !result.Handled {
 		t.Error("expected /done to be handled by dispatcher")
 	}
@@ -133,18 +102,12 @@ func TestDispatchSlashDoneHandled(t *testing.T) {
 	}
 }
 
-// TestDispatchUnknownCommand verifies that unknown commands are not handled.
+// TestDispatchUnknownCommand verifies that unknown dot-commands are not handled.
 func TestDispatchUnknownCommand(t *testing.T) {
 	reg := command.NewRegistry()
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   ".nosuchcommand",
-		ChannelID: "12345",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), ".nosuchcommand", 12345, "user1")
 	if result.Handled {
 		t.Error("expected unknown command to not be handled")
 	}
@@ -153,15 +116,9 @@ func TestDispatchUnknownCommand(t *testing.T) {
 // TestDispatchPlainTextNotHandled verifies that plain text messages are not routed.
 func TestDispatchPlainTextNotHandled(t *testing.T) {
 	reg := command.NewRegistry()
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
-	msg := &discordgo.Message{
-		Content:   "just a normal message",
-		ChannelID: "12345",
-		Author:    &discordgo.User{ID: "user1"},
-	}
-
-	result := d.Dispatch(context.Background(), msg)
+	result := d.DispatchText(context.Background(), "just a normal message", 12345, "user1")
 	if result.Handled {
 		t.Error("expected plain text to not be handled")
 	}
@@ -177,7 +134,7 @@ func TestDispatchCallbackCommand(t *testing.T) {
 		},
 	})
 
-	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+	d := dispatch.NewDispatcher(reg, command.CommandContext{}, "agent1")
 
 	result := d.DispatchCallback(context.Background(), 12345, "/model opus")
 	if !result.Handled {

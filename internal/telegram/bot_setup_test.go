@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/chatmeta"
 	"foci/internal/command"
+	"foci/internal/dispatch"
 	"foci/internal/log"
 	"foci/internal/platform"
 
@@ -164,7 +165,7 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 		TurnActive: b.isTurnActive,
 		Logger:     lg,
 	})
-	b.dispatcher = NewDispatcher(cmds, command.CommandContext{}, "test")
+	b.dispatcher = dispatch.NewDispatcher(cmds, command.CommandContext{}, "test")
 	return b, mock
 }
 

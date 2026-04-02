@@ -164,7 +164,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		Commands:     b.commands,
 		LastMsgStore: b.lastMsgStore,
 		Handler:      b.handler,
-		Dispatcher:   b.dispatcher.Inner(),
+		Dispatcher:   b.dispatcher,
 		IsSecondary:  b.isSecondary,
 		SessionKeyFn: b.SessionKey,
 		LogWarnf:     func(f string, a ...any) { b.logger().Warnf(f, a...) },

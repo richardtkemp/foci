@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/dispatch"
 )
 
 func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
@@ -18,7 +19,7 @@ func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 		StopFunc:       b.cancelTurn,
 		IsSecondaryBot: false,
 	}
-	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID)
 
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
@@ -54,7 +55,7 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 			pool.Release(b)
 		},
 	}
-	b.dispatcher = NewDispatcher(cmds, cc, b.agentID)
+	b.dispatcher = dispatch.NewDispatcher(cmds, cc, b.agentID)
 
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
