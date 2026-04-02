@@ -193,7 +193,7 @@ func buildPermissionText(req *PermissionRequestBody) string {
 		b.WriteString("\n\n")
 	}
 	if req.DecisionReason != "" {
-		b.WriteString(fmt.Sprintf("_Reason: %s_", req.DecisionReason))
+		b.WriteString(fmt.Sprintf("_Reason: %s_", friendlyReason(req.DecisionReason)))
 	}
 	return b.String()
 }
@@ -228,6 +228,18 @@ func formatToolInput(toolName string, input json.RawMessage) string {
 		s = s[:200] + "…"
 	}
 	return fmt.Sprintf("`%s`", s)
+}
+
+// friendlyReason rewrites CC's internal decision reasons into user-facing text.
+// CC's bash security parser emits technical strings like "Unhandled node type: string"
+// which are meaningless to users.
+func friendlyReason(reason string) string {
+	if strings.HasPrefix(reason, "Unhandled node type:") ||
+		strings.HasPrefix(reason, "Contains ") ||
+		reason == "Parse error" {
+		return "Command requires manual review"
+	}
+	return reason
 }
 
 // buildPermissionSummary creates a short summary for post-approval display.
