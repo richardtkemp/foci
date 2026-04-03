@@ -197,12 +197,14 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 
 	// Record the actual model reported by the backend so that
-	// SessionContextLimit uses the real context window — but only if the
-	// user hasn't explicitly set a model via /model. Without the guard,
-	// the backend's reported model clobbers the user's choice every turn.
+	// SessionContextLimit uses the real context window. The modelUserSet flag
+	// protects against in-flight turns clobbering a freshly-set /model alias,
+	// but is cleared immediately after so that the next turn resolves the alias
+	// to its full name (e.g. "sonnet" → "claude-sonnet-4-5-...").
 	if ts.FinalModel != "" && !ts.SessionMeta.modelUserSet {
 		ts.SessionMeta.model = ts.FinalModel
 	}
+	ts.SessionMeta.modelUserSet = false
 }
 
 // LogUsage records delegated turn usage to the API database.
