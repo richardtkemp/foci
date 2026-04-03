@@ -147,6 +147,28 @@ type ControlResponsePayload struct {
 	Response  any    `json:"response"`
 }
 
+// controlResponseInbound is the envelope for control_response messages
+// received FROM CC (responses to our get_context_usage, initialize, etc.).
+type controlResponseInbound struct {
+	Type     string `json:"type"` // "control_response"
+	Response struct {
+		Subtype   string          `json:"subtype"`    // "success" or "error"
+		RequestID string          `json:"request_id"`
+		Response  json.RawMessage `json:"response"`   // subtype-specific payload
+	} `json:"response"`
+}
+
+// contextUsagePayload is the inner response from a get_context_usage
+// control request. We only parse the fields foci cares about — CC also
+// returns gridRows, memoryFiles, mcpTools, etc. that we ignore.
+type contextUsagePayload struct {
+	TotalTokens          int    `json:"totalTokens"`
+	MaxTokens            int    `json:"maxTokens"`
+	Percentage           int    `json:"percentage"`
+	AutoCompactThreshold int    `json:"autoCompactThreshold"`
+	Model                string `json:"model"`
+}
+
 // ControlCancelRequest cancels a pending CC-originated control request.
 type ControlCancelRequest struct {
 	Type      string `json:"type"`       // always "control_cancel_request"

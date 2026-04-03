@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -2041,13 +2042,115 @@ func TestOnStreamEvent_InvalidJSON(t *testing.T) {
 // OnControlResponse / OnControlCancelRequest
 // ---------------------------------------------------------------------------
 
-func TestOnControlResponse_NoOp(t *testing.T) {
-	// Verifies OnControlResponse is a no-op (init response handled elsewhere).
+func TestOnControlResponse_NoMatchingWaiter(t *testing.T) {
+	// Verifies OnControlResponse is safe when no waiter is registered.
 	t.Parallel()
 
 	b := &Backend{}
-	// Should not panic.
-	b.OnControlResponse(json.RawMessage(`{"type":"control_response"}`))
+	// Should not panic — no pending controls, unknown request_id.
+	b.OnControlResponse(json.RawMessage(`{"type":"control_response","response":{"subtype":"success","request_id":"unknown","response":{}}}`))
+}
+
+func TestOnControlResponse_RoutesToWaiter(t *testing.T) {
+	// Verifies that OnControlResponse routes by request_id to the pending channel.
+	t.Parallel()
+
+	b := &Backend{
+		pendingControls: make(map[string]chan json.RawMessage),
+	}
+	ch := make(chan json.RawMessage, 1)
+	b.pendingControls["req-ctx-1"] = ch
+
+	raw := json.RawMessage(`{"type":"control_response","response":{"subtype":"success","request_id":"req-ctx-1","response":{"totalTokens":50000,"maxTokens":200000}}}`)
+	b.OnControlResponse(raw)
+
+	select {
+	case got := <-ch:
+		if string(got) != string(raw) {
+			t.Errorf("got %s, want %s", got, raw)
+		}
+	default:
+		t.Error("expected response on channel, got nothing")
+	}
+
+	// Channel should be removed from pending map.
+	b.pendingControlMu.Lock()
+	_, stillPending := b.pendingControls["req-ctx-1"]
+	b.pendingControlMu.Unlock()
+	if stillPending {
+		t.Error("request_id should be removed from pendingControls after delivery")
+	}
+}
+
+func TestGetContextUsage(t *testing.T) {
+	// End-to-end test: GetContextUsage sends request, receives routed response.
+	t.Parallel()
+
+	// Create a pipe; drain reader so writer.SendControl doesn't block.
+	pr, pw := io.Pipe()
+	go func() { _, _ = io.Copy(io.Discard, pr) }()
+
+	b := &Backend{
+		writer:          NewWriter(pw),
+		pendingControls: make(map[string]chan json.RawMessage),
+	}
+
+	// Run GetContextUsage in a goroutine (it blocks waiting for response).
+	type result struct {
+		usage *backend.ContextUsage
+		err   error
+	}
+	resCh := make(chan result, 1)
+	ctx := context.Background()
+
+	go func() {
+		u, err := b.GetContextUsage(ctx)
+		resCh <- result{u, err}
+	}()
+
+	// Wait for the pending control to be registered.
+	var reqID string
+	for i := 0; i < 100; i++ {
+		time.Sleep(time.Millisecond)
+		b.pendingControlMu.Lock()
+		for k := range b.pendingControls {
+			reqID = k
+		}
+		b.pendingControlMu.Unlock()
+		if reqID != "" {
+			break
+		}
+	}
+	if reqID == "" {
+		t.Fatal("GetContextUsage didn't register a pending control request")
+	}
+
+	// Simulate CC returning the response via OnControlResponse.
+	resp := fmt.Sprintf(`{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":{"totalTokens":50000,"maxTokens":200000,"percentage":25,"autoCompactThreshold":160000,"model":"claude-sonnet-4-6"}}}`, reqID)
+	b.OnControlResponse(json.RawMessage(resp))
+
+	// Read result.
+	r := <-resCh
+	if r.err != nil {
+		t.Fatalf("GetContextUsage error: %v", r.err)
+	}
+	if r.usage.TotalTokens != 50000 {
+		t.Errorf("TotalTokens = %d, want 50000", r.usage.TotalTokens)
+	}
+	if r.usage.MaxTokens != 200000 {
+		t.Errorf("MaxTokens = %d, want 200000", r.usage.MaxTokens)
+	}
+	if r.usage.Percentage != 25 {
+		t.Errorf("Percentage = %d, want 25", r.usage.Percentage)
+	}
+	if r.usage.AutoCompactThreshold != 160000 {
+		t.Errorf("AutoCompactThreshold = %d, want 160000", r.usage.AutoCompactThreshold)
+	}
+	if r.usage.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want %q", r.usage.Model, "claude-sonnet-4-6")
+	}
+
+	pw.Close()
 }
 
 func TestOnControlCancelRequest(t *testing.T) {

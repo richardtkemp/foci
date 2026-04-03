@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"foci/internal/backend"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -303,6 +304,12 @@ func ContextCommand() *Command {
 		Description: "Context window breakdown: system prompt, conversation, compaction status",
 		Category:    "observability",
 		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			// Try backend's get_context_usage first (exact, zero API cost).
+			if text, err := contextFromBackend(ctx, cc); err == nil {
+				return Response{Text: text}, nil
+			}
+
+			// Fallback: estimate from foci's own state.
 			infoFn := cc.ContextInfoFn
 			if infoFn == nil {
 				infoFn = buildContextInfo
@@ -436,6 +443,50 @@ func ContextCommand() *Command {
 			return Response{Text: sb.String()}, nil
 		},
 	}
+}
+
+// contextFromBackend tries to get context usage from the delegated backend's
+// get_context_usage control request. Returns formatted text, or error if
+// unavailable (no backend, doesn't implement ContextUsageQuerier, etc.).
+func contextFromBackend(ctx context.Context, cc CommandContext) (string, error) {
+	if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
+		return "", fmt.Errorf("no delegated manager")
+	}
+	sk := tools.SessionKeyFromContext(ctx)
+	if sk == "" {
+		return "", fmt.Errorf("no session key")
+	}
+	be, err := cc.Agent.DelegatedManager.Get(ctx, sk)
+	if err != nil {
+		return "", err
+	}
+	cuq, ok := be.(backend.ContextUsageQuerier)
+	if !ok {
+		return "", fmt.Errorf("backend does not implement ContextUsageQuerier")
+	}
+	usage, err := cuq.GetContextUsage(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	threshTokens := usage.AutoCompactThreshold
+	percentUsed := float64(usage.TotalTokens) / float64(usage.MaxTokens) * 100
+
+	var sb strings.Builder
+	sb.WriteString("```\n")
+	fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
+		display.FormatCommas(usage.TotalTokens), display.FormatCommas(usage.MaxTokens), percentUsed)
+	fmt.Fprintf(&sb, "Model: %s\n", usage.Model)
+	fmt.Fprintf(&sb, "Compaction at: %s tokens\n", display.FormatCommas(threshTokens))
+	if usage.TotalTokens >= threshTokens {
+		sb.WriteString("Status: at/above threshold\n")
+	} else {
+		remaining := threshTokens - usage.TotalTokens
+		fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", display.FormatCommas(remaining))
+	}
+	sb.WriteString("```")
+
+	return sb.String(), nil
 }
 
 // buildContextInfo constructs ContextInfo from CommandContext.

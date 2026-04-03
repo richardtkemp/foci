@@ -71,6 +71,10 @@ type Backend struct {
 	turnText     strings.Builder       // accumulates text across assistant messages
 	turnTools    int                   // tool_use count this turn
 
+	// Pending control responses (request_id → channel)
+	pendingControlMu sync.Mutex
+	pendingControls  map[string]chan json.RawMessage
+
 	// Permissions
 	permMu       sync.Mutex
 	pendingPerms map[string]*pendingPermission
@@ -501,6 +505,60 @@ func (b *Backend) SetModel(ctx context.Context, model string) error {
 	return b.SendControl(ctx, &backend.SetModelRequest{Model: model})
 }
 
+// GetContextUsage sends a get_context_usage control request and returns the
+// parsed response. Zero API cost — CC computes this locally. ~650ms on a
+// persistent session.
+func (b *Backend) GetContextUsage(ctx context.Context) (*backend.ContextUsage, error) {
+	reqID := newRequestID()
+
+	// Arm response channel before sending.
+	ch := make(chan json.RawMessage, 1)
+	b.pendingControlMu.Lock()
+	if b.pendingControls == nil {
+		b.pendingControls = make(map[string]chan json.RawMessage)
+	}
+	b.pendingControls[reqID] = ch
+	b.pendingControlMu.Unlock()
+
+	if err := b.writer.SendControl(reqID, &GetContextUsageRequest{
+		Subtype: "get_context_usage",
+	}); err != nil {
+		// Clean up on send failure.
+		b.pendingControlMu.Lock()
+		delete(b.pendingControls, reqID)
+		b.pendingControlMu.Unlock()
+		return nil, fmt.Errorf("send get_context_usage: %w", err)
+	}
+
+	select {
+	case raw := <-ch:
+		var env controlResponseInbound
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return nil, fmt.Errorf("unmarshal control_response envelope: %w", err)
+		}
+		if env.Response.Subtype != "success" {
+			return nil, fmt.Errorf("get_context_usage returned subtype %q", env.Response.Subtype)
+		}
+		var payload contextUsagePayload
+		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
+			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
+		}
+		return &backend.ContextUsage{
+			TotalTokens:          payload.TotalTokens,
+			MaxTokens:            payload.MaxTokens,
+			Percentage:           payload.Percentage,
+			AutoCompactThreshold: payload.AutoCompactThreshold,
+			Model:                payload.Model,
+		}, nil
+	case <-ctx.Done():
+		// Clean up on timeout.
+		b.pendingControlMu.Lock()
+		delete(b.pendingControls, reqID)
+		b.pendingControlMu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Handler interface implementation (called by Reader goroutine)
 // ---------------------------------------------------------------------------
@@ -747,10 +805,30 @@ func (b *Backend) OnPermissionRequest(msg *PermissionRequest) {
 	b.handleToolRequest(msg)
 }
 
-// OnControlResponse handles responses to our control requests (e.g. initialize).
+// OnControlResponse handles responses to our control requests (e.g. initialize,
+// get_context_usage). Routes to pending waiters by request_id.
 func (b *Backend) OnControlResponse(raw json.RawMessage) {
-	// The init response is handled via the system/init message, not here.
-	// Log at debug level if we add a logger.
+	var env controlResponseInbound
+	if err := json.Unmarshal(raw, &env); err != nil {
+		log.Debugf("ccstream", "unmarshal control_response: %v", err)
+		return
+	}
+	reqID := env.Response.RequestID
+	if reqID == "" {
+		return
+	}
+	b.pendingControlMu.Lock()
+	ch, ok := b.pendingControls[reqID]
+	if ok {
+		delete(b.pendingControls, reqID)
+	}
+	b.pendingControlMu.Unlock()
+	if ok {
+		select {
+		case ch <- raw:
+		default:
+		}
+	}
 }
 
 // OnControlCancelRequest handles CC cancelling a pending control request.
