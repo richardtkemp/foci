@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"foci/internal/config"
+	"foci/internal/provider"
 	"foci/internal/tools"
 )
 
@@ -34,16 +35,16 @@ func ModelCommand() *Command {
 				model = resolved.Developer + "/" + resolved.ModelID
 				format = resolved.Format
 			}
-			var client interface{ Send(context.Context, *interface{}, interface{}) (interface{}, error) }
-			_ = client // ResolveEndpointClient handled below
+			var provClient provider.Client
 			if endpoint != "" && format != "" && cc.ClientProvider != nil {
-				provClient := cc.ClientProvider.ResolveEndpointClient(endpoint, format)
-				cc.Agent.SetSessionModel(sk, model, endpoint, format, provClient)
-			} else {
-				cc.Agent.SetSessionModel(sk, model, endpoint, format, nil)
+				provClient = cc.ClientProvider.ResolveEndpointClient(endpoint, format)
+			}
+			// Use the orchestrator that updates metadata AND notifies the backend.
+			if err := cc.Agent.SetModel(ctx, sk, model, endpoint, format, provClient, req.Args); err != nil {
+				return Response{Text: fmt.Sprintf("Model metadata updated to %s but backend switch failed: %v", model, err)}, nil
 			}
 			display := model
-			if endpoint != "" && endpoint != resolved.Developer {
+			if endpoint != "" && resolved != nil && endpoint != resolved.Developer {
 				display = endpoint + ":" + model
 			}
 			return Response{Text: fmt.Sprintf("Model switched to: %s", display)}, nil

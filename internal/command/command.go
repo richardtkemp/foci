@@ -27,11 +27,29 @@ type Subcommand struct {
 	Execute     func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 }
 
+// Requires declares what transport a command needs to function.
+// Checked at dispatch time and help rendering time.
+type Requires int
+
+const (
+	// RequiresNothing means the command works regardless of transport
+	// (foci-internal, or the Agent routes internally).
+	RequiresNothing Requires = iota
+
+	// RequiresBackend means the command only works with a delegated backend
+	// (e.g. ccstream). Dispatch rejects with a clear error if no backend.
+	RequiresBackend
+
+	// RequiresAPI means the command only works with the API transport.
+	RequiresAPI
+)
+
 // Command is a slash command that executes outside the agent pipeline.
 type Command struct {
 	Name        string
 	Description string
 	Category    string
+	Requires    Requires // transport requirement — checked before Execute
 	Hidden      bool
 	Visible func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
 
@@ -271,6 +289,11 @@ func (r *Registry) Dispatch(ctx context.Context, req Request, cc CommandContext)
 		return Response{Text: r.suggestCommand(req.Name)}, true, nil
 	}
 
+	// Gate on transport requirements before executing.
+	if msg := checkRequires(cmd, cc); msg != "" {
+		return Response{Text: msg}, true, nil
+	}
+
 	if cmd.Execute != nil {
 		resp, err := cmd.Execute(ctx, req, cc)
 		if err != nil {
@@ -280,6 +303,23 @@ func (r *Registry) Dispatch(ctx context.Context, req Request, cc CommandContext)
 	}
 
 	return Response{}, false, fmt.Errorf("command /%s has no Execute function", req.Name)
+}
+
+// checkRequires validates a command's transport requirement against the
+// current agent configuration. Returns an error message if the requirement
+// is not met, or empty string if OK.
+func checkRequires(cmd *Command, cc CommandContext) string {
+	switch cmd.Requires {
+	case RequiresBackend:
+		if cc.Agent == nil || cc.Agent.DelegatedManager == nil {
+			return fmt.Sprintf("/%s requires a Claude Code backend", cmd.Name)
+		}
+	case RequiresAPI:
+		if cc.Agent != nil && cc.Agent.DelegatedManager != nil {
+			return fmt.Sprintf("/%s requires API transport (not available in delegated mode)", cmd.Name)
+		}
+	}
+	return ""
 }
 
 // suggestCommand returns a helpful message when a command isn't found,

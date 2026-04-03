@@ -509,6 +509,50 @@ func TestAll(t *testing.T) {
 	}
 }
 
+// TestDispatchRequiresBackend verifies that a command with RequiresBackend is
+// rejected when no delegated backend is available.
+func TestDispatchRequiresBackend(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name:     "replay",
+		Requires: RequiresBackend,
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+			return Response{Text: "ok"}, nil
+		},
+	})
+
+	ctx := context.Background()
+
+	// No agent → rejected.
+	resp, ok, _ := r.Dispatch(ctx, Request{Name: "replay"}, CommandContext{})
+	if !ok {
+		t.Fatal("expected command to be found")
+	}
+	if !strings.Contains(resp.Text, "requires a Claude Code backend") {
+		t.Errorf("expected backend-required error, got %q", resp.Text)
+	}
+}
+
+// TestDispatchRequiresNothing verifies that RequiresNothing commands always execute.
+func TestDispatchRequiresNothing(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&Command{
+		Name:     "ping",
+		Requires: RequiresNothing,
+		Execute: func(_ context.Context, _ Request, _ CommandContext) (Response, error) {
+			return Response{Text: "pong"}, nil
+		},
+	})
+
+	resp, ok, _ := r.Dispatch(context.Background(), Request{Name: "ping"}, CommandContext{})
+	if !ok {
+		t.Fatal("expected command to be found")
+	}
+	if resp.Text != "pong" {
+		t.Errorf("got %q, want %q", resp.Text, "pong")
+	}
+}
+
 // mockSecretsStore implements SecretsStore for testing.
 type mockSecretsStore struct {
 	data          map[string]string

@@ -108,6 +108,14 @@ type Backend interface {
 	Close() error
 }
 
+// ControlSender is optionally implemented by backends that support
+// runtime control requests (model switch, effort change, etc.).
+// The Agent layer constructs backend-agnostic ControlRequest values;
+// the backend translates them to its own wire format.
+type ControlSender interface {
+	SendControl(ctx context.Context, req ControlRequest) error
+}
+
 // CommandOutputCapturer is optionally implemented by backends that can
 // capture local command output from the agent's TUI by polling for stable
 // pane content. The tmux backend implements this; the stream backend

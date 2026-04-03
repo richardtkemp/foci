@@ -196,11 +196,11 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	ts.SessionMeta.prevCacheRead = ts.FinalUsage.CacheReadInputTokens
 	ts.SessionMeta.prevCacheWrite = ts.FinalUsage.CacheCreationInputTokens
 
-	// Record the actual model reported by the JSONL watcher so that
-	// SessionContextLimit uses the real context window. Without this,
-	// ag.Model is "claude-code-tmux" which defaults to 1M — correct as a
-	// starting assumption, but the watcher knows the truth each turn.
-	if ts.FinalModel != "" {
+	// Record the actual model reported by the backend so that
+	// SessionContextLimit uses the real context window — but only if the
+	// user hasn't explicitly set a model via /model. Without the guard,
+	// the backend's reported model clobbers the user's choice every turn.
+	if ts.FinalModel != "" && !ts.SessionMeta.modelUserSet {
 		ts.SessionMeta.model = ts.FinalModel
 	}
 }

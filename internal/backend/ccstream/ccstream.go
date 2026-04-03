@@ -468,6 +468,12 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	return b.writer.SendInterrupt()
 }
 
+// SetModel sends a set_model control request to CC via the generic
+// ControlSender interface. Convenience method retained for direct callers.
+func (b *Backend) SetModel(ctx context.Context, model string) error {
+	return b.SendControl(ctx, &backend.SetModelRequest{Model: model})
+}
+
 // ---------------------------------------------------------------------------
 // Handler interface implementation (called by Reader goroutine)
 // ---------------------------------------------------------------------------
