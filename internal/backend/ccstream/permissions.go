@@ -213,7 +213,11 @@ func (req *PermissionRequestPayload) DisplayText() string {
 	}
 	// Show tool input (e.g. the command being run) when available.
 	if len(req.Input) > 0 && string(req.Input) != "{}" && string(req.Input) != "null" {
-		b.WriteString(formatToolInput(req.ToolName, req.Input))
+		toolName := req.ToolName
+		if toolName == "" {
+			toolName = req.DisplayName
+		}
+		b.WriteString(formatToolInput(toolName, req.Input))
 		b.WriteString("\n\n")
 	}
 	if req.DecisionReason != "" {
