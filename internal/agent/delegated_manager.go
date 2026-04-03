@@ -103,10 +103,21 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 
 	m.mu.Lock()
 	if mb, ok := m.backends[base]; ok {
-		mb.lastActive = time.Now()
-		mb.sessionKey = sessionKey
-		m.mu.Unlock()
-		return mb.be, nil
+		if mb.be.IsRunning() {
+			mb.lastActive = time.Now()
+			mb.sessionKey = sessionKey
+			m.mu.Unlock()
+			return mb.be, nil
+		}
+		// Backend subprocess is dead — clean up and fall through to respawn.
+		// Save the resume ID so the new subprocess can resume the CC session.
+		log.Warnf("delegated", "backend for %s is dead, respawning", base)
+		m.saveResumeID(base, mb.be.SessionID())
+		_ = mb.be.Close()
+		if mb.bridge != nil {
+			mb.bridge.Close()
+		}
+		delete(m.backends, base)
 	}
 
 	// Check for a saved session UUID to resume.

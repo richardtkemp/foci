@@ -115,7 +115,7 @@ func TestReaderUnknownType(t *testing.T) {
 	r := NewReader(strings.NewReader(line), h)
 	r.Run(context.Background())
 
-	// No handler should have been called.
+	// No message handler should have been called.
 	if len(h.assistants) != 0 {
 		t.Errorf("unexpected assistant dispatch")
 	}
@@ -128,8 +128,9 @@ func TestReaderUnknownType(t *testing.T) {
 	if len(h.systems) != 0 {
 		t.Errorf("unexpected system dispatch")
 	}
-	if len(h.errors) != 0 {
-		t.Errorf("unexpected error: %v", h.errors)
+	// EOF error is expected — reader always fires OnError when it exits.
+	if len(h.errors) != 1 {
+		t.Errorf("got %d errors, want 1 (EOF)", len(h.errors))
 	}
 }
 
@@ -144,8 +145,9 @@ func TestReaderMalformedJSON(t *testing.T) {
 	r := NewReader(strings.NewReader(input), h)
 	r.Run(context.Background())
 
-	if len(h.errors) != 1 {
-		t.Fatalf("got %d errors, want 1", len(h.errors))
+	// Expect 2 errors: one from the malformed JSON line, one from EOF.
+	if len(h.errors) != 2 {
+		t.Fatalf("got %d errors, want 2 (malformed JSON + EOF)", len(h.errors))
 	}
 	// The valid line should still dispatch.
 	if len(h.results) != 1 {
@@ -160,9 +162,12 @@ func TestReaderEOF(t *testing.T) {
 	r := NewReader(strings.NewReader(""), h)
 	r.Run(context.Background())
 
-	// Should return without error.
-	if len(h.errors) != 0 {
-		t.Errorf("unexpected errors: %v", h.errors)
+	// EOF always fires OnError so the backend knows the subprocess is gone.
+	if len(h.errors) != 1 {
+		t.Fatalf("got %d errors, want 1 (EOF)", len(h.errors))
+	}
+	if !strings.Contains(h.errors[0].Error(), "EOF") {
+		t.Errorf("error = %q, want EOF-related", h.errors[0])
 	}
 }
 
