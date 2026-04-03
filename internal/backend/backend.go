@@ -171,6 +171,23 @@ type QuestionResponder interface {
 	HasPendingQuestion() string
 }
 
+// ContextUsage holds context window usage data returned by a backend's
+// get_context_usage control request. Zero-cost (no API call).
+type ContextUsage struct {
+	TotalTokens          int    // tokens currently consumed
+	MaxTokens            int    // total context window size
+	Percentage           int    // usage percentage (0–100)
+	AutoCompactThreshold int    // CC's autocompact trigger threshold
+	Model                string // model reported by CC
+}
+
+// ContextUsageQuerier is optionally implemented by backends that support
+// on-demand context window queries. The response is computed locally by CC
+// (no API call), so it's cheap and fast (~650ms on a persistent session).
+type ContextUsageQuerier interface {
+	GetContextUsage(ctx context.Context) (*ContextUsage, error)
+}
+
 // StartOptions configures the backend at launch time.
 type StartOptions struct {
 	WorkDir         string // agent workspace directory (becomes cwd)

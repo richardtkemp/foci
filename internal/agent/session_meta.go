@@ -32,6 +32,7 @@ type sessionMeta struct {
 	usageClient     provider.UsageClient   // per-session usage client (nil may be intentional for non-Anthropic endpoints)
 	usageClientSet  bool                   // true if usageClient was explicitly set (distinguishes nil-from-set vs nil-from-default)
 	modelUserSet    bool                   // true if model was explicitly set by user (prevents backend clobber)
+	contextLimit    int                    // override from backend get_context_usage; 0 = use model default
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 	apiSeqNum       int                    // per-session incrementing counter for payload log entries
@@ -174,8 +175,16 @@ func (a *Agent) SetSessionSpeed(sessionKey, value string) { a.setStringSetting(s
 func (a *Agent) SessionModel(sessionKey string) string { return a.getStringSetting(sessionKey, settingModel) }
 
 // SessionContextLimit returns the context window size for the session's model.
-// Checks ModelMetaFn (config-defined) first, falls back to modelinfo registry.
+// Checks backend-reported context limit first (from get_context_usage),
+// then ModelMetaFn (config-defined), falls back to modelinfo registry.
 func (a *Agent) SessionContextLimit(sessionKey string) int {
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	override := sm.contextLimit
+	a.metaMu.Unlock()
+	if override > 0 {
+		return override
+	}
 	model := a.SessionModel(sessionKey)
 	if a.ModelMetaFn != nil {
 		if meta := a.ModelMetaFn(model); meta.ContextWindow > 0 {
@@ -256,7 +265,53 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 		log.Infof("agent", "session=%s model switched via backend to %q", sessionKey, rawModel)
 	}
 
+	// Query context usage to get the real context window size and resolved
+	// model name. This is zero-cost (no API call) and resolves aliases
+	// immediately instead of waiting for the next turn's FinalModel.
+	a.refreshContextFromBackend(ctx, sessionKey)
+
 	return nil
+}
+
+// refreshContextFromBackend queries the backend's context usage and updates
+// the session's context limit and model name. No-op if the backend doesn't
+// implement ContextUsageQuerier.
+func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string) {
+	if a.DelegatedManager == nil {
+		return
+	}
+	be, err := a.DelegatedManager.Get(ctx, sessionKey)
+	if err != nil {
+		return
+	}
+	cuq, ok := be.(backend.ContextUsageQuerier)
+	if !ok {
+		return
+	}
+
+	// Use a short timeout — this is a convenience query, not critical path.
+	queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	usage, err := cuq.GetContextUsage(queryCtx)
+	if err != nil {
+		log.Warnf("agent", "session=%s get_context_usage failed: %v", sessionKey, err)
+		return
+	}
+
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	if usage.MaxTokens > 0 {
+		sm.contextLimit = usage.MaxTokens
+	}
+	// Resolve the model alias immediately (e.g. "sonnet" → "claude-sonnet-4-6").
+	if usage.Model != "" {
+		sm.model = usage.Model
+	}
+	a.metaMu.Unlock()
+
+	log.Infof("agent", "session=%s context_usage: %d/%d tokens (%d%%), model=%s",
+		sessionKey, usage.TotalTokens, usage.MaxTokens, usage.Percentage, usage.Model)
 }
 
 // SessionFormat returns the effective wire format for the session.
