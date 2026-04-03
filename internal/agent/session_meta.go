@@ -232,12 +232,19 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 	// Always update foci's own tracking.
 	a.SetSessionModel(sessionKey, model, endpoint, format, client)
 
-	// Mark that the user explicitly set this model so UpdateSessionMeta
-	// doesn't clobber it with the backend's reported model.
+	// Only arm modelUserSet if a delegated turn is currently in flight.
+	// The flag guards against that in-flight turn's stale FinalModel clobbering
+	// the user's fresh /model choice. If no turn is in flight there is nothing
+	// to protect against, so skip the flag entirely — the next turn's FinalModel
+	// will resolve the alias immediately.
 	sm := a.getSessionMeta(sessionKey)
-	a.metaMu.Lock()
-	sm.modelUserSet = true
-	a.metaMu.Unlock()
+	if a.DelegatedManager != nil {
+		if mb, ok := a.DelegatedManager.getManaged(sessionKey); ok && mb.be.IsTurnInFlight() {
+			a.metaMu.Lock()
+			sm.modelUserSet = true
+			a.metaMu.Unlock()
+		}
+	}
 
 	// Tell the backend, if one exists and supports control requests.
 	handled, err := a.SendBackendControl(ctx, sessionKey, &backend.SetModelRequest{Model: rawModel})
