@@ -116,6 +116,16 @@ type ControlSender interface {
 	SendControl(ctx context.Context, req ControlRequest) error
 }
 
+// CompactionWaiter is optionally implemented by backends that can signal
+// when CC-initiated compaction has completed. ArmCompactionWait must be
+// called before the /compact command is sent so that the compact_boundary
+// stream event is never missed. WaitForCompaction then blocks until that
+// event arrives (or ctx expires).
+type CompactionWaiter interface {
+	ArmCompactionWait()
+	WaitForCompaction(ctx context.Context) error
+}
+
 // CommandOutputCapturer is optionally implemented by backends that can
 // capture local command output from the agent's TUI by polling for stable
 // pane content. The tmux backend implements this; the stream backend

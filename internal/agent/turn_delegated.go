@@ -328,14 +328,29 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// after processAgentMessage returns and the turn context is done).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+
+	// Arm the compaction waiter before sending the command so the
+	// compact_boundary signal is never missed (race-free).
+	if cw, ok := ts.Backend.(backend.CompactionWaiter); ok {
+		cw.ArmCompactionWait()
+	}
+
 	if err := ts.Backend.SendCommand(ctx, cmd, ""); err != nil {
 		a.logger().Errorf("session=%s delegated compaction failed: %v", ts.SessionKey, err)
 		return
 	}
 
-	// Wait for CC to finish the compaction turn.
-	if err := ts.Backend.WaitForTurn(ctx); err != nil {
-		a.logger().Warnf("session=%s timeout timeout waiting for delegated compaction: %v", ts.SessionKey, err)
+	// Wait for CC to confirm compaction via compact_boundary. Backends that
+	// implement CompactionWaiter (ccstream) block on the stream event;
+	// others fall back to WaitForTurn.
+	var waitErr error
+	if cw, ok := ts.Backend.(backend.CompactionWaiter); ok {
+		waitErr = cw.WaitForCompaction(ctx)
+	} else {
+		waitErr = ts.Backend.WaitForTurn(ctx)
+	}
+	if waitErr != nil {
+		a.logger().Warnf("session=%s timeout waiting for delegated compaction: %v", ts.SessionKey, waitErr)
 	} else {
 		for _, fn := range a.CompactionNotifyFunc {
 			fn(ts.SessionKey, "✅ Context compacted (delegated).")
