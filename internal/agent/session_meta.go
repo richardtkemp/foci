@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
+	"foci/internal/backend"
 	"foci/internal/display"
-	"foci/internal/timeutil"
+	"foci/internal/log"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
+	"foci/internal/timeutil"
 )
 
 // sessionMeta tracks per-session state for metadata injection.
@@ -28,6 +31,7 @@ type sessionMeta struct {
 	client          provider.Client        // per-session client override (nil = use a.Client)
 	usageClient     provider.UsageClient   // per-session usage client (nil may be intentional for non-Anthropic endpoints)
 	usageClientSet  bool                   // true if usageClient was explicitly set (distinguishes nil-from-set vs nil-from-default)
+	modelUserSet    bool                   // true if model was explicitly set by user (prevents backend clobber)
 	noCompact       bool                   // per-session no_compact flag (sticky across async operations)
 	systemBlocks    []provider.SystemBlock // per-session system prompt snapshot (nil = rebuild from bootstrap)
 	apiSeqNum       int                    // per-session incrementing counter for payload log entries
@@ -218,6 +222,34 @@ func (a *Agent) SetSessionModel(sessionKey, value, endpoint, format string, clie
 			}
 		}
 	}
+}
+
+// SetModel is the high-level orchestrator for /model. It updates foci's
+// session metadata AND tells the delegated backend (if any) to switch models.
+// rawModel is the user's input (e.g. "opus", "sonnet") — passed verbatim to
+// the backend since CC accepts bare model names.
+func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint, format string, client provider.Client, rawModel string) error {
+	// Always update foci's own tracking.
+	a.SetSessionModel(sessionKey, model, endpoint, format, client)
+
+	// Mark that the user explicitly set this model so UpdateSessionMeta
+	// doesn't clobber it with the backend's reported model.
+	sm := a.getSessionMeta(sessionKey)
+	a.metaMu.Lock()
+	sm.modelUserSet = true
+	a.metaMu.Unlock()
+
+	// Tell the backend, if one exists and supports control requests.
+	handled, err := a.SendBackendControl(ctx, sessionKey, &backend.SetModelRequest{Model: rawModel})
+	if err != nil {
+		log.Warnf("agent", "session=%s backend set_model failed: %v", sessionKey, err)
+		return fmt.Errorf("backend model switch failed: %w", err)
+	}
+	if handled {
+		log.Infof("agent", "session=%s model switched via backend to %q", sessionKey, rawModel)
+	}
+
+	return nil
 }
 
 // SessionFormat returns the effective wire format for the session.

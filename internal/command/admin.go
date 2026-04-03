@@ -196,7 +196,7 @@ func HelpCommand(registry *Registry) *Command {
 			var other []*Command
 
 			for _, cmd := range registry.All() {
-				if cmd.Hidden || (cmd.Visible != nil && !cmd.Visible(ctx, req, cc)) {
+				if cmd.Hidden || (cmd.Visible != nil && !cmd.Visible(ctx, req, cc)) || checkRequires(cmd, cc) != "" {
 					continue
 				}
 				if cmd.Category != "" {

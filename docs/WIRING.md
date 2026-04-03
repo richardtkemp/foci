@@ -407,6 +407,14 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 
 **`DelegatedManager.WaitForPermission`:** Before `RunInference` sends a new prompt to the backend, it calls `WaitForPermission` which blocks until all pending permission prompts are resolved. Uses `sync.Cond` with a context-cancellation goroutine (since `sync.Cond` doesn't natively support context). The `onPermCleared` callback signals the condition variable when the last pending permission is resolved.
 
+**ControlSender pattern (`backend/control.go`, `ccstream/control.go`):** Generic runtime control for delegated backends. Three layers:
+
+1. **Intent types** (`backend/control.go`) — backend-agnostic request types (`SetModelRequest`, etc.) with a `ControlRequest` marker interface (unexported method prevents arbitrary types).
+2. **`ControlSender` interface** (`backend/backend.go`) — optional interface backends implement: `SendControl(ctx, ControlRequest) error`. The ccstream backend type-switches on intent types and translates to wire format.
+3. **Agent routing** (`agent/delegated_control.go`) — `SendBackendControl(ctx, sk, req) (handled, err)`. Gets the backend via `DelegatedManager.Get`, type-asserts to `ControlSender`, calls `SendControl`. Returns `(false, nil)` if no backend or backend doesn't support it.
+
+Adding a new control: define intent type in `backend/control.go`, add case in ccstream's `SendControl`, add Agent method, register command with appropriate `Requires`.
+
 **Differences from tmux backend:**
 - No tmux pane, no `send-keys`, no pane capture — all communication is structured NDJSON.
 - Permissions are handled via structured control messages rather than pane scraping.
@@ -904,7 +912,9 @@ Messages starting with `/` are intercepted at the Telegram router level before r
    - `/pass` — forward a command directly to the delegated backend (e.g. `/pass /context`, `/pass /model opus`). Bypasses foci's command dispatch so CC slash commands that would otherwise be intercepted by foci can be sent through. For tmux backends, captures and returns pane output after stabilisation. For stream backends, output arrives normally via the stdout reader. Only available for delegated agents — returns an error for API-mode agents.
 2. **Custom** (script-defined in `foci.toml` via `[[commands]]`): runs a shell script, returns stdout. Timeout default 10s.
 
-**`/model` endpoint switching:** Accepts `endpoint:developer/model_id` syntax (e.g. `/model gemini:google/gemini-2.5-flash`, `/model openrouter:anthropic/claude-opus-4-6`). The Execute function calls `config.ResolveModel()` to parse the `developer/model_id` string and `cc.ClientProvider.ResolveEndpointClient(endpoint, format)` to lazy-init the correct client. Calls `cc.Agent.SetSessionModel(sessionKey, model, endpoint, format, client)` to store the model, endpoint, format, and per-session client override. All three are persisted to state store for restoration across restarts.
+**`/model` endpoint switching:** Accepts `endpoint:developer/model_id` syntax (e.g. `/model gemini:google/gemini-2.5-flash`, `/model openrouter:anthropic/claude-opus-4-6`). The Execute function calls `config.ResolveModel()` to parse the `developer/model_id` string and `cc.ClientProvider.ResolveEndpointClient(endpoint, format)` to lazy-init the correct client. Calls `cc.Agent.SetModel()` — the orchestrator that updates foci's session metadata AND sends a `set_model` control request to the delegated backend (if any). Sets `modelUserSet` flag to prevent `UpdateSessionMeta` from clobbering the user's explicit choice with the backend's reported model.
+
+**Command `Requires` field:** Commands declare their transport requirement via a static `Requires` field on the `Command` struct (`RequiresNothing`, `RequiresBackend`, `RequiresAPI`). `Dispatch()` checks this before calling `Execute`, rejecting with a clear error. The help renderer also filters by `Requires` — backend-only commands don't appear for API agents.
 
 **Command registration** (`commands.go` in main package): All per-agent slash commands are registered in `registerAgentCommands()`, which builds a `command.CommandContext` struct from agent references, config, clients, and stores. Commands are zero-argument constructors (e.g. `ModelCommand()`, `ResetCommand()`) returning `*Command` structs with an `Execute(ctx, Request, CommandContext)` function. All command logic accesses dependencies through the `CommandContext` parameter — no closures or per-command constructor injection. Commands interact with platforms via `cc.ConnMgr` (a `platform.ConnectionManager` interface) to avoid importing the `telegram` package.
 
