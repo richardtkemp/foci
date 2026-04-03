@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"foci/internal/backend"
+	"foci/internal/log"
 )
 
 func init() {
@@ -51,6 +52,7 @@ type Backend struct {
 	writer *Writer
 	cancel context.CancelFunc // cancels reader goroutine + keep-alive
 	done   chan struct{}       // closed when reader goroutine exits
+	waitCh chan error          // receives cmd.Wait() result (reaps zombie)
 
 	// State
 	mu        sync.Mutex
@@ -194,6 +196,14 @@ func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
 	// Keep-alive goroutine.
 	go b.runKeepAlive(readerCtx)
 
+	// Process waiter goroutine — reaps the subprocess and logs exit status.
+	// Without this, a dead subprocess becomes a zombie until Close() is called.
+	b.waitCh = make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		b.waitCh <- err
+	}()
+
 	// Send initialize control request with system prompt.
 	if err := b.writer.SendControl(newRequestID(), &InitializeRequest{
 		Subtype:      "initialize",
@@ -223,28 +233,25 @@ func (b *Backend) Close() error {
 	_ = b.writer.SendInterrupt()
 	_ = b.writer.Close()
 
-	// Wait for process exit with timeout.
-	waitDone := make(chan error, 1)
-	go func() {
-		waitDone <- b.cmd.Wait()
-	}()
-
+	// Wait for process exit with timeout. The waiter goroutine (launched in
+	// Start) calls cmd.Wait() and sends the result to waitCh. If the process
+	// already exited, this returns immediately.
 	select {
-	case <-waitDone:
-		// Process exited.
+	case <-b.waitCh:
+		// Process already exited (or just did).
 	case <-time.After(5 * time.Second):
 		// SIGTERM.
 		if b.cmd.Process != nil {
 			_ = b.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		select {
-		case <-waitDone:
+		case <-b.waitCh:
 		case <-time.After(2 * time.Second):
 			// SIGKILL.
 			if b.cmd.Process != nil {
 				_ = b.cmd.Process.Kill()
 			}
-			<-waitDone
+			<-b.waitCh
 		}
 	}
 
@@ -743,8 +750,17 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 	}
 }
 
-// OnError handles errors from the reader (scanner errors, broken pipe, etc.).
+// OnError handles errors from the reader (scanner errors, broken pipe, EOF, etc.).
+// This is called when the reader goroutine exits for any reason, including
+// clean process exit (io.EOF). It marks the backend as dead and completes
+// any in-flight turn so callers don't block forever.
 func (b *Backend) OnError(err error) {
+	component := "ccstream"
+	if b.label != "" {
+		component = "ccstream:" + b.label
+	}
+	log.Warnf(component, "subprocess reader stopped: %v", err)
+
 	b.mu.Lock()
 	b.running = false
 	b.mu.Unlock()
@@ -797,15 +813,25 @@ func (b *Backend) runKeepAlive(ctx context.Context) {
 	}
 }
 
-// captureStderr reads CC's stderr line by line. CC's stderr is noisy with
-// progress info — only errors would be promoted to warn level.
+// captureStderr reads CC's stderr line by line and logs it. CC's stderr
+// can contain progress info, warnings, and errors. Lines containing "error"
+// or "fatal" are logged at warn level; everything else at debug.
 func (b *Backend) captureStderr(r io.Reader) {
+	component := "ccstream"
+	if b.label != "" {
+		component = "ccstream:" + b.label
+	}
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if line != "" {
-			// TODO: integrate with foci's logger
-			_ = line
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "error") || strings.Contains(lower, "fatal") || strings.Contains(lower, "panic") {
+			log.Warnf(component, "stderr: %s", line)
+		} else {
+			log.Debugf(component, "stderr: %s", line)
 		}
 	}
 }

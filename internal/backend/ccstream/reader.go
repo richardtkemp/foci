@@ -61,10 +61,16 @@ func (rd *Reader) Run(ctx context.Context) {
 		}
 
 		if !scanner.Scan() {
-			// scanner.Err() returns nil on clean EOF.
-			if err := scanner.Err(); err != nil {
-				rd.handler.OnError(fmt.Errorf("ccstream: scanner: %w", err))
+			// Always notify the handler when the reader exits.
+			// scanner.Err() is nil on clean EOF (process exited),
+			// non-nil on read errors (broken pipe, etc.).
+			// Both cases mean the subprocess is gone — in-flight turns
+			// must be completed and the backend marked as dead.
+			err := scanner.Err()
+			if err == nil {
+				err = io.EOF
 			}
+			rd.handler.OnError(fmt.Errorf("ccstream: reader stopped: %w", err))
 			return
 		}
 

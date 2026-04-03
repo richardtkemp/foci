@@ -50,6 +50,8 @@ func (m *mockPermBackend) SendKeystroke(_ context.Context, key string) error {
 	return m.keystrokeErr
 }
 
+func (m *mockPermBackend) IsRunning() bool { return true }
+
 // mockPermBackendNoRule only implements permResponder, not ruleResponder.
 // Used to test the fallback when RespondToPermissionWithRule is not available.
 type mockPermBackendNoRule struct {
@@ -65,6 +67,8 @@ func (m *mockPermBackendNoRule) RespondToPermission(requestID string, allow bool
 func (m *mockPermBackendNoRule) SendKeystroke(_ context.Context, key string) error {
 	return nil
 }
+
+func (m *mockPermBackendNoRule) IsRunning() bool { return true }
 
 // mockDelegatedManagerForPerm is a minimal DelegatedManager replacement
 // that returns a pre-configured backend. Since DelegatedManager.Get requires
