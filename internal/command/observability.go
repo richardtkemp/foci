@@ -469,15 +469,18 @@ func contextFromBackend(ctx context.Context, cc CommandContext) (string, error) 
 		return "", err
 	}
 
-	threshTokens := usage.AutoCompactThreshold
+	// Use foci's compaction threshold, not CC's autoCompactThreshold.
+	threshTokens := int(float64(usage.MaxTokens) * cc.CompactionThreshold)
 	percentUsed := float64(usage.TotalTokens) / float64(usage.MaxTokens) * 100
+	percentThresh := cc.CompactionThreshold * 100
 
 	var sb strings.Builder
 	sb.WriteString("```\n")
 	fmt.Fprintf(&sb, "Context: %s / %s tokens (%.1f%%)\n",
 		display.FormatCommas(usage.TotalTokens), display.FormatCommas(usage.MaxTokens), percentUsed)
 	fmt.Fprintf(&sb, "Model: %s\n", usage.Model)
-	fmt.Fprintf(&sb, "Compaction at: %s tokens\n", display.FormatCommas(threshTokens))
+	fmt.Fprintf(&sb, "Compaction at: %s (%.0f%%)\n",
+		display.FormatCommas(threshTokens), percentThresh)
 	if usage.TotalTokens >= threshTokens {
 		sb.WriteString("Status: at/above threshold\n")
 	} else {
@@ -485,6 +488,23 @@ func contextFromBackend(ctx context.Context, cc CommandContext) (string, error) 
 		fmt.Fprintf(&sb, "Status: %s tokens until compaction\n", display.FormatCommas(remaining))
 	}
 	sb.WriteString("```")
+
+	// Category breakdown.
+	if len(usage.Categories) > 0 {
+		sb.WriteString("\n\n```\n")
+		maxNameLen := 0
+		for _, c := range usage.Categories {
+			if len(c.Name) > maxNameLen {
+				maxNameLen = len(c.Name)
+			}
+		}
+		for _, c := range usage.Categories {
+			pct := float64(c.Tokens) / float64(usage.MaxTokens) * 100
+			fmt.Fprintf(&sb, "  %-*s  %6s tokens  (%4.1f%%)\n",
+				maxNameLen, c.Name, display.FormatCommas(c.Tokens), pct)
+		}
+		sb.WriteString("```")
+	}
 
 	return sb.String(), nil
 }

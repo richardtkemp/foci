@@ -174,11 +174,18 @@ type QuestionResponder interface {
 // ContextUsage holds context window usage data returned by a backend's
 // get_context_usage control request. Zero-cost (no API call).
 type ContextUsage struct {
-	TotalTokens          int    // tokens currently consumed
-	MaxTokens            int    // total context window size
-	Percentage           int    // usage percentage (0–100)
-	AutoCompactThreshold int    // CC's autocompact trigger threshold
-	Model                string // model reported by CC
+	TotalTokens          int              // tokens currently consumed
+	MaxTokens            int              // total context window size
+	Percentage           int              // usage percentage (0–100)
+	AutoCompactThreshold int              // CC's autocompact trigger threshold
+	Model                string           // model reported by CC
+	Categories           []ContextCategory // per-category token breakdown
+}
+
+// ContextCategory is a single category in the context usage breakdown.
+type ContextCategory struct {
+	Name   string // e.g. "System prompt", "Messages", "Free space"
+	Tokens int
 }
 
 // ContextUsageQuerier is optionally implemented by backends that support
