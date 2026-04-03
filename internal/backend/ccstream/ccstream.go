@@ -67,6 +67,7 @@ type Backend struct {
 	turnActive   bool
 	turnHandler  *backend.EventHandler // current turn's handler
 	turnResultCh chan *ResultMessage    // buffered(1), receives result
+	compactDoneCh chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
 	turnText     strings.Builder       // accumulates text across assistant messages
 	turnTools    int                   // tool_use count this turn
 
@@ -432,6 +433,32 @@ func (b *Backend) SetOnCompactionStart(fn func()) { b.onCompactionStart = fn }
 // preTokens is the token count before compaction.
 func (b *Backend) SetOnCompactionDone(fn func(preTokens int)) { b.onCompactionDone = fn }
 
+// ArmCompactionWait sets up a one-shot channel that will be closed when
+// compact_boundary is received. Must be called before the /compact command
+// is sent so the signal is never missed.
+func (b *Backend) ArmCompactionWait() {
+	b.turnMu.Lock()
+	b.compactDoneCh = make(chan struct{}, 1)
+	b.turnMu.Unlock()
+}
+
+// WaitForCompaction blocks until compact_boundary is received or ctx expires.
+// Returns immediately if no waiter is armed (ArmCompactionWait was not called).
+func (b *Backend) WaitForCompaction(ctx context.Context) error {
+	b.turnMu.Lock()
+	ch := b.compactDoneCh
+	b.turnMu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // SetOnAgentStatus sets a callback for agent/task lifecycle events.
 func (b *Backend) SetOnAgentStatus(fn func(string)) { b.agents.OnStatus = fn }
 
@@ -667,6 +694,17 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 		if b.onCompactionDone != nil {
 			b.onCompactionDone(cb.CompactMetadata.PreTokens)
+		}
+		// Signal any armed compaction waiter (one-shot; clear after firing).
+		b.turnMu.Lock()
+		ch := b.compactDoneCh
+		b.compactDoneCh = nil
+		b.turnMu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
 		}
 
 	case "session_state_changed":

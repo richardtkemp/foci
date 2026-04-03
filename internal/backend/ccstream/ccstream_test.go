@@ -1476,6 +1476,105 @@ func TestOnSystem_CompactBoundaryBadJSON(t *testing.T) {
 	}
 }
 
+func TestArmCompactionWait_SignaledByCompactBoundary(t *testing.T) {
+	// Verifies that ArmCompactionWait + WaitForCompaction blocks until
+	// compact_boundary is received.
+	t.Parallel()
+
+	b := &Backend{}
+	b.ArmCompactionWait()
+
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		done <- b.WaitForCompaction(ctx)
+	}()
+
+	// Give the goroutine time to block.
+	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("WaitForCompaction returned before compact_boundary")
+	default:
+	}
+
+	// Fire compact_boundary.
+	raw, _ := json.Marshal(CompactBoundaryMessage{
+		CompactMetadata: CompactMetadata{PreTokens: 100000},
+	})
+	b.OnSystem("compact_boundary", raw)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitForCompaction: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitForCompaction did not return after compact_boundary")
+	}
+}
+
+func TestArmCompactionWait_ContextCancellation(t *testing.T) {
+	// Verifies WaitForCompaction respects context cancellation.
+	t.Parallel()
+
+	b := &Backend{}
+	b.ArmCompactionWait()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- b.WaitForCompaction(ctx) }()
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("WaitForCompaction err = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitForCompaction did not return after context cancel")
+	}
+}
+
+func TestWaitForCompaction_NoArm(t *testing.T) {
+	// Verifies WaitForCompaction returns immediately if not armed.
+	t.Parallel()
+
+	b := &Backend{}
+	if err := b.WaitForCompaction(context.Background()); err != nil {
+		t.Fatalf("WaitForCompaction (unarmed): %v", err)
+	}
+}
+
+func TestArmCompactionWait_OneShot(t *testing.T) {
+	// Verifies compactDoneCh is cleared after compact_boundary fires,
+	// so a second call to WaitForCompaction returns immediately.
+	t.Parallel()
+
+	b := &Backend{}
+	b.ArmCompactionWait()
+
+	raw, _ := json.Marshal(CompactBoundaryMessage{
+		CompactMetadata: CompactMetadata{PreTokens: 50000},
+	})
+	b.OnSystem("compact_boundary", raw)
+
+	// First call should unblock.
+	ctx := context.Background()
+	if err := b.WaitForCompaction(ctx); err != nil {
+		t.Fatalf("WaitForCompaction (first): %v", err)
+	}
+
+	// Second call without re-arming: channel is nil, returns immediately.
+	if err := b.WaitForCompaction(ctx); err != nil {
+		t.Fatalf("WaitForCompaction (second, unarmed): %v", err)
+	}
+}
+
 func TestOnSystem_TaskStarted(t *testing.T) {
 	// task_started is a no-op — agent tracking happens in OnAssistant via
 	// tool_use detection. Verify no status is emitted.
