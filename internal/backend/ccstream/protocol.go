@@ -159,14 +159,20 @@ type controlResponseInbound struct {
 }
 
 // contextUsagePayload is the inner response from a get_context_usage
-// control request. We only parse the fields foci cares about — CC also
-// returns gridRows, memoryFiles, mcpTools, etc. that we ignore.
+// control request. We parse the fields foci cares about — CC also
+// returns gridRows and other TUI data that we ignore.
 type contextUsagePayload struct {
-	TotalTokens          int    `json:"totalTokens"`
-	MaxTokens            int    `json:"maxTokens"`
-	Percentage           int    `json:"percentage"`
-	AutoCompactThreshold int    `json:"autoCompactThreshold"`
-	Model                string `json:"model"`
+	TotalTokens          int                       `json:"totalTokens"`
+	MaxTokens            int                       `json:"maxTokens"`
+	Percentage           int                       `json:"percentage"`
+	AutoCompactThreshold int                       `json:"autoCompactThreshold"`
+	Model                string                    `json:"model"`
+	Categories           []contextUsageCategoryRaw `json:"categories"`
+}
+
+type contextUsageCategoryRaw struct {
+	Name   string `json:"name"`
+	Tokens int    `json:"tokens"`
 }
 
 // ControlCancelRequest cancels a pending CC-originated control request.

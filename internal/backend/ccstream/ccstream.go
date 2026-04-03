@@ -543,12 +543,17 @@ func (b *Backend) GetContextUsage(ctx context.Context) (*backend.ContextUsage, e
 		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
 			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
 		}
+		cats := make([]backend.ContextCategory, len(payload.Categories))
+		for i, c := range payload.Categories {
+			cats[i] = backend.ContextCategory{Name: c.Name, Tokens: c.Tokens}
+		}
 		return &backend.ContextUsage{
 			TotalTokens:          payload.TotalTokens,
 			MaxTokens:            payload.MaxTokens,
 			Percentage:           payload.Percentage,
 			AutoCompactThreshold: payload.AutoCompactThreshold,
 			Model:                payload.Model,
+			Categories:           cats,
 		}, nil
 	case <-ctx.Done():
 		// Clean up on timeout.
