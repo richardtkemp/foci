@@ -9,6 +9,7 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/mana"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 )
@@ -130,7 +131,7 @@ func (r *AnthropicResolver) ResolveClient(ctx context.Context, endpointName, api
 // The usage API requires OAuth credentials with user:profile scope, so only
 // Claude Code credentials are supported. Setup-tokens and API keys don't have
 // OAuth scopes and will be rejected by the usage endpoint.
-func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (provider.UsageClient, error) {
+func (r *AnthropicResolver) ResolveUsageClient(endpointName, apiKeyName string) (mana.UsageClient, error) {
 	// Usage API requires OAuth with user:profile scope — only CC credentials work.
 	if r.ccSrc != nil {
 		client := NewUsageClient(r.ccSrc.Token)

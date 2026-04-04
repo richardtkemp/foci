@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"foci/internal/mana"
 )
 
 // tokenResolutionError wraps token resolution failures. These errors should
@@ -29,14 +31,40 @@ const (
 	maxErrBackoff = 1 * time.Hour
 )
 
-// UsageClient is a client for the Anthropic usage API (requires OAuth token)
+// usageAPIResponse is the raw JSON shape from the Anthropic usage API.
+// All fields are Anthropic-specific; the public GetUsage method maps these
+// to the provider-neutral *mana.UsageWindow.
+type usageAPIResponse struct {
+	FiveHour          *usageAPIWindow `json:"five_hour"`
+	SevenDay          *usageAPIWindow `json:"seven_day"`
+	SevenDayOAuthApps *usageAPIWindow `json:"seven_day_oauth_apps"`
+	SevenDayOpus      *usageAPIWindow `json:"seven_day_opus"`
+	SevenDaySonnet    *usageAPIWindow `json:"seven_day_sonnet"`
+	SevenDayCowork    *usageAPIWindow `json:"seven_day_cowork"`
+	IguanaNecktie     *usageAPIWindow `json:"iguana_necktie"`
+	ExtraUsage        *usageAPIExtra  `json:"extra_usage"`
+}
+
+type usageAPIWindow struct {
+	Utilization *float64 `json:"utilization"` // 0–100
+	ResetsAt    *string  `json:"resets_at"`   // ISO timestamp
+}
+
+type usageAPIExtra struct {
+	IsEnabled    bool    `json:"is_enabled"`
+	MonthlyLimit float64 `json:"monthly_limit"`
+	UsedCredits  float64 `json:"used_credits"`
+}
+
+// UsageClient is a client for the Anthropic usage API (requires OAuth token).
+// Implements mana.UsageClient.
 type UsageClient struct {
 	tokenFunc  func() (string, error) // returns the current OAuth token
 	httpClient *http.Client
 	baseURL    string
 
 	mu       sync.Mutex
-	cached   *UsageResponse
+	cached   *mana.UsageWindow
 	cachedAt time.Time
 	cacheTTL time.Duration
 
@@ -103,10 +131,11 @@ func (c *UsageClient) resolveToken() (string, error) {
 }
 
 // GetUsage retrieves the current usage from the Anthropic API.
+// Returns the 5-hour window as the primary mana window.
 // Results are cached for cacheTTL; concurrent callers share the same cached value.
 // On fetch errors, retries are suppressed with exponential backoff (starting at
 // cacheTTL, doubling up to maxErrBackoff). A successful fetch resets the backoff.
-func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
+func (c *UsageClient) GetUsage(ctx context.Context) (*mana.UsageWindow, error) {
 	c.mu.Lock()
 	if c.cached != nil && time.Since(c.cachedAt) < c.cacheTTL {
 		resp := c.cached
@@ -158,8 +187,9 @@ func (c *UsageClient) GetUsage(ctx context.Context) (*UsageResponse, error) {
 	return resp, nil
 }
 
-// fetchUsage performs the actual HTTP request to the usage API.
-func (c *UsageClient) fetchUsage(ctx context.Context) (*UsageResponse, error) {
+// fetchUsage performs the actual HTTP request to the usage API and maps
+// the Anthropic-specific response to a provider-neutral *mana.UsageWindow.
+func (c *UsageClient) fetchUsage(ctx context.Context) (*mana.UsageWindow, error) {
 	token, err := c.resolveToken()
 	if err != nil {
 		return nil, err
@@ -188,10 +218,61 @@ func (c *UsageClient) fetchUsage(ctx context.Context) (*UsageResponse, error) {
 		return nil, fmt.Errorf("API error (status %d): %s", httpResp.StatusCode, string(respBody))
 	}
 
-	var resp UsageResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
+	var raw usageAPIResponse
+	if err := json.Unmarshal(respBody, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	return &resp, nil
+	return mapUsageResponse(&raw), nil
+}
+
+// mapUsageResponse converts the Anthropic API response to a provider-neutral
+// *mana.UsageWindow. The 5-hour window is primary; other windows and overage
+// info are formatted into ExtraInfo for display.
+func mapUsageResponse(raw *usageAPIResponse) *mana.UsageWindow {
+	w := &mana.UsageWindow{
+		Period: 5 * time.Hour,
+	}
+
+	if raw.FiveHour != nil {
+		if raw.FiveHour.Utilization != nil {
+			u := *raw.FiveHour.Utilization / 100 // API 0–100 → interface 0–1
+			w.Utilization = &u
+		}
+		if raw.FiveHour.ResetsAt != nil {
+			if t, err := time.Parse(time.RFC3339Nano, *raw.FiveHour.ResetsAt); err == nil {
+				w.ResetsAt = t
+			}
+		}
+	}
+
+	w.ExtraInfo = formatExtraInfo(raw)
+	return w
+}
+
+// formatExtraInfo builds a compact display string from secondary windows
+// and overage billing data. Returns "" if nothing noteworthy.
+func formatExtraInfo(raw *usageAPIResponse) string {
+	var parts []string
+
+	// Overage billing
+	if raw.ExtraUsage != nil && raw.ExtraUsage.IsEnabled {
+		parts = append(parts, fmt.Sprintf("Overage: $%.2f / $%.2f",
+			raw.ExtraUsage.UsedCredits, raw.ExtraUsage.MonthlyLimit))
+	}
+
+	// 7-day window utilization
+	if raw.SevenDay != nil && raw.SevenDay.Utilization != nil {
+		parts = append(parts, fmt.Sprintf("7-day: %.0f%%", *raw.SevenDay.Utilization))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	result := parts[0]
+	for _, p := range parts[1:] {
+		result += " | " + p
+	}
+	return result
 }

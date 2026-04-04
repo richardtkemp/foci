@@ -1,7 +1,8 @@
-// Package mana provides mana budget logic for background work throttling.
+// Package mana provides usage/quota tracking and budget logic for background
+// work throttling.
 //
-// Pure math + usage formatting. Caching is handled by UsageClient.
-// No coupling beyond foci/provider and foci/log.
+// Pure math + usage formatting. Caching is handled by UsageClient implementations
+// (anthropic.UsageClient for API agents, ccstream.RateLimitState for delegated).
 package mana
 
 import (
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"foci/internal/log"
-	"foci/internal/provider"
 )
 
 const (
@@ -18,11 +18,10 @@ const (
 	Window = 5 * time.Hour
 )
 
-// FromUtilization converts a provider utilization percentage (0-100) to mana
-// (available quota). Mana = 100 - utilization, clamped to [0, 100].
-// Provider-agnostic: works with any API that reports utilization out of 100%.
+// FromUtilization converts a utilization fraction (0–1) to mana percentage
+// (available quota, 0–100). Mana = (1 - utilization) * 100, clamped to [0, 100].
 func FromUtilization(utilization float64) float64 {
-	m := 100 - utilization
+	m := (1 - utilization) * 100
 	if m < 0 {
 		return 0
 	}
@@ -39,31 +38,36 @@ func formatPercentValue(percent float64) string {
 
 // FormatPercent returns a compact mana percentage string from usage data.
 // Returns "" if unavailable.
-func FormatPercent(usage *provider.UsageResponse) string {
-	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
+func FormatPercent(w *UsageWindow) string {
+	if w == nil || w.Utilization == nil {
 		return ""
 	}
-	m := FromUtilization(*usage.FiveHour.Utilization)
+	m := FromUtilization(*w.Utilization)
 	return formatPercentValue(m)
 }
 
 // FormatReset returns a human-readable reset time string from usage data.
 // Returns "" if no reset time available.
-func FormatReset(usage *provider.UsageResponse) string {
-	if usage == nil || usage.FiveHour == nil || usage.FiveHour.ResetsAt == nil {
+func FormatReset(w *UsageWindow) string {
+	if w == nil || w.ResetsAt.IsZero() {
 		return ""
 	}
-	return ParseResetTime(*usage.FiveHour.ResetsAt)
+	return FormatResetTime(w.ResetsAt)
 }
 
-// ParseResetTime converts ISO timestamp to human-readable relative time.
-// Returns formats like "2pm", "in 2h", "in 45m", or "" if parsing fails.
+// ParseResetTime converts an ISO timestamp to a human-readable relative time.
+// Kept for callers that have a string; prefer FormatResetTime for time.Time values.
 func ParseResetTime(isoTime string) string {
 	t, err := time.Parse(time.RFC3339Nano, isoTime)
 	if err != nil {
 		return ""
 	}
+	return FormatResetTime(t)
+}
 
+// FormatResetTime converts a time to a human-readable relative string.
+// Returns formats like "2pm", "in 2h", "in 45m", etc.
+func FormatResetTime(t time.Time) string {
 	now := time.Now().UTC()
 	until := t.Sub(now)
 
@@ -124,13 +128,13 @@ func IsGood(actualMana float64, resetsAt time.Time, investInterval time.Duration
 // Caching is handled by UsageClient; Monitor just calls GetUsage and evaluates.
 type Monitor struct {
 	log         *log.ComponentLogger
-	usageClient provider.UsageClient                        // static client (if not using getClient)
-	getClient   func() provider.UsageClient                // dynamic client getter (for session-aware)
+	usageClient UsageClient                        // static client (if not using getClient)
+	getClient   func() UsageClient                // dynamic client getter (for session-aware)
 }
 
 // NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor returns false
 // (no client means we can't verify mana availability — conservatively assume insufficient).
-func NewMonitor(usageClient provider.UsageClient) *Monitor {
+func NewMonitor(usageClient UsageClient) *Monitor {
 	return &Monitor{
 		log:         log.NewComponentLogger("mana"),
 		usageClient: usageClient,
@@ -140,69 +144,67 @@ func NewMonitor(usageClient provider.UsageClient) *Monitor {
 // IsGoodFor checks whether we can afford to run background work with the given invest interval.
 // Calls GetUsage (which is cached by UsageClient) and evaluates via IsGood.
 func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) bool {
-	var client provider.UsageClient
+	var client UsageClient
 	if m.getClient != nil {
-		client = m.getClient()  // Lazily resolve
+		client = m.getClient() // Lazily resolve
 	} else {
-		client = m.usageClient  // Static
+		client = m.usageClient // Static
 	}
 
 	if client == nil {
 		return false // no usage client = can't verify mana; assume insufficient
 	}
 
-	usage, err := client.GetUsage(ctx)
+	w, err := client.GetUsage(ctx)
 	if err != nil {
 		m.log.Warnf("usage API: %v", err)
 		return false
 	}
 
-	manaVal, resetsAt := extractManaAndReset(usage)
+	manaVal, resetsAt := extractManaAndReset(w)
 	return IsGood(manaVal, resetsAt, investInterval, time.Now())
 }
 
 // ManaAndReset returns mana percentage, reset time strings, and whether
 // mana is "good" (above invest threshold). Returns empty strings and false if
 // UsageClient is nil or on error.
-func ManaAndReset(usageClient provider.UsageClient, investInterval time.Duration) (pct, reset string, good bool) {
+func ManaAndReset(usageClient UsageClient, investInterval time.Duration) (pct, reset string, good bool) {
 	if usageClient == nil {
 		return "", "", false
 	}
 
-	usage, err := usageClient.GetUsage(context.Background())
+	w, err := usageClient.GetUsage(context.Background())
 	if err != nil {
 		return "", "", false
 	}
 
-	pct = FormatPercent(usage)
-	reset = FormatReset(usage)
-	good = computeManaGood(usage, investInterval)
+	pct = FormatPercent(w)
+	reset = FormatReset(w)
+	good = computeManaGood(w, investInterval)
 	return pct, reset, good
 }
 
-// extractManaAndReset extracts mana value and reset time from a usage response.
-func extractManaAndReset(usage *provider.UsageResponse) (float64, time.Time) {
+// extractManaAndReset extracts mana value and reset time from a usage window.
+func extractManaAndReset(w *UsageWindow) (float64, time.Time) {
 	var manaVal float64
 	var resetsAt time.Time
-	if usage != nil && usage.FiveHour != nil {
-		if usage.FiveHour.Utilization != nil {
-			manaVal = FromUtilization(*usage.FiveHour.Utilization)
+	if w != nil {
+		if w.Utilization != nil {
+			manaVal = FromUtilization(*w.Utilization)
 		}
-		if usage.FiveHour.ResetsAt != nil {
-			resetsAt, _ = time.Parse(time.RFC3339Nano, *usage.FiveHour.ResetsAt)
-		}
+		resetsAt = w.ResetsAt
 	}
 	return manaVal, resetsAt
 }
 
 // computeManaGood evaluates whether current mana is above the invest threshold.
-func computeManaGood(usage *provider.UsageResponse, investInterval time.Duration) bool {
+func computeManaGood(w *UsageWindow, investInterval time.Duration) bool {
 	if investInterval == 0 {
 		return false
 	}
-	if usage == nil || usage.FiveHour == nil || usage.FiveHour.Utilization == nil {
+	if w == nil || w.Utilization == nil {
 		return false
 	}
-	manaVal, resetsAt := extractManaAndReset(usage)
+	manaVal, resetsAt := extractManaAndReset(w)
 	return IsGood(manaVal, resetsAt, investInterval, time.Now())
 }

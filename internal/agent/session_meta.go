@@ -9,6 +9,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/log"
+	"foci/internal/mana"
 	"foci/internal/modelinfo"
 	"foci/internal/provider"
 	"foci/internal/timeutil"
@@ -29,7 +30,7 @@ type sessionMeta struct {
 	modelEndpoint   string                 // per-session endpoint override (empty = use agent default)
 	modelFormat     string                 // per-session format override (empty = use agent default)
 	client          provider.Client        // per-session client override (nil = use a.Client)
-	usageClient     provider.UsageClient   // per-session usage client (nil may be intentional for non-Anthropic endpoints)
+	usageClient     mana.UsageClient   // per-session usage client (nil may be intentional for non-Anthropic endpoints)
 	usageClientSet  bool                   // true if usageClient was explicitly set (distinguishes nil-from-set vs nil-from-default)
 	modelUserSet    bool                   // true if model was explicitly set by user (prevents backend clobber)
 	contextLimit    int                    // override from backend get_context_usage; 0 = use model default
@@ -340,7 +341,7 @@ func (a *Agent) SessionClient(sessionKey string) provider.Client {
 // prevents returning the agent's Anthropic usage client for sessions that are
 // actually using a non-Anthropic endpoint. The resolved value is cached so
 // subsequent calls don't re-resolve.
-func (a *Agent) SessionUsageClient(sessionKey string) provider.UsageClient {
+func (a *Agent) SessionUsageClient(sessionKey string) mana.UsageClient {
 	sm := a.getSessionMeta(sessionKey)
 	a.metaMu.Lock()
 	defer a.metaMu.Unlock()

@@ -9,25 +9,26 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/mana"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
 
-// mockUsageClient is a minimal mock for provider.UsageClient in tests.
+// mockUsageClient is a minimal mock for mana.UsageClient in tests.
 type mockUsageClient struct{}
 
-func (m *mockUsageClient) GetUsage(_ context.Context) (*provider.UsageResponse, error) {
+func (m *mockUsageClient) GetUsage(_ context.Context) (*mana.UsageWindow, error) {
 	return nil, nil
 }
 func (m *mockUsageClient) Invalidate()                {}
 func (m *mockUsageClient) SetCacheTTL(_ time.Duration) {}
 
-// usageClientProviderFunc adapts a function to the provider.UsageClientProvider interface.
-type usageClientProviderFunc func(endpoint string) provider.UsageClient
+// usageClientProviderFunc adapts a function to the mana.UsageClientProvider interface.
+type usageClientProviderFunc func(endpoint string) mana.UsageClient
 
-func (f usageClientProviderFunc) GetUsageClient(endpoint string) provider.UsageClient {
+func (f usageClientProviderFunc) GetUsageClient(endpoint string) mana.UsageClient {
 	return f(endpoint)
 }
 
@@ -196,7 +197,7 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 	// means we can't verify mana, so we conservatively refuse.
 	ag := &Agent{
 		UsageClient:        nil,
-		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
+		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return nil }),
 		ManaInvestInterval: 30 * time.Minute,
 	}
 
@@ -218,7 +219,7 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 
 	ag := &Agent{
 		UsageClient:        mockClient,
-		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return mockClient }),
+		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return mockClient }),
 		ManaInvestInterval: 0, // disabled
 	}
 
@@ -246,7 +247,7 @@ func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	// disabled (ManaInvestInterval=0) all combine to return canFire=true.
 	ag := &Agent{
 		UsageClient:        nil,
-		UsageClientProvider: usageClientProviderFunc(func(endpoint string) provider.UsageClient { return nil }),
+		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return nil }),
 		ManaInvestInterval: 0, // disabled — bypasses mana check
 	}
 

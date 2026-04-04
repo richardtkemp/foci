@@ -9,6 +9,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/mana"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -107,7 +108,7 @@ type finalizeParams struct {
 	serverTools   []provider.ToolDef     // nil for delegated agents
 	client        provider.Client        // nil for delegated agents
 	clientProvider provider.ClientProvider // nil for delegated agents
-	usageClientProvider provider.UsageClientProvider // nil for delegated agents
+	usageClientProvider mana.UsageClientProvider // nil for delegated agents
 	fallbackFn    provider.FallbackFunc  // nil for delegated agents
 	compactionThreshold float64          // 0 for delegated agents
 	tmuxTool      *tools.Tool            // nil for delegated agents

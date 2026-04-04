@@ -11,6 +11,7 @@ import (
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/modelinfo"
 	"foci/internal/nudge"
@@ -112,8 +113,8 @@ type Agent struct {
 	OnActivity                    HookList[func(string)]                 // callbacks when a session has activity (session key)
 	Redact                        func(string) string          // redact secrets from tool output; nil disables
 	SessionIndex                  *session.SessionIndex        // nil disables state persistence
-	UsageClient                   provider.UsageClient         // nil disables mana metadata
-	UsageClientProvider           provider.UsageClientProvider // per-endpoint usage client resolution (nil = use default UsageClient)
+	UsageClient                   mana.UsageClient             // nil disables mana metadata
+	UsageClientProvider           mana.UsageClientProvider     // per-endpoint usage client resolution (nil = use default UsageClient)
 	MessageTransforms             []CompiledTransform          // compiled regex rules for inbound message transformation
 	CompactionSummaryPromptPath   string                       // file path; read at compaction time via prompts.ResolvePrompt
 	CompactionHandoffMsg          string                       // inline handoff message; empty resolves from search dirs or embedded default
