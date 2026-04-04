@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -2382,5 +2384,76 @@ func TestNewRequestID_Unique(t *testing.T) {
 			t.Fatalf("duplicate request ID: %s", id)
 		}
 		seen[id] = true
+	}
+}
+
+// ---------------------------------------------------------------------------
+// logComponent
+// ---------------------------------------------------------------------------
+
+func TestLogComponent_WithLabel(t *testing.T) {
+	// Proves logComponent includes the label when set.
+	t.Parallel()
+	b := &Backend{label: "helen-c123"}
+	if got := b.logComponent(); got != "ccstream:helen-c123" {
+		t.Errorf("logComponent() = %q, want %q", got, "ccstream:helen-c123")
+	}
+}
+
+func TestLogComponent_NoLabel(t *testing.T) {
+	// Proves logComponent returns the bare prefix when no label is set.
+	t.Parallel()
+	b := &Backend{}
+	if got := b.logComponent(); got != "ccstream" {
+		t.Errorf("logComponent() = %q, want %q", got, "ccstream")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// describeExitError
+// ---------------------------------------------------------------------------
+
+func TestDescribeExitError_Nil(t *testing.T) {
+	// Proves nil error returns a clean status message.
+	t.Parallel()
+	if got := describeExitError(nil); got != "exit status 0" {
+		t.Errorf("describeExitError(nil) = %q, want %q", got, "exit status 0")
+	}
+}
+
+func TestDescribeExitError_NonExitError(t *testing.T) {
+	// Proves non-exec.ExitError falls back to err.Error().
+	t.Parallel()
+	err := errors.New("some weird error")
+	if got := describeExitError(err); got != "some weird error" {
+		t.Errorf("describeExitError = %q, want %q", got, "some weird error")
+	}
+}
+
+func TestDescribeExitError_RealProcess(t *testing.T) {
+	// Proves describeExitError extracts a real exit code from a failed process.
+	t.Parallel()
+	cmd := exec.Command("sh", "-c", "exit 42")
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected error from exit 42")
+	}
+	got := describeExitError(err)
+	if !strings.Contains(got, "exit code 42") {
+		t.Errorf("describeExitError = %q, want it to contain 'exit code 42'", got)
+	}
+}
+
+func TestDescribeExitError_Signal(t *testing.T) {
+	// Proves describeExitError reports the signal when a process is killed.
+	t.Parallel()
+	cmd := exec.Command("sh", "-c", "kill -KILL $$")
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected error from killed process")
+	}
+	got := describeExitError(err)
+	if !strings.Contains(got, "signal") {
+		t.Errorf("describeExitError = %q, want it to contain 'signal'", got)
 	}
 }

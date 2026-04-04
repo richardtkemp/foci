@@ -1080,6 +1080,168 @@ func TestStateKey(t *testing.T) {
 	}
 }
 
+func TestClearResumeID(t *testing.T) {
+	// Proves that clearResumeID removes the stored session UUID so subsequent
+	// loads return empty.
+	idx := newTestSessionIndex(t)
+	mgr := &DelegatedManager{AgentID: "test-agent", SessionIndex: idx}
+
+	base := "test-agent/c1"
+	mgr.saveResumeID(base, "some-uuid")
+	if got := mgr.loadResumeID(base); got != "some-uuid" {
+		t.Fatalf("loadResumeID before clear = %q, want %q", got, "some-uuid")
+	}
+
+	mgr.clearResumeID(base)
+	if got := mgr.loadResumeID(base); got != "" {
+		t.Errorf("loadResumeID after clear = %q, want empty", got)
+	}
+}
+
+func TestClearResumeID_NilIndex(t *testing.T) {
+	// Proves that clearResumeID is a no-op when SessionIndex is nil.
+	mgr := &DelegatedManager{AgentID: "test-agent"}
+	mgr.clearResumeID("test-agent/c1") // should not panic
+}
+
+func TestGet_RetryAfterInitDeath(t *testing.T) {
+	// Proves that when a backend starts successfully but dies during init
+	// (WaitReady fails + IsRunning returns false) and a resume ID was used,
+	// the manager clears the stale resume ID and retries without --resume.
+	idx := newTestSessionIndex(t)
+
+	var callCount atomic.Int32
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			n := int(callCount.Add(1))
+			be := &mockBackendDM{running: true}
+			if n == 1 {
+				// First backend: simulate dying during init.
+				// WaitReady returns error, IsRunning returns false.
+				be.waitReadyErr = context.DeadlineExceeded
+				be.running = false // dead after Start returns
+			}
+			// Second backend: healthy.
+			return be, nil
+		},
+		StartOpts:    delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:      "test-agent",
+		SessionIndex: idx,
+		IdleTimeout:  time.Hour,
+	}
+	t.Cleanup(func() { mgr.Close() })
+
+	// Seed a resume ID.
+	base := "test-agent/c222"
+	stateKey := "cc_session:" + base
+	if err := idx.SetAgentMetadata("test-agent", stateKey, "stale-uuid"); err != nil {
+		t.Fatalf("SetAgentMetadata: %v", err)
+	}
+
+	be, err := mgr.Get(context.Background(), base)
+	if err != nil {
+		t.Fatalf("Get should succeed after retry: %v", err)
+	}
+	if be == nil {
+		t.Fatal("Get returned nil backend")
+	}
+
+	// Should have created 2 backends: first died, second succeeded.
+	if got := int(callCount.Load()); got != 2 {
+		t.Errorf("expected 2 NewBackend calls, got %d", got)
+	}
+
+	// The stale resume ID should have been cleared.
+	if got := mgr.loadResumeID(base); got != "" {
+		t.Errorf("resume ID should be cleared after init death retry, got %q", got)
+	}
+}
+
+func TestGet_NoRetryAfterInitDeath_WithoutResumeID(t *testing.T) {
+	// Proves that when a backend dies during init but no resume ID was used,
+	// no retry is attempted (there's nothing to clear).
+	var callCount atomic.Int32
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			callCount.Add(1)
+			be := &mockBackendDM{
+				running:      false, // dead
+				waitReadyErr: context.DeadlineExceeded,
+			}
+			return be, nil
+		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test-agent",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { mgr.Close() })
+
+	// No resume ID stored — no retry should happen.
+	_, err := mgr.Get(context.Background(), "test-agent/c333")
+	if err != nil {
+		t.Fatalf("Get should not error (proceeds anyway): %v", err)
+	}
+
+	if got := int(callCount.Load()); got != 1 {
+		t.Errorf("expected 1 NewBackend call (no retry), got %d", got)
+	}
+}
+
+func TestSetBackendCallbacks(t *testing.T) {
+	// Proves that setBackendCallbacks wires up all four callback types on a
+	// backend, avoiding the duplication that previously existed across retry
+	// paths.
+	var replyKey, replyText string
+	var typingKey string
+	var typingState bool
+
+	mgr := &DelegatedManager{
+		AgentID: "test-agent",
+		SendFunc: func(sk, text string) {
+			replyKey = sk
+			replyText = text
+		},
+		TypingFunc: func(sk string, typing bool) {
+			typingKey = sk
+			typingState = typing
+		},
+	}
+
+	be := &mockBackendDM{running: true}
+	mgr.setBackendCallbacks(be, "test-agent/c1", "test-agent/c1")
+
+	be.mu.Lock()
+	rf := be.replyFunc
+	tf := be.typingFunc
+	osr := be.onSessionReady
+	opc := be.onPermCleared
+	be.mu.Unlock()
+
+	if rf == nil {
+		t.Fatal("replyFunc not set")
+	}
+	rf("hi")
+	if replyKey != "test-agent/c1" || replyText != "hi" {
+		t.Errorf("replyFunc routed to key=%q text=%q", replyKey, replyText)
+	}
+
+	if tf == nil {
+		t.Fatal("typingFunc not set")
+	}
+	tf(true)
+	if typingKey != "test-agent/c1" || !typingState {
+		t.Errorf("typingFunc routed to key=%q state=%v", typingKey, typingState)
+	}
+
+	if osr == nil {
+		t.Fatal("onSessionReady not set")
+	}
+
+	if opc == nil {
+		t.Fatal("onPermCleared not set")
+	}
+}
+
 // contains is a test helper that checks if a string contains a substring.
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && searchString(s, sub)
