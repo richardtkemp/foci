@@ -145,6 +145,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
 
+	component := "ccstream"
+	if opts.Label != "" {
+		component = "ccstream:" + opts.Label
+	}
+	log.Infof(component, "launching: claude %s (workdir=%s)", strings.Join(args, " "), opts.WorkDir)
+
 	// Create command with cancellable context.
 	cmdCtx, cmdCancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(cmdCtx, "claude", args...)

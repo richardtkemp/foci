@@ -163,56 +163,19 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 
 	// Set the reply and permission prompt functions before starting.
 	sk := sessionKey
-	if m.SendFunc != nil {
-		be.SetReplyFunc(func(text string) {
-			m.SendFunc(sk, text)
-		})
-	}
-	if m.PermissionPromptFunc != nil {
-		be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
-			m.SetPermissionPending(sk, true)
-			m.PermissionPromptFunc(sk, requestID, text, summary, choices)
-		})
-	}
-	be.SetOnPermissionCleared(func() {
-		m.SetPermissionPending(sk, false)
-	})
-	if m.TypingFunc != nil {
-		be.SetTypingFunc(func(typing bool) {
-			m.TypingFunc(sk, typing)
-		})
-	}
-	be.SetOnSessionReady(func(sessionID string) {
-		m.saveResumeID(base, sessionID)
-	})
+	m.setBackendCallbacks(be, sk, base)
 
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
 		if resumeID != "" {
 			log.Warnf("delegated", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, base, err)
 			_ = be.Close()
-			be, err = m.NewBackend()
+			be, err = m.newBackendWithCallbacks(sk, base)
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
 				}
 				return nil, fmt.Errorf("create delegated backend for %s (retry): %w", base, err)
-			}
-			// Re-set reply functions on the new instance.
-			if m.SendFunc != nil {
-				be.SetReplyFunc(func(text string) { m.SendFunc(sk, text) })
-			}
-			if m.PermissionPromptFunc != nil {
-				be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
-					m.SetPermissionPending(sk, true)
-					m.PermissionPromptFunc(sk, requestID, text, summary, choices)
-				})
-			}
-			be.SetOnPermissionCleared(func() {
-				m.SetPermissionPending(sk, false)
-			})
-			if m.TypingFunc != nil {
-				be.SetTypingFunc(func(typing bool) { m.TypingFunc(sk, typing) })
 			}
 			opts.ResumeSessionID = ""
 			if err := be.Start(ctx, opts); err != nil {
@@ -257,7 +220,45 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 	readyCtx, readyCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer readyCancel()
 	if err := be.WaitReady(readyCtx); err != nil {
-		log.Warnf("delegated", "WaitReady for %s: %v (proceeding anyway)", base, err)
+		log.Warnf("delegated", "WaitReady for %s: %v", base, err)
+
+		// If the process is already dead, a stale --resume UUID may have
+		// caused CC to exit silently. Clear the resume ID and retry fresh.
+		if !be.IsRunning() && resumeID != "" {
+			log.Warnf("delegated", "backend for %s died during init with --resume %s — retrying without resume", base, resumeID)
+			_ = be.Close()
+			m.clearResumeID(base)
+
+			be, err = m.newBackendWithCallbacks(sk, base)
+			if err != nil {
+				if bridge != nil {
+					bridge.Close()
+				}
+				return nil, fmt.Errorf("create delegated backend for %s (retry after init death): %w", base, err)
+			}
+			opts.ResumeSessionID = ""
+			if err := be.Start(ctx, opts); err != nil {
+				if bridge != nil {
+					bridge.Close()
+				}
+				return nil, fmt.Errorf("start delegated backend for %s (retry after init death): %w", base, err)
+			}
+
+			m.mu.Lock()
+			m.backends[base] = &managedBackend{
+				be:         be,
+				bridge:     bridge,
+				lastActive: time.Now(),
+				sessionKey: sessionKey,
+			}
+			m.mu.Unlock()
+
+			readyCtx2, readyCancel2 := context.WithTimeout(ctx, 60*time.Second)
+			defer readyCancel2()
+			if err := be.WaitReady(readyCtx2); err != nil {
+				log.Warnf("delegated", "WaitReady for %s (retry): %v (proceeding anyway)", base, err)
+			}
+		}
 	}
 
 	return be, nil
@@ -424,6 +425,43 @@ func (m *DelegatedManager) Count() int {
 	return len(m.backends)
 }
 
+// setBackendCallbacks wires up reply, permission, typing, and session-ready
+// callbacks on a backend. Must be called before Start.
+func (m *DelegatedManager) setBackendCallbacks(be delegator.Delegator, sk, base string) {
+	if m.SendFunc != nil {
+		be.SetReplyFunc(func(text string) {
+			m.SendFunc(sk, text)
+		})
+	}
+	if m.PermissionPromptFunc != nil {
+		be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
+			m.SetPermissionPending(sk, true)
+			m.PermissionPromptFunc(sk, requestID, text, summary, choices)
+		})
+	}
+	be.SetOnPermissionCleared(func() {
+		m.SetPermissionPending(sk, false)
+	})
+	if m.TypingFunc != nil {
+		be.SetTypingFunc(func(typing bool) {
+			m.TypingFunc(sk, typing)
+		})
+	}
+	be.SetOnSessionReady(func(sessionID string) {
+		m.saveResumeID(base, sessionID)
+	})
+}
+
+// newBackendWithCallbacks creates a fresh backend and wires callbacks.
+func (m *DelegatedManager) newBackendWithCallbacks(sk, base string) (delegator.Delegator, error) {
+	be, err := m.NewBackend()
+	if err != nil {
+		return nil, err
+	}
+	m.setBackendCallbacks(be, sk, base)
+	return be, nil
+}
+
 // stateKey returns the agent_metadata key for a CC session UUID.
 func (m *DelegatedManager) stateKey(base string) string {
 	return "cc_session:" + base
@@ -436,6 +474,16 @@ func (m *DelegatedManager) saveResumeID(base, sessionID string) {
 	}
 	if err := m.SessionIndex.SetAgentMetadata(m.AgentID, m.stateKey(base), sessionID); err != nil {
 		log.Warnf("delegated", "save resume ID for %s: %v", base, err)
+	}
+}
+
+// clearResumeID removes a saved CC session UUID from state.db.
+func (m *DelegatedManager) clearResumeID(base string) {
+	if m.SessionIndex == nil {
+		return
+	}
+	if err := m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base)); err != nil {
+		log.Warnf("delegated", "clear resume ID for %s: %v", base, err)
 	}
 }
 
