@@ -5,11 +5,11 @@ import (
 
 	"foci/internal/config"
 	"foci/internal/log"
-	"foci/internal/provider"
+	"foci/internal/mana"
 )
 
-// Compile-time verification that usageClientRegistry implements provider.UsageClientProvider
-var _ provider.UsageClientProvider = (*usageClientRegistry)(nil)
+// Compile-time verification that usageClientRegistry implements mana.UsageClientProvider
+var _ mana.UsageClientProvider = (*usageClientRegistry)(nil)
 
 // usageClientRegistry lazily creates UsageClient instances per API key.
 // Key format: "format:api_key_secret_name"
@@ -21,7 +21,7 @@ type usageClientRegistry struct {
 }
 
 type usageClientEntry struct {
-	client provider.UsageClient
+	client mana.UsageClient
 	once   sync.Once
 }
 
@@ -35,7 +35,7 @@ func newUsageClientRegistry(cfg *config.Config) *usageClientRegistry {
 
 // GetUsageClient returns a UsageClient for the given endpoint, or nil if unavailable.
 // Creates and caches by format:api_key pair.
-func (r *usageClientRegistry) GetUsageClient(endpointName string) provider.UsageClient {
+func (r *usageClientRegistry) GetUsageClient(endpointName string) mana.UsageClient {
 	if endpointName == "" {
 		return nil
 	}

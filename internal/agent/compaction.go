@@ -94,16 +94,14 @@ func (a *Agent) maybeCompact(ctx context.Context, sessionKey string, messages []
 		usageClient := a.SessionUsageClient(sessionKey)
 		if usageClient != nil {
 			manaRefreshThreshold := parseDurationFallback(a.AutocompactBeforeManaRefreshThreshold, 5*time.Minute)
-			if usageResp, err := usageClient.GetUsage(ctx); err == nil && usageResp.FiveHour != nil && usageResp.FiveHour.ResetsAt != nil {
-				if manaResetsAt, parseErr := time.Parse(time.RFC3339Nano, *usageResp.FiveHour.ResetsAt); parseErr == nil {
-					if compaction.ManaResetImminent(manaResetsAt, manaRefreshThreshold) {
-						secondaryThreshold := int(float64(ctxLimit) * a.Compactor.Threshold() * a.AutocompactBeforeManaRefreshFactor)
-						if totalTokens > secondaryThreshold {
-							isManaRefresh = true
-							untilReset := time.Until(manaResetsAt).Round(time.Minute)
-							a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens)",
-								sessionKey, untilReset, totalTokens, ctxLimit)
-						}
+			if w, err := usageClient.GetUsage(ctx); err == nil && w != nil && !w.ResetsAt.IsZero() {
+				if compaction.ManaResetImminent(w.ResetsAt, manaRefreshThreshold) {
+					secondaryThreshold := int(float64(ctxLimit) * a.Compactor.Threshold() * a.AutocompactBeforeManaRefreshFactor)
+					if totalTokens > secondaryThreshold {
+						isManaRefresh = true
+						untilReset := time.Until(w.ResetsAt).Round(time.Minute)
+						a.logger().Infof("session=%s mana-refresh compaction (reset in %s, %d/%d tokens)",
+							sessionKey, untilReset, totalTokens, ctxLimit)
 					}
 				}
 			}

@@ -12,15 +12,20 @@ import (
 	"time"
 )
 
+// usageTestResponse is the server-side JSON shape for tests (matches the API contract).
+type usageTestResponse struct {
+	FiveHour   *usageAPIWindow `json:"five_hour,omitempty"`
+	SevenDay   *usageAPIWindow `json:"seven_day,omitempty"`
+	ExtraUsage *usageAPIExtra  `json:"extra_usage,omitempty"`
+}
+
 func TestGetUsageSuccess(t *testing.T) {
-	// Proves that GetUsage sends a request to the correct path with the OAuth Bearer token and anthropic-beta header, and correctly deserializes the utilization value from the response.
+	// Proves that GetUsage sends a request to the correct path with the OAuth Bearer token and anthropic-beta header, and correctly maps the utilization from 0-100 to 0-1.
 	util := 55.0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify path
 		if r.URL.Path != "/api/oauth/usage" {
 			t.Errorf("path = %q, want /api/oauth/usage", r.URL.Path)
 		}
-		// Verify headers
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-oauth-token" {
 			t.Errorf("Authorization = %q", auth)
 		}
@@ -29,14 +34,14 @@ func TestGetUsageSuccess(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("test-oauth-token"),
+		tokenFunc:  StaticToken("test-oauth-token"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   defaultCacheTTL,
@@ -46,11 +51,18 @@ func TestGetUsageSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUsage: %v", err)
 	}
-	if resp.FiveHour == nil {
-		t.Fatal("FiveHour is nil")
+	if resp == nil {
+		t.Fatal("response is nil")
 	}
-	if *resp.FiveHour.Utilization != 55.0 {
-		t.Errorf("utilization = %f, want 55.0", *resp.FiveHour.Utilization)
+	if resp.Utilization == nil {
+		t.Fatal("Utilization is nil")
+	}
+	// API returns 55.0 (0-100); interface should return 0.55 (0-1)
+	if got := *resp.Utilization; got != 0.55 {
+		t.Errorf("utilization = %f, want 0.55", got)
+	}
+	if resp.Period != 5*time.Hour {
+		t.Errorf("period = %v, want 5h", resp.Period)
 	}
 }
 
@@ -81,7 +93,7 @@ func TestGetUsageAPIError(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("bad-token"),
+		tokenFunc:  StaticToken("bad-token"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   defaultCacheTTL,
@@ -103,14 +115,14 @@ func TestGetUsageCacheHit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("tok"),
+		tokenFunc:  StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -121,8 +133,8 @@ func TestGetUsageCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	if *resp.FiveHour.Utilization != 55.0 {
-		t.Fatalf("first call util = %f", *resp.FiveHour.Utilization)
+	if got := *resp.Utilization; got != 0.55 {
+		t.Fatalf("first call util = %f, want 0.55", got)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("first call: server hit count = %d, want 1", calls.Load())
@@ -148,14 +160,14 @@ func TestGetUsageCacheExpiry(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("tok"),
+		tokenFunc:  StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   1 * time.Millisecond,
@@ -190,14 +202,14 @@ func TestInvalidateForcesFetch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("tok"),
+		tokenFunc:  StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -231,7 +243,7 @@ func TestErrorBackoff(t *testing.T) {
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("tok"),
+		tokenFunc:  StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   100 * time.Millisecond, // short for testing
@@ -285,14 +297,14 @@ func TestErrorBackoffResetsOnSuccess(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("tok"),
+		tokenFunc:  StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   1 * time.Millisecond,
@@ -312,7 +324,7 @@ func TestErrorBackoffResetsOnSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("after recovery: %v", err)
 	}
-	if resp.FiveHour == nil || *resp.FiveHour.Utilization != 55.0 {
+	if resp == nil || resp.Utilization == nil || *resp.Utilization != 0.55 {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 
@@ -339,14 +351,14 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
 
 	client := &UsageClient{
-		tokenFunc: StaticToken("tok"),
+		tokenFunc:  StaticToken("tok"),
 		httpClient: http.DefaultClient,
 		baseURL:    server.URL,
 		cacheTTL:   5 * time.Minute,
@@ -372,7 +384,7 @@ func TestInvalidateClearsErrorBackoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("after invalidate: %v", err)
 	}
-	if resp.FiveHour == nil || *resp.FiveHour.Utilization != 55.0 {
+	if resp == nil || resp.Utilization == nil || *resp.Utilization != 0.55 {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	if calls.Load() != 2 {
@@ -397,17 +409,15 @@ func TestSetCacheTTL(t *testing.T) {
 
 func TestTokenErrorSkipsBackoff(t *testing.T) {
 	// Proves that token resolution errors don't trigger error backoff, so a
-	// refreshed token is picked up on the very next call. This prevents the
-	// bug where an expired CC token causes a 5-minute backoff window during
-	// which the refreshed token is never read.
+	// refreshed token is picked up on the very next call.
 	tokenErr := true
 	var calls atomic.Int32
 	util := 42.0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageTestResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
@@ -448,7 +458,8 @@ func TestTokenErrorSkipsBackoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("after token refresh: %v", err)
 	}
-	if resp.FiveHour == nil || *resp.FiveHour.Utilization != 42.0 {
+	// API returns 42.0 (0-100); interface should return 0.42 (0-1)
+	if resp == nil || resp.Utilization == nil || *resp.Utilization != 0.42 {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	if calls.Load() != 1 {
@@ -489,5 +500,49 @@ func TestAPIErrorStillGetsBackoff(t *testing.T) {
 	_, _ = client.GetUsage(context.Background())
 	if calls.Load() != 1 {
 		t.Fatalf("during backoff: server hits = %d, want 1 (backoff should suppress)", calls.Load())
+	}
+}
+
+func TestMapUsageResponseExtraInfo(t *testing.T) {
+	// Proves that mapUsageResponse formats ExtraInfo from overage and 7-day window data.
+	util5h := 40.0
+	reset := "2026-04-04T20:00:00Z"
+	util7d := 12.0
+	raw := &usageAPIResponse{
+		FiveHour: &usageAPIWindow{Utilization: &util5h, ResetsAt: &reset},
+		SevenDay: &usageAPIWindow{Utilization: &util7d},
+		ExtraUsage: &usageAPIExtra{
+			IsEnabled:    true,
+			MonthlyLimit: 10.0,
+			UsedCredits:  2.40,
+		},
+	}
+
+	w := mapUsageResponse(raw)
+	if w.Utilization == nil || *w.Utilization != 0.40 {
+		t.Errorf("utilization = %v, want 0.40", w.Utilization)
+	}
+	if w.ResetsAt.IsZero() {
+		t.Error("ResetsAt is zero")
+	}
+	if !strings.Contains(w.ExtraInfo, "Overage: $2.40 / $10.00") {
+		t.Errorf("ExtraInfo missing overage: %q", w.ExtraInfo)
+	}
+	if !strings.Contains(w.ExtraInfo, "7-day: 12%") {
+		t.Errorf("ExtraInfo missing 7-day: %q", w.ExtraInfo)
+	}
+}
+
+func TestMapUsageResponseNilFiveHour(t *testing.T) {
+	// Proves that mapUsageResponse returns a valid window even when the 5-hour data is nil.
+	w := mapUsageResponse(&usageAPIResponse{})
+	if w == nil {
+		t.Fatal("expected non-nil window")
+	}
+	if w.Utilization != nil {
+		t.Errorf("expected nil utilization, got %v", *w.Utilization)
+	}
+	if w.Period != 5*time.Hour {
+		t.Errorf("period = %v, want 5h", w.Period)
 	}
 }

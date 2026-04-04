@@ -128,8 +128,8 @@ func TestUsageClientWithFunc(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		util := 30.0
-		json.NewEncoder(w).Encode(UsageResponse{
-			FiveHour: &UsageWindow{Utilization: &util},
+		json.NewEncoder(w).Encode(usageAPIResponse{
+			FiveHour: &usageAPIWindow{Utilization: &util},
 		})
 	}))
 	defer server.Close()
@@ -143,7 +143,7 @@ func TestUsageClientWithFunc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUsage: %v", err)
 	}
-	if resp.FiveHour == nil {
-		t.Fatal("FiveHour is nil")
+	if resp == nil || resp.Utilization == nil {
+		t.Fatal("Utilization is nil")
 	}
 }

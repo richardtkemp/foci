@@ -18,9 +18,6 @@ type (
 	Usage          = provider.Usage
 	MessageResponse = provider.MessageResponse
 	APIError       = provider.APIError
-	UsageWindow    = provider.UsageWindow
-	ExtraUsage     = provider.ExtraUsage
-	UsageResponse  = provider.UsageResponse
 	ModelInfo      = provider.ModelInfo
 )
 

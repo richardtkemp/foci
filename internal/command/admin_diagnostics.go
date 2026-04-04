@@ -167,17 +167,20 @@ func manaCheck(ctx context.Context, _ Request, cc CommandContext, manaName strin
 	}
 
 	usageClient.Invalidate()
-	usage, err := usageClient.GetUsage(ctx)
+	w, err := usageClient.GetUsage(ctx)
 	if err != nil {
 		return fmt.Sprintf("%s Error fetching %s: %v", emoji, displayName, err)
 	}
-	percent := mana.FormatPercent(usage)
+	percent := mana.FormatPercent(w)
 	if percent == "" {
 		return fmt.Sprintf("%s %s: unknown", emoji, displayName)
 	}
 	result := fmt.Sprintf("%s %s: %s remaining", emoji, displayName, percent)
-	if reset := mana.FormatReset(usage); reset != "" {
+	if reset := mana.FormatReset(w); reset != "" {
 		result += fmt.Sprintf(" (resets %s)", reset)
+	}
+	if w != nil && w.ExtraInfo != "" {
+		result += "\n" + w.ExtraInfo
 	}
 	return result
 }

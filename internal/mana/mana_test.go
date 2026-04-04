@@ -2,16 +2,20 @@ package mana
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"foci/internal/anthropic"
-	"foci/internal/provider"
 )
+
+// mockUsageClient is a test mock implementing UsageClient.
+type mockUsageClient struct {
+	window *UsageWindow
+	err    error
+}
+
+func (m *mockUsageClient) GetUsage(_ context.Context) (*UsageWindow, error) { return m.window, m.err }
+func (m *mockUsageClient) Invalidate()                                      {}
+func (m *mockUsageClient) SetCacheTTL(time.Duration)                        {}
 
 func TestIsGood_InCredit(t *testing.T) {
 	now := time.Now()
@@ -127,15 +131,16 @@ func TestWindow(t *testing.T) {
 }
 
 func TestFromUtilization(t *testing.T) {
+	// FromUtilization takes 0–1 fraction, returns mana percentage 0–100.
 	tests := []struct {
 		util float64
 		want float64
 	}{
 		{0, 100},
-		{50, 50},
-		{100, 0},
-		{110, 0},  // clamped
-		{25.5, 74.5},
+		{0.5, 50},
+		{1, 0},
+		{1.1, 0},    // clamped
+		{0.255, 74.5},
 	}
 	for _, tt := range tests {
 		got := FromUtilization(tt.util)
@@ -151,31 +156,31 @@ func TestFormatPercentNil(t *testing.T) {
 	}
 }
 
-func TestFormatPercentNoFiveHour(t *testing.T) {
-	if got := FormatPercent(&provider.UsageResponse{}); got != "" {
+func TestFormatPercentNoUtilization(t *testing.T) {
+	// Window with nil utilization.
+	if got := FormatPercent(&UsageWindow{}); got != "" {
 		t.Errorf("FormatPercent(empty) = %q, want empty", got)
 	}
 }
 
 func TestFormatPercentValues(t *testing.T) {
+	// Utilization is 0–1 fraction.
 	tests := []struct {
 		util float64
 		want string
 	}{
 		{0, "100%"},
-		{25, "75%"},
-		{50, "50%"},
-		{99.5, "0.5%"},
-		{100, "0.0%"},
-		{110, "0.0%"}, // clamped to 0
+		{0.25, "75%"},
+		{0.5, "50%"},
+		{0.995, "0.5%"},
+		{1, "0.0%"},
+		{1.1, "0.0%"}, // clamped to 0
 	}
 	for _, tt := range tests {
 		util := tt.util
-		got := FormatPercent(&provider.UsageResponse{
-			FiveHour: &provider.UsageWindow{Utilization: &util},
-		})
+		got := FormatPercent(&UsageWindow{Utilization: &util})
 		if got != tt.want {
-			t.Errorf("FormatPercent(util=%.1f) = %q, want %q", tt.util, got, tt.want)
+			t.Errorf("FormatPercent(util=%.3f) = %q, want %q", tt.util, got, tt.want)
 		}
 	}
 }
@@ -186,56 +191,32 @@ func TestFormatResetNil(t *testing.T) {
 	}
 }
 
-func TestFormatResetNoFiveHour(t *testing.T) {
-	if got := FormatReset(&provider.UsageResponse{}); got != "" {
-		t.Errorf("FormatReset(empty) = %q, want empty", got)
-	}
-}
-
-func TestFormatResetNoResetsAt(t *testing.T) {
-	util := 50.0
-	if got := FormatReset(&provider.UsageResponse{FiveHour: &provider.UsageWindow{Utilization: &util}}); got != "" {
-		t.Errorf("FormatReset(no ResetsAt) = %q, want empty", got)
+func TestFormatResetZeroTime(t *testing.T) {
+	// Window with zero ResetsAt.
+	if got := FormatReset(&UsageWindow{}); got != "" {
+		t.Errorf("FormatReset(zero) = %q, want empty", got)
 	}
 }
 
 func TestFormatResetWithTime(t *testing.T) {
-	util := 50.0
-	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
-	got := FormatReset(&provider.UsageResponse{
-		FiveHour: &provider.UsageWindow{
-			Utilization: &util,
-			ResetsAt:    &future,
-		},
-	})
+	future := time.Now().Add(2 * time.Hour).UTC()
+	got := FormatReset(&UsageWindow{ResetsAt: future})
 	if !strings.HasPrefix(got, "in ") || !strings.Contains(got, "h") {
 		t.Errorf("FormatReset(2h) = %q, want 'in Xh' or 'in Xh Ym'", got)
 	}
 }
 
 func TestFormatResetPast(t *testing.T) {
-	util := 50.0
-	past := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339Nano)
-	got := FormatReset(&provider.UsageResponse{
-		FiveHour: &provider.UsageWindow{
-			Utilization: &util,
-			ResetsAt:    &past,
-		},
-	})
+	past := time.Now().Add(-1 * time.Hour).UTC()
+	got := FormatReset(&UsageWindow{ResetsAt: past})
 	if got != "now" {
 		t.Errorf("FormatReset(past) = %q, want %q", got, "now")
 	}
 }
 
 func TestFormatResetMinutes(t *testing.T) {
-	util := 50.0
-	future := time.Now().Add(45 * time.Minute).UTC().Format(time.RFC3339Nano)
-	got := FormatReset(&provider.UsageResponse{
-		FiveHour: &provider.UsageWindow{
-			Utilization: &util,
-			ResetsAt:    &future,
-		},
-	})
+	future := time.Now().Add(45 * time.Minute).UTC()
+	got := FormatReset(&UsageWindow{ResetsAt: future})
 	if !strings.HasPrefix(got, "in ") || !strings.HasSuffix(got, "m") {
 		t.Errorf("FormatReset(45m) = %q, want 'in Xm'", got)
 	}
@@ -320,7 +301,6 @@ func TestParseResetTime_ManyHours(t *testing.T) {
 	}
 }
 
-
 func TestIsGood_NegativeInvestInterval(t *testing.T) {
 	now := time.Now()
 	resetsAt := now.Add(2 * time.Hour)
@@ -346,16 +326,17 @@ func TestIsGood_ZeroMana(t *testing.T) {
 }
 
 func TestFromUtilization_EdgeCases(t *testing.T) {
+	// Input is 0–1 fraction.
 	tests := []struct {
 		name string
 		util float64
 		want float64
 	}{
-		{"negative", -10, 110},
-		{"large_negative", -100, 200},
-		{"exactly_100", 100, 0},
-		{"way_over", 200, -100},
-		{"fractional", 33.33, 66.67},
+		{"negative", -0.1, 110},
+		{"large_negative", -1, 200},
+		{"exactly_1", 1, 0},
+		{"way_over", 2, -100},
+		{"fractional", 0.3333, 66.67},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -364,8 +345,8 @@ func TestFromUtilization_EdgeCases(t *testing.T) {
 			if expected < 0 {
 				expected = 0
 			}
-			if got != expected {
-				t.Errorf("FromUtilization(%v) = %v, want %v", tt.util, got, expected)
+			if diff := got - expected; diff < -0.01 || diff > 0.01 {
+				t.Errorf("FromUtilization(%v) = %v, want ≈%v", tt.util, got, expected)
 			}
 		})
 	}
@@ -392,25 +373,23 @@ func TestParseResetTime_EarlyMorning(t *testing.T) {
 }
 
 func TestFormatPercent_EdgeCasesNearZero(t *testing.T) {
+	// Utilization is 0–1 fraction.
 	tests := []struct {
 		util float64
 		want string
 	}{
-		{99.9, "0.1%"},
-		{99.95, "0.0%"},
-		{99.99, "0.0%"},
+		{0.999, "0.1%"},
+		{0.9995, "0.0%"},
+		{0.9999, "0.0%"},
 	}
 	for _, tt := range tests {
 		util := tt.util
-		got := FormatPercent(&provider.UsageResponse{
-			FiveHour: &provider.UsageWindow{Utilization: &util},
-		})
+		got := FormatPercent(&UsageWindow{Utilization: &util})
 		if got != tt.want {
-			t.Errorf("FormatPercent(%.2f) = %q, want %q", tt.util, got, tt.want)
+			t.Errorf("FormatPercent(%.4f) = %q, want %q", tt.util, got, tt.want)
 		}
 	}
 }
-
 
 func TestIsGood_ZeroInvestInterval(t *testing.T) {
 	now := time.Now()
@@ -504,40 +483,35 @@ func TestIsGood_ExtremeValues(t *testing.T) {
 }
 
 func TestFromUtilization_RoundingEdges(t *testing.T) {
+	// Input is 0–1 fraction.
 	tests := []struct {
 		util     float64
 		expected float64
 	}{
-		{0.5, 99.5},
-		{49.9999, 50.0001},
-		{50.5, 49.5},
-		{99.9999, 0.0001},
+		{0.005, 99.5},
+		{0.499999, 50.0001},
+		{0.505, 49.5},
+		{0.999999, 0.0001},
 	}
 	for _, tt := range tests {
 		got := FromUtilization(tt.util)
 		if diff := got - tt.expected; diff < -0.001 || diff > 0.001 {
-			t.Errorf("FromUtilization(%.4f) = %.4f, want ≈ %.4f", tt.util, got, tt.expected)
+			t.Errorf("FromUtilization(%.6f) = %.4f, want ≈ %.4f", tt.util, got, tt.expected)
 		}
 	}
 }
 
-// TestMonitor_IsGoodFor_WithServer tests the full flow with a test HTTP server.
-func TestMonitor_IsGoodFor_WithServer(t *testing.T) {
-	util := 70.0 // 30% mana
-	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(provider.UsageResponse{
-			FiveHour: &provider.UsageWindow{
-				Utilization: &util,
-				ResetsAt:    &future,
-			},
-		})
-	}))
-	defer server.Close()
-
-	client := anthropic.NewUsageClient(anthropic.StaticToken("test-token"))
-	client.SetBaseURL(server.URL)
+func TestMonitor_IsGoodFor_WithMock(t *testing.T) {
+	// Uses a mock client that returns 70% utilization (30% mana), 2h until reset.
+	util := 0.70 // 30% mana
+	future := time.Now().Add(2 * time.Hour).UTC()
+	client := &mockUsageClient{
+		window: &UsageWindow{
+			Utilization: &util,
+			ResetsAt:    future,
+			Period:      5 * time.Hour,
+		},
+	}
 
 	m := NewMonitor(client)
 
@@ -548,32 +522,25 @@ func TestMonitor_IsGoodFor_WithServer(t *testing.T) {
 	}
 }
 
-// TestManaAndReset tests the ManaAndReset function.
 func TestManaAndReset(t *testing.T) {
-	// Nil client returns empty
+	// Nil client returns empty.
 	pct, reset, good := ManaAndReset(nil, 30*time.Minute)
 	if pct != "" || reset != "" || good {
 		t.Errorf("ManaAndReset(nil) = (%q, %q, %v), want empty", pct, reset, good)
 	}
 }
 
-// TestManaAndReset_WithServer tests ManaAndReset with a test server.
-func TestManaAndReset_WithServer(t *testing.T) {
-	util := 25.0 // 75% mana
-	future := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339Nano)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(provider.UsageResponse{
-			FiveHour: &provider.UsageWindow{
-				Utilization: &util,
-				ResetsAt:    &future,
-			},
-		})
-	}))
-	defer server.Close()
-
-	client := anthropic.NewUsageClient(anthropic.StaticToken("test-token"))
-	client.SetBaseURL(server.URL)
+func TestManaAndReset_WithMock(t *testing.T) {
+	// 25% utilization → 75% mana, 2h until reset.
+	util := 0.25
+	future := time.Now().Add(2 * time.Hour).UTC()
+	client := &mockUsageClient{
+		window: &UsageWindow{
+			Utilization: &util,
+			ResetsAt:    future,
+			Period:      5 * time.Hour,
+		},
+	}
 
 	pct, reset, _ := ManaAndReset(client, 30*time.Minute)
 	if pct != "75%" {
@@ -583,4 +550,3 @@ func TestManaAndReset_WithServer(t *testing.T) {
 		t.Errorf("reset = %q, want 'in ...'", reset)
 	}
 }
-

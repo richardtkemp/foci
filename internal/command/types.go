@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/agent"
 	"foci/internal/config"
+	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/modelinfo"
 	"foci/internal/platform"
@@ -139,7 +140,7 @@ type CommandContext struct {
 	IsSecondaryBot bool   // true for facet/secondary bots
 
 	// Usage client provider (for mana command)
-	UsageClientProvider provider.UsageClientProvider
+	UsageClientProvider mana.UsageClientProvider
 
 	// Resolved holds the pre-merged agent+global config. Prefer reading
 	// from here instead of calling config.Merge() at runtime.

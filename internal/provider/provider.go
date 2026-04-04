@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"foci/internal/mana"
 )
 
 // Client is the interface that all LLM providers implement.
@@ -82,7 +84,7 @@ type CredentialResolver interface {
 
 	// ResolveUsageClient returns a configured UsageClient for the given endpoint,
 	// or nil if usage tracking is not supported or credentials are unavailable.
-	ResolveUsageClient(endpointName, apiKeyName string) (UsageClient, error)
+	ResolveUsageClient(endpointName, apiKeyName string) (mana.UsageClient, error)
 
 	// GetReloadFunc returns a function that reloads credentials from disk,
 	// or nil if hot-reload is not supported.
@@ -105,16 +107,9 @@ type ClientProvider interface {
 	ResolveEndpointClient(endpoint, format string) Client
 }
 
-// UsageClientProvider provides access to usage tracking clients for different endpoints.
-type UsageClientProvider interface {
-	// GetUsageClient returns the usage client for the given endpoint.
-	// Returns nil if usage tracking is not available for this endpoint.
-	GetUsageClient(endpoint string) UsageClient
-}
-
 // CombinedClientProvider combines both client and usage client provision.
 // Implementations can satisfy both interfaces.
 type CombinedClientProvider interface {
 	ClientProvider
-	UsageClientProvider
+	mana.UsageClientProvider
 }

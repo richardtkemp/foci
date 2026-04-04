@@ -13,6 +13,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/mana"
 	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -40,7 +41,7 @@ type cmdRegParams struct {
 	sessionIndex        *session.SessionIndex
 	client              provider.Client
 	clientProvider      provider.ClientProvider
-	usageClientProvider provider.UsageClientProvider
+	usageClientProvider mana.UsageClientProvider
 	store               *secrets.Store
 	bwStore             *bitwarden.Store
 	startTime           time.Time

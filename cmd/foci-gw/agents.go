@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/delegator"
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/mana"
 	mcpkg "foci/internal/mcp"
 	"foci/internal/memory"
 	"foci/internal/periodic"
@@ -53,7 +54,7 @@ type setupParams struct {
 	resolved            *config.ResolvedAgentConfig
 	configPath          string
 	clientProvider      provider.ClientProvider
-	usageClientProvider provider.UsageClientProvider
+	usageClientProvider mana.UsageClientProvider
 	sessions            *session.Store
 	store               *secrets.Store
 	bwStore             *bitwarden.Store

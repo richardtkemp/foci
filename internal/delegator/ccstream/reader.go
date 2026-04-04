@@ -21,6 +21,7 @@ type Handler interface {
 	OnControlCancelRequest(reqID string)
 	OnToolProgress(msg *ToolProgressMessage)
 	OnStreamEvent(raw json.RawMessage)
+	OnRateLimit(msg *RateLimitEvent)
 	OnSystem(subtype string, raw json.RawMessage)
 	OnError(err error)
 }
@@ -173,7 +174,12 @@ func (rd *Reader) dispatch(line []byte) {
 	case "auth_status":
 		// Authentication status, informational.
 	case "rate_limit_event":
-		// Rate limit info; api_retry (system subtype) is more actionable.
+		var msg RateLimitEvent
+		if err := json.Unmarshal(line, &msg); err != nil {
+			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal rate_limit_event: %w", err))
+			return
+		}
+		rd.handler.OnRateLimit(&msg)
 
 	default:
 		log.Debugf("ccstream", "unknown message type %q", env.Type)

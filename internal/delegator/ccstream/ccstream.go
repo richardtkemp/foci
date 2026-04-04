@@ -87,6 +87,9 @@ type Backend struct {
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
 
+	// Rate limit state (shared across all backends for an agent).
+	rateLimitState *RateLimitState
+
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.AgentTracker
 
@@ -466,6 +469,10 @@ func (b *Backend) WaitForCompaction(ctx context.Context) error {
 // SetOnAgentStatus sets a callback for agent/task lifecycle events.
 func (b *Backend) SetOnAgentStatus(fn func(string)) { b.agents.OnStatus = fn }
 
+// SetRateLimitState sets the shared rate limit state that OnRateLimit writes to.
+// Must be called before Start. The state is shared across all backends for an agent.
+func (b *Backend) SetRateLimitState(s *RateLimitState) { b.rateLimitState = s }
+
 // ---------------------------------------------------------------------------
 // State methods
 // ---------------------------------------------------------------------------
@@ -839,6 +846,13 @@ func (b *Backend) OnControlResponse(raw json.RawMessage) {
 // OnControlCancelRequest handles CC cancelling a pending control request.
 func (b *Backend) OnControlCancelRequest(reqID string) {
 	b.handleControlCancel(reqID)
+}
+
+// OnRateLimit handles rate limit events from CC's stdout.
+func (b *Backend) OnRateLimit(msg *RateLimitEvent) {
+	if b.rateLimitState != nil {
+		b.rateLimitState.Update(&msg.RateLimitInfo)
+	}
 }
 
 // OnToolProgress handles heartbeats during long-running tool execution.

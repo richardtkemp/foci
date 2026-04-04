@@ -54,6 +54,11 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Override model display name to show the backend name.
 	ag.Model = backendName
 
+	// Shared rate limit state — account-wide, not per-session. All backends
+	// under this agent write to the same state via OnRateLimit.
+	rateLimitState := &ccstream.RateLimitState{}
+	ag.UsageClient = rateLimitState // implements mana.UsageClient
+
 	// Wire DelegatedManager: lazy per-session Backend creation.
 	connMgr := p.connMgr
 	agentID := p.acfg.ID
@@ -69,7 +74,15 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
 		NewBackend: func() (delegator.Delegator, error) {
-			return delegator.New(backendName, backendConfig)
+			be, err := delegator.New(backendName, backendConfig)
+			if err != nil {
+				return nil, err
+			}
+			// Inject shared rate limit state into ccstream backends.
+			if sb, ok := be.(*ccstream.Backend); ok {
+				sb.SetRateLimitState(rateLimitState)
+			}
+			return be, nil
 		},
 		StartOpts: delegator.StartOptions{
 			WorkDir:          p.acfg.Workspace,

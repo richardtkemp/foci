@@ -393,6 +393,26 @@ type TaskEvent struct {
 	Summary     string `json:"summary,omitempty"`
 }
 
+// RateLimitEvent carries rate limit utilization from the Anthropic API,
+// emitted by CC on status transitions (allowed → allowed_warning → rejected).
+type RateLimitEvent struct {
+	Type          string        `json:"type"` // "rate_limit_event"
+	RateLimitInfo RateLimitInfo `json:"rate_limit_info"`
+}
+
+// RateLimitInfo holds the fields from CC's rate_limit_event.rate_limit_info.
+// Utilization (0–1) is only populated on allowed_warning/rejected; nil on allowed.
+type RateLimitInfo struct {
+	Status             string   `json:"status"`                         // "allowed"|"allowed_warning"|"rejected"
+	ResetsAt           *float64 `json:"resetsAt,omitempty"`             // unix epoch seconds
+	RateLimitType      string   `json:"rateLimitType,omitempty"`        // "five_hour"|"seven_day"|...
+	Utilization        *float64 `json:"utilization,omitempty"`          // 0–1 fraction; nil on "allowed"
+	OverageStatus      string   `json:"overageStatus,omitempty"`
+	OverageResetsAt    *float64 `json:"overageResetsAt,omitempty"`
+	IsUsingOverage     *bool    `json:"isUsingOverage,omitempty"`
+	SurpassedThreshold *float64 `json:"surpassedThreshold,omitempty"`
+}
+
 // StreamEvent wraps a raw Anthropic streaming event, emitted when CC is
 // started with --include-partial-messages.
 type StreamEvent struct {
