@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,8 +52,10 @@ type Backend struct {
 	cmd    *exec.Cmd
 	writer *Writer
 	cancel context.CancelFunc // cancels reader goroutine + keep-alive
-	done   chan struct{}       // closed when reader goroutine exits
-	waitCh chan error          // receives cmd.Wait() result (reaps zombie)
+	done      chan struct{} // closed when reader goroutine exits
+	waitCh    chan error   // receives cmd.Wait() result (reaps zombie)
+	exitCh    chan struct{} // closed when exitErr is set
+	exitErr   error        // set by waiter goroutine when process exits
 
 	// State
 	mu        sync.Mutex
@@ -207,8 +210,17 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// Process waiter goroutine — reaps the subprocess and logs exit status.
 	// Without this, a dead subprocess becomes a zombie until Close() is called.
 	b.waitCh = make(chan error, 1)
+	b.exitCh = make(chan struct{})
 	go func() {
 		err := cmd.Wait()
+		b.exitErr = err // store for OnError; read after exitCh is closed
+		close(b.exitCh)
+		comp := b.logComponent()
+		if err != nil {
+			log.Warnf(comp, "process exited: %s", describeExitError(err))
+		} else {
+			log.Infof(comp, "process exited cleanly (status 0)")
+		}
 		b.waitCh <- err
 	}()
 
@@ -244,11 +256,13 @@ func (b *Backend) Close() error {
 	// Wait for process exit with timeout. The waiter goroutine (launched in
 	// Start) calls cmd.Wait() and sends the result to waitCh. If the process
 	// already exited, this returns immediately.
+	component := b.logComponent()
 	select {
 	case <-b.waitCh:
 		// Process already exited (or just did).
 	case <-time.After(5 * time.Second):
 		// SIGTERM.
+		log.Warnf(component, "process did not exit after 5s, sending SIGTERM")
 		if b.cmd.Process != nil {
 			_ = b.cmd.Process.Signal(syscall.SIGTERM)
 		}
@@ -256,6 +270,7 @@ func (b *Backend) Close() error {
 		case <-b.waitCh:
 		case <-time.After(2 * time.Second):
 			// SIGKILL.
+			log.Warnf(component, "process did not exit after SIGTERM, sending SIGKILL")
 			if b.cmd.Process != nil {
 				_ = b.cmd.Process.Kill()
 			}
@@ -896,11 +911,23 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 // clean process exit (io.EOF). It marks the backend as dead and completes
 // any in-flight turn so callers don't block forever.
 func (b *Backend) OnError(err error) {
-	component := "ccstream"
-	if b.label != "" {
-		component = "ccstream:" + b.label
-	}
+	component := b.logComponent()
 	log.Warnf(component, "subprocess reader stopped: %v", err)
+
+	// Wait briefly for the waiter goroutine to set exitErr. The process is
+	// already dead (we got EOF/error on stdout), so cmd.Wait should return
+	// almost immediately. exitCh is closed before waitCh is sent to, so
+	// this doesn't steal the value that Close() needs.
+	select {
+	case <-b.exitCh:
+	case <-time.After(2 * time.Second):
+	}
+
+	exitDetail := ""
+	if b.exitErr != nil {
+		exitDetail = describeExitError(b.exitErr)
+		log.Warnf(component, "process exit detail: %s", exitDetail)
+	}
 
 	b.mu.Lock()
 	b.running = false
@@ -916,8 +943,12 @@ func (b *Backend) OnError(err error) {
 	b.turnMu.Unlock()
 
 	if handler != nil && handler.OnTurnComplete != nil {
+		msg := fmt.Sprintf("Error: CC process exited unexpectedly: %v", err)
+		if exitDetail != "" {
+			msg += " (" + exitDetail + ")"
+		}
 		handler.OnTurnComplete(&delegator.TurnResult{
-			Text: fmt.Sprintf("Error: CC process exited unexpectedly: %v", err),
+			Text: msg,
 		})
 	}
 
@@ -958,10 +989,7 @@ func (b *Backend) runKeepAlive(ctx context.Context) {
 // can contain progress info, warnings, and errors. Lines containing "error"
 // or "fatal" are logged at warn level; everything else at debug.
 func (b *Backend) captureStderr(r io.Reader) {
-	component := "ccstream"
-	if b.label != "" {
-		component = "ccstream:" + b.label
-	}
+	component := b.logComponent()
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -975,4 +1003,55 @@ func (b *Backend) captureStderr(r io.Reader) {
 			log.Debugf(component, "stderr: %s", line)
 		}
 	}
+}
+
+// logComponent returns the log component string for this backend.
+func (b *Backend) logComponent() string {
+	if b.label != "" {
+		return "ccstream:" + b.label
+	}
+	return "ccstream"
+}
+
+// describeExitError returns a human-readable description of a process exit
+// error including exit code, signal, and stderr snippet when available.
+func describeExitError(err error) string {
+	if err == nil {
+		return "exit status 0"
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return err.Error()
+	}
+
+	ps := exitErr.ProcessState
+	ws, ok := ps.Sys().(syscall.WaitStatus)
+	if !ok {
+		return fmt.Sprintf("exit code %d", exitErr.ExitCode())
+	}
+
+	var parts []string
+	if ws.Exited() {
+		parts = append(parts, fmt.Sprintf("exit code %d", ws.ExitStatus()))
+	}
+	if ws.Signaled() {
+		parts = append(parts, fmt.Sprintf("signal %s", ws.Signal()))
+		if ws.CoreDump() {
+			parts = append(parts, "core dumped")
+		}
+	}
+
+	// Include a stderr snippet if the ExitError captured any.
+	if len(exitErr.Stderr) > 0 {
+		snippet := string(exitErr.Stderr)
+		if len(snippet) > 512 {
+			snippet = snippet[:512] + "…"
+		}
+		parts = append(parts, fmt.Sprintf("stderr: %s", snippet))
+	}
+
+	if len(parts) == 0 {
+		return err.Error()
+	}
+	return strings.Join(parts, ", ")
 }
