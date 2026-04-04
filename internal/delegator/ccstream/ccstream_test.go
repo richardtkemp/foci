@@ -2297,6 +2297,83 @@ func TestWaitReady_UnblockedByInit(t *testing.T) {
 	}
 }
 
+func TestWaitReady_UnblockedByInitControlResponse(t *testing.T) {
+	// Verifies WaitReady unblocks when a control_response matching the
+	// initialize request ID is received. This is the code path for fresh
+	// sessions (no --resume) where CC responds with control_response
+	// instead of system/init.
+	t.Parallel()
+
+	b := &Backend{
+		readyCh:      make(chan struct{}),
+		pendingPerms: make(map[string]*pendingPermission),
+		initReqID:    "init-42",
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- b.WaitReady(context.Background())
+	}()
+
+	// Simulate control_response to the initialize request.
+	raw := json.RawMessage(`{
+		"type": "control_response",
+		"response": {
+			"subtype": "success",
+			"request_id": "init-42",
+			"response": {}
+		}
+	}`)
+	time.Sleep(10 * time.Millisecond)
+	b.OnControlResponse(raw)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("WaitReady: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitReady did not unblock after initialize control_response")
+	}
+
+	// initReqID should be consumed (cleared).
+	b.mu.Lock()
+	if b.initReqID != "" {
+		t.Errorf("initReqID not cleared, got %q", b.initReqID)
+	}
+	b.mu.Unlock()
+}
+
+func TestWaitReady_ControlResponseIgnoresNonInit(t *testing.T) {
+	// Verifies that a control_response with a different request ID does
+	// NOT close readyCh.
+	t.Parallel()
+
+	b := &Backend{
+		readyCh:      make(chan struct{}),
+		pendingPerms: make(map[string]*pendingPermission),
+		initReqID:    "init-42",
+	}
+
+	raw := json.RawMessage(`{
+		"type": "control_response",
+		"response": {
+			"subtype": "success",
+			"request_id": "other-99",
+			"response": {}
+		}
+	}`)
+	b.OnControlResponse(raw)
+
+	// readyCh should still be open.
+	select {
+	case <-b.readyCh:
+		t.Fatal("readyCh closed by non-matching control_response")
+	default:
+		// expected
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Close (partial — only tests state; subprocess logic needs real process)
 // ---------------------------------------------------------------------------

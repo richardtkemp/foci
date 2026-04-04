@@ -58,12 +58,13 @@ type Backend struct {
 	exitErr   error        // set by waiter goroutine when process exits
 
 	// State
-	mu        sync.Mutex
-	running   bool
-	sessionID string       // from init message
-	initMsg   *InitMessage // from init message
-	readyCh   chan struct{} // closed when init received
-	readyOnce sync.Once    // ensures readyCh closed once
+	mu           sync.Mutex
+	running      bool
+	sessionID    string       // from init message
+	initMsg      *InitMessage // from init message
+	readyCh      chan struct{} // closed when init received
+	readyOnce    sync.Once    // ensures readyCh closed once
+	initReqID    string       // request_id of the initialize control request
 
 	// Turn state
 	turnMu       sync.Mutex
@@ -151,8 +152,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}
 	log.Infof(component, "launching: claude %s (workdir=%s)", strings.Join(args, " "), opts.WorkDir)
 
-	// Create command with cancellable context.
-	cmdCtx, cmdCancel := context.WithCancel(ctx)
+	// Create command with its own cancellable context. The CC process is
+	// long-lived (surviving across turns), so it must NOT be tied to the
+	// caller's context — otherwise the process is killed when the turn
+	// context expires or is cancelled.
+	cmdCtx, cmdCancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(cmdCtx, "claude", args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = os.Environ()
@@ -231,7 +235,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	}()
 
 	// Send initialize control request with system prompt.
-	if err := b.writer.SendControl(newRequestID(), &InitializeRequest{
+	// Save the request ID so OnControlResponse can detect the response
+	// and close readyCh. For fresh sessions (no --resume), CC responds
+	// with a control_response rather than emitting system/init.
+	initReqID := newRequestID()
+	b.mu.Lock()
+	b.initReqID = initReqID
+	b.mu.Unlock()
+	if err := b.writer.SendControl(initReqID, &InitializeRequest{
 		Subtype:      "initialize",
 		SystemPrompt: opts.SystemPrompt,
 	}); err != nil {
@@ -304,6 +315,9 @@ func (b *Backend) Restart(ctx context.Context) error {
 	// Reset state for fresh start.
 	b.readyCh = make(chan struct{})
 	b.readyOnce = sync.Once{}
+	b.mu.Lock()
+	b.initReqID = ""
+	b.mu.Unlock()
 
 	b.permMu.Lock()
 	b.pendingPerms = make(map[string]*pendingPermission)
@@ -840,6 +854,11 @@ func (b *Backend) OnPermissionRequest(msg *PermissionRequest) {
 
 // OnControlResponse handles responses to our control requests (e.g. initialize,
 // get_context_usage). Routes to pending waiters by request_id.
+//
+// For fresh sessions (no --resume), CC responds to the initialize control
+// request with a control_response rather than emitting a system/init message.
+// When we detect the initialize response, we close readyCh so WaitReady
+// unblocks.
 func (b *Backend) OnControlResponse(raw json.RawMessage) {
 	var env controlResponseInbound
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -850,6 +869,18 @@ func (b *Backend) OnControlResponse(raw json.RawMessage) {
 	if reqID == "" {
 		return
 	}
+
+	// Check if this is the response to our initialize request.
+	b.mu.Lock()
+	isInit := b.initReqID != "" && reqID == b.initReqID
+	if isInit {
+		b.initReqID = "" // consume — only match once
+	}
+	b.mu.Unlock()
+	if isInit {
+		b.readyOnce.Do(func() { close(b.readyCh) })
+	}
+
 	b.pendingControlMu.Lock()
 	ch, ok := b.pendingControls[reqID]
 	if ok {
