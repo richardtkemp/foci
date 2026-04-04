@@ -232,18 +232,21 @@ func TestBrowserStaleRef(t *testing.T) {
 		t.Fatalf("snapshot: %v", err)
 	}
 
-	// Try to use the old ref — should fail or return error
+	// Use the old ref after a new snapshot. The browser tool resolves refs
+	// by re-querying the DOM, not by validating the generation number. On a
+	// static page the element is still connected, so the click succeeds.
 	params, _ = json.Marshal(map[string]any{"action": "click", "ref": ref})
 	result, err = tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("click with stale ref: %v", err)
 	}
 
-	// The result should contain an error about the stale ref
-	if !strings.Contains(result.Text, "Error") {
-		t.Logf("result: %s", result.Text)
-		// Not necessarily an error if the element is still connected
-		// and the generation hasn't changed. This is OK.
+	// Either the click succeeded (element still connected) or an error was
+	// returned in the result text (element gone / ref invalid). Both are
+	// acceptable — the key invariant is that the tool produces a non-empty
+	// response rather than silently doing nothing.
+	if result.Text == "" {
+		t.Error("expected non-empty result for click with stale ref")
 	}
 }
 
