@@ -1,4 +1,4 @@
-package claudecode
+package cctmux
 
 import (
 	"context"
@@ -613,7 +613,7 @@ func TestPermissionPipeline_EndToEnd(t *testing.T) {
 		"Previous output...",
 		"───────────────────────────────",
 		"Edit file",
-		" internal/backend/claudecode/lifecycle.go",
+		" internal/backend/cctmux/lifecycle.go",
 		"╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
 		"-old line",
 		"+new line",
