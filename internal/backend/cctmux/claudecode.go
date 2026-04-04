@@ -1,8 +1,8 @@
-// Package claudecode implements the backend.Backend interface using
+// Package cctmux implements the backend.Backend interface using
 // Claude Code running as an interactive process in a tmux pane.
 // Input is sent via tmux send-keys; output is read by tailing
 // Claude Code's session JSONL file.
-package claudecode
+package cctmux
 
 import (
 	"context"

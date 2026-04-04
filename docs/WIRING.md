@@ -170,7 +170,7 @@ main
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
  ├── backend       (no deps — Backend interface, registry, StartOptions, EventHandler)
- │   ├── backend/claudecode → backend, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
+ │   ├── backend/cctmux     → backend, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
  │   └── backend/ccstream   → backend, log (stream-json Claude Code; registers "claude-code" via init())
  ├── agent         → backend, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
@@ -316,7 +316,7 @@ When `steer_mode` is enabled and a turn is active, user messages are buffered as
 - **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. The `SteerCheckFunc` on `TurnCallbacks` returns buffered steers from the platform's `MessageQueue`.
 - **Delegated transport:** Steer messages are drained via `checkAndSendSteers()` on the ccstream backend at tool execution boundaries (after `tool_use` blocks in `OnAssistant`, and during `OnToolProgress` heartbeats). Each steer is sent as a `SendUserWithPriority(text, PriorityNow)` message — "now" priority interrupts the current tool execution. The `SteerCheckFunc` is wired from `TurnCallbacks` onto the `EventHandler` at `RunInference` time.
 
-### Backend Watcher — tmux (`internal/backend/claudecode/watcher.go`)
+### Backend Watcher — tmux (`internal/backend/cctmux/watcher.go`)
 
 The tmux backend's session watcher tails Claude Code's JSONL session file via fsnotify. It converts raw JSONL events into structured callbacks (assistant text, turn completion, usage, agent status). For the stream-json backend (ccstream), see the [ccstream Backend](#ccstream-backend-internalbackendccstream) section below — it receives these events directly on stdout rather than from a file watcher.
 
