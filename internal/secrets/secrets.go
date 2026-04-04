@@ -89,7 +89,7 @@ func Load(path string) (*Store, error) {
 			for agentID, v := range pairs {
 				agentTable, ok := v.(map[string]interface{})
 				if !ok {
-					continue
+					return nil, fmt.Errorf("parse secrets: [agents.%s] must be a table, got %T", agentID, v)
 				}
 				flattenInto(agentID, agentTable, s)
 			}

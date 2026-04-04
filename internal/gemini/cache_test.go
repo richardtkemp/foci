@@ -45,9 +45,13 @@ func TestContentHash_DiffersOnChange(t *testing.T) {
 }
 
 func TestContentHash_NilInputs(t *testing.T) {
-	// Proves that contentHash handles nil system content and nil tools without panicking.
-	h := contentHash(nil, nil)
-	_ = h
+	// Proves that contentHash handles nil system content and nil tools,
+	// returning a deterministic hash.
+	h1 := contentHash(nil, nil)
+	h2 := contentHash(nil, nil)
+	if h1 != h2 {
+		t.Errorf("contentHash(nil, nil) not deterministic: %x vs %x", h1, h2)
+	}
 }
 
 func TestContentHash_ToolsOnly(t *testing.T) {

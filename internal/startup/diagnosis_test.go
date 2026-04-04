@@ -320,22 +320,24 @@ func TestFormatNotification_UnknownWithDiagnostics(t *testing.T) {
 	}
 }
 
-// TestGatherDiagnostics_ReadError tests handling of file read errors
+// TestGatherDiagnostics_ReadError tests handling of file read errors.
+// When the log file is unreadable, gatherDiagnostics should return empty
+// findings rather than panicking or reporting spurious diagnostics.
 func TestGatherDiagnostics_ReadError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("chmod 0000 has no effect when running as root")
+	}
 	tmpDir := t.TempDir()
 	logFile := filepath.Join(tmpDir, "foci.log")
 
-	// Create a file but make it unreadable on Unix systems (if possible)
 	if err := os.WriteFile(logFile, []byte("test"), 0000); err != nil {
 		t.Fatalf("write log file: %v", err)
 	}
 	defer os.Chmod(logFile, 0644)
 
-	// gatherDiagnostics should handle the read error gracefully
 	findings := gatherDiagnostics(tmpDir, time.Now().Add(-1*time.Hour))
-	// Should return empty findings on error, not panic
-	if len(findings) > 0 {
-		t.Logf("findings: %v", findings)
+	if len(findings) != 0 {
+		t.Errorf("expected empty findings on read error, got %d: %v", len(findings), findings)
 	}
 }
 

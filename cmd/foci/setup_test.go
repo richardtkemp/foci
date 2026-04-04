@@ -137,9 +137,17 @@ func TestValidationFunctions(t *testing.T) {
 	}
 }
 
-// Verifies findRepoShared doesn't panic regardless of working directory.
+// Verifies findRepoShared returns a valid path or empty string, never panics.
 func TestFindRepoShared(t *testing.T) {
-	_ = findRepoShared()
+	result := findRepoShared()
+	if result != "" {
+		info, err := os.Stat(result)
+		if err != nil {
+			t.Errorf("findRepoShared returned %q but stat failed: %v", result, err)
+		} else if !info.IsDir() {
+			t.Errorf("findRepoShared returned %q which is not a directory", result)
+		}
+	}
 }
 
 // Verifies importMDFiles copies selected .md files from src to dest.

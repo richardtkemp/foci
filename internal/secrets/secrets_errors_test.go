@@ -1,32 +1,50 @@
 package secrets
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestLoadReadError(t *testing.T) {
-	// Try to load from a path that will cause permission denied
-	_, err := Load("/root/nonexistent_secret_file_cant_read.toml")
-	// Errors are OK, but shouldn't crash
-	if err != nil {
-		t.Logf("expected error for unreadable path: %v", err)
+	// Proves that Load returns an error when the file exists but is unreadable.
+	if os.Getuid() == 0 {
+		t.Skip("chmod 0000 has no effect when running as root")
+	}
+	path := filepath.Join(t.TempDir(), "secrets.toml")
+	os.WriteFile(path, []byte("[custom]\nkey = \"val\"\n"), 0000)
+	defer os.Chmod(path, 0644)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected error for unreadable file, got nil")
 	}
 }
 
 func TestLoadAgentsNonMapValue(t *testing.T) {
-	// Proves that Load rejects a file where the [agents] key
-	// holds a scalar instead of a TOML table, catching malformed configuration early.
+	// When the top-level "agents" key is a scalar instead of a TOML table,
+	// the TOML library silently skips it (type mismatch for map target).
+	// Load succeeds but the agents section is empty — no per-agent secrets
+	// are loaded. This test documents that behavior.
 	path := writeSecrets(t, `
+agents = "not a table"
+
 [custom]
 key = "val"
-
-agents = "not a table"
 `)
-	_, err := Load(path)
-	// Should error because agents should be a table, not a string
+	s, err := Load(path)
 	if err != nil {
-		t.Logf("expected error for non-table agents: %v", err)
+		t.Fatalf("Load: %v", err)
+	}
+	// Global secrets should still load.
+	v, ok := s.Get("custom.key")
+	if !ok || v != "val" {
+		t.Errorf("custom.key = %q, ok=%v; expected 'val'", v, ok)
+	}
+	// Per-agent secrets should be empty (agents section was a scalar, not a table).
+	alice := s.ForAgent("alice")
+	if _, ok := alice.Get("anything"); ok {
+		t.Error("expected no agent secrets when agents is a scalar")
 	}
 }
 
@@ -50,16 +68,16 @@ strange_value = ["array", "of", "things"]
 }
 
 func TestLoadAgentNonTableSubValue(t *testing.T) {
-	// Proves that Load rejects a file where an agent
-	// entry is a scalar string rather than a nested table, catching structural errors.
+	// Proves that Load rejects a file where an agent entry is a scalar
+	// string rather than a nested table, catching structural errors that
+	// would otherwise cause the agent's secrets to silently vanish.
 	path := writeSecrets(t, `
 [agents]
 alice = "not a table"
 `)
 	_, err := Load(path)
-	// Should error because agents.alice should be a table
-	if err != nil {
-		t.Logf("expected error for non-table agent.alice: %v", err)
+	if err == nil {
+		t.Fatal("expected error for agents.alice as scalar, got nil")
 	}
 }
 
@@ -102,18 +120,35 @@ key = "val"
 }
 
 func TestFlatKeysToSectionsNoDot(t *testing.T) {
-	// Proves that setting a key without a "section.name"
-	// dot separator either saves gracefully or returns an error, but never panics.
+	// Proves that a key without a "section.name" dot separator is silently
+	// dropped by Save (flatKeysToSections skips it). The key can be Set and
+	// retrieved via Get within the same Store instance, but does not survive
+	// a save/load cycle.
 	path := filepath.Join(t.TempDir(), "secrets.toml")
 	s, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	s.Set("no_dot_key", "value")
-	// Should handle gracefully or error, but not panic.
-	err = s.Save()
+
+	// Should be retrievable in-memory.
+	v, ok := s.Get("no_dot_key")
+	if !ok || v != "value" {
+		t.Fatalf("Get before Save: got %q, ok=%v", v, ok)
+	}
+
+	// Save succeeds but drops the dotless key.
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Reload — the dotless key should be gone.
+	s2, err := Load(path)
 	if err != nil {
-		t.Logf("expected error for key without section: %v", err)
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if _, ok := s2.Get("no_dot_key"); ok {
+		t.Error("dotless key survived save/load cycle — expected it to be dropped")
 	}
 }
 
