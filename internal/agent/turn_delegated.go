@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/compaction"
 	"foci/internal/log"
 	"foci/internal/provider"
@@ -102,7 +102,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Check for a pending AskUserQuestion — intercept typed text as an
 	// answer before WaitForPermission blocks. This lets users respond to
 	// questions by typing instead of clicking buttons.
-	if qr, ok := be.(backend.QuestionResponder); ok {
+	if qr, ok := be.(delegator.QuestionResponder); ok {
 		if reqID := qr.HasPendingQuestion(); reqID != "" && len(ts.Texts) > 0 {
 			text := strings.TrimSpace(ts.Texts[0])
 			if text != "" {
@@ -150,8 +150,8 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Per-turn handler: fires once when the watcher sees end_turn.
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(result *backend.TurnResult) {
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(result *delegator.TurnResult) {
 			if result != nil {
 				ts.FinalText = result.Text
 				ts.FinalModel = result.Model
@@ -331,7 +331,7 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 
 	// Arm the compaction waiter before sending the command so the
 	// compact_boundary signal is never missed (race-free).
-	if cw, ok := ts.Backend.(backend.CompactionWaiter); ok {
+	if cw, ok := ts.Backend.(delegator.CompactionWaiter); ok {
 		cw.ArmCompactionWait()
 	}
 
@@ -344,7 +344,7 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	// implement CompactionWaiter (ccstream) block on the stream event;
 	// others fall back to WaitForTurn.
 	var waitErr error
-	if cw, ok := ts.Backend.(backend.CompactionWaiter); ok {
+	if cw, ok := ts.Backend.(delegator.CompactionWaiter); ok {
 		waitErr = cw.WaitForCompaction(ctx)
 	} else {
 		waitErr = ts.Backend.WaitForTurn(ctx)

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/tools"
 )
 
@@ -84,7 +84,7 @@ func TestPassExecuteGetBackendError(t *testing.T) {
 	cmd := PassCommand()
 
 	dm := &agent.DelegatedManager{
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			return nil, fmt.Errorf("boom")
 		},
 	}
@@ -115,7 +115,7 @@ func TestPassExecuteSuccessWithCapture(t *testing.T) {
 		captureOutput: "❯ /model\n  ⎿  claude-opus-4-6\n─────────────────────────\n❯",
 	}
 	dm := &agent.DelegatedManager{
-		NewBackend: func() (backend.Backend, error) { return mb, nil },
+		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
 	}
 
 	cc := CommandContext{
@@ -151,7 +151,7 @@ func TestPassExecuteSuccessNoCapturer(t *testing.T) {
 
 	mb := &mockPassBackendNoCapturer{}
 	dm := &agent.DelegatedManager{
-		NewBackend: func() (backend.Backend, error) { return mb, nil },
+		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
 	}
 
 	cc := CommandContext{
@@ -184,7 +184,7 @@ func TestPassExecuteSessionKeyFromRequest(t *testing.T) {
 
 	mb := &mockPassBackendNoCapturer{}
 	dm := &agent.DelegatedManager{
-		NewBackend: func() (backend.Backend, error) { return mb, nil },
+		NewBackend: func() (delegator.Delegator, error) { return mb, nil },
 	}
 
 	cc := CommandContext{
@@ -332,16 +332,16 @@ func TestIsSeparatorLine(t *testing.T) {
 
 // --- Mock backends for pass tests ---
 
-// mockPassBackend implements backend.Backend and backend.CommandOutputCapturer
+// mockPassBackend implements delegator.Delegator and delegator.CommandOutputCapturer
 // for testing /pass with pane capture.
 type mockPassBackend struct {
 	sentCommand   string
 	captureOutput string
 }
 
-func (m *mockPassBackend) Start(context.Context, backend.StartOptions) error { return nil }
-func (m *mockPassBackend) SendToPane(context.Context, string, *backend.EventHandler) (*backend.TurnResult, error) {
-	return &backend.TurnResult{}, nil
+func (m *mockPassBackend) Start(context.Context, delegator.StartOptions) error { return nil }
+func (m *mockPassBackend) SendToPane(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error) {
+	return &delegator.TurnResult{}, nil
 }
 func (m *mockPassBackend) WaitForTurn(context.Context) error             { return nil }
 func (m *mockPassBackend) IsTurnInFlight() bool                          { return false }
@@ -351,8 +351,8 @@ func (m *mockPassBackend) SendCommand(_ context.Context, cmd, _ string) error {
 }
 func (m *mockPassBackend) IsRunning() bool                                        { return true }
 func (m *mockPassBackend) Restart(context.Context) error                          { return nil }
-func (m *mockPassBackend) SetReplyFunc(backend.ReplyFunc)                         {}
-func (m *mockPassBackend) SetPermissionPromptFunc(backend.PermissionPromptFunc)   {}
+func (m *mockPassBackend) SetReplyFunc(delegator.ReplyFunc)                         {}
+func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
 func (m *mockPassBackend) SetOnPermissionCleared(func())                          {}
 func (m *mockPassBackend) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackend) SetTypingFunc(func(bool))                               {}
@@ -370,18 +370,18 @@ func (m *mockPassBackend) CaptureCommandOutput(_ context.Context, _, _ time.Dura
 
 // Compile-time verification that mockPassBackend satisfies both interfaces.
 var (
-	_ backend.Backend               = (*mockPassBackend)(nil)
-	_ backend.CommandOutputCapturer = (*mockPassBackend)(nil)
+	_ delegator.Delegator               = (*mockPassBackend)(nil)
+	_ delegator.CommandOutputCapturer = (*mockPassBackend)(nil)
 )
 
-// mockPassBackendNoCapturer implements only backend.Backend (no capture support).
+// mockPassBackendNoCapturer implements only delegator.Delegator (no capture support).
 type mockPassBackendNoCapturer struct {
 	sentCommand string
 }
 
-func (m *mockPassBackendNoCapturer) Start(context.Context, backend.StartOptions) error { return nil }
-func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string, *backend.EventHandler) (*backend.TurnResult, error) {
-	return &backend.TurnResult{}, nil
+func (m *mockPassBackendNoCapturer) Start(context.Context, delegator.StartOptions) error { return nil }
+func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error) {
+	return &delegator.TurnResult{}, nil
 }
 func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error             { return nil }
 func (m *mockPassBackendNoCapturer) IsTurnInFlight() bool                          { return false }
@@ -391,8 +391,8 @@ func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd, _ string
 }
 func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }
 func (m *mockPassBackendNoCapturer) Restart(context.Context) error                          { return nil }
-func (m *mockPassBackendNoCapturer) SetReplyFunc(backend.ReplyFunc)                         {}
-func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(backend.PermissionPromptFunc)   {}
+func (m *mockPassBackendNoCapturer) SetReplyFunc(delegator.ReplyFunc)                         {}
+func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
 func (m *mockPassBackendNoCapturer) SetOnPermissionCleared(func())                          {}
 func (m *mockPassBackendNoCapturer) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackendNoCapturer) SetTypingFunc(func(bool))                               {}
@@ -405,4 +405,4 @@ func (m *mockPassBackendNoCapturer) WaitReady(context.Context) error            
 func (m *mockPassBackendNoCapturer) Close() error                                            { return nil }
 
 // Compile-time verification.
-var _ backend.Backend = (*mockPassBackendNoCapturer)(nil)
+var _ delegator.Delegator = (*mockPassBackendNoCapturer)(nil)

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // ---------------------------------------------------------------------------
@@ -296,14 +296,14 @@ func TestRespondToQuestion_SingleQuestion(t *testing.T) {
 		reqID   string
 		text    string
 		summary string
-		choices []backend.PromptChoice
+		choices []delegator.PromptChoice
 	}
-	b.permPromptFn = func(reqID, text, summary string, choices []backend.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		promptCalls = append(promptCalls, struct {
 			reqID   string
 			text    string
 			summary string
-			choices []backend.PromptChoice
+			choices []delegator.PromptChoice
 		}{reqID, text, summary, choices})
 	}
 
@@ -393,7 +393,7 @@ func TestRespondToQuestion_SequentialMultiQuestion(t *testing.T) {
 	b, buf := testBackend(t)
 
 	var promptCalls int
-	b.permPromptFn = func(reqID, text, summary string, choices []backend.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		promptCalls++
 	}
 	b.onPermCleared = func() {}
@@ -471,7 +471,7 @@ func TestRespondToQuestion_CustomText(t *testing.T) {
 	t.Parallel()
 
 	b, buf := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermCleared = func() {}
 	b.onPermPending = func() {}
 
@@ -521,7 +521,7 @@ func TestCancelQuestion(t *testing.T) {
 	t.Parallel()
 
 	b, buf := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermCleared = func() {}
 	b.onPermPending = func() {}
 
@@ -568,7 +568,7 @@ func TestCancelQuestion_MidSequence(t *testing.T) {
 	t.Parallel()
 
 	b, buf := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermCleared = func() {}
 	b.onPermPending = func() {}
 
@@ -615,7 +615,7 @@ func TestHasPendingQuestion(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermPending = func() {}
 
 	// No pending question initially.
@@ -652,7 +652,7 @@ func TestRespondToQuestion_AlreadyAnswered(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermCleared = func() {}
 	b.onPermPending = func() {}
 
@@ -685,7 +685,7 @@ func TestRespondToQuestion_InvalidOptionIndex(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
@@ -714,7 +714,7 @@ func TestHandleToolRequest_DetectsAskUserQuestion(t *testing.T) {
 	b, _ := testBackend(t)
 
 	var questionHandled bool
-	b.permPromptFn = func(reqID, text, summary string, choices []backend.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		// If this is the question handler, text should NOT contain "Permission Required".
 		if !strings.Contains(text, "Permission Required") {
 			questionHandled = true
@@ -756,7 +756,7 @@ func TestHandleToolRequest_RegularPermission(t *testing.T) {
 	b, _ := testBackend(t)
 
 	var gotText string
-	b.permPromptFn = func(reqID, text, summary string, choices []backend.PromptChoice) {
+	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		gotText = text
 	}
 	b.onPermPending = func() {}
@@ -785,7 +785,7 @@ func TestRespondToQuestion_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 
 	b, _ := testBackend(t)
-	b.permPromptFn = func(string, string, string, []backend.PromptChoice) {}
+	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 	b.onPermCleared = func() {}
 	b.onPermPending = func() {}
 

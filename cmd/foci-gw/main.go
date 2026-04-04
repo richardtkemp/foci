@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	_ "foci/internal/backend/ccstream"   // register claude-code backend (stream-json)
-	_ "foci/internal/backend/cctmux" // register claude-code-tmux backend
+	_ "foci/internal/delegator/ccstream"   // register claude-code backend (stream-json)
+	_ "foci/internal/delegator/cctmux" // register claude-code-tmux backend
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 

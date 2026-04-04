@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -31,7 +31,7 @@ type sessionWatcher struct {
 	fsnot   *fsnotify.Watcher
 	mu      sync.Mutex
 	offset  int64                // current read position in the file
-	handler *backend.EventHandler // current turn's handler (nil between turns)
+	handler *delegator.EventHandler // current turn's handler (nil between turns)
 
 	// onPermissionCheck is called periodically to detect permission prompts
 	// in the tmux pane. Decoupled from session events because prompts can
@@ -40,12 +40,12 @@ type sessionWatcher struct {
 
 	// agents tracks pending Agent tool_use calls within a turn and emits
 	// aggregated status messages (e.g. "🔄 2 agent(s) running: ...").
-	agents backend.AgentTracker
+	agents delegator.AgentTracker
 
 	// turnState tracks the current turn's accumulated text, tool calls, and usage.
 	turnText  string
 	turnTools int
-	turnUsage *backend.TurnUsage // usage from the last assistant message
+	turnUsage *delegator.TurnUsage // usage from the last assistant message
 	turnModel string             // model from the last assistant message
 }
 
@@ -127,14 +127,14 @@ func (w *sessionWatcher) watchLoop(ctx context.Context) {
 }
 
 // setHandler sets the event handler for the current turn.
-func (w *sessionWatcher) setHandler(h *backend.EventHandler) {
+func (w *sessionWatcher) setHandler(h *delegator.EventHandler) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.handler = h
 }
 
 // readNew reads any new lines appended since the last read and processes them.
-func (w *sessionWatcher) readNew(handler *backend.EventHandler) {
+func (w *sessionWatcher) readNew(handler *delegator.EventHandler) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -167,7 +167,7 @@ func (w *sessionWatcher) readNew(handler *backend.EventHandler) {
 }
 
 // processLine parses a single JSONL entry and dispatches events.
-func (w *sessionWatcher) processLine(line []byte, handler *backend.EventHandler) {
+func (w *sessionWatcher) processLine(line []byte, handler *delegator.EventHandler) {
 	var entry sessionEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		return // skip unparseable lines
@@ -186,7 +186,7 @@ func (w *sessionWatcher) processLine(line []byte, handler *backend.EventHandler)
 
 // handleAssistant processes an assistant entry, extracting text deltas
 // and tool call events.
-func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.EventHandler) {
+func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator.EventHandler) {
 	if entry.Message == nil {
 		return
 	}
@@ -209,7 +209,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 			}
 			// Track Agent tool calls for status reporting.
 			if b.Name == "Agent" {
-				desc := backend.ExtractAgentDescription(b.Input)
+				desc := delegator.ExtractAgentDescription(b.Input)
 				w.agents.Add(b.ID, desc)
 			}
 		}
@@ -217,7 +217,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 
 	// Extract usage and model from the assistant message (last one wins per turn).
 	if entry.Message.Usage != nil {
-		w.turnUsage = &backend.TurnUsage{
+		w.turnUsage = &delegator.TurnUsage{
 			InputTokens:              entry.Message.Usage.InputTokens,
 			OutputTokens:             entry.Message.Usage.OutputTokens,
 			CacheCreationInputTokens: entry.Message.Usage.CacheCreationInputTokens,
@@ -247,7 +247,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *backend.E
 // produce an assistant message (no end_turn) or turn_duration, so without
 // this check WaitForTurn blocks until the next real turn — causing the
 // "context compacted" notification to arrive one turn late.
-func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *backend.EventHandler) {
+func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *delegator.EventHandler) {
 	switch entry.Subtype {
 	case "turn_duration", "compact_boundary":
 		w.fireTurnResult(handler)
@@ -259,8 +259,8 @@ func (w *sessionWatcher) handleSystem(entry *sessionEntry, handler *backend.Even
 // and handleSystem (turn_duration). If both fire for the same turn, the
 // second is a safe no-op — fireTurnComplete is one-shot (nils the callback
 // after first call) and turn state is already reset.
-func (w *sessionWatcher) fireTurnResult(handler *backend.EventHandler) {
-	result := &backend.TurnResult{
+func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
+	result := &delegator.TurnResult{
 		Text:      w.turnText,
 		ToolCalls: w.turnTools,
 		Usage:     w.turnUsage,

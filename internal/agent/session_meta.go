@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -256,7 +256,7 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 	}
 
 	// Tell the backend, if one exists and supports control requests.
-	handled, err := a.SendBackendControl(ctx, sessionKey, &backend.SetModelRequest{Model: rawModel})
+	handled, err := a.SendBackendControl(ctx, sessionKey, &delegator.SetModelRequest{Model: rawModel})
 	if err != nil {
 		log.Warnf("agent", "session=%s backend set_model failed: %v", sessionKey, err)
 		return fmt.Errorf("backend model switch failed: %w", err)
@@ -284,7 +284,7 @@ func (a *Agent) refreshContextFromBackend(ctx context.Context, sessionKey string
 	if err != nil {
 		return
 	}
-	cuq, ok := be.(backend.ContextUsageQuerier)
+	cuq, ok := be.(delegator.ContextUsageQuerier)
 	if !ok {
 		return
 	}

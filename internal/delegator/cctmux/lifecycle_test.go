@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // ---------------------------------------------------------------------------
@@ -125,9 +125,9 @@ func TestCheckPermissionPrompt_StructuredCallback(t *testing.T) {
 	b := &Backend{}
 
 	var gotText, gotSummary string
-	var gotChoices []backend.PromptChoice
+	var gotChoices []delegator.PromptChoice
 	b.replyMu.Lock()
-	b.permPromptFunc = func(requestID, text, summary string, choices []backend.PromptChoice) {
+	b.permPromptFunc = func(requestID, text, summary string, choices []delegator.PromptChoice) {
 		gotText = text
 		gotSummary = summary
 		gotChoices = choices
@@ -142,9 +142,9 @@ func TestCheckPermissionPrompt_StructuredCallback(t *testing.T) {
 		Raw:         "full block",
 	}
 
-	var choices []backend.PromptChoice
+	var choices []delegator.PromptChoice
 	for _, c := range prompt.Choices {
-		choices = append(choices, backend.PromptChoice{
+		choices = append(choices, delegator.PromptChoice{
 			Label: c.Label,
 			Data:  c.Number,
 		})
@@ -457,7 +457,7 @@ func TestSetPermissionPromptFunc(t *testing.T) {
 	b := &Backend{}
 
 	called := false
-	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []backend.PromptChoice) {
+	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		called = true
 	})
 
@@ -578,7 +578,7 @@ func TestIsTurnInFlight_NoCallback(t *testing.T) {
 func TestIsTurnInFlight_WithCallback(t *testing.T) {
 	b := &Backend{}
 	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *backend.TurnResult) {}
+	b.turnCompleteFn = func(r *delegator.TurnResult) {}
 	b.turnCompleteMu.Unlock()
 
 	if !b.IsTurnInFlight() {
@@ -591,10 +591,10 @@ func TestIsTurnInFlight_WithCallback(t *testing.T) {
 func TestIsTurnInFlight_ClearedAfterFire(t *testing.T) {
 	b := &Backend{}
 	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *backend.TurnResult) {}
+	b.turnCompleteFn = func(r *delegator.TurnResult) {}
 	b.turnCompleteMu.Unlock()
 
-	b.fireTurnComplete(&backend.TurnResult{})
+	b.fireTurnComplete(&delegator.TurnResult{})
 
 	if b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight should be false after fireTurnComplete")
@@ -651,7 +651,7 @@ func TestPermissionPipeline_EndToEnd(t *testing.T) {
 	b := &Backend{}
 
 	var dispatched bool
-	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []backend.PromptChoice) {
+	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		dispatched = true
 		if summary != prompt.Summary {
 			t.Errorf("dispatched summary = %q, want %q", summary, prompt.Summary)
@@ -672,9 +672,9 @@ func TestPermissionPipeline_EndToEnd(t *testing.T) {
 	b.replyMu.Unlock()
 
 	if promptFn != nil && len(prompt.Choices) > 0 {
-		var choices []backend.PromptChoice
+		var choices []delegator.PromptChoice
 		for _, c := range prompt.Choices {
-			choices = append(choices, backend.PromptChoice{Label: c.Label, Data: c.Number})
+			choices = append(choices, delegator.PromptChoice{Label: c.Label, Data: c.Number})
 		}
 		promptFn("", "\u26a0\ufe0f Permission required:\n\n"+prompt.Description, prompt.Summary, choices)
 	}

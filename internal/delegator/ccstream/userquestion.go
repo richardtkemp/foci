@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
@@ -91,15 +91,15 @@ func formatQuestionText(q *userQuestion, index, total int) string {
 
 // questionChoices creates button choices for a question's options.
 // Each option gets data "qa:<index>"; a Cancel button is appended.
-func questionChoices(q *userQuestion) []backend.PromptChoice {
-	choices := make([]backend.PromptChoice, 0, len(q.Options)+1)
+func questionChoices(q *userQuestion) []delegator.PromptChoice {
+	choices := make([]delegator.PromptChoice, 0, len(q.Options)+1)
 	for i, opt := range q.Options {
-		choices = append(choices, backend.PromptChoice{
+		choices = append(choices, delegator.PromptChoice{
 			Label: opt.Label,
 			Data:  "qa:" + strconv.Itoa(i),
 		})
 	}
-	choices = append(choices, backend.PromptChoice{
+	choices = append(choices, delegator.PromptChoice{
 		Label: "Cancel",
 		Data:  "qa:cancel",
 	})

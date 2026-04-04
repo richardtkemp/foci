@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
@@ -22,7 +22,7 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 	}
 
 	// AskUserQuestion routing — button clicks ("qa:*") and cancellation.
-	if qr, ok := be.(backend.QuestionResponder); ok && requestID != "" {
+	if qr, ok := be.(delegator.QuestionResponder); ok && requestID != "" {
 		if choice == "qa:cancel" {
 			log.Debugf("agent/perm", "cancelling question: reqID=%s", requestID)
 			return qr.CancelQuestion(requestID)
@@ -76,7 +76,7 @@ func (a *Agent) CancelPendingQuestion(ctx context.Context, sessionKey string) bo
 	if err != nil {
 		return false
 	}
-	qr, ok := be.(backend.QuestionResponder)
+	qr, ok := be.(delegator.QuestionResponder)
 	if !ok {
 		return false
 	}

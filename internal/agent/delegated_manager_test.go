@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/session"
 )
 
 // ---------------------------------------------------------------------------
-// mockBackendDM implements backend.Backend for DelegatedManager tests.
+// mockBackendDM implements delegator.Delegator for DelegatedManager tests.
 // Every method is a no-op or records calls unless overridden via function
 // fields. This keeps tests focused on the manager logic, not the backend.
 // ---------------------------------------------------------------------------
@@ -25,10 +25,10 @@ type mockBackendDM struct {
 	closed      bool
 	interrupted bool
 	startErr    error
-	startOpts   backend.StartOptions
+	startOpts   delegator.StartOptions
 
-	replyFunc           backend.ReplyFunc
-	permPromptFunc      backend.PermissionPromptFunc
+	replyFunc           delegator.ReplyFunc
+	permPromptFunc      delegator.PermissionPromptFunc
 	onPermCleared       func()
 	onSessionReady      func(string)
 	typingFunc          func(bool)
@@ -42,7 +42,7 @@ type mockBackendDM struct {
 	waitForTurnBlock    chan struct{} // if non-nil, WaitForTurn blocks until closed
 }
 
-func (m *mockBackendDM) Start(_ context.Context, opts backend.StartOptions) error {
+func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.startErr != nil {
@@ -57,8 +57,8 @@ func (m *mockBackendDM) Start(_ context.Context, opts backend.StartOptions) erro
 	return nil
 }
 
-func (m *mockBackendDM) SendToPane(_ context.Context, _ string, _ *backend.EventHandler) (*backend.TurnResult, error) {
-	return &backend.TurnResult{Text: "ok"}, nil
+func (m *mockBackendDM) SendToPane(_ context.Context, _ string, _ *delegator.EventHandler) (*delegator.TurnResult, error) {
+	return &delegator.TurnResult{Text: "ok"}, nil
 }
 
 func (m *mockBackendDM) WaitForTurn(ctx context.Context) error {
@@ -80,13 +80,13 @@ func (m *mockBackendDM) IsRunning() bool { return m.running }
 
 func (m *mockBackendDM) Restart(_ context.Context) error { return nil }
 
-func (m *mockBackendDM) SetReplyFunc(fn backend.ReplyFunc) {
+func (m *mockBackendDM) SetReplyFunc(fn delegator.ReplyFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.replyFunc = fn
 }
 
-func (m *mockBackendDM) SetPermissionPromptFunc(fn backend.PermissionPromptFunc) {
+func (m *mockBackendDM) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.permPromptFunc = fn
@@ -174,12 +174,12 @@ func newTestManager(t *testing.T, idx *session.SessionIndex) (*DelegatedManager,
 	t.Helper()
 	var mocks []*mockBackendDM
 	mgr := &DelegatedManager{
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			be := &mockBackendDM{running: true}
 			mocks = append(mocks, be)
 			return be, nil
 		},
-		StartOpts:    backend.StartOptions{WorkDir: t.TempDir()},
+		StartOpts:    delegator.StartOptions{WorkDir: t.TempDir()},
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 		IdleTimeout:  time.Hour, // don't idle-reap during tests
@@ -285,7 +285,7 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 
 	var callCount int
 	mgr := &DelegatedManager{
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			callCount++
 			be := &mockBackendDM{running: true}
 			if callCount == 1 {
@@ -294,7 +294,7 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 			}
 			return be, nil
 		},
-		StartOpts:    backend.StartOptions{WorkDir: t.TempDir()},
+		StartOpts:    delegator.StartOptions{WorkDir: t.TempDir()},
 		AgentID:      "test-agent",
 		SessionIndex: idx,
 		IdleTimeout:  time.Hour,
@@ -322,10 +322,10 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 func TestGet_NewBackendError(t *testing.T) {
 	// Proves that Get returns an error when NewBackend fails.
 	mgr := &DelegatedManager{
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			return nil, errors.New("factory broken")
 		},
-		StartOpts: backend.StartOptions{WorkDir: t.TempDir()},
+		StartOpts: delegator.StartOptions{WorkDir: t.TempDir()},
 		AgentID:   "test-agent",
 	}
 
@@ -341,10 +341,10 @@ func TestGet_NewBackendError(t *testing.T) {
 func TestGet_StartError_NoResume(t *testing.T) {
 	// Proves that Start errors without a resume ID propagate directly.
 	mgr := &DelegatedManager{
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			return &mockBackendDM{startErr: errors.New("start failed"), running: true}, nil
 		},
-		StartOpts: backend.StartOptions{WorkDir: t.TempDir()},
+		StartOpts: delegator.StartOptions{WorkDir: t.TempDir()},
 		AgentID:   "test-agent",
 	}
 
@@ -842,7 +842,7 @@ func TestGet_PermissionPromptFuncRouting(t *testing.T) {
 	// invoked it both sets permission pending and calls the manager's func.
 	var gotKey, gotReqID, gotText, gotSummary string
 	mgr, mocks := newTestManager(t, nil)
-	mgr.PermissionPromptFunc = func(sk, reqID, text, summary string, choices []backend.PromptChoice) {
+	mgr.PermissionPromptFunc = func(sk, reqID, text, summary string, choices []delegator.PromptChoice) {
 		gotKey = sk
 		gotReqID = reqID
 		gotText = text
@@ -1014,7 +1014,7 @@ func TestGet_StartOptionsPassthrough(t *testing.T) {
 	// Proves that global StartOpts fields (WorkDir, SystemPrompt, Model) are
 	// passed through to the backend, while Label and SessionKey are overridden.
 	mgr, mocks := newTestManager(t, nil)
-	mgr.StartOpts = backend.StartOptions{
+	mgr.StartOpts = delegator.StartOptions{
 		WorkDir:      "/workspace",
 		SystemPrompt: "You are helpful.",
 		Model:        "opus",

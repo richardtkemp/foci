@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 func TestCheckAndSendSteers_DrainsPending(t *testing.T) {
@@ -18,7 +18,7 @@ func TestCheckAndSendSteers_DrainsPending(t *testing.T) {
 	b := &Backend{
 		writer: NewWriter(nopWriteCloser{&buf}),
 	}
-	b.turnHandler = &backend.EventHandler{
+	b.turnHandler = &delegator.EventHandler{
 		SteerCheckFunc: func() []string {
 			return []string{"stop that", "do this instead"}
 		},
@@ -72,7 +72,7 @@ func TestCheckAndSendSteers_NilHandler(t *testing.T) {
 	}
 
 	// Handler without SteerCheckFunc.
-	b.turnHandler = &backend.EventHandler{}
+	b.turnHandler = &delegator.EventHandler{}
 	b.checkAndSendSteers()
 	if buf.Len() != 0 {
 		t.Errorf("expected no output with nil SteerCheckFunc, got %q", buf.String())
@@ -87,7 +87,7 @@ func TestCheckAndSendSteers_EmptyDrain(t *testing.T) {
 	b := &Backend{
 		writer: NewWriter(nopWriteCloser{&buf}),
 	}
-	b.turnHandler = &backend.EventHandler{
+	b.turnHandler = &delegator.EventHandler{
 		SteerCheckFunc: func() []string { return nil },
 	}
 
@@ -105,7 +105,7 @@ func TestCheckAndSendSteers_SkipsEmptyStrings(t *testing.T) {
 	b := &Backend{
 		writer: NewWriter(nopWriteCloser{&buf}),
 	}
-	b.turnHandler = &backend.EventHandler{
+	b.turnHandler = &delegator.EventHandler{
 		SteerCheckFunc: func() []string { return []string{"", "redirect", ""} },
 	}
 

@@ -1,4 +1,4 @@
-// Package cctmux implements the backend.Backend interface using
+// Package cctmux implements the delegator.Delegator interface using
 // Claude Code running as an interactive process in a tmux pane.
 // Input is sent via tmux send-keys; output is read by tailing
 // Claude Code's session JSONL file.
@@ -8,14 +8,14 @@ import (
 	"context"
 	"sync"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 func init() {
-	backend.Register("claude-code-tmux", newFromConfig)
+	delegator.Register("claude-code-tmux", newFromConfig)
 }
 
-func newFromConfig(cfg map[string]any) (backend.Backend, error) {
+func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{cfg: cfg, preSendOffset: -1}
 	if v, ok := cfg["socket_path"].(string); ok {
 		b.socketPath = v
@@ -41,7 +41,7 @@ type Backend struct {
 	// replyFunc delivers text to the user's platform chat.
 	replyMu            sync.Mutex
 	replyFunc          func(string)
-	permPromptFunc     backend.PermissionPromptFunc
+	permPromptFunc     delegator.PermissionPromptFunc
 	onSessionReady     func(string)     // called once when session ID is discovered
 	typingFunc         func(bool)       // typing indicator: true=start, false=stop
 
@@ -61,7 +61,7 @@ type Backend struct {
 	// turnCompleteMu guards turnCompleteFn. Set by SendToPane from the
 	// per-turn EventHandler; fired once by the watcher on end_turn, then nil'd.
 	turnCompleteMu sync.Mutex
-	turnCompleteFn func(*backend.TurnResult)
+	turnCompleteFn func(*delegator.TurnResult)
 
 	// preSendOffset records the JSONL file size before sendText, so the
 	// watcher starts from there and catches responses written before it starts.

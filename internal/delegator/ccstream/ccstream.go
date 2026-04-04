@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
 func init() {
-	backend.Register("claude-code", newFromConfig)
+	delegator.Register("claude-code", newFromConfig)
 }
 
-func newFromConfig(cfg map[string]any) (backend.Backend, error) {
+func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
@@ -34,7 +34,7 @@ func newFromConfig(cfg map[string]any) (backend.Backend, error) {
 	return b, nil
 }
 
-// Backend implements backend.Backend using Claude Code's stream-json
+// Backend implements delegator.Delegator using Claude Code's stream-json
 // NDJSON protocol. CC runs as a subprocess with structured stdin/stdout
 // communication — no tmux, no pane scraping, no JSONL file watching.
 type Backend struct {
@@ -45,7 +45,7 @@ type Backend struct {
 	label        string
 	model        string
 	systemPrompt string
-	startOpts    backend.StartOptions // saved for Restart
+	startOpts    delegator.StartOptions // saved for Restart
 
 	// Process
 	cmd    *exec.Cmd
@@ -65,7 +65,7 @@ type Backend struct {
 	// Turn state
 	turnMu       sync.Mutex
 	turnActive   bool
-	turnHandler  *backend.EventHandler // current turn's handler
+	turnHandler  *delegator.EventHandler // current turn's handler
 	turnResultCh chan *ResultMessage    // buffered(1), receives result
 	compactDoneCh chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
 	turnText     strings.Builder       // accumulates text across assistant messages
@@ -88,11 +88,11 @@ type Backend struct {
 	autoApproveRules []autoApproveRule
 
 	// Agent tracking (shared with tmux backend via AgentTracker).
-	agents backend.AgentTracker
+	agents delegator.AgentTracker
 
 	// Callbacks (set before Start, read-only after)
-	replyFunc          backend.ReplyFunc
-	permPromptFn       backend.PermissionPromptFunc
+	replyFunc          delegator.ReplyFunc
+	permPromptFn       delegator.PermissionPromptFunc
 	onPermCleared      func()
 	onPermPending      func()
 	onSessionReady     func(sessionID string)
@@ -113,7 +113,7 @@ func newRequestID() string {
 // ---------------------------------------------------------------------------
 
 // Start launches the Claude Code subprocess with stream-json pipes.
-func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
+func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error {
 	b.startOpts = opts
 	b.workDir = opts.WorkDir
 	b.agentID = opts.AgentID
@@ -310,7 +310,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // ---------------------------------------------------------------------------
 
 // beginTurn initialises all turn-related state for a new turn.
-func (b *Backend) beginTurn(handler *backend.EventHandler) {
+func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnMu.Lock()
 	b.turnActive = true
 	b.turnHandler = handler
@@ -335,7 +335,7 @@ func (b *Backend) cancelTurn() {
 // SendToPane sends a composed prompt to Claude Code and streams events back
 // via the handler. Returns immediately — the turn completes asynchronously.
 // Use WaitForTurn to block until the result is received.
-func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 	b.beginTurn(handler)
 
 	if b.typingFunc != nil {
@@ -347,7 +347,7 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backen
 		return nil, fmt.Errorf("ccstream: send user message: %w", err)
 	}
 
-	return &backend.TurnResult{}, nil
+	return &delegator.TurnResult{}, nil
 }
 
 // WaitForTurn blocks until the current turn completes (result message received).
@@ -413,10 +413,10 @@ func (b *Backend) checkAndSendSteers() {
 // ---------------------------------------------------------------------------
 
 // SetReplyFunc sets the function used to deliver text to the user's platform chat.
-func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) { b.replyFunc = fn }
+func (b *Backend) SetReplyFunc(fn delegator.ReplyFunc) { b.replyFunc = fn }
 
 // SetPermissionPromptFunc sets the function used to send permission prompts.
-func (b *Backend) SetPermissionPromptFunc(fn backend.PermissionPromptFunc) { b.permPromptFn = fn }
+func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) { b.permPromptFn = fn }
 
 // SetOnPermissionCleared sets a callback fired when permissions are resolved.
 func (b *Backend) SetOnPermissionCleared(fn func()) { b.onPermCleared = fn }
@@ -502,13 +502,13 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 // SetModel sends a set_model control request to CC via the generic
 // ControlSender interface. Convenience method retained for direct callers.
 func (b *Backend) SetModel(ctx context.Context, model string) error {
-	return b.SendControl(ctx, &backend.SetModelRequest{Model: model})
+	return b.SendControl(ctx, &delegator.SetModelRequest{Model: model})
 }
 
 // GetContextUsage sends a get_context_usage control request and returns the
 // parsed response. Zero API cost — CC computes this locally. ~650ms on a
 // persistent session.
-func (b *Backend) GetContextUsage(ctx context.Context) (*backend.ContextUsage, error) {
+func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage, error) {
 	reqID := newRequestID()
 
 	// Arm response channel before sending.
@@ -543,11 +543,11 @@ func (b *Backend) GetContextUsage(ctx context.Context) (*backend.ContextUsage, e
 		if err := json.Unmarshal(env.Response.Response, &payload); err != nil {
 			return nil, fmt.Errorf("unmarshal context_usage payload: %w", err)
 		}
-		cats := make([]backend.ContextCategory, len(payload.Categories))
+		cats := make([]delegator.ContextCategory, len(payload.Categories))
 		for i, c := range payload.Categories {
-			cats[i] = backend.ContextCategory{Name: c.Name, Tokens: c.Tokens}
+			cats[i] = delegator.ContextCategory{Name: c.Name, Tokens: c.Tokens}
 		}
-		return &backend.ContextUsage{
+		return &delegator.ContextUsage{
 			TotalTokens:          payload.TotalTokens,
 			MaxTokens:            payload.MaxTokens,
 			Percentage:           payload.Percentage,
@@ -613,7 +613,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 
 			// Track Agent tool calls for status reporting (same as tmux backend).
 			if block.Name == "Agent" {
-				desc := backend.ExtractAgentDescription(block.Input)
+				desc := delegator.ExtractAgentDescription(block.Input)
 				b.agents.Add(block.ID, desc)
 			}
 
@@ -674,16 +674,16 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 
 	// Prefer per-call usage from last assistant message; fall back to
 	// result usage (which is cumulative) if no assistant messages seen.
-	var turnUsage *backend.TurnUsage
+	var turnUsage *delegator.TurnUsage
 	if lastUsage != nil {
-		turnUsage = &backend.TurnUsage{
+		turnUsage = &delegator.TurnUsage{
 			InputTokens:              lastUsage.InputTokens,
 			OutputTokens:             lastUsage.OutputTokens,
 			CacheCreationInputTokens: lastUsage.CacheCreationInputTokens,
 			CacheReadInputTokens:     lastUsage.CacheReadInputTokens,
 		}
 	} else {
-		turnUsage = &backend.TurnUsage{
+		turnUsage = &delegator.TurnUsage{
 			InputTokens:              msg.Usage.InputTokens,
 			OutputTokens:             msg.Usage.OutputTokens,
 			CacheCreationInputTokens: msg.Usage.CacheCreationInputTokens,
@@ -691,7 +691,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 	}
 
-	result := &backend.TurnResult{
+	result := &delegator.TurnResult{
 		Text:      text,
 		Model:     resultModel,
 		ToolCalls: turnTools,
@@ -902,7 +902,7 @@ func (b *Backend) OnError(err error) {
 	b.turnMu.Unlock()
 
 	if handler != nil && handler.OnTurnComplete != nil {
-		handler.OnTurnComplete(&backend.TurnResult{
+		handler.OnTurnComplete(&delegator.TurnResult{
 			Text: fmt.Sprintf("Error: CC process exited unexpectedly: %v", err),
 		})
 	}

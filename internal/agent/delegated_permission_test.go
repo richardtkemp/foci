@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
-// mockPermBackend implements backend.Backend with configurable permission
+// mockPermBackend implements delegator.Delegator with configurable permission
 // response recording. It also implements the permResponder and ruleResponder
 // interfaces used by SendPermissionResponse.
 type mockPermBackend struct {
-	backend.Backend // embed to satisfy the interface; unused methods will panic
+	delegator.Delegator // embed to satisfy the interface; unused methods will panic
 
 	respondCalls    []respondCall
 	ruleCalls       []ruleCall
@@ -55,7 +55,7 @@ func (m *mockPermBackend) IsRunning() bool { return true }
 // mockPermBackendNoRule only implements permResponder, not ruleResponder.
 // Used to test the fallback when RespondToPermissionWithRule is not available.
 type mockPermBackendNoRule struct {
-	backend.Backend
+	delegator.Delegator
 	respondCalls []respondCall
 }
 
@@ -73,14 +73,14 @@ func (m *mockPermBackendNoRule) IsRunning() bool { return true }
 // mockDelegatedManagerForPerm is a minimal DelegatedManager replacement
 // that returns a pre-configured backend. Since DelegatedManager.Get requires
 // real mutex/map wiring, we set up a real DelegatedManager with a pre-seeded backend.
-func setupAgentWithMockBackend(t *testing.T, be backend.Backend) *Agent {
+func setupAgentWithMockBackend(t *testing.T, be delegator.Delegator) *Agent {
 	t.Helper()
 	dm := &DelegatedManager{
 		backends: make(map[string]*managedBackend),
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			return be, nil
 		},
-		StartOpts: backend.StartOptions{},
+		StartOpts: delegator.StartOptions{},
 	}
 	// Pre-seed the backend so Get() finds it without calling Start().
 	dm.backends["test/s"] = &managedBackend{
@@ -205,10 +205,10 @@ func TestSendPermissionResponse_AllowAlwaysFallback(t *testing.T) {
 func TestSendPermissionResponse_GetError(t *testing.T) {
 	dm := &DelegatedManager{
 		backends: make(map[string]*managedBackend),
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			return nil, errors.New("backend unavailable")
 		},
-		StartOpts: backend.StartOptions{},
+		StartOpts: delegator.StartOptions{},
 	}
 	a := &Agent{DelegatedManager: dm}
 

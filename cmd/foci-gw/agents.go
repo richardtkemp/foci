@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/command"
 	"foci/internal/compaction"
 	"foci/internal/config"
@@ -98,7 +98,7 @@ func setupAgent(p setupParams) *agentInstance {
 	var ok bool
 
 	if isDelegated {
-		if !backend.IsRegistered(acfg.Backend) {
+		if !delegator.IsRegistered(acfg.Backend) {
 			log.Errorf("agent/"+acfg.ID, "backend %q not registered (missing blank import?)", acfg.Backend)
 			return nil
 		}

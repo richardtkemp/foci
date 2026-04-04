@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/provider"
@@ -568,15 +568,15 @@ func TestReloadAfterMutation(t *testing.T) {
 	}
 }
 
-// mockBackend is a minimal mock implementing backend.Backend for lifecycle tests.
+// mockBackend is a minimal mock implementing delegator.Delegator for lifecycle tests.
 type mockBackend struct {
 	waitForTurnFn func(ctx context.Context) error
 	closeFn       func() error
 	sendFn        func(ctx context.Context, prompt string) error
 }
 
-func (m *mockBackend) Start(_ context.Context, _ backend.StartOptions) error { return nil }
-func (m *mockBackend) SendToPane(_ context.Context, prompt string, _ *backend.EventHandler) (*backend.TurnResult, error) {
+func (m *mockBackend) Start(_ context.Context, _ delegator.StartOptions) error { return nil }
+func (m *mockBackend) SendToPane(_ context.Context, prompt string, _ *delegator.EventHandler) (*delegator.TurnResult, error) {
 	if m.sendFn != nil {
 		return nil, m.sendFn(context.Background(), prompt)
 	}
@@ -592,8 +592,8 @@ func (m *mockBackend) IsTurnInFlight() bool                                    {
 func (m *mockBackend) SendCommand(_ context.Context, _ string, _ string) error { return nil }
 func (m *mockBackend) IsRunning() bool                                         { return true }
 func (m *mockBackend) Restart(_ context.Context) error                         { return nil }
-func (m *mockBackend) SetReplyFunc(_ backend.ReplyFunc)                        {}
-func (m *mockBackend) SetPermissionPromptFunc(_ backend.PermissionPromptFunc)  {}
+func (m *mockBackend) SetReplyFunc(_ delegator.ReplyFunc)                        {}
+func (m *mockBackend) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc)  {}
 func (m *mockBackend) SetOnPermissionCleared(_ func())                         {}
 func (m *mockBackend) SetOnSessionReady(_ func(string))                        {}
 func (m *mockBackend) SetTypingFunc(_ func(bool))                              {}

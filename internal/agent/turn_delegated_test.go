@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/compaction"
 	"foci/internal/nudge"
 	"foci/internal/provider"
@@ -99,18 +99,18 @@ func TestDelegatedTransport_ComposePrompt(t *testing.T) {
 type mockBackendDT struct {
 	mu sync.Mutex
 
-	sendToPaneFn  func(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error)
+	sendToPaneFn  func(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error)
 	sendCommandFn func(ctx context.Context, command string, priority string) error
 	waitForTurnFn func(ctx context.Context) error
 	turnInFlight  bool
 	sessionFile   string
 }
 
-func (m *mockBackendDT) Start(_ context.Context, _ backend.StartOptions) error             { return nil }
+func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error             { return nil }
 func (m *mockBackendDT) IsRunning() bool                                                   { return true }
 func (m *mockBackendDT) Restart(_ context.Context) error                                   { return nil }
-func (m *mockBackendDT) SetReplyFunc(_ backend.ReplyFunc)                                  {}
-func (m *mockBackendDT) SetPermissionPromptFunc(_ backend.PermissionPromptFunc)            {}
+func (m *mockBackendDT) SetReplyFunc(_ delegator.ReplyFunc)                                  {}
+func (m *mockBackendDT) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc)            {}
 func (m *mockBackendDT) SetOnPermissionCleared(_ func())                                   {}
 func (m *mockBackendDT) SetOnSessionReady(_ func(string))                                  {}
 func (m *mockBackendDT) SetTypingFunc(_ func(bool))                                        {}
@@ -133,11 +133,11 @@ func (m *mockBackendDT) IsTurnInFlight() bool {
 	return m.turnInFlight
 }
 
-func (m *mockBackendDT) SendToPane(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+func (m *mockBackendDT) SendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 	if m.sendToPaneFn != nil {
 		return m.sendToPaneFn(ctx, prompt, handler)
 	}
-	return &backend.TurnResult{Text: "ok"}, nil
+	return &delegator.TurnResult{Text: "ok"}, nil
 }
 
 func (m *mockBackendDT) SendCommand(ctx context.Context, command string, priority string) error {
@@ -156,10 +156,10 @@ func (m *mockBackendDT) WaitForTurn(ctx context.Context) error {
 
 // newMockDelegatedManager creates a DelegatedManager pre-loaded with a mock
 // backend so tests can call RunInference without real CC infrastructure.
-func newMockDelegatedManager(t *testing.T, be backend.Backend) *DelegatedManager {
+func newMockDelegatedManager(t *testing.T, be delegator.Delegator) *DelegatedManager {
 	t.Helper()
 	mgr := &DelegatedManager{
-		NewBackend: func() (backend.Backend, error) { return be, nil },
+		NewBackend: func() (delegator.Delegator, error) { return be, nil },
 	}
 	// Pre-register the backend so Get() returns it immediately.
 	_, err := mgr.Get(context.Background(), "test/s")
@@ -273,16 +273,16 @@ func TestDelegatedTransport_InjectNudges_NoMatchingNudges(t *testing.T) {
 func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/test-session.jsonl",
-		sendToPaneFn: func(_ context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 			if !strings.Contains(prompt, "hello") {
 				t.Errorf("prompt should contain 'hello', got: %q", prompt)
 			}
 			// Simulate the watcher calling OnTurnComplete asynchronously.
 			if handler != nil && handler.OnTurnComplete != nil {
-				handler.OnTurnComplete(&backend.TurnResult{
+				handler.OnTurnComplete(&delegator.TurnResult{
 					Text:  "response text",
 					Model: "claude-sonnet-4-20250514",
-					Usage: &backend.TurnUsage{
+					Usage: &delegator.TurnUsage{
 						InputTokens:  1000,
 						OutputTokens: 200,
 					},
@@ -339,7 +339,7 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 // DelegatedManager.Get propagates back to the caller.
 func TestDelegatedTransport_RunInference_GetError(t *testing.T) {
 	mgr := &DelegatedManager{
-		NewBackend: func() (backend.Backend, error) {
+		NewBackend: func() (delegator.Delegator, error) {
 			return nil, errors.New("backend unavailable")
 		},
 	}
@@ -436,9 +436,9 @@ func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing
 func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 			if handler != nil && handler.OnTurnComplete != nil {
-				handler.OnTurnComplete(&backend.TurnResult{Text: "done"})
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "done"})
 			}
 			return nil, nil
 		},
@@ -489,10 +489,10 @@ func TestDelegatedTransport_RunInference_SteerCheckFunc(t *testing.T) {
 	var handlerSteerFunc func() []string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 			handlerSteerFunc = handler.SteerCheckFunc
 			if handler.OnTurnComplete != nil {
-				handler.OnTurnComplete(&backend.TurnResult{Text: "ok"})
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
 			}
 			return nil, nil
 		},
@@ -525,7 +525,7 @@ func TestDelegatedTransport_RunInference_SteerCheckFunc(t *testing.T) {
 func TestDelegatedTransport_RunInference_NilTurnResult(t *testing.T) {
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 			if handler != nil && handler.OnTurnComplete != nil {
 				handler.OnTurnComplete(nil)
 			}

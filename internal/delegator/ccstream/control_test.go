@@ -6,11 +6,11 @@ import (
 	"io"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // TestSendControl_SetModel verifies that SendControl translates a
-// backend.SetModelRequest into the correct ccstream wire format.
+// delegator.SetModelRequest into the correct ccstream wire format.
 func TestSendControl_SetModel(t *testing.T) {
 	t.Parallel()
 
@@ -29,7 +29,7 @@ func TestSendControl_SetModel(t *testing.T) {
 		line = buf[:n]
 	}()
 
-	err := b.SendControl(context.Background(), &backend.SetModelRequest{Model: "opus"})
+	err := b.SendControl(context.Background(), &delegator.SetModelRequest{Model: "opus"})
 	if err != nil {
 		t.Fatalf("SendControl: %v", err)
 	}

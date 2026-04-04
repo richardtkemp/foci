@@ -3,7 +3,7 @@
 // including inference and tool execution. This is fundamentally different
 // from provider.Client, which handles only the inference call while Foci
 // executes tools.
-package backend
+package delegator
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // A Backend owns the entire turn: inference, tool execution, and context
 // management. Foci sends composed prompts (with metadata, nudges, reminders)
 // via SendToPane and receives streaming events back.
-type Backend interface {
+type Delegator interface {
 	// Start launches the coding agent subprocess.
 	// Called once during agent setup. The backend should be ready to
 	// accept turns after Start returns.

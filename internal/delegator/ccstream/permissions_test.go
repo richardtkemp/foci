@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ func TestHandlePermissionRequest_AutoApprove(t *testing.T) {
 		writer:           NewWriter(nopWriteCloser{&buf}),
 		pendingPerms:     make(map[string]*pendingPermission),
 		autoApproveRules: parseAutoApproveRules([]string{"Read"}),
-		permPromptFn: func(reqID, text, summary string, choices []backend.PromptChoice) {
+		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
 			promptCalled = true
 		},
 	}
@@ -287,11 +287,11 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 
 	var buf bytes.Buffer
 	var gotReqID, gotText, gotSummary string
-	var gotChoices []backend.PromptChoice
+	var gotChoices []delegator.PromptChoice
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		permPromptFn: func(reqID, text, summary string, choices []backend.PromptChoice) {
+		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
 			gotReqID = reqID
 			gotText = text
 			gotSummary = summary

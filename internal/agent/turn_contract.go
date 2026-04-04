@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
@@ -190,7 +190,7 @@ type TurnState struct {
 
 	// --- Delegated-specific ---
 
-	Backend         backend.Backend // backend instance for this session (nil for API)
+	Backend         delegator.Delegator // backend instance for this session (nil for API)
 	sessionFilePath string          // cached before SendToPane to avoid deadlock in OnTurnComplete
 }
 
