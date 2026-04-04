@@ -318,7 +318,18 @@ func TestRotateFile_PreservesPermissions(t *testing.T) {
 		t.Fatalf("stat after rotation (default): %v", err)
 	}
 	if perm := info.Mode().Perm(); perm != 0600 {
-		t.Errorf("permissions after rotation (default) = %o, want 0600", perm)
+		t.Errorf("active file permissions (default) = %o, want 0600", perm)
+	}
+	archives, _ := filepath.Glob(filepath.Join(archiveDir, "*.log.gz"))
+	if len(archives) != 1 {
+		t.Fatalf("expected 1 archive (default), got %d", len(archives))
+	}
+	info, err = os.Stat(archives[0])
+	if err != nil {
+		t.Fatalf("stat archive (default): %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("archive permissions (default) = %o, want 0600", perm)
 	}
 
 	// Explicit 0640
@@ -332,7 +343,17 @@ func TestRotateFile_PreservesPermissions(t *testing.T) {
 		t.Fatalf("stat after rotation (0640): %v", err)
 	}
 	if perm := info.Mode().Perm(); perm != 0640 {
-		t.Errorf("permissions after rotation (0640) = %o, want 0640", perm)
+		t.Errorf("active file permissions (0640) = %o, want 0640", perm)
+	}
+	archives, _ = filepath.Glob(filepath.Join(archiveDir, "*.log.gz"))
+	for _, a := range archives {
+		info, err = os.Stat(a)
+		if err != nil {
+			t.Fatalf("stat archive (0640): %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0640 {
+			t.Errorf("archive %s permissions = %o, want 0640", filepath.Base(a), perm)
+		}
 	}
 }
 

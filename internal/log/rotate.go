@@ -225,6 +225,7 @@ func rotateFile(path string, retention time.Duration, archiveDir string, maxLine
 	if err := os.Rename(tmpArchivePath, archivePath); err != nil {
 		return fmt.Errorf("rename archive: %w", err)
 	}
+	_ = os.Chmod(archivePath, fileMode)
 
 	Infof("rotate", "rotated %s: archived %d old lines to %s", path, archivedLines, archivePath)
 	return nil
