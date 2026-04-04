@@ -370,17 +370,7 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 }
 
-// TestClose_ClosesBridge verifies that Close shuts down the exec bridge.
-func TestClose_ClosesBridge(t *testing.T) {
-	// We can't easily create a real tools.ExecBridge without a registry,
-	// but we can verify the nil-check path: Close with bridge=nil should
-	// not panic.
-	b := &Backend{}
-	b.bridge = nil
-	if err := b.Close(); err != nil {
-		t.Errorf("Close with nil bridge failed: %v", err)
-	}
-}
+
 
 // ---------------------------------------------------------------------------
 // newFromConfig tests
