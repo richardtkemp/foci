@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/tools"
 )
 
@@ -60,7 +60,7 @@ func PassCommand() *Command {
 			// For backends that support pane capture (tmux), wait for the
 			// output to stabilise and return it. Local slash commands don't
 			// write to the JSONL so the watcher won't deliver them.
-			if capturer, ok := be.(backend.CommandOutputCapturer); ok {
+			if capturer, ok := be.(delegator.CommandOutputCapturer); ok {
 				raw, err := capturer.CaptureCommandOutput(ctx, 1*time.Second, 200*time.Millisecond)
 				if err == nil && raw != "" {
 					output := extractCommandOutput(raw, req.Args)

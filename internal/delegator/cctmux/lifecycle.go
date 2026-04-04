@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
-func (b *Backend) Start(ctx context.Context, opts backend.StartOptions) error {
+func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -236,7 +236,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 	// watcher sees CC's first output, processAgentMessage has returned and
 	// its defer has stopped typing. This restarts it for the duration of
 	// the turn (fireTurnComplete stops it via OnTurnDone).
-	w.setHandler(&backend.EventHandler{
+	w.setHandler(&delegator.EventHandler{
 		OnText: func(text string) {
 			// Re-establish typing — CC is actively producing output.
 			b.replyMu.Lock()
@@ -250,7 +250,7 @@ func (b *Backend) startWatcher(jsonlPath string) error {
 				fn(text)
 			}
 		},
-		OnTurnComplete: func(result *backend.TurnResult) {
+		OnTurnComplete: func(result *delegator.TurnResult) {
 			b.fireTurnComplete(result)
 		},
 	})
@@ -333,9 +333,9 @@ func (b *Backend) checkPermissionPrompt() {
 
 	// Prefer structured prompt with keyboard; fall back to plain text.
 	if promptFn != nil && len(prompt.Choices) > 0 {
-		var choices []backend.PromptChoice
+		var choices []delegator.PromptChoice
 		for _, c := range prompt.Choices {
-			choices = append(choices, backend.PromptChoice{
+			choices = append(choices, delegator.PromptChoice{
 				Label: c.Label,
 				Data:  c.Number,
 			})
@@ -369,7 +369,7 @@ func (b *Backend) Restart(ctx context.Context) error {
 	if err := b.Close(); err != nil {
 		return fmt.Errorf("close before restart: %w", err)
 	}
-	return b.Start(ctx, backend.StartOptions{
+	return b.Start(ctx, delegator.StartOptions{
 		WorkDir: b.workDir,
 		AgentID: b.agentID,
 	})

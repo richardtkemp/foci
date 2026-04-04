@@ -47,10 +47,10 @@ config.Load(path)                                        ← validates values; l
    → setupAgent(params)                                    ← agents.go → agentInstance{ag, cmds, registry, bootstrap}
      → resolveSharedSetup(params)                           ← agents_shared.go — config cascade, prompt dirs, group resolver
      → IF delegated agent (acfg.Backend != "" && != "api"):
-       → configureDelegated(params, backend)                ← agents_delegated.go
-         → backend.New(name, config)                        ← create backend via registry
+       → configureDelegated(params, delegator)              ← agents_delegated.go
+         → delegator.New(name, config)                      ← create delegator via registry
          → workspace.NewBootstrap → system prompt            ← concatenate workspace *.md files
-         → backend.Start(ctx, opts)                         ← spawn coding agent in tmux pane
+         → delegator.Start(ctx, opts)                       ← spawn coding agent in tmux pane
          → shared.finalize(ag, params)                      ← commands, platform, nudge (shared postamble)
      → ELSE (traditional API agent):
        → tools.NewAsyncNotifier()                           ← shared by exec + http_request + tmux, routes by session key
@@ -169,10 +169,10 @@ main
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
- ├── backend       (no deps — Backend interface, registry, StartOptions, EventHandler)
- │   ├── backend/cctmux     → backend, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
- │   └── backend/ccstream   → backend, log (stream-json Claude Code; registers "claude-code" via init())
- ├── agent         → backend, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
+ ├── delegator     (no deps — Delegator interface, registry, StartOptions, EventHandler)
+ │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
+ │   └── delegator/ccstream   → delegator, log (stream-json Claude Code; registers "claude-code" via init())
+ ├── agent         → delegator, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
  ├── periodic     → config, log, memory, provider, state, warnings (NO agent, NO session)
  ├── dispatch      → command, session (shared command dispatch logic; platform wrappers delegate here)
  ├── turn          → display, log, toolformat (shared turn rendering + tool call tracking for all platforms)
@@ -316,7 +316,7 @@ When `steer_mode` is enabled and a turn is active, user messages are buffered as
 - **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. The `SteerCheckFunc` on `TurnCallbacks` returns buffered steers from the platform's `MessageQueue`.
 - **Delegated transport:** Steer messages are drained via `checkAndSendSteers()` on the ccstream backend at tool execution boundaries (after `tool_use` blocks in `OnAssistant`, and during `OnToolProgress` heartbeats). Each steer is sent as a `SendUserWithPriority(text, PriorityNow)` message — "now" priority interrupts the current tool execution. The `SteerCheckFunc` is wired from `TurnCallbacks` onto the `EventHandler` at `RunInference` time.
 
-### Backend Watcher — tmux (`internal/backend/cctmux/watcher.go`)
+### Backend Watcher — tmux (`internal/delegator/cctmux/watcher.go`)
 
 The tmux backend's session watcher tails Claude Code's JSONL session file via fsnotify. It converts raw JSONL events into structured callbacks (assistant text, turn completion, usage, agent status). For the stream-json backend (ccstream), see the [ccstream Backend](#ccstream-backend-internalbackendccstream) section below — it receives these events directly on stdout rather than from a file watcher.
 
@@ -358,9 +358,9 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 - `agent.Redact` is applied to all tool results and error messages (secret redaction)
 - Tool errors are logged as WARN in the event log
 
-### ccstream Backend (`internal/backend/ccstream/`)
+### ccstream Backend (`internal/delegator/ccstream/`)
 
-The ccstream backend replaces the tmux-based backend with structured NDJSON communication over stdin/stdout. CC runs as a subprocess with `--input-format stream-json --output-format stream-json --permission-prompt-tool stdio` — no pane management, no screen scraping, no JSONL file watching. Registered as `"claude-code"` via `backend.Register` in `init()`.
+The ccstream backend replaces the tmux-based backend with structured NDJSON communication over stdin/stdout. CC runs as a subprocess with `--input-format stream-json --output-format stream-json --permission-prompt-tool stdio` — no pane management, no screen scraping, no JSONL file watching. Registered as `"claude-code"` via `delegator.Register` in `init()`.
 
 **Protocol:** Each line on the wire is a single JSON object. The `type` field (and optionally `subtype`) discriminates the message kind. Foci writes to CC's stdin; CC writes to foci's stdout. All writes are serialised by a mutex on the `Writer` — no interleaving of JSON lines.
 
@@ -407,13 +407,13 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 
 **`DelegatedManager.WaitForPermission`:** Before `RunInference` sends a new prompt to the backend, it calls `WaitForPermission` which blocks until all pending permission prompts are resolved. Uses `sync.Cond` with a context-cancellation goroutine (since `sync.Cond` doesn't natively support context). The `onPermCleared` callback signals the condition variable when the last pending permission is resolved.
 
-**ControlSender pattern (`backend/control.go`, `ccstream/control.go`):** Generic runtime control for delegated backends. Three layers:
+**ControlSender pattern (`delegator/control.go`, `ccstream/control.go`):** Generic runtime control for delegated backends. Three layers:
 
-1. **Intent types** (`backend/control.go`) — backend-agnostic request types (`SetModelRequest`, etc.) with a `ControlRequest` marker interface (unexported method prevents arbitrary types).
-2. **`ControlSender` interface** (`backend/backend.go`) — optional interface backends implement: `SendControl(ctx, ControlRequest) error`. The ccstream backend type-switches on intent types and translates to wire format.
+1. **Intent types** (`delegator/control.go`) — backend-agnostic request types (`SetModelRequest`, etc.) with a `ControlRequest` marker interface (unexported method prevents arbitrary types).
+2. **`ControlSender` interface** (`delegator/backend.go`) — optional interface backends implement: `SendControl(ctx, ControlRequest) error`. The ccstream backend type-switches on intent types and translates to wire format.
 3. **Agent routing** (`agent/delegated_control.go`) — `SendBackendControl(ctx, sk, req) (handled, err)`. Gets the backend via `DelegatedManager.Get`, type-asserts to `ControlSender`, calls `SendControl`. Returns `(false, nil)` if no backend or backend doesn't support it.
 
-Adding a new control: define intent type in `backend/control.go`, add case in ccstream's `SendControl`, add Agent method, register command with appropriate `Requires`.
+Adding a new control: define intent type in `delegator/control.go`, add case in ccstream's `SendControl`, add Agent method, register command with appropriate `Requires`.
 
 **Differences from tmux backend:**
 - No tmux pane, no `send-keys`, no pane capture — all communication is structured NDJSON.

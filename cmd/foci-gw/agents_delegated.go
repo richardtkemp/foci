@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/backend"
-	"foci/internal/backend/ccstream"
+	"foci/internal/delegator"
+	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/tools"
@@ -68,10 +68,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	ag.DelegatedManager = &agent.DelegatedManager{
 		SessionIndex: p.sessionIndex,
 		AgentID:      agentID,
-		NewBackend: func() (backend.Backend, error) {
-			return backend.New(backendName, backendConfig)
+		NewBackend: func() (delegator.Delegator, error) {
+			return delegator.New(backendName, backendConfig)
 		},
-		StartOpts: backend.StartOptions{
+		StartOpts: delegator.StartOptions{
 			WorkDir:          p.acfg.Workspace,
 			SystemPrompt:     systemPrompt,
 			Model:            model,
@@ -101,7 +101,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				log.Warnf("agent/"+agentID, "delegated: no connection for session %s after 30s, message dropped", sessionKey)
 			}()
 		},
-		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []backend.PromptChoice) {
+		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {
 				log.Warnf("agent/"+agentID, "permission prompt: ForSessionOrPrimary returned nil for session=%s, prompt dropped", sessionKey)

@@ -1,4 +1,4 @@
-package backend
+package delegator
 
 // ControlRequest is a marker interface for backend-agnostic control intents.
 // The Agent layer constructs these; each backend translates them to its own

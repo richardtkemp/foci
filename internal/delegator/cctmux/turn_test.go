@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // TestFireTurnComplete_PerTurnCallback verifies the per-turn callback fires
@@ -14,15 +14,15 @@ import (
 func TestFireTurnComplete_PerTurnCallback(t *testing.T) {
 	b := &Backend{}
 
-	var got *backend.TurnResult
+	var got *delegator.TurnResult
 	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *backend.TurnResult) { got = r }
+	b.turnCompleteFn = func(r *delegator.TurnResult) { got = r }
 	b.turnCompleteMu.Unlock()
 
-	result := &backend.TurnResult{
+	result := &delegator.TurnResult{
 		Text:      "hello",
 		ToolCalls: 3,
-		Usage: &backend.TurnUsage{
+		Usage: &delegator.TurnUsage{
 			InputTokens:  1000,
 			OutputTokens: 200,
 		},
@@ -50,11 +50,11 @@ func TestFireTurnComplete_OneShot(t *testing.T) {
 
 	callCount := 0
 	b.turnCompleteMu.Lock()
-	b.turnCompleteFn = func(r *backend.TurnResult) { callCount++ }
+	b.turnCompleteFn = func(r *delegator.TurnResult) { callCount++ }
 	b.turnCompleteMu.Unlock()
 
-	b.fireTurnComplete(&backend.TurnResult{Text: "first"})
-	b.fireTurnComplete(&backend.TurnResult{Text: "second"})
+	b.fireTurnComplete(&delegator.TurnResult{Text: "first"})
+	b.fireTurnComplete(&delegator.TurnResult{Text: "second"})
 
 	if callCount != 1 {
 		t.Fatalf("callback called %d times, want 1", callCount)
@@ -73,7 +73,7 @@ func TestFireTurnComplete_OneShot(t *testing.T) {
 func TestFireTurnComplete_NilCallback(t *testing.T) {
 	b := &Backend{}
 	// Should not panic.
-	b.fireTurnComplete(&backend.TurnResult{Text: "no callback"})
+	b.fireTurnComplete(&delegator.TurnResult{Text: "no callback"})
 }
 
 // TestFireTurnComplete_AlsoSignalsWaitForTurn verifies that fireTurnComplete
@@ -86,7 +86,7 @@ func TestFireTurnComplete_AlsoSignalsWaitForTurn(t *testing.T) {
 	b.waitCh = ch
 	b.waitMu.Unlock()
 
-	b.fireTurnComplete(&backend.TurnResult{})
+	b.fireTurnComplete(&delegator.TurnResult{})
 
 	select {
 	case <-ch:
@@ -107,13 +107,13 @@ func TestFireTurnComplete_RaceSafety(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			b.turnCompleteMu.Lock()
-			b.turnCompleteFn = func(r *backend.TurnResult) {}
+			b.turnCompleteFn = func(r *delegator.TurnResult) {}
 			b.turnCompleteMu.Unlock()
 		}()
 		// Concurrent fire.
 		go func() {
 			defer wg.Done()
-			b.fireTurnComplete(&backend.TurnResult{})
+			b.fireTurnComplete(&delegator.TurnResult{})
 		}()
 	}
 	wg.Wait()
@@ -129,7 +129,7 @@ func TestFireTurnComplete_StopsTypingIndicator(t *testing.T) {
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
 	b.replyMu.Unlock()
 
-	b.fireTurnComplete(&backend.TurnResult{Text: "done"})
+	b.fireTurnComplete(&delegator.TurnResult{Text: "done"})
 
 	if len(typingCalls) != 1 {
 		t.Fatalf("typingFunc called %d times, want 1", len(typingCalls))

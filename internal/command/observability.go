@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/display"
 	"foci/internal/log"
 	"foci/internal/modelinfo"
@@ -460,7 +460,7 @@ func contextFromBackend(ctx context.Context, cc CommandContext) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	cuq, ok := be.(backend.ContextUsageQuerier)
+	cuq, ok := be.(delegator.ContextUsageQuerier)
 	if !ok {
 		return "", fmt.Errorf("backend does not implement ContextUsageQuerier")
 	}

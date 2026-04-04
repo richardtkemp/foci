@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
@@ -87,7 +87,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // If handler.OnTurnComplete is set, it is registered as a per-turn callback
 // that fires once when the watcher sees end_turn, then auto-nils. This is
 // the preferred mechanism for TurnContract's CompletionChan pattern.
-func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backend.EventHandler) (*backend.TurnResult, error) {
+func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
 	b.mu.Lock()
 	if b.pane == nil {
 		b.mu.Unlock()
@@ -136,7 +136,7 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backen
 		return nil, fmt.Errorf("session discovery: %w", err)
 	}
 
-	return &backend.TurnResult{}, nil
+	return &delegator.TurnResult{}, nil
 }
 
 // fireTurnComplete fires the per-turn callback (if set) with the given
@@ -144,7 +144,7 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *backen
 // Stops the typing indicator via TypingFunc(false) — for backend turns,
 // processAgentMessage has already returned so this is the correct place
 // to stop typing (on end_turn, when CC is actually done).
-func (b *Backend) fireTurnComplete(result *backend.TurnResult) {
+func (b *Backend) fireTurnComplete(result *delegator.TurnResult) {
 	// Stop typing indicator — CC's turn is done.
 	b.replyMu.Lock()
 	typFn := b.typingFunc
@@ -200,13 +200,13 @@ func (b *Backend) recordPreSendOffset() {
 	log.Debugf("backend/cc", "recorded pre-send offset: %d bytes", b.preSendOffset)
 }
 
-func (b *Backend) SetReplyFunc(fn backend.ReplyFunc) {
+func (b *Backend) SetReplyFunc(fn delegator.ReplyFunc) {
 	b.replyMu.Lock()
 	defer b.replyMu.Unlock()
 	b.replyFunc = fn
 }
 
-func (b *Backend) SetPermissionPromptFunc(fn backend.PermissionPromptFunc) {
+func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	b.replyMu.Lock()
 	defer b.replyMu.Unlock()
 	b.permPromptFunc = fn
@@ -299,7 +299,7 @@ func (b *Backend) SendCommand(ctx context.Context, command string, _ string) err
 
 // CaptureCommandOutput polls the tmux pane until content stabilises
 // (unchanged for stableFor, checked every pollInterval). Returns the
-// raw pane content. Implements backend.CommandOutputCapturer.
+// raw pane content. Implements delegator.CommandOutputCapturer.
 func (b *Backend) CaptureCommandOutput(ctx context.Context, stableFor, pollInterval time.Duration) (string, error) {
 	b.mu.Lock()
 	pane := b.pane

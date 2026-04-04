@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // TestProcessLine_ExtractsUsage verifies that usage is extracted from
@@ -13,9 +13,9 @@ import (
 func TestProcessLine_ExtractsUsage(t *testing.T) {
 	w := &sessionWatcher{}
 
-	var got *backend.TurnResult
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { got = r },
+	var got *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 	w.setHandler(handler)
 
@@ -67,9 +67,9 @@ func TestProcessLine_ExtractsUsage(t *testing.T) {
 func TestProcessLine_UsageResetsAcrossTurns(t *testing.T) {
 	w := &sessionWatcher{}
 
-	var results []*backend.TurnResult
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { results = append(results, r) },
+	var results []*delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { results = append(results, r) },
 	}
 	w.setHandler(handler)
 
@@ -116,9 +116,9 @@ func TestProcessLine_UsageResetsAcrossTurns(t *testing.T) {
 func TestProcessLine_LastUsageWins(t *testing.T) {
 	w := &sessionWatcher{}
 
-	var got *backend.TurnResult
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { got = r },
+	var got *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 	w.setHandler(handler)
 
@@ -195,7 +195,7 @@ func TestHandleAssistant_TextEvent(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var textEvents []string
-	handler := &backend.EventHandler{
+	handler := &delegator.EventHandler{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	}
 
@@ -223,7 +223,7 @@ func TestHandleAssistant_ToolCallTracking(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var toolStarts []string
-	handler := &backend.EventHandler{
+	handler := &delegator.EventHandler{
 		OnToolStart: func(name, input string) { toolStarts = append(toolStarts, name) },
 	}
 
@@ -257,7 +257,7 @@ func TestHandleAssistant_SyntheticNoResponseFiltered(t *testing.T) {
 			w := &sessionWatcher{}
 
 			var textEvents []string
-			handler := &backend.EventHandler{
+			handler := &delegator.EventHandler{
 				OnText: func(text string) { textEvents = append(textEvents, text) },
 			}
 
@@ -286,7 +286,7 @@ func TestHandleAssistant_SyntheticNoResponseFiltered(t *testing.T) {
 // when the entry has no message payload.
 func TestHandleAssistant_NilMessage(t *testing.T) {
 	w := &sessionWatcher{}
-	handler := &backend.EventHandler{}
+	handler := &delegator.EventHandler{}
 
 	entry := &sessionEntry{Type: "assistant", Message: nil}
 	// Should not panic.
@@ -301,7 +301,7 @@ func TestHandleAssistant_AgentTracking(t *testing.T) {
 	var statusMessages []string
 	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
 
-	handler := &backend.EventHandler{}
+	handler := &delegator.EventHandler{}
 
 	agentInput, _ := json.Marshal(map[string]string{"description": "search files"})
 	content, _ := json.Marshal([]contentBlock{
@@ -337,7 +337,7 @@ func TestHandleAssistant_MultipleAgents(t *testing.T) {
 	var statusMessages []string
 	w.agents.OnStatus = func(text string) { statusMessages = append(statusMessages, text) }
 
-	handler := &backend.EventHandler{}
+	handler := &delegator.EventHandler{}
 
 	input1, _ := json.Marshal(map[string]string{"description": "task A"})
 	input2, _ := json.Marshal(map[string]string{"description": "task B"})
@@ -372,9 +372,9 @@ func TestHandleAssistant_EndTurnFiresResult(t *testing.T) {
 	w.turnText = "earlier text"
 	w.turnTools = 2
 
-	var got *backend.TurnResult
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { got = r },
+	var got *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 
 	endTurn := "end_turn"
@@ -421,8 +421,8 @@ func TestHandleAssistant_NonEndTurnDoesNotFire(t *testing.T) {
 	w := &sessionWatcher{}
 
 	called := false
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { called = true },
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { called = true },
 	}
 
 	toolUse := "tool_use"
@@ -448,7 +448,7 @@ func TestHandleAssistant_EmptyTextIgnored(t *testing.T) {
 	w := &sessionWatcher{}
 
 	var textEvents []string
-	handler := &backend.EventHandler{
+	handler := &delegator.EventHandler{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	}
 
@@ -612,9 +612,9 @@ func TestHandleSystem_TurnDuration(t *testing.T) {
 	w.turnText = "accumulated text"
 	w.turnTools = 3
 
-	var got *backend.TurnResult
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { got = r },
+	var got *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 
 	entry := &sessionEntry{
@@ -646,9 +646,9 @@ func TestHandleSystem_TurnDuration(t *testing.T) {
 func TestHandleSystem_CompactBoundary(t *testing.T) {
 	w := &sessionWatcher{}
 
-	var got *backend.TurnResult
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { got = r },
+	var got *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { got = r },
 	}
 
 	entry := &sessionEntry{
@@ -669,8 +669,8 @@ func TestHandleSystem_OtherSubtype(t *testing.T) {
 	w := &sessionWatcher{}
 
 	called := false
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) { called = true },
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { called = true },
 	}
 
 	for _, subtype := range []string{"", "init", "login", "unknown"} {
@@ -695,9 +695,9 @@ func TestProcessLine_DispatchesCorrectly(t *testing.T) {
 
 	var textCalled bool
 	var turnComplete bool
-	handler := &backend.EventHandler{
+	handler := &delegator.EventHandler{
 		OnText:         func(text string) { textCalled = true },
-		OnTurnComplete: func(r *backend.TurnResult) { turnComplete = true },
+		OnTurnComplete: func(r *delegator.TurnResult) { turnComplete = true },
 	}
 
 	// assistant type → handleAssistant
@@ -735,7 +735,7 @@ func TestProcessLine_DispatchesCorrectly(t *testing.T) {
 // is silently skipped without panicking.
 func TestProcessLine_IgnoresUnparseableLines(t *testing.T) {
 	w := &sessionWatcher{}
-	handler := &backend.EventHandler{}
+	handler := &delegator.EventHandler{}
 
 	// Should not panic.
 	w.processLine([]byte("not valid json"), handler)
@@ -749,9 +749,9 @@ func TestProcessLine_IgnoresUnknownTypes(t *testing.T) {
 	w := &sessionWatcher{}
 
 	called := false
-	handler := &backend.EventHandler{
+	handler := &delegator.EventHandler{
 		OnText:         func(text string) { called = true },
-		OnTurnComplete: func(r *backend.TurnResult) { called = true },
+		OnTurnComplete: func(r *delegator.TurnResult) { called = true },
 	}
 
 	for _, typ := range []string{"progress", "file-history-snapshot", "queue-operation", "unknown"} {
@@ -773,11 +773,11 @@ func TestFireTurnResult_ResetsAllState(t *testing.T) {
 	w := &sessionWatcher{}
 	w.turnText = "some text"
 	w.turnTools = 5
-	w.turnUsage = &backend.TurnUsage{InputTokens: 100}
+	w.turnUsage = &delegator.TurnUsage{InputTokens: 100}
 	w.turnModel = "claude-opus-4-6"
 
-	handler := &backend.EventHandler{
-		OnTurnComplete: func(r *backend.TurnResult) {},
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) {},
 	}
 
 	w.fireTurnResult(handler)
@@ -802,7 +802,7 @@ func TestFireTurnResult_NilCallback(t *testing.T) {
 	w := &sessionWatcher{}
 	w.turnText = "text"
 
-	handler := &backend.EventHandler{} // OnTurnComplete is nil
+	handler := &delegator.EventHandler{} // OnTurnComplete is nil
 
 	// Should not panic.
 	w.fireTurnResult(handler)
@@ -821,7 +821,7 @@ func TestFireTurnResult_NilCallback(t *testing.T) {
 func TestSetHandler(t *testing.T) {
 	w := &sessionWatcher{}
 
-	handler := &backend.EventHandler{
+	handler := &delegator.EventHandler{
 		OnText: func(text string) {},
 	}
 
@@ -839,7 +839,7 @@ func TestSetHandler(t *testing.T) {
 // TestSetHandler_NilClears verifies that setting a nil handler clears it.
 func TestSetHandler_NilClears(t *testing.T) {
 	w := &sessionWatcher{}
-	w.setHandler(&backend.EventHandler{})
+	w.setHandler(&delegator.EventHandler{})
 	w.setHandler(nil)
 
 	w.mu.Lock()

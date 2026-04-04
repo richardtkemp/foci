@@ -1,10 +1,10 @@
-package backend
+package delegator
 
 import "sync"
 
-// Constructor creates a Backend from backend-specific config.
+// Constructor creates a Delegator from backend-specific config.
 // The config map comes from [agents.backend_config] in TOML.
-type Constructor func(cfg map[string]any) (Backend, error)
+type Constructor func(cfg map[string]any) (Delegator, error)
 
 var (
 	registryMu   sync.Mutex
@@ -19,9 +19,9 @@ func Register(name string, c Constructor) {
 	constructors[name] = c
 }
 
-// New creates a Backend by name using the registered constructor.
+// New creates a Delegator by name using the registered constructor.
 // Returns nil, nil if the name is not registered.
-func New(name string, cfg map[string]any) (Backend, error) {
+func New(name string, cfg map[string]any) (Delegator, error) {
 	registryMu.Lock()
 	c := constructors[name]
 	registryMu.Unlock()

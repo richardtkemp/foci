@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -121,7 +121,7 @@ func TestTransportSelection_Delegated(t *testing.T) {
 		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
 		Model:     "test-model",
 		DelegatedManager: &DelegatedManager{
-			NewBackend: func() (backend.Backend, error) {
+			NewBackend: func() (delegator.Delegator, error) {
 				return nil, fmt.Errorf("no real backend in test")
 			},
 		},

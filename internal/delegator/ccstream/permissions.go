@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 )
 
@@ -294,14 +294,14 @@ func (req *PermissionRequestPayload) Summary() string {
 }
 
 // Choices creates the button choices for the platform UI.
-func (req *PermissionRequestPayload) Choices() []backend.PromptChoice {
-	choices := []backend.PromptChoice{
+func (req *PermissionRequestPayload) Choices() []delegator.PromptChoice {
+	choices := []delegator.PromptChoice{
 		{Label: "Allow", Data: "allow"},
 		{Label: "Deny", Data: "deny"},
 	}
 	for _, s := range req.PermissionSuggestions {
 		if s.Prefix != "" {
-			choices = append(choices, backend.PromptChoice{
+			choices = append(choices, delegator.PromptChoice{
 				Label: fmt.Sprintf("Always: %s", s.Prefix),
 				Data:  fmt.Sprintf("allow_always:%s", s.Prefix),
 			})

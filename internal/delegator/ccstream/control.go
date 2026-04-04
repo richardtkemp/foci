@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 )
 
 // SendControl translates a backend-agnostic ControlRequest into the
 // ccstream wire format and sends it to the CC subprocess.
-func (b *Backend) SendControl(ctx context.Context, req backend.ControlRequest) error {
+func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest) error {
 	switch r := req.(type) {
-	case *backend.SetModelRequest:
+	case *delegator.SetModelRequest:
 		return b.writer.SendControl(newRequestID(), &SetModelRequest{
 			Subtype: "set_model",
 			Model:   r.Model,

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"foci/internal/backend"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -27,11 +27,11 @@ type DelegatedManager struct {
 	backends map[string]*managedBackend // sessionKeyBase → managed backend
 
 	// NewBackend creates a fresh Backend instance (does not start it).
-	NewBackend func() (backend.Backend, error)
+	NewBackend func() (delegator.Delegator, error)
 
 	// StartOpts returns the StartOptions for a new Backend.
 	// Label and ResumeSessionID are set by the manager.
-	StartOpts backend.StartOptions
+	StartOpts delegator.StartOptions
 
 	// SendFunc routes text to the correct platform chat for a session key.
 	SendFunc func(sessionKey, text string)
@@ -39,7 +39,7 @@ type DelegatedManager struct {
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
 	// requestID is the CC protocol request ID.
 	// If nil, backends fall back to plain text via SendFunc.
-	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []backend.PromptChoice)
+	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice)
 
 	// TypingFunc controls the platform typing indicator for a session.
 	// Called with true when CC starts working, false on turn complete.
@@ -62,7 +62,7 @@ type DelegatedManager struct {
 
 // managedBackend wraps a Backend with idle tracking and resume state.
 type managedBackend struct {
-	be         backend.Backend
+	be         delegator.Delegator
 	bridge     *tools.ExecBridge // exec bridge for shell functions; nil if not configured
 	lastActive time.Time
 	sessionKey string // full session key from last message (for reply routing)
@@ -98,7 +98,7 @@ func (mb *managedBackend) clearPermission() {
 // Get returns the Backend for the given session key, creating and starting
 // one if it doesn't exist yet. The session key is collapsed to its base
 // (agentID/c12345) so that compaction-rotated keys share the same Backend.
-func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.Backend, error) {
+func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
 	base := session.SessionKeyBase(sessionKey)
 
 	m.mu.Lock()
@@ -169,7 +169,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 		})
 	}
 	if m.PermissionPromptFunc != nil {
-		be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []backend.PromptChoice) {
+		be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
 			m.SetPermissionPending(sk, true)
 			m.PermissionPromptFunc(sk, requestID, text, summary, choices)
 		})
@@ -203,7 +203,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (backend.
 				be.SetReplyFunc(func(text string) { m.SendFunc(sk, text) })
 			}
 			if m.PermissionPromptFunc != nil {
-				be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []backend.PromptChoice) {
+				be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
 					m.SetPermissionPending(sk, true)
 					m.PermissionPromptFunc(sk, requestID, text, summary, choices)
 				})
