@@ -28,18 +28,26 @@ const (
 // ---------------------------------------------------------------------------
 
 // ContentBlock represents a block inside an assistant message's content array.
-// The same struct covers text, thinking, tool_use, and tool_result blocks;
-// unused fields are omitted from JSON.
+// The same struct covers text, thinking, tool_use, tool_result, image, and
+// document blocks; unused fields are omitted from JSON.
 type ContentBlock struct {
-	Type     string          `json:"type"`               // "text"|"thinking"|"tool_use"|"tool_result"
-	Text     string          `json:"text,omitempty"`      // text block content
-	Thinking string          `json:"thinking,omitempty"`  // thinking block content
-	ID       string          `json:"id,omitempty"`        // tool_use id
-	Name     string          `json:"name,omitempty"`      // tool_use name
-	Input    json.RawMessage `json:"input,omitempty"`     // tool_use input (arbitrary JSON)
-	Content  json.RawMessage `json:"content,omitempty"`   // tool_result content
-	IsError  *bool           `json:"is_error,omitempty"`  // tool_result error flag
-	ToolID   string          `json:"tool_use_id,omitempty"` // tool_result back-reference
+	Type     string              `json:"type"`               // "text"|"thinking"|"tool_use"|"tool_result"|"image"|"document"
+	Text     string              `json:"text,omitempty"`      // text block content
+	Thinking string              `json:"thinking,omitempty"`  // thinking block content
+	ID       string              `json:"id,omitempty"`        // tool_use id
+	Name     string              `json:"name,omitempty"`      // tool_use name
+	Input    json.RawMessage     `json:"input,omitempty"`     // tool_use input (arbitrary JSON)
+	Content  json.RawMessage     `json:"content,omitempty"`   // tool_result content
+	IsError  *bool               `json:"is_error,omitempty"`  // tool_result error flag
+	ToolID   string              `json:"tool_use_id,omitempty"` // tool_result back-reference
+	Source   *ContentBlockSource `json:"source,omitempty"`    // image/document: base64-encoded source
+}
+
+// ContentBlockSource holds base64-encoded data for image and document content blocks.
+type ContentBlockSource struct {
+	Type      string `json:"type"`       // "base64"
+	MimeType  string `json:"media_type"` // "image/jpeg", "image/png", "application/pdf", etc.
+	Data      string `json:"data"`       // base64-encoded data
 }
 
 // TokenUsage holds token counts for a single API call or accumulated turn.

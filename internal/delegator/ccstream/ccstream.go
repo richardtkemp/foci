@@ -7,6 +7,7 @@ package ccstream
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -386,6 +387,50 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delega
 	}
 
 	return &delegator.TurnResult{}, nil
+}
+
+// SendToPaneWithAttachments sends a prompt with file attachments as structured
+// content blocks. Images become "image" blocks, PDFs become "document" blocks,
+// all alongside the text prompt. This preserves binary data through to CC
+// instead of flattening to text.
+func (b *Backend) SendToPaneWithAttachments(ctx context.Context, prompt string, attachments []delegator.Attachment, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+	b.beginTurn(handler)
+
+	if b.typingFunc != nil {
+		b.typingFunc(true)
+	}
+
+	// Build content blocks: text first, then attachments.
+	var blocks []ContentBlock
+	if prompt != "" {
+		blocks = append(blocks, ContentBlock{Type: "text", Text: prompt})
+	}
+	for _, att := range attachments {
+		blockType := attachmentBlockType(att.MimeType)
+		blocks = append(blocks, ContentBlock{
+			Type: blockType,
+			Source: &ContentBlockSource{
+				Type:     "base64",
+				MimeType: att.MimeType,
+				Data:     base64.StdEncoding.EncodeToString(att.Data),
+			},
+		})
+	}
+
+	if err := b.writer.Send(NewUserMessageBlocks(blocks)); err != nil {
+		b.cancelTurn()
+		return nil, fmt.Errorf("ccstream: send user message with attachments: %w", err)
+	}
+
+	return &delegator.TurnResult{}, nil
+}
+
+// attachmentBlockType returns the CC content block type for a MIME type.
+func attachmentBlockType(mimeType string) string {
+	if strings.HasPrefix(mimeType, "image/") {
+		return "image"
+	}
+	return "document"
 }
 
 // WaitForTurn blocks until the current turn completes (result message received).
