@@ -108,6 +108,25 @@ type Delegator interface {
 	Close() error
 }
 
+// AttachmentSender is optionally implemented by backends that support
+// structured content blocks (images, documents) alongside text prompts.
+// When the delegated transport has attachments, it checks for this interface
+// and uses it instead of the text-only SendToPane path.
+type AttachmentSender interface {
+	// SendToPaneWithAttachments sends a composed prompt with file attachments
+	// as structured content blocks. Each attachment becomes an image or document
+	// ContentBlock alongside the text prompt.
+	SendToPaneWithAttachments(ctx context.Context, prompt string, attachments []Attachment, handler *EventHandler) (*TurnResult, error)
+}
+
+// Attachment is a file attachment to include as a structured content block.
+// Mirrors platform.Attachment but lives in the delegator package to avoid
+// a dependency on platform from backends.
+type Attachment struct {
+	MimeType string // "image/jpeg", "image/png", "application/pdf", etc.
+	Data     []byte // raw binary data (will be base64-encoded for the wire)
+}
+
 // ControlSender is optionally implemented by backends that support
 // runtime control requests (model switch, effort change, etc.).
 // The Agent layer constructs backend-agnostic ControlRequest values;

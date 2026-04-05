@@ -174,6 +174,23 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		handler.SteerCheckFunc = cb.SteerCheckFunc
 	}
 
+	// Use structured content blocks when attachments are present and the
+	// backend supports it. This sends images/documents as proper content
+	// blocks instead of flattening them into the text prompt.
+	if len(ts.Attachments) > 0 {
+		if as, ok := be.(delegator.AttachmentSender); ok {
+			atts := make([]delegator.Attachment, len(ts.Attachments))
+			for i, a := range ts.Attachments {
+				atts[i] = delegator.Attachment{
+					MimeType: a.MimeType,
+					Data:     a.Data,
+				}
+			}
+			_, err = as.SendToPaneWithAttachments(ts.Ctx, ts.Prompt, atts, handler)
+			return err
+		}
+	}
+
 	_, err = be.SendToPane(ts.Ctx, ts.Prompt, handler)
 	return err
 }

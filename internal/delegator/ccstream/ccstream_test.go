@@ -528,6 +528,82 @@ func TestSendToPane_Success(t *testing.T) {
 	}
 }
 
+func TestSendToPaneWithAttachments(t *testing.T) {
+	// Verifies SendToPaneWithAttachments sends structured content blocks
+	// with text + image + document attachments.
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:  NewWriter(nopWriteCloser{&buf}),
+		readyCh: make(chan struct{}),
+	}
+
+	handler := &delegator.EventHandler{}
+	atts := []delegator.Attachment{
+		{MimeType: "image/jpeg", Data: []byte("fake-jpeg")},
+		{MimeType: "application/pdf", Data: []byte("fake-pdf")},
+	}
+	result, err := b.SendToPaneWithAttachments(context.Background(), "describe these", atts, handler)
+	if err != nil {
+		t.Fatalf("SendToPaneWithAttachments: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after SendToPaneWithAttachments")
+	}
+
+	// Parse the wire message.
+	line := strings.TrimSpace(buf.String())
+	var got map[string]any
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if got["type"] != "user" {
+		t.Errorf("type = %v, want %q", got["type"], "user")
+	}
+
+	// Content should be an array of blocks, not a string.
+	msg := got["message"].(map[string]any)
+	blocks, ok := msg["content"].([]any)
+	if !ok {
+		t.Fatalf("content is not an array: %T", msg["content"])
+	}
+	if len(blocks) != 3 {
+		t.Fatalf("len(blocks) = %d, want 3 (text + image + document)", len(blocks))
+	}
+
+	// Block 0: text
+	b0 := blocks[0].(map[string]any)
+	if b0["type"] != "text" {
+		t.Errorf("block[0].type = %v, want %q", b0["type"], "text")
+	}
+	if b0["text"] != "describe these" {
+		t.Errorf("block[0].text = %v, want %q", b0["text"], "describe these")
+	}
+
+	// Block 1: image
+	b1 := blocks[1].(map[string]any)
+	if b1["type"] != "image" {
+		t.Errorf("block[1].type = %v, want %q", b1["type"], "image")
+	}
+	src1 := b1["source"].(map[string]any)
+	if src1["type"] != "base64" {
+		t.Errorf("block[1].source.type = %v, want %q", src1["type"], "base64")
+	}
+	if src1["media_type"] != "image/jpeg" {
+		t.Errorf("block[1].source.media_type = %v, want %q", src1["media_type"], "image/jpeg")
+	}
+
+	// Block 2: document (PDF)
+	b2 := blocks[2].(map[string]any)
+	if b2["type"] != "document" {
+		t.Errorf("block[2].type = %v, want %q", b2["type"], "document")
+	}
+}
+
 func TestSendToPane_WriterError(t *testing.T) {
 	// Verifies SendToPane cancels the turn if the writer fails.
 	t.Parallel()
