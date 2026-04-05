@@ -186,13 +186,6 @@ type KeepAlive struct {
 	Type string `json:"type"` // always "keep_alive"
 }
 
-// UpdateEnvironmentVariables injects environment variables into the CC process
-// at runtime.
-type UpdateEnvironmentVariables struct {
-	Type      string            `json:"type"`      // always "update_environment_variables"
-	Variables map[string]string `json:"variables"`
-}
-
 // ---------------------------------------------------------------------------
 // Control request subtypes (payloads for ControlRequest.Request)
 // ---------------------------------------------------------------------------
@@ -459,20 +452,4 @@ func NewControlResponse(reqID string, response any) *ControlResponse {
 	}
 }
 
-// NewControlCancelRequest creates a ControlCancelRequest for the given
-// request ID.
-func NewControlCancelRequest(reqID string) *ControlCancelRequest {
-	return &ControlCancelRequest{
-		Type:      "control_cancel_request",
-		RequestID: reqID,
-	}
-}
-
-// NewUpdateEnvironmentVariables creates an UpdateEnvironmentVariables message.
-func NewUpdateEnvironmentVariables(vars map[string]string) *UpdateEnvironmentVariables {
-	return &UpdateEnvironmentVariables{
-		Type:      "update_environment_variables",
-		Variables: vars,
-	}
-}
 
