@@ -149,13 +149,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			if conn == nil {
 				return
 			}
-			if typing {
-				conn.SetTyping(true)
-			}
-			// Don't propagate false here. Typing lifecycle is handled by
-			// OnTurnDone callback (set by processAgentMessage, called by
-			// runPostTurn when the turn completes). TypingFunc just starts
-			// typing when CC begins working; stopping is OnTurnDone's job.
+			conn.SetTyping(typing)
 		},
 		IdleTimeout: idleTimeout,
 	}
