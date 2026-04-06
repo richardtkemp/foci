@@ -121,16 +121,11 @@ func (b *Bot) SendNotification(text string) {
 // Typing lifecycle:
 //
 //  1. processAgentMessage starts typing and defers SetTyping(false) as a
-//     safety net. The real stop signal comes from OnTurnDone (see below).
-//  2. OnTurnDone callback (set by processAgentMessage on TurnCallbacks):
-//     called by runPostTurn when the turn actually completes. For API turns
-//     this fires inline (synchronous). For backend turns it fires
-//     asynchronously when the watcher sees end_turn. This is the primary
-//     mechanism for stopping typing at the right time.
-//  3. TypingFunc (backend only): re-establishes typing when the watcher
-//     sees CC output (after processAgentMessage's defer has already fired).
-//     Does NOT propagate false — OnTurnDone handles stopping.
-//  4. tryDispatchViaDispatcher: SetTyping(false) after command completion.
+//     safety net for errors/cancellation.
+//  2. TypingFunc (delegated backend): the backend calls typingFunc(true) on
+//     SendToPane and typingFunc(false) on turn completion or error. This is
+//     the primary stop mechanism for delegated turns.
+//  3. tryDispatchViaDispatcher: SetTyping(false) after command completion.
 func (b *Bot) SetTyping(typing bool) {
 	b.typingMu.Lock()
 	defer b.typingMu.Unlock()

@@ -86,11 +86,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		}
 	}()
 
-	// Start typing immediately. Stopped by OnTurnDone callback when the
-	// turn actually completes — the transport layer decides when that is
-	// (immediate for API, async on end_turn for backend).
-	// The defer is a safety net for errors/cancellation where OnTurnDone
-	// might not fire.
+	// Start typing immediately. For delegated turns, TypingFunc stops it
+	// synchronously on turn completion/error. The defer is a safety net
+	// for errors/cancellation where the normal stop might not fire.
 	b.SetTyping(true)
 	defer b.SetTyping(false)
 
@@ -109,7 +107,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		SteerCheckFunc:     b.mq.DrainSteer,
 		RetryNotifyFunc:    tracker.NotifyRetry,
 		RetrySuccessFunc:   tracker.ClearRetryNotification,
-		OnTurnDone:         func() { b.SetTyping(false) },
+		OnTurnDone:         nil,
 	}
 	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
