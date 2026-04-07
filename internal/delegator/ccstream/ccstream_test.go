@@ -1835,12 +1835,13 @@ func TestOnSystem_NilCallbacks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// OnError
+// OnReaderStopped
 // ---------------------------------------------------------------------------
 
-func TestOnError_ClearsTurnState(t *testing.T) {
-	// Verifies OnError marks the backend as not running, fires OnTurnComplete
-	// with an error message, stops typing, and unblocks WaitForTurn.
+func TestOnReaderStopped_ClearsTurnState(t *testing.T) {
+	// Verifies OnReaderStopped marks the backend as not running, fires
+	// OnTurnComplete with an error message, stops typing, and unblocks
+	// WaitForTurn.
 	t.Parallel()
 
 	var completedResult *delegator.TurnResult
@@ -1858,15 +1859,15 @@ func TestOnError_ClearsTurnState(t *testing.T) {
 	b.beginTurn(handler)
 
 	testErr := fmt.Errorf("pipe broken")
-	b.OnError(testErr)
+	b.OnReaderStopped(testErr)
 
 	// Running should be false.
 	if b.IsRunning() {
-		t.Error("IsRunning = true after OnError")
+		t.Error("IsRunning = true after OnReaderStopped")
 	}
 	// Turn should be cleared.
 	if b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = true after OnError")
+		t.Error("IsTurnInFlight = true after OnReaderStopped")
 	}
 	// OnTurnComplete should have been called with error info.
 	if completedResult == nil {
@@ -1881,8 +1882,9 @@ func TestOnError_ClearsTurnState(t *testing.T) {
 	}
 }
 
-func TestOnError_UnblocksWaitForTurn(t *testing.T) {
-	// Verifies that OnError pushes to turnResultCh so WaitForTurn unblocks.
+func TestOnReaderStopped_UnblocksWaitForTurn(t *testing.T) {
+	// Verifies that OnReaderStopped pushes to turnResultCh so WaitForTurn
+	// unblocks.
 	t.Parallel()
 
 	b := &Backend{}
@@ -1898,7 +1900,7 @@ func TestOnError_UnblocksWaitForTurn(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	b.OnError(fmt.Errorf("crash"))
+	b.OnReaderStopped(fmt.Errorf("crash"))
 
 	select {
 	case err := <-done:
@@ -1906,13 +1908,13 @@ func TestOnError_UnblocksWaitForTurn(t *testing.T) {
 			t.Fatalf("WaitForTurn: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("WaitForTurn did not unblock after OnError")
+		t.Fatal("WaitForTurn did not unblock after OnReaderStopped")
 	}
 }
 
-func TestOnError_NoTurnInFlight(t *testing.T) {
-	// Verifies OnError handles the case where no turn is in flight without
-	// panicking.
+func TestOnReaderStopped_NoTurnInFlight(t *testing.T) {
+	// Verifies OnReaderStopped handles the case where no turn is in flight
+	// without panicking.
 	t.Parallel()
 
 	b := &Backend{}
@@ -1921,16 +1923,16 @@ func TestOnError_NoTurnInFlight(t *testing.T) {
 	b.mu.Unlock()
 
 	// Should not panic even with no turn.
-	b.OnError(fmt.Errorf("unexpected EOF"))
+	b.OnReaderStopped(fmt.Errorf("unexpected EOF"))
 
 	if b.IsRunning() {
-		t.Error("IsRunning should be false after OnError")
+		t.Error("IsRunning should be false after OnReaderStopped")
 	}
 }
 
-func TestOnError_NilCallbacks(t *testing.T) {
-	// Verifies OnError doesn't panic when typingFunc, handler, and resultCh
-	// are all nil/unset.
+func TestOnReaderStopped_NilCallbacks(t *testing.T) {
+	// Verifies OnReaderStopped doesn't panic when typingFunc, handler, and
+	// resultCh are all nil/unset.
 	t.Parallel()
 
 	b := &Backend{}
@@ -1939,7 +1941,39 @@ func TestOnError_NilCallbacks(t *testing.T) {
 	b.mu.Unlock()
 
 	// No typing, no handler, no result channel. Should not panic.
-	b.OnError(fmt.Errorf("test error"))
+	b.OnReaderStopped(fmt.Errorf("test error"))
+}
+
+func TestOnReaderStopped_ExpectedClose(t *testing.T) {
+	// Verifies that when closing=true (set by Close), OnReaderStopped uses a
+	// non-error turn-complete message instead of "exited unexpectedly".
+	t.Parallel()
+
+	var completedResult *delegator.TurnResult
+
+	b := &Backend{}
+	b.mu.Lock()
+	b.running = true
+	b.closing = true
+	b.mu.Unlock()
+	b.typingFunc = func(bool) {}
+
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
+	}
+	b.beginTurn(handler)
+
+	b.OnReaderStopped(io.EOF)
+
+	if completedResult == nil {
+		t.Fatal("OnTurnComplete was not called")
+	}
+	if strings.Contains(completedResult.Text, "unexpectedly") {
+		t.Errorf("result.Text = %q, should not say 'unexpectedly' for expected close", completedResult.Text)
+	}
+	if !strings.Contains(completedResult.Text, "Session closed") {
+		t.Errorf("result.Text = %q, want to contain 'Session closed'", completedResult.Text)
+	}
 }
 
 // ---------------------------------------------------------------------------

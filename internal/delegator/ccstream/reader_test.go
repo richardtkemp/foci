@@ -30,7 +30,7 @@ func (h *mockHandler) OnToolProgress(msg *ToolProgressMessage)    { h.toolProgre
 func (h *mockHandler) OnStreamEvent(raw json.RawMessage)          { h.streamEvents = append(h.streamEvents, raw) }
 func (h *mockHandler) OnRateLimit(_ *RateLimitEvent)              {}
 func (h *mockHandler) OnSystem(subtype string, _ json.RawMessage) { h.systems = append(h.systems, subtype) }
-func (h *mockHandler) OnError(err error)                          { h.errors = append(h.errors, err) }
+func (h *mockHandler) OnReaderStopped(err error)                   { h.errors = append(h.errors, err) }
 
 func TestReaderDispatchAssistant(t *testing.T) {
 	t.Parallel()
@@ -129,7 +129,7 @@ func TestReaderUnknownType(t *testing.T) {
 	if len(h.systems) != 0 {
 		t.Errorf("unexpected system dispatch")
 	}
-	// EOF error is expected — reader always fires OnError when it exits.
+	// EOF is expected — reader always fires OnReaderStopped when it exits.
 	if len(h.errors) != 1 {
 		t.Errorf("got %d errors, want 1 (EOF)", len(h.errors))
 	}
@@ -163,7 +163,7 @@ func TestReaderEOF(t *testing.T) {
 	r := NewReader(strings.NewReader(""), h)
 	r.Run(context.Background())
 
-	// EOF always fires OnError so the backend knows the subprocess is gone.
+	// EOF always fires OnReaderStopped so the backend knows the subprocess is gone.
 	if len(h.errors) != 1 {
 		t.Fatalf("got %d errors, want 1 (EOF)", len(h.errors))
 	}
