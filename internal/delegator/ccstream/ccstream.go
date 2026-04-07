@@ -61,6 +61,7 @@ type Backend struct {
 	// State
 	mu           sync.Mutex
 	running      bool
+	closing      bool // set by Close() before shutdown; tells OnReaderStopped this is expected
 	sessionID    string       // from init message
 	initMsg      *InitMessage // from init message
 	readyCh      chan struct{} // closed when init received
@@ -265,6 +266,7 @@ func (b *Backend) Close() error {
 		return nil
 	}
 	b.running = false
+	b.closing = true
 	b.mu.Unlock()
 
 	// Try graceful shutdown: interrupt + close stdin (EOF).
@@ -988,13 +990,24 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 	}
 }
 
-// OnError handles errors from the reader (scanner errors, broken pipe, EOF, etc.).
-// This is called when the reader goroutine exits for any reason, including
-// clean process exit (io.EOF). It marks the backend as dead and completes
+// OnReaderStopped handles the reader goroutine exiting for any reason, including
+// expected shutdown (Close), clean process exit (io.EOF), or unexpected errors
+// (broken pipe, scanner errors). It marks the backend as dead and completes
 // any in-flight turn so callers don't block forever.
-func (b *Backend) OnError(err error) {
+func (b *Backend) OnReaderStopped(err error) {
 	component := b.logComponent()
-	log.Warnf(component, "subprocess reader stopped: %v", err)
+
+	// Check whether Close() initiated this shutdown.
+	b.mu.Lock()
+	expected := b.closing
+	b.running = false
+	b.mu.Unlock()
+
+	if expected {
+		log.Infof(component, "subprocess reader stopped (session closing)")
+	} else {
+		log.Warnf(component, "subprocess reader stopped: %v", err)
+	}
 
 	// Wait briefly for the waiter goroutine to set exitErr. The process is
 	// already dead (we got EOF/error on stdout), so cmd.Wait should return
@@ -1005,15 +1018,10 @@ func (b *Backend) OnError(err error) {
 	case <-time.After(2 * time.Second):
 	}
 
-	exitDetail := ""
-	if b.exitErr != nil {
-		exitDetail = describeExitError(b.exitErr)
+	if !expected && b.exitErr != nil {
+		exitDetail := describeExitError(b.exitErr)
 		log.Warnf(component, "process exit detail: %s", exitDetail)
 	}
-
-	b.mu.Lock()
-	b.running = false
-	b.mu.Unlock()
 
 	// If a turn was in-flight, fire OnTurnComplete with an error indication
 	// so the caller doesn't block forever on CompletionChan.
@@ -1025,9 +1033,14 @@ func (b *Backend) OnError(err error) {
 	b.turnMu.Unlock()
 
 	if handler != nil && handler.OnTurnComplete != nil {
-		msg := fmt.Sprintf("Error: CC process exited unexpectedly: %v", err)
-		if exitDetail != "" {
-			msg += " (" + exitDetail + ")"
+		var msg string
+		if expected {
+			msg = "Session closed while turn was in flight"
+		} else {
+			msg = fmt.Sprintf("Error: CC process exited unexpectedly: %v", err)
+			if b.exitErr != nil {
+				msg += " (" + describeExitError(b.exitErr) + ")"
+			}
 		}
 		handler.OnTurnComplete(&delegator.TurnResult{
 			Text: msg,

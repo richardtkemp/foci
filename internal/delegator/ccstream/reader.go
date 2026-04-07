@@ -23,7 +23,7 @@ type Handler interface {
 	OnStreamEvent(raw json.RawMessage)
 	OnRateLimit(msg *RateLimitEvent)
 	OnSystem(subtype string, raw json.RawMessage)
-	OnError(err error)
+	OnReaderStopped(err error)
 }
 
 // Reader reads NDJSON from CC's stdout and dispatches to a Handler.
@@ -71,7 +71,7 @@ func (rd *Reader) Run(ctx context.Context) {
 			if err == nil {
 				err = io.EOF
 			}
-			rd.handler.OnError(fmt.Errorf("ccstream: reader stopped: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: reader stopped: %w", err))
 			return
 		}
 
@@ -99,7 +99,7 @@ func (rd *Reader) dispatch(line []byte) {
 	// Step 1: Discriminate on Type (and optionally Subtype).
 	var env StdoutEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
-		rd.handler.OnError(fmt.Errorf("ccstream: unmarshal envelope: %w", err))
+		rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal envelope: %w", err))
 		return
 	}
 
@@ -107,7 +107,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "assistant":
 		var msg AssistantMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal assistant: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal assistant: %w", err))
 			return
 		}
 		rd.handler.OnAssistant(&msg)
@@ -115,7 +115,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "result":
 		var msg ResultMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal result: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal result: %w", err))
 			return
 		}
 		rd.handler.OnResult(&msg)
@@ -123,14 +123,14 @@ func (rd *Reader) dispatch(line []byte) {
 	case "control_request":
 		var crEnv controlRequestEnvelope
 		if err := json.Unmarshal(line, &crEnv); err != nil {
-			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal control_request envelope: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal control_request envelope: %w", err))
 			return
 		}
 		switch crEnv.Request.Subtype {
 		case "can_use_tool":
 			var msg PermissionRequest
 			if err := json.Unmarshal(line, &msg); err != nil {
-				rd.handler.OnError(fmt.Errorf("ccstream: unmarshal permission_request: %w", err))
+				rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal permission_request: %w", err))
 				return
 			}
 			log.Debugf("ccstream", "received permission request req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
@@ -145,7 +145,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "control_cancel_request":
 		var ce cancelEnvelope
 		if err := json.Unmarshal(line, &ce); err != nil {
-			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal control_cancel_request: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal control_cancel_request: %w", err))
 			return
 		}
 		rd.handler.OnControlCancelRequest(ce.RequestID)
@@ -153,7 +153,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "tool_progress":
 		var msg ToolProgressMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal tool_progress: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal tool_progress: %w", err))
 			return
 		}
 		rd.handler.OnToolProgress(&msg)
@@ -176,7 +176,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "rate_limit_event":
 		var msg RateLimitEvent
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnError(fmt.Errorf("ccstream: unmarshal rate_limit_event: %w", err))
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal rate_limit_event: %w", err))
 			return
 		}
 		rd.handler.OnRateLimit(&msg)
