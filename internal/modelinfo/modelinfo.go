@@ -80,11 +80,36 @@ func stripPrefix(model string) string {
 	return model
 }
 
+// stripDateSuffix removes a trailing "-YYYYMMDD" date suffix from a model
+// name. CC sometimes reports dated model variants (e.g.
+// "claude-haiku-4-5-20251001") that don't match our registry keys.
+func stripDateSuffix(model string) string {
+	// Need at least "-" + 8 digits.
+	if len(model) < 9 {
+		return model
+	}
+	tail := model[len(model)-9:]
+	if tail[0] != '-' {
+		return model
+	}
+	for i := 1; i < 9; i++ {
+		if tail[i] < '0' || tail[i] > '9' {
+			return model
+		}
+	}
+	return model[:len(model)-9]
+}
+
+// normalize strips provider prefixes and date suffixes from a model string.
+func normalize(model string) string {
+	return stripDateSuffix(stripPrefix(model))
+}
+
 // ContextWindow returns the context window for a model.
 // Falls back to family defaults: gemini-1.5-* → 2M, gemini-* → 1M,
 // everything else (including claude) → 200k.
 func ContextWindow(model string) int {
-	bare := stripPrefix(model)
+	bare := normalize(model)
 	if m, ok := registry[bare]; ok {
 		return m.ContextWindow
 	}
@@ -93,6 +118,8 @@ func ContextWindow(model string) int {
 	case strings.Contains(bare, "gemini-1.5"):
 		return 2_000_000
 	case strings.Contains(bare, "gemini-"):
+		return 1_000_000
+	case strings.Contains(bare, "opus"):
 		return 1_000_000
 	default:
 		return 200_000
@@ -103,7 +130,7 @@ func ContextWindow(model string) int {
 // Falls back to family defaults: claude-sonnet → effort+thinking,
 // claude-opus → effort+thinking+speed, everything else → none.
 func Capabilities(model string) (effort, thinking, speed bool) {
-	bare := strings.ToLower(stripPrefix(model))
+	bare := strings.ToLower(normalize(model))
 	if m, ok := registry[bare]; ok {
 		return m.Effort, m.Thinking, m.Speed
 	}
@@ -125,7 +152,7 @@ func Capabilities(model string) (effort, thinking, speed bool) {
 // Falls back to family defaults: gemini → flash pricing,
 // OpenAI → $5/$15 approximation, everything else → haiku pricing.
 func Cost(model string, input, output, cacheRead, cacheWrite int) float64 {
-	bare := stripPrefix(model)
+	bare := normalize(model)
 	m, ok := registry[bare]
 	if !ok {
 		switch {

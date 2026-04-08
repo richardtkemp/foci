@@ -753,12 +753,26 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	b.lastUsage = nil // reset for next turn
 	b.mu.Unlock()
 
-	for modelName, usage := range msg.ModelUsage {
-		resultModel = modelName
+	// Pick context window from ModelUsage deterministically: prefer the
+	// entry matching resultModel (the primary model from assistant messages);
+	// otherwise take the largest context window to avoid spurious compaction
+	// from subagent models (e.g. haiku) winning the random map iteration.
+	if usage, ok := msg.ModelUsage[resultModel]; ok {
 		b.mu.Lock()
 		b.contextWindow = usage.ContextWindow
 		b.mu.Unlock()
-		break // take first
+	} else {
+		var bestCW int
+		for _, usage := range msg.ModelUsage {
+			if usage.ContextWindow > bestCW {
+				bestCW = usage.ContextWindow
+			}
+		}
+		if bestCW > 0 {
+			b.mu.Lock()
+			b.contextWindow = bestCW
+			b.mu.Unlock()
+		}
 	}
 
 	// Prefer per-call usage from last assistant message; fall back to
