@@ -23,6 +23,10 @@ func TestContextWindow(t *testing.T) {
 		{"gemini-1.5-pro", 2_000_000},       // family fallback
 		{"gemini-99-future", 1_000_000},      // unknown gemini fallback
 		{"google/gemini-99-future", 1_000_000},
+		{"claude-haiku-4-5-20251001", 200_000}, // date suffix stripped → exact match
+		{"claude-opus-4-6-20260101", 1_000_000}, // date suffix stripped → exact match
+		{"anthropic/claude-haiku-4-5-20251001", 200_000}, // prefix + date suffix
+		{"claude-opus-99", 1_000_000},        // unknown opus family fallback
 		{"claude-sonnet-99", 200_000},        // unknown claude fallback
 		{"totally-unknown", 200_000},         // default fallback
 	}
@@ -52,6 +56,8 @@ func TestCapabilities(t *testing.T) {
 		{"claude-sonnet-99", true, true, false},   // unknown sonnet fallback
 		{"claude-opus-99", true, true, true},      // unknown opus fallback
 		{"claude-haiku-99", false, false, false},   // unknown haiku fallback
+		{"claude-haiku-4-5-20251001", false, false, false}, // date suffix stripped
+		{"claude-opus-4-6-20260101", true, true, true},     // date suffix stripped
 		{"gemini-2.5-flash", false, false, false},
 		{"gpt-4o", false, false, false},
 		{"unknown", false, false, false},
@@ -91,6 +97,49 @@ func TestCost(t *testing.T) {
 			got := Cost(tt.model, m, m, m, m)
 			if math.Abs(got-tt.want) > 0.001 {
 				t.Errorf("Cost(%q, 1M each) = %.4f, want %.4f", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStripDateSuffix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input, want string
+	}{
+		{"claude-haiku-4-5-20251001", "claude-haiku-4-5"},
+		{"claude-opus-4-6-20260101", "claude-opus-4-6"},
+		{"claude-opus-4-6", "claude-opus-4-6"},             // no suffix
+		{"claude-opus-4-6[1m]", "claude-opus-4-6[1m]"},     // not a date suffix
+		{"gemini-2.5-pro", "gemini-2.5-pro"},                // no suffix
+		{"short", "short"},                                  // too short
+		{"x-1234567a", "x-1234567a"},                        // non-digit in suffix
+		{"", ""},                                            // empty
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := stripDateSuffix(tt.input)
+			if got != tt.want {
+				t.Errorf("stripDateSuffix(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		input, want string
+	}{
+		{"anthropic/claude-haiku-4-5-20251001", "claude-haiku-4-5"},
+		{"claude-opus-4-6", "claude-opus-4-6"},
+		{"google/gemini-2.5-pro", "gemini-2.5-pro"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalize(tt.input)
+			if got != tt.want {
+				t.Errorf("normalize(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
