@@ -14,20 +14,29 @@ import (
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
 // work branches which set NoResetHook but should still get memory formation).
-func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) {
+//
+// Returns a channel that is closed when memory formation completes (or immediately
+// if skipped). Callers that need to wait (e.g. reclaim hooks closing a backend)
+// can select on it; fire-and-forget callers can ignore the return value.
+func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) <-chan struct{} {
+	done := make(chan struct{})
+
 	if !a.MemoryFormationConfig.SessionEndEnabled {
-		return
+		close(done)
+		return done
 	}
 
 	canFire, reason := a.CanFireBackgroundOperation(ctx, sessionKey)
 	if !canFire {
 		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
-		return
+		close(done)
+		return done
 	}
 
 	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.SessionEndPrompt, "memory-session-end.md", prompts.MemoryFormation(), a.PromptSearchDirs...)
 	if prompt == "" {
-		return
+		close(done)
+		return done
 	}
 
 	if !skipMetaCheck {
@@ -37,7 +46,8 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		}
 		if meta != nil && meta.NoResetHook {
 			log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
-			return
+			close(done)
+			return done
 		}
 	}
 
@@ -52,7 +62,8 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		})
 		if err != nil {
 			log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
-			return
+			close(done)
+			return done
 		}
 		a.SetSessionNoCompact(branchKey, true)
 		targetKey = branchKey
@@ -61,6 +72,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, targetKey)
 
 	go func() {
+		defer close(done)
 		hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
 		hookCtx = WithTrigger(hookCtx, "session_end_memory")
@@ -68,4 +80,6 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 			log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
 		}
 	}()
+
+	return done
 }

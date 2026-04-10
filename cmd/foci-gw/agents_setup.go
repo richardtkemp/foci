@@ -517,12 +517,17 @@ func setupPlatformConnections(
 		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
-			ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
-			// Close any delegated branch backend so the CC process doesn't leak.
-			// FireSessionEndMemory is async — it may race with this close. If it
-			// loses the race, memory formation creates a fresh backend (eventually
-			// reaped by closeIdle). Acceptable tradeoff vs leaking processes.
+			done := ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
+			// Wait for memory formation to complete before closing the backend.
+			// For API agents this is a no-op (memory runs on a branch session).
+			// For delegated agents, memory injects into this session's backend.
 			if ag.DelegatedManager != nil {
+				waitCtx, cancel := context.WithTimeout(p.ctx, 130*time.Second)
+				select {
+				case <-done:
+				case <-waitCtx.Done():
+				}
+				cancel()
 				ag.DelegatedManager.ResetSession(sessionKey)
 			}
 		},
