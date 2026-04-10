@@ -51,7 +51,7 @@ func TestSendMessageToUserChatRoutingDocument(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/report.pdf",
+		"file": "/tmp/report.pdf",
 	})
 
 	_, err := tool.Execute(ctx, params)
@@ -78,7 +78,7 @@ func TestSendMessageToUserChatRoutingVoice(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/note.ogg",
+		"file": "/tmp/note.ogg",
 		"send_as":   "voice",
 	})
 

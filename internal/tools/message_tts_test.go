@@ -135,7 +135,7 @@ func TestSendMessageToUserVoiceFilePathStillWorks(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, tts)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/note.ogg",
+		"file": "/tmp/note.ogg",
 		"send_as":   "voice",
 	})
 

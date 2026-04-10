@@ -17,7 +17,7 @@ func TestSendMessageToUserSendAsVideo(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/clip.mp4",
+		"file": "/tmp/clip.mp4",
 		"send_as":   "video",
 	})
 
@@ -43,7 +43,7 @@ func TestSendMessageToUserSendAsVoice(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/note.ogg",
+		"file": "/tmp/note.ogg",
 		"send_as":   "voice",
 	})
 
@@ -66,7 +66,7 @@ func TestSendMessageToUserSendAsDocument(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/report.pdf",
+		"file": "/tmp/report.pdf",
 		"send_as":   "document",
 	})
 
@@ -89,7 +89,7 @@ func TestSendMessageToUserSendAsDefaultIsDocument(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/file.bin",
+		"file": "/tmp/file.bin",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -111,7 +111,7 @@ func TestSendMessageToUserVideoError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/big.mp4",
+		"file": "/tmp/big.mp4",
 		"send_as":   "video",
 	})
 
@@ -132,7 +132,7 @@ func TestSendMessageToUserVideoChatRouting(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/clip.mp4",
+		"file": "/tmp/clip.mp4",
 		"send_as":   "video",
 	})
 
@@ -160,7 +160,7 @@ func TestSendMessageToUserTextAndVideo(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "check this out",
-		"file_path": "/tmp/clip.mp4",
+		"file": "/tmp/clip.mp4",
 		"send_as":   "video",
 	})
 
@@ -186,7 +186,7 @@ func TestSendMessageToUserSendAsPhoto(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/image.jpg",
+		"file": "/tmp/image.jpg",
 		"send_as":   "photo",
 	})
 
@@ -209,7 +209,7 @@ func TestSendMessageToUserPhotoError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/huge.jpg",
+		"file": "/tmp/huge.jpg",
 		"send_as":   "photo",
 	})
 
@@ -230,7 +230,7 @@ func TestSendMessageToUserPhotoChatRouting(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/image.jpg",
+		"file": "/tmp/image.jpg",
 		"send_as":   "photo",
 	})
 
@@ -253,7 +253,7 @@ func TestSendMessageToUserSendAsAudio(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/song.mp3",
+		"file": "/tmp/song.mp3",
 		"send_as":   "audio",
 	})
 
@@ -276,7 +276,7 @@ func TestSendMessageToUserAudioError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/bad.mp3",
+		"file": "/tmp/bad.mp3",
 		"send_as":   "audio",
 	})
 
@@ -297,7 +297,7 @@ func TestSendMessageToUserAudioChatRouting(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/song.mp3",
+		"file": "/tmp/song.mp3",
 		"send_as":   "audio",
 	})
 
@@ -320,7 +320,7 @@ func TestSendMessageToUserSendAsAnimation(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/funny.gif",
+		"file": "/tmp/funny.gif",
 		"send_as":   "animation",
 	})
 
@@ -343,7 +343,7 @@ func TestSendMessageToUserAnimationError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/bad.gif",
+		"file": "/tmp/bad.gif",
 		"send_as":   "animation",
 	})
 
@@ -364,7 +364,7 @@ func TestSendMessageToUserAnimationChatRouting(t *testing.T) {
 
 	ctx := WithSessionKey(context.Background(), "fotini/c12345/1000")
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/funny.gif",
+		"file": "/tmp/funny.gif",
 		"send_as":   "animation",
 	})
 
