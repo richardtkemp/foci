@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"foci/internal/config"
+	"foci/internal/log"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/shared/prompts"
@@ -50,7 +51,11 @@ func forkFacet(ctx context.Context, _ Request, cc CommandContext) (string, error
 
 	secConn.SetSessionKey(branchKey)
 	if primary := cc.ConnMgr.Primary(cc.AgentConfig.ID); primary != nil {
-		secConn.SetChatID(primary.ChatID())
+		chatID := primary.ChatID()
+		log.Debugf("facet", "primary chatID=%d username=%s for agent %s", chatID, primary.Username(), cc.AgentConfig.ID)
+		secConn.SetChatID(chatID)
+	} else {
+		log.Warnf("facet", "no primary connection for agent %s — notification may fail", cc.AgentConfig.ID)
 	}
 	secConn.SendNotification("🎱 Forked from main. What do you need?")
 
