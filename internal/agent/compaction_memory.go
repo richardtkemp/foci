@@ -47,12 +47,10 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 
 	log.Infof("compaction-memory", "firing for %s → %s", sessionKey, targetKey)
 
-	go func() {
-		hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
-		defer cancel()
-		hookCtx = WithTrigger(hookCtx, "compaction_memory")
-		if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
-			log.Warnf("compaction-memory", "failed for %s: %v", targetKey, err)
-		}
-	}()
+	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	hookCtx = WithTrigger(hookCtx, "compaction_memory")
+	if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
+		log.Warnf("compaction-memory", "failed for %s: %v", targetKey, err)
+	}
 }
