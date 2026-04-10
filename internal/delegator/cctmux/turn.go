@@ -81,7 +81,7 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 
 // SendToPane sends a prompt to the Claude Code pane. It does not block waiting
 // for a response — output is delivered asynchronously via the persistent
-// watcher handler using the ReplyFunc set by SetReplyFunc. Returns immediately.
+// watcher handler using the internal replyFunc. Returns immediately.
 // Use WaitForTurn to block until the turn completes.
 //
 // If handler.OnTurnComplete is set, it is registered as a per-turn callback
@@ -198,12 +198,6 @@ func (b *Backend) recordPreSendOffset() {
 	}
 	b.preSendOffset = info.Size()
 	log.Debugf("backend/cc", "recorded pre-send offset: %d bytes", b.preSendOffset)
-}
-
-func (b *Backend) SetReplyFunc(fn delegator.ReplyFunc) {
-	b.replyMu.Lock()
-	defer b.replyMu.Unlock()
-	b.replyFunc = fn
 }
 
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {

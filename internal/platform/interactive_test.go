@@ -369,13 +369,13 @@ func (m *mockButtonSender) EditMessageWithButtons(string, string, []ButtonChoice
 var _ ButtonSender = (*mockButtonSender)(nil)
 
 // mockConnectionCapture embeds mockConnection but captures text sent via
-// RawSendText — used to test the fallback path where no ButtonSender exists.
+// SendText — used to test the fallback path where no ButtonSender exists.
 type mockConnectionCapture struct {
 	mockConnection
 	lastText string
 }
 
-func (m *mockConnectionCapture) RawSendText(text string) error {
+func (m *mockConnectionCapture) SendText(text string) error {
 	m.lastText = text
 	return nil
 }

@@ -36,7 +36,7 @@ func TestConnectionManagerInterface(t *testing.T) {
 type mockSender struct{}
 
 func (m *mockSender) SessionKey() string                                       { return "" }
-func (m *mockSender) RawSendText(text string) error                            { return nil }
+func (m *mockSender) SendText(text string) error                            { return nil }
 func (m *mockSender) SendDocument(filePath string) error                       { return nil }
 func (m *mockSender) SendVoice(filePath string) error                          { return nil }
 func (m *mockSender) SendVideo(filePath string) error                          { return nil }
@@ -44,7 +44,7 @@ func (m *mockSender) SendPhoto(filePath string) error                          {
 func (m *mockSender) SendAudio(filePath string) error                          { return nil }
 func (m *mockSender) SendAnimation(filePath string) error                      { return nil }
 func (m *mockSender) SendVoiceData(audioData []byte) error                     { return nil }
-func (m *mockSender) RawSendTextToChat(chatID int64, text string) error        { return nil }
+func (m *mockSender) SendTextToChat(chatID int64, text string) error        { return nil }
 func (m *mockSender) SendDocumentToChat(chatID int64, filePath string) error   { return nil }
 func (m *mockSender) SendVoiceToChat(chatID int64, filePath string) error      { return nil }
 func (m *mockSender) SendVideoToChat(chatID int64, filePath string) error      { return nil }
@@ -104,6 +104,48 @@ func (p *mockProvider) AgentPreFlight(string) []string                          
 func (p *mockProvider) DefaultPlatformConfig() config.PlatformConfig            { return config.PlatformConfig{} }
 func (p *mockProvider) ValidateConfig(config.PlatformConfig) []string           { return nil }
 func (p *mockProvider) Close() error                                            { return nil }
+
+// --- FilteredConnection tests ---
+
+// trackingConnection embeds mockConnection but overrides SendText/SendTextToChat
+// to record what was sent.
+type trackingConnection struct {
+	mockConnection
+	sent []string
+}
+
+func (c *trackingConnection) SendText(text string) error                    { c.sent = append(c.sent, text); return nil }
+func (c *trackingConnection) SendTextToChat(_ int64, text string) error     { c.sent = append(c.sent, text); return nil }
+
+func TestFilteredConnection_SilencesSentinel(t *testing.T) {
+	inner := &trackingConnection{mockConnection: mockConnection{mockSender: &mockSender{}}}
+	conn := filtered(inner)
+
+	// Silent messages should be swallowed.
+	for _, text := range []string{"", "  ", "[[NO_RESPONSE]]", "No response requested.", "  [[NO_RESPONSE]]  "} {
+		_ = conn.SendText(text)
+		_ = conn.SendTextToChat(123, text)
+	}
+	if len(inner.sent) != 0 {
+		t.Errorf("silent messages leaked through FilteredConnection: %v", inner.sent)
+	}
+
+	// Real text should pass through.
+	_ = conn.SendText("hello")
+	_ = conn.SendTextToChat(123, "world")
+	if len(inner.sent) != 2 {
+		t.Errorf("expected 2 real messages, got %d: %v", len(inner.sent), inner.sent)
+	}
+}
+
+func TestFilteredConnection_NoDoubleWrap(t *testing.T) {
+	inner := &trackingConnection{mockConnection: mockConnection{mockSender: &mockSender{}}}
+	conn := filtered(inner)
+	conn2 := filtered(conn)
+	if conn != conn2 {
+		t.Error("filtered() should not double-wrap")
+	}
+}
 
 // mockWizardProvider implements both MessagingProvider and SetupWizard.
 type mockWizardProvider struct {

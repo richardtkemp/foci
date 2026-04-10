@@ -104,26 +104,6 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			TmuxRows:         p.cfg.Tools.TmuxRows,
 			AutoApproveRules: autoApproveRules,
 		},
-		SendFunc: func(sessionKey, text string) {
-			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
-			if conn != nil {
-				_ = platform.SendText(conn, text)
-				return
-			}
-			// Platform not ready yet (e.g. Discord still connecting on startup).
-			// Queue and retry until the connection is available.
-			go func() {
-				for i := 0; i < 60; i++ {
-					time.Sleep(500 * time.Millisecond)
-					conn = connMgr.ForSessionOrPrimary(sessionKey, agentID)
-					if conn != nil {
-						_ = platform.SendText(conn, text)
-						return
-					}
-				}
-				log.Warnf("agent/"+agentID, "delegated: no connection for session %s after 30s, message dropped", sessionKey)
-			}()
-		},
 		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 			if conn == nil {

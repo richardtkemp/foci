@@ -45,7 +45,7 @@ func SendInteractiveMessage(conn Connection, text string, buttons []ButtonChoice
 		for i, b := range buttons {
 			lines = append(lines, fmt.Sprintf("%d. %s", i+1, b.Label))
 		}
-		return SendText(conn, text+"\n\n"+strings.Join(lines, "\n")+"\n\nReply with your choice.")
+		return conn.SendText(text + "\n\n" + strings.Join(lines, "\n") + "\n\nReply with your choice.")
 	}
 
 	promptID := nextPromptID()

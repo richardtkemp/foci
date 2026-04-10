@@ -251,7 +251,7 @@ func (b *Bot) SendStartupNotification(agentID string) {
 // SendText sends a text message to the default channel without any header.
 // Returns an error if no channel ID is available.
 // Silently skips empty or whitespace-only messages.
-func (b *Bot) RawSendText(text string) error {
+func (b *Bot) SendText(text string) error {
 
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
@@ -269,18 +269,6 @@ func (b *Bot) RawSendText(text string) error {
 	return nil
 }
 
-// SendInjected sends a system/injected text message to the default channel.
-// Prepends the configured InjectedMessageHeader (if non-empty) so users can
-// distinguish system messages from agent replies.
-//
-// Prefer SendToSession when a session key is available -- it routes to the
-// correct channel for chat-based sessions.
-func (b *Bot) SendInjected(text string) error {
-	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.display.InjectedMessageHeader + "\n" + text
-	}
-	return platform.SendText(b, text)
-}
 
 // SendInjectedMessage sends a system/injected text message to the channel
 // associated with the given session key. Falls back to the bot's default channel
@@ -387,8 +375,8 @@ func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 	return err
 }
 
-// RawSendTextToChat sends a text message to a specific channel ID without any header.
-func (b *Bot) RawSendTextToChat(chatID int64, text string) error {
+// SendTextToChat sends a text message to a specific channel ID without any header.
+func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	channelIDStr := strconv.FormatInt(chatID, 10)
 	b.sendMarkdownChunks(channelIDStr, text)
 	return nil
@@ -400,7 +388,7 @@ func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
 		text = b.display.InjectedMessageHeader + "\n" + text
 	}
-	return platform.SendTextToChat(b, chatID, text)
+	return b.SendTextToChat(chatID, text)
 }
 
 // sendMediaFile is a generic helper for sending media files to Discord.

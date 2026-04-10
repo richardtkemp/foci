@@ -1141,9 +1141,10 @@ func TestRunInference_SimpleEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRunInference_NoResponseSentinel verifies that the [[NO_RESPONSE]]
-// sentinel is stripped from FinalText (becomes empty string).
-func TestRunInference_NoResponseSentinel(t *testing.T) {
+// TestRunInference_NoResponseSentinelPassedThrough verifies that the
+// [[NO_RESPONSE]] sentinel passes through RunInference — filtering is
+// handled downstream by platform.IsSilent (FilteredConnection and Finalize).
+func TestRunInference_NoResponseSentinelPassedThrough(t *testing.T) {
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 			return &provider.MessageResponse{
@@ -1164,8 +1165,8 @@ func TestRunInference_NoResponseSentinel(t *testing.T) {
 		t.Fatalf("RunInference: %v", err)
 	}
 
-	if ts.FinalText != "" {
-		t.Errorf("FinalText = %q, want empty (NO_RESPONSE stripped)", ts.FinalText)
+	if ts.FinalText != "[[NO_RESPONSE]]" {
+		t.Errorf("FinalText = %q, want sentinel to pass through", ts.FinalText)
 	}
 }
 

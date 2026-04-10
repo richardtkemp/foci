@@ -811,3 +811,41 @@ func TestCleanup_Idempotent(t *testing.T) {
 	r.Finalize("response")
 	r.Cleanup() // should not panic
 }
+
+// TestFinalize_NoResponseSentinelSilenced verifies that [[NO_RESPONSE]] and
+// other silent sentinels are caught by Finalize before reaching the platform.
+// This is the end-to-end test for the bug where delegated agents returned the
+// sentinel as FinalText and Finalize delivered it to the user.
+func TestFinalize_NoResponseSentinelSilenced(t *testing.T) {
+	for _, text := range []string{"[[NO_RESPONSE]]", "No response requested.", "  [[NO_RESPONSE]]  ", ""} {
+		t.Run(text, func(t *testing.T) {
+			backend := newMockBackend()
+			tracker := &mockTracker{}
+			display := TurnDisplay{MaxChars: 4096}
+			r := newTestRenderer(backend, tracker, display)
+
+			r.Finalize(text)
+
+			total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+			if total != 0 {
+				t.Errorf("Finalize(%q): expected no sends, got %d", text, total)
+			}
+		})
+	}
+}
+
+// TestFinalize_RealTextNotSilenced verifies that non-sentinel text still
+// gets delivered normally through Finalize.
+func TestFinalize_RealTextNotSilenced(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{MaxChars: 4096}
+	r := newTestRenderer(backend, tracker, display)
+
+	r.Finalize("Here is my answer.")
+
+	total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+	if total == 0 {
+		t.Error("Finalize with real text should produce output")
+	}
+}

@@ -33,12 +33,8 @@ type DelegatedManager struct {
 	// Label and ResumeSessionID are set by the manager.
 	StartOpts delegator.StartOptions
 
-	// SendFunc routes text to the correct platform chat for a session key.
-	SendFunc func(sessionKey, text string)
-
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
 	// requestID is the CC protocol request ID.
-	// If nil, backends fall back to plain text via SendFunc.
 	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice)
 
 	// TypingFunc controls the platform typing indicator for a session.
@@ -424,11 +420,6 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return mb.sessionKey
-	}
-	if m.SendFunc != nil {
-		mb.be.SetReplyFunc(func(text string) {
-			m.SendFunc(sk(), text)
-		})
 	}
 	if m.PermissionPromptFunc != nil {
 		mb.be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {

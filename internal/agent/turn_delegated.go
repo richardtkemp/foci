@@ -164,6 +164,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
 	handler := &delegator.EventHandler{
+		OnText: func(text string) {
+			if cb := TurnCallbacksFromContext(ts.Ctx); cb != nil && cb.ReplyFunc != nil {
+				cb.ReplyFunc(text)
+			}
+		},
 		OnTurnComplete: func(result *delegator.TurnResult) {
 			if result != nil {
 				ts.FinalText = result.Text

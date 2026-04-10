@@ -38,7 +38,7 @@ func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(ag
 func (a *aggregatingConnMgr) Primary(agentID string) Connection {
 	for _, name := range a.order {
 		if c := a.named[name].Primary(agentID); c != nil {
-			return c
+			return filtered(c)
 		}
 	}
 	return nil
@@ -47,7 +47,9 @@ func (a *aggregatingConnMgr) Primary(agentID string) Connection {
 func (a *aggregatingConnMgr) AllForAgent(agentID string) []Connection {
 	var conns []Connection
 	for _, name := range a.order {
-		conns = append(conns, a.named[name].AllForAgent(agentID)...)
+		for _, c := range a.named[name].AllForAgent(agentID) {
+			conns = append(conns, filtered(c))
+		}
 	}
 	return conns
 }
@@ -61,7 +63,7 @@ func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
 			if platformName := a.chatPlatformFn(agentID, chatID); platformName != "" {
 				if mgr, ok := a.named[platformName]; ok {
 					if c := mgr.ForSession(sessionKey); c != nil {
-						return c
+						return filtered(c)
 					}
 					log.Debugf("platform", "platform %q claimed chat %d but ForSession returned nil for %s", platformName, chatID, sessionKey)
 				}
@@ -72,7 +74,7 @@ func (a *aggregatingConnMgr) ForSession(sessionKey string) Connection {
 	// Fallback: iterate all platforms (first-message-ever case, facet bots, etc.)
 	for _, name := range a.order {
 		if c := a.named[name].ForSession(sessionKey); c != nil {
-			return c
+			return filtered(c)
 		}
 	}
 	return nil
@@ -103,7 +105,7 @@ func (a *aggregatingConnMgr) ForSessionOrPrimary(sessionKey, agentID string) Con
 func (a *aggregatingConnMgr) AcquireFacet(agentID string) (Connection, bool) {
 	for _, name := range a.order {
 		if c, ok := a.named[name].AcquireFacet(agentID); ok {
-			return c, true
+			return filtered(c), true
 		}
 	}
 	return nil, false

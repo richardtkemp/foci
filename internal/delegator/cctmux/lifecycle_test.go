@@ -420,27 +420,8 @@ func TestNewFromConfig_WrongSocketType(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Setter tests (SetReplyFunc, SetPermissionPromptFunc, etc.)
+// Setter tests (SetPermissionPromptFunc, etc.)
 // ---------------------------------------------------------------------------
-
-// TestSetReplyFunc verifies that SetReplyFunc stores and replaces the callback.
-func TestSetReplyFunc(t *testing.T) {
-	b := &Backend{}
-
-	called := false
-	b.SetReplyFunc(func(s string) { called = true })
-
-	b.replyMu.Lock()
-	fn := b.replyFunc
-	b.replyMu.Unlock()
-	if fn == nil {
-		t.Fatal("replyFunc should not be nil after SetReplyFunc")
-	}
-	fn("test")
-	if !called {
-		t.Error("replyFunc was not called")
-	}
-}
 
 // TestSetPermissionPromptFunc verifies storage and invocation.
 func TestSetPermissionPromptFunc(t *testing.T) {
@@ -693,29 +674,3 @@ func TestDiscoverSession_NoSession(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// isSyntheticNoResponse tests
-// ---------------------------------------------------------------------------
-
-// TestIsSyntheticNoResponse verifies detection of CC's synthetic empty
-// responses that should be silently dropped.
-func TestIsSyntheticNoResponse(t *testing.T) {
-	cases := []struct {
-		input string
-		want  bool
-	}{
-		{"No response requested.", true},
-		{"[[NO_RESPONSE]]", true},
-		{"  No response requested.  ", true},
-		{"\n[[NO_RESPONSE]]\n", true},
-		{"Hello world", false},
-		{"", false},
-		{"No response", false},
-		{"no response requested.", false}, // case-sensitive
-	}
-	for _, tc := range cases {
-		if got := isSyntheticNoResponse(tc.input); got != tc.want {
-			t.Errorf("isSyntheticNoResponse(%q) = %v, want %v", tc.input, got, tc.want)
-		}
-	}
-}

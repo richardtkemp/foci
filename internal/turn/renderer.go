@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 )
 
 // TurnBackend provides platform-specific message rendering operations.
@@ -245,9 +246,9 @@ func (r *TurnRenderer) Finalize(response string) {
 		return
 	}
 
-	// Guard against empty responses.
-	if strings.TrimSpace(response) == "" {
-		r.backend.Logger().Debugf("agent returned empty response, not sending")
+	// Guard against empty and silent responses (e.g. [[NO_RESPONSE]] sentinel).
+	if platform.IsSilent(response) {
+		r.backend.Logger().Debugf("silent response, not sending")
 		return
 	}
 

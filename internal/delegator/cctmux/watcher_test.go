@@ -159,34 +159,6 @@ func TestProcessLine_LastUsageWins(t *testing.T) {
 	}
 }
 
-// --- isSyntheticNoResponse edge cases ---
-// Note: basic cases (exact matches, whitespace, empty, case-sensitivity)
-// are covered in lifecycle_test.go/TestIsSyntheticNoResponse. These tests
-// cover additional near-miss patterns.
-
-// TestIsSyntheticNoResponse_NearMisses verifies that close-but-wrong
-// variations are correctly rejected.
-func TestIsSyntheticNoResponse_NearMisses(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"No response requested", false},        // missing period
-		{"[[NO_RESPONSE]", false},                // missing bracket
-		{"No response requested. More.", false},  // extra text after
-		{"[[NO_RESPONSE]] extra", false},         // extra text after
-		{"prefix No response requested.", false}, // extra text before
-		{"prefix [[NO_RESPONSE]]", false},        // extra text before
-	}
-
-	for _, tt := range tests {
-		got := isSyntheticNoResponse(tt.input)
-		if got != tt.want {
-			t.Errorf("isSyntheticNoResponse(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
-
 // --- handleAssistant tests ---
 
 // TestHandleAssistant_TextEvent verifies that text content blocks are
@@ -248,10 +220,10 @@ func TestHandleAssistant_ToolCallTracking(t *testing.T) {
 	}
 }
 
-// TestHandleAssistant_SyntheticNoResponseFiltered verifies that synthetic
-// "no response" text blocks are silently dropped — no OnText callback,
-// no turnText accumulation.
-func TestHandleAssistant_SyntheticNoResponseFiltered(t *testing.T) {
+// TestHandleAssistant_SyntheticNoResponsePassedThrough verifies that synthetic
+// "no response" text blocks are passed through by the watcher — filtering is
+// handled downstream by platform.IsSilent (FilteredConnection and Finalize).
+func TestHandleAssistant_SyntheticNoResponsePassedThrough(t *testing.T) {
 	for _, text := range []string{"No response requested.", "[[NO_RESPONSE]]"} {
 		t.Run(text, func(t *testing.T) {
 			w := &sessionWatcher{}
@@ -272,11 +244,11 @@ func TestHandleAssistant_SyntheticNoResponseFiltered(t *testing.T) {
 
 			w.handleAssistant(entry, handler)
 
-			if len(textEvents) != 0 {
-				t.Errorf("OnText should not fire for synthetic text, got %v", textEvents)
+			if len(textEvents) != 1 {
+				t.Errorf("OnText should fire once, got %d events", len(textEvents))
 			}
-			if w.turnText != "" {
-				t.Errorf("turnText = %q, should be empty for synthetic", w.turnText)
+			if w.turnText != text {
+				t.Errorf("turnText = %q, want %q", w.turnText, text)
 			}
 		})
 	}
