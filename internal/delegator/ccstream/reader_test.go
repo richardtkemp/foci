@@ -28,6 +28,7 @@ func (h *mockHandler) OnControlResponse(raw json.RawMessage)      { h.controlRes
 func (h *mockHandler) OnControlCancelRequest(reqID string)        { h.cancelReqs = append(h.cancelReqs, reqID) }
 func (h *mockHandler) OnToolProgress(msg *ToolProgressMessage)    { h.toolProgress = append(h.toolProgress, msg) }
 func (h *mockHandler) OnStreamEvent(raw json.RawMessage)          { h.streamEvents = append(h.streamEvents, raw) }
+func (h *mockHandler) OnKeepAlive()                               {}
 func (h *mockHandler) OnRateLimit(_ *RateLimitEvent)              {}
 func (h *mockHandler) OnSystem(subtype string, _ json.RawMessage) { h.systems = append(h.systems, subtype) }
 func (h *mockHandler) OnReaderStopped(err error)                   { h.errors = append(h.errors, err) }
