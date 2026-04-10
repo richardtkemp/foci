@@ -285,20 +285,70 @@ func toolParamKeys(t *Tool) string {
 	return strings.Join(keys, " ")
 }
 
+// generateHelpText builds a help string for a tool from its description and JSON schema.
+func generateHelpText(t *Tool) string {
+	var b strings.Builder
+	b.WriteString(t.Description)
+	// Extract parameter info from JSON schema.
+	var schema struct {
+		Properties map[string]struct {
+			Type        string `json:"type"`
+			Description string `json:"description"`
+			Enum        []string `json:"enum"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if json.Unmarshal(t.Parameters, &schema) == nil && len(schema.Properties) > 0 {
+		b.WriteString("\n\nParameters:")
+		// Sort for deterministic output.
+		keys := make([]string, 0, len(schema.Properties))
+		for k := range schema.Properties {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		reqSet := make(map[string]bool)
+		for _, r := range schema.Required {
+			reqSet[r] = true
+		}
+		for _, k := range keys {
+			p := schema.Properties[k]
+			req := ""
+			if reqSet[k] {
+				req = " (required)"
+			}
+			desc := p.Description
+			if len(p.Enum) > 0 {
+				desc += " [" + strings.Join(p.Enum, "|") + "]"
+			}
+			if desc != "" {
+				fmt.Fprintf(&b, "\n  %-20s %s%s", k, desc, req)
+			} else {
+				fmt.Fprintf(&b, "\n  %s%s", k, req)
+			}
+		}
+	}
+	return b.String()
+}
+
 // generateShellFunc returns a bash function definition for a tool.
 // Each tool gets a function named foci_<toolname> with appropriate argument handling.
-// Every function starts with a JSON passthrough guard: if the sole argument is
-// a valid JSON object whose keys are all valid parameter names for this tool,
-// it is sent directly to foci-call as tool params.
+// Every function starts with a help flag check, then a JSON passthrough guard:
+// if the sole argument is a valid JSON object whose keys are all valid parameter
+// names for this tool, it is sent directly to foci-call as tool params.
 func generateShellFunc(t *Tool) string {
 	name := "foci_" + t.Name
 	validKeys := toolParamKeys(t)
+	helpText := generateHelpText(t)
+	// Escape single quotes for embedding in bash single-quoted heredoc.
+	escapedHelp := strings.ReplaceAll(helpText, "'", "'\\''")
+	helpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", escapedHelp)
 	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
 
 	switch t.Name {
 	case "web_search", "memory_search":
 		// Simple query tools: all args become the query string
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local query=""
   while [ $# -gt 0 ]; do
@@ -318,11 +368,12 @@ func generateShellFunc(t *Tool) string {
   fi
   foci-call "$(jq -nc --arg q "$query" '{"tool":"%s","params":{"query":$q}}')"
 }
-`, name, guard, name, t.Name)
+`, name, helpCheck, guard, name, t.Name)
 
 	case "web_fetch":
 		// URL as first arg, optional --raw flag
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local url="" raw=false
   while [ $# -gt 0 ]; do
@@ -341,12 +392,13 @@ func generateShellFunc(t *Tool) string {
   fi
   foci-call "$(jq -nc --arg u "$url" --argjson r "$raw" '{"tool":"web_fetch","params":{"url":$u,"raw":$r}}')"
 }
-`, name, guard, name)
+`, name, helpCheck, guard, name)
 
 	case "http_request":
 		// URL as first arg, flags for method, headers, body, save_to
 		// --include-headers: output full HTTP status/headers + body (default: body only)
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local url="" method="GET" body="" save_to="" headers="{}" inc_headers=false
   while [ $# -gt 0 ]; do
@@ -377,11 +429,12 @@ func generateShellFunc(t *Tool) string {
   fi
   foci-call "$(jq -nc --argjson p "$params" --argjson ih "$inc_headers" '{"tool":"http_request","params":$p,"include_headers":$ih}')"
 }
-`, name, guard, name)
+`, name, helpCheck, guard, name)
 
 	case "send_to_chat":
 		// Text as args or stdin; optional --file flag
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local text="" file_path="" send_as="" read_stdin=false
   foci__trace "send" "args=$# tty=$([ -t 0 ] && echo yes || echo no)"
@@ -424,11 +477,12 @@ func generateShellFunc(t *Tool) string {
   foci__trace "send" "calling foci-call text=${#text}b file=$file_path"
   foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_to_chat","params":$p}')"
 }
-`, name, guard, name, name, name)
+`, name, helpCheck, guard, name, name, name)
 
 	case "todo":
 		// action as first arg, rest varies by action
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local action="$1"; shift 2>/dev/null || true
   local text="" priority="" tag="" query="" status="" id="" reason="" sort="" reverse="" limit=""
@@ -520,11 +574,12 @@ func generateShellFunc(t *Tool) string {
       ;;
   esac
 }
-`, name, guard, name)
+`, name, helpCheck, guard, name)
 
 	case "summary":
 		// Prompt as argument; content from --file or stdin
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local prompt="" file=""
   while [ $# -gt 0 ]; do
@@ -555,11 +610,12 @@ func generateShellFunc(t *Tool) string {
   fi
   foci-call "$(jq -nc --arg f "$file" --arg p "$prompt" '{"tool":"summary","params":{"file":$f,"prompt":$p}}')"
 }
-`, name, guard, name, name)
+`, name, helpCheck, guard, name, name)
 
 	case "spawn":
 		// prompt as args, optional --model and --context flags
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local prompt="" model="" ctx_mode=""
   while [ $# -gt 0 ]; do
@@ -588,11 +644,12 @@ func generateShellFunc(t *Tool) string {
   fi
   foci-call "$(jq -nc --argjson p "$params" '{"tool":"spawn","params":$p}')"
 }
-`, name, guard, name)
+`, name, helpCheck, guard, name)
 
 	case "tmux":
 		// Subcommand-style dispatch (same pattern as todo)
 		return fmt.Sprintf(`%s() {
+%s
 %s
   local op="$1"; shift 2>/dev/null || true
   local name="" command="" workdir="" watch="" keys="" enter="" lines="" window="" threshold="" raw=""
@@ -671,15 +728,16 @@ func generateShellFunc(t *Tool) string {
       ;;
   esac
 }
-`, name, guard, name)
+`, name, helpCheck, guard, name)
 
 	default:
 		// Generic: JSON passthrough handles the common case;
 		// fall back to treating $1 as raw JSON params
 		return fmt.Sprintf(`%s() {
 %s
+%s
   foci-call "$(jq -nc --argjson p "$1" '{"tool":"%s","params":$p}')"
 }
-`, name, guard, t.Name)
+`, name, helpCheck, guard, t.Name)
 	}
 }

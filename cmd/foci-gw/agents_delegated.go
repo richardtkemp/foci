@@ -53,7 +53,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 	// Per-agent environment block for delegated backends.
 	if p.resolved.Environment.Enabled {
-		envBlock := buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, p.plat.ActivePlatformNames(), registry.ExportedNames())
+		envBlock := buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, p.plat.ActivePlatformNames(), registry.ExportedTools())
 		if systemPrompt != "" {
 			systemPrompt = envBlock + "\n\n" + systemPrompt
 		} else {
