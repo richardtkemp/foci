@@ -567,6 +567,38 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	return result, nil
 }
 
+// BackendInfo returns a human-readable status line for the backend serving
+// the given session key. Returns "" if no backend exists.
+func (m *DelegatedManager) BackendInfo(sessionKey string) string {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return ""
+	}
+
+	running := mb.be.IsRunning()
+	inFlight := mb.be.IsTurnInFlight()
+
+	status := "idle"
+	if !running {
+		status = "dead"
+	} else if inFlight {
+		status = "processing"
+	}
+
+	info := fmt.Sprintf("%s", status)
+	if ac, ok := mb.be.(delegator.ActivityChecker); ok {
+		if t := ac.LastActivity(); !t.IsZero() {
+			info += fmt.Sprintf(" | last event: %s ago", time.Since(t).Round(time.Second))
+		}
+	}
+
+	if sid := mb.be.SessionID(); sid != "" {
+		info += fmt.Sprintf(" | session: %s", sid)
+	}
+
+	return info
+}
+
 // closeIdle closes delegated backends that have been idle longer than timeout.
 func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 	m.mu.Lock()
@@ -574,13 +606,21 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 
 	now := time.Now()
 	for key, mb := range m.backends {
-		if now.Sub(mb.lastActive) < timeout {
+		// Use backend stream activity if available (tracks actual CC events),
+		// falling back to lastActive (when foci last sent a message).
+		lastSeen := mb.lastActive
+		if ac, ok := mb.be.(delegator.ActivityChecker); ok {
+			if t := ac.LastActivity(); !t.IsZero() && t.After(lastSeen) {
+				lastSeen = t
+			}
+		}
+		if now.Sub(lastSeen) < timeout {
 			continue
 		}
 		mb.clearPermission()
 		m.saveResumeID(key, mb.be.SessionID())
 		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
-			key, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
+			key, now.Sub(lastSeen).Round(time.Minute), mb.be.SessionID())
 		_ = mb.be.Close()
 		if mb.bridge != nil {
 			mb.bridge.Close()

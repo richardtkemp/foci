@@ -137,6 +137,13 @@ func StatusCommand() *Command {
 				fmt.Fprintf(&sb, "\n💰 Session cost: $%.2f eq. (%d calls)", sessionCost, sessionCalls)
 			}
 
+			// Backend liveness for delegated agents.
+			if cc.Agent.DelegatedManager != nil {
+				if info := cc.Agent.DelegatedManager.BackendInfo(sk); info != "" {
+					fmt.Fprintf(&sb, "\n\n🔌 Backend: %s", info)
+				}
+			}
+
 			return Response{Text: strings.TrimRight(sb.String(), "\n")}, nil
 		},
 	}
