@@ -275,7 +275,7 @@ func TestComposePrompt_DuplicateAllowedWithThinkingOff(t *testing.T) {
 }
 
 // TestComposePrompt_Orientation verifies that branch orientation text is
-// included in the user message content blocks when PendingOrientation returns
+// included in the user message content blocks when ConsumeOrientation returns
 // a non-empty string.
 func TestComposePrompt_Orientation(t *testing.T) {
 	dir := t.TempDir()

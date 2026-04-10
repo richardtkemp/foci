@@ -242,8 +242,8 @@ func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 		t.Fatalf("CreateBranchWithOptions: %v", err)
 	}
 
-	// Verify template variables were resolved.
-	got := s.PendingOrientation(branchKey)
+	// First call: returns resolved orientation.
+	got := s.ConsumeOrientation(branchKey)
 	if strings.Contains(got, "{branch_key}") {
 		t.Errorf("orientation still contains {branch_key}: %q", got)
 	}
@@ -257,11 +257,22 @@ func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 		t.Errorf("orientation should contain branch type, got: %q", got)
 	}
 
-	// After appending a message (first turn consumed), orientation is gone.
-	s.TestAppend(branchKey, msg("user", "first turn"))
-	got = s.PendingOrientation(branchKey)
+	// Second call: returns "" (already consumed and cleared from disk).
+	got = s.ConsumeOrientation(branchKey)
 	if got != "" {
-		t.Errorf("PendingOrientation after first turn = %q, want empty", got)
+		t.Errorf("ConsumeOrientation second call = %q, want empty", got)
+	}
+
+	// Verify meta still readable (rewrite didn't corrupt the file).
+	meta, err := s.GetBranchMeta(branchKey)
+	if err != nil {
+		t.Fatalf("GetBranchMeta after consume: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("branch meta should still exist after orientation consumed")
+	}
+	if meta.Orientation != "" {
+		t.Errorf("stored orientation should be cleared, got: %q", meta.Orientation)
 	}
 }
 
