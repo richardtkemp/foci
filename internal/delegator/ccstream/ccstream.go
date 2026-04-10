@@ -680,15 +680,18 @@ func (b *Backend) LastActivity() time.Time {
 // OnAssistant handles assistant messages from CC's stdout.
 func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
-	// Track model and per-call usage (last assistant message wins, same as
-	// the tmux watcher). The result message carries cumulative usage across
-	// all inference calls in the turn — we need per-call for context tracking.
+	// Track model and per-call usage from top-level assistant messages only.
+	// Subagent messages (parent_tool_use_id != nil) carry the subagent model
+	// (e.g. haiku) which must not overwrite the primary model.
+	isTopLevel := msg.ParentToolUseID == nil
 	b.mu.Lock()
-	if msg.Message.Model != "" {
+	if isTopLevel && msg.Message.Model != "" {
 		b.lastModel = msg.Message.Model
 	}
-	u := msg.Message.Usage
-	b.lastUsage = &u
+	if isTopLevel {
+		u := msg.Message.Usage
+		b.lastUsage = &u
+	}
 	b.mu.Unlock()
 
 	b.turnMu.Lock()
@@ -765,32 +768,31 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		text = turnText
 	}
 
-	// Determine model: prefer the key from ModelUsage with the largest context
-	// window (the primary model), falling back to lastModel (from assistant
-	// messages). Use per-call usage from the last assistant message (not the
-	// result's accumulated total) — this matches what the tmux watcher reports
-	// and gives compaction the actual context window fill, not a sum of all calls.
+	// Determine model from lastModel (set by OnAssistant, filtered to top-level
+	// messages only — subagent models are excluded). Use per-call usage from
+	// the last assistant message (not the result's accumulated total) — this
+	// matches what the tmux watcher reports and gives compaction the actual
+	// context window fill, not a sum of all calls.
 	b.mu.Lock()
 	resultModel := b.lastModel
 	lastUsage := b.lastUsage
 	b.lastUsage = nil // reset for next turn
 	b.mu.Unlock()
 
-	// Extract model and context window from ModelUsage. When multiple models
-	// are present (e.g. main + subagent), pick the one with the largest
-	// context window — that's the primary model. This also overrides
-	// lastModel which may be stale or from a subagent's assistant message.
-	{
+	// Pick context window from ModelUsage deterministically: prefer the
+	// entry matching resultModel (the primary model from assistant messages);
+	// otherwise take the largest context window to avoid spurious compaction
+	// from subagent models (e.g. haiku) winning the random map iteration.
+	if usage, ok := msg.ModelUsage[resultModel]; ok {
+		b.mu.Lock()
+		b.contextWindow = usage.ContextWindow
+		b.mu.Unlock()
+	} else {
 		var bestCW int
-		var bestModel string
-		for model, usage := range msg.ModelUsage {
+		for _, usage := range msg.ModelUsage {
 			if usage.ContextWindow > bestCW {
 				bestCW = usage.ContextWindow
-				bestModel = model
 			}
-		}
-		if bestModel != "" {
-			resultModel = bestModel
 		}
 		if bestCW > 0 {
 			b.mu.Lock()
