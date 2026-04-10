@@ -57,17 +57,11 @@ func DoneCommand() *Command {
 			if !cc.IsSecondaryBot {
 				return Response{Text: "Nothing to detach — this is the main session."}, nil
 			}
-			sk := tools.SessionKeyFromContext(ctx)
-			if sk == "" {
+			if tools.SessionKeyFromContext(ctx) == "" {
 				return Response{Text: "Already idle."}, nil
 			}
 			if cc.StopFunc != nil {
 				cc.StopFunc()
-			}
-			// Close the branch CC backend so the process doesn't leak.
-			// Must happen before ReleaseFunc clears the session key.
-			if cc.Agent != nil && cc.Agent.DelegatedManager != nil {
-				cc.Agent.DelegatedManager.ResetSession(sk)
 			}
 			if cc.ReleaseFunc != nil {
 				cc.ReleaseFunc()
