@@ -16,6 +16,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/memory"
 	"foci/internal/secrets"
+	focitools "foci/internal/tools"
 )
 
 func TestGracefulShutdown_AllIdle(t *testing.T) {
@@ -308,9 +309,16 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 		},
 	}
 	rc := config.Resolve(cfg, acfg)
-	tools := []string{"foci_http_request", "foci_memory_search", "foci_send_to_chat", "foci_todo", "foci_web_fetch", "foci_web_search"}
+	shellTools := []focitools.ExportedTool{
+		{Name: "foci_http_request", Description: "Make an HTTP request."},
+		{Name: "foci_memory_search", Description: "Search memory files and conversation history."},
+		{Name: "foci_send_to_chat", Description: "Send a proactive message to the user."},
+		{Name: "foci_todo", Description: "Manage a persistent todo list."},
+		{Name: "foci_web_fetch", Description: "Fetch a URL and return its content as clean Markdown."},
+		{Name: "foci_web_search", Description: "Search the web using Brave Search API."},
+	}
 
-	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, []string{"telegram"}, tools)
+	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, []string{"telegram"}, shellTools)
 
 	// Core sections present
 	if !strings.Contains(block, "You are running on **foci**") {
@@ -330,9 +338,12 @@ func TestBuildEnvironmentDelegated(t *testing.T) {
 	if !strings.Contains(block, "## Foci Shell Tools") {
 		t.Error("expected Shell Tools section")
 	}
-	for _, tool := range tools {
-		if !strings.Contains(block, tool) {
-			t.Errorf("expected shell tool %q in block", tool)
+	for _, tool := range shellTools {
+		if !strings.Contains(block, tool.Name) {
+			t.Errorf("expected shell tool %q in block", tool.Name)
+		}
+		if !strings.Contains(block, tool.Description) {
+			t.Errorf("expected description %q in block", tool.Description)
 		}
 	}
 

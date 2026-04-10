@@ -59,6 +59,12 @@ func (r *Registry) All() []*Tool {
 	return out
 }
 
+// ExportedTool holds the shell function name and description for an exported tool.
+type ExportedTool struct {
+	Name        string // e.g. "foci_todo"
+	Description string // first sentence of the tool's description
+}
+
 // ExportedNames returns sorted names of tools with ExecExport: true,
 // prefixed with "foci_" (matching the shell function names).
 func (r *Registry) ExportedNames() []string {
@@ -69,6 +75,31 @@ func (r *Registry) ExportedNames() []string {
 		}
 	}
 	return names
+}
+
+// ExportedTools returns sorted exported tools with names and descriptions.
+func (r *Registry) ExportedTools() []ExportedTool {
+	var out []ExportedTool
+	for _, t := range r.All() {
+		if t.ExecExport {
+			out = append(out, ExportedTool{
+				Name:        "foci_" + t.Name,
+				Description: firstSentence(t.Description),
+			})
+		}
+	}
+	return out
+}
+
+// firstSentence returns the text up to the first period followed by a space,
+// or the full string if no such boundary exists.
+func firstSentence(s string) string {
+	for i := 0; i < len(s)-1; i++ {
+		if s[i] == '.' && s[i+1] == ' ' {
+			return s[:i+1]
+		}
+	}
+	return s
 }
 
 // FinalizeShellDescription updates the shell tool's description to include

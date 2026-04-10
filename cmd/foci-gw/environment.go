@@ -10,6 +10,7 @@ import (
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/skills"
+	"foci/internal/tools"
 	"foci/internal/workspace"
 )
 
@@ -153,7 +154,7 @@ func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config
 // buildEnvironmentDelegated generates the environment block for delegated
 // (CC backend) agents. These agents use Claude Code's built-in tools plus
 // foci shell functions exposed via the exec bridge.
-func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string, shellToolNames []string) string {
+func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string, shellTools []tools.ExportedTool) string {
 	var b strings.Builder
 	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
 
@@ -164,13 +165,13 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	b.WriteString("Foci bridges messaging platforms to CC and provides additional tools as shell functions.\n")
 
 	// Shell tools
-	if len(shellToolNames) > 0 {
+	if len(shellTools) > 0 {
 		b.WriteString("\n## Foci Shell Tools\n")
 		b.WriteString("The following foci tools are available as shell functions in your Bash environment. ")
 		b.WriteString("Call them via the Bash tool (e.g., `foci_todo list --status open`).\n")
 		b.WriteString("Run any command with `--help` or `-h` for usage details.\n\n")
-		for _, name := range shellToolNames {
-			fmt.Fprintf(&b, "- `%s`\n", name)
+		for _, t := range shellTools {
+			fmt.Fprintf(&b, "- `%s` — %s\n", t.Name, t.Description)
 		}
 	}
 
