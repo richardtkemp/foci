@@ -104,7 +104,6 @@ type Backend struct {
 	lastActivity atomic.Int64 // unix nanos of most recent stream event
 
 	// Callbacks (set before Start, read-only after)
-	replyFunc          delegator.ReplyFunc
 	permPromptFn       delegator.PermissionPromptFunc
 	onPermCleared      func()
 	onPermPending      func()
@@ -501,9 +500,6 @@ func (b *Backend) checkAndSendSteers() {
 // Callback setters
 // ---------------------------------------------------------------------------
 
-// SetReplyFunc sets the function used to deliver text to the user's platform chat.
-func (b *Backend) SetReplyFunc(fn delegator.ReplyFunc) { b.replyFunc = fn }
-
 // SetPermissionPromptFunc sets the function used to send permission prompts.
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) { b.permPromptFn = fn }
 
@@ -708,9 +704,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 
 			if handler != nil && handler.OnText != nil {
 				handler.OnText(block.Text)
-			}
-			if b.replyFunc != nil {
-				b.replyFunc(block.Text)
 			}
 
 		case "tool_use":
@@ -926,10 +919,8 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if err := json.Unmarshal(raw, &retry); err != nil {
 			return
 		}
-		if b.replyFunc != nil && retry.Attempt > 1 {
-			b.replyFunc(fmt.Sprintf("⏳ Rate limited, retrying in %dms (attempt %d/%d)",
-				retry.RetryDelayMS, retry.Attempt, retry.MaxRetries))
-		}
+		// Retry notifications are handled by RetryNotifyFunc (TurnCallbacks).
+		_ = retry
 	}
 }
 

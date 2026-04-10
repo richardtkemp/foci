@@ -81,7 +81,7 @@ func wireAgentPlatformCallbacks(
 	// Uses SendNotificationDirect to bypass turn buffering (same as compaction start).
 	ag.ResetNotifyFunc.Add(func(sk, msg string) {
 		if c := connMgr.ForSessionOrPrimary(sk, acfg.ID); c != nil {
-			_ = platform.SendText(c, msg)
+			_ = c.SendText(msg)
 		}
 	})
 

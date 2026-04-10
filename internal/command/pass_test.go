@@ -351,7 +351,6 @@ func (m *mockPassBackend) SendCommand(_ context.Context, cmd, _ string) error {
 }
 func (m *mockPassBackend) IsRunning() bool                                        { return true }
 func (m *mockPassBackend) Restart(context.Context) error                          { return nil }
-func (m *mockPassBackend) SetReplyFunc(delegator.ReplyFunc)                         {}
 func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
 func (m *mockPassBackend) SetOnPermissionCleared(func())                          {}
 func (m *mockPassBackend) SetOnSessionReady(func(string))                         {}
@@ -391,7 +390,6 @@ func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd, _ string
 }
 func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }
 func (m *mockPassBackendNoCapturer) Restart(context.Context) error                          { return nil }
-func (m *mockPassBackendNoCapturer) SetReplyFunc(delegator.ReplyFunc)                         {}
 func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
 func (m *mockPassBackendNoCapturer) SetOnPermissionCleared(func())                          {}
 func (m *mockPassBackendNoCapturer) SetOnSessionReady(func(string))                         {}

@@ -104,41 +104,58 @@ type SendOptions struct {
 	ReplyTo   string
 }
 
-// RawTextSender is implemented by platform bots for text delivery.
-// Callers should use the package-level SendText/SendTextToChat functions
-// instead of calling these methods directly — those functions filter
-// empty text and [[NO_RESPONSE]] sentinels before delegating.
-type RawTextSender interface {
-	RawSendText(text string) error
-	RawSendTextToChat(chatID int64, text string) error
+// TextSender is implemented by platform bots for text delivery.
+// Silent-message filtering is handled automatically by FilteredConnection,
+// which wraps all connections from the ConnectionManager.
+type TextSender interface {
+	SendText(text string) error
+	SendTextToChat(chatID int64, text string) error
 }
 
 // IsSilent returns true if text should not be sent to users.
-// Covers empty/whitespace-only text and the [[NO_RESPONSE]] sentinel
-// that agents use to indicate they have nothing to say.
+// Covers empty/whitespace-only text, the [[NO_RESPONSE]] sentinel that agents
+// use to indicate they have nothing to say, and CC's synthetic "No response
+// requested." message.
 func IsSilent(text string) bool {
 	t := strings.TrimSpace(text)
-	return t == "" || t == "[[NO_RESPONSE]]"
+	return t == "" || t == "[[NO_RESPONSE]]" || t == "No response requested."
 }
 
-// SendText filters silent text then sends via the sender's raw method.
-func SendText(s RawTextSender, text string) error {
+// FilteredConnection wraps any Connection with automatic IsSilent filtering
+// on all text sends. New platform implementations get this for free — the
+// aggregating ConnectionManager wraps all returned connections.
+type FilteredConnection struct {
+	Connection
+}
+
+func (f *FilteredConnection) SendText(text string) error {
 	if IsSilent(text) {
 		return nil
 	}
-	return s.RawSendText(text)
+	return f.Connection.SendText(text)
 }
 
-// SendTextToChat filters silent text then sends to a specific chat.
-func SendTextToChat(s RawTextSender, chatID int64, text string) error {
+func (f *FilteredConnection) SendTextToChat(chatID int64, text string) error {
 	if IsSilent(text) {
 		return nil
 	}
-	return s.RawSendTextToChat(chatID, text)
+	return f.Connection.SendTextToChat(chatID, text)
+}
+
+// filtered wraps a Connection with IsSilent filtering. Returns nil for nil input.
+func filtered(c Connection) Connection {
+	if c == nil {
+		return nil
+	}
+	// Don't double-wrap.
+	if _, ok := c.(*FilteredConnection); ok {
+		return c
+	}
+	return &FilteredConnection{c}
 }
 
 type Sender interface {
-	RawTextSender
+	TextSender
 
 	SessionKey() string
 

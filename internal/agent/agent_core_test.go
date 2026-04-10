@@ -494,9 +494,10 @@ func TestDeferredReply(t *testing.T) {
 	}
 }
 
-func TestNoResponseSentinelFiltered(t *testing.T) {
-	// Proves that when the model responds with [[NO_RESPONSE]], the agent
-	// returns an empty string instead of delivering the sentinel to the caller.
+func TestNoResponseSentinelPassedThrough(t *testing.T) {
+	// The agent layer no longer strips [[NO_RESPONSE]] — that's handled
+	// downstream by platform.IsSilent (FilteredConnection and Finalize).
+	// HandleMessage returns the sentinel as-is.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{
 			ID:         "msg_test",
@@ -521,95 +522,8 @@ func TestNoResponseSentinelFiltered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
-	if resp != "" {
-		t.Errorf("expected empty response, got %q", resp)
-	}
-}
-
-func TestNoResponseSentinelIntermediateFiltered(t *testing.T) {
-	// Proves that [[NO_RESPONSE]] in an intermediate tool_use response
-	// does not trigger ReplyFunc delivery.
-	var callCount atomic.Int32
-	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
-		n := callCount.Add(1)
-		if n == 1 {
-			return &provider.MessageResponse{
-				ID:   "msg_1",
-				Type: "message",
-				Role: "assistant",
-				Content: []provider.ContentBlock{
-					{Type: "text", Text: "[[NO_RESPONSE]]"},
-					{Type: "tool_use", ID: "tu_001", Name: "test_tool", Input: json.RawMessage(`{}`)},
-				},
-				StopReason: "tool_use",
-				Usage:      provider.Usage{InputTokens: 20, OutputTokens: 10},
-			}
-		}
-		return &provider.MessageResponse{
-			ID:         "msg_2",
-			Type:       "message",
-			Role:       "assistant",
-			Content:    provider.TextContent("done"),
-			StopReason: "end_turn",
-			Usage:      provider.Usage{InputTokens: 30, OutputTokens: 15},
-		}
-	})
-	store := session.NewStore(t.TempDir())
-	registry := tools.NewRegistry()
-	registry.Register(&tools.Tool{
-		Name:        "test_tool",
-		Description: "test",
-		Parameters:  json.RawMessage(`{"type":"object"}`),
-		Execute: func(ctx context.Context, params json.RawMessage) (tools.ToolResult, error) {
-			return tools.TextResult("ok"), nil
-		},
-	})
-	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
-	ag := &Agent{
-		Client:    client,
-		Sessions:  store,
-		Tools:     registry,
-		Bootstrap: bootstrap,
-		Model:     "claude-haiku-4-5",
-	}
-
-	var replies []string
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		ReplyFunc: func(text string) { replies = append(replies, text) },
-	})
-	resp, err := ag.HandleMessage(ctx, "test/imain/1000000000", "go")
-	if err != nil {
-		t.Fatalf("HandleMessage: %v", err)
-	}
-	if resp != "done" {
-		t.Errorf("final response = %q, want 'done'", resp)
-	}
-	for _, r := range replies {
-		if r == "[[NO_RESPONSE]]" {
-			t.Error("[[NO_RESPONSE]] sentinel was delivered via ReplyFunc")
-		}
-	}
-}
-
-func TestIsNoResponse(t *testing.T) {
-	// Proves that isNoResponse matches the sentinel with various whitespace
-	// wrapping but rejects normal text and partial matches.
-	cases := []struct {
-		input string
-		want  bool
-	}{
-		{"[[NO_RESPONSE]]", true},
-		{"  [[NO_RESPONSE]]  ", true},
-		{"\n[[NO_RESPONSE]]\n", true},
-		{"", false},
-		{"hello", false},
-		{"[[NO_RESPONSE]] extra text", false},
-		{"some [[NO_RESPONSE]]", false},
-	}
-	for _, tc := range cases {
-		if got := isNoResponse(tc.input); got != tc.want {
-			t.Errorf("isNoResponse(%q) = %v, want %v", tc.input, got, tc.want)
-		}
+	if resp != "[[NO_RESPONSE]]" {
+		t.Errorf("expected sentinel to pass through, got %q", resp)
 	}
 }
 

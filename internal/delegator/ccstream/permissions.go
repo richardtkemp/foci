@@ -68,11 +68,8 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	if b.permPromptFn != nil {
 		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
 		b.permPromptFn(msg.RequestID, text, summary, choices)
-	} else if b.replyFunc != nil {
-		log.Warnf("ccstream/perm", "permPromptFn nil, falling back to replyFunc for req_id=%s", msg.RequestID)
-		b.replyFunc(text)
 	} else {
-		log.Warnf("ccstream/perm", "both permPromptFn and replyFunc nil for req_id=%s", msg.RequestID)
+		log.Warnf("ccstream/perm", "permPromptFn nil for req_id=%s, prompt stored but not displayed", msg.RequestID)
 	}
 }
 

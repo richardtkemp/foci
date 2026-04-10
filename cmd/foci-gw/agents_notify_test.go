@@ -43,7 +43,7 @@ func (c *stubConn) SetChatID(int64)                                 {}
 func (c *stubConn) ChatID() int64                                   { return 0 }
 func (c *stubConn) Username() string                                { return "test" }
 func (c *stubConn) UpdateChatSessionKey(int64, string)              {}
-func (c *stubConn) RawSendText(string) error                        { return nil }
+func (c *stubConn) SendText(string) error                           { return nil }
 func (c *stubConn) SendDocument(string) error                       { return nil }
 func (c *stubConn) SendVoice(string) error                          { return nil }
 func (c *stubConn) SendVideo(string) error                          { return nil }
@@ -51,7 +51,7 @@ func (c *stubConn) SendPhoto(string) error                          { return nil
 func (c *stubConn) SendAudio(string) error                          { return nil }
 func (c *stubConn) SendAnimation(string) error                      { return nil }
 func (c *stubConn) SendVoiceData([]byte) error                      { return nil }
-func (c *stubConn) RawSendTextToChat(int64, string) error           { return nil }
+func (c *stubConn) SendTextToChat(int64, string) error              { return nil }
 func (c *stubConn) SendDocumentToChat(int64, string) error          { return nil }
 func (c *stubConn) SendVoiceToChat(int64, string) error             { return nil }
 func (c *stubConn) SendVideoToChat(int64, string) error             { return nil }

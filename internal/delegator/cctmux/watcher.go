@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -18,14 +17,6 @@ import (
 
 // sessionWatcher tails a Claude Code session JSONL file and emits events
 // as new entries are appended. Uses fsnotify for immediate event delivery.
-// isSyntheticNoResponse returns true for CC's synthetic "no response" messages
-// that should be silently dropped. CC generates these locally (model: "<synthetic>")
-// when it has nothing to say — e.g. after "Continue from where you left off."
-func isSyntheticNoResponse(text string) bool {
-	t := strings.TrimSpace(text)
-	return t == "No response requested." || t == "[[NO_RESPONSE]]"
-}
-
 type sessionWatcher struct {
 	path    string
 	fsnot   *fsnotify.Watcher
@@ -195,7 +186,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
-			if b.Text != "" && !isSyntheticNoResponse(b.Text) {
+			if b.Text != "" {
 				w.turnText = b.Text
 				if handler.OnText != nil {
 					handler.OnText(b.Text)

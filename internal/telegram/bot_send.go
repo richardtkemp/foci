@@ -303,9 +303,9 @@ func buildButtonRows(buttons []platform.ButtonChoice, callbackPrefix string) [][
 	return rows
 }
 
-// RawSendText sends a text message to the default chat without any header.
+// SendText sends a text message to the default chat without any header.
 // Returns an error if no chat ID is available.
-func (b *Bot) RawSendText(text string) error {
+func (b *Bot) SendText(text string) error {
 
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
@@ -322,18 +322,6 @@ func (b *Bot) RawSendText(text string) error {
 	return nil
 }
 
-// SendInjected sends a system/injected text message to the default chat.
-// Prepends the configured InjectedMessageHeader (if non-empty) so users can
-// distinguish system messages from agent replies.
-//
-// Prefer SendToSession when a session key is available — it routes to the
-// correct chat for chat-based sessions.
-func (b *Bot) SendInjected(text string) error {
-	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
-		text = b.display.InjectedMessageHeader + "\n" + text
-	}
-	return platform.SendText(b, text)
-}
 
 // SendInjectedMessage sends a system/injected text message to the chat
 // associated with the given session key. Falls back to the bot's default chat

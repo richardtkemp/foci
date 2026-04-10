@@ -28,10 +28,6 @@ import (
 // user never sees it (and the platform treats it as an empty response).
 const NoResponseSentinel = "[[NO_RESPONSE]]"
 
-// isNoResponse returns true when text is exactly the no-response sentinel.
-func isNoResponse(text string) bool {
-	return strings.TrimSpace(text) == NoResponseSentinel
-}
 
 // nudgeHeader prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.

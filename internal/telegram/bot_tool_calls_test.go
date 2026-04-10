@@ -7,34 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"foci/internal/command"
-
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-func TestAsyncNotifierDeliveryViaSendInjected(t *testing.T) {
-	// Simulates the async notifier delivery path in main.go:
-	// notifier calls HandleMessage → gets response → calls bot.SendInjected()
-	mgr := NewBotManager()
-	bot, mock := testBot([]string{"111"}, command.NewRegistry())
-	bot.SetChatID(12345)
-	mgr.AddPrimary("test-agent", bot)
-
-	// Simulate: notifier got a response from HandleMessage
-	resp := "Four undeployed commits now. Both queues empty."
-
-	// Deliver via primary bot's SendInjected (same as main.go closure)
-	primary := mgr.PrimaryBot("test-agent")
-	if primary == nil {
-		t.Fatal("PrimaryBot returned nil")
-	}
-	if err := primary.SendInjected(resp); err != nil {
-		t.Fatalf("SendInjected error: %v", err)
-	}
-	if mock.sentCount() != 1 {
-		t.Errorf("sentCount = %d, want 1", mock.sentCount())
-	}
-}
 
 func TestAsyncNotifierNoPrimaryBot(t *testing.T) {
 	// When no primary bot is configured, PrimaryBot returns nil.

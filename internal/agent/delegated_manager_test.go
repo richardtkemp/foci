@@ -27,7 +27,6 @@ type mockBackendDM struct {
 	startErr    error
 	startOpts   delegator.StartOptions
 
-	replyFunc           delegator.ReplyFunc
 	permPromptFunc      delegator.PermissionPromptFunc
 	onPermCleared       func()
 	onSessionReady      func(string)
@@ -89,12 +88,6 @@ func (m *mockBackendDM) SendCommand(_ context.Context, _ string, _ string) error
 func (m *mockBackendDM) IsRunning() bool { return m.running }
 
 func (m *mockBackendDM) Restart(_ context.Context) error { return nil }
-
-func (m *mockBackendDM) SetReplyFunc(fn delegator.ReplyFunc) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.replyFunc = fn
-}
 
 func (m *mockBackendDM) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) {
 	m.mu.Lock()
@@ -397,37 +390,6 @@ func TestGet_SetsLabelFromBase(t *testing.T) {
 	want := "myagent-c42-v1"
 	if mock.startOpts.Label != want {
 		t.Errorf("Label = %q, want %q", mock.startOpts.Label, want)
-	}
-}
-
-func TestGet_SendFuncRouting(t *testing.T) {
-	// Proves that SetReplyFunc is called on the backend with a function that
-	// routes back through SendFunc with the correct session key.
-	var gotKey, gotText string
-	mgr, mocks := newTestManager(t, nil)
-	mgr.SendFunc = func(sk, text string) {
-		gotKey = sk
-		gotText = text
-	}
-
-	_, err := mgr.Get(context.Background(), "test-agent/c1")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-
-	mock := (*mocks)[0]
-	mock.mu.Lock()
-	rf := mock.replyFunc
-	mock.mu.Unlock()
-	if rf == nil {
-		t.Fatal("replyFunc not set on backend")
-	}
-	rf("hello")
-	if gotKey != "test-agent/c1" {
-		t.Errorf("SendFunc sessionKey = %q, want %q", gotKey, "test-agent/c1")
-	}
-	if gotText != "hello" {
-		t.Errorf("SendFunc text = %q, want %q", gotText, "hello")
 	}
 }
 
@@ -1212,19 +1174,12 @@ func TestGet_NoRetryAfterInitDeath_WithoutResumeID(t *testing.T) {
 }
 
 func TestSetBackendCallbacks(t *testing.T) {
-	// Proves that setBackendCallbacks wires up all four callback types on a
-	// backend, avoiding the duplication that previously existed across retry
-	// paths.
-	var replyKey, replyText string
+	// Proves that setBackendCallbacks wires up callback types on a backend.
 	var typingKey string
 	var typingState bool
 
 	mgr := &DelegatedManager{
 		AgentID: "test-agent",
-		SendFunc: func(sk, text string) {
-			replyKey = sk
-			replyText = text
-		},
 		TypingFunc: func(sk string, typing bool) {
 			typingKey = sk
 			typingState = typing
@@ -1236,19 +1191,10 @@ func TestSetBackendCallbacks(t *testing.T) {
 	mgr.setBackendCallbacks(mb)
 
 	be.mu.Lock()
-	rf := be.replyFunc
 	tf := be.typingFunc
 	osr := be.onSessionReady
 	opc := be.onPermCleared
 	be.mu.Unlock()
-
-	if rf == nil {
-		t.Fatal("replyFunc not set")
-	}
-	rf("hi")
-	if replyKey != "test-agent/c1" || replyText != "hi" {
-		t.Errorf("replyFunc routed to key=%q text=%q", replyKey, replyText)
-	}
 
 	if tf == nil {
 		t.Fatal("typingFunc not set")

@@ -332,42 +332,9 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 	}
 }
 
-func TestHandlePermissionRequest_FallbackToReplyFunc(t *testing.T) {
-	// Proves that when permPromptFn is nil, handlePermissionRequest falls back
-	// to replyFunc to display the permission text.
-	t.Parallel()
-
-	var buf bytes.Buffer
-	var replyText string
-	b := &Backend{
-		writer:       NewWriter(nopWriteCloser{&buf}),
-		pendingPerms: make(map[string]*pendingPermission),
-		replyFunc:    func(text string) { replyText = text },
-	}
-
-	msg := &PermissionRequest{
-		RequestID: "req-fallback",
-		Request: PermissionRequestPayload{
-			ToolName:    "Write",
-			ToolUseID:   "toolu_FB",
-			Description: "Write a file",
-			Input:       json.RawMessage(`{"file_path":"/tmp/test.txt","content":"hello"}`),
-		},
-	}
-
-	b.handleToolRequest(msg)
-
-	if replyText == "" {
-		t.Error("replyFunc should have been called with display text")
-	}
-	if b.PendingPermissions() != 1 {
-		t.Errorf("pending = %d, want 1", b.PendingPermissions())
-	}
-}
-
-func TestHandlePermissionRequest_BothCallbacksNil(t *testing.T) {
-	// Proves that handlePermissionRequest doesn't panic when both permPromptFn
-	// and replyFunc are nil. The permission is still stored as pending.
+func TestHandlePermissionRequest_NilPermPromptFn(t *testing.T) {
+	// Proves that handlePermissionRequest doesn't panic when permPromptFn
+	// is nil. The permission is still stored as pending.
 	t.Parallel()
 
 	var buf bytes.Buffer

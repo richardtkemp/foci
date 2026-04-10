@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"foci/internal/platform"
 	"foci/internal/timeutil"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -58,8 +57,8 @@ func (b *Bot) lastChatID() (int64, error) {
 	return chatID, nil
 }
 
-// RawSendTextToChat sends a text message to a specific chat ID without any header.
-func (b *Bot) RawSendTextToChat(chatID int64, text string) error {
+// SendTextToChat sends a text message to a specific chat ID without any header.
+func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
 	return nil
 }
@@ -70,7 +69,7 @@ func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 	if b.display.InjectedMessageHeader != "" && strings.TrimSpace(text) != "" {
 		text = b.display.InjectedMessageHeader + "\n" + text
 	}
-	return platform.SendTextToChat(b, chatID, text)
+	return b.SendTextToChat(chatID, text)
 }
 
 // sendMediaFile is a generic helper for sending media files to Telegram.

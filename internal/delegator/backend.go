@@ -54,11 +54,6 @@ type Delegator interface {
 	// Restart kills and relaunches the agent subprocess.
 	Restart(ctx context.Context) error
 
-	// SetReplyFunc sets the function used to deliver text to the user's
-	// platform chat. Called when the session/connection is known. The backend
-	// uses this for all asynchronous output (streamed responses, etc.).
-	SetReplyFunc(fn ReplyFunc)
-
 	// SetPermissionPromptFunc sets the function used to send permission
 	// prompts with inline keyboard choices. Optional — if not set, the
 	// backend falls back to plain text via ReplyFunc.
@@ -168,8 +163,6 @@ type CommandOutputCapturer interface {
 // ReplyFunc sends text to the user's platform chat. Set by the agent layer
 // so the backend can deliver asynchronous output (session file watcher events,
 // permission prompts, etc.) without depending on per-turn context.
-type ReplyFunc func(text string)
-
 // PromptChoice represents a choice in a permission prompt.
 type PromptChoice struct {
 	Label string // button text (e.g. "Yes", "No")

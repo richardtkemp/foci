@@ -87,17 +87,6 @@ func TestCallbackSetters(t *testing.T) {
 		pendingPerms: make(map[string]*pendingPermission),
 	}
 
-	// SetReplyFunc
-	var replyCalled bool
-	b.SetReplyFunc(func(text string) { replyCalled = true })
-	if b.replyFunc == nil {
-		t.Error("replyFunc is nil after SetReplyFunc")
-	}
-	b.replyFunc("test")
-	if !replyCalled {
-		t.Error("replyFunc was not called")
-	}
-
 	// SetPermissionPromptFunc
 	var permCalled bool
 	b.SetPermissionPromptFunc(func(reqID, text, summary string, choices []delegator.PromptChoice) {
@@ -630,15 +619,13 @@ func TestSendToPane_WriterError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestOnAssistant_TextAccumulation(t *testing.T) {
-	// Verifies OnAssistant accumulates text blocks into turnText, fires the
-	// handler OnText callback, and fires replyFunc.
+	// Verifies OnAssistant accumulates text blocks into turnText and fires
+	// the handler OnText callback.
 	t.Parallel()
 
-	var replyTexts []string
 	var handlerTexts []string
 
 	b := &Backend{}
-	b.replyFunc = func(text string) { replyTexts = append(replyTexts, text) }
 	handler := &delegator.EventHandler{
 		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
 	}
@@ -662,12 +649,6 @@ func TestOnAssistant_TextAccumulation(t *testing.T) {
 
 	if text != "Hello world!" {
 		t.Errorf("turnText = %q, want %q", text, "Hello world!")
-	}
-	if len(replyTexts) != 2 {
-		t.Fatalf("replyTexts count = %d, want 2", len(replyTexts))
-	}
-	if replyTexts[0] != "Hello " || replyTexts[1] != "world!" {
-		t.Errorf("replyTexts = %v, want [Hello , world!]", replyTexts)
 	}
 	if len(handlerTexts) != 2 {
 		t.Fatalf("handlerTexts count = %d, want 2", len(handlerTexts))
@@ -944,7 +925,7 @@ func TestOnAssistant_NilCallbacks(t *testing.T) {
 			Usage: TokenUsage{},
 		},
 	}
-	// Should not panic even with nil replyFunc and typingFunc.
+	// Should not panic even with nil typingFunc and no handler callbacks.
 	b.OnAssistant(msg)
 }
 
@@ -953,11 +934,11 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 	// no callbacks fired).
 	t.Parallel()
 
-	var replyTexts []string
-	b := &Backend{
-		replyFunc: func(text string) { replyTexts = append(replyTexts, text) },
-	}
-	b.beginTurn(&delegator.EventHandler{})
+	var handlerTexts []string
+	b := &Backend{}
+	b.beginTurn(&delegator.EventHandler{
+		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
+	})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -971,8 +952,8 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 	b.OnAssistant(msg)
 
 	// Only "result" should appear; thinking block should be silent.
-	if len(replyTexts) != 1 || replyTexts[0] != "result" {
-		t.Errorf("replyTexts = %v, want [result]", replyTexts)
+	if len(handlerTexts) != 1 || handlerTexts[0] != "result" {
+		t.Errorf("handlerTexts = %v, want [result]", handlerTexts)
 	}
 	b.turnMu.Lock()
 	text := b.turnText.String()
@@ -1759,69 +1740,6 @@ func TestOnSystem_TaskProgress(t *testing.T) {
 	if called {
 		t.Error("OnStatus should not be called for task_progress")
 	}
-}
-
-func TestOnSystem_APIRetry(t *testing.T) {
-	// Verifies OnSystem/api_retry fires replyFunc with retry info when
-	// attempt > 1.
-	t.Parallel()
-
-	var replyText string
-	b := &Backend{}
-	b.replyFunc = func(text string) { replyText = text }
-
-	raw, _ := json.Marshal(APIRetryMessage{
-		Subtype:      "api_retry",
-		Attempt:      2,
-		MaxRetries:   5,
-		RetryDelayMS: 30000,
-		ErrorStatus:  529,
-	})
-	b.OnSystem("api_retry", raw)
-
-	if !strings.Contains(replyText, "30000") {
-		t.Errorf("replyText = %q, want to contain retry delay", replyText)
-	}
-	if !strings.Contains(replyText, "2/5") {
-		t.Errorf("replyText = %q, want to contain attempt info", replyText)
-	}
-}
-
-func TestOnSystem_APIRetryFirstAttempt(t *testing.T) {
-	// Verifies OnSystem/api_retry does NOT fire replyFunc on the first
-	// attempt (attempt=1) — only retries are visible.
-	t.Parallel()
-
-	var called bool
-	b := &Backend{}
-	b.replyFunc = func(text string) { called = true }
-
-	raw, _ := json.Marshal(APIRetryMessage{
-		Subtype:      "api_retry",
-		Attempt:      1,
-		MaxRetries:   5,
-		RetryDelayMS: 1000,
-	})
-	b.OnSystem("api_retry", raw)
-
-	if called {
-		t.Error("replyFunc should not be called for attempt 1")
-	}
-}
-
-func TestOnSystem_APIRetryNilReplyFunc(t *testing.T) {
-	// Verifies OnSystem/api_retry doesn't panic when replyFunc is nil.
-	t.Parallel()
-
-	b := &Backend{}
-	raw, _ := json.Marshal(APIRetryMessage{
-		Subtype:      "api_retry",
-		Attempt:      3,
-		MaxRetries:   5,
-		RetryDelayMS: 5000,
-	})
-	// Should not panic.
-	b.OnSystem("api_retry", raw)
 }
 
 func TestOnSystem_UnknownSubtype(t *testing.T) {

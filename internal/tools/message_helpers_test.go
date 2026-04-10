@@ -45,7 +45,7 @@ type mockChatDataCall struct {
 	data   []byte
 }
 
-func (m *mockSender) RawSendText(text string) error {
+func (m *mockSender) SendText(text string) error {
 	m.textCalls = append(m.textCalls, text)
 	return m.textErr
 }
@@ -80,7 +80,7 @@ func (m *mockSender) SendAnimation(filePath string) error {
 	return m.animationErr
 }
 
-func (m *mockSender) RawSendTextToChat(chatID int64, text string) error {
+func (m *mockSender) SendTextToChat(chatID int64, text string) error {
 	m.chatTextCalls = append(m.chatTextCalls, mockChatCall{chatID, text})
 	return m.textErr
 }

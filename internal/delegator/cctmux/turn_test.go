@@ -299,7 +299,7 @@ func TestNotifyTurnComplete_BufferedNonBlocking(t *testing.T) {
 	}
 }
 
-// Note: SetPermissionPromptFunc, SetOnPermissionCleared, SetReplyFunc,
+// Note: SetPermissionPromptFunc, SetOnPermissionCleared,
 // SetTypingFunc, SetOnSessionReady, SessionID, SessionFilePath, and
 // IsTurnInFlight basic cases are tested in lifecycle_test.go.
 

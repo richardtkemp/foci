@@ -705,8 +705,8 @@ func TestSQLiteReadOnly(t *testing.T) {
 
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
-	// Create the database with sqlite3.
-	cmd := exec.CommandContext(context.Background(), binPath, dbPath,
+	// Create the database with the real sqlite3 (not the readonly wrapper).
+	cmd := exec.CommandContext(context.Background(), "/usr/bin/sqlite3", dbPath,
 		"CREATE TABLE t(id INTEGER, name TEXT); INSERT INTO t VALUES(1, 'alice'); INSERT INTO t VALUES(2, 'bob');")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("create test db: %s: %v", out, err)

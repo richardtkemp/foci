@@ -246,7 +246,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 
 	// sendOrBatchText delivers text respecting batch mode.
 	sendOrBatchText := func(r provider.MessageResponse) {
-		if text := provider.TextOf(r.Content); text != "" && !isNoResponse(text) {
+		if text := provider.TextOf(r.Content); text != "" {
 			if a.BatchPartialAssistantMessages {
 				if batchedText.Len() > 0 {
 					batchedText.WriteString(a.BatchPartialJoiner)
@@ -388,9 +388,6 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			ts.FinalUsage = &resp.Usage
 			ts.FinalCost = cost
 			ts.FinalText = provider.TextOf(resp.Content)
-			if isNoResponse(ts.FinalText) {
-				ts.FinalText = ""
-			}
 
 			// Handle batched partial messages.
 			if a.BatchPartialAssistantMessages && batchedText.Len() > 0 {
@@ -399,9 +396,6 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 					batchedText.WriteString(ts.FinalText)
 				}
 				ts.FinalText = batchedText.String()
-				if isNoResponse(ts.FinalText) {
-					ts.FinalText = ""
-				}
 			}
 
 			close(ts.CompletionChan)
