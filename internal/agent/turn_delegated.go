@@ -48,9 +48,9 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	ts.Prompt = parts.JoinPrompt()
 
 	// Consume branch orientation. ConsumeOrientation is atomic — returns the
-	// orientation once and clears it from the store, same as API transport.
+	// orientation once and marks it consumed in the DB, same as API transport.
 	if a.Sessions != nil {
-		if orient := a.Sessions.ConsumeOrientation(ts.SessionKey); orient != "" {
+		if orient := a.Sessions.ConsumeOrientation(ts.SessionKey, a.SessionIndex); orient != "" {
 			ts.Prompt = orient + "\n\n" + ts.Prompt
 			log.Infof("delegated", "session=%s injected branch orientation (%d chars)", ts.SessionKey, len(orient))
 		}
