@@ -65,52 +65,39 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	return ts.FinalText, nil
 }
 
-// runPostTurn handles the sync/async split for post-turn concerns.
+// runPostTurn waits for the turn to complete, then runs post-turn concerns.
 //
-// API path: CompletionChan is already closed when RunInference returns,
-// so the select falls through to the inline post() call.
+// API path: CompletionChan is already closed when RunInference returns —
+// the select completes immediately.
 //
-// Delegated path: CompletionChan is still open (turn completes asynchronously).
-// A goroutine waits for completion with a 10-minute safety timeout.
+// Delegated path: blocks until CC signals turn completion via OnTurnComplete
+// (which closes CompletionChan), or until a 10-minute safety timeout.
 //
 // Steered follow-up (delegated): CompletionChan is already closed by
-// RunInference (no callback registered). Falls through to inline post()
-// which no-ops (FinalUsage is nil). No goroutine spawned.
+// RunInference (no callback registered). Falls through immediately and
+// post-turn no-ops (FinalUsage is nil).
 func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
-	// Fire OnTurnDone callback — signals the platform layer that the turn
-	// is fully complete. Used to stop the typing indicator at the right time:
-	// immediately for API turns, asynchronously for delegated turns.
-	onDone := func() {
-		if ts.Ctx == nil {
-			return
-		}
+	// Wait for turn completion — synchronous for both API and delegated.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	select {
+	case <-ts.CompletionChan:
+		// Turn complete — run post-turn work.
+	case <-ctx.Done():
+		a.logger().Warnf("session=%s post-turn timeout waiting for completion", ts.SessionKey)
+		return
+	}
+
+	if ts.Ctx != nil {
 		if cb := TurnCallbacksFromContext(ts.Ctx); cb != nil && cb.OnTurnDone != nil {
 			cb.OnTurnDone()
 		}
 	}
-	post := func() {
-		onDone()
-		if err := tc.SaveSession(ts); err != nil {
-			a.logger().Errorf("session=%s post-turn save: %v", ts.SessionKey, err)
-		}
-		tc.UpdateSessionMeta(ts)
-		tc.RunCompaction(ts)
-		tc.LogConversationSent(ts)
-		tc.TouchActivityPost(ts)
+	if err := tc.SaveSession(ts); err != nil {
+		a.logger().Errorf("session=%s post-turn save: %v", ts.SessionKey, err)
 	}
-	select {
-	case <-ts.CompletionChan:
-		post() // API: already done
-	default:
-		go func() { // Delegated: wait for completion
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-			defer cancel()
-			select {
-			case <-ts.CompletionChan:
-				post()
-			case <-ctx.Done():
-				a.logger().Warnf("session=%s post-turn timeout", ts.SessionKey)
-			}
-		}()
-	}
+	tc.UpdateSessionMeta(ts)
+	tc.RunCompaction(ts)
+	tc.LogConversationSent(ts)
+	tc.TouchActivityPost(ts)
 }

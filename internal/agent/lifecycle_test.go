@@ -374,8 +374,8 @@ func TestCompactSession_ErrorWhenEmptySession(t *testing.T) {
 }
 
 func TestResetDelegatedSession(t *testing.T) {
-	// Proves that resetDelegatedSession sends memory formation to the backend,
-	// detaches it, lets memory formation complete in the background, rotates the
+	// Proves that resetDelegatedSession sends memory formation to the backend
+	// (blocking until CC completes), then closes the backend, rotates the
 	// foci session key, and reloads the bootstrap.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -389,42 +389,46 @@ func TestResetDelegatedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Build a mock DelegatedManager.
-	var waitForTurnCalled atomic.Bool
+	// Build a DelegatedManager with a mock backend that completes turns immediately.
+	var memorySent atomic.Bool
 	var backendClosed atomic.Bool
-
-	mockBe := &mockBackend{
-		waitForTurnFn: func(ctx context.Context) error {
-			waitForTurnCalled.Store(true)
-			return nil
-		},
-	}
 	dm := &DelegatedManager{
-		backends: map[string]*managedBackend{
-			"test/delegated/1000000000": {be: mockBe},
+		NewBackend: func() (delegator.Delegator, error) {
+			be := &mockBackendDM{running: true}
+			be.closeFn = func() error {
+				backendClosed.Store(true)
+				return nil
+			}
+			return be, nil
 		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	// Pre-create the backend so Get() finds it.
+	_, err := dm.Get(context.Background(), sessionKey)
+	if err != nil {
+		t.Fatalf("pre-create backend: %v", err)
 	}
 
-	mockBe.closeFn = func() error {
-		backendClosed.Store(true)
-		return nil
-	}
-
-	// For the memory formation, we need HandleMessage to work. Since we're
-	// in delegated mode, HandleMessage returns ("", nil) immediately.
-	// We need a client for the OrchestrateFullTurn path.
-	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
-		return &provider.MessageResponse{
-			ID:         "msg_test",
-			Role:       "assistant",
-			Content:    provider.TextContent("memory formed"),
-			StopReason: "end_turn",
-			Usage:      provider.Usage{InputTokens: 100, OutputTokens: 50},
+	// Override SendToPane on the mock to capture memory formation and
+	// immediately complete the turn (simulating CC finishing).
+	mb, _ := dm.getManaged(sessionKey)
+	mock := mb.be.(*mockBackendDM)
+	mock.sendToPaneFn = func(_ context.Context, text string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+		if strings.Contains(text, "memories") || strings.Contains(text, "session") {
+			memorySent.Store(true)
 		}
-	})
+		result := &delegator.TurnResult{Text: "memory formed"}
+		if handler != nil && handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(result)
+		}
+		return result, nil
+	}
 
 	ag := &Agent{
-		Client:           client,
 		Sessions:         store,
 		Tools:            tools.NewRegistry(),
 		Bootstrap:        bootstrap,
@@ -432,7 +436,6 @@ func TestResetDelegatedSession(t *testing.T) {
 		Model:            "claude-haiku-4-5",
 		MemoryFormationConfig: config.ResolvedMemoryFormation{
 			SessionEndEnabled: true,
-			SessionEndPrompt:  "form memories now",
 		},
 	}
 
@@ -462,19 +465,13 @@ func TestResetDelegatedSession(t *testing.T) {
 	if len(notifyMsgs) == 0 {
 		t.Error("expected a progress notification during delegated reset")
 	}
-	if len(notifyMsgs) > 0 && !strings.Contains(notifyMsgs[0], "Session reset") {
-		t.Errorf("notification = %q, want to contain 'Session reset'", notifyMsgs[0])
+
+	// Memory formation sent synchronously — no need to sleep.
+	if !memorySent.Load() {
+		t.Error("memory formation was not sent to the backend")
 	}
 
-	// Memory formation runs in a background goroutine — give it a moment.
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify WaitForTurn was called (background goroutine waits for memory formation).
-	if !waitForTurnCalled.Load() {
-		t.Error("WaitForTurn was not called")
-	}
-
-	// Verify the backend was closed (background goroutine closes after memory formation).
+	// Backend closed after HandleMessage returned.
 	if !backendClosed.Load() {
 		t.Error("backend Close was not called after memory formation")
 	}
@@ -492,7 +489,7 @@ func TestResetDelegatedSession(t *testing.T) {
 
 func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 	// Proves that when SessionEndEnabled is false, resetDelegatedSession skips
-	// memory formation but still resets the backend and rotates the key.
+	// memory formation but still closes the backend and rotates the key.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
 	sessionKey := "test/delnomem/1000000000"
@@ -504,17 +501,26 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var backendClosed bool
-	mockBe := &mockBackend{
-		closeFn: func() error {
-			backendClosed = true
-			return nil
-		},
-	}
+	var backendClosed atomic.Bool
 	dm := &DelegatedManager{
-		backends: map[string]*managedBackend{
-			"test/delnomem/1000000000": {be: mockBe},
+		NewBackend: func() (delegator.Delegator, error) {
+			be := &mockBackendDM{running: true}
+			be.closeFn = func() error {
+				backendClosed.Store(true)
+				return nil
+			}
+			return be, nil
 		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	// Pre-create the backend.
+	_, err := dm.Get(context.Background(), sessionKey)
+	if err != nil {
+		t.Fatalf("pre-create backend: %v", err)
 	}
 
 	ag := &Agent{
@@ -533,7 +539,7 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 	if newKey == "" || newKey == sessionKey {
 		t.Errorf("expected rotated key, got %q", newKey)
 	}
-	if !backendClosed {
+	if !backendClosed.Load() {
 		t.Error("backend should be closed even when memory is disabled")
 	}
 }
@@ -567,44 +573,3 @@ func TestReloadAfterMutation(t *testing.T) {
 	}
 }
 
-// mockBackend is a minimal mock implementing delegator.Delegator for lifecycle tests.
-type mockBackend struct {
-	waitForTurnFn func(ctx context.Context) error
-	closeFn       func() error
-	sendFn        func(ctx context.Context, prompt string) error
-}
-
-func (m *mockBackend) Start(_ context.Context, _ delegator.StartOptions) error { return nil }
-func (m *mockBackend) SendToPane(_ context.Context, prompt string, _ *delegator.EventHandler) (*delegator.TurnResult, error) {
-	if m.sendFn != nil {
-		return nil, m.sendFn(context.Background(), prompt)
-	}
-	return nil, nil
-}
-func (m *mockBackend) WaitForTurn(ctx context.Context) error {
-	if m.waitForTurnFn != nil {
-		return m.waitForTurnFn(ctx)
-	}
-	return nil
-}
-func (m *mockBackend) IsTurnInFlight() bool                                    { return false }
-func (m *mockBackend) SendCommand(_ context.Context, _ string, _ string) error { return nil }
-func (m *mockBackend) IsRunning() bool                                         { return true }
-func (m *mockBackend) Restart(_ context.Context) error                         { return nil }
-func (m *mockBackend) SetReplyFunc(_ delegator.ReplyFunc)                        {}
-func (m *mockBackend) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc)  {}
-func (m *mockBackend) SetOnPermissionCleared(_ func())                         {}
-func (m *mockBackend) SetOnSessionReady(_ func(string))                        {}
-func (m *mockBackend) SetTypingFunc(_ func(bool))                              {}
-func (m *mockBackend) SendKeystroke(_ context.Context, _ string) error         { return nil }
-func (m *mockBackend) SendSpecialKey(_ context.Context, _ string) error        { return nil }
-func (m *mockBackend) Interrupt(_ context.Context) error                       { return nil }
-func (m *mockBackend) SessionID() string                                       { return "" }
-func (m *mockBackend) SessionFilePath() string                                 { return "" }
-func (m *mockBackend) WaitReady(_ context.Context) error                       { return nil }
-func (m *mockBackend) Close() error {
-	if m.closeFn != nil {
-		return m.closeFn()
-	}
-	return nil
-}

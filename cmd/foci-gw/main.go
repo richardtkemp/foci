@@ -350,14 +350,8 @@ Subcommands:
 					if strings.HasPrefix(sessionKey, id+"/") {
 						orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt))
 						orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
-						done := inst.ag.FireSessionEndMemory(ctx, sessionKey, orientTemplate, false)
+						inst.ag.FireSessionEndMemory(ctx, sessionKey, orientTemplate, false)
 						if inst.ag.DelegatedManager != nil {
-							waitCtx, cancel := context.WithTimeout(ctx, 130*time.Second)
-							select {
-							case <-done:
-							case <-waitCtx.Done():
-							}
-							cancel()
 							inst.ag.DelegatedManager.ResetSession(sessionKey)
 						}
 						return
