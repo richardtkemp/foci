@@ -40,6 +40,8 @@ type mockBackendDM struct {
 	running             bool
 	waitForTurnErr      error
 	waitForTurnBlock    chan struct{} // if non-nil, WaitForTurn blocks until closed
+	sendToPaneFn        func(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error)
+	closeFn             func() error
 }
 
 func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) error {
@@ -57,8 +59,16 @@ func (m *mockBackendDM) Start(_ context.Context, opts delegator.StartOptions) er
 	return nil
 }
 
-func (m *mockBackendDM) SendToPane(_ context.Context, _ string, _ *delegator.EventHandler) (*delegator.TurnResult, error) {
-	return &delegator.TurnResult{Text: "ok"}, nil
+func (m *mockBackendDM) SendToPane(ctx context.Context, text string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+	if m.sendToPaneFn != nil {
+		return m.sendToPaneFn(ctx, text, handler)
+	}
+	// Default: immediately complete the turn via handler.
+	result := &delegator.TurnResult{Text: "ok"}
+	if handler != nil && handler.OnTurnComplete != nil {
+		handler.OnTurnComplete(result)
+	}
+	return result, nil
 }
 
 func (m *mockBackendDM) WaitForTurn(ctx context.Context) error {
@@ -147,6 +157,9 @@ func (m *mockBackendDM) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true
+	if m.closeFn != nil {
+		return m.closeFn()
+	}
 	return nil
 }
 

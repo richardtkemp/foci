@@ -279,9 +279,10 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	if err != nil {
 		return "", err
 	}
-	// Delegated transport agents deliver responses via the session watcher
-	// (replyFunc), not via OrchestrateFullTurn's return value. Return empty
-	// so the platform renderer treats this as a no-op — avoiding duplicate delivery.
+	// Delegated transport: responses are delivered to the user via the session
+	// watcher's replyFunc during the turn. Return empty so platform workers
+	// don't duplicate delivery via Finalize. The turn is synchronous — it
+	// blocks until CC completes — but the text is already delivered.
 	if isDelegated {
 		return "", nil
 	}

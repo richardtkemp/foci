@@ -9,34 +9,25 @@ import (
 	"foci/shared/prompts"
 )
 
-// FireSessionEndMemory runs memory formation on the expiring session before it is cleared.
-// Creates an async branch from the session so the caller can proceed immediately.
+// FireSessionEndMemory runs memory formation on the expiring session.
+// Blocks until the turn completes (HandleMessage is synchronous for all transports).
 // Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
 // work branches which set NoResetHook but should still get memory formation).
-//
-// Returns a channel that is closed when memory formation completes (or immediately
-// if skipped). Callers that need to wait (e.g. reclaim hooks closing a backend)
-// can select on it; fire-and-forget callers can ignore the return value.
-func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) <-chan struct{} {
-	done := make(chan struct{})
-
+func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) {
 	if !a.MemoryFormationConfig.SessionEndEnabled {
-		close(done)
-		return done
+		return
 	}
 
 	canFire, reason := a.CanFireBackgroundOperation(ctx, sessionKey)
 	if !canFire {
 		log.Debugf("session-end-memory", "skipping for %s: %s", sessionKey, reason)
-		close(done)
-		return done
+		return
 	}
 
 	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.SessionEndPrompt, "memory-session-end.md", prompts.MemoryFormation(), a.PromptSearchDirs...)
 	if prompt == "" {
-		close(done)
-		return done
+		return
 	}
 
 	if !skipMetaCheck {
@@ -46,8 +37,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		}
 		if meta != nil && meta.NoResetHook {
 			log.Debugf("session-end-memory", "skipping for %s (no_reset_hook set)", sessionKey)
-			close(done)
-			return done
+			return
 		}
 	}
 
@@ -62,8 +52,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		})
 		if err != nil {
 			log.Errorf("session-end-memory", "branch error for session %s: %v", sessionKey, err)
-			close(done)
-			return done
+			return
 		}
 		a.SetSessionNoCompact(branchKey, true)
 		targetKey = branchKey
@@ -71,24 +60,10 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 
 	log.Infof("session-end-memory", "firing for %s → %s", sessionKey, targetKey)
 
-	go func() {
-		defer close(done)
-		hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
-		defer cancel()
-		hookCtx = WithTrigger(hookCtx, "session_end_memory")
-		if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
-			log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
-			return
-		}
-		// For delegated agents, HandleMessage returns immediately after sending
-		// to the pane — CC hasn't finished yet. Wait for the actual turn so
-		// callers blocking on the done channel get correct completion semantics.
-		if a.DelegatedManager != nil {
-			if err := a.DelegatedManager.WaitForTurn(hookCtx, targetKey); err != nil {
-				log.Warnf("session-end-memory", "wait for turn %s: %v", targetKey, err)
-			}
-		}
-	}()
-
-	return done
+	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	hookCtx = WithTrigger(hookCtx, "session_end_memory")
+	if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
+		log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
+	}
 }

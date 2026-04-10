@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -115,41 +116,48 @@ func TestRunPostTurn_SyncPath(t *testing.T) {
 	}
 }
 
-// TestRunPostTurn_AsyncPath verifies that runPostTurn launches a goroutine
-// when CompletionChan is not yet closed (delegated path), and that closing it
-// triggers the post-turn methods.
-func TestRunPostTurn_AsyncPath(t *testing.T) {
+// TestRunPostTurn_BlocksUntilCompletion verifies that runPostTurn blocks
+// when CompletionChan is not yet closed, then runs post-turn methods
+// after it closes. This is the delegated path where CC signals completion
+// asynchronously.
+func TestRunPostTurn_BlocksUntilCompletion(t *testing.T) {
 	ch := make(chan struct{})
 	ts := &TurnState{
-		SessionKey:     "test/async",
+		SessionKey:     "test/blocking",
 		CompletionChan: ch,
 	}
 
-	doneCh := make(chan struct{})
+	var saved atomic.Bool
 	tc := &stubContract{
-		saveFn: func() { close(doneCh) },
+		saveFn: func() { saved.Store(true) },
 	}
 
 	a := &Agent{}
-	a.runPostTurn(tc, ts)
+	done := make(chan struct{})
+	go func() {
+		a.runPostTurn(tc, ts)
+		close(done)
+	}()
 
-	// Should not have been called yet (async path).
+	// runPostTurn should be blocking — not yet returned.
 	select {
-	case <-doneCh:
-		t.Fatal("post-turn should not have been called yet in async path")
-	case <-time.After(20 * time.Millisecond):
-		// expected
+	case <-done:
+		t.Fatal("runPostTurn should block until CompletionChan closes")
+	case <-time.After(50 * time.Millisecond):
+		// expected — still blocking
 	}
 
 	// Signal completion.
 	close(ch)
 
-	// Wait for post-turn to fire.
+	// runPostTurn should unblock and run post-turn.
 	select {
-	case <-doneCh:
-		// success
+	case <-done:
+		if !saved.Load() {
+			t.Error("SaveSession was not called after completion")
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("post-turn was not called after closing CompletionChan in async path")
+		t.Fatal("runPostTurn did not unblock after CompletionChan closed")
 	}
 }
 

@@ -517,17 +517,8 @@ func setupPlatformConnections(
 		STT:            resolveSTT(p.sttMap, p.cfg.STT, vc.STT, voice.MergeReplacements(p.cfg.Voice.STTReplacements, acfg.Voice.STTReplacements)),
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
-			done := ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
-			// Wait for memory formation to complete before closing the backend.
-			// For API agents this is a no-op (memory runs on a branch session).
-			// For delegated agents, memory injects into this session's backend.
+			ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
 			if ag.DelegatedManager != nil {
-				waitCtx, cancel := context.WithTimeout(p.ctx, 130*time.Second)
-				select {
-				case <-done:
-				case <-waitCtx.Done():
-				}
-				cancel()
 				ag.DelegatedManager.ResetSession(sessionKey)
 			}
 		},

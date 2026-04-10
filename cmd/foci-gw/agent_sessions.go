@@ -105,19 +105,12 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 		log.Infof(branchType, "[%s] delegated: new session %s", agentID, sessionKey)
 	}
 
+	// HandleMessage blocks until the turn completes (synchronous for both
+	// API and delegated agents).
 	_, err := ag.HandleMessage(turnCtx, sessionKey, promptText)
 	if err != nil {
 		log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, sessionKey, err)
 		return false
-	}
-
-	// Wait for CC to complete the turn (HandleMessage returns immediately
-	// for delegated agents).
-	waitCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
-	defer cancel()
-	if err := ag.DelegatedManager.WaitForTurn(waitCtx, sessionKey); err != nil {
-		log.Warnf(branchType, "[%s] session=%s wait error: %v", agentID, sessionKey, err)
-		// Don't return false — the turn may still complete, we just can't wait.
 	}
 
 	// Close independent CC sessions after the turn completes. Without this,
