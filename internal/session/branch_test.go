@@ -2,11 +2,22 @@ package session
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"foci/internal/provider"
 )
+
+func newTestSessionIndex(t *testing.T) *SessionIndex {
+	t.Helper()
+	idx, err := NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { idx.Close() })
+	return idx
+}
 
 func TestCreateBranchAndLoadFull(t *testing.T) {
 	// Proves that LoadFull on a branch returns the parent messages at the branch point
@@ -243,7 +254,8 @@ func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 	}
 
 	// First call: returns resolved orientation.
-	got := s.ConsumeOrientation(branchKey)
+	idx := newTestSessionIndex(t)
+	got := s.ConsumeOrientation(branchKey, idx)
 	if strings.Contains(got, "{branch_key}") {
 		t.Errorf("orientation still contains {branch_key}: %q", got)
 	}
@@ -257,13 +269,13 @@ func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 		t.Errorf("orientation should contain branch type, got: %q", got)
 	}
 
-	// Second call: returns "" (already consumed and cleared from disk).
-	got = s.ConsumeOrientation(branchKey)
+	// Second call: returns "" (consumed flag set in DB).
+	got = s.ConsumeOrientation(branchKey, idx)
 	if got != "" {
 		t.Errorf("ConsumeOrientation second call = %q, want empty", got)
 	}
 
-	// Verify meta still readable (rewrite didn't corrupt the file).
+	// Verify the branch meta is unmodified on disk (orientation still present).
 	meta, err := s.GetBranchMeta(branchKey)
 	if err != nil {
 		t.Fatalf("GetBranchMeta after consume: %v", err)
@@ -271,8 +283,14 @@ func TestCreateBranchWithOrientationTemplate(t *testing.T) {
 	if meta == nil {
 		t.Fatal("branch meta should still exist after orientation consumed")
 	}
-	if meta.Orientation != "" {
-		t.Errorf("stored orientation should be cleared, got: %q", meta.Orientation)
+	if meta.Orientation == "" {
+		t.Error("stored orientation should be preserved (consumption tracked in DB, not file)")
+	}
+
+	// Without index (nil), consumption is not tracked — returns orientation again.
+	got = s.ConsumeOrientation(branchKey, nil)
+	if got == "" {
+		t.Error("ConsumeOrientation with nil index should return orientation (no tracking)")
 	}
 }
 
