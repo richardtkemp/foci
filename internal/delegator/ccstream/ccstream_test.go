@@ -1147,8 +1147,10 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	if completedResult == nil {
 		t.Fatal("OnTurnComplete was not called")
 	}
-	if completedResult.Text != "final result text" {
-		t.Errorf("result.Text = %q, want %q", completedResult.Text, "final result text")
+	// turnText is preferred over msg.Result — it accumulates all text
+	// across multi-segment turns (text → tool → text).
+	if completedResult.Text != "accumulated text" {
+		t.Errorf("result.Text = %q, want %q (turnText preferred)", completedResult.Text, "accumulated text")
 	}
 }
 
