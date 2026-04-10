@@ -285,45 +285,83 @@ func toolParamKeys(t *Tool) string {
 	return strings.Join(keys, " ")
 }
 
+// shellPositionalParams maps tool names to parameters that are positional
+// arguments in the shell function (not --flags). These are shown in the
+// usage line and excluded from the flags list.
+var shellPositionalParams = map[string][]string{
+	"web_fetch":     {"url"},
+	"web_search":    {"query"},
+	"memory_search": {"query"},
+	"http_request":  {"url"},
+	"send_to_chat":  {"text"},
+	"todo":          {"action"},
+	"summary":       {"prompt"},
+	"spawn":         {"prompt"},
+	"tmux":          {"operation"},
+}
+
 // generateHelpText builds a help string for a tool from its description and JSON schema.
 func generateHelpText(t *Tool) string {
 	var b strings.Builder
 	b.WriteString(t.Description)
+
+	// Build set of positional params to exclude from flags list.
+	posSet := make(map[string]bool)
+	if pos, ok := shellPositionalParams[t.Name]; ok {
+		for _, p := range pos {
+			posSet[p] = true
+		}
+		// Show usage line with positional args.
+		fmt.Fprintf(&b, "\n\nUsage: foci_%s", t.Name)
+		for _, p := range pos {
+			fmt.Fprintf(&b, " <%s>", p)
+		}
+		b.WriteString(" [flags...]")
+	}
+
 	// Extract parameter info from JSON schema.
 	var schema struct {
 		Properties map[string]struct {
-			Type        string `json:"type"`
-			Description string `json:"description"`
+			Type        string   `json:"type"`
+			Description string   `json:"description"`
 			Enum        []string `json:"enum"`
 		} `json:"properties"`
 		Required []string `json:"required"`
 	}
 	if json.Unmarshal(t.Parameters, &schema) == nil && len(schema.Properties) > 0 {
-		b.WriteString("\n\nParameters:")
-		// Sort for deterministic output.
+		// Collect non-positional params as flags.
 		keys := make([]string, 0, len(schema.Properties))
 		for k := range schema.Properties {
-			keys = append(keys, k)
+			if !posSet[k] {
+				keys = append(keys, k)
+			}
 		}
 		sort.Strings(keys)
-		reqSet := make(map[string]bool)
-		for _, r := range schema.Required {
-			reqSet[r] = true
-		}
-		for _, k := range keys {
-			p := schema.Properties[k]
-			req := ""
-			if reqSet[k] {
-				req = " (required)"
+		if len(keys) > 0 {
+			b.WriteString("\n\nFlags:")
+			reqSet := make(map[string]bool)
+			for _, r := range schema.Required {
+				reqSet[r] = true
 			}
-			desc := p.Description
-			if len(p.Enum) > 0 {
-				desc += " [" + strings.Join(p.Enum, "|") + "]"
-			}
-			if desc != "" {
-				fmt.Fprintf(&b, "\n  %-20s %s%s", k, desc, req)
-			} else {
-				fmt.Fprintf(&b, "\n  %s%s", k, req)
+			for _, k := range keys {
+				p := schema.Properties[k]
+				req := ""
+				if reqSet[k] {
+					req = " (required)"
+				}
+				desc := p.Description
+				if len(p.Enum) > 0 {
+					desc += " [" + strings.Join(p.Enum, "|") + "]"
+				}
+				flag := "--" + strings.ReplaceAll(k, "_", "-")
+				if p.Type == "boolean" {
+					flag += " (flag)"
+				}
+				if desc != "" {
+					fmt.Fprintf(&b, "\n  %-22s %s%s", flag, desc, req)
+				} else {
+					fmt.Fprintf(&b, "\n  %s%s", flag, req)
+				}
 			}
 		}
 	}
