@@ -351,6 +351,10 @@ Subcommands:
 						orientPath := config.DerefStr(config.First(inst.agentCfg.Sessions.BranchOrientationHeadlessPrompt, cfg.Sessions.BranchOrientationHeadlessPrompt))
 						orientTemplate := prompts.ResolveOrientationTemplate(orientPath, false, inst.promptSearchDirs...)
 						inst.ag.FireSessionEndMemory(ctx, sessionKey, orientTemplate, false)
+						// Close any delegated branch backend so the CC process doesn't leak.
+						if inst.ag.DelegatedManager != nil {
+							inst.ag.DelegatedManager.ResetSession(sessionKey)
+						}
 						return
 					}
 				}

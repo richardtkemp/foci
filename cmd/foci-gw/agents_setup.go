@@ -518,6 +518,13 @@ func setupPlatformConnections(
 		TTS:            resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls),
 		ReclaimHook: func(sessionKey string) {
 			ag.FireSessionEndMemory(p.ctx, sessionKey, reclaimOrientTemplate, false)
+			// Close any delegated branch backend so the CC process doesn't leak.
+			// FireSessionEndMemory is async — it may race with this close. If it
+			// loses the race, memory formation creates a fresh backend (eventually
+			// reaped by closeIdle). Acceptable tradeoff vs leaking processes.
+			if ag.DelegatedManager != nil {
+				ag.DelegatedManager.ResetSession(sessionKey)
+			}
 		},
 		DisplayOverrideFn: func(sessionKey string) platform.DisplaySettings {
 			return platform.DisplaySettings{
