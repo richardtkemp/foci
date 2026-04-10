@@ -755,10 +755,12 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	turnTools := b.turnTools
 	b.turnMu.Unlock()
 
-	// Build TurnResult.
-	text := msg.Result
+	// Build TurnResult. Prefer turnText (accumulated from all assistant
+	// messages in the turn) over msg.Result (which only contains the last
+	// segment). Multi-segment turns (text → tool → text) need the full text.
+	text := turnText
 	if text == "" {
-		text = turnText
+		text = msg.Result
 	}
 
 	// Determine model from lastModel (set by OnAssistant, filtered to top-level

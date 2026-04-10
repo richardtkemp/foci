@@ -163,14 +163,21 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Per-turn handler: fires once when the watcher sees end_turn.
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
-	// Wire streaming and delivery callbacks from TurnCallbacks (set by the
-	// platform worker). TextDeltaObserver feeds the stream writer (edit-in-place);
-	// used when streaming is enabled. When streaming is disabled, Finalize
-	// sends the complete response.
+	// Wire callbacks from TurnCallbacks (set by the platform worker).
+	// OnTextDelta feeds the stream writer (edit-in-place) for streaming.
+	// OnText delivers complete text blocks via ReplyFunc (renderer.OnReply),
+	// matching the API transport's multi-segment pattern: each assistant
+	// message's text is delivered as it completes, the renderer manages
+	// stream finalization and replyDelivered lifecycle.
 	cb := TurnCallbacksFromContext(ts.Ctx)
 	handler := &delegator.EventHandler{}
-	if cb != nil && cb.TextDeltaObserver != nil {
-		handler.OnTextDelta = cb.TextDeltaObserver
+	if cb != nil {
+		if cb.TextDeltaObserver != nil {
+			handler.OnTextDelta = cb.TextDeltaObserver
+		}
+		if cb.ReplyFunc != nil {
+			handler.OnText = cb.ReplyFunc
+		}
 	}
 	handler.OnTurnComplete = func(result *delegator.TurnResult) {
 		if result != nil {
