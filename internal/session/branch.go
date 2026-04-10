@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,10 +152,14 @@ func (s *Store) GetBranchMeta(key string) (*BranchMeta, error) {
 	return s.readBranchMeta(key)
 }
 
-// PendingOrientation returns the orientation text for a branch session that
-// hasn't had its first turn yet. Returns "" for non-branches or branches that
-// already have messages (orientation was consumed on the first turn).
-func (s *Store) PendingOrientation(key string) string {
+// ConsumeOrientation atomically returns the orientation text for a branch
+// session and clears it from the stored metadata. Returns "" for non-branches
+// or branches whose orientation was already consumed. Safe to call multiple
+// times — only the first call returns the orientation.
+//
+// The orientation is cleared on disk so it survives restarts correctly:
+// API branches won't re-inject, delegated branches start fresh anyway.
+func (s *Store) ConsumeOrientation(key string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -163,13 +168,45 @@ func (s *Store) PendingOrientation(key string) string {
 		return ""
 	}
 
-	// Only return orientation if the branch has no own messages yet (first turn).
-	ownMsgs, err := s.loadUnlocked(key)
-	if err != nil || len(ownMsgs) > 0 {
-		return ""
+	orientation := meta.Orientation
+
+	// Clear orientation from stored meta so it's never re-consumed.
+	meta.Orientation = ""
+	if err := s.rewriteBranchMeta(key, meta); err != nil {
+		log.Warnf("session", "failed to clear consumed orientation for %s: %v", key, err)
+		// Return orientation anyway — double-injection is better than no injection.
 	}
 
-	return meta.Orientation
+	return orientation
+}
+
+// rewriteBranchMeta replaces the first line (BranchMeta JSON) of a branch
+// session file, preserving all subsequent lines (messages).
+func (s *Store) rewriteBranchMeta(key string, meta *BranchMeta) error {
+	path, err := s.SessionPath(key)
+	if err != nil {
+		return err
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	newMeta, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+
+	// Replace first line (up to first \n) with new meta.
+	idx := bytes.IndexByte(content, '\n')
+	if idx < 0 {
+		content = append(newMeta, '\n')
+	} else {
+		content = append(append(newMeta, '\n'), content[idx+1:]...)
+	}
+
+	return os.WriteFile(path, content, s.fileMode)
 }
 
 // LoadFull loads the full message history for a session.

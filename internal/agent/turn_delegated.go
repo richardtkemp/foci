@@ -47,6 +47,15 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 	parts := a.composeTurnText(ts.Ctx, ts.SessionKey, ts.TurnModel, "", false, ts.Texts, ts.Attachments)
 	ts.Prompt = parts.JoinPrompt()
 
+	// Consume branch orientation. ConsumeOrientation is atomic — returns the
+	// orientation once and clears it from the store, same as API transport.
+	if a.Sessions != nil {
+		if orient := a.Sessions.ConsumeOrientation(ts.SessionKey); orient != "" {
+			ts.Prompt = orient + "\n\n" + ts.Prompt
+			log.Infof("delegated", "session=%s injected branch orientation (%d chars)", ts.SessionKey, len(orient))
+		}
+	}
+
 	// Update lastMessageTime AFTER composition so the gap is calculated
 	// against the previous message, not the current one.
 	ts.SessionMeta.lastMessageTime = ts.StartedAt
@@ -98,17 +107,6 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		return err
 	}
 	ts.Backend = be
-
-	// Inject branch orientation for new delegated branch sessions.
-	// API transport consumes PendingOrientation in ComposePrompt; delegated
-	// transport does it here after Get() ensures the backend exists in the map.
-	// ConsumeOrientation returns true only on the first call per backend.
-	if a.Sessions != nil && a.DelegatedManager.ConsumeOrientation(ts.SessionKey) {
-		if orient := a.Sessions.PendingOrientation(ts.SessionKey); orient != "" {
-			ts.Prompt = orient + "\n\n" + ts.Prompt
-			log.Infof("delegated", "session=%s injected branch orientation (%d chars)", ts.SessionKey, len(orient))
-		}
-	}
 
 	// Check for a pending AskUserQuestion — intercept typed text as an
 	// answer before WaitForPermission blocks. This lets users respond to

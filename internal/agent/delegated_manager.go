@@ -67,10 +67,6 @@ type managedBackend struct {
 	lastActive time.Time
 	sessionKey string // full session key from last message (for reply routing)
 
-	// orientationSent tracks whether branch orientation has been injected
-	// for this backend. Set once on first turn, never cleared.
-	orientationSent bool
-
 	// Permission prompt gating. When a permission prompt is outstanding,
 	// incoming messages and injections must wait — the backend cannot
 	// process new input until the prompt is resolved.
@@ -96,20 +92,6 @@ func (mb *managedBackend) clearPermission() {
 		mb.permCond.Broadcast()
 	}
 	mb.permMu.Unlock()
-}
-
-// ConsumeOrientation atomically checks and sets the orientationSent flag for
-// a backend. Returns true on the first call (orientation should be injected),
-// false on all subsequent calls. Safe for concurrent use.
-func (m *DelegatedManager) ConsumeOrientation(sessionKey string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	mb, ok := m.backends[sessionKey]
-	if !ok || mb.orientationSent {
-		return false
-	}
-	mb.orientationSent = true
-	return true
 }
 
 // Get returns the Backend for the given session key, creating and starting

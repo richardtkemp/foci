@@ -93,7 +93,7 @@ func (t *APITransport) ComposePrompt(ts *TurnState) error {
 	}
 
 	// Consume branch orientation.
-	orientation := a.Sessions.PendingOrientation(ts.SessionKey)
+	orientation := a.Sessions.ConsumeOrientation(ts.SessionKey)
 
 	ts.UserMsg = a.prepareUserMessage(ts.Ctx, ts.SessionKey, ts.Texts, ts.TurnModel,
 		ts.Attachments, ts.EffectiveDuplicate, orientation)
