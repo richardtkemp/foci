@@ -235,7 +235,8 @@ type StartOptions struct {
 // EventHandler receives streaming events during a turn.
 // All callbacks are optional — nil callbacks are silently skipped.
 type EventHandler struct {
-	OnText         func(text string)                              // new text content from the agent
+	OnText         func(text string)                              // complete text block from the agent
+	OnTextDelta    func(delta string)                             // streaming text delta (content_block_delta)
 	OnToolStart    func(name string, input string)                // tool execution began
 	OnToolEnd      func(name string, output string, isError bool) // tool execution finished
 	OnTurnComplete func(result *TurnResult)                       // turn finished
