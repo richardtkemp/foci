@@ -222,7 +222,7 @@ func TestBuildEnvironmentBlock_VisibilitySection(t *testing.T) {
 				},
 			}
 
-			block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
+			block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
 
 			if !strings.Contains(block, "## Visibility") {
 				t.Error("expected Visibility section")
@@ -259,7 +259,7 @@ func TestBuildEnvironmentBlock_AgentOverridesGlobal(t *testing.T) {
 		},
 	}
 
-	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
+	block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
 
 	// Agent overrides should win
 	if !strings.Contains(block, "fully visible") {
@@ -285,15 +285,63 @@ func TestBuildEnvironmentBlock_CrontabInfo(t *testing.T) {
 	}
 
 	// Test with 0 cron jobs
-	block := buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
+	block := buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 0, nil)
 	if !strings.Contains(block, "You may schedule recurring tasks using crontab. You have 0 jobs scheduled.") {
 		t.Error("expected crontab info with 0 jobs")
 	}
 
 	// Test with 3 cron jobs
-	block = buildEnvironmentBlock(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 3, nil)
+	block = buildEnvironmentAPI(acfg, "/tmp/foci.toml", cfg, config.Resolve(cfg, acfg), 3, nil)
 	if !strings.Contains(block, "You may schedule recurring tasks using crontab. You have 3 jobs scheduled.") {
 		t.Error("expected crontab info with 3 jobs")
+	}
+}
+
+func TestBuildEnvironmentDelegated(t *testing.T) {
+	acfg := config.AgentConfig{
+		ID:        "clutch",
+		Workspace: "/home/foci/clutch",
+	}
+	cfg := &config.Config{
+		Logging: config.LoggingConfig{
+			EventFile: "/tmp/foci.log",
+		},
+	}
+	rc := config.Resolve(cfg, acfg)
+	tools := []string{"foci_http_request", "foci_memory_search", "foci_send_to_chat", "foci_todo", "foci_web_fetch", "foci_web_search"}
+
+	block := buildEnvironmentDelegated(acfg, "/tmp/foci.toml", cfg, rc, []string{"telegram"}, tools)
+
+	// Core sections present
+	if !strings.Contains(block, "You are running on **foci**") {
+		t.Error("expected foci identity")
+	}
+	if !strings.Contains(block, "Agent ID: clutch") {
+		t.Error("expected agent ID")
+	}
+
+	// Delegated-specific sections
+	if !strings.Contains(block, "## Backend") {
+		t.Error("expected Backend section")
+	}
+	if !strings.Contains(block, "Claude Code") {
+		t.Error("expected Claude Code mention")
+	}
+	if !strings.Contains(block, "## Foci Shell Tools") {
+		t.Error("expected Shell Tools section")
+	}
+	for _, tool := range tools {
+		if !strings.Contains(block, tool) {
+			t.Errorf("expected shell tool %q in block", tool)
+		}
+	}
+
+	// Should NOT have API-specific sections
+	if strings.Contains(block, "crontab") {
+		t.Error("delegated block should not mention crontab")
+	}
+	if strings.Contains(block, "Task List") {
+		t.Error("delegated block should not mention Task List")
 	}
 }
 

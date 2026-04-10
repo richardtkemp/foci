@@ -51,6 +51,16 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// shell environment via the persistent exec bridge.
 	registry := buildExecRegistry(p)
 
+	// Per-agent environment block for delegated backends.
+	if p.resolved.Environment.Enabled {
+		envBlock := buildEnvironmentDelegated(p.acfg, p.configPath, p.cfg, p.resolved, p.plat.ActivePlatformNames(), registry.ExportedNames())
+		if systemPrompt != "" {
+			systemPrompt = envBlock + "\n\n" + systemPrompt
+		} else {
+			systemPrompt = envBlock
+		}
+	}
+
 	// Override model display name to show the backend name.
 	ag.Model = backendName
 

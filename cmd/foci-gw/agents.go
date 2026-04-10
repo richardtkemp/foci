@@ -191,7 +191,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	var envBlock string
 	if p.resolved.Environment.Enabled {
 		crontabCount := countCrontabJobs()
-		envBlock = buildEnvironmentBlock(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames())
+		envBlock = buildEnvironmentAPI(acfg, p.configPath, p.cfg, p.resolved, crontabCount, p.plat.ActivePlatformNames())
 	}
 
 	// API-specific agent fields
