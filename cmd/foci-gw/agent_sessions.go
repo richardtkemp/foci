@@ -22,6 +22,7 @@ var branchTypesForMainSession = map[string]bool{
 	"memory-formation":    true,
 	"session-end-memory":  true,
 	"compaction-memory":   true,
+	"keepalive":           true,
 }
 
 // buildBranchFunc returns a function that creates a branch session from a
@@ -117,6 +118,13 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 	if err := ag.DelegatedManager.WaitForTurn(waitCtx, sessionKey); err != nil {
 		log.Warnf(branchType, "[%s] session=%s wait error: %v", agentID, sessionKey, err)
 		// Don't return false — the turn may still complete, we just can't wait.
+	}
+
+	// Close independent CC sessions after the turn completes. Without this,
+	// the backend process leaks until the idle reaper (24h default).
+	// Main-session injections are not cleaned up (they share the main backend).
+	if !branchTypesForMainSession[branchType] {
+		ag.DelegatedManager.ResetSession(sessionKey)
 	}
 
 	return true
