@@ -114,16 +114,16 @@ func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bo
 }
 
 // resetDelegatedSession handles session reset for backend-managed agents.
-// Sends memory formation prompt to the live backend session, waits for
-// completion, then destroys the backend session and starts fresh.
+// Sends memory formation prompt to the live backend session, detaches it,
+// and lets memory formation complete in the background while a fresh session
+// starts immediately.
 func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (string, error) {
-	// Notify user — this takes a moment.
 	for _, fn := range a.ResetNotifyFunc {
-		fn(sessionKey, "⏳ Session reset in progress — writing memories, please wait...")
+		fn(sessionKey, "♻️ Session reset — memories saving in background.")
 	}
 
-	// Send memory formation prompt to the live backend session, then wait
-	// for the turn to complete before destroying the session.
+	// Send memory formation prompt to the live backend session.
+	var memSent bool
 	if a.MemoryFormationConfig.SessionEndEnabled {
 		prompt := prompts.ResolvePrompt(
 			a.MemoryFormationConfig.SessionEndPrompt,
@@ -134,21 +134,38 @@ func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (s
 			if _, err := a.HandleMessage(ctx, sessionKey, prompt); err != nil {
 				log.Warnf("reset", "memory formation failed for %s: %v", sessionKey, err)
 			} else {
-				// HandleMessage returns immediately (SendToPane is async).
-				// Block until the backend actually finishes the memory formation turn.
-				waitCtx, waitCancel := context.WithTimeout(ctx, 120*time.Second)
-				defer waitCancel()
-				if err := a.DelegatedManager.WaitForTurn(waitCtx, sessionKey); err != nil {
-					log.Warnf("reset", "timeout waiting for memory formation on %s: %v", sessionKey, err)
-				} else {
-					log.Infof("reset", "memory formation completed for %s", sessionKey)
-				}
+				memSent = true
 			}
 		}
 	}
 
-	// Close the backend session WITHOUT saving resume ID (fresh start).
-	a.DelegatedManager.ResetSession(sessionKey)
+	// Detach old backend from manager — frees the map slot for a new session.
+	old := a.DelegatedManager.DetachSession(sessionKey)
+
+	if old != nil {
+		if memSent {
+			// Memory formation is in-flight. Wait and clean up in background.
+			go func() {
+				waitCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+				defer cancel()
+				if err := old.be.WaitForTurn(waitCtx); err != nil {
+					log.Warnf("reset", "timeout waiting for background memory formation on %s: %v", sessionKey, err)
+				} else {
+					log.Infof("reset", "background memory formation completed for %s", sessionKey)
+				}
+				_ = old.be.Close()
+				if old.bridge != nil {
+					old.bridge.Close()
+				}
+			}()
+		} else {
+			// No memory formation — close immediately.
+			_ = old.be.Close()
+			if old.bridge != nil {
+				old.bridge.Close()
+			}
+		}
+	}
 
 	// Rotate foci session key, reload, invalidate caches.
 	newKey, err := a.Sessions.RotateKey(sessionKey)

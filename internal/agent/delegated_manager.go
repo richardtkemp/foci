@@ -399,6 +399,28 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 	log.Infof("delegated", "reset session %s (closed, resume ID cleared)", base)
 }
 
+// DetachSession removes the delegated backend from management without closing it.
+// The caller receives ownership of the managedBackend and is responsible for
+// calling Close() on both the backend and bridge when done.
+// Resume ID is cleared so the next Get() creates a fresh session.
+func (m *DelegatedManager) DetachSession(sessionKey string) *managedBackend {
+	base := session.SessionKeyBase(sessionKey)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.backends[base]
+	if !ok {
+		return nil
+	}
+	mb.clearPermission()
+	delete(m.backends, base)
+	// Clear any saved resume ID so next session starts fresh.
+	if m.SessionIndex != nil {
+		_ = m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base))
+	}
+	log.Infof("delegated", "detached session %s (resume ID cleared, backend still running)", base)
+	return mb
+}
+
 // Close shuts down all managed delegated backends and the idle reaper.
 func (m *DelegatedManager) Close() {
 	m.mu.Lock()

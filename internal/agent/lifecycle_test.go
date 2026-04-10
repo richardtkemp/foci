@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/compaction"
@@ -374,7 +375,7 @@ func TestCompactSession_ErrorWhenEmptySession(t *testing.T) {
 
 func TestResetDelegatedSession(t *testing.T) {
 	// Proves that resetDelegatedSession sends memory formation to the backend,
-	// waits for the turn to complete, resets the backend session, rotates the
+	// detaches it, lets memory formation complete in the background, rotates the
 	// foci session key, and reloads the bootstrap.
 	store := session.NewStore(t.TempDir())
 	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
@@ -389,13 +390,12 @@ func TestResetDelegatedSession(t *testing.T) {
 	}
 
 	// Build a mock DelegatedManager.
-	var waitForTurnCalled bool
-	var resetSessionCalled bool
-	var resetSessionKey string
+	var waitForTurnCalled atomic.Bool
+	var backendClosed atomic.Bool
 
 	mockBe := &mockBackend{
 		waitForTurnFn: func(ctx context.Context) error {
-			waitForTurnCalled = true
+			waitForTurnCalled.Store(true)
 			return nil
 		},
 	}
@@ -405,11 +405,8 @@ func TestResetDelegatedSession(t *testing.T) {
 		},
 	}
 
-	// Wrap ResetSession check: we can't easily mock DelegatedManager.ResetSession
-	// since it's a concrete method. Instead, verify the backend Close was called.
 	mockBe.closeFn = func() error {
-		resetSessionCalled = true
-		resetSessionKey = sessionKey
+		backendClosed.Store(true)
 		return nil
 	}
 
@@ -465,20 +462,22 @@ func TestResetDelegatedSession(t *testing.T) {
 	if len(notifyMsgs) == 0 {
 		t.Error("expected a progress notification during delegated reset")
 	}
-	if len(notifyMsgs) > 0 && !strings.Contains(notifyMsgs[0], "reset in progress") {
-		t.Errorf("notification = %q, want to contain 'reset in progress'", notifyMsgs[0])
+	if len(notifyMsgs) > 0 && !strings.Contains(notifyMsgs[0], "Session reset") {
+		t.Errorf("notification = %q, want to contain 'Session reset'", notifyMsgs[0])
 	}
 
-	// Verify WaitForTurn was called (memory formation waits for backend).
-	if !waitForTurnCalled {
+	// Memory formation runs in a background goroutine — give it a moment.
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify WaitForTurn was called (background goroutine waits for memory formation).
+	if !waitForTurnCalled.Load() {
 		t.Error("WaitForTurn was not called")
 	}
 
-	// Verify the backend was closed (ResetSession closes it).
-	if !resetSessionCalled {
-		t.Error("backend Close was not called (ResetSession)")
+	// Verify the backend was closed (background goroutine closes after memory formation).
+	if !backendClosed.Load() {
+		t.Error("backend Close was not called after memory formation")
 	}
-	_ = resetSessionKey
 
 	// Verify session rotation.
 	if rotatedOld != sessionKey || rotatedNew != newKey {
