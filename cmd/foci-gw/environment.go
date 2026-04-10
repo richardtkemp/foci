@@ -41,32 +41,31 @@ func countCrontabJobs() int {
 	return count
 }
 
-// buildEnvironmentBlock generates the environment system block content
-// from config values known at startup.
-func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string) string {
+// writeEnvironmentCore writes the shared environment sections common to both
+// API and delegated agents: identity, workspace, paths, message metadata,
+// session structure, and visibility.
+func writeEnvironmentCore(b *strings.Builder, acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string) {
 	logDir := filepath.Dir(cfg.Logging.EventFile)
 
-	var b strings.Builder
 	b.WriteString("# Environment\n\n")
 	b.WriteString("You are running on **foci**, an AI agent platform.\n\n")
 
 	// Workspace
 	b.WriteString("## Workspace\n")
-	fmt.Fprintf(&b, "- Workspace: %s\n", acfg.Workspace)
-	fmt.Fprintf(&b, "- Agent ID: %s\n", acfg.ID)
+	fmt.Fprintf(b, "- Workspace: %s\n", acfg.Workspace)
+	fmt.Fprintf(b, "- Agent ID: %s\n", acfg.ID)
 	b.WriteString("- Platform: foci (https://github.com/richardtkemp/foci)\n")
 	if rc.Environment.DocsPath != "" {
-		fmt.Fprintf(&b, "- Platform docs: %s\n", rc.Environment.DocsPath)
+		fmt.Fprintf(b, "- Platform docs: %s\n", rc.Environment.DocsPath)
 	}
 	if len(activePlatforms) > 0 {
-		fmt.Fprintf(&b, "- Messaging: %s\n", strings.Join(activePlatforms, ", "))
+		fmt.Fprintf(b, "- Messaging: %s\n", strings.Join(activePlatforms, ", "))
 	}
-	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
 
 	// Paths
 	b.WriteString("\n## Paths\n")
-	fmt.Fprintf(&b, "- Config: %s\n", configPath)
-	fmt.Fprintf(&b, "- Logs: %s\n", logDir)
+	fmt.Fprintf(b, "- Config: %s\n", configPath)
+	fmt.Fprintf(b, "- Logs: %s\n", logDir)
 
 	// Message Metadata
 	b.WriteString("\n## Message Metadata\n")
@@ -91,15 +90,10 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 	b.WriteString("\n")
 	b.WriteString("The human only sees the conversation — they cannot see your system prompt, character files, or this environment block. ")
 	b.WriteString("Do not assume shared context when referencing system prompt content. If you need the human to understand something from your instructions, explain it in your own words.\n")
+}
 
-	// Task List
-	b.WriteString("\n## Task List\n")
-	b.WriteString("The `task_list` tool tracks progress when working through a list of steps with the user (e.g., reviewing items, multi-step processes).\n")
-	b.WriteString("Create tasks using the `tasks` JSON array (each item has `subject` and optional `description`), mark them `in_progress` as you work on each, and `completed` when done.\n")
-	b.WriteString("The state dashboard auto-injects progress into every message (e.g., \"tasks: 2/12 → current task\"), and tasks survive compaction.\n")
-	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
-
-	// Visibility: resolve effective show_tool_calls and show_thinking.
+// writeVisibility appends the display visibility section.
+func writeVisibility(b *strings.Builder, rc *config.ResolvedAgentConfig) {
 	dc := rc.Display
 	toolCalls := config.ToolCallDisplay(dc.ShowToolCalls)
 	if toolCalls == "" {
@@ -135,7 +129,52 @@ func buildEnvironmentBlock(acfg config.AgentConfig, configPath string, cfg *conf
 			b.WriteString(thinkDesc + "\n")
 		}
 	}
+}
 
+// buildEnvironmentAPI generates the environment block for API agents, which
+// have direct access to foci's tool registry.
+func buildEnvironmentAPI(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, crontabCount int, activePlatforms []string) string {
+	var b strings.Builder
+	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
+
+	fmt.Fprintf(&b, "- You may schedule recurring tasks using crontab. You have %d jobs scheduled.\n", crontabCount)
+
+	// Task List
+	b.WriteString("\n## Task List\n")
+	b.WriteString("The `task_list` tool tracks progress when working through a list of steps with the user (e.g., reviewing items, multi-step processes).\n")
+	b.WriteString("Create tasks using the `tasks` JSON array (each item has `subject` and optional `description`), mark them `in_progress` as you work on each, and `completed` when done.\n")
+	b.WriteString("The state dashboard auto-injects progress into every message (e.g., \"tasks: 2/12 → current task\"), and tasks survive compaction.\n")
+	b.WriteString("Use it for collaborative step-tracking, not solo background work.\n")
+
+	writeVisibility(&b, rc)
+	return b.String()
+}
+
+// buildEnvironmentDelegated generates the environment block for delegated
+// (CC backend) agents. These agents use Claude Code's built-in tools plus
+// foci shell functions exposed via the exec bridge.
+func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *config.Config, rc *config.ResolvedAgentConfig, activePlatforms []string, shellToolNames []string) string {
+	var b strings.Builder
+	writeEnvironmentCore(&b, acfg, configPath, cfg, rc, activePlatforms)
+
+	// Backend description
+	b.WriteString("\n## Backend\n")
+	b.WriteString("You run inside **Claude Code** (CC) as a delegated backend. ")
+	b.WriteString("Your primary tools are CC's built-in tools (Read, Write, Edit, Bash, Grep, Glob, Agent, WebFetch, WebSearch, etc.). ")
+	b.WriteString("Foci bridges messaging platforms to CC and provides additional tools as shell functions.\n")
+
+	// Shell tools
+	if len(shellToolNames) > 0 {
+		b.WriteString("\n## Foci Shell Tools\n")
+		b.WriteString("The following foci tools are available as shell functions in your Bash environment. ")
+		b.WriteString("Call them via the Bash tool (e.g., `foci_todo list --status open`).\n")
+		b.WriteString("Run any command with `--help` or `-h` for usage details.\n\n")
+		for _, name := range shellToolNames {
+			fmt.Fprintf(&b, "- `%s`\n", name)
+		}
+	}
+
+	writeVisibility(&b, rc)
 	return b.String()
 }
 
