@@ -1254,6 +1254,39 @@ func TestSetBackendCallbacks(t *testing.T) {
 	}
 }
 
+func TestConsumeOrientation(t *testing.T) {
+	// Proves that ConsumeOrientation returns true on first call (orientation
+	// should be injected) and false on all subsequent calls.
+	mgr, _ := newTestManager(t, nil)
+	sk := "test-agent/c123/1000"
+
+	// Before backend exists: returns false (no backend in map).
+	if mgr.ConsumeOrientation(sk) {
+		t.Error("ConsumeOrientation should return false when backend doesn't exist")
+	}
+
+	// Create the backend.
+	_, err := mgr.Get(context.Background(), sk)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	// First call: returns true.
+	if !mgr.ConsumeOrientation(sk) {
+		t.Error("ConsumeOrientation should return true on first call after Get")
+	}
+
+	// Second call: returns false (already consumed).
+	if mgr.ConsumeOrientation(sk) {
+		t.Error("ConsumeOrientation should return false on second call")
+	}
+
+	// Different session key: returns false (no backend).
+	if mgr.ConsumeOrientation("test-agent/c456/2000") {
+		t.Error("ConsumeOrientation should return false for non-existent key")
+	}
+}
+
 // contains is a test helper that checks if a string contains a substring.
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && searchString(s, sub)
