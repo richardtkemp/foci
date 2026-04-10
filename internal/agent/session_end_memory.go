@@ -78,6 +78,15 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		hookCtx = WithTrigger(hookCtx, "session_end_memory")
 		if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
 			log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
+			return
+		}
+		// For delegated agents, HandleMessage returns immediately after sending
+		// to the pane — CC hasn't finished yet. Wait for the actual turn so
+		// callers blocking on the done channel get correct completion semantics.
+		if a.DelegatedManager != nil {
+			if err := a.DelegatedManager.WaitForTurn(hookCtx, targetKey); err != nil {
+				log.Warnf("session-end-memory", "wait for turn %s: %v", targetKey, err)
+			}
 		}
 	}()
 
