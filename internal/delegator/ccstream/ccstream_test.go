@@ -1171,19 +1171,38 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	}
 }
 
-func TestOnResult_ModelFromModelUsage(t *testing.T) {
-	// Verifies OnResult extracts the model name from the result's ModelUsage
-	// map, preferring it over lastModel.
+func TestOnResult_SubagentDoesNotOverrideModel(t *testing.T) {
+	// Verifies that a subagent's assistant message (parent_tool_use_id set)
+	// does not overwrite lastModel. The primary model from top-level assistant
+	// messages is preserved through to the TurnResult.
 	t.Parallel()
 
 	var completedResult *delegator.TurnResult
 
 	b := &Backend{}
-	b.lastModel = "should-be-overridden"
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	b.beginTurn(handler)
+
+	// Top-level assistant message sets the primary model.
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Model: "claude-opus-4-20250514",
+			Usage: TokenUsage{InputTokens: 100, OutputTokens: 50},
+		},
+		// ParentToolUseID is nil (top-level)
+	})
+
+	// Subagent assistant message should NOT override.
+	subagentToolID := "toolu_sub123"
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Model: "claude-haiku-4-5-20251001",
+			Usage: TokenUsage{InputTokens: 10, OutputTokens: 5},
+		},
+		ParentToolUseID: &subagentToolID,
+	})
 
 	result := &ResultMessage{
 		Subtype: "success",
@@ -1192,8 +1211,11 @@ func TestOnResult_ModelFromModelUsage(t *testing.T) {
 			"claude-opus-4-20250514": {
 				ContextWindow: 200000,
 			},
+			"claude-haiku-4-5-20251001": {
+				ContextWindow: 200000,
+			},
 		},
-		Usage: TokenUsage{InputTokens: 100, OutputTokens: 50},
+		Usage: TokenUsage{InputTokens: 110, OutputTokens: 55},
 	}
 	b.OnResult(result)
 
@@ -1203,7 +1225,7 @@ func TestOnResult_ModelFromModelUsage(t *testing.T) {
 	if completedResult.Model != "claude-opus-4-20250514" {
 		t.Errorf("result.Model = %q, want %q", completedResult.Model, "claude-opus-4-20250514")
 	}
-	// Context window should be stored.
+	// Context window should match the primary model.
 	b.mu.Lock()
 	cw := b.contextWindow
 	b.mu.Unlock()
