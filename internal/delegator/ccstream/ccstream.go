@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -98,6 +99,9 @@ type Backend struct {
 
 	// Agent tracking (shared with tmux backend via AgentTracker).
 	agents delegator.AgentTracker
+
+	// Activity tracking — updated on every inbound stream event.
+	lastActivity atomic.Int64 // unix nanos of most recent stream event
 
 	// Callbacks (set before Start, read-only after)
 	replyFunc          delegator.ReplyFunc
@@ -657,8 +661,25 @@ func (b *Backend) GetContextUsage(ctx context.Context) (*delegator.ContextUsage,
 // Handler interface implementation (called by Reader goroutine)
 // ---------------------------------------------------------------------------
 
+// touchActivity records the current time as the most recent stream event.
+// Called from every On* handler to track backend liveness.
+func (b *Backend) touchActivity() {
+	b.lastActivity.Store(time.Now().UnixNano())
+}
+
+// LastActivity returns the time of the most recent stream event from CC.
+// Implements delegator.ActivityChecker.
+func (b *Backend) LastActivity() time.Time {
+	ns := b.lastActivity.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
 // OnAssistant handles assistant messages from CC's stdout.
 func (b *Backend) OnAssistant(msg *AssistantMessage) {
+	b.touchActivity()
 	// Track model and per-call usage (last assistant message wins, same as
 	// the tmux watcher). The result message carries cumulative usage across
 	// all inference calls in the turn — we need per-call for context tracking.
@@ -728,6 +749,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 
 // OnResult handles the result message signalling turn completion.
 func (b *Backend) OnResult(msg *ResultMessage) {
+	b.touchActivity()
 	b.turnMu.Lock()
 	handler := b.turnHandler
 	b.turnHandler = nil
@@ -826,6 +848,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 
 // OnSystem handles system messages (init, status, compact_boundary, etc.).
 func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
+	b.touchActivity()
 	switch subtype {
 	case "init":
 		var init InitMessage
@@ -910,6 +933,7 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 // Dispatches to tool-specific handlers (e.g. AskUserQuestion) or the
 // standard permission prompt flow.
 func (b *Backend) OnPermissionRequest(msg *PermissionRequest) {
+	b.touchActivity()
 	b.handleToolRequest(msg)
 }
 
@@ -921,6 +945,7 @@ func (b *Backend) OnPermissionRequest(msg *PermissionRequest) {
 // When we detect the initialize response, we close readyCh so WaitReady
 // unblocks.
 func (b *Backend) OnControlResponse(raw json.RawMessage) {
+	b.touchActivity()
 	var env controlResponseInbound
 	if err := json.Unmarshal(raw, &env); err != nil {
 		log.Debugf("ccstream", "unmarshal control_response: %v", err)
@@ -958,11 +983,13 @@ func (b *Backend) OnControlResponse(raw json.RawMessage) {
 
 // OnControlCancelRequest handles CC cancelling a pending control request.
 func (b *Backend) OnControlCancelRequest(reqID string) {
+	b.touchActivity()
 	b.handleControlCancel(reqID)
 }
 
 // OnRateLimit handles rate limit events from CC's stdout.
 func (b *Backend) OnRateLimit(msg *RateLimitEvent) {
+	b.touchActivity()
 	if b.rateLimitState != nil {
 		b.rateLimitState.Update(&msg.RateLimitInfo)
 	}
@@ -970,6 +997,7 @@ func (b *Backend) OnRateLimit(msg *RateLimitEvent) {
 
 // OnToolProgress handles heartbeats during long-running tool execution.
 func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
+	b.touchActivity()
 	// Keep typing indicator alive during tool execution.
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -981,6 +1009,7 @@ func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
 
 // OnStreamEvent handles token-level streaming events.
 func (b *Backend) OnStreamEvent(raw json.RawMessage) {
+	b.touchActivity()
 	// Quick extraction of text deltas for streaming display.
 	var env struct {
 		Event struct {
