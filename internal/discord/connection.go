@@ -266,8 +266,14 @@ func (b *Bot) SetCommandContext(cc command.CommandContext) {
 	cc.IsSecondaryBot = b.isSecondary
 	if b.isSecondary {
 		cc.ReleaseFunc = func() {
+			// Capture session key before pool.Release clears it.
+			sk := b.SessionKey()
 			if b.pool != nil {
 				b.pool.Release(b)
+			}
+			// Close any delegated branch backend so the CC process doesn't leak.
+			if sk != "" && cc.Agent != nil && cc.Agent.DelegatedManager != nil {
+				cc.Agent.DelegatedManager.ResetSession(sk)
 			}
 			b.logger().Infof("secondary bot released")
 		}
