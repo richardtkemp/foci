@@ -268,8 +268,7 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessag
 // transport path (DelegatedTransport) via the TurnContract interface.
 func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
 	var tc TurnContract
-	isDelegated := a.DelegatedManager != nil
-	if isDelegated {
+	if a.DelegatedManager != nil {
 		tc = &DelegatedTransport{sharedTurnOps{agent: a}}
 	} else {
 		tc = &APITransport{sharedTurnOps{agent: a}}
@@ -278,13 +277,6 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 	_, err := a.OrchestrateFullTurn(ctx, tc, ts)
 	if err != nil {
 		return "", err
-	}
-	// Delegated transport: responses are delivered to the user via the session
-	// watcher's replyFunc during the turn. Return empty so platform workers
-	// don't duplicate delivery via Finalize. The turn is synchronous — it
-	// blocks until CC completes — but the text is already delivered.
-	if isDelegated {
-		return "", nil
 	}
 	return ts.FinalText, nil
 }
