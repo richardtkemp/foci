@@ -71,6 +71,11 @@ type TurnRenderer struct {
 	// streamedThinkingLive is true when thinking was written to the current
 	// StreamWriter, so the Content() fallback knows to strip it.
 	streamedThinkingLive bool
+	// replyDelivered is true when OnReply delivered content to the user
+	// during the turn (via the watcher's replyFunc for delegated agents).
+	// Finalize skips re-delivery when this is set. Stream deltas are NOT
+	// counted — they need Finalize to edit-in-place with final formatting.
+	replyDelivered bool
 }
 
 // NewTurnRenderer creates a TurnRenderer with the given backend, tracker, and display
@@ -112,6 +117,7 @@ func (r *TurnRenderer) OnReply(text string) {
 			_ = r.backend.EditMessage(msgID, formatted)
 		}
 		r.tracker.CleanupPreview()
+		r.replyDelivered = true
 	} else {
 		// No stream message. Always deliver — this fixes the bug where text
 		// was dropped when streaming was enabled but no deltas arrived.
@@ -119,6 +125,7 @@ func (r *TurnRenderer) OnReply(text string) {
 			r.backend.SendReply(text)
 		}
 		r.tracker.ResetMsgID()
+		r.replyDelivered = true
 	}
 	// Fresh stream writer for the next segment.
 	r.sw = r.newSW()
@@ -208,6 +215,11 @@ func (r *TurnRenderer) OnActivity() {
 
 // Finalize renders the final agent response. It handles all combinations of
 // streaming/non-streaming, thinking modes, response length, and tool call previews.
+//
+// When the renderer already delivered content during the turn (via OnReply or
+// streaming), Finalize only does cleanup — it won't send the response again.
+// This prevents double delivery when HandleMessage returns FinalText for
+// delegated agents whose watcher already streamed the response.
 func (r *TurnRenderer) Finalize(response string) {
 	// Finish the stream writer and get the message ID it created (if any).
 	//
@@ -223,6 +235,14 @@ func (r *TurnRenderer) Finalize(response string) {
 	streamMsgID := r.sw.Finish()
 	if textContent := r.streamTextContent(); strings.TrimSpace(response) == "" && strings.TrimSpace(textContent) != "" {
 		response = textContent
+	}
+
+	// Content was already delivered via OnReply during the turn (delegated
+	// agents deliver via watcher's replyFunc). Clean up tool previews but
+	// don't re-send the response.
+	if r.replyDelivered {
+		r.tracker.CleanupPreview()
+		return
 	}
 
 	// Guard against empty responses.
