@@ -765,30 +765,32 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		text = turnText
 	}
 
-	// Determine model: first key from ModelUsage, falling back to lastModel.
-	// Use per-call usage from the last assistant message (not the result's
-	// accumulated total) — this matches what the tmux watcher reports and
-	// gives compaction the actual context window fill, not a sum of all calls.
+	// Determine model: prefer the key from ModelUsage with the largest context
+	// window (the primary model), falling back to lastModel (from assistant
+	// messages). Use per-call usage from the last assistant message (not the
+	// result's accumulated total) — this matches what the tmux watcher reports
+	// and gives compaction the actual context window fill, not a sum of all calls.
 	b.mu.Lock()
 	resultModel := b.lastModel
 	lastUsage := b.lastUsage
 	b.lastUsage = nil // reset for next turn
 	b.mu.Unlock()
 
-	// Pick context window from ModelUsage deterministically: prefer the
-	// entry matching resultModel (the primary model from assistant messages);
-	// otherwise take the largest context window to avoid spurious compaction
-	// from subagent models (e.g. haiku) winning the random map iteration.
-	if usage, ok := msg.ModelUsage[resultModel]; ok {
-		b.mu.Lock()
-		b.contextWindow = usage.ContextWindow
-		b.mu.Unlock()
-	} else {
+	// Extract model and context window from ModelUsage. When multiple models
+	// are present (e.g. main + subagent), pick the one with the largest
+	// context window — that's the primary model. This also overrides
+	// lastModel which may be stale or from a subagent's assistant message.
+	{
 		var bestCW int
-		for _, usage := range msg.ModelUsage {
+		var bestModel string
+		for model, usage := range msg.ModelUsage {
 			if usage.ContextWindow > bestCW {
 				bestCW = usage.ContextWindow
+				bestModel = model
 			}
+		}
+		if bestModel != "" {
+			resultModel = bestModel
 		}
 		if bestCW > 0 {
 			b.mu.Lock()
