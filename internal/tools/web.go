@@ -21,7 +21,7 @@ func NewWebFetchTool() *Tool {
 	return &Tool{
 		Name:        "web_fetch",
 		ExecExport:  true,
-		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability). Prefer the default Markdown mode; only set raw=true when you specifically need HTML.",
+		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability).",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
