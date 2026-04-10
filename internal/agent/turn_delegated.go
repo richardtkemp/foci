@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/delegator"
@@ -23,7 +24,10 @@ import (
 
 func (t *DelegatedTransport) RateLimitGate(ts *TurnState) error        { return nil }       // CC has its own rate limiting
 func (t *DelegatedTransport) AcquireTurnLock(ts *TurnState) func()     { return func() {} } // CC serializes internally
-func (t *DelegatedTransport) IncrementProcessing(ts *TurnState) func() { return func() {} } // fire-and-forget from foci's view
+func (t *DelegatedTransport) IncrementProcessing(ts *TurnState) func() { // tracks IsProcessing() for shutdown/reset gating
+	atomic.AddInt32(&t.agent.processing, 1)
+	return func() { atomic.AddInt32(&t.agent.processing, -1) }
+}
 func (t *DelegatedTransport) RegisterTurn(ts *TurnState) func()        { return func() {} } // not tracked externally
 
 // --- Phase 2: Turn preparation ---
