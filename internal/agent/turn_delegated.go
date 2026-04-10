@@ -99,6 +99,17 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	}
 	ts.Backend = be
 
+	// Inject branch orientation for new delegated branch sessions.
+	// API transport consumes PendingOrientation in ComposePrompt; delegated
+	// transport does it here after Get() ensures the backend exists in the map.
+	// ConsumeOrientation returns true only on the first call per backend.
+	if a.Sessions != nil && a.DelegatedManager.ConsumeOrientation(ts.SessionKey) {
+		if orient := a.Sessions.PendingOrientation(ts.SessionKey); orient != "" {
+			ts.Prompt = orient + "\n\n" + ts.Prompt
+			log.Infof("delegated", "session=%s injected branch orientation (%d chars)", ts.SessionKey, len(orient))
+		}
+	}
+
 	// Check for a pending AskUserQuestion — intercept typed text as an
 	// answer before WaitForPermission blocks. This lets users respond to
 	// questions by typing instead of clicking buttons.
