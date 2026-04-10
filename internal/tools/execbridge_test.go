@@ -851,7 +851,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 		},
 		{
 			name:       "send_to_chat",
-			params:     json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
+			params:     json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file":{"type":"string"},"send_as":{"type":"string"}}}`),
 			validFlags: []string{"--file", "--send-as"},
 		},
 		{
@@ -980,7 +980,7 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	r.Register(&Tool{
 		Name:       "send_to_chat",
 		ExecExport: true,
-		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file_path":{"type":"string"},"send_as":{"type":"string"}}}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file":{"type":"string"},"send_as":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Text string `json:"text"`

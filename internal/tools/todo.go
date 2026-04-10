@@ -69,11 +69,11 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				"sort": {
 					"type": "string",
 					"enum": ["priority", "created", "updated", "closed", "relevance"],
-					"description": "Sort order for 'list' and 'search'. 'list' default: 'created'. 'search' default: 'relevance'. All sort descending (newest/highest first) unless reverse=true"
+					"description": "Sort order for 'list' and 'search'. 'list' default: 'created'. 'search' default: 'relevance'. All sort descending (newest/highest first) unless reversed"
 				},
 				"reverse": {
 					"type": "boolean",
-					"description": "Reverse the sort order (default: false). E.g. sort=created with reverse=true returns oldest first"
+					"description": "Reverse the sort order (default: false). E.g. sorting by created date reversed returns oldest first"
 				}
 			},
 			"required": ["action"]

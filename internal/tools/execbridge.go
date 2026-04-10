@@ -507,7 +507,7 @@ func generateShellFunc(t *Tool) string {
     params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
   fi
   if [ -n "$file_path" ]; then
-    params="$(echo "$params" | jq --arg f "$file_path" '. + {file_path: $f}')"
+    params="$(echo "$params" | jq --arg f "$file_path" '. + {file: $f}')"
   fi
   if [ -n "$send_as" ]; then
     params="$(echo "$params" | jq --arg s "$send_as" '. + {send_as: $s}')"

@@ -42,7 +42,7 @@ func TestSendMessageToUserDocumentOnly(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/report.pdf",
+		"file": "/tmp/report.pdf",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -64,7 +64,7 @@ func TestSendMessageToUserVoice(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/note.ogg",
+		"file": "/tmp/note.ogg",
 		"send_as":   "voice",
 	})
 
@@ -88,7 +88,7 @@ func TestSendMessageToUserTextAndDocument(t *testing.T) {
 
 	params, _ := json.Marshal(map[string]interface{}{
 		"text":      "here's the file",
-		"file_path": "/tmp/data.csv",
+		"file": "/tmp/data.csv",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -167,7 +167,7 @@ func TestSendMessageToUserDocumentError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/huge.bin",
+		"file": "/tmp/huge.bin",
 	})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -186,7 +186,7 @@ func TestSendMessageToUserVoiceError(t *testing.T) {
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"file_path": "/tmp/voice.ogg",
+		"file": "/tmp/voice.ogg",
 		"send_as":   "voice",
 	})
 

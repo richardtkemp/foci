@@ -16,7 +16,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 	return &Tool{
 		Name:        "send_to_chat",
 		ExecExport:  true,
-		Description: "Send a proactive message to the user. Can send text, files, voice notes, videos, photos, audio, or animations. Use send_as=\"voice\" with text (no file_path) to synthesize speech and send as a voice note. Use for alerts, sharing files, or sending media.",
+		Description: "Send a rich message to the user. Can send text, files, or TTS.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -24,7 +24,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 					"type": "string",
 					"description": "Text message to send. Supports Markdown formatting."
 				},
-				"file_path": {
+				"file": {
 					"type": "string",
 					"description": "Path to a file to send as a document attachment."
 				},
@@ -38,14 +38,14 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
 				Text     string `json:"text"`
-				FilePath string `json:"file_path"`
+				FilePath string `json:"file"`
 				SendAs   string `json:"send_as"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
 				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 			if p.Text == "" && p.FilePath == "" {
-				return ToolResult{}, fmt.Errorf("at least one of text or file_path is required")
+				return ToolResult{}, fmt.Errorf("at least one of text or file is required")
 			}
 			if p.SendAs == "" {
 				p.SendAs = "document"
@@ -62,7 +62,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 
 			var sent []string
 
-			// TTS synthesis: send_as="voice" + text + no file_path
+			// TTS synthesis: send_as="voice" + text + no file
 			if p.SendAs == "voice" && p.Text != "" && p.FilePath == "" {
 				if tts == nil {
 					return ToolResult{}, fmt.Errorf("tts not configured")
