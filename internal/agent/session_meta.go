@@ -587,6 +587,12 @@ func (a *Agent) RotateSession(oldKey, newKey string) {
 	// the old key resolve to the new key when they deliver results.
 	a.AsyncNotifier.MigrateSession(oldKey, newKey)
 
+	// Migrate delegated backend map key so the running CC process
+	// is found under the new session key.
+	if a.DelegatedManager != nil {
+		a.DelegatedManager.RotateBackendKey(oldKey, newKey)
+	}
+
 	// Fire callbacks
 	for _, fn := range a.SessionKeyRotatedFunc {
 		fn(oldKey, newKey)

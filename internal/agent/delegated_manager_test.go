@@ -209,7 +209,7 @@ func TestGet_LazyCreation(t *testing.T) {
 	// backend on subsequent calls with the same session key base.
 	mgr, mocks := newTestManager(t, nil)
 
-	be1, err := mgr.Get(context.Background(), "test-agent/c123/v1")
+	be1, err := mgr.Get(context.Background(), "test-agent/c123/1000")
 	if err != nil {
 		t.Fatalf("Get #1: %v", err)
 	}
@@ -220,16 +220,29 @@ func TestGet_LazyCreation(t *testing.T) {
 		t.Fatalf("expected 1 mock created, got %d", len(*mocks))
 	}
 
-	// Same base key (different version suffix) should return same backend.
-	be2, err := mgr.Get(context.Background(), "test-agent/c123/v2")
+	// Same session key returns the same backend (no new mock created).
+	be2, err := mgr.Get(context.Background(), "test-agent/c123/1000")
 	if err != nil {
 		t.Fatalf("Get #2: %v", err)
 	}
 	if be1 != be2 {
-		t.Error("expected same backend for same session key base")
+		t.Error("expected same backend for same session key")
 	}
 	if len(*mocks) != 1 {
 		t.Errorf("expected still 1 mock, got %d", len(*mocks))
+	}
+
+	// Different session key creates a separate backend.
+	// In production, use RotateBackendKey to migrate after compaction.
+	be3, err := mgr.Get(context.Background(), "test-agent/c123/2000")
+	if err != nil {
+		t.Fatalf("Get #3 (different key): %v", err)
+	}
+	if be1 == be3 {
+		t.Error("expected different backend for different session key")
+	}
+	if len(*mocks) != 2 {
+		t.Errorf("expected 2 mocks after different key, got %d", len(*mocks))
 	}
 }
 
@@ -368,7 +381,7 @@ func TestGet_SetsLabelFromBase(t *testing.T) {
 	}
 
 	mock := (*mocks)[0]
-	want := "myagent-c42"
+	want := "myagent-c42-v1"
 	if mock.startOpts.Label != want {
 		t.Errorf("Label = %q, want %q", mock.startOpts.Label, want)
 	}
@@ -581,10 +594,9 @@ func TestResetSession_ClosesAndClears(t *testing.T) {
 	mgr, mocks := newTestManager(t, idx)
 
 	sk := "test-agent/c1"
-	base := session.SessionKeyBase(sk)
 
 	// Pre-populate a resume ID.
-	stateKey := "cc_session:" + base
+	stateKey := "cc_session:" + sk
 	if err := idx.SetAgentMetadata("test-agent", stateKey, "some-uuid"); err != nil {
 		t.Fatalf("SetAgentMetadata: %v", err)
 	}
@@ -696,7 +708,7 @@ func TestCount(t *testing.T) {
 	}
 
 	// Getting the same key again should not increase the count.
-	_, _ = mgr.Get(context.Background(), "test-agent/c1/v2")
+	_, _ = mgr.Get(context.Background(), "test-agent/c1")
 	if mgr.Count() != 2 {
 		t.Errorf("Count = %d after duplicate get, want 2", mgr.Count())
 	}
@@ -778,8 +790,7 @@ func TestCloseIdle(t *testing.T) {
 
 	// Make c1 idle by backdating its lastActive.
 	mgr.mu.Lock()
-	base1 := session.SessionKeyBase("test-agent/c1")
-	if mb, ok := mgr.backends[base1]; ok {
+	if mb, ok := mgr.backends["test-agent/c1"]; ok {
 		mb.lastActive = time.Now().Add(-2 * time.Hour)
 	}
 	mgr.mu.Unlock()
@@ -1035,8 +1046,8 @@ func TestGet_StartOptionsPassthrough(t *testing.T) {
 	if opts.Model != "opus" {
 		t.Errorf("Model = %q, want %q", opts.Model, "opus")
 	}
-	if opts.Label != "agent-c1" {
-		t.Errorf("Label = %q, want %q", opts.Label, "agent-c1")
+	if opts.Label != "agent-c1-v1" {
+		t.Errorf("Label = %q, want %q", opts.Label, "agent-c1-v1")
 	}
 	if opts.SessionKey != "agent/c1/v1" {
 		t.Errorf("SessionKey = %q, want %q", opts.SessionKey, "agent/c1/v1")
@@ -1208,7 +1219,8 @@ func TestSetBackendCallbacks(t *testing.T) {
 	}
 
 	be := &mockBackendDM{running: true}
-	mgr.setBackendCallbacks(be, "test-agent/c1", "test-agent/c1")
+	mb := &managedBackend{be: be, sessionKey: "test-agent/c1"}
+	mgr.setBackendCallbacks(mb)
 
 	be.mu.Lock()
 	rf := be.replyFunc

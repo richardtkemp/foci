@@ -78,9 +78,8 @@ type managedBackend struct {
 
 // getManaged looks up the managed backend for a session key under the lock.
 func (m *DelegatedManager) getManaged(sessionKey string) (*managedBackend, bool) {
-	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
-	mb, ok := m.backends[base]
+	mb, ok := m.backends[sessionKey]
 	m.mu.Unlock()
 	return mb, ok
 }
@@ -96,13 +95,11 @@ func (mb *managedBackend) clearPermission() {
 }
 
 // Get returns the Backend for the given session key, creating and starting
-// one if it doesn't exist yet. The session key is collapsed to its base
-// (agentID/c12345) so that compaction-rotated keys share the same Backend.
+// one if it doesn't exist yet. Each session key gets its own backend.
+// Use RotateBackendKey after compaction to re-key the map entry.
 func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
-	base := session.SessionKeyBase(sessionKey)
-
 	m.mu.Lock()
-	if mb, ok := m.backends[base]; ok {
+	if mb, ok := m.backends[sessionKey]; ok {
 		if mb.be.IsRunning() {
 			mb.lastActive = time.Now()
 			mb.sessionKey = sessionKey
@@ -111,27 +108,27 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 		}
 		// Backend subprocess is dead — clean up and fall through to respawn.
 		// Save the resume ID so the new subprocess can resume the CC session.
-		log.Warnf("delegated", "backend for %s is dead, respawning", base)
-		m.saveResumeID(base, mb.be.SessionID())
+		log.Warnf("delegated", "backend for %s is dead, respawning", sessionKey)
+		m.saveResumeID(sessionKey, mb.be.SessionID())
 		_ = mb.be.Close()
 		if mb.bridge != nil {
 			mb.bridge.Close()
 		}
-		delete(m.backends, base)
+		delete(m.backends, sessionKey)
 	}
 
 	// Check for a saved session UUID to resume.
-	resumeID := m.loadResumeID(base)
+	resumeID := m.loadResumeID(sessionKey)
 	m.mu.Unlock()
 
 	// Create and start a new Backend for this session.
 	be, err := m.NewBackend()
 	if err != nil {
-		return nil, fmt.Errorf("create delegated backend for %s: %w", base, err)
+		return nil, fmt.Errorf("create delegated backend for %s: %w", sessionKey, err)
 	}
 
 	opts := m.StartOpts
-	opts.Label = strings.ReplaceAll(base, "/", "-")
+	opts.Label = strings.ReplaceAll(sessionKey, "/", "-")
 	opts.ResumeSessionID = resumeID
 	opts.SessionKey = sessionKey
 
@@ -151,44 +148,51 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 			bridge, bridgeErr = tools.NewExecBridge(reg, bridgeCtx)
 		}
 		if bridgeErr != nil {
-			log.Warnf("delegated", "exec bridge creation failed for %s (continuing without): %v", base, bridgeErr)
+			log.Warnf("delegated", "exec bridge creation failed for %s (continuing without): %v", sessionKey, bridgeErr)
 		} else {
 			opts.Env = map[string]string{
 				"BASH_ENV":  bridge.FuncsPath(),
 				"FOCI_SOCK": bridge.SockPath(),
 			}
-			log.Infof("delegated", "exec bridge started for %s: sock=%s funcs=%s", base, bridge.SockPath(), bridge.FuncsPath())
+			log.Infof("delegated", "exec bridge started for %s: sock=%s funcs=%s", sessionKey, bridge.SockPath(), bridge.FuncsPath())
 		}
 	}
 
-	// Set the reply and permission prompt functions before starting.
-	sk := sessionKey
-	m.setBackendCallbacks(be, sk, base)
+	// Create the managedBackend early so callbacks can reference it.
+	mb := &managedBackend{
+		be:         be,
+		bridge:     bridge,
+		lastActive: time.Now(),
+		sessionKey: sessionKey,
+	}
+	m.setBackendCallbacks(mb)
 
 	if err := be.Start(ctx, opts); err != nil {
 		// If resume failed (e.g. stale UUID), retry without resume.
 		if resumeID != "" {
-			log.Warnf("delegated", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, base, err)
+			log.Warnf("delegated", "start with --resume %s failed for %s: %v — retrying without resume", resumeID, sessionKey, err)
 			_ = be.Close()
-			be, err = m.newBackendWithCallbacks(sk, base)
+			newBe, err := m.NewBackend()
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
 				}
-				return nil, fmt.Errorf("create delegated backend for %s (retry): %w", base, err)
+				return nil, fmt.Errorf("create delegated backend for %s (retry): %w", sessionKey, err)
 			}
+			mb.be = newBe
+			m.setBackendCallbacks(mb)
 			opts.ResumeSessionID = ""
-			if err := be.Start(ctx, opts); err != nil {
+			if err := newBe.Start(ctx, opts); err != nil {
 				if bridge != nil {
 					bridge.Close()
 				}
-				return nil, fmt.Errorf("start delegated backend for %s (no resume): %w", base, err)
+				return nil, fmt.Errorf("start delegated backend for %s (no resume): %w", sessionKey, err)
 			}
 		} else {
 			if bridge != nil {
 				bridge.Close()
 			}
-			return nil, fmt.Errorf("start delegated backend for %s: %w", base, err)
+			return nil, fmt.Errorf("start delegated backend for %s: %w", sessionKey, err)
 		}
 	}
 
@@ -196,12 +200,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 	if m.backends == nil {
 		m.backends = make(map[string]*managedBackend)
 	}
-	m.backends[base] = &managedBackend{
-		be:         be,
-		bridge:     bridge,
-		lastActive: time.Now(),
-		sessionKey: sessionKey,
-	}
+	m.backends[sessionKey] = mb
 
 	// Start the idle reaper on first delegated backend creation.
 	if m.reaperStop == nil {
@@ -212,56 +211,53 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 	m.mu.Unlock()
 
 	if resumeID != "" {
-		log.Infof("delegated", "resumed session %s for %s", resumeID, base)
+		log.Infof("delegated", "resumed session %s for %s", resumeID, sessionKey)
 	}
 
 	// Wait for the coding agent to be ready to accept prompts.
 	// Without this, early SendToPane hits a CC that's still loading.
 	readyCtx, readyCancel := context.WithTimeout(ctx, 60*time.Second)
 	defer readyCancel()
-	if err := be.WaitReady(readyCtx); err != nil {
-		log.Warnf("delegated", "WaitReady for %s: %v", base, err)
+	if err := mb.be.WaitReady(readyCtx); err != nil {
+		log.Warnf("delegated", "WaitReady for %s: %v", sessionKey, err)
 
 		// If the process is already dead, a stale --resume UUID may have
 		// caused CC to exit silently. Clear the resume ID and retry fresh.
-		if !be.IsRunning() && resumeID != "" {
-			log.Warnf("delegated", "backend for %s died during init with --resume %s — retrying without resume", base, resumeID)
-			_ = be.Close()
-			m.clearResumeID(base)
+		if !mb.be.IsRunning() && resumeID != "" {
+			log.Warnf("delegated", "backend for %s died during init with --resume %s — retrying without resume", sessionKey, resumeID)
+			_ = mb.be.Close()
+			m.clearResumeID(sessionKey)
 
-			be, err = m.newBackendWithCallbacks(sk, base)
+			newBe, err := m.NewBackend()
 			if err != nil {
 				if bridge != nil {
 					bridge.Close()
 				}
-				return nil, fmt.Errorf("create delegated backend for %s (retry after init death): %w", base, err)
+				return nil, fmt.Errorf("create delegated backend for %s (retry after init death): %w", sessionKey, err)
 			}
+			mb.be = newBe
+			m.setBackendCallbacks(mb)
 			opts.ResumeSessionID = ""
-			if err := be.Start(ctx, opts); err != nil {
+			if err := newBe.Start(ctx, opts); err != nil {
 				if bridge != nil {
 					bridge.Close()
 				}
-				return nil, fmt.Errorf("start delegated backend for %s (retry after init death): %w", base, err)
+				return nil, fmt.Errorf("start delegated backend for %s (retry after init death): %w", sessionKey, err)
 			}
 
 			m.mu.Lock()
-			m.backends[base] = &managedBackend{
-				be:         be,
-				bridge:     bridge,
-				lastActive: time.Now(),
-				sessionKey: sessionKey,
-			}
+			m.backends[sessionKey] = mb
 			m.mu.Unlock()
 
 			readyCtx2, readyCancel2 := context.WithTimeout(ctx, 60*time.Second)
 			defer readyCancel2()
-			if err := be.WaitReady(readyCtx2); err != nil {
-				log.Warnf("delegated", "WaitReady for %s (retry): %v (proceeding anyway)", base, err)
+			if err := mb.be.WaitReady(readyCtx2); err != nil {
+				log.Warnf("delegated", "WaitReady for %s (retry): %v (proceeding anyway)", sessionKey, err)
 			}
 		}
 	}
 
-	return be, nil
+	return mb.be, nil
 }
 
 // StopSession interrupts the current agent turn. The mechanism is
@@ -270,7 +266,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) error {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
-		return fmt.Errorf("no delegated backend for session %s", session.SessionKeyBase(sessionKey))
+		return fmt.Errorf("no delegated backend for session %s", sessionKey)
 	}
 	return mb.be.Interrupt(ctx)
 }
@@ -279,7 +275,6 @@ func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) e
 // prompt (pending=true) or clears it (pending=false). When pending, all
 // calls to WaitForPermission block until cleared.
 func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool) {
-	base := session.SessionKeyBase(sessionKey)
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return
@@ -288,10 +283,10 @@ func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool)
 		mb.permMu.Lock()
 		mb.permPending = true
 		mb.permMu.Unlock()
-		log.Debugf("delegated", "permission pending for %s", base)
+		log.Debugf("delegated", "permission pending for %s", sessionKey)
 	} else {
 		mb.clearPermission()
-		log.Debugf("delegated", "permission cleared for %s", base)
+		log.Debugf("delegated", "permission cleared for %s", sessionKey)
 	}
 }
 
@@ -299,7 +294,6 @@ func (m *DelegatedManager) SetPermissionPending(sessionKey string, pending bool)
 // the session. Returns immediately if no prompt is pending. Returns
 // ctx.Err() if the context is cancelled (e.g. /stop).
 func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey string) error {
-	base := session.SessionKeyBase(sessionKey)
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
 		return nil
@@ -316,7 +310,7 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 		mb.permCond = sync.NewCond(&mb.permMu)
 	}
 
-	log.Infof("delegated", "waiting for permission to clear on %s", base)
+	log.Infof("delegated", "waiting for permission to clear on %s", sessionKey)
 
 	// Wait with context cancellation support. sync.Cond doesn't natively
 	// support context, so we use a goroutine to broadcast on cancel.
@@ -340,7 +334,7 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 	mb.permMu.Unlock()
 	close(done)
 
-	log.Infof("delegated", "permission cleared on %s, proceeding", base)
+	log.Infof("delegated", "permission cleared on %s, proceeding", sessionKey)
 	return nil
 }
 
@@ -371,7 +365,7 @@ func (m *DelegatedManager) SessionFilePath(sessionKey string) string {
 func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) error {
 	mb, ok := m.getManaged(sessionKey)
 	if !ok {
-		return fmt.Errorf("no delegated backend for session %s", session.SessionKeyBase(sessionKey))
+		return fmt.Errorf("no delegated backend for session %s", sessionKey)
 	}
 	return mb.be.WaitForTurn(ctx)
 }
@@ -379,10 +373,9 @@ func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) e
 // ResetSession closes the delegated backend for a specific session key WITHOUT saving
 // the resume ID, so the next Get() creates a completely fresh CC session.
 func (m *DelegatedManager) ResetSession(sessionKey string) {
-	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	mb, ok := m.backends[base]
+	mb, ok := m.backends[sessionKey]
 	if !ok {
 		return
 	}
@@ -391,12 +384,10 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 	if mb.bridge != nil {
 		mb.bridge.Close()
 	}
-	delete(m.backends, base)
+	delete(m.backends, sessionKey)
 	// Clear any saved resume ID so next session starts fresh.
-	if m.SessionIndex != nil {
-		_ = m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base))
-	}
-	log.Infof("delegated", "reset session %s (closed, resume ID cleared)", base)
+	m.clearResumeID(sessionKey)
+	log.Infof("delegated", "reset session %s (closed, resume ID cleared)", sessionKey)
 }
 
 // DetachSession removes the delegated backend from management without closing it.
@@ -404,20 +395,17 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 // calling Close() on both the backend and bridge when done.
 // Resume ID is cleared so the next Get() creates a fresh session.
 func (m *DelegatedManager) DetachSession(sessionKey string) *managedBackend {
-	base := session.SessionKeyBase(sessionKey)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	mb, ok := m.backends[base]
+	mb, ok := m.backends[sessionKey]
 	if !ok {
 		return nil
 	}
 	mb.clearPermission()
-	delete(m.backends, base)
+	delete(m.backends, sessionKey)
 	// Clear any saved resume ID so next session starts fresh.
-	if m.SessionIndex != nil {
-		_ = m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base))
-	}
-	log.Infof("delegated", "detached session %s (resume ID cleared, backend still running)", base)
+	m.clearResumeID(sessionKey)
+	log.Infof("delegated", "detached session %s (resume ID cleared, backend still running)", sessionKey)
 	return mb
 }
 
@@ -448,73 +436,93 @@ func (m *DelegatedManager) Count() int {
 }
 
 // setBackendCallbacks wires up reply, permission, typing, and session-ready
-// callbacks on a backend. Must be called before Start.
-func (m *DelegatedManager) setBackendCallbacks(be delegator.Delegator, sk, base string) {
+// callbacks on a managed backend. Callbacks read mb.sessionKey dynamically
+// so they automatically use the correct key after RotateBackendKey.
+func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
+	sk := func() string {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return mb.sessionKey
+	}
 	if m.SendFunc != nil {
-		be.SetReplyFunc(func(text string) {
-			m.SendFunc(sk, text)
+		mb.be.SetReplyFunc(func(text string) {
+			m.SendFunc(sk(), text)
 		})
 	}
 	if m.PermissionPromptFunc != nil {
-		be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
-			m.SetPermissionPending(sk, true)
-			m.PermissionPromptFunc(sk, requestID, text, summary, choices)
+		mb.be.SetPermissionPromptFunc(func(requestID, text, summary string, choices []delegator.PromptChoice) {
+			key := sk()
+			m.SetPermissionPending(key, true)
+			m.PermissionPromptFunc(key, requestID, text, summary, choices)
 		})
 	}
-	be.SetOnPermissionCleared(func() {
-		m.SetPermissionPending(sk, false)
+	mb.be.SetOnPermissionCleared(func() {
+		m.SetPermissionPending(sk(), false)
 	})
 	if m.TypingFunc != nil {
-		be.SetTypingFunc(func(typing bool) {
-			m.TypingFunc(sk, typing)
+		mb.be.SetTypingFunc(func(typing bool) {
+			m.TypingFunc(sk(), typing)
 		})
 	}
-	be.SetOnSessionReady(func(sessionID string) {
-		m.saveResumeID(base, sessionID)
+	mb.be.SetOnSessionReady(func(sessionID string) {
+		m.saveResumeID(sk(), sessionID)
 	})
 }
 
-// newBackendWithCallbacks creates a fresh backend and wires callbacks.
-func (m *DelegatedManager) newBackendWithCallbacks(sk, base string) (delegator.Delegator, error) {
-	be, err := m.NewBackend()
-	if err != nil {
-		return nil, err
+// RotateBackendKey re-keys a backend entry after session key rotation
+// (e.g. compaction). The backend continues running — only the map key
+// and session key reference change. Resume ID is migrated atomically.
+func (m *DelegatedManager) RotateBackendKey(oldKey, newKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mb, ok := m.backends[oldKey]
+	if !ok {
+		return
 	}
-	m.setBackendCallbacks(be, sk, base)
-	return be, nil
+	delete(m.backends, oldKey)
+	mb.sessionKey = newKey
+	m.backends[newKey] = mb
+	// Migrate resume ID.
+	if m.SessionIndex != nil {
+		if id := m.loadResumeID(oldKey); id != "" {
+			m.saveResumeID(newKey, id)
+			m.clearResumeID(oldKey)
+		}
+	}
+	log.Infof("delegated", "rotated backend key %s → %s", oldKey, newKey)
 }
 
 // stateKey returns the agent_metadata key for a CC session UUID.
-func (m *DelegatedManager) stateKey(base string) string {
-	return "cc_session:" + base
+func (m *DelegatedManager) stateKey(sessionKey string) string {
+	return "cc_session:" + sessionKey
 }
 
 // saveResumeID persists the CC session UUID to state.db.
-func (m *DelegatedManager) saveResumeID(base, sessionID string) {
+func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if sessionID == "" || m.SessionIndex == nil {
 		return
 	}
-	if err := m.SessionIndex.SetAgentMetadata(m.AgentID, m.stateKey(base), sessionID); err != nil {
-		log.Warnf("delegated", "save resume ID for %s: %v", base, err)
+	if err := m.SessionIndex.SetAgentMetadata(m.AgentID, m.stateKey(sessionKey), sessionID); err != nil {
+		log.Warnf("delegated", "save resume ID for %s: %v", sessionKey, err)
 	}
 }
 
 // clearResumeID removes a saved CC session UUID from state.db.
-func (m *DelegatedManager) clearResumeID(base string) {
+func (m *DelegatedManager) clearResumeID(sessionKey string) {
 	if m.SessionIndex == nil {
 		return
 	}
-	if err := m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(base)); err != nil {
-		log.Warnf("delegated", "clear resume ID for %s: %v", base, err)
+	if err := m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(sessionKey)); err != nil {
+		log.Warnf("delegated", "clear resume ID for %s: %v", sessionKey, err)
 	}
 }
 
 // loadResumeID reads a saved CC session UUID from state.db.
-func (m *DelegatedManager) loadResumeID(base string) string {
+func (m *DelegatedManager) loadResumeID(sessionKey string) string {
 	if m.SessionIndex == nil {
 		return ""
 	}
-	id, err := m.SessionIndex.GetAgentMetadata(m.AgentID, m.stateKey(base))
+	id, err := m.SessionIndex.GetAgentMetadata(m.AgentID, m.stateKey(sessionKey))
 	if err != nil {
 		return ""
 	}
@@ -584,18 +592,18 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 	defer m.mu.Unlock()
 
 	now := time.Now()
-	for base, mb := range m.backends {
+	for key, mb := range m.backends {
 		if now.Sub(mb.lastActive) < timeout {
 			continue
 		}
 		mb.clearPermission()
-		m.saveResumeID(base, mb.be.SessionID())
+		m.saveResumeID(key, mb.be.SessionID())
 		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
-			base, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
+			key, now.Sub(mb.lastActive).Round(time.Minute), mb.be.SessionID())
 		_ = mb.be.Close()
 		if mb.bridge != nil {
 			mb.bridge.Close()
 		}
-		delete(m.backends, base)
+		delete(m.backends, key)
 	}
 }

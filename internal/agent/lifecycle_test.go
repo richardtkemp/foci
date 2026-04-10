@@ -401,7 +401,7 @@ func TestResetDelegatedSession(t *testing.T) {
 	}
 	dm := &DelegatedManager{
 		backends: map[string]*managedBackend{
-			"test/delegated": {be: mockBe},
+			"test/delegated/1000000000": {be: mockBe},
 		},
 	}
 
@@ -513,7 +513,7 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 	}
 	dm := &DelegatedManager{
 		backends: map[string]*managedBackend{
-			"test/delnomem": {be: mockBe},
+			"test/delnomem/1000000000": {be: mockBe},
 		},
 	}
 
