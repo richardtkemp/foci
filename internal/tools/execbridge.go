@@ -383,8 +383,8 @@ func generateShellFunc(t *Tool) string {
 	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
 
 	switch t.Name {
-	case "web_search", "memory_search":
-		// Simple query tools: all args become the query string
+	case "web_search":
+		// Simple query tool: all args become the query string
 		return fmt.Sprintf(`%s() {
 %s
 %s
@@ -407,6 +407,41 @@ func generateShellFunc(t *Tool) string {
   foci-call "$(jq -nc --arg q "$query" '{"tool":"%s","params":{"query":$q}}')"
 }
 `, name, helpCheck, guard, name, t.Name)
+
+	case "memory_search":
+		// Query as positional args, with optional sort/date/lines flags
+		return fmt.Sprintf(`%s() {
+%s
+%s
+  local query="" msort="" date_from="" date_to="" lines=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --query) query="$2"; shift 2 ;;
+      --sort) msort="$2"; shift 2 ;;
+      --date-from) date_from="$2"; shift 2 ;;
+      --date-to) date_to="$2"; shift 2 ;;
+      --lines) lines="$2"; shift 2 ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid flags: --query --sort --date-from --date-to --lines" >&2
+        return 1 ;;
+      *) query="$query $1"; shift ;;
+    esac
+  done
+  query="${query# }"
+  if [ -z "$query" ]; then
+    echo "usage: %s <query> [--sort relevance|newest|oldest] [--date-from YYYY-MM-DD] [--date-to YYYY-MM-DD] [--lines N]" >&2
+    return 1
+  fi
+  local params
+  params="$(jq -nc --arg q "$query" '{"query":$q}')"
+  [ -n "$msort" ] && params="$(echo "$params" | jq --arg s "$msort" '. + {sort: $s}')"
+  [ -n "$date_from" ] && params="$(echo "$params" | jq --arg d "$date_from" '. + {date_from: $d}')"
+  [ -n "$date_to" ] && params="$(echo "$params" | jq --arg d "$date_to" '. + {date_to: $d}')"
+  [ -n "$lines" ] && params="$(echo "$params" | jq --argjson l "$lines" '. + {lines: $l}')"
+  foci-call "$(jq -nc --argjson p "$params" '{"tool":"memory_search","params":$p}')"
+}
+`, name, helpCheck, guard, name)
 
 	case "web_fetch":
 		// URL as first arg, optional --raw flag
@@ -433,38 +468,50 @@ func generateShellFunc(t *Tool) string {
 `, name, helpCheck, guard, name)
 
 	case "http_request":
-		// URL as first arg, flags for method, headers, body, save_to
-		// --include-headers: output full HTTP status/headers + body (default: body only)
+		// URL as first arg, flags for method, headers, body, save_to, etc.
 		return fmt.Sprintf(`%s() {
 %s
 %s
-  local url="" method="GET" body="" save_to="" headers="{}" inc_headers=false
+  local url="" method="GET" body="" body_file="" save_to="" save_json_path="" headers="{}" query="{}" inc_headers=false background=false timeout="" max_bytes="" files="[]" form_fields="{}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --method) method="$2"; shift 2 ;;
       --body) body="$2"; shift 2 ;;
+      --body-file) body_file="$2"; shift 2 ;;
       --header) headers="$(echo "$headers" | jq --arg k "${2%%%%:*}" --arg v "${2#*: }" '. + {($k): $v}')"; shift 2 ;;
+      --headers) headers="$2"; shift 2 ;;
+      --query) query="$2"; shift 2 ;;
       --save-to) save_to="$2"; shift 2 ;;
+      --save-from-json-path) save_json_path="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      --max-response-bytes) max_bytes="$2"; shift 2 ;;
+      --files) files="$2"; shift 2 ;;
+      --form-fields) form_fields="$2"; shift 2 ;;
+      --background) background=true; shift ;;
       --include-headers) inc_headers=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --method --body --header --save-to --include-headers" >&2
+        echo "valid flags: --method --body --body-file --header --headers --query --save-to --save-from-json-path --timeout --max-response-bytes --files --form-fields --background --include-headers" >&2
         return 1 ;;
       *) url="$1"; shift ;;
     esac
   done
   if [ -z "$url" ]; then
-    echo "usage: %s <url> [--method METHOD] [--header 'K: V'] [--body BODY] [--save-to PATH] [--include-headers]" >&2
+    echo "usage: %s <url> [--method METHOD] [--header 'K: V'] [--body BODY] [--save-to PATH] [--timeout SECS] ..." >&2
     return 1
   fi
   local params
   params="$(jq -nc --arg u "$url" --arg m "$method" --argjson h "$headers" '{"url":$u,"method":$m,"headers":$h}')"
-  if [ -n "$body" ]; then
-    params="$(echo "$params" | jq --arg b "$body" '. + {body: $b}')"
-  fi
-  if [ -n "$save_to" ]; then
-    params="$(echo "$params" | jq --arg s "$save_to" '. + {save_to: $s}')"
-  fi
+  [ -n "$body" ] && params="$(echo "$params" | jq --arg b "$body" '. + {body: $b}')"
+  [ -n "$body_file" ] && params="$(echo "$params" | jq --arg b "$body_file" '. + {body_file: $b}')"
+  [ -n "$save_to" ] && params="$(echo "$params" | jq --arg s "$save_to" '. + {save_to: $s}')"
+  [ -n "$save_json_path" ] && params="$(echo "$params" | jq --arg s "$save_json_path" '. + {save_from_json_path: $s}')"
+  [ -n "$timeout" ] && params="$(echo "$params" | jq --argjson t "$timeout" '. + {timeout: $t}')"
+  [ -n "$max_bytes" ] && params="$(echo "$params" | jq --argjson m "$max_bytes" '. + {max_response_bytes: $m}')"
+  [ "$background" = true ] && params="$(echo "$params" | jq '. + {background: true}')"
+  [ "$query" != "{}" ] && params="$(echo "$params" | jq --argjson q "$query" '. + {query: $q}')"
+  [ "$files" != "[]" ] && params="$(echo "$params" | jq --argjson f "$files" '. + {files: $f}')"
+  [ "$form_fields" != "{}" ] && params="$(echo "$params" | jq --argjson f "$form_fields" '. + {form_fields: $f}')"
   foci-call "$(jq -nc --argjson p "$params" --argjson ih "$inc_headers" '{"tool":"http_request","params":$p,"include_headers":$ih}')"
 }
 `, name, helpCheck, guard, name)
@@ -523,7 +570,7 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local action="$1"; shift 2>/dev/null || true
-  local text="" priority="" tag="" query="" status="" id="" reason="" sort="" reverse="" limit=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" state=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --text) text="$2"; shift 2 ;;
@@ -532,13 +579,15 @@ func generateShellFunc(t *Tool) string {
       --query) query="$2"; shift 2 ;;
       --status) status="$2"; shift 2 ;;
       --id) id="$2"; shift 2 ;;
+      --ids) ids="$2"; shift 2 ;;
       --reason) reason="$2"; shift 2 ;;
       --sort) sort="$2"; shift 2 ;;
       --limit) limit="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
+      --state) state="$2"; shift 2 ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --text --priority --tag --query --status --id --reason --sort --reverse --limit" >&2
+        echo "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit --state" >&2
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
@@ -590,21 +639,27 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"get","id":$id}}')"
       ;;
     complete)
-      local params='{"action":"complete"}'
+      local params='{"action":"transition","state":"done"}'
+      [ -n "$state" ] && params="$(echo "$params" | jq --arg s "$state" '. + {state: $s}')"
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
       [ -n "$reason" ] && params="$(echo "$params" | jq --arg r "$reason" '. + {reason: $r}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     edit)
       local params='{"action":"edit"}'
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
       [ -n "$text" ] && params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
       [ -n "$priority" ] && params="$(echo "$params" | jq --arg p "$priority" '. + {priority: $p}')"
       [ -n "$tag" ] && params="$(echo "$params" | jq --arg g "$tag" '. + {tag: $g}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     remove)
-      foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"remove","id":$id}}')"
+      local params='{"action":"remove"}'
+      [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     *)
       echo "usage: %s <add|list|list-all|search|get|complete|edit|remove> [args...]" >&2

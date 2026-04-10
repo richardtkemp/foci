@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	osexec "os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -811,8 +812,8 @@ func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 		t.Error("foci_todo should handle --sort flag")
 	}
 	// Should have a sort variable declared
-	if !strings.Contains(content, `local text="" priority="" tag="" query="" status="" id="" reason="" sort="" reverse="" limit=""`) {
-		t.Error("foci_todo should declare sort, reverse, and limit variables")
+	if !strings.Contains(content, `local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" state=""`) {
+		t.Error("foci_todo should declare sort, reverse, limit, ids, and state variables")
 	}
 	// Should pass sort parameter to list action
 	if !strings.Contains(content, `[ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"`) {
@@ -1067,4 +1068,71 @@ func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) 
 		t.Fatalf("parse response: %v", err)
 	}
 	return resp.Result, resp.Error
+}
+
+func TestExecBridgeAllSchemaParamsWiredUp(t *testing.T) {
+	// Proves that every parameter in a tool's JSON schema has a corresponding
+	// flag handler in the generated shell function. Catches cases where the
+	// schema has params that the shell function silently ignores (they'd hit
+	// the --* error handler at runtime).
+	t.Parallel()
+
+	// Tools with ExecExport:true and their real schemas.
+	// Keep schemas in sync with the actual tool definitions.
+	tools := []struct {
+		name   string
+		params json.RawMessage
+	}{
+		{"web_search", json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`)},
+		{"memory_search", json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"sort":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"lines":{"type":"integer"}}}`)},
+		{"web_fetch", json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"raw":{"type":"boolean"}}}`)},
+		{"http_request", json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"body_file":{"type":"string"},"files":{"type":"array"},"form_fields":{"type":"object"},"query":{"type":"object"},"save_to":{"type":"string"},"save_from_json_path":{"type":"string"},"timeout":{"type":"integer"},"max_response_bytes":{"type":"integer"},"background":{"type":"boolean"}}}`)},
+		{"send_to_chat", json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file":{"type":"string"},"send_as":{"type":"string"}}}`)},
+		{"todo", json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"priority":{"type":"string"},"tag":{"type":"string"},"query":{"type":"string"},"status":{"type":"string"},"id":{"type":"integer"},"ids":{"type":"array"},"reason":{"type":"string"},"sort":{"type":"string"},"reverse":{"type":"boolean"},"limit":{"type":"integer"},"state":{"type":"string"}}}`)},
+		{"summary", json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"prompt":{"type":"string"}}}`)},
+		{"spawn", json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string"},"model":{"type":"string"},"context":{"type":"string"}}}`)},
+	}
+
+	for _, tc := range tools {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := &Tool{
+				Name:       tc.name,
+				ExecExport: true,
+				Parameters: tc.params,
+			}
+			funcBody := generateShellFunc(tool)
+
+			// Extract param names from schema.
+			var schema struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(tc.params, &schema); err != nil {
+				t.Fatalf("parse schema: %v", err)
+			}
+
+			// Get positional params to exclude.
+			posSet := make(map[string]bool)
+			if pos, ok := shellPositionalParams[tc.name]; ok {
+				for _, p := range pos {
+					posSet[p] = true
+				}
+			}
+
+			var missing []string
+			for param := range schema.Properties {
+				if posSet[param] {
+					continue
+				}
+				flag := "--" + strings.ReplaceAll(param, "_", "-")
+				// Look for the flag in a case pattern: either "flag)" or "flag="
+				if !strings.Contains(funcBody, flag+")") && !strings.Contains(funcBody, flag+"=") {
+					missing = append(missing, fmt.Sprintf("%s (flag %s)", param, flag))
+				}
+			}
+			if len(missing) > 0 {
+				sort.Strings(missing)
+				t.Errorf("schema params not wired up in shell function:\n  %s", strings.Join(missing, "\n  "))
+			}
+		})
+	}
 }
