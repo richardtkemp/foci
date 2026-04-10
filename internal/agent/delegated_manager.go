@@ -585,7 +585,7 @@ func (m *DelegatedManager) BackendInfo(sessionKey string) string {
 		status = "processing"
 	}
 
-	info := fmt.Sprintf("%s", status)
+	info := status
 	if ac, ok := mb.be.(delegator.ActivityChecker); ok {
 		if t := ac.LastActivity(); !t.IsZero() {
 			info += fmt.Sprintf(" | last event: %s ago", time.Since(t).Round(time.Second))

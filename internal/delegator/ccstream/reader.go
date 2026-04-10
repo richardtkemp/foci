@@ -22,6 +22,7 @@ type Handler interface {
 	OnToolProgress(msg *ToolProgressMessage)
 	OnStreamEvent(raw json.RawMessage)
 	OnRateLimit(msg *RateLimitEvent)
+	OnKeepAlive()
 	OnSystem(subtype string, raw json.RawMessage)
 	OnReaderStopped(err error)
 }
@@ -168,7 +169,10 @@ func (rd *Reader) dispatch(line []byte) {
 	case "user":
 		// Replay messages, only emitted with --replay-user-messages.
 	case "keep_alive":
-		// Heartbeat, no action needed.
+		// Heartbeat — touch activity so the idle/timeout tracker knows the
+		// stream is alive even when CC is blocked (e.g. waiting for a
+		// permission prompt response).
+		rd.handler.OnKeepAlive()
 	case "tool_use_summary":
 		// Informational summary of tool use.
 	case "auth_status":

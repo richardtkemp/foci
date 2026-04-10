@@ -991,6 +991,13 @@ func (b *Backend) OnControlCancelRequest(reqID string) {
 	b.handleControlCancel(reqID)
 }
 
+// OnKeepAlive handles heartbeat events. Touches activity so the idle/timeout
+// tracker sees the stream as alive during periods where CC is blocked (e.g.
+// waiting for a permission prompt response) and not emitting work events.
+func (b *Backend) OnKeepAlive() {
+	b.touchActivity()
+}
+
 // OnRateLimit handles rate limit events from CC's stdout.
 func (b *Backend) OnRateLimit(msg *RateLimitEvent) {
 	b.touchActivity()
