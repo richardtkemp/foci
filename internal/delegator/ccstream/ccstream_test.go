@@ -1980,10 +1980,10 @@ func TestOnStreamEvent_TextDelta(t *testing.T) {
 	// and fires the handler's OnText callback.
 	t.Parallel()
 
-	var handlerTexts []string
+	var deltas []string
 	b := &Backend{}
 	b.turnHandler = &delegator.EventHandler{
-		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
+		OnTextDelta: func(delta string) { deltas = append(deltas, delta) },
 	}
 
 	raw := json.RawMessage(`{
@@ -1998,8 +1998,8 @@ func TestOnStreamEvent_TextDelta(t *testing.T) {
 	}`)
 	b.OnStreamEvent(raw)
 
-	if len(handlerTexts) != 1 || handlerTexts[0] != "Hello" {
-		t.Errorf("handlerTexts = %v, want [Hello]", handlerTexts)
+	if len(deltas) != 1 || deltas[0] != "Hello" {
+		t.Errorf("deltas = %v, want [Hello]", deltas)
 	}
 }
 

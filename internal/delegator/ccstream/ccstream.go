@@ -1029,8 +1029,8 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 		b.turnMu.Lock()
 		handler := b.turnHandler
 		b.turnMu.Unlock()
-		if handler != nil && handler.OnText != nil {
-			handler.OnText(env.Event.Delta.Text)
+		if handler != nil && handler.OnTextDelta != nil {
+			handler.OnTextDelta(env.Event.Delta.Text)
 		}
 	}
 }

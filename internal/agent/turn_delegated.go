@@ -163,23 +163,30 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Per-turn handler: fires once when the watcher sees end_turn.
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(result *delegator.TurnResult) {
-			if result != nil {
-				ts.FinalText = result.Text
-				ts.FinalModel = result.Model
-				if result.Usage != nil {
-					ts.FinalUsage = &provider.Usage{
-						InputTokens:              result.Usage.InputTokens,
-						OutputTokens:             result.Usage.OutputTokens,
-						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
-						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
-					}
+	// Wire streaming and delivery callbacks from TurnCallbacks (set by the
+	// platform worker). TextDeltaObserver feeds the stream writer (edit-in-place);
+	// used when streaming is enabled. When streaming is disabled, Finalize
+	// sends the complete response.
+	cb := TurnCallbacksFromContext(ts.Ctx)
+	handler := &delegator.EventHandler{}
+	if cb != nil && cb.TextDeltaObserver != nil {
+		handler.OnTextDelta = cb.TextDeltaObserver
+	}
+	handler.OnTurnComplete = func(result *delegator.TurnResult) {
+		if result != nil {
+			ts.FinalText = result.Text
+			ts.FinalModel = result.Model
+			if result.Usage != nil {
+				ts.FinalUsage = &provider.Usage{
+					InputTokens:              result.Usage.InputTokens,
+					OutputTokens:             result.Usage.OutputTokens,
+					CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
+					CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
 				}
 			}
-			bt.LogUsage(ts)
-			close(ts.CompletionChan)
-		},
+		}
+		bt.LogUsage(ts)
+		close(ts.CompletionChan)
 	}
 	// Wire steer drain from the platform's MessageQueue into the backend
 	// so ccstream can inject steered messages at tool execution boundaries.
