@@ -145,6 +145,15 @@ type CompactionWaiter interface {
 	WaitForCompaction(ctx context.Context) error
 }
 
+// ActivityChecker is optionally implemented by backends that track stream
+// activity. Used by the orchestrator to replace fixed timeouts with
+// activity-based detection: alive (events arriving) vs dead (stream silent).
+type ActivityChecker interface {
+	// LastActivity returns the time of the most recent stream event from
+	// the backend. Zero time means no events have been received.
+	LastActivity() time.Time
+}
+
 // CommandOutputCapturer is optionally implemented by backends that can
 // capture local command output from the agent's TUI by polling for stable
 // pane content. The tmux backend implements this; the stream backend
