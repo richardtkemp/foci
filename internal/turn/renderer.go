@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"foci/internal/log"
-	"foci/internal/platform"
 )
 
 // TurnBackend provides platform-specific message rendering operations.
@@ -108,9 +107,6 @@ func (r *TurnRenderer) Cleanup() {
 // "else if !streamOutput", which dropped text when streaming was configured
 // but no stream deltas arrived. Now always delivers when no stream message exists.
 func (r *TurnRenderer) OnReply(text string) {
-	if platform.IsSilent(text) {
-		return
-	}
 	msgID := r.sw.Finish()
 	if msgID != "" {
 		// Streaming: reply content is in the stream message. Finalize it
@@ -249,11 +245,6 @@ func (r *TurnRenderer) Finalize(response string) {
 		return
 	}
 
-	// Guard against empty and silent responses (e.g. [[NO_RESPONSE]] sentinel).
-	if platform.IsSilent(response) {
-		r.backend.Logger().Debugf("silent response, not sending")
-		return
-	}
 
 	thinkingText := r.thinking.String()
 	showThinkMode := r.display.ShowThinking
