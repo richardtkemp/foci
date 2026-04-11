@@ -313,8 +313,8 @@ All three call `reloadAfterMutation()` internally, which reloads bootstrap, refr
 
 When `steer_mode` is enabled and a turn is active, user messages are buffered as "steers" and injected mid-turn rather than waiting for completion:
 
-- **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. The `SteerCheckFunc` on `TurnCallbacks` returns buffered steers from the platform's `MessageQueue`.
-- **Delegated transport:** Steer messages are drained via `checkAndSendSteers()` on the ccstream backend at tool execution boundaries (after `tool_use` blocks in `OnAssistant`, and during `OnToolProgress` heartbeats). Each steer is sent as a `SendUserWithPriority(text, PriorityNow)` message — "now" priority interrupts the current tool execution. The `SteerCheckFunc` is wired from `TurnCallbacks` onto the `EventHandler` at `RunInference` time.
+- **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. `steerBlocks` pulls from the `turnevent.Steerer` attached to ctx, which returns buffered steers from the platform's `MessageQueue`.
+- **Delegated transport:** Steer messages are drained via `checkAndSendSteers()` on the ccstream backend at tool execution boundaries (after `tool_use` blocks in `OnAssistant`, and during `OnToolProgress` heartbeats). Each steer is sent as a `SendUserWithPriority(text, PriorityNow)` message — "now" priority interrupts the current tool execution. The `SteerCheckFunc` on `delegator.EventHandler` is wired from the ctx-attached `turnevent.Steerer` at `RunInference` time.
 
 ### Backend Watcher — tmux (`internal/delegator/cctmux/watcher.go`)
 
@@ -494,47 +494,136 @@ Each user message then gets a metadata line prepended (NOT in system prompt — 
 
 Per-session state is tracked in `sessionMeta` (in-memory map on Agent). The metadata goes past the cache breakpoint, so it doesn't affect prompt caching.
 
+## Turn Event Stream (Sink Architecture)
+
+All per-turn output — text, thinking, tool calls, retries, typing-indicator lifecycle — flows through a single ordered event stream defined in `internal/agent/turnevent`. The agent is the sole producer; consumers attach a `Sink` to the turn context and receive events as they happen.
+
+### Contract
+
+```go
+// internal/agent/turnevent/event.go
+type Event interface{ turnEvent() }
+
+type (
+    TurnStart     struct{}
+    TextDelta     struct{ Delta string }
+    TextBlock     struct{ Text string; Phase Phase }  // Intermediate | Final
+    ThinkingDelta struct{ Delta string }
+    ThinkingBlock struct{ Text string }
+    ToolCall      struct{ Name, ID string; Args json.RawMessage }
+    ToolResult    struct{ Name, ID, Output string; IsError bool }
+    RetryNotice   struct{ Attempt int; Endpoint string; Err error }
+    RetrySuccess  struct{}
+    Activity      struct{}
+    TurnComplete  struct{ FinalText string; Usage *provider.Usage; Cost float64; Model string; Err error }
+)
+
+type Sink interface {
+    Emit(ctx context.Context, ev Event)
+}
+```
+
+- `TurnStart` opens every turn; `TurnComplete` closes every turn. Both always fire — the agent emits `TurnComplete` via `defer` from `HandleMessage` so error paths still surface final state.
+- Emits are sequential within a single turn (single-producer invariant: API path runs on the caller goroutine, delegated path runs on the watcher goroutine). Sinks don't need internal locks.
+- `HandleMessage` returns `error` only. Final text, usage, cost, and model are carried on `TurnComplete` — callers attach a `BufferSink` if they want the old string-return shape.
+
+### Where sinks live
+
+| Package | Sinks | Role |
+|---|---|---|
+| `internal/agent/turnevent` | `BufferSink`, `RecordingSink`, `NopSink`, `TeeSink`, `SinkFunc` | Leaf package: event types, Sink interface, context helpers, and pure-utility sinks. No platform or turn deps. |
+| `internal/turn/sink.go` | `StreamingSink`, `SessionSink` | Shared platform sinks. `StreamingSink` wraps a `TurnRenderer`, `SinkTracker`, and `platform.Connection` — used by Telegram and Discord workers. `SessionSink` delivers via `conn.SendToSession` — used by injected-turn and cross-session notify flows. |
+
+### How interactive platforms wire it
+
+Both Telegram (`internal/telegram/bot_worker.go`) and Discord (`internal/discord/worker.go`) workers share the same ~10-line pattern:
+
+```go
+tracker := newToolCallTracker(b, chatID, d)
+renderer := newTurnRenderer(b, origMsg, tracker, d)
+defer renderer.Cleanup()
+
+sink := turn.NewStreamingSink(renderer, tracker, b)
+ctx = turnevent.WithSink(ctx, sink)
+ctx = turnevent.WithSteerer(ctx, turnevent.SteererFunc(b.mq.DrainSteer))
+
+err := b.handler.HandleMessage(ctx, sk, texts, attachments)
+```
+
+`StreamingSink` routes each event type:
+- `TurnStart` → `conn.SetTyping(true)`
+- `TextDelta` → `renderer.OnTextDelta` (stream writer edit-in-place)
+- `TextBlock{Intermediate}` → `renderer.OnReply` (and marks sink as delivered)
+- `ThinkingBlock` → `renderer.OnThinking`
+- `ToolCall` / `ToolResult` → `tracker.ObserveToolCall` / `ObserveToolResult`
+- `RetryNotice` / `RetrySuccess` → `tracker.NotifyRetry` / `ClearRetryNotification`
+- `Activity` → `renderer.OnActivity`
+- `TurnComplete` → `renderer.Finalize` (if undelivered) or `renderer.Cleanup` + `tracker.CleanupPreview` (if delivered); `conn.SetTyping(false)`
+
+The delivered flag lives on `StreamingSink`, not on `TurnRenderer`. The renderer is now stateless across `OnReply → Finalize` boundaries. Double-delivery suppression for delegated turns (which stream text via `OnText` and also emit a `TurnComplete` with the same final text) happens automatically: the first `TextBlock{Intermediate}` sets `delivered = true`, and the terminal `TurnComplete` falls through to cleanup-only.
+
+### How headless callers wire it
+
+- **HTTP `/send`, `/wake`, voice, webhook** (`cmd/foci-gw/http_handlers.go`, `http.go`): build a `turnevent.NewBufferSink()`, attach via `WithSink`, call `HandleMessage`, return `buf.FinalText()` as the JSON response.
+- **Injected turns** (`cmd/foci-gw/agents_notify.go → deliverInjectedTurn`): build `turn.NewSessionSink(conn, sessionKey, trigger)`, attach, call `HandleMessage`. SessionSink owns its own delivered flag so intermediate text and final text don't double-deliver.
+- **Cross-session notify** (`agents_notify.go → newSessionNotifyFn`): same as injected turns — `SessionSink` routing through `conn.SendToSession`.
+- **Async notify with response routing** (`agents_notify.go → newAsyncNotifier`): `BufferSink` captures the target session's final text, then the response is routed back to the caller's session via `deliverInjectedTurn`.
+- **Internal hooks** (compaction memory, session-end memory, lifecycle, ratelimit replay): call `HandleMessage` without attaching any sink — the `NopSink` fallback absorbs events silently.
+- **Spawn tool** (`internal/tools/spawn.go`): `BufferSink` captures the branch session's response so the tool can return it as a `ToolResult` to the parent agent.
+- **Nudge extraction** (`internal/nudge/extract.go`): `BufferSink` captures the rule-extraction response for JSON parsing.
+
+### Steering (pull-direction)
+
+Steering is deliberately separate from the event stream because it flows the other way — the agent needs to ask the platform for pending user input at safe points inside the turn and receive a return value.
+
+```go
+// internal/agent/turnevent/steerer.go
+type Steerer interface {
+    PendingSteers() []string
+}
+```
+
+Interactive platforms attach a `Steerer` via `turnevent.WithSteerer(ctx, ...)`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries (API path) or via the delegator's `SteerCheckFunc` hook (delegated path).
+
 ## Deferred Replies
 
-When the model responds with text alongside `tool_use` blocks (e.g., "Looking into this..."), the text is sent to Telegram before tool execution begins. This allows the agent to acknowledge a message and deliver the full response later.
+When the model responds with text alongside `tool_use` blocks (e.g., "Looking into this..."), the text is sent to the platform before tool execution begins. This allows the agent to acknowledge a message and deliver the full response later.
 
 Controlled by `batch_partial_assistant_messages` (bool, default `false`):
-- **false (default):** Text is sent immediately via `ReplyFunc` each time it appears in a response.
-- **true:** Text is accumulated in a `strings.Builder` and returned concatenated from `HandleMessage` when the turn completes.
+- **false (default):** Text is sent immediately via a `TextBlock{Intermediate}` event each time it appears in a response.
+- **true:** Text is accumulated in a `strings.Builder` and folded into `ts.FinalText` when the turn completes; only the combined text reaches the sink via `TurnComplete.FinalText`.
 
 **Flow (batch=false, default):**
-1. Caller creates a `TurnCallbacks` struct and attaches it via `agent.WithTurnCallbacks(ctx, cb)`
+1. Caller attaches a `turnevent.Sink` via `turnevent.WithSink(ctx, sink)`
 2. Agent loop detects text in a `tool_use` response
-3. `sendIntermediateCtx(ctx)` extracts the ReplyFunc from context and calls it
+3. `emitIntermediateText(ctx, text)` emits `TextBlock{Intermediate}` through the sink
 4. Agent continues executing tools
-5. Final `end_turn` response is returned from `HandleMessage` as usual
+5. The terminal `TurnComplete` carries the final response text
 
 **Flow (batch=true):**
 1. Agent loop detects text in a `tool_use` response and appends to `batchedText`
 2. On `end_turn`, batched text is prepended to final text (joined with `\n\n`)
-3. Concatenated text is returned from `HandleMessage`
+3. Concatenated text is carried as `TurnComplete.FinalText`
 
-Callbacks are **context-scoped**, not agent-global. Each turn gets its own isolated callbacks.
-
-Both Telegram-triggered and async callers (tmux watch, exec auto-background) now set up `TurnCallbacks` with a `ReplyFunc`. The async_notify path resolves the bot early and attaches callbacks before calling `HandleMessage`, so intermediate text is delivered during system-triggered turns.
+Sinks are **context-scoped**, not agent-global. Each turn gets its own sink.
 
 ## Tool Call Visibility
 
 Tool call display is controlled by `show_tool_calls` (string: `"off"`, `"preview"`, `"full"`). Configurable globally in `[telegram]` and per-agent in `[[agents]]`. Bool values are accepted for backwards compat (`true` → `"preview"`, `false` → `"off"`).
 
 **Modes:**
-- **`"off"`** (default) — Tool calls are hidden. `ToolCallObserver` returns immediately.
+- **`"off"`** (default) — Tool calls are hidden. The tracker's `ObserveToolCall` returns immediately.
 - **`"preview"`** — Tool calls are shown via send+edit, then the final response **overwrites** the tool message (or falls back to a new message if too long).
 - **`"full"`** — Tool calls are shown via send+edit (same as preview), but the final response is always sent as a **separate new message**, preserving the tool call log in chat.
 
-Both `ToolCallObserver` and `ReplyFunc` are part of the context-scoped `TurnCallbacks` struct — per-turn, not agent-global.
+`ToolCall` and `ToolResult` are `turnevent.Event` types routed by `StreamingSink` directly to the platform tracker — there is no separate `BuildTurnObservers` wiring.
 
-**Ordering with deferred replies:** When intermediate text fires between tool loops, `ReplyFunc` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
+**Ordering with deferred replies:** When intermediate text fires between tool loops, `OnReply` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
 
 **Flow (multi-loop turn, preview/full):**
 1. Loop 1: API returns `[tool_use(exec)]` — `notifyToolCall` sends message A (`toolMsgID=A`)
 2. Loop 2: API returns `[text("Checking..."), tool_use(read)]`
-   - `sendIntermediate` fires `ReplyFunc` → sends message B, resets `toolMsgID=0`
+   - `emitIntermediateText` emits `TextBlock{Intermediate}` → `StreamingSink` calls `renderer.OnReply` → sends message B, resets `toolMsgID=0`
    - `notifyToolCall` sends message C (`toolMsgID=C`, fresh because reset)
 3. Final:
    - **preview**: `end_turn` response edits message C with the answer
