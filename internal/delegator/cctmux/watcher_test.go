@@ -575,6 +575,55 @@ func TestHandleUser_UnmatchedToolResult(t *testing.T) {
 	}
 }
 
+// TestProcessLine_SkipsSidechainEntries proves that sidechain entries (sub-agent
+// turns spawned via the Agent tool) are filtered out before dispatch — CC
+// writes them into the same JSONL as the parent and we must not fire OnText /
+// OnToolStart / OnToolEnd / OnTurnComplete for them on the parent handler.
+func TestProcessLine_SkipsSidechainEntries(t *testing.T) {
+	w := &sessionWatcher{}
+
+	var textEvents []string
+	var toolStarts []string
+	var toolEnds []string
+	handler := &delegator.EventHandler{
+		OnText:       func(text string) { textEvents = append(textEvents, text) },
+		OnToolStart:  func(_, name, _ string) { toolStarts = append(toolStarts, name) },
+		OnToolEnd:    func(_, name, _ string, _ bool) { toolEnds = append(toolEnds, name) },
+		OnTurnComplete: func(_ *delegator.TurnResult) {
+			t.Error("OnTurnComplete fired for sidechain entry")
+		},
+	}
+
+	// A sidechain assistant entry with both text and tool_use blocks.
+	assistantLine := `{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"sub-agent text"},{"type":"tool_use","id":"tu_nested","name":"Read","input":{}}],"stop_reason":"end_turn"}}`
+	w.processLine([]byte(assistantLine), handler)
+
+	// A sidechain user entry with a tool_result block.
+	userLine := `{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_nested","content":"nested result"}]}}`
+	w.processLine([]byte(userLine), handler)
+
+	// A sidechain turn_duration system entry.
+	systemLine := `{"type":"system","subtype":"turn_duration","isSidechain":true}`
+	w.processLine([]byte(systemLine), handler)
+
+	if len(textEvents) != 0 {
+		t.Errorf("OnText fired for sidechain: %v", textEvents)
+	}
+	if len(toolStarts) != 0 {
+		t.Errorf("OnToolStart fired for sidechain: %v", toolStarts)
+	}
+	if len(toolEnds) != 0 {
+		t.Errorf("OnToolEnd fired for sidechain: %v", toolEnds)
+	}
+	// Per-turn state must not be touched by sidechain traffic.
+	if w.turnText != "" {
+		t.Errorf("turnText mutated by sidechain: %q", w.turnText)
+	}
+	if w.turnTools != 0 {
+		t.Errorf("turnTools mutated by sidechain: %d", w.turnTools)
+	}
+}
+
 // TestHandleUser_FiresToolEndWithName proves that handleAssistant records the
 // id→name pairing from tool_use blocks and handleUser looks it up when
 // dispatching OnToolEnd, so downstream consumers (tracker hint functions)

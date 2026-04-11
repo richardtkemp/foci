@@ -678,11 +678,18 @@ func (b *Backend) LastActivity() time.Time {
 }
 
 // OnAssistant handles assistant messages from CC's stdout.
+//
+// Sub-agent messages (ParentToolUseID != nil) are filtered out of the
+// turn-state updates and handler callbacks below — sub-agents run their own
+// turn via the Agent tool, and their text / tool_use blocks belong to the
+// sub-agent's transcript rather than the parent turn the caller is
+// observing. Without this guard, sub-agent text would fire OnText onto the
+// parent's StreamingSink (rendering nested text twice) and sub-agent
+// tool_use blocks would fire OnToolStart onto the parent tracker. Model /
+// usage tracking is already gated on isTopLevel to protect the primary
+// model name from subagent haiku overrides.
 func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
-	// Track model and per-call usage from top-level assistant messages only.
-	// Subagent messages (parent_tool_use_id != nil) carry the subagent model
-	// (e.g. haiku) which must not overwrite the primary model.
 	isTopLevel := msg.ParentToolUseID == nil
 	b.mu.Lock()
 	if isTopLevel && msg.Message.Model != "" {
@@ -693,6 +700,10 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		b.lastUsage = &u
 	}
 	b.mu.Unlock()
+
+	if !isTopLevel {
+		return
+	}
 
 	b.turnMu.Lock()
 	handler := b.turnHandler
@@ -1015,28 +1026,39 @@ func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
 	b.checkAndSendSteers()
 }
 
-// OnStreamEvent handles token-level streaming events.
+// OnStreamEvent handles token-level streaming events. CC wraps Anthropic
+// SDK stream parts in these envelopes (services/api/claude.ts:2300), so the
+// event payload is a verbatim SDK `content_block_delta` with subtypes like
+// `text_delta` and `thinking_delta` that we extract separately.
 func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 	b.touchActivity()
-	// Quick extraction of text deltas for streaming display.
 	var env struct {
 		Event struct {
 			Type  string `json:"type"`
 			Delta struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type     string `json:"type"`
+				Text     string `json:"text"`
+				Thinking string `json:"thinking"`
 			} `json:"delta"`
 		} `json:"event"`
 	}
-	if json.Unmarshal(raw, &env) == nil &&
-		env.Event.Type == "content_block_delta" &&
-		env.Event.Delta.Type == "text_delta" &&
-		env.Event.Delta.Text != "" {
-		b.turnMu.Lock()
-		handler := b.turnHandler
-		b.turnMu.Unlock()
-		if handler != nil && handler.OnTextDelta != nil {
+	if json.Unmarshal(raw, &env) != nil || env.Event.Type != "content_block_delta" {
+		return
+	}
+	b.turnMu.Lock()
+	handler := b.turnHandler
+	b.turnMu.Unlock()
+	if handler == nil {
+		return
+	}
+	switch env.Event.Delta.Type {
+	case "text_delta":
+		if env.Event.Delta.Text != "" && handler.OnTextDelta != nil {
 			handler.OnTextDelta(env.Event.Delta.Text)
+		}
+	case "thinking_delta":
+		if env.Event.Delta.Thinking != "" && handler.OnThinkingDelta != nil {
+			handler.OnThinkingDelta(env.Event.Delta.Thinking)
 		}
 	}
 }

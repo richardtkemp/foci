@@ -35,6 +35,16 @@ type sessionEntry struct {
 	CWD        string          `json:"cwd,omitempty"`
 	Message    *messagePayload `json:"message,omitempty"`
 
+	// IsSidechain marks entries written by a subagent sidechain (spawned via
+	// the Agent tool) rather than the main conversation thread. CC writes
+	// sub-agent turns into the same JSONL file as the parent and filters
+	// them out of /resume and /branch via this flag (see claude-code
+	// src/commands/resume/resume.tsx:192 and src/commands/branch/branch.ts:95).
+	// The watcher skips sidechain entries so sub-agent text, tool calls,
+	// tool results, and turn-duration events don't leak onto the parent
+	// turn handler.
+	IsSidechain bool `json:"isSidechain,omitempty"`
+
 	// system/turn_duration fields
 	DurationMs   int `json:"durationMs,omitempty"`
 	MessageCount int `json:"messageCount,omitempty"`

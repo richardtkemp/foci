@@ -236,11 +236,12 @@ type StartOptions struct {
 // consumers can correlate OnToolEnd with the originating OnToolStart without
 // having to match by name or rely on ordering.
 type EventHandler struct {
-	OnText         func(text string)                                          // complete text block from the agent
-	OnTextDelta    func(delta string)                                         // streaming text delta (content_block_delta)
-	OnToolStart    func(id, name, input string)                               // tool execution began
-	OnToolEnd      func(id, name, output string, isError bool)                // tool execution finished
-	OnTurnComplete func(result *TurnResult)                                   // turn finished
+	OnText           func(text string)                             // complete text block from the agent
+	OnTextDelta      func(delta string)                            // streaming text delta (content_block_delta)
+	OnThinkingDelta  func(delta string)                            // streaming thinking delta (content_block_delta)
+	OnToolStart      func(id, name, input string)                  // tool execution began
+	OnToolEnd        func(id, name, output string, isError bool)   // tool execution finished
+	OnTurnComplete   func(result *TurnResult)                      // turn finished
 
 	// SteerCheckFunc is called by the backend at tool execution boundaries
 	// to check for pending steer messages. Non-blocking; returns nil if no

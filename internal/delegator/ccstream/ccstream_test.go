@@ -1154,6 +1154,56 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	}
 }
 
+// TestOnAssistant_SubagentDoesNotFireEvents proves that a subagent assistant
+// message (ParentToolUseID != nil) does not fire OnText or OnToolStart on the
+// parent turn handler. Subagent text/tool_use blocks belong to the subagent's
+// own transcript and must not leak onto the parent StreamingSink or tracker.
+func TestOnAssistant_SubagentDoesNotFireEvents(t *testing.T) {
+	t.Parallel()
+
+	var textEvents []string
+	var toolStarts []string
+
+	b := &Backend{}
+	handler := &delegator.EventHandler{
+		OnText:      func(text string) { textEvents = append(textEvents, text) },
+		OnToolStart: func(_, name, _ string) { toolStarts = append(toolStarts, name) },
+	}
+	b.beginTurn(handler)
+
+	parentID := "toolu_parent"
+	b.OnAssistant(&AssistantMessage{
+		ParentToolUseID: &parentID,
+		Message: BetaMessage{
+			Model: "claude-haiku-4-5",
+			Content: []ContentBlock{
+				{Type: "text", Text: "sub-agent reply"},
+				{Type: "tool_use", ID: "tu_nested", Name: "Read", Input: json.RawMessage(`{}`)},
+			},
+			Usage: TokenUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	if len(textEvents) != 0 {
+		t.Errorf("OnText fired for subagent: %v", textEvents)
+	}
+	if len(toolStarts) != 0 {
+		t.Errorf("OnToolStart fired for subagent: %v", toolStarts)
+	}
+
+	// Subagent content must not touch the parent's per-turn state either.
+	b.turnMu.Lock()
+	turnText := b.turnText.String()
+	turnTools := b.turnTools
+	b.turnMu.Unlock()
+	if turnText != "" {
+		t.Errorf("turnText mutated by subagent: %q", turnText)
+	}
+	if turnTools != 0 {
+		t.Errorf("turnTools mutated by subagent: %d", turnTools)
+	}
+}
+
 func TestOnResult_SubagentDoesNotOverrideModel(t *testing.T) {
 	// Verifies that a subagent's assistant message (parent_tool_use_id set)
 	// does not overwrite lastModel. The primary model from top-level assistant
@@ -2006,7 +2056,7 @@ func TestOnStreamEvent_TextDelta(t *testing.T) {
 }
 
 func TestOnStreamEvent_NonTextDelta(t *testing.T) {
-	// Verifies OnStreamEvent ignores events that are not text_delta.
+	// Verifies OnStreamEvent ignores events that are not text_delta or thinking_delta.
 	t.Parallel()
 
 	var called bool
@@ -2029,6 +2079,70 @@ func TestOnStreamEvent_NonTextDelta(t *testing.T) {
 
 	if called {
 		t.Error("OnText should not be called for non-text_delta events")
+	}
+}
+
+// TestOnStreamEvent_ThinkingDelta proves that thinking_delta subtypes in
+// content_block_delta stream events dispatch to OnThinkingDelta (not
+// OnTextDelta). This is the path that carries per-token thinking streaming
+// from CC — previously dropped, now wired through turnevent.ThinkingDelta.
+func TestOnStreamEvent_ThinkingDelta(t *testing.T) {
+	t.Parallel()
+
+	var textDeltas []string
+	var thinkingDeltas []string
+	b := &Backend{}
+	b.turnHandler = &delegator.EventHandler{
+		OnTextDelta:     func(delta string) { textDeltas = append(textDeltas, delta) },
+		OnThinkingDelta: func(delta string) { thinkingDeltas = append(thinkingDeltas, delta) },
+	}
+
+	raw := json.RawMessage(`{
+		"type": "stream_event",
+		"event": {
+			"type": "content_block_delta",
+			"delta": {
+				"type": "thinking_delta",
+				"thinking": "I should check "
+			}
+		}
+	}`)
+	b.OnStreamEvent(raw)
+
+	if len(textDeltas) != 0 {
+		t.Errorf("OnTextDelta fired for thinking_delta: %v", textDeltas)
+	}
+	if len(thinkingDeltas) != 1 || thinkingDeltas[0] != "I should check " {
+		t.Errorf("thinkingDeltas = %v, want [I should check ]", thinkingDeltas)
+	}
+}
+
+// TestOnStreamEvent_EmptyThinking proves empty thinking_delta payloads are
+// dropped, matching the existing text_delta behaviour and keeping downstream
+// emit helpers from firing no-op events.
+func TestOnStreamEvent_EmptyThinking(t *testing.T) {
+	t.Parallel()
+
+	var called bool
+	b := &Backend{}
+	b.turnHandler = &delegator.EventHandler{
+		OnThinkingDelta: func(delta string) { called = true },
+	}
+
+	raw := json.RawMessage(`{
+		"type": "stream_event",
+		"event": {
+			"type": "content_block_delta",
+			"delta": {
+				"type": "thinking_delta",
+				"thinking": ""
+			}
+		}
+	}`)
+	b.OnStreamEvent(raw)
+
+	if called {
+		t.Error("OnThinkingDelta should not fire for empty thinking delta")
 	}
 }
 
