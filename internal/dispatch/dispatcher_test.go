@@ -122,6 +122,39 @@ func TestDispatchCallback(t *testing.T) {
 	}
 }
 
+// TestDispatchSlashStopHandled verifies that /stop is dispatched via the
+// registry when a StopCommand is registered.
+func TestDispatchSlashStopHandled(t *testing.T) {
+	reg := command.NewRegistry()
+	reg.Register(command.StopCommand())
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+
+	result := d.DispatchText(context.Background(), "/stop", 12345, "user1")
+	if !result.Handled {
+		t.Error("expected /stop to be handled by dispatcher")
+	}
+	if result.Response.Text != "Stopped." {
+		t.Errorf("unexpected response: %q", result.Response.Text)
+	}
+}
+
+// TestDispatchSlashDoneHandled verifies that /done is dispatched via the
+// registry when a DoneCommand is registered, and returns the primary-bot
+// "nothing to detach" message.
+func TestDispatchSlashDoneHandled(t *testing.T) {
+	reg := command.NewRegistry()
+	reg.Register(command.DoneCommand())
+	d := NewDispatcher(reg, command.CommandContext{}, "agent1")
+
+	result := d.DispatchText(context.Background(), "/done", 12345, "user1")
+	if !result.Handled {
+		t.Error("expected /done to be handled by dispatcher")
+	}
+	if result.Response.Text != "Nothing to detach — this is the main session." {
+		t.Errorf("unexpected response: %q", result.Response.Text)
+	}
+}
+
 // TestSetSessionKeyFunc verifies that a custom session key resolver overrides
 // the default NewChatSessionKey derivation.
 func TestSetSessionKeyFunc(t *testing.T) {
