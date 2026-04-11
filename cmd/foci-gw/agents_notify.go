@@ -102,7 +102,8 @@ func newAsyncNotifier(
 					ReplyFunc: func(text string) {
 						// Intermediate replies are agent output — use SendToSession
 						// to avoid prepending the system injection header.
-						if err := conn.SendToSession(target, text); err != nil {
+						// REMOVE_ME: debug tag for delivery path tracing
+						if err := conn.SendToSession(target, "[notify:ReplyFunc] "+text); err != nil {
 							log.Errorf(trigger, "intermediate platform delivery: %v", err)
 						}
 					},
@@ -133,7 +134,8 @@ func newAsyncNotifier(
 			}
 			// Final reply is agent output — use SendToSession to avoid
 			// prepending the system injection header.
-			if err := conn.SendToSession(target, resp); err != nil {
+			// REMOVE_ME: debug tag for delivery path tracing
+			if err := conn.SendToSession(target, "[notify:resp] "+resp); err != nil {
 				log.Errorf(trigger, "platform delivery: %v", err)
 			}
 		}()
@@ -251,7 +253,8 @@ func deliverInjectedTurn(
 
 		cb := &agent.TurnCallbacks{
 			ReplyFunc: func(text string) {
-				if err := conn.SendToSession(sessionKey, text); err != nil {
+				// REMOVE_ME: debug tag for delivery path tracing
+				if err := conn.SendToSession(sessionKey, "[inject:ReplyFunc] "+text); err != nil {
 					log.Errorf(trigger, "intermediate platform delivery: %v", err)
 				}
 			},
@@ -274,7 +277,8 @@ func deliverInjectedTurn(
 		log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
 		return
 	}
-	if err := conn.SendToSession(sessionKey, resp); err != nil {
+	// REMOVE_ME: debug tag for delivery path tracing
+	if err := conn.SendToSession(sessionKey, "[inject:resp] "+resp); err != nil {
 		log.Errorf(trigger, "platform delivery: %v", err)
 	}
 }
