@@ -543,7 +543,8 @@ func TestPromptsCommandReinstallSequentialProgression(t *testing.T) {
 	}
 }
 
-// TestPromptsCommandDiff verifies diff computes correctly and returns result text.
+// TestPromptsCommandDiff verifies diff computes correctly, returns result text,
+// and populates DocPath with a real temp file so the platform layer can send it.
 func TestPromptsCommandDiff(t *testing.T) {
 	cmd := PromptsCommand()
 	cc := promptsCC(PromptsData{
@@ -558,7 +559,7 @@ func TestPromptsCommandDiff(t *testing.T) {
 			"keepalive": "default keepalive\noriginal text",
 		},
 	})
-	// cc.Client and cc.ConnMgr are nil — no summary, no doc send
+	// cc.Client is nil — no summary generated, but the diff + temp file still land.
 
 	result, err := cmd.Execute(context.Background(), Request{Args: "diff keepalive"}, cc)
 	if err != nil {
@@ -569,6 +570,45 @@ func TestPromptsCommandDiff(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "lines changed") {
 		t.Errorf("expected 'lines changed' in: %s", result.Text)
+	}
+	if result.DocPath == "" {
+		t.Fatal("expected DocPath to be set so platform can send the diff")
+	}
+	t.Cleanup(func() { _ = os.Remove(result.DocPath) })
+	body, err := os.ReadFile(result.DocPath)
+	if err != nil {
+		t.Fatalf("read DocPath: %v", err)
+	}
+	if !strings.Contains(string(body), "# Prompt diff: keepalive") {
+		t.Errorf("temp file missing header, got:\n%s", body)
+	}
+	if !strings.Contains(string(body), "```diff") {
+		t.Errorf("temp file missing diff fence, got:\n%s", body)
+	}
+}
+
+// TestPromptsCommandChainKeyboardDiffDataIncludesSubcommand verifies that buttons
+// produced for /prompts diff encode the "diff " prefix, so clicking one re-dispatches
+// "/prompts diff <label>" rather than "/prompts <label>" (which would just match nothing
+// and return usage).
+func TestPromptsCommandChainKeyboardDiffDataIncludesSubcommand(t *testing.T) {
+	cmd := PromptsCommand()
+	cc := promptsCC(PromptsData{
+		Prompts: []PromptInfo{{Label: "memory_formation"}, {Label: "keepalive"}},
+		ResolvedTexts: map[string]string{
+			"memory_formation": "t",
+			"keepalive":        "t",
+		},
+	})
+
+	opts := cmd.ChainKeyboard(context.Background(), "diff", cc)
+	if len(opts) != 2 {
+		t.Fatalf("expected 2 opts, got %d", len(opts))
+	}
+	for _, o := range opts {
+		if !strings.HasPrefix(o.Data, "diff ") {
+			t.Errorf("button Data should start with 'diff ', got %q", o.Data)
+		}
 	}
 }
 

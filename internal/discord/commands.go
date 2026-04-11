@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"os"
 	"strings"
 
 	"foci/internal/dispatch"
@@ -46,7 +47,8 @@ func (b *Bot) renderCommandOutcome(msg *discordgo.Message, outcome *dispatch.Com
 			b.sendReply(msg, result.Response.Text)
 		}
 		if result.Response.DocPath != "" {
-			_ = b.SendDocument(result.Response.DocPath)
+			_ = b.SendDocumentToChat(chatIDFromMsg(msg), result.Response.DocPath)
+			_ = os.Remove(result.Response.DocPath)
 		}
 		return true
 	}

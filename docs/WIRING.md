@@ -202,7 +202,7 @@ Slash commands (`/ping`, `/model`, etc.) are dispatched through a three-layer ar
 
 2. **Shared dispatch** (`dispatch/dispatcher.go`): Platform-agnostic routing logic. Detects dot-commands (`.model`) vs slash-commands (`/model`), resolves session keys, and builds a `command.Request`. Returns a `dispatch.Result` with `Handled`, `Response`, `SessionKey`, `UserID`.
 
-3. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`.
+3. **Command layer** (`command/registry.go`): Receives `Request` and `CommandContext` (platform-agnostic dependencies), executes the command, and returns a `Response` with `Text` and optional `DocPath`. When `DocPath` is set, it points to a temp file that the platform layer sends to the originating chat via `SendDocumentToChat(msg's chat ID, path)` and then removes. This keeps the send scoped to the exact chat that invoked the command, avoiding reliance on global "last channel" state. The HTTP `/command` endpoint handles `DocPath` by sending via `ForSessionOrPrimary(sessionKey, agentID)`.
 
 **Dispatch flow:**
 ```
