@@ -305,12 +305,8 @@ func buildButtonRows(buttons []platform.ButtonChoice, callbackPrefix string) [][
 
 // SendText sends a text message to the default chat without any header.
 // Returns an error if no chat ID is available.
-// Silently drops messages matching platform.IsSilent (sentinels, empty).
+// Delegates to SendTextToChat, which handles IsSilent filtering.
 func (b *Bot) SendText(text string) error {
-	if platform.IsSilent(text) {
-		return nil
-	}
-
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		// Fall back to last known chat (e.g. when no state store is configured).
@@ -321,9 +317,7 @@ func (b *Bot) SendText(text string) error {
 	if chatID == 0 {
 		return fmt.Errorf("no chat ID — no default chat configured")
 	}
-
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
-	return nil
+	return b.SendTextToChat(chatID, text)
 }
 
 
@@ -341,11 +335,8 @@ func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
 // SendToSession sends a text message (without header) to the chat
 // associated with the given session key. Falls back to the bot's default chat
 // if the session key doesn't contain a chat ID.
+// Delegates to SendTextToChat, which handles IsSilent filtering.
 func (b *Bot) SendToSession(sessionKey, text string) error {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-
 	chatID := session.ChatIDFromKey(sessionKey)
 	if chatID == 0 {
 		chatID = b.DefaultChatID()
@@ -353,7 +344,5 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 	if chatID == 0 {
 		return fmt.Errorf("no chat ID for session %q and no default chat", sessionKey)
 	}
-
-	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
-	return nil
+	return b.SendTextToChat(chatID, text)
 }
