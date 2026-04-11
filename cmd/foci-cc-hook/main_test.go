@@ -42,8 +42,9 @@ func decodeOutput(t *testing.T, raw string) hookOutput {
 
 // runHook invokes the same logic main() runs, but against an in-memory
 // input/output pair so the tests don't need to shell out. Keeps the unit
-// test deterministic and fast.
-func runHook(t *testing.T, body []byte) hookOutput {
+// test deterministic and fast. installID simulates the --install argv
+// foci passes in at install time.
+func runHook(t *testing.T, body []byte, installID string) hookOutput {
 	t.Helper()
 	var in hookInput
 	if err := json.Unmarshal(body, &in); err != nil {
@@ -51,6 +52,7 @@ func runHook(t *testing.T, body []byte) hookOutput {
 	}
 	out := hookOutput{
 		HookEvent: in.HookEventName,
+		InstallID: installID,
 		ToolUseID: in.ToolUseID,
 		ToolName:  in.ToolName,
 		AgentID:   in.AgentID,
@@ -81,7 +83,7 @@ func TestMain_PostToolUse(t *testing.T) {
 		"tool_response": "contents of the file",
 		"session_id": "sess-1"
 	}`)
-	out := runHook(t, body)
+	out := runHook(t, body, "test-id")
 
 	if out.HookEvent != "PostToolUse" {
 		t.Errorf("HookEvent = %q, want PostToolUse", out.HookEvent)
@@ -114,7 +116,7 @@ func TestMain_PostToolUseFailure(t *testing.T) {
 		"is_interrupt": false,
 		"is_timeout": false
 	}`)
-	out := runHook(t, body)
+	out := runHook(t, body, "test-id")
 
 	if !out.IsError {
 		t.Error("IsError = false, want true for PostToolUseFailure")
@@ -137,7 +139,7 @@ func TestMain_Subagent(t *testing.T) {
 		"tool_response": "ok",
 		"agent_id": "agent-sub-42"
 	}`)
-	out := runHook(t, body)
+	out := runHook(t, body, "test-id")
 
 	if out.AgentID != "agent-sub-42" {
 		t.Errorf("AgentID = %q, want agent-sub-42", out.AgentID)
@@ -161,7 +163,7 @@ func TestMain_TruncatesLargeToolResponse(t *testing.T) {
 		"tool_use_id": "toolu_big",
 		"tool_response": ` + string(encoded) + `
 	}`)
-	out := runHook(t, body)
+	out := runHook(t, body, "test-id")
 
 	if len(out.ToolResponse) > maxFieldBytes+len("...[truncated]") {
 		t.Errorf("truncated length = %d, want <= %d", len(out.ToolResponse), maxFieldBytes+len("...[truncated]"))
@@ -182,8 +184,44 @@ func TestMain_IsInterruptSetsError(t *testing.T) {
 		"tool_response": "",
 		"is_interrupt": true
 	}`)
-	out := runHook(t, body)
+	out := runHook(t, body, "test-id")
 	if !out.IsError {
 		t.Error("IsError = false, want true when is_interrupt=true")
+	}
+}
+
+// TestParseInstallID_Forms proves the argv parser accepts both the
+// space-separated and equals-separated forms, returns empty when absent,
+// and ignores unrelated flags.
+func TestParseInstallID_Forms(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"space form", []string{"foci-cc-hook", "--install", "abc123"}, "abc123"},
+		{"equals form", []string{"foci-cc-hook", "--install=xyz789"}, "xyz789"},
+		{"absent", []string{"foci-cc-hook"}, ""},
+		{"dangling", []string{"foci-cc-hook", "--install"}, ""},
+		{"other flag", []string{"foci-cc-hook", "--other", "val", "--install", "id-2"}, "id-2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseInstallID(tc.args)
+			if got != tc.want {
+				t.Errorf("parseInstallID(%v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMain_InstallIDEchoed proves the install ID passed on argv is echoed
+// back in the output so ccstream's handleHookResponse can filter by
+// originating backend.
+func TestMain_InstallIDEchoed(t *testing.T) {
+	body := []byte(`{"hook_event_name":"PostToolUse","tool_name":"Read","tool_use_id":"t1","tool_response":"x"}`)
+	out := runHook(t, body, "backend-xyz")
+	if out.InstallID != "backend-xyz" {
+		t.Errorf("InstallID = %q, want backend-xyz", out.InstallID)
 	}
 }

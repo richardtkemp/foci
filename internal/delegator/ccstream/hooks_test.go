@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"foci/internal/delegator"
@@ -55,11 +56,11 @@ func readHooks(t *testing.T, path string) hooksConfig {
 	return h
 }
 
-// TestEnsureFociEntry_AddsWhenAbsent proves ensureFociEntry creates a new
+// TestEnsureFociEntry_AddsWhenAbsent proves appendFociEntry creates a new
 // matcher entry for foci's command when nothing matching is present.
 func TestEnsureFociEntry_AddsWhenAbsent(t *testing.T) {
 	spec := fociHookSpec("/usr/local/bin/foci-cc-hook")
-	matchers := ensureFociEntry(nil, spec)
+	matchers := appendFociEntry(nil, spec)
 
 	if len(matchers) != 1 {
 		t.Fatalf("matchers = %d, want 1", len(matchers))
@@ -77,8 +78,8 @@ func TestEnsureFociEntry_AddsWhenAbsent(t *testing.T) {
 // foci's entries linger and a new foci starts up in the same workdir.
 func TestEnsureFociEntry_Idempotent(t *testing.T) {
 	spec := fociHookSpec("/bin/foci-cc-hook")
-	once := ensureFociEntry(nil, spec)
-	twice := ensureFociEntry(once, spec)
+	once := appendFociEntry(nil, spec)
+	twice := appendFociEntry(once, spec)
 
 	if len(twice) != 1 {
 		t.Errorf("after double install matchers = %d, want 1", len(twice))
@@ -95,7 +96,7 @@ func TestEnsureFociEntry_PreservesUserHooks(t *testing.T) {
 			{Type: "command", Command: "/home/user/bin/format.sh"},
 		},
 	}
-	merged := ensureFociEntry([]hookMatcher{userMatcher}, fociHookSpec("/bin/foci-cc-hook"))
+	merged := appendFociEntry([]hookMatcher{userMatcher}, fociHookSpec("/bin/foci-cc-hook"))
 
 	if len(merged) != 2 {
 		t.Fatalf("matchers = %d, want 2 (user + foci)", len(merged))
@@ -164,8 +165,8 @@ func TestInstallHooks_CreatesSettingsFile(t *testing.T) {
 	}
 	hooks := extractHooks(top)
 	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = ensureFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = ensureFociEntry(hooks[eventPostToolUseFailure], spec)
+	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
+	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
 	if err := writeHooks(settingsPath, top, hooks); err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +202,8 @@ func TestInstallHooks_MergesWithExisting(t *testing.T) {
 	}
 	hooks := extractHooks(top)
 	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = ensureFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = ensureFociEntry(hooks[eventPostToolUseFailure], spec)
+	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
+	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
 	if err := writeHooks(settingsPath, top, hooks); err != nil {
 		t.Fatal(err)
 	}
@@ -246,8 +247,8 @@ func TestUninstallHooks_RemovesEntries(t *testing.T) {
 	top, _ := loadSettings(settingsPath)
 	hooks := extractHooks(top)
 	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = ensureFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = ensureFociEntry(hooks[eventPostToolUseFailure], spec)
+	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
+	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
 	if err := writeHooks(settingsPath, top, hooks); err != nil {
 		t.Fatal(err)
 	}
@@ -291,8 +292,8 @@ func TestUninstallHooks_PreservesUserHooks(t *testing.T) {
 	top, _ := loadSettings(settingsPath)
 	hooks := extractHooks(top)
 	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = ensureFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = ensureFociEntry(hooks[eventPostToolUseFailure], spec)
+	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
+	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
 	_ = writeHooks(settingsPath, top, hooks)
 
 	// Uninstall.
@@ -322,8 +323,10 @@ func TestUninstallHooks_PreservesUserHooks(t *testing.T) {
 
 // TestHandleHookResponse_PostToolUse proves a well-formed hook_response
 // envelope for a PostToolUse event dispatches to OnToolEnd with is_error=false.
+// The backend's install ID matches the payload so the multi-backend filter
+// lets the event through.
 func TestHandleHookResponse_PostToolUse(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-a"}
 
 	type captured struct {
 		id, name, output string
@@ -339,6 +342,7 @@ func TestHandleHookResponse_PostToolUse(t *testing.T) {
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
+		InstallID:    "install-a",
 		ToolUseID:    "toolu_1",
 		ToolName:     "Read",
 		ToolResponse: "file contents",
@@ -364,7 +368,7 @@ func TestHandleHookResponse_PostToolUse(t *testing.T) {
 // TestHandleHookResponse_PostToolUseFailure proves failure envelopes carry
 // the error message (not tool_response) into OnToolEnd with is_error=true.
 func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-b"}
 	var captured struct {
 		id, name, output string
 		isErr            bool
@@ -381,6 +385,7 @@ func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent: "PostToolUseFailure",
+		InstallID: "install-b",
 		ToolUseID: "toolu_2",
 		ToolName:  "Write",
 		Error:     "Permission denied",
@@ -397,6 +402,145 @@ func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
 	}
 	if captured.output != "Permission denied" {
 		t.Errorf("output = %q, want Permission denied", captured.output)
+	}
+}
+
+// TestHandleHookResponse_FiltersForeignInstallID proves the multi-backend
+// filter drops events whose install_id doesn't match this backend's — each
+// backend only acts on hook_response events from its own installed entry.
+// This is what keeps two foci backends sharing a workdir from crossing
+// wires.
+func TestHandleHookResponse_FiltersForeignInstallID(t *testing.T) {
+	b := &Backend{hookInstallID: "install-us"}
+	fired := false
+	handler := &delegator.EventHandler{
+		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
+	}
+	b.beginTurn(handler)
+
+	stdout, _ := json.Marshal(hookScriptOutput{
+		HookEvent:    "PostToolUse",
+		InstallID:    "install-someone-else",
+		ToolUseID:    "toolu_x",
+		ToolName:     "Read",
+		ToolResponse: "not ours",
+	})
+	env, _ := json.Marshal(hookResponseEnvelope{
+		HookEvent: "PostToolUse",
+		Stdout:    string(stdout),
+	})
+	b.handleHookResponse(env)
+
+	if fired {
+		t.Error("OnToolEnd fired for foreign install_id")
+	}
+}
+
+// TestInstallHooks_MultiBackend proves two backends installing into the
+// same settings.local.json produce two independent entries (each with its
+// own unique install ID in the command string), and that uninstalling
+// one backend leaves the other's entry untouched.
+func TestInstallHooks_MultiBackend(t *testing.T) {
+	workDir := t.TempDir()
+	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
+
+	hookPath := "/bin/foci-cc-hook"
+	idA := "aaaaaaaa"
+	idB := "bbbbbbbb"
+	cmdA := buildHookCommand(hookPath, idA)
+	cmdB := buildHookCommand(hookPath, idB)
+
+	// Backend A installs.
+	top, _ := loadSettings(settingsPath)
+	hooks := extractHooks(top)
+	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], fociHookSpec(cmdA))
+	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], fociHookSpec(cmdA))
+	if err := writeHooks(settingsPath, top, hooks); err != nil {
+		t.Fatal(err)
+	}
+
+	// Backend B installs with a different install ID.
+	top, _ = loadSettings(settingsPath)
+	hooks = extractHooks(top)
+	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], fociHookSpec(cmdB))
+	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], fociHookSpec(cmdB))
+	if err := writeHooks(settingsPath, top, hooks); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both entries should now be present.
+	got := readHooks(t, settingsPath)
+	if len(got[eventPostToolUse]) != 2 {
+		t.Fatalf("PostToolUse entries = %d, want 2 (A + B)", len(got[eventPostToolUse]))
+	}
+
+	// Backend A uninstalls. B's entry must survive.
+	top, _ = loadSettings(settingsPath)
+	hooks = extractHooks(top)
+	hooks[eventPostToolUse] = removeFociEntries(hooks[eventPostToolUse], cmdA)
+	hooks[eventPostToolUseFailure] = removeFociEntries(hooks[eventPostToolUseFailure], cmdA)
+	if err := writeHooks(settingsPath, top, hooks); err != nil {
+		t.Fatal(err)
+	}
+
+	// B's entry still there.
+	got = readHooks(t, settingsPath)
+	if len(got[eventPostToolUse]) != 1 {
+		t.Fatalf("PostToolUse entries after A uninstall = %d, want 1 (B)", len(got[eventPostToolUse]))
+	}
+	if got[eventPostToolUse][0].Hooks[0].Command != cmdB {
+		t.Errorf("surviving entry = %q, want %q", got[eventPostToolUse][0].Hooks[0].Command, cmdB)
+	}
+}
+
+// TestNewInstallID_Unique proves independent calls produce distinct IDs.
+// A collision would mean two backends in the same workdir can't
+// distinguish their own hook_response events from each other's.
+func TestNewInstallID_Unique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		id := newInstallID()
+		if id == "" {
+			t.Fatal("empty install ID")
+		}
+		if seen[id] {
+			t.Fatalf("duplicate install ID after %d iterations: %s", i, id)
+		}
+		seen[id] = true
+	}
+}
+
+// TestLockSettingsFile_SerializesConcurrent proves the package-level mutex
+// keyed by absolute path prevents concurrent read-modify-write races on the
+// same settings file. Two goroutines racing to add their entry should end
+// up with both entries in the file rather than one clobbering the other.
+func TestLockSettingsFile_SerializesConcurrent(t *testing.T) {
+	workDir := t.TempDir()
+	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
+
+	cmdA := buildHookCommand("/bin/foci-cc-hook", "a")
+	cmdB := buildHookCommand("/bin/foci-cc-hook", "b")
+
+	var wg sync.WaitGroup
+	install := func(cmd string) {
+		defer wg.Done()
+		mu := lockSettingsFile(settingsPath)
+		mu.Lock()
+		defer mu.Unlock()
+		top, _ := loadSettings(settingsPath)
+		hooks := extractHooks(top)
+		hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], fociHookSpec(cmd))
+		_ = writeHooks(settingsPath, top, hooks)
+	}
+
+	wg.Add(2)
+	go install(cmdA)
+	go install(cmdB)
+	wg.Wait()
+
+	got := readHooks(t, settingsPath)
+	if len(got[eventPostToolUse]) != 2 {
+		t.Fatalf("entries = %d, want 2 (both install calls should have landed)", len(got[eventPostToolUse]))
 	}
 }
 
