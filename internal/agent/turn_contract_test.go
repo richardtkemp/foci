@@ -35,49 +35,6 @@ func TestNewTurnState(t *testing.T) {
 	}
 }
 
-// TestCompletionChanSemantics_Close verifies that closing CompletionChan
-// unblocks a select waiting on it.
-func TestCompletionChanSemantics_Close(t *testing.T) {
-	ch := make(chan struct{})
-
-	done := make(chan bool, 1)
-	go func() {
-		select {
-		case <-ch:
-			done <- true
-		case <-time.After(5 * time.Second):
-			done <- false
-		}
-	}()
-
-	// Close the channel — the goroutine should unblock.
-	close(ch)
-
-	if result := <-done; !result {
-		t.Fatal("closing CompletionChan did not unblock select")
-	}
-}
-
-// TestCompletionChanSemantics_Timeout verifies that an unclosed CompletionChan
-// causes the timeout path to fire.
-func TestCompletionChanSemantics_Timeout(t *testing.T) {
-	ch := make(chan struct{})
-
-	done := make(chan string, 1)
-	go func() {
-		select {
-		case <-ch:
-			done <- "completed"
-		case <-time.After(50 * time.Millisecond):
-			done <- "timeout"
-		}
-	}()
-
-	result := <-done
-	if result != "timeout" {
-		t.Fatalf("expected timeout path, got %q", result)
-	}
-}
 
 // TestAPITransportSatisfiesInterface verifies that *APITransport satisfies the
 // TurnContract interface (compile-time check).

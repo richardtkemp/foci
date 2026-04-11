@@ -233,14 +233,6 @@ func TestCanFireBackgroundOperation_ZeroInvestInterval(t *testing.T) {
 	}
 }
 
-func TestCanFireBackgroundOperation_ManaInsufficient(t *testing.T) {
-	// Proves that insufficient mana blocks background operations; skipped here because
-	// mana.Monitor.IsGoodFor is already covered by mana package tests and the UsageClient
-	// base URL cannot be easily mocked at the agent level.
-	// Skipping this test since UsageClient baseURL cannot be easily mocked in agent tests.
-	// The mana.Monitor.IsGoodFor logic is already tested in the mana package tests.
-	t.Skip("Skipping mana insufficient test - UsageClient baseURL cannot be easily mocked in agent tests")
-}
 
 func TestCanFireBackgroundOperation_Success(t *testing.T) {
 	// Proves the full success path: gate open, valid session key, and mana tracking

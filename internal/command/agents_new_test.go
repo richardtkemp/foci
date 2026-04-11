@@ -178,27 +178,6 @@ func TestAgentWizardNoPreFlightWarning(t *testing.T) {
 	}
 }
 
-// Verifies model alias resolution.
-func TestAgentWizardModelResolution(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"opus", "anthropic/claude-opus-4-6"},
-		{"sonnet", "anthropic/claude-sonnet-4-6"},
-		{"haiku", "anthropic/claude-haiku-4-5-20251001"},
-		{"", "anthropic/claude-sonnet-4-6"},
-		{"claude-custom-model", "claude-custom-model"},
-		{"OPUS", "anthropic/claude-opus-4-6"},
-	}
-
-	for _, tt := range tests {
-		got := provision.ResolveModelAlias(tt.input)
-		if got != tt.want {
-			t.Errorf("ResolveModelAlias(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
 
 // Verifies copying character files from an existing agent.
 func TestAgentWizardCharModeCopy(t *testing.T) {

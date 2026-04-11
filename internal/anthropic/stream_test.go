@@ -171,10 +171,6 @@ data: {"type":"message_stop"}`,
 	}
 }
 
-func TestStreamMessagePreStreamRetry(t *testing.T) {
-	// Placeholder test documenting that pre-stream retry logic has moved to the provider layer.
-	t.Skip("Retry logic moved to provider layer - see provider.TestRetryStreamingClient")
-}
 
 func TestStreamMessageNilHandler(t *testing.T) {
 	// Proves that StreamMessage completes successfully when passed a nil handler, allowing callers that only want the final response to omit the handler.

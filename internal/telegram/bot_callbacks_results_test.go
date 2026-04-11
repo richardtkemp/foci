@@ -314,19 +314,6 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 	}
 }
 
-func TestFormatToolCallWithResult_Truncation(t *testing.T) {
-	// Verifies that formatted tool
-	// results with very long outputs are truncated.
-	longOutput := strings.Repeat("x", 1000)
-	result := "Result:\n" + longOutput
-	if len(result) > 4096 {
-		t.Skipf("test data too small to exercise truncation (need >4096 chars)")
-	}
-	// Just verify no panic and basic format
-	if !strings.Contains(result, "Result:") {
-		t.Error("should contain Result: header")
-	}
-}
 
 func TestSteerBuffer_AppendAndDrain(t *testing.T) {
 	// Verifies basic steer buffer operations.
