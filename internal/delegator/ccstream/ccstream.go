@@ -94,6 +94,13 @@ type Backend struct {
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
 
+	// Hook install state. Set by installHooks at Start, consumed by
+	// uninstallHooks at Close so settings.local.json entries are removed
+	// when the backend shuts down. See hooks.go for the full flow.
+	hookInstalled    bool
+	hookSettingsPath string
+	hookCmd          string
+
 	// Rate limit state (shared across all backends for an agent).
 	rateLimitState *RateLimitState
 
@@ -156,6 +163,11 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		component = "ccstream:" + opts.Label
 	}
 	log.Infof(component, "launching: claude %s (workdir=%s)", strings.Join(args, " "), opts.WorkDir)
+
+	// Install PostToolUse / PostToolUseFailure hooks before spawning CC so
+	// the subprocess picks them up from .claude/settings.local.json on
+	// startup. See hooks.go for the install algorithm and contract.
+	b.installHooks(opts.WorkDir)
 
 	// Create command with its own cancellable context. The CC process is
 	// long-lived (surviving across turns), so it must NOT be tied to the
@@ -310,6 +322,10 @@ func (b *Backend) Close() error {
 	if b.done != nil {
 		<-b.done
 	}
+
+	// Remove our PostToolUse / PostToolUseFailure entries from
+	// .claude/settings.local.json. Preserves any user-owned hooks.
+	b.uninstallHooks()
 
 	return nil
 }
@@ -938,6 +954,12 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 		// Retry notifications are handled by RetryNotifyFunc (TurnCallbacks).
 		_ = retry
+
+	case "hook_response":
+		// PostToolUse / PostToolUseFailure hook completions. Parsed and
+		// dispatched to the current turn's EventHandler.OnToolEnd via the
+		// helper defined in hooks.go.
+		b.handleHookResponse(raw)
 	}
 }
 
