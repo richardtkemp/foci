@@ -11,6 +11,7 @@ import (
 // mockHandler records dispatched messages for assertion.
 type mockHandler struct {
 	assistants   []*AssistantMessage
+	users        []*UserMessageInbound
 	results      []*ResultMessage
 	permissions  []*PermissionRequest
 	systems      []string // subtypes
@@ -22,6 +23,7 @@ type mockHandler struct {
 }
 
 func (h *mockHandler) OnAssistant(msg *AssistantMessage)          { h.assistants = append(h.assistants, msg) }
+func (h *mockHandler) OnUser(msg *UserMessageInbound)              { h.users = append(h.users, msg) }
 func (h *mockHandler) OnResult(msg *ResultMessage)                { h.results = append(h.results, msg) }
 func (h *mockHandler) OnPermissionRequest(msg *PermissionRequest) { h.permissions = append(h.permissions, msg) }
 func (h *mockHandler) OnControlResponse(raw json.RawMessage)      { h.controlResps = append(h.controlResps, raw) }
@@ -71,6 +73,41 @@ func TestReaderDispatchResult(t *testing.T) {
 	}
 	if h.results[0].Result != "Done." {
 		t.Errorf("result = %q, want %q", h.results[0].Result, "Done.")
+	}
+}
+
+func TestReaderDispatchUser(t *testing.T) {
+	// Proves that user-type messages (replayed by CC with
+	// --replay-user-messages) are parsed into UserMessageInbound and
+	// dispatched via OnUser. This is the path that carries tool_result blocks
+	// back to the Backend so OnToolEnd can fire for tracker display.
+	t.Parallel()
+
+	line := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"exit 0","is_error":false}]},"session_id":"sess-1"}` + "\n"
+
+	h := &mockHandler{}
+	r := NewReader(strings.NewReader(line), h)
+	r.Run(context.Background())
+
+	if len(h.users) != 1 {
+		t.Fatalf("got %d user messages, want 1", len(h.users))
+	}
+	msg := h.users[0]
+	if len(msg.Message.Content) != 1 {
+		t.Fatalf("content blocks = %d, want 1", len(msg.Message.Content))
+	}
+	block := msg.Message.Content[0]
+	if block.Type != "tool_result" {
+		t.Errorf("block type = %q, want tool_result", block.Type)
+	}
+	if block.ToolID != "tu_1" {
+		t.Errorf("tool_use_id = %q, want tu_1", block.ToolID)
+	}
+	if string(block.Content) != `"exit 0"` {
+		t.Errorf("content = %q, want %q", string(block.Content), `"exit 0"`)
+	}
+	if block.IsError == nil || *block.IsError {
+		t.Errorf("IsError = %v, want false", block.IsError)
 	}
 }
 
