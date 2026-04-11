@@ -168,7 +168,7 @@ func (w *sessionWatcher) processLine(line []byte, handler *delegator.EventHandle
 	case "assistant":
 		w.handleAssistant(&entry, handler)
 	case "user":
-		w.handleUser(&entry)
+		w.handleUser(&entry, handler)
 	case "system":
 		w.handleSystem(&entry, handler)
 	// progress, file-history-snapshot, queue-operation: ignored for now
@@ -196,7 +196,7 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 			w.turnTools++
 			if handler.OnToolStart != nil {
 				input := string(b.Input)
-				handler.OnToolStart(b.Name, input)
+				handler.OnToolStart(b.ID, b.Name, input)
 			}
 			// Track Agent tool calls for status reporting.
 			if b.Name == "Agent" {
@@ -266,14 +266,23 @@ func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
 	}
 }
 
-// handleUser processes user entries, tracking Agent tool_result completions.
-func (w *sessionWatcher) handleUser(entry *sessionEntry) {
-	if entry.Message == nil || w.agents.Pending() == 0 {
+// handleUser processes user entries, firing OnToolEnd for each tool_result
+// block and tracking Agent tool_result completions. Tool results arrive on
+// user messages (per the CC protocol) — the tool_use ID lets consumers
+// correlate results with the matching OnToolStart event.
+func (w *sessionWatcher) handleUser(entry *sessionEntry, handler *delegator.EventHandler) {
+	if entry.Message == nil {
 		return
 	}
 	blocks := parseContentBlocks(entry.Message.Content)
 	for _, b := range blocks {
-		if b.Type == "tool_result" {
+		if b.Type != "tool_result" {
+			continue
+		}
+		if handler != nil && handler.OnToolEnd != nil {
+			handler.OnToolEnd(b.ToolUseID, "", string(b.Content), b.IsError)
+		}
+		if w.agents.Pending() > 0 {
 			w.agents.Remove(b.ToolUseID)
 		}
 	}

@@ -196,7 +196,7 @@ func TestHandleAssistant_ToolCallTracking(t *testing.T) {
 
 	var toolStarts []string
 	handler := &delegator.EventHandler{
-		OnToolStart: func(name, input string) { toolStarts = append(toolStarts, name) },
+		OnToolStart: func(_ string, name, input string) { toolStarts = append(toolStarts, name) },
 	}
 
 	entry := &sessionEntry{
@@ -463,7 +463,7 @@ func TestHandleUser_AgentCompletion(t *testing.T) {
 		},
 	}
 
-	w.handleUser(entry)
+	w.handleUser(entry, nil)
 
 	if w.agents.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1 (ag1 should be removed)", w.agents.Pending())
@@ -497,7 +497,7 @@ func TestHandleUser_AllAgentsComplete(t *testing.T) {
 		},
 	}
 
-	w.handleUser(entry)
+	w.handleUser(entry, nil)
 
 	if w.agents.Pending() != 0 {
 		t.Fatalf("Pending() = %d, want 0", w.agents.Pending())
@@ -527,7 +527,7 @@ func TestHandleUser_NoPendingAgents(t *testing.T) {
 	}
 
 	// Should not panic.
-	w.handleUser(entry)
+	w.handleUser(entry, nil)
 }
 
 // TestHandleUser_NilMessage verifies handleUser is a safe no-op when
@@ -537,7 +537,7 @@ func TestHandleUser_NilMessage(t *testing.T) {
 	w.agents.Add("ag1", "")
 
 	entry := &sessionEntry{Type: "user", Message: nil}
-	w.handleUser(entry)
+	w.handleUser(entry, nil)
 
 	// Pending agents should be unchanged.
 	if w.agents.Pending() != 1 {
@@ -565,7 +565,7 @@ func TestHandleUser_UnmatchedToolResult(t *testing.T) {
 		},
 	}
 
-	w.handleUser(entry)
+	w.handleUser(entry, nil)
 
 	if w.agents.Pending() != 1 {
 		t.Fatalf("Pending() = %d, want 1 (should not change)", w.agents.Pending())
