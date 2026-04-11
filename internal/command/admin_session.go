@@ -102,6 +102,11 @@ func CompactCommand() *Command {
 		if err != nil {
 			return Response{}, err
 		}
+		// Delegated agents: CC owns the session file, so there's no
+		// foci-side message count to report.
+		if cc.Agent.DelegatedManager != nil {
+			return Response{Text: "Context compacted (delegated)."}, nil
+		}
 		if dryRun {
 			return Response{Text: fmt.Sprintf("Dry-run complete — %d messages would be summarised. Summary sent.", result.OldMessageCount)}, nil
 		}
