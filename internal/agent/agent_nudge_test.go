@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -150,12 +151,12 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 	}
 
 	var intermediateReplies []string
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
-			intermediateReplies = append(intermediateReplies, text)
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
+	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
+			intermediateReplies = append(intermediateReplies, tb.Text)
+		}
+	})
+	ctx := turnevent.WithSink(context.Background(), recorder)
 
 	finalResp, err := ag.hmTest(ctx, "test/inudge-preanswer/1000000000", "What is the meaning of life?")
 	if err != nil {

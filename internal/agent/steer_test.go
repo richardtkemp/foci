@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -22,21 +23,20 @@ func TestSteerCheckFromCtx_NilCallbacks(t *testing.T) {
 }
 
 func TestSteerCheckFromCtx_NilFunc(t *testing.T) {
-	// Proves that steerBlocks returns nil when a TurnCallbacks compat shim is
-	// attached but its SteerCheckFunc is nil (the shim only installs a
-	// Steerer when SteerCheckFunc is non-nil).
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
+	// Proves that steerBlocks returns nil when a Steerer returns an empty
+	// slice — no [user] blocks should be generated.
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string { return nil }))
 	if got := steerBlocks(ctx); got != nil {
-		t.Errorf("expected nil with nil SteerCheckFunc, got %v", got)
+		t.Errorf("expected nil with empty Steerer, got %v", got)
 	}
 }
 
 func TestSteerCheckFromCtx_ReturnsText(t *testing.T) {
 	// Proves that steerBlocks pulls from the ctx-attached Steerer and wraps
 	// each pending steer in a `[user] ...` content block.
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() []string { return []string{"change direction"} },
-	})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
+		return []string{"change direction"}
+	}))
 	got := steerBlocks(ctx)
 	if len(got) != 1 || got[0].Text != "[user] change direction" {
 		t.Errorf("got %v, want [user] change direction", got)
@@ -61,15 +61,13 @@ func TestExecuteToolCalls_SteerSkipsRemainingTools(t *testing.T) {
 
 	// Steer fires on the second check (after first tool executes)
 	var checkCount int
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() []string {
-			checkCount++
-			if checkCount >= 2 {
-				return []string{"stop and do something else"}
-			}
-			return nil
-		},
-	})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
+		checkCount++
+		if checkCount >= 2 {
+			return []string{"stop and do something else"}
+		}
+		return nil
+	}))
 
 	blocks := []provider.ContentBlock{
 		{Type: "tool_use", ID: "tu_1", Name: "slow_tool", Input: json.RawMessage(`{}`)},
@@ -122,9 +120,7 @@ func TestExecuteToolCalls_NoSteer(t *testing.T) {
 
 	ag := &Agent{Tools: registry}
 
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() []string { return nil },
-	})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string { return nil }))
 
 	blocks := []provider.ContentBlock{
 		{Type: "tool_use", ID: "tu_1", Name: "counter", Input: json.RawMessage(`{}`)},
@@ -169,9 +165,7 @@ func TestExecuteToolCalls_SteerBeforeFirstTool(t *testing.T) {
 	ag := &Agent{Tools: registry}
 
 	// Steer fires immediately
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() []string { return []string{"abort"} },
-	})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string { return []string{"abort"} }))
 
 	blocks := []provider.ContentBlock{
 		{Type: "tool_use", ID: "tu_1", Name: "noop", Input: json.RawMessage(`{}`)},
@@ -268,17 +262,15 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 	// SteerCheckFunc fires "" during executeToolCalls, then "new direction please"
 	// at the post-batch check.
 	var checkCount int
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() []string {
-			checkCount++
-			// The first check is inside executeToolCalls (before the tool).
-			// The second check is the post-batch check in agent.go.
-			if checkCount == 2 {
-				return []string{"new direction please"}
-			}
-			return nil
-		},
-	})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
+		checkCount++
+		// The first check is inside executeToolCalls (before the tool).
+		// The second check is the post-batch check in agent.go.
+		if checkCount == 2 {
+			return []string{"new direction please"}
+		}
+		return nil
+	}))
 
 	ag := &Agent{
 		Client:    client,
@@ -384,15 +376,13 @@ func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
 
 	// Steer fires after the first tool executes (second steer check).
 	var checkCount int
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		SteerCheckFunc: func() []string {
-			checkCount++
-			if checkCount == 2 {
-				return []string{"stop everything"}
-			}
-			return nil
-		},
-	})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
+		checkCount++
+		if checkCount == 2 {
+			return []string{"stop everything"}
+		}
+		return nil
+	}))
 
 	ag := &Agent{
 		Client:    client,
