@@ -718,6 +718,64 @@ func TestAgentMetadata_IsolationBetweenAgents(t *testing.T) {
 	}
 }
 
+// ========== DefaultSessionKeyForAgent tests ==========
+
+func TestDefaultSessionKeyForAgent_ChatMetadata(t *testing.T) {
+	// Proves DefaultSessionKeyForAgent returns the session key stored in
+	// chat_metadata when one is present, taking priority over session_index.
+	idx := tempIndex(t)
+
+	if err := idx.SetChatMetadata("scout", "", 123, "session_key", "scout/c123/1709590000"); err != nil {
+		t.Fatalf("set chat metadata: %v", err)
+	}
+
+	key := idx.DefaultSessionKeyForAgent("scout")
+	if key != "scout/c123/1709590000" {
+		t.Errorf("expected chat metadata key, got %q", key)
+	}
+}
+
+func TestDefaultSessionKeyForAgent_Fallback(t *testing.T) {
+	// Proves DefaultSessionKeyForAgent falls back to the most-recent root
+	// session from session_index when no chat_metadata entry exists.
+	idx := tempIndex(t)
+
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/c999/1709590000",
+		FilePath:       "/tmp/test.jsonl",
+		CreatedAt:      time.Now(),
+		LastActivityAt: time.Now(),
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+
+	key := idx.DefaultSessionKeyForAgent("scout")
+	if key != "scout/c999/1709590000" {
+		t.Errorf("expected fallback key, got %q", key)
+	}
+}
+
+func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
+	// Proves DefaultSessionKeyForAgent ignores branch/child sessions (4+ segment
+	// keys) and returns "" when only child sessions exist.
+	idx := tempIndex(t)
+
+	// Insert only a branch session (4 segments)
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/c999/1709590000/b1709590001",
+		FilePath:       "/tmp/branch.jsonl",
+		CreatedAt:      time.Now(),
+		LastActivityAt: time.Now(),
+		SessionType:    SessionTypeBranch,
+		Status:         SessionStatusActive,
+	})
+
+	key := idx.DefaultSessionKeyForAgent("scout")
+	if key != "" {
+		t.Errorf("expected empty (no root sessions), got %q", key)
+	}
+}
+
 func TestAgentMetadata_MultipleKeys(t *testing.T) {
 	// Proves that an agent can store independent values under multiple keys and
 	// that deleting one key leaves the others unaffected.

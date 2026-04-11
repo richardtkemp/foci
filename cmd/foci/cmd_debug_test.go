@@ -333,62 +333,6 @@ func TestResolveSessionKey_AgentNotFound(t *testing.T) {
 	}
 }
 
-// Tests DefaultSessionKeyForAgent returns the session key from chat_metadata.
-func TestDefaultSessionKeyForAgent_ChatMetadata(t *testing.T) {
-	idx := testIndex(t)
-	defer idx.Close()
-
-	if err := idx.SetChatMetadata("scout", "", 123, "session_key", "scout/c123/1709590000"); err != nil {
-		t.Fatalf("set chat metadata: %v", err)
-	}
-
-	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "scout/c123/1709590000" {
-		t.Errorf("expected chat metadata key, got %q", key)
-	}
-}
-
-// Tests DefaultSessionKeyForAgent falls back to session_index when no chat_metadata exists.
-func TestDefaultSessionKeyForAgent_Fallback(t *testing.T) {
-	idx := testIndex(t)
-	defer idx.Close()
-
-	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "scout/c999/1709590000",
-		FilePath:       "/tmp/test.jsonl",
-		CreatedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		SessionType:    session.SessionTypeChat,
-		Status:         session.SessionStatusActive,
-	})
-
-	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "scout/c999/1709590000" {
-		t.Errorf("expected fallback key, got %q", key)
-	}
-}
-
-// Tests DefaultSessionKeyForAgent excludes child sessions (4+ segment keys).
-func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
-	idx := testIndex(t)
-	defer idx.Close()
-
-	// Insert only a branch session (4 segments)
-	idx.Upsert(session.SessionIndexEntry{
-		SessionKey:     "scout/c999/1709590000/b1709590001",
-		FilePath:       "/tmp/branch.jsonl",
-		CreatedAt:      time.Now(),
-		LastActivityAt: time.Now(),
-		SessionType:    session.SessionTypeBranch,
-		Status:         session.SessionStatusActive,
-	})
-
-	key := idx.DefaultSessionKeyForAgent("scout")
-	if key != "" {
-		t.Errorf("expected empty (no root sessions), got %q", key)
-	}
-}
-
 // Tests printExistingContent reads a JSONL file and returns the correct offset.
 func TestPrintExistingContent(t *testing.T) {
 	dir := t.TempDir()
