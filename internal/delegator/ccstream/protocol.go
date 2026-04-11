@@ -264,31 +264,6 @@ type AssistantMessage struct {
 	SessionID       string       `json:"session_id,omitempty"`
 }
 
-// UserMessageInbound is a replayed user message from CC's stdout (emitted
-// with --replay-user-messages). It carries the content blocks of a user turn,
-// including tool_result blocks generated internally by CC after each tool
-// invocation. The Backend parses these to fire OnToolEnd events for tracker
-// display and delegated-agent tool-use correlation.
-//
-// Distinct from UserMessage (foci → CC) because inbound replays share the
-// same wire envelope but should be decoded into a strongly-typed content
-// block array rather than the ContentString/ContentBlocks union that
-// UserPayload uses for marshalling outbound turns.
-type UserMessageInbound struct {
-	Type            string              `json:"type"`                          // always "user"
-	Message         InboundUserPayload  `json:"message"`
-	ParentToolUseID *string             `json:"parent_tool_use_id,omitempty"` // non-nil for sub-agent turns
-	SessionID       string              `json:"session_id,omitempty"`
-	UUID            string              `json:"uuid,omitempty"`
-}
-
-// InboundUserPayload decodes the inner message object of a replayed user
-// message. Content is always an array of ContentBlocks in this direction.
-type InboundUserPayload struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
-}
-
 // BetaMessage is the Anthropic API message object embedded in an
 // AssistantMessage.
 type BetaMessage struct {

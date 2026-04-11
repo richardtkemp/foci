@@ -106,7 +106,10 @@ func newAsyncNotifier(
 				return
 			}
 
-			defer startTypingTicker(ctx, conn)()
+			// Typing indicator is driven by SessionSink on TurnStart /
+			// TurnComplete — the Bot.SetTyping implementation on both
+			// telegram and discord starts its own 4s refresh ticker
+			// internally, so one call at turn start is sufficient.
 			sink := turn.NewSessionSink(conn, target, trigger,
 				turn.WithSessionSinkErrorHandler(func(t string, err error) {
 					log.Errorf(t, "platform delivery: %v", err)
@@ -169,31 +172,6 @@ func newSessionNotifyFn(
 	})
 }
 
-// startTypingTicker sends an initial typing indicator and keeps it alive
-// every 4 seconds until the returned cancel function is called.
-// This is a self-contained ticker used by async notification callbacks —
-// separate from the bot-level SetTyping ticker used by agent turns and
-// command dispatch. The caller owns the lifecycle via the returned cancel func.
-func startTypingTicker(ctx context.Context, conn platform.Connection) (cancel func()) {
-	conn.SetTyping(true)
-	typingCtx, typingCancel := context.WithCancel(ctx)
-	typingTicker := time.NewTicker(4 * time.Second)
-	go func() {
-		for {
-			select {
-			case <-typingTicker.C:
-				conn.SetTyping(true)
-			case <-typingCtx.Done():
-				return
-			}
-		}
-	}()
-	return func() {
-		typingTicker.Stop()
-		typingCancel()
-	}
-}
-
 // deliverInjectedTurn runs a HandleMessage turn and delivers the response
 // to the user's platform connection. Used by all system-initiated injections
 // (restart changelog, scheduled wakes, proactive warnings).
@@ -217,7 +195,10 @@ func deliverInjectedTurn(
 		return
 	}
 
-	defer startTypingTicker(ctx, conn)()
+	// Typing indicator is driven by SessionSink on TurnStart /
+	// TurnComplete — the Bot.SetTyping implementation on both telegram
+	// and discord starts its own 4s refresh ticker internally, so one
+	// call at turn start is sufficient.
 	sink := turn.NewSessionSink(conn, sessionKey, trigger,
 		turn.WithSessionSinkErrorHandler(func(t string, err error) {
 			log.Errorf(t, "platform delivery: %v", err)

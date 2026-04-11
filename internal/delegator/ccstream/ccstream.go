@@ -135,11 +135,6 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	b.autoApproveRules = parseAutoApproveRules(opts.AutoApproveRules)
 
 	// Build command args.
-	//
-	// --replay-user-messages is required for tool_result blocks to surface
-	// on stdout — CC generates them internally after each tool invocation
-	// and only emits them as user-type messages when replay is enabled.
-	// Without this flag, OnToolEnd would never fire from ccstream turns.
 	args := []string{
 		"--print",
 		"--input-format", "stream-json",
@@ -147,7 +142,6 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		"--permission-prompt-tool", "stdio",
 		"--include-partial-messages",
 		"--include-hook-events",
-		"--replay-user-messages",
 		"--verbose",
 	}
 	if opts.Model != "" {
@@ -992,34 +986,6 @@ func (b *Backend) OnControlResponse(raw json.RawMessage) {
 func (b *Backend) OnControlCancelRequest(reqID string) {
 	b.touchActivity()
 	b.handleControlCancel(reqID)
-}
-
-// OnUser handles replayed user messages from CC's stdout (enabled by
-// --replay-user-messages in the Start args). Extracts tool_result blocks and
-// fires OnToolEnd on the current turn's EventHandler so tracker display and
-// any sink-based consumers see tool completion events.
-//
-// Sub-agent user turns (ParentToolUseID != nil) are skipped — their
-// tool_results are consumed by the sub-agent internally and the parent sees
-// only the aggregated result as a single tool_result against the Agent call.
-func (b *Backend) OnUser(msg *UserMessageInbound) {
-	b.touchActivity()
-	if msg == nil || msg.ParentToolUseID != nil {
-		return
-	}
-	b.turnMu.Lock()
-	handler := b.turnHandler
-	b.turnMu.Unlock()
-	if handler == nil || handler.OnToolEnd == nil {
-		return
-	}
-	for _, block := range msg.Message.Content {
-		if block.Type != "tool_result" {
-			continue
-		}
-		isErr := block.IsError != nil && *block.IsError
-		handler.OnToolEnd(block.ToolID, "", string(block.Content), isErr)
-	}
 }
 
 // OnKeepAlive handles heartbeat events. Touches activity so the idle/timeout

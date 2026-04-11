@@ -575,6 +575,60 @@ func TestHandleUser_UnmatchedToolResult(t *testing.T) {
 	}
 }
 
+// TestHandleUser_FiresToolEndWithName proves that handleAssistant records the
+// id→name pairing from tool_use blocks and handleUser looks it up when
+// dispatching OnToolEnd, so downstream consumers (tracker hint functions)
+// see the originating tool name and can format result hints correctly.
+func TestHandleUser_FiresToolEndWithName(t *testing.T) {
+	w := &sessionWatcher{}
+
+	type captured struct {
+		id      string
+		name    string
+		output  string
+		isError bool
+	}
+	var events []captured
+	handler := &delegator.EventHandler{
+		OnToolStart: func(_ string, _ string, _ string) {},
+		OnToolEnd: func(id, name, output string, isErr bool) {
+			events = append(events, captured{id: id, name: name, output: output, isError: isErr})
+		},
+	}
+
+	// Assistant fires first (records id→name).
+	assistantContent, _ := json.Marshal([]contentBlock{
+		{Type: "tool_use", ID: "tu_1", Name: "Bash", Input: json.RawMessage(`{}`)},
+	})
+	w.handleAssistant(&sessionEntry{
+		Type:    "assistant",
+		Message: &messagePayload{Role: "assistant", Content: json.RawMessage(assistantContent)},
+	}, handler)
+
+	// User message carries the tool_result back; handleUser should find
+	// the recorded name and pass it to OnToolEnd.
+	userContent, _ := json.Marshal([]contentBlock{
+		{Type: "tool_result", ToolUseID: "tu_1", Content: json.RawMessage(`"exit 0"`)},
+	})
+	w.handleUser(&sessionEntry{
+		Type:    "user",
+		Message: &messagePayload{Role: "user", Content: json.RawMessage(userContent)},
+	}, handler)
+
+	if len(events) != 1 {
+		t.Fatalf("OnToolEnd calls = %d, want 1", len(events))
+	}
+	if events[0].id != "tu_1" || events[0].name != "Bash" {
+		t.Errorf("OnToolEnd = %+v, want {id:tu_1 name:Bash}", events[0])
+	}
+
+	// The id→name entry should be removed after firing so it doesn't
+	// leak across tool calls within the same turn.
+	if _, ok := w.toolNamesByID["tu_1"]; ok {
+		t.Error("toolNamesByID entry not cleared after OnToolEnd")
+	}
+}
+
 // --- handleSystem tests ---
 
 // TestHandleSystem_TurnDuration verifies that a system entry with
