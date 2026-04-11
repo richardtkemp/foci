@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/delegator"
+	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
+	"foci/internal/delegator"
 	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
@@ -502,7 +503,7 @@ func TestDelegatedTransport_RunInference_SteerCheckFunc(t *testing.T) {
 	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
 
 	steerFn := func() []string { return []string{"steer message"} }
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{SteerCheckFunc: steerFn})
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(steerFn))
 	ts := NewTurnState(ctx, "test/s", []string{"hi"}, nil)
 	ts.Prompt = "hi"
 	ts.StartedAt = time.Now()

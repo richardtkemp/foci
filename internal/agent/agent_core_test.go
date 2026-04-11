@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -466,14 +467,14 @@ func TestDeferredReply(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Track intermediate replies via context-scoped callbacks
+	// Track intermediate replies via a context-scoped recording sink
 	var intermediateReplies []string
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
-			intermediateReplies = append(intermediateReplies, text)
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
+	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
+			intermediateReplies = append(intermediateReplies, tb.Text)
+		}
+	})
+	ctx := turnevent.WithSink(context.Background(), recorder)
 
 	finalResp, err := ag.hmTest(ctx, "test/ideferred/1000000000", "Complex question")
 	if err != nil {

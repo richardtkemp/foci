@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -230,23 +231,25 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Record callback invocation order
+	// Record event order so we can assert ReplyFunc-then-ToolCall ordering.
 	var mu sync.Mutex
 	var order []string
 
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
+	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+		switch e := ev.(type) {
+		case turnevent.TextBlock:
+			if e.Phase == turnevent.PhaseIntermediate {
+				mu.Lock()
+				order = append(order, "reply:"+e.Text)
+				mu.Unlock()
+			}
+		case turnevent.ToolCall:
 			mu.Lock()
-			order = append(order, "reply:"+text)
+			order = append(order, "tool:"+e.Name)
 			mu.Unlock()
-		},
-		ToolCallObserver: func(name string, params json.RawMessage) {
-			mu.Lock()
-			order = append(order, "tool:"+name)
-			mu.Unlock()
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
+		}
+	})
+	ctx := turnevent.WithSink(context.Background(), recorder)
 
 	_, err := ag.hmTest(ctx, "test/iorder/1000000000", "Check something")
 	if err != nil {

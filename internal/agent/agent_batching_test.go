@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
@@ -196,19 +197,19 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	}
 
 	var intermediateReplies []string
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
-			intermediateReplies = append(intermediateReplies, text)
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
+	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
+			intermediateReplies = append(intermediateReplies, tb.Text)
+		}
+	})
+	ctx := turnevent.WithSink(context.Background(), recorder)
 
 	finalResp, err := ag.hmTest(ctx, "test/ibatchfalse/1000000000", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	// Intermediate text should have been sent via ReplyFunc
+	// Intermediate text should have been delivered as an intermediate TextBlock
 	if len(intermediateReplies) != 1 || intermediateReplies[0] != "Working on it..." {
 		t.Errorf("intermediate replies = %v, want [\"Working on it...\"]", intermediateReplies)
 	}
@@ -267,12 +268,12 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	}
 
 	var intermediateReplies []string
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) {
-			intermediateReplies = append(intermediateReplies, text)
-		},
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
+	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
+			intermediateReplies = append(intermediateReplies, tb.Text)
+		}
+	})
+	ctx := turnevent.WithSink(context.Background(), recorder)
 
 	finalResp, err := ag.hmTest(ctx, "test/ibatchtrue/1000000000", "Do something")
 	if err != nil {
@@ -350,8 +351,7 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 		BatchPartialAssistantMessages: true,
 	}
 
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
-	finalResp, err := ag.hmTest(ctx, "test/ibatchmulti/1000000000", "Do multiple things")
+	finalResp, err := ag.hmTest(context.Background(), "test/ibatchmulti/1000000000", "Do multiple things")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
