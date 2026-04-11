@@ -346,7 +346,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 **Stable exec bridge sockets:** The exec bridge socket path for delegated agents is derived from the session key (not a random value). This means CC retains the same `FOCI_SOCK` environment variable path across foci restarts — shell functions piped through the bridge continue to work without re-sourcing.
 
 **Branch rejection:** Delegated agents return HTTP 400 for `/branch` endpoint requests. The three task-type strategies:
-- **Inject into main session** — memory-formation and compaction-memory prompts are sent directly into the running CC session (no branch needed).
+- **Inject into main session** — reflection and compaction-memory prompts are sent directly into the running CC session (no branch needed).
 - **New independent CC session** — consolidation, background tasks, and nudge extraction use `RunOnce` (see above), which spawns an independent headless CC process.
 - **Reject** — the HTTP `/branch` endpoint is explicitly rejected since delegated agents don't support session branching.
 
@@ -1352,7 +1352,7 @@ Memory formation and consolidation run in the keepalive timer loop (30s ticks):
 2. Check wall-clock interval elapsed and user not idle
 3. Query `session_index` for active chat sessions with `last_activity_at > last_memory_formation` (per-session tracking)
 4. Resolve prompt via `prompts.ResolvePrompt`
-5. Iterate all matching sessions: `branchFn("memory-formation", sessionKey, promptText, true)` for each
+5. Iterate all matching sessions: `branchFn("reflection", sessionKey, promptText, true)` for each
 6. On success per session: stamp `last_memory_formation` at branch creation time
 
 Formation runs before consolidation so the latest memory content is available. Consolidation is blocked while formation is running.

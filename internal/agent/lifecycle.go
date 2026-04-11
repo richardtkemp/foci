@@ -126,7 +126,7 @@ func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (s
 	if a.MemoryFormationConfig.SessionEndEnabled {
 		prompt := prompts.ResolvePrompt(
 			a.MemoryFormationConfig.SessionEndPrompt,
-			"memory-formation.md", prompts.MemoryFormation(),
+			"reflection.md", prompts.Reflection(),
 			a.PromptSearchDirs...)
 		if prompt != "" {
 			log.Infof("reset", "sending memory formation to backend session %s", sessionKey)

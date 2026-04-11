@@ -46,7 +46,7 @@ func (r *Runner) parseDuration(field string, s string) (time.Duration, bool) {
 }
 
 // BranchFunc is called to dispatch a branch session. It receives the branch type
-// ("keepalive", "background", "memory-formation", "consolidation"), the parent
+// ("keepalive", "background", "reflection", "consolidation"), the parent
 // session key to branch from, the prompt text, and whether to skip compaction.
 // Returns true if the branch was created and the agent turn completed successfully.
 type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) bool
@@ -424,7 +424,7 @@ func (r *Runner) maybeMemoryFormation() {
 	skip := ""
 	defer func() {
 		if skip != "" {
-			r.log.Debugf("skip memory-formation: %s", skip)
+			r.log.Debugf("skip reflection: %s", skip)
 		}
 	}()
 
@@ -491,7 +491,7 @@ func (r *Runner) maybeMemoryFormation() {
 		}
 	}
 
-	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "memory-formation.md", prompts.MemoryFormation(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "reflection.md", prompts.Reflection(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
@@ -500,7 +500,7 @@ func (r *Runner) maybeMemoryFormation() {
 	r.memoryFormationRunning = true
 	r.mu.Unlock()
 
-	r.log.Infof("firing memory formation for agent %s (%d sessions)", r.agentID, len(keys))
+	r.log.Infof("firing reflection pass for agent %s (%d sessions)", r.agentID, len(keys))
 
 	go func() {
 		defer func() {
@@ -511,7 +511,7 @@ func (r *Runner) maybeMemoryFormation() {
 		}()
 		for _, key := range keys {
 			t := time.Now()
-			if r.branchFn("memory-formation", key, promptText, true) {
+			if r.branchFn("reflection", key, promptText, true) {
 				r.sessionIndex.StampMemoryFormation(key, t)
 			}
 		}

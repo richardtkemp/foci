@@ -12,7 +12,7 @@ Foci ships embedded prompt files in the binary. These provide sensible defaults 
 | `shared/prompts/compaction-handoff.md` | `CompactionHandoff()` | Post-compaction handoff message |
 | `shared/prompts/keepalive.md` | `Keepalive()` | Cache keepalive pings |
 | `shared/prompts/background.md` | `Background()` | Background work trigger |
-| `shared/prompts/memory-formation.md` | `MemoryFormation()` | Interval + session-end memory capture |
+| `shared/prompts/reflection.md` | `Reflection()` | Interval + session-end reflection pass (memory + skill formation) |
 | `shared/prompts/memory-consolidation.md` | `MemoryConsolidation()` | MEMORY.md curation |
 
 ## First-Run Seeding
@@ -21,7 +21,7 @@ On startup, foci seeds editable copies of the 4 new prompt files to `~/shared/pr
 
 - `keepalive.md`
 - `background.md`
-- `memory-formation.md`
+- `reflection.md`
 - `memory-consolidation.md`
 
 Existing files are never overwritten. This gives users a starting point for customisation without needing to know the embedded content.

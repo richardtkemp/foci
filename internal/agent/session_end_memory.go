@@ -25,7 +25,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.SessionEndPrompt, "memory-session-end.md", prompts.MemoryFormation(), a.PromptSearchDirs...)
+	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}

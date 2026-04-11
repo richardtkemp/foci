@@ -262,7 +262,7 @@ func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
 }
 
 func TestMaybeMemoryFormation_Fires(t *testing.T) {
-	// Verifies that maybeMemoryFormation dispatches a "memory-formation" branch when enabled,
+	// Verifies that maybeMemoryFormation dispatches a "reflection" branch when enabled,
 	// there has been recent activity, and the session has activity newer than its last formation.
 	var calls int
 	var gotParentKey string
@@ -290,14 +290,14 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 		mfCfg: config.ResolvedMemoryFormation{
 			IntervalEnabled: true,
 			Interval:        "1h",
-			IntervalPrompt:  "memory-formation.md",
+			IntervalPrompt:  "reflection.md",
 		},
 		sessionIndex:        idx,
 		lastInteraction:     now.Add(-30 * time.Minute),
 		lastMemoryFormation: now.Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
-			if branchType != "memory-formation" {
-				t.Errorf("expected branch type 'memory-formation', got %q", branchType)
+			if branchType != "reflection" {
+				t.Errorf("expected branch type 'reflection', got %q", branchType)
 			}
 			gotParentKey = parentKey
 			calls++

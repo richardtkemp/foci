@@ -35,7 +35,7 @@ func TestEmbeddedFilesLoadNonEmpty(t *testing.T) {
 		{"CompactionHandoff", CompactionHandoff},
 		{"Keepalive", Keepalive},
 		{"Background", Background},
-		{"MemoryFormation", MemoryFormation},
+		{"Reflection", Reflection},
 		{"MemoryConsolidation", MemoryConsolidation},
 		{"FirstRun", FirstRun},
 		{"WeeklyCharacterReview", WeeklyCharacterReview},
