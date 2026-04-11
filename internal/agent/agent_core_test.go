@@ -496,7 +496,7 @@ func TestDeferredReply(t *testing.T) {
 
 func TestNoResponseSentinelPassedThrough(t *testing.T) {
 	// The agent layer no longer strips [[NO_RESPONSE]] — that's handled
-	// downstream by platform.IsSilent (FilteredConnection and Finalize).
+	// downstream by platform.IsSilent (bot SendText/SendTextToChat and Finalize).
 	// HandleMessage returns the sentinel as-is.
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		return &provider.MessageResponse{

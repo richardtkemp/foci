@@ -258,7 +258,7 @@ Both transport paths (API and delegated) are unified under the `TurnContract` in
 Phase 1 — Pre-lock gates and registration:
   RateLimitGate         API: per-endpoint rate limit gate     Delegated: no-op (CC has its own)
   AcquireTurnLock       API: per-session serialization lock   Delegated: no-op (CC serializes)
-  IncrementProcessing   API: atomic processing counter        Delegated: no-op
+  IncrementProcessing   API: atomic processing counter        Delegated: atomic processing counter
   RegisterTurn          API: TurnDetail for diagnostics       Delegated: no-op
   CheckStaleContext     Shared: return ctx.Err() if cancelled
 
@@ -287,7 +287,7 @@ Phase 4 — Post-turn:
   TouchActivityPost     Shared: fire OnActivity callbacks
 ```
 
-**Post-turn sync/async split** (`runPostTurn`): API turns close `CompletionChan` before `RunInference` returns (synchronous), so post-turn runs inline. Delegated turns leave `CompletionChan` open — a goroutine waits up to 10 minutes for the backend's `OnTurnComplete` callback to close it, then runs post-turn. Steered follow-ups (delegated, `IsTurnInFlight() == true`) close `CompletionChan` immediately with no post-turn work.
+**Post-turn sync/async split** (`runPostTurn`): API turns close `CompletionChan` before `RunInference` returns (synchronous), so post-turn runs inline. Delegated turns block inline waiting for `CompletionChan` with an activity-based timeout — if no stream events arrive for 2 minutes (`streamIdleTimeout`), the wait times out. Activity is tracked by the backend's `LastActivity()` method, seeded at turn start and updated on every stream event. Steered follow-ups (delegated, `IsTurnInFlight() == true`) close `CompletionChan` immediately with no post-turn work.
 
 **Shared prompt composition** (`turn_common.go`): `composeTurnText` assembles metadata prefix, reminders, state dashboard, mana-restore text, attachment paths, and user texts into a `turnTextParts` struct. The API transport converts these to content blocks; the delegated transport joins them into a flat string via `JoinPrompt()`.
 

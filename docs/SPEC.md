@@ -255,13 +255,13 @@ Valid levels: `"low"`, `"medium"`, `"high"`. Empty = omit from request (API defa
 Foci supports two turn-handling paths, selected per-agent via the `backend` config:
 
 - **API path (`APITransport`)** — Foci calls the LLM API directly and executes tools locally. The traditional path.
-- **Delegated path (`DelegatedTransport`)** — A coding agent (Claude Code) runs in a tmux pane, handling inference and tool execution. Foci sends composed prompts and receives results via a JSONL session file watcher.
+- **Delegated path (`DelegatedTransport`)** — A coding agent (Claude Code) runs as a subprocess, handling inference and tool execution. Foci sends composed prompts via stdin and receives streaming JSONL events via stdout (ccstream backend), or via a tmux pane with JSONL session file watcher (cctmux backend).
 
 Both implement the `TurnContract` interface (`internal/agent/turn_contract.go`) — 20 methods covering every concern of a turn (rate limiting, session registration, prompt composition, execution, saving, compaction, etc.). Adding a new concern requires adding a method to the interface, producing compile errors in both transports until implemented.
 
 The orchestrator (`OrchestrateFullTurn` in `turn_orchestrator.go`) calls all 20 methods in a fixed order. Each transport provides real implementations or explicit no-ops. Seven methods are shared via `sharedTurnOps` embedding.
 
-The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; delegated closes it when the watcher sees `end_turn` in the JSONL. Post-turn methods (save, metadata, compaction, logging) fire inline for API or in a goroutine for delegated.
+The sync/async split is handled by `TurnState.CompletionChan`: API closes it synchronously; delegated closes it when the backend fires `OnTurnComplete` (ccstream: on `result` message; cctmux: on `end_turn` in JSONL). Post-turn methods (save, metadata, compaction, logging) run after `CompletionChan` closes, with an activity-based timeout (2 minutes of stream silence) rather than a fixed deadline.
 
 **RunOnce mode:** `DelegatedManager.RunOnce(ctx, prompt, systemPrompt)` runs `claude --print` synchronously for headless tasks (nudge extraction, consolidation). No tmux, no watcher — one-shot subprocess with stdout capture.
 

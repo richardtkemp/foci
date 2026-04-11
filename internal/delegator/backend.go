@@ -56,7 +56,7 @@ type Delegator interface {
 
 	// SetPermissionPromptFunc sets the function used to send permission
 	// prompts with inline keyboard choices. Optional — if not set, the
-	// backend falls back to plain text via ReplyFunc.
+	// backend logs and drops undeliverable prompts.
 	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
 	// SetOnPermissionCleared sets a callback fired when a permission prompt
@@ -160,9 +160,6 @@ type CommandOutputCapturer interface {
 	CaptureCommandOutput(ctx context.Context, stableFor, pollInterval time.Duration) (string, error)
 }
 
-// ReplyFunc sends text to the user's platform chat. Set by the agent layer
-// so the backend can deliver asynchronous output (session file watcher events,
-// permission prompts, etc.) without depending on per-turn context.
 // PromptChoice represents a choice in a permission prompt.
 type PromptChoice struct {
 	Label string // button text (e.g. "Yes", "No")
