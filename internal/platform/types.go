@@ -121,38 +121,6 @@ func IsSilent(text string) bool {
 	return t == "" || t == "[[NO_RESPONSE]]" || t == "No response requested."
 }
 
-// FilteredConnection wraps any Connection with automatic IsSilent filtering
-// on all text sends. New platform implementations get this for free — the
-// aggregating ConnectionManager wraps all returned connections.
-type FilteredConnection struct {
-	Connection
-}
-
-func (f *FilteredConnection) SendText(text string) error {
-	if IsSilent(text) {
-		return nil
-	}
-	return f.Connection.SendText(text)
-}
-
-func (f *FilteredConnection) SendTextToChat(chatID int64, text string) error {
-	if IsSilent(text) {
-		return nil
-	}
-	return f.Connection.SendTextToChat(chatID, text)
-}
-
-// filtered wraps a Connection with IsSilent filtering. Returns nil for nil input.
-func filtered(c Connection) Connection {
-	if c == nil {
-		return nil
-	}
-	// Don't double-wrap.
-	if _, ok := c.(*FilteredConnection); ok {
-		return c
-	}
-	return &FilteredConnection{c}
-}
 
 type Sender interface {
 	TextSender
