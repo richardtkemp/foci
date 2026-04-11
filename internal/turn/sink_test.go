@@ -88,7 +88,40 @@ func (f *fakeTypingConn) SendNotificationDirect(string)          { panic("SendNo
 // turns it off. This is load-bearing because it replaces the old out-of-band
 // SetTyping(true)/defer SetTyping(false) in the worker.
 func TestStreamingSinkTypingLifecycle(t *testing.T) {
-	t.Skip("StreamingSink requires platform.Connection which has BuildTurnObservers — skipping until test shim is ready")
+	backend := newMockBackend()
+	tracker := &fakeSinkTracker{}
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	conn := &fakeTypingConn{}
+	sink := NewStreamingSink(renderer, tracker, conn)
+
+	ctx := context.Background()
+	sink.Emit(ctx, turnevent.TurnStart{})
+	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "done"})
+
+	if len(conn.typingCalls) != 2 {
+		t.Fatalf("typing calls = %d, want 2 (on, off)", len(conn.typingCalls))
+	}
+	if conn.typingCalls[0] != true {
+		t.Errorf("first typing call = %v, want true (TurnStart → on)", conn.typingCalls[0])
+	}
+	if conn.typingCalls[1] != false {
+		t.Errorf("last typing call = %v, want false (TurnComplete → off)", conn.typingCalls[1])
+	}
+}
+
+// TestStreamingSinkNilConnSkipsTyping asserts the sink tolerates a nil conn
+// for tests or headless call sites where typing indicator control is
+// irrelevant.
+func TestStreamingSinkNilConnSkipsTyping(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &fakeSinkTracker{}
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	sink := NewStreamingSink(renderer, tracker, nil)
+
+	// Must not panic.
+	ctx := context.Background()
+	sink.Emit(ctx, turnevent.TurnStart{})
+	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "ok"})
 }
 
 // TestStreamingSinkRoutesToolEvents asserts ToolCall/ToolResult/RetryNotice/
