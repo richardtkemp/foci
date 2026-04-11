@@ -83,8 +83,11 @@ type ToolCall struct {
 	Args json.RawMessage
 }
 
-// ToolResult announces the outcome of a tool invocation.
+// ToolResult announces the outcome of a tool invocation. Name is included in
+// addition to the tool-use ID so sinks can dispatch to platform observers
+// without having to correlate with a prior ToolCall.
 type ToolResult struct {
+	Name    string
 	ID      string
 	Output  string
 	IsError bool
