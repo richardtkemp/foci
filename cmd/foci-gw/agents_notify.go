@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/agent/turnevent"
 	"foci/internal/log"
 	"foci/internal/memory"
 	"foci/internal/platform"
 	"foci/internal/session"
 	"foci/internal/tools"
+	"foci/internal/turn"
 	"foci/shared/prompts"
 )
 
@@ -55,29 +57,25 @@ func newAsyncNotifier(
 				trigger = "async_notify"
 			}
 
-			// If replyToSession is set, route response back to caller
+			// If replyToSession is set, route the target's response back
+			// to the calling session via an injected [SESSION RESPONSE].
 			if replyToSession != "" {
 				notifyCtx := agent.WithTrigger(ctx, trigger)
-				// Wire tool call observers for the target session so tool
-				// calls are visible in the user's chat during processing.
-				if targetConn := connMgr.ForSessionOrPrimary(target, agentID); targetConn != nil {
-					cb := &agent.TurnCallbacks{}
-					defer wireTurnObservers(targetConn, target, cb)()
-					notifyCtx = agent.WithTurnCallbacks(notifyCtx, cb)
-				}
-				// Process message on target session
-				resp, err := getAgent().HandleMessage(notifyCtx, target, message)
-				if err != nil {
+				buf := turnevent.NewBufferSink()
+				notifyCtx = turnevent.WithSink(notifyCtx, buf)
+
+				if err := getAgent().HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
 					log.Errorf(trigger, "error processing on target %s: %v", target, err)
 					return
 				}
+				resp := buf.FinalText()
 				if resp == "" {
 					return
 				}
 
-				// Route the target session's response through HandleMessage on the
-				// calling session. This maintains role alternation and lets the
-				// agent process/relay the response.
+				// Route the target session's response through HandleMessage on
+				// the calling session. This maintains role alternation and lets
+				// the agent process/relay the response.
 				formattedResp := "Response from session " + target + ":\n" + resp
 				injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
 					"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
@@ -85,7 +83,7 @@ func newAsyncNotifier(
 				return
 			}
 
-			// Otherwise use existing behavior (display to target's chat)
+			// Otherwise deliver the response to the target session's chat.
 			conn := connMgr.ForSessionOrPrimary(target, agentID)
 
 			// Branch sessions without their own facet connection should not
@@ -95,36 +93,11 @@ func newAsyncNotifier(
 			isBranchWithoutConn := parseErr == nil && !sk.IsRoot() && connMgr.ForSession(target) == nil
 
 			notifyCtx := agent.WithTrigger(ctx, trigger)
-			if conn != nil && !isBranchWithoutConn {
-				defer startTypingTicker(ctx, conn)()
-
-				cb := &agent.TurnCallbacks{
-					ReplyFunc: func(text string) {
-						// Intermediate replies are agent output — use SendToSession
-						// to avoid prepending the system injection header.
-						// REMOVE_ME: debug tag for delivery path tracing
-						if err := conn.SendToSession(target, "[notify:ReplyFunc] "+text); err != nil {
-							log.Errorf(trigger, "intermediate platform delivery: %v", err)
-						}
-					},
-					ActivityFunc: func() {
-						conn.SetTyping(true)
-					},
-				}
-				defer wireTurnObservers(conn, target, cb)()
-				notifyCtx = agent.WithTurnCallbacks(notifyCtx, cb)
-			}
-
-			resp, err := getAgent().HandleMessage(notifyCtx, target, message)
-			if err != nil {
-				log.Errorf(trigger, "error: %v", err)
-				return
-			}
-			log.Debugf(trigger, "response length: %d", len(resp))
-			if resp == "" {
-				return
-			}
 			if conn == nil || isBranchWithoutConn {
+				if err := getAgent().HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
+					log.Errorf(trigger, "error: %v", err)
+					return
+				}
 				if isBranchWithoutConn {
 					log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", target)
 				} else {
@@ -132,11 +105,17 @@ func newAsyncNotifier(
 				}
 				return
 			}
-			// Final reply is agent output — use SendToSession to avoid
-			// prepending the system injection header.
-			// REMOVE_ME: debug tag for delivery path tracing
-			if err := conn.SendToSession(target, "[notify:resp] "+resp); err != nil {
-				log.Errorf(trigger, "platform delivery: %v", err)
+
+			defer startTypingTicker(ctx, conn)()
+			sink := turn.NewSessionSink(conn, target, trigger,
+				turn.WithSessionSinkErrorHandler(func(t string, err error) {
+					log.Errorf(t, "platform delivery: %v", err)
+				}))
+			notifyCtx = turnevent.WithSink(notifyCtx, sink)
+
+			if err := getAgent().HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
+				log.Errorf(trigger, "error: %v", err)
+				return
 			}
 		}()
 	})
@@ -167,29 +146,24 @@ func newSessionNotifyFn(
 
 			conn := connMgr.ForSessionOrPrimary(targetSessionKey, targetAgentID)
 			notifyCtx := agent.WithTrigger(ctx, "session_notify")
-			if conn != nil {
-				cb := &agent.TurnCallbacks{}
-				defer wireTurnObservers(conn, targetSessionKey, cb)()
-				notifyCtx = agent.WithTurnCallbacks(notifyCtx, cb)
-			}
-
-			resp, err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, message)
-			if err != nil {
-				log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
-				return
-			}
-			if resp == "" {
-				return
-			}
 			if conn == nil {
+				if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
+					log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
+					return
+				}
 				log.Warnf("session_notify", "no connection for agent %s session %s, response not delivered", targetAgentID, targetSessionKey)
 				return
 			}
 
-			// Agent reply — use SendToSession to avoid prepending the
-			// system injection header.
-			if err := conn.SendToSession(targetSessionKey, resp); err != nil {
-				log.Errorf("session_notify", "platform delivery for session %s: %v", targetSessionKey, err)
+			sink := turn.NewSessionSink(conn, targetSessionKey, "session_notify",
+				turn.WithSessionSinkErrorHandler(func(t string, err error) {
+					log.Errorf(t, "platform delivery for session %s: %v", targetSessionKey, err)
+				}))
+			notifyCtx = turnevent.WithSink(notifyCtx, sink)
+
+			if err := inst.ag.HandleMessage(notifyCtx, targetSessionKey, []string{message}, nil); err != nil {
+				log.Errorf("session_notify", "error for session %s: %v", targetSessionKey, err)
+				return
 			}
 		}()
 	})
@@ -220,20 +194,6 @@ func startTypingTicker(ctx context.Context, conn platform.Connection) (cancel fu
 	}
 }
 
-// wireTurnObservers attaches platform-specific tool call/result/retry observers
-// to the given TurnCallbacks. Returns a cleanup function that should be deferred.
-func wireTurnObservers(conn platform.Connection, sessionKey string, cb *agent.TurnCallbacks) (cleanup func()) {
-	obs := conn.BuildTurnObservers(sessionKey)
-	if obs == nil {
-		return func() {}
-	}
-	cb.ToolCallObserver = obs.OnToolCall
-	cb.ToolResultObserver = obs.OnToolResult
-	cb.RetryNotifyFunc = obs.OnRetry
-	cb.RetrySuccessFunc = obs.OnRetryClear
-	return obs.Cleanup
-}
-
 // deliverInjectedTurn runs a HandleMessage turn and delivers the response
 // to the user's platform connection. Used by all system-initiated injections
 // (restart changelog, scheduled wakes, proactive warnings).
@@ -248,38 +208,25 @@ func deliverInjectedTurn(
 ) {
 	conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
 	triggerCtx := agent.WithTrigger(ctx, trigger)
-	if conn != nil {
-		defer startTypingTicker(ctx, conn)()
-
-		cb := &agent.TurnCallbacks{
-			ReplyFunc: func(text string) {
-				// REMOVE_ME: debug tag for delivery path tracing
-				if err := conn.SendToSession(sessionKey, "[inject:ReplyFunc] "+text); err != nil {
-					log.Errorf(trigger, "intermediate platform delivery: %v", err)
-				}
-			},
-			ActivityFunc: func() {
-				conn.SetTyping(true)
-			},
-		}
-		defer wireTurnObservers(conn, sessionKey, cb)()
-		triggerCtx = agent.WithTurnCallbacks(triggerCtx, cb)
-	}
-	resp, err := ag.HandleMessage(triggerCtx, sessionKey, message)
-	if err != nil {
-		log.Errorf(trigger, "error: %v", err)
-		return
-	}
-	if resp == "" {
-		return
-	}
 	if conn == nil {
+		if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
+			log.Errorf(trigger, "error: %v", err)
+			return
+		}
 		log.Warnf(trigger, "no connection for session %s agent %s, response not delivered", sessionKey, agentID)
 		return
 	}
-	// REMOVE_ME: debug tag for delivery path tracing
-	if err := conn.SendToSession(sessionKey, "[inject:resp] "+resp); err != nil {
-		log.Errorf(trigger, "platform delivery: %v", err)
+
+	defer startTypingTicker(ctx, conn)()
+	sink := turn.NewSessionSink(conn, sessionKey, trigger,
+		turn.WithSessionSinkErrorHandler(func(t string, err error) {
+			log.Errorf(t, "platform delivery: %v", err)
+		}))
+	triggerCtx = turnevent.WithSink(triggerCtx, sink)
+
+	if err := ag.HandleMessage(triggerCtx, sessionKey, []string{message}, nil); err != nil {
+		log.Errorf(trigger, "error: %v", err)
+		return
 	}
 }
 

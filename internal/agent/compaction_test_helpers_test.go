@@ -100,7 +100,7 @@ func (e *compactionTestEnv) activeKey(original string) string {
 func (e *compactionTestEnv) runTurns(t *testing.T, sessionKey string, from, to int) {
 	t.Helper()
 	for i := from; i <= to; i++ {
-		resp, err := e.ag.HandleMessage(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i))
+		resp, err := e.ag.hmTest(context.Background(), sessionKey, fmt.Sprintf("Turn %d", i))
 		if err != nil {
 			t.Fatalf("Turn %d: %v", i, err)
 		}

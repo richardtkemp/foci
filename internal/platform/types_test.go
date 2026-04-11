@@ -71,15 +71,11 @@ func (m *mockConnection) SendToSession(sk, text string) error       { return nil
 func (m *mockConnection) SendNotification(text string)            {}
 func (m *mockConnection) SendNotificationDirect(text string)      {}
 func (m *mockConnection) SetTyping(bool)                           {}
-func (m *mockConnection) BuildTurnObservers(string) *TurnObservers { return nil }
 
 type mockHandler struct{}
 
-func (m *mockHandler) HandleMessage(ctx context.Context, sessionKey, text string) (string, error) {
-	return "", nil
-}
-func (m *mockHandler) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) (string, error) {
-	return "", nil
+func (m *mockHandler) HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) error {
+	return nil
 }
 func (m *mockHandler) IsProcessing() bool                  { return false }
 func (m *mockHandler) TransformMessage(text string) string { return text }

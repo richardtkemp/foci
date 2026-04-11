@@ -130,7 +130,7 @@ func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (s
 			a.PromptSearchDirs...)
 		if prompt != "" {
 			log.Infof("reset", "sending memory formation to backend session %s", sessionKey)
-			if _, err := a.HandleMessage(ctx, sessionKey, prompt); err != nil {
+			if err := a.HandleMessage(ctx, sessionKey, []string{prompt}, nil); err != nil {
 				log.Warnf("reset", "memory formation failed for %s: %v", sessionKey, err)
 			}
 		}

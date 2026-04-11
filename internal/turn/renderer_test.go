@@ -845,30 +845,12 @@ func TestOnReply_RealTextDelivered(t *testing.T) {
 	}
 }
 
-// --- replyDelivered double-delivery prevention ---
-
-func TestOnReply_ThenFinalize_NoDuplicateDelivery(t *testing.T) {
-	// When OnReply delivers text (setting replyDelivered=true),
-	// a subsequent Finalize with the same text must NOT re-deliver.
-	backend := newMockBackend()
-	tracker := &mockTracker{}
-	display := TurnDisplay{MaxChars: 4096}
-	r := newTestRenderer(backend, tracker, display)
-
-	r.OnReply("my response")
-
-	beforeCount := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
-	if beforeCount != 1 {
-		t.Fatalf("OnReply should produce 1 send, got %d", beforeCount)
-	}
-
-	r.Finalize("my response")
-
-	afterCount := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
-	if afterCount != beforeCount {
-		t.Errorf("Finalize after OnReply should not re-deliver: before=%d after=%d", beforeCount, afterCount)
-	}
-}
+// Note: double-delivery prevention used to live on the renderer (via a
+// replyDelivered flag) and was exercised by TestOnReply_ThenFinalize_*. That
+// coordination moved up to StreamingSink during the turnevent refactor — the
+// renderer is now stateless across OnReply → Finalize boundaries, and
+// StreamingSink owns its own delivered flag (see sink_test.go:
+// TestStreamingSinkDeliveredFlagSuppressesFinalize).
 
 func TestFinalize_WithoutOnReply_DeliversOnce(t *testing.T) {
 	// When OnReply was never called, Finalize should deliver the text.
@@ -882,27 +864,5 @@ func TestFinalize_WithoutOnReply_DeliversOnce(t *testing.T) {
 	total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
 	if total != 1 {
 		t.Errorf("Finalize without prior OnReply should deliver once, got %d sends", total)
-	}
-}
-
-func TestStreamOnReply_ThenFinalize_NoDuplicateDelivery(t *testing.T) {
-	// Streaming variant: deltas arrive, OnReply finalises the stream,
-	// then Finalize must not re-send.
-	backend := newMockBackend()
-	tracker := &mockTracker{}
-	display := TurnDisplay{StreamOutput: true, MaxChars: 4096}
-	transport := &mockTransport{sendMsgID: "100"}
-	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
-
-	r.sw.OnDelta("streamed content")
-	r.OnReply("streamed content")
-
-	r.Finalize("streamed content")
-
-	// OnReply should have set replyDelivered, so Finalize should not deliver again.
-	// Count all sends after OnReply:
-	total := len(backend.sendReplyCalls) + len(backend.sendChunkedCalls)
-	if total != 0 {
-		t.Errorf("Finalize after streaming OnReply should not re-deliver via sendReply/sendChunked, got %d", total)
 	}
 }

@@ -6,7 +6,9 @@ import (
 	"strconv"
 
 	"foci/internal/agent"
+	"foci/internal/agent/turnevent"
 	"foci/internal/platform"
+	"foci/internal/turn"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -90,30 +92,15 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		}
 	}()
 
-	// Start typing immediately. For delegated turns, TypingFunc stops it
-	// synchronously on turn completion/error. The defer is a safety net
-	// for errors/cancellation where the normal stop might not fire.
-	b.SetTyping(true)
-	defer b.SetTyping(false)
-
 	d := b.resolveDisplay(sk)
 	tracker := newToolCallTracker(b, channelIDStr, d)
 	renderer := newTurnRenderer(b, origMsg, tracker, d)
 	defer renderer.Cleanup()
 
-	cb := &agent.TurnCallbacks{
-		ReplyFunc:          renderer.OnReply,
-		ActivityFunc:       renderer.OnActivity,
-		ToolCallObserver:   tracker.ObserveToolCall,
-		ToolResultObserver: tracker.ObserveToolResult,
-		ThinkingObserver:   renderer.OnThinking,
-		TextDeltaObserver:  renderer.OnTextDelta,
-		SteerCheckFunc:     b.mq.DrainSteer,
-		RetryNotifyFunc:    tracker.NotifyRetry,
-		RetrySuccessFunc:   tracker.ClearRetryNotification,
-		OnTurnDone:         nil,
-	}
-	turnCtx = agent.WithTurnCallbacks(turnCtx, cb)
+	sink := turn.NewStreamingSink(renderer, tracker, b)
+
+	turnCtx = turnevent.WithSink(turnCtx, sink)
+	turnCtx = turnevent.WithSteerer(turnCtx, turnevent.SteererFunc(b.mq.DrainSteer))
 	turnCtx = agent.WithTrigger(turnCtx, "discord")
 	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
 		UserID:   first.UserID,
@@ -136,27 +123,18 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		allAttachments = append(allAttachments, qm.Attachments...)
 	}
 
-	var response string
-	var err error
-	if len(allAttachments) > 0 {
-		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, texts, allAttachments)
-	} else {
-		response, err = b.handler.HandleMessageWithAttachments(turnCtx, sk, texts, nil)
+	err := b.handler.HandleMessage(turnCtx, sk, texts, allAttachments)
+	if err != nil && turnCtx.Err() != nil {
+		b.logger().Infof("agent turn cancelled")
+		return
 	}
 	if err != nil {
-		if turnCtx.Err() != nil {
-			b.logger().Infof("agent turn cancelled")
-			return
-		}
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
-		response = fmt.Sprintf("Error: %s", b.sanitizeError(err))
 	}
 
 	if b.OnTurnComplete != nil {
 		b.OnTurnComplete()
 	}
-
-	renderer.Finalize(response)
 }
 
 // cancelTurn cancels the in-flight agent turn, if any.

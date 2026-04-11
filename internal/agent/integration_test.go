@@ -69,7 +69,7 @@ func TestBranchCacheSharing(t *testing.T) {
 
 	// --- Step 1: First parent request (expect cache WRITE) ---
 	t.Log("=== Step 1: First parent request (expect cache WRITE) ===")
-	resp1, err := ag.HandleMessage(ctx, parentKey, "Tell me about the Go programming language.")
+	resp1, err := ag.hmTest(ctx, parentKey, "Tell me about the Go programming language.")
 	if err != nil {
 		t.Fatalf("Step 1 failed: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestBranchCacheSharing(t *testing.T) {
 
 	// --- Step 2: Second parent request (expect cache READ) ---
 	t.Log("=== Step 2: Second parent request (expect cache READ) ===")
-	resp2, err := ag.HandleMessage(ctx, parentKey, "How do goroutines work?")
+	resp2, err := ag.hmTest(ctx, parentKey, "How do goroutines work?")
 	if err != nil {
 		t.Fatalf("Step 2 failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestBranchCacheSharing(t *testing.T) {
 
 	// --- Step 4: Branch request (expect cache READ for shared prefix) ---
 	t.Log("=== Step 4: BRANCH request (expect cache READ on shared prefix) ===")
-	resp4, err := ag.HandleMessage(ctx, branchKey, "What is the Go module system?")
+	resp4, err := ag.hmTest(ctx, branchKey, "What is the Go module system?")
 	if err != nil {
 		t.Fatalf("Step 4 failed: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestBranchCacheSharing(t *testing.T) {
 
 	// --- Step 5: Parent after branch (expect cache READ still works) ---
 	t.Log("=== Step 5: Parent after branch (expect cache READ still works) ===")
-	resp5, err := ag.HandleMessage(ctx, parentKey, "Tell me about Go interfaces.")
+	resp5, err := ag.hmTest(ctx, parentKey, "Tell me about Go interfaces.")
 	if err != nil {
 		t.Fatalf("Step 5 failed: %v", err)
 	}

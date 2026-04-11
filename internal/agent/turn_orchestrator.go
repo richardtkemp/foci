@@ -10,7 +10,9 @@ import (
 // OrchestrateFullTurn executes a complete turn through the TurnContract pipeline.
 // It calls all 20 concern methods in the canonical order, handling errors
 // and cleanup at each step. The ctx is stored on ts.Ctx for use by
-// contract methods that need it.
+// contract methods that need it. FinalText, Usage, Cost, and Model accumulate
+// on ts and are surfaced to the caller's sink via the TurnComplete event
+// emitted by HandleMessage.
 func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *TurnState) (string, error) {
 	ts.Ctx = ctx
 
@@ -130,11 +132,9 @@ func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
 
 done:
 
-	if ts.Ctx != nil {
-		if cb := TurnCallbacksFromContext(ts.Ctx); cb != nil && cb.OnTurnDone != nil {
-			cb.OnTurnDone()
-		}
-	}
+	// OnTurnDone is subsumed by the sink's TurnComplete handler (which is
+	// emitted from HandleMessage's defer). No additional platform notification
+	// is needed here.
 	if err := tc.SaveSession(ts); err != nil {
 		a.logger().Errorf("session=%s post-turn save: %v", ts.SessionKey, err)
 	}

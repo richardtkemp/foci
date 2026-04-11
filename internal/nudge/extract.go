@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/log"
+	"foci/internal/platform"
 )
 
 // ExtractionPrompt is sent to the model to extract rules from character files.
@@ -76,7 +78,7 @@ func NewExtractor(workspaceDir string, fileOrder []string, fileMode os.FileMode)
 // BranchHandler is the interface for running extraction via a branch session.
 // This matches the agent's HandleMessage signature.
 type BranchHandler interface {
-	HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error)
+	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) error
 }
 
 // OneShotRunner executes a one-shot prompt and returns the response.
@@ -117,12 +119,13 @@ func (e *Extractor) Extract(ctx context.Context, handler BranchHandler, sessionK
 
 	log.Infof("nudge", "extracting nudge rules (hash=%s)", hash[:16])
 
-	response, err := handler.HandleMessage(ctx, sessionKey, ExtractionPrompt)
-	if err != nil {
+	buf := turnevent.NewBufferSink()
+	extractCtx := turnevent.WithSink(ctx, buf)
+	if err := handler.HandleMessage(extractCtx, sessionKey, []string{ExtractionPrompt}, nil); err != nil {
 		return fmt.Errorf("nudge extraction: %w", err)
 	}
 
-	rules, err := ParseExtractionResponse(response)
+	rules, err := ParseExtractionResponse(buf.FinalText())
 	if err != nil {
 		return fmt.Errorf("parse nudge extraction: %w", err)
 	}

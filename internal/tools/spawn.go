@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/config"
 	"foci/internal/display"
 	"foci/internal/log"
+	"foci/internal/platform"
 	"foci/internal/provider"
 	"foci/internal/tempdir"
 )
@@ -38,7 +40,7 @@ type SessionBrancher interface {
 
 // SpawnAgent is the agent interface needed by spawn inherit mode.
 type SpawnAgent interface {
-	HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error)
+	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) error
 }
 
 // spawnRawBlacklist lists tools excluded from "raw" mode spawns.
@@ -551,7 +553,10 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 		go func() {
 			spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, true)
 			defer cancel()
-			spawnResult, spawnErr = agent.HandleMessage(spawnCtx, branchKey, prompt)
+			buf := turnevent.NewBufferSink()
+			spawnCtx = turnevent.WithSink(spawnCtx, buf)
+			spawnErr = agent.HandleMessage(spawnCtx, branchKey, []string{prompt}, nil)
+			spawnResult = buf.FinalText()
 			close(signal)
 		}()
 
@@ -586,14 +591,15 @@ func spawnInherit(ctx context.Context, deps SpawnDeps, agentFn func() SpawnAgent
 	spawnCtx, cancel := buildSpawnContext(ctx, timeout, branchKey, false)
 	defer cancel()
 
-	result, err := agent.HandleMessage(spawnCtx, branchKey, prompt)
-	if err != nil {
+	buf := turnevent.NewBufferSink()
+	spawnCtx = turnevent.WithSink(spawnCtx, buf)
+	if err := agent.HandleMessage(spawnCtx, branchKey, []string{prompt}, nil); err != nil {
 		return ToolResult{}, fmt.Errorf("spawn inherit: %w", err)
 	}
-	if result == "" {
+	if buf.FinalText() == "" {
 		return TextResult("(empty response)"), nil
 	}
-	return TextResult(result), nil
+	return TextResult(buf.FinalText()), nil
 }
 
 // resolveSpawnGroup resolves a spawn call to (client, model, format) using the group resolver.

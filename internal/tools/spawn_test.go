@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent/turnevent"
+	"foci/internal/platform"
 	"foci/internal/provider"
 )
 
@@ -62,10 +64,16 @@ type mockSpawnAgent struct {
 	err        error
 }
 
-func (m *mockSpawnAgent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
+func (m *mockSpawnAgent) HandleMessage(ctx context.Context, sessionKey string, texts []string, _ []platform.Attachment) error {
 	m.sessionKey = sessionKey
-	m.message = userMessage
-	return m.response, m.err
+	if len(texts) > 0 {
+		m.message = texts[0]
+	}
+	if m.err != nil {
+		return m.err
+	}
+	turnevent.Emit(ctx, turnevent.TurnComplete{FinalText: m.response})
+	return nil
 }
 
 func okResponse(text string) func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -84,7 +92,7 @@ type concurrentAgent struct {
 	maxConcurrent   *int32
 }
 
-func (a *concurrentAgent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
+func (a *concurrentAgent) HandleMessage(ctx context.Context, sessionKey string, texts []string, _ []platform.Attachment) error {
 	cur := atomic.AddInt32(a.concurrentCount, 1)
 	for {
 		old := atomic.LoadInt32(a.maxConcurrent)
@@ -94,7 +102,8 @@ func (a *concurrentAgent) HandleMessage(ctx context.Context, sessionKey string, 
 	}
 	time.Sleep(50 * time.Millisecond)
 	atomic.AddInt32(a.concurrentCount, -1)
-	return "ok", nil
+	turnevent.Emit(ctx, turnevent.TurnComplete{FinalText: "ok"})
+	return nil
 }
 
 // channelSpawnAgent signals when HandleMessage is called.
@@ -105,7 +114,7 @@ type channelSpawnAgent struct {
 	mu       sync.Mutex
 }
 
-func (a *channelSpawnAgent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
+func (a *channelSpawnAgent) HandleMessage(ctx context.Context, sessionKey string, texts []string, _ []platform.Attachment) error {
 	a.mu.Lock()
 	if a.called != nil {
 		select {
@@ -114,7 +123,11 @@ func (a *channelSpawnAgent) HandleMessage(ctx context.Context, sessionKey string
 		}
 	}
 	a.mu.Unlock()
-	return a.response, a.err
+	if a.err != nil {
+		return a.err
+	}
+	turnevent.Emit(ctx, turnevent.TurnComplete{FinalText: a.response})
+	return nil
 }
 
 func extractTempDir(result string) string {

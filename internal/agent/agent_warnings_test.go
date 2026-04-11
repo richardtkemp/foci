@@ -42,7 +42,7 @@ func TestMaxTokensWarning(t *testing.T) {
 		}},
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imaxtkn/1000000000", "Write a very long essay")
+	resp, err := ag.hmTest(context.Background(), "test/imaxtkn/1000000000", "Write a very long essay")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestMaxTokensNoWarningOnEndTurn(t *testing.T) {
 		}},
 	}
 
-	ag.HandleMessage(context.Background(), "test/inomax/1000000000", "Hello")
+	ag.hmTest(context.Background(), "test/inomax/1000000000", "Hello")
 
 	if len(warnings) != 0 {
 		t.Errorf("expected no warnings for end_turn, got %d: %v", len(warnings), warnings)
@@ -143,7 +143,7 @@ func TestBraindeadWarningInjected(t *testing.T) {
 		Nudger:    nudge.NewScheduler(rs, 5, 1),
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestBraindeadWarningCooldown(t *testing.T) {
 		Nudger:    nudge.NewScheduler(rs, 5, 1),
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestBraindeadDisabledWhenZero(t *testing.T) {
 		// No Nudger set — braindead disabled
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestDisplayNoteInjectedOnce(t *testing.T) {
 		ShowToolCalls: "full",
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "go")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestDisplayNoteReflectsSessionOverride(t *testing.T) {
 	// Per-session override to preview
 	ag.SetSessionShowToolCalls(sk, "preview")
 
-	_, err := ag.HandleMessage(context.Background(), sk, "go")
+	_, err := ag.hmTest(context.Background(), sk, "go")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

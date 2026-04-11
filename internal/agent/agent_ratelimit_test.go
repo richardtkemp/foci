@@ -58,7 +58,7 @@ func TestHandleMessageRateLimitGateBlocks(t *testing.T) {
 	gate.Close(until)
 
 	ctx := WithTrigger(context.Background(), "telegram")
-	_, err := ag.HandleMessage(ctx, "test/igate/1000000000", "Hello")
+	_, err := ag.hmTest(ctx, "test/igate/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected RateLimitedError")
 	}
@@ -91,7 +91,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	}
 
 	// First call hits the API, gets 429, closes gate
-	_, err := ag.HandleMessage(context.Background(), "test/igate429/1000000000", "Hello")
+	_, err := ag.hmTest(context.Background(), "test/igate429/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -108,7 +108,7 @@ func TestHandleMessageRateLimitClosesGate(t *testing.T) {
 	}
 
 	// Second call should be blocked by the gate (no API hit)
-	_, err = ag.HandleMessage(context.Background(), "test/igate429/1000000000", "World")
+	_, err = ag.hmTest(context.Background(), "test/igate429/1000000000", "World")
 	if err == nil {
 		t.Fatal("expected RateLimitedError on second call")
 	}

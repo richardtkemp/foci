@@ -69,12 +69,10 @@ func buildBranchFunc(
 			ag.SetSessionNoCompact(branchKey, true)
 		}
 
-		resp, err := ag.HandleMessage(turnCtx, branchKey, promptText)
-		if err != nil {
+		if err := ag.HandleMessage(turnCtx, branchKey, []string{promptText}, nil); err != nil {
 			log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, branchKey, err)
 			return false
 		}
-		_ = resp
 
 		if onDone != nil {
 			onDone(branchType, branchKey)
@@ -107,7 +105,7 @@ func handleDelegatedBranch(ag *agent.Agent, agentID, branchType, parentKey, prom
 
 	// HandleMessage blocks until the turn completes (synchronous for both
 	// API and delegated agents).
-	_, err := ag.HandleMessage(turnCtx, sessionKey, promptText)
+	err := ag.HandleMessage(turnCtx, sessionKey, []string{promptText}, nil)
 	if err != nil {
 		log.Warnf(branchType, "[%s] session=%s turn error: %v", agentID, sessionKey, err)
 		return false

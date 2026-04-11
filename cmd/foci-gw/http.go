@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/platform"
@@ -132,11 +133,13 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool) {
 	go func() {
-		resp, err := inst.ag.HandleMessage(ctx, sessionKey, text)
-		if err != nil {
+		buf := turnevent.NewBufferSink()
+		handleCtx := turnevent.WithSink(ctx, buf)
+		if err := inst.ag.HandleMessage(handleCtx, sessionKey, []string{text}, nil); err != nil {
 			log.Errorf(logTag, "async error: %v", err)
 			return
 		}
+		resp := buf.FinalText()
 		if resp != "" && !silent && connMgr != nil {
 			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
 				if err := conn.SendToSession(sessionKey, resp); err != nil {

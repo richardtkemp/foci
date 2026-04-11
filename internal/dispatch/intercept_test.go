@@ -26,11 +26,7 @@ type fakeHandler struct {
 	transform func(string) string
 }
 
-func (h *fakeHandler) HandleMessage(_ context.Context, _, _ string) (string, error) {
-	panic("not used by Interceptor")
-}
-
-func (h *fakeHandler) HandleMessageWithAttachments(_ context.Context, _ string, _ []string, _ []platform.Attachment) (string, error) {
+func (h *fakeHandler) HandleMessage(_ context.Context, _ string, _ []string, _ []platform.Attachment) error {
 	panic("not used by Interceptor")
 }
 
