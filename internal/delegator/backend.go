@@ -189,6 +189,31 @@ type QuestionResponder interface {
 	HasPendingQuestion() string
 }
 
+// ElicitationResponder is optionally implemented by backends that support
+// MCP elicitation control requests — requests from MCP servers for
+// structured user input via form fields or a URL visit. ccstream implements
+// this; other backends (cctmux) don't.
+type ElicitationResponder interface {
+	// RespondToElicitation handles one user action on a pending
+	// elicitation. For form-mode flows, the backend advances through schema
+	// fields on each call; the control_response is sent only when all
+	// fields have been answered (or when the user declines/cancels).
+	//
+	// choice is one of:
+	//   - "elic:accept"          URL-mode Done button
+	//   - "elic:decline"         user declines
+	//   - "elic:cancel"          user cancels
+	//   - "elic:enum:<i>"        enum button click for current form field
+	//   - "elic:bool:true|false" boolean button for current form field
+	//   - any other string       free-text answer for current form field
+	RespondToElicitation(requestID, choice string) error
+
+	// HasPendingElicitation returns the request ID of a pending elicitation
+	// currently awaiting a free-text field answer, or "" if none. Used by
+	// the agent layer to intercept typed user messages as form input.
+	HasPendingElicitation() string
+}
+
 // ContextUsage holds context window usage data returned by a backend's
 // get_context_usage control request. Zero-cost (no API call).
 type ContextUsage struct {

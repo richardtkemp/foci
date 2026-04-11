@@ -30,8 +30,9 @@ func init() {
 
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{
-		readyCh:      make(chan struct{}),
-		pendingPerms: make(map[string]*pendingPermission),
+		readyCh:        make(chan struct{}),
+		pendingPerms:   make(map[string]*pendingPermission),
+		pendingElicits: make(map[string]*pendingElicitation),
 	}
 	b.cfg = cfg
 	return b, nil
@@ -85,6 +86,12 @@ type Backend struct {
 	// Permissions
 	permMu       sync.Mutex
 	pendingPerms map[string]*pendingPermission
+
+	// Elicitations (MCP user-input requests). Separate from pendingPerms
+	// because elicitations aren't keyed to tool_use_ids and have a richer
+	// lifecycle (sequential field walks, URL completion notifications).
+	elicMu         sync.Mutex
+	pendingElicits map[string]*pendingElicitation
 
 	// Context tracking (from result/assistant messages)
 	contextWindow int         // from modelUsage.contextWindow
@@ -362,6 +369,10 @@ func (b *Backend) Restart(ctx context.Context) error {
 	b.permMu.Lock()
 	b.pendingPerms = make(map[string]*pendingPermission)
 	b.permMu.Unlock()
+
+	b.elicMu.Lock()
+	b.pendingElicits = make(map[string]*pendingElicitation)
+	b.elicMu.Unlock()
 
 	return b.Start(ctx, b.startOpts)
 }
@@ -1010,6 +1021,17 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		// dispatched to the current turn's EventHandler.OnToolEnd via the
 		// helper defined in hooks.go.
 		b.handleHookResponse(raw)
+
+	case "elicitation_complete":
+		// CC re-broadcasts an MCP server's elicitation_complete notification
+		// when a URL-mode flow was completed externally. Match by
+		// elicitation_id and auto-accept so the user doesn't have to click
+		// Done after already finishing in the browser.
+		var done ElicitationCompleteMessage
+		if err := json.Unmarshal(raw, &done); err != nil {
+			return
+		}
+		b.OnElicitationComplete(&done)
 	}
 }
 

@@ -33,6 +33,15 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 		}
 	}
 
+	// Elicitation routing — button clicks ("elic:*"). Free-text answers
+	// arrive via the turn_delegated.go intercept below, not this path.
+	if er, ok := be.(delegator.ElicitationResponder); ok && requestID != "" {
+		if strings.HasPrefix(choice, "elic:") {
+			log.Debugf("agent/perm", "answering elicitation: reqID=%s choice=%q", requestID, choice)
+			return er.RespondToElicitation(requestID, choice)
+		}
+	}
+
 	// Protocol-based response (ccstream) — use RespondToPermission if available.
 	type permResponder interface {
 		RespondToPermission(requestID string, allow bool, message string) error

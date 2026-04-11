@@ -128,6 +128,20 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		}
 	}
 
+	// Same intercept for pending elicitation form fields — typed text
+	// becomes the answer for the current free-text field.
+	if er, ok := be.(delegator.ElicitationResponder); ok {
+		if reqID := er.HasPendingElicitation(); reqID != "" && len(ts.Texts) > 0 {
+			text := strings.TrimSpace(ts.Texts[0])
+			if text != "" {
+				log.Debugf("delegated", "session=%s intercepting text as elicitation answer: %q", ts.SessionKey, text)
+				_ = er.RespondToElicitation(reqID, text)
+				close(ts.CompletionChan)
+				return nil
+			}
+		}
+	}
+
 	// Wait for any outstanding permission prompt to resolve before sending
 	// new input. The backend cannot process messages while blocked on a
 	// permission decision. Messages queue naturally in the platform's

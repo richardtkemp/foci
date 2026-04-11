@@ -244,6 +244,52 @@ type PermissionDeny struct {
 }
 
 // ---------------------------------------------------------------------------
+// Elicitation (MCP elicitation control request/response)
+// ---------------------------------------------------------------------------
+
+// ElicitationRequest is a control_request from CC asking foci to collect
+// structured input from the user on behalf of an MCP server. Triggered when
+// an MCP tool call declares an elicitation requirement. See Claude Code's
+// SDKControlElicitationRequestSchema for the authoritative shape.
+type ElicitationRequest struct {
+	Type      string                    `json:"type"`       // "control_request"
+	RequestID string                    `json:"request_id"`
+	Request   ElicitationRequestPayload `json:"request"`
+}
+
+// ElicitationRequestPayload is the inner request object of an ElicitationRequest.
+// Mode distinguishes "form" (collect structured fields from requested_schema)
+// from "url" (direct user to an external URL). Empty mode is treated as "form".
+type ElicitationRequestPayload struct {
+	Subtype         string          `json:"subtype"`                    // "elicitation"
+	McpServerName   string          `json:"mcp_server_name"`
+	Message         string          `json:"message"`
+	Mode            string          `json:"mode,omitempty"`             // "form"|"url"
+	URL             string          `json:"url,omitempty"`
+	ElicitationID   string          `json:"elicitation_id,omitempty"`
+	RequestedSchema json.RawMessage `json:"requested_schema,omitempty"`
+}
+
+// ElicitationResponsePayload is the inner payload foci sends inside a
+// control_response when the user has answered an elicitation prompt.
+// Content is populated only when Action == "accept".
+type ElicitationResponsePayload struct {
+	Action  string          `json:"action"`            // "accept"|"decline"|"cancel"
+	Content json.RawMessage `json:"content,omitempty"` // JSON object, only on accept
+}
+
+// ElicitationCompleteMessage is CC's "system / elicitation_complete"
+// streamlined message, emitted when an MCP server notifies that a URL-mode
+// elicitation was completed externally. Matches an in-flight elicitation by
+// elicitation_id and resolves it as accept without user interaction.
+type ElicitationCompleteMessage struct {
+	Type          string `json:"type"`    // "system"
+	Subtype       string `json:"subtype"` // "elicitation_complete"
+	McpServerName string `json:"mcp_server_name"`
+	ElicitationID string `json:"elicitation_id"`
+}
+
+// ---------------------------------------------------------------------------
 // Stdout messages (CC → foci)
 // ---------------------------------------------------------------------------
 
