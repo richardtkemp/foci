@@ -185,6 +185,20 @@ type ModelConfig struct {
 	CacheStrategy   string        `toml:"cache_strategy"`    // cache marker strategy: "auto" or "explicit" (Anthropic only, default "auto")
 }
 
+// CCBackendConfig holds defaults shared by all Claude Code-based delegator
+// backends (cctmux, ccstream). Per-agent [agents.backend_config] values
+// still apply; scalar values there override, and DefaultAllowedTools is
+// merged with any per-agent allowed_tools rather than replaced.
+type CCBackendConfig struct {
+	// DefaultAllowedTools is a list of Claude Code permission rules (same
+	// syntax as settings.json permissions.allow — e.g. "Write(/tmp/**)",
+	// "Bash(git:*)") that every CC-backed agent receives via --allowedTools.
+	// Merged with per-agent backend_config.allowed_tools before launch.
+	// Factory default grants /tmp file writes so agents don't prompt for
+	// scratch-file access. Set to an empty list in TOML to disable.
+	DefaultAllowedTools []string `toml:"default_allowed_tools"`
+}
+
 // GroupsConfig assigns named models to groups and call sites.
 // Groups is populated from top-level string keys in [groups] by load.go
 // (not decoded by TOML directly since the section mixes string keys with sub-tables).
@@ -892,6 +906,7 @@ type Config struct {
 	Background         BackgroundConfig          `toml:"background"`
 	MemoryFormation    MemoryFormationConfig     `toml:"memory_formation"`
 	Permissions        PermissionsConfig         `toml:"permissions"`
+	CCBackend          CCBackendConfig           `toml:"cc_backend"`          // shared defaults for Claude Code delegator backends
 	Commands           []CommandConfig           `toml:"commands"`
 	MessageTransforms  []MessageTransform        `toml:"message_transforms"`   // regex find/replace rules applied to inbound messages
 	BlockedPaths       []BlockedPath             `toml:"blocked_paths"`        // path prefixes that write/edit tools refuse (with rebuke message)

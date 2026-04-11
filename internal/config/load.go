@@ -223,6 +223,11 @@ func Load(path string) (*Config, error) {
 	if len(cfg.Behavior.StopAliases) == 0 {
 		cfg.Behavior.StopAliases = []string{"stop", "wait"}
 	}
+	// CC backend default allowed tools. Applied only when the user has not
+	// defined the key in TOML; an explicit empty list disables the feature.
+	if !cfg.DefinedKeys["cc_backend.default_allowed_tools"] && cfg.CCBackend.DefaultAllowedTools == nil {
+		cfg.CCBackend.DefaultAllowedTools = append([]string(nil), DefaultCCAllowedTools...)
+	}
 
 	// Apply convention-based defaults before path resolution.
 	for i := range cfg.Agents {

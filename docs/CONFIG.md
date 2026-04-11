@@ -1207,16 +1207,38 @@ workspace = "/home/coder/projects/myapp"
 [agents.backend_config]
 # model = "sonnet"            # CC model name (optional — omit for CC default)
 # skip_permissions = true     # --dangerously-skip-permissions (no approval prompts)
-# allowed_tools = "Bash,Read,Edit,Write,Glob,Grep"  # --allowedTools (pre-approve specific tools)
-# socket_path = ""            # tmux socket override (empty = default)
+# allowed_tools = ["Bash(git:*)", "Read"]  # --allowedTools: per-agent CC permission rules
+# socket_path = ""            # tmux socket override (empty = default, cctmux only)
 ```
+
+Per-agent `allowed_tools` accepts either a comma-separated string (`"Bash(git:*), Read"`) or a TOML array (`["Bash(git:*)", "Read"]`). It is merged with the global `[cc_backend] default_allowed_tools` list (see below) before launch — you don't need to repeat the defaults here.
+
+### Global CC backend defaults — `[cc_backend]`
+
+Applies to every agent whose `backend` is `claude-code` or `claude-code-tmux`:
+
+```toml
+[cc_backend]
+# default_allowed_tools — permission rules that every CC agent receives via
+# --allowedTools, merged with per-agent backend_config.allowed_tools. Uses the
+# same rule syntax as settings.json permissions.allow.
+#
+# Factory default (applied when the key is not set in TOML):
+#   ["Read(/tmp/**)", "Write(/tmp/**)", "Edit(/tmp/**)", "MultiEdit(/tmp/**)"]
+#
+# Set to an empty list to disable, or override with your own rules:
+# default_allowed_tools = ["Write(/tmp/**)", "Bash(git:*)"]
+```
+
+The factory default grants CC agents free read/write access to `/tmp` so they can use the system scratch directory without a permission round-trip. Override if your deployment uses a different scratch path or wants a tighter default.
 
 ### Available backends
 
 | Backend | Description |
 |---|---|
 | `"api"` (default) | Traditional agent loop — Foci calls LLM API, executes tools, manages sessions. |
-| `"claude-code-tmux"` | Claude Code running interactively in a tmux pane. Input via tmux paste-buffer, output via session JSONL file watcher. |
+| `"claude-code"` | Claude Code via stream-json protocol (ccstream). Structured NDJSON stdin/stdout; no tmux. |
+| `"claude-code-tmux"` | Claude Code running interactively in a tmux pane (cctmux). Input via paste-buffer, output via session JSONL file watcher. |
 
 Codex and OpenCode backends are planned but not yet implemented.
 

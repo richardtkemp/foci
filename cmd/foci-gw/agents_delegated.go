@@ -43,6 +43,28 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		model = v
 	}
 
+	// For Claude Code-family backends, fold global [cc_backend]
+	// default_allowed_tools into the per-agent backend_config.allowed_tools
+	// so both cctmux and ccstream pick up the merged rule list from the
+	// same cfg key. Non-CC backends (codex, opencode, ...) are skipped so
+	// the key doesn't leak into their config surface.
+	if backendName == "claude-code" || backendName == "claude-code-tmux" {
+		merged := p.cfg.CCBackend.MergedAllowedTools(backendConfig["allowed_tools"])
+		if merged != "" {
+			if backendConfig == nil {
+				backendConfig = map[string]any{}
+			} else {
+				// Copy so we don't mutate the shared AgentConfig.BackendConfig map.
+				copied := make(map[string]any, len(backendConfig)+1)
+				for k, v := range backendConfig {
+					copied[k] = v
+				}
+				backendConfig = copied
+			}
+			backendConfig["allowed_tools"] = merged
+		}
+	}
+
 	// Build auto-approve rules from resolved config.
 	autoApproveRules := buildAutoApproveRules(p)
 
