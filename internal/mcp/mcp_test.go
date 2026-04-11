@@ -62,9 +62,7 @@ func TestNewManager_NoServers(t *testing.T) {
 	m := newManager()
 	defer m.Close()
 
-	if err := m.connect(context.Background(), nil); err != nil {
-		t.Fatalf("Connect with no servers: %v", err)
-	}
+	m.connect(context.Background(), nil)
 	if m.serverCount() != 0 {
 		t.Errorf("ServerCount = %d, want 0", m.serverCount())
 	}
@@ -85,12 +83,9 @@ func TestConnect_EndToEnd(t *testing.T) {
 	m := newManager()
 	defer m.Close()
 
-	err := m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
+	m.connectWith(ctx, []ServerConfig{{Name: "test"}}, func(cfg ServerConfig) (mcp.Transport, error) {
 		return clientTransport, nil
 	})
-	if err != nil {
-		t.Fatalf("Connect: %v", err)
-	}
 
 	if m.serverCount() != 1 {
 		t.Fatalf("ServerCount = %d, want 1", m.serverCount())

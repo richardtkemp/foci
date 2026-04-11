@@ -8,8 +8,8 @@ func newManager() *Manager {
 }
 
 // connect connects to all configured MCP servers (test-only wrapper).
-func (m *Manager) connect(ctx context.Context, servers []ServerConfig) error {
-	return m.connectWith(ctx, servers, nil)
+func (m *Manager) connect(ctx context.Context, servers []ServerConfig) {
+	m.connectWith(ctx, servers, nil)
 }
 
 // serverCount returns the number of connected servers (test-only).
