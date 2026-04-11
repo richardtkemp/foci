@@ -250,8 +250,11 @@ func (b *Bot) SendStartupNotification(agentID string) {
 
 // SendText sends a text message to the default channel without any header.
 // Returns an error if no channel ID is available.
-// Silently skips empty or whitespace-only messages.
+// Silently drops messages matching platform.IsSilent (sentinels, empty).
 func (b *Bot) SendText(text string) error {
+	if platform.IsSilent(text) {
+		return nil
+	}
 
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
@@ -376,7 +379,11 @@ func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 }
 
 // SendTextToChat sends a text message to a specific channel ID without any header.
+// Silently drops messages matching platform.IsSilent (sentinels, empty).
 func (b *Bot) SendTextToChat(chatID int64, text string) error {
+	if platform.IsSilent(text) {
+		return nil
+	}
 	channelIDStr := strconv.FormatInt(chatID, 10)
 	b.sendMarkdownChunks(channelIDStr, text)
 	return nil

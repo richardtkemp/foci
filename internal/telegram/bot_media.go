@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/platform"
 	"foci/internal/timeutil"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -58,7 +59,11 @@ func (b *Bot) lastChatID() (int64, error) {
 }
 
 // SendTextToChat sends a text message to a specific chat ID without any header.
+// Silently drops messages matching platform.IsSilent (sentinels, empty).
 func (b *Bot) SendTextToChat(chatID int64, text string) error {
+	if platform.IsSilent(text) {
+		return nil
+	}
 	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
 	return nil
 }

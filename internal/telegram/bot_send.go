@@ -305,7 +305,11 @@ func buildButtonRows(buttons []platform.ButtonChoice, callbackPrefix string) [][
 
 // SendText sends a text message to the default chat without any header.
 // Returns an error if no chat ID is available.
+// Silently drops messages matching platform.IsSilent (sentinels, empty).
 func (b *Bot) SendText(text string) error {
+	if platform.IsSilent(text) {
+		return nil
+	}
 
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
