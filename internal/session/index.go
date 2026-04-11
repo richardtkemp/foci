@@ -106,10 +106,13 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// Migration: add last_activity_at column if missing (idempotent).
 	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_activity_at TEXT`)
 
-	// Migration: add last_memory_formation column if missing (idempotent).
-	// Backfill existing rows to now so we don't stampede all sessions on first run.
-	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_memory_formation TEXT`)
-	_, _ = db.Exec(`UPDATE session_index SET last_memory_formation = ? WHERE last_memory_formation IS NULL`,
+	// Migration: add last_reflection column if missing, copy data from the
+	// now-defunct last_memory_formation column (if present) and drop the old
+	// column. Backfill any still-null values to now so a fresh install doesn't
+	// stampede all sessions into reflection on first run.
+	_, _ = db.Exec(`ALTER TABLE session_index ADD COLUMN last_reflection TEXT`)
+	migrateLastReflection(db)
+	_, _ = db.Exec(`UPDATE session_index SET last_reflection = ? WHERE last_reflection IS NULL`,
 		timeutil.Format(timeutil.Now()))
 
 	// Migration: add platform column to chat_metadata if missing (idempotent).
@@ -186,32 +189,32 @@ func (idx *SessionIndex) UpdateActivity(sessionKey string, activityAt time.Time)
 	}
 }
 
-// StampMemoryFormation records when memory formation was dispatched for a session.
-func (idx *SessionIndex) StampMemoryFormation(sessionKey string, at time.Time) {
+// StampReflection records when the reflection pass was dispatched for a session.
+func (idx *SessionIndex) StampReflection(sessionKey string, at time.Time) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	stamp := timeutil.Format(at)
 	_, err := idx.db.Exec(
-		`UPDATE session_index SET last_memory_formation = ? WHERE session_key = ?`,
+		`UPDATE session_index SET last_reflection = ? WHERE session_key = ?`,
 		stamp,
 		sessionKey,
 	)
 	if err != nil {
-		log.Warnf("session", "stamp memory formation for %q: %v", sessionKey, err)
+		log.Warnf("session", "stamp reflection for %q: %v", sessionKey, err)
 	}
 }
 
-// SessionsNeedingFormation returns active chat session keys for an agent where
-// activity has occurred since the last memory formation (or formation has never run).
-func (idx *SessionIndex) SessionsNeedingFormation(agentID string) ([]string, error) {
+// SessionsNeedingReflection returns active chat session keys for an agent where
+// activity has occurred since the last reflection pass (or it has never run).
+func (idx *SessionIndex) SessionsNeedingReflection(agentID string) ([]string, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
 	rows, err := idx.db.Query(
 		`SELECT session_key FROM session_index
 		 WHERE session_key LIKE ? AND session_type = 'chat' AND status = 'active'
-		   AND (last_memory_formation IS NULL OR unixepoch(last_activity_at) > unixepoch(last_memory_formation))`,
+		   AND (last_reflection IS NULL OR unixepoch(last_activity_at) > unixepoch(last_reflection))`,
 		agentID+"/%",
 	)
 	if err != nil {
@@ -366,23 +369,23 @@ func (idx *SessionIndex) TouchActivity(sessionKey string) {
 }
 
 // RebuildIndex clears and repopulates the session index from the given entries.
-// Preserves last_memory_formation timestamps across the rebuild.
+// Preserves last_reflection timestamps across the rebuild.
 // Wrapped in a single transaction for performance (~3000x fewer fsyncs).
 func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Preserve last_memory_formation before clearing — the rebuild can't
-	// reconstruct this from disk, and losing it resets memory formation
+	// Preserve last_reflection before clearing — the rebuild can't
+	// reconstruct this from disk, and losing it resets reflection
 	// scheduling for all sessions.
-	savedFormation := make(map[string]string)
-	rows, err := idx.db.Query(`SELECT session_key, last_memory_formation FROM session_index WHERE last_memory_formation IS NOT NULL`)
+	savedReflection := make(map[string]string)
+	rows, err := idx.db.Query(`SELECT session_key, last_reflection FROM session_index WHERE last_reflection IS NOT NULL`)
 	if err == nil {
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
-			var key, formation string
-			if rows.Scan(&key, &formation) == nil {
-				savedFormation[key] = formation
+			var key, stamp string
+			if rows.Scan(&key, &stamp) == nil {
+				savedReflection[key] = stamp
 			}
 		}
 	}
@@ -426,13 +429,13 @@ func (idx *SessionIndex) RebuildIndex(entries []SessionIndexEntry) (int, error) 
 		count++
 	}
 
-	// Restore preserved last_memory_formation timestamps.
-	if len(savedFormation) > 0 {
-		updateStmt, err := tx.Prepare(`UPDATE session_index SET last_memory_formation = ? WHERE session_key = ?`)
+	// Restore preserved last_reflection timestamps.
+	if len(savedReflection) > 0 {
+		updateStmt, err := tx.Prepare(`UPDATE session_index SET last_reflection = ? WHERE session_key = ?`)
 		if err == nil {
 			defer func() { _ = updateStmt.Close() }()
-			for key, formation := range savedFormation {
-				_, _ = updateStmt.Exec(formation, key)
+			for key, stamp := range savedReflection {
+				_, _ = updateStmt.Exec(stamp, key)
 			}
 		}
 	}
@@ -506,6 +509,27 @@ func nullableString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// migrateLastReflection copies data from the legacy last_memory_formation column
+// into the new last_reflection column, then drops the old column. No-op if the
+// old column doesn't exist (fresh install on post-rename schema).
+func migrateLastReflection(db *sql.DB) {
+	// Probe for old column presence by querying it.
+	var dummy sql.NullString
+	err := db.QueryRow(`SELECT last_memory_formation FROM session_index LIMIT 1`).Scan(&dummy)
+	if err != nil && err != sql.ErrNoRows {
+		// "no such column" — nothing to migrate.
+		return
+	}
+	log.Infof("session", "migrating last_memory_formation → last_reflection")
+	if _, err := db.Exec(`UPDATE session_index SET last_reflection = last_memory_formation WHERE last_reflection IS NULL AND last_memory_formation IS NOT NULL`); err != nil {
+		log.Errorf("session", "copy last_memory_formation: %v", err)
+		return
+	}
+	if _, err := db.Exec(`ALTER TABLE session_index DROP COLUMN last_memory_formation`); err != nil {
+		log.Warnf("session", "drop last_memory_formation (SQLite <3.35?): %v — leaving column in place", err)
+	}
 }
 
 // migrateChatMetadataPlatform adds the platform column to chat_metadata if missing.

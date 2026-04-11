@@ -48,7 +48,7 @@ var globalSections = map[string]reflect.Type{
 	"browser":          reflect.TypeOf(BrowserConfig{}),
 	"keepalive":        reflect.TypeOf(KeepaliveConfig{}),
 	"background":       reflect.TypeOf(BackgroundConfig{}),
-	"memory_formation": reflect.TypeOf(MemoryFormationConfig{}),
+	"reflection":      reflect.TypeOf(ReflectionConfig{}),
 	"mana":             reflect.TypeOf(ManaConfig{}),
 	"debug":            reflect.TypeOf(DebugConfig{}),
 	"logging":          reflect.TypeOf(LoggingConfig{}),

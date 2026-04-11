@@ -13,7 +13,7 @@ import (
 // compaction summarises and replaces the history. Creates an async branch so
 // the memory agent sees the full pre-compaction context.
 func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemplate string) {
-	if !a.MemoryFormationConfig.CompactionEnabled {
+	if !a.Reflection.CompactionEnabled {
 		return
 	}
 
@@ -23,7 +23,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.CompactionPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
+	prompt := prompts.ResolvePrompt(a.Reflection.CompactionPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}

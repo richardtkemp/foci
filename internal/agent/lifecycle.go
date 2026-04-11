@@ -163,9 +163,9 @@ func (a *Agent) resetDelegatedSession(ctx context.Context, sessionKey string) (s
 
 	// Send memory formation prompt to the live backend session.
 	// HandleMessage blocks until CC completes the turn.
-	if a.MemoryFormationConfig.SessionEndEnabled {
+	if a.Reflection.SessionEndEnabled {
 		prompt := prompts.ResolvePrompt(
-			a.MemoryFormationConfig.SessionEndPrompt,
+			a.Reflection.SessionEndPrompt,
 			"reflection.md", prompts.Reflection(),
 			a.PromptSearchDirs...)
 		if prompt != "" {

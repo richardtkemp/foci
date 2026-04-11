@@ -62,7 +62,7 @@ func (s *sharedAgentSetup) newAgent() *agent.Agent {
 		SessionIndex:      s.p.sessionIndex,
 		MessageTransforms: agent.CompileTransforms(resolveMessageTransforms(acfg, s.p.cfg)),
 		PromptSearchDirs:      s.promptSearchDirs,
-		MemoryFormationConfig: s.p.resolved.MemoryFormation,
+		Reflection:            s.p.resolved.Reflection,
 		ShowToolCalls:         resolveShowToolCalls(s.p.resolved),
 	}
 }

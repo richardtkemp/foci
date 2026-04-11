@@ -1325,12 +1325,12 @@ Separate binary (`go build ./cmd/foci`) that wraps the HTTP gateway endpoints fo
 - **HTTP Wake** (`POST /wake`): Creates a branch session from the agent's default chat session, injects the text, runs the agent on the branch. Supports `no_compact` and `no_reset_hook` flags. `--oneshot` CLI flag sets both. Returns 412 if no default session.
 - **Scheduled Wakes** (`remind` tool with `wake=true`): Agent-initiated timer that fires message injection into the default session at specified delay or timestamp. One-shot, background goroutine, auto-cleaned after firing. Skips if no default session.
 
-## Session-End Memory Formation
+## Session-End Reflection
 
-Before a session is cleared (`/reset` or facet TTL reclaim), the agent captures memories asynchronously. Configured via `[memory_formation]` section (replaces `session_reset_prompt`).
+Before a session is cleared (`/reset` or facet TTL reclaim), the agent runs the reflection pass asynchronously. Configured via `[reflection]` section (replaces `session_reset_prompt`).
 
 Flow (`agent.FireSessionEndMemory` in `internal/agent/session_end_memory.go`):
-1. Check `memory_formation.session_end_enabled` (nil = true, explicit false skips)
+1. Check `reflection.session_end_enabled` (nil = true, explicit false skips)
 2. Resolve prompt via `prompts.ResolvePrompt(session_end_prompt, ...)` — embedded default on empty/error
 3. If prompt resolves to empty, skip
 4. For branch sessions, check `BranchMeta.NoResetHook` — if true, skip (unless skipMetaCheck=true for background branches)
@@ -1343,25 +1343,25 @@ Entry points:
 - `Pool.Acquire` (TTL reclaim) → `ReclaimHook` → `agent.FireSessionEndMemory` (async) → clear session key
 - Periodic runner (background branch completion) → `agent.FireSessionEndMemory` (async, skipMetaCheck=true)
 
-## Memory Formation & Consolidation Timers
+## Reflection & Consolidation Timers
 
-Memory formation and consolidation run in the keepalive timer loop (30s ticks):
+Reflection and consolidation run in the keepalive timer loop (30s ticks):
 
-**Interval memory formation** (`maybeMemoryFormation`):
+**Interval reflection** (`maybeReflection`):
 1. Check `interval_enabled` (nil = true)
 2. Check wall-clock interval elapsed and user not idle
-3. Query `session_index` for active chat sessions with `last_activity_at > last_memory_formation` (per-session tracking)
+3. Query `session_index` for active chat sessions with `last_activity_at > last_reflection` (per-session tracking)
 4. Resolve prompt via `prompts.ResolvePrompt`
 5. Iterate all matching sessions: `branchFn("reflection", sessionKey, promptText, true)` for each
-6. On success per session: stamp `last_memory_formation` at branch creation time
+6. On success per session: stamp `last_reflection` at branch creation time
 
-Formation runs before consolidation so the latest memory content is available. Consolidation is blocked while formation is running.
+Reflection runs before consolidation so the latest memory content is available. Consolidation is blocked while reflection is running.
 
 **Consolidation** (`maybeConsolidation`):
 1. Check `consolidation_enabled` (nil = true)
 2. Check consolidation interval elapsed (persisted in state store)
 3. Check recent user activity (within 1h)
-4. Check memory formation is not running
+4. Check reflection is not running
 5. Resolve prompt via `prompts.ResolvePrompt`
 6. Fire branch on default session: `branchFn("consolidation", parentKey, promptText, true)`
 7. On completion: persist timestamp to state store

@@ -112,7 +112,7 @@ func TestResetSession_APIPath(t *testing.T) {
 	ag := &Agent{
 		Sessions:  store,
 		Bootstrap: bootstrap,
-		// MemoryFormationConfig.SessionEndEnabled defaults to false, so
+		// Reflection.SessionEndEnabled defaults to false, so
 		// FireSessionEndMemory is a no-op. This is fine — we're testing
 		// that the method is called without crashing.
 	}
@@ -597,7 +597,7 @@ func TestResetDelegatedSession(t *testing.T) {
 		Bootstrap:        bootstrap,
 		DelegatedManager: dm,
 		Model:            "claude-haiku-4-5",
-		MemoryFormationConfig: config.ResolvedMemoryFormation{
+		Reflection: config.ResolvedReflection{
 			SessionEndEnabled: true,
 		},
 	}
@@ -690,7 +690,7 @@ func TestResetDelegatedSession_MemoryDisabled(t *testing.T) {
 		Sessions:         store,
 		Bootstrap:        bootstrap,
 		DelegatedManager: dm,
-		MemoryFormationConfig: config.ResolvedMemoryFormation{
+		Reflection: config.ResolvedReflection{
 			SessionEndEnabled: false,
 		},
 	}

@@ -343,8 +343,8 @@ func resolveBlockedPaths(acfg config.AgentConfig, cfg *config.Config) []config.B
 		func(b config.BlockedPath) string { return b.Path })
 }
 
-// hasMemoryFormation returns true if any memory formation feature is enabled.
+// hasReflection returns true if any reflection feature is enabled.
 // All four default to true, so returns false only when all are explicitly disabled.
-func hasMemoryFormation(mf config.ResolvedMemoryFormation) bool {
-	return mf.IntervalEnabled || mf.ConsolidationEnabled || mf.SessionEndEnabled || mf.CompactionEnabled
+func hasReflection(r config.ResolvedReflection) bool {
+	return r.IntervalEnabled || r.ConsolidationEnabled || r.SessionEndEnabled || r.CompactionEnabled
 }

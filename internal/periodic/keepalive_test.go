@@ -91,8 +91,8 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 	// (it just falls back to 30m for mana check)
 }
 
-func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
-	// Verifies that maybeMemoryFormation respects the canFireFn gate: if the function returns
+func TestMaybeReflection_SkipsWhenRateLimited(t *testing.T) {
+	// Verifies that maybeReflection respects the canFireFn gate: if the function returns
 	// false (e.g. insufficient mana), no branch is dispatched even when all other conditions are met.
 	called := false
 	now := time.Now()
@@ -110,12 +110,12 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 		Status:      session.SessionStatusActive,
 	})
 	idx.UpdateActivity("test/c123/1000000000", now.Add(-30*time.Minute))
-	idx.StampMemoryFormation("test/c123/1000000000", now.Add(-2*time.Hour))
+	idx.StampReflection("test/c123/1000000000", now.Add(-2*time.Hour))
 
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
@@ -128,15 +128,15 @@ func TestMaybeMemoryFormation_SkipsWhenRateLimited(t *testing.T) {
 			called = true
 			return true
 		},
-		lastMemoryFormation: now.Add(-2 * time.Hour),
-		lastInteraction:     now.Add(-30 * time.Minute),
-		done:                make(chan struct{}),
+		lastReflection:  now.Add(-2 * time.Hour),
+		lastInteraction: now.Add(-30 * time.Minute),
+		done:            make(chan struct{}),
 	}
 
-	r.maybeMemoryFormation()
+	r.maybeReflection()
 
 	if called {
-		t.Error("expected memory formation to skip when canFireFn returns false")
+		t.Error("expected reflection to skip when canFireFn returns false")
 	}
 }
 
@@ -148,7 +148,7 @@ func TestMaybeConsolidation_SkipsWhenRateLimited(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled:  true,
 			ConsolidationInterval: "1h",
 		},

@@ -59,7 +59,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 	}
 
 	bg := inst.resolved.Background
-	mf := inst.resolved.MemoryFormation
+	refl := inst.resolved.Reflection
 
 	cachingAvailable := true
 	if cachingOverride != nil {
@@ -71,7 +71,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 
 	hasAgentWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectAgentWarnings.Enabled() })
 	hasChatWarnings := anyNotifyEnabled(inst.resolved, p.cfg, func(n config.ResolvedNotify) bool { return n.InjectChatWarnings.Enabled() })
-	if !kaEnabled && !bg.Enabled && !hasMemoryFormation(mf) && !hasAgentWarnings && !hasChatWarnings {
+	if !kaEnabled && !bg.Enabled && !hasReflection(refl) && !hasAgentWarnings && !hasChatWarnings {
 		return nil
 	}
 
@@ -163,7 +163,7 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		CachingOverride:    cachingOverride,
 		Keepalive:          ka,
 		Background:         bg,
-		MemoryFormation:    mf,
+		Reflection:         refl,
 		ManaInvestInterval: inst.resolved.Mana.InvestInterval,
 		PromptSearchDirs:   inst.promptSearchDirs,
 		TodoStore:          p.todoStore,

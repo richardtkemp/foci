@@ -51,7 +51,7 @@ func (r *Runner) parseDuration(field string, s string) (time.Duration, bool) {
 // Returns true if the branch was created and the agent turn completed successfully.
 type BranchFunc func(branchType, parentKey, promptText string, noCompact bool) bool
 
-// Runner manages keepalive, background work, and memory formation timers for an agent.
+// Runner manages keepalive, background work, and reflection timers for an agent.
 type Runner struct {
 	log                *log.ComponentLogger
 	agentID            string
@@ -59,7 +59,7 @@ type Runner struct {
 	cachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override
 	kaCfg              config.ResolvedKeepalive
 	bgCfg              config.ResolvedBackground
-	mfCfg              config.ResolvedMemoryFormation
+	reflectCfg         config.ResolvedReflection
 	manaInvestInterval string // mana invest interval (Go duration string)
 	promptSearchDirs   []string
 	todoStore          *memory.TodoStore
@@ -74,7 +74,7 @@ type Runner struct {
 	// Session-aware availability checking
 	sessionKeyFn   func() string                                                   // returns the session key these operations will run on
 	canFireFn      func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
-	isDelegatedAgent bool // memory formation needs quiet period in delegated mode
+	isDelegatedAgent bool // reflection needs quiet period in delegated mode
 	runOnceFn      func(ctx context.Context, prompt, systemPrompt string) (string, error)
 
 	mu                    sync.Mutex
@@ -84,11 +84,11 @@ type Runner struct {
 	backgroundRunning     bool
 	lastBackgroundEnded   time.Time // when the last background session finished
 
-	// Memory formation state
-	lastMemoryFormation    time.Time
-	lastConsolidation      time.Time
-	memoryFormationRunning bool
-	consolidationRunning   bool
+	// Reflection state
+	lastReflection       time.Time
+	lastConsolidation    time.Time
+	reflectionRunning    bool
+	consolidationRunning bool
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -101,7 +101,7 @@ type RunnerConfig struct {
 	CachingOverride    *bool           // nil=use client.IsCachingAvailable(), non-nil=override (for OpenAI/DeepSeek)
 	Keepalive          config.ResolvedKeepalive
 	Background         config.ResolvedBackground
-	MemoryFormation    config.ResolvedMemoryFormation
+	Reflection         config.ResolvedReflection
 	ManaInvestInterval string                // mana invest interval (Go duration string, default: "30m")
 	PromptSearchDirs   []string              // directories to search for prompt files (agent workspace, shared)
 	TodoStore          *memory.TodoStore
@@ -118,8 +118,8 @@ type RunnerConfig struct {
 	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
 
 	// IsDelegatedAgent indicates this agent uses a delegated transport (CC).
-	// When true, memory formation requires a quiet period (no recent user
-	// activity) because formation runs IN the live session, not as a branch.
+	// When true, reflection requires a quiet period (no recent user
+	// activity) because reflection runs IN the live session, not as a branch.
 	IsDelegatedAgent bool
 
 	// RunOnceFunc executes a one-shot prompt via claude --print.
@@ -139,7 +139,7 @@ func New(cfg RunnerConfig) *Runner {
 		cachingOverride:    cfg.CachingOverride,
 		kaCfg:              cfg.Keepalive,
 		bgCfg:              cfg.Background,
-		mfCfg:              cfg.MemoryFormation,
+		reflectCfg:         cfg.Reflection,
 		manaInvestInterval: cfg.ManaInvestInterval,
 		promptSearchDirs:   cfg.PromptSearchDirs,
 		todoStore:          cfg.TodoStore,
@@ -156,7 +156,7 @@ func New(cfg RunnerConfig) *Runner {
 		runOnceFn:          cfg.RunOnceFunc,
 		lastCacheWarmed:    now,
 		lastInteraction:    now,
-		lastMemoryFormation: now,
+		lastReflection:     now,
 		done:               make(chan struct{}),
 	}
 	// Restore consolidation timestamp from persistent state
@@ -232,10 +232,10 @@ func (r *Runner) run(ctx context.Context) {
 			}
 			r.maybeKeepalive(ctx)
 			r.maybeBackgroundWork(ctx)
-			// Formation runs before consolidation so that all the latest
+			// Reflection runs before consolidation so that all the latest
 			// memory content is available when consolidation curates MEMORY.md.
-			// Consolidation also skips if formation is still running.
-			r.maybeMemoryFormation()
+			// Consolidation also skips if reflection is still running.
+			r.maybeReflection()
 			r.maybeConsolidation()
 			if r.warningDispatcher != nil {
 				r.warningDispatcher.MaybeFire()
@@ -416,8 +416,8 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 	}()
 }
 
-func (r *Runner) maybeMemoryFormation() {
-	if !r.mfCfg.IntervalEnabled {
+func (r *Runner) maybeReflection() {
+	if !r.reflectCfg.IntervalEnabled {
 		return
 	}
 
@@ -428,7 +428,7 @@ func (r *Runner) maybeMemoryFormation() {
 		}
 	}()
 
-	interval, ok := r.parseDuration("memory formation interval", r.mfCfg.Interval)
+	interval, ok := r.parseDuration("reflection interval", r.reflectCfg.Interval)
 	if !ok {
 		return
 	}
@@ -436,12 +436,12 @@ func (r *Runner) maybeMemoryFormation() {
 	now := time.Now()
 
 	r.mu.Lock()
-	lastFormation := r.lastMemoryFormation
+	lastReflection := r.lastReflection
 	sinceLastInteraction := time.Since(r.lastInteraction)
-	running := r.memoryFormationRunning
+	running := r.reflectionRunning
 	r.mu.Unlock()
 
-	nextFire := lastFormation.Truncate(interval).Add(interval)
+	nextFire := lastReflection.Truncate(interval).Add(interval)
 	if running {
 		skip = "already running"
 		return
@@ -456,28 +456,28 @@ func (r *Runner) maybeMemoryFormation() {
 		return
 	}
 
-	// In delegated mode, memory formation runs IN the live CC session (not as
+	// In delegated mode, reflection runs IN the live CC session (not as
 	// a branch), so wait for user to be quiet before interrupting.
 	if r.isDelegatedAgent {
-		quietPeriod, qOk := r.parseDuration("backend_quiet_period", r.mfCfg.BackendQuietPeriod)
+		quietPeriod, qOk := r.parseDuration("backend_quiet_period", r.reflectCfg.BackendQuietPeriod)
 		if qOk && sinceLastInteraction < quietPeriod {
 			skip = fmt.Sprintf("backend: user active (idle %s < quiet %s)", sinceLastInteraction.Round(time.Second), quietPeriod)
 			return
 		}
 	}
 
-	// Query DB for sessions with activity since their last formation.
+	// Query DB for sessions with activity since their last reflection.
 	if r.sessionIndex == nil {
 		skip = "no session index"
 		return
 	}
-	keys, err := r.sessionIndex.SessionsNeedingFormation(r.agentID)
+	keys, err := r.sessionIndex.SessionsNeedingReflection(r.agentID)
 	if err != nil {
 		skip = fmt.Sprintf("query sessions: %v", err)
 		return
 	}
 	if len(keys) == 0 {
-		skip = "no sessions need formation"
+		skip = "no sessions need reflection"
 		return
 	}
 
@@ -491,13 +491,13 @@ func (r *Runner) maybeMemoryFormation() {
 		}
 	}
 
-	promptText := prompts.ResolvePrompt(r.mfCfg.IntervalPrompt, "reflection.md", prompts.Reflection(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.reflectCfg.IntervalPrompt, "reflection.md", prompts.Reflection(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
 
 	r.mu.Lock()
-	r.memoryFormationRunning = true
+	r.reflectionRunning = true
 	r.mu.Unlock()
 
 	r.log.Infof("firing reflection pass for agent %s (%d sessions)", r.agentID, len(keys))
@@ -505,21 +505,21 @@ func (r *Runner) maybeMemoryFormation() {
 	go func() {
 		defer func() {
 			r.mu.Lock()
-			r.memoryFormationRunning = false
-			r.lastMemoryFormation = time.Now()
+			r.reflectionRunning = false
+			r.lastReflection = time.Now()
 			r.mu.Unlock()
 		}()
 		for _, key := range keys {
 			t := time.Now()
 			if r.branchFn("reflection", key, promptText, true) {
-				r.sessionIndex.StampMemoryFormation(key, t)
+				r.sessionIndex.StampReflection(key, t)
 			}
 		}
 	}()
 }
 
 func (r *Runner) maybeConsolidation() {
-	if !r.mfCfg.ConsolidationEnabled {
+	if !r.reflectCfg.ConsolidationEnabled {
 		return
 	}
 
@@ -530,7 +530,7 @@ func (r *Runner) maybeConsolidation() {
 		}
 	}()
 
-	interval, ok := r.parseDuration("consolidation interval", r.mfCfg.ConsolidationInterval)
+	interval, ok := r.parseDuration("consolidation interval", r.reflectCfg.ConsolidationInterval)
 	if !ok {
 		return
 	}
@@ -541,7 +541,7 @@ func (r *Runner) maybeConsolidation() {
 	lastConsolidation := r.lastConsolidation
 	sinceLastInteraction := time.Since(r.lastInteraction)
 	running := r.consolidationRunning
-	memFormRunning := r.memoryFormationRunning
+	reflectionRunning := r.reflectionRunning
 	r.mu.Unlock()
 
 	nextFire := lastConsolidation.Truncate(interval).Add(interval)
@@ -549,8 +549,8 @@ func (r *Runner) maybeConsolidation() {
 		skip = "already running"
 		return
 	}
-	if memFormRunning {
-		skip = "memory formation running"
+	if reflectionRunning {
+		skip = "reflection running"
 		return
 	}
 	if now.Before(nextFire) {
@@ -579,7 +579,7 @@ func (r *Runner) maybeConsolidation() {
 		return
 	}
 
-	promptText := prompts.ResolvePrompt(r.mfCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
+	promptText := prompts.ResolvePrompt(r.reflectCfg.ConsolidationPrompt, "memory-consolidation.md", prompts.MemoryConsolidation(), r.promptSearchDirs...)
 	if promptText == "" {
 		return
 	}
