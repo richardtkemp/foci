@@ -97,8 +97,9 @@ func TestNudgeRegexPrependedToUserMessage(t *testing.T) {
 }
 
 func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
-	// Proves that when a pre_answer gate fires, the original answer is sent via ReplyFunc
-	// before the gate injects its nudge, ensuring the initial response is never silently discarded.
+	// Proves that when a pre_answer gate fires, the original answer is sent
+	// as an intermediate TextBlock before the gate injects its nudge,
+	// ensuring the initial response is never silently discarded.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -140,18 +141,18 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 	sched := nudge.NewScheduler(rs, 5, 1)
 
 	ag := &Agent{
-		Client:              client,
-		Sessions:            store,
-		Tools:               registry,
-		Bootstrap:           bootstrap,
-		Model:               "claude-haiku-4-5",
-		Nudger:              sched,
-		NudgePreAnswerGate:  true,
+		Client:                 client,
+		Sessions:               store,
+		Tools:                  registry,
+		Bootstrap:              bootstrap,
+		Model:                  "claude-haiku-4-5",
+		Nudger:                 sched,
+		NudgePreAnswerGate:     true,
 		NudgePreAnswerMinTools: 0, // fire even with 0 tool calls
 	}
 
 	var intermediateReplies []string
-	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+	recorder := fnSink(func(_ context.Context, ev turnevent.Event) {
 		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
 			intermediateReplies = append(intermediateReplies, tb.Text)
 		}

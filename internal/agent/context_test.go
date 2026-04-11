@@ -12,19 +12,20 @@ import (
 // routes to the ctx sink as an intermediate TextBlock (not a delta or final),
 // and no-ops for empty text.
 func TestEmitIntermediateTextEmitsTextBlock(t *testing.T) {
-	r := turnevent.NewRecordingSink()
-	ctx := turnevent.WithSink(context.Background(), r)
+	var events []turnevent.Event
+	ctx := turnevent.WithSink(context.Background(), fnSink(func(_ context.Context, ev turnevent.Event) {
+		events = append(events, ev)
+	}))
 
 	emitIntermediateText(ctx, "hello")
 	emitIntermediateText(ctx, "")
 
-	evs := r.Events()
-	if len(evs) != 1 {
-		t.Fatalf("events = %d, want 1", len(evs))
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
 	}
-	tb, ok := evs[0].(turnevent.TextBlock)
+	tb, ok := events[0].(turnevent.TextBlock)
 	if !ok {
-		t.Fatalf("event[0] = %T, want TextBlock", evs[0])
+		t.Fatalf("event[0] = %T, want TextBlock", events[0])
 	}
 	if tb.Text != "hello" || tb.Phase != turnevent.PhaseIntermediate {
 		t.Errorf("TextBlock = %+v, want {hello,Intermediate}", tb)
@@ -40,22 +41,23 @@ func TestEmitToolCallNilSafe(t *testing.T) {
 // TestEmitThinkingBlockSkipsEmpty proves the helper avoids emitting empty
 // thinking text so sinks don't receive meaningless ThinkingBlock events.
 func TestEmitThinkingBlockSkipsEmpty(t *testing.T) {
-	r := turnevent.NewRecordingSink()
-	ctx := turnevent.WithSink(context.Background(), r)
+	var events []turnevent.Event
+	ctx := turnevent.WithSink(context.Background(), fnSink(func(_ context.Context, ev turnevent.Event) {
+		events = append(events, ev)
+	}))
 
 	emitThinkingBlock(ctx, "")
-	if len(r.Events()) != 0 {
-		t.Errorf("empty thinking emitted: %v", r.Events())
+	if len(events) != 0 {
+		t.Errorf("empty thinking emitted: %v", events)
 	}
 
 	emitThinkingBlock(ctx, "reasoning")
-	evs := r.Events()
-	if len(evs) != 1 {
-		t.Fatalf("events = %d, want 1", len(evs))
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
 	}
-	tb, ok := evs[0].(turnevent.ThinkingBlock)
+	tb, ok := events[0].(turnevent.ThinkingBlock)
 	if !ok || tb.Text != "reasoning" {
-		t.Errorf("event[0] = %v, want ThinkingBlock{reasoning}", evs[0])
+		t.Errorf("event[0] = %v, want ThinkingBlock{reasoning}", events[0])
 	}
 }
 

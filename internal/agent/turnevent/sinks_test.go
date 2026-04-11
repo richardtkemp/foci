@@ -59,82 +59,6 @@ func TestBufferSinkCapturesError(t *testing.T) {
 	}
 }
 
-// TestRecordingSinkOrdersEvents asserts the sink preserves insertion order —
-// tests that assert on event sequences depend on this.
-func TestRecordingSinkOrdersEvents(t *testing.T) {
-	ctx := context.Background()
-	r := NewRecordingSink()
-	r.Emit(ctx, TurnStart{})
-	r.Emit(ctx, TextBlock{Text: "a"})
-	r.Emit(ctx, TextDelta{Delta: "b"})
-	r.Emit(ctx, TurnComplete{FinalText: "done"})
-
-	evs := r.Events()
-	if len(evs) != 4 {
-		t.Fatalf("len(events) = %d, want 4", len(evs))
-	}
-	if _, ok := evs[0].(TurnStart); !ok {
-		t.Errorf("events[0] = %T, want TurnStart", evs[0])
-	}
-	if tb, ok := evs[1].(TextBlock); !ok || tb.Text != "a" {
-		t.Errorf("events[1] = %v, want TextBlock{a}", evs[1])
-	}
-	if td, ok := evs[2].(TextDelta); !ok || td.Delta != "b" {
-		t.Errorf("events[2] = %v, want TextDelta{b}", evs[2])
-	}
-	if tc, ok := evs[3].(TurnComplete); !ok || tc.FinalText != "done" {
-		t.Errorf("events[3] = %v, want TurnComplete{done}", evs[3])
-	}
-	if got := r.FinalText(); got != "done" {
-		t.Errorf("FinalText = %q, want done", got)
-	}
-}
-
-// TestRecordingSinkTextsConcatenates asserts Texts() assembles TextBlocks and
-// the final TurnComplete text with newlines, so assertions can write
-// "a\nb\ndone" instead of picking events apart.
-func TestRecordingSinkTextsConcatenates(t *testing.T) {
-	ctx := context.Background()
-	r := NewRecordingSink()
-	r.Emit(ctx, TextBlock{Text: "a"})
-	r.Emit(ctx, TextBlock{Text: "b"})
-	r.Emit(ctx, TurnComplete{FinalText: "c"})
-
-	if got, want := r.Texts(), "a\nb\nc"; got != want {
-		t.Errorf("Texts = %q, want %q", got, want)
-	}
-}
-
-// TestTeeSinkFansOut asserts TeeSink broadcasts each event to every wrapped
-// sink — the "I want both a buffer and a renderer" pattern used by
-// agents_notify.
-func TestTeeSinkFansOut(t *testing.T) {
-	ctx := context.Background()
-	a := NewRecordingSink()
-	b := NewRecordingSink()
-	tee := NewTeeSink(a, b)
-	tee.Emit(ctx, TurnStart{})
-	tee.Emit(ctx, TurnComplete{FinalText: "hi"})
-
-	if len(a.Events()) != 2 {
-		t.Errorf("sink a got %d events, want 2", len(a.Events()))
-	}
-	if len(b.Events()) != 2 {
-		t.Errorf("sink b got %d events, want 2", len(b.Events()))
-	}
-	if a.FinalText() != "hi" || b.FinalText() != "hi" {
-		t.Errorf("FinalText not propagated to both sinks")
-	}
-}
-
-// TestTeeSinkSkipsNil asserts TeeSink tolerates nil entries — callers build
-// tee arrays conditionally and we don't want a nil to panic mid-turn.
-func TestTeeSinkSkipsNil(t *testing.T) {
-	tee := NewTeeSink(nil, NewRecordingSink(), nil)
-	// Must not panic.
-	tee.Emit(context.Background(), TurnStart{})
-}
-
 // TestNopSinkDiscards asserts NopSink drops every event silently — the
 // default fallback for ctx with no sink attached.
 func TestNopSinkDiscards(t *testing.T) {
@@ -159,12 +83,12 @@ func TestSinkFromContextFallback(t *testing.T) {
 // TestWithSinkStoresAndRetrieves asserts the context helper round-trips a
 // sink correctly.
 func TestWithSinkStoresAndRetrieves(t *testing.T) {
-	r := NewRecordingSink()
-	ctx := WithSink(context.Background(), r)
+	b := NewBufferSink()
+	ctx := WithSink(context.Background(), b)
 	Emit(ctx, TurnStart{})
 	Emit(ctx, TurnComplete{FinalText: "x"})
-	if r.FinalText() != "x" {
-		t.Errorf("FinalText = %q, want x", r.FinalText())
+	if b.FinalText() != "x" {
+		t.Errorf("FinalText = %q, want x", b.FinalText())
 	}
 }
 

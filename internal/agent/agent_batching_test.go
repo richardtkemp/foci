@@ -148,9 +148,10 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 }
 
 func TestBatchPartialAssistantMessages_False(t *testing.T) {
-	// When batch=false (default), intermediate text should be sent via ReplyFunc
-	// and the final response text returned from HandleMessage.
-	// This also covers the bug where final response has empty content.
+	// When batch=false (default), intermediate text should be sent via the
+	// sink as a TextBlock{Intermediate} and the final response text returned
+	// from HandleMessage. This also covers the bug where the second API call
+	// returns empty content.
 	callCount := 0
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
@@ -197,7 +198,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	}
 
 	var intermediateReplies []string
-	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+	recorder := fnSink(func(_ context.Context, ev turnevent.Event) {
 		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
 			intermediateReplies = append(intermediateReplies, tb.Text)
 		}
@@ -222,7 +223,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 
 func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	// When batch=true, intermediate text should be accumulated and returned
-	// concatenated from HandleMessage. No ReplyFunc calls.
+	// concatenated from HandleMessage. No intermediate TextBlock events.
 	callCount := 0
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
 		callCount++
@@ -268,7 +269,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	}
 
 	var intermediateReplies []string
-	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+	recorder := fnSink(func(_ context.Context, ev turnevent.Event) {
 		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
 			intermediateReplies = append(intermediateReplies, tb.Text)
 		}
@@ -280,7 +281,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 		t.Fatalf("HandleMessage: %v", err)
 	}
 
-	// ReplyFunc should NOT have been called
+	// Intermediate TextBlocks should NOT have fired
 	if len(intermediateReplies) != 0 {
 		t.Errorf("intermediate replies = %v, want none", intermediateReplies)
 	}

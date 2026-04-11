@@ -59,7 +59,7 @@ func runHook(t *testing.T, body []byte, installID string) hookOutput {
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
 	}
 	if len(in.ToolResponse) > 0 {
-		out.ToolResponse = truncate(string(in.ToolResponse), maxFieldBytes)
+		out.ToolResponse = truncate(decodeToolResponse(in.ToolResponse), maxFieldBytes)
 	}
 	if in.Error != "" {
 		out.Error = truncate(in.Error, maxFieldBytes)
@@ -73,7 +73,8 @@ func runHook(t *testing.T, body []byte, installID string) hookOutput {
 
 // TestMain_PostToolUse proves the happy path: a realistic PostToolUse
 // envelope from CC is reduced to the compact hookOutput shape with
-// is_error=false and tool_response preserved (unquoted-string form).
+// is_error=false and tool_response unwrapped from its JSON string form
+// (so the user-visible "Show full" view doesn't show stray double quotes).
 func TestMain_PostToolUse(t *testing.T) {
 	body := []byte(`{
 		"hook_event_name": "PostToolUse",
@@ -97,11 +98,35 @@ func TestMain_PostToolUse(t *testing.T) {
 	if out.IsError {
 		t.Error("IsError = true, want false for PostToolUse")
 	}
-	// tool_response is json.RawMessage in hookInput; we stringify it,
-	// so a JSON string like `"contents of the file"` becomes exactly that
-	// (quote-included) in the output.
-	if out.ToolResponse != `"contents of the file"` {
-		t.Errorf("ToolResponse = %q, want quoted string", out.ToolResponse)
+	if out.ToolResponse != "contents of the file" {
+		t.Errorf("ToolResponse = %q, want unwrapped plain string", out.ToolResponse)
+	}
+}
+
+// TestDecodeToolResponse_StructuredFallsBackToRaw proves that non-string
+// tool_response payloads (objects, arrays, numbers) fall back to the raw
+// JSON bytes rather than being dropped — Bash's structured exec results,
+// for example, arrive as objects and we still want them legible in the
+// "Show full" expansion.
+func TestDecodeToolResponse_StructuredFallsBackToRaw(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"plain string", `"hello"`, "hello"},
+		{"object", `{"stdout":"ok","exit":0}`, `{"stdout":"ok","exit":0}`},
+		{"array", `[1,2,3]`, `[1,2,3]`},
+		{"number", `42`, `42`},
+		{"escaped string", `"line\nbreak"`, "line\nbreak"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decodeToolResponse(json.RawMessage(tc.raw))
+			if got != tc.want {
+				t.Errorf("decodeToolResponse(%s) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 
