@@ -519,7 +519,7 @@ func TestDisplayText_DisplayNameAndTitle(t *testing.T) {
 	if !strings.Contains(text, "Execute a shell command") {
 		t.Errorf("text missing description: %q", text)
 	}
-	if !strings.Contains(text, "`ls -la`") {
+	if !strings.Contains(text, "```\nls -la\n```") {
 		t.Errorf("text missing formatted command: %q", text)
 	}
 }
@@ -600,6 +600,39 @@ func TestDisplayText_FallbackInputFormatting(t *testing.T) {
 	// Should contain the compact JSON in backticks.
 	if !strings.Contains(text, "`") {
 		t.Errorf("text missing backtick-wrapped input: %q", text)
+	}
+}
+
+func TestDisplayText_CommandWithBackticks(t *testing.T) {
+	// Regression: a shell command containing backticks (e.g. a grep pattern
+	// like `\`(high|med|low)\``) must render via a fenced code block so the
+	// full command text survives downstream markdown-to-HTML conversion.
+	// Previously the command was wrapped in single backticks, which the
+	// inline-code regex then paired incorrectly with the internal backticks,
+	// leaking part of the command and an INLINECODE placeholder token.
+	t.Parallel()
+
+	cmd := `foci_todo list | grep -oP '` + "`" + `(high|med|low)` + "`" + `'`
+	inputJSON, err := json.Marshal(map[string]string{"command": cmd})
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+
+	req := &PermissionRequestPayload{
+		ToolName: "Bash",
+		Input:    json.RawMessage(inputJSON),
+	}
+	text := req.DisplayText()
+
+	// Must use a fenced block (triple backticks on their own lines).
+	wantFence := "```\n" + cmd + "\n```"
+	if !strings.Contains(text, wantFence) {
+		t.Errorf("DisplayText() did not use fenced block for command with backticks\n  got:  %q\n  want: contains %q", text, wantFence)
+	}
+	// The whole command — including the bits around the internal backticks
+	// — must appear verbatim somewhere in the output.
+	if !strings.Contains(text, cmd) {
+		t.Errorf("DisplayText() missing full command text\n  got: %q\n  cmd: %q", text, cmd)
 	}
 }
 
@@ -741,12 +774,16 @@ func TestChoices_EmptyPrefixSkipped(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFormatToolInput_BashCommand(t *testing.T) {
-	// Proves that Bash tool input extracts the command field.
+	// Proves that Bash tool input extracts the command field and renders it
+	// as a fenced code block. Fenced blocks (rather than inline `backticks`)
+	// are needed so commands containing internal backticks don't confuse the
+	// downstream markdown-to-HTML inline-code regex.
 	t.Parallel()
 
 	out := formatToolInput("Bash", json.RawMessage(`{"command":"echo hello"}`))
-	if out != "`echo hello`" {
-		t.Errorf("formatToolInput = %q, want %q", out, "`echo hello`")
+	want := "```\necho hello\n```"
+	if out != want {
+		t.Errorf("formatToolInput = %q, want %q", out, want)
 	}
 }
 
@@ -761,12 +798,15 @@ func TestFormatToolInput_FilePath(t *testing.T) {
 }
 
 func TestFormatToolInput_InvalidJSON(t *testing.T) {
-	// Proves that invalid JSON input is displayed as-is in backticks.
+	// Proves that invalid JSON input is displayed as-is inside a fenced
+	// code block (so that any stray backticks in the raw input don't break
+	// the downstream markdown-to-HTML conversion).
 	t.Parallel()
 
 	out := formatToolInput("Bash", json.RawMessage(`not json`))
-	if out != "`not json`" {
-		t.Errorf("formatToolInput = %q, want %q", out, "`not json`")
+	want := "```\nnot json\n```"
+	if out != want {
+		t.Errorf("formatToolInput = %q, want %q", out, want)
 	}
 }
 

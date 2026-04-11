@@ -47,6 +47,12 @@ var (
 // - - item / * item -> bullet lists
 // - 1. item -> ordered lists
 func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
+	// Strip any stray NUL bytes from input. We use \x00 as the delimiter for
+	// code-extraction placeholders (see below); a pre-existing NUL in the
+	// input could corrupt placeholder boundaries. Valid UTF-8 text never
+	// contains NUL, so this is a defensive no-op in normal use.
+	text = strings.ReplaceAll(text, "\x00", "")
+
 	// Convert markdown formatting in order of precedence
 	// Code blocks first (preserve everything inside)
 	var codeBlocks []string
@@ -59,7 +65,7 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 		}
 		inner := htmlEscape(parts[1])
 		codeBlocks = append(codeBlocks, "<pre><code>"+inner+"</code></pre>")
-		return fmt.Sprintf("[CODEBLOCK%d]", idx)
+		return codeBlockPlaceholder(idx)
 	})
 
 	// Tables: detect blocks of lines containing | with a separator row (---).
@@ -80,7 +86,7 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 		}
 		code := htmlEscape(parts[1])
 		inlineCodes = append(inlineCodes, "<code>"+code+"</code>")
-		return fmt.Sprintf("[INLINECODE%d]", idx)
+		return inlineCodePlaceholder(idx)
 	})
 
 	// Escape & and < in the body text after extracting code blocks and inline
@@ -132,14 +138,23 @@ func ConvertToTelegramHTML(text string, opts ...display.RenderOpts) string {
 
 	// Restore code blocks and inline codes
 	for i, code := range codeBlocks {
-		text = strings.ReplaceAll(text, fmt.Sprintf("[CODEBLOCK%d]", i), code)
+		text = strings.ReplaceAll(text, codeBlockPlaceholder(i), code)
 	}
 	for i, code := range inlineCodes {
-		text = strings.ReplaceAll(text, fmt.Sprintf("[INLINECODE%d]", i), code)
+		text = strings.ReplaceAll(text, inlineCodePlaceholder(i), code)
 	}
 
 	return text
 }
+
+// Placeholder format for code extraction. We use NUL-byte delimiters rather
+// than bracketed tokens because bracketed tokens can be mutated by later
+// regex passes — notably reLink matching `[INLINECODE0](x)` as a link when
+// inline code happens to sit adjacent to parens. NUL is unreachable via
+// valid UTF-8 input (stripped at the top of ConvertToTelegramHTML) and does
+// not appear in any markdown regex, so placeholders survive untouched.
+func codeBlockPlaceholder(idx int) string  { return fmt.Sprintf("\x00CODEBLOCK%d\x00", idx) }
+func inlineCodePlaceholder(idx int) string { return fmt.Sprintf("\x00INLINECODE%d\x00", idx) }
 
 // convertTables finds markdown table blocks and converts them to <pre> blocks
 // using display.DetectTables and display.RenderTable.
@@ -154,7 +169,7 @@ func convertTables(text string, codeBlocks *[]string, opts display.RenderOpts) s
 		rendered := display.RenderTable(blocks[i].Lines, opts)
 		idx := len(*codeBlocks)
 		*codeBlocks = append(*codeBlocks, "<pre>"+htmlEscape(rendered)+"</pre>")
-		replacement := []string{fmt.Sprintf("[CODEBLOCK%d]", idx)}
+		replacement := []string{codeBlockPlaceholder(idx)}
 		lines = append(lines[:blocks[i].StartLine], append(replacement, lines[blocks[i].EndLine:]...)...)
 	}
 	return strings.Join(lines, "\n")
