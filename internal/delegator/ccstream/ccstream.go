@@ -94,17 +94,16 @@ type Backend struct {
 	// Auto-approve rules (compiled from config, immutable after Start)
 	autoApproveRules []autoApproveRule
 
-	// Hook install state. Set by installHooks at Start, consumed by
-	// uninstallHooks at Close so settings.local.json entries are removed
-	// when the backend shuts down. hookInstallID is the unique ID bound
-	// into hookCmd (via --install) and echoed back by foci-cc-hook so
-	// handleHookResponse can filter events belonging to this backend
-	// from events belonging to other backends sharing the same
-	// settings.local.json. See hooks.go for the full flow.
-	hookInstalled    bool
-	hookSettingsPath string
-	hookCmd          string
-	hookInstallID    string
+	// Hook install state. Set by prepareHooks at Start so
+	// handleHookResponse can filter events belonging to this backend from
+	// events belonging to user-configured hooks. hookCmd is the full
+	// shell-command string passed to CC via --settings; hookInstallID is
+	// the unique ID bound into it and echoed back by foci-cc-hook. No
+	// file state — CC receives the hook config as a JSON argv and the
+	// subprocess-scoped temp file CC derives from it vanishes with the
+	// process. See hooks.go for the full flow.
+	hookCmd       string
+	hookInstallID string
 
 	// Rate limit state (shared across all backends for an agent).
 	rateLimitState *RateLimitState
@@ -167,12 +166,17 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if opts.Label != "" {
 		component = "ccstream:" + opts.Label
 	}
-	log.Infof(component, "launching: claude %s (workdir=%s)", strings.Join(args, " "), opts.WorkDir)
 
-	// Install PostToolUse / PostToolUseFailure hooks before spawning CC so
-	// the subprocess picks them up from .claude/settings.local.json on
-	// startup. See hooks.go for the install algorithm and contract.
-	b.installHooks(opts.WorkDir)
+	// Build foci's hook settings JSON and append it as a --settings argv
+	// so CC loads it as a flagSettings source (always enabled, merges
+	// with user hooks automatically). Skipped when the foci-cc-hook
+	// binary can't be located — Warn logged, ccstream runs without
+	// OnToolEnd events. See hooks.go for the full flow.
+	if hookSettings, ok := b.prepareHooks(); ok {
+		args = append(args, "--settings", hookSettings)
+	}
+
+	log.Infof(component, "launching: claude %s (workdir=%s)", strings.Join(args, " "), opts.WorkDir)
 
 	// Create command with its own cancellable context. The CC process is
 	// long-lived (surviving across turns), so it must NOT be tied to the
@@ -328,9 +332,10 @@ func (b *Backend) Close() error {
 		<-b.done
 	}
 
-	// Remove our PostToolUse / PostToolUseFailure entries from
-	// .claude/settings.local.json. Preserves any user-owned hooks.
-	b.uninstallHooks()
+	// No hook cleanup needed — the CC subprocess exits with our
+	// --settings temp file still on disk, but it's owned by CC and the
+	// content-hash path is stable so it naturally de-dupes across
+	// backend restarts.
 
 	return nil
 }
