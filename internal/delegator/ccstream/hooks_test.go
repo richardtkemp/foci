@@ -346,6 +346,33 @@ func TestHandleHookResponse_FiltersUserHookNoID(t *testing.T) {
 	}
 }
 
+// TestHandleHookResponse_DropsEventsWhenHooksDisabled proves that when
+// prepareHooks failed (hookInstallID stays empty), incoming hook_response
+// events from user-configured hooks that also have empty install_id are
+// dropped — we can't tell them apart from ours because we never installed
+// one, but since we never installed one, nothing should match. Requires
+// exact install ID equality rather than the looser "matches if both set"
+// rule that would have let user events through.
+func TestHandleHookResponse_DropsEventsWhenHooksDisabled(t *testing.T) {
+	b := &Backend{} // hookInstallID intentionally empty — install failed
+	fired := false
+	handler := &delegator.EventHandler{
+		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
+	}
+	b.beginTurn(handler)
+
+	// A user-configured hook fires with no install_id (it wasn't foci's).
+	env, _ := json.Marshal(hookResponseEnvelope{
+		HookEvent: "PostToolUse",
+		Stdout:    `{"tool_use_id":"toolu_user","tool_name":"Bash","tool_response":"ok"}`,
+	})
+	b.handleHookResponse(env)
+
+	if fired {
+		t.Error("OnToolEnd fired for user hook event when foci hooks were not installed")
+	}
+}
+
 // TestHandleHookResponse_SkipsSubagent proves hook events with a non-empty
 // agent_id are dropped before dispatch — they belong to the sub-agent's
 // transcript, not the parent turn.

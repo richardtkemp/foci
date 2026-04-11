@@ -313,11 +313,15 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// Multi-source filter: only events emitted by a hook we installed
 	// (carrying our install ID in their echoed stdout) belong to us.
 	// Events from user-configured hooks — which coexist with foci's via
-	// CC's source-merging — are dropped here.
+	// CC's source-merging — and hook events that arrive when foci never
+	// installed a hook at all (prepareHooks skipped because the helper
+	// binary wasn't found) are both dropped here. Requires exact match:
+	// an empty ourInstallID means no match is ever possible, so every
+	// hook event is correctly ignored when foci's install is inactive.
 	b.mu.Lock()
 	ourInstallID := b.hookInstallID
 	b.mu.Unlock()
-	if ourInstallID != "" && parsed.InstallID != ourInstallID {
+	if ourInstallID == "" || parsed.InstallID != ourInstallID {
 		return
 	}
 
