@@ -173,10 +173,10 @@ The agent can acknowledge a message and deliver a full response later. For compl
 Implementation: The agent turn can produce multiple Telegram messages. The first is sent immediately. Subsequent messages are sent as the agent completes tool calls. This is just streaming tool results to Telegram rather than batching everything into one final response.
 
 Controlled by `batch_partial_assistant_messages` (bool, default `false`):
-- **false:** Text in mid-turn responses is sent to Telegram immediately via `ReplyFunc`. The user sees text as it's generated, even if more tool calls follow.
-- **true:** Text is accumulated across all responses in the turn chain and sent concatenated when the turn completes (end_turn with no more tool calls).
+- **false:** Text in mid-turn responses is emitted as `turnevent.TextBlock{Phase: Intermediate}` events immediately. The user sees text as it's generated, even if more tool calls follow.
+- **true:** Text is accumulated across all responses in the turn chain and carried on `turnevent.TurnComplete.FinalText` when the turn completes (end_turn with no more tool calls).
 
-Both system-triggered turns (async_notify) and Telegram-triggered turns support deferred replies. The async_notify path resolves the Telegram bot early and attaches a `ReplyFunc` callback so intermediate text is delivered during the turn.
+Both system-triggered turns (async_notify) and Telegram-triggered turns support deferred replies. Both paths attach a `turnevent.Sink` to the turn context (via `turn.NewStreamingSink` for interactive platforms, `turn.NewSessionSink` for async_notify) so intermediate text events route to the platform during the turn.
 
 ## Agent Behaviour
 

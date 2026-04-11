@@ -235,11 +235,12 @@ All commands use a unified signature: `Execute(ctx context.Context, req Request,
 
 ## The Agent Loop (`agent/agent.go`)
 
-The core of the system. Two entry points:
-- `HandleMessage(ctx, sessionKey, text)` — text-only, delegates to `HandleMessageWithAttachments`
-- `HandleMessageWithAttachments(ctx, sessionKey, text, attachments)` — full version with optional image/document attachments
+The core of the system. Single entry point:
+- `HandleMessage(ctx, sessionKey, texts, attachments) error` — accepts one or more user text blocks and optional image/document attachments. Both parameters may be nil/empty for the appropriate caller.
 
-**Delegated agents:** When `Agent.DelegatedManager != nil`, `HandleMessageWithAttachments` branches to `DelegatedTransport` (`turn_delegated.go`) instead of the traditional API tool loop. See the TurnContract section below for how the transport choice is made and how turns are orchestrated.
+**Output delivery:** Text, thinking, tool calls, tool results, typing indicator, and turn lifecycle are all emitted as `turnevent.Event` values through a `turnevent.Sink` attached to ctx (see the "Turn Event Stream (Sink Architecture)" section). `HandleMessage` emits `TurnStart` at entry and `TurnComplete` via `defer` so consumers always see the terminal event even on error paths. There is no string return value — callers that need the final text wire a `turnevent.BufferSink` and read `buf.FinalText()` after the call.
+
+**Delegated agents:** When `Agent.DelegatedManager != nil`, `HandleMessage` branches to `DelegatedTransport` (`turn_delegated.go`) instead of the traditional API tool loop. See the TurnContract section below for how the transport choice is made and how turns are orchestrated.
 
 ### TurnContract Abstraction (`agent/turn_contract.go`)
 
@@ -250,7 +251,7 @@ Both transport paths (API and delegated) are unified under the `TurnContract` in
 - `DelegatedTransport` (`turn_delegated.go`) — delegated path: the backend (Claude Code) owns inference and tool execution.
 - Both embed `sharedTurnOps` (`turn_contract.go`) for shared implementations (7 methods).
 
-**Transport selection:** In `HandleMessageWithAttachments`, if `Agent.DelegatedManager != nil` → `DelegatedTransport`; otherwise → `APITransport`.
+**Transport selection:** In `HandleMessage`, if `Agent.DelegatedManager != nil` → `DelegatedTransport`; otherwise → `APITransport`.
 
 **Orchestrator:** `OrchestrateFullTurn` (`turn_orchestrator.go`) calls all 20 methods in canonical order:
 
@@ -379,11 +380,11 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 |------|---------|
 | `assistant` | Model response with content blocks (text, thinking, tool_use) |
 | `result` | Turn completion with accumulated metrics (success, error, max_turns) |
-| `system` | Lifecycle events (init, status, compact_boundary, session_state_changed, task_*, api_retry) |
+| `system` | Lifecycle events — subtypes: `init`, `status`, `compact_boundary`, `session_state_changed`, `task_*`, `api_retry`, `hook_started` / `hook_progress` / `hook_response` (from `--include-hook-events`) |
 | `control_request` | CC requesting permission (subtype `can_use_tool`) |
 | `control_cancel_request` | CC cancelling a pending permission request |
 | `tool_progress` | Heartbeat during long-running tool execution |
-| `stream_event` | Token-level streaming (with `--include-partial-messages`) |
+| `stream_event` | Token-level streaming (with `--include-partial-messages`) — `text_delta` and `thinking_delta` subtypes are extracted |
 
 **Message priority:** User messages carry an optional `priority` field. `PriorityNow` interrupts the current operation (aborts tool execution) — used for steer messages. `PriorityNext` queues after the current turn (default). `PriorityLater` defers for low-priority system messages.
 
@@ -423,6 +424,37 @@ Adding a new control: define intent type in `delegator/control.go`, add case in 
 - `SendKeystroke` and `SendSpecialKey` are no-ops (no TUI).
 - `CaptureCommandOutput` is not implemented — local command output arrives as system messages on stdout.
 - Typing indicator is restarted on mid-turn events (`OnAssistant`, `OnToolProgress`), not just on `SendToPane`.
+
+#### Hook Integration (`internal/delegator/ccstream/hooks.go`)
+
+CC consumes tool_result blocks internally — they never surface on stdout the way assistant messages or stream events do. To get per-tool completion signals (so the tracker can update "Show results" inline buttons and fire result hints), ccstream installs `PostToolUse` and `PostToolUseFailure` hooks on each session that point at the `bin/foci-cc-hook` helper binary.
+
+**Install at `Backend.Start`:**
+
+1. Resolve hook binary path via `os.Executable()` + `../foci-cc-hook` sibling lookup. If absent (dev builds, broken packaging), log at **Warn** and skip — the backend runs without tool-result display rather than failing to start.
+2. Generate a unique 16-hex-char install ID via `crypto/rand`.
+3. Build the shell command string: `"<path>" --install <id>`.
+4. Merge a `{matcher: "*", hooks: [{type: "command", command: <cmd>, timeout: 10}]}` entry into `{opts.WorkDir}/.claude/settings.local.json` for both `PostToolUse` and `PostToolUseFailure` events. User hooks and other tools' hooks are preserved; top-level settings keys (`permissionMode`, etc.) are round-tripped untouched.
+5. Atomic write via `.tmp + rename`.
+6. Record `hookInstalled` / `hookSettingsPath` / `hookCmd` / `hookInstallID` on the Backend struct so uninstall can find and filter them.
+
+**Uninstall at `Backend.Close`:** after the reader goroutine exits, load `settings.local.json`, remove entries whose command string exactly matches this backend's `hookCmd` (install ID included), prune empty matchers, write back atomically. If the entire top-level settings object ends up empty the file is deleted.
+
+**Multi-backend safety:** two foci backends sharing a workdir each install their own uniquely-identified entry. `appendFociEntry` always appends (each command is distinct because the install ID is distinct), so both entries coexist. `removeFociEntries` matches exact command strings so one backend's uninstall leaves the other's entry alone. A package-level mutex keyed by absolute settings.local.json path (`lockSettingsFile`) serializes concurrent read-modify-write from multiple backends in the same foci-gw process.
+
+**Hook output path:** when CC fires a hook, it pipes an input JSON envelope (`tool_name`, `tool_use_id`, `tool_input`, `tool_response` / `error`, `agent_id`, ...) into `foci-cc-hook`'s stdin. The helper parses its own argv for `--install <id>`, reads the stdin envelope, truncates `tool_response` / `error` to 64 KB (so each emitted stream line stays under ccstream's 1 MB scanner limit — without the cap a multi-MB file read would blow the scanner and tear down the backend via `OnReaderStopped`), and writes a compact JSON object to stdout. CC captures that stdout and emits it as a `system/hook_response` message on its own stdout, where foci's reader picks it up.
+
+**Dispatch path:** `OnSystem("hook_response", ...)` calls `handleHookResponse`, which applies three filters before firing `handler.OnToolEnd`:
+
+1. **Hook event type:** only `PostToolUse` and `PostToolUseFailure` are processed. Other hook events (user-configured `PreToolUse`, lifecycle events) are silently ignored.
+2. **Install ID match:** parses `install_id` from the helper's stdout JSON; events whose ID doesn't match the current backend's `hookInstallID` are dropped. This is what keeps two backends sharing a workdir from crossing wires.
+3. **Sidechain filter:** events with non-empty `agent_id` are dropped — sub-agent tool calls belong to the sub-agent's own transcript rather than the parent turn, consistent with the `isSidechain` filter in the cctmux backend.
+
+For events that pass all three, `handler.OnToolEnd(tool_use_id, tool_name, tool_response_or_error, is_error)` fires. The id plumbs through `turn_delegated.go` → `turnevent.ToolResult{ID, Name, Output, IsError}` → `StreamingSink.Emit` → `tracker.ObserveToolResult(id, name, result, isError)` which looks up the entry by id (see Tool Call Visibility below) and updates the correct message.
+
+**Crash resilience:** if foci crashes mid-session, stale entries remain in `settings.local.json` pointing at the `foci-cc-hook` binary. Because the binary is persistent (shipped with foci, not ephemeral), the hook still fires correctly under a subsequent CC invocation — but the install ID won't match any running backend, so `handleHookResponse` drops the event. Orphans accumulate over successive crashes; they're harmless (dead hooks whose output is filtered out) and can be cleaned manually if they get noisy.
+
+**Required CC flags:** `--include-hook-events` + `--verbose` in `ccstream.go:Start` (both already set) enable the `hook_response` system message subtype on CC's stream-json output. Without them, hooks would run but their output would never reach foci.
 
 ### Interactive Messages (`platform/interactive.go`)
 
@@ -474,7 +506,7 @@ Messages are only saved to disk after the full turn completes (all tool loops re
 
 ### Cache Stability Invariant
 
-Conversation history sent to the API must be a strict append-only extension of the previous request — inserting a message in the middle invalidates all cached tokens after that point. `HandleMessageWithAttachments` enforces this via a per-session turn lock that serializes all callers (Telegram, `AsyncNotifier`, scheduled wakes, HTTP `/send`). Different sessions run concurrently. See [CACHING.md](CACHING.md) for the full cache stability contract.
+Conversation history sent to the API must be a strict append-only extension of the previous request — inserting a message in the middle invalidates all cached tokens after that point. `HandleMessage` enforces this via a per-session turn lock that serializes all callers (Telegram, `AsyncNotifier`, scheduled wakes, HTTP `/send`). Different sessions run concurrently. See [CACHING.md](CACHING.md) for the full cache stability contract.
 
 ## Message Metadata
 
@@ -618,6 +650,10 @@ Tool call display is controlled by `show_tool_calls` (string: `"off"`, `"preview
 
 `ToolCall` and `ToolResult` are `turnevent.Event` types routed by `StreamingSink` directly to the platform tracker — there is no separate `BuildTurnObservers` wiring.
 
+**Tracker state machine (`internal/turn/tracker.go`):** `ToolCallTracker` keys its per-tool state by `tool_use_id`, not by insertion order. This matters when Claude batches multiple `tool_use` blocks in a single assistant message (common: three `Read` calls, a `Grep` + `Bash`, etc.) — each tool call gets its own `trackerEntry{msgID, text, fullText, lastParams}` so parallel `ObserveToolResult` calls each update the correct message's hint and store entry, regardless of arrival order. Preview mode uses a sentinel `""` key for the single shared preview message that every call edits in place. `LastMsgID` / `ResetMsgID` return and clear the most-recently-inserted entry respectively, preserving the preview-mode "one message edited by reply" UX.
+
+Cctmux plumbs the id through via `handleAssistant` recording `toolNamesByID` at tool_use time and looking it up in `handleUser` when the tool_result arrives. Ccstream plumbs the id via the CC hook integration described above — both paths feed `handler.OnToolEnd(id, name, output, isError)` which the StreamingSink forwards to the tracker.
+
 **Ordering with deferred replies:** When intermediate text fires between tool loops, `OnReply` resets `toolMsgID` to 0. This forces the next tool call to create a fresh message below the text, preserving chronological order in chat.
 
 **Flow (multi-loop turn, preview/full):**
@@ -738,7 +774,7 @@ main/i1709596800/1709596800             → sessions/main/i1709596800/1709596800
 
 System blocks are assembled in this order:
 
-1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, platform URL, messaging platform, config/log paths, message metadata docs, and session structure. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessageWithAttachments`. Omitted when `[environment] enabled = false` (empty string).
+1. **Environment block** (`agent.EnvironmentBlock`) — programmatically built at startup from config values. Contains workspace path, agent ID, platform URL, messaging platform, config/log paths, message metadata docs, and session structure. Built by `buildEnvironmentBlock()` in `main.go`, stored as a string on the Agent struct, prepended as the first `SystemBlock` in `HandleMessage`. Omitted when `[environment] enabled = false` (empty string).
 
 2. **Character files** (`workspace/bootstrap.go`) — reads markdown files from workspace dir in order:
 ```
@@ -1077,7 +1113,7 @@ Two goroutines:
                                                               - GroupThrottle (group chat + throttle configured)
                                                               - drop (group + require_mention + no throttle + no mention)
                                                               - main channel (everything else)
-[agent worker goroutine]  →  dequeue msg  →  batch with DrainQueue()  →  HandleMessageWithAttachments  →  reply
+[agent worker goroutine]  →  dequeue msg  →  batch with DrainQueue()  →  HandleMessage  →  reply
 ```
 
 Both platforms use a shared `platform.MessageQueue` that manages inbound message buffering, steer injection, and group chat throttling. The `MessageQueue` wraps a buffered channel with routing logic:
@@ -1095,7 +1131,7 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 
 **Wizard routing (`WizardHandler`):** Interactive wizards (e.g. `/agents new`) take over message routing via `Registry.HandleMessage()`. When a wizard is active, ALL messages (including non-`/` text) are intercepted by the receiver goroutine before reaching slash command dispatch or the agent queue. `/cancel` and `/stop` abort the active wizard. The wizard is cleared automatically when it signals completion (`done=true`).
 
-**Attachment handling:** Photos (`msg.Photo`, largest size selected), image documents (`msg.Document` with image MIME type), and PDF documents (`msg.Document` with `application/pdf` MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `attachment` structs alongside the message text (which may come from `msg.Caption` for photos). PDFs over 32MB fall back to save-to-disk with a text annotation. The agent worker converts these to `agent.Attachment` and calls `HandleMessageWithAttachments`, which routes images to `ImageBlock()` and PDFs to `DocumentBlock()` content blocks.
+**Attachment handling:** Photos (`msg.Photo`, largest size selected), image documents (`msg.Document` with image MIME type), and PDF documents (`msg.Document` with `application/pdf` MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `attachment` structs alongside the message text (which may come from `msg.Caption` for photos). PDFs over 32MB fall back to save-to-disk with a text annotation. The agent worker converts these to `platform.Attachment` and calls `HandleMessage`, which routes images to `ImageBlock()` and PDFs to `DocumentBlock()` content blocks.
 
 **Turn cancellation:** Each agent turn gets its own `context.WithCancel`. `/stop` calls `turnCancel()`, which propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). The agent loop checks `ctx.Err()` after API responses and between tool calls.
 
