@@ -59,6 +59,10 @@ func startTestServer(t *testing.T, handler func(req string) string) string {
 	return sockPath
 }
 
+// TestFociCallSuccess builds the foci-call binary and exercises the happy
+// path end-to-end — a successful round-trip over a Unix socket.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallSuccess(t *testing.T) {
 	bin := buildBinary(t)
 	sockPath := startTestServer(t, func(req string) string {
@@ -77,6 +81,10 @@ func TestFociCallSuccess(t *testing.T) {
 	}
 }
 
+// TestFociCallError verifies the binary exits non-zero when the server
+// returns an error field in the JSON response.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallError(t *testing.T) {
 	bin := buildBinary(t)
 	sockPath := startTestServer(t, func(req string) string {
@@ -95,6 +103,10 @@ func TestFociCallError(t *testing.T) {
 	}
 }
 
+// TestFociCallNoSocket verifies the binary exits non-zero and mentions
+// FOCI_SOCK when the environment variable is absent.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallNoSocket(t *testing.T) {
 	bin := buildBinary(t)
 	cmd := exec.Command(bin, `{"tool":"test","params":{}}`)
@@ -108,6 +120,10 @@ func TestFociCallNoSocket(t *testing.T) {
 	}
 }
 
+// TestFociCallNoArgs verifies the binary prints a usage message and exits
+// non-zero when invoked with no arguments.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallNoArgs(t *testing.T) {
 	bin := buildBinary(t)
 	cmd := exec.Command(bin)
@@ -121,6 +137,10 @@ func TestFociCallNoArgs(t *testing.T) {
 	}
 }
 
+// TestFociCallInvalidJSON verifies the binary rejects malformed JSON input
+// with a clear error message and non-zero exit code.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallInvalidJSON(t *testing.T) {
 	bin := buildBinary(t)
 	cmd := exec.Command(bin, `{not valid}`)
@@ -134,6 +154,10 @@ func TestFociCallInvalidJSON(t *testing.T) {
 	}
 }
 
+// TestFociCallHelp verifies that -h, --help, and help all print a Usage:
+// header and exit zero.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallHelp(t *testing.T) {
 	bin := buildBinary(t)
 	for _, arg := range []string{"-h", "--help", "help"} {
@@ -150,6 +174,10 @@ func TestFociCallHelp(t *testing.T) {
 	}
 }
 
+// TestFociCallVersion verifies that --version, -v, and version all print a
+// line starting with "foci-call " and exit zero.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestFociCallVersion(t *testing.T) {
 	bin := buildBinary(t)
 	for _, arg := range []string{"--version", "-v", "version"} {
