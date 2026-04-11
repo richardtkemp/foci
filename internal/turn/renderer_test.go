@@ -866,3 +866,66 @@ func TestFinalize_WithoutOnReply_DeliversOnce(t *testing.T) {
 		t.Errorf("Finalize without prior OnReply should deliver once, got %d sends", total)
 	}
 }
+
+// TestOnThinkingDelta_StreamsLive proves OnThinkingDelta writes each delta to
+// the stream writer so users see thinking progress per-token, and sets the
+// streamedThinkingLive guard so a subsequent OnThinking block doesn't
+// re-stream the same text.
+func TestOnThinkingDelta_StreamsLive(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinkingDelta("I need ")
+	r.OnThinkingDelta("to think")
+	r.OnThinking("I need to think")
+
+	content := r.sw.Content()
+	// Stream should contain the delta-streamed text exactly once, not twice.
+	if strings.Count(content, "I need ") != 1 || strings.Count(content, "to think") != 1 {
+		t.Errorf("deltas should stream once and OnThinking should not duplicate; got %q", content)
+	}
+	// Builder should hold the accumulated block text for the finalization button.
+	if r.thinking.String() != "I need to think" {
+		t.Errorf("thinking builder = %q, want %q", r.thinking.String(), "I need to think")
+	}
+}
+
+// TestOnThinkingDelta_NoStreamingDoesNothing proves the delta path is gated
+// on StreamOutput — when streaming is disabled, the delta is a no-op and
+// OnThinking still carries the block through at end-of-stream.
+func TestOnThinkingDelta_NoStreamingDoesNothing(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: false, MaxChars: 4096}
+	r := newTestRenderer(backend, tracker, display)
+
+	r.OnThinkingDelta("fragment")
+
+	if r.streamedThinkingLive {
+		t.Error("streamedThinkingLive set despite StreamOutput=false")
+	}
+	if r.thinking.Len() != 0 {
+		t.Error("builder populated by delta path; deltas must not accumulate")
+	}
+}
+
+// TestOnThinking_FallbackWhenNoDelta proves OnThinking still streams the full
+// block when no delta fired — preserves pre-refactor behaviour for API turns
+// that only emit block-level thinking events.
+func TestOnThinking_FallbackWhenNoDelta(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("whole block")
+
+	content := r.sw.Content()
+	if !strings.Contains(content, "whole block") {
+		t.Errorf("OnThinking block fallback did not stream text; got %q", content)
+	}
+}

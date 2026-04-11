@@ -72,9 +72,7 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		}
 
 	case turnevent.ThinkingDelta:
-		// Thinking deltas are not currently forwarded to the renderer — the
-		// renderer's OnThinking handles both accumulation and live streaming
-		// from the block-level event. Reserved for future use.
+		s.renderer.OnThinkingDelta(e.Delta)
 
 	case turnevent.ThinkingBlock:
 		s.renderer.OnThinking(e.Text)
