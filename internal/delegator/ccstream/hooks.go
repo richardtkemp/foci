@@ -1,10 +1,13 @@
 package ccstream
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"foci/internal/log"
 )
@@ -33,14 +36,34 @@ import (
 // settings.json are never touched. If the user already has entries in
 // settings.local.json, ours are added alongside rather than replacing.
 //
-// On Close foci removes its own hook entries (identified by the command path
-// pointing at bin/foci-cc-hook). If foci crashes mid-session the entries are
-// left behind but keep working correctly — the helper binary still exists
-// and the hook continues to fire for the next CC invocation in that workdir.
+// Multi-backend safety: when two foci backends share a workdir (common when
+// running multiple agents in the same repo), they share a settings.local.json
+// file. Each backend generates a unique install ID at Start time, bakes it
+// into both the command string (`"<path>" --install <id>`) and the helper
+// binary's echoed output, and filters incoming hook_response events by the
+// install_id field. Each backend's entry in the settings file is therefore
+// uniquely identifiable — install append-only, uninstall matches exact
+// command string including its own install ID, and handleHookResponse drops
+// events whose install_id doesn't match the current backend. Concurrent
+// read-modify-write on the same settings file is serialized via a package-
+// level mutex keyed by the absolute file path.
+//
+// On Close foci removes its own hook entry (matched by command string).
+// If foci crashes mid-session the entry is left behind but keeps working
+// correctly — the helper binary still exists, CC's next invocation under
+// the same workdir fires the hook, handleHookResponse sees an unknown
+// install_id and drops the event. Orphan entries accumulate across crashes
+// but are harmless (they just fire dead hooks whose output is dropped).
 // ---------------------------------------------------------------------------
 
 // hookCommandName is the binary filename foci looks for alongside foci-gw.
 const hookCommandName = "foci-cc-hook"
+
+// installIDFlag must match cmd/foci-cc-hook/main.go installIDFlag — it's
+// the flag the helper binary parses from its own argv to extract the ID
+// foci passes in. Kept as a constant in both places so rename refactors
+// surface as build errors in the tests.
+const installIDFlag = "--install"
 
 // hookTimeoutSeconds is the CC hook-script timeout foci configures. 10
 // seconds is comfortable for the helper binary's ~10ms startup cost while
@@ -52,6 +75,56 @@ const (
 	eventPostToolUse        = "PostToolUse"
 	eventPostToolUseFailure = "PostToolUseFailure"
 )
+
+// ---------------------------------------------------------------------------
+// Per-path file mutex
+//
+// Concurrent installHooks / uninstallHooks calls from multiple backends in
+// the same foci-gw process would otherwise race on the read-modify-write
+// cycle against settings.local.json. A simple package-level mutex map keyed
+// by absolute file path serializes access. Abs-path normalization means two
+// backends with different relative paths that resolve to the same file
+// still share a mutex.
+// ---------------------------------------------------------------------------
+
+var (
+	settingsFileLocksMu sync.Mutex
+	settingsFileLocks   = map[string]*sync.Mutex{}
+)
+
+func lockSettingsFile(path string) *sync.Mutex {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	settingsFileLocksMu.Lock()
+	defer settingsFileLocksMu.Unlock()
+	mu, ok := settingsFileLocks[abs]
+	if !ok {
+		mu = &sync.Mutex{}
+		settingsFileLocks[abs] = mu
+	}
+	return mu
+}
+
+// newInstallID generates a short random identifier used to distinguish one
+// backend's hook entries from another's in a shared settings.local.json.
+// 8 bytes → 16 hex chars is plenty — collision risk is negligible compared
+// to the probability of two backends installing in the same nanosecond, and
+// even a collision only causes one backend to mis-filter (harmless with
+// idempotent tracker updates).
+func newInstallID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// buildHookCommand composes the shell command string foci writes into
+// settings.local.json. The binary path is double-quoted so paths containing
+// spaces survive bash parsing; the install ID is appended as an argv pair.
+func buildHookCommand(hookPath, installID string) string {
+	return fmt.Sprintf("%q %s %s", hookPath, installIDFlag, installID)
+}
 
 // ---------------------------------------------------------------------------
 // Settings.local.json merge support
@@ -77,7 +150,9 @@ type hookSpec struct {
 	Async   bool   `json:"async,omitempty"`
 }
 
-// fociHookSpec builds the hookSpec foci installs for an event. Identical for
+// fociHookSpec builds the hookSpec foci installs for an event. hookCmd is
+// the full command string (path + --install <id>) so every backend's spec
+// is uniquely identifiable in settings.local.json. Identical shape for
 // both PostToolUse and PostToolUseFailure — the helper binary branches on
 // hook_event_name internally.
 func fociHookSpec(hookCmd string) hookSpec {
@@ -92,19 +167,30 @@ func fociHookSpec(hookCmd string) hookSpec {
 // Backend lifecycle
 // ---------------------------------------------------------------------------
 
-// installHooks merges foci's PostToolUse and PostToolUseFailure hooks into
-// {workDir}/.claude/settings.local.json. It preserves any existing entries
-// (user hooks, other tools' hooks) and is idempotent — running install
-// twice leaves a single foci entry per event. Records paths on the Backend
-// so uninstallHooks can locate and remove them on Close.
+// installHooks merges a foci PostToolUse and PostToolUseFailure hook into
+// {workDir}/.claude/settings.local.json. Preserves any existing entries
+// (user hooks, other backends' foci entries) — the install generates a
+// unique install ID so each backend's entry is independently identifiable
+// and removable. Records paths and install ID on the Backend so
+// uninstallHooks can locate and remove them on Close.
 func (b *Backend) installHooks(workDir string) {
-	hookCmd, err := resolveHookBinary()
+	hookPath, err := resolveHookBinary()
 	if err != nil {
-		b.logger().Debugf("hook install skipped: %v", err)
+		// Warn level: without hooks, ccstream mode loses OnToolEnd and
+		// the "Show results" inline button is empty. Operators running
+		// stripped-down builds need to see this in normal logs.
+		b.logger().Warnf("CC hook install skipped: %v (ccstream OnToolEnd events will not fire)", err)
 		return
 	}
 
 	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
+	installID := newInstallID()
+	hookCmd := buildHookCommand(hookPath, installID)
+
+	mu := lockSettingsFile(settingsPath)
+	mu.Lock()
+	defer mu.Unlock()
+
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		b.logger().Warnf("hook install: create .claude dir: %v", err)
 		return
@@ -119,7 +205,7 @@ func (b *Backend) installHooks(workDir string) {
 	hooks := extractHooks(top)
 	spec := fociHookSpec(hookCmd)
 	for _, event := range []string{eventPostToolUse, eventPostToolUseFailure} {
-		hooks[event] = ensureFociEntry(hooks[event], spec)
+		hooks[event] = appendFociEntry(hooks[event], spec)
 	}
 
 	if err := writeHooks(settingsPath, top, hooks); err != nil {
@@ -131,12 +217,16 @@ func (b *Backend) installHooks(workDir string) {
 	b.hookInstalled = true
 	b.hookSettingsPath = settingsPath
 	b.hookCmd = hookCmd
+	b.hookInstallID = installID
 	b.mu.Unlock()
-	b.logger().Infof("installed CC hooks at %s (command=%s)", settingsPath, hookCmd)
+	b.logger().Infof("installed CC hooks at %s (install_id=%s)", settingsPath, installID)
 }
 
-// uninstallHooks removes foci's hook entries from settings.local.json. If the
-// file ends up empty it's deleted. No-op if installHooks never ran.
+// uninstallHooks removes this backend's hook entries from
+// settings.local.json. Matching is by exact command string (which includes
+// our unique install ID), so other backends' entries — and user hooks —
+// are left untouched. If the file ends up empty the file is deleted.
+// No-op if installHooks never ran or was skipped.
 func (b *Backend) uninstallHooks() {
 	b.mu.Lock()
 	installed := b.hookInstalled
@@ -147,6 +237,10 @@ func (b *Backend) uninstallHooks() {
 	if !installed || settingsPath == "" || hookCmd == "" {
 		return
 	}
+
+	mu := lockSettingsFile(settingsPath)
+	mu.Lock()
+	defer mu.Unlock()
 
 	top, err := loadSettings(settingsPath)
 	if err != nil {
@@ -233,14 +327,20 @@ func extractHooks(top map[string]json.RawMessage) hooksConfig {
 	return h
 }
 
-// ensureFociEntry adds a matcher:"*" entry for foci's hook command to the
-// event's matcher list if it isn't already present. Idempotent — running
-// twice leaves exactly one foci entry.
-func ensureFociEntry(matchers []hookMatcher, spec hookSpec) []hookMatcher {
+// appendFociEntry adds a matcher:"*" entry for this backend's hook command
+// to the event's matcher list. Each install generates a unique command
+// string (via --install <id>) so append is the correct operation —
+// multiple backends in the same workdir each contribute one entry.
+//
+// If a call with the EXACT same command already exists (e.g. a backend
+// re-invoked install without cleaning up first), it's treated as already-
+// present and no duplicate is added. Preserves idempotency at the
+// per-command level.
+func appendFociEntry(matchers []hookMatcher, spec hookSpec) []hookMatcher {
 	for _, m := range matchers {
 		for _, h := range m.Hooks {
 			if h.Type == "command" && h.Command == spec.Command {
-				return matchers // already present
+				return matchers
 			}
 		}
 	}
@@ -333,8 +433,14 @@ type hookResponseEnvelope struct {
 // hookScriptOutput is the compact JSON foci-cc-hook writes to its stdout.
 // Must stay in sync with cmd/foci-cc-hook/main.go's hookOutput type — they
 // are the two sides of a stable contract.
+//
+// InstallID is echoed back from the hook command's argv (see
+// buildHookCommand) so handleHookResponse can filter events belonging to
+// this backend from events belonging to other backends that share the
+// same settings.local.json.
 type hookScriptOutput struct {
 	HookEvent    string `json:"hook_event"`
+	InstallID    string `json:"install_id,omitempty"`
 	ToolUseID    string `json:"tool_use_id"`
 	ToolName     string `json:"tool_name"`
 	ToolResponse string `json:"tool_response,omitempty"`
@@ -345,13 +451,18 @@ type hookScriptOutput struct {
 
 // handleHookResponse parses a system/hook_response envelope and dispatches
 // to the current turn's EventHandler.OnToolEnd for PostToolUse and
-// PostToolUseFailure events. Sub-agent tool calls (agent_id non-empty) are
-// filtered out at parse time — their tool results belong to the sub-agent's
-// own transcript rather than the parent turn.
+// PostToolUseFailure events.
 //
-// Unknown hook events (e.g. PreToolUse) and hook events we don't have a
-// helper binary for (user-configured hooks with their own scripts) are
-// silently ignored — we only act on output that matches our contract.
+// Three filter layers before dispatch:
+//  1. Hook event must be PostToolUse or PostToolUseFailure — user-
+//     configured PreToolUse or lifecycle hooks are silently ignored.
+//  2. Install ID must match this backend's install ID. When multiple
+//     foci backends share a workdir they all see every backend's hook_
+//     response events, but each backend only acts on its own entries.
+//  3. Sub-agent tool calls (agent_id non-empty) are filtered out — their
+//     tool results belong to the sub-agent's own transcript rather than
+//     the parent turn.
+//
 // Malformed stdout (parse failure) degrades gracefully: log at debug and
 // drop the event, keeping the rest of the turn flowing.
 func (b *Backend) handleHookResponse(raw json.RawMessage) {
@@ -374,6 +485,18 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	if parsed.ToolUseID == "" {
 		return
 	}
+
+	// Multi-backend filter: only events emitted by a hook we installed
+	// (carrying our install ID in their echoed stdout) belong to us.
+	// Events from another backend's hook entry in the same
+	// settings.local.json are dropped here.
+	b.mu.Lock()
+	ourInstallID := b.hookInstallID
+	b.mu.Unlock()
+	if ourInstallID != "" && parsed.InstallID != ourInstallID {
+		return
+	}
+
 	// Sidechain filter: sub-agent tool calls have a non-empty agent_id per
 	// claude-code src/utils/hooks.ts:createBaseHookInput. Skip so they
 	// don't fire OnToolEnd on the parent turn's tracker.

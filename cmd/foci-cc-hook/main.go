@@ -25,6 +25,14 @@ import (
 	"os"
 )
 
+// installIDFlag is the argv flag foci sets when installing the hook so the
+// binary can echo the install ID back in its output. Each foci backend uses
+// a unique install ID in its hook command string — see
+// internal/delegator/ccstream/hooks.go for the generation and filter logic.
+// Without the ID round-trip, multiple backends sharing a workdir can't tell
+// which hook_response events belong to which backend.
+const installIDFlag = "--install"
+
 // maxFieldBytes bounds the size of tool_response / error fields in the
 // emitted JSON so each hook_response line from CC stays well under the
 // ccstream reader's 1MB scanner limit (internal/delegator/ccstream/reader.go
@@ -50,8 +58,13 @@ type hookInput struct {
 // hookOutput is the compact JSON foci's ccstream handleHookResponse parser
 // expects to find in hook_response.stdout. Keep field names aligned with
 // the stable contract in internal/delegator/ccstream/hooks.go.
+//
+// InstallID is echoed back from argv so foci can filter hook_response
+// events by the originating backend when multiple foci backends share a
+// workdir and therefore share a .claude/settings.local.json file.
 type hookOutput struct {
 	HookEvent    string `json:"hook_event"`
+	InstallID    string `json:"install_id,omitempty"`
 	ToolUseID    string `json:"tool_use_id"`
 	ToolName     string `json:"tool_name"`
 	ToolResponse string `json:"tool_response,omitempty"`
@@ -60,7 +73,27 @@ type hookOutput struct {
 	IsError      bool   `json:"is_error"`
 }
 
+// parseInstallID extracts the value of the --install flag from argv.
+// Returns empty string when absent. Accepts both `--install X` (two args)
+// and `--install=X` (one arg) forms. Silent on malformed input — foci's
+// stream parser handles missing install_ids by treating them as "not ours".
+func parseInstallID(args []string) string {
+	for i := 1; i < len(args); i++ {
+		a := args[i]
+		if a == installIDFlag && i+1 < len(args) {
+			return args[i+1]
+		}
+		const eq = installIDFlag + "="
+		if len(a) > len(eq) && a[:len(eq)] == eq {
+			return a[len(eq):]
+		}
+	}
+	return ""
+}
+
 func main() {
+	installID := parseInstallID(os.Args)
+
 	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return // exit 0 — silent drop, don't interfere with the turn
@@ -72,6 +105,7 @@ func main() {
 
 	out := hookOutput{
 		HookEvent: in.HookEventName,
+		InstallID: installID,
 		ToolUseID: in.ToolUseID,
 		ToolName:  in.ToolName,
 		AgentID:   in.AgentID,

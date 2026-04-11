@@ -96,10 +96,15 @@ type Backend struct {
 
 	// Hook install state. Set by installHooks at Start, consumed by
 	// uninstallHooks at Close so settings.local.json entries are removed
-	// when the backend shuts down. See hooks.go for the full flow.
+	// when the backend shuts down. hookInstallID is the unique ID bound
+	// into hookCmd (via --install) and echoed back by foci-cc-hook so
+	// handleHookResponse can filter events belonging to this backend
+	// from events belonging to other backends sharing the same
+	// settings.local.json. See hooks.go for the full flow.
 	hookInstalled    bool
 	hookSettingsPath string
 	hookCmd          string
+	hookInstallID    string
 
 	// Rate limit state (shared across all backends for an agent).
 	rateLimitState *RateLimitState
