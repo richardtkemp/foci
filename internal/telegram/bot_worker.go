@@ -95,8 +95,6 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 
 	sink := turn.NewStreamingSink(renderer, tracker, b)
 
-	turnCtx = turnevent.WithSink(turnCtx, sink)
-	turnCtx = turnevent.WithSteerer(turnCtx, turnevent.SteererFunc(b.mq.DrainSteer))
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
 	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
 		UserID:   first.UserID,
@@ -119,7 +117,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		allAttachments = append(allAttachments, qm.Attachments...)
 	}
 
-	err := b.handler.HandleMessage(turnCtx, sk, texts, allAttachments)
+	err := turn.RunTurn(turnCtx, b.handler, sink, turnevent.SteererFunc(b.mq.DrainSteer), sk, texts, allAttachments)
 	if err != nil && turnCtx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return // /stop was called, "Stopped." already sent
