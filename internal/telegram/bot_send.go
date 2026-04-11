@@ -31,11 +31,7 @@ func (b *Bot) sendHTMLChunks(chatID int64, html string) {
 // sendReply sends a response back to the user, splitting long messages and
 // falling back to plain text if HTML formatting fails.
 func (b *Bot) sendReply(msg *gotgbot.Message, response string) {
-	response = strings.TrimSpace(response)
-	if response == "" {
-		return
-	}
-	b.sendHTMLChunks(msg.Chat.Id, ConvertToTelegramHTML(response, b.tableOpts()))
+	_ = b.SendTextToChat(msg.Chat.Id, response)
 }
 
 // SendNotification sends a plain text notification to the default chat.

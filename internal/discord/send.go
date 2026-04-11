@@ -83,11 +83,8 @@ func (b *Bot) clearStaleChannel(channelIDStr string) {
 
 // sendReply sends a response back to the channel where the message originated.
 func (b *Bot) sendReply(msg *discordgo.Message, response string) {
-	response = strings.TrimSpace(response)
-	if response == "" {
-		return
-	}
-	b.sendMarkdownChunks(msg.ChannelID, response)
+	chatID, _ := strconv.ParseInt(msg.ChannelID, 10, 64)
+	_ = b.SendTextToChat(chatID, response)
 }
 
 // SendNotification sends a plain text notification to the default channel.
