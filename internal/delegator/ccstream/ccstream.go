@@ -366,6 +366,10 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.mu.Lock()
 	b.lastUsage = nil
 	b.mu.Unlock()
+
+	// Seed activity timestamp so the idle reaper has an initial deadline
+	// rather than polling indefinitely when no events arrive.
+	b.touchActivity()
 }
 
 // cancelTurn reverses beginTurn on send failure.

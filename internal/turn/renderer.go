@@ -108,6 +108,9 @@ func (r *TurnRenderer) Cleanup() {
 // "else if !streamOutput", which dropped text when streaming was configured
 // but no stream deltas arrived. Now always delivers when no stream message exists.
 func (r *TurnRenderer) OnReply(text string) {
+	if platform.IsSilent(text) {
+		return
+	}
 	msgID := r.sw.Finish()
 	if msgID != "" {
 		// Streaming: reply content is in the stream message. Finalize it
