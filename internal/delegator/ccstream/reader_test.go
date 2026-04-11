@@ -234,10 +234,6 @@ func (r *readCloserWithCancel) Read(p []byte) (int, error) {
 	return 0, context.Canceled
 }
 
-func (w *writeCloserForPipe) Write(p []byte) (int, error) {
-	return len(p), nil
-}
-
 func (w *writeCloserForPipe) Close() error {
 	select {
 	case <-w.closed:

@@ -20,10 +20,17 @@ func TestConnectionInterface(t *testing.T) {
 	var _ Connection = (*mockConnection)(nil)
 }
 
-// TestMessageHandlerInterface verifies that mockHandler implements the MessageHandler interface.
-// This is a compile-time check that catches interface drift.
+// TestMessageHandlerInterface verifies that mockHandler implements the
+// MessageHandler interface AND invokes every method on the mock via
+// interface dispatch. The method calls below ensure deadcode's RTA can
+// trace each method as reachable from a test entry point — without them,
+// the unused stubs get flagged as dead code even with -test.
 func TestMessageHandlerInterface(t *testing.T) {
-	var _ MessageHandler = (*mockHandler)(nil)
+	var h MessageHandler = &mockHandler{}
+	_ = h.HandleMessage(context.Background(), "", nil, nil)
+	_ = h.IsProcessing()
+	_ = h.TransformMessage("")
+	_ = h.Warnings()
 }
 
 // TestConnectionManagerInterface verifies that noopConnMgr implements ConnectionManager.
