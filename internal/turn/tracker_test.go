@@ -183,7 +183,7 @@ func TestObserveToolCall_OffMode(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "off"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 
 	if backend.sendCount()+backend.sendWithButtonCount() != 0 {
 		t.Error("off mode should not send any messages")
@@ -196,7 +196,7 @@ func TestObserveToolCall_EmptyMode(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: ""}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 
 	if backend.sendCount()+backend.sendWithButtonCount() != 0 {
 		t.Error("empty mode should not send any messages")
@@ -205,12 +205,13 @@ func TestObserveToolCall_EmptyMode(t *testing.T) {
 
 func TestObserveToolCall_FullMode(t *testing.T) {
 	// Verifies that full mode sends each tool call as a new message with a button
-	// and stores the entry for later expansion.
+	// and stores the entry for later expansion. Distinct tool_use IDs per call
+	// create distinct entries in the tracker's id-keyed map.
 	backend := &mockTrackerBackend{}
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-1", "shell", json.RawMessage(`{"command":"ls"}`))
 
 	if backend.sendWithButtonCount() != 1 {
 		t.Fatalf("sendWithButton count = %d, want 1", backend.sendWithButtonCount())
@@ -223,10 +224,77 @@ func TestObserveToolCall_FullMode(t *testing.T) {
 		t.Errorf("msgID = %q, want msg-1", tracker.LastMsgID())
 	}
 
-	// Second tool call in full mode also sends a new message.
-	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	// Second tool call with a distinct id creates a new entry and sends a
+	// new message (rather than clobbering the first).
+	tracker.ObserveToolCall("tu-2", "read", json.RawMessage(`{"path":"foo.txt"}`))
 	if backend.sendWithButtonCount() != 2 {
 		t.Errorf("sendWithButton count = %d, want 2", backend.sendWithButtonCount())
+	}
+	if tracker.LastMsgID() != "msg-2" {
+		t.Errorf("msgID = %q, want msg-2", tracker.LastMsgID())
+	}
+}
+
+// TestObserveToolResult_ParallelCalls proves the id-keyed refactor handles
+// Claude's typical parallel-tool-call pattern: three tool_use blocks in one
+// assistant message get three distinct store entries, and three subsequent
+// tool_results each update their matching entry — not just the last one,
+// which was the pre-refactor bug.
+func TestObserveToolResult_ParallelCalls(t *testing.T) {
+	backend := &mockTrackerBackend{}
+	store := newMockTrackerStore()
+	hintFn := func(_ string, _ json.RawMessage, result string) string {
+		return "got: " + result
+	}
+	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, hintFn)
+
+	tracker.ObserveToolCall("tu-1", "Read", json.RawMessage(`{"path":"/a"}`))
+	tracker.ObserveToolCall("tu-2", "Read", json.RawMessage(`{"path":"/b"}`))
+	tracker.ObserveToolCall("tu-3", "Bash", json.RawMessage(`{"cmd":"ls"}`))
+
+	if backend.sendWithButtonCount() != 3 {
+		t.Fatalf("sendWithButton = %d, want 3", backend.sendWithButtonCount())
+	}
+
+	// Results arrive in arbitrary order — each must update its own entry.
+	tracker.ObserveToolResult("tu-2", "Read", "content-b", false)
+	tracker.ObserveToolResult("tu-1", "Read", "content-a", false)
+	tracker.ObserveToolResult("tu-3", "Bash", "file1 file2", false)
+
+	store.mu.Lock()
+	a := store.entries["msg-1"].result
+	b := store.entries["msg-2"].result
+	c := store.entries["msg-3"].result
+	store.mu.Unlock()
+
+	if a != "content-a" {
+		t.Errorf("msg-1 result = %q, want content-a", a)
+	}
+	if b != "content-b" {
+		t.Errorf("msg-2 result = %q, want content-b", b)
+	}
+	if c != "file1 file2" {
+		t.Errorf("msg-3 result = %q, want file1 file2", c)
+	}
+
+	// Each compact notification must be updated with its own hint — not
+	// three identical hints from the last-result-wins bug.
+	if backend.editWithButtonCount() != 3 {
+		t.Fatalf("editWithButton = %d, want 3", backend.editWithButtonCount())
+	}
+	want := map[string]string{
+		"msg-1": "[compact] Read -> got: content-a",
+		"msg-2": "[compact] Read -> got: content-b",
+		"msg-3": "[compact] Bash -> got: file1 file2",
+	}
+	seen := map[string]string{}
+	for _, eb := range backend.editWithButtons {
+		seen[eb.msgID] = eb.text
+	}
+	for id, w := range want {
+		if got := seen[id]; got != w {
+			t.Errorf("edit[%s] = %q, want %q", id, got, w)
+		}
 	}
 }
 
@@ -238,7 +306,7 @@ func TestObserveToolCall_PreviewMode(t *testing.T) {
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "preview"}, noHint)
 
 	// First call: send new message.
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	if backend.sendCount() != 1 {
 		t.Fatalf("send count = %d, want 1", backend.sendCount())
 	}
@@ -247,7 +315,7 @@ func TestObserveToolCall_PreviewMode(t *testing.T) {
 	}
 
 	// Second call: edit existing message.
-	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("tu-test", "read", json.RawMessage(`{"path":"foo.txt"}`))
 	if backend.sendCount() != 1 {
 		t.Errorf("send count = %d, want 1 (should edit, not send)", backend.sendCount())
 	}
@@ -270,7 +338,7 @@ func TestCleanupPreview_DeletesInPreviewMode(t *testing.T) {
 	}
 
 	// Send a message, then cleanup.
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	tracker.CleanupPreview()
 	if backend.deleteCount() != 1 {
 		t.Errorf("delete count = %d, want 1", backend.deleteCount())
@@ -289,7 +357,7 @@ func TestCleanupPreview_NoDeleteInFullMode(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	tracker.CleanupPreview()
 	if backend.deleteCount() != 0 {
 		t.Errorf("delete count = %d, want 0 (full mode should not delete)", backend.deleteCount())
@@ -303,14 +371,14 @@ func TestResetMsgID_ForcesNewMessage(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "preview"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	if backend.sendCount() != 1 {
 		t.Fatalf("send count = %d, want 1", backend.sendCount())
 	}
 
 	tracker.ResetMsgID()
 
-	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("tu-test", "read", json.RawMessage(`{"path":"foo.txt"}`))
 	if backend.sendCount() != 2 {
 		t.Errorf("send count = %d, want 2 (should send new after reset)", backend.sendCount())
 	}
@@ -325,8 +393,8 @@ func TestObserveToolResult_IgnoredWhenNotFull(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "preview"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
-	tracker.ObserveToolResult("shell", "file1\nfile2", false)
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolResult("tu-test", "shell", "file1\nfile2", false)
 
 	if backend.editWithButtonCount() != 0 {
 		t.Error("preview mode should not process tool results")
@@ -343,8 +411,8 @@ func TestObserveToolResult_UpdatesHint(t *testing.T) {
 	}
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, hintFn)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
-	tracker.ObserveToolResult("shell", "lots of output", false)
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolResult("tu-test", "shell", "lots of output", false)
 
 	if backend.editWithButtonCount() != 1 {
 		t.Fatalf("editWithButton count = %d, want 1", backend.editWithButtonCount())
@@ -367,7 +435,7 @@ func TestObserveToolResult_ExpandedUpdatesWithResult(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	// Simulate user clicking "Show full" before result arrives.
 	store.entries["msg-1"] = mockTrackerEntry{
 		compact:  "[compact] shell",
@@ -376,7 +444,7 @@ func TestObserveToolResult_ExpandedUpdatesWithResult(t *testing.T) {
 		expanded: true,
 	}
 
-	tracker.ObserveToolResult("shell", "file1\nfile2", false)
+	tracker.ObserveToolResult("tu-test", "shell", "file1\nfile2", false)
 
 	if backend.editWithButtonCount() != 1 {
 		t.Fatalf("editWithButton count = %d, want 1", backend.editWithButtonCount())
@@ -394,8 +462,8 @@ func TestObserveToolResult_StoresAndPersists(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
-	tracker.ObserveToolResult("shell", "output", false)
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolResult("tu-test", "shell", "output", false)
 
 	if len(store.persisted) != 1 {
 		t.Fatalf("persisted count = %d, want 1", len(store.persisted))
@@ -416,8 +484,8 @@ func TestObserveToolResult_NoMsgID(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
-	tracker.ObserveToolResult("shell", "output", false)
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolResult("tu-test", "shell", "output", false)
 
 	if backend.editWithButtonCount() != 0 {
 		t.Error("should not edit when no message was sent")
@@ -483,7 +551,7 @@ func TestFullMode_StoreEntryOnSend(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "full"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 
 	store.mu.Lock()
 	entry, ok := store.entries["msg-1"]
@@ -506,14 +574,14 @@ func TestPreviewMode_SendError(t *testing.T) {
 	store := newMockTrackerStore()
 	tracker := NewToolCallTracker(backend, store, TrackerDisplay{ShowToolCalls: "preview"}, noHint)
 
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	if tracker.LastMsgID() != "" {
 		t.Errorf("msgID = %q, want empty after send error", tracker.LastMsgID())
 	}
 
 	// Clear the error and try again -- should send, not edit.
 	backend.sendErr = nil
-	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("tu-test", "read", json.RawMessage(`{"path":"foo.txt"}`))
 	if backend.sendCount() != 2 {
 		t.Errorf("send count = %d, want 2 (both attempts should send)", backend.sendCount())
 	}

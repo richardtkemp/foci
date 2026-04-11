@@ -14,8 +14,8 @@ import (
 // a minimal fake to avoid constructing a full tracker.
 type SinkTracker interface {
 	ToolTracker
-	ObserveToolCall(toolName string, params json.RawMessage)
-	ObserveToolResult(toolName, result string, isError bool)
+	ObserveToolCall(id, toolName string, params json.RawMessage)
+	ObserveToolResult(id, toolName, result string, isError bool)
 	NotifyRetry(endpoint string)
 	ClearRetryNotification()
 }
@@ -79,12 +79,12 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 
 	case turnevent.ToolCall:
 		if s.tracker != nil {
-			s.tracker.ObserveToolCall(e.Name, e.Args)
+			s.tracker.ObserveToolCall(e.ID, e.Name, e.Args)
 		}
 
 	case turnevent.ToolResult:
 		if s.tracker != nil {
-			s.tracker.ObserveToolResult(e.Name, e.Output, e.IsError)
+			s.tracker.ObserveToolResult(e.ID, e.Name, e.Output, e.IsError)
 		}
 
 	case turnevent.Activity:
