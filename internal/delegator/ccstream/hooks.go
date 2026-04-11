@@ -344,6 +344,19 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		output = parsed.Error
 	}
 	handler.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
+
+	// Fire any post-tool nudges the caller wants to inject for this
+	// tool. Uses the same "now"-priority user-message path as steers —
+	// CC processes the reminder between tool executions, matching the
+	// API transport's CheckAfterTools injection point.
+	if handler.PostToolNudgeFunc != nil {
+		for _, text := range handler.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
+			if text == "" {
+				continue
+			}
+			_ = b.writer.SendUserWithPriority("[user] "+text, PriorityNow)
+		}
+	}
 }
 
 // logger returns a component-scoped logger for hook-related messages.

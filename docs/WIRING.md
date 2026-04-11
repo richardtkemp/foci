@@ -274,7 +274,7 @@ Phase 2 — Turn preparation:
   ResolveModelEffort    API: full resolution with defaults     Delegated: reads agent-level model
   ComposePrompt         API: rich content blocks               Delegated: flat text via JoinPrompt
   BuildSystemAndTools   API: per-turn system + tool rebuild    Delegated: no-op (set at Start)
-  InjectNudges          API: content blocks in user message    Delegated: text prepended to prompt
+  InjectNudges          API: content blocks in user message    Delegated: text prepended + PostToolNudgeFunc + PreAnswerNudgeFunc (see Nudge System)
 
 Phase 3 — Core execution:
   RunInference          API: multi-iteration tool loop         Delegated: SendToPane (async)
@@ -1435,7 +1435,13 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 
 ### Injection
 
-Nudge reminders are injected as text ContentBlocks in user messages. After-tools nudges (every_n_tools, after_error, regex) are appended as individual blocks to tool result messages. Regex nudges on no-tools turns and every_n_turns nudges are prepended as ContentBlocks to the user message before the first API call. Pre_answer nudges are injected as standalone user messages that continue the loop. Each injection is one-shot per trigger type per turn to prevent infinite loops.
+**API transport** (`turn_api.go`): nudge reminders are injected as text ContentBlocks in user messages. After-tools nudges (every_n_tools, after_error, regex) are appended as individual blocks to tool result messages. Regex nudges on no-tools turns and every_n_turns nudges are prepended as ContentBlocks to the user message before the first API call. Pre_answer nudges are injected as standalone user messages that continue the loop. Each injection is one-shot per trigger type per turn to prevent infinite loops.
+
+**Delegated transport** (`turn_delegated.go`): CC owns the inference loop so foci can't edit in-flight messages. Instead:
+
+- **every_n_turns / regex** — prepended to the prompt string in `InjectNudges` before `SendToPane`, same as API content blocks but flattened to text.
+- **every_n_tools / after_error** — wired through `delegator.EventHandler.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as `[user] <text>` with `PriorityNow` via the writer. CC processes them between tool executions — the same injection point the SteerCheckFunc uses.
+- **pre_answer** — wired through `delegator.EventHandler.PreAnswerNudgeFunc`. On `OnResult`, ccstream gives the handler a chance to return a verification follow-up. When non-empty, ccstream re-arms the same handler via `beginTurn`, sends the follow-up via `writer.SendUser`, and skips `OnTurnComplete` until the second round's `OnResult`. `turn_delegated.go` tracks `preAnswerFired` in a closure local so the gate fires at most once per user turn, stashes round-1 usage/text so the final `OnTurnComplete` can fold usage into `ts.FinalUsage`, and restores the original answer when round 2 echoes `NoResponseSentinel`. Unlike the API path, the round-1 answer has already streamed to the user as intermediate text — round 2's text becomes the authoritative final reply.
 
 ### Configuration
 

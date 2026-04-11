@@ -250,6 +250,24 @@ type EventHandler struct {
 	// execution. Used by the delegated transport to drain steer messages
 	// buffered by the platform's MessageQueue.
 	SteerCheckFunc func() []string
+
+	// PostToolNudgeFunc is called after each tool's completion signal
+	// (PostToolUse hook dispatch). The caller returns any nudge reminders
+	// that should be injected mid-turn as "now"-priority user messages,
+	// matching the API transport's CheckAfterTools path. Non-blocking.
+	// Used by the delegated transport to fire every_n_tools and
+	// after_error nudge rules during long CC turns.
+	PostToolNudgeFunc func(toolName string, isError bool) []string
+
+	// PreAnswerNudgeFunc is called when CC signals end_turn on a result
+	// message. The caller returns a follow-up prompt (or "" to let the
+	// turn finalise as-is). When non-empty, the backend re-arms a second
+	// round under the SAME EventHandler — sends the returned text as a
+	// new user message and treats its result as the authoritative one.
+	// This wires every nudge rule of type pre_answer into delegated turns,
+	// at the cost of the original answer streaming to the user before the
+	// revised answer arrives (delegated can't retract a committed reply).
+	PreAnswerNudgeFunc func(result *TurnResult) string
 }
 
 // TurnResult is the outcome of a completed turn.

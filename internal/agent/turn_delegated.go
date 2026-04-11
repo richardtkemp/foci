@@ -164,6 +164,26 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Per-turn handler: fires once when the watcher sees end_turn.
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
+
+	// Cumulative tool-call state for every_n_tools / after_error nudges.
+	// These fire via PostToolNudgeFunc, once per tool hook_response — the
+	// scheduler's internal cooldown prevents a rule from re-firing on
+	// back-to-back tools. Lives in a closure so that each turn starts
+	// at zero without polluting DelegatedTransport's long-lived state.
+	var toolCount int
+
+	// Pre-answer gate state: when PreAnswerNudgeFunc returns a follow-up,
+	// ccstream re-dispatches this handler for a second round. preAnswerFired
+	// flips to true on first return so subsequent calls from the second
+	// round's OnResult yield "" and break the loop. preAnswerAccumulated
+	// folds round-1 usage into the final accounting — ccstream's beginTurn
+	// resets lastUsage between rounds, so we stash it here.
+	var (
+		preAnswerFired       bool
+		preAnswerAccumulated *provider.Usage
+		preAnswerFirstText   string
+	)
+
 	// Translate the delegator watcher's callbacks into turnevent.Sink events.
 	// OnTextDelta feeds the stream writer via TextDelta events (edit-in-place
 	// streaming). OnText delivers complete text blocks as intermediate TextBlocks
@@ -187,6 +207,54 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		OnToolEnd: func(id, name, output string, isError bool) {
 			turnevent.Emit(turnCtx, turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 		},
+		PostToolNudgeFunc: func(toolName string, isError bool) []string {
+			if a.Nudger == nil {
+				return nil
+			}
+			toolCount++
+			reminders := a.Nudger.CheckAfterTools(toolCount, isError)
+			if len(reminders) == 0 {
+				return nil
+			}
+			out := make([]string, 0, len(reminders))
+			for _, r := range reminders {
+				out = append(out, nudgeHeader+r)
+			}
+			a.logger().Debugf("nudge: injected %d reminder(s) after tool %q (count=%d, err=%v) for session %s",
+				len(out), toolName, toolCount, isError, ts.SessionKey)
+			return out
+		},
+		PreAnswerNudgeFunc: func(result *delegator.TurnResult) string {
+			if preAnswerFired || a.Nudger == nil || !a.NudgePreAnswerGate {
+				return ""
+			}
+			if toolCount < a.NudgePreAnswerMinTools {
+				return ""
+			}
+			reminder := a.Nudger.CheckPreAnswer()
+			if reminder == "" {
+				return ""
+			}
+			preAnswerFired = true
+			// Stash round-1 state so the final OnTurnComplete can fold it
+			// in. The original answer has already streamed to the user
+			// (OnText delivered PhaseIntermediate), so the sink will treat
+			// the round-2 result as the authoritative final text.
+			if result != nil {
+				preAnswerFirstText = result.Text
+				if result.Usage != nil {
+					preAnswerAccumulated = &provider.Usage{
+						InputTokens:              result.Usage.InputTokens,
+						OutputTokens:             result.Usage.OutputTokens,
+						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
+						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+					}
+				}
+			}
+			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
+				ts.SessionKey, toolCount)
+			return nudgeHeader + reminder + "\n\nIf your answer stands as-is, respond with `" + NoResponseSentinel + "` and nothing else."
+		},
 	}
 	handler.OnTurnComplete = func(result *delegator.TurnResult) {
 		if result != nil {
@@ -200,6 +268,22 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 					CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
 				}
 			}
+		}
+		// Fold round-1 usage into the final totals when the pre-answer
+		// gate ran a second round. Token cost is the sum of both rounds
+		// so the API log reflects the true spend of the user's turn.
+		if preAnswerAccumulated != nil && ts.FinalUsage != nil {
+			ts.FinalUsage.InputTokens += preAnswerAccumulated.InputTokens
+			ts.FinalUsage.OutputTokens += preAnswerAccumulated.OutputTokens
+			ts.FinalUsage.CacheCreationInputTokens += preAnswerAccumulated.CacheCreationInputTokens
+			ts.FinalUsage.CacheReadInputTokens += preAnswerAccumulated.CacheReadInputTokens
+		}
+		// If the model chose to echo the sentinel the API path uses to
+		// mean "my original answer stands", replace the final text with
+		// the round-1 answer so the platform delivery reflects the
+		// user-visible intent. Otherwise the round-2 revised answer wins.
+		if preAnswerFirstText != "" && strings.TrimSpace(ts.FinalText) == NoResponseSentinel {
+			ts.FinalText = preAnswerFirstText
 		}
 		bt.LogUsage(ts)
 		close(ts.CompletionChan)

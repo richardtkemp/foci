@@ -1,6 +1,7 @@
 package ccstream
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -466,5 +467,120 @@ func TestHandleHookResponse_EmptyStdoutSilent(t *testing.T) {
 
 	if fired {
 		t.Error("OnToolEnd fired for empty stdout")
+	}
+}
+
+// TestHandleHookResponse_PostToolNudgeSentAsSteer proves that when the
+// handler's PostToolNudgeFunc returns a nudge reminder, handleHookResponse
+// sends it to CC as a "now"-priority `[user]` message via the writer —
+// the same injection path as SteerCheckFunc. Matches the API transport's
+// CheckAfterTools injection into the tool_result batch.
+func TestHandleHookResponse_PostToolNudgeSentAsSteer(t *testing.T) {
+	var buf bytes.Buffer
+	b := &Backend{
+		hookInstallID: "install-us",
+		writer:        NewWriter(nopWriteCloser{&buf}),
+	}
+
+	handler := &delegator.EventHandler{
+		OnToolEnd: func(_, _, _ string, _ bool) {},
+		PostToolNudgeFunc: func(name string, isErr bool) []string {
+			if name == "Bash" && !isErr {
+				return []string{"reminder-text"}
+			}
+			return nil
+		},
+	}
+	b.beginTurn(handler)
+
+	stdout, _ := json.Marshal(hookScriptOutput{
+		HookEvent:    "PostToolUse",
+		InstallID:    "install-us",
+		ToolUseID:    "toolu_1",
+		ToolName:     "Bash",
+		ToolResponse: "ok",
+	})
+	env, _ := json.Marshal(hookResponseEnvelope{
+		HookEvent: "PostToolUse",
+		Stdout:    string(stdout),
+	})
+	b.handleHookResponse(env)
+
+	if !strings.Contains(buf.String(), "[user] reminder-text") {
+		t.Errorf("expected [user] reminder-text in writer output, got: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), PriorityNow) {
+		t.Errorf("expected priority=%q in writer output, got: %q", PriorityNow, buf.String())
+	}
+}
+
+// TestHandleHookResponse_PostToolNudgeNilFunc proves handleHookResponse is a
+// no-op on the nudge path when PostToolNudgeFunc is nil — agents without a
+// Nudger keep working without spurious writer traffic.
+func TestHandleHookResponse_PostToolNudgeNilFunc(t *testing.T) {
+	var buf bytes.Buffer
+	b := &Backend{
+		hookInstallID: "install-us",
+		writer:        NewWriter(nopWriteCloser{&buf}),
+	}
+	handler := &delegator.EventHandler{
+		OnToolEnd: func(_, _, _ string, _ bool) {},
+	}
+	b.beginTurn(handler)
+
+	stdout, _ := json.Marshal(hookScriptOutput{
+		HookEvent:    "PostToolUse",
+		InstallID:    "install-us",
+		ToolUseID:    "toolu_1",
+		ToolName:     "Read",
+		ToolResponse: "ok",
+	})
+	env, _ := json.Marshal(hookResponseEnvelope{
+		HookEvent: "PostToolUse",
+		Stdout:    string(stdout),
+	})
+	b.handleHookResponse(env)
+
+	if buf.Len() != 0 {
+		t.Errorf("writer should be empty with nil PostToolNudgeFunc, got: %q", buf.String())
+	}
+}
+
+// TestHandleHookResponse_PostToolNudgeSkipsEmpty proves that empty reminder
+// strings returned by PostToolNudgeFunc are skipped rather than emitted as
+// a blank `[user] ` message — matches the SteerCheckFunc drain path.
+func TestHandleHookResponse_PostToolNudgeSkipsEmpty(t *testing.T) {
+	var buf bytes.Buffer
+	b := &Backend{
+		hookInstallID: "install-us",
+		writer:        NewWriter(nopWriteCloser{&buf}),
+	}
+	handler := &delegator.EventHandler{
+		OnToolEnd: func(_, _, _ string, _ bool) {},
+		PostToolNudgeFunc: func(_ string, _ bool) []string {
+			return []string{"", "real", ""}
+		},
+	}
+	b.beginTurn(handler)
+
+	stdout, _ := json.Marshal(hookScriptOutput{
+		HookEvent:    "PostToolUse",
+		InstallID:    "install-us",
+		ToolUseID:    "toolu_1",
+		ToolName:     "Read",
+		ToolResponse: "ok",
+	})
+	env, _ := json.Marshal(hookResponseEnvelope{
+		HookEvent: "PostToolUse",
+		Stdout:    string(stdout),
+	})
+	b.handleHookResponse(env)
+
+	lines := strings.Count(strings.TrimSpace(buf.String()), "\n") + 1
+	if !strings.Contains(buf.String(), "[user] real") {
+		t.Errorf("expected [user] real in output, got: %q", buf.String())
+	}
+	if lines != 1 {
+		t.Errorf("expected exactly 1 writer line (empty nudges skipped), got %d: %q", lines, buf.String())
 	}
 }

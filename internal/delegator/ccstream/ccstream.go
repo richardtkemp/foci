@@ -871,6 +871,35 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
+	// Pre-answer nudge gate: give the caller a chance to re-dispatch this
+	// turn with a verification prompt before finalising. When the func
+	// returns a non-empty follow-up, the result is swallowed, turn state
+	// is re-armed under the SAME handler, and the follow-up is sent as a
+	// new user message. The next OnResult delivers the revised answer as
+	// the authoritative outcome. The caller must stop returning a follow-up
+	// after the first fire to break the loop (guaranteed by the scheduler's
+	// internal state — CheckPreAnswer returns the same text every call but
+	// the turn_delegated closure tracks "fired" locally).
+	if handler != nil && handler.PreAnswerNudgeFunc != nil {
+		if followUp := handler.PreAnswerNudgeFunc(result); followUp != "" {
+			b.beginTurn(handler)
+			if err := b.writer.SendUser(followUp); err != nil {
+				b.logger().Errorf("pre-answer re-dispatch: send user: %v", err)
+				b.cancelTurn()
+				// Fall through to the normal completion path so the
+				// first-round result is still delivered on failure.
+			} else {
+				if b.typingFunc != nil {
+					b.typingFunc(true)
+				}
+				// Restart the idle clock; the second round is an active
+				// continuation, not a completed turn.
+				b.touchActivity()
+				return
+			}
+		}
+	}
+
 	// Clear any agents still tracked (safety net — task_notification should
 	// have already removed them individually during the turn).
 	b.agents.ClearAll()
