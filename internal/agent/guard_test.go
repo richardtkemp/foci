@@ -592,25 +592,3 @@ func TestGuardHintPlainTextInstallRecommendation(t *testing.T) {
 		t.Error("should not recommend installing jq when it's present")
 	}
 }
-
-func TestGuardToolResult_SummaryFormat(t *testing.T) {
-	// Proves that the auto-summary output format includes the model name, char count, and saved file path.
-	// Test the summary output format by calling summariseToolResult directly
-	// This would need a real API client, so we test the format string construction
-	model := "claude-haiku-4-5"
-	result := strings.Repeat("x", 1000)
-	savedPath := "/tmp/test-result.txt"
-
-	expected := fmt.Sprintf("[Auto-summary by %s — full output (%d chars) saved to %s]\n\n%s",
-		model, len(result), savedPath, "test summary")
-
-	if !strings.Contains(expected, "[Auto-summary by") {
-		t.Error("format should start with [Auto-summary by")
-	}
-	if !strings.Contains(expected, "1000 chars") {
-		t.Error("format should contain char count")
-	}
-	if !strings.Contains(expected, savedPath) {
-		t.Error("format should contain saved path")
-	}
-}
