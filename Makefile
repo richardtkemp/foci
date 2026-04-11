@@ -9,9 +9,9 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
 
-all: build cli foci-call
+all: build cli foci-call foci-cc-hook
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -27,6 +27,10 @@ cli:
 foci-call:
 	@mkdir -p bin
 	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-call ./cmd/foci-call
+
+foci-cc-hook:
+	@mkdir -p bin
+	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-cc-hook ./cmd/foci-cc-hook
 
 test:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
