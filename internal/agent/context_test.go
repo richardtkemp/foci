@@ -4,92 +4,82 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"foci/internal/agent/turnevent"
 )
 
-func TestTurnCallbacksRoundTrip(t *testing.T) {
-	// Proves that TurnCallbacks stored in a context via WithTurnCallbacks can be retrieved with TurnCallbacksFromContext and that the retrieved callbacks are the exact same object.
-	var called bool
-	cb := &TurnCallbacks{
-		ReplyFunc: func(text string) { called = true },
-	}
-	ctx := WithTurnCallbacks(context.Background(), cb)
+// TestEmitIntermediateTextEmitsTextBlock proves that emitIntermediateText
+// routes to the ctx sink as an intermediate TextBlock (not a delta or final),
+// and no-ops for empty text.
+func TestEmitIntermediateTextEmitsTextBlock(t *testing.T) {
+	r := turnevent.NewRecordingSink()
+	ctx := turnevent.WithSink(context.Background(), r)
 
-	got := TurnCallbacksFromContext(ctx)
-	if got == nil {
-		t.Fatal("expected non-nil callbacks from context")
-	}
-	if got != cb {
-		t.Error("round-tripped callbacks don't match")
-	}
-	got.ReplyFunc("test")
-	if !called {
-		t.Error("ReplyFunc was not called")
-	}
-}
+	emitIntermediateText(ctx, "hello")
+	emitIntermediateText(ctx, "")
 
-func TestTurnCallbacksNilContext(t *testing.T) {
-	// Proves that TurnCallbacksFromContext returns nil when no callbacks have been stored in the context.
-	got := TurnCallbacksFromContext(context.Background())
-	if got != nil {
-		t.Errorf("expected nil from empty context, got %v", got)
+	evs := r.Events()
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(evs))
+	}
+	tb, ok := evs[0].(turnevent.TextBlock)
+	if !ok {
+		t.Fatalf("event[0] = %T, want TextBlock", evs[0])
+	}
+	if tb.Text != "hello" || tb.Phase != turnevent.PhaseIntermediate {
+		t.Errorf("TextBlock = %+v, want {hello,Intermediate}", tb)
 	}
 }
 
-func TestSendIntermediateCtxNilSafe(t *testing.T) {
-	// Proves that sendIntermediateCtx is nil-safe: it does not panic when the context has no callbacks, when ReplyFunc is nil, or when called with empty text.
-	sendIntermediateCtx(context.Background(), "test")
+// TestEmitToolCallNilSafe proves emitToolCall does not panic when ctx has no
+// sink attached — the default NopSink fallback must absorb the emit.
+func TestEmitToolCallNilSafe(t *testing.T) {
+	emitToolCall(context.Background(), "test", "t1", json.RawMessage(`{}`))
+}
 
-	// Should not panic with nil ReplyFunc
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
-	sendIntermediateCtx(ctx, "test")
+// TestEmitThinkingBlockSkipsEmpty proves the helper avoids emitting empty
+// thinking text so sinks don't receive meaningless ThinkingBlock events.
+func TestEmitThinkingBlockSkipsEmpty(t *testing.T) {
+	r := turnevent.NewRecordingSink()
+	ctx := turnevent.WithSink(context.Background(), r)
 
-	// Should not call with empty text
-	var called bool
-	ctx = WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		ReplyFunc: func(text string) { called = true },
-	})
-	sendIntermediateCtx(ctx, "")
-	if called {
-		t.Error("should not call ReplyFunc with empty text")
+	emitThinkingBlock(ctx, "")
+	if len(r.Events()) != 0 {
+		t.Errorf("empty thinking emitted: %v", r.Events())
+	}
+
+	emitThinkingBlock(ctx, "reasoning")
+	evs := r.Events()
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(evs))
+	}
+	tb, ok := evs[0].(turnevent.ThinkingBlock)
+	if !ok || tb.Text != "reasoning" {
+		t.Errorf("event[0] = %v, want ThinkingBlock{reasoning}", evs[0])
 	}
 }
 
-func TestNotifyToolCallCtxNilSafe(t *testing.T) {
-	// Proves that notifyToolCallCtx does not panic when the context has no callbacks registered.
-	notifyToolCallCtx(context.Background(), "test", json.RawMessage(`{}`))
-}
+// TestSteerBlocksViaSteerer proves steerBlocks pulls from the ctx-attached
+// Steerer and wraps each message in a `[user] ...` content block — this is
+// the path the agent uses to drain pending steers between tool calls.
+func TestSteerBlocksViaSteerer(t *testing.T) {
+	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(func() []string {
+		return []string{"wait", "use bun"}
+	}))
 
-func TestSignalActivityCtxNilSafe(t *testing.T) {
-	// Proves that signalActivityCtx does not panic when the context has no callbacks registered.
-	signalActivityCtx(context.Background())
-}
-
-func TestNotifyThinkingCtxNilSafe(t *testing.T) {
-	// Proves that notifyThinkingCtx is nil-safe and guards against empty input: it does not panic without callbacks, skips empty thinking text, and correctly delivers non-empty thinking to the observer.
-	notifyThinkingCtx(context.Background(), "some thinking")
-
-	// Should not panic with nil ThinkingObserver
-	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
-	notifyThinkingCtx(ctx, "some thinking")
-
-	// Should not call with empty thinking
-	var called bool
-	ctx = WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		ThinkingObserver: func(thinking string) { called = true },
-	})
-	notifyThinkingCtx(ctx, "")
-	if called {
-		t.Error("should not call ThinkingObserver with empty thinking")
+	blocks := steerBlocks(ctx)
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(blocks))
 	}
-
-	// Should call with non-empty thinking
-	var got string
-	ctx = WithTurnCallbacks(context.Background(), &TurnCallbacks{
-		ThinkingObserver: func(thinking string) { got = thinking },
-	})
-	notifyThinkingCtx(ctx, "internal reasoning")
-	if got != "internal reasoning" {
-		t.Errorf("ThinkingObserver got %q, want %q", got, "internal reasoning")
+	if blocks[0].Text != "[user] wait" || blocks[1].Text != "[user] use bun" {
+		t.Errorf("blocks = %+v", blocks)
 	}
 }
 
+// TestSteerBlocksAbsent proves steerBlocks returns nil when no steerer is set,
+// which is the common path for HTTP and hook-driven turns.
+func TestSteerBlocksAbsent(t *testing.T) {
+	if blocks := steerBlocks(context.Background()); blocks != nil {
+		t.Errorf("blocks = %v, want nil", blocks)
+	}
+}

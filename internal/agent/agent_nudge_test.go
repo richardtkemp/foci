@@ -58,7 +58,7 @@ func TestNudgeRegexPrependedToUserMessage(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	finalResp, err := ag.HandleMessage(ctx, "test/inudge-match/1000000000", "Please debug this issue")
+	finalResp, err := ag.hmTest(ctx, "test/inudge-match/1000000000", "Please debug this issue")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestNudgePreAnswerDoesNotDropReply(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "test/inudge-preanswer/1000000000", "What is the meaning of life?")
+	finalResp, err := ag.hmTest(ctx, "test/inudge-preanswer/1000000000", "What is the meaning of life?")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestNudgeRegexBatchMode(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	finalResp, err := ag.HandleMessage(ctx, "test/inudge-batch/1000000000", "debug this")
+	finalResp, err := ag.hmTest(ctx, "test/inudge-batch/1000000000", "debug this")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

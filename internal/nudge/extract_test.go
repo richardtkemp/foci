@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"foci/internal/agent/turnevent"
+	"foci/internal/platform"
 )
 
 func TestParseExtractionResponse(t *testing.T) {
@@ -209,8 +212,14 @@ type mockHandler struct {
 	err      error
 }
 
-func (m *mockHandler) HandleMessage(_ context.Context, _ string, _ string) (string, error) {
-	return m.response, m.err
+func (m *mockHandler) HandleMessage(ctx context.Context, _ string, _ []string, _ []platform.Attachment) error {
+	if m.err != nil {
+		return m.err
+	}
+	// Write the response into any turnevent.Sink on the context so Extract's
+	// BufferSink picks it up.
+	turnevent.Emit(ctx, turnevent.TurnComplete{FinalText: m.response})
+	return nil
 }
 
 func TestExtractEndToEnd(t *testing.T) {

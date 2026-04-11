@@ -2,9 +2,9 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
 )
 
@@ -16,9 +16,6 @@ var platformTriggers sync.Map // trigger string → true
 func RegisterPlatformTrigger(trigger string) {
 	platformTriggers.Store(trigger, true)
 }
-
-// turnCallbacksKey is the context key for TurnCallbacks.
-type turnCallbacksKey struct{}
 
 // turnMetadataKey is the context key for TurnMetadata.
 type turnMetadataKey struct{}
@@ -101,94 +98,82 @@ func triggerToPlatform(trigger string) string {
 	}
 }
 
-// TurnCallbacks holds per-turn callbacks scoped to a context.
-// Using context avoids cross-turn races from mutable Agent fields.
-type TurnCallbacks struct {
-	ReplyFunc            ReplyFunc
-	ToolCallObserver     ToolCallObserver
-	ToolResultObserver   ToolResultObserver
-	ThinkingObserver     func(thinking string)
-	ActivityFunc         func()
-	TextDeltaObserver    func(delta string)
-	ThinkingDeltaObserver func(delta string)
-	SteerCheckFunc       func() []string // non-blocking; returns nil if no pending steer
-	RetryNotifyFunc      func(endpoint string) // called on first API retry; endpoint is a human-readable name (e.g. "Anthropic API")
-	RetrySuccessFunc     func() // called when a retry succeeds (to clear/overwrite retry message)
-	OnTurnDone           func() // called when the turn is fully complete (end_turn for delegated, ExecuteTurn return for API). Platform uses this to stop typing.
-}
+// --- sink-based event emission ---
+//
+// The per-turn event stream replaces the old TurnCallbacks struct. Producers
+// emit events via the sink attached to ctx (turnevent.SinkFromContext). The
+// helpers below are thin wrappers that match the pre-refactor call shapes so
+// existing producer code does not need to reach into turnevent on every line.
 
-// WithTurnCallbacks attaches TurnCallbacks to a context.
-func WithTurnCallbacks(ctx context.Context, cb *TurnCallbacks) context.Context {
-	return context.WithValue(ctx, turnCallbacksKey{}, cb)
-}
-
-// TurnCallbacksFromContext extracts TurnCallbacks from context (nil if absent).
-func TurnCallbacksFromContext(ctx context.Context) *TurnCallbacks {
-	cb, _ := ctx.Value(turnCallbacksKey{}).(*TurnCallbacks)
-	return cb
-}
-
-// sendIntermediateCtx sends an intermediate reply via context callbacks.
-func sendIntermediateCtx(ctx context.Context, text string) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ReplyFunc != nil && text != "" {
-		cb.ReplyFunc(text)
+// emitIntermediateText sends an intermediate assistant text block through the
+// sink attached to ctx. No-op for empty text — matches the old
+// sendIntermediateCtx shape.
+func emitIntermediateText(ctx context.Context, text string) {
+	if text == "" {
+		return
 	}
+	turnevent.Emit(ctx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
 }
 
-// signalActivityCtx calls the activity callback via context.
-func signalActivityCtx(ctx context.Context) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ActivityFunc != nil {
-		cb.ActivityFunc()
+// emitActivity fires a heartbeat event — sinks use this to refresh
+// typing-indicator state between content events.
+func emitActivity(ctx context.Context) {
+	turnevent.Emit(ctx, turnevent.Activity{})
+}
+
+// emitToolCall announces a tool invocation on the event stream.
+func emitToolCall(ctx context.Context, name, id string, params []byte) {
+	turnevent.Emit(ctx, turnevent.ToolCall{Name: name, ID: id, Args: params})
+}
+
+// emitToolResult announces a tool execution outcome.
+func emitToolResult(ctx context.Context, name, id, result string, isError bool) {
+	turnevent.Emit(ctx, turnevent.ToolResult{Name: name, ID: id, Output: result, IsError: isError})
+}
+
+// emitThinkingBlock delivers a full extended-thinking block.
+func emitThinkingBlock(ctx context.Context, text string) {
+	if text == "" {
+		return
 	}
+	turnevent.Emit(ctx, turnevent.ThinkingBlock{Text: text})
 }
 
-// notifyToolCallCtx calls the tool call observer via context.
-func notifyToolCallCtx(ctx context.Context, name string, params json.RawMessage) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ToolCallObserver != nil {
-		cb.ToolCallObserver(name, params)
+// emitTextDelta delivers a streaming text fragment.
+func emitTextDelta(ctx context.Context, delta string) {
+	if delta == "" {
+		return
 	}
+	turnevent.Emit(ctx, turnevent.TextDelta{Delta: delta})
 }
 
-// notifyToolResultCtx calls the tool result observer via context.
-func notifyToolResultCtx(ctx context.Context, name string, result string, isError bool) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ToolResultObserver != nil {
-		cb.ToolResultObserver(name, result, isError)
+// emitThinkingDelta delivers a streaming thinking fragment.
+func emitThinkingDelta(ctx context.Context, delta string) {
+	if delta == "" {
+		return
 	}
+	turnevent.Emit(ctx, turnevent.ThinkingDelta{Delta: delta})
 }
 
-// notifyThinkingCtx calls the thinking observer via context.
-func notifyThinkingCtx(ctx context.Context, thinking string) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ThinkingObserver != nil && thinking != "" {
-		cb.ThinkingObserver(thinking)
-	}
+// emitRetryNotice announces the first retry of an upstream API call.
+func emitRetryNotice(ctx context.Context, endpoint string) {
+	turnevent.Emit(ctx, turnevent.RetryNotice{Endpoint: endpoint})
 }
 
-// notifyTextDeltaCtx calls the text delta observer via context.
-func notifyTextDeltaCtx(ctx context.Context, delta string) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.TextDeltaObserver != nil && delta != "" {
-		cb.TextDeltaObserver(delta)
-	}
+// emitRetrySuccess announces that a retry succeeded (clears retry notice UI).
+func emitRetrySuccess(ctx context.Context) {
+	turnevent.Emit(ctx, turnevent.RetrySuccess{})
 }
 
-// notifyThinkingDeltaCtx calls the thinking delta observer via context.
-func notifyThinkingDeltaCtx(ctx context.Context, delta string) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.ThinkingDeltaObserver != nil && delta != "" {
-		cb.ThinkingDeltaObserver(delta)
-	}
-}
-
-// steerCheckFromCtx calls the steer check function via context.
-// Returns nil if no steer callback is set or no steer text is pending.
-func steerCheckFromCtx(ctx context.Context) []string {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.SteerCheckFunc != nil {
-		return cb.SteerCheckFunc()
-	}
-	return nil
-}
-
-// steerBlocks drains pending steer messages and returns them as [user] content blocks.
+// steerBlocks drains pending steer messages via the context-attached Steerer
+// and returns them as [user] content blocks for injection into the next prompt.
+// Returns nil when no steerer is set or no text is pending.
 func steerBlocks(ctx context.Context) []provider.ContentBlock {
-	steers := steerCheckFromCtx(ctx)
+	st := turnevent.SteererFromContext(ctx)
+	if st == nil {
+		return nil
+	}
+	steers := st.PendingSteers()
 	if len(steers) == 0 {
 		return nil
 	}
@@ -198,18 +183,3 @@ func steerBlocks(ctx context.Context) []provider.ContentBlock {
 	}
 	return blocks
 }
-
-// notifyRetryCtx calls the retry notification callback via context.
-func notifyRetryCtx(ctx context.Context, endpoint string) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.RetryNotifyFunc != nil {
-		cb.RetryNotifyFunc(endpoint)
-	}
-}
-
-// notifyRetrySuccessCtx calls the retry success callback via context.
-func notifyRetrySuccessCtx(ctx context.Context) {
-	if cb := TurnCallbacksFromContext(ctx); cb != nil && cb.RetrySuccessFunc != nil {
-		cb.RetrySuccessFunc()
-	}
-}
-

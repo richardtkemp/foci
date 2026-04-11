@@ -7,8 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"foci/internal/delegator"
+	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/provider"
 	"foci/shared/prompts"
@@ -163,21 +164,26 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// Per-turn handler: fires once when the watcher sees end_turn.
 	// Captures FinalText/FinalUsage/FinalModel, logs usage, then closes CompletionChan.
 	bt := t
-	// Wire callbacks from TurnCallbacks (set by the platform worker).
-	// OnTextDelta feeds the stream writer (edit-in-place) for streaming.
-	// OnText delivers complete text blocks via ReplyFunc (renderer.OnReply),
-	// matching the API transport's multi-segment pattern: each assistant
-	// message's text is delivered as it completes, the renderer manages
-	// stream finalization and replyDelivered lifecycle.
-	cb := TurnCallbacksFromContext(ts.Ctx)
-	handler := &delegator.EventHandler{}
-	if cb != nil {
-		if cb.TextDeltaObserver != nil {
-			handler.OnTextDelta = cb.TextDeltaObserver
-		}
-		if cb.ReplyFunc != nil {
-			handler.OnText = cb.ReplyFunc
-		}
+	// Translate the delegator watcher's callbacks into turnevent.Sink events.
+	// OnTextDelta feeds the stream writer via TextDelta events (edit-in-place
+	// streaming). OnText delivers complete text blocks as intermediate TextBlocks
+	// so sinks can drive renderer.OnReply. The StreamingSink owns the delivered
+	// flag that used to live on the renderer — so intermediate delivery during
+	// the turn correctly suppresses re-delivery of the final text.
+	turnCtx := ts.Ctx
+	handler := &delegator.EventHandler{
+		OnTextDelta: func(delta string) {
+			turnevent.Emit(turnCtx, turnevent.TextDelta{Delta: delta})
+		},
+		OnText: func(text string) {
+			turnevent.Emit(turnCtx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
+		},
+		OnToolStart: func(name, input string) {
+			turnevent.Emit(turnCtx, turnevent.ToolCall{Name: name, Args: []byte(input)})
+		},
+		OnToolEnd: func(name, output string, isError bool) {
+			turnevent.Emit(turnCtx, turnevent.ToolResult{Name: name, Output: output, IsError: isError})
+		},
 	}
 	handler.OnTurnComplete = func(result *delegator.TurnResult) {
 		if result != nil {
@@ -195,10 +201,10 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		bt.LogUsage(ts)
 		close(ts.CompletionChan)
 	}
-	// Wire steer drain from the platform's MessageQueue into the backend
+	// Wire steer drain from the context-attached Steerer into the backend
 	// so ccstream can inject steered messages at tool execution boundaries.
-	if cb := TurnCallbacksFromContext(ts.Ctx); cb != nil && cb.SteerCheckFunc != nil {
-		handler.SteerCheckFunc = cb.SteerCheckFunc
+	if st := turnevent.SteererFromContext(ts.Ctx); st != nil {
+		handler.SteerCheckFunc = st.PendingSteers
 	}
 
 	// Use structured content blocks when attachments are present and the

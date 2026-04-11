@@ -66,7 +66,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), sessionKey, "Turn A")
+		ag.hmTest(context.Background(), sessionKey, "Turn A")
 	}()
 
 	// Small delay to ensure Turn A acquires the lock first
@@ -74,7 +74,7 @@ func TestConcurrentTurnSerialization(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), sessionKey, "Turn B")
+		ag.hmTest(context.Background(), sessionKey, "Turn B")
 	}()
 
 	wg.Wait()
@@ -180,12 +180,12 @@ func TestConcurrentTurnsDifferentSessions(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), "test/isessionA/1000000000", "Hello A")
+		ag.hmTest(context.Background(), "test/isessionA/1000000000", "Hello A")
 	}()
 
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), "test/isessionB/1000000000", "Hello B")
+		ag.hmTest(context.Background(), "test/isessionB/1000000000", "Hello B")
 	}()
 
 	wg.Wait()
@@ -229,7 +229,7 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ag.HandleMessage(context.Background(), sessionKey, "Slow turn")
+		ag.hmTest(context.Background(), sessionKey, "Slow turn")
 	}()
 
 	time.Sleep(20 * time.Millisecond) // let the slow turn start
@@ -238,7 +238,7 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	_, err := ag.HandleMessage(ctx, sessionKey, "Should not process")
+	_, err := ag.hmTest(ctx, sessionKey, "Should not process")
 	if err != context.Canceled {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}

@@ -46,7 +46,7 @@ func TestCacheStrategyInRequest(t *testing.T) {
 		},
 	}
 
-	ag.HandleMessage(context.Background(), "test/icache/1000000000", "Hello")
+	ag.hmTest(context.Background(), "test/icache/1000000000", "Hello")
 
 	if receivedReq == nil {
 		t.Fatal("no request received")
@@ -104,9 +104,9 @@ func TestCacheBustDetection(t *testing.T) {
 	}
 
 	// First request — establishes baseline (prevCacheRead=15000)
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg1")
 	// Second request — cache_read drops to 0, recent session → should alert
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 1 {
 		t.Fatalf("expected 1 alert, got %d: %v", len(alerts), alerts)
@@ -155,11 +155,11 @@ func TestCacheBustSuppressedWhenIdle(t *testing.T) {
 	}
 
 	// First request — establishes baseline
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg1")
 	// Wait longer than the idle threshold
 	time.Sleep(5 * time.Millisecond)
 	// Second request — cache_read drops to 0, but session was idle → should NOT alert
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 0 {
 		t.Fatalf("expected 0 alerts (idle session), got %d: %v", len(alerts), alerts)
@@ -256,9 +256,9 @@ func TestCacheBustOnlyOncePerTurn(t *testing.T) {
 	}
 
 	// First turn — establishes baseline (prevCacheRead=15000)
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg1")
 	// Second turn — 3 API calls (2 tool_use + 1 end_turn), all with cache_read=0
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 1 {
 		t.Fatalf("expected exactly 1 cache bust alert for the turn, got %d: %v", len(alerts), alerts)
@@ -304,13 +304,13 @@ func TestCacheBustResetAfterManualCompact(t *testing.T) {
 	}
 
 	// First request — establishes baseline (prevCacheRead=15000)
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg1")
 
 	// Simulate manual /compact: reset the cache baseline
 	ag.ResetCacheBaseline("test/imain/1000000000")
 
 	// Second request — cache_read=0, but baseline was reset → no alert
-	ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
+	ag.hmTest(context.Background(), "test/imain/1000000000", "msg2")
 
 	if len(alerts) != 0 {
 		t.Fatalf("expected 0 alerts after cache baseline reset, got %d: %v", len(alerts), alerts)
@@ -357,8 +357,8 @@ func TestCacheBustFiresForAllFormats(t *testing.T) {
 				}},
 			}
 
-			ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg1")
-			ag.HandleMessage(context.Background(), "test/imain/1000000000", "msg2")
+			ag.hmTest(context.Background(), "test/imain/1000000000", "msg1")
+			ag.hmTest(context.Background(), "test/imain/1000000000", "msg2")
 
 			if len(alerts) != 1 {
 				t.Fatalf("expected 1 alert for %s format, got %d: %v", format, len(alerts), alerts)

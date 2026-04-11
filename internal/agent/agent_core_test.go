@@ -41,7 +41,7 @@ func TestHandleMessageEndTurn(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hi there")
+	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Hi there")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestHandleMessageWithToolUse(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Run echo")
+	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Run echo")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestHandleMessageUnknownTool(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Use a fake tool")
+	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Use a fake tool")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -229,13 +229,13 @@ func TestHandleMessageSessionContinuity(t *testing.T) {
 	}
 
 	// First message
-	resp, _ := ag.HandleMessage(context.Background(), "test/imain/1000000000", "First")
+	resp, _ := ag.hmTest(context.Background(), "test/imain/1000000000", "First")
 	if resp != "Received 1 messages" {
 		t.Errorf("first response = %q", resp)
 	}
 
 	// Second message — should include history
-	resp, _ = ag.HandleMessage(context.Background(), "test/imain/1000000000", "Second")
+	resp, _ = ag.hmTest(context.Background(), "test/imain/1000000000", "Second")
 	if resp != "Received 3 messages" {
 		t.Errorf("second response = %q, want 'Received 3 messages' (2 history + 1 new)", resp)
 	}
@@ -294,7 +294,7 @@ func TestHandleMessageCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := ag.HandleMessage(ctx, "test/icancel/1000000000", "Do something slow")
+	_, err := ag.hmTest(ctx, "test/icancel/1000000000", "Do something slow")
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -330,7 +330,7 @@ func TestIsProcessing(t *testing.T) {
 		t.Error("should not be processing before HandleMessage")
 	}
 
-	ag.HandleMessage(context.Background(), "test/iproc/1000000000", "Hi")
+	ag.hmTest(context.Background(), "test/iproc/1000000000", "Hi")
 
 	if ag.IsProcessing() {
 		t.Error("should not be processing after HandleMessage returns")
@@ -373,7 +373,7 @@ func TestProcessingDetails(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		ctx := WithTrigger(context.Background(), "keepalive")
-		ag.HandleMessage(ctx, "test/idetail/1000000000", "check")
+		ag.hmTest(ctx, "test/idetail/1000000000", "check")
 		close(done)
 	}()
 
@@ -475,7 +475,7 @@ func TestDeferredReply(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "test/ideferred/1000000000", "Complex question")
+	finalResp, err := ag.hmTest(ctx, "test/ideferred/1000000000", "Complex question")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestNoResponseSentinelPassedThrough(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "ping")
+	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "ping")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

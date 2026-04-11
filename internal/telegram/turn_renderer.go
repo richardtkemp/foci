@@ -50,13 +50,11 @@ func (b *telegramBackend) FormatResponse(text string) string {
 }
 
 func (b *telegramBackend) SendReply(text string) {
-	// REMOVE_ME: debug tag for delivery path tracing
-	b.bot.sendReply(b.msg, "[renderer:SendReply] "+text)
+	b.bot.sendReply(b.msg, text)
 }
 
 func (b *telegramBackend) SendChunked(formatted string) {
-	// REMOVE_ME: debug tag for delivery path tracing
-	b.bot.sendHTMLChunks(b.chatID, "[renderer:SendChunked] "+formatted)
+	b.bot.sendHTMLChunks(b.chatID, formatted)
 }
 
 func (b *telegramBackend) EditMessage(msgID, formatted string) error {

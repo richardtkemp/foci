@@ -41,7 +41,7 @@ func TestHandleMessageWithAttachments(t *testing.T) {
 	images := []platform.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake-jpeg-data")},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimg/1000000000", []string{"What is this?"}, images)
+	resp, err := ag.hmTestAttachments(context.Background(), "test/iimg/1000000000", []string{"What is this?"}, images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestHandleMessageWithPDFAttachment(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: "application/pdf", Data: []byte("%PDF-1.4 fake")},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdf/1000000000", []string{"Read this PDF"}, attachments)
+	resp, err := ag.hmTestAttachments(context.Background(), "test/ipdf/1000000000", []string{"Read this PDF"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestHandleMessageWithPDFSavedPath(t *testing.T) {
 	attachments := []platform.Attachment{
 		{MimeType: "application/pdf", Data: []byte("%PDF-1.4"), SavedPath: "/tmp/docs/report.pdf"},
 	}
-	_, err := ag.HandleMessageWithAttachments(context.Background(), "test/ipdfsaved/1000000000", []string{"Check this"}, attachments)
+	_, err := ag.hmTestAttachments(context.Background(), "test/ipdfsaved/1000000000", []string{"Check this"}, attachments)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestHandleMessageWithAttachmentsNoText(t *testing.T) {
 		{MimeType: "image/png", Data: []byte("fake-png-data")},
 	}
 	// Empty text — image only
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/iimgonly/1000000000", []string{""}, images)
+	resp, err := ag.hmTestAttachments(context.Background(), "test/iimgonly/1000000000", []string{""}, images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestHandleMessageDelegatesToWithImages(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	ag.HandleMessage(context.Background(), "test/idelegate/1000000000", "Hello")
+	ag.hmTest(context.Background(), "test/idelegate/1000000000", "Hello")
 
 	// Text-only message should have meta block + user text block
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
@@ -293,7 +293,7 @@ func TestHandleMessageWithAttachmentsSavedPath(t *testing.T) {
 	images := []platform.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake"), SavedPath: "/tmp/images/test.jpg"},
 	}
-	resp, err := ag.HandleMessageWithAttachments(context.Background(), "test/isavepath/1000000000", []string{"What is this?"}, images)
+	resp, err := ag.hmTestAttachments(context.Background(), "test/isavepath/1000000000", []string{"What is this?"}, images)
 	if err != nil {
 		t.Fatalf("HandleMessageWithAttachments: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestHandleMessageWithAttachmentsNoSavedPath(t *testing.T) {
 	images := []platform.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake")},
 	}
-	ag.HandleMessageWithAttachments(context.Background(), "test/inosaved/1000000000", []string{"Look"}, images)
+	ag.hmTestAttachments(context.Background(), "test/inosaved/1000000000", []string{"Look"}, images)
 
 	// No block should contain [Image saved to:] when SavedPath is empty
 	userMsg := receivedReq.Messages[len(receivedReq.Messages)-1]

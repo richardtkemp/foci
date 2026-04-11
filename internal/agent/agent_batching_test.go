@@ -39,7 +39,7 @@ func TestThinkingAdaptiveInRequest(t *testing.T) {
 	}
 	ag.SetSessionThinking("test/imain/1000000000", "adaptive")
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Think about this")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Think about this")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestThinkingOffOmitsField(t *testing.T) {
 		// Thinking not set (empty string)
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "No thinking")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "No thinking")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestThinkingBlocksPreservedInSession(t *testing.T) {
 	}
 	ag.SetSessionThinking("test/imain/1000000000", "adaptive")
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Think and answer")
+	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Think and answer")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestBatchPartialAssistantMessages_False(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "test/ibatchfalse/1000000000", "Do something")
+	finalResp, err := ag.hmTest(ctx, "test/ibatchfalse/1000000000", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestBatchPartialAssistantMessages_True(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	finalResp, err := ag.HandleMessage(ctx, "test/ibatchtrue/1000000000", "Do something")
+	finalResp, err := ag.hmTest(ctx, "test/ibatchtrue/1000000000", "Do something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestBatchPartialAssistantMessages_TrueMultipleTexts(t *testing.T) {
 	}
 
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
-	finalResp, err := ag.HandleMessage(ctx, "test/ibatchmulti/1000000000", "Do multiple things")
+	finalResp, err := ag.hmTest(ctx, "test/ibatchmulti/1000000000", "Do multiple things")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

@@ -253,7 +253,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 				}
 				batchedText.WriteString(text)
 			} else {
-				sendIntermediateCtx(ts.Ctx, text)
+				emitIntermediateText(ts.Ctx, text)
 				a.logConversationSent(ts.ConvChatID, ts.Meta, ts.SessionKey, text)
 			}
 		}
@@ -292,21 +292,21 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		if a.Streaming {
 			handler = &provider.StreamHandler{
 				OnTextDelta: func(delta string) {
-					notifyTextDeltaCtx(ts.Ctx, delta)
-					signalActivityCtx(ts.Ctx)
+					emitTextDelta(ts.Ctx, delta)
+					emitActivity(ts.Ctx)
 				},
 				OnThinkingDelta: func(delta string) {
-					notifyThinkingDeltaCtx(ts.Ctx, delta)
+					emitThinkingDelta(ts.Ctx, delta)
 				},
 			}
 		}
 
 		ctx := provider.WithRetryCallbacks(ts.Ctx, &provider.RetryCallbacks{
 			OnFirstRetry: func(endpoint string) {
-				notifyRetryCtx(ts.Ctx, endpoint)
+				emitRetryNotice(ts.Ctx, endpoint)
 			},
 			OnSuccess: func() {
-				notifyRetrySuccessCtx(ts.Ctx)
+				emitRetrySuccess(ts.Ctx)
 			},
 		})
 

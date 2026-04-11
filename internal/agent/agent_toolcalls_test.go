@@ -140,7 +140,7 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	_, err := ag.HandleMessage(context.Background(), sessionKey, "continue")
+	_, err := ag.hmTest(context.Background(), sessionKey, "continue")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	}
 	ctx := WithTurnCallbacks(context.Background(), cb)
 
-	_, err := ag.HandleMessage(ctx, "test/iorder/1000000000", "Check something")
+	_, err := ag.hmTest(ctx, "test/iorder/1000000000", "Check something")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestToolResultRedaction(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/iredact/1000000000", "Leak the secret")
+	_, err := ag.hmTest(context.Background(), "test/iredact/1000000000", "Leak the secret")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestToolErrorRedaction(t *testing.T) {
 		},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/iredacterr/1000000000", "Try the tool")
+	_, err := ag.hmTest(context.Background(), "test/iredacterr/1000000000", "Try the tool")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

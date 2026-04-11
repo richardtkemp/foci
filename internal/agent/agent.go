@@ -2,12 +2,12 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -32,19 +32,6 @@ const NoResponseSentinel = "[[NO_RESPONSE]]"
 // nudgeHeader prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.
 const nudgeHeader = "[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]\n"
-
-// ReplyFunc is called to deliver intermediate messages during a turn.
-// Used by the platform to send early/deferred replies while
-// the agent continues working (e.g., "Looking into this...").
-type ReplyFunc func(text string)
-
-// ToolCallObserver is called before each tool execution.
-// Used by the platform to show which tools the agent is calling.
-type ToolCallObserver func(toolName string, params json.RawMessage)
-
-// ToolResultObserver is called after each tool execution with the result.
-// Used by the platform to store tool results for inline keyboard expansion.
-type ToolResultObserver func(toolName string, result string, isError bool)
 
 // CacheBustFunc is called when a cache bust is detected (cache_read drops
 // significantly compared to the previous request).
@@ -251,18 +238,23 @@ func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 	return mu
 }
 
-// HandleMessage processes a text-only user message. Delegates to HandleMessageWithAttachments.
-func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, userMessage string) (string, error) {
-	return a.HandleMessageWithAttachments(ctx, sessionKey, []string{userMessage}, nil)
-}
-
-// HandleMessageWithAttachments processes one or more user messages with optional attachments
-// (images, PDFs, or convertible documents like docx/xlsx/pptx/HTML/CSV).
-// Multiple texts are batched into a single turn with separate content blocks.
-//
-// Routes to either the API tool-loop path (APITransport) or the delegated
+// HandleMessage processes one or more user messages with optional attachments
+// (images, PDFs, or convertible documents like docx/xlsx/pptx/HTML/CSV). It
+// routes to either the API tool-loop path (APITransport) or the delegated
 // transport path (DelegatedTransport) via the TurnContract interface.
-func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
+//
+// Text delivery (intermediate and final), thinking, tool call visibility,
+// retries, and typing-indicator lifecycle flow through the turnevent.Sink
+// attached to ctx (see internal/agent/turnevent). Callers that want the final
+// text wire a BufferSink; callers that want streaming UI wire a StreamingSink.
+//
+// TurnStart fires at entry; TurnComplete always fires via defer, carrying the
+// accumulated FinalText, Usage, Cost, Model, and any error returned by the
+// turn orchestrator.
+func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (err error) {
+	sink := turnevent.SinkFromContext(ctx)
+	sink.Emit(ctx, turnevent.TurnStart{})
+
 	var tc TurnContract
 	if a.DelegatedManager != nil {
 		tc = &DelegatedTransport{sharedTurnOps{agent: a}}
@@ -270,11 +262,19 @@ func (a *Agent) HandleMessageWithAttachments(ctx context.Context, sessionKey str
 		tc = &APITransport{sharedTurnOps{agent: a}}
 	}
 	ts := NewTurnState(ctx, sessionKey, texts, attachments)
-	_, err := a.OrchestrateFullTurn(ctx, tc, ts)
-	if err != nil {
-		return "", err
-	}
-	return ts.FinalText, nil
+
+	defer func() {
+		sink.Emit(ctx, turnevent.TurnComplete{
+			FinalText: ts.FinalText,
+			Usage:     ts.FinalUsage,
+			Cost:      ts.FinalCost,
+			Model:     ts.FinalModel,
+			Err:       err,
+		})
+	}()
+
+	_, err = a.OrchestrateFullTurn(ctx, tc, ts)
+	return err
 }
 
 

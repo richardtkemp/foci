@@ -103,7 +103,7 @@ func TestTransportSelection_API(t *testing.T) {
 		Model:     "test-model",
 	}
 
-	resp, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "hello")
+	resp, err := ag.hmTest(context.Background(), "test/imain/1000000000", "hello")
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestTransportSelection_Delegated(t *testing.T) {
 
 	// Delegated path will fail (no real backend), but it should NOT fall
 	// through to the API path. The error proves the delegated transport was selected.
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "hello")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "hello")
 	if err == nil {
 		t.Fatal("expected error from delegated transport (no real backend)")
 	}

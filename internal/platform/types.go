@@ -2,7 +2,6 @@ package platform
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -18,17 +17,6 @@ import (
 	"foci/internal/voice"
 	"foci/internal/warnings"
 )
-
-// TurnObservers holds platform-specific observer callbacks for tool call
-// visibility during agent turns. Returned by Connection.BuildTurnObservers
-// and wired into agent.TurnCallbacks by callers.
-type TurnObservers struct {
-	OnToolCall   func(toolName string, params json.RawMessage)
-	OnToolResult func(toolName string, result string, isError bool)
-	OnRetry      func(endpoint string)
-	OnRetryClear func()
-	Cleanup      func() // delete transient preview messages after turn
-}
 
 type Message struct {
 	ID        string
@@ -169,9 +157,6 @@ type Connection interface {
 	SendNotification(text string)
 	SendNotificationDirect(text string) // sends immediately, bypassing turn buffering
 	SetTyping(typing bool)              // true starts typing indicator, false stops it
-
-	// Observers
-	BuildTurnObservers(sessionKey string) *TurnObservers // nil when unsupported or no chat target
 }
 
 // ButtonChoice represents an inline keyboard button for interactive prompts.
@@ -223,9 +208,13 @@ type SetupResult struct {
 	DisplayDefaultsFn func() DisplaySettings
 }
 
+// MessageHandler processes user messages through an agent. Text delivery,
+// tool visibility, thinking, retries, and typing lifecycle flow through the
+// turnevent.Sink attached to ctx (see internal/agent/turnevent) — callers that
+// want the final text wire a BufferSink; interactive platforms wire a
+// StreamingSink for per-turn rendering.
 type MessageHandler interface {
-	HandleMessage(ctx context.Context, sessionKey, text string) (string, error)
-	HandleMessageWithAttachments(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) (string, error)
+	HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []Attachment) error
 	IsProcessing() bool
 	TransformMessage(text string) string
 	Warnings() *warnings.Queue

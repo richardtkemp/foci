@@ -64,10 +64,8 @@ func (b *Bot) lastChatID() (int64, error) {
 // Silently drops messages matching platform.IsSilent (sentinels, empty).
 func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	if platform.IsSilent(text) {
-		b.logger().Debugf("IsSilent filtered: chatID=%d len=%d preview=%q", chatID, len(text), truncate(text, 40))
 		return nil
 	}
-	b.logger().Debugf("SendTextToChat: chatID=%d len=%d", chatID, len(text))
 	b.sendHTMLChunks(chatID, ConvertToTelegramHTML(text, b.tableOpts()))
 	return nil
 }

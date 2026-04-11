@@ -132,8 +132,7 @@ func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
 		a.logger().Infof("rate limit lifted for %s, replaying %d queued items", endpoint, len(items))
 		for i, item := range items {
 			itemCtx := WithTrigger(ctx, item.Trigger)
-			resp, err := a.HandleMessage(itemCtx, item.SessionKey, item.Message)
-			if err != nil {
+			if err := a.HandleMessage(itemCtx, item.SessionKey, []string{item.Message}, nil); err != nil {
 				a.logger().Errorf("replay queued message session=%s trigger=%s: %v", item.SessionKey, item.Trigger, err)
 				// If we hit another rate limit on THIS endpoint, stop replaying its queue
 				var rlErr *RateLimitedError
@@ -143,9 +142,7 @@ func (a *Agent) DrainRateLimitQueue(ctx context.Context) {
 				}
 				continue
 			}
-			if resp != "" {
-				a.logger().Debugf("replayed message session=%s trigger=%s response_len=%d", item.SessionKey, item.Trigger, len(resp))
-			}
+			a.logger().Debugf("replayed message session=%s trigger=%s", item.SessionKey, item.Trigger)
 		}
 	}
 }

@@ -14,30 +14,32 @@ import (
 )
 
 func TestSteerCheckFromCtx_NilCallbacks(t *testing.T) {
-	// Proves that steerCheckFromCtx returns nil and does not panic when there are no TurnCallbacks in the context.
-	got := steerCheckFromCtx(context.Background())
-	if got != nil {
+	// Proves that steerBlocks returns nil and does not panic when there is
+	// no Steerer attached to the context.
+	if got := steerBlocks(context.Background()); got != nil {
 		t.Errorf("expected nil from bare context, got %v", got)
 	}
 }
 
 func TestSteerCheckFromCtx_NilFunc(t *testing.T) {
-	// Proves that steerCheckFromCtx returns nil without panicking when TurnCallbacks is present but SteerCheckFunc is nil.
+	// Proves that steerBlocks returns nil when a TurnCallbacks compat shim is
+	// attached but its SteerCheckFunc is nil (the shim only installs a
+	// Steerer when SteerCheckFunc is non-nil).
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{})
-	got := steerCheckFromCtx(ctx)
-	if got != nil {
+	if got := steerBlocks(ctx); got != nil {
 		t.Errorf("expected nil with nil SteerCheckFunc, got %v", got)
 	}
 }
 
 func TestSteerCheckFromCtx_ReturnsText(t *testing.T) {
-	// Proves that steerCheckFromCtx correctly invokes and returns the result of a registered SteerCheckFunc.
+	// Proves that steerBlocks pulls from the ctx-attached Steerer and wraps
+	// each pending steer in a `[user] ...` content block.
 	ctx := WithTurnCallbacks(context.Background(), &TurnCallbacks{
 		SteerCheckFunc: func() []string { return []string{"change direction"} },
 	})
-	got := steerCheckFromCtx(ctx)
-	if len(got) != 1 || got[0] != "change direction" {
-		t.Errorf("got %v, want [change direction]", got)
+	got := steerBlocks(ctx)
+	if len(got) != 1 || got[0].Text != "[user] change direction" {
+		t.Errorf("got %v, want [user] change direction", got)
 	}
 }
 
@@ -286,7 +288,7 @@ func TestSteerInjectedAfterToolBatch(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/1000000000", []string{"Do something"}, nil)
+	resp, err := ag.hmTestAttachments(ctx, "test/imain/1000000000", []string{"Do something"}, nil)
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}
@@ -400,7 +402,7 @@ func TestSteerMidBatch_AssistantMessageRewritten(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	resp, err := ag.HandleMessageWithAttachments(ctx, "test/imain/2000000000", []string{"Run three tools"}, nil)
+	resp, err := ag.hmTestAttachments(ctx, "test/imain/2000000000", []string{"Run three tools"}, nil)
 	if err != nil {
 		t.Fatalf("HandleMessage: %v", err)
 	}

@@ -37,7 +37,7 @@ func TestHandleMessageRateLimit(t *testing.T) {
 	}
 
 	ctx := WithTrigger(context.Background(), "keepalive")
-	_, err := ag.HandleMessage(ctx, "test/imain/1000000000", "Hello")
+	_, err := ag.hmTest(ctx, "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error for rate limit")
 	}
@@ -83,7 +83,7 @@ func TestHandleMessageRateLimitUserTrigger(t *testing.T) {
 	for _, trigger := range []string{"telegram", "user", "voice", ""} {
 		rateLimitCalled = false
 		ctx := WithTrigger(context.Background(), trigger)
-		_, err := ag.HandleMessage(ctx, "test/iusertrigger/1000000000", "Hello")
+		_, err := ag.hmTest(ctx, "test/iusertrigger/1000000000", "Hello")
 		if err == nil {
 			t.Fatalf("trigger=%q: expected error for rate limit", trigger)
 		}
@@ -115,7 +115,7 @@ func TestHandleMessageOverloaded(t *testing.T) {
 		}},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error for overloaded")
 	}
@@ -149,7 +149,7 @@ func TestHandleMessageRateLimitNoCallback(t *testing.T) {
 		// RateLimitFunc intentionally nil
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -180,7 +180,7 @@ func TestHandleMessageServerError(t *testing.T) {
 		}},
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error for server error")
 	}
@@ -215,7 +215,7 @@ func TestHandleMessageServerErrorNoCallback(t *testing.T) {
 		// RateLimitFunc intentionally nil
 	}
 
-	_, err := ag.HandleMessage(context.Background(), "test/imain/1000000000", "Hello")
+	_, err := ag.hmTest(context.Background(), "test/imain/1000000000", "Hello")
 	if err == nil {
 		t.Fatal("expected error")
 	}

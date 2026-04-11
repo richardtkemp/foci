@@ -18,6 +18,14 @@ func (NopSink) Emit(context.Context, Event) {}
 
 var nopSinkSingleton Sink = NopSink{}
 
+// SinkFunc adapts a plain function to the Sink interface. Useful for inline
+// sinks in tests and call sites that would otherwise define a trivial type
+// just to hold an Emit method.
+type SinkFunc func(ctx context.Context, ev Event)
+
+// Emit implements Sink.
+func (f SinkFunc) Emit(ctx context.Context, ev Event) { f(ctx, ev) }
+
 // BufferSink collects the final text and usage from a turn. It ignores
 // intermediate events entirely, so callers that only need the completed
 // answer (HTTP handlers, spawn tool, hooks that log results) can wire it up

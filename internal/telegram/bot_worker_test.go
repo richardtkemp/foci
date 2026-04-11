@@ -21,11 +21,7 @@ type mockHandler struct {
 	onCall    func(texts []string) // optional hook called inside HandleMessageWithAttachments
 }
 
-func (h *mockHandler) HandleMessage(_ context.Context, _ string, text string) (string, error) {
-	return h.HandleMessageWithAttachments(context.Background(), "", []string{text}, nil)
-}
-
-func (h *mockHandler) HandleMessageWithAttachments(_ context.Context, _ string, texts []string, _ []platform.Attachment) (string, error) {
+func (h *mockHandler) HandleMessage(_ context.Context, _ string, texts []string, _ []platform.Attachment) error {
 	h.mu.Lock()
 	h.calls = append(h.calls, texts)
 	fn := h.onCall
@@ -33,7 +29,7 @@ func (h *mockHandler) HandleMessageWithAttachments(_ context.Context, _ string, 
 	if fn != nil {
 		fn(texts)
 	}
-	return "ok", nil
+	return nil
 }
 
 func (h *mockHandler) IsProcessing() bool               { return false }

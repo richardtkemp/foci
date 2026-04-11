@@ -257,7 +257,7 @@ func TestAgentCompactionIntegration(t *testing.T) {
 
 		// Turn 5 triggers compaction threshold — but with NoCompact set
 		env.ag.SetSessionNoCompact(sessionKey, true)
-		resp, err := env.ag.HandleMessage(context.Background(), sessionKey, "Turn 5")
+		resp, err := env.ag.hmTest(context.Background(), sessionKey, "Turn 5")
 		if err != nil {
 			t.Fatalf("Turn 5: %v", err)
 		}

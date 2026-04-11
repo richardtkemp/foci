@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/agent/turnevent"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -125,14 +126,15 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		resp, err := inst.ag.HandleMessage(sendCtx, sessionKey, req.Text)
-		if err != nil {
+		buf := turnevent.NewBufferSink()
+		sendCtx = turnevent.WithSink(sendCtx, buf)
+		if err := inst.ag.HandleMessage(sendCtx, sessionKey, []string{req.Text}, nil); err != nil {
 			log.Errorf("http", "send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": buf.FinalText()}); err != nil {
 			log.Errorf("http", "encode response: %v", err)
 		}
 	}
@@ -292,15 +294,16 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		resp, err := inst.ag.HandleMessage(wakeCtx, branchKey, req.Text)
-		if err != nil {
+		buf := turnevent.NewBufferSink()
+		wakeCtx = turnevent.WithSink(wakeCtx, buf)
+		if err := inst.ag.HandleMessage(wakeCtx, branchKey, []string{req.Text}, nil); err != nil {
 			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": buf.FinalText()}); err != nil {
 			log.Errorf("http", "encode response: %v", err)
 		}
 	}
@@ -326,7 +329,12 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			if !ok {
 				return "", fmt.Errorf("unknown agent: %q", agentID)
 			}
-			return inst.ag.HandleMessage(agent.WithTrigger(msgCtx, "voice"), sessionKey, text)
+			buf := turnevent.NewBufferSink()
+			handleCtx := turnevent.WithSink(agent.WithTrigger(msgCtx, "voice"), buf)
+			if err := inst.ag.HandleMessage(handleCtx, sessionKey, []string{text}, nil); err != nil {
+				return "", err
+			}
+			return buf.FinalText(), nil
 		},
 		SessionExists: func(key string) bool {
 			msgs, err := d.sessions.Load(key)
@@ -437,14 +445,15 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			return
 		}
 
-		resp, err := inst.ag.HandleMessage(sendCtx, sessionKey, combined)
-		if err != nil {
+		buf := turnevent.NewBufferSink()
+		sendCtx = turnevent.WithSink(sendCtx, buf)
+		if err := inst.ag.HandleMessage(sendCtx, sessionKey, []string{combined}, nil); err != nil {
 			log.Errorf("http", "webhook error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": resp}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]string{"response": buf.FinalText()}); err != nil {
 			log.Errorf("http", "encode response: %v", err)
 		}
 	}

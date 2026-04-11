@@ -63,7 +63,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 	hookCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 	hookCtx = WithTrigger(hookCtx, "session_end_memory")
-	if _, err := a.HandleMessage(hookCtx, targetKey, prompt); err != nil {
+	if err := a.HandleMessage(hookCtx, targetKey, []string{prompt}, nil); err != nil {
 		log.Warnf("session-end-memory", "failed for %s: %v", targetKey, err)
 	}
 }

@@ -43,17 +43,17 @@ func (a *Agent) processAPIResponse(sessionKey string, sm *sessionMeta, resp *pro
 }
 
 // notifyResponseBlocks emits thinking blocks and server tool call/result
-// notifications to the observer context.
+// events to the sink attached to ctx.
 func notifyResponseBlocks(ctx context.Context, content []provider.ContentBlock) {
 	for _, block := range content {
 		if block.Type == "thinking" {
-			notifyThinkingCtx(ctx, block.Thinking)
+			emitThinkingBlock(ctx, block.Thinking)
 		}
 		if block.Type == "server_tool_use" {
-			notifyToolCallCtx(ctx, block.Name, block.Input)
+			emitToolCall(ctx, block.Name, block.ID, block.Input)
 		}
 		if block.Type == "web_search_tool_result" || block.Type == "web_fetch_tool_result" {
-			notifyToolResultCtx(ctx, block.Type, summarizeServerToolResult(block), false)
+			emitToolResult(ctx, block.Type, block.ID, summarizeServerToolResult(block), false)
 		}
 	}
 }
@@ -94,12 +94,12 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			toolResults = append(toolResults, provider.ToolResultBlock(
 				block.ID, fmt.Sprintf("Unknown tool: %s", block.Name), true,
 			))
-			signalActivityCtx(ctx)
+			emitActivity(ctx)
 			continue
 		}
 
 		a.logger().Debugf("session=%s tool_use: %s (%d bytes)", sessionKey, block.Name, len(block.Input))
-		notifyToolCallCtx(ctx, block.Name, block.Input)
+		emitToolCall(ctx, block.Name, block.ID, block.Input)
 		td.ToolName = block.Name
 		result, err := tool.Execute(toolCtx, block.Input)
 		td.ToolName = ""
@@ -115,8 +115,8 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			toolResults = append(toolResults, provider.ToolResultBlock(
 				block.ID, errMsg, true,
 			))
-			notifyToolResultCtx(ctx, block.Name, errMsg, true)
-			signalActivityCtx(ctx)
+			emitToolResult(ctx, block.Name, block.ID, errMsg, true)
+			emitActivity(ctx)
 			continue
 		}
 
@@ -128,8 +128,8 @@ func (a *Agent) executeToolCalls(ctx context.Context, td *TurnDetail, turnClient
 			block.ID, guardedResult, false,
 		))
 		toolResults = append(toolResults, result.ExtraBlocks...)
-		notifyToolResultCtx(ctx, block.Name, guardedResult, false)
-		signalActivityCtx(ctx)
+		emitToolResult(ctx, block.Name, block.ID, guardedResult, false)
+		emitActivity(ctx)
 	}
 	return toolResults, nil
 }
