@@ -5,316 +5,202 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"foci/internal/delegator"
 )
 
 // ---------------------------------------------------------------------------
-// Settings file install / uninstall
+// Hook settings JSON build
 // ---------------------------------------------------------------------------
 
-// writeSettings is a test helper that serialises a settings.local.json
-// fixture to a temp path.
-func writeSettings(t *testing.T, path string, content string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// readTop parses a settings.local.json file back into the top-level raw-
-// message map so tests can inspect individual keys.
-func readTop(t *testing.T, path string) map[string]json.RawMessage {
-	t.Helper()
-	body, err := os.ReadFile(path)
+// TestBuildHookSettingsJSON proves the generated JSON has the shape CC
+// expects (top-level hooks.PostToolUse and hooks.PostToolUseFailure each
+// with a single matcher:"*" entry carrying the foci hook command). CC
+// loads this via --settings <json> as a flagSettings source.
+func TestBuildHookSettingsJSON(t *testing.T) {
+	cmd := buildHookCommand("/bin/foci-cc-hook", "abc123")
+	body, err := buildHookSettingsJSON(cmd)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(body, &top); err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	return top
-}
-
-// readHooks decodes the "hooks" sub-tree of a settings.local.json file.
-func readHooks(t *testing.T, path string) hooksConfig {
-	t.Helper()
-	top := readTop(t, path)
-	raw, ok := top["hooks"]
-	if !ok {
-		return hooksConfig{}
-	}
-	var h hooksConfig
-	if err := json.Unmarshal(raw, &h); err != nil {
-		t.Fatalf("parse hooks: %v", err)
-	}
-	return h
-}
-
-// TestEnsureFociEntry_AddsWhenAbsent proves appendFociEntry creates a new
-// matcher entry for foci's command when nothing matching is present.
-func TestEnsureFociEntry_AddsWhenAbsent(t *testing.T) {
-	spec := fociHookSpec("/usr/local/bin/foci-cc-hook")
-	matchers := appendFociEntry(nil, spec)
-
-	if len(matchers) != 1 {
-		t.Fatalf("matchers = %d, want 1", len(matchers))
-	}
-	if matchers[0].Matcher != "*" {
-		t.Errorf("matcher = %q, want *", matchers[0].Matcher)
-	}
-	if len(matchers[0].Hooks) != 1 || matchers[0].Hooks[0].Command != "/usr/local/bin/foci-cc-hook" {
-		t.Errorf("hooks = %+v", matchers[0].Hooks)
-	}
-}
-
-// TestEnsureFociEntry_Idempotent proves running install twice leaves exactly
-// one foci entry — important for crash-recovery scenarios where a dead
-// foci's entries linger and a new foci starts up in the same workdir.
-func TestEnsureFociEntry_Idempotent(t *testing.T) {
-	spec := fociHookSpec("/bin/foci-cc-hook")
-	once := appendFociEntry(nil, spec)
-	twice := appendFociEntry(once, spec)
-
-	if len(twice) != 1 {
-		t.Errorf("after double install matchers = %d, want 1", len(twice))
-	}
-}
-
-// TestEnsureFociEntry_PreservesUserHooks proves existing non-foci hooks are
-// left untouched when foci adds its own entry — the user's hooks and foci's
-// hook both fire.
-func TestEnsureFociEntry_PreservesUserHooks(t *testing.T) {
-	userMatcher := hookMatcher{
-		Matcher: "Write|Edit",
-		Hooks: []hookSpec{
-			{Type: "command", Command: "/home/user/bin/format.sh"},
-		},
-	}
-	merged := appendFociEntry([]hookMatcher{userMatcher}, fociHookSpec("/bin/foci-cc-hook"))
-
-	if len(merged) != 2 {
-		t.Fatalf("matchers = %d, want 2 (user + foci)", len(merged))
-	}
-	if merged[0].Hooks[0].Command != "/home/user/bin/format.sh" {
-		t.Errorf("user hook displaced: %+v", merged[0])
-	}
-	if merged[1].Hooks[0].Command != "/bin/foci-cc-hook" {
-		t.Errorf("foci hook missing: %+v", merged[1])
-	}
-}
-
-// TestRemoveFociEntries_KeepsUserHooks proves uninstall drops only foci's
-// command entries; user hooks under the same or adjacent matchers stay.
-func TestRemoveFociEntries_KeepsUserHooks(t *testing.T) {
-	input := []hookMatcher{
-		{
-			Matcher: "*",
-			Hooks: []hookSpec{
-				{Type: "command", Command: "/bin/foci-cc-hook"},
-				{Type: "command", Command: "/home/user/other-hook.sh"},
-			},
-		},
-	}
-	out := removeFociEntries(input, "/bin/foci-cc-hook")
-
-	if len(out) != 1 {
-		t.Fatalf("matchers = %d, want 1", len(out))
-	}
-	if len(out[0].Hooks) != 1 || out[0].Hooks[0].Command != "/home/user/other-hook.sh" {
-		t.Errorf("remaining hooks = %+v", out[0].Hooks)
-	}
-}
-
-// TestRemoveFociEntries_PrunesEmptyMatcher proves matchers that have no
-// remaining hooks after uninstall are dropped so the config doesn't
-// accumulate empty shells.
-func TestRemoveFociEntries_PrunesEmptyMatcher(t *testing.T) {
-	input := []hookMatcher{
-		{
-			Matcher: "*",
-			Hooks: []hookSpec{
-				{Type: "command", Command: "/bin/foci-cc-hook"},
-			},
-		},
-	}
-	out := removeFociEntries(input, "/bin/foci-cc-hook")
-
-	if len(out) != 0 {
-		t.Errorf("matchers = %d, want 0 (empty matcher should be pruned)", len(out))
-	}
-}
-
-// TestInstallHooks_CreatesSettingsFile proves installing into an empty
-// workdir writes a minimal settings.local.json with foci's two entries
-// and nothing else.
-func TestInstallHooks_CreatesSettingsFile(t *testing.T) {
-	workDir := t.TempDir()
-	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
-
-	// Directly exercise the merge helpers (resolveHookBinary requires an
-	// actual binary sibling, which unit tests don't have).
-	top, err := loadSettings(settingsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hooks := extractHooks(top)
-	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
+		t.Fatalf("buildHookSettingsJSON: %v", err)
 	}
 
-	got := readHooks(t, settingsPath)
-	if _, ok := got[eventPostToolUse]; !ok {
-		t.Error("PostToolUse entry not written")
+	var parsed struct {
+		Hooks map[string][]hookMatcher `json:"hooks"`
 	}
-	if _, ok := got[eventPostToolUseFailure]; !ok {
-		t.Error("PostToolUseFailure entry not written")
-	}
-}
-
-// TestInstallHooks_MergesWithExisting proves that a pre-existing
-// settings.local.json with user hooks retains them after foci installs its
-// own entries, and that top-level keys unrelated to hooks are preserved.
-func TestInstallHooks_MergesWithExisting(t *testing.T) {
-	workDir := t.TempDir()
-	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
-
-	writeSettings(t, settingsPath, `{
-	  "hooks": {
-	    "PostToolUse": [
-	      { "matcher": "Write", "hooks": [{ "type": "command", "command": "/home/user/format.sh" }] }
-	    ]
-	  },
-	  "permissionMode": "default"
-	}`)
-
-	top, err := loadSettings(settingsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hooks := extractHooks(top)
-	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("parse generated settings: %v (body: %s)", err, body)
 	}
 
-	// User's PostToolUse hook should still be there.
-	gotHooks := readHooks(t, settingsPath)
-	pte := gotHooks[eventPostToolUse]
-	if len(pte) != 2 {
-		t.Fatalf("PostToolUse entries = %d, want 2 (user + foci)", len(pte))
-	}
-	foundUser := false
-	foundFoci := false
-	for _, m := range pte {
-		for _, h := range m.Hooks {
-			if h.Command == "/home/user/format.sh" {
-				foundUser = true
-			}
-			if h.Command == "/bin/foci-cc-hook" {
-				foundFoci = true
-			}
+	for _, event := range []string{eventPostToolUse, eventPostToolUseFailure} {
+		matchers, ok := parsed.Hooks[event]
+		if !ok {
+			t.Errorf("generated settings missing event %q", event)
+			continue
+		}
+		if len(matchers) != 1 {
+			t.Errorf("%s matchers = %d, want 1", event, len(matchers))
+			continue
+		}
+		m := matchers[0]
+		if m.Matcher != "*" {
+			t.Errorf("%s matcher = %q, want *", event, m.Matcher)
+		}
+		if len(m.Hooks) != 1 {
+			t.Fatalf("%s hook specs = %d, want 1", event, len(m.Hooks))
+		}
+		h := m.Hooks[0]
+		if h.Type != "command" {
+			t.Errorf("%s hook.type = %q, want command", event, h.Type)
+		}
+		if h.Command != cmd {
+			t.Errorf("%s hook.command = %q, want %q", event, h.Command, cmd)
+		}
+		if h.Timeout != hookTimeoutSeconds {
+			t.Errorf("%s hook.timeout = %d, want %d", event, h.Timeout, hookTimeoutSeconds)
 		}
 	}
-	if !foundUser || !foundFoci {
-		t.Errorf("user=%v foci=%v", foundUser, foundFoci)
-	}
+}
 
-	// Top-level permissionMode must survive the round-trip.
-	gotTop := readTop(t, settingsPath)
-	if _, ok := gotTop["permissionMode"]; !ok {
-		t.Error("permissionMode not preserved across merge")
+// TestBuildHookCommand_Format proves the generated command string is a
+// valid shell command with the binary path quoted and the install ID
+// appended via the --install flag. CC passes this to bash verbatim.
+func TestBuildHookCommand_Format(t *testing.T) {
+	got := buildHookCommand("/bin/foci-cc-hook", "abc123")
+	want := `"/bin/foci-cc-hook" --install abc123`
+	if got != want {
+		t.Errorf("buildHookCommand = %q, want %q", got, want)
 	}
 }
 
-// TestUninstallHooks_RemovesEntries proves install-then-uninstall restores
-// the settings file to its pre-install state when the user had no hooks.
-func TestUninstallHooks_RemovesEntries(t *testing.T) {
-	workDir := t.TempDir()
-	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
-
-	// Install.
-	top, _ := loadSettings(settingsPath)
-	hooks := extractHooks(top)
-	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
-	}
-
-	// Uninstall.
-	top, _ = loadSettings(settingsPath)
-	hooks = extractHooks(top)
-	hooks[eventPostToolUse] = removeFociEntries(hooks[eventPostToolUse], "/bin/foci-cc-hook")
-	hooks[eventPostToolUseFailure] = removeFociEntries(hooks[eventPostToolUseFailure], "/bin/foci-cc-hook")
-	if len(hooks[eventPostToolUse]) == 0 {
-		delete(hooks, eventPostToolUse)
-	}
-	if len(hooks[eventPostToolUseFailure]) == 0 {
-		delete(hooks, eventPostToolUseFailure)
-	}
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
-	}
-
-	// File should be gone (empty top-level after pruning).
-	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
-		t.Errorf("settings.local.json still exists after uninstall: %v", err)
+// TestBuildHookCommand_QuotesPathWithSpaces proves paths containing
+// spaces survive by being wrapped in double quotes — `%q` produces
+// a Go-escaped string which is also valid bash with respect to spaces.
+func TestBuildHookCommand_QuotesPathWithSpaces(t *testing.T) {
+	got := buildHookCommand("/home/user name/bin/foci-cc-hook", "id-1")
+	if !strings.Contains(got, `"/home/user name/bin/foci-cc-hook"`) {
+		t.Errorf("expected quoted path with spaces, got %q", got)
 	}
 }
 
-// TestUninstallHooks_PreservesUserHooks proves uninstalling leaves user
-// hooks intact when they coexisted with foci's entries.
-func TestUninstallHooks_PreservesUserHooks(t *testing.T) {
-	workDir := t.TempDir()
-	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
-
-	writeSettings(t, settingsPath, `{
-	  "hooks": {
-	    "PostToolUse": [
-	      { "matcher": "Write", "hooks": [{ "type": "command", "command": "/home/user/format.sh" }] }
-	    ]
-	  }
-	}`)
-
-	// Install.
-	top, _ := loadSettings(settingsPath)
-	hooks := extractHooks(top)
-	spec := fociHookSpec("/bin/foci-cc-hook")
-	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], spec)
-	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], spec)
-	_ = writeHooks(settingsPath, top, hooks)
-
-	// Uninstall.
-	top, _ = loadSettings(settingsPath)
-	hooks = extractHooks(top)
-	hooks[eventPostToolUse] = removeFociEntries(hooks[eventPostToolUse], "/bin/foci-cc-hook")
-	hooks[eventPostToolUseFailure] = removeFociEntries(hooks[eventPostToolUseFailure], "/bin/foci-cc-hook")
-	if len(hooks[eventPostToolUse]) == 0 {
-		delete(hooks, eventPostToolUse)
+// TestNewInstallID_Unique proves independent calls produce distinct IDs.
+// A collision would mean two hook entries with the same ID can't be
+// distinguished by handleHookResponse's install-ID filter.
+func TestNewInstallID_Unique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 100; i++ {
+		id := newInstallID()
+		if id == "" {
+			t.Fatal("empty install ID")
+		}
+		if seen[id] {
+			t.Fatalf("duplicate install ID after %d iterations: %s", i, id)
+		}
+		seen[id] = true
 	}
-	if len(hooks[eventPostToolUseFailure]) == 0 {
-		delete(hooks, eventPostToolUseFailure)
-	}
-	_ = writeHooks(settingsPath, top, hooks)
+}
 
-	// User's entry should still be there.
-	gotHooks := readHooks(t, settingsPath)
-	pte := gotHooks[eventPostToolUse]
-	if len(pte) != 1 || pte[0].Hooks[0].Command != "/home/user/format.sh" {
-		t.Errorf("user hook not preserved: %+v", pte)
+// ---------------------------------------------------------------------------
+// Hook binary resolution
+// ---------------------------------------------------------------------------
+
+// TestIsExecutableFile proves the helper distinguishes regular executables
+// from directories and non-executable files — all three cases are live
+// because a bad sibling should fall through to the $PATH fallback rather
+// than erroring out.
+func TestIsExecutableFile(t *testing.T) {
+	dir := t.TempDir()
+
+	exe := filepath.Join(dir, "exe")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !isExecutableFile(exe) {
+		t.Error("executable file not recognised")
+	}
+
+	plain := filepath.Join(dir, "plain")
+	if err := os.WriteFile(plain, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isExecutableFile(plain) {
+		t.Error("plain file classified as executable")
+	}
+
+	if isExecutableFile(dir) {
+		t.Error("directory classified as executable")
+	}
+
+	if isExecutableFile(filepath.Join(dir, "missing")) {
+		t.Error("missing path classified as executable")
+	}
+}
+
+// TestResolveHookBinary_SiblingFound proves the primary lookup resolves
+// the binary shipped alongside the running process. Uses the real
+// bin/foci-cc-hook built by `make foci-cc-hook` — tests run in the build
+// tree so the sibling path exists.
+func TestResolveHookBinary_SiblingFound(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	sibling := filepath.Join(filepath.Dir(self), hookCommandName)
+	if !isExecutableFile(sibling) {
+		t.Skipf("no foci-cc-hook sibling at %s (run `make foci-cc-hook` before `make test` to enable)", sibling)
+	}
+
+	t.Setenv("PATH", "")
+
+	got, err := resolveHookBinary()
+	if err != nil {
+		t.Fatalf("resolveHookBinary: %v", err)
+	}
+	if got != sibling {
+		t.Errorf("got %q, want sibling %q", got, sibling)
+	}
+}
+
+// TestResolveHookBinary_PathFallback proves that when the sibling lookup
+// misses, $PATH is searched for foci-cc-hook. This is the packaging case
+// (foci-gw in /usr/local/bin, foci-cc-hook in /opt/foci/libexec but
+// reachable via PATH).
+func TestResolveHookBinary_PathFallback(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, hookCommandName)
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	got, err := resolveHookBinary()
+	if err != nil {
+		t.Fatalf("resolveHookBinary: %v", err)
+	}
+	if got != fake {
+		t.Errorf("got %q, want %q", got, fake)
+	}
+}
+
+// TestResolveHookBinary_NotFound proves the error path fires when neither
+// lookup strategy finds an executable foci-cc-hook. prepareHooks logs at
+// Warn in this case and skips hook install gracefully.
+func TestResolveHookBinary_NotFound(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	if self, err := os.Executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(self), hookCommandName)
+		if isExecutableFile(sibling) {
+			t.Skipf("sibling %s exists; can't test NotFound path here", sibling)
+		}
+	}
+
+	_, err := resolveHookBinary()
+	if err == nil {
+		t.Fatal("resolveHookBinary succeeded, want error")
+	}
+	if msg := err.Error(); !strings.Contains(msg, hookCommandName) {
+		t.Errorf("error message = %q, want to mention %q", msg, hookCommandName)
 	}
 }
 
@@ -323,9 +209,9 @@ func TestUninstallHooks_PreservesUserHooks(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestHandleHookResponse_PostToolUse proves a well-formed hook_response
-// envelope for a PostToolUse event dispatches to OnToolEnd with is_error=false.
-// The backend's install ID matches the payload so the multi-backend filter
-// lets the event through.
+// envelope for a PostToolUse event dispatches to OnToolEnd with
+// is_error=false. The backend's install ID matches the payload so the
+// install-ID filter lets the event through.
 func TestHandleHookResponse_PostToolUse(t *testing.T) {
 	b := &Backend{hookInstallID: "install-a"}
 
@@ -406,11 +292,10 @@ func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
 	}
 }
 
-// TestHandleHookResponse_FiltersForeignInstallID proves the multi-backend
-// filter drops events whose install_id doesn't match this backend's — each
-// backend only acts on hook_response events from its own installed entry.
-// This is what keeps two foci backends sharing a workdir from crossing
-// wires.
+// TestHandleHookResponse_FiltersForeignInstallID proves the multi-source
+// filter drops events whose install_id doesn't match this backend's — if
+// the user has their own PostToolUse hook configured in settings.json,
+// foci sees its hook_response events via the stream but skips them.
 func TestHandleHookResponse_FiltersForeignInstallID(t *testing.T) {
 	b := &Backend{hookInstallID: "install-us"}
 	fired := false
@@ -437,227 +322,27 @@ func TestHandleHookResponse_FiltersForeignInstallID(t *testing.T) {
 	}
 }
 
-// TestInstallHooks_MultiBackend proves two backends installing into the
-// same settings.local.json produce two independent entries (each with its
-// own unique install ID in the command string), and that uninstalling
-// one backend leaves the other's entry untouched.
-func TestInstallHooks_MultiBackend(t *testing.T) {
-	workDir := t.TempDir()
-	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
-
-	hookPath := "/bin/foci-cc-hook"
-	idA := "aaaaaaaa"
-	idB := "bbbbbbbb"
-	cmdA := buildHookCommand(hookPath, idA)
-	cmdB := buildHookCommand(hookPath, idB)
-
-	// Backend A installs.
-	top, _ := loadSettings(settingsPath)
-	hooks := extractHooks(top)
-	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], fociHookSpec(cmdA))
-	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], fociHookSpec(cmdA))
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
+// TestHandleHookResponse_FiltersUserHookNoID proves events from user-
+// configured PostToolUse hooks (which don't pass through foci-cc-hook and
+// therefore have empty install_id) are dropped when the backend has its
+// own install ID set.
+func TestHandleHookResponse_FiltersUserHookNoID(t *testing.T) {
+	b := &Backend{hookInstallID: "install-us"}
+	fired := false
+	handler := &delegator.EventHandler{
+		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
+	b.beginTurn(handler)
 
-	// Backend B installs with a different install ID.
-	top, _ = loadSettings(settingsPath)
-	hooks = extractHooks(top)
-	hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], fociHookSpec(cmdB))
-	hooks[eventPostToolUseFailure] = appendFociEntry(hooks[eventPostToolUseFailure], fociHookSpec(cmdB))
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
-	}
+	// Payload without install_id — the user's hook script doesn't echo one.
+	env, _ := json.Marshal(hookResponseEnvelope{
+		HookEvent: "PostToolUse",
+		Stdout:    `{"tool_use_id":"toolu_user","tool_name":"Bash"}`,
+	})
+	b.handleHookResponse(env)
 
-	// Both entries should now be present.
-	got := readHooks(t, settingsPath)
-	if len(got[eventPostToolUse]) != 2 {
-		t.Fatalf("PostToolUse entries = %d, want 2 (A + B)", len(got[eventPostToolUse]))
-	}
-
-	// Backend A uninstalls. B's entry must survive.
-	top, _ = loadSettings(settingsPath)
-	hooks = extractHooks(top)
-	hooks[eventPostToolUse] = removeFociEntries(hooks[eventPostToolUse], cmdA)
-	hooks[eventPostToolUseFailure] = removeFociEntries(hooks[eventPostToolUseFailure], cmdA)
-	if err := writeHooks(settingsPath, top, hooks); err != nil {
-		t.Fatal(err)
-	}
-
-	// B's entry still there.
-	got = readHooks(t, settingsPath)
-	if len(got[eventPostToolUse]) != 1 {
-		t.Fatalf("PostToolUse entries after A uninstall = %d, want 1 (B)", len(got[eventPostToolUse]))
-	}
-	if got[eventPostToolUse][0].Hooks[0].Command != cmdB {
-		t.Errorf("surviving entry = %q, want %q", got[eventPostToolUse][0].Hooks[0].Command, cmdB)
-	}
-}
-
-// TestNewInstallID_Unique proves independent calls produce distinct IDs.
-// A collision would mean two backends in the same workdir can't
-// distinguish their own hook_response events from each other's.
-func TestNewInstallID_Unique(t *testing.T) {
-	seen := map[string]bool{}
-	for i := 0; i < 100; i++ {
-		id := newInstallID()
-		if id == "" {
-			t.Fatal("empty install ID")
-		}
-		if seen[id] {
-			t.Fatalf("duplicate install ID after %d iterations: %s", i, id)
-		}
-		seen[id] = true
-	}
-}
-
-// TestIsExecutableFile proves the helper distinguishes regular executables
-// from directories and non-executable files — all three cases are live
-// because a bad sibling should fall through to the $PATH fallback rather
-// than erroring out.
-func TestIsExecutableFile(t *testing.T) {
-	dir := t.TempDir()
-
-	// A regular executable file.
-	exe := filepath.Join(dir, "exe")
-	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if !isExecutableFile(exe) {
-		t.Error("executable file not recognised")
-	}
-
-	// A non-executable file.
-	plain := filepath.Join(dir, "plain")
-	if err := os.WriteFile(plain, []byte("hi"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if isExecutableFile(plain) {
-		t.Error("plain file classified as executable")
-	}
-
-	// A directory.
-	if isExecutableFile(dir) {
-		t.Error("directory classified as executable")
-	}
-
-	// A missing path.
-	if isExecutableFile(filepath.Join(dir, "missing")) {
-		t.Error("missing path classified as executable")
-	}
-}
-
-// TestResolveHookBinary_SiblingFound proves the primary lookup resolves to
-// the binary shipped alongside the running process. Uses the real
-// bin/foci-cc-hook built by `make foci-cc-hook` — tests run in the build
-// tree so the sibling path exists.
-func TestResolveHookBinary_SiblingFound(t *testing.T) {
-	// Skip the sibling-lookup portion when the test binary isn't co-located
-	// with foci-cc-hook (e.g. when tests run without a preceding `make`).
-	// The PATH fallback test below exercises the alternate route unconditionally.
-	self, err := os.Executable()
-	if err != nil {
-		t.Skipf("os.Executable unavailable: %v", err)
-	}
-	sibling := filepath.Join(filepath.Dir(self), hookCommandName)
-	if !isExecutableFile(sibling) {
-		t.Skipf("no foci-cc-hook sibling at %s (run `make foci-cc-hook` before `make test` to enable)", sibling)
-	}
-
-	// Ensure PATH doesn't accidentally satisfy the fallback so we prove
-	// the sibling path was taken.
-	t.Setenv("PATH", "")
-
-	got, err := resolveHookBinary()
-	if err != nil {
-		t.Fatalf("resolveHookBinary: %v", err)
-	}
-	if got != sibling {
-		t.Errorf("got %q, want sibling %q", got, sibling)
-	}
-}
-
-// TestResolveHookBinary_PathFallback proves that when the sibling lookup
-// misses, $PATH is searched for foci-cc-hook. This is the packaging case
-// (foci-gw in /usr/local/bin, foci-cc-hook in /opt/foci/libexec but
-// reachable via PATH).
-func TestResolveHookBinary_PathFallback(t *testing.T) {
-	// Create a fake foci-cc-hook in a temp dir and put it on PATH.
-	// The sibling lookup will fail (test binary is in a go-test temp dir
-	// with no foci-cc-hook next to it), so resolveHookBinary must fall
-	// back to PATH and find our fake.
-	dir := t.TempDir()
-	fake := filepath.Join(dir, hookCommandName)
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
-
-	got, err := resolveHookBinary()
-	if err != nil {
-		t.Fatalf("resolveHookBinary: %v", err)
-	}
-	if got != fake {
-		t.Errorf("got %q, want %q", got, fake)
-	}
-}
-
-// TestResolveHookBinary_NotFound proves the error path fires when neither
-// lookup strategy finds an executable foci-cc-hook. installHooks logs at
-// Warn in this case and skips hook install gracefully.
-func TestResolveHookBinary_NotFound(t *testing.T) {
-	// Empty PATH + no sibling (go-test binary isn't shipped with foci-cc-hook).
-	t.Setenv("PATH", "")
-
-	// If the test binary happens to live next to a real foci-cc-hook
-	// (uncommon), skip — we're proving the error path, not the happy path.
-	if self, err := os.Executable(); err == nil {
-		sibling := filepath.Join(filepath.Dir(self), hookCommandName)
-		if isExecutableFile(sibling) {
-			t.Skipf("sibling %s exists; can't test NotFound path here", sibling)
-		}
-	}
-
-	_, err := resolveHookBinary()
-	if err == nil {
-		t.Fatal("resolveHookBinary succeeded, want error")
-	}
-	if msg := err.Error(); !strings.Contains(msg, hookCommandName) {
-		t.Errorf("error message = %q, want to mention %q", msg, hookCommandName)
-	}
-}
-
-// TestLockSettingsFile_SerializesConcurrent proves the package-level mutex
-// keyed by absolute path prevents concurrent read-modify-write races on the
-// same settings file. Two goroutines racing to add their entry should end
-// up with both entries in the file rather than one clobbering the other.
-func TestLockSettingsFile_SerializesConcurrent(t *testing.T) {
-	workDir := t.TempDir()
-	settingsPath := filepath.Join(workDir, ".claude", "settings.local.json")
-
-	cmdA := buildHookCommand("/bin/foci-cc-hook", "a")
-	cmdB := buildHookCommand("/bin/foci-cc-hook", "b")
-
-	var wg sync.WaitGroup
-	install := func(cmd string) {
-		defer wg.Done()
-		mu := lockSettingsFile(settingsPath)
-		mu.Lock()
-		defer mu.Unlock()
-		top, _ := loadSettings(settingsPath)
-		hooks := extractHooks(top)
-		hooks[eventPostToolUse] = appendFociEntry(hooks[eventPostToolUse], fociHookSpec(cmd))
-		_ = writeHooks(settingsPath, top, hooks)
-	}
-
-	wg.Add(2)
-	go install(cmdA)
-	go install(cmdB)
-	wg.Wait()
-
-	got := readHooks(t, settingsPath)
-	if len(got[eventPostToolUse]) != 2 {
-		t.Fatalf("entries = %d, want 2 (both install calls should have landed)", len(got[eventPostToolUse]))
+	if fired {
+		t.Error("OnToolEnd fired for payload with no install_id")
 	}
 }
 
@@ -665,7 +350,7 @@ func TestLockSettingsFile_SerializesConcurrent(t *testing.T) {
 // agent_id are dropped before dispatch — they belong to the sub-agent's
 // transcript, not the parent turn.
 func TestHandleHookResponse_SkipsSubagent(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-us"}
 	fired := false
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
@@ -674,6 +359,7 @@ func TestHandleHookResponse_SkipsSubagent(t *testing.T) {
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
+		InstallID:    "install-us",
 		ToolUseID:    "toolu_sub",
 		ToolName:     "Read",
 		ToolResponse: "nested result",
@@ -694,7 +380,7 @@ func TestHandleHookResponse_SkipsSubagent(t *testing.T) {
 // PostToolUse or PostToolUseFailure are silently ignored — user-configured
 // PreToolUse hooks or other lifecycle events shouldn't fire OnToolEnd.
 func TestHandleHookResponse_SkipsUnknownHookEvent(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-us"}
 	fired := false
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
@@ -703,7 +389,7 @@ func TestHandleHookResponse_SkipsUnknownHookEvent(t *testing.T) {
 
 	env, _ := json.Marshal(hookResponseEnvelope{
 		HookEvent: "PreToolUse",
-		Stdout:    `{"tool_use_id":"x","tool_name":"y"}`,
+		Stdout:    `{"tool_use_id":"x","tool_name":"y","install_id":"install-us"}`,
 	})
 	b.handleHookResponse(env)
 
@@ -716,7 +402,7 @@ func TestHandleHookResponse_SkipsUnknownHookEvent(t *testing.T) {
 // in the hook script's stdout doesn't crash — we log at debug and drop the
 // event, keeping the rest of the turn flowing.
 func TestHandleHookResponse_MalformedStdoutGracefulSkip(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-us"}
 	fired := false
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
@@ -738,7 +424,7 @@ func TestHandleHookResponse_MalformedStdoutGracefulSkip(t *testing.T) {
 // with empty stdout (possible when the helper binary fails silently) are
 // ignored rather than triggering a spurious OnToolEnd dispatch.
 func TestHandleHookResponse_EmptyStdoutSilent(t *testing.T) {
-	b := &Backend{}
+	b := &Backend{hookInstallID: "install-us"}
 	fired := false
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },

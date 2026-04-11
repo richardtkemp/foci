@@ -427,32 +427,32 @@ Adding a new control: define intent type in `delegator/control.go`, add case in 
 
 #### Hook Integration (`internal/delegator/ccstream/hooks.go`)
 
-CC consumes tool_result blocks internally — they never surface on stdout the way assistant messages or stream events do. To get per-tool completion signals (so the tracker can update "Show results" inline buttons and fire result hints), ccstream installs `PostToolUse` and `PostToolUseFailure` hooks on each session that point at the `bin/foci-cc-hook` helper binary.
+CC consumes tool_result blocks internally — they never surface on stdout the way assistant messages or stream events do. To get per-tool completion signals (so the tracker can update "Show results" inline buttons and fire result hints), ccstream installs `PostToolUse` and `PostToolUseFailure` hooks on each session that point at the `bin/foci-cc-hook` helper binary. Install is done via CC's `--settings <json>` CLI flag (see `claude-code/src/main.tsx:1000`, `loadSettingsFromFlag` at line 432) — foci **never** mutates the user's `.claude/settings.local.json`.
 
 **Install at `Backend.Start`:**
 
-1. Resolve hook binary path via `os.Executable()` + `../foci-cc-hook` sibling lookup. If absent (dev builds, broken packaging), log at **Warn** and skip — the backend runs without tool-result display rather than failing to start.
+1. Resolve hook binary path via `os.Executable()` + sibling lookup, falling back to `exec.LookPath("foci-cc-hook")` on `$PATH`. If neither finds an executable (dev builds, broken packaging), log at **Warn** and skip — the backend runs without tool-result display rather than failing to start.
 2. Generate a unique 16-hex-char install ID via `crypto/rand`.
-3. Build the shell command string: `"<path>" --install <id>`.
-4. Merge a `{matcher: "*", hooks: [{type: "command", command: <cmd>, timeout: 10}]}` entry into `{opts.WorkDir}/.claude/settings.local.json` for both `PostToolUse` and `PostToolUseFailure` events. User hooks and other tools' hooks are preserved; top-level settings keys (`permissionMode`, etc.) are round-tripped untouched.
-5. Atomic write via `.tmp + rename`.
-6. Record `hookInstalled` / `hookSettingsPath` / `hookCmd` / `hookInstallID` on the Backend struct so uninstall can find and filter them.
+3. Build the shell command string: `"<path>" --install <id>` (path double-quoted so spaces survive bash parsing).
+4. Build a JSON settings object: `{"hooks": {"PostToolUse": [{"matcher":"*", "hooks":[{"type":"command","command":<cmd>,"timeout":10}]}], "PostToolUseFailure": [...]}}`.
+5. Append `--settings <json>` to the claude argv before spawning.
+6. Record `hookCmd` / `hookInstallID` on the Backend struct so `handleHookResponse` can filter events by matching install ID.
 
-**Uninstall at `Backend.Close`:** after the reader goroutine exits, load `settings.local.json`, remove entries whose command string exactly matches this backend's `hookCmd` (install ID included), prune empty matchers, write back atomically. If the entire top-level settings object ends up empty the file is deleted.
+**Why `--settings` over file mutation:** CC loads the JSON as an additional settings source called `flagSettings` (`constants.ts:159`). `flagSettings` is always enabled regardless of `--setting-sources` filters, and hooks from multiple sources merge rather than replace, so foci's hook coexists automatically with any user hooks in `settings.json` / `settings.local.json`. The JSON lives in a content-hashed temp file CC creates internally (`loadSettingsFromFlag` at `main.tsx:454`) — identical settings produce the same path across process boundaries, so prompt-cache stability is preserved. Foci has **no filesystem footprint** for hook installation.
 
-**Multi-backend safety:** two foci backends sharing a workdir each install their own uniquely-identified entry. `appendFociEntry` always appends (each command is distinct because the install ID is distinct), so both entries coexist. `removeFociEntries` matches exact command strings so one backend's uninstall leaves the other's entry alone. A package-level mutex keyed by absolute settings.local.json path (`lockSettingsFile`) serializes concurrent read-modify-write from multiple backends in the same foci-gw process.
+**No uninstall step:** `Backend.Close` has nothing to clean up. The CC subprocess exits, its temp settings file is CC's concern, and foci's own state (`hookCmd`, `hookInstallID`) disappears with the Backend struct. There's no shared settings.local.json file to unwind, no mutex, no crash-orphan accumulation, no multi-backend race — each Backend passes its own `--settings` argv and each CC subprocess has independent hook state.
 
-**Hook output path:** when CC fires a hook, it pipes an input JSON envelope (`tool_name`, `tool_use_id`, `tool_input`, `tool_response` / `error`, `agent_id`, ...) into `foci-cc-hook`'s stdin. The helper parses its own argv for `--install <id>`, reads the stdin envelope, truncates `tool_response` / `error` to 64 KB (so each emitted stream line stays under ccstream's 1 MB scanner limit — without the cap a multi-MB file read would blow the scanner and tear down the backend via `OnReaderStopped`), and writes a compact JSON object to stdout. CC captures that stdout and emits it as a `system/hook_response` message on its own stdout, where foci's reader picks it up.
+**Multi-backend safety:** two foci backends running CC in the same workdir each generate a unique install ID and each passes its own `--settings <json>` argv. CC's subprocesses have no shared state — each reads its own flagSettings from its own temp file. The install ID is still bound into the hook command and echoed back by `foci-cc-hook` so `handleHookResponse` can filter events by origin — not for race protection (there's no race) but to distinguish foci's hook_response events from any user-installed PostToolUse hooks that fire alongside.
+
+**Hook output path:** when CC fires the hook, it pipes an input JSON envelope (`tool_name`, `tool_use_id`, `tool_input`, `tool_response` / `error`, `agent_id`, ...) into `foci-cc-hook`'s stdin. The helper parses its own argv for `--install <id>`, reads the stdin envelope, truncates `tool_response` / `error` to 64 KB (so each emitted stream line stays under ccstream's 1 MB scanner limit — without the cap a multi-MB file read would blow the scanner and tear down the backend via `OnReaderStopped`), and writes a compact JSON object to stdout. CC captures that stdout and emits it as a `system/hook_response` message on its own stdout, where foci's reader picks it up.
 
 **Dispatch path:** `OnSystem("hook_response", ...)` calls `handleHookResponse`, which applies three filters before firing `handler.OnToolEnd`:
 
 1. **Hook event type:** only `PostToolUse` and `PostToolUseFailure` are processed. Other hook events (user-configured `PreToolUse`, lifecycle events) are silently ignored.
-2. **Install ID match:** parses `install_id` from the helper's stdout JSON; events whose ID doesn't match the current backend's `hookInstallID` are dropped. This is what keeps two backends sharing a workdir from crossing wires.
+2. **Install ID match:** parses `install_id` from the helper's stdout JSON; events whose ID doesn't match the current backend's `hookInstallID` are dropped. This is what keeps user-authored hook responses out of foci's tracker.
 3. **Sidechain filter:** events with non-empty `agent_id` are dropped — sub-agent tool calls belong to the sub-agent's own transcript rather than the parent turn, consistent with the `isSidechain` filter in the cctmux backend.
 
 For events that pass all three, `handler.OnToolEnd(tool_use_id, tool_name, tool_response_or_error, is_error)` fires. The id plumbs through `turn_delegated.go` → `turnevent.ToolResult{ID, Name, Output, IsError}` → `StreamingSink.Emit` → `tracker.ObserveToolResult(id, name, result, isError)` which looks up the entry by id (see Tool Call Visibility below) and updates the correct message.
-
-**Crash resilience:** if foci crashes mid-session, stale entries remain in `settings.local.json` pointing at the `foci-cc-hook` binary. Because the binary is persistent (shipped with foci, not ephemeral), the hook still fires correctly under a subsequent CC invocation — but the install ID won't match any running backend, so `handleHookResponse` drops the event. Orphans accumulate over successive crashes; they're harmless (dead hooks whose output is filtered out) and can be cleaned manually if they get noisy.
 
 **Required CC flags:** `--include-hook-events` + `--verbose` in `ccstream.go:Start` (both already set) enable the `hook_response` system message subtype on CC's stream-json output. Without them, hooks would run but their output would never reach foci.
 
