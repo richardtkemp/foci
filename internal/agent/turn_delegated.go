@@ -178,11 +178,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		OnText: func(text string) {
 			turnevent.Emit(turnCtx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
 		},
-		OnToolStart: func(name, input string) {
-			turnevent.Emit(turnCtx, turnevent.ToolCall{Name: name, Args: []byte(input)})
+		OnToolStart: func(id, name, input string) {
+			turnevent.Emit(turnCtx, turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
 		},
-		OnToolEnd: func(name, output string, isError bool) {
-			turnevent.Emit(turnCtx, turnevent.ToolResult{Name: name, Output: output, IsError: isError})
+		OnToolEnd: func(id, name, output string, isError bool) {
+			turnevent.Emit(turnCtx, turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 		},
 	}
 	handler.OnTurnComplete = func(result *delegator.TurnResult) {

@@ -664,7 +664,7 @@ func TestOnAssistant_ToolUseTracking(t *testing.T) {
 
 	b := &Backend{}
 	handler := &delegator.EventHandler{
-		OnToolStart: func(name string, input string) {
+		OnToolStart: func(_ string, name string, input string) {
 			toolStarts = append(toolStarts, name)
 		},
 	}
@@ -2465,7 +2465,7 @@ func TestConcurrentOnAssistantAndOnResult(t *testing.T) {
 
 	handler := &delegator.EventHandler{
 		OnText:         func(string) {},
-		OnToolStart:    func(string, string) {},
+		OnToolStart:    func(string, string, string) {},
 		OnTurnComplete: func(*delegator.TurnResult) {},
 	}
 	b.beginTurn(handler)

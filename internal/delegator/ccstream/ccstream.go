@@ -718,7 +718,7 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 
 			if handler != nil && handler.OnToolStart != nil {
 				inputStr := string(block.Input)
-				handler.OnToolStart(block.Name, inputStr)
+				handler.OnToolStart(block.ID, block.Name, inputStr)
 			}
 
 			// Track Agent tool calls for status reporting (same as tmux backend).

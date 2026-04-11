@@ -231,12 +231,16 @@ type StartOptions struct {
 
 // EventHandler receives streaming events during a turn.
 // All callbacks are optional — nil callbacks are silently skipped.
+//
+// Tool events carry the tool_use ID (from the JSONL/stream source) so
+// consumers can correlate OnToolEnd with the originating OnToolStart without
+// having to match by name or rely on ordering.
 type EventHandler struct {
-	OnText         func(text string)                              // complete text block from the agent
-	OnTextDelta    func(delta string)                             // streaming text delta (content_block_delta)
-	OnToolStart    func(name string, input string)                // tool execution began
-	OnToolEnd      func(name string, output string, isError bool) // tool execution finished
-	OnTurnComplete func(result *TurnResult)                       // turn finished
+	OnText         func(text string)                                          // complete text block from the agent
+	OnTextDelta    func(delta string)                                         // streaming text delta (content_block_delta)
+	OnToolStart    func(id, name, input string)                               // tool execution began
+	OnToolEnd      func(id, name, output string, isError bool)                // tool execution finished
+	OnTurnComplete func(result *TurnResult)                                   // turn finished
 
 	// SteerCheckFunc is called by the backend at tool execution boundaries
 	// to check for pending steer messages. Non-blocking; returns nil if no
