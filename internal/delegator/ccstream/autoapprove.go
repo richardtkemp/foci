@@ -75,6 +75,20 @@ var CommonReadonlyRules = []string{
 	"Bash:foci_web_fetch",
 }
 
+// CommonSafeWriteRules is the built-in list of commands that have side effects
+// (network fetches or filesystem writes) but are considered low-risk in a
+// workspace-scoped agent. Enabled via auto_approve_common_safe_write (default
+// off). Kept distinct from CommonReadonlyRules so operators can opt into
+// write/network access separately.
+var CommonSafeWriteRules = []string{
+	// Network fetches.
+	"Bash:curl",
+	"Bash:wget",
+	// Filesystem scaffolding.
+	"Bash:mkdir",
+	"Bash:touch",
+}
+
 // parseAutoApproveRule splits a rule string into tool name and optional pattern.
 // Format: "ToolName" (match any input) or "ToolName:pattern" (match input).
 func parseAutoApproveRule(rule string) autoApproveRule {

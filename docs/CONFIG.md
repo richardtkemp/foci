@@ -627,8 +627,11 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 |-----|------|---------|-------------|
 | `auto_approve` | string[] | `[]` | Patterns to auto-approve. Format: `"ToolName"` (any input) or `"ToolName:pattern"` (match input). See below for pattern matching and Bash safety details. |
 | `auto_approve_common_readonly` | bool | `true` | Enable built-in allowlist of read-only tools (Search, Glob, Grep, Read, WebSearch, WebFetch) and safe shell commands (ls, cat, grep, jq, etc.). |
+| `auto_approve_common_safe_write` | bool | `false` | Enable built-in allowlist of side-effecting commands that are typically low-risk for a coding agent: `curl`, `wget`, `mkdir`, `touch`. **Opt-in** — see the warning below. |
 
-Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. The bool follows standard cascade (per-agent overrides global).
+Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
+
+> **⚠ Safe-write rules are not path-scoped.** Unlike `Edit`/`Write` rules, which can be pinned to a workspace (`Edit:/path/to/workspace/*`), Bash-command rules are prefix-matched on the command string. Enabling `auto_approve_common_safe_write` means `mkdir ./build` and `mkdir /etc/foo` are both auto-approved — the allowlist trusts the agent not to target paths outside its workspace. Leave this off unless you've reasoned about that trust boundary for your deployment.
 
 Delegated backends also auto-approve workspace Edit/Write access (scoped to the agent's workspace directory).
 
@@ -659,7 +662,8 @@ auto_approve = [
   "Bash:git -C /home/rich/git/foci *",
   "Bash:gcalcli *",
 ]
-auto_approve_common_readonly = true   # default
+auto_approve_common_readonly  = true    # default
+auto_approve_common_safe_write = false  # default — opt-in, not path-scoped
 ```
 
 ### `[skills]`

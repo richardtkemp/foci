@@ -660,8 +660,9 @@ type BitwardenConfig struct {
 // [[agents]].permissions are combined (union) — both sets apply.
 // All fields are pointer/slice types for Merge-based resolution.
 type PermissionsConfig struct {
-	AutoApprove              []string `toml:"auto_approve"`                                                                    // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
-	AutoApproveCommonReadonly *bool   `toml:"auto_approve_common_readonly" default:"true" desc:"auto-approve common read-only tools and commands"` // enable built-in read-only tool/command allowlist
+	AutoApprove               []string `toml:"auto_approve"`                                                                                        // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
+	AutoApproveCommonReadonly *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"auto-approve common read-only tools and commands"` // enable built-in read-only tool/command allowlist
+	AutoApproveCommonSafeWrite *bool   `toml:"auto_approve_common_safe_write" default:"false" desc:"auto-approve common side-effecting commands (curl, wget, mkdir, touch)"` // enable built-in safe-write allowlist (default false — not path-scoped)
 }
 
 // AutoApproveCommonReadonlyEnabled returns the resolved value (default: true).
@@ -670,6 +671,14 @@ func (p PermissionsConfig) AutoApproveCommonReadonlyEnabled() bool {
 		return *p.AutoApproveCommonReadonly
 	}
 	return true
+}
+
+// AutoApproveCommonSafeWriteEnabled returns the resolved value (default: false).
+func (p PermissionsConfig) AutoApproveCommonSafeWriteEnabled() bool {
+	if p.AutoApproveCommonSafeWrite != nil {
+		return *p.AutoApproveCommonSafeWrite
+	}
+	return false
 }
 
 type EnvironmentConfig struct {

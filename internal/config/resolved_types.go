@@ -378,8 +378,9 @@ func resolveNotify(m NotifyConfig) ResolvedNotify {
 }
 
 type ResolvedPermissions struct {
-	AutoApproveRules         []string // union of global + per-agent patterns
-	AutoApproveCommonReadonly bool     // enable built-in read-only allowlist (default true)
+	AutoApproveRules           []string // union of global + per-agent patterns
+	AutoApproveCommonReadonly  bool     // enable built-in read-only allowlist (default true)
+	AutoApproveCommonSafeWrite bool     // enable built-in safe-write allowlist (default false)
 }
 
 func resolvePermissions(agent, global PermissionsConfig) ResolvedPermissions {
@@ -405,8 +406,17 @@ func resolvePermissions(agent, global PermissionsConfig) ResolvedPermissions {
 		commonReadonly = *p
 	}
 
+	// Bool: standard cascade (agent → global → default false). Safe-write is
+	// opt-in because the rules aren't path-scoped — enabling it trusts the
+	// agent not to target paths outside its workspace.
+	commonSafeWrite := false
+	if p := First(agent.AutoApproveCommonSafeWrite, global.AutoApproveCommonSafeWrite); p != nil {
+		commonSafeWrite = *p
+	}
+
 	return ResolvedPermissions{
-		AutoApproveRules:         rules,
-		AutoApproveCommonReadonly: commonReadonly,
+		AutoApproveRules:           rules,
+		AutoApproveCommonReadonly:  commonReadonly,
+		AutoApproveCommonSafeWrite: commonSafeWrite,
 	}
 }
