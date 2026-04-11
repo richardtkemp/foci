@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 
@@ -263,26 +264,50 @@ func (b *Backend) uninstallHooks() {
 	b.logger().Debugf("uninstalled CC hooks from %s", settingsPath)
 }
 
-// resolveHookBinary returns the absolute path to bin/foci-cc-hook. It
-// assumes the binary ships alongside the foci-gw executable — foci's
-// standard Makefile builds both into the same bin/ directory. Returns an
-// error if the binary can't be located or isn't executable; installHooks
-// logs and skips in that case so dev builds that only built foci-gw keep
-// working.
+// resolveHookBinary returns the absolute path to foci-cc-hook. Lookup
+// strategy (first hit wins):
+//
+//  1. Sibling of the running foci-gw executable, via os.Executable().
+//     This is the standard case — foci's Makefile builds both binaries
+//     into the same bin/ directory so co-located installs resolve here.
+//  2. $PATH, via exec.LookPath. Covers distro packaging where foci-gw
+//     and foci-cc-hook might end up in different directories (e.g.
+//     /usr/local/bin/foci-gw + /usr/local/libexec/foci-cc-hook if the
+//     latter is also on PATH, or any user-installed sibling).
+//
+// Returns an error if neither lookup finds an executable foci-cc-hook;
+// installHooks logs at Warn and skips in that case so dev builds that
+// only built foci-gw keep working (just without OnToolEnd events in
+// ccstream mode).
 func resolveHookBinary() (string, error) {
-	self, err := os.Executable()
+	var siblingErr error
+	if self, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(self), hookCommandName)
+		if isExecutableFile(candidate) {
+			return candidate, nil
+		}
+		siblingErr = fmt.Errorf("sibling %s not executable", candidate)
+	} else {
+		siblingErr = fmt.Errorf("os.Executable: %w", err)
+	}
+
+	if path, err := exec.LookPath(hookCommandName); err == nil {
+		return path, nil
+	}
+
+	return "", fmt.Errorf("%s not found (%v; and not on $PATH)", hookCommandName, siblingErr)
+}
+
+// isExecutableFile returns true when path is a regular file with at least
+// one execute bit set. Used to validate resolveHookBinary candidates —
+// directories, symlinks to non-executables, and mode-0 files all return
+// false so the caller falls through to the next lookup strategy.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("os.Executable: %w", err)
+		return false
 	}
-	candidate := filepath.Join(filepath.Dir(self), hookCommandName)
-	info, err := os.Stat(candidate)
-	if err != nil {
-		return "", fmt.Errorf("stat %s: %w", candidate, err)
-	}
-	if info.IsDir() || info.Mode()&0o111 == 0 {
-		return "", fmt.Errorf("%s not executable", candidate)
-	}
-	return candidate, nil
+	return !info.IsDir() && info.Mode()&0o111 != 0
 }
 
 // loadSettings reads settings.local.json and returns its top-level fields as

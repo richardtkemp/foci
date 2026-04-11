@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -507,6 +508,122 @@ func TestNewInstallID_Unique(t *testing.T) {
 			t.Fatalf("duplicate install ID after %d iterations: %s", i, id)
 		}
 		seen[id] = true
+	}
+}
+
+// TestIsExecutableFile proves the helper distinguishes regular executables
+// from directories and non-executable files — all three cases are live
+// because a bad sibling should fall through to the $PATH fallback rather
+// than erroring out.
+func TestIsExecutableFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// A regular executable file.
+	exe := filepath.Join(dir, "exe")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !isExecutableFile(exe) {
+		t.Error("executable file not recognised")
+	}
+
+	// A non-executable file.
+	plain := filepath.Join(dir, "plain")
+	if err := os.WriteFile(plain, []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isExecutableFile(plain) {
+		t.Error("plain file classified as executable")
+	}
+
+	// A directory.
+	if isExecutableFile(dir) {
+		t.Error("directory classified as executable")
+	}
+
+	// A missing path.
+	if isExecutableFile(filepath.Join(dir, "missing")) {
+		t.Error("missing path classified as executable")
+	}
+}
+
+// TestResolveHookBinary_SiblingFound proves the primary lookup resolves to
+// the binary shipped alongside the running process. Uses the real
+// bin/foci-cc-hook built by `make foci-cc-hook` — tests run in the build
+// tree so the sibling path exists.
+func TestResolveHookBinary_SiblingFound(t *testing.T) {
+	// Skip the sibling-lookup portion when the test binary isn't co-located
+	// with foci-cc-hook (e.g. when tests run without a preceding `make`).
+	// The PATH fallback test below exercises the alternate route unconditionally.
+	self, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable unavailable: %v", err)
+	}
+	sibling := filepath.Join(filepath.Dir(self), hookCommandName)
+	if !isExecutableFile(sibling) {
+		t.Skipf("no foci-cc-hook sibling at %s (run `make foci-cc-hook` before `make test` to enable)", sibling)
+	}
+
+	// Ensure PATH doesn't accidentally satisfy the fallback so we prove
+	// the sibling path was taken.
+	t.Setenv("PATH", "")
+
+	got, err := resolveHookBinary()
+	if err != nil {
+		t.Fatalf("resolveHookBinary: %v", err)
+	}
+	if got != sibling {
+		t.Errorf("got %q, want sibling %q", got, sibling)
+	}
+}
+
+// TestResolveHookBinary_PathFallback proves that when the sibling lookup
+// misses, $PATH is searched for foci-cc-hook. This is the packaging case
+// (foci-gw in /usr/local/bin, foci-cc-hook in /opt/foci/libexec but
+// reachable via PATH).
+func TestResolveHookBinary_PathFallback(t *testing.T) {
+	// Create a fake foci-cc-hook in a temp dir and put it on PATH.
+	// The sibling lookup will fail (test binary is in a go-test temp dir
+	// with no foci-cc-hook next to it), so resolveHookBinary must fall
+	// back to PATH and find our fake.
+	dir := t.TempDir()
+	fake := filepath.Join(dir, hookCommandName)
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	got, err := resolveHookBinary()
+	if err != nil {
+		t.Fatalf("resolveHookBinary: %v", err)
+	}
+	if got != fake {
+		t.Errorf("got %q, want %q", got, fake)
+	}
+}
+
+// TestResolveHookBinary_NotFound proves the error path fires when neither
+// lookup strategy finds an executable foci-cc-hook. installHooks logs at
+// Warn in this case and skips hook install gracefully.
+func TestResolveHookBinary_NotFound(t *testing.T) {
+	// Empty PATH + no sibling (go-test binary isn't shipped with foci-cc-hook).
+	t.Setenv("PATH", "")
+
+	// If the test binary happens to live next to a real foci-cc-hook
+	// (uncommon), skip — we're proving the error path, not the happy path.
+	if self, err := os.Executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(self), hookCommandName)
+		if isExecutableFile(sibling) {
+			t.Skipf("sibling %s exists; can't test NotFound path here", sibling)
+		}
+	}
+
+	_, err := resolveHookBinary()
+	if err == nil {
+		t.Fatal("resolveHookBinary succeeded, want error")
+	}
+	if msg := err.Error(); !strings.Contains(msg, hookCommandName) {
+		t.Errorf("error message = %q, want to mention %q", msg, hookCommandName)
 	}
 }
 
