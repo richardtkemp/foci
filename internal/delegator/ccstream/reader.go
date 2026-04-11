@@ -17,6 +17,7 @@ type Handler interface {
 	OnAssistant(msg *AssistantMessage)
 	OnResult(msg *ResultMessage)
 	OnPermissionRequest(msg *PermissionRequest)
+	OnElicitationRequest(msg *ElicitationRequest)
 	OnControlResponse(raw json.RawMessage)
 	OnControlCancelRequest(reqID string)
 	OnToolProgress(msg *ToolProgressMessage)
@@ -136,6 +137,15 @@ func (rd *Reader) dispatch(line []byte) {
 			}
 			log.Debugf("ccstream", "received permission request req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
 			rd.handler.OnPermissionRequest(&msg)
+		case "elicitation":
+			var msg ElicitationRequest
+			if err := json.Unmarshal(line, &msg); err != nil {
+				rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal elicitation: %w", err))
+				return
+			}
+			log.Debugf("ccstream", "received elicitation req_id=%s server=%s mode=%s",
+				msg.RequestID, msg.Request.McpServerName, msg.Request.Mode)
+			rd.handler.OnElicitationRequest(&msg)
 		default:
 			log.Debugf("ccstream", "unknown control_request subtype %q", crEnv.Request.Subtype)
 		}
