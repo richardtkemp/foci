@@ -307,4 +307,39 @@ func TestResolve_PermissionsDefaultTrue(t *testing.T) {
 	}
 }
 
+func TestResolve_PermissionsSafeWriteDefaultFalse(t *testing.T) {
+	// Proves auto_approve_common_safe_write defaults to false — the list is
+	// opt-in because the built-in rules aren't path-scoped.
+	cfg := &Config{}
+	acfg := AgentConfig{}
+
+	rc := Resolve(cfg, acfg)
+
+	if rc.Permissions.AutoApproveCommonSafeWrite {
+		t.Error("AutoApproveCommonSafeWrite should default to false")
+	}
+}
+
+func TestResolve_PermissionsSafeWriteCascade(t *testing.T) {
+	// Proves agent-level auto_approve_common_safe_write overrides global, so
+	// an operator can enable safe-write for a single trusted agent without
+	// flipping the global flag.
+	cfg := &Config{
+		Permissions: PermissionsConfig{
+			AutoApproveCommonSafeWrite: Ptr(false),
+		},
+	}
+	acfg := AgentConfig{
+		Permissions: PermissionsConfig{
+			AutoApproveCommonSafeWrite: Ptr(true),
+		},
+	}
+
+	rc := Resolve(cfg, acfg)
+
+	if !rc.Permissions.AutoApproveCommonSafeWrite {
+		t.Error("AutoApproveCommonSafeWrite should be true (agent override)")
+	}
+}
+
 func ptrFloat(v float64) *float64 { return &v }

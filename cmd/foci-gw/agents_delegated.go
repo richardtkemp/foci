@@ -159,6 +159,9 @@ func buildAutoApproveRules(p setupParams) []string {
 	if perms.AutoApproveCommonReadonly {
 		rules = append(rules, ccstream.CommonReadonlyRules...)
 	}
+	if perms.AutoApproveCommonSafeWrite {
+		rules = append(rules, ccstream.CommonSafeWriteRules...)
+	}
 
 	// Add workspace Edit/Write rules — delegated backends always need
 	// workspace file access without prompting.

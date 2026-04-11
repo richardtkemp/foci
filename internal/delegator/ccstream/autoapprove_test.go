@@ -207,6 +207,39 @@ func TestCommonReadonlyRulesParseSuccessfully(t *testing.T) {
 	}
 }
 
+// TestCommonSafeWriteRulesParseSuccessfully ensures the opt-in safe-write rules
+// parse cleanly and match their intended commands. Guards against typos in the
+// list and regressions in prefix-matching behaviour.
+func TestCommonSafeWriteRulesParseSuccessfully(t *testing.T) {
+	parsed := parseAutoApproveRules(CommonSafeWriteRules)
+	if len(parsed) != len(CommonSafeWriteRules) {
+		t.Fatalf("expected %d parsed rules, got %d", len(CommonSafeWriteRules), len(parsed))
+	}
+	for i, r := range parsed {
+		if r.toolName == "" {
+			t.Errorf("CommonSafeWriteRules[%d] = %q: empty tool name", i, CommonSafeWriteRules[i])
+		}
+	}
+
+	safe := []string{
+		`{"command":"curl https://example.com"}`,
+		`{"command":"wget https://example.com/file"}`,
+		`{"command":"mkdir -p /tmp/foo"}`,
+		`{"command":"touch /tmp/foo/bar"}`,
+	}
+	for _, input := range safe {
+		if !matchAutoApprove(parsed, "Bash", json.RawMessage(input)) {
+			t.Errorf("safe-write should match Bash %s", input)
+		}
+	}
+
+	// The safe-write list must not leak readonly approvals — "ls" should not
+	// match when only safe-write rules are loaded.
+	if matchAutoApprove(parsed, "Bash", json.RawMessage(`{"command":"ls"}`)) {
+		t.Error("safe-write rules should not match unrelated commands like ls")
+	}
+}
+
 // TestCommonReadonlyMatchesSafeCommands verifies that the built-in readonly
 // rules correctly match a sample of safe commands.
 func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
