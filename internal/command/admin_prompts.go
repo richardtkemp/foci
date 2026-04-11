@@ -90,7 +90,7 @@ func PromptsCommand() *Command {
 			var opts []KeyboardOption
 			for _, p := range data.Prompts {
 				if _, ok := data.ResolvedTexts[p.Label]; ok {
-					opts = append(opts, KeyboardOption{Label: p.Label, Data: p.Label})
+					opts = append(opts, KeyboardOption{Label: p.Label, Data: "diff " + p.Label})
 				}
 			}
 			return opts
@@ -568,19 +568,11 @@ func promptsDiff(ctx context.Context, data PromptsData, name string, cc CommandC
 	}
 	_ = tmpFile.Close()
 
-	// Send document via primary connection
-	if cc.ConnMgr != nil {
-		if conn := cc.ConnMgr.Primary(cc.AgentConfig.ID); conn != nil {
-			if err := conn.SendDocument(tmpPath); err != nil {
-				_ = os.Remove(tmpPath)
-				return Response{}, fmt.Errorf("send document: %w", err)
-			}
-		}
-	}
-	_ = os.Remove(tmpPath)
-
 	changed := diffChangedLines(diff)
-	return Response{Text: fmt.Sprintf("Diff for %s sent (%d lines changed).", label, changed)}, nil
+	return Response{
+		Text:    fmt.Sprintf("Diff for %s sent (%d lines changed).", label, changed),
+		DocPath: tmpPath,
+	}, nil
 }
 
 // buildDiffSummary generates an AI summary comparing custom vs default prompt text.

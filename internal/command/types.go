@@ -47,9 +47,12 @@ func RequestFromText(text, sessionKey, userID string, chatID int64) Request {
 // Response holds the command result text and optional document path.
 // When Parts is non-empty, each element is sent as a separate message
 // (replacing the legacy \x00-separated text convention).
+//
+// DocPath, when set, points to a temp file that the platform layer sends
+// to the originating chat and then removes.
 type Response struct {
 	Text     string
-	Parts    []string         // when set, each part is sent as a separate message
+	Parts    []string // when set, each part is sent as a separate message
 	DocPath  string
 	Keyboard []KeyboardOption // optional inline keyboard to show with the response
 }
