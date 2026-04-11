@@ -234,7 +234,7 @@ func TestToolCallTracker_CleanupPreview(t *testing.T) {
 	}
 
 	// Send a tool call (creates a message), then cleanup.
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	tracker.CleanupPreview()
 	if mock.deleteCount() != 1 {
 		t.Errorf("deleteCount = %d, want 1", mock.deleteCount())
@@ -264,7 +264,7 @@ func TestPreviewModeOverwritesToolCallOnReply(t *testing.T) {
 	defer r.Cleanup()
 
 	// Tool call B: sends new preview message.
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Fatalf("after tool B: sends=%d, want 1", mock.sentCount())
 	}
@@ -279,7 +279,7 @@ func TestPreviewModeOverwritesToolCallOnReply(t *testing.T) {
 	}
 
 	// Tool call D: should send a NEW preview message (tracker was reset).
-	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("tu-test", "read", json.RawMessage(`{"path":"foo.txt"}`))
 	if mock.sentCount() != 2 {
 		t.Errorf("after tool D: sends=%d, want 2", mock.sentCount())
 	}
@@ -302,7 +302,7 @@ func TestPreviewModeResetsAfterStreamingReply(t *testing.T) {
 	defer r.Cleanup()
 
 	// Tool call B: sends new preview message.
-	tracker.ObserveToolCall("shell", json.RawMessage(`{"command":"ls"}`))
+	tracker.ObserveToolCall("tu-test", "shell", json.RawMessage(`{"command":"ls"}`))
 	if mock.sentCount() != 1 {
 		t.Fatalf("after tool B: sends=%d, want 1", mock.sentCount())
 	}
@@ -318,7 +318,7 @@ func TestPreviewModeResetsAfterStreamingReply(t *testing.T) {
 	}
 
 	// Tool call D: should send a NEW message, not edit the deleted one.
-	tracker.ObserveToolCall("read", json.RawMessage(`{"path":"foo.txt"}`))
+	tracker.ObserveToolCall("tu-test", "read", json.RawMessage(`{"path":"foo.txt"}`))
 	if mock.sentCount() != 3 {
 		t.Errorf("after tool D: sends=%d, want 3 (tool D should be a new message)", mock.sentCount())
 	}

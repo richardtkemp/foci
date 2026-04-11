@@ -22,11 +22,11 @@ type fakeSinkTracker struct {
 	retryClears int
 }
 
-func (f *fakeSinkTracker) ObserveToolCall(toolName string, _ json.RawMessage) {
+func (f *fakeSinkTracker) ObserveToolCall(_, toolName string, _ json.RawMessage) {
 	f.toolCalls = append(f.toolCalls, toolName)
 }
 
-func (f *fakeSinkTracker) ObserveToolResult(toolName, _ string, _ bool) {
+func (f *fakeSinkTracker) ObserveToolResult(_, toolName, _ string, _ bool) {
 	f.toolResults = append(f.toolResults, toolName)
 }
 
