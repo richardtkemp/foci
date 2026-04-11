@@ -38,6 +38,12 @@ type sessionWatcher struct {
 	turnTools int
 	turnUsage *delegator.TurnUsage // usage from the last assistant message
 	turnModel string             // model from the last assistant message
+
+	// toolNamesByID maps tool_use IDs observed in assistant messages to their
+	// tool names, so the subsequent tool_result block (which only carries the
+	// tool_use_id back-reference) can be dispatched to OnToolEnd with the
+	// originating name. Scoped to the current turn.
+	toolNamesByID map[string]string
 }
 
 // close shuts down the fsnotify watcher.
@@ -194,6 +200,12 @@ func (w *sessionWatcher) handleAssistant(entry *sessionEntry, handler *delegator
 			}
 		case "tool_use":
 			w.turnTools++
+			// Record id → name so handleUser can correlate tool_result
+			// blocks (which only carry tool_use_id) back to the tool name.
+			if w.toolNamesByID == nil {
+				w.toolNamesByID = make(map[string]string)
+			}
+			w.toolNamesByID[b.ID] = b.Name
 			if handler.OnToolStart != nil {
 				input := string(b.Input)
 				handler.OnToolStart(b.ID, b.Name, input)
@@ -261,6 +273,7 @@ func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
 	w.turnTools = 0
 	w.turnUsage = nil
 	w.turnModel = ""
+	w.toolNamesByID = nil
 	if handler.OnTurnComplete != nil {
 		handler.OnTurnComplete(result)
 	}
@@ -269,7 +282,9 @@ func (w *sessionWatcher) fireTurnResult(handler *delegator.EventHandler) {
 // handleUser processes user entries, firing OnToolEnd for each tool_result
 // block and tracking Agent tool_result completions. Tool results arrive on
 // user messages (per the CC protocol) — the tool_use ID lets consumers
-// correlate results with the matching OnToolStart event.
+// correlate results with the matching OnToolStart event, and the recorded
+// id → name map lets us pass the originating tool name through to
+// OnToolEnd (tool_result blocks only carry the ID themselves).
 func (w *sessionWatcher) handleUser(entry *sessionEntry, handler *delegator.EventHandler) {
 	if entry.Message == nil {
 		return
@@ -280,8 +295,10 @@ func (w *sessionWatcher) handleUser(entry *sessionEntry, handler *delegator.Even
 			continue
 		}
 		if handler != nil && handler.OnToolEnd != nil {
-			handler.OnToolEnd(b.ToolUseID, "", string(b.Content), b.IsError)
+			name := w.toolNamesByID[b.ToolUseID]
+			handler.OnToolEnd(b.ToolUseID, name, string(b.Content), b.IsError)
 		}
+		delete(w.toolNamesByID, b.ToolUseID)
 		if w.agents.Pending() > 0 {
 			w.agents.Remove(b.ToolUseID)
 		}

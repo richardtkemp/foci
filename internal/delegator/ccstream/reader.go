@@ -15,7 +15,6 @@ import (
 // dispatch. Implementations do not need internal synchronisation for these calls.
 type Handler interface {
 	OnAssistant(msg *AssistantMessage)
-	OnUser(msg *UserMessageInbound) // replayed user message, including tool_result blocks
 	OnResult(msg *ResultMessage)
 	OnPermissionRequest(msg *PermissionRequest)
 	OnControlResponse(raw json.RawMessage)
@@ -166,19 +165,14 @@ func (rd *Reader) dispatch(line []byte) {
 	case "system":
 		rd.handler.OnSystem(env.Subtype, json.RawMessage(copyBytes(line)))
 
-	case "user":
-		// User-message replays, emitted with --replay-user-messages. Carries
-		// the content blocks of user turns, including tool_result blocks CC
-		// generates internally after each tool invocation. Parsing them lets
-		// the Backend fire OnToolEnd for tracker display.
-		var msg UserMessageInbound
-		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal user: %w", err))
-			return
-		}
-		rd.handler.OnUser(&msg)
-
 	// Intentionally ignored — protocol informational types.
+	case "user":
+		// Replay messages, only emitted with --replay-user-messages —
+		// which is the echo-of-our-input feature, not a surfacing of
+		// CC's internal tool_result generation. Tool results from CC's
+		// own tool execution never reach stdout; the ccstream path has
+		// no way to fire OnToolEnd (the cctmux session-file watcher
+		// fires it from parsed JSONL instead).
 	case "keep_alive":
 		// Heartbeat — touch activity so the idle/timeout tracker knows the
 		// stream is alive even when CC is blocked (e.g. waiting for a
