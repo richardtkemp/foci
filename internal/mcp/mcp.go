@@ -107,8 +107,10 @@ func NewManagerForAgent(configDir, agentID string) *Manager {
 type transportFactory func(cfg ServerConfig) (mcp.Transport, error)
 
 // connectWith is the internal connect implementation that accepts an optional
-// transport factory for testing.
-func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf transportFactory) error {
+// transport factory for testing. Per-server failures are logged as warnings
+// and the loop continues to the next server — this is a best-effort fan-out,
+// so there is no aggregate error to return.
+func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf transportFactory) {
 	for _, cfg := range servers {
 		var transport mcp.Transport
 		var err error
@@ -147,7 +149,6 @@ func (m *Manager) connectWith(ctx context.Context, servers []ServerConfig, tf tr
 
 		log.Infof("mcp", "connected to %q: %d tools", cfg.Name, len(result.Tools))
 	}
-	return nil
 }
 
 // makeTransport creates the appropriate transport for a server config.
@@ -247,8 +248,9 @@ func (m *Manager) refreshServers(ctx context.Context) {
 		return
 	}
 
-	// Connect with new config.
-	_ = m.connectWith(ctx, servers, m.tf) // errors already logged in connectWith
+	// Connect with new config. Per-server errors are logged as warnings
+	// inside connectWith; this is a best-effort fan-out.
+	m.connectWith(ctx, servers, m.tf)
 
 	m.mu.Lock()
 	m.current = servers

@@ -115,7 +115,10 @@ lint:
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== deadcode (whole-program reachability) ==="
-	@output=$$($(GOBIN)/deadcode ./... 2>&1 | grep -v 'NewUserMessageBlocks'); \
+	@output=$$($(GOBIN)/deadcode -test ./... 2>&1 \
+		| grep -v 'NewUserMessageBlocks' \
+		| grep -v 'internal/platform/types_test.go.*mockHandler' \
+		| grep -v 'internal/delegator/ccstream/reader_test.go.*writeCloserForPipe.Write'); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 
 lint-fix:
