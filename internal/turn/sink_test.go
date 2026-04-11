@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"foci/internal/agent/turnevent"
@@ -122,6 +123,31 @@ func TestStreamingSinkNilConnSkipsTyping(t *testing.T) {
 	ctx := context.Background()
 	sink.Emit(ctx, turnevent.TurnStart{})
 	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "ok"})
+}
+
+// TestStreamingSinkRoutesThinkingDelta asserts ThinkingDelta events reach
+// the renderer's OnThinkingDelta path, so tests and downstream consumers
+// can rely on per-token thinking streaming rather than the block fallback.
+func TestStreamingSinkRoutesThinkingDelta(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &fakeSinkTracker{}
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	renderer := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+	sink := NewStreamingSink(renderer, tracker, nil)
+
+	ctx := context.Background()
+	sink.Emit(ctx, turnevent.ThinkingDelta{Delta: "I'm "})
+	sink.Emit(ctx, turnevent.ThinkingDelta{Delta: "pondering"})
+	sink.Emit(ctx, turnevent.ThinkingBlock{Text: "I'm pondering"})
+
+	content := renderer.sw.Content()
+	if strings.Count(content, "I'm ") != 1 || strings.Count(content, "pondering") != 1 {
+		t.Errorf("stream content duplicated after delta+block; got %q", content)
+	}
+	if renderer.thinking.String() != "I'm pondering" {
+		t.Errorf("thinking builder = %q, want %q", renderer.thinking.String(), "I'm pondering")
+	}
 }
 
 // TestStreamingSinkRoutesToolEvents asserts ToolCall/ToolResult/RetryNotice/

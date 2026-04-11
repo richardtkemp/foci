@@ -166,10 +166,38 @@ func (r *TurnRenderer) editToolPreviewWithReply(text string) bool {
 	return true
 }
 
-// OnThinking accumulates thinking blocks (gated by showThinking config).
-// In compact mode with live streaming, thinking is also fed into the
-// StreamWriter so users can read it while the model thinks. At finalization
-// the message is edited to show only the response with a thinking button.
+// OnThinkingDelta streams a thinking fragment to the current stream writer
+// for live per-token progress. Does not accumulate into the builder — the
+// terminal ThinkingBlock (or OnThinking for non-streaming turns) is the
+// source of truth for the finalization button text.
+//
+// No-op when thinking display is off, when live streaming is disabled for
+// the display mode, or when the StreamOutput config is false.
+func (r *TurnRenderer) OnThinkingDelta(delta string) {
+	mode := r.display.ShowThinking
+	if mode == "off" || mode == "" {
+		return
+	}
+	if (mode != "compact" && mode != "true") || !r.display.StreamOutput {
+		return
+	}
+	if delta == "" {
+		return
+	}
+	r.sw.OnDelta(delta)
+	r.thinkingPhase = true
+	r.streamedThinkingLive = true
+	r.backend.SendTyping()
+}
+
+// OnThinking accumulates a complete thinking block for finalization and,
+// when no per-token streaming has already written to the stream writer,
+// also streams the full block in one chunk (legacy behaviour for callers
+// that don't emit ThinkingDelta events).
+//
+// Kept under the same name so existing tests and non-streaming call sites
+// keep working — the split between block and delta concerns is a pure
+// extension, not a rename.
 func (r *TurnRenderer) OnThinking(thinking string) {
 	mode := r.display.ShowThinking
 	if mode == "off" || mode == "" {
@@ -180,9 +208,12 @@ func (r *TurnRenderer) OnThinking(thinking string) {
 	}
 	r.thinking.WriteString(thinking)
 
-	// Stream thinking live so there's visible progress while the model
-	// thinks. For compact mode, the message is collapsed to a button at
-	// finalization. For true mode, it's reformatted with proper styling.
+	// Stream the full block if per-token deltas didn't already write to the
+	// stream writer. When OnThinkingDelta has already fired for this block,
+	// streamedThinkingLive is set and we skip to avoid duplicating the text.
+	if r.streamedThinkingLive {
+		return
+	}
 	if (mode == "compact" || mode == "true") && r.display.StreamOutput {
 		r.sw.OnDelta(thinking)
 		r.thinkingPhase = true
