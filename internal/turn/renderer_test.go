@@ -849,3 +849,99 @@ func TestFinalize_RealTextNotSilenced(t *testing.T) {
 		t.Error("Finalize with real text should produce output")
 	}
 }
+
+// --- OnReply IsSilent tests ---
+
+func TestOnReply_SilencesSentinel(t *testing.T) {
+	for _, text := range []string{"[[NO_RESPONSE]]", "No response requested.", "  [[NO_RESPONSE]]  ", "", "   "} {
+		t.Run(text, func(t *testing.T) {
+			backend := newMockBackend()
+			tracker := &mockTracker{}
+			display := TurnDisplay{MaxChars: 4096}
+			r := newTestRenderer(backend, tracker, display)
+
+			r.OnReply(text)
+
+			total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+			if total != 0 {
+				t.Errorf("OnReply(%q): expected no sends, got %d", text, total)
+			}
+		})
+	}
+}
+
+func TestOnReply_RealTextNotSilenced(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{MaxChars: 4096}
+	r := newTestRenderer(backend, tracker, display)
+
+	r.OnReply("Here is my answer.")
+
+	total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+	if total == 0 {
+		t.Error("OnReply with real text should produce output")
+	}
+}
+
+// --- replyDelivered double-delivery prevention ---
+
+func TestOnReply_ThenFinalize_NoDuplicateDelivery(t *testing.T) {
+	// When OnReply delivers text (setting replyDelivered=true),
+	// a subsequent Finalize with the same text must NOT re-deliver.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{MaxChars: 4096}
+	r := newTestRenderer(backend, tracker, display)
+
+	r.OnReply("my response")
+
+	beforeCount := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+	if beforeCount != 1 {
+		t.Fatalf("OnReply should produce 1 send, got %d", beforeCount)
+	}
+
+	r.Finalize("my response")
+
+	afterCount := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+	if afterCount != beforeCount {
+		t.Errorf("Finalize after OnReply should not re-deliver: before=%d after=%d", beforeCount, afterCount)
+	}
+}
+
+func TestFinalize_WithoutOnReply_DeliversOnce(t *testing.T) {
+	// When OnReply was never called, Finalize should deliver the text.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{MaxChars: 4096}
+	r := newTestRenderer(backend, tracker, display)
+
+	r.Finalize("my response")
+
+	total := len(backend.sendReplyCalls) + len(backend.editCalls) + len(backend.sendChunkedCalls)
+	if total != 1 {
+		t.Errorf("Finalize without prior OnReply should deliver once, got %d sends", total)
+	}
+}
+
+func TestStreamOnReply_ThenFinalize_NoDuplicateDelivery(t *testing.T) {
+	// Streaming variant: deltas arrive, OnReply finalises the stream,
+	// then Finalize must not re-send.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{StreamOutput: true, MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.sw.OnDelta("streamed content")
+	r.OnReply("streamed content")
+
+	r.Finalize("streamed content")
+
+	// OnReply should have set replyDelivered, so Finalize should not deliver again.
+	// Count all sends after OnReply:
+	total := len(backend.sendReplyCalls) + len(backend.sendChunkedCalls)
+	if total != 0 {
+		t.Errorf("Finalize after streaming OnReply should not re-deliver via sendReply/sendChunked, got %d", total)
+	}
+}
