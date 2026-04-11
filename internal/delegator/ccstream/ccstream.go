@@ -161,6 +161,14 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
+	// Permission pre-approval rules. cfg["allowed_tools"] is the merged
+	// string produced by cmd/foci-gw/agents_delegated.go (global
+	// [cc_backend] default_allowed_tools combined with the agent's
+	// backend_config.allowed_tools). Rules use CC's permission syntax —
+	// e.g. "Write(/tmp/**)", "Bash(git:*)".
+	if v, ok := b.cfg["allowed_tools"].(string); ok && v != "" {
+		args = append(args, "--allowedTools", v)
+	}
 
 	component := "ccstream"
 	if opts.Label != "" {

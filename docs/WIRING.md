@@ -406,6 +406,8 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 
 **Permission handling:** CC sends `control_request` with subtype `can_use_tool`. The backend first checks compiled auto-approve rules (`autoApprovePermission`). Unmatched requests are stored as `pendingPermission` entries and forwarded to the platform via `permPromptFn` (interactive buttons: Allow, Deny, Always Allow). The user's response is sent back as a `control_response` with either `PermissionAllow` or `PermissionDeny`. CC can also cancel a pending request via `control_cancel_request` (e.g. when a hook resolves it).
 
+**Static permission pre-approval:** Both CC backends also pass an `--allowedTools` argv to the `claude` binary at launch. The rule list comes from merging global `[cc_backend] default_allowed_tools` with the agent's `[agents.backend_config] allowed_tools`. The merge happens in `cmd/foci-gw/agents_delegated.go` before calling `delegator.New`, so both backends read the final list from `cfg["allowed_tools"]` the same way. Factory default grants `Read/Write/Edit/MultiEdit(/tmp/**)` so agents can use the system scratch dir without a round-trip — see `internal/config/cc_backend.go`.
+
 **`DelegatedManager.WaitForPermission`:** Before `RunInference` sends a new prompt to the backend, it calls `WaitForPermission` which blocks until all pending permission prompts are resolved. Uses `sync.Cond` with a context-cancellation goroutine (since `sync.Cond` doesn't natively support context). The `onPermCleared` callback signals the condition variable when the last pending permission is resolved.
 
 **ControlSender pattern (`delegator/control.go`, `ccstream/control.go`):** Generic runtime control for delegated backends. Three layers:
