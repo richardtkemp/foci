@@ -153,7 +153,7 @@ func TestMessageQueue_SteerMode(t *testing.T) {
 	}
 
 	parts := mq.DrainSteer()
-	if len(parts) != 1 || parts[0] != "redirect this" {
+	if len(parts) != 1 || parts[0].Text != "redirect this" {
 		t.Fatalf("unexpected steer parts: %v", parts)
 	}
 }
@@ -253,7 +253,7 @@ func TestMessageQueue_GroupMentionSteer(t *testing.T) {
 	})
 
 	parts := mq.DrainSteer()
-	if len(parts) != 1 || parts[0] != "hey @bot do this" {
+	if len(parts) != 1 || parts[0].Text != "hey @bot do this" {
 		t.Fatalf("expected mention to be steered, got: %v", parts)
 	}
 }

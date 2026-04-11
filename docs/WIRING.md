@@ -520,8 +520,8 @@ Each user message then gets a metadata line prepended (NOT in system prompt — 
 [meta] time=2026-02-21T05:30:00Z gap=3h12m model=claude-haiku-4-5 via=telegram prev_cost=$0.0430 prev_tokens=in:2400/out:312/cR:18000/cW:200
 ```
 
-- `time` — current UTC timestamp
-- `gap` — human-readable time since previous message ("3h12m", "2d4h", "38s", "none")
+- `time` — the time the user's message was received at the platform boundary, not the time the turn was composed. Stamped in `toPlatformMessage` as `QueuedMessage.ReceivedAt` (Telegram: `msg.Date`; Discord: `msg.Timestamp`) and threaded through `agent.WithReceivedAt(ctx, …)` → `TurnState.ReceivedAt` → `composeTurnText` so queued or steered messages show the user's send time rather than the drain/inject time. Falls back to wall clock for system-initiated turns with no platform receipt.
+- `gap` — human-readable time since previous message ("3h12m", "2d4h", "38s", "none"). Computed from `time` minus `sessionMeta.lastMessageTime`, which is updated to `TurnState.UserMessageTime()` so gaps also measure user-send-to-user-send rather than inject-to-inject.
 - `model` — current model name (e.g., "claude-haiku-4-5", "claude-opus-4-6")
 - `via` — transport that delivered the message. Derived from the context trigger via `triggerToPlatform()` in `context.go`. Values: `telegram` (Telegram/voice), `discord` (Discord), `android` (Android app), `api` (HTTP /send), `cron` (system-initiated: keepalive, wake, scheduled, etc.)
 - `prev_cost` / `prev_tokens` — cost and token breakdown of the previous turn (omitted on first message)
@@ -579,10 +579,13 @@ defer renderer.Cleanup()
 
 sink := turn.NewStreamingSink(renderer, tracker, b)
 ctx = turnevent.WithSink(ctx, sink)
-ctx = turnevent.WithSteerer(ctx, turnevent.SteererFunc(b.mq.DrainSteer))
+ctx = turnevent.WithSteerer(ctx, turnevent.SteererFunc(b.mq.DrainSteerTexts))
+ctx = agent.WithReceivedAt(ctx, batch[0].ReceivedAt) // first message's platform receipt time
 
 err := b.handler.HandleMessage(ctx, sk, texts, attachments)
 ```
+
+`DrainSteerTexts` returns just the text fields of the buffered `SteerEntry` values — mid-turn injection (ccstream's `checkAndSendSteers`, API-path `steerBlocks`) never renders a new meta header, so it discards receipt timestamps. The post-turn orphan-drain loop (when a turn finishes and the worker rebuilds leftover steers as a follow-up turn) calls `DrainSteer` and reads `SteerEntry.ReceivedAt` to construct the new `QueuedMessage` so the follow-up turn's meta header reflects the original user send time rather than the drain time.
 
 `StreamingSink` routes each event type:
 - `TurnStart` → `conn.SetTyping(true)`

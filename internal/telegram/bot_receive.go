@@ -65,6 +65,7 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 		IsGroupChat: isGroup,
 		IsMention:   isMention,
 		Original:    msg,
+		ReceivedAt:  time.Unix(int64(msg.Date), 0),
 	}
 }
 

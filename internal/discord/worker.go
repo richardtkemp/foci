@@ -35,10 +35,11 @@ func (b *Bot) agentWorker(ctx context.Context) {
 				var followUp []platform.QueuedMessage
 				for _, s := range orphans {
 					followUp = append(followUp, platform.QueuedMessage{
-						Original: qm.Original,
-						UserID:   qm.UserID,
-						Text:     s,
-						ChatID:   qm.ChatID,
+						Original:   qm.Original,
+						UserID:     qm.UserID,
+						Text:       s.Text,
+						ChatID:     qm.ChatID,
+						ReceivedAt: s.ReceivedAt,
 					})
 				}
 				followUp = append(followUp, extras...)
@@ -105,6 +106,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		Username: origMsg.Author.Username,
 		ChatID:   channelID,
 	})
+	if !first.ReceivedAt.IsZero() {
+		turnCtx = agent.WithReceivedAt(turnCtx, first.ReceivedAt)
+	}
 
 	// Collect texts and attachments across the batch.
 	// Group chat messages get sender attribution.
@@ -121,7 +125,7 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		allAttachments = append(allAttachments, qm.Attachments...)
 	}
 
-	err := turn.RunTurn(turnCtx, b.handler, sink, turnevent.SteererFunc(b.mq.DrainSteer), sk, texts, allAttachments)
+	err := turn.RunTurn(turnCtx, b.handler, sink, turnevent.SteererFunc(b.mq.DrainSteerTexts), sk, texts, allAttachments)
 	if err != nil && turnCtx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return

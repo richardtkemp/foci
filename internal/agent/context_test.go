@@ -4,9 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"foci/internal/agent/turnevent"
 )
+
+// TestReceivedAtContextRoundtrip proves that WithReceivedAt / ReceivedAtFromContext
+// carry the timestamp through the context unchanged, and that absence returns
+// a zero time so callers can fall back to wall clock for system triggers.
+func TestReceivedAtContextRoundtrip(t *testing.T) {
+	want := time.Date(2026, 4, 11, 13, 49, 0, 0, time.UTC)
+	ctx := WithReceivedAt(context.Background(), want)
+	if got := ReceivedAtFromContext(ctx); !got.Equal(want) {
+		t.Errorf("ReceivedAtFromContext = %v, want %v", got, want)
+	}
+	if got := ReceivedAtFromContext(context.Background()); !got.IsZero() {
+		t.Errorf("absent should return zero time, got %v", got)
+	}
+}
 
 // TestEmitIntermediateTextEmitsTextBlock proves that emitIntermediateText
 // routes to the ctx sink as an intermediate TextBlock (not a delta or final),
