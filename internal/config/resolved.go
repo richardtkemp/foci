@@ -19,7 +19,7 @@ type ResolvedAgentConfig struct {
 	Keepalive       ResolvedKeepalive
 	Background      ResolvedBackground
 	MemorySearch    ResolvedMemorySearch
-	MemoryFormation ResolvedMemoryFormation
+	Reflection      ResolvedReflection
 	Browser         ResolvedBrowser
 	Mana            ResolvedMana
 	Display         ResolvedDisplay
@@ -111,7 +111,7 @@ func Resolve(cfg *Config, acfg AgentConfig) *ResolvedAgentConfig {
 		Keepalive:       resolveKeepalive(Merge(acfg.Keepalive, cfg.Keepalive)),
 		Background:      resolveBackground(Merge(acfg.Background, cfg.Background)),
 		MemorySearch:    resolveMemorySearch(Merge(acfg.Memory, cfg.Memory)),
-		MemoryFormation: resolveMemoryFormation(Merge(acfg.MemoryFormation, cfg.MemoryFormation)),
+		Reflection:      resolveReflection(Merge(acfg.Reflection, cfg.Reflection)),
 		Browser:         resolveBrowser(Merge(acfg.Browser, cfg.Browser)),
 		Mana:            resolveMana(Merge(acfg.Mana, cfg.Mana)),
 		Display:         resolveDisplay(Merge(displayLayers...)),

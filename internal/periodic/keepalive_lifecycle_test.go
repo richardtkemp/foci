@@ -211,17 +211,17 @@ func TestMaybeBackgroundWork_RecentInteraction(t *testing.T) {
 	}
 }
 
-func TestMaybeMemoryFormation_Disabled(t *testing.T) {
-	// Verifies that maybeMemoryFormation is a no-op when IntervalEnabled is explicitly set to false.
+func TestMaybeReflection_Disabled(t *testing.T) {
+	// Verifies that maybeReflection is a no-op when IntervalEnabled is explicitly set to false.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: false,
 		},
 		lastInteraction:     time.Now().Add(-1 * time.Hour),
-		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
+		lastReflection:  time.Now().Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
 			return true
@@ -229,25 +229,25 @@ func TestMaybeMemoryFormation_Disabled(t *testing.T) {
 		done: make(chan struct{}),
 	}
 
-	r.maybeMemoryFormation()
+	r.maybeReflection()
 	if calls != 0 {
 		t.Errorf("memory formation called when disabled")
 	}
 }
 
-func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
-	// Verifies that maybeMemoryFormation skips dispatch when the configured interval string is
+func TestMaybeReflection_BadInterval(t *testing.T) {
+	// Verifies that maybeReflection skips dispatch when the configured interval string is
 	// unparseable.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "invalid",
 		},
 		lastInteraction:     time.Now().Add(-1 * time.Hour),
-		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
+		lastReflection:  time.Now().Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
 			return true
@@ -255,14 +255,14 @@ func TestMaybeMemoryFormation_BadInterval(t *testing.T) {
 		done: make(chan struct{}),
 	}
 
-	r.maybeMemoryFormation()
+	r.maybeReflection()
 	if calls != 0 {
 		t.Errorf("memory formation called with bad interval")
 	}
 }
 
-func TestMaybeMemoryFormation_Fires(t *testing.T) {
-	// Verifies that maybeMemoryFormation dispatches a "reflection" branch when enabled,
+func TestMaybeReflection_Fires(t *testing.T) {
+	// Verifies that maybeReflection dispatches a "reflection" branch when enabled,
 	// there has been recent activity, and the session has activity newer than its last formation.
 	var calls int
 	var gotParentKey string
@@ -282,19 +282,19 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 		Status:      session.SessionStatusActive,
 	})
 	idx.UpdateActivity("test/c1/1", now.Add(-30*time.Minute))
-	idx.StampMemoryFormation("test/c1/1", now.Add(-2*time.Hour))
+	idx.StampReflection("test/c1/1", now.Add(-2*time.Hour))
 
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 			IntervalPrompt:  "reflection.md",
 		},
 		sessionIndex:        idx,
 		lastInteraction:     now.Add(-30 * time.Minute),
-		lastMemoryFormation: now.Add(-2 * time.Hour),
+		lastReflection:  now.Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			if branchType != "reflection" {
 				t.Errorf("expected branch type 'reflection', got %q", branchType)
@@ -306,7 +306,7 @@ func TestMaybeMemoryFormation_Fires(t *testing.T) {
 		done: make(chan struct{}),
 	}
 
-	r.maybeMemoryFormation()
+	r.maybeReflection()
 	time.Sleep(50 * time.Millisecond)
 
 	if calls != 1 {
@@ -323,7 +323,7 @@ func TestMaybeConsolidation_Disabled(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled: false,
 		},
 		lastInteraction:   time.Now(),
@@ -348,7 +348,7 @@ func TestMaybeConsolidation_BadInterval(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled: true,
 			ConsolidationInterval: "invalid",
 		},
@@ -375,7 +375,7 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled:  true,
 			ConsolidationInterval: "1h",
 			ConsolidationPrompt:   "memory-consolidation.md",
@@ -410,7 +410,7 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled:  true,
 			ConsolidationInterval: "1h",
 			ConsolidationPrompt:   "memory-consolidation.md",
@@ -444,19 +444,19 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	}
 }
 
-func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
-	// Verifies that maybeMemoryFormation requires recent interaction activity; if the last
+func TestMaybeReflection_NoActivity(t *testing.T) {
+	// Verifies that maybeReflection requires recent interaction activity; if the last
 	// interaction is also older than the interval, formation is skipped.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
 		lastInteraction:     time.Now().Add(-2 * time.Hour),
-		lastMemoryFormation: time.Now().Add(-2 * time.Hour),
+		lastReflection:  time.Now().Add(-2 * time.Hour),
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
 			return true
@@ -464,26 +464,26 @@ func TestMaybeMemoryFormation_NoActivity(t *testing.T) {
 		done: make(chan struct{}),
 	}
 
-	r.maybeMemoryFormation()
+	r.maybeReflection()
 	if calls != 0 {
 		t.Errorf("memory formation called with no activity")
 	}
 }
 
-func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
-	// Verifies that maybeMemoryFormation is a no-op when memoryFormationRunning is true, preventing
+func TestMaybeReflection_AlreadyRunning(t *testing.T) {
+	// Verifies that maybeReflection is a no-op when reflectionRunning is true, preventing
 	// concurrent formation sessions.
 	var calls int
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
-		lastInteraction:        time.Now().Add(-30 * time.Minute),
-		lastMemoryFormation:    time.Now().Add(-2 * time.Hour),
-		memoryFormationRunning: true,
+		lastInteraction:   time.Now().Add(-30 * time.Minute),
+		lastReflection:    time.Now().Add(-2 * time.Hour),
+		reflectionRunning: true,
 		branchFn: func(branchType, parentKey, promptText string, noCompact bool) bool {
 			calls++
 			return true
@@ -491,7 +491,7 @@ func TestMaybeMemoryFormation_AlreadyRunning(t *testing.T) {
 		done: make(chan struct{}),
 	}
 
-	r.maybeMemoryFormation()
+	r.maybeReflection()
 	if calls != 0 {
 		t.Errorf("memory formation called while already running")
 	}
@@ -504,7 +504,7 @@ func TestMaybeConsolidation_TooMuchInactivity(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled:  true,
 			ConsolidationInterval: "1h",
 		},
@@ -530,7 +530,7 @@ func TestMaybeConsolidation_AlreadyRunning(t *testing.T) {
 	r := &Runner{
 		log:     log.NewComponentLogger("keepalive:test"),
 		agentID: "test",
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			ConsolidationEnabled:  true,
 			ConsolidationInterval: "1h",
 		},
@@ -561,7 +561,7 @@ func TestNew(t *testing.T) {
 		Background: config.ResolvedBackground{
 			Enabled: true,
 		},
-		MemoryFormation: config.ResolvedMemoryFormation{
+		Reflection: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
@@ -657,7 +657,7 @@ func TestStartStop(t *testing.T) {
 		Background: config.ResolvedBackground{
 			Enabled: false,
 		},
-		MemoryFormation: config.ResolvedMemoryFormation{
+		Reflection: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},
@@ -695,7 +695,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 		bgCfg: config.ResolvedBackground{
 			Enabled: false,
 		},
-		mfCfg: config.ResolvedMemoryFormation{
+		reflectCfg: config.ResolvedReflection{
 			IntervalEnabled: true,
 			Interval:        "1h",
 		},

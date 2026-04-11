@@ -237,7 +237,7 @@ func resolveBackground(m BackgroundConfig) ResolvedBackground {
 	}
 }
 
-type ResolvedMemoryFormation struct {
+type ResolvedReflection struct {
 	IntervalEnabled       bool // default true
 	Interval              string
 	IntervalPrompt        string
@@ -251,8 +251,8 @@ type ResolvedMemoryFormation struct {
 	BackendQuietPeriod    string // default "5m"
 }
 
-func resolveMemoryFormation(m MemoryFormationConfig) ResolvedMemoryFormation {
-	return ResolvedMemoryFormation{
+func resolveReflection(m ReflectionConfig) ResolvedReflection {
+	return ResolvedReflection{
 		IntervalEnabled:       DerefBool(m.IntervalEnabled),
 		Interval:              DerefStr(m.Interval),
 		IntervalPrompt:        DerefStr(m.IntervalPrompt),

@@ -208,10 +208,10 @@ The reflection prompt also instructs the agent to capture *procedural* knowledge
 
 ### Configuration
 
-Set globally in `[memory_formation]` or per-agent in `[[agents.memory_formation]]`.
+Set globally in `[reflection]` or per-agent in `[[agents.reflection]]`.
 
 ```toml
-[memory_formation]
+[reflection]
 interval_enabled = true
 interval = "1h"
 session_end_enabled = true

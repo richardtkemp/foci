@@ -291,8 +291,8 @@ system_files = [
 # [agents.browser]
 # enabled = true
 
-# Per-agent memory formation:
-# [agents.memory_formation]
+# Per-agent reflection pass (memory + skill formation):
+# [agents.reflection]
 # interval_enabled = true
 # interval = "1h"
 # interval_prompt = ""
@@ -568,8 +568,10 @@ bind = "127.0.0.1"
 # interval = "55m"
 # prompt = ""
 
-# ─── Global Memory Formation ─────────────────────────────────────────
-# [memory_formation]
+# ─── Global Reflection ───────────────────────────────────────────────
+# Periodic reflection pass: captures memories into daily files AND autogenerates
+# skills under workspace/skills/ from replayable workflows. See docs/MEMORY.md.
+# [reflection]
 # interval_enabled = true
 # interval = "1h"
 # interval_prompt = ""

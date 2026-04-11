@@ -1008,12 +1008,12 @@ func TestMetadata_IndependentOfSessionIndex(t *testing.T) {
 	}
 }
 
-// ========== Memory formation tests ==========
+// ========== Reflection tests ==========
 
-func TestStampMemoryFormation(t *testing.T) {
-	// Proves that StampMemoryFormation records a timestamp for a session, and that
-	// SessionsNeedingFormation no longer returns it when activity hasn't changed
-	// (i.e. last_memory_formation >= last_activity_at).
+func TestStampReflection(t *testing.T) {
+	// Proves that StampReflection records a timestamp for a session, and that
+	// SessionsNeedingReflection no longer returns it when activity hasn't changed
+	// (i.e. last_reflection >= last_activity_at).
 	idx := tempIndex(t)
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -1026,36 +1026,36 @@ func TestStampMemoryFormation(t *testing.T) {
 		Status:         SessionStatusActive,
 	})
 
-	// Before stamping: session has NULL last_memory_formation, so it needs formation.
-	keys, err := idx.SessionsNeedingFormation("bot")
+	// Before stamping: session has NULL last_reflection, so it needs reflection.
+	keys, err := idx.SessionsNeedingReflection("bot")
 	if err != nil {
-		t.Fatalf("SessionsNeedingFormation: %v", err)
+		t.Fatalf("SessionsNeedingReflection: %v", err)
 	}
 	if len(keys) != 1 || keys[0] != "bot/c100/1000000000" {
 		t.Fatalf("expected [bot/c100/1000000000] before stamp, got %v", keys)
 	}
 
-	// Stamp memory formation at or after the last activity time.
-	idx.StampMemoryFormation("bot/c100/1000000000", now)
+	// Stamp reflection at or after the last activity time.
+	idx.StampReflection("bot/c100/1000000000", now)
 
-	// After stamping: last_memory_formation >= last_activity_at, so not returned.
-	keys, err = idx.SessionsNeedingFormation("bot")
+	// After stamping: last_reflection >= last_activity_at, so not returned.
+	keys, err = idx.SessionsNeedingReflection("bot")
 	if err != nil {
-		t.Fatalf("SessionsNeedingFormation after stamp: %v", err)
+		t.Fatalf("SessionsNeedingReflection after stamp: %v", err)
 	}
 	if len(keys) != 0 {
-		t.Errorf("expected no sessions needing formation after stamp, got %v", keys)
+		t.Errorf("expected no sessions needing reflection after stamp, got %v", keys)
 	}
 }
 
-func TestSessionsNeedingFormation(t *testing.T) {
-	// Proves that SessionsNeedingFormation correctly filters sessions based on
-	// activity vs formation timestamps, session type, status, and agent scoping.
+func TestSessionsNeedingReflection(t *testing.T) {
+	// Proves that SessionsNeedingReflection correctly filters sessions based on
+	// activity vs reflection timestamps, session type, status, and agent scoping.
 	idx := tempIndex(t)
 
 	base := time.Date(2026, 3, 23, 12, 0, 0, 0, time.UTC)
 
-	// Case 1: Activity newer than formation — should be included.
+	// Case 1: Activity newer than reflection — should be included.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "agent1/c1/1000000000",
 		FilePath:       "f1",
@@ -1064,10 +1064,10 @@ func TestSessionsNeedingFormation(t *testing.T) {
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	idx.StampMemoryFormation("agent1/c1/1000000000", base.Add(-time.Hour))
+	idx.StampReflection("agent1/c1/1000000000", base.Add(-time.Hour))
 	idx.UpdateActivity("agent1/c1/1000000000", base)
 
-	// Case 2: Activity older than formation — should be excluded.
+	// Case 2: Activity older than reflection — should be excluded.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "agent1/c2/1000000000",
 		FilePath:       "f2",
@@ -1076,9 +1076,9 @@ func TestSessionsNeedingFormation(t *testing.T) {
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	idx.StampMemoryFormation("agent1/c2/1000000000", base.Add(time.Hour))
+	idx.StampReflection("agent1/c2/1000000000", base.Add(time.Hour))
 
-	// Case 3: NULL formation (never formed) — should be included.
+	// Case 3: NULL reflection (never reflected) — should be included.
 	idx.Upsert(SessionIndexEntry{
 		SessionKey:     "agent1/c3/1000000000",
 		FilePath:       "f3",
@@ -1087,7 +1087,7 @@ func TestSessionsNeedingFormation(t *testing.T) {
 		SessionType:    SessionTypeChat,
 		Status:         SessionStatusActive,
 	})
-	// No StampMemoryFormation call — last_memory_formation stays NULL.
+	// No StampReflection call — last_reflection stays NULL.
 
 	// Case 4: Non-chat session (branch) — should be excluded.
 	idx.Upsert(SessionIndexEntry{
@@ -1122,9 +1122,9 @@ func TestSessionsNeedingFormation(t *testing.T) {
 	})
 	// No stamp — would qualify if it belonged to agent1.
 
-	keys, err := idx.SessionsNeedingFormation("agent1")
+	keys, err := idx.SessionsNeedingReflection("agent1")
 	if err != nil {
-		t.Fatalf("SessionsNeedingFormation: %v", err)
+		t.Fatalf("SessionsNeedingReflection: %v", err)
 	}
 
 	// Build a set for easy lookup.
@@ -1133,17 +1133,17 @@ func TestSessionsNeedingFormation(t *testing.T) {
 		got[k] = true
 	}
 
-	// Case 1: activity > formation → included.
+	// Case 1: activity > reflection → included.
 	if !got["agent1/c1/1000000000"] {
-		t.Errorf("case 1 (activity newer than formation): expected included, missing from %v", keys)
+		t.Errorf("case 1 (activity newer than reflection): expected included, missing from %v", keys)
 	}
-	// Case 2: activity < formation → excluded.
+	// Case 2: activity < reflection → excluded.
 	if got["agent1/c2/1000000000"] {
-		t.Errorf("case 2 (activity older than formation): expected excluded, present in %v", keys)
+		t.Errorf("case 2 (activity older than reflection): expected excluded, present in %v", keys)
 	}
-	// Case 3: NULL formation → included.
+	// Case 3: NULL reflection → included.
 	if !got["agent1/c3/1000000000"] {
-		t.Errorf("case 3 (NULL formation): expected included, missing from %v", keys)
+		t.Errorf("case 3 (NULL reflection): expected included, missing from %v", keys)
 	}
 	// Case 4: non-chat session → excluded.
 	if got["agent1/c1/1000000000/b2000000000"] {
@@ -1160,6 +1160,6 @@ func TestSessionsNeedingFormation(t *testing.T) {
 
 	// Exactly 2 sessions should be returned.
 	if len(keys) != 2 {
-		t.Errorf("expected exactly 2 sessions needing formation, got %d: %v", len(keys), keys)
+		t.Errorf("expected exactly 2 sessions needing reflection, got %d: %v", len(keys), keys)
 	}
 }

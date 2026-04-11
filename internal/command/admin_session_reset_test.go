@@ -28,7 +28,7 @@ func TestResetCommand_UsesSessionKeyFromContext(t *testing.T) {
 	ag := &agent.Agent{
 		Sessions:  store,
 		Bootstrap: bs,
-		MemoryFormationConfig: config.ResolvedMemoryFormation{
+		Reflection: config.ResolvedReflection{
 			SessionEndEnabled: false,
 		},
 	}
@@ -38,7 +38,7 @@ func TestResetCommand_UsesSessionKeyFromContext(t *testing.T) {
 		Config:      &config.Config{},
 		AgentConfig: config.AgentConfig{},
 		Resolved: &config.ResolvedAgentConfig{
-			MemoryFormation: config.ResolvedMemoryFormation{
+			Reflection: config.ResolvedReflection{
 				SessionEndEnabled: false,
 			},
 		},

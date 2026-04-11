@@ -594,10 +594,10 @@ func TestPromptsCommandDiff(t *testing.T) {
 func TestPromptsCommandChainKeyboardDiffDataIncludesSubcommand(t *testing.T) {
 	cmd := PromptsCommand()
 	cc := promptsCC(PromptsData{
-		Prompts: []PromptInfo{{Label: "memory_formation"}, {Label: "keepalive"}},
+		Prompts: []PromptInfo{{Label: "reflection"}, {Label: "keepalive"}},
 		ResolvedTexts: map[string]string{
-			"memory_formation": "t",
-			"keepalive":        "t",
+			"reflection": "t",
+			"keepalive":  "t",
 		},
 	})
 

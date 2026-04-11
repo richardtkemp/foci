@@ -171,7 +171,7 @@ func TestResolve_AllFieldsPopulated(t *testing.T) {
 		Keepalive:       KeepaliveConfig{Enabled: Ptr(true)},
 		Background:      BackgroundConfig{Enabled: Ptr(true)},
 		Memory:          MemoryConfig{SearchBackend: Ptr("bleve")},
-		MemoryFormation: MemoryFormationConfig{IntervalEnabled: Ptr(true)},
+		Reflection:      ReflectionConfig{IntervalEnabled: Ptr(true)},
 		Browser:         BrowserConfig{Enabled: Ptr(true)},
 		Mana:            ManaConfig{Name: Ptr("m")},
 	}

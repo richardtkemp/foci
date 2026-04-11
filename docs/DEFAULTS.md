@@ -53,10 +53,10 @@ All `*_enabled` fields use `*bool` — `nil` means `true`. Set to explicit `fals
 
 ## Config Cascade
 
-Memory formation config follows the same cascade as keepalive/background:
+Reflection config follows the same cascade as keepalive/background:
 
-1. **Global defaults** — `[memory_formation]` section, filled with hardcoded fallbacks
-2. **Per-agent zero-check** — if agent's `[agents.memory_formation]` is entirely empty, copy global
+1. **Global defaults** — `[reflection]` section, filled with hardcoded fallbacks
+2. **Per-agent zero-check** — if agent's `[agents.reflection]` is entirely empty, copy global
 3. **Per-agent partial override** — if some fields set, fill gaps from global
 4. **Runtime resolution** — prompt paths resolved via `ResolvePrompt` at fire-time
 
@@ -64,17 +64,17 @@ Memory formation config follows the same cascade as keepalive/background:
 
 ```toml
 # Use a custom prompt file:
-[memory_formation]
-interval_prompt = "~/shared/prompts/my-custom-memory.md"
+[reflection]
+interval_prompt = "~/shared/prompts/my-custom-reflection.md"
 
-# Disable interval memory formation but keep session-end:
-[memory_formation]
+# Disable interval reflection but keep session-end:
+[reflection]
 interval_enabled = false
 
-# Disable all memory formation for a specific agent:
+# Disable all reflection for a specific agent:
 [[agents]]
 id = "minimal-agent"
-[agents.memory_formation]
+[agents.reflection]
 interval_enabled = false
 consolidation_enabled = false
 session_end_enabled = false

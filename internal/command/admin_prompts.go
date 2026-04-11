@@ -130,14 +130,14 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		resolvePromptInfo("background",
 			derefStr(acfg.Background.Prompt),
 			"background.md", prompts.Background(), dirs),
-		resolvePromptInfo("memory_formation",
-			derefStr(acfg.MemoryFormation.IntervalPrompt),
+		resolvePromptInfo("reflection",
+			derefStr(acfg.Reflection.IntervalPrompt),
 			"reflection.md", prompts.Reflection(), dirs),
 		resolvePromptInfo("memory_consolidation",
-			derefStr(acfg.MemoryFormation.ConsolidationPrompt),
+			derefStr(acfg.Reflection.ConsolidationPrompt),
 			"memory-consolidation.md", prompts.MemoryConsolidation(), dirs),
-		resolvePromptInfo("memory_session_end",
-			derefStr(acfg.MemoryFormation.SessionEndPrompt),
+		resolvePromptInfo("reflection_session_end",
+			derefStr(acfg.Reflection.SessionEndPrompt),
 			"reflection.md", prompts.Reflection(), dirs),
 	}
 
@@ -170,9 +170,9 @@ func buildPromptsData(cc CommandContext) PromptsData {
 		{"branch_orient_headless", resolveString(derefStr(acfg.Sessions.BranchOrientationHeadlessPrompt), derefStr(cfg.Sessions.BranchOrientationHeadlessPrompt)), "branch-orientation-headless.md", prompts.BranchOrientationHeadless()},
 		{"keepalive", derefStr(acfg.Keepalive.Prompt), "keepalive.md", prompts.Keepalive()},
 		{"background", derefStr(acfg.Background.Prompt), "background.md", prompts.Background()},
-		{"memory_formation", derefStr(acfg.MemoryFormation.IntervalPrompt), "reflection.md", prompts.Reflection()},
-		{"memory_consolidation", derefStr(acfg.MemoryFormation.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
-		{"memory_session_end", derefStr(acfg.MemoryFormation.SessionEndPrompt), "reflection.md", prompts.Reflection()},
+		{"reflection", derefStr(acfg.Reflection.IntervalPrompt), "reflection.md", prompts.Reflection()},
+		{"memory_consolidation", derefStr(acfg.Reflection.ConsolidationPrompt), "memory-consolidation.md", prompts.MemoryConsolidation()},
+		{"reflection_session_end", derefStr(acfg.Reflection.SessionEndPrompt), "reflection.md", prompts.Reflection()},
 	}
 	resolvedTexts := make(map[string]string, len(fileDefs)+2)
 	defaultTexts := make(map[string]string, len(fileDefs)+2)

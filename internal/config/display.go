@@ -110,17 +110,17 @@ func collectGlobalConfigRows(cfg *Config) []configRow {
 	add("background", "interval", cfg.Background.Interval)
 	add("background", "prompt", cfg.Background.Prompt)
 
-	// memory_formation
-	add("memory_formation", "interval", cfg.MemoryFormation.Interval)
-	add("memory_formation", "consolidation_interval", cfg.MemoryFormation.ConsolidationInterval)
-	if cfg.MemoryFormation.IntervalEnabled != nil {
-		add("memory_formation", "interval_enabled", *cfg.MemoryFormation.IntervalEnabled)
+	// reflection
+	add("reflection", "interval", cfg.Reflection.Interval)
+	add("reflection", "consolidation_interval", cfg.Reflection.ConsolidationInterval)
+	if cfg.Reflection.IntervalEnabled != nil {
+		add("reflection", "interval_enabled", *cfg.Reflection.IntervalEnabled)
 	}
-	if cfg.MemoryFormation.ConsolidationEnabled != nil {
-		add("memory_formation", "consolidation_enabled", *cfg.MemoryFormation.ConsolidationEnabled)
+	if cfg.Reflection.ConsolidationEnabled != nil {
+		add("reflection", "consolidation_enabled", *cfg.Reflection.ConsolidationEnabled)
 	}
-	if cfg.MemoryFormation.SessionEndEnabled != nil {
-		add("memory_formation", "session_end_enabled", *cfg.MemoryFormation.SessionEndEnabled)
+	if cfg.Reflection.SessionEndEnabled != nil {
+		add("reflection", "session_end_enabled", *cfg.Reflection.SessionEndEnabled)
 	}
 
 	// platforms
@@ -459,29 +459,29 @@ func collectAgentRows(agent AgentConfig) []configRow {
 	if agent.Background.Prompt != nil {
 		add("background.prompt", *agent.Background.Prompt)
 	}
-	if agent.MemoryFormation.Interval != nil {
-		add("memory_formation.interval", *agent.MemoryFormation.Interval)
+	if agent.Reflection.Interval != nil {
+		add("reflection.interval", *agent.Reflection.Interval)
 	}
-	if agent.MemoryFormation.IntervalEnabled != nil {
-		add("memory_formation.interval_enabled", *agent.MemoryFormation.IntervalEnabled)
+	if agent.Reflection.IntervalEnabled != nil {
+		add("reflection.interval_enabled", *agent.Reflection.IntervalEnabled)
 	}
-	if agent.MemoryFormation.IntervalPrompt != nil {
-		add("memory_formation.interval_prompt", *agent.MemoryFormation.IntervalPrompt)
+	if agent.Reflection.IntervalPrompt != nil {
+		add("reflection.interval_prompt", *agent.Reflection.IntervalPrompt)
 	}
-	if agent.MemoryFormation.ConsolidationInterval != nil {
-		add("memory_formation.consolidation_interval", *agent.MemoryFormation.ConsolidationInterval)
+	if agent.Reflection.ConsolidationInterval != nil {
+		add("reflection.consolidation_interval", *agent.Reflection.ConsolidationInterval)
 	}
-	if agent.MemoryFormation.ConsolidationEnabled != nil {
-		add("memory_formation.consolidation_enabled", *agent.MemoryFormation.ConsolidationEnabled)
+	if agent.Reflection.ConsolidationEnabled != nil {
+		add("reflection.consolidation_enabled", *agent.Reflection.ConsolidationEnabled)
 	}
-	if agent.MemoryFormation.ConsolidationPrompt != nil {
-		add("memory_formation.consolidation_prompt", *agent.MemoryFormation.ConsolidationPrompt)
+	if agent.Reflection.ConsolidationPrompt != nil {
+		add("reflection.consolidation_prompt", *agent.Reflection.ConsolidationPrompt)
 	}
-	if agent.MemoryFormation.SessionEndEnabled != nil {
-		add("memory_formation.session_end_enabled", *agent.MemoryFormation.SessionEndEnabled)
+	if agent.Reflection.SessionEndEnabled != nil {
+		add("reflection.session_end_enabled", *agent.Reflection.SessionEndEnabled)
 	}
-	if agent.MemoryFormation.SessionEndPrompt != nil {
-		add("memory_formation.session_end_prompt", *agent.MemoryFormation.SessionEndPrompt)
+	if agent.Reflection.SessionEndPrompt != nil {
+		add("reflection.session_end_prompt", *agent.Reflection.SessionEndPrompt)
 	}
 	if len(agent.BlockedPaths) > 0 {
 		add("blocked_paths", fmt.Sprintf("(%d paths)", len(agent.BlockedPaths)))

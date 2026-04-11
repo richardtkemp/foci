@@ -596,7 +596,7 @@ Creates a branch session that picks up the highest-priority background todo item
 
 **Manamometer** — Linear interpolation of expected mana over the 5-hour budget window. After `invest_interval` (default 30m) of quiet to let the cache build, the expected mana line drops linearly from 100% to 0% at window end. Work fires when actual mana exceeds expected mana. Near reset, even tiny mana is "in credit" since the budget resets soon.
 
-Config: `[keepalive]`, `[background]`, and `[memory_formation]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
+Config: `[keepalive]`, `[background]`, and `[reflection]` sections. See [docs/HEARTBEAT.md](docs/HEARTBEAT.md) for full details.
 
 ## Secrets
 
@@ -675,7 +675,7 @@ No tool call should prevent the system from responding to interrupts. If it does
 
 `/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — foci has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
 
-**Session-end memory formation:** Before clearing the session, memory formation fires asynchronously — creating a branch from the expiring session to preserve conversation history. Configured via `[memory_formation]` section (`session_end_enabled`, `session_end_prompt`). The branch has a 120-second timeout and is non-fatal — if it fails, the reset has already proceeded. Branch sessions can opt out via `NoResetHook` in their branch metadata. The same hook fires on facet TTL reclaim.
+**Session-end reflection:** Before clearing the session, the reflection pass fires asynchronously — creating a branch from the expiring session to preserve conversation history. Configured via `[reflection]` section (`session_end_enabled`, `session_end_prompt`). The branch has a 120-second timeout and is non-fatal — if it fails, the reset has already proceeded. Branch sessions can opt out via `NoResetHook` in their branch metadata. The same hook fires on facet TTL reclaim.
 
 If automatic resets are added later: never reset an active session. A session is "active" if the agent is processing a turn OR the last message was received less than N minutes ago. OpenClaw's blunt `updatedAt < dailyResetAt` check wiped an active conversation mid-flow — that's the failure to avoid.
 

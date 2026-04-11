@@ -9,13 +9,13 @@ import (
 	"foci/shared/prompts"
 )
 
-// FireSessionEndMemory runs memory formation on the expiring session.
+// FireSessionEndMemory runs the reflection pass on the expiring session.
 // Blocks until the turn completes (HandleMessage is synchronous for all transports).
-// Checks BranchMeta.NoResetHook and memory_formation.session_end_enabled.
+// Checks BranchMeta.NoResetHook and reflection.session_end_enabled.
 // If skipMetaCheck is true, the NoResetHook check is skipped (used for background
-// work branches which set NoResetHook but should still get memory formation).
+// work branches which set NoResetHook but should still get reflection).
 func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemplate string, skipMetaCheck bool) {
-	if !a.MemoryFormationConfig.SessionEndEnabled {
+	if !a.Reflection.SessionEndEnabled {
 		return
 	}
 
@@ -25,7 +25,7 @@ func (a *Agent) FireSessionEndMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
+	prompt := prompts.ResolvePrompt(a.Reflection.SessionEndPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}

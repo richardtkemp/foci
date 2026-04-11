@@ -137,24 +137,24 @@ func TestBackgroundConfigMerge(t *testing.T) {
 	})
 }
 
-func TestMemoryFormationConfigMerge(t *testing.T) {
+func TestReflectionConfigMerge(t *testing.T) {
 	// Proves that Merge copies pointer fields from the global config when they
 	// are nil locally, and preserves locally-set pointer values (including false)
 	// without overwriting them.
-	global := MemoryFormationConfig{
+	global := ReflectionConfig{
 		IntervalEnabled: Ptr[bool](true), Interval: Ptr[string]("1h"), IntervalPrompt: Ptr[string]("mf.md"),
 		ConsolidationEnabled: Ptr[bool](true), ConsolidationInterval: Ptr[string]("20h"),
 		SessionEndEnabled: Ptr[bool](true), SessionEndPrompt: Ptr[string]("se.md"),
 	}
 
 	t.Run("replaces zero struct", func(t *testing.T) {
-		mf := Merge(MemoryFormationConfig{}, global)
+		mf := Merge(ReflectionConfig{}, global)
 		if DerefStr(mf.Interval) != "1h" || !DerefBool(mf.IntervalEnabled) {
 			t.Errorf("expected full copy of global, got %+v", mf)
 		}
 	})
 	t.Run("fills gaps preserving set values", func(t *testing.T) {
-		mf := Merge(MemoryFormationConfig{IntervalEnabled: Ptr[bool](false), Interval: Ptr[string]("2h")}, global)
+		mf := Merge(ReflectionConfig{IntervalEnabled: Ptr[bool](false), Interval: Ptr[string]("2h")}, global)
 		if DerefBool(mf.IntervalEnabled) != false {
 			t.Errorf("IntervalEnabled should be preserved as false")
 		}
