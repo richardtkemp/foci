@@ -520,6 +520,347 @@ func TestDelegatedTransport_RunInference_SteerCheckFunc(t *testing.T) {
 	}
 }
 
+// TestDelegatedTransport_RunInference_PostToolNudgeWired verifies that the
+// PostToolNudgeFunc drives CheckAfterTools: on the N-th tool call the
+// every_n_tools rule fires and the returned reminder is formatted with the
+// nudge header. This is the delegated equivalent of the API transport's
+// mid-loop CheckAfterTools call after each tool batch.
+func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
+	var capturedNudgeFunc func(string, bool) []string
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedNudgeFunc = handler.PostToolNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
+			}
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "tool-batch-reminder", Trigger: nudge.Trigger{Type: "every_n_tools", N: 3}},
+			{Text: "error-reminder", Trigger: nudge.Trigger{Type: "after_error"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 1, 2)
+	sched.StartTurn("hi")
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr, Nudger: sched}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if capturedNudgeFunc == nil {
+		t.Fatal("PostToolNudgeFunc should be wired into the EventHandler")
+	}
+
+	// Two successful tools — no reminder yet (every_n_tools N=3, after_error needs isError).
+	if got := capturedNudgeFunc("Read", false); len(got) != 0 {
+		t.Errorf("PostToolNudgeFunc after tool 1 = %v, want empty", got)
+	}
+	if got := capturedNudgeFunc("Edit", false); len(got) != 0 {
+		t.Errorf("PostToolNudgeFunc after tool 2 = %v, want empty", got)
+	}
+	// Third tool — every_n_tools should fire.
+	got := capturedNudgeFunc("Bash", false)
+	if len(got) == 0 {
+		t.Fatal("PostToolNudgeFunc after tool 3 should return a reminder")
+	}
+	found := false
+	for _, r := range got {
+		if strings.Contains(r, "tool-batch-reminder") {
+			found = true
+		}
+		if !strings.HasPrefix(r, nudgeHeader) {
+			t.Errorf("reminder missing nudge header: %q", r)
+		}
+	}
+	if !found {
+		t.Errorf("expected tool-batch-reminder in %v", got)
+	}
+}
+
+// TestDelegatedTransport_RunInference_PostToolNudgeNilNudger verifies the
+// callback is safe when the agent has no Nudger — returns nil without panic
+// so hook_response dispatch keeps working for agents that don't nudge.
+func TestDelegatedTransport_RunInference_PostToolNudgeNilNudger(t *testing.T) {
+	var capturedNudgeFunc func(string, bool) []string
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedNudgeFunc = handler.PostToolNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
+			}
+			return nil, nil
+		},
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if capturedNudgeFunc == nil {
+		t.Fatal("PostToolNudgeFunc should be wired even without Nudger")
+	}
+	if got := capturedNudgeFunc("Read", false); got != nil {
+		t.Errorf("PostToolNudgeFunc with nil Nudger = %v, want nil", got)
+	}
+}
+
+// TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce verifies that
+// PreAnswerNudgeFunc returns the verification prompt on the first call and
+// "" thereafter — the closure-local firedPreAnswer flag must break the loop
+// so ccstream doesn't re-dispatch indefinitely when the scheduler keeps
+// reporting a pending pre_answer rule.
+func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
+	var capturedPreAnswerFunc func(*delegator.TurnResult) string
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "final"})
+			}
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "verify-your-answer", Trigger: nudge.Trigger{Type: "pre_answer"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.StartTurn("hi")
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{
+		Model:                  "test-model",
+		DelegatedManager:       mgr,
+		Nudger:                 sched,
+		NudgePreAnswerGate:     true,
+		NudgePreAnswerMinTools: 0,
+	}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if capturedPreAnswerFunc == nil {
+		t.Fatal("PreAnswerNudgeFunc should be wired into the EventHandler")
+	}
+
+	// First call: round-1 result arrives with no tools — gate fires.
+	firstRound := &delegator.TurnResult{
+		Text:  "original answer",
+		Usage: &delegator.TurnUsage{InputTokens: 100, OutputTokens: 50},
+	}
+	followUp := capturedPreAnswerFunc(firstRound)
+	if followUp == "" {
+		t.Fatal("pre-answer gate should fire on first call")
+	}
+	if !strings.Contains(followUp, "verify-your-answer") {
+		t.Errorf("follow-up should contain reminder text, got: %q", followUp)
+	}
+	if !strings.Contains(followUp, NoResponseSentinel) {
+		t.Errorf("follow-up should instruct model to emit %q on no-op, got: %q", NoResponseSentinel, followUp)
+	}
+
+	// Second call: gate should self-suppress.
+	if again := capturedPreAnswerFunc(&delegator.TurnResult{Text: "revised"}); again != "" {
+		t.Errorf("pre-answer gate should fire only once, got second follow-up: %q", again)
+	}
+}
+
+// TestDelegatedTransport_RunInference_PreAnswerGateDisabled verifies that
+// PreAnswerNudgeFunc returns "" when the agent hasn't enabled the gate, even
+// if a pre_answer rule exists — the gate config flag is the master switch.
+func TestDelegatedTransport_RunInference_PreAnswerGateDisabled(t *testing.T) {
+	var capturedPreAnswerFunc func(*delegator.TurnResult) string
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
+			}
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "verify", Trigger: nudge.Trigger{Type: "pre_answer"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.StartTurn("hi")
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{
+		Model:              "test-model",
+		DelegatedManager:   mgr,
+		Nudger:             sched,
+		NudgePreAnswerGate: false, // explicitly disabled
+	}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if got := capturedPreAnswerFunc(&delegator.TurnResult{Text: "x"}); got != "" {
+		t.Errorf("pre-answer gate should be a no-op when disabled, got: %q", got)
+	}
+}
+
+// TestDelegatedTransport_RunInference_PreAnswerAccumulatesUsage verifies that
+// when the gate runs a second round, round-1 usage captured inside the gate
+// callback gets folded into the final ts.FinalUsage. Without this, the API
+// log would under-report the true token spend of the user's turn since
+// ccstream's beginTurn resets lastUsage between rounds.
+func TestDelegatedTransport_RunInference_PreAnswerAccumulatesUsage(t *testing.T) {
+	var capturedHandler *delegator.EventHandler
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedHandler = handler
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "verify", Trigger: nudge.Trigger{Type: "pre_answer"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.StartTurn("hi")
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{
+		Model:                  "test-model",
+		DelegatedManager:       mgr,
+		Nudger:                 sched,
+		NudgePreAnswerGate:     true,
+		NudgePreAnswerMinTools: 0,
+	}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	// Simulate ccstream: round 1 → PreAnswerNudgeFunc (fires), round 2 → OnTurnComplete.
+	round1 := &delegator.TurnResult{
+		Text:  "original",
+		Usage: &delegator.TurnUsage{InputTokens: 100, OutputTokens: 40, CacheReadInputTokens: 10},
+	}
+	if followUp := capturedHandler.PreAnswerNudgeFunc(round1); followUp == "" {
+		t.Fatal("gate should have fired on round 1")
+	}
+	capturedHandler.OnTurnComplete(&delegator.TurnResult{
+		Text:  "revised",
+		Usage: &delegator.TurnUsage{InputTokens: 20, OutputTokens: 15},
+	})
+
+	if ts.FinalText != "revised" {
+		t.Errorf("FinalText = %q, want %q", ts.FinalText, "revised")
+	}
+	if ts.FinalUsage == nil {
+		t.Fatal("FinalUsage should not be nil")
+	}
+	// 100 + 20 = 120 input, 40 + 15 = 55 output, 10 + 0 cache read.
+	if ts.FinalUsage.InputTokens != 120 {
+		t.Errorf("FinalUsage.InputTokens = %d, want 120 (accumulated)", ts.FinalUsage.InputTokens)
+	}
+	if ts.FinalUsage.OutputTokens != 55 {
+		t.Errorf("FinalUsage.OutputTokens = %d, want 55 (accumulated)", ts.FinalUsage.OutputTokens)
+	}
+	if ts.FinalUsage.CacheReadInputTokens != 10 {
+		t.Errorf("FinalUsage.CacheReadInputTokens = %d, want 10 (accumulated)", ts.FinalUsage.CacheReadInputTokens)
+	}
+}
+
+// TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal
+// verifies that when the second round echoes NoResponseSentinel ("my
+// original answer stands"), FinalText is replaced with round-1's text so
+// the platform delivers the answer the agent originally committed to rather
+// than a raw sentinel literal.
+func TestDelegatedTransport_RunInference_PreAnswerSentinelRestoresOriginal(t *testing.T) {
+	var capturedHandler *delegator.EventHandler
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedHandler = handler
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "verify", Trigger: nudge.Trigger{Type: "pre_answer"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.StartTurn("hi")
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{
+		Model:                  "test-model",
+		DelegatedManager:       mgr,
+		Nudger:                 sched,
+		NudgePreAnswerGate:     true,
+		NudgePreAnswerMinTools: 0,
+	}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+
+	round1 := &delegator.TurnResult{
+		Text:  "original answer that stands",
+		Usage: &delegator.TurnUsage{InputTokens: 10, OutputTokens: 5},
+	}
+	if capturedHandler.PreAnswerNudgeFunc(round1) == "" {
+		t.Fatal("gate should fire")
+	}
+	capturedHandler.OnTurnComplete(&delegator.TurnResult{
+		Text:  NoResponseSentinel,
+		Usage: &delegator.TurnUsage{InputTokens: 5, OutputTokens: 1},
+	})
+
+	if ts.FinalText != "original answer that stands" {
+		t.Errorf("FinalText = %q, want original answer (sentinel should restore round-1)", ts.FinalText)
+	}
+}
+
 // TestDelegatedTransport_RunInference_NilTurnResult verifies that a nil
 // TurnResult from the watcher doesn't panic (edge case: watcher error).
 func TestDelegatedTransport_RunInference_NilTurnResult(t *testing.T) {

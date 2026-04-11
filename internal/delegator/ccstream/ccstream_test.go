@@ -1416,6 +1416,111 @@ func TestOnResult_ClearsLastUsage(t *testing.T) {
 	b.mu.Unlock()
 }
 
+func TestOnResult_PreAnswerReDispatches(t *testing.T) {
+	// Verifies that when PreAnswerNudgeFunc returns a non-empty follow-up on
+	// the first OnResult, ccstream re-arms the same handler, sends the
+	// follow-up via the writer with NO priority (plain user message), and
+	// SKIPS firing OnTurnComplete. A second OnResult then fires
+	// OnTurnComplete with the revised result. This is the delegated
+	// equivalent of the API transport's pre_answer verification loop.
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+	}
+	b.typingFunc = func(bool) {}
+
+	var completedCount int
+	var completedResult *delegator.TurnResult
+	var preAnswerCalls int
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) {
+			completedCount++
+			completedResult = r
+		},
+		PreAnswerNudgeFunc: func(_ *delegator.TurnResult) string {
+			preAnswerCalls++
+			if preAnswerCalls == 1 {
+				return "verify your answer"
+			}
+			return ""
+		},
+	}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.turnText.WriteString("original")
+	b.turnMu.Unlock()
+
+	// Round 1: pre_answer fires — should re-arm instead of completing.
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+
+	if completedCount != 0 {
+		t.Errorf("OnTurnComplete should not fire on round 1 (pre_answer re-dispatched); fired %d times", completedCount)
+	}
+	if preAnswerCalls != 1 {
+		t.Errorf("PreAnswerNudgeFunc should have fired once, got %d", preAnswerCalls)
+	}
+	if !strings.Contains(buf.String(), "verify your answer") {
+		t.Errorf("writer should contain follow-up prompt, got: %q", buf.String())
+	}
+	if !b.IsTurnInFlight() {
+		t.Error("turn should be re-armed and in flight after pre_answer re-dispatch")
+	}
+
+	// Simulate round 2 text and result.
+	b.turnMu.Lock()
+	b.turnText.WriteString("revised")
+	b.turnMu.Unlock()
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+
+	if completedCount != 1 {
+		t.Errorf("OnTurnComplete should fire once after round 2, got %d", completedCount)
+	}
+	if completedResult == nil || completedResult.Text != "revised" {
+		t.Errorf("final result.Text = %v, want %q", completedResult, "revised")
+	}
+	if b.IsTurnInFlight() {
+		t.Error("turn should be completed after round 2")
+	}
+}
+
+func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
+	// Verifies that when PreAnswerNudgeFunc returns "" (gate not firing),
+	// OnResult falls through to the standard completion path without any
+	// writer traffic. Matches the no-nudger case from the caller's side.
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+	}
+	b.typingFunc = func(bool) {}
+
+	var completed *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete:     func(r *delegator.TurnResult) { completed = r },
+		PreAnswerNudgeFunc: func(_ *delegator.TurnResult) string { return "" },
+	}
+	b.beginTurn(handler)
+	b.turnMu.Lock()
+	b.turnText.WriteString("final answer")
+	b.turnMu.Unlock()
+
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	if completed == nil {
+		t.Fatal("OnTurnComplete should fire when pre_answer returns empty")
+	}
+	if completed.Text != "final answer" {
+		t.Errorf("result.Text = %q, want %q", completed.Text, "final answer")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("writer should stay empty when pre_answer returns empty, got: %q", buf.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OnSystem
 // ---------------------------------------------------------------------------
