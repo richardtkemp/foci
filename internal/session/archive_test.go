@@ -214,6 +214,79 @@ func TestArchiveSweep_GzipsArchiveFiles(t *testing.T) {
 	}
 }
 
+func TestArchiveSweep_GzipPreservesFileMode(t *testing.T) {
+	// Proves that .jsonl.gz files created by ArchiveSweep inherit the
+	// permission bits of the source .jsonl (both for the main file and for
+	// numbered archive files gzipped alongside it). Without this, a store
+	// configured with 0640 would produce world-readable 0644 archives.
+	dir := t.TempDir()
+	store := NewStore(dir)
+	store.SetFileMode(0640)
+	idx := tempIndex(t)
+
+	// Create a session and compact it so both a main file and a numbered
+	// archive exist — both should end up with 0640 after sweep.
+	store.TestAppend("bot/c100/1000000000", msg("user", "hello"))
+	store.TestReplace("bot/c100/1000000000", []provider.Message{msg("user", "compacted")})
+	idx.Rebuild(store)
+
+	past := time.Now().UTC().Add(-48 * time.Hour)
+	idx.UpdateActivity("bot/c100/1000000000", past)
+	path := mustSessionPath(t, store, "bot/c100/1000000000")
+
+	// Sanity check: source files were created with 0640.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat source: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0640 {
+		t.Fatalf("source .jsonl perms = %o, want 0640", perm)
+	}
+
+	archived, err := ArchiveSweep(store, idx, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("ArchiveSweep: %v", err)
+	}
+	if archived != 1 {
+		t.Fatalf("expected 1 archived, got %d", archived)
+	}
+
+	// Main .jsonl.gz should have source perms.
+	info, err = os.Stat(path + ".gz")
+	if err != nil {
+		t.Fatalf("stat main .gz: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0640 {
+		t.Errorf("main .jsonl.gz perms = %o, want 0640", perm)
+	}
+
+	// Any numbered archive .gz in the session directory should also match.
+	sessionDir := filepath.Dir(path)
+	entries, err := os.ReadDir(sessionDir)
+	if err != nil {
+		t.Fatalf("read session dir: %v", err)
+	}
+	found := 0
+	for _, e := range entries {
+		name := e.Name()
+		if name == "root.jsonl.gz" || !strings.HasSuffix(name, ".jsonl.gz") {
+			continue
+		}
+		full := filepath.Join(sessionDir, name)
+		info, err := os.Stat(full)
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if perm := info.Mode().Perm(); perm != 0640 {
+			t.Errorf("archive %s perms = %o, want 0640", name, perm)
+		}
+		found++
+	}
+	if found == 0 {
+		t.Error("expected at least one numbered archive .jsonl.gz")
+	}
+}
+
 func TestDecompressIfGzipped(t *testing.T) {
 	// Proves that Load transparently decompresses a .jsonl.gz file: the original
 	// content is returned, the .jsonl is restored on disk, and the .gz is removed.

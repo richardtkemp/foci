@@ -414,6 +414,8 @@ func ArchiveSweep(store *Store, index *SessionIndex, maxAge time.Duration) (int,
 }
 
 // gzipFile compresses src to src.gz and removes the original.
+// The .gz file is created with the same permission bits as src so that
+// archived sessions inherit whatever mode the live file was using.
 func gzipFile(src string) error {
 	in, err := os.Open(src)
 	if os.IsNotExist(err) {
@@ -424,8 +426,13 @@ func gzipFile(src string) error {
 	}
 	defer func() { _ = in.Close() }()
 
+	info, err := in.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", src, err)
+	}
+
 	dst := src + ".gz"
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
