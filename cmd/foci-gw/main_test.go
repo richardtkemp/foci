@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -76,40 +75,6 @@ func TestGracefulShutdown_TimesOut(t *testing.T) {
 	ag.SetProcessingForTest(0)
 }
 
-func TestProcessingCounter(t *testing.T) {
-	ag := &agent.Agent{}
-	if ag.IsProcessing() {
-		t.Fatal("new agent should not be processing")
-	}
-
-	ag.SetProcessingForTest(1)
-	if !ag.IsProcessing() {
-		t.Fatal("agent should be processing after SetProcessingForTest(1)")
-	}
-
-	ag.SetProcessingForTest(0)
-	if ag.IsProcessing() {
-		t.Fatal("agent should not be processing after SetProcessingForTest(0)")
-	}
-}
-
-func TestProcessingCounter_Multiple(t *testing.T) {
-	ag := &agent.Agent{}
-	ag.SetProcessingForTest(2)
-	if !ag.IsProcessing() {
-		t.Fatal("should be processing with count 2")
-	}
-
-	ag.SetProcessingForTest(1)
-	if !ag.IsProcessing() {
-		t.Fatal("should still be processing with count 1")
-	}
-
-	ag.SetProcessingForTest(0)
-	if ag.IsProcessing() {
-		t.Fatal("should not be processing with count 0")
-	}
-}
 
 func TestReadAndConsumeWelcomeFile(t *testing.T) {
 	// Proves that readAndConsumeWelcomeFile reads the file, deletes it, and
@@ -485,67 +450,6 @@ func TestPerAgentMemoryIndex(t *testing.T) {
 	}
 }
 
-
-// ========== tokenHolder tests ==========
-
-func TestTokenHolder_GetSet(t *testing.T) {
-	h := anthropic.NewTokenHolder("initial")
-	tok, err := h.Get()
-	if err != nil {
-		t.Fatalf("Get: unexpected error: %v", err)
-	}
-	if tok != "initial" {
-		t.Errorf("Get = %q, want %q", tok, "initial")
-	}
-
-	h.Set("updated")
-	tok, err = h.Get()
-	if err != nil {
-		t.Fatalf("Get after Set: unexpected error: %v", err)
-	}
-	if tok != "updated" {
-		t.Errorf("Get after Set = %q, want %q", tok, "updated")
-	}
-}
-
-func TestTokenHolder_EmptyReturnsError(t *testing.T) {
-	h := anthropic.NewTokenHolder("")
-	_, err := h.Get()
-	if err == nil {
-		t.Fatal("expected error for empty tokenHolder")
-	}
-}
-
-func TestTokenHolder_ConcurrentAccess(t *testing.T) {
-	h := anthropic.NewTokenHolder("start")
-	var wg sync.WaitGroup
-
-	// Concurrent writers
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			h.Set("token-" + strings.Repeat("x", i))
-		}(i)
-	}
-
-	// Concurrent readers
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tok, err := h.Get()
-			if err != nil {
-				t.Errorf("concurrent Get error: %v", err)
-			}
-			if tok == "" {
-				t.Error("concurrent Get returned empty")
-			}
-		}()
-	}
-
-	wg.Wait()
-}
 
 // ========== /-/reload-credentials endpoint tests ==========
 

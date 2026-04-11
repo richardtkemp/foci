@@ -252,3 +252,42 @@ func TestConcurrentTurnCancellation(t *testing.T) {
 	}
 }
 
+func TestProcessingCounter(t *testing.T) {
+	// Proves IsProcessing reflects the atomic counter set by SetProcessingForTest:
+	// false when zero, true when non-zero.
+	ag := &Agent{}
+	if ag.IsProcessing() {
+		t.Fatal("new agent should not be processing")
+	}
+
+	ag.SetProcessingForTest(1)
+	if !ag.IsProcessing() {
+		t.Fatal("agent should be processing after SetProcessingForTest(1)")
+	}
+
+	ag.SetProcessingForTest(0)
+	if ag.IsProcessing() {
+		t.Fatal("agent should not be processing after SetProcessingForTest(0)")
+	}
+}
+
+func TestProcessingCounter_Multiple(t *testing.T) {
+	// Proves IsProcessing remains true while the counter is above zero and
+	// transitions to false only once the counter reaches exactly zero.
+	ag := &Agent{}
+	ag.SetProcessingForTest(2)
+	if !ag.IsProcessing() {
+		t.Fatal("should be processing with count 2")
+	}
+
+	ag.SetProcessingForTest(1)
+	if !ag.IsProcessing() {
+		t.Fatal("should still be processing with count 1")
+	}
+
+	ag.SetProcessingForTest(0)
+	if ag.IsProcessing() {
+		t.Fatal("should not be processing with count 0")
+	}
+}
+
