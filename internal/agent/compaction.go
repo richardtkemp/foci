@@ -8,9 +8,12 @@ import (
 
 	"foci/internal/compaction"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/provider"
 	"foci/shared/prompts"
 )
+
+const delegatedCompactTimeout = 5 * time.Minute
 
 // CompactResult holds the outcome of a compaction operation.
 type CompactResult struct {
@@ -75,6 +78,58 @@ func (a *Agent) doCompact(ctx context.Context, sessionKey string, system []provi
 	}
 
 	return result, nil
+}
+
+// runDelegatedCompact sends "/compact $instructions" to a delegated backend
+// and waits for the compact_boundary signal. Fires start and notify hooks,
+// reloads nudge rules. Shared by manual /compact (CompactSession) and the
+// auto-compaction path (DelegatedTransport.RunCompaction). Callers own their
+// own pre/post work (memory formation, threshold checks, session meta cleanup).
+//
+// The input ctx is wrapped with delegatedCompactTimeout. Auto-compaction
+// passes context.Background because the turn context is already cancelled;
+// manual compaction passes the user command context so /stop can interrupt.
+func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator, sessionKey string) error {
+	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
+	if summaryPrompt == "" {
+		return fmt.Errorf("compaction summary prompt is empty")
+	}
+
+	for _, fn := range a.CompactionStartFunc {
+		fn(sessionKey, "⏳ Compacting context...")
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, delegatedCompactTimeout)
+	defer cancel()
+
+	// Arm the waiter before sending so compact_boundary is never missed.
+	if cw, ok := be.(delegator.CompactionWaiter); ok {
+		cw.ArmCompactionWait()
+	}
+
+	if err := be.SendCommand(cctx, fmt.Sprintf("/compact %s", summaryPrompt), ""); err != nil {
+		return fmt.Errorf("send /compact: %w", err)
+	}
+
+	var waitErr error
+	if cw, ok := be.(delegator.CompactionWaiter); ok {
+		waitErr = cw.WaitForCompaction(cctx)
+	} else {
+		waitErr = be.WaitForTurn(cctx)
+	}
+	if waitErr != nil {
+		return fmt.Errorf("wait for compaction: %w", waitErr)
+	}
+
+	for _, fn := range a.CompactionNotifyFunc {
+		fn(sessionKey, "✅ Context compacted (delegated).")
+	}
+
+	// CC owns the system prompt for delegated agents — don't reload Bootstrap.
+	if a.NudgeReloadFunc != nil {
+		a.NudgeReloadFunc()
+	}
+	return nil
 }
 
 // maybeCompact checks whether context compaction is needed and performs it.

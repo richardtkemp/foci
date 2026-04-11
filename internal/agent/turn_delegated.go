@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/provider"
-	"foci/shared/prompts"
 )
 
 // ---------------------------------------------------------------------------
@@ -398,13 +396,12 @@ func (t *DelegatedTransport) LogUsage(ts *TurnState) {
 		ts.FinalUsage.CacheReadInputTokens, ts.FinalUsage.CacheCreationInputTokens, cost)
 }
 
-// RunCompaction checks whether context compaction is needed and sends
-// "/compact $instructions" to CC with foci's own compaction prompt.
+// RunCompaction checks whether context compaction is needed and dispatches
+// to the shared runDelegatedCompact primitive when the threshold is hit.
 // Two triggers: (1) standard threshold (e.g. 80% of context window),
 // (2) mana-refresh (lower threshold when Anthropic rate limit resets soon).
 // The watcher's TurnUsage provides the token counts; the context window
-// comes from model metadata. CC handles the actual compaction — foci
-// controls when it fires and what instructions are used.
+// comes from model metadata.
 func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 	a := t.agent
 	if a.Compactor == nil || ts.FinalUsage == nil {
@@ -455,63 +452,21 @@ func (t *DelegatedTransport) RunCompaction(ts *TurnState) {
 		return
 	}
 
-	// Resolve compaction instructions and send to CC.
-	summaryPrompt := prompts.ResolvePrompt(a.CompactionSummaryPromptPath, "compaction-summary.md", prompts.CompactionSummary(), a.PromptSearchDirs...)
-	if summaryPrompt == "" {
-		a.logger().Warnf("session=%s compaction prompt is empty, skipping delegated compaction", ts.SessionKey)
-		return
-	}
-
+	// Memory formation runs only on auto-compaction — the post-turn hook is
+	// where the agent records insights before the window shrinks.
 	for _, fn := range a.CompactionMemoryFunc {
 		fn(ts.SessionKey)
 	}
-	for _, fn := range a.CompactionStartFunc {
-		fn(ts.SessionKey, "⏳ Compacting context...")
-	}
 
-	// Send "/compact $instructions" to CC — CC handles the actual compaction
-	// using our prompt. This is different from the API transport which does
-	// its own API call; here CC owns the session and compaction mechanics.
-	cmd := fmt.Sprintf("/compact %s", summaryPrompt)
-	// Use Background — not ts.Ctx which may be cancelled (post-turn runs
-	// after processAgentMessage returns and the turn context is done).
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	// Arm the compaction waiter before sending the command so the
-	// compact_boundary signal is never missed (race-free).
-	if cw, ok := ts.Backend.(delegator.CompactionWaiter); ok {
-		cw.ArmCompactionWait()
-	}
-
-	if err := ts.Backend.SendCommand(ctx, cmd, ""); err != nil {
-		a.logger().Errorf("session=%s delegated compaction failed: %v", ts.SessionKey, err)
+	// Background — not ts.Ctx which may be cancelled (post-turn runs after
+	// processAgentMessage returns and the turn context is done).
+	if err := a.runDelegatedCompact(context.Background(), ts.Backend, ts.SessionKey); err != nil {
+		a.logger().Warnf("session=%s delegated compaction failed: %v", ts.SessionKey, err)
 		return
 	}
 
-	// Wait for CC to confirm compaction via compact_boundary. Backends that
-	// implement CompactionWaiter (ccstream) block on the stream event;
-	// others fall back to WaitForTurn.
-	var waitErr error
-	if cw, ok := ts.Backend.(delegator.CompactionWaiter); ok {
-		waitErr = cw.WaitForCompaction(ctx)
-	} else {
-		waitErr = ts.Backend.WaitForTurn(ctx)
-	}
-	if waitErr != nil {
-		a.logger().Warnf("session=%s timeout waiting for delegated compaction: %v", ts.SessionKey, waitErr)
-	} else {
-		for _, fn := range a.CompactionNotifyFunc {
-			fn(ts.SessionKey, "✅ Context compacted (delegated).")
-		}
-	}
-
-	// Don't reload Bootstrap here — CC owns the system prompt. Reloading
-	// would make /context show disk state instead of what CC is actually using.
-	// Bootstrap is only loaded on new session / /reset for delegated agents.
-	if a.NudgeReloadFunc != nil {
-		a.NudgeReloadFunc()
-	}
+	// Turn-specific post-compact state: per-turn session meta caches are
+	// stale now that CC has rewritten the transcript.
 	if ts.SessionMeta != nil {
 		ts.SessionMeta.systemBlocks = nil
 		ts.SessionMeta.prevCacheRead = 0

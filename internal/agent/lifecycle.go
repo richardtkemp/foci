@@ -84,13 +84,35 @@ func (a *Agent) ResetSession(ctx context.Context, sessionKey string) (string, er
 // Platform concerns (e.g. sending the dry-run summary as a document) are
 // handled via CompactionDebugFunc hooks. If no hooks are registered, the
 // summary is returned in CompactResult.Summary for the caller to handle.
+//
+// For delegated agents, CC owns the session file and the compaction mechanics —
+// this method sends "/compact $instructions" to CC and waits for the boundary
+// signal. Dry-run is not supported because CC has no dry-run mode.
 func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bool) (CompactResult, error) {
-	if a.Compactor == nil {
+	// Neither transport available — agent is misconfigured. Surface this
+	// first because it's more diagnostic than "no active session".
+	if a.Compactor == nil && a.DelegatedManager == nil {
 		return CompactResult{}, fmt.Errorf("compaction is not configured")
 	}
 	if sessionKey == "" {
 		return CompactResult{}, fmt.Errorf("no active session to compact")
 	}
+
+	// Fire memory formation before compaction so the memory agent sees the
+	// pre-compaction transcript. Both auto paths (maybeCompact for API,
+	// RunCompaction for delegated) fire this hook; manual /compact used to
+	// skip it, losing the chance to save memories before summarisation.
+	// Dry-run is excluded — it must not cause side effects.
+	if !dryRun {
+		for _, fn := range a.CompactionMemoryFunc {
+			fn(sessionKey)
+		}
+	}
+
+	if a.DelegatedManager != nil {
+		return a.compactDelegatedSession(ctx, sessionKey, dryRun)
+	}
+
 	mc, _ := a.Sessions.MessageCount(sessionKey)
 	if mc < 5 {
 		return CompactResult{}, fmt.Errorf("too few messages to compact (%d)", mc)
@@ -111,6 +133,24 @@ func (a *Agent) CompactSession(ctx context.Context, sessionKey string, dryRun bo
 		a.ResetCacheBaseline(resetKey)
 	}
 	return result, nil
+}
+
+// compactDelegatedSession handles manual /compact for backend-managed agents.
+// Looks up the backend and calls the shared runDelegatedCompact primitive.
+// Returns an empty CompactResult on success — CC owns the session file so
+// foci has no message count to report.
+func (a *Agent) compactDelegatedSession(ctx context.Context, sessionKey string, dryRun bool) (CompactResult, error) {
+	if dryRun {
+		return CompactResult{}, fmt.Errorf("dry-run compaction is not supported for delegated backends")
+	}
+	be, err := a.DelegatedManager.Get(ctx, sessionKey)
+	if err != nil {
+		return CompactResult{}, fmt.Errorf("get backend: %w", err)
+	}
+	if err := a.runDelegatedCompact(ctx, be, sessionKey); err != nil {
+		return CompactResult{}, err
+	}
+	return CompactResult{}, nil
 }
 
 // resetDelegatedSession handles session reset for backend-managed agents.

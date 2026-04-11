@@ -228,6 +228,68 @@ func TestCompactSession_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCompactSession_FiresMemoryHook(t *testing.T) {
+	// Proves that manual /compact fires the CompactionMemoryFunc hook before
+	// summarising, matching auto-compaction behavior. Regression test for the
+	// bug where manual compact silently skipped memory formation, losing the
+	// chance to persist insights from the pre-compaction transcript.
+	var turnCount atomic.Int32
+	client := compactionTestClient(&turnCount, -1)
+
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	compactor := compaction.NewCompactor(store, 0.8)
+
+	sessionKey := "test/compactmem/1000000000"
+	for i := 0; i < 3; i++ {
+		if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent(fmt.Sprintf("msg %d", i))}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent(fmt.Sprintf("reply %d", i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ag := &Agent{
+		Client:    client,
+		Sessions:  store,
+		Tools:     tools.NewRegistry(),
+		Bootstrap: bootstrap,
+		Compactor: compactor,
+		Model:     "claude-haiku-4-5",
+	}
+
+	var memoryFiredFor string
+	ag.CompactionMemoryFunc.Add(func(sk string) { memoryFiredFor = sk })
+
+	if _, err := ag.CompactSession(context.Background(), sessionKey, false); err != nil {
+		t.Fatalf("CompactSession: %v", err)
+	}
+	if memoryFiredFor != sessionKey {
+		t.Errorf("CompactionMemoryFunc fired for %q, want %q", memoryFiredFor, sessionKey)
+	}
+
+	// Dry-run must NOT fire memory formation (no side effects).
+	memoryFiredFor = ""
+	// Seed a new session for dry-run so the rotation from the first compaction
+	// doesn't leave us pointing at a stale key.
+	dryKey := "test/compactmemdry/1000000000"
+	for i := 0; i < 3; i++ {
+		if err := store.TestAppend(dryKey, provider.Message{Role: "user", Content: provider.TextContent("x")}); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.TestAppend(dryKey, provider.Message{Role: "assistant", Content: provider.TextContent("y")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ag.CompactSession(context.Background(), dryKey, true); err != nil {
+		t.Fatalf("CompactSession dry-run: %v", err)
+	}
+	if memoryFiredFor != "" {
+		t.Errorf("CompactionMemoryFunc fired during dry-run (for %q) — should be suppressed", memoryFiredFor)
+	}
+}
+
 func TestCompactSession_DryRun(t *testing.T) {
 	// Proves that dry-run mode runs compaction but does NOT reload the
 	// bootstrap, does NOT rotate the session, and returns an empty NewSessionKey.
@@ -370,6 +432,107 @@ func TestCompactSession_ErrorWhenEmptySession(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "too few messages") {
 		t.Errorf("error = %q, want to contain 'too few messages'", err.Error())
+	}
+}
+
+func TestCompactSession_Delegated(t *testing.T) {
+	// Proves that /compact on a delegated agent bypasses the foci message-count
+	// gate, resolves the backend via DelegatedManager, sends "/compact <prompt>"
+	// to CC, and fires start + notify hooks. This is the regression test for
+	// the bug where foci's MessageCount returned 0 for ccstream sessions
+	// (CC owns the session file) so /compact always failed with "too few messages".
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	sessionKey := "test/delegatedcompact/1000000000"
+
+	// Note: we deliberately do NOT seed any messages. Delegated agents have
+	// empty foci session files — the whole point is that /compact must work
+	// anyway.
+
+	var sentCommand string
+	dm := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			be := &mockBackendDM{running: true}
+			be.sendCommandFn = func(_ context.Context, cmd string, _ string) error {
+				sentCommand = cmd
+				return nil
+			}
+			return be, nil
+		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	// Pre-create the backend so Get() returns it.
+	if _, err := dm.Get(context.Background(), sessionKey); err != nil {
+		t.Fatalf("pre-create backend: %v", err)
+	}
+
+	ag := &Agent{
+		Sessions:         store,
+		Bootstrap:        bootstrap,
+		DelegatedManager: dm,
+		// Compactor is set on real delegated agents for the RunCompaction
+		// threshold path, but manual /compact for delegated agents doesn't
+		// need it — leaving nil here proves that.
+	}
+
+	var startMsgs, notifyMsgs []string
+	ag.CompactionStartFunc.Add(func(_, msg string) { startMsgs = append(startMsgs, msg) })
+	ag.CompactionNotifyFunc.Add(func(_, msg string) { notifyMsgs = append(notifyMsgs, msg) })
+
+	var nudgeReloaded bool
+	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
+
+	result, err := ag.CompactSession(context.Background(), sessionKey, false)
+	if err != nil {
+		t.Fatalf("CompactSession (delegated): %v", err)
+	}
+	if result.NewSessionKey != "" {
+		t.Errorf("delegated compact should not rotate session key, got %q", result.NewSessionKey)
+	}
+
+	if !strings.HasPrefix(sentCommand, "/compact ") {
+		t.Errorf("expected backend to receive /compact command, got %q", sentCommand)
+	}
+	if len(sentCommand) <= len("/compact ") {
+		t.Errorf("/compact command has no summary prompt body: %q", sentCommand)
+	}
+
+	if len(startMsgs) != 1 {
+		t.Errorf("expected 1 start message, got %d", len(startMsgs))
+	}
+	if len(notifyMsgs) != 1 {
+		t.Errorf("expected 1 notify message, got %d", len(notifyMsgs))
+	}
+	if !nudgeReloaded {
+		t.Error("NudgeReloadFunc should fire after delegated compaction")
+	}
+}
+
+func TestCompactSession_Delegated_DryRunUnsupported(t *testing.T) {
+	// Proves that dry-run mode returns a clear error for delegated agents,
+	// because CC's /compact command has no dry-run counterpart.
+	dm := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			return &mockBackendDM{running: true}, nil
+		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	ag := &Agent{DelegatedManager: dm}
+
+	_, err := ag.CompactSession(context.Background(), "test/session/1", true)
+	if err == nil {
+		t.Fatal("expected dry-run to be rejected for delegated agents")
+	}
+	if !strings.Contains(err.Error(), "dry-run") {
+		t.Errorf("error = %q, want to contain 'dry-run'", err.Error())
 	}
 }
 

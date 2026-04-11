@@ -55,7 +55,7 @@ All of this works unchanged when you delegate to CC:
 - **Nudges** — regex and every-N-turn triggers prepend to the user message.
 - **Message metadata** — `[meta]` / `[reminders]` / `[state]` prefix is composed by `composeTurnText` and joined into flat text via `JoinPrompt()` (instead of rich content blocks).
 - **Platform connections** — Telegram, Discord, Android, HTTP, voice — the reply stream is the same.
-- **Command dispatch** — `/sessions`, `/config`, `/mana`, `/stop`, `/reset`, `/facet`, etc. Foci handles them normally. `/model` and `/compact` pass through to CC via the ControlSender pattern.
+- **Command dispatch** — `/sessions`, `/config`, `/mana`, `/stop`, `/reset`, `/facet`, etc. Foci handles them normally. `/model` goes via the ControlSender pattern. `/compact` — both manual (`/compact` command) and auto (threshold / mana-refresh) — dispatches through `Agent.runDelegatedCompact`, which sends `/compact <foci-summary-prompt>` to CC and waits for the `compact_boundary` stream event.
 - **Attachments** — images and documents become `[Image saved to: ...]` path annotations so CC can `Read` them from disk.
 - **Steering** — mid-turn user messages are sent as `PriorityNow` user messages that interrupt the current tool execution.
 - **Memory formation** — injected into the live CC session as a prompt (not branched).

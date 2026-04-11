@@ -40,6 +40,7 @@ type mockBackendDM struct {
 	waitForTurnErr      error
 	waitForTurnBlock    chan struct{} // if non-nil, WaitForTurn blocks until closed
 	sendToPaneFn        func(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error)
+	sendCommandFn       func(context.Context, string, string) error
 	closeFn             func() error
 }
 
@@ -83,7 +84,12 @@ func (m *mockBackendDM) WaitForTurn(ctx context.Context) error {
 
 func (m *mockBackendDM) IsTurnInFlight() bool { return m.turnInFlight }
 
-func (m *mockBackendDM) SendCommand(_ context.Context, _ string, _ string) error { return nil }
+func (m *mockBackendDM) SendCommand(ctx context.Context, cmd string, priority string) error {
+	if m.sendCommandFn != nil {
+		return m.sendCommandFn(ctx, cmd, priority)
+	}
+	return nil
+}
 
 func (m *mockBackendDM) IsRunning() bool { return m.running }
 
