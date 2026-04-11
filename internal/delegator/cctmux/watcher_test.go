@@ -222,7 +222,7 @@ func TestHandleAssistant_ToolCallTracking(t *testing.T) {
 
 // TestHandleAssistant_SyntheticNoResponsePassedThrough verifies that synthetic
 // "no response" text blocks are passed through by the watcher — filtering is
-// handled downstream by platform.IsSilent (FilteredConnection and Finalize).
+// handled downstream by platform.IsSilent (bot SendText/SendTextToChat and Finalize).
 func TestHandleAssistant_SyntheticNoResponsePassedThrough(t *testing.T) {
 	for _, text := range []string{"No response requested.", "[[NO_RESPONSE]]"} {
 		t.Run(text, func(t *testing.T) {

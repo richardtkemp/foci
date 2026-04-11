@@ -105,9 +105,6 @@ func (p *mockProvider) DefaultPlatformConfig() config.PlatformConfig            
 func (p *mockProvider) ValidateConfig(config.PlatformConfig) []string           { return nil }
 func (p *mockProvider) Close() error                                            { return nil }
 
-// --- FilteredConnection tests ---
-
-
 // mockWizardProvider implements both MessagingProvider and SetupWizard.
 type mockWizardProvider struct {
 	mockProvider

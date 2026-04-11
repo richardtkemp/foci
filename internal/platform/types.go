@@ -105,8 +105,8 @@ type SendOptions struct {
 }
 
 // TextSender is implemented by platform bots for text delivery.
-// Silent-message filtering is handled automatically by FilteredConnection,
-// which wraps all connections from the ConnectionManager.
+// Silent-message filtering (platform.IsSilent) is handled by each concrete
+// implementation's SendText/SendTextToChat methods.
 type TextSender interface {
 	SendText(text string) error
 	SendTextToChat(chatID int64, text string) error

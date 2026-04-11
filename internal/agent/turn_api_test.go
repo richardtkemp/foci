@@ -1143,7 +1143,7 @@ func TestRunInference_SimpleEndToEnd(t *testing.T) {
 
 // TestRunInference_NoResponseSentinelPassedThrough verifies that the
 // [[NO_RESPONSE]] sentinel passes through RunInference — filtering is
-// handled downstream by platform.IsSilent (FilteredConnection and Finalize).
+// handled downstream by platform.IsSilent (bot SendText/SendTextToChat and Finalize).
 func TestRunInference_NoResponseSentinelPassedThrough(t *testing.T) {
 	client := &mockClient{
 		sendFn: func(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {

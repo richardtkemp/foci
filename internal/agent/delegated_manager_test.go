@@ -1213,6 +1213,93 @@ func TestSetBackendCallbacks(t *testing.T) {
 	}
 }
 
+func TestRotateBackendKey(t *testing.T) {
+	idx := newTestSessionIndex(t)
+	mgr, mocks := newTestManager(t, idx)
+
+	// Create a backend under the old key.
+	be, err := mgr.Get(context.Background(), "old-key")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if be == nil {
+		t.Fatal("Get returned nil")
+	}
+
+	// Simulate session-ready to persist a resume ID.
+	(*mocks)[0].mu.Lock()
+	osr := (*mocks)[0].onSessionReady
+	(*mocks)[0].mu.Unlock()
+	if osr != nil {
+		osr("resume-uuid-123")
+	}
+
+	// Rotate the key.
+	mgr.RotateBackendKey("old-key", "new-key")
+
+	// Old key should be gone — Get would create a new backend.
+	if mgr.Count() != 1 {
+		t.Fatalf("expected 1 backend after rotate, got %d", mgr.Count())
+	}
+
+	// New key should return the same backend without creating a new one.
+	be2, err := mgr.Get(context.Background(), "new-key")
+	if err != nil {
+		t.Fatalf("Get new-key: %v", err)
+	}
+	if len(*mocks) != 1 {
+		t.Fatalf("expected no new backend creation, got %d mocks", len(*mocks))
+	}
+	_ = be2
+
+	// Resume ID should be migrated: new key has it, old key doesn't.
+	newID := mgr.loadResumeID("new-key")
+	oldID := mgr.loadResumeID("old-key")
+	if newID != "resume-uuid-123" {
+		t.Errorf("resume ID not migrated to new key: got %q", newID)
+	}
+	if oldID != "" {
+		t.Errorf("resume ID not cleared from old key: got %q", oldID)
+	}
+}
+
+func TestRotateBackendKey_NoOp(t *testing.T) {
+	mgr, _ := newTestManager(t, nil)
+
+	// Rotating a key that doesn't exist should be a no-op, not panic.
+	mgr.RotateBackendKey("nonexistent", "new-key")
+
+	if mgr.Count() != 0 {
+		t.Fatalf("expected 0 backends, got %d", mgr.Count())
+	}
+}
+
+func TestRotateBackendKey_NilSessionIndex(t *testing.T) {
+	mgr, mocks := newTestManager(t, nil) // no session index
+
+	_, err := mgr.Get(context.Background(), "old-key")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	_ = mocks
+
+	// Should not panic even without a session index.
+	mgr.RotateBackendKey("old-key", "new-key")
+
+	if mgr.Count() != 1 {
+		t.Fatalf("expected 1 backend after rotate, got %d", mgr.Count())
+	}
+
+	// New key should find the existing backend.
+	_, err = mgr.Get(context.Background(), "new-key")
+	if err != nil {
+		t.Fatalf("Get new-key: %v", err)
+	}
+	if len(*mocks) != 1 {
+		t.Fatal("should not have created a new backend")
+	}
+}
+
 // contains is a test helper that checks if a string contains a substring.
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && searchString(s, sub)
