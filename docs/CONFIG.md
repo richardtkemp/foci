@@ -1196,6 +1196,8 @@ weight = 1.0
 
 Instead of calling an LLM API directly (the default `"api"` backend), an agent can delegate entire turns to a coding agent subprocess. The coding agent handles inference, tool execution, and context management; Foci handles platform delivery, prompt enrichment (metadata, reminders, nudges), and command dispatch.
 
+For a conceptual overview of the two paths and how to choose between them, see [BACKENDS.md](BACKENDS.md).
+
 Set `backend` on an `[[agents]]` entry to enable:
 
 ```toml
