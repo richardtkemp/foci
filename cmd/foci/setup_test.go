@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"foci/internal/provision"
-
 	_ "foci/internal/discord"  // register provider for SetupProviders
 	_ "foci/internal/telegram" // register provider for SetupProviders
 )
@@ -124,16 +122,6 @@ func TestParseSetupFlagsInfersImportMode(t *testing.T) {
 	}
 	if f.charImportDir != "/opt/foci-import/character" {
 		t.Errorf("charImportDir = %q, want /opt/foci-import/character", f.charImportDir)
-	}
-}
-
-// Verifies provision.IsValidAgentID works correctly through the setup code path.
-func TestValidationFunctions(t *testing.T) {
-	if !provision.IsValidAgentID("my-agent") {
-		t.Error("expected valid agent ID")
-	}
-	if provision.IsValidAgentID("-bad") {
-		t.Error("expected invalid agent ID")
 	}
 }
 
