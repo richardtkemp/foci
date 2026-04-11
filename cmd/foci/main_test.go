@@ -147,6 +147,12 @@ func mockGateway() *httptest.Server {
 
 
 
+// TestCLIEnvVars verifies that FOCI_* environment variables are correctly
+// honoured, including overrides from explicit flags. The test execs the built
+// foci binary as a subprocess and asserts on stdout/exit codes — it cannot
+// reference package symbols directly.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestCLIEnvVars(t *testing.T) {
 	server := mockGateway()
 	defer server.Close()
@@ -393,6 +399,11 @@ func TestSubcommandHelp(t *testing.T) {
 	}
 }
 
+// TestVersionCommand verifies that version, --version, and -v all print a
+// line starting with "foci " and exit zero. Execs the compiled binary as a
+// subprocess — cannot reference package symbols directly.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestVersionCommand(t *testing.T) {
 	for _, arg := range []string{"version", "--version", "-v"} {
 		t.Run(arg, func(t *testing.T) {
@@ -409,6 +420,11 @@ func TestVersionCommand(t *testing.T) {
 	}
 }
 
+// TestHelpCommand verifies that help, --help, and -h all print usage output
+// and exit zero. Execs the compiled binary as a subprocess — cannot reference
+// package symbols directly.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestHelpCommand(t *testing.T) {
 	for _, arg := range []string{"help", "--help", "-h"} {
 		t.Run(arg, func(t *testing.T) {

@@ -7,8 +7,13 @@ import (
 	"testing"
 )
 
-// TestCLIIntegration verifies all major CLI commands work end-to-end against a mock gateway.
-// It tests async vs sync modes, flag parsing, and error handling for various command combinations.
+// TestCLIIntegration verifies all major CLI commands work end-to-end against a
+// mock gateway. It tests async vs sync modes, flag parsing, and error handling
+// for various command combinations. The test execs the built foci binary as a
+// subprocess and asserts on stdout/exit codes — it cannot reference package
+// symbols directly.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestCLIIntegration(t *testing.T) {
 	server := mockGateway()
 	defer server.Close()
@@ -141,7 +146,12 @@ func TestCLIIntegration(t *testing.T) {
 	}
 }
 
-// TestCLIMessageFile verifies -mt and -mf flags work correctly, including file reading and conflicts.
+// TestCLIMessageFile verifies -mt and -mf flags work correctly, including file
+// reading and conflicts. The test execs the built foci binary as a subprocess
+// and asserts on stdout/exit codes — it cannot reference package symbols
+// directly.
+//
+// disconnected-test-ok: black-box CLI integration test; execs compiled binary
 func TestCLIMessageFile(t *testing.T) {
 	server := mockGateway()
 	defer server.Close()
