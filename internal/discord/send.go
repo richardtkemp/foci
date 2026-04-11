@@ -250,12 +250,8 @@ func (b *Bot) SendStartupNotification(agentID string) {
 
 // SendText sends a text message to the default channel without any header.
 // Returns an error if no channel ID is available.
-// Silently drops messages matching platform.IsSilent (sentinels, empty).
+// Delegates to SendTextToChat, which handles IsSilent filtering.
 func (b *Bot) SendText(text string) error {
-	if platform.IsSilent(text) {
-		return nil
-	}
-
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
 		// Fall back to last known channel.
@@ -266,10 +262,7 @@ func (b *Bot) SendText(text string) error {
 	if channelID == 0 {
 		return fmt.Errorf("no channel ID -- no default channel configured")
 	}
-
-	channelIDStr := strconv.FormatInt(channelID, 10)
-	b.sendMarkdownChunks(channelIDStr, text)
-	return nil
+	return b.SendTextToChat(channelID, text)
 }
 
 
@@ -287,11 +280,8 @@ func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
 // SendToSession sends a text message (without header) to the channel
 // associated with the given session key. Falls back to the bot's default channel
 // if the session key doesn't contain a chat ID.
+// Delegates to SendTextToChat, which handles IsSilent filtering.
 func (b *Bot) SendToSession(sessionKey, text string) error {
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-
 	chatID := session.ChatIDFromKey(sessionKey)
 	if chatID == 0 {
 		chatID = b.DefaultChatID()
@@ -299,10 +289,7 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 	if chatID == 0 {
 		return fmt.Errorf("no channel ID for session %q and no default channel", sessionKey)
 	}
-
-	channelIDStr := strconv.FormatInt(chatID, 10)
-	b.sendMarkdownChunks(channelIDStr, text)
-	return nil
+	return b.SendTextToChat(chatID, text)
 }
 
 // sendToLastChannel resolves the last known channel ID and calls fn with it.
