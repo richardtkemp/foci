@@ -14,7 +14,7 @@ func seedDefaultPrompts(dir string, fileMode os.FileMode) {
 	promptFiles := map[string]func() string{
 		"keepalive.md":                    prompts.Keepalive,
 		"background.md":                   prompts.Background,
-		"memory-formation.md":             prompts.MemoryFormation,
+		"reflection.md":                   prompts.Reflection,
 		"memory-consolidation.md":         prompts.MemoryConsolidation,
 		"compaction-summary.md":           prompts.CompactionSummary,
 		"compaction-handoff.md":           prompts.CompactionHandoff,

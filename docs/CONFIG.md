@@ -253,7 +253,7 @@ When no config override is set, embedded defaults from `shared/prompts/` are use
 - `shared/prompts/compaction-handoff.md` — post-compaction handoff message
 - `shared/prompts/keepalive.md` — keepalive ping prompt
 - `shared/prompts/background.md` — background work prompt
-- `shared/prompts/memory-formation.md` — memory formation prompt (interval + session-end)
+- `shared/prompts/reflection.md` — reflection pass prompt (memory + skill formation; interval, session-end, and compaction)
 - `shared/prompts/memory-consolidation.md` — MEMORY.md consolidation prompt
 
 ### `[memory]`
@@ -1003,14 +1003,14 @@ Automatic memory capture and MEMORY.md consolidation. All three sub-features def
 |-----|------|---------|-------------|
 | `interval_enabled` | bool | `true` | Enable periodic memory capture on timer. |
 | `interval` | string | `"1h"` | Time between interval captures. |
-| `interval_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+| `interval_prompt` | string | `""` | Prompt override. `""` = embedded `reflection.md`, `"none"` = disabled, `/path` = custom file. |
 | `consolidation_enabled` | bool | `true` | Enable periodic MEMORY.md curation. |
 | `consolidation_interval` | string | `"20h"` | Minimum time between consolidation runs. Persisted across restarts. |
 | `consolidation_prompt` | string | `""` | Prompt override. `""` = embedded `memory-consolidation.md`, `"none"` = disabled, `/path` = custom file. |
 | `session_end_enabled` | bool | `true` | Run memory formation on `/reset` and facet reclaim. |
-| `session_end_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+| `session_end_prompt` | string | `""` | Prompt override. `""` = embedded `reflection.md`, `"none"` = disabled, `/path` = custom file. |
 | `compaction_enabled` | bool | `true` | Run memory formation before compaction summarises context. |
-| `compaction_prompt` | string | `""` | Prompt override. `""` = embedded `memory-formation.md`, `"none"` = disabled, `/path` = custom file. |
+| `compaction_prompt` | string | `""` | Prompt override. `""` = embedded `reflection.md`, `"none"` = disabled, `/path` = custom file. |
 | `backend_quiet_period` | string | `"5m"` | Minimum idle time before memory formation fires in backend/delegated mode. Prevents formation from triggering while the backend agent is still actively working. |
 
 All prompt fields use 3-state resolution: `""` or `"default"` → embedded default from `shared/prompts/`, `"none"` → disabled, file path → read file with embedded fallback on error.

@@ -23,7 +23,7 @@ func (a *Agent) FireCompactionMemory(ctx context.Context, sessionKey, orientTemp
 		return
 	}
 
-	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.CompactionPrompt, "memory-formation.md", prompts.MemoryFormation(), a.PromptSearchDirs...)
+	prompt := prompts.ResolvePrompt(a.MemoryFormationConfig.CompactionPrompt, "reflection.md", prompts.Reflection(), a.PromptSearchDirs...)
 	if prompt == "" {
 		return
 	}

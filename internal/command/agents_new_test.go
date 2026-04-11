@@ -292,7 +292,7 @@ func TestCreateWorkspace(t *testing.T) {
 	os.MkdirAll(filepath.Join(defaultsDir, "character"), 0755)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "SOUL.md"), []byte("- **Name:** <!-- your name -->\n"), 0644)
 	os.WriteFile(filepath.Join(defaultsDir, "character", "CRAFT.md"), []byte("craft content"), 0644)
-	os.WriteFile(filepath.Join(defaultsDir, "crontab.template"), []byte("*/30 * * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/memory-formation.md 2>&1 >> HOMEDIR/logs/cron.log\n"), 0644)
+	os.WriteFile(filepath.Join(defaultsDir, "crontab.template"), []byte("*/30 * * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/shared/prompts/reflection.md 2>&1 >> HOMEDIR/logs/cron.log\n"), 0644)
 
 	configPath := filepath.Join(tmpDir, "foci.toml")
 	os.WriteFile(configPath, []byte("# existing config\n"), 0644)

@@ -41,7 +41,7 @@ Setting env vars is useful for crontab entries where the same agent/session is t
 ```crontab
 FOCI_AGENT=clutch
 FOCI_IF_ACTIVE=4h
-*/30 * * * * foci send -mf /home/foci/shared/prompts/memory-formation.md
+*/30 * * * * foci send -mf /home/foci/shared/prompts/reflection.md
 0 7 * * * foci branch --oneshot -mf /home/foci/shared/prompts/morning-routine.md
 ```
 
@@ -86,7 +86,7 @@ foci send --sync "check the weather forecast"
 foci send -mt "check the weather forecast"
 
 # Send file contents as the message
-foci send -mf /home/foci/shared/prompts/memory-formation.md
+foci send -mf /home/foci/shared/prompts/reflection.md
 
 # Send to a specific agent
 foci send -a research "summarize today's news"

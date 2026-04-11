@@ -19,10 +19,10 @@ type BranchDoneFunc func(branchType, branchKey string)
 // the existing CC session rather than creating a new one. These need the
 // parent's conversation context and are short-lived.
 var branchTypesForMainSession = map[string]bool{
-	"memory-formation":    true,
-	"session-end-memory":  true,
-	"compaction-memory":   true,
-	"keepalive":           true,
+	"reflection":         true,
+	"session-end-memory": true,
+	"compaction-memory":  true,
+	"keepalive":          true,
 }
 
 // buildBranchFunc returns a function that creates a branch session from a
