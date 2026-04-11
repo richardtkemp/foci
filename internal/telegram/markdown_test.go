@@ -350,6 +350,53 @@ func TestConvertToTelegramHTML(t *testing.T) {
 			in:   "`a` `b` `c` `d` `e` `f` `g` `h` `i` `j` `k` `l`",
 			want: "<code>a</code> <code>b</code> <code>c</code> <code>d</code> <code>e</code> <code>f</code> <code>g</code> <code>h</code> <code>i</code> <code>j</code> <code>k</code> <code>l</code>",
 		},
+		// Inline code adjacent to parens must NOT be consumed by the link
+		// regex. Regression for a bug where the [INLINECODE%d] placeholder
+		// collided with the `[text](url)` pattern, silently dropping the
+		// inline code content and leaking the placeholder as link anchor text.
+		{
+			name: "inline code followed by parens not treated as link",
+			in:   "`code`(url)",
+			want: "<code>code</code>(url)",
+		},
+		{
+			name: "inline code function signature",
+			in:   "use `Printf`(format, args) here",
+			want: "use <code>Printf</code>(format, args) here",
+		},
+		{
+			name: "two adjacent inline codes then parens",
+			in:   "`first` `second`(c)",
+			want: "<code>first</code> <code>second</code>(c)",
+		},
+		{
+			name: "code block followed by parens",
+			in:   "```\nbody\n```\n(not a link)",
+			want: "<pre><code>body</code></pre>\n(not a link)",
+		},
+		// A fenced code block containing single backticks (e.g. a shell
+		// command with `$(...)` or grep `\`pattern\``) must render with the
+		// full content intact. This is the formatToolInput → markdown
+		// pipeline for permission prompt commands.
+		{
+			name: "code block with internal single backticks",
+			in:   "```\ngrep -oP '`(high|med|low)`' file\n```",
+			want: "<pre><code>grep -oP '`(high|med|low)`' file</code></pre>",
+		},
+		// Stray NUL bytes in input must be stripped so they can't corrupt
+		// placeholder boundaries (we use NUL as the placeholder delimiter).
+		{
+			name: "nul bytes stripped from input",
+			in:   "before\x00after",
+			want: "beforeafter",
+		},
+		// Literal "[INLINECODE0]" in input should render as-is — placeholders
+		// use NUL delimiters now, so this form is just text.
+		{
+			name: "literal bracketed placeholder form passes through",
+			in:   "see [INLINECODE0] token",
+			want: "see [INLINECODE0] token",
+		},
 	}
 
 	for _, tt := range tests {

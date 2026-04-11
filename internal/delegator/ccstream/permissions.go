@@ -226,10 +226,19 @@ func (req *PermissionRequestPayload) DisplayText() string {
 // formatToolInput extracts a human-readable summary from tool input JSON.
 // Uses toolName to determine which input field to display, aligned with
 // toolMatchKeys in autoapprove.go.
+//
+// Fields that may contain arbitrary shell/regex text (command, pattern, url,
+// query, and the JSON fallback) are rendered as fenced code blocks rather
+// than inline code. Inline code delimiters (single backticks) would be
+// broken by internal backticks in the content — e.g. a grep command like
+// `grep -oP '`(high|med|low)`'` would pair the wrapper backticks with the
+// internal ones, losing part of the command in the markdown converter.
+// Fenced blocks delimit on triple backticks, which shell content practically
+// never contains.
 func formatToolInput(toolName string, input json.RawMessage) string {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(input, &m); err != nil {
-		return fmt.Sprintf("`%s`", string(input))
+		return fencedBlock(string(input))
 	}
 
 	// Use toolMatchKeys to find the primary input field for this tool.
@@ -239,17 +248,17 @@ func formatToolInput(toolName string, input json.RawMessage) string {
 			if json.Unmarshal(raw, &s) == nil {
 				switch key {
 				case "command":
-					return fmt.Sprintf("`%s`", s)
+					return fencedBlock(s)
 				case "file_path":
 					return fmt.Sprintf("File: `%s`", s)
 				case "pattern":
-					return fmt.Sprintf("Pattern: `%s`", s)
+					return "Pattern:\n" + fencedBlock(s)
 				case "url":
-					return fmt.Sprintf("URL: `%s`", s)
+					return "URL:\n" + fencedBlock(s)
 				case "query":
-					return fmt.Sprintf("Query: `%s`", s)
+					return "Query:\n" + fencedBlock(s)
 				default:
-					return fmt.Sprintf("`%s`", s)
+					return fencedBlock(s)
 				}
 			}
 		}
@@ -258,13 +267,21 @@ func formatToolInput(toolName string, input json.RawMessage) string {
 	// Fallback: compact JSON.
 	compact, err := json.Marshal(m)
 	if err != nil {
-		return fmt.Sprintf("`%s`", string(input))
+		return fencedBlock(string(input))
 	}
 	s := string(compact)
 	if len(s) > 200 {
 		s = s[:200] + "…"
 	}
-	return fmt.Sprintf("`%s`", s)
+	return fencedBlock(s)
+}
+
+// fencedBlock wraps s in a triple-backtick markdown code fence. The fence
+// protects content from inline-code regex matching in the downstream
+// markdown-to-HTML converter — single backticks inside s are passed through
+// untouched.
+func fencedBlock(s string) string {
+	return "```\n" + s + "\n```"
 }
 
 // friendlyReason rewrites CC's internal decision reasons into user-facing text.
