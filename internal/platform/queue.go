@@ -3,6 +3,7 @@ package platform
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"foci/internal/log"
 )
@@ -17,6 +18,19 @@ type QueuedMessage struct {
 	IsGroupChat bool         // true = group/guild channel, false = DM
 	IsMention   bool         // true if @mentions the bot
 	Original    any          // *gotgbot.Message or *discordgo.Message
+	// ReceivedAt is stamped at the platform receipt boundary (toPlatformMessage)
+	// so that meta header timestamps reflect when the user actually sent the
+	// message, not when it was later drained into a turn.
+	ReceivedAt time.Time
+}
+
+// SteerEntry is a buffered steer message together with the time it was
+// received from the user. Preserving the receipt time lets orphaned steers
+// (drained after a turn completes and rebuilt as follow-up turns) show
+// accurate meta header timestamps.
+type SteerEntry struct {
+	Text       string
+	ReceivedAt time.Time
 }
 
 // MessageQueue manages inbound message buffering, steer injection, and
@@ -24,7 +38,7 @@ type QueuedMessage struct {
 type MessageQueue struct {
 	ch             chan QueuedMessage
 	steerMu        sync.Mutex
-	steerParts     []string
+	steerParts     []SteerEntry
 	throttle       *GroupThrottle // nil = disabled
 	requireMention bool
 	steerMode      bool
@@ -83,7 +97,7 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 
 	// Rule 2: group + mention + steer + turn active -> steer (urgent redirect)
 	if msg.IsGroupChat && msg.IsMention && q.steerMode && isActive && msg.Text != "" && len(msg.Attachments) == 0 {
-		q.AppendSteer(msg.Text)
+		q.AppendSteer(msg.Text, msg.ReceivedAt)
 		if q.log != nil {
 			q.log.Infof("steer: buffered mention from %s", q.senderLabel(msg))
 		}
@@ -103,7 +117,7 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 
 	// Rule 4: steer mode + turn active + text-only -> steer
 	if q.steerMode && isActive && msg.Text != "" && len(msg.Attachments) == 0 {
-		q.AppendSteer(msg.Text)
+		q.AppendSteer(msg.Text, msg.ReceivedAt)
 		if q.log != nil {
 			q.log.Infof("steer: buffered message from %s", q.senderLabel(msg))
 		}
@@ -144,16 +158,19 @@ func (q *MessageQueue) DrainQueue() []QueuedMessage {
 	}
 }
 
-// AppendSteer adds text to the steer buffer.
-func (q *MessageQueue) AppendSteer(text string) {
+// AppendSteer adds text to the steer buffer together with the time the
+// message was received. Use the platform receipt time so that when the buffer
+// is later drained into a follow-up turn, the meta header shows the original
+// send time rather than the drain time.
+func (q *MessageQueue) AppendSteer(text string, receivedAt time.Time) {
 	q.steerMu.Lock()
-	q.steerParts = append(q.steerParts, text)
+	q.steerParts = append(q.steerParts, SteerEntry{Text: text, ReceivedAt: receivedAt})
 	q.steerMu.Unlock()
 }
 
-// DrainSteer returns all pending steer parts and clears the buffer.
+// DrainSteer returns all pending steer entries and clears the buffer.
 // Returns nil if no messages are pending.
-func (q *MessageQueue) DrainSteer() []string {
+func (q *MessageQueue) DrainSteer() []SteerEntry {
 	q.steerMu.Lock()
 	defer q.steerMu.Unlock()
 	if len(q.steerParts) == 0 {
@@ -162,6 +179,22 @@ func (q *MessageQueue) DrainSteer() []string {
 	parts := q.steerParts
 	q.steerParts = nil
 	return parts
+}
+
+// DrainSteerTexts drains the steer buffer and returns just the text portions,
+// discarding receipt timestamps. Used by mid-turn injection paths (ccstream,
+// API transport) that paste steers into an in-flight turn and never render a
+// new meta header for them.
+func (q *MessageQueue) DrainSteerTexts() []string {
+	entries := q.DrainSteer()
+	if len(entries) == 0 {
+		return nil
+	}
+	texts := make([]string, len(entries))
+	for i, e := range entries {
+		texts[i] = e.Text
+	}
+	return texts
 }
 
 // SetThrottle sets the group throttle. Must be called before messages arrive.

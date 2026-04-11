@@ -25,7 +25,13 @@ type turnTextParts struct {
 // the traditional API path (which converts these to content blocks) and the
 // delegated path (which joins them into a single prompt string).
 func (a *Agent) composeTurnText(ctx context.Context, sessionKey string, turnModel string, manaStr string, manaGood bool, texts []string, attachments []platform.Attachment) turnTextParts {
-	now := time.Now()
+	// Prefer the platform receipt time so queued/steered messages render the
+	// time the user actually sent them. Fall back to wall clock for
+	// system-initiated turns (cron, keepalive, etc.).
+	now := ReceivedAtFromContext(ctx)
+	if now.IsZero() {
+		now = time.Now()
+	}
 	sm := a.getSessionMeta(sessionKey)
 	trigger := TriggerFromContext(ctx)
 	platName := triggerToPlatform(trigger)

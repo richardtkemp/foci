@@ -8,6 +8,7 @@ import (
 
 	"foci/internal/provider"
 	"foci/internal/session"
+	"foci/internal/timeutil"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
@@ -105,6 +106,50 @@ func TestMetadataInjectedInMessage(t *testing.T) {
 	}
 	if !strings.Contains(text, "Hello") {
 		t.Errorf("user message missing original text: %q", text)
+	}
+}
+
+// TestMetadataUsesReceivedAtNotWallClock proves that when the platform boundary
+// attaches a receipt time to ctx via WithReceivedAt, the [meta] header timestamp
+// reflects that value instead of the wall clock. This is the regression guard
+// for the bug where queued/steered Telegram messages were being stamped at
+// injection time (when the turn was drained) rather than when the user sent
+// the message — producing misleading gap calculations and time= values.
+func TestMetadataUsesReceivedAtNotWallClock(t *testing.T) {
+	var receivedReq *provider.MessageRequest
+	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
+		receivedReq = req
+		return &provider.MessageResponse{
+			ID:         "msg_test",
+			Type:       "message",
+			Role:       "assistant",
+			Content:    provider.TextContent("ok"),
+			StopReason: "end_turn",
+			Usage:      provider.Usage{InputTokens: 10, OutputTokens: 5},
+		}
+	})
+	ag := &Agent{
+		Client:    client,
+		Sessions:  session.NewStore(t.TempDir()),
+		Tools:     tools.NewRegistry(),
+		Bootstrap: workspace.NewBootstrap(t.TempDir(), []string{}),
+		Model:     "claude-haiku-4-5",
+	}
+
+	receivedAt := time.Date(2026, 4, 11, 13, 49, 0, 0, time.UTC)
+	ctx := WithReceivedAt(context.Background(), receivedAt)
+	if _, err := ag.hmTest(ctx, "test/ireceivedat/1000000000", "Dick's message"); err != nil {
+		t.Fatalf("hmTest: %v", err)
+	}
+	if receivedReq == nil {
+		t.Fatal("no request received")
+	}
+
+	lastMsg := receivedReq.Messages[len(receivedReq.Messages)-1]
+	text := provider.TextOf(lastMsg.Content)
+	wantStamp := "time=" + timeutil.Format(receivedAt)
+	if !strings.Contains(text, wantStamp) {
+		t.Errorf("meta header missing receipt timestamp %q: %q", wantStamp, text)
 	}
 }
 

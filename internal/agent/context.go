@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"sync"
+	"time"
 
 	"foci/internal/agent/turnevent"
 	"foci/internal/provider"
@@ -52,6 +53,23 @@ func WithTrigger(ctx context.Context, trigger string) context.Context {
 func TriggerFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(triggerKey{}).(string)
 	return s
+}
+
+// receivedAtKey is the context key for the user-message receipt time.
+type receivedAtKey struct{}
+
+// WithReceivedAt attaches the platform receipt time to a context. Platform
+// workers set this from the first message of the batched turn so the meta
+// header reflects when the user actually sent the message, not the time it
+// was drained out of the queue.
+func WithReceivedAt(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, receivedAtKey{}, t)
+}
+
+// ReceivedAtFromContext extracts the receipt time (zero Time if absent).
+func ReceivedAtFromContext(ctx context.Context) time.Time {
+	t, _ := ctx.Value(receivedAtKey{}).(time.Time)
+	return t
 }
 
 // isUserTrigger returns true if the trigger represents a human-initiated message

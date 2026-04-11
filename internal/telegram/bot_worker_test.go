@@ -87,14 +87,14 @@ func TestAgentWorker_OrphanDrainIsRecursive(t *testing.T) {
 			once.Do(func() {
 				// Simulate a message arriving during orphan-1 processing.
 				// In production, the receiver goroutine calls AppendSteer.
-				b.mq.AppendSteer("orphan-2")
+				b.mq.AppendSteer("orphan-2", time.Now())
 			})
 		}
 	}
 
 	// Pre-load the steer buffer with orphan-1 (simulates a message that
 	// arrived during the queued turn but wasn't consumed by tool execution).
-	b.mq.AppendSteer("orphan-1")
+	b.mq.AppendSteer("orphan-1", time.Now())
 
 	msg := &gotgbot.Message{
 		From: &gotgbot.User{Id: 111, Username: "testuser"},

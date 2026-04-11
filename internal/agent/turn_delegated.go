@@ -63,7 +63,7 @@ func (t *DelegatedTransport) ComposePrompt(ts *TurnState) error {
 
 	// Update lastMessageTime AFTER composition so the gap is calculated
 	// against the previous message, not the current one.
-	ts.SessionMeta.lastMessageTime = ts.StartedAt
+	ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
 
 	return nil
 }
@@ -243,7 +243,7 @@ func (t *DelegatedTransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
 	}
-	ts.SessionMeta.lastMessageTime = ts.StartedAt
+	ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
 	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
 	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens
 	ts.SessionMeta.prevCacheRead = ts.FinalUsage.CacheReadInputTokens

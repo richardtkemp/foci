@@ -517,7 +517,7 @@ func (t *APITransport) UpdateSessionMeta(ts *TurnState) {
 	if ts.SessionMeta == nil || ts.FinalUsage == nil {
 		return
 	}
-	ts.SessionMeta.lastMessageTime = ts.StartedAt
+	ts.SessionMeta.lastMessageTime = ts.UserMessageTime()
 	ts.SessionMeta.prevCost = ts.FinalCost
 	ts.SessionMeta.prevInput = ts.FinalUsage.InputTokens
 	ts.SessionMeta.prevOutput = ts.FinalUsage.OutputTokens

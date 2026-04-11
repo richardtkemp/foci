@@ -7,8 +7,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"foci/internal/command"
+	"foci/internal/platform"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -316,15 +318,23 @@ func TestToolResultObserver_StoresResult(t *testing.T) {
 
 
 func TestSteerBuffer_AppendAndDrain(t *testing.T) {
-	// Verifies basic steer buffer operations.
+	// Verifies basic steer buffer operations, including that AppendSteer
+	// preserves the receipt timestamp for each buffered entry so orphan-drain
+	// paths can reconstruct receive time on follow-up turns.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 
-	b.mq.AppendSteer("message1")
-	b.mq.AppendSteer("message2")
+	t1 := time.Date(2026, 4, 11, 13, 49, 0, 0, time.UTC)
+	t2 := time.Date(2026, 4, 11, 13, 50, 30, 0, time.UTC)
+	b.mq.AppendSteer("message1", t1)
+	b.mq.AppendSteer("message2", t2)
 
 	got := b.mq.DrainSteer()
-	if len(got) != 2 || got[0] != "message1" || got[1] != "message2" {
+	if len(got) != 2 || got[0].Text != "message1" || got[1].Text != "message2" {
 		t.Errorf("drainSteer = %v, want [message1 message2]", got)
+	}
+	if !got[0].ReceivedAt.Equal(t1) || !got[1].ReceivedAt.Equal(t2) {
+		t.Errorf("receipt times lost: got[0]=%v got[1]=%v, want %v/%v",
+			got[0].ReceivedAt, got[1].ReceivedAt, t1, t2)
 	}
 
 	// After drain, should be empty
@@ -353,13 +363,13 @@ func TestSteerBuffer_Concurrent(t *testing.T) {
 
 	go func() {
 		for i := 0; i < n; i++ {
-			b.mq.AppendSteer(fmt.Sprintf("msg-%d\n", i))
+			b.mq.AppendSteer(fmt.Sprintf("msg-%d\n", i), time.Now())
 		}
 		done <- true
 	}()
 
 	// Drain periodically until writer is done and buffer is empty
-	var collected []string
+	var collected []platform.SteerEntry
 	for {
 		if parts := b.mq.DrainSteer(); len(parts) > 0 {
 			collected = append(collected, parts...)
@@ -371,7 +381,11 @@ func TestSteerBuffer_Concurrent(t *testing.T) {
 				collected = append(collected, parts...)
 			}
 			// Verify we got all messages
-			joined := strings.Join(collected, "\n")
+			var texts []string
+			for _, e := range collected {
+				texts = append(texts, e.Text)
+			}
+			joined := strings.Join(texts, "\n")
 			for i := 0; i < n; i++ {
 				want := fmt.Sprintf("msg-%d", i)
 				if !strings.Contains(joined, want) {
@@ -407,7 +421,7 @@ func TestReceiveMessage_SteerRoutesToBuffer(t *testing.T) {
 
 	// Should be in steer buffer
 	got := b.mq.DrainSteer()
-	if len(got) != 1 || got[0] != "change direction" {
+	if len(got) != 1 || got[0].Text != "change direction" {
 		t.Errorf("steer buffer = %v, want [change direction]", got)
 	}
 }
@@ -475,7 +489,7 @@ func TestSetSteerMode(t *testing.T) {
 	if len(b.mq.Chan()) != 0 {
 		t.Error("with steer mode on, message should go to steer buffer not queue")
 	}
-	if got := b.mq.DrainSteer(); len(got) != 1 || got[0] != "steered" {
+	if got := b.mq.DrainSteer(); len(got) != 1 || got[0].Text != "steered" {
 		t.Errorf("steer buffer = %v, want [steered]", got)
 	}
 

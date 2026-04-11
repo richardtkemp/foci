@@ -174,6 +174,14 @@ type TurnState struct {
 	// Used for lastMessageTime, cache bust idle detection, etc.
 	StartedAt time.Time
 
+	// ReceivedAt is when the user message that triggered this turn was first
+	// received at the platform boundary. Used for the meta header timestamp
+	// and gap calculation so that queued/steered messages show the user's
+	// original send time instead of the delayed injection time. Zero for
+	// system-initiated turns (cron, keepalive, tmux watch), in which case
+	// callers should fall back to StartedAt / time.Now().
+	ReceivedAt time.Time
+
 	// --- Phase 3 outputs ---
 
 	FinalText  string          // response text from the completed turn
@@ -205,6 +213,17 @@ func NewTurnState(ctx context.Context, sessionKey string, texts []string, attach
 		Attachments:    attachments,
 		CompletionChan: make(chan struct{}),
 	}
+}
+
+// UserMessageTime returns the time the user message was received at the
+// platform boundary, falling back to StartedAt when ReceivedAt is unset
+// (system-initiated turns, or tests that build TurnState directly and skip
+// the orchestrator's context lookup).
+func (ts *TurnState) UserMessageTime() time.Time {
+	if !ts.ReceivedAt.IsZero() {
+		return ts.ReceivedAt
+	}
+	return ts.StartedAt
 }
 
 // sharedTurnOps holds shared method implementations inherited by both

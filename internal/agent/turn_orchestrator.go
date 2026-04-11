@@ -23,6 +23,10 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	}
 	ts.Trigger = TriggerFromContext(ctx)
 	ts.StartedAt = time.Now()
+	ts.ReceivedAt = ReceivedAtFromContext(ctx)
+	if ts.ReceivedAt.IsZero() {
+		ts.ReceivedAt = ts.StartedAt
+	}
 
 	// Phase 1: Pre-lock
 	if err := tc.RateLimitGate(ts); err != nil {

@@ -62,6 +62,7 @@ func (b *Bot) toPlatformMessage(msg *discordgo.Message, qm queuedMessage) platfo
 		IsGroupChat: isGroup,
 		IsMention:   isMention,
 		Original:    msg,
+		ReceivedAt:  msg.Timestamp,
 	}
 }
 
