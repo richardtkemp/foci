@@ -7,27 +7,35 @@ import (
 	"foci/internal/platform"
 )
 
-// hmTest wraps HandleMessage with a BufferSink so tests that want the old
-// (string, error) return shape can keep their existing assertions without
-// having to build a sink + read FinalText() inline at every call site.
-//
-// If ctx already carries a sink (e.g. a RecordingSink installed by the test
-// to assert on intermediate events), both receive every event via a TeeSink
-// — the BufferSink captures FinalText, and the caller's sink sees the full
-// event stream.
+// fnSink is a closure-to-Sink adapter used by tests in this package to
+// observe the event stream without defining one-off types per test. Lives
+// in a *_test.go file (and therefore invisible to deadcode) so the
+// production turnevent package stays free of test-only utilities; the
+// production sinks are all concrete (StreamingSink, SessionSink, BufferSink),
+// none of which expose per-event hooks tests need for assertions.
+type fnSink func(context.Context, turnevent.Event)
+
+// Emit implements turnevent.Sink.
+func (f fnSink) Emit(ctx context.Context, ev turnevent.Event) { f(ctx, ev) }
+
+// hmTest wraps HandleMessage with a fan-out sink that preserves any
+// previously-attached sink (so tests that want to observe intermediate
+// events keep working) and additionally captures TurnComplete.FinalText so
+// tests can assert on the (string, error) shape they used pre-refactor.
 func (a *Agent) hmTest(ctx context.Context, sessionKey, message string) (string, error) {
-	buf := turnevent.NewBufferSink()
-	existing := turnevent.SinkFromContext(ctx)
-	ctx = turnevent.WithSink(ctx, turnevent.NewTeeSink(existing, buf))
-	err := a.HandleMessage(ctx, sessionKey, []string{message}, nil)
-	return buf.FinalText(), err
+	return a.hmTestAttachments(ctx, sessionKey, []string{message}, nil)
 }
 
 // hmTestAttachments is the attachment-aware counterpart.
 func (a *Agent) hmTestAttachments(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (string, error) {
-	buf := turnevent.NewBufferSink()
 	existing := turnevent.SinkFromContext(ctx)
-	ctx = turnevent.WithSink(ctx, turnevent.NewTeeSink(existing, buf))
+	var finalText string
+	ctx = turnevent.WithSink(ctx, fnSink(func(c context.Context, ev turnevent.Event) {
+		existing.Emit(c, ev)
+		if tc, ok := ev.(turnevent.TurnComplete); ok {
+			finalText = tc.FinalText
+		}
+	}))
 	err := a.HandleMessage(ctx, sessionKey, texts, attachments)
-	return buf.FinalText(), err
+	return finalText, err
 }

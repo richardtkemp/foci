@@ -317,10 +317,10 @@ func TestSessionSinkFallsBackToFinalTextWhenSilent(t *testing.T) {
 	}
 }
 
-// TestSessionSinkEmptyFinalTextSends asserts that a TurnComplete with empty
+// TestSessionSinkEmptyFinalTextSkipped asserts that a TurnComplete with empty
 // FinalText and no prior delivery is a no-op — matches current agents_notify
 // behaviour which skips empty responses.
-func TestSessionSinkEmptyFinalTextSends(t *testing.T) {
+func TestSessionSinkEmptyFinalTextSkipped(t *testing.T) {
 	conn := &fakeSessionConn{}
 	sink := NewSessionSink(conn, "sess-1", "test")
 

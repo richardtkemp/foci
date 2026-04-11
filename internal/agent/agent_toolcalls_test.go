@@ -183,10 +183,10 @@ func TestRepairInterruptedToolCallsPersisted(t *testing.T) {
 }
 
 func TestIntermediateTextBeforeToolCalls(t *testing.T) {
-	// Verify the agent calls sendIntermediate before notifyToolCall when the
-	// API response contains both text and tool_use blocks. This ordering is
-	// critical for platform message display: thinking text must appear above
-	// tool call notifications in the chat.
+	// Verify the agent emits the intermediate TextBlock before the ToolCall
+	// event when the API response contains both text and tool_use blocks.
+	// This ordering is critical for platform message display: thinking text
+	// must appear above tool call notifications in the chat.
 	var callCount atomic.Int32
 
 	client := newTestClient(func(req *provider.MessageRequest) *provider.MessageResponse {
@@ -231,11 +231,11 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Record event order so we can assert ReplyFunc-then-ToolCall ordering.
+	// Record event order so we can assert TextBlock-before-ToolCall.
 	var mu sync.Mutex
 	var order []string
 
-	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+	recorder := fnSink(func(_ context.Context, ev turnevent.Event) {
 		switch e := ev.(type) {
 		case turnevent.TextBlock:
 			if e.Phase == turnevent.PhaseIntermediate {
@@ -260,13 +260,13 @@ func TestIntermediateTextBeforeToolCalls(t *testing.T) {
 	defer mu.Unlock()
 
 	if len(order) < 2 {
-		t.Fatalf("expected at least 2 callbacks, got %d: %v", len(order), order)
+		t.Fatalf("expected at least 2 events, got %d: %v", len(order), order)
 	}
 	if order[0] != "reply:Let me check..." {
-		t.Errorf("order[0] = %q, want reply callback first", order[0])
+		t.Errorf("order[0] = %q, want intermediate text first", order[0])
 	}
 	if order[1] != "tool:test_tool" {
-		t.Errorf("order[1] = %q, want tool callback second", order[1])
+		t.Errorf("order[1] = %q, want tool call second", order[1])
 	}
 }
 

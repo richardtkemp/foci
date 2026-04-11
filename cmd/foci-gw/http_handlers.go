@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -112,10 +111,7 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			cmdReq := command.RequestFromText(req.Text, sessionKey, "", 0)
 			cmdCtx := tools.WithSessionKey(d.ctx, sessionKey)
 			if result, ok, _ := inst.cmds.Dispatch(cmdCtx, cmdReq, inst.cc); ok {
-				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
-					log.Errorf("http", "encode response: %v", err)
-				}
+				writeJSONResponse(w, result.Text)
 				return
 			}
 		}
@@ -126,17 +122,13 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		buf := turnevent.NewBufferSink()
-		sendCtx = turnevent.WithSink(sendCtx, buf)
-		if err := inst.ag.HandleMessage(sendCtx, sessionKey, []string{req.Text}, nil); err != nil {
+		resp, err := runAgentBuffered(sendCtx, inst.ag, sessionKey, req.Text)
+		if err != nil {
 			log.Errorf("http", "send error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": buf.FinalText()}); err != nil {
-			log.Errorf("http", "encode response: %v", err)
-		}
+		writeJSONResponse(w, resp)
 	}
 }
 
@@ -161,10 +153,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 			http.Error(w, "status command not available", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
-			log.Errorf("http", "encode response: %v", err)
-		}
+		writeJSONResponse(w, result.Text)
 	}
 }
 
@@ -196,10 +185,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": result.Text}); err != nil {
-			log.Errorf("http", "encode response: %v", err)
-		}
+		writeJSONResponse(w, result.Text)
 	}
 }
 
@@ -294,18 +280,13 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		buf := turnevent.NewBufferSink()
-		wakeCtx = turnevent.WithSink(wakeCtx, buf)
-		if err := inst.ag.HandleMessage(wakeCtx, branchKey, []string{req.Text}, nil); err != nil {
+		resp, err := runAgentBuffered(wakeCtx, inst.ag, branchKey, req.Text)
+		if err != nil {
 			log.Errorf("wake", "error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": buf.FinalText()}); err != nil {
-			log.Errorf("http", "encode response: %v", err)
-		}
+		writeJSONResponse(w, resp)
 	}
 }
 
@@ -329,12 +310,7 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			if !ok {
 				return "", fmt.Errorf("unknown agent: %q", agentID)
 			}
-			buf := turnevent.NewBufferSink()
-			handleCtx := turnevent.WithSink(agent.WithTrigger(msgCtx, "voice"), buf)
-			if err := inst.ag.HandleMessage(handleCtx, sessionKey, []string{text}, nil); err != nil {
-				return "", err
-			}
-			return buf.FinalText(), nil
+			return runAgentBuffered(agent.WithTrigger(msgCtx, "voice"), inst.ag, sessionKey, text)
 		},
 		SessionExists: func(key string) bool {
 			msgs, err := d.sessions.Load(key)
@@ -445,17 +421,13 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			return
 		}
 
-		buf := turnevent.NewBufferSink()
-		sendCtx = turnevent.WithSink(sendCtx, buf)
-		if err := inst.ag.HandleMessage(sendCtx, sessionKey, []string{combined}, nil); err != nil {
+		resp, err := runAgentBuffered(sendCtx, inst.ag, sessionKey, combined)
+		if err != nil {
 			log.Errorf("http", "webhook error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]string{"response": buf.FinalText()}); err != nil {
-			log.Errorf("http", "encode response: %v", err)
-		}
+		writeJSONResponse(w, resp)
 	}
 }
 

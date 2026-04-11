@@ -159,6 +159,16 @@ func (t *ToolCallTracker) CleanupPreview() {
 // ObserveToolCall handles tool call visibility via send+edit pattern.
 // The id is the Anthropic tool_use_id (or the delegator's equivalent) —
 // it's the key used to correlate with the matching ObserveToolResult.
+//
+// The lock is held through the backend Send/Edit network call, deliberately:
+// the order slice (used by LastMsgID) must reflect the order tool messages
+// landed on the platform, so two concurrent ObserveToolCall calls have to
+// serialise on the network round-trip rather than racing on slice append.
+// In practice this is moot under the single-producer turnevent contract,
+// but remains correct under the broader "any goroutine may call" contract
+// the button-callback path also exercises. ObserveToolResult, by contrast,
+// copies state under the lock and releases before its IO since it has no
+// ordering constraint to preserve.
 func (t *ToolCallTracker) ObserveToolCall(id, toolName string, params json.RawMessage) {
 	mode := t.display.ShowToolCalls
 	if mode == "off" || mode == "" {

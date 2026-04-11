@@ -112,7 +112,7 @@ func main() {
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
 	}
 	if len(in.ToolResponse) > 0 {
-		out.ToolResponse = truncate(string(in.ToolResponse), maxFieldBytes)
+		out.ToolResponse = truncate(decodeToolResponse(in.ToolResponse), maxFieldBytes)
 	}
 	if in.Error != "" {
 		out.Error = truncate(in.Error, maxFieldBytes)
@@ -132,4 +132,20 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "...[truncated]"
+}
+
+// decodeToolResponse turns the raw tool_response RawMessage into a plain
+// string for downstream display. CC encodes most file/text tool results as
+// JSON strings (e.g. `"contents of the file"`), and forwarding the raw
+// bytes verbatim would leave the surrounding double quotes in the user-
+// visible "Show full" expansion. We try to unmarshal as a string first;
+// when that fails (objects, arrays, numbers — Bash structured output for
+// example), we fall back to the raw bytes so the tracker still gets
+// something legible.
+func decodeToolResponse(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return string(raw)
 }

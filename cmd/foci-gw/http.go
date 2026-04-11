@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -128,18 +129,40 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 	log.Infof("http", "registered endpoints: %s", endpointList)
 }
 
+// runAgentBuffered attaches a BufferSink to ctx, calls HandleMessage, and
+// returns the captured FinalText. Used by HTTP/voice/async/notify callers
+// that just need the final response text rather than streaming events —
+// the alternative is repeating the buf-sink-handle-finaltext four-line
+// dance at every site, which makes adding a new caller error-prone.
+func runAgentBuffered(ctx context.Context, ag *agent.Agent, sessionKey, text string) (string, error) {
+	buf := turnevent.NewBufferSink()
+	ctx = turnevent.WithSink(ctx, buf)
+	if err := ag.HandleMessage(ctx, sessionKey, []string{text}, nil); err != nil {
+		return "", err
+	}
+	return buf.FinalText(), nil
+}
+
+// writeJSONResponse writes a {"response": text} JSON envelope to w. Encoding
+// errors are logged but not returned because by this point the status line
+// has already been committed and there is nothing the caller can do.
+func writeJSONResponse(w http.ResponseWriter, text string) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"response": text}); err != nil {
+		log.Errorf("http", "encode response: %v", err)
+	}
+}
+
 // asyncDispatch handles async fire-and-forget requests: sends the agent message
 // in a goroutine, writes a 202 response, and optionally delivers the result via platform.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool) {
 	go func() {
-		buf := turnevent.NewBufferSink()
-		handleCtx := turnevent.WithSink(ctx, buf)
-		if err := inst.ag.HandleMessage(handleCtx, sessionKey, []string{text}, nil); err != nil {
+		resp, err := runAgentBuffered(ctx, inst.ag, sessionKey, text)
+		if err != nil {
 			log.Errorf(logTag, "async error: %v", err)
 			return
 		}
-		resp := buf.FinalText()
 		if resp != "" && !silent && connMgr != nil {
 			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
 				if err := conn.SendToSession(sessionKey, resp); err != nil {

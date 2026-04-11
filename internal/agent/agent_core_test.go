@@ -467,9 +467,9 @@ func TestDeferredReply(t *testing.T) {
 		Model:     "claude-haiku-4-5",
 	}
 
-	// Track intermediate replies via a context-scoped recording sink
+	// Track intermediate replies via a context-scoped fnSink observer.
 	var intermediateReplies []string
-	recorder := turnevent.SinkFunc(func(_ context.Context, ev turnevent.Event) {
+	recorder := fnSink(func(_ context.Context, ev turnevent.Event) {
 		if tb, ok := ev.(turnevent.TextBlock); ok && tb.Phase == turnevent.PhaseIntermediate {
 			intermediateReplies = append(intermediateReplies, tb.Text)
 		}

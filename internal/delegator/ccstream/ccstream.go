@@ -958,11 +958,14 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		}
 
 	case "api_retry":
+		// CC handles its own API retries internally; we parse the message
+		// for symmetry with the protocol but do not surface it to the user.
+		// The turnevent.RetryNotice / RetrySuccess UI is for the API tool
+		// loop's own retries, which don't apply when CC owns inference.
 		var retry APIRetryMessage
 		if err := json.Unmarshal(raw, &retry); err != nil {
 			return
 		}
-		// Retry notifications are handled by RetryNotifyFunc (TurnCallbacks).
 		_ = retry
 
 	case "hook_response":
