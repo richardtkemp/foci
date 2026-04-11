@@ -15,6 +15,7 @@ import (
 // dispatch. Implementations do not need internal synchronisation for these calls.
 type Handler interface {
 	OnAssistant(msg *AssistantMessage)
+	OnUser(msg *UserMessageInbound) // replayed user message, including tool_result blocks
 	OnResult(msg *ResultMessage)
 	OnPermissionRequest(msg *PermissionRequest)
 	OnControlResponse(raw json.RawMessage)
@@ -165,9 +166,19 @@ func (rd *Reader) dispatch(line []byte) {
 	case "system":
 		rd.handler.OnSystem(env.Subtype, json.RawMessage(copyBytes(line)))
 
-	// Intentionally ignored — protocol informational types.
 	case "user":
-		// Replay messages, only emitted with --replay-user-messages.
+		// User-message replays, emitted with --replay-user-messages. Carries
+		// the content blocks of user turns, including tool_result blocks CC
+		// generates internally after each tool invocation. Parsing them lets
+		// the Backend fire OnToolEnd for tracker display.
+		var msg UserMessageInbound
+		if err := json.Unmarshal(line, &msg); err != nil {
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal user: %w", err))
+			return
+		}
+		rd.handler.OnUser(&msg)
+
+	// Intentionally ignored — protocol informational types.
 	case "keep_alive":
 		// Heartbeat — touch activity so the idle/timeout tracker knows the
 		// stream is alive even when CC is blocked (e.g. waiting for a
