@@ -164,10 +164,22 @@ func (w *sessionWatcher) readNew(handler *delegator.EventHandler) {
 }
 
 // processLine parses a single JSONL entry and dispatches events.
+//
+// Sidechain entries (subagent turns spawned via the Agent tool) are skipped
+// before dispatch — their text, tool calls, tool results, and turn-duration
+// events belong to the sub-agent's own transcript and must not fire callbacks
+// on the parent turn handler. Without this guard, handleAssistant would
+// overwrite turnUsage/turnModel with subagent values, handleUser would fire
+// OnToolEnd for nested tool_results, and handleSystem's turn_duration
+// path would fire OnTurnComplete on the parent prematurely.
 func (w *sessionWatcher) processLine(line []byte, handler *delegator.EventHandler) {
 	var entry sessionEntry
 	if err := json.Unmarshal(line, &entry); err != nil {
 		return // skip unparseable lines
+	}
+
+	if entry.IsSidechain {
+		return
 	}
 
 	switch entry.Type {

@@ -175,6 +175,9 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		OnTextDelta: func(delta string) {
 			turnevent.Emit(turnCtx, turnevent.TextDelta{Delta: delta})
 		},
+		OnThinkingDelta: func(delta string) {
+			turnevent.Emit(turnCtx, turnevent.ThinkingDelta{Delta: delta})
+		},
 		OnText: func(text string) {
 			turnevent.Emit(turnCtx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
 		},
