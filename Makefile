@@ -9,9 +9,9 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call foci-cc-hook test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
 
-all: build cli foci-call foci-cc-hook
+all: build cli foci-call foci-cc-hook find-disconnected-tests
 
 BUILDVCS := $(shell git rev-parse --git-dir >/dev/null 2>&1 && echo true || echo false)
 
@@ -31,6 +31,15 @@ foci-call:
 foci-cc-hook:
 	@mkdir -p bin
 	go build -buildvcs=$(BUILDVCS) -ldflags "$(LDFLAGS)" -o bin/foci-cc-hook ./cmd/foci-cc-hook
+
+# find-disconnected-tests is the test-side counterpart to deadcode: it
+# reports Test* functions whose bodies do not (transitively, via test
+# helpers in the same package) reach any identifier defined in the
+# package under test. Lives in its own go.mod under scripts/ so x/tools
+# stays out of foci's main module.
+find-disconnected-tests:
+	@mkdir -p bin
+	cd scripts/find-disconnected-tests && go build -o ../../bin/find-disconnected-tests .
 
 test:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
@@ -115,12 +124,14 @@ setup-hooks:
 vet:
 	go vet ./...
 
-lint:
+lint: find-disconnected-tests
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
-	@echo "=== deadcode (whole-program reachability) ==="
-	@output=$$($(GOBIN)/deadcode -test ./...); \
+	@echo "=== deadcode (whole-program reachability, app code only) ==="
+	@output=$$($(GOBIN)/deadcode ./...); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
+	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
+	@./bin/find-disconnected-tests ./...
 
 lint-fix:
 	@echo "=== golangci-lint --fix ==="
