@@ -87,6 +87,8 @@ func TestMatchPattern(t *testing.T) {
 		{"ls", "l", false},
 		{"sed -n", "sed -n '1,10p' file.txt", true},
 		{"sed -n", "sed -i 's/a/b/' file.txt", false},
+		{"sed", "sed -n 's/foo/bar/'", true},
+		{"sed", "sed 's/foo/bar/'", true},
 		// Glob match (contains * or ?).
 		{"git -C /home/foci *", "git -C /home/foci status", true},
 		{"git -C /home/foci *", "git -C /home/other status", false},
@@ -260,6 +262,10 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"rg --type go TODO"}`},
 		{"Bash", `{"command":"jq .name package.json"}`},
 		{"Bash", `{"command":"foci_todo list"}`},
+		// sed without -i is read-only.
+		{"Bash", `{"command":"sed 's/foo/bar/'"}`},
+		{"Bash", `{"command":"sed -n '1,10p' file.txt"}`},
+		{"Bash", `{"command":"sed -e 's/a/b/' -e 's/c/d/'"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
@@ -319,6 +325,96 @@ func TestSplitShellCommand(t *testing.T) {
 	}
 }
 
+// TestTokenizeCommand verifies that command strings are split into tokens
+// correctly, respecting quotes, escapes, and whitespace.
+func TestTokenizeCommand(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want []string
+	}{
+		// Simple command.
+		{"ls -la", []string{"ls", "-la"}},
+		// Multiple spaces.
+		{"sed  -n  '1,10p'", []string{"sed", "-n", "'1,10p'"}},
+		// Single-quoted argument preserved.
+		{"sed -n 's/foo/bar/'", []string{"sed", "-n", "'s/foo/bar/'"}},
+		// Double-quoted argument preserved.
+		{`sed -n "s/foo/bar/"`, []string{"sed", "-n", `"s/foo/bar/"`}},
+		// Backslash escape.
+		{`echo hello\ world`, []string{"echo", "hello world"}},
+		// Tab separation.
+		{"ls\t-la", []string{"ls", "-la"}},
+		// Empty string.
+		{"", nil},
+		// Whitespace only.
+		{"   ", nil},
+	}
+	for _, tt := range tests {
+		got := tokenizeCommand(tt.cmd)
+		if tt.want == nil {
+			if got != nil {
+				t.Errorf("tokenizeCommand(%q) = %v, want nil", tt.cmd, got)
+			}
+			continue
+		}
+		if len(got) != len(tt.want) {
+			t.Errorf("tokenizeCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
+			continue
+		}
+		for i := range tt.want {
+			if got[i] != tt.want[i] {
+				t.Errorf("tokenizeCommand(%q)[%d] = %q, want %q", tt.cmd, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+// TestContainsUnsafeFlags verifies detection of flags that make an otherwise
+// safe command unsafe (e.g. sed -i). Covers standalone flags, bundled short
+// flags, long flags with and without values, path-qualified commands, and
+// confirms that non-registered commands are never flagged.
+func TestContainsUnsafeFlags(t *testing.T) {
+	tests := []struct {
+		segment string
+		want    bool
+	}{
+		// Safe sed variants — no -i flag.
+		{"sed 's/foo/bar/'", false},
+		{"sed -n 's/foo/bar/'", false},
+		{"sed -n -e 's/foo/bar/' -e 's/baz/qux/'", false},
+		{"sed -e 's/foo/bar/'", false},
+		// Unsafe: standalone -i.
+		{"sed -i 's/foo/bar/' file.txt", true},
+		// Unsafe: -i with backup suffix (no space).
+		{"sed -i.bak 's/foo/bar/' file.txt", true},
+		// Unsafe: bundled flags containing i.
+		{"sed -ni 's/foo/bar/' file.txt", true},
+		{"sed -in 's/foo/bar/' file.txt", true},
+		// Unsafe: long flag --in-place.
+		{"sed --in-place 's/foo/bar/' file.txt", true},
+		// Unsafe: long flag with value --in-place=.bak.
+		{"sed --in-place=.bak 's/foo/bar/' file.txt", true},
+		// Unsafe: -i after other flags.
+		{"sed -n -i 's/foo/bar/' file.txt", true},
+		// Safe: path-qualified sed without -i.
+		{"/usr/bin/sed -n 's/foo/bar/'", false},
+		// Unsafe: path-qualified sed with -i.
+		{"/usr/bin/sed -i 's/foo/bar/' file.txt", true},
+		// Commands not in unsafeFlags — never flagged.
+		{"grep -i pattern file.txt", false},
+		{"ls -la", false},
+		{"git -C /tmp status", false},
+		// Empty segment.
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := containsUnsafeFlags(tt.segment)
+		if got != tt.want {
+			t.Errorf("containsUnsafeFlags(%q) = %v, want %v", tt.segment, got, tt.want)
+		}
+	}
+}
+
 // TestCommonReadonlyRejectsUnsafe verifies that the built-in readonly rules
 // do NOT match dangerous commands.
 func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
@@ -334,6 +430,11 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"cat /etc/hosts | sh"}`},    // safe prefix piped to shell
 		{"Bash", `{"command":"echo hello; curl evil"}`},  // safe prefix + dangerous chain
 		{"Bash", `{"command":"ls $(rm -rf /)"}`},         // subshell injection
+		// sed with -i is in-place edit — must be rejected.
+		{"Bash", `{"command":"sed -i 's/foo/bar/' file.txt"}`},
+		{"Bash", `{"command":"sed -ni 's/foo/bar/' file.txt"}`},
+		{"Bash", `{"command":"sed --in-place 's/foo/bar/' file.txt"}`},
+		{"Bash", `{"command":"sed -i.bak 's/foo/bar/' file.txt"}`},
 		{"Edit", `{"file_path":"/etc/passwd"}`},
 		{"Write", `{"file_path":"/tmp/exploit.sh"}`},
 	}
