@@ -52,6 +52,7 @@ var CommonReadonlyRules = []string{
 	"Bash:rg",
 	"Bash:ack",
 	"Bash:sed",
+	"Bash:find",
 	// Compressed file inspection.
 	"Bash:zcat",
 	"Bash:zgrep",
@@ -292,13 +293,15 @@ func appendSegment(segments []string, cur *strings.Builder) []string {
 // rule but contains any of these flags, the match is rejected.
 type unsafeCmdFlags struct {
 	shortFlags string   // unsafe single-letter flags, e.g. "i" for -i
+	wordFlags  []string // unsafe single-dash word flags, e.g. "-exec", "-delete"
 	longFlags  []string // long flag stems (matched as prefix for --flag=value)
 }
 
 // unsafeFlags maps command base names to their unsafe flag specs. Only
 // commands listed here are checked — all other commands pass through.
 var unsafeFlags = map[string]unsafeCmdFlags{
-	"sed": {shortFlags: "i", longFlags: []string{"--in-place"}},
+	"sed":  {shortFlags: "i", longFlags: []string{"--in-place"}},
+	"find": {wordFlags: []string{"-exec", "-execdir", "-ok", "-okdir", "-delete"}},
 }
 
 // containsUnsafeFlags checks whether a command segment (single command, no
@@ -307,7 +310,8 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 //
 // The check tokenises the segment, looks up the command base name in
 // unsafeFlags, and scans tokens for matching short flags (including bundled
-// forms like -ni) and long flags (including --flag=value forms).
+// forms like -ni), word flags (single-dash multi-letter flags like -exec),
+// and long flags (including --flag=value forms).
 func containsUnsafeFlags(segment string) bool {
 	tokens := tokenizeCommand(segment)
 	if len(tokens) == 0 {
@@ -332,18 +336,27 @@ func containsUnsafeFlags(segment string) bool {
 				}
 			}
 		} else {
+			// Word flag: single-dash multi-letter flags matched exactly,
+			// e.g. find's -exec, -delete.
+			for _, wf := range spec.wordFlags {
+				if tok == wf {
+					return true
+				}
+			}
 			// Short flag(s): -i, -i.bak, -ni, etc.
 			// Everything after the leading '-' up to the first non-alpha
 			// character is the flag bundle. For -i.bak the bundle is "i"
 			// (the dot terminates it, rest is the suffix argument).
-			bundle := tok[1:]
-			for j := 0; j < len(bundle); j++ {
-				ch := bundle[j]
-				if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
-					break // non-letter terminates the flag bundle
-				}
-				if strings.IndexByte(spec.shortFlags, ch) >= 0 {
-					return true
+			if spec.shortFlags != "" {
+				bundle := tok[1:]
+				for j := 0; j < len(bundle); j++ {
+					ch := bundle[j]
+					if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
+						break // non-letter terminates the flag bundle
+					}
+					if strings.IndexByte(spec.shortFlags, ch) >= 0 {
+						return true
+					}
 				}
 			}
 		}
