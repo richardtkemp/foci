@@ -545,20 +545,36 @@ func applyDisplaySetting(sessionKey string, cc CommandContext, key, value string
 	switch key {
 	case "show_tool_calls":
 		switch value {
+		case "false":
+			value = "off"
+		case "medium":
+			value = "preview"
+		case "true":
+			value = "full"
+		}
+		switch value {
 		case "off", "preview", "full":
 			cc.Agent.SetSessionShowToolCalls(sessionKey, value)
 			return Response{Text: fmt.Sprintf("show_tool_calls set to: %s", value)}, nil
 		default:
-			return Response{}, fmt.Errorf("invalid show_tool_calls value: %q\nOptions: off, preview, full", value)
+			return Response{}, fmt.Errorf("invalid show_tool_calls value: %q\nOptions: off/false, preview/medium, full/true", value)
 		}
 
 	case "show_thinking":
+		switch value {
+		case "false":
+			value = "off"
+		case "medium":
+			value = "compact"
+		case "full":
+			value = "true"
+		}
 		switch value {
 		case "off", "compact", "true":
 			cc.Agent.SetSessionDisplayShowThinking(sessionKey, value)
 			return Response{Text: fmt.Sprintf("show_thinking set to: %s", value)}, nil
 		default:
-			return Response{}, fmt.Errorf("invalid show_thinking value: %q\nOptions: off, compact, true", value)
+			return Response{}, fmt.Errorf("invalid show_thinking value: %q\nOptions: off/false, compact/medium, true/full", value)
 		}
 
 	case "stream_output":
