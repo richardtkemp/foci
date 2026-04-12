@@ -266,6 +266,10 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"sed 's/foo/bar/'"}`},
 		{"Bash", `{"command":"sed -n '1,10p' file.txt"}`},
 		{"Bash", `{"command":"sed -e 's/a/b/' -e 's/c/d/'"}`},
+		// find without -exec/-delete is read-only.
+		{"Bash", `{"command":"find . -name '*.go'"}`},
+		{"Bash", `{"command":"find /tmp -type f -name '*.log'"}`},
+		{"Bash", `{"command":"find . -maxdepth 2 -print0"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
@@ -400,6 +404,23 @@ func TestContainsUnsafeFlags(t *testing.T) {
 		{"/usr/bin/sed -n 's/foo/bar/'", false},
 		// Unsafe: path-qualified sed with -i.
 		{"/usr/bin/sed -i 's/foo/bar/' file.txt", true},
+		// Safe find variants — no exec/delete actions.
+		{"find . -name '*.go'", false},
+		{"find /tmp -type f -name '*.log'", false},
+		{"find . -maxdepth 2 -print", false},
+		{"find . -name '*.go' -print0", false},
+		// Unsafe find: -exec runs arbitrary commands.
+		{"find . -name '*.go' -exec rm {} \\;", true},
+		// Unsafe find: -execdir.
+		{"find . -name '*.go' -execdir cat {} \\;", true},
+		// Unsafe find: -delete removes matched files.
+		{"find . -name '*.tmp' -delete", true},
+		// Unsafe find: -ok (interactive exec, still dangerous).
+		{"find . -name '*.go' -ok rm {} \\;", true},
+		// Unsafe find: -okdir.
+		{"find . -name '*.go' -okdir rm {} \\;", true},
+		// Path-qualified find with -exec.
+		{"/usr/bin/find . -exec cat {} +", true},
 		// Commands not in unsafeFlags — never flagged.
 		{"grep -i pattern file.txt", false},
 		{"ls -la", false},
@@ -435,6 +456,10 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"sed -ni 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed --in-place 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed -i.bak 's/foo/bar/' file.txt"}`},
+		// find with -exec/-delete must be rejected.
+		{"Bash", `{"command":"find . -name '*.tmp' -delete"}`},
+		{"Bash", `{"command":"find . -name '*.go' -exec rm {} \\;"}`},
+		{"Bash", `{"command":"find . -execdir cat {} +"}`},
 		{"Edit", `{"file_path":"/etc/passwd"}`},
 		{"Write", `{"file_path":"/tmp/exploit.sh"}`},
 	}
