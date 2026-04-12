@@ -20,6 +20,7 @@ echo "Installing..."
 install -m 755 "$SCRIPT_DIR/bin/foci-gw" "$INSTALL_DIR/foci-gw"
 install -m 755 "$SCRIPT_DIR/bin/foci" "$INSTALL_DIR/foci"
 install -m 755 "$SCRIPT_DIR/bin/foci-call" "$INSTALL_DIR/foci-call"
+install -m 755 "$SCRIPT_DIR/bin/foci-cc-hook" "$INSTALL_DIR/foci-cc-hook"
 
 echo "Migrating service files..."
 for svcfile in /etc/systemd/system/foci*.service; do
