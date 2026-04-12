@@ -78,6 +78,7 @@ type Backend struct {
 	compactDoneCh chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
 	turnText     strings.Builder       // accumulates text across assistant messages
 	turnTools    int                   // tool_use count this turn
+	nudgePending bool                  // set when PostToolNudge sends PriorityNow; cleared on next OnResult or beginTurn
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -405,6 +406,7 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnHandler = handler
 	b.turnText.Reset()
 	b.turnTools = 0
+	b.nudgePending = false
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -423,6 +425,38 @@ func (b *Backend) cancelTurn() {
 	b.turnActive = false
 	b.turnHandler = nil
 	b.turnMu.Unlock()
+}
+
+// rearmForNudgeResponse re-arms the turn with a delivery-only handler
+// derived from the original. The nudge turn delivers text and tracks
+// tools normally, but its OnTurnComplete is nil — it doesn't signal
+// the foci turn (which already completed on the prior result).
+// PostToolNudgeFunc is preserved so chained nudges work correctly.
+func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
+	b.turnMu.Lock()
+	b.turnActive = true
+	b.turnHandler = &delegator.EventHandler{
+		OnTextDelta:       orig.OnTextDelta,
+		OnThinkingDelta:   orig.OnThinkingDelta,
+		OnText:            orig.OnText,
+		OnToolStart:       orig.OnToolStart,
+		OnToolEnd:         orig.OnToolEnd,
+		PostToolNudgeFunc: orig.PostToolNudgeFunc,
+		SteerCheckFunc:    orig.SteerCheckFunc,
+		// OnTurnComplete: nil — nudge CC turn doesn't end the foci turn.
+		// PreAnswerNudgeFunc: nil — pre-answer gate doesn't apply to nudge turns.
+	}
+	b.turnText.Reset()
+	b.turnTools = 0
+	b.nudgePending = false
+	b.turnResultCh = make(chan *ResultMessage, 1)
+	b.turnMu.Unlock()
+
+	b.mu.Lock()
+	b.lastUsage = nil
+	b.mu.Unlock()
+
+	b.touchActivity()
 }
 
 // SendToPane sends a composed prompt to Claude Code and streams events back
@@ -820,10 +854,14 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 // OnResult handles the result message signalling turn completion.
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
+
+	// Capture turn state. Handler clearing is deferred — the nudge re-arm
+	// and pre-answer gate paths need the handler alive to re-arm or fire
+	// OnTurnComplete. The normal path clears handler/turnActive below.
 	b.turnMu.Lock()
 	handler := b.turnHandler
-	b.turnHandler = nil
-	b.turnActive = false
+	nudgePending := b.nudgePending
+	b.nudgePending = false
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -896,6 +934,30 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
+	// Post-tool nudge re-arm: a nudge was injected via PriorityNow but CC
+	// ended the turn before processing it. CC will process the nudge as a
+	// new CC-internal turn. Complete the foci turn normally (fire
+	// OnTurnComplete), then re-arm with a delivery-only handler so the
+	// nudge response reaches the platform.
+	if nudgePending && handler != nil {
+		b.agents.ClearAll()
+		if handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(result)
+		}
+		if b.typingFunc != nil {
+			b.typingFunc(true)
+		}
+		b.rearmForNudgeResponse(handler)
+		b.logger().Infof("OnResult: re-armed for pending nudge response")
+		if resultCh != nil {
+			select {
+			case resultCh <- msg:
+			default:
+			}
+		}
+		return
+	}
+
 	// Pre-answer nudge gate: give the caller a chance to re-dispatch this
 	// turn with a verification prompt before finalising. When the func
 	// returns a non-empty follow-up, the result is swallowed, turn state
@@ -924,6 +986,12 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 			}
 		}
 	}
+
+	// Normal turn completion — clear handler.
+	b.turnMu.Lock()
+	b.turnHandler = nil
+	b.turnActive = false
+	b.turnMu.Unlock()
 
 	// Clear any agents still tracked (safety net — task_notification should
 	// have already removed them individually during the turn).
