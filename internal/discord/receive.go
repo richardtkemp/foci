@@ -177,6 +177,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		ChatID:    chatIDFromMsg(qm.msg),
 		Timestamp: qm.msg.Timestamp,
 	})
+	qm.text = result.Text // pick up any message transforms
 	if !result.Consumed {
 		return false
 	}

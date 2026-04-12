@@ -281,6 +281,45 @@ func TestTryInterceptTransformNoChange(t *testing.T) {
 	}
 }
 
+// TestTryInterceptTransformNonCommand verifies that when a transform produces
+// non-command text, the result carries the transformed text for downstream use.
+func TestTryInterceptTransformNonCommand(t *testing.T) {
+	reg := command.NewRegistry()
+	ic := newTestInterceptor(reg)
+	ic.Handler = &fakeHandler{
+		transform: func(text string) string {
+			if text == "ot" {
+				return "Check back over our conversation for open threads."
+			}
+			return text
+		},
+	}
+
+	msg := &InterceptMessage{Text: "ot", UserID: "u1", ChatID: 1}
+	result := ic.TryIntercept(context.Background(), msg)
+
+	if result.Consumed {
+		t.Error("non-command transform should not consume the message")
+	}
+	if result.Text != "Check back over our conversation for open threads." {
+		t.Errorf("Text = %q, want transformed text", result.Text)
+	}
+}
+
+// TestTryInterceptTextAlwaysSet verifies that result.Text is set even when
+// no transform fires.
+func TestTryInterceptTextAlwaysSet(t *testing.T) {
+	reg := command.NewRegistry()
+	ic := newTestInterceptor(reg)
+
+	msg := &InterceptMessage{Text: "hello world", UserID: "u1", ChatID: 1}
+	result := ic.TryIntercept(context.Background(), msg)
+
+	if result.Text != "hello world" {
+		t.Errorf("Text = %q, want original text", result.Text)
+	}
+}
+
 // TestTryInterceptSecondaryBotIdleDrop verifies that a secondary bot with no
 // active session silently drops non-command messages.
 func TestTryInterceptSecondaryBotIdleDrop(t *testing.T) {

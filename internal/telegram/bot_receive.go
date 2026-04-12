@@ -250,6 +250,7 @@ func (b *Bot) tryIntercept(ctx context.Context, qm *queuedMessage) bool {
 		ChatID:    qm.msg.Chat.Id,
 		Timestamp: time.Unix(int64(qm.msg.Date), 0),
 	})
+	qm.text = result.Text // pick up any message transforms
 	if !result.Consumed {
 		return false
 	}

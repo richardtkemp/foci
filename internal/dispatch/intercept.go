@@ -39,6 +39,11 @@ type InterceptResult struct {
 	WizardReply string          // wizard handled it, send this reply
 	Outcome     *CommandOutcome // command dispatched, render this
 	// Consumed && WizardReply=="" && Outcome==nil → silently consumed (stale/idle drop)
+
+	// Text is the final message text after any transforms have been applied.
+	// Always set — either the original text or the transformed version.
+	// When Consumed is false, callers should use this for downstream processing.
+	Text string
 }
 
 // TryIntercept runs the shared interception pipeline.
@@ -48,7 +53,7 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 	// Wizard intercept — route all messages to active wizard before normal dispatch.
 	if msg.Text != "" {
 		if result, ok := i.Commands.HandleMessage(msg.Text); ok {
-			return InterceptResult{Consumed: true, WizardReply: result}
+			return InterceptResult{Consumed: true, WizardReply: result, Text: msg.Text}
 		}
 	}
 
@@ -63,22 +68,24 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 	if msg.Text != "" && strings.HasPrefix(msg.Text, "/") && !msg.Timestamp.IsZero() {
 		if age := time.Since(msg.Timestamp); age > 30*time.Second {
 			i.LogWarnf("dropping stale command %q (age=%s)", strings.ToLower(msg.Text), age.Truncate(time.Second))
-			return InterceptResult{Consumed: true}
+			return InterceptResult{Consumed: true, Text: msg.Text}
 		}
 	}
 
 	// Try dispatching the original message as a command (slash or dot-prefix).
 	if outcome := i.tryDispatch(ctx, msg); outcome != nil {
-		return InterceptResult{Consumed: true, Outcome: outcome}
+		return InterceptResult{Consumed: true, Outcome: outcome, Text: msg.Text}
 	}
 
 	// Apply message transforms to non-command messages.
-	// Transforms may produce a command (e.g. "m" → "/mana").
+	// Transforms rewrite the text unconditionally; if the result is itself
+	// a command, dispatch it. Either way, the transformed text is carried
+	// in the result for downstream processing.
 	if i.Handler != nil {
 		if transformed := i.Handler.TransformMessage(msg.Text); transformed != msg.Text {
 			msg.Text = transformed
 			if outcome := i.tryDispatch(ctx, msg); outcome != nil {
-				return InterceptResult{Consumed: true, Outcome: outcome}
+				return InterceptResult{Consumed: true, Outcome: outcome, Text: msg.Text}
 			}
 		}
 	}
@@ -86,10 +93,10 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 	// Secondary bots with no session silently drop non-command messages.
 	if i.IsSecondary && i.SessionKeyFn != nil && i.SessionKeyFn() == "" {
 		i.LogDebugf("dropping message to idle secondary bot")
-		return InterceptResult{Consumed: true}
+		return InterceptResult{Consumed: true, Text: msg.Text}
 	}
 
-	return InterceptResult{}
+	return InterceptResult{Text: msg.Text}
 }
 
 // tryDispatch attempts to dispatch text as a command via the Dispatcher.
