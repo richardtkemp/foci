@@ -136,7 +136,9 @@ func matchToolAutoApprove(rules []autoApproveRule, toolName string, input json.R
 }
 
 // matchBashAutoApprove splits a Bash command on shell operators and requires
-// every segment to match at least one Bash rule.
+// every segment to match at least one Bash rule. Shell control-flow keywords
+// (for/do/done/if/then/else/fi/while/until) are stripped so the actual
+// commands inside simple loops and conditionals are validated normally.
 func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 	command := extractMatchString("Bash", input)
 	if command == "" {
@@ -149,11 +151,50 @@ func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 	}
 
 	for _, seg := range segments {
-		if !matchBashSegment(rules, seg) {
+		inner, skip := stripShellKeyword(seg)
+		if skip {
+			continue
+		}
+		if !matchBashSegment(rules, inner) {
 			return false
 		}
 	}
 	return true
+}
+
+// shellCmdKeywords are keywords that precede a command. The keyword is
+// stripped and the remaining command is validated against rules.
+var shellCmdKeywords = []string{
+	"do", "then", "else", "elif",
+	"if", "while", "until",
+}
+
+// stripShellKeyword removes a single leading shell keyword from a segment,
+// returning the inner command to validate. For purely structural segments
+// (done, fi, for...in..., or a bare keyword with no command), it returns
+// skip=true. Only one level of keywords is stripped — nested constructs
+// fall through to user prompting.
+func stripShellKeyword(segment string) (string, bool) {
+	// Closing keywords — purely structural.
+	if segment == "done" || segment == "fi" {
+		return "", true
+	}
+	// for ... in ... — loop header, no command execution.
+	// (Command substitution in the value list is already rejected by
+	// splitShellCommand before we get here.)
+	if strings.HasPrefix(segment, "for ") && strings.Contains(segment, " in ") {
+		return "", true
+	}
+	// Command-preceding keywords: strip and validate the inner command.
+	for _, kw := range shellCmdKeywords {
+		if segment == kw {
+			return "", true // bare keyword, no command — skip
+		}
+		if strings.HasPrefix(segment, kw+" ") {
+			return strings.TrimSpace(segment[len(kw)+1:]), false
+		}
+	}
+	return segment, false
 }
 
 // matchBashSegment checks whether a single command segment (no shell operators)
