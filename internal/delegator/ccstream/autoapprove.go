@@ -2,6 +2,7 @@ package ccstream
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 
 	"foci/internal/log"
@@ -50,7 +51,7 @@ var CommonReadonlyRules = []string{
 	"Bash:grep",
 	"Bash:rg",
 	"Bash:ack",
-	"Bash:sed -n",
+	"Bash:sed",
 	// Compressed file inspection.
 	"Bash:zcat",
 	"Bash:zgrep",
@@ -155,8 +156,13 @@ func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 }
 
 // matchBashSegment checks whether a single command segment (no shell operators)
-// matches at least one Bash rule.
+// matches at least one Bash rule. If the segment contains flags that are
+// known to be unsafe for the matched command (e.g. sed -i), the match is
+// rejected regardless of which rule matched.
 func matchBashSegment(rules []autoApproveRule, segment string) bool {
+	if containsUnsafeFlags(segment) {
+		return false
+	}
 	for _, r := range rules {
 		if r.toolName != "Bash" {
 			continue
@@ -279,6 +285,119 @@ func appendSegment(segments []string, cur *strings.Builder) []string {
 		segments = append(segments, s)
 	}
 	return segments
+}
+
+// unsafeCmdFlags describes flags that make an otherwise read-only command
+// unsafe for auto-approval. If a command segment matches an auto-approve
+// rule but contains any of these flags, the match is rejected.
+type unsafeCmdFlags struct {
+	shortFlags string   // unsafe single-letter flags, e.g. "i" for -i
+	longFlags  []string // long flag stems (matched as prefix for --flag=value)
+}
+
+// unsafeFlags maps command base names to their unsafe flag specs. Only
+// commands listed here are checked — all other commands pass through.
+var unsafeFlags = map[string]unsafeCmdFlags{
+	"sed": {shortFlags: "i", longFlags: []string{"--in-place"}},
+}
+
+// containsUnsafeFlags checks whether a command segment (single command, no
+// shell operators) contains flags that make it unsafe for auto-approval.
+// Returns true if any unsafe flag is detected.
+//
+// The check tokenises the segment, looks up the command base name in
+// unsafeFlags, and scans tokens for matching short flags (including bundled
+// forms like -ni) and long flags (including --flag=value forms).
+func containsUnsafeFlags(segment string) bool {
+	tokens := tokenizeCommand(segment)
+	if len(tokens) == 0 {
+		return false
+	}
+
+	cmdBase := filepath.Base(tokens[0])
+	spec, ok := unsafeFlags[cmdBase]
+	if !ok {
+		return false
+	}
+
+	for _, tok := range tokens[1:] {
+		if len(tok) < 2 || tok[0] != '-' {
+			continue // not a flag
+		}
+		if strings.HasPrefix(tok, "--") {
+			// Long flag: --in-place or --in-place=.bak
+			for _, lf := range spec.longFlags {
+				if tok == lf || strings.HasPrefix(tok, lf+"=") {
+					return true
+				}
+			}
+		} else {
+			// Short flag(s): -i, -i.bak, -ni, etc.
+			// Everything after the leading '-' up to the first non-alpha
+			// character is the flag bundle. For -i.bak the bundle is "i"
+			// (the dot terminates it, rest is the suffix argument).
+			bundle := tok[1:]
+			for j := 0; j < len(bundle); j++ {
+				ch := bundle[j]
+				if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
+					break // non-letter terminates the flag bundle
+				}
+				if strings.IndexByte(spec.shortFlags, ch) >= 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// tokenizeCommand splits a command string into whitespace-delimited tokens,
+// respecting single and double quotes and backslash escapes.
+func tokenizeCommand(cmd string) []string {
+	var tokens []string
+	var cur strings.Builder
+	i := 0
+	for i < len(cmd) {
+		ch := cmd[i]
+
+		// Skip whitespace between tokens.
+		if ch == ' ' || ch == '\t' {
+			if cur.Len() > 0 {
+				tokens = append(tokens, cur.String())
+				cur.Reset()
+			}
+			i++
+			continue
+		}
+
+		// Quoted string — consume through matching quote.
+		if ch == '\'' || ch == '"' {
+			end := indexUnescapedQuote(cmd, i+1, ch)
+			if end < 0 {
+				// Unmatched quote — take rest of string.
+				cur.WriteString(cmd[i:])
+				i = len(cmd)
+			} else {
+				cur.WriteString(cmd[i : end+1])
+				i = end + 1
+			}
+			continue
+		}
+
+		// Backslash escape.
+		if ch == '\\' && i+1 < len(cmd) {
+			cur.WriteByte(cmd[i+1])
+			i += 2
+			continue
+		}
+
+		cur.WriteByte(ch)
+		i++
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
 }
 
 // toolMatchKeys maps CC tool names to the JSON input field used for pattern
