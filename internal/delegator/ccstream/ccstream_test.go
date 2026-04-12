@@ -1154,11 +1154,12 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	}
 }
 
-// TestOnAssistant_SubagentDoesNotFireEvents proves that a subagent assistant
-// message (ParentToolUseID != nil) does not fire OnText or OnToolStart on the
-// parent turn handler. Subagent text/tool_use blocks belong to the subagent's
-// own transcript and must not leak onto the parent StreamingSink or tracker.
-func TestOnAssistant_SubagentDoesNotFireEvents(t *testing.T) {
+// TestOnAssistant_SubagentSurfacesBlockquotedText proves that a subagent
+// assistant message (ParentToolUseID != nil) fires OnText with blockquoted
+// text so the user can follow sub-agent progress, but does NOT fire
+// OnToolStart (the parent tracker owns tool visibility) and does NOT mutate
+// the parent's per-turn accumulator state (turnText, turnTools).
+func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 	t.Parallel()
 
 	var textEvents []string
@@ -1184,14 +1185,16 @@ func TestOnAssistant_SubagentDoesNotFireEvents(t *testing.T) {
 		},
 	})
 
-	if len(textEvents) != 0 {
-		t.Errorf("OnText fired for subagent: %v", textEvents)
+	// Text is surfaced as a blockquote.
+	if len(textEvents) != 1 || textEvents[0] != "> sub-agent reply" {
+		t.Errorf("textEvents = %v, want [> sub-agent reply]", textEvents)
 	}
+	// Tool calls are NOT forwarded.
 	if len(toolStarts) != 0 {
 		t.Errorf("OnToolStart fired for subagent: %v", toolStarts)
 	}
 
-	// Subagent content must not touch the parent's per-turn state either.
+	// Subagent content must not touch the parent's per-turn state.
 	b.turnMu.Lock()
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -1201,6 +1204,59 @@ func TestOnAssistant_SubagentDoesNotFireEvents(t *testing.T) {
 	}
 	if turnTools != 0 {
 		t.Errorf("turnTools mutated by subagent: %d", turnTools)
+	}
+}
+
+// TestOnAssistant_SubagentMultilineBlockquote verifies that multiline
+// sub-agent text gets every line prefixed with "> ".
+func TestOnAssistant_SubagentMultilineBlockquote(t *testing.T) {
+	t.Parallel()
+
+	var textEvents []string
+	b := &Backend{}
+	b.beginTurn(&delegator.EventHandler{
+		OnText: func(text string) { textEvents = append(textEvents, text) },
+	})
+
+	parentID := "toolu_parent"
+	b.OnAssistant(&AssistantMessage{
+		ParentToolUseID: &parentID,
+		Message: BetaMessage{
+			Content: []ContentBlock{
+				{Type: "text", Text: "line one\nline two\nline three"},
+			},
+		},
+	})
+
+	want := "> line one\n> line two\n> line three"
+	if len(textEvents) != 1 || textEvents[0] != want {
+		t.Errorf("textEvents = %v, want [%s]", textEvents, want)
+	}
+}
+
+// TestOnAssistant_SubagentEmptyTextSkipped verifies that empty sub-agent
+// text blocks do not fire OnText.
+func TestOnAssistant_SubagentEmptyTextSkipped(t *testing.T) {
+	t.Parallel()
+
+	var textEvents []string
+	b := &Backend{}
+	b.beginTurn(&delegator.EventHandler{
+		OnText: func(text string) { textEvents = append(textEvents, text) },
+	})
+
+	parentID := "toolu_parent"
+	b.OnAssistant(&AssistantMessage{
+		ParentToolUseID: &parentID,
+		Message: BetaMessage{
+			Content: []ContentBlock{
+				{Type: "text", Text: ""},
+			},
+		},
+	})
+
+	if len(textEvents) != 0 {
+		t.Errorf("OnText fired for empty subagent text: %v", textEvents)
 	}
 }
 
@@ -2308,6 +2364,54 @@ func TestOnStreamEvent_InvalidJSON(t *testing.T) {
 
 	if called {
 		t.Error("OnText should not be called for invalid JSON")
+	}
+}
+
+// TestOnStreamEvent_SubagentFiltered proves that stream events with
+// parent_tool_use_id set are filtered out, matching the guard in OnAssistant.
+// Without this, sub-agent deltas leak into the parent turn's StreamWriter.
+func TestOnStreamEvent_SubagentFiltered(t *testing.T) {
+	t.Parallel()
+
+	var deltas []string
+	b := &Backend{}
+	b.turnHandler = &delegator.EventHandler{
+		OnTextDelta: func(delta string) { deltas = append(deltas, delta) },
+	}
+
+	// Sub-agent stream event — should be filtered.
+	raw := json.RawMessage(`{
+		"type": "stream_event",
+		"parent_tool_use_id": "toolu_sub123",
+		"event": {
+			"type": "content_block_delta",
+			"delta": {
+				"type": "text_delta",
+				"text": "sub-agent delta"
+			}
+		}
+	}`)
+	b.OnStreamEvent(raw)
+
+	if len(deltas) != 0 {
+		t.Errorf("OnTextDelta fired for sub-agent stream event: %v", deltas)
+	}
+
+	// Top-level stream event — should pass through.
+	raw = json.RawMessage(`{
+		"type": "stream_event",
+		"event": {
+			"type": "content_block_delta",
+			"delta": {
+				"type": "text_delta",
+				"text": "top-level delta"
+			}
+		}
+	}`)
+	b.OnStreamEvent(raw)
+
+	if len(deltas) != 1 || deltas[0] != "top-level delta" {
+		t.Errorf("deltas = %v, want [top-level delta]", deltas)
 	}
 }
 

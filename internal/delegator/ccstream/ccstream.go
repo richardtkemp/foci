@@ -746,13 +746,27 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	}
 	b.mu.Unlock()
 
-	if !isTopLevel {
-		return
-	}
-
 	b.turnMu.Lock()
 	handler := b.turnHandler
 	b.turnMu.Unlock()
+
+	if !isTopLevel {
+		// Surface sub-agent text as blockquoted intermediate replies so
+		// the user can follow sub-agent progress. Tool_use blocks are not
+		// forwarded — the parent tracker owns tool visibility.
+		if handler != nil && handler.OnText != nil {
+			for _, block := range msg.Message.Content {
+				if block.Type == "text" && block.Text != "" {
+					handler.OnText(blockquote(block.Text))
+				}
+			}
+		}
+		// Keep typing indicator alive during sub-agent work.
+		if b.typingFunc != nil {
+			b.typingFunc(true)
+		}
+		return
+	}
 
 	hasToolUse := false
 	for _, block := range msg.Message.Content {
@@ -1124,10 +1138,18 @@ func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
 // SDK stream parts in these envelopes (services/api/claude.ts:2300), so the
 // event payload is a verbatim SDK `content_block_delta` with subtypes like
 // `text_delta` and `thinking_delta` that we extract separately.
+//
+// Sub-agent stream events (ParentToolUseID != nil) are filtered out, matching
+// the guard in OnAssistant. Sub-agent text is delivered as complete blocks
+// (blockquoted) via OnAssistant instead. Without this filter, sub-agent
+// deltas leak into the parent turn's StreamWriter — accumulating text that
+// is never Finish()ed by OnReply, which corrupts the parent's stream message
+// and silently discards the parent's reply text.
 func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 	b.touchActivity()
 	var env struct {
-		Event struct {
+		ParentToolUseID *string `json:"parent_tool_use_id,omitempty"`
+		Event           struct {
 			Type  string `json:"type"`
 			Delta struct {
 				Type     string `json:"type"`
@@ -1137,6 +1159,9 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 		} `json:"event"`
 	}
 	if json.Unmarshal(raw, &env) != nil || env.Event.Type != "content_block_delta" {
+		return
+	}
+	if env.ParentToolUseID != nil {
 		return
 	}
 	b.turnMu.Lock()
@@ -1316,4 +1341,13 @@ func describeExitError(err error) string {
 		return err.Error()
 	}
 	return strings.Join(parts, ", ")
+}
+
+// blockquote prefixes every line with "> " for markdown blockquote rendering.
+func blockquote(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = "> " + line
+	}
+	return strings.Join(lines, "\n")
 }
