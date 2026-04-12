@@ -111,6 +111,20 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			text = fmt.Sprintf("Error: %s", e.Err.Error())
 		}
 
+		// Silent responses (sentinels, empty) — clean up without delivering.
+		// This is the authoritative filter for interactive turns; downstream
+		// methods (SendTextToChat, renderer) no longer check IsSilent.
+		if platform.IsSilent(text) {
+			s.renderer.Cleanup()
+			if s.tracker != nil {
+				s.tracker.CleanupPreview()
+			}
+			if s.conn != nil {
+				s.conn.SetTyping(false)
+			}
+			return
+		}
+
 		if s.delivered {
 			// Content was already shown via OnReply during the turn — skip
 			// re-delivery. Matches the historical replyDelivered-on-renderer
@@ -189,7 +203,7 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		if s.conn != nil {
 			s.conn.SetTyping(false)
 		}
-		if s.delivered || e.FinalText == "" || s.conn == nil {
+		if s.delivered || platform.IsSilent(e.FinalText) || s.conn == nil {
 			return
 		}
 		if err := s.conn.SendToSession(s.sessionKey, e.FinalText); err != nil && s.onError != nil {
