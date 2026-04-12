@@ -15,18 +15,34 @@ const (
 	ToolCallFull    ToolCallDisplay = "full"    // shown and kept; reply is a separate message
 )
 
-// UnmarshalTOML accepts "off", "preview", or "full".
+// UnmarshalTOML accepts "off"/"false", "preview", or "full"/"true" (plus bool).
 func (d *ToolCallDisplay) UnmarshalTOML(v any) error {
-	val, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("show_tool_calls must be a string (off/preview/full)")
-	}
-	switch val {
-	case "off", "preview", "full":
-		*d = ToolCallDisplay(val)
+	var val string
+	switch tv := v.(type) {
+	case string:
+		val = strings.ToLower(tv)
+	case bool:
+		if tv {
+			*d = ToolCallFull
+		} else {
+			*d = ToolCallOff
+		}
 		return nil
 	default:
-		return fmt.Errorf("invalid show_tool_calls value %q (must be off, preview, full)", val)
+		return fmt.Errorf("show_tool_calls must be a string or bool")
+	}
+	switch val {
+	case "off", "false":
+		*d = ToolCallOff
+		return nil
+	case "preview", "medium":
+		*d = ToolCallPreview
+		return nil
+	case "full", "true":
+		*d = ToolCallFull
+		return nil
+	default:
+		return fmt.Errorf("invalid show_tool_calls value %q (must be off/false, preview/medium, full/true)", val)
 	}
 }
 
@@ -39,18 +55,34 @@ const (
 	ShowThinkingTrue    ShowThinking = "true"    // thinking prepended to every response
 )
 
-// UnmarshalTOML accepts "off", "compact", or "true".
+// UnmarshalTOML accepts "off"/"false", "compact", or "true"/"full" (plus bool).
 func (s *ShowThinking) UnmarshalTOML(v any) error {
-	val, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("show_thinking must be a string (off/compact/true)")
-	}
-	switch val {
-	case "off", "compact", "true":
-		*s = ShowThinking(val)
+	var val string
+	switch tv := v.(type) {
+	case string:
+		val = strings.ToLower(tv)
+	case bool:
+		if tv {
+			*s = ShowThinkingTrue
+		} else {
+			*s = ShowThinkingOff
+		}
 		return nil
 	default:
-		return fmt.Errorf("invalid show_thinking value %q (must be off, compact, true)", val)
+		return fmt.Errorf("show_thinking must be a string or bool")
+	}
+	switch val {
+	case "off", "false":
+		*s = ShowThinkingOff
+		return nil
+	case "compact", "medium":
+		*s = ShowThinkingCompact
+		return nil
+	case "true", "full":
+		*s = ShowThinkingTrue
+		return nil
+	default:
+		return fmt.Errorf("invalid show_thinking value %q (must be off/false, compact/medium, true/full)", val)
 	}
 }
 
@@ -63,27 +95,37 @@ const (
 	InjectionOff  InjectionLevel = "off"  // disabled
 )
 
-// UnmarshalTOML accepts "all", "errors", or "off".
+// UnmarshalTOML accepts "off"/"false", "errors", or "all"/"true"/"full" (plus bool).
 func (il *InjectionLevel) UnmarshalTOML(v any) error {
-	val, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("injection level must be a string (all/errors/off)")
-	}
-	switch strings.ToLower(val) {
-	case "all":
-		*il = InjectionAll
+	var val string
+	switch tv := v.(type) {
+	case string:
+		val = strings.ToLower(tv)
+	case bool:
+		if tv {
+			*il = InjectionAll
+		} else {
+			*il = InjectionOff
+		}
 		return nil
-	case "errors":
+	default:
+		return fmt.Errorf("injection level must be a string or bool")
+	}
+	switch val {
+	case "off", "false":
+		*il = InjectionOff
+		return nil
+	case "errors", "medium":
 		*il = InjectionErrors
 		return nil
-	case "off":
-		*il = InjectionOff
+	case "all", "true", "full":
+		*il = InjectionAll
 		return nil
 	case "":
 		*il = ""
 		return nil
 	default:
-		return fmt.Errorf("invalid injection level %q (must be all, errors, off)", val)
+		return fmt.Errorf("invalid injection level %q (must be off/false, errors/medium, all/true/full)", val)
 	}
 }
 
@@ -150,24 +192,34 @@ func (c *ContextWindow) parse(s string) error {
 // ThinkingMode controls whether model thinking/reasoning is enabled.
 type ThinkingMode string
 
-// UnmarshalTOML accepts "adaptive" or "off".
+// UnmarshalTOML accepts "off"/"false" or "adaptive"/"true" (plus bool).
 func (t *ThinkingMode) UnmarshalTOML(v any) error {
-	val, ok := v.(string)
-	if !ok {
-		return fmt.Errorf("thinking must be a string (adaptive/off)")
-	}
-	switch strings.ToLower(val) {
-	case "adaptive":
-		*t = "adaptive"
+	var val string
+	switch tv := v.(type) {
+	case string:
+		val = strings.ToLower(tv)
+	case bool:
+		if tv {
+			*t = "adaptive"
+		} else {
+			*t = "off"
+		}
 		return nil
-	case "off":
+	default:
+		return fmt.Errorf("thinking must be a string or bool")
+	}
+	switch val {
+	case "off", "false":
 		*t = "off"
+		return nil
+	case "adaptive", "true":
+		*t = "adaptive"
 		return nil
 	case "":
 		*t = ""
 		return nil
 	default:
-		return fmt.Errorf("invalid thinking value %q (must be adaptive, off)", val)
+		return fmt.Errorf("invalid thinking value %q (must be off/false, adaptive/true)", val)
 	}
 }
 

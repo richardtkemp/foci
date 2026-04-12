@@ -147,9 +147,9 @@ startup_notify = false
 // ApplyProviderDefaults was deleted as part of the Per-Model Config refactor.
 
 func TestShowToolCallsDisplay(t *testing.T) {
-	// Proves that ToolCallDisplay accepts string values ("off", "preview", "full"),
-	// rejects invalid strings and non-string types, and works both at the defaults
-	// level and per-agent with nil meaning unset.
+	// Proves that ToolCallDisplay accepts canonical strings, aliases (false/medium/true),
+	// bools, rejects invalid strings, and works both at the defaults level and per-agent
+	// with nil meaning unset.
 	tests := []struct {
 		name    string
 		toml    string
@@ -159,8 +159,12 @@ func TestShowToolCallsDisplay(t *testing.T) {
 		{"string off", `show_tool_calls = "off"`, ToolCallOff, false},
 		{"string preview", `show_tool_calls = "preview"`, ToolCallPreview, false},
 		{"string full", `show_tool_calls = "full"`, ToolCallFull, false},
+		{"false alias", `show_tool_calls = "false"`, ToolCallOff, false},
+		{"medium alias", `show_tool_calls = "medium"`, ToolCallPreview, false},
+		{"true alias", `show_tool_calls = "true"`, ToolCallFull, false},
+		{"bool true", `show_tool_calls = true`, ToolCallFull, false},
+		{"bool false", `show_tool_calls = false`, ToolCallOff, false},
 		{"invalid string", `show_tool_calls = "banana"`, "", true},
-		{"bool rejected", `show_tool_calls = true`, "", true},
 	}
 
 	for _, tt := range tests {
