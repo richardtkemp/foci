@@ -1578,6 +1578,156 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Nudge re-arm
+// ---------------------------------------------------------------------------
+
+func TestOnResult_NudgePending_RearmsHandler(t *testing.T) {
+	// When a PostToolNudge was sent (nudgePending=true) and OnResult fires,
+	// the foci turn should complete (OnTurnComplete called) but the handler
+	// should be re-armed with a delivery-only handler for the nudge response.
+	t.Parallel()
+
+	var completed *delegator.TurnResult
+	var textCalls []string
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
+		OnText:         func(text string) { textCalls = append(textCalls, text) },
+		OnTextDelta:    func(string) {},
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.turnText.WriteString("turn text")
+	b.nudgePending = true
+	b.turnMu.Unlock()
+
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	// Foci turn completed.
+	if completed == nil {
+		t.Fatal("OnTurnComplete should fire on nudge-pending result")
+	}
+	if completed.Text != "turn text" {
+		t.Errorf("result.Text = %q, want %q", completed.Text, "turn text")
+	}
+
+	// Handler re-armed for nudge response.
+	b.turnMu.Lock()
+	rearmed := b.turnHandler
+	active := b.turnActive
+	b.turnMu.Unlock()
+
+	if !active {
+		t.Error("turnActive should be true after re-arm")
+	}
+	if rearmed == nil {
+		t.Fatal("turnHandler should be non-nil after re-arm")
+	}
+	if rearmed.OnTurnComplete != nil {
+		t.Error("re-armed handler should have nil OnTurnComplete")
+	}
+	if rearmed.OnText == nil {
+		t.Error("re-armed handler should preserve OnText for delivery")
+	}
+	if rearmed.OnTextDelta == nil {
+		t.Error("re-armed handler should preserve OnTextDelta for streaming")
+	}
+}
+
+func TestOnResult_NudgePending_DeliveryAfterRearm(t *testing.T) {
+	// After re-arm, assistant messages from the nudge response should be
+	// delivered through the re-armed handler's OnText callback.
+	t.Parallel()
+
+	var textCalls []string
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(*delegator.TurnResult) {},
+		OnText:         func(text string) { textCalls = append(textCalls, text) },
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.nudgePending = true
+	b.turnMu.Unlock()
+
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	// Simulate CC processing the nudge: assistant message with text.
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Content: []ContentBlock{{Type: "text", Text: "nudge response text"}},
+		},
+	})
+
+	if len(textCalls) != 1 || textCalls[0] != "nudge response text" {
+		t.Errorf("textCalls = %v, want [nudge response text]", textCalls)
+	}
+}
+
+func TestOnResult_NudgePending_SecondResultCleansUp(t *testing.T) {
+	// The nudge turn's result should clean up normally: turnHandler nil,
+	// turnActive false, no panic (OnTurnComplete is nil on the re-armed handler).
+	t.Parallel()
+
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(*delegator.TurnResult) {},
+		OnText:         func(string) {},
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.nudgePending = true
+	b.turnMu.Unlock()
+
+	// First result: foci turn completes, handler re-armed.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	// Second result: nudge turn ends.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	b.turnMu.Lock()
+	h := b.turnHandler
+	active := b.turnActive
+	b.turnMu.Unlock()
+
+	if h != nil {
+		t.Error("turnHandler should be nil after nudge turn completes")
+	}
+	if active {
+		t.Error("turnActive should be false after nudge turn completes")
+	}
+}
+
+func TestBeginTurn_ClearsNudgePending(t *testing.T) {
+	// A new foci turn (beginTurn) should clear any stale nudgePending state.
+	t.Parallel()
+
+	b := &Backend{}
+	b.turnMu.Lock()
+	b.nudgePending = true
+	b.turnMu.Unlock()
+
+	b.beginTurn(&delegator.EventHandler{})
+
+	b.turnMu.Lock()
+	pending := b.nudgePending
+	b.turnMu.Unlock()
+
+	if pending {
+		t.Error("beginTurn should clear nudgePending")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // OnSystem
 // ---------------------------------------------------------------------------
 
