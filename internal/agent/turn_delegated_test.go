@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -11,9 +12,12 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
 	"foci/internal/delegator"
+	focilog "foci/internal/log"
 	"foci/internal/nudge"
 	"foci/internal/provider"
 	"foci/internal/session"
+
+	_ "modernc.org/sqlite"
 )
 
 // TestDelegatedTransport_NoOps verifies that no-op methods don't panic and
@@ -47,8 +51,9 @@ func TestDelegatedTransport_NoOps(t *testing.T) {
 	if err := tr.SaveSession(ts); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
-	tr.UpdateSessionMeta(ts) // no panic (stub)
-	tr.RunCompaction(ts)      // no panic (stub)
+	tr.LogConversationSent(ts) // no-op: delegated path logs per-message in OnText
+	tr.UpdateSessionMeta(ts)   // no panic (stub)
+	tr.RunCompaction(ts)       // no panic (stub)
 }
 
 // TestDelegatedTransport_ResolveModelEffort verifies it reads agent-level model.
@@ -896,6 +901,103 @@ func TestDelegatedTransport_RunInference_NilTurnResult(t *testing.T) {
 	}
 	if ts.FinalUsage != nil {
 		t.Error("FinalUsage should be nil for nil result")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OnText conversation logging
+// ---------------------------------------------------------------------------
+
+// TestDelegatedTransport_OnText_LogsEachMessage verifies that the OnText
+// callback in RunInference logs each intermediate text to the conversation DB
+// individually, rather than accumulating a single concatenated row at turn end.
+// This is the fix for conversation.db missing per-message rows (Issue 2) and
+// concatenating separate messages into one row (Issue 3).
+func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
+	// Set up a temp conversation DB so log.Conversation() actually writes.
+	dir := t.TempDir()
+	agentID := "test"
+	err := focilog.InitPerAgentConversation([]string{agentID}, func(id string) string {
+		return dir + "/" + id + ".db"
+	})
+	if err != nil {
+		t.Fatalf("InitPerAgentConversation: %v", err)
+	}
+	defer focilog.CloseConversation()
+
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			// Simulate CC producing three intermediate text blocks
+			// followed by turn completion.
+			if handler != nil {
+				if handler.OnText != nil {
+					handler.OnText("message one")
+					handler.OnText("message two")
+					handler.OnText("message three")
+				}
+				if handler.OnTurnComplete != nil {
+					handler.OnTurnComplete(&delegator.TurnResult{
+						Text:  "message onemessage twomessage three",
+						Model: "test-model",
+					})
+				}
+			}
+			return nil, nil
+		},
+	}
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+
+	// The session key must start with the agent ID so resolveConvLog routes
+	// to the right DB.
+	sk := agentID + "/chat/12345"
+	ctx := turnevent.WithSink(context.Background(), turnevent.NewBufferSink())
+	ts := NewTurnState(ctx, sk, []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+	ts.Meta = &TurnMetadata{UserID: "u1", Username: "dick"}
+	ts.ConvChatID = 42
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	<-ts.CompletionChan
+
+	// Now run LogConversationSent (the no-op override) — should NOT add
+	// another row with the concatenated text.
+	tr.LogConversationSent(ts)
+
+	// Query the DB for sent rows.
+	dbPath := dir + "/" + agentID + ".db"
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open DB: %v", err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query("SELECT text FROM messages WHERE direction='sent' ORDER BY id")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var texts []string
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		texts = append(texts, text)
+	}
+
+	if len(texts) != 3 {
+		t.Fatalf("got %d sent rows, want 3 individual messages; texts=%v", len(texts), texts)
+	}
+	if texts[0] != "message one" || texts[1] != "message two" || texts[2] != "message three" {
+		t.Errorf("sent texts = %v, want [message one, message two, message three]", texts)
 	}
 }
 
