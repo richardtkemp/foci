@@ -212,6 +212,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		},
 		OnText: func(text string) {
 			turnevent.Emit(turnCtx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
+			// Log each intermediate text individually to the conversation DB.
+			// The API transport does this in sendOrBatchText; the delegated
+			// path was missing it, causing conversation.db to only record a
+			// single concatenated row at turn end.
+			a.logConversationSent(ts.ConvChatID, ts.Meta, ts.SessionKey, text)
 		},
 		OnToolStart: func(id, name, input string) {
 			turnevent.Emit(turnCtx, turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
@@ -328,6 +333,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 }
 
 // --- Phase 4: Post-turn ---
+
+// LogConversationSent is a no-op — the delegated path logs each intermediate
+// text individually in the OnText callback. The shared implementation would
+// log a single concatenated blob of all text from the turn, which is both
+// redundant and incorrect (it concatenates separate messages into one row).
+func (t *DelegatedTransport) LogConversationSent(ts *TurnState) {}
 
 // SaveSession is a no-op — CC owns its session file.
 func (t *DelegatedTransport) SaveSession(ts *TurnState) error { return nil }

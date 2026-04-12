@@ -218,6 +218,34 @@ func TestOnReply_StreamEnabled_ThinkingOnly_NoEdit(t *testing.T) {
 	}
 }
 
+func TestOnReply_StreamEnabled_ThinkingOnly_NonEmptyText_Fallback(t *testing.T) {
+	// When only thinking was streamed (no text deltas) but the OnReply text
+	// parameter is non-empty, the text should be delivered as a new message
+	// rather than silently dropped. This covers the case where a previous
+	// assistant message produced thinking deltas but no text, and the next
+	// message's text has no corresponding stream deltas.
+	backend := newMockBackend()
+	tracker := &mockTracker{}
+	display := TurnDisplay{StreamOutput: true, ShowThinking: "compact", MaxChars: 4096}
+	transport := &mockTransport{sendMsgID: "100"}
+	r := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+
+	r.OnThinking("just thinking")
+	r.OnReply("important text that must not be dropped")
+
+	// Stream content is empty (only thinking, no text after divider).
+	// The fallback should send the text as a new message.
+	if len(backend.editCalls) != 0 {
+		t.Errorf("editMessage calls = %d, want 0 (stream content was thinking-only)", len(backend.editCalls))
+	}
+	if len(backend.sendReplyCalls) != 1 {
+		t.Fatalf("sendReply calls = %d, want 1 (fallback delivery)", len(backend.sendReplyCalls))
+	}
+	if backend.sendReplyCalls[0] != "important text that must not be dropped" {
+		t.Errorf("sendReply text = %q, want %q", backend.sendReplyCalls[0], "important text that must not be dropped")
+	}
+}
+
 func TestOnReply_StreamEnabled_DeltasArrived_FreshWriterForNextSegment(t *testing.T) {
 	// After OnReply finalizes the stream message, a fresh stream writer
 	// is created for the next segment. The next OnReply should take the
