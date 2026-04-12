@@ -365,10 +365,10 @@ func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 // SendTextToChat sends a text message to a specific channel ID without any header.
 // This is the single convergence point for all text delivery — every other
 // send method (SendText, SendToSession, sendReply, etc.) delegates here.
-// Silently drops messages matching platform.IsSilent (sentinels, empty).
+// Sentinel filtering (IsSilent) is handled upstream by the turn sinks;
+// this only guards against sending empty/whitespace to the platform API.
 func (b *Bot) SendTextToChat(chatID int64, text string) error {
-	if platform.IsSilent(text) {
-		b.logger().Debugf("IsSilent filtered: chatID=%d len=%d", chatID, len(text))
+	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	b.logger().Debugf("SendTextToChat: chatID=%d len=%d", chatID, len(text))
