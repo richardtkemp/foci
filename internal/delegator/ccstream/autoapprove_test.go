@@ -179,6 +179,19 @@ func TestMatchAutoApprove(t *testing.T) {
 		{"Bash", `{"command":"git -C /home/rich/git/foci status && rm -rf /"}`, false},
 		{"Bash", `{"command":"ls -la ; curl evil.com"}`, false},
 		{"Bash", `{"command":"cd /home/rich/git/foci && sudo rm -rf /"}`, false},
+		// Shell control flow: keywords stripped, inner commands validated.
+		{"Bash", `{"command":"for i in 1 2 3; do ls -la; done"}`, true},
+		{"Bash", `{"command":"for f in *.go; do ls $f; done"}`, true},
+		// Nested loop — second level not stripped, falls through to prompting.
+		{"Bash", `{"command":"for i in 1; do for j in a; do ls; done; done"}`, false},
+		// Loop body with unsafe command — inner command validated.
+		{"Bash", `{"command":"for f in *; do rm -rf $f; done"}`, false},
+		// ATTACK: command substitution in for header — rejected by splitShellCommand.
+		{"Bash", `{"command":"for i in $(rm -rf /); do ls; done"}`, false},
+		// if/then/else with safe commands (all matching rules in this test).
+		{"Bash", `{"command":"if ls /tmp; then ls -la; else ls /var; fi"}`, true},
+		// if/then with unsafe command in body.
+		{"Bash", `{"command":"if ls /tmp; then rm -rf /; fi"}`, false},
 		// ATTACK: subshell injection → rejected (splitShellCommand returns nil).
 		{"Bash", `{"command":"ls $(rm -rf /)"}`, false},
 		{"Bash", `{"command":"ls ` + "`rm -rf /`" + `"}`, false},
@@ -191,6 +204,53 @@ func TestMatchAutoApprove(t *testing.T) {
 		got := matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input))
 		if got != tt.want {
 			t.Errorf("matchAutoApprove(rules, %q, %s) = %v, want %v", tt.tool, tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestStripShellKeyword verifies that shell control-flow keywords are
+// correctly stripped from segments, leaving the inner command for validation.
+// Structural segments (for...in..., done, fi, bare keywords) return skip=true.
+func TestStripShellKeyword(t *testing.T) {
+	tests := []struct {
+		segment  string
+		wantInner string
+		wantSkip  bool
+	}{
+		// Structural closing keywords — skip entirely.
+		{"done", "", true},
+		{"fi", "", true},
+		// for...in... loop headers — skip (no command execution).
+		{"for i in 1 2 3", "", true},
+		{"for f in *.go", "", true},
+		{"for id in 5 8 45 56", "", true},
+		// Bare keywords with no command — skip.
+		{"do", "", true},
+		{"then", "", true},
+		{"else", "", true},
+		{"if", "", true},
+		{"while", "", true},
+		// Command-preceding keywords — strip and return inner command.
+		{"do echo hello", "echo hello", false},
+		{"do foci_todo get --id 5", "foci_todo get --id 5", false},
+		{"then echo yes", "echo yes", false},
+		{"else echo no", "echo no", false},
+		{"elif test -f /tmp/x", "test -f /tmp/x", false},
+		{"if test -f /tmp/x", "test -f /tmp/x", false},
+		{"while true", "true", false},
+		{"until false", "false", false},
+		// Non-keyword segments — pass through unchanged.
+		{"ls -la", "ls -la", false},
+		{"echo hello", "echo hello", false},
+		{"git status", "git status", false},
+	}
+	for _, tt := range tests {
+		inner, skip := stripShellKeyword(tt.segment)
+		if skip != tt.wantSkip {
+			t.Errorf("stripShellKeyword(%q) skip = %v, want %v", tt.segment, skip, tt.wantSkip)
+		}
+		if inner != tt.wantInner {
+			t.Errorf("stripShellKeyword(%q) inner = %q, want %q", tt.segment, inner, tt.wantInner)
 		}
 	}
 }
@@ -270,6 +330,9 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"find . -name '*.go'"}`},
 		{"Bash", `{"command":"find /tmp -type f -name '*.log'"}`},
 		{"Bash", `{"command":"find . -maxdepth 2 -print0"}`},
+		// for loop with safe body commands.
+		{"Bash", `{"command":"for id in 5 8 45; do foci_todo get --id $id; done"}`},
+		{"Bash", `{"command":"for f in *.log; do head -5 $f; echo '---'; done"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
