@@ -103,6 +103,16 @@ var CommonSafeWriteRules = []string{
 	"Bash:touch",
 	// Safe deletion — moves to trash, recoverable.
 	"Bash:trash",
+	// Go development workflow.
+	"Bash:go build",
+	"Bash:go test",
+	"Bash:go install",
+	"Bash:go get",
+	"Bash:go mod tidy",
+	"Bash:go mod download",
+	"Bash:go mod edit",
+	"Bash:go clean",
+	"Bash:go run",
 }
 
 // parseAutoApproveRule splits a rule string into tool name and optional pattern.
