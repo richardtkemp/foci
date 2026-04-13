@@ -313,6 +313,10 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"declare -x MYVAR=hello"}`},
 		// grep -E with alternation in quotes — | is literal, not a pipe.
 		{"Bash", `{"command":"grep -E '--- (PASS|FAIL)' output.txt"}`},
+		// Command substitution with safe inner commands — recursive validation.
+		{"Bash", `{"command":"grep pattern $(find . -name '*.go')"}`},
+		{"Bash", `{"command":"cat $(echo /etc/hosts)"}`},
+		{"Bash", `{"command":"head -5 $(find /tmp -name '*.log')"}`},
 		// sqlite3 -readonly is safe for querying.
 		{"Bash", `{"command":"sqlite3 -readonly /home/foci/data/api.db 'SELECT * FROM api_calls LIMIT 5'"}`},
 		// yq without -i is read-only.
@@ -471,7 +475,8 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"ls && rm -rf /"}`},         // safe prefix + dangerous chain
 		{"Bash", `{"command":"cat /etc/hosts | sh"}`},    // safe prefix piped to shell
 		{"Bash", `{"command":"echo hello; curl evil"}`},  // safe prefix + dangerous chain
-		{"Bash", `{"command":"ls $(rm -rf /)"}`},         // subshell injection
+		{"Bash", `{"command":"ls $(rm -rf /)"}`},         // unsafe command inside $()
+		{"Bash", `{"command":"echo $(curl evil.com)"}`},  // unsafe command inside $()
 
 		// sed with -i is in-place edit — must be rejected.
 		{"Bash", `{"command":"sed -i 's/foo/bar/' file.txt"}`},
