@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/log"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // autoApproveRule is a parsed permission auto-approve rule.
@@ -93,6 +94,8 @@ var CommonSafeWriteRules = []string{
 	// Filesystem scaffolding.
 	"Bash:mkdir",
 	"Bash:touch",
+	// Safe deletion — moves to trash, recoverable.
+	"Bash:trash",
 }
 
 // parseAutoApproveRule splits a rule string into tool name and optional pattern.
@@ -119,9 +122,9 @@ func parseAutoApproveRules(rules []string) []autoApproveRule {
 // matchAutoApprove checks whether a permission request matches any auto-approve
 // rule. Returns true if the request should be auto-approved.
 //
-// For Bash commands, the command is split on shell operators (&&, ||, ;, |)
-// and every segment must independently match at least one Bash rule. This
-// prevents "git status && rm -rf /" from being auto-approved by a "git *" rule.
+// For Bash commands, the command is parsed into an AST and every structural
+// element and simple command is validated. This prevents bypasses via shell
+// features like redirects, process substitution, and command wrappers.
 func matchAutoApprove(rules []autoApproveRule, toolName string, input json.RawMessage) bool {
 	if toolName == "Bash" {
 		return matchBashAutoApprove(rules, input)
@@ -139,72 +142,201 @@ func matchToolAutoApprove(rules []autoApproveRule, toolName string, input json.R
 	return false
 }
 
-// matchBashAutoApprove splits a Bash command on shell operators and requires
-// every segment to match at least one Bash rule. Shell control-flow keywords
-// (for/do/done/if/then/else/fi/while/until) are stripped so the actual
-// commands inside simple loops and conditionals are validated normally.
+// ---------- AST-based Bash command validation ----------
+
+// wrapperCommands are commands that execute their arguments as a subprocess.
+// When these appear as the first word of a simple command with additional
+// arguments, the command is rejected (prompted to user) because the wrapper
+// could be used to execute any arbitrary command.
+//
+// Bare invocations (e.g. "env" alone to show environment) are not affected —
+// only wrapper + arguments triggers rejection.
+var wrapperCommands = map[string]bool{
+	"env":     true,
+	"nice":    true,
+	"timeout": true,
+	"nohup":   true,
+	"flock":   true,
+	"script":  true,
+	"setsid":  true,
+	"taskset": true,
+	"ionice":  true,
+	"strace":  true,
+	"watch":   true,
+}
+
+// matchBashAutoApprove parses a Bash command into an AST and validates every
+// command and structural element against the auto-approve rules.
+//
+// Structural safety checks (AST-level):
+//   - Output redirects (>, >>, >|, &>, &>>) are rejected
+//   - Process substitution <() is rejected
+//   - Command substitution $() and backticks are rejected
+//   - Brace expansion {a,b} is rejected
+//   - Function declarations and coprocesses are rejected
+//   - Command wrappers (env, nice, timeout, etc.) with arguments are rejected
+//
+// Command-level checks (reusing existing infrastructure):
+//   - Each simple command must match at least one Bash auto-approve rule
+//   - Commands with known unsafe flags (sed -i, find -exec, sort -o, etc.) are rejected
+//   - sed script arguments are scanned for dangerous commands (w, e)
 func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 	command := extractMatchString("Bash", input)
 	if command == "" {
 		return false
 	}
 
-	segments := splitShellCommand(command)
-	if len(segments) == 0 {
+	// Parse command as bash.
+	p := syntax.NewParser(syntax.KeepComments(false), syntax.Variant(syntax.LangBash))
+	f, err := p.Parse(strings.NewReader(command), "")
+	if err != nil {
+		return false // unparseable → fail safe (prompt user)
+	}
+
+	// Walk the AST checking structural safety and collecting simple commands.
+	//
+	// Note: the parser treats brace expansion ({a,b}, {1..10}) as literal
+	// text in Lit nodes. syntax.SplitBraces exists to convert them into
+	// BraceExp nodes, but Walk panics on BraceExp (unsupported node type).
+	// So we detect brace expansion by inspecting Lit values directly.
+	var commands []*syntax.CallExpr
+	hasContent := false
+	safe := true
+
+	syntax.Walk(f, func(node syntax.Node) bool {
+		if !safe {
+			return false
+		}
+		switch n := node.(type) {
+		case *syntax.Redirect:
+			if isOutputRedirect(n.Op) {
+				safe = false
+			}
+		case *syntax.ProcSubst:
+			safe = false
+		case *syntax.CmdSubst:
+			safe = false
+		case *syntax.Lit:
+			if litContainsBraceExpansion(n.Value) {
+				safe = false
+			}
+		case *syntax.CallExpr:
+			commands = append(commands, n)
+			hasContent = true
+		case *syntax.TestClause:
+			hasContent = true // [[ ]] — safe, no side effects
+		case *syntax.DeclClause:
+			hasContent = true // export/local/declare — safe
+		case *syntax.ArithmCmd:
+			hasContent = true // (( )) — safe
+		case *syntax.LetClause:
+			hasContent = true // let — safe
+		case *syntax.FuncDecl:
+			safe = false // function declarations not allowed
+		case *syntax.CoprocClause:
+			safe = false // coprocesses not allowed
+		default:
+			_ = n // other node types — recurse normally
+		}
+		return safe
+	})
+
+	if !safe || !hasContent {
 		return false
 	}
 
-	for _, seg := range segments {
-		inner, skip := stripShellKeyword(seg)
-		if skip {
-			continue
+	// Validate each simple command against rules.
+	pr := syntax.NewPrinter()
+	for _, cmd := range commands {
+		cmdStr := callExprCmdString(pr, cmd)
+		if cmdStr == "" {
+			continue // pure assignment, no command — safe
 		}
-		if !matchBashSegment(rules, inner) {
+
+		// Reject command wrappers with arguments (e.g. "env rm file").
+		// Bare wrapper invocations (e.g. "env" alone) are allowed.
+		name := commandBaseName(cmd)
+		if wrapperCommands[name] && len(cmd.Args) > 1 {
+			return false
+		}
+
+		if !matchBashSegment(rules, cmdStr) {
 			return false
 		}
 	}
 	return true
 }
 
-// shellCmdKeywords are keywords that precede a command. The keyword is
-// stripped and the remaining command is validated against rules.
-var shellCmdKeywords = []string{
-	"do", "then", "else", "elif",
-	"if", "while", "until",
+// isOutputRedirect returns true if the redirect operator writes output to a
+// file. Input redirects (<, <<, <<<) and FD duplication (>&N, <&N) are not
+// considered output redirects.
+func isOutputRedirect(op syntax.RedirOperator) bool {
+	switch op {
+	case syntax.RdrOut, // >
+		syntax.AppOut, // >>
+		syntax.ClbOut, // >|
+		syntax.RdrAll, // &>
+		syntax.AppAll: // &>>
+		return true
+	}
+	return false
 }
 
-// stripShellKeyword removes a single leading shell keyword from a segment,
-// returning the inner command to validate. For purely structural segments
-// (done, fi, for...in..., or a bare keyword with no command), it returns
-// skip=true. Only one level of keywords is stripped — nested constructs
-// fall through to user prompting.
-func stripShellKeyword(segment string) (string, bool) {
-	// Closing keywords — purely structural.
-	if segment == "done" || segment == "fi" {
-		return "", true
+// litContainsBraceExpansion checks whether an unquoted literal contains bash
+// brace expansion syntax: {a,b,c} (alternatives) or {1..10} (sequences).
+// The sh/syntax parser keeps these as Lit text; syntax.SplitBraces can
+// convert them to BraceExp nodes, but Walk doesn't support BraceExp, so
+// we detect the pattern in the literal value instead.
+func litContainsBraceExpansion(s string) bool {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return false
 	}
-	// for ... in ... — loop header, no command execution.
-	// (Command substitution in the value list is already rejected by
-	// splitShellCommand before we get here.)
-	if strings.HasPrefix(segment, "for ") && strings.Contains(segment, " in ") {
-		return "", true
+	end := strings.IndexByte(s[start:], '}')
+	if end < 0 {
+		return false
 	}
-	// Command-preceding keywords: strip and validate the inner command.
-	for _, kw := range shellCmdKeywords {
-		if segment == kw {
-			return "", true // bare keyword, no command — skip
-		}
-		if strings.HasPrefix(segment, kw+" ") {
-			return strings.TrimSpace(segment[len(kw)+1:]), false
-		}
-	}
-	return segment, false
+	inner := s[start : start+end+1]
+	return strings.Contains(inner, ",") || strings.Contains(inner, "..")
 }
 
-// matchBashSegment checks whether a single command segment (no shell operators)
-// matches at least one Bash rule. If the segment contains flags that are
-// known to be unsafe for the matched command (e.g. sed -i), the match is
-// rejected regardless of which rule matched.
+// callExprCmdString returns the command string from a CallExpr, excluding
+// any variable assignments. Returns "" for pure assignments with no command.
+func callExprCmdString(pr *syntax.Printer, ce *syntax.CallExpr) string {
+	if len(ce.Args) == 0 {
+		return ""
+	}
+	var buf strings.Builder
+	for i, arg := range ce.Args {
+		if i > 0 {
+			buf.WriteByte(' ')
+		}
+		pr.Print(&buf, arg)
+	}
+	return buf.String()
+}
+
+// commandBaseName extracts the base name of the command from a CallExpr.
+// For simple literal commands (like "env", "/usr/bin/env"), returns the base
+// name ("env"). Returns "" if the command name is not a simple literal (e.g.
+// quoted or expanded).
+func commandBaseName(ce *syntax.CallExpr) string {
+	if len(ce.Args) == 0 || len(ce.Args[0].Parts) == 0 {
+		return ""
+	}
+	lit, ok := ce.Args[0].Parts[0].(*syntax.Lit)
+	if !ok {
+		return ""
+	}
+	return filepath.Base(lit.Value)
+}
+
+// ---------- Command segment validation ----------
+
+// matchBashSegment checks whether a single command string matches at least one
+// Bash rule. If the command contains flags or arguments that are known to be
+// unsafe (e.g. sed -i, sort -o), the match is rejected regardless of which
+// rule matched.
 func matchBashSegment(rules []autoApproveRule, segment string) bool {
 	if containsUnsafeFlags(segment) {
 		return false
@@ -240,123 +372,43 @@ func (r autoApproveRule) matchesTool(toolName string, input json.RawMessage) boo
 	return matchPattern(r.pattern, matchStr)
 }
 
-// splitShellCommand splits a command string on unquoted shell operators
-// (&&, ||, ;, |) into individual command segments. Respects single and
-// double quotes, and backslash escapes. Each segment is trimmed.
-// Returns nil if parsing fails (unmatched quotes).
-func splitShellCommand(cmd string) []string {
-	var segments []string
-	var cur strings.Builder
-	i := 0
+// ---------- Unsafe flag and argument detection ----------
 
-	for i < len(cmd) {
-		ch := cmd[i]
-
-		// Backslash escape — skip next char.
-		if ch == '\\' && i+1 < len(cmd) {
-			cur.WriteByte(ch)
-			cur.WriteByte(cmd[i+1])
-			i += 2
-			continue
-		}
-
-		// Quoted strings — consume until matching quote.
-		if ch == '\'' || ch == '"' {
-			end := indexUnescapedQuote(cmd, i+1, ch)
-			if end < 0 {
-				return nil // unmatched quote → fail safe (prompt user)
-			}
-			cur.WriteString(cmd[i : end+1])
-			i = end + 1
-			continue
-		}
-
-		// Check for shell operators.
-		if ch == '&' && i+1 < len(cmd) && cmd[i+1] == '&' {
-			segments = appendSegment(segments, &cur)
-			i += 2
-			continue
-		}
-		if ch == '|' && i+1 < len(cmd) && cmd[i+1] == '|' {
-			segments = appendSegment(segments, &cur)
-			i += 2
-			continue
-		}
-		if ch == '|' || ch == ';' {
-			segments = appendSegment(segments, &cur)
-			i++
-			continue
-		}
-
-		// $(...) and backtick subshells are dangerous — fail safe.
-		if ch == '$' && i+1 < len(cmd) && cmd[i+1] == '(' {
-			return nil
-		}
-		if ch == '`' {
-			return nil
-		}
-
-		cur.WriteByte(ch)
-		i++
-	}
-
-	segments = appendSegment(segments, &cur)
-
-	if len(segments) == 0 {
-		return nil
-	}
-	return segments
-}
-
-// indexUnescapedQuote returns the index of the next unescaped quote character
-// starting from position start, or -1 if not found.
-func indexUnescapedQuote(s string, start int, quote byte) int {
-	for i := start; i < len(s); i++ {
-		if s[i] == '\\' && quote == '"' {
-			i++ // skip escaped char in double quotes
-			continue
-		}
-		if s[i] == quote {
-			return i
-		}
-	}
-	return -1
-}
-
-// appendSegment trims and appends the current builder content as a segment.
-func appendSegment(segments []string, cur *strings.Builder) []string {
-	s := strings.TrimSpace(cur.String())
-	cur.Reset()
-	if s != "" {
-		segments = append(segments, s)
-	}
-	return segments
-}
-
-// unsafeCmdFlags describes flags that make an otherwise read-only command
-// unsafe for auto-approval. If a command segment matches an auto-approve
-// rule but contains any of these flags, the match is rejected.
+// unsafeCmdFlags describes flags and argument patterns that make an otherwise
+// safe command unsafe for auto-approval.
 type unsafeCmdFlags struct {
-	shortFlags string   // unsafe single-letter flags, e.g. "i" for -i
-	wordFlags  []string // unsafe single-dash word flags, e.g. "-exec", "-delete"
-	longFlags  []string // long flag stems (matched as prefix for --flag=value)
+	shortFlags string            // unsafe single-letter flags, e.g. "i" for -i
+	wordFlags  []string          // unsafe single-dash word flags, e.g. "-exec", "-delete"
+	longFlags  []string          // long flag stems (matched as prefix for --flag=value)
+	argCheck   func(string) bool // optional: check non-flag arguments for dangerous content
 }
 
-// unsafeFlags maps command base names to their unsafe flag specs. Only
-// commands listed here are checked — all other commands pass through.
+// unsafeFlags maps command base names to their unsafe flag/argument specs.
+// Only commands listed here are checked — all other commands pass through.
 var unsafeFlags = map[string]unsafeCmdFlags{
-	"sed":  {shortFlags: "i", longFlags: []string{"--in-place"}},
-	"find": {wordFlags: []string{"-exec", "-execdir", "-ok", "-okdir", "-delete"}},
+	"sed": {
+		shortFlags: "i",
+		longFlags:  []string{"--in-place"},
+		argCheck:   sedArgUnsafe,
+	},
+	"find": {
+		wordFlags: []string{"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fls", "-fprintf"},
+	},
+	"sort": {
+		shortFlags: "o",
+		longFlags:  []string{"--output"},
+	},
 }
 
-// containsUnsafeFlags checks whether a command segment (single command, no
-// shell operators) contains flags that make it unsafe for auto-approval.
-// Returns true if any unsafe flag is detected.
+// containsUnsafeFlags checks whether a command string contains flags or
+// arguments that make it unsafe for auto-approval. Returns true if any unsafe
+// flag or dangerous argument content is detected.
 //
-// The check tokenises the segment, looks up the command base name in
+// The check tokenises the command, looks up the command base name in
 // unsafeFlags, and scans tokens for matching short flags (including bundled
 // forms like -ni), word flags (single-dash multi-letter flags like -exec),
-// and long flags (including --flag=value forms).
+// long flags (including --flag=value forms), and dangerous argument content
+// (via the optional argCheck function).
 func containsUnsafeFlags(segment string) bool {
 	tokens := tokenizeCommand(segment)
 	if len(tokens) == 0 {
@@ -370,44 +422,121 @@ func containsUnsafeFlags(segment string) bool {
 	}
 
 	for _, tok := range tokens[1:] {
-		if len(tok) < 2 || tok[0] != '-' {
-			continue // not a flag
-		}
-		if strings.HasPrefix(tok, "--") {
-			// Long flag: --in-place or --in-place=.bak
-			for _, lf := range spec.longFlags {
-				if tok == lf || strings.HasPrefix(tok, lf+"=") {
-					return true
-				}
-			}
-		} else {
-			// Word flag: single-dash multi-letter flags matched exactly,
-			// e.g. find's -exec, -delete.
-			for _, wf := range spec.wordFlags {
-				if tok == wf {
-					return true
-				}
-			}
-			// Short flag(s): -i, -i.bak, -ni, etc.
-			// Everything after the leading '-' up to the first non-alpha
-			// character is the flag bundle. For -i.bak the bundle is "i"
-			// (the dot terminates it, rest is the suffix argument).
-			if spec.shortFlags != "" {
-				bundle := tok[1:]
-				for j := 0; j < len(bundle); j++ {
-					ch := bundle[j]
-					if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
-						break // non-letter terminates the flag bundle
-					}
-					if strings.IndexByte(spec.shortFlags, ch) >= 0 {
+		if len(tok) >= 2 && tok[0] == '-' {
+			// Flag token.
+			if strings.HasPrefix(tok, "--") {
+				// Long flag: --in-place or --in-place=.bak
+				for _, lf := range spec.longFlags {
+					if tok == lf || strings.HasPrefix(tok, lf+"=") {
 						return true
 					}
 				}
+			} else {
+				// Word flag: single-dash multi-letter flags matched exactly,
+				// e.g. find's -exec, -delete.
+				for _, wf := range spec.wordFlags {
+					if tok == wf {
+						return true
+					}
+				}
+				// Short flag(s): -i, -i.bak, -ni, etc.
+				// Everything after the leading '-' up to the first non-alpha
+				// character is the flag bundle. For -i.bak the bundle is "i"
+				// (the dot terminates it, rest is the suffix argument).
+				if spec.shortFlags != "" {
+					bundle := tok[1:]
+					for j := 0; j < len(bundle); j++ {
+						ch := bundle[j]
+						if ch < 'A' || (ch > 'Z' && ch < 'a') || ch > 'z' {
+							break // non-letter terminates the flag bundle
+						}
+						if strings.IndexByte(spec.shortFlags, ch) >= 0 {
+							return true
+						}
+					}
+				}
+			}
+		} else if spec.argCheck != nil {
+			// Non-flag token — check with custom argument checker.
+			if spec.argCheck(tok) {
+				return true
 			}
 		}
 	}
 	return false
 }
+
+// ---------- sed script argument analysis ----------
+
+// sedArgUnsafe checks if a sed script argument contains potentially dangerous
+// sed commands. Returns true if the argument contains a 'w' (write to file)
+// or 'e' (execute pattern space as shell command) command.
+//
+// Known limitation: the s///e flag (execute replacement as shell command) is
+// not detected — it requires parsing the substitute command's delimiters,
+// which is beyond this heuristic.
+func sedArgUnsafe(arg string) bool {
+	// Strip outer quotes if present.
+	if len(arg) >= 2 {
+		if (arg[0] == '\'' && arg[len(arg)-1] == '\'') ||
+			(arg[0] == '"' && arg[len(arg)-1] == '"') {
+			arg = arg[1 : len(arg)-1]
+		}
+	}
+	if arg == "" {
+		return false
+	}
+	// Scan past optional sed address prefix (line numbers, /regex/, $, ranges).
+	i := skipSedAddress(arg)
+	// Check for dangerous commands at current position.
+	if i < len(arg) {
+		switch arg[i] {
+		case 'w', 'W': // write command — writes matched lines to file
+			return true
+		case 'e', 'E': // execute command — runs pattern space as shell command
+			return true
+		}
+	}
+	return false
+}
+
+// skipSedAddress skips a sed address prefix in a script string, returning
+// the index of the first command character. Handles line numbers, $ (last
+// line), /regex/ delimiters, \cregexc alternate delimiters, address ranges
+// (,), and step (~).
+func skipSedAddress(s string) int {
+	i := 0
+	for i < len(s) {
+		ch := s[i]
+		if ch >= '0' && ch <= '9' || ch == ',' || ch == '~' || ch == '$' || ch == ' ' {
+			i++
+			continue
+		}
+		if ch == '/' {
+			// Skip /regex/ address.
+			end := strings.IndexByte(s[i+1:], '/')
+			if end >= 0 {
+				i = i + 1 + end + 1
+				continue
+			}
+			break // unterminated regex — stop
+		}
+		if ch == '\\' && i+1 < len(s) {
+			// Skip \cregexc alternate delimiter.
+			delim := s[i+1]
+			end := strings.IndexByte(s[i+2:], delim)
+			if end >= 0 {
+				i = i + 2 + end + 1
+				continue
+			}
+			break // unterminated — stop
+		}
+		break
+	}
+	return i
+}
+
+// ---------- Command tokenization ----------
 
 // tokenizeCommand splits a command string into whitespace-delimited tokens,
 // respecting single and double quotes and backslash escapes.
@@ -458,6 +587,23 @@ func tokenizeCommand(cmd string) []string {
 	return tokens
 }
 
+// indexUnescapedQuote returns the index of the next unescaped quote character
+// starting from position start, or -1 if not found.
+func indexUnescapedQuote(s string, start int, quote byte) int {
+	for i := start; i < len(s); i++ {
+		if s[i] == '\\' && quote == '"' {
+			i++ // skip escaped char in double quotes
+			continue
+		}
+		if s[i] == quote {
+			return i
+		}
+	}
+	return -1
+}
+
+// ---------- Tool input extraction ----------
+
 // toolMatchKeys maps CC tool names to the JSON input field used for pattern
 // matching. Tools not listed here only support tool-name-only rules.
 var toolMatchKeys = map[string]string{
@@ -496,6 +642,8 @@ func extractMatchString(toolName string, input json.RawMessage) string {
 	return s
 }
 
+// ---------- Pattern matching ----------
+
 // matchPattern checks whether str matches pattern. The pattern supports two modes:
 //   - If the pattern contains * or ?: glob matching where * matches any sequence
 //     of characters (including / and spaces) and ? matches any single character.
@@ -516,10 +664,9 @@ func globMatch(pattern, str string) bool {
 	return doGlob(pattern, str)
 }
 
-// doGlob is the recursive glob matcher. It uses the standard two-pointer
+// doGlob is the iterative glob matcher. It uses the standard two-pointer
 // backtracking algorithm for O(n*m) worst case.
 func doGlob(pattern, str string) bool {
-	// Iterative backtracking — avoids stack overflow on long inputs.
 	px, sx := 0, 0           // pattern and string cursors
 	starPx, starSx := -1, -1 // last * position for backtracking
 
@@ -548,6 +695,8 @@ func doGlob(pattern, str string) bool {
 	}
 	return px == len(pattern)
 }
+
+// ---------- Permission handling ----------
 
 // autoApprovePermission checks the request against compiled rules and, if
 // matched, sends an allow response directly. Returns true if auto-approved.

