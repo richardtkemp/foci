@@ -114,14 +114,12 @@ func (r *TurnRenderer) OnReply(text string) {
 			formatted := r.backend.FormatResponse(content)
 			_ = r.backend.EditMessage(msgID, formatted)
 		} else if strings.TrimSpace(text) != "" {
-			// Stream had no text content (e.g. only thinking deltas from a
-			// previous message), but OnReply was called with non-empty text.
-			// The text parameter is normally redundant with the stream, but
-			// when they diverge the text would be silently dropped. Log and
-			// fall back to sending it directly.
-			r.backend.Logger().Warnf("OnReply: stream content empty but text=%d chars (streamedThinking=%v, bufLen=%d); sending as new message",
-				len(text), r.streamedThinkingLive, len(r.sw.Content()))
-			r.backend.SendReply(text)
+			// Stream had no text content (e.g. only thinking deltas arrived,
+			// not the reply text), but OnReply has the reply. Edit the
+			// existing stream message with the reply — same as the happy path.
+			r.backend.Logger().Debugf("OnReply: stream text empty, editing with OnReply text (%d chars)", len(text))
+			formatted := r.backend.FormatResponse(text)
+			_ = r.backend.EditMessage(msgID, formatted)
 		}
 		r.tracker.CleanupPreview()
 	} else {
