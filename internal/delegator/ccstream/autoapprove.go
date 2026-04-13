@@ -193,6 +193,16 @@ func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 		return false // unparseable → fail safe (prompt user)
 	}
 
+	return validateParsedCommand(rules, f.Stmts, 0)
+}
+
+// maxCmdSubstDepth limits recursive validation of nested command substitutions.
+const maxCmdSubstDepth = 3
+
+// validateParsedCommand walks a list of statements checking structural safety
+// and validating each simple command against rules. depth tracks CmdSubst
+// nesting to prevent infinite recursion.
+func validateParsedCommand(rules []autoApproveRule, stmts []*syntax.Stmt, depth int) bool {
 	// Walk the AST checking structural safety and collecting simple commands.
 	//
 	// Note: the parser treats brace expansion ({a,b}, {1..10}) as literal
@@ -200,52 +210,67 @@ func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 	// BraceExp nodes, but Walk panics on BraceExp (unsupported node type).
 	// So we detect brace expansion by inspecting Lit values directly.
 	var commands []*syntax.CallExpr
+	var cmdSubsts []*syntax.CmdSubst
 	hasContent := false
 	safe := true
 
-	syntax.Walk(f, func(node syntax.Node) bool {
-		if !safe {
-			return false
-		}
-		switch n := node.(type) {
-		case *syntax.Redirect:
-			if isOutputRedirect(n.Op) {
-				safe = false
+	for _, stmt := range stmts {
+		syntax.Walk(stmt, func(node syntax.Node) bool {
+			if !safe {
+				return false
 			}
-		case *syntax.ProcSubst:
-			safe = false
-		case *syntax.CmdSubst:
-			safe = false
-		case *syntax.Lit:
-			if litContainsBraceExpansion(n.Value) {
+			switch n := node.(type) {
+			case *syntax.Redirect:
+				if isOutputRedirect(n.Op) {
+					safe = false
+				}
+			case *syntax.ProcSubst:
 				safe = false
+			case *syntax.CmdSubst:
+				// Collect for recursive validation instead of rejecting.
+				cmdSubsts = append(cmdSubsts, n)
+				return false // don't descend — we'll validate separately
+			case *syntax.Lit:
+				if litContainsBraceExpansion(n.Value) {
+					safe = false
+				}
+			case *syntax.CallExpr:
+				commands = append(commands, n)
+				hasContent = true
+			case *syntax.TestClause:
+				hasContent = true // [[ ]] — safe, no side effects
+			case *syntax.DeclClause:
+				if declHasDangerousVar(n) {
+					safe = false
+				}
+				hasContent = true
+			case *syntax.ArithmCmd:
+				hasContent = true // (( )) — safe
+			case *syntax.LetClause:
+				hasContent = true // let — safe
+			case *syntax.FuncDecl:
+				safe = false // function declarations not allowed
+			case *syntax.CoprocClause:
+				safe = false // coprocesses not allowed
+			default:
+				_ = n // other node types — recurse normally
 			}
-		case *syntax.CallExpr:
-			commands = append(commands, n)
-			hasContent = true
-		case *syntax.TestClause:
-			hasContent = true // [[ ]] — safe, no side effects
-		case *syntax.DeclClause:
-			if declHasDangerousVar(n) {
-				safe = false
-			}
-			hasContent = true
-		case *syntax.ArithmCmd:
-			hasContent = true // (( )) — safe
-		case *syntax.LetClause:
-			hasContent = true // let — safe
-		case *syntax.FuncDecl:
-			safe = false // function declarations not allowed
-		case *syntax.CoprocClause:
-			safe = false // coprocesses not allowed
-		default:
-			_ = n // other node types — recurse normally
-		}
-		return safe
-	})
+			return safe
+		})
+	}
 
 	if !safe || !hasContent {
 		return false
+	}
+
+	// Recursively validate command substitutions.
+	if depth >= maxCmdSubstDepth {
+		return false // too deeply nested — fail safe
+	}
+	for _, cs := range cmdSubsts {
+		if !validateParsedCommand(rules, cs.Stmts, depth+1) {
+			return false
+		}
 	}
 
 	// Validate each simple command against rules.
