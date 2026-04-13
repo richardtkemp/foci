@@ -441,7 +441,7 @@ func (r *Runner) maybeReflection() {
 	running := r.reflectionRunning
 	r.mu.Unlock()
 
-	nextFire := lastReflection.Truncate(interval).Add(interval)
+	nextFire := lastReflection.Add(interval)
 	if running {
 		skip = "already running"
 		return
