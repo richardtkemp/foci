@@ -330,6 +330,13 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"find . -name '*.go'"}`},
 		{"Bash", `{"command":"find /tmp -type f -name '*.log'"}`},
 		{"Bash", `{"command":"find . -maxdepth 2 -print0"}`},
+		// Shell test expressions — purely conditional, no side effects.
+		{"Bash", `{"command":"test -f /tmp/file.txt"}`},
+		{"Bash", `{"command":"[ -f /tmp/file.txt ]"}`},
+		{"Bash", `{"command":"[[ -f /tmp/file.txt ]]"}`},
+		// if/then with test expressions.
+		{"Bash", `{"command":"if [ -f /tmp/file.txt ]; then echo exists; fi"}`},
+		{"Bash", `{"command":"if [[ -d /tmp ]]; then ls /tmp; fi"}`},
 		// for loop with safe body commands.
 		{"Bash", `{"command":"for id in 5 8 45; do foci_todo get --id $id; done"}`},
 		{"Bash", `{"command":"for f in *.log; do head -5 $f; echo '---'; done"}`},
