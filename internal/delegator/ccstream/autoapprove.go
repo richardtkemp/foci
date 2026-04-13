@@ -72,7 +72,7 @@ var CommonReadonlyRules = []string{
 	"Bash:yq",
 	"Bash:mds",
 	"Bash:mdq",
-	"Bash:sqlite3",
+	"Bash:sqlite3 -readonly",
 	// Foci shell functions.
 	"Bash:foci_todo",
 	"Bash:foci_send_to_chat",
@@ -226,7 +226,10 @@ func matchBashAutoApprove(rules []autoApproveRule, input json.RawMessage) bool {
 		case *syntax.TestClause:
 			hasContent = true // [[ ]] — safe, no side effects
 		case *syntax.DeclClause:
-			hasContent = true // export/local/declare — safe
+			if declHasDangerousVar(n) {
+				safe = false
+			}
+			hasContent = true
 		case *syntax.ArithmCmd:
 			hasContent = true // (( )) — safe
 		case *syntax.LetClause:
@@ -298,6 +301,56 @@ func litContainsBraceExpansion(s string) bool {
 	}
 	inner := s[start : start+end+1]
 	return strings.Contains(inner, ",") || strings.Contains(inner, "..")
+}
+
+// dangerousVars lists environment variables whose modification can lead to
+// arbitrary code execution or security bypass. Assignments to these via
+// export/declare/readonly/typeset are rejected by the auto-approve walker.
+var dangerousVars = map[string]bool{
+	"PATH":             true, // redirects command lookups
+	"LD_PRELOAD":       true, // injects shared library into every process
+	"LD_LIBRARY_PATH":  true, // redirects shared library resolution
+	"PROMPT_COMMAND":   true, // executed by bash before every prompt
+	"BASH_ENV":         true, // executed on non-interactive bash startup
+	"ENV":              true, // executed on sh/dash startup
+	"HISTFILE":         true, // controls command history location
+	"BASH_FUNC_":      true, // function export (ShellShock-style)
+}
+
+// declHasDangerousVar checks whether a DeclClause (export, declare, etc.)
+// assigns to any security-sensitive variable. Also rejects nameref
+// declarations since they can alias dangerous variables indirectly.
+func declHasDangerousVar(d *syntax.DeclClause) bool {
+	// nameref can alias any variable — always require approval.
+	if d.Variant != nil && d.Variant.Value == "nameref" {
+		return true
+	}
+	// declare -n / typeset -n also creates namerefs.
+	for _, arg := range d.Args {
+		if arg.Naked && arg.Name == nil && arg.Value != nil {
+			// Naked args are flags (e.g. -n, -gn). Check for nameref flag.
+			var buf strings.Builder
+			syntax.NewPrinter().Print(&buf, arg.Value)
+			flag := buf.String()
+			if strings.HasPrefix(flag, "-") && strings.ContainsRune(flag, 'n') {
+				return true
+			}
+		}
+	}
+	for _, arg := range d.Args {
+		if arg.Name == nil {
+			continue
+		}
+		name := arg.Name.Value
+		if dangerousVars[name] {
+			return true
+		}
+		// Check prefix for BASH_FUNC_ (exported functions).
+		if strings.HasPrefix(name, "BASH_FUNC_") {
+			return true
+		}
+	}
+	return false
 }
 
 // callExprCmdString returns the command string from a CallExpr, excluding
@@ -397,6 +450,10 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 	"sort": {
 		shortFlags: "o",
 		longFlags:  []string{"--output"},
+	},
+	"yq": {
+		shortFlags: "i",
+		longFlags:  []string{"--inplace"},
 	},
 }
 
