@@ -471,6 +471,9 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"sed 'w /tmp/stolen.txt' /etc/shadow"}`},
 		// sed e command executes shell commands (GNU extension).
 		{"Bash", `{"command":"sed -e '1e rm file' /dev/null"}`},
+		// sed s///e flag — executes replacement as shell command.
+		{"Bash", `{"command":"sed 's/foo/bar/e' file.txt"}`},
+		{"Bash", `{"command":"sed 's|cmd|replacement|e' file.txt"}`},
 
 		// find with -exec/-delete must be rejected.
 		{"Bash", `{"command":"find . -name '*.tmp' -delete"}`},
@@ -619,6 +622,13 @@ func TestSedArgUnsafe(t *testing.T) {
 		// Dangerous: uppercase variants.
 		{"'W /tmp/file'", true},
 		{"'E'", true},
+		// Dangerous: s///e flag — execute replacement as shell command.
+		{"'s/foo/bar/e'", true},
+		{"'s|cmd|replacement|e'", true},
+		{"'s/foo/bar/ge'", true},    // combined flags
+		{"'s/foo/bar/Ie'", true},    // case-insensitive + execute
+		// Dangerous: s///w flag — write matched lines to file.
+		{"'s/foo/bar/w /tmp/file'", true},
 		// Without quotes.
 		{"w /tmp/file", true},
 		{"1e rm file", true},
