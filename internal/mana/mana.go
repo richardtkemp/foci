@@ -132,8 +132,8 @@ type Monitor struct {
 	getClient   func() UsageClient                // dynamic client getter (for session-aware)
 }
 
-// NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor returns false
-// (no client means we can't verify mana availability — conservatively assume insufficient).
+// NewMonitor creates a Monitor. If usageClient is nil, IsGoodFor returns true
+// (no client means unknown mana — don't block operations).
 func NewMonitor(usageClient UsageClient) *Monitor {
 	return &Monitor{
 		log:         log.NewComponentLogger("mana"),
@@ -152,7 +152,7 @@ func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) b
 	}
 
 	if client == nil {
-		return false // no usage client = can't verify mana; assume insufficient
+		return true // no usage client = unknown mana; don't block
 	}
 
 	w, err := client.GetUsage(ctx)
@@ -166,11 +166,11 @@ func (m *Monitor) IsGoodFor(ctx context.Context, investInterval time.Duration) b
 }
 
 // ManaAndReset returns mana percentage, reset time strings, and whether
-// mana is "good" (above invest threshold). Returns empty strings and false if
-// UsageClient is nil or on error.
+// mana is "good" (above invest threshold). Returns empty strings if
+// UsageClient is nil (unknown — callers should omit mana display entirely).
 func ManaAndReset(usageClient UsageClient, investInterval time.Duration) (pct, reset string, good bool) {
 	if usageClient == nil {
-		return "", "", false
+		return "", "", false // unknown — pct="" signals callers to skip display
 	}
 
 	w, err := usageClient.GetUsage(context.Background())

@@ -193,8 +193,8 @@ func TestCanFireBackgroundOperation_NoSessionKey(t *testing.T) {
 
 func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 	// Proves that when no UsageClient is available for the session's endpoint
-	// (non-Anthropic provider), background ops are blocked — no usage client
-	// means we can't verify mana, so we conservatively refuse.
+	// (e.g. backend agent, non-Anthropic provider), background ops are allowed —
+	// unknown mana does not block operations.
 	ag := &Agent{
 		UsageClient:        nil,
 		UsageClientProvider: usageClientProviderFunc(func(endpoint string) mana.UsageClient { return nil }),
@@ -203,11 +203,8 @@ func TestCanFireBackgroundOperation_NoUsageClient(t *testing.T) {
 
 	canFire, reason := ag.CanFireBackgroundOperation(context.Background(), "test/c123/1000000000")
 
-	if canFire {
-		t.Error("expected canFire=false for non-Anthropic endpoint (no usage client)")
-	}
-	if reason != "mana insufficient" {
-		t.Errorf("expected 'mana insufficient', got: %s", reason)
+	if !canFire {
+		t.Errorf("expected canFire=true for nil usage client (unknown mana should not block), got reason: %s", reason)
 	}
 }
 
