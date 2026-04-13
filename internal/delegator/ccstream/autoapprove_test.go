@@ -313,10 +313,18 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"declare -x MYVAR=hello"}`},
 		// grep -E with alternation in quotes — | is literal, not a pipe.
 		{"Bash", `{"command":"grep -E '--- (PASS|FAIL)' output.txt"}`},
+		// Go read-only subcommands.
+		{"Bash", `{"command":"go env GOMODCACHE"}`},
+		{"Bash", `{"command":"go version"}`},
+		{"Bash", `{"command":"go doc fmt.Println"}`},
+		{"Bash", `{"command":"go help build"}`},
+		{"Bash", `{"command":"go list ./..."}`},
+		{"Bash", `{"command":"go vet ./..."}`},
 		// Command substitution with safe inner commands — recursive validation.
 		{"Bash", `{"command":"grep pattern $(find . -name '*.go')"}`},
 		{"Bash", `{"command":"cat $(echo /etc/hosts)"}`},
 		{"Bash", `{"command":"head -5 $(find /tmp -name '*.log')"}`},
+		{"Bash", `{"command":"ls $(go env GOMODCACHE)"}`},
 		// sqlite3 -readonly is safe for querying.
 		{"Bash", `{"command":"sqlite3 -readonly /home/foci/data/api.db 'SELECT * FROM api_calls LIMIT 5'"}`},
 		// yq without -i is read-only.
