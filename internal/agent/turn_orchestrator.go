@@ -74,14 +74,20 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 }
 
 // streamIdleTimeout is how long runPostTurn tolerates silence on the CC
-// stream before declaring the backend hung. CC emits keep_alive, tool_progress,
-// and stream_event messages regularly during active turns — silence means dead.
-const streamIdleTimeout = 2 * time.Minute
+// stream before declaring the backend hung. This is a last-resort safety net
+// for orphaned goroutines — not a liveness check. Normal backend death is
+// detected by process exit / stream EOF, not by this timeout.
+//
+// Set high (24h) because legitimate silence happens during permission prompts
+// (CC emits nothing while waiting for user approval in pipe mode — keep_alive
+// frames are WebSocket-only). A short timeout here causes false warnings on
+// every permission wait longer than the threshold.
+const streamIdleTimeout = 24 * time.Hour
 
 // fixedPostTurnTimeout is the hard safety ceiling for backends that don't
 // implement ActivityChecker (e.g. cctmux, or API turns where CompletionChan
 // is already closed).
-const fixedPostTurnTimeout = 10 * time.Minute
+const fixedPostTurnTimeout = 24 * time.Hour
 
 // runPostTurn waits for the turn to complete, then runs post-turn concerns.
 //
