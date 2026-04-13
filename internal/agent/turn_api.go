@@ -362,6 +362,11 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 
 		notifyResponseBlocks(ts.Ctx, resp.Content)
 
+		// Log thinking blocks to conversation DB.
+		if thinking := provider.ThinkingOf(resp.Content); thinking != "" {
+			a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
+		}
+
 		if resp.StopReason == "pause_turn" {
 			continue
 		}
@@ -595,6 +600,22 @@ func (a *Agent) logConversationSent(chatID int64, meta *TurnMetadata, sessionKey
 		ChatID:    chatID,
 		Text:      text,
 		Session:   sessionKey,
+	})
+}
+
+// logConversationThinking logs thinking/reasoning content to the conversation log.
+func (a *Agent) logConversationThinking(chatID int64, meta *TurnMetadata, sessionKey, thinking string) {
+	if thinking == "" {
+		return
+	}
+	log.Conversation(log.ConversationEntry{
+		Direction:   "sent",
+		UserID:      meta.UserID,
+		Username:    meta.Username,
+		ChatID:      chatID,
+		Text:        thinking,
+		Session:     sessionKey,
+		ContentType: "thinking",
 	})
 }
 
