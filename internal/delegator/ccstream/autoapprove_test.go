@@ -306,6 +306,8 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"ls /nonexistent 2>&1"}`},
 		// Bare env (show environment) — allowed.
 		{"Bash", `{"command":"env"}`},
+		// grep -E with alternation in quotes — | is literal, not a pipe.
+		{"Bash", `{"command":"grep -E '--- (PASS|FAIL)' output.txt"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
