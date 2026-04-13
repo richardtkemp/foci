@@ -530,6 +530,17 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"find . -name '*.tmp' -delete"}`},
 		{"Bash", `{"command":"find . -name '*.go' -exec rm {} \\;"}`},
 		{"Bash", `{"command":"find . -execdir cat {} +"}`},
+		// for loop with unsafe body.
+		{"Bash", `{"command":"for f in /tmp/*.txt; do rm \"$f\"; done"}`},
+		// env can run arbitrary commands — bypass via command execution.
+		{"Bash", `{"command":"env rm /tmp/test.txt"}`},
+		{"Bash", `{"command":"env bash -c 'rm -rf /tmp'"}`},
+		// sort -o writes output to file — bypass via file write.
+		{"Bash", `{"command":"sort -o /tmp/overwritten.txt /etc/passwd"}`},
+		// Shell redirects write files — bypass via redirect operator.
+		{"Bash", `{"command":"cat /etc/passwd > /tmp/stolen.txt"}`},
+		{"Bash", `{"command":"echo pwned >> /tmp/append.txt"}`},
+		{"Bash", `{"command":"ls -la > /tmp/listing.txt"}`},
 		{"Edit", `{"file_path":"/etc/passwd"}`},
 		{"Write", `{"file_path":"/tmp/exploit.sh"}`},
 	}
