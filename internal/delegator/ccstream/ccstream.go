@@ -1216,6 +1216,13 @@ func (b *Backend) OnControlCancelRequest(reqID string) {
 // OnKeepAlive handles heartbeat events. Touches activity so the idle/timeout
 // tracker sees the stream as alive during periods where CC is blocked (e.g.
 // waiting for a permission prompt response) and not emitting work events.
+//
+// NOTE: As of CC 1.x, keep_alive frames are only sent on WebSocket transports
+// (remote control sessions). In --pipe mode (stdin/stdout, which foci uses),
+// CC never sends keep_alive — so this handler is effectively dead code.
+// The idle tracker must be kept alive by other means (e.g. touchActivity on
+// permission request arrival). See also runKeepAlive which sends keep_alive
+// TO CC (also a no-op: CC silently ignores them in pipe mode).
 func (b *Backend) OnKeepAlive() {
 	b.touchActivity()
 }
@@ -1362,7 +1369,13 @@ func (b *Backend) OnReaderStopped(err error) {
 // Background goroutines
 // ---------------------------------------------------------------------------
 
-// runKeepAlive sends periodic keep-alive messages to prevent idle timeout.
+// runKeepAlive sends periodic keep-alive messages to CC's stdin.
+//
+// NOTE: As of CC 1.x, CC silently ignores keep_alive messages in --pipe mode
+// (structuredIO.ts drops them). This goroutine runs but has no observable
+// effect. The original intent was to prevent idle timeout, but CC's pipe
+// transport has no idle timeout to prevent. Kept for forward-compatibility
+// in case CC adds pipe-mode keepalive handling.
 func (b *Backend) runKeepAlive(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
