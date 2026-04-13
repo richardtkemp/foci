@@ -122,15 +122,16 @@ func (b *Bot) refreshTyping() {
 // SendNotificationDirect sends a notification immediately, bypassing the
 // turn-active buffer. Use for time-sensitive notifications (e.g. compaction start)
 // that must arrive before the turn ends.
-func (b *Bot) SendNotificationDirect(text string) {
+func (b *Bot) SendNotificationDirect(text string) string {
 	if strings.TrimSpace(text) == "" {
-		return
+		return ""
 	}
-	b.sendNotificationImmediate(text)
+	return b.sendNotificationImmediate(text)
 }
 
 // sendNotificationImmediate sends a notification directly to the default chat.
-func (b *Bot) sendNotificationImmediate(text string) {
+// Returns the platform message ID as a string, or "" on failure.
+func (b *Bot) sendNotificationImmediate(text string) string {
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
 		// Fall back to last known chat (e.g. when no state store is configured).
@@ -144,12 +145,15 @@ func (b *Bot) sendNotificationImmediate(text string) {
 			truncated = truncated[:40] + "..."
 		}
 		b.logger().Warnf("no chat ID for notification: %s", truncated)
-		return
+		return ""
 	}
 
-	if _, err := b.client.SendMessage(chatID, text, nil); err != nil {
+	msg, err := b.client.SendMessage(chatID, text, nil)
+	if err != nil {
 		b.logger().Errorf("send notification: %s", b.sanitizeError(err))
+		return ""
 	}
+	return strconv.FormatInt(msg.MessageId, 10)
 }
 
 // drainPendingNotifications sends all buffered notifications to the default chat.

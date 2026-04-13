@@ -76,7 +76,7 @@ func (m *mockConnection) UpdateChatSessionKey(int64, string)     {}
 func (m *mockConnection) SendInjectedMessage(sk, text string) error { return nil }
 func (m *mockConnection) SendToSession(sk, text string) error       { return nil }
 func (m *mockConnection) SendNotification(text string)            {}
-func (m *mockConnection) SendNotificationDirect(text string)      {}
+func (m *mockConnection) SendNotificationDirect(text string) string { return "" }
 func (m *mockConnection) SetTyping(bool)                           {}
 
 type mockHandler struct{}

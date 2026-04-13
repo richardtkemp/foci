@@ -82,7 +82,7 @@ func (f *fakeTypingConn) SendInjectedMessage(string, string) error {
 }
 func (f *fakeTypingConn) SendToSession(string, string) error     { panic("SendToSession") }
 func (f *fakeTypingConn) SendNotification(string)                { panic("SendNotification") }
-func (f *fakeTypingConn) SendNotificationDirect(string)          { panic("SendNotificationDirect") }
+func (f *fakeTypingConn) SendNotificationDirect(string) string   { panic("SendNotificationDirect") }
 
 // TestStreamingSinkTypingLifecycle asserts the sink drives the typing
 // indicator entirely through events: TurnStart turns typing on, TurnComplete

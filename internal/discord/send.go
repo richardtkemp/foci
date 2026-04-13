@@ -170,15 +170,15 @@ func (b *Bot) SetTyping(typing bool) {
 // SendNotificationDirect sends a notification immediately, bypassing the
 // turn-active buffer. Use for time-sensitive notifications (e.g. compaction start)
 // that must arrive before the turn ends.
-func (b *Bot) SendNotificationDirect(text string) {
+func (b *Bot) SendNotificationDirect(text string) string {
 	if strings.TrimSpace(text) == "" {
-		return
+		return ""
 	}
-	b.sendNotificationImmediate(text)
+	return b.sendNotificationImmediate(text)
 }
 
 // sendNotificationImmediate sends a notification directly to the default channel.
-func (b *Bot) sendNotificationImmediate(text string) {
+func (b *Bot) sendNotificationImmediate(text string) string {
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
 		// Fall back to last known channel (e.g. when no state store is configured).
@@ -192,16 +192,22 @@ func (b *Bot) sendNotificationImmediate(text string) {
 			truncated = truncated[:40] + "..."
 		}
 		b.logger().Warnf("no channel ID for notification: %s", truncated)
-		return
+		return ""
 	}
 
 	channelIDStr := strconv.FormatInt(channelID, 10)
-	if _, err := b.session.ChannelMessageSend(channelIDStr, text); err != nil {
+	msg, err := b.session.ChannelMessageSend(channelIDStr, text)
+	if err != nil {
 		b.logger().Errorf("send notification (channel=%s): %s", channelIDStr, b.sanitizeError(err))
 		if isUnknownChannel(err) {
 			b.clearStaleChannel(channelIDStr)
 		}
+		return ""
 	}
+	if msg != nil {
+		return msg.ID
+	}
+	return ""
 }
 
 // drainPendingNotifications sends all buffered notifications to the default channel.

@@ -155,7 +155,7 @@ type Connection interface {
 	SendInjectedMessage(sessionKey, text string) error // sends with system injection header
 	SendToSession(sessionKey, text string) error       // sends without header (for agent replies)
 	SendNotification(text string)
-	SendNotificationDirect(text string) // sends immediately, bypassing turn buffering
+	SendNotificationDirect(text string) string // sends immediately, bypassing turn buffering; returns platform msg ID ("" if unknown)
 	SetTyping(typing bool)              // true starts typing indicator, false stops it
 }
 

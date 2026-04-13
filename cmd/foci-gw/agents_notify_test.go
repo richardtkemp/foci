@@ -62,7 +62,7 @@ func (c *stubConn) SendVoiceDataToChat(int64, []byte) error         { return nil
 func (c *stubConn) SendInjectedMessage(string, string) error        { return nil }
 func (c *stubConn) SendToSession(string, string) error              { return nil }
 func (c *stubConn) SendNotification(string)                         {}
-func (c *stubConn) SendNotificationDirect(string)                   {}
+func (c *stubConn) SendNotificationDirect(string) string             { return "" }
 func (c *stubConn) SetTyping(bool)                                   {}
 
 func TestNewSessionNotifyFnParsesSlashKeys(t *testing.T) {
