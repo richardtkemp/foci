@@ -53,6 +53,10 @@ var CommonReadonlyRules = []string{
 	"Bash:ack",
 	"Bash:sed",
 	"Bash:find",
+	// Shell test expressions — purely conditional, no side effects.
+	"Bash:test",
+	"Bash:[",
+	"Bash:[[",
 	// Compressed file inspection.
 	"Bash:zcat",
 	"Bash:zgrep",
