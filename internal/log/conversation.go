@@ -12,14 +12,15 @@ import (
 
 // ConversationEntry is a single message in the conversation log.
 type ConversationEntry struct {
-	Direction string // "recv" or "sent"
-	UserID    string
-	Username  string
-	ChatID    int64
-	Text      string
-	ParseMode string // for sent messages: "Markdown", "", etc.
-	Session   string
-	Error     string // non-empty if send failed
+	Direction   string // "recv" or "sent"
+	UserID      string
+	Username    string
+	ChatID      int64
+	Text        string
+	ParseMode   string // for sent messages: "Markdown", "", etc.
+	Session     string
+	Error       string // non-empty if send failed
+	ContentType string // "text" (default) or "thinking"
 }
 
 // ConversationLog writes platform messages to a SQLite database.
@@ -41,22 +42,25 @@ var ConversationHook func(text, session string, rowID int64)
 // openConversationLog opens a single conversation log database.
 func openConversationLog(path string) (*ConversationLog, error) {
 	db, err := sqlite.OpenInit(path, `CREATE TABLE IF NOT EXISTS messages (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		ts         TEXT    NOT NULL,
-		direction  TEXT    NOT NULL,
-		user_id    TEXT    NOT NULL,
-		username   TEXT    NOT NULL,
-		chat_id    INTEGER NOT NULL,
-		text       TEXT    NOT NULL,
-		parse_mode TEXT,
-		session    TEXT,
-		error      TEXT
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		ts           TEXT    NOT NULL,
+		direction    TEXT    NOT NULL,
+		user_id      TEXT    NOT NULL,
+		username     TEXT    NOT NULL,
+		chat_id      INTEGER NOT NULL,
+		text         TEXT    NOT NULL,
+		parse_mode   TEXT,
+		session      TEXT,
+		error        TEXT,
+		content_type TEXT    NOT NULL DEFAULT 'text'
 	)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_ts_unix ON messages(unixepoch(ts))`,
 	)
 	if err != nil {
 		return nil, err
 	}
+	// Migration for existing DBs.
+	_, _ = db.Exec(`ALTER TABLE messages ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'`)
 	return &ConversationLog{db: db}, nil
 }
 
@@ -133,14 +137,19 @@ func agentFromSession(session string) string {
 func (c *ConversationLog) log(entry ConversationEntry) int64 {
 	ts := timeutil.FormatNano(timeutil.Now())
 
+	contentType := entry.ContentType
+	if contentType == "" {
+		contentType = "text"
+	}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	res, err := c.db.Exec(
-		`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, parse_mode, session, error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages (ts, direction, user_id, username, chat_id, text, parse_mode, session, error, content_type)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts, entry.Direction, entry.UserID, entry.Username, entry.ChatID,
-		entry.Text, entry.ParseMode, entry.Session, entry.Error,
+		entry.Text, entry.ParseMode, entry.Session, entry.Error, contentType,
 	)
 	if err != nil {
 		std.event(ERROR, "conversation", "insert error: %v", err)

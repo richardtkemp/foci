@@ -390,6 +390,17 @@ func TextOf(blocks []ContentBlock) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// ThinkingOf extracts the concatenated thinking text from content blocks.
+func ThinkingOf(blocks []ContentBlock) string {
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "thinking" && b.Thinking != "" {
+			parts = append(parts, b.Thinking)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
 // APIError is returned when an LLM API responds with a non-200 status code.
 // Use errors.As to check for this type and inspect StatusCode or RetryAfter.
 type APIError struct {

@@ -194,6 +194,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		preAnswerFired       bool
 		preAnswerAccumulated *provider.Usage
 		preAnswerFirstText   string
+		thinkingBuf          strings.Builder // accumulates thinking deltas for conversation log
 	)
 
 	// Translate the delegator watcher's callbacks into turnevent.Sink events.
@@ -209,6 +210,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		},
 		OnThinkingDelta: func(delta string) {
 			turnevent.Emit(turnCtx, turnevent.ThinkingDelta{Delta: delta})
+			thinkingBuf.WriteString(delta)
 		},
 		OnText: func(text string) {
 			turnevent.Emit(turnCtx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
@@ -301,6 +303,10 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		// user-visible intent. Otherwise the round-2 revised answer wins.
 		if preAnswerFirstText != "" && strings.TrimSpace(ts.FinalText) == NoResponseSentinel {
 			ts.FinalText = preAnswerFirstText
+		}
+		// Log accumulated thinking to conversation DB.
+		if thinking := thinkingBuf.String(); thinking != "" {
+			a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
 		}
 		bt.LogUsage(ts)
 		close(ts.CompletionChan)
