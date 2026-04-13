@@ -439,7 +439,11 @@ func InitMessaging(cfg *config.Config, deps ProviderDeps) (*Messaging, error) {
 		if deps.SessionIndex != nil {
 			chatPlatformFn = deps.SessionIndex.PlatformForChat
 		}
-		m.connMgr = newAggregatingConnMgr(active, chatPlatformFn)
+		var defaultSessionKeyFn func(string) string
+		if deps.SessionIndex != nil {
+			defaultSessionKeyFn = deps.SessionIndex.DefaultSessionKeyForAgent
+		}
+		m.connMgr = newAggregatingConnMgr(active, chatPlatformFn, defaultSessionKeyFn)
 	} else {
 		m.connMgr = &noopConnMgr{}
 	}

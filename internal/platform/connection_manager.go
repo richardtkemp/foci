@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	"foci/internal/log"
@@ -15,12 +16,13 @@ import (
 // function to dispatch directly to the correct platform, avoiding false-positive
 // matches when chat IDs collide across platforms.
 type aggregatingConnMgr struct {
-	named           map[string]ConnectionManager // platform name → manager
-	order           []string                     // iteration order
-	chatPlatformFn  func(agentID string, chatID int64) string
+	named                map[string]ConnectionManager // platform name → manager
+	order                []string                     // iteration order
+	chatPlatformFn       func(agentID string, chatID int64) string
+	defaultSessionKeyFn  func(agentID string) string // resolves most recently active session
 }
 
-func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(agentID string, chatID int64) string) *aggregatingConnMgr {
+func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(agentID string, chatID int64) string, defaultSessionKeyFn func(agentID string) string) *aggregatingConnMgr {
 	named := make(map[string]ConnectionManager, len(providers))
 	order := make([]string, len(providers))
 	for i, p := range providers {
@@ -28,14 +30,32 @@ func newAggregatingConnMgr(providers []MessagingProvider, chatPlatformFn func(ag
 		named[name] = p.ConnectionManager()
 		order[i] = name
 	}
+	sort.Strings(order) // deterministic fallback order
 	return &aggregatingConnMgr{
-		named:          named,
-		order:          order,
-		chatPlatformFn: chatPlatformFn,
+		named:               named,
+		order:               order,
+		chatPlatformFn:      chatPlatformFn,
+		defaultSessionKeyFn: defaultSessionKeyFn,
 	}
 }
 
 func (a *aggregatingConnMgr) Primary(agentID string) Connection {
+	// Prefer the platform that owns the most recently active session.
+	if a.defaultSessionKeyFn != nil && a.chatPlatformFn != nil {
+		if sk := a.defaultSessionKeyFn(agentID); sk != "" {
+			_, chatID := extractSessionInfo(sk)
+			if chatID != 0 {
+				if platName := a.chatPlatformFn(agentID, chatID); platName != "" {
+					if mgr, ok := a.named[platName]; ok {
+						if c := mgr.Primary(agentID); c != nil {
+							return c
+						}
+					}
+				}
+			}
+		}
+	}
+	// Fallback: first platform with a primary connection.
 	for _, name := range a.order {
 		if c := a.named[name].Primary(agentID); c != nil {
 			return c
