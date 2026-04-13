@@ -67,6 +67,13 @@ var CommonReadonlyRules = []string{
 	"Bash:npm list",
 	// System logs.
 	"Bash:journalctl",
+	// Go read-only subcommands.
+	"Bash:go env",
+	"Bash:go version",
+	"Bash:go doc",
+	"Bash:go help",
+	"Bash:go list",
+	"Bash:go vet",
 	// Data tools.
 	"Bash:jq",
 	"Bash:yq",
