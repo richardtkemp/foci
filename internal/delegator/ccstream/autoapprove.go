@@ -469,12 +469,11 @@ func containsUnsafeFlags(segment string) bool {
 // ---------- sed script argument analysis ----------
 
 // sedArgUnsafe checks if a sed script argument contains potentially dangerous
-// sed commands. Returns true if the argument contains a 'w' (write to file)
-// or 'e' (execute pattern space as shell command) command.
-//
-// Known limitation: the s///e flag (execute replacement as shell command) is
-// not detected — it requires parsing the substitute command's delimiters,
-// which is beyond this heuristic.
+// sed commands or flags. Returns true if the argument contains:
+//   - A 'w'/'W' command (write matched lines to file)
+//   - An 'e'/'E' command (execute pattern space as shell command)
+//   - A substitute command with 'e' flag: s/pattern/replacement/e
+//   - A substitute command with 'w' flag: s/pattern/replacement/w file
 func sedArgUnsafe(arg string) bool {
 	// Strip outer quotes if present.
 	if len(arg) >= 2 {
@@ -488,12 +487,51 @@ func sedArgUnsafe(arg string) bool {
 	}
 	// Scan past optional sed address prefix (line numbers, /regex/, $, ranges).
 	i := skipSedAddress(arg)
-	// Check for dangerous commands at current position.
-	if i < len(arg) {
-		switch arg[i] {
-		case 'w', 'W': // write command — writes matched lines to file
+	if i >= len(arg) {
+		return false
+	}
+	switch arg[i] {
+	case 'w', 'W': // write command — writes matched lines to file
+		return true
+	case 'e', 'E': // execute command — runs pattern space as shell command
+		return true
+	case 's': // substitute — check flags after third delimiter for e/w
+		return sedSubstHasUnsafeFlags(arg[i:])
+	}
+	return false
+}
+
+// sedSubstHasUnsafeFlags checks whether a sed substitute command
+// (s/pattern/replacement/flags) contains the 'e' (execute) or 'w' (write)
+// flag. The delimiter is the character immediately after 's' and can be any
+// character (/, |, #, etc.).
+func sedSubstHasUnsafeFlags(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	delim := s[1]
+	// Find the third delimiter (end of replacement) to reach the flags.
+	count := 0
+	i := 2
+	for i < len(s) && count < 2 {
+		if s[i] == '\\' && i+1 < len(s) {
+			i += 2 // skip escaped char
+			continue
+		}
+		if s[i] == delim {
+			count++
+		}
+		i++
+	}
+	if count < 2 {
+		return false // incomplete substitute — no flags section
+	}
+	// Everything from i onward is flags (and optional w filename).
+	for j := i; j < len(s); j++ {
+		switch s[j] {
+		case 'e', 'E':
 			return true
-		case 'e', 'E': // execute command — runs pattern space as shell command
+		case 'w', 'W':
 			return true
 		}
 	}
