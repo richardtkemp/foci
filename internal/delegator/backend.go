@@ -140,6 +140,15 @@ type CompactionWaiter interface {
 	WaitForCompaction(ctx context.Context) error
 }
 
+// CompactionStartWaiter is optionally implemented by backends that can
+// signal when CC has confirmed compaction is underway (status="compacting").
+// Used to defer the ⏳ notification until compaction actually starts,
+// avoiding a race where the notification overtakes buffered content.
+type CompactionStartWaiter interface {
+	ArmCompactionStartWait()
+	WaitForCompactionStart(ctx context.Context) error
+}
+
 // ActivityChecker is optionally implemented by backends that track stream
 // activity. Used by the orchestrator to replace fixed timeouts with
 // activity-based detection: alive (events arriving) vs dead (stream silent).

@@ -75,7 +75,8 @@ type Backend struct {
 	turnActive   bool
 	turnHandler  *delegator.EventHandler // current turn's handler
 	turnResultCh chan *ResultMessage    // buffered(1), receives result
-	compactDoneCh chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
+	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
+	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText     strings.Builder       // accumulates text across assistant messages
 	turnTools    int                   // tool_use count this turn
 	nudgePending bool                  // set when PostToolNudge sends PriorityNow; cleared on next OnResult or beginTurn
@@ -631,6 +632,32 @@ func (b *Backend) WaitForCompaction(ctx context.Context) error {
 	}
 }
 
+// ArmCompactionStartWait sets up a one-shot channel that will be closed when
+// status="compacting" is received. Must be called before the /compact command
+// is sent so the signal is never missed.
+func (b *Backend) ArmCompactionStartWait() {
+	b.turnMu.Lock()
+	b.compactStartCh = make(chan struct{}, 1)
+	b.turnMu.Unlock()
+}
+
+// WaitForCompactionStart blocks until status="compacting" is received or ctx
+// expires. Returns immediately if no waiter is armed.
+func (b *Backend) WaitForCompactionStart(ctx context.Context) error {
+	b.turnMu.Lock()
+	ch := b.compactStartCh
+	b.turnMu.Unlock()
+	if ch == nil {
+		return nil
+	}
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // SetOnAgentStatus sets a callback for agent/task lifecycle events.
 func (b *Backend) SetOnAgentStatus(fn func(string)) { b.agents.OnStatus = fn }
 
@@ -1043,6 +1070,17 @@ func (b *Backend) OnSystem(subtype string, raw json.RawMessage) {
 		if status.Status != nil && *status.Status == "compacting" {
 			if b.onCompactionStart != nil {
 				b.onCompactionStart()
+			}
+			// Signal any armed compaction start waiter (one-shot).
+			b.turnMu.Lock()
+			sch := b.compactStartCh
+			b.compactStartCh = nil
+			b.turnMu.Unlock()
+			if sch != nil {
+				select {
+				case sch <- struct{}{}:
+				default:
+				}
 			}
 		}
 

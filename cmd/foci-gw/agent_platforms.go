@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"foci/internal/agent"
@@ -88,27 +89,50 @@ func wireAgentPlatformCallbacks(
 	// Compaction notify — per-platform resolution.
 	// Start notifications use SendNotificationDirect to bypass turn buffering
 	// so ⏳ arrives before the compaction completes (not batched with ✅).
+	// The msg ID is stored so the completion notification can edit in-place.
+	var compactionMsgIDs sync.Map // sessionKey → msgID string
 	ag.CompactionStartFunc.Add(func(sk, msg string) {
 		if c := connMgr.ForSession(sk); c != nil {
 			if resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
-				c.SendNotificationDirect(msg)
+				if msgID := c.SendNotificationDirect(msg); msgID != "" {
+					compactionMsgIDs.Store(sk, msgID)
+				}
 			}
 		} else {
 			for _, conn := range connMgr.AllForAgent(acfg.ID) {
 				if resolved.PlatformNotify(conn.PlatformName()).CompactionNotify {
-					conn.SendNotificationDirect(msg)
+					if msgID := conn.SendNotificationDirect(msg); msgID != "" {
+						compactionMsgIDs.Store(sk, msgID)
+					}
 				}
 			}
 		}
 	})
 	ag.CompactionNotifyFunc.Add(func(sk, msg string) {
+		// Try to edit the ⏳ start message in-place rather than sending a new one.
+		if rawID, ok := compactionMsgIDs.LoadAndDelete(sk); ok {
+			msgID := rawID.(string)
+			c := connMgr.ForSession(sk)
+			if c == nil {
+				if conns := connMgr.AllForAgent(acfg.ID); len(conns) > 0 {
+					c = conns[0]
+				}
+			}
+			if c != nil {
+				if bs, ok := c.(platform.ButtonSender); ok {
+					if err := bs.EditMessageText(msgID, msg); err == nil {
+						return
+					}
+					log.Debugf("agent", "compaction edit failed for session=%s msgID=%s, falling back to new message", sk, msgID)
+				}
+			}
+		}
+		// Fallback: send as a new message.
 		if c := connMgr.ForSession(sk); c != nil {
 			if resolved.PlatformNotify(c.PlatformName()).CompactionNotify {
-				log.Debugf("agent", "compaction notify session=%s → session-specific connection", sk)
 				c.SendNotification(msg)
 			}
 		} else {
-			log.Debugf("agent", "compaction notify session=%s → agent broadcast (%s)", sk, acfg.ID)
 			for _, conn := range connMgr.AllForAgent(acfg.ID) {
 				if resolved.PlatformNotify(conn.PlatformName()).CompactionNotify {
 					conn.SendNotification(msg)

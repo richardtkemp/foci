@@ -95,20 +95,31 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		return fmt.Errorf("compaction summary prompt is empty")
 	}
 
-	for _, fn := range a.CompactionStartFunc {
-		fn(sessionKey, "⏳ Compacting context...")
-	}
-
 	cctx, cancel := context.WithTimeout(ctx, delegatedCompactTimeout)
 	defer cancel()
 
-	// Arm the waiter before sending so compact_boundary is never missed.
+	// Arm waiters before sending so stream events are never missed.
 	if cw, ok := be.(delegator.CompactionWaiter); ok {
 		cw.ArmCompactionWait()
+	}
+	if csw, ok := be.(delegator.CompactionStartWaiter); ok {
+		csw.ArmCompactionStartWait()
 	}
 
 	if err := be.SendCommand(cctx, fmt.Sprintf("/compact %s", summaryPrompt), ""); err != nil {
 		return fmt.Errorf("send /compact: %w", err)
+	}
+
+	// Wait for CC to confirm compaction is underway before notifying the user.
+	// This prevents the ⏳ from racing ahead of buffered content messages.
+	if csw, ok := be.(delegator.CompactionStartWaiter); ok {
+		if err := csw.WaitForCompactionStart(cctx); err != nil {
+			// Timed out waiting for start — send the notification anyway
+			// and continue waiting for completion.
+		}
+	}
+	for _, fn := range a.CompactionStartFunc {
+		fn(sessionKey, "⏳ Compacting context...")
 	}
 
 	var waitErr error
