@@ -185,8 +185,9 @@ func (rd *Reader) dispatch(line []byte) {
 		// fires it from parsed JSONL instead).
 	case "keep_alive":
 		// Heartbeat — touch activity so the idle/timeout tracker knows the
-		// stream is alive even when CC is blocked (e.g. waiting for a
-		// permission prompt response).
+		// stream is alive. NOTE: CC never sends keep_alive in --pipe mode
+		// (only on WebSocket transports), so this branch is effectively
+		// dead code. See OnKeepAlive comment for details.
 		rd.handler.OnKeepAlive()
 	case "tool_use_summary":
 		// Informational summary of tool use.
