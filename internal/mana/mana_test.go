@@ -283,10 +283,10 @@ func TestNewMonitor(t *testing.T) {
 }
 
 func TestIsGoodFor_NoClient(t *testing.T) {
-	// No usage client means we can't verify mana — conservatively return false.
+	// No usage client means unknown mana — don't block operations.
 	m := NewMonitor(nil)
-	if m.IsGoodFor(context.Background(), 30*time.Minute) {
-		t.Error("IsGoodFor should return false with no client (can't verify mana)")
+	if !m.IsGoodFor(context.Background(), 30*time.Minute) {
+		t.Error("IsGoodFor should return true with no client (unknown mana should not block)")
 	}
 }
 
@@ -411,25 +411,25 @@ func TestIsGood_WindowEqualsInvestInterval(t *testing.T) {
 	}
 }
 
-func TestMonitor_IsGoodFor_NoClient_AlwaysFalse(t *testing.T) {
-	// No usage client = can't verify mana = conservatively false.
+func TestMonitor_IsGoodFor_NoClient_AllowsOperations(t *testing.T) {
+	// No usage client = unknown mana = don't block.
 	m := NewMonitor(nil)
-	if m.IsGoodFor(context.Background(), 30*time.Minute) {
-		t.Error("IsGoodFor with nil client should return false")
+	if !m.IsGoodFor(context.Background(), 30*time.Minute) {
+		t.Error("IsGoodFor with nil client should return true (unknown mana should not block)")
 	}
-	if m.IsGoodFor(context.Background(), 0) {
-		t.Error("IsGoodFor with nil client and zero interval should return false")
+	if !m.IsGoodFor(context.Background(), 0) {
+		t.Error("IsGoodFor with nil client and zero interval should return true")
 	}
 }
 
 func TestMonitor_IsGoodFor_ContextCancelled(t *testing.T) {
-	// Nil client returns false regardless of context state.
+	// Nil client returns true regardless of context state (unknown = allow).
 	m := NewMonitor(nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	result := m.IsGoodFor(ctx, 30*time.Minute)
-	if result {
-		t.Error("IsGoodFor with nil client should return false even with cancelled context")
+	if !result {
+		t.Error("IsGoodFor with nil client should return true even with cancelled context")
 	}
 }
 

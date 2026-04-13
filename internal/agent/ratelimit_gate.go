@@ -211,8 +211,9 @@ func (a *Agent) CanFireBackgroundOperation(ctx context.Context, sessionKey strin
 	}
 
 	// Check 2: Mana availability (session-aware).
-	// NewMonitor(nil).IsGoodFor() returns false — no usage client means we
-	// can't verify mana, so we conservatively block background work.
+	// When no usage client is available (e.g. backend agents with no
+	// configured endpoint), IsGoodFor returns true — unknown mana does
+	// not block operations.
 	if a.ManaInvestInterval > 0 {
 		monitor := mana.NewMonitor(a.SessionUsageClient(sessionKey))
 		if !monitor.IsGoodFor(ctx, a.ManaInvestInterval) {
