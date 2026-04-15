@@ -238,7 +238,7 @@ func validateParsedCommand(rules []autoApproveRule, stmts []*syntax.Stmt, depth 
 			}
 			switch n := node.(type) {
 			case *syntax.Redirect:
-				if isOutputRedirect(n.Op) {
+				if isOutputRedirect(n.Op) && !isDevNullRedirect(n) {
 					safe = false
 				}
 			case *syntax.ProcSubst:
@@ -310,6 +310,21 @@ func validateParsedCommand(rules []autoApproveRule, stmts []*syntax.Stmt, depth 
 		}
 	}
 	return true
+}
+
+// isDevNullRedirect returns true if the redirect target is /dev/null.
+// Redirecting to /dev/null discards output — it cannot exfiltrate data,
+// so it is safe to allow even when other output redirects are rejected.
+func isDevNullRedirect(r *syntax.Redirect) bool {
+	if r.Word == nil {
+		return false
+	}
+	// Word.Parts should be a single Lit with value "/dev/null".
+	if len(r.Word.Parts) != 1 {
+		return false
+	}
+	lit, ok := r.Word.Parts[0].(*syntax.Lit)
+	return ok && lit.Value == "/dev/null"
 }
 
 // isOutputRedirect returns true if the redirect operator writes output to a

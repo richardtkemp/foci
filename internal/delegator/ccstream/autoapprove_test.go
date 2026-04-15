@@ -960,6 +960,13 @@ func TestASTRedirectDetection(t *testing.T) {
 		{`{"command":"echo test >| /tmp/file"}`, false},
 		{`{"command":"ls &> /tmp/file"}`, false},
 		{`{"command":"ls &>> /tmp/file"}`, false},
+		// Output redirects to /dev/null — safe (discards data, no exfiltration).
+		{`{"command":"ls > /dev/null"}`, true},
+		{`{"command":"ls 2>/dev/null"}`, true},
+		{`{"command":"ls &>/dev/null"}`, true},
+		{`{"command":"find . -name '*.cfg' 2>/dev/null"}`, true},
+		// Output redirects to /dev/null in compound commands — safe.
+		{`{"command":"find . -name '*.log' 2>/dev/null | head -5"}`, true},
 		// Input redirects — safe.
 		{`{"command":"cat < /tmp/file"}`, true},
 		// FD duplication — safe.
