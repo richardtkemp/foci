@@ -470,9 +470,16 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delega
 		b.typingFunc(true)
 	}
 
+	b.logger().Debugf("SendToPane: calling writer.SendUser (%d bytes)", len(prompt))
+	sendStart := time.Now()
 	if err := b.writer.SendUser(prompt); err != nil {
 		b.cancelTurn()
 		return nil, fmt.Errorf("ccstream: send user message: %w", err)
+	}
+	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
+		b.logger().Warnf("SendToPane: writer.SendUser took %s (slow — possible mutex contention or blocked stdin)", elapsed.Round(time.Millisecond))
+	} else {
+		b.logger().Debugf("SendToPane: writer.SendUser returned in %s", elapsed.Round(time.Millisecond))
 	}
 
 	return &delegator.TurnResult{}, nil
@@ -506,9 +513,16 @@ func (b *Backend) SendToPaneWithAttachments(ctx context.Context, prompt string, 
 		})
 	}
 
+	b.logger().Debugf("SendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
+	sendStart := time.Now()
 	if err := b.writer.Send(NewUserMessageBlocks(blocks)); err != nil {
 		b.cancelTurn()
 		return nil, fmt.Errorf("ccstream: send user message with attachments: %w", err)
+	}
+	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
+		b.logger().Warnf("SendToPaneWithAttachments: writer.Send took %s (slow)", elapsed.Round(time.Millisecond))
+	} else {
+		b.logger().Debugf("SendToPaneWithAttachments: writer.Send returned in %s", elapsed.Round(time.Millisecond))
 	}
 
 	return &delegator.TurnResult{}, nil

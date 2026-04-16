@@ -105,10 +105,12 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	a := t.agent
 
+	log.Debugf("delegated", "RunInference: Get backend start sk=%s", ts.SessionKey)
 	be, err := a.DelegatedManager.Get(ts.Ctx, ts.SessionKey)
 	if err != nil {
 		return err
 	}
+	log.Debugf("delegated", "RunInference: Get backend done sk=%s", ts.SessionKey)
 	ts.Backend = be
 
 	// Check for a pending AskUserQuestion — intercept typed text as an
@@ -144,9 +146,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// new input. The backend cannot process messages while blocked on a
 	// permission decision. Messages queue naturally in the platform's
 	// MessageQueue channel while the worker goroutine blocks here.
+	log.Debugf("delegated", "RunInference: WaitForPermission start sk=%s", ts.SessionKey)
 	if err := a.DelegatedManager.WaitForPermission(ts.Ctx, ts.SessionKey); err != nil {
 		return err
 	}
+	log.Debugf("delegated", "RunInference: WaitForPermission done sk=%s", ts.SessionKey)
 
 	// Follow-up: a turn is already in-flight. Send the text to CC without
 	// creating a new turn pipeline. CC queues it after the current turn
@@ -160,10 +164,12 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// steer_mode=false case where messages flow through the channel normally.
 	if be.IsTurnInFlight() {
 		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
+		log.Debugf("delegated", "RunInference: SendCommand (follow-up) start sk=%s", ts.SessionKey)
 		if err := be.SendCommand(ts.Ctx, ts.Prompt, "next"); err != nil {
 			close(ts.CompletionChan)
 			return err
 		}
+		log.Debugf("delegated", "RunInference: SendCommand (follow-up) done sk=%s", ts.SessionKey)
 		close(ts.CompletionChan)
 		return nil
 	}
@@ -329,12 +335,16 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 					Data:     a.Data,
 				}
 			}
+			log.Debugf("delegated", "RunInference: SendToPaneWithAttachments start sk=%s", ts.SessionKey)
 			_, err = as.SendToPaneWithAttachments(ts.Ctx, ts.Prompt, atts, handler)
+			log.Debugf("delegated", "RunInference: SendToPaneWithAttachments done sk=%s err=%v", ts.SessionKey, err)
 			return err
 		}
 	}
 
+	log.Debugf("delegated", "RunInference: SendToPane start sk=%s", ts.SessionKey)
 	_, err = be.SendToPane(ts.Ctx, ts.Prompt, handler)
+	log.Debugf("delegated", "RunInference: SendToPane done sk=%s err=%v", ts.SessionKey, err)
 	return err
 }
 
