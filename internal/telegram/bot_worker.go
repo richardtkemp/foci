@@ -17,11 +17,14 @@ func (b *Bot) agentWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			b.logger().Debugf("worker: ctx done, exiting")
 			return
 		case qm := <-b.mq.Chan():
 			// Batch with any other immediately-available messages.
 			batch := append([]platform.QueuedMessage{qm}, b.mq.DrainQueue()...)
+			b.logger().Debugf("worker: dequeued batch of %d, entering processAgentMessage", len(batch))
 			b.processAgentMessage(ctx, batch)
+			b.logger().Debugf("worker: processAgentMessage returned, draining orphans")
 
 			// After the turn: drain orphan steers + any newly queued messages.
 			// Loop because new steers/messages can arrive during processing.
@@ -44,7 +47,9 @@ func (b *Bot) agentWorker(ctx context.Context) {
 				followUp = append(followUp, extras...)
 				b.logger().Infof("steer: processing %d orphan(s) + %d queued as follow-up turn", len(orphans), len(extras))
 				b.processAgentMessage(ctx, followUp)
+				b.logger().Debugf("worker: follow-up processAgentMessage returned")
 			}
+			b.logger().Debugf("worker: returning to select for next message")
 		}
 	}
 }
@@ -71,6 +76,8 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		return // no session assigned (idle secondary bot)
 	}
 
+	b.logger().Debugf("processAgentMessage: enter sk=%s batch_size=%d", sk, len(batch))
+
 	// Create a cancellable context for this turn
 	turnCtx, cancel := context.WithCancel(ctx)
 
@@ -79,14 +86,18 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 	b.turnMu.Unlock()
 
 	defer func() {
+		b.logger().Debugf("processAgentMessage: defer start sk=%s", sk)
 		b.turnMu.Lock()
 		b.turnCancel = nil
 		b.turnMu.Unlock()
 		cancel()
+		b.logger().Debugf("processAgentMessage: defer calling drainPendingNotifications sk=%s", sk)
 		b.drainPendingNotifications()
 		if b.OnTurnEnd != nil {
+			b.logger().Debugf("processAgentMessage: defer calling OnTurnEnd sk=%s", sk)
 			b.OnTurnEnd()
 		}
+		b.logger().Debugf("processAgentMessage: defer complete sk=%s", sk)
 	}()
 
 	d := b.resolveDisplay(sk)
@@ -121,7 +132,9 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 		allAttachments = append(allAttachments, qm.Attachments...)
 	}
 
+	b.logger().Debugf("processAgentMessage: calling turn.RunTurn sk=%s", sk)
 	err := turn.RunTurn(turnCtx, b.handler, sink, turnevent.SteererFunc(b.mq.DrainSteerTexts), sk, texts, allAttachments)
+	b.logger().Debugf("processAgentMessage: RunTurn returned sk=%s err=%v", sk, err)
 	if err != nil && turnCtx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return // /stop was called, "Stopped." already sent
@@ -131,8 +144,10 @@ func (b *Bot) processAgentMessage(ctx context.Context, batch []platform.QueuedMe
 	}
 
 	if b.OnTurnComplete != nil {
+		b.logger().Debugf("processAgentMessage: calling OnTurnComplete sk=%s", sk)
 		b.OnTurnComplete()
 	}
+	b.logger().Debugf("processAgentMessage: exit sk=%s", sk)
 }
 
 // cancelTurn cancels the in-flight agent turn, if any.

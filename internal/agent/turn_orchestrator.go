@@ -104,6 +104,7 @@ const fixedPostTurnTimeout = 24 * time.Hour
 // RunInference (no callback registered). Falls through immediately and
 // post-turn no-ops (FinalUsage is nil).
 func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
+	a.logger().Debugf("runPostTurn: enter sk=%s", ts.SessionKey)
 	// Check if the backend supports activity tracking.
 	var ac delegator.ActivityChecker
 	if ts.Backend != nil {
@@ -118,6 +119,7 @@ func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
 		for {
 			select {
 			case <-ts.CompletionChan:
+				a.logger().Debugf("runPostTurn: CompletionChan closed sk=%s", ts.SessionKey)
 				goto done
 			case <-ticker.C:
 				last := ac.LastActivity()
@@ -134,6 +136,7 @@ func (a *Agent) runPostTurn(tc TurnContract, ts *TurnState) {
 		defer cancel()
 		select {
 		case <-ts.CompletionChan:
+			a.logger().Debugf("runPostTurn: CompletionChan closed (no-activity-checker) sk=%s", ts.SessionKey)
 		case <-ctx.Done():
 			a.logger().Warnf("session=%s post-turn timeout waiting for completion", ts.SessionKey)
 			return
@@ -149,7 +152,10 @@ done:
 		a.logger().Errorf("session=%s post-turn save: %v", ts.SessionKey, err)
 	}
 	tc.UpdateSessionMeta(ts)
+	a.logger().Debugf("runPostTurn: entering RunCompaction sk=%s", ts.SessionKey)
 	tc.RunCompaction(ts)
+	a.logger().Debugf("runPostTurn: RunCompaction returned sk=%s", ts.SessionKey)
 	tc.LogConversationSent(ts)
 	tc.TouchActivityPost(ts)
+	a.logger().Debugf("runPostTurn: exit sk=%s", ts.SessionKey)
 }
