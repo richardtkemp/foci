@@ -51,6 +51,11 @@ type Command struct {
 	Category    string
 	Requires    Requires // transport requirement — checked before Execute
 	Hidden      bool
+	// Immediate marks commands that must run in the polling goroutine rather
+	// than being deferred to the worker goroutine. Set this on any command
+	// that cancels or interrupts an active agent turn (e.g. /stop), since the
+	// worker is blocked while a turn is running and cannot process deferred work.
+	Immediate bool
 	Visible func(ctx context.Context, req Request, cc CommandContext) bool // when non-nil and returns false, suppressed from listings/keyboards
 
 	// Subcommands declares the command's subcommand set. When non-empty and
@@ -192,6 +197,29 @@ func (cmd *Command) buildSubcommandUsage() string {
 // Get returns a command by name, or nil.
 func (r *Registry) Get(name string) *Command {
 	return r.commands[name]
+}
+
+// IsImmediateText reports whether the command named in text has Immediate set.
+// Used by platform receive loops to decide whether to dispatch a command in the
+// polling goroutine (immediate) or defer it to the worker goroutine (non-immediate).
+func (r *Registry) IsImmediateText(text string) bool {
+	name := commandNameFromText(text)
+	if name == "" {
+		return false
+	}
+	cmd, ok := r.commands[name]
+	return ok && cmd.Immediate
+}
+
+// commandNameFromText extracts the lower-cased command name from slash/dot-prefixed
+// text (e.g. "/stop args" → "stop", ".reset" → "reset"). Returns "" if not a command.
+func commandNameFromText(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) == 0 || (text[0] != '/' && text[0] != '.') {
+		return ""
+	}
+	name, _, _ := strings.Cut(text[1:], " ")
+	return strings.ToLower(name)
 }
 
 // All returns all commands sorted by name.

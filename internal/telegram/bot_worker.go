@@ -12,13 +12,28 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// agentWorker processes queued messages, batching any that arrive while busy.
+// agentWorker processes queued messages and commands, batching messages that
+// arrive while busy. Commands are given priority over agent turns: they are
+// drained before starting a new turn, preventing long turns from starving
+// pending commands.
 func (b *Bot) agentWorker(ctx context.Context) {
 	for {
+		// Priority: drain any pending commands before starting a new agent turn.
+		select {
+		case cmd := <-b.mq.CmdChan():
+			b.logger().Debugf("worker: dequeued command %q", cmd.Text)
+			b.processQueuedCommand(ctx, cmd)
+			continue
+		default:
+		}
+
 		select {
 		case <-ctx.Done():
 			b.logger().Debugf("worker: ctx done, exiting")
 			return
+		case cmd := <-b.mq.CmdChan():
+			b.logger().Debugf("worker: dequeued command %q", cmd.Text)
+			b.processQueuedCommand(ctx, cmd)
 		case qm := <-b.mq.Chan():
 			// Batch with any other immediately-available messages.
 			batch := append([]platform.QueuedMessage{qm}, b.mq.DrainQueue()...)
@@ -51,6 +66,26 @@ func (b *Bot) agentWorker(ctx context.Context) {
 			}
 			b.logger().Debugf("worker: returning to select for next message")
 		}
+	}
+}
+
+// processQueuedCommand dispatches a command that was routed via the command
+// channel rather than the polling goroutine. Commands are routed here (instead
+// of being dispatched inline in the polling loop) so that blocking commands
+// like /reset do not prevent getUpdates from running, which would stop
+// callback_query delivery (e.g. permission "Allow" buttons).
+func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessage) {
+	origMsg, _ := qm.Original.(*gotgbot.Message)
+	if origMsg == nil {
+		b.logger().Warnf("processQueuedCommand: missing original message")
+		return
+	}
+	if b.dispatcher == nil {
+		return
+	}
+	outcome := b.dispatcher.DispatchCommand(ctx, qm.Text, qm.ChatID, qm.UserID)
+	if !outcome.NotHandled {
+		b.renderCommandOutcome(origMsg, &outcome)
 	}
 }
 

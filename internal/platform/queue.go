@@ -37,6 +37,7 @@ type SteerEntry struct {
 // group chat throttling. Thread-safe. Used by both Telegram and Discord bots.
 type MessageQueue struct {
 	ch             chan QueuedMessage
+	cmdCh          chan QueuedMessage // commands bypass message routing rules
 	steerMu        sync.Mutex
 	steerParts     []SteerEntry
 	throttle       *GroupThrottle // nil = disabled
@@ -52,6 +53,7 @@ type MessageQueue struct {
 // MessageQueueConfig holds construction parameters for NewMessageQueue.
 type MessageQueueConfig struct {
 	Size           int
+	CmdSize        int // command channel buffer size; 0 uses default (8)
 	RequireMention bool
 	SteerMode      bool
 	Throttle       *GroupThrottle
@@ -65,8 +67,13 @@ func NewMessageQueue(cfg MessageQueueConfig) *MessageQueue {
 	if size <= 0 {
 		size = 64
 	}
+	cmdSize := cfg.CmdSize
+	if cmdSize <= 0 {
+		cmdSize = 8
+	}
 	mq := &MessageQueue{
 		ch:             make(chan QueuedMessage, size),
+		cmdCh:          make(chan QueuedMessage, cmdSize),
 		throttle:       cfg.Throttle,
 		requireMention: cfg.RequireMention,
 		steerMode:      cfg.SteerMode,
@@ -216,6 +223,24 @@ func (q *MessageQueue) SetSteerMode(v bool) {
 // Used as the throttle's flush callback target.
 func (q *MessageQueue) PushFlushed(msg QueuedMessage) {
 	q.pushToChannel(msg)
+}
+
+// EnqueueCommand sends a command message to the command channel, bypassing
+// all message routing rules (steer mode, group throttle, require-mention).
+// Commands must always reach the worker so they are never silently dropped.
+func (q *MessageQueue) EnqueueCommand(msg QueuedMessage) {
+	select {
+	case q.cmdCh <- msg:
+	default:
+		if q.log != nil {
+			q.log.Warnf("command queue full, dropping command from %s", q.senderLabel(msg))
+		}
+	}
+}
+
+// CmdChan returns the receive-only command channel for the worker select loop.
+func (q *MessageQueue) CmdChan() <-chan QueuedMessage {
+	return q.cmdCh
 }
 
 // Stop stops throttle timers and releases resources.

@@ -14,8 +14,8 @@ import (
 )
 
 func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
-	// Verifies that fresh slash
-	// commands are dispatched immediately.
+	// Verifies that fresh slash commands are routed to the command channel (not
+	// the agent queue) and produce a reply when the worker dispatches them.
 	cmds := command.NewRegistry()
 	cmds.Register(&command.Command{
 		Name:        "ping",
@@ -27,16 +27,20 @@ func TestReceiveMessage_FreshSlashCommandDispatched(t *testing.T) {
 
 	b, mock := testBot([]string{"111"}, cmds)
 
-	// Fresh message (timestamp = now) -- should be dispatched normally
 	msg := makeMsg(111, "owner", "/ping")
 	b.receiveMessage(context.Background(), msg)
 
-	// Command should have been dispatched and replied
+	// Should be in the command channel, not the agent queue.
+	if len(b.mq.Chan()) != 0 {
+		t.Error("fresh slash command should not be in agent queue")
+	}
+
+	// Simulate worker dispatch.
+	cmd := <-b.mq.CmdChan()
+	b.processQueuedCommand(context.Background(), cmd)
+
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 sent message for fresh /ping, got %d", mock.sentCount())
-	}
-	if len(b.mq.Chan()) != 0 {
-		t.Error("fresh slash command should not be queued")
 	}
 }
 
