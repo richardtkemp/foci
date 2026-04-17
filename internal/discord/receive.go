@@ -27,6 +27,17 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *discordgo.Message) {
 	if !ok {
 		return
 	}
+	// Non-immediate commands go to the command channel so the worker dispatches
+	// them without blocking the event handler goroutine. /stop is kept here
+	// because it must cancel a live turn immediately.
+	if dispatch.IsCommandText(qm.text) && !b.commands.IsImmediateText(qm.text) {
+		if !msg.Timestamp.IsZero() && time.Since(msg.Timestamp) > dispatch.StaleCommandAge {
+			b.logger().Warnf("dropping stale command %q (age=%s)", qm.text, time.Since(msg.Timestamp).Truncate(time.Second))
+			return
+		}
+		b.mq.EnqueueCommand(b.toPlatformMessage(msg, qm))
+		return
+	}
 	if b.tryIntercept(ctx, &qm) {
 		return
 	}

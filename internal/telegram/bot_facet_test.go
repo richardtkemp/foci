@@ -9,8 +9,8 @@ import (
 )
 
 func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
-	// Verifies that /done on the primary bot
-	// returns a "nothing to detach" message.
+	// Verifies that /done on the primary bot goes to the command channel and,
+	// when the worker dispatches it, returns a "nothing to detach" message.
 	cmds := command.NewRegistry()
 	cmds.Register(command.DoneCommand())
 	b, mock := testBot([]string{"111"}, cmds)
@@ -24,18 +24,23 @@ func TestReceiveMessage_DoneOnPrimaryBot(t *testing.T) {
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
 
-	// Should reply with "nothing to detach"
+	// Should be in command channel, not the agent queue.
+	if len(b.mq.Chan()) != 0 {
+		t.Error("/done should not be in agent queue")
+	}
+
+	// Simulate worker dispatch.
+	cmd := <-b.mq.CmdChan()
+	b.processQueuedCommand(context.Background(), cmd)
+
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
-	}
-	if len(b.mq.Chan()) != 0 {
-		t.Error("/done should not be queued")
 	}
 }
 
 func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
-	// Verifies that /done on a secondary bot
-	// with an active session detaches the session.
+	// Verifies that /done on a secondary bot goes to the command channel and,
+	// when the worker dispatches it, detaches the session.
 	cmds := command.NewRegistry()
 	cmds.Register(command.DoneCommand())
 	b, mock := testBot([]string{"111"}, cmds)
@@ -60,7 +65,15 @@ func TestReceiveMessage_DoneOnSecondaryBot(t *testing.T) {
 	msg := makeMsg(111, "owner", "/done")
 	b.receiveMessage(context.Background(), msg)
 
-	// Should detach and reply
+	// Should be in command channel, not the agent queue.
+	if len(b.mq.Chan()) != 0 {
+		t.Error("/done should not be in agent queue")
+	}
+
+	// Simulate worker dispatch.
+	cmd := <-b.mq.CmdChan()
+	b.processQueuedCommand(context.Background(), cmd)
+
 	if mock.sentCount() != 1 {
 		t.Fatalf("expected 1 sent message, got %d", mock.sentCount())
 	}

@@ -13,6 +13,7 @@ func StopCommand() *Command {
 		Name:        "stop",
 		Description: "Cancel the current agent turn",
 		Category:    "operations",
+		Immediate:   true, // must run in polling goroutine to cancel a live turn
 		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
 			// Delegated mode: send Escape×2 + Ctrl-C to CC's TUI.
 			if cc.Agent != nil && cc.Agent.DelegatedManager != nil {

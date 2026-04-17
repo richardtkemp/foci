@@ -13,12 +13,27 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// agentWorker processes queued messages, batching any that arrive while busy.
+// agentWorker processes queued messages and commands, batching messages that
+// arrive while busy. Commands are given priority over agent turns: they are
+// drained before starting a new turn, preventing long turns from starving
+// pending commands.
 func (b *Bot) agentWorker(ctx context.Context) {
 	for {
+		// Priority: drain any pending commands before starting a new agent turn.
+		select {
+		case cmd := <-b.mq.CmdChan():
+			b.logger().Debugf("worker: dequeued command %q", cmd.Text)
+			b.processQueuedCommand(ctx, cmd)
+			continue
+		default:
+		}
+
 		select {
 		case <-ctx.Done():
 			return
+		case cmd := <-b.mq.CmdChan():
+			b.logger().Debugf("worker: dequeued command %q", cmd.Text)
+			b.processQueuedCommand(ctx, cmd)
 		case qm := <-b.mq.Chan():
 			// Batch with any other immediately-available messages.
 			batch := append([]platform.QueuedMessage{qm}, b.mq.DrainQueue()...)
@@ -47,6 +62,23 @@ func (b *Bot) agentWorker(ctx context.Context) {
 				b.processAgentMessage(ctx, followUp)
 			}
 		}
+	}
+}
+
+// processQueuedCommand dispatches a command that was routed via the command
+// channel. See telegram/bot_worker.go for the rationale.
+func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessage) {
+	origMsg, _ := qm.Original.(*discordgo.Message)
+	if origMsg == nil {
+		b.logger().Warnf("processQueuedCommand: missing original message")
+		return
+	}
+	if b.dispatcher == nil {
+		return
+	}
+	outcome := b.dispatcher.DispatchCommand(ctx, qm.Text, qm.ChatID, qm.UserID)
+	if !outcome.NotHandled {
+		b.renderCommandOutcome(origMsg, &outcome)
 	}
 }
 

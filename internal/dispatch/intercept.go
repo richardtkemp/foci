@@ -9,6 +9,24 @@ import (
 	"foci/internal/platform"
 )
 
+// StaleCommandAge is the maximum age of a slash command before it is dropped.
+// Commands older than this are treated as replays (e.g. from Telegram's update
+// queue after a foci restart) and silently discarded.
+const StaleCommandAge = 30 * time.Second
+
+// IsCommandText reports whether text begins with a command prefix (/ or .).
+func IsCommandText(text string) bool {
+	return len(text) > 0 && (text[0] == '/' || text[0] == '.')
+}
+
+// IsImmediateCommand reports whether a command must be dispatched in the polling
+// goroutine rather than deferred to the worker. Currently only /stop, because it
+// cancels an active agent turn and must not wait in the command queue.
+func IsImmediateCommand(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	return lower == "/stop" || strings.HasPrefix(lower, "/stop ")
+}
+
 // Interceptor implements the shared message interception pipeline used by
 // both Telegram and Discord bots. It handles wizard intercept, last-message
 // recording, stale command drops, command dispatch, message transforms,
@@ -66,7 +84,7 @@ func (i *Interceptor) TryIntercept(ctx context.Context, msg *InterceptMessage) I
 	// restart). Agent messages are still delivered since the agent can reason
 	// about timeliness, but slash commands execute unconditionally.
 	if msg.Text != "" && strings.HasPrefix(msg.Text, "/") && !msg.Timestamp.IsZero() {
-		if age := time.Since(msg.Timestamp); age > 30*time.Second {
+		if age := time.Since(msg.Timestamp); age > StaleCommandAge {
 			i.LogWarnf("dropping stale command %q (age=%s)", strings.ToLower(msg.Text), age.Truncate(time.Second))
 			return InterceptResult{Consumed: true, Text: msg.Text}
 		}
