@@ -56,11 +56,13 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, cq *gotgbot.CallbackQuery
 
 	msgID := cq.Message.GetMessageId()
 	action, data := dispatch.ParseCallback(cq.Data)
+	b.logger().Debugf("callback_query: action=%d raw=%q chatID=%d msgID=%d", action, cq.Data, chatID, msgID)
 	switch action {
 	case dispatch.CallbackCommand:
 		b.handleCommandCallback(ctx, chatID, msgID, data)
 	case dispatch.CallbackInteractive:
 		editText, _, ok := platform.HandleInteractiveCallback(data)
+		b.logger().Debugf("callback_query interactive: data=%q found=%v editText=%q", data, ok, editText)
 		if ok && editText != "" {
 			_, _, _ = b.client.EditMessageText(
 				ConvertToTelegramHTML(editText, b.tableOpts()),
