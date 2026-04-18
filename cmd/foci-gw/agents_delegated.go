@@ -139,7 +139,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			}
 			reqID := requestID // capture for closure
 			_ = platform.SendInteractiveMessage(conn, text, buttons, func(choice platform.ButtonChoice) string {
-				_ = ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data)
+				log.Debugf("agent/"+agentID, "permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
+				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data); err != nil {
+					log.Errorf("agent/"+agentID, "SendPermissionResponse failed: sk=%s reqID=%s choice=%q err=%v", sessionKey, reqID, choice.Data, err)
+				}
 				switch {
 				case choice.Data == "deny" || choice.Data == "qa:cancel":
 					if summary != "" {

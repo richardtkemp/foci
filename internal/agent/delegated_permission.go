@@ -56,7 +56,11 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 			prefix := strings.TrimPrefix(choice, "allow_always:")
 			if rr, ok := be.(ruleResponder); ok {
 				log.Debugf("agent/perm", "responding with rule: reqID=%s prefix=%s", requestID, prefix)
-				return rr.RespondToPermissionWithRule(requestID, prefix)
+				err := rr.RespondToPermissionWithRule(requestID, prefix)
+				if err != nil {
+					log.Errorf("agent/perm", "RespondToPermissionWithRule failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
+				}
+				return err
 			}
 			// Fall through to simple allow if rule not supported.
 		}
@@ -67,7 +71,11 @@ func (a *Agent) SendPermissionResponse(ctx context.Context, sessionKey string, r
 			msg = "User denied permission"
 		}
 		log.Debugf("agent/perm", "responding via protocol: reqID=%s choice=%q allow=%v", requestID, choice, allow)
-		return pr.RespondToPermission(requestID, allow, msg)
+		err := pr.RespondToPermission(requestID, allow, msg)
+		if err != nil {
+			log.Errorf("agent/perm", "RespondToPermission failed: reqID=%s sk=%s err=%v", requestID, sessionKey, err)
+		}
+		return err
 	}
 
 	// Keystroke-based response (tmux backend).
