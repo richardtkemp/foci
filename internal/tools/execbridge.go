@@ -420,6 +420,10 @@ func generateHelpText(t *Tool) string {
 					desc += " [" + strings.Join(p.Enum, "|") + "]"
 				}
 				flag := "--" + strings.ReplaceAll(k, "_", "-")
+				// Append aliases so --help shows them alongside the canonical name.
+				for _, alias := range t.Aliases[k] {
+					flag += "|--" + strings.ReplaceAll(alias, "_", "-")
+				}
 				if p.Type == "boolean" {
 					flag += " (flag)"
 				}
@@ -822,6 +826,18 @@ func generateGenericShellFunc(t *Tool) string {
 			fmt.Fprintf(&b, "      --%s) %s=true; shift ;;\n", flag, k)
 		} else {
 			fmt.Fprintf(&b, "      --%s) %s=\"$2\"; shift 2 ;;\n", flag, k)
+		}
+		// Emit alias arms that set the same canonical variable. Aliases
+		// silently skip if the canonical key isn't a schema property
+		// (already verified by paramNames iteration).
+		for _, alias := range t.Aliases[k] {
+			aliasFlag := strings.ReplaceAll(alias, "_", "-")
+			flagList = append(flagList, "--"+aliasFlag)
+			if schema.Properties[k].Type == "boolean" {
+				fmt.Fprintf(&b, "      --%s) %s=true; shift ;;\n", aliasFlag, k)
+			} else {
+				fmt.Fprintf(&b, "      --%s) %s=\"$2\"; shift 2 ;;\n", aliasFlag, k)
+			}
 		}
 	}
 	fmt.Fprintf(&b,

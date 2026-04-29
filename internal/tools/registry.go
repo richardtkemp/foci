@@ -39,6 +39,16 @@ type Tool struct {
 	// explicit value is provided and stdin is not a TTY. Used by tools
 	// that accept piped content (send_to_chat, summary).
 	StdinParam string
+
+	// Aliases maps a canonical schema parameter name to one or more
+	// alternative flag names. The generated shell function emits a case
+	// arm for each alias that assigns into the canonical variable, so
+	// `--description X` and `--text X` populate the same field.
+	//
+	// Aliases use snake_case names; the generator kebab-cases them for
+	// the actual flag (e.g. "send_as" → --send-as). Values that don't
+	// reference a real schema property are silently ignored.
+	Aliases map[string][]string
 }
 
 // Registry holds all registered tools.
