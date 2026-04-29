@@ -1019,6 +1019,48 @@ func TestGenerateGenericShellFuncEmptyFallback(t *testing.T) {
 	}
 }
 
+func TestGenerateGenericShellFuncAliases(t *testing.T) {
+	// Aliases on Tool produce additional --flag case arms that assign into
+	// the canonical variable. So `--description X` and `--text X` both
+	// populate $text. Help text shows both names. Catches drift if the
+	// generator silently drops aliases.
+	t.Parallel()
+	tool := &Tool{
+		Name:        "test_alias",
+		Description: "test tool",
+		ExecExport:  true,
+		Aliases:     map[string][]string{"text": {"description"}},
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"text":{"type":"string","description":"the text"}
+			},
+			"required":["text"]
+		}`),
+	}
+
+	body := generateGenericShellFunc(tool)
+
+	// Both canonical and alias arms exist, both assign to text.
+	if !strings.Contains(body, `--text) text="$2"; shift 2`) {
+		t.Errorf("body missing canonical --text arm")
+	}
+	if !strings.Contains(body, `--description) text="$2"; shift 2`) {
+		t.Errorf("body missing alias --description arm targeting text")
+	}
+	// The recognized-flag list (used by the unknown-flag error message)
+	// includes both names so callers see the alias is valid.
+	if !strings.Contains(body, "--text --description") {
+		t.Errorf("body unrecognized-flag list should include both --text and --description")
+	}
+
+	// Help text advertises the alias inline with the canonical flag.
+	help := generateHelpText(tool)
+	if !strings.Contains(help, "--text|--description") {
+		t.Errorf("help text should show alias: got %q", help)
+	}
+}
+
 func TestGeneratedRemindShellFuncEndToEnd(t *testing.T) {
 	// Sources the generated funcs file and invokes foci_remind with
 	// --text/--when/--wake against a real socket. Asserts the JSON

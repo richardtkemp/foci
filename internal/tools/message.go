@@ -14,10 +14,15 @@ import (
 
 func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts voice.TTS) *Tool {
 	return &Tool{
-		Name:        "send_to_chat",
-		ExecExport:  true,
-		Positional:  []string{"text"},
-		StdinParam:  "text",
+		Name:       "send_to_chat",
+		ExecExport: true,
+		Positional: []string{"text"},
+		StdinParam: "text",
+		// description is a more natural flag when paired with a file —
+		// "this file with this caption". Maps to the canonical text field
+		// so `--description X --file Y` and `--text X --file Y` are
+		// equivalent.
+		Aliases:     map[string][]string{"text": {"description"}},
 		Description: "Send a rich message to the user. Can send text, files, or TTS.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
