@@ -16,6 +16,8 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 	return &Tool{
 		Name:        "send_to_chat",
 		ExecExport:  true,
+		Positional:  []string{"text"},
+		StdinParam:  "text",
 		Description: "Send a rich message to the user. Can send text, files, or TTS.",
 		Parameters: json.RawMessage(`{
 			"type": "object",

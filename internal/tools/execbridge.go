@@ -503,54 +503,6 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, helpCheck, guard, name)
 
-	case "send_to_chat":
-		// Text as args or stdin; optional --file flag
-		return fmt.Sprintf(`%s() {
-%s
-%s
-  local text="" file_path="" send_as="" read_stdin=false
-  foci__trace "send" "args=$# tty=$([ -t 0 ] && echo yes || echo no)"
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --file) file_path="$2"; shift 2 ;;
-      --send-as) send_as="$2"; shift 2 ;;
-      -) read_stdin=true; shift ;;
-      --*)
-        echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --file --send-as" >&2
-        return 1 ;;
-      *) text="$text $1"; shift ;;
-    esac
-  done
-  text="${text# }"
-  if [ "$read_stdin" = true ] || ([ -z "$text" ] && [ -z "$file_path" ]); then
-    if [ ! -t 0 ]; then
-      foci__trace "send" "reading stdin..."
-      text="$(cat)"
-      foci__trace "send" "stdin read ${#text} bytes"
-    fi
-  fi
-  if [ -z "$text" ] && [ -z "$file_path" ]; then
-    echo "usage: %s <text> [--file PATH] [--send-as TYPE]" >&2
-    echo "  or: echo 'message' | %s" >&2
-    echo "  or: echo 'message' | %s -" >&2
-    return 1
-  fi
-  local params="{}"
-  if [ -n "$text" ]; then
-    params="$(echo "$params" | jq --arg t "$text" '. + {text: $t}')"
-  fi
-  if [ -n "$file_path" ]; then
-    params="$(echo "$params" | jq --arg f "$file_path" '. + {file: $f}')"
-  fi
-  if [ -n "$send_as" ]; then
-    params="$(echo "$params" | jq --arg s "$send_as" '. + {send_as: $s}')"
-  fi
-  foci__trace "send" "calling foci-call text=${#text}b file=$file_path"
-  foci-call "$(jq -nc --argjson p "$params" '{"tool":"send_to_chat","params":$p}')"
-}
-`, name, helpCheck, guard, name, name, name)
-
 	case "todo":
 		// action as first arg, rest varies by action
 		return fmt.Sprintf(`%s() {
@@ -901,6 +853,16 @@ func generateGenericShellFunc(t *Tool) string {
 	if len(positional) == 1 {
 		p := positional[0]
 		fmt.Fprintf(&b, "  %s=\"${%s# }\"\n", p, p)
+	}
+
+	// Stdin reader: if the StdinParam value is empty and stdin is not a TTY,
+	// read stdin into the variable. Lets pipe usage Just Work — `echo hi |
+	// foci_send_to_chat` populates text from stdin without --text.
+	if t.StdinParam != "" {
+		if _, ok := schema.Properties[t.StdinParam]; !ok {
+			return fmt.Sprintf("# error: tool %q StdinParam=%q not in schema\n", t.Name, t.StdinParam)
+		}
+		fmt.Fprintf(&b, "  if [ -z \"$%s\" ] && [ ! -t 0 ]; then\n    %s=\"$(cat)\"\n  fi\n", t.StdinParam, t.StdinParam)
 	}
 
 	// Required-param usage check.

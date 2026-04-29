@@ -900,6 +900,8 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	r.Register(&Tool{
 		Name:       "send_to_chat",
 		ExecExport: true,
+		Positional: []string{"text"}, // matches NewSendToChatTool
+		StdinParam: "text",           // matches NewSendToChatTool
 		Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file":{"type":"string"},"send_as":{"type":"string"}}}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 			var p struct {
