@@ -39,12 +39,6 @@ type Tool struct {
 	// explicit value is provided and stdin is not a TTY. Used by tools
 	// that accept piped content (send_to_chat, summary).
 	StdinParam string
-
-	// RepeatedFlag maps a singular shell flag name (e.g. "header") to the
-	// schema parameter it accumulates into (e.g. "headers", typed as an
-	// object). Each occurrence of `--<flag> 'K: V'` adds one key-value
-	// pair to the parameter object.
-	RepeatedFlag map[string]string
 }
 
 // Registry holds all registered tools.
