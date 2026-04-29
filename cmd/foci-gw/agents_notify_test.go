@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"foci/internal/agent"
+	"foci/internal/memory"
 	"foci/internal/platform"
 )
 
@@ -181,5 +184,73 @@ func TestNewSessionNotifyFnParsesIndependentKeys(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("resolver was not called")
+	}
+}
+
+func TestBuildWakeSchedulerNilStore(t *testing.T) {
+	// Without a reminderStore the scheduler is disabled — buildWakeScheduler
+	// must return nil so callers can detect "reminders unsupported" and skip
+	// remind-tool registration.
+	t.Parallel()
+	fn := buildWakeScheduler(func() *agent.Agent { return nil }, nil, "test", context.Background(), stubConnMgr{})
+	if fn != nil {
+		t.Errorf("buildWakeScheduler with nil store = non-nil, want nil")
+	}
+}
+
+func TestBuildWakeSchedulerReturnsCallback(t *testing.T) {
+	// With a real reminderStore, buildWakeScheduler returns a callable
+	// schedule function. The function must accept a wake without error so
+	// tools.NewRemindTool can use it from any transport (API or delegated).
+	t.Parallel()
+	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fn := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
+	if fn == nil {
+		t.Fatal("buildWakeScheduler with valid store = nil, want non-nil")
+	}
+	// Schedule a wake far in the future so it never fires during the test.
+	if err := fn(1, 24*time.Hour, "noop", ""); err != nil {
+		t.Errorf("schedule fn returned error: %v", err)
+	}
+}
+
+func TestBuildWakeSchedulerRestoresPending(t *testing.T) {
+	// On agent startup, buildWakeScheduler must restore any pending wakes
+	// previously stored in the DB so reminders survive restarts. We pre-seed
+	// the store with one due wake and verify buildWakeScheduler returns a
+	// non-nil scheduler — the restoration loop runs synchronously inside the
+	// builder, so a successful return implies pending rows were processed
+	// without panic.
+	t.Parallel()
+	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+
+	if _, err := rs.AddWake("test", "test/main", "morning routine", "24h"); err != nil {
+		t.Fatalf("seed AddWake: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fn := buildWakeScheduler(func() *agent.Agent { return &agent.Agent{} }, rs, "test", ctx, stubConnMgr{})
+	if fn == nil {
+		t.Fatal("buildWakeScheduler returned nil despite valid store")
+	}
+
+	pending, err := rs.PendingWakes("test")
+	if err != nil {
+		t.Fatalf("PendingWakes: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Errorf("PendingWakes returned %d rows, want 1 (restoration should not consume DB rows)", len(pending))
 	}
 }

@@ -687,6 +687,8 @@ Cctmux plumbs the id through via `handleAssistant` recording `toolNamesByID` at 
 
 The agent can defer thoughts for later via the `remind` tool. Reminders are stored in SQLite (`reminders.db`) and surfaced as injected context when due. With `wake=true`, the session is actively woken at the specified time.
 
+**Tool registration:** `remind` is `ExecExport: true`, so it is exposed both as a native API tool (in API-mode agents) and as a `foci_remind` shell function via the exec bridge (in delegated/Claude Code agents). The wake-scheduling machinery (`buildWakeScheduler` in `cmd/foci-gw/agents_notify.go`) is built once per agent in `setupAgent` — transport-independent — and the resulting `tools.ScheduleWakeFn` is held on `sharedAgentSetup.wakeScheduleFn`. Each transport then registers the tool into its own registry: `configureAPI` adds it to the API tool registry; `buildExecRegistry` adds it to the delegated exec registry. Both registrations are gated on `reminderStore != nil && wakeScheduleFn != nil`.
+
 **Storage:** `ReminderStore` in `memory/remind.go`. Table `reminders` with columns: `id`, `agent_id`, `text`, `due_at`, `due_tag`, `created`. Scoped per-agent — each agent sees only its own reminders.
 
 **Time resolution (`resolveWhen`):**

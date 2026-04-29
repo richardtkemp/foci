@@ -71,7 +71,7 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Build a tool registry with exec-exported tools so foci shell commands
 	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
 	// shell environment via the persistent exec bridge.
-	registry := buildExecRegistry(p)
+	registry := buildExecRegistry(p, shared.wakeScheduleFn)
 
 	// Per-agent environment block for delegated backends.
 	if p.resolved.Environment.Enabled {
@@ -208,7 +208,11 @@ func buildAutoApproveRules(p setupParams) []string {
 // buildExecRegistry creates a tools.Registry containing only exec-exported
 // tools. These are exposed as shell functions (foci_todo, foci_send_to_chat,
 // etc.) via the persistent exec bridge in the delegated backend's tmux session.
-func buildExecRegistry(p setupParams) *tools.Registry {
+//
+// wakeScheduleFn is the agent's scheduled-wake callback (built once
+// transport-independently in setupAgent). Pass nil to skip remind-tool
+// registration — useful when reminderStore is unconfigured.
+func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn) *tools.Registry {
 	registry := tools.NewRegistry()
 	acfg := p.acfg
 	connMgr := p.connMgr
@@ -234,6 +238,10 @@ func buildExecRegistry(p setupParams) *tools.Registry {
 
 	if len(p.memBackends) > 0 {
 		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))
+	}
+
+	if p.reminderStore != nil && wakeScheduleFn != nil {
+		registry.Register(tools.NewRemindTool(p.reminderStore, acfg.ID, wakeScheduleFn))
 	}
 
 	log.Infof("agent/"+acfg.ID, "exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())

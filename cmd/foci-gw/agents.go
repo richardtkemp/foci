@@ -93,6 +93,12 @@ func setupAgent(p setupParams) *agentInstance {
 	compactor, compactionThreshold := buildCompactor(p, nil)
 	configureUniversal(ag, p, compactor)
 
+	// Wake scheduler is transport-independent: build the goroutine machinery
+	// and restore pending wakes here so both API and delegated transports can
+	// register the remind tool into their own registries below.
+	agLazy := func() *agent.Agent { return ag }
+	shared.wakeScheduleFn = buildWakeScheduler(agLazy, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
+
 	// Transport-specific configuration
 	isDelegated := acfg.Backend != "" && acfg.Backend != "api"
 	var fp finalizeParams
@@ -242,7 +248,9 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 
 	// Spawn and wake tools (registered after agent creation for lazy capture)
 	registerSpawnTool(registry, p, client, bs.bootstrap, func() tools.SpawnAgent { return ag }, notifier, promptSearchDirs, func(sk string, v bool) { ag.SetSessionNoCompact(sk, v) }, groupResolver, resolvedModel, defaultFormat, fallbackFn)
-	setupWakeScheduler(agLazy, registry, p.reminderStore, acfg.ID, p.ctx, p.connMgr)
+	if p.reminderStore != nil && shared.wakeScheduleFn != nil {
+		registry.Register(tools.NewRemindTool(p.reminderStore, acfg.ID, shared.wakeScheduleFn))
+	}
 
 	return finalizeParams{
 		bootstrap:           bs.bootstrap,
