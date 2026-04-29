@@ -19,6 +19,7 @@ func NewRemindTool(rs *memory.ReminderStore, agentID string, wakeFn ScheduleWake
 	return &Tool{
 		Name:        "remind",
 		Description: "Defer a thought for later. By default the reminder surfaces as injected context at the specified time. Set wake=true to actively wake the session (fires a message to yourself at the specified time).",
+		ExecExport:  true,
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {

@@ -25,6 +25,11 @@ type sharedAgentSetup struct {
 	p                setupParams
 	promptSearchDirs []string
 	groupResolver    *config.GroupResolver
+	// wakeScheduleFn is the agent's scheduled-wake callback, built once
+	// transport-independently in setupAgent. Nil when reminderStore is nil
+	// (reminder support disabled). Used by both transports to register the
+	// remind tool into their respective registries.
+	wakeScheduleFn tools.ScheduleWakeFn
 }
 
 // resolveSharedSetup performs the common preamble for all agent types:

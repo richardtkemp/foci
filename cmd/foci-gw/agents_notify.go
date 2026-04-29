@@ -211,19 +211,23 @@ func deliverInjectedTurn(
 	}
 }
 
-// setupWakeScheduler creates the wake scheduling function and registers the remind tool.
-// It also restores any pending wakes from the database.
-// Returns the wakeScheduleFn for use by other components.
-func setupWakeScheduler(
+// buildWakeScheduler creates the agent-scoped wake-scheduling machinery and
+// restores any pending wakes from the database. Returns the schedule callback
+// for use by NewRemindTool. Returns nil if reminderStore is nil (reminder
+// support disabled for this agent).
+//
+// Transport-independent: call once per agent at setup time. Tool registration
+// is the caller's responsibility — register tools.NewRemindTool(reminderStore,
+// agentID, wakeScheduleFn) into whichever registry the transport uses.
+func buildWakeScheduler(
 	getAgent func() *agent.Agent,
-	registry *tools.Registry,
 	reminderStore *memory.ReminderStore,
 	agentID string,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
-) {
+) tools.ScheduleWakeFn {
 	if reminderStore == nil {
-		return
+		return nil
 	}
 
 	var wakesMu sync.Mutex
@@ -272,9 +276,7 @@ func setupWakeScheduler(
 		return nil
 	}
 
-	registry.Register(tools.NewRemindTool(reminderStore, agentID, wakeScheduleFn))
-
-	// Restore pending wakes from DB (survives restart)
+	// Restore pending wakes from DB (survives restart).
 	if pending, err := reminderStore.PendingWakes(agentID); err != nil {
 		log.Errorf("remind", "failed to load pending wakes for %s: %v", agentID, err)
 	} else if len(pending) > 0 {
@@ -287,4 +289,6 @@ func setupWakeScheduler(
 		}
 		log.Infof("remind", "restored %d pending wake(s) for agent %s", len(pending), agentID)
 	}
+
+	return wakeScheduleFn
 }

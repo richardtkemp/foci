@@ -318,6 +318,28 @@ func TestRemindWakeCallbackError(t *testing.T) {
 	}
 }
 
+func TestRemindToolExecExport(t *testing.T) {
+	// Verifies the remind tool is exec-exported so it surfaces as a foci_remind shell function in delegated backends. Without this, delegated agents (Claude Code mode) have no way to set reminders even when the tool is registered.
+	t.Parallel()
+	tool := testRemindTool(t)
+	if !tool.ExecExport {
+		t.Fatal("remind tool should have ExecExport: true")
+	}
+	registry := NewRegistry()
+	registry.Register(tool)
+	names := registry.ExportedNames()
+	found := false
+	for _, n := range names {
+		if n == "foci_remind" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ExportedNames() = %v, want to include foci_remind", names)
+	}
+}
+
 func TestRemindWakeTomorrow(t *testing.T) {
 	// Verifies that "tomorrow" resolves to a duration within the next 24 hours when used as a wake trigger.
 	t.Parallel()
