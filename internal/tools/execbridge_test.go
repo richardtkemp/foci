@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	osexec "os/exec"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -793,7 +792,7 @@ func TestExecBridgeShellFuncsRejectUnknownFlags(t *testing.T) {
 		{
 			name:       "tmux",
 			params:     json.RawMessage(`{"type":"object","properties":{"operation":{"type":"string"},"name":{"type":"string"},"command":{"type":"string"},"workdir":{"type":"string"},"watch":{"type":"boolean"},"keys":{"type":"string"},"enter":{"type":"boolean"},"lines":{"type":"integer"},"window":{"type":"integer"},"threshold_seconds":{"type":"integer"},"raw":{"type":"boolean"}}}`),
-			validFlags: []string{"--name", "--command", "--workdir", "--watch", "--keys", "--enter", "--lines", "--window", "--threshold", "--raw"},
+			validFlags: []string{"--name", "--command", "--workdir", "--watch", "--keys", "--enter", "--lines", "--window", "--threshold-seconds", "--raw"},
 		},
 	}
 
@@ -944,6 +943,170 @@ func TestExecBridgePipeFunctions(t *testing.T) {
 	}
 }
 
+func TestGenerateGenericShellFuncFlatSchema(t *testing.T) {
+	// Pins the generic generator's contract for a flat schema with one
+	// required string, one optional boolean, and a snake_case key. This is
+	// the shape of foci_remind and any future flat-schema tool added to
+	// the registry without a hand-rolled case in generateShellFunc.
+	t.Parallel()
+	tool := &Tool{
+		Name:        "test_flat",
+		Description: "test tool",
+		ExecExport:  true,
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"text":{"type":"string","description":"the text"},
+				"when":{"type":"string","description":"when"},
+				"wake":{"type":"boolean","description":"wake flag"},
+				"date_from":{"type":"string","description":"snake_case key"}
+			},
+			"required":["text","when"]
+		}`),
+	}
+
+	body := generateGenericShellFunc(tool)
+
+	// String-flag arms consume two args. Snake_case becomes kebab-case.
+	for _, want := range []string{
+		`--text) text="$2"; shift 2`,
+		`--when) when="$2"; shift 2`,
+		`--date-from) date_from="$2"; shift 2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+	// Boolean is presence-only.
+	if !strings.Contains(body, `--wake) wake=true; shift ;;`) {
+		t.Errorf("body missing presence-only --wake arm")
+	}
+	// Required-param check fires when text or when are empty.
+	if !strings.Contains(body, `[ -z "$text" ] || [ -z "$when" ]`) {
+		t.Errorf("body missing required-param check")
+	}
+	// Usage line lists required flags but not optional ones.
+	if !strings.Contains(body, `usage: foci_test_flat --text <text> --when <when>`) {
+		t.Errorf("body missing usage line for required params")
+	}
+	// Boolean param uses jq object literal (no --argjson with empty value).
+	if !strings.Contains(body, `[ "$wake" = true ] && params="$(echo "$params" | jq '. + {wake: true}')"`) {
+		t.Errorf("body missing boolean params injection")
+	}
+	// String param uses jq --arg.
+	if !strings.Contains(body, `[ -n "$text" ] && params="$(echo "$params" | jq --arg v "$text" '. + {text: $v}')"`) {
+		t.Errorf("body missing string params injection")
+	}
+}
+
+func TestGenerateGenericShellFuncEmptyFallback(t *testing.T) {
+	// Empty/unparseable schema falls back to legacy JSON-blob behavior so
+	// the foci__json passthrough still works for raw-JSON callers.
+	t.Parallel()
+	tool := &Tool{
+		Name:       "test_empty",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+	}
+	body := generateGenericShellFunc(tool)
+	if !strings.Contains(body, `foci-call "$(jq -nc --argjson p "$1" '{"tool":"test_empty","params":$p}')"`) {
+		t.Errorf("empty-schema fallback should emit JSON-blob handler")
+	}
+	if strings.Contains(body, "while [ $# -gt 0 ]") {
+		t.Errorf("empty-schema fallback should not emit flag-parsing loop")
+	}
+}
+
+func TestGeneratedRemindShellFuncEndToEnd(t *testing.T) {
+	// Sources the generated funcs file and invokes foci_remind with
+	// --text/--when/--wake against a real socket. Asserts the JSON
+	// delivered to foci-call has the expected typed values. Catches bash
+	// quoting bugs that static checks would miss — and proves the exact
+	// invocation that failed in TODO #723 now works.
+	t.Parallel()
+
+	if _, err := osexec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	if _, err := osexec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+
+	binDir := t.TempDir()
+	binPath := binDir + "/foci-call"
+	build := osexec.Command("go", "build", "-o", binPath, "foci/cmd/foci-call")
+	build.Dir = findModuleRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build foci-call: %v\n%s", err, out)
+	}
+
+	var captured json.RawMessage
+	var mu sync.Mutex
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:        "remind",
+		Description: "Defer a thought for later.",
+		ExecExport:  true,
+		Parameters: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"text":{"type":"string","description":"the text"},
+				"when":{"type":"string","description":"when"},
+				"wake":{"type":"boolean","description":"wake flag"}
+			},
+			"required":["text","when"]
+		}`),
+		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
+			mu.Lock()
+			captured = append([]byte(nil), params...)
+			mu.Unlock()
+			return TextResult("ok"), nil
+		},
+	})
+
+	bridge, err := NewExecBridge(r, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v", err)
+	}
+	defer bridge.Close()
+
+	// Same shell options as production execPreamble.
+	script := fmt.Sprintf(
+		"set -o pipefail -o nounset; shopt -s failglob; source %s; foci_remind --text 'investigate why' --when 2m --wake",
+		bridge.FuncsPath(),
+	)
+	cmd := osexec.Command("bash", "-c", script)
+	cmd.Env = append(os.Environ(),
+		"FOCI_SOCK="+bridge.SockPath(),
+		"PATH="+binDir+":"+os.Getenv("PATH"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash invocation failed: %v\noutput: %s", err, out)
+	}
+
+	mu.Lock()
+	got := captured
+	mu.Unlock()
+	var p struct {
+		Text string `json:"text"`
+		When string `json:"when"`
+		Wake bool   `json:"wake"`
+	}
+	if err := json.Unmarshal(got, &p); err != nil {
+		t.Fatalf("parse captured params %q: %v", got, err)
+	}
+	if p.Text != "investigate why" {
+		t.Errorf("text = %q, want %q", p.Text, "investigate why")
+	}
+	if p.When != "2m" {
+		t.Errorf("when = %q, want %q", p.When, "2m")
+	}
+	if !p.Wake {
+		t.Errorf("wake = false, want true (presence-only --wake)")
+	}
+}
+
 // findModuleRoot walks up from the test's directory to find the go.mod file.
 func findModuleRoot(t *testing.T) string {
 	t.Helper()
@@ -990,69 +1153,86 @@ func callBridge(t *testing.T, sockPath, request string) (result, errMsg string) 
 	return resp.Result, resp.Error
 }
 
-func TestExecBridgeAllSchemaParamsWiredUp(t *testing.T) {
-	// Proves that every parameter in a tool's JSON schema has a corresponding
-	// flag handler in the generated shell function. Catches cases where the
-	// schema has params that the shell function silently ignores (they'd hit
-	// the --* error handler at runtime).
+func TestValidateShellFuncSchemaParity(t *testing.T) {
+	// Unit-level test of the parity validator. The validator runs on every
+	// NewExecBridge call, so the structural coverage for real production
+	// tools comes from any test that builds a bridge (see
+	// TestBuildExecRegistryAllToolsHaveShellFuncParity in cmd/foci-gw).
+	// This test pins the validator's own behavior on synthetic schemas.
 	t.Parallel()
-
-	// Tools with ExecExport:true and their real schemas.
-	// Keep schemas in sync with the actual tool definitions.
-	tools := []struct {
-		name   string
-		params json.RawMessage
+	tests := []struct {
+		name      string
+		tool      *Tool
+		wantError bool
 	}{
-		{"web_search", json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}}}`)},
-		{"memory_search", json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"sort":{"type":"string"},"date_from":{"type":"string"},"date_to":{"type":"string"},"lines":{"type":"integer"}}}`)},
-		{"web_fetch", json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"raw":{"type":"boolean"}}}`)},
-		{"http_request", json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"body_file":{"type":"string"},"files":{"type":"array"},"form_fields":{"type":"object"},"query":{"type":"object"},"save_to":{"type":"string"},"save_from_json_path":{"type":"string"},"timeout":{"type":"integer"},"max_response_bytes":{"type":"integer"},"background":{"type":"boolean"}}}`)},
-		{"send_to_chat", json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"file":{"type":"string"},"send_as":{"type":"string"}}}`)},
-		{"todo", json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"},"text":{"type":"string"},"priority":{"type":"string"},"tag":{"type":"string"},"query":{"type":"string"},"status":{"type":"string"},"id":{"type":"integer"},"ids":{"type":"array"},"reason":{"type":"string"},"sort":{"type":"string"},"reverse":{"type":"boolean"},"limit":{"type":"integer"},"state":{"type":"string"}}}`)},
-		{"summary", json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"prompt":{"type":"string"}}}`)},
-		{"spawn", json.RawMessage(`{"type":"object","properties":{"prompt":{"type":"string"},"model":{"type":"string"},"context":{"type":"string"}}}`)},
-	}
-
-	for _, tc := range tools {
-		t.Run(tc.name, func(t *testing.T) {
-			tool := &Tool{
-				Name:       tc.name,
+		{
+			name: "flat schema all flags wired",
+			tool: &Tool{
+				Name:       "flat",
 				ExecExport: true,
-				Parameters: tc.params,
+				Parameters: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"},"wake":{"type":"boolean"}}}`),
+			},
+			wantError: false, // generic generator wires all params
+		},
+		{
+			name: "snake_case to kebab-case",
+			tool: &Tool{
+				Name:       "kebab",
+				ExecExport: true,
+				Parameters: json.RawMessage(`{"type":"object","properties":{"date_from":{"type":"string"}}}`),
+			},
+			wantError: false,
+		},
+		{
+			name: "empty schema falls back to JSON-blob (no validation needed)",
+			tool: &Tool{
+				Name:       "empty",
+				ExecExport: true,
+				Parameters: json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+			wantError: false,
+		},
+		{
+			name: "unparseable schema is tolerated",
+			tool: &Tool{
+				Name:       "bad",
+				ExecExport: true,
+				Parameters: json.RawMessage(`not json`),
+			},
+			wantError: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateShellFuncSchemaParity(tc.tool)
+			if tc.wantError && err == nil {
+				t.Errorf("expected error, got nil")
 			}
-			funcBody := generateShellFunc(tool)
-
-			// Extract param names from schema.
-			var schema struct {
-				Properties map[string]json.RawMessage `json:"properties"`
-			}
-			if err := json.Unmarshal(tc.params, &schema); err != nil {
-				t.Fatalf("parse schema: %v", err)
-			}
-
-			// Get positional params to exclude.
-			posSet := make(map[string]bool)
-			if pos, ok := shellPositionalParams[tc.name]; ok {
-				for _, p := range pos {
-					posSet[p] = true
-				}
-			}
-
-			var missing []string
-			for param := range schema.Properties {
-				if posSet[param] {
-					continue
-				}
-				flag := "--" + strings.ReplaceAll(param, "_", "-")
-				// Look for the flag in a case pattern: either "flag)" or "flag="
-				if !strings.Contains(funcBody, flag+")") && !strings.Contains(funcBody, flag+"=") {
-					missing = append(missing, fmt.Sprintf("%s (flag %s)", param, flag))
-				}
-			}
-			if len(missing) > 0 {
-				sort.Strings(missing)
-				t.Errorf("schema params not wired up in shell function:\n  %s", strings.Join(missing, "\n  "))
+			if !tc.wantError && err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateShellFuncSchemaParityCatchesDrift(t *testing.T) {
+	// Constructs a deliberately-broken tool: it has a hand-rolled case in
+	// generateShellFunc's switch (web_search) but a schema with extra
+	// params the body doesn't handle. The validator must detect this and
+	// surface the drift before it reaches production.
+	t.Parallel()
+	tool := &Tool{
+		Name:       "web_search", // hand-rolled in switch — only --query
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"safe_search":{"type":"boolean"},"region":{"type":"string"}}}`),
+	}
+	err := validateShellFuncSchemaParity(tool)
+	if err == nil {
+		t.Fatal("expected drift error for web_search with extra schema params, got nil")
+	}
+	for _, want := range []string{"safe_search", "region"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
 	}
 }
