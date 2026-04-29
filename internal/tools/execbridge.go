@@ -248,6 +248,11 @@ export -f foci__json
 // writeShellFuncs generates a bash file defining foci_<toolname>() for each
 // exported tool. Functions use jq for safe JSON construction and foci-call
 // for socket communication.
+//
+// Every generated function is validated for help/body parity before write —
+// any ExecExport tool whose body lacks a case arm for a flag advertised in
+// --help (the bug in TODO #723 for foci_remind) returns an error here, so
+// the failure surfaces at production startup rather than at runtime.
 func (b *ExecBridge) writeShellFuncs() error {
 	var sb strings.Builder
 	sb.WriteString("#!/bin/bash\n")
@@ -258,6 +263,9 @@ func (b *ExecBridge) writeShellFuncs() error {
 		if !t.ExecExport {
 			continue
 		}
+		if err := validateShellFuncSchemaParity(t); err != nil {
+			return fmt.Errorf("exec bridge: %w", err)
+		}
 		fn := generateShellFunc(t)
 		if fn != "" {
 			sb.WriteString(fn)
@@ -266,6 +274,54 @@ func (b *ExecBridge) writeShellFuncs() error {
 	}
 
 	return os.WriteFile(b.funcsPath, []byte(sb.String()), 0600)
+}
+
+// validateShellFuncSchemaParity ensures every non-positional parameter in a
+// tool's JSON schema has a corresponding flag-handler case arm in its
+// generated shell function body. The check is structural: it walks the
+// schema (the source of truth) and looks for `--<flag>)` or `--<flag>=` in
+// the body. Catches both directions of drift —
+//   - schema gains a param the body silently ignores (TODO #723: foci_remind
+//     advertised --text but the JSON-blob body rejected it)
+//   - body claims to handle a flag the schema doesn't define (less common,
+//     but the help text would also be missing it)
+//
+// Runs on every NewExecBridge call, so any test that constructs a bridge
+// with real production tools enforces parity automatically — no
+// hand-maintained tool list required.
+func validateShellFuncSchemaParity(t *Tool) error {
+	body := generateShellFunc(t)
+	if body == "" {
+		return nil
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(t.Parameters, &schema); err != nil || len(schema.Properties) == 0 {
+		// Tools with empty schemas use the JSON-blob fallback; nothing to validate.
+		return nil
+	}
+	posSet := make(map[string]bool)
+	if pos, ok := shellPositionalParams[t.Name]; ok {
+		for _, p := range pos {
+			posSet[p] = true
+		}
+	}
+	var missing []string
+	for param := range schema.Properties {
+		if posSet[param] {
+			continue
+		}
+		flag := "--" + strings.ReplaceAll(param, "_", "-")
+		if !strings.Contains(body, flag+")") && !strings.Contains(body, flag+"=") {
+			missing = append(missing, param)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("tool %q: schema params not wired into shell func body: %s", t.Name, strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // toolParamKeys extracts the property names from a tool's JSON schema Parameters.
@@ -745,7 +801,7 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local op="$1"; shift 2>/dev/null || true
-  local name="" command="" workdir="" watch="" keys="" enter="" lines="" window="" threshold="" raw=""
+  local name="" command="" workdir="" watch="" keys="" enter="" lines="" window="" threshold_seconds="" raw=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --name) name="$2"; shift 2 ;;
@@ -756,11 +812,11 @@ func generateShellFunc(t *Tool) string {
       --enter) enter="$2"; shift 2 ;;
       --lines) lines="$2"; shift 2 ;;
       --window) window="$2"; shift 2 ;;
-      --threshold) threshold="$2"; shift 2 ;;
+      --threshold-seconds) threshold_seconds="$2"; shift 2 ;;
       --raw) raw=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --name --command --workdir --watch --keys --enter --lines --window --threshold --raw" >&2
+        echo "valid flags: --name --command --workdir --watch --keys --enter --lines --window --threshold-seconds --raw" >&2
         return 1 ;;
       *)
         echo "error: unexpected positional argument: $1" >&2
@@ -807,7 +863,7 @@ func generateShellFunc(t *Tool) string {
       local params='{"operation":"watch"}'
       [ -n "$name" ] && params="$(echo "$params" | jq --arg n "$name" '. + {name: $n}')"
       [ -n "$window" ] && params="$(echo "$params" | jq --argjson w "$window" '. + {window: $w}')"
-      [ -n "$threshold" ] && params="$(echo "$params" | jq --argjson t "$threshold" '. + {threshold_seconds: $t}')"
+      [ -n "$threshold_seconds" ] && params="$(echo "$params" | jq --argjson t "$threshold_seconds" '. + {threshold_seconds: $t}')"
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"tmux","params":$p}')"
       ;;
     unwatch)
@@ -824,8 +880,52 @@ func generateShellFunc(t *Tool) string {
 `, name, helpCheck, guard, name)
 
 	default:
-		// Generic: JSON passthrough handles the common case;
-		// fall back to treating $1 as raw JSON params
+		// Schema-driven generic: emits a flag-parsing function whose
+		// accepted flags are exactly those advertised by generateHelpText.
+		// This is the default path for any tool that doesn't have
+		// hand-rolled UX (stdin reading, accumulator flags, subcommand
+		// dispatch). See generateGenericShellFunc for behavior details.
+		return generateGenericShellFunc(t)
+	}
+}
+
+// generateGenericShellFunc emits a flag-parsing bash function for a tool from
+// its JSON schema. Both --help text (via generateHelpText) and the body
+// emitted here derive from the same schema, so the two cannot drift.
+//
+// Prior to this generator the default branch took $1 as a raw JSON object —
+// flags advertised in --help were silently ignored, which is the bug fixed by
+// TODO #723 (foci_remind --text rejected even though --help advertised it).
+//
+// Conventions:
+//   - Snake_case schema keys become kebab-case flags: date_from -> --date-from
+//   - String/integer/number/object/array params consume two args: --flag VALUE
+//   - Boolean params are presence-only: --flag (sets variable to "true")
+//   - Positional params (per shellPositionalParams) accept bare args, joined
+//     with a space when multiple arrive (matches existing query/text UX)
+//   - Required params (per schema.Required) trigger a usage line on missing
+//   - JSON-typed params (object/array/integer/number) use jq --argjson, so jq
+//     validates the value at parse time
+//
+// If the schema is unparseable or empty the function falls back to the legacy
+// JSON-blob behavior so the foci__json passthrough still works for callers
+// that hand-construct the params object.
+func generateGenericShellFunc(t *Tool) string {
+	name := "foci_" + t.Name
+	helpText := generateHelpText(t)
+	escapedHelp := strings.ReplaceAll(helpText, "'", "'\\''")
+	helpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", escapedHelp)
+	validKeys := toolParamKeys(t)
+	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
+
+	var schema struct {
+		Properties map[string]struct {
+			Type string `json:"type"`
+		} `json:"properties"`
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal(t.Parameters, &schema); err != nil || len(schema.Properties) == 0 {
+		// Fallback to legacy JSON-blob behavior when schema unavailable.
 		return fmt.Sprintf(`%s() {
 %s
 %s
@@ -833,4 +933,145 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, helpCheck, guard, t.Name)
 	}
+
+	// Collect param names in stable (sorted) order so generated bash is
+	// deterministic across builds.
+	paramNames := make([]string, 0, len(schema.Properties))
+	for k := range schema.Properties {
+		paramNames = append(paramNames, k)
+	}
+	sort.Strings(paramNames)
+
+	// Identify positional and required params.
+	posSet := make(map[string]bool)
+	var positional []string
+	if pos, ok := shellPositionalParams[t.Name]; ok {
+		positional = pos
+		for _, p := range pos {
+			posSet[p] = true
+		}
+	}
+	reqSet := make(map[string]bool)
+	for _, r := range schema.Required {
+		reqSet[r] = true
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s() {\n%s\n%s\n", name, helpCheck, guard)
+
+	// Local declarations: every param has a string slot defaulted to empty.
+	b.WriteString("  local")
+	for _, k := range paramNames {
+		fmt.Fprintf(&b, " %s=\"\"", k)
+	}
+	b.WriteString("\n")
+
+	// Flag-parsing while-loop.
+	b.WriteString("  while [ $# -gt 0 ]; do\n    case \"$1\" in\n")
+	var flagList []string
+	for _, k := range paramNames {
+		if posSet[k] {
+			continue
+		}
+		flag := strings.ReplaceAll(k, "_", "-")
+		flagList = append(flagList, "--"+flag)
+		if schema.Properties[k].Type == "boolean" {
+			fmt.Fprintf(&b, "      --%s) %s=true; shift ;;\n", flag, k)
+		} else {
+			fmt.Fprintf(&b, "      --%s) %s=\"$2\"; shift 2 ;;\n", flag, k)
+		}
+	}
+	fmt.Fprintf(&b,
+		"      --*)\n        echo \"error: unrecognized flag: $1\" >&2\n        echo \"valid flags: %s\" >&2\n        return 1 ;;\n",
+		strings.Join(flagList, " "),
+	)
+
+	// Positional arg handling.
+	switch len(positional) {
+	case 0:
+		b.WriteString("      *)\n        echo \"error: unexpected positional argument: $1\" >&2\n        return 1 ;;\n")
+	case 1:
+		// Multi-word join — matches existing query/prompt UX.
+		p := positional[0]
+		fmt.Fprintf(&b, "      *) %s=\"$%s $1\"; shift ;;\n", p, p)
+	default:
+		// No current tool uses multiple positional params. Bail rather than
+		// emit unverified code.
+		b.WriteString("      *)\n        echo \"error: multiple positional args not supported by generic generator\" >&2\n        return 1 ;;\n")
+	}
+	b.WriteString("    esac\n  done\n")
+
+	// Trim leading space from joined single-positional.
+	if len(positional) == 1 {
+		p := positional[0]
+		fmt.Fprintf(&b, "  %s=\"${%s# }\"\n", p, p)
+	}
+
+	// Required-param usage check.
+	if len(schema.Required) > 0 {
+		var conditions []string
+		for _, r := range schema.Required {
+			// Boolean required params can't use -z (an unset var renders as
+			// empty); treat them as "must be set to true".
+			if schema.Properties[r].Type == "boolean" {
+				conditions = append(conditions, fmt.Sprintf("[ \"$%s\" != true ]", r))
+			} else {
+				conditions = append(conditions, fmt.Sprintf("[ -z \"$%s\" ]", r))
+			}
+		}
+		var usage strings.Builder
+		usage.WriteString("usage: ")
+		usage.WriteString(name)
+		for _, p := range positional {
+			fmt.Fprintf(&usage, " <%s>", p)
+		}
+		for _, k := range paramNames {
+			if posSet[k] || !reqSet[k] {
+				continue
+			}
+			flag := strings.ReplaceAll(k, "_", "-")
+			if schema.Properties[k].Type == "boolean" {
+				fmt.Fprintf(&usage, " --%s", flag)
+			} else {
+				fmt.Fprintf(&usage, " --%s <%s>", flag, k)
+			}
+		}
+		fmt.Fprintf(&b,
+			"  if %s; then\n    echo \"%s\" >&2\n    return 1\n  fi\n",
+			strings.Join(conditions, " || "),
+			usage.String(),
+		)
+	}
+
+	// Build the params object with jq, type-aware. Strings use --arg; other
+	// JSON-valued types use --argjson so jq validates the value as JSON.
+	b.WriteString("  local params=\"{}\"\n")
+	for _, k := range paramNames {
+		ty := schema.Properties[k].Type
+		switch ty {
+		case "boolean":
+			fmt.Fprintf(&b,
+				"  [ \"$%s\" = true ] && params=\"$(echo \"$params\" | jq '. + {%s: true}')\"\n",
+				k, k,
+			)
+		case "string":
+			fmt.Fprintf(&b,
+				"  [ -n \"$%s\" ] && params=\"$(echo \"$params\" | jq --arg v \"$%s\" '. + {%s: $v}')\"\n",
+				k, k, k,
+			)
+		default:
+			// integer, number, object, array — jq validates value as JSON.
+			fmt.Fprintf(&b,
+				"  [ -n \"$%s\" ] && params=\"$(echo \"$params\" | jq --argjson v \"$%s\" '. + {%s: $v}')\"\n",
+				k, k, k,
+			)
+		}
+	}
+
+	fmt.Fprintf(&b,
+		"  foci-call \"$(jq -nc --argjson p \"$params\" '{\"tool\":\"%s\",\"params\":$p}')\"\n}\n",
+		t.Name,
+	)
+
+	return b.String()
 }

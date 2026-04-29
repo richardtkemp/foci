@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -78,6 +79,62 @@ func TestBuildExecRegistrySkipsRemindWhenStoreNil(t *testing.T) {
 	if got := registry.Get("remind"); got != nil {
 		t.Error("registry contains remind tool despite nil reminderStore")
 	}
+}
+
+func TestBuildExecRegistryAllToolsHaveShellFuncParity(t *testing.T) {
+	// Walks the production wiring (buildExecRegistry) with all conditional
+	// dependencies populated, then creates an exec bridge — which runs
+	// validateShellFuncSchemaParity on every ExecExport tool. Any tool whose
+	// schema gains a parameter without a matching flag arm in its generated
+	// shell-func body fails this test.
+	//
+	// New ExecExport tools added to buildExecRegistry are automatically
+	// covered: there is no hand-maintained list to update. This is the
+	// structural fix for the foci_remind --text drift (TODO #723).
+	t.Parallel()
+
+	rs, err := memory.NewReminderStore(filepath.Join(t.TempDir(), "reminders.db"))
+	if err != nil {
+		t.Fatalf("NewReminderStore: %v", err)
+	}
+	t.Cleanup(func() { rs.Close() })
+
+	ts, err := memory.NewTodoStore(filepath.Join(t.TempDir(), "todo.db"))
+	if err != nil {
+		t.Fatalf("NewTodoStore: %v", err)
+	}
+	t.Cleanup(func() { ts.Close() })
+
+	p := minimalSetupParams(t, "test")
+	p.reminderStore = rs
+	p.todoStore = ts
+	p.braveKey = "stub-key" // non-empty enables web_search registration
+	p.resolved = &config.ResolvedAgentConfig{}
+	// Populate memBackends with a stub so memory_search registers. The map
+	// just needs len > 0; the searcher value is never invoked here.
+	p.memBackends = map[string]memory.Searcher{"stub": nil}
+
+	registry := buildExecRegistry(p, stubWakeFn)
+
+	// Sanity: every conditional tool we expect should be present. If
+	// buildExecRegistry's wiring changes, update this list AND the test
+	// will still cover all registered tools because the parity check runs
+	// over registry.All().
+	for _, want := range []string{"send_to_chat", "web_fetch", "http_request", "todo", "web_search", "memory_search", "remind"} {
+		if registry.Get(want) == nil {
+			t.Errorf("expected tool %q to be registered with full deps", want)
+		}
+	}
+
+	// Creating the bridge runs writeShellFuncs, which calls
+	// validateShellFuncSchemaParity on every ExecExport tool. A drift
+	// (schema param without a matching --flag case arm in the generated
+	// body) returns an error from NewExecBridge.
+	bridge, err := tools.NewExecBridge(registry, context.Background())
+	if err != nil {
+		t.Fatalf("NewExecBridge: %v\n\nThis usually means a tool's schema gained a parameter without a matching --flag case arm in its generated shell-func body. Check generateShellFunc and generateGenericShellFunc.", err)
+	}
+	t.Cleanup(bridge.Close)
 }
 
 func TestBuildExecRegistrySkipsRemindWhenWakeFnNil(t *testing.T) {
