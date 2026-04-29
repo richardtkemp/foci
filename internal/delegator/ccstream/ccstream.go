@@ -434,6 +434,8 @@ func (b *Backend) cancelTurn() {
 // the foci turn (which already completed on the prior result).
 // PostToolNudgeFunc is preserved so chained nudges work correctly.
 func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
+	log.Debugf("ccstream", "rearmForNudgeResponse: installing nudge handler OnText=%v OnTurnComplete=nil(intentional) OnToolStart=%v OnToolEnd=%v PostToolNudgeFunc=%v SteerCheckFunc=%v",
+		orig.OnText != nil, orig.OnToolStart != nil, orig.OnToolEnd != nil, orig.PostToolNudgeFunc != nil, orig.SteerCheckFunc != nil)
 	b.turnMu.Lock()
 	b.turnActive = true
 	b.turnHandler = &delegator.EventHandler{
@@ -590,6 +592,15 @@ func (b *Backend) checkAndSendSteers() {
 		if text == "" {
 			continue
 		}
+		// Surface PriorityNow steer sends — these are documented to
+		// "interrupt the current operation (aborts tool execution)" on
+		// the CC side, so they're a leading suspect when a permission
+		// is auto-cancelled (handleControlCancel) without user input.
+		preview := text
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
+		log.Debugf("ccstream/steer", "sending PriorityNow steer to CC: bytes=%d preview=%q", len(text), preview)
 		_ = b.writer.SendUserWithPriority("[user] "+text, PriorityNow)
 	}
 }
@@ -811,6 +822,31 @@ func (b *Backend) LastActivity() time.Time {
 func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	b.touchActivity()
 	isTopLevel := msg.ParentToolUseID == nil
+
+	// Block-type breakdown for diagnostics — distinguishes "model
+	// produced text but it didn't reach delivery" from "model produced
+	// no text block at all" when investigating delivery gaps.
+	if isTopLevel {
+		var textBlocks, toolUseBlocks, thinkingBlocks, totalTextBytes int
+		for _, block := range msg.Message.Content {
+			switch block.Type {
+			case "text":
+				textBlocks++
+				totalTextBytes += len(block.Text)
+			case "tool_use":
+				toolUseBlocks++
+			case "thinking":
+				thinkingBlocks++
+			}
+		}
+		stopReason := ""
+		if msg.Message.StopReason != nil {
+			stopReason = *msg.Message.StopReason
+		}
+		log.Debugf("ccstream", "OnAssistant: text_blocks=%d tool_use_blocks=%d thinking_blocks=%d text_bytes=%d stop_reason=%s",
+			textBlocks, toolUseBlocks, thinkingBlocks, totalTextBytes, stopReason)
+	}
+
 	b.mu.Lock()
 	if isTopLevel && msg.Message.Model != "" {
 		b.lastModel = msg.Message.Model
@@ -853,6 +889,17 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 
 			if handler != nil && handler.OnText != nil {
 				handler.OnText(block.Text)
+			} else if block.Text != "" {
+				// Top-level text block produced but no handler is
+				// armed (or has no OnText) — text is silently dropped
+				// from the delivery path. This is the failure shape
+				// observed in TODO #726. Loud so it's caught quickly.
+				preview := block.Text
+				if len(preview) > 120 {
+					preview = preview[:120] + "..."
+				}
+				log.Warnf("ccstream", "text block dropped (no handler/OnText): bytes=%d handler_nil=%v preview=%q",
+					len(block.Text), handler == nil, preview)
 			}
 
 		case "tool_use":

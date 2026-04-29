@@ -143,9 +143,19 @@ func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) e
 }
 
 // handleControlCancel is called when CC cancels a permission request
-// (e.g. a hook resolved it before the user responded).
+// (e.g. a hook resolved it before the user responded, or a PriorityNow
+// user message interrupted the in-flight tool execution). This is the
+// only non-user-driven path that clears a permission — surface it at
+// INFO so it shows up alongside the corresponding "permission cleared"
+// debug line and makes the cause attributable.
 func (b *Backend) handleControlCancel(reqID string) {
-	_, _, noMorePending := b.removePendingPerm(reqID)
+	pp, _, noMorePending := b.removePendingPerm(reqID)
+
+	tool := ""
+	if pp != nil {
+		tool = pp.toolName
+	}
+	log.Infof("ccstream/perm", "permission auto-cancelled by CC control_cancel_request: reqID=%s tool=%s noMorePending=%v", reqID, tool, noMorePending)
 
 	if noMorePending && b.onPermCleared != nil {
 		b.onPermCleared()

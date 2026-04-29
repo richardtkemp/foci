@@ -264,6 +264,13 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 	ts := NewTurnState(ctx, sessionKey, texts, attachments)
 
 	defer func() {
+		// Diagnostic for delivery gaps (TODO #726): if FinalText is
+		// empty here despite a turn that produced output tokens,
+		// something dropped the text on the way from CC's stream
+		// through to the renderer. Surface length so it's easy to
+		// correlate with the usage line.
+		log.Debugf("agent", "deferred TurnComplete: session=%s final_text_len=%d err=%v",
+			sessionKey, len(ts.FinalText), err)
 		sink.Emit(ctx, turnevent.TurnComplete{
 			FinalText: ts.FinalText,
 			Usage:     ts.FinalUsage,
