@@ -34,6 +34,7 @@ func NewMemorySearchTool(backends map[string]memory.Searcher, defaultBackend str
 	return &Tool{
 		Name:        "memory_search",
 		ExecExport:  true,
+		Positional:  []string{"query"},
 		Description: "Search memory files and conversation history using full-text search. Supports natural language queries with stemming (e.g., 'programming' matches 'program', 'programmer'). Memory files are ranked higher than conversation history. Sort by relevance (default), newest, or oldest. To retrieve conversation context around a specific result, use the session#rowID shown in results as the query (e.g., 'agent/c123/456#42').",
 		Parameters:  schema,
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {

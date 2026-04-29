@@ -27,6 +27,24 @@ type Tool struct {
 	Parameters  json.RawMessage
 	Execute     func(ctx context.Context, params json.RawMessage) (ToolResult, error)
 	ExecExport  bool // expose as shell function inside exec calls via ExecBridge
+
+	// Positional declares schema parameters that appear as bare args in
+	// the generated shell function instead of --flag form. Multi-word
+	// values are space-joined to match existing UX (`foci_web_search the
+	// quick brown fox` → `query="the quick brown fox"`). Currently
+	// single-element only. Used by the schema-driven generic generator.
+	Positional []string
+
+	// StdinParam declares which schema parameter consumes stdin when no
+	// explicit value is provided and stdin is not a TTY. Used by tools
+	// that accept piped content (send_to_chat, summary).
+	StdinParam string
+
+	// RepeatedFlag maps a singular shell flag name (e.g. "header") to the
+	// schema parameter it accumulates into (e.g. "headers", typed as an
+	// object). Each occurrence of `--<flag> 'K: V'` adds one key-value
+	// pair to the parameter object.
+	RepeatedFlag map[string]string
 }
 
 // Registry holds all registered tools.

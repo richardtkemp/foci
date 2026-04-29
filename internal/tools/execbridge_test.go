@@ -1217,20 +1217,20 @@ func TestValidateShellFuncSchemaParity(t *testing.T) {
 
 func TestValidateShellFuncSchemaParityCatchesDrift(t *testing.T) {
 	// Constructs a deliberately-broken tool: it has a hand-rolled case in
-	// generateShellFunc's switch (web_search) but a schema with extra
+	// generateShellFunc's switch (http_request) but a schema with extra
 	// params the body doesn't handle. The validator must detect this and
 	// surface the drift before it reaches production.
 	t.Parallel()
 	tool := &Tool{
-		Name:       "web_search", // hand-rolled in switch — only --query
+		Name:       "http_request", // hand-rolled — fixed flag set
 		ExecExport: true,
-		Parameters: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"safe_search":{"type":"boolean"},"region":{"type":"string"}}}`),
+		Parameters: json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"},"new_field":{"type":"string"},"another_one":{"type":"boolean"}}}`),
 	}
 	err := validateShellFuncSchemaParity(tool)
 	if err == nil {
-		t.Fatal("expected drift error for web_search with extra schema params, got nil")
+		t.Fatal("expected drift error for http_request with extra schema params, got nil")
 	}
-	for _, want := range []string{"safe_search", "region"} {
+	for _, want := range []string{"new_field", "another_one"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %q", err, want)
 		}

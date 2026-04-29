@@ -302,7 +302,7 @@ func validateShellFuncSchemaParity(t *Tool) error {
 		return nil
 	}
 	posSet := make(map[string]bool)
-	if pos, ok := shellPositionalParams[t.Name]; ok {
+	if pos, ok := positionalParamsForTool(t); ok {
 		for _, p := range pos {
 			posSet[p] = true
 		}
@@ -341,9 +341,11 @@ func toolParamKeys(t *Tool) string {
 	return strings.Join(keys, " ")
 }
 
-// shellPositionalParams maps tool names to parameters that are positional
-// arguments in the shell function (not --flags). These are shown in the
-// usage line and excluded from the flags list.
+// shellPositionalParams is the legacy fallback for tools that haven't yet
+// migrated to the Tool.Positional field. New tools should declare positional
+// params on the Tool struct itself; positionalParamsForTool prefers the
+// struct field over this map. Once all entries here are also set on their
+// respective Tool structs, the map can be removed.
 var shellPositionalParams = map[string][]string{
 	"web_fetch":     {"url"},
 	"web_search":    {"query"},
@@ -356,6 +358,19 @@ var shellPositionalParams = map[string][]string{
 	"tmux":          {"operation"},
 }
 
+// positionalParamsForTool returns a tool's positional schema params. Prefers
+// the Tool.Positional struct field; falls back to the legacy
+// shellPositionalParams map. The bool reports whether any are declared.
+func positionalParamsForTool(t *Tool) ([]string, bool) {
+	if len(t.Positional) > 0 {
+		return t.Positional, true
+	}
+	if pos, ok := shellPositionalParams[t.Name]; ok {
+		return pos, true
+	}
+	return nil, false
+}
+
 // generateHelpText builds a help string for a tool from its description and JSON schema.
 func generateHelpText(t *Tool) string {
 	var b strings.Builder
@@ -363,7 +378,7 @@ func generateHelpText(t *Tool) string {
 
 	// Build set of positional params to exclude from flags list.
 	posSet := make(map[string]bool)
-	if pos, ok := shellPositionalParams[t.Name]; ok {
+	if pos, ok := positionalParamsForTool(t); ok {
 		for _, p := range pos {
 			posSet[p] = true
 		}
@@ -439,90 +454,6 @@ func generateShellFunc(t *Tool) string {
 	guard := fmt.Sprintf("  foci__json %q %q \"$@\" && return $?", t.Name, validKeys)
 
 	switch t.Name {
-	case "web_search":
-		// Simple query tool: all args become the query string
-		return fmt.Sprintf(`%s() {
-%s
-%s
-  local query=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --query) query="$2"; shift 2 ;;
-      --*)
-        echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --query" >&2
-        return 1 ;;
-      *) query="$query $1"; shift ;;
-    esac
-  done
-  query="${query# }"
-  if [ -z "$query" ]; then
-    echo "usage: %s <query>" >&2
-    return 1
-  fi
-  foci-call "$(jq -nc --arg q "$query" '{"tool":"%s","params":{"query":$q}}')"
-}
-`, name, helpCheck, guard, name, t.Name)
-
-	case "memory_search":
-		// Query as positional args, with optional sort/date/lines flags
-		return fmt.Sprintf(`%s() {
-%s
-%s
-  local query="" msort="" date_from="" date_to="" lines=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --query) query="$2"; shift 2 ;;
-      --sort) msort="$2"; shift 2 ;;
-      --date-from) date_from="$2"; shift 2 ;;
-      --date-to) date_to="$2"; shift 2 ;;
-      --lines) lines="$2"; shift 2 ;;
-      --*)
-        echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --query --sort --date-from --date-to --lines" >&2
-        return 1 ;;
-      *) query="$query $1"; shift ;;
-    esac
-  done
-  query="${query# }"
-  if [ -z "$query" ]; then
-    echo "usage: %s <query> [--sort relevance|newest|oldest] [--date-from YYYY-MM-DD] [--date-to YYYY-MM-DD] [--lines N]" >&2
-    return 1
-  fi
-  local params
-  params="$(jq -nc --arg q "$query" '{"query":$q}')"
-  [ -n "$msort" ] && params="$(echo "$params" | jq --arg s "$msort" '. + {sort: $s}')"
-  [ -n "$date_from" ] && params="$(echo "$params" | jq --arg d "$date_from" '. + {date_from: $d}')"
-  [ -n "$date_to" ] && params="$(echo "$params" | jq --arg d "$date_to" '. + {date_to: $d}')"
-  [ -n "$lines" ] && params="$(echo "$params" | jq --argjson l "$lines" '. + {lines: $l}')"
-  foci-call "$(jq -nc --argjson p "$params" '{"tool":"memory_search","params":$p}')"
-}
-`, name, helpCheck, guard, name)
-
-	case "web_fetch":
-		// URL as first arg, optional --raw flag
-		return fmt.Sprintf(`%s() {
-%s
-%s
-  local url="" raw=false
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --raw) raw=true; shift ;;
-      --*)
-        echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --raw" >&2
-        return 1 ;;
-      *) url="$1"; shift ;;
-    esac
-  done
-  if [ -z "$url" ]; then
-    echo "usage: %s <url> [--raw]" >&2
-    return 1
-  fi
-  foci-call "$(jq -nc --arg u "$url" --argjson r "$raw" '{"tool":"web_fetch","params":{"url":$u,"raw":$r}}')"
-}
-`, name, helpCheck, guard, name)
-
 	case "http_request":
 		// URL as first arg, flags for method, headers, body, save_to, etc.
 		return fmt.Sprintf(`%s() {
@@ -761,40 +692,6 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, helpCheck, guard, name, name)
 
-	case "spawn":
-		// prompt as args, optional --model and --context flags
-		return fmt.Sprintf(`%s() {
-%s
-%s
-  local prompt="" model="" ctx_mode=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --model) model="$2"; shift 2 ;;
-      --context) ctx_mode="$2"; shift 2 ;;
-      --*)
-        echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --model --context" >&2
-        return 1 ;;
-      *) prompt="$prompt $1"; shift ;;
-    esac
-  done
-  prompt="${prompt# }"
-  if [ -z "$prompt" ]; then
-    echo "usage: %s <prompt> [--model MODEL] [--context raw|character|clone|explore]" >&2
-    return 1
-  fi
-  local params
-  params="$(jq -nc --arg p "$prompt" '{"prompt":$p}')"
-  if [ -n "$model" ]; then
-    params="$(echo "$params" | jq --arg m "$model" '. + {model: $m}')"
-  fi
-  if [ -n "$ctx_mode" ]; then
-    params="$(echo "$params" | jq --arg c "$ctx_mode" '. + {context: $c}')"
-  fi
-  foci-call "$(jq -nc --argjson p "$params" '{"tool":"spawn","params":$p}')"
-}
-`, name, helpCheck, guard, name)
-
 	case "tmux":
 		// Subcommand-style dispatch (same pattern as todo)
 		return fmt.Sprintf(`%s() {
@@ -945,7 +842,7 @@ func generateGenericShellFunc(t *Tool) string {
 	// Identify positional and required params.
 	posSet := make(map[string]bool)
 	var positional []string
-	if pos, ok := shellPositionalParams[t.Name]; ok {
+	if pos, ok := positionalParamsForTool(t); ok {
 		positional = pos
 		for _, p := range pos {
 			posSet[p] = true
@@ -966,13 +863,12 @@ func generateGenericShellFunc(t *Tool) string {
 	}
 	b.WriteString("\n")
 
-	// Flag-parsing while-loop.
+	// Flag-parsing while-loop. Positional params still get a --flag arm so
+	// callers can use either `foci_X --query foo` or `foci_X foo`. The
+	// bare-arg case handles the second form below.
 	b.WriteString("  while [ $# -gt 0 ]; do\n    case \"$1\" in\n")
 	var flagList []string
 	for _, k := range paramNames {
-		if posSet[k] {
-			continue
-		}
 		flag := strings.ReplaceAll(k, "_", "-")
 		flagList = append(flagList, "--"+flag)
 		if schema.Properties[k].Type == "boolean" {
