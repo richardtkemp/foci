@@ -21,6 +21,7 @@ func NewWebFetchTool() *Tool {
 	return &Tool{
 		Name:        "web_fetch",
 		ExecExport:  true,
+		Positional:  []string{"url"},
 		Description: "Fetch a URL and return its content as clean Markdown (article extracted via readability).",
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -46,6 +47,7 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 	return &Tool{
 		Name:        "web_search",
 		ExecExport:  true,
+		Positional:  []string{"query"},
 		Description: "Search the web using Brave Search API. Returns titles, URLs, and descriptions.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
