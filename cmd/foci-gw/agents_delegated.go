@@ -65,13 +65,17 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 		}
 	}
 
-	// Build auto-approve rules from resolved config.
-	autoApproveRules := buildAutoApproveRules(p)
-
 	// Build a tool registry with exec-exported tools so foci shell commands
 	// (foci_todo, foci_send_to_chat, etc.) are available in the backend's
 	// shell environment via the persistent exec bridge.
+	//
+	// Built before buildAutoApproveRules so its ExportedNames can drive the
+	// always-on FociShellRules — keeps the auto-approve list in sync with
+	// what's actually wired in (no hand-list to drift).
 	registry := buildExecRegistry(p, shared.wakeScheduleFn)
+
+	// Build auto-approve rules from resolved config.
+	autoApproveRules := buildAutoApproveRules(p, registry.ExportedNames())
 
 	// Per-agent environment block for delegated backends.
 	if p.resolved.Environment.Enabled {
@@ -176,11 +180,20 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 
 // buildAutoApproveRules assembles the foci-level auto-approve rules for a
 // delegated backend from resolved config + workspace-scoped defaults.
-func buildAutoApproveRules(p setupParams) []string {
+//
+// fociExecNames is the list of foci shell-function names exported by the
+// agent's tool registry (e.g. "foci_todo", "foci_remind"). These get an
+// always-on auto-approve rule via FociShellRulesFor — no toggle, since
+// they're foci's own constrained wrappers.
+func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
 	perms := p.resolved.Permissions
 
-	// Start with common readonly rules if enabled.
-	var rules []string
+	// Foci shell functions are always auto-approved — derived from the
+	// registry so adding/removing an ExecExport tool updates the rules
+	// automatically.
+	rules := ccstream.FociShellRulesFor(fociExecNames)
+
+	// Common readonly rules if enabled.
 	if perms.AutoApproveCommonReadonly {
 		rules = append(rules, ccstream.CommonReadonlyRules...)
 	}

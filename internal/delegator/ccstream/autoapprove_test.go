@@ -262,6 +262,46 @@ func TestCommonSafeWriteRulesParseSuccessfully(t *testing.T) {
 	}
 }
 
+// TestFociShellRulesForDerivesFromExecNames ensures FociShellRulesFor
+// produces auto-approve rules from a list of registry-exported names.
+// This is the structural guard against drift: the source of truth is the
+// registry, not a hand-list, so adding/removing an ExecExport tool
+// automatically updates the rules.
+func TestFociShellRulesForDerivesFromExecNames(t *testing.T) {
+	names := []string{"foci_todo", "foci_send_to_chat", "foci_remind"}
+	rules := FociShellRulesFor(names)
+	if len(rules) != len(names) {
+		t.Fatalf("expected %d rules, got %d", len(names), len(rules))
+	}
+
+	parsed := parseAutoApproveRules(rules)
+	for i, p := range parsed {
+		if p.toolName != "Bash" {
+			t.Errorf("rule[%d] toolName = %q, want Bash", i, p.toolName)
+		}
+		if p.pattern != names[i] {
+			t.Errorf("rule[%d] pattern = %q, want %q", i, p.pattern, names[i])
+		}
+	}
+
+	// Positive matches: each command should be auto-approved.
+	cases := []string{
+		`{"command":"foci_todo list"}`,
+		`{"command":"foci_remind 'note' 'tomorrow'"}`,
+		`{"command":"foci_send_to_chat 'hello'"}`,
+	}
+	for _, input := range cases {
+		if !matchAutoApprove(parsed, "Bash", json.RawMessage(input)) {
+			t.Errorf("FociShellRulesFor should match Bash %s", input)
+		}
+	}
+
+	// Empty input — no foci tools registered → no rules.
+	if got := FociShellRulesFor(nil); len(got) != 0 {
+		t.Errorf("FociShellRulesFor(nil) = %v, want empty", got)
+	}
+}
+
 // TestCommonReadonlyMatchesSafeCommands verifies that the built-in readonly
 // rules correctly match a sample of safe commands.
 func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
@@ -281,7 +321,6 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		{"Bash", `{"command":"grep -r pattern ."}`},
 		{"Bash", `{"command":"rg --type go TODO"}`},
 		{"Bash", `{"command":"jq .name package.json"}`},
-		{"Bash", `{"command":"foci_todo list"}`},
 		// sed without -i is read-only.
 		{"Bash", `{"command":"sed 's/foo/bar/'"}`},
 		{"Bash", `{"command":"sed -n '1,10p' file.txt"}`},
