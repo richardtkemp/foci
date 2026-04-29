@@ -188,7 +188,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 		}
 		if result.DocPath != "" {
 			if conn := d.connMgr.ForSessionOrPrimary(sk, inst.id); conn != nil {
-				if err := conn.SendDocument(result.DocPath); err != nil {
+				if err := conn.SendDocument(result.DocPath, ""); err != nil {
 					log.Warnf("http", "POST /command: send document: %v", err)
 				}
 			}

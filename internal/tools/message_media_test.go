@@ -153,29 +153,33 @@ func TestSendMessageToUserVideoChatRouting(t *testing.T) {
 }
 
 func TestSendMessageToUserTextAndVideo(t *testing.T) {
-	// Verifies that providing both text and a video file sends both independently and reports the combined result.
+	// Verifies that text + video collapses into a single captioned-video
+	// message — caption rides on the video, no separate text send.
 	t.Parallel()
 	mock := &mockSender{}
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"text":      "check this out",
-		"file": "/tmp/clip.mp4",
-		"send_as":   "video",
+		"text":    "check this out",
+		"file":    "/tmp/clip.mp4",
+		"send_as": "video",
 	})
 
 	result, err := tool.Execute(context.Background(), params)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: text + video" {
+	if result.Text != "Sent: video+caption" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.textCalls) != 1 {
-		t.Errorf("textCalls = %v", mock.textCalls)
+	if len(mock.textCalls) != 0 {
+		t.Errorf("textCalls should be empty (caption rides on video), got %v", mock.textCalls)
 	}
 	if len(mock.videoCalls) != 1 {
 		t.Errorf("videoCalls = %v", mock.videoCalls)
+	}
+	if len(mock.videoCaptions) != 1 || mock.videoCaptions[0] != "check this out" {
+		t.Errorf("videoCaptions = %v, want [\"check this out\"]", mock.videoCaptions)
 	}
 }
 

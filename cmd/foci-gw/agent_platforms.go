@@ -165,7 +165,7 @@ func wireAgentPlatformCallbacks(
 			return
 		}
 		_ = f.Close()
-		if err := c.SendDocument(f.Name()); err != nil {
+		if err := c.SendDocument(f.Name(), ""); err != nil {
 			log.Warnf("agent", "compaction debug: send document: %v", err)
 		}
 		_ = os.Remove(f.Name())

@@ -81,13 +81,16 @@ func TestSendMessageToUserVoice(t *testing.T) {
 }
 
 func TestSendMessageToUserTextAndDocument(t *testing.T) {
-	// Verifies that providing both text and a file path sends both independently and reports the combined result.
+	// Verifies that text + file collapses into a single captioned-document
+	// message rather than two separate messages. The text travels as the
+	// document caption (Telegram caption / Discord Content) — single
+	// message, no separate text send.
 	t.Parallel()
 	mock := &mockSender{}
 	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
 
 	params, _ := json.Marshal(map[string]interface{}{
-		"text":      "here's the file",
+		"text": "here's the file",
 		"file": "/tmp/data.csv",
 	})
 
@@ -95,14 +98,18 @@ func TestSendMessageToUserTextAndDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Text != "Sent: text + document" {
+	if result.Text != "Sent: document+caption" {
 		t.Errorf("result = %q", result.Text)
 	}
-	if len(mock.textCalls) != 1 {
-		t.Errorf("textCalls = %v", mock.textCalls)
+	// No standalone text send when caption rides on the document.
+	if len(mock.textCalls) != 0 {
+		t.Errorf("textCalls should be empty (caption rides on document), got %v", mock.textCalls)
 	}
 	if len(mock.documentCalls) != 1 {
 		t.Errorf("documentCalls = %v", mock.documentCalls)
+	}
+	if len(mock.documentCaptions) != 1 || mock.documentCaptions[0] != "here's the file" {
+		t.Errorf("documentCaptions = %v, want [\"here's the file\"]", mock.documentCaptions)
 	}
 }
 
@@ -196,6 +203,67 @@ func TestSendMessageToUserVoiceError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "codec error") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSendMessageToUserCaptionTooLongFallsBack(t *testing.T) {
+	// When the caption exceeds platform.MaxCaptionLen (1024), the tool
+	// should fall back to a separate text message + uncaptioned file.
+	// Telegram caps document captions at 1024; sending longer would error
+	// at the platform.
+	t.Parallel()
+	mock := &mockSender{}
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+
+	longText := strings.Repeat("x", platform.MaxCaptionLen+1)
+	params, _ := json.Marshal(map[string]interface{}{
+		"text": longText,
+		"file": "/tmp/data.csv",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "Sent: text + document" {
+		t.Errorf("result = %q (expected fallback to two-message form)", result.Text)
+	}
+	if len(mock.textCalls) != 1 {
+		t.Errorf("textCalls should have 1 entry (text didn't fit as caption), got %v", mock.textCalls)
+	}
+	if len(mock.documentCalls) != 1 {
+		t.Errorf("documentCalls = %v", mock.documentCalls)
+	}
+	if len(mock.documentCaptions) != 1 || mock.documentCaptions[0] != "" {
+		t.Errorf("documentCaptions = %v, want [\"\"]", mock.documentCaptions)
+	}
+}
+
+func TestSendMessageToUserVoiceWithTextDoesNotCaption(t *testing.T) {
+	// Voice notes don't caption — text + voice should still be two
+	// separate messages even when text fits within MaxCaptionLen.
+	t.Parallel()
+	mock := &mockSender{}
+	tool := NewSendToChatTool(func(string) platform.Sender { return mock }, nil)
+
+	params, _ := json.Marshal(map[string]interface{}{
+		"text":    "listen to this",
+		"file":    "/tmp/note.ogg",
+		"send_as": "voice",
+	})
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "Sent: text + voice note" {
+		t.Errorf("result = %q", result.Text)
+	}
+	if len(mock.textCalls) != 1 {
+		t.Errorf("textCalls = %v (expected separate text)", mock.textCalls)
+	}
+	if len(mock.voiceCalls) != 1 {
+		t.Errorf("voiceCalls = %v", mock.voiceCalls)
 	}
 }
 
