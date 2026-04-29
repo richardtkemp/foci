@@ -80,13 +80,23 @@ var CommonReadonlyRules = []string{
 	"Bash:mds",
 	"Bash:mdq",
 	"Bash:sqlite3 -readonly",
-	// Foci shell functions.
-	"Bash:foci_todo",
-	"Bash:foci_send_to_chat",
-	"Bash:foci_memory_search",
-	"Bash:foci_http_request",
-	"Bash:foci_web_search",
-	"Bash:foci_web_fetch",
+}
+
+// FociShellRulesFor returns auto-approve rules for foci shell functions
+// (foci_todo, foci_send_to_chat, foci_remind, etc.) derived from the tools
+// registry's ExportedNames. These are always auto-approved — they're foci's
+// own wrappers around platform/storage primitives, executed in-process with
+// constrained schemas, and have the same risk profile across the set.
+//
+// Source-of-truth is the registry: any tool registered with ExecExport:true
+// gets a rule automatically, and removing one removes its rule. No hand-list
+// to drift.
+func FociShellRulesFor(execNames []string) []string {
+	rules := make([]string, 0, len(execNames))
+	for _, name := range execNames {
+		rules = append(rules, "Bash:"+name)
+	}
+	return rules
 }
 
 // CommonSafeWriteRules is the built-in list of commands that have side effects
