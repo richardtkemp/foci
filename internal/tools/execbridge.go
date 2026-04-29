@@ -347,15 +347,10 @@ func toolParamKeys(t *Tool) string {
 // struct field over this map. Once all entries here are also set on their
 // respective Tool structs, the map can be removed.
 var shellPositionalParams = map[string][]string{
-	"web_fetch":     {"url"},
-	"web_search":    {"query"},
-	"memory_search": {"query"},
-	"http_request":  {"url"},
-	"send_to_chat":  {"text"},
-	"todo":          {"action"},
-	"summary":       {"prompt"},
-	"spawn":         {"prompt"},
-	"tmux":          {"operation"},
+	"http_request": {"url"},
+	"todo":         {"action"},
+	"summary":      {"prompt"},
+	"tmux":         {"operation"},
 }
 
 // positionalParamsForTool returns a tool's positional schema params. Prefers
