@@ -101,7 +101,23 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 				}
 			}
 
-			if p.Text != "" {
+			// Decide whether text rides along as a caption on the file
+			// or goes as a separate text message. send_as=voice doesn't
+			// caption (foci's voice path is for raw voice notes, no
+			// caption param plumbed); long text falls back to a
+			// separate message because Telegram caps captions at 1024
+			// chars and Discord at 2000.
+			canCaption := p.FilePath != "" &&
+				p.SendAs != "voice" &&
+				p.Text != "" &&
+				len(p.Text) <= platform.MaxCaptionLen
+			caption := ""
+			if canCaption {
+				caption = p.Text
+			}
+
+			// Standalone text — only when not riding as caption.
+			if p.Text != "" && !canCaption {
 				var err error
 				if chatID != 0 {
 					err = bot.SendTextToChat(chatID, p.Text)
@@ -128,45 +144,50 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 					label = "voice note"
 				case "video":
 					if chatID != 0 {
-						err = bot.SendVideoToChat(chatID, p.FilePath)
+						err = bot.SendVideoToChat(chatID, p.FilePath, caption)
 					} else {
-						err = bot.SendVideo(p.FilePath)
+						err = bot.SendVideo(p.FilePath, caption)
 					}
 					label = "video"
 				case "photo":
 					if chatID != 0 {
-						err = bot.SendPhotoToChat(chatID, p.FilePath)
+						err = bot.SendPhotoToChat(chatID, p.FilePath, caption)
 					} else {
-						err = bot.SendPhoto(p.FilePath)
+						err = bot.SendPhoto(p.FilePath, caption)
 					}
 					label = "photo"
 				case "audio":
 					if chatID != 0 {
-						err = bot.SendAudioToChat(chatID, p.FilePath)
+						err = bot.SendAudioToChat(chatID, p.FilePath, caption)
 					} else {
-						err = bot.SendAudio(p.FilePath)
+						err = bot.SendAudio(p.FilePath, caption)
 					}
 					label = "audio"
 				case "animation":
 					if chatID != 0 {
-						err = bot.SendAnimationToChat(chatID, p.FilePath)
+						err = bot.SendAnimationToChat(chatID, p.FilePath, caption)
 					} else {
-						err = bot.SendAnimation(p.FilePath)
+						err = bot.SendAnimation(p.FilePath, caption)
 					}
 					label = "animation"
 				default: // "document"
 					if chatID != 0 {
-						err = bot.SendDocumentToChat(chatID, p.FilePath)
+						err = bot.SendDocumentToChat(chatID, p.FilePath, caption)
 					} else {
-						err = bot.SendDocument(p.FilePath)
+						err = bot.SendDocument(p.FilePath, caption)
 					}
 					label = "document"
 				}
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("send %s: %w", label, err)
 				}
-				logToolSend(sessionKey, chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
-				sent = append(sent, label)
+				if caption != "" {
+					logToolSend(sessionKey, chatID, fmt.Sprintf("[%s %s + caption: %s]", label, p.FilePath, caption))
+					sent = append(sent, label+"+caption")
+				} else {
+					logToolSend(sessionKey, chatID, fmt.Sprintf("[%s %s]", label, p.FilePath))
+					sent = append(sent, label)
+				}
 			}
 
 			return TextResult(fmt.Sprintf("Sent: %s", joinWords(sent))), nil

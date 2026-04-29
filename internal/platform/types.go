@@ -115,22 +115,34 @@ type Sender interface {
 
 	SessionKey() string
 
-	SendDocument(filePath string) error
+	// File-send methods take a caption string. Empty means no caption —
+	// equivalent to the previous (caption-less) behaviour. Captioned sends
+	// produce a single platform message instead of separate text+file.
+	// Caption length limits are platform-specific (Telegram: 1024 chars,
+	// Discord: 2000 chars); over-limit captions fall back to a separate
+	// text message via the helper in this package.
+	SendDocument(filePath, caption string) error
 	SendVoice(filePath string) error
-	SendVideo(filePath string) error
-	SendPhoto(filePath string) error
-	SendAudio(filePath string) error
-	SendAnimation(filePath string) error
+	SendVideo(filePath, caption string) error
+	SendPhoto(filePath, caption string) error
+	SendAudio(filePath, caption string) error
+	SendAnimation(filePath, caption string) error
 	SendVoiceData(audioData []byte) error
 
-	SendDocumentToChat(chatID int64, filePath string) error
+	SendDocumentToChat(chatID int64, filePath, caption string) error
 	SendVoiceToChat(chatID int64, filePath string) error
-	SendVideoToChat(chatID int64, filePath string) error
-	SendPhotoToChat(chatID int64, filePath string) error
-	SendAudioToChat(chatID int64, filePath string) error
-	SendAnimationToChat(chatID int64, filePath string) error
+	SendVideoToChat(chatID int64, filePath, caption string) error
+	SendPhotoToChat(chatID int64, filePath, caption string) error
+	SendAudioToChat(chatID int64, filePath, caption string) error
+	SendAnimationToChat(chatID int64, filePath, caption string) error
 	SendVoiceDataToChat(chatID int64, audioData []byte) error
 }
+
+// MaxCaptionLen is the lowest common caption-length limit across supported
+// platforms. Telegram: 1024 chars. Discord allows 2000 in message Content.
+// Captions longer than this should be sent as a separate text message
+// followed by an uncaptioned file (the fallback path in tools/message.go).
+const MaxCaptionLen = 1024
 
 // Connection is the runtime interface for a platform instance (e.g. a Telegram
 // bot, a Discord guild connection, etc.). Used by commands, notifications,

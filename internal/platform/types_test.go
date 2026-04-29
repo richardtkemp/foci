@@ -44,21 +44,21 @@ type mockSender struct{}
 
 func (m *mockSender) SessionKey() string                                       { return "" }
 func (m *mockSender) SendText(text string) error                            { return nil }
-func (m *mockSender) SendDocument(filePath string) error                       { return nil }
+func (m *mockSender) SendDocument(filePath, caption string) error              { return nil }
 func (m *mockSender) SendVoice(filePath string) error                          { return nil }
-func (m *mockSender) SendVideo(filePath string) error                          { return nil }
-func (m *mockSender) SendPhoto(filePath string) error                          { return nil }
-func (m *mockSender) SendAudio(filePath string) error                          { return nil }
-func (m *mockSender) SendAnimation(filePath string) error                      { return nil }
+func (m *mockSender) SendVideo(filePath, caption string) error                 { return nil }
+func (m *mockSender) SendPhoto(filePath, caption string) error                 { return nil }
+func (m *mockSender) SendAudio(filePath, caption string) error                 { return nil }
+func (m *mockSender) SendAnimation(filePath, caption string) error             { return nil }
 func (m *mockSender) SendVoiceData(audioData []byte) error                     { return nil }
 func (m *mockSender) SendTextToChat(chatID int64, text string) error        { return nil }
-func (m *mockSender) SendDocumentToChat(chatID int64, filePath string) error   { return nil }
-func (m *mockSender) SendVoiceToChat(chatID int64, filePath string) error      { return nil }
-func (m *mockSender) SendVideoToChat(chatID int64, filePath string) error      { return nil }
-func (m *mockSender) SendPhotoToChat(chatID int64, filePath string) error      { return nil }
-func (m *mockSender) SendAudioToChat(chatID int64, filePath string) error      { return nil }
-func (m *mockSender) SendAnimationToChat(chatID int64, filePath string) error  { return nil }
-func (m *mockSender) SendVoiceDataToChat(chatID int64, audioData []byte) error { return nil }
+func (m *mockSender) SendDocumentToChat(chatID int64, filePath, caption string) error  { return nil }
+func (m *mockSender) SendVoiceToChat(chatID int64, filePath string) error             { return nil }
+func (m *mockSender) SendVideoToChat(chatID int64, filePath, caption string) error    { return nil }
+func (m *mockSender) SendPhotoToChat(chatID int64, filePath, caption string) error    { return nil }
+func (m *mockSender) SendAudioToChat(chatID int64, filePath, caption string) error    { return nil }
+func (m *mockSender) SendAnimationToChat(chatID int64, filePath, caption string) error { return nil }
+func (m *mockSender) SendVoiceDataToChat(chatID int64, audioData []byte) error        { return nil }
 
 type mockConnection struct {
 	*mockSender

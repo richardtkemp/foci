@@ -295,13 +295,23 @@ func (b *Bot) SendToSession(sessionKey, text string) error {
 	return b.SendTextToChat(chatID, text)
 }
 
-// sendToLastChannel resolves the last known channel ID and calls fn with it.
+// sendToLastChannel resolves the last known channel ID and calls fn with it
+// (caption-less variant — used by SendVoice).
 func (b *Bot) sendToLastChannel(fn func(int64, string) error, filePath string) error {
 	channelID, err := b.lastChannelID()
 	if err != nil {
 		return err
 	}
 	return fn(channelID, filePath)
+}
+
+// sendCaptionedToLastChannel is the captioned-file variant of sendToLastChannel.
+func (b *Bot) sendCaptionedToLastChannel(fn func(int64, string, string) error, filePath, caption string) error {
+	channelID, err := b.lastChannelID()
+	if err != nil {
+		return err
+	}
+	return fn(channelID, filePath, caption)
 }
 
 // lastChannelID returns the last known channel ID, or an error if none has been set.
@@ -316,8 +326,8 @@ func (b *Bot) lastChannelID() (int64, error) {
 }
 
 // SendDocument sends a file as a Discord attachment to the last known channel.
-func (b *Bot) SendDocument(filePath string) error {
-	return b.sendToLastChannel(b.SendDocumentToChat, filePath)
+func (b *Bot) SendDocument(filePath, caption string) error {
+	return b.sendCaptionedToLastChannel(b.SendDocumentToChat, filePath, caption)
 }
 
 // SendVoice sends a voice file to the last known channel.
@@ -326,23 +336,23 @@ func (b *Bot) SendVoice(filePath string) error {
 }
 
 // SendVideo sends a video file to the last known channel.
-func (b *Bot) SendVideo(filePath string) error {
-	return b.sendToLastChannel(b.SendVideoToChat, filePath)
+func (b *Bot) SendVideo(filePath, caption string) error {
+	return b.sendCaptionedToLastChannel(b.SendVideoToChat, filePath, caption)
 }
 
 // SendPhoto sends a photo to the last known channel.
-func (b *Bot) SendPhoto(filePath string) error {
-	return b.sendToLastChannel(b.SendPhotoToChat, filePath)
+func (b *Bot) SendPhoto(filePath, caption string) error {
+	return b.sendCaptionedToLastChannel(b.SendPhotoToChat, filePath, caption)
 }
 
 // SendAudio sends an audio file to the last known channel.
-func (b *Bot) SendAudio(filePath string) error {
-	return b.sendToLastChannel(b.SendAudioToChat, filePath)
+func (b *Bot) SendAudio(filePath, caption string) error {
+	return b.sendCaptionedToLastChannel(b.SendAudioToChat, filePath, caption)
 }
 
 // SendAnimation sends an animation (GIF) to the last known channel.
-func (b *Bot) SendAnimation(filePath string) error {
-	return b.sendToLastChannel(b.SendAnimationToChat, filePath)
+func (b *Bot) SendAnimation(filePath, caption string) error {
+	return b.sendCaptionedToLastChannel(b.SendAnimationToChat, filePath, caption)
 }
 
 // SendVoiceData sends audio bytes as a Discord voice message to the last known channel.
@@ -393,7 +403,9 @@ func (b *Bot) SendInjectedToChat(chatID int64, text string) error {
 }
 
 // sendMediaFile is a generic helper for sending media files to Discord.
-func (b *Bot) sendMediaFile(chatID int64, filePath string) error {
+// If caption is non-empty, it's set as the message Content alongside the
+// attachment — Discord renders both inline as a single message.
+func (b *Bot) sendMediaFile(chatID int64, filePath, caption string) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
@@ -402,6 +414,7 @@ func (b *Bot) sendMediaFile(chatID int64, filePath string) error {
 
 	channelIDStr := strconv.FormatInt(chatID, 10)
 	_, err = b.session.ChannelMessageSendComplex(channelIDStr, &discordgo.MessageSend{
+		Content: caption,
 		Files: []*discordgo.File{
 			{
 				Name:   filepath.Base(filePath),
@@ -416,33 +429,34 @@ func (b *Bot) sendMediaFile(chatID int64, filePath string) error {
 }
 
 // SendDocumentToChat sends a file as a Discord attachment to a specific channel ID.
-func (b *Bot) SendDocumentToChat(chatID int64, filePath string) error {
-	return b.sendMediaFile(chatID, filePath)
+// If caption is non-empty, it's sent inline as message text alongside the attachment.
+func (b *Bot) SendDocumentToChat(chatID int64, filePath, caption string) error {
+	return b.sendMediaFile(chatID, filePath, caption)
 }
 
 // SendVoiceToChat sends a voice file to a specific channel ID.
 func (b *Bot) SendVoiceToChat(chatID int64, filePath string) error {
-	return b.sendMediaFile(chatID, filePath)
+	return b.sendMediaFile(chatID, filePath, "")
 }
 
 // SendVideoToChat sends a video file to a specific channel ID.
-func (b *Bot) SendVideoToChat(chatID int64, filePath string) error {
-	return b.sendMediaFile(chatID, filePath)
+func (b *Bot) SendVideoToChat(chatID int64, filePath, caption string) error {
+	return b.sendMediaFile(chatID, filePath, caption)
 }
 
 // SendPhotoToChat sends a photo to a specific channel ID.
-func (b *Bot) SendPhotoToChat(chatID int64, filePath string) error {
-	return b.sendMediaFile(chatID, filePath)
+func (b *Bot) SendPhotoToChat(chatID int64, filePath, caption string) error {
+	return b.sendMediaFile(chatID, filePath, caption)
 }
 
 // SendAudioToChat sends an audio file to a specific channel ID.
-func (b *Bot) SendAudioToChat(chatID int64, filePath string) error {
-	return b.sendMediaFile(chatID, filePath)
+func (b *Bot) SendAudioToChat(chatID int64, filePath, caption string) error {
+	return b.sendMediaFile(chatID, filePath, caption)
 }
 
 // SendAnimationToChat sends an animation (GIF) to a specific channel ID.
-func (b *Bot) SendAnimationToChat(chatID int64, filePath string) error {
-	return b.sendMediaFile(chatID, filePath)
+func (b *Bot) SendAnimationToChat(chatID int64, filePath, caption string) error {
+	return b.sendMediaFile(chatID, filePath, caption)
 }
 
 // SendTextWithButtons sends a text message with inline buttons to the default channel.

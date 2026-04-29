@@ -6,7 +6,7 @@ func (m *Messaging) notifyAgentDoc(agentID string, path string) {
 		return
 	}
 	for _, conn := range m.connMgr.AllForAgent(agentID) {
-		_ = conn.SendDocument(path)
+		_ = conn.SendDocument(path, "")
 	}
 }
 

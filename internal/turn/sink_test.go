@@ -52,21 +52,21 @@ func (f *fakeTypingConn) SetTyping(on bool) { f.typingCalls = append(f.typingCal
 func (f *fakeTypingConn) SendText(string) error                 { panic("SendText") }
 func (f *fakeTypingConn) SendTextToChat(int64, string) error    { panic("SendTextToChat") }
 func (f *fakeTypingConn) SessionKey() string                    { panic("SessionKey") }
-func (f *fakeTypingConn) SendDocument(string) error             { panic("SendDocument") }
+func (f *fakeTypingConn) SendDocument(string, string) error     { panic("SendDocument") }
 func (f *fakeTypingConn) SendVoice(string) error                { panic("SendVoice") }
-func (f *fakeTypingConn) SendVideo(string) error                { panic("SendVideo") }
-func (f *fakeTypingConn) SendPhoto(string) error                { panic("SendPhoto") }
-func (f *fakeTypingConn) SendAudio(string) error                { panic("SendAudio") }
-func (f *fakeTypingConn) SendAnimation(string) error            { panic("SendAnimation") }
+func (f *fakeTypingConn) SendVideo(string, string) error        { panic("SendVideo") }
+func (f *fakeTypingConn) SendPhoto(string, string) error        { panic("SendPhoto") }
+func (f *fakeTypingConn) SendAudio(string, string) error        { panic("SendAudio") }
+func (f *fakeTypingConn) SendAnimation(string, string) error    { panic("SendAnimation") }
 func (f *fakeTypingConn) SendVoiceData([]byte) error            { panic("SendVoiceData") }
-func (f *fakeTypingConn) SendDocumentToChat(int64, string) error {
+func (f *fakeTypingConn) SendDocumentToChat(int64, string, string) error {
 	panic("SendDocumentToChat")
 }
-func (f *fakeTypingConn) SendVoiceToChat(int64, string) error     { panic("SendVoiceToChat") }
-func (f *fakeTypingConn) SendVideoToChat(int64, string) error     { panic("SendVideoToChat") }
-func (f *fakeTypingConn) SendPhotoToChat(int64, string) error     { panic("SendPhotoToChat") }
-func (f *fakeTypingConn) SendAudioToChat(int64, string) error     { panic("SendAudioToChat") }
-func (f *fakeTypingConn) SendAnimationToChat(int64, string) error { panic("SendAnimationToChat") }
+func (f *fakeTypingConn) SendVoiceToChat(int64, string) error             { panic("SendVoiceToChat") }
+func (f *fakeTypingConn) SendVideoToChat(int64, string, string) error     { panic("SendVideoToChat") }
+func (f *fakeTypingConn) SendPhotoToChat(int64, string, string) error     { panic("SendPhotoToChat") }
+func (f *fakeTypingConn) SendAudioToChat(int64, string, string) error     { panic("SendAudioToChat") }
+func (f *fakeTypingConn) SendAnimationToChat(int64, string, string) error { panic("SendAnimationToChat") }
 func (f *fakeTypingConn) SendVoiceDataToChat(int64, []byte) error { panic("SendVoiceDataToChat") }
 func (f *fakeTypingConn) PlatformName() string                    { panic("PlatformName") }
 func (f *fakeTypingConn) SessionKeyForChat(int64) string          { panic("SessionKeyForChat") }
