@@ -81,6 +81,7 @@ type Backend struct {
 	turnTools     int                   // tool_use count this turn
 	nudgePending  bool                  // set when PostToolNudge sends PriorityNow; cleared on next OnResult or beginTurn
 	steerInjected bool                  // set when checkAndSendSteers sends PriorityNow; cleared on next OnResult or beginTurn. Triggers handler re-arm so the steered response isn't dropped after CC's abort-result fires (TODO #726).
+	followUpQueued bool                 // set when SendCommand sends a follow-up via priority="next" (RunInference's IsTurnInFlight branch). Cleared on next OnResult or beginTurn. Triggers handler re-arm so the follow-up's response isn't dropped after the original turn's result clears the handler (TODO #726 sub-mode 3).
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -410,6 +411,7 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnTools = 0
 	b.nudgePending = false
 	b.steerInjected = false
+	b.followUpQueued = false
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -455,6 +457,7 @@ func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
 	b.turnTools = 0
 	b.nudgePending = false
 	b.steerInjected = false
+	b.followUpQueued = false
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -571,9 +574,24 @@ func (b *Backend) IsTurnInFlight() bool {
 // SendCommand sends a slash command or steered message directly to CC.
 // priority controls CC's processing order — use PriorityNow for steer
 // messages that should interrupt tool execution, or "" for default.
+//
+// Priority "next" is used by RunInference's follow-up path (turn_delegated.go)
+// when IsTurnInFlight is true: the new user message is queued behind the
+// in-flight turn rather than starting a fresh turn pipeline. Mark
+// followUpQueued so OnResult re-arms the handler instead of clearing it —
+// without this, the follow-up's response text hits b.turnHandler == nil
+// and gets silently dropped if an unrelated OnResult (e.g. a nudge response
+// completing) fires between SendCommand and CC processing the follow-up.
+// See TODO #726 sub-mode 3.
 func (b *Backend) SendCommand(ctx context.Context, command string, priority string) error {
 	if priority != "" {
-		return b.writer.SendUserWithPriority(command, priority)
+		err := b.writer.SendUserWithPriority(command, priority)
+		if err == nil && priority == "next" {
+			b.turnMu.Lock()
+			b.followUpQueued = true
+			b.turnMu.Unlock()
+		}
+		return err
 	}
 	return b.writer.SendUser(command)
 }
@@ -963,6 +981,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	b.nudgePending = false
 	steerInjected := b.steerInjected
 	b.steerInjected = false
+	followUpQueued := b.followUpQueued
+	b.followUpQueued = false
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -1077,6 +1097,34 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 		b.rearmForNudgeResponse(handler)
 		b.logger().Infof("OnResult: re-armed for steered response (text=%d bytes)", len(text))
+		if resultCh != nil {
+			select {
+			case resultCh <- msg:
+			default:
+			}
+		}
+		return
+	}
+
+	// Follow-up re-arm: SendCommand queued a follow-up message via
+	// priority="next" while a turn was in-flight. CC will process the
+	// follow-up after the current result and produce more output. Without
+	// re-arming, the follow-up's text blocks hit b.turnHandler == nil
+	// when this OnResult clears the handler, and they're silently dropped
+	// (TODO #726 sub-mode 3 — observed live with scout 2026-04-30 20:07).
+	// Same shape as the nudge / steer re-arm: fire OnTurnComplete on this
+	// result, then re-arm with a delivery-only handler so the follow-up
+	// response reaches the platform via OnText.
+	if followUpQueued && handler != nil {
+		b.agents.ClearAll()
+		if handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(result)
+		}
+		if b.typingFunc != nil {
+			b.typingFunc(true)
+		}
+		b.rearmForNudgeResponse(handler)
+		b.logger().Infof("OnResult: re-armed for queued follow-up response (text=%d bytes)", len(text))
 		if resultCh != nil {
 			select {
 			case resultCh <- msg:

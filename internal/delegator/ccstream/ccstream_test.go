@@ -1923,6 +1923,174 @@ func TestBeginTurn_ClearsSteerInjected(t *testing.T) {
 	}
 }
 
+func TestSendCommand_NextPrioritySetsFollowUpQueued(t *testing.T) {
+	// SendCommand with priority="next" is the RunInference follow-up path:
+	// the new user message is queued behind an in-flight turn. Mark the
+	// flag so OnResult re-arms the handler instead of clearing — otherwise
+	// the follow-up's response text gets dropped (TODO #726 sub-mode 3).
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+	}
+
+	if err := b.SendCommand(context.Background(), "follow-up text", "next"); err != nil {
+		t.Fatalf("SendCommand: %v", err)
+	}
+
+	b.turnMu.Lock()
+	queued := b.followUpQueued
+	b.turnMu.Unlock()
+
+	if !queued {
+		t.Error("followUpQueued should be true after SendCommand with priority=next")
+	}
+}
+
+func TestSendCommand_OtherPrioritiesDoNotSetFlag(t *testing.T) {
+	// Slash commands (/pass, /compact) and steer-priority messages don't
+	// represent queued user follow-ups awaiting a delivered response, so
+	// they must not set followUpQueued.
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		priority string
+	}{
+		{"empty (slash command)", ""},
+		{"now (steer)", PriorityNow},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			b := &Backend{
+				writer: NewWriter(nopWriteCloser{&buf}),
+			}
+
+			if err := b.SendCommand(context.Background(), "msg", tc.priority); err != nil {
+				t.Fatalf("SendCommand: %v", err)
+			}
+
+			b.turnMu.Lock()
+			queued := b.followUpQueued
+			b.turnMu.Unlock()
+
+			if queued {
+				t.Errorf("followUpQueued should remain false for priority=%q", tc.priority)
+			}
+		})
+	}
+}
+
+func TestOnResult_FollowUpQueued_RearmsHandler(t *testing.T) {
+	// When SendCommand queues a follow-up via priority="next", the
+	// follow-up's response arrives AFTER the current turn's result fires.
+	// OnResult must fire OnTurnComplete on the current result AND re-arm
+	// a delivery-only handler so the follow-up's text reaches OnText.
+	// Without this, the rearmed handler from a prior nudge gets cleared
+	// before CC produces the follow-up's response — the failure shape
+	// observed live with scout 2026-04-30 20:07 (TODO #726 sub-mode 3).
+	t.Parallel()
+
+	var completed *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
+		OnText:         func(string) {},
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.followUpQueued = true // simulate SendCommand follow-up just sent
+	b.turnMu.Unlock()
+
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	if completed == nil {
+		t.Fatal("OnTurnComplete should fire on followUp-queued result")
+	}
+
+	b.turnMu.Lock()
+	rearmed := b.turnHandler
+	active := b.turnActive
+	stillFlagged := b.followUpQueued
+	b.turnMu.Unlock()
+
+	if stillFlagged {
+		t.Error("followUpQueued should be cleared by OnResult")
+	}
+	if !active {
+		t.Error("turnActive should remain true after follow-up re-arm")
+	}
+	if rearmed == nil {
+		t.Fatal("turnHandler should be non-nil after follow-up re-arm")
+	}
+	if rearmed.OnTurnComplete != nil {
+		t.Error("re-armed handler should have nil OnTurnComplete")
+	}
+	if rearmed.OnText == nil {
+		t.Error("re-armed handler should preserve OnText")
+	}
+}
+
+func TestOnResult_FollowUpQueued_DeliveryAfterRearm(t *testing.T) {
+	// After follow-up re-arm, the queued message's response text reaches
+	// the original OnText callback.
+	t.Parallel()
+
+	var textCalls []string
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(*delegator.TurnResult) {},
+		OnText:         func(text string) { textCalls = append(textCalls, text) },
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.followUpQueued = true
+	b.turnMu.Unlock()
+
+	// First OnResult clears the original turn but re-arms for follow-up.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	// CC then processes the follow-up and emits text.
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Content: []ContentBlock{{Type: "text", Text: "follow-up response"}},
+		},
+	})
+
+	if len(textCalls) != 1 || textCalls[0] != "follow-up response" {
+		t.Errorf("textCalls = %v, want [follow-up response]", textCalls)
+	}
+}
+
+func TestBeginTurn_ClearsFollowUpQueued(t *testing.T) {
+	// A new foci turn (beginTurn) should clear any stale followUpQueued state.
+	t.Parallel()
+
+	b := &Backend{}
+	b.turnMu.Lock()
+	b.followUpQueued = true
+	b.turnMu.Unlock()
+
+	b.beginTurn(&delegator.EventHandler{})
+
+	b.turnMu.Lock()
+	queued := b.followUpQueued
+	b.turnMu.Unlock()
+
+	if queued {
+		t.Error("beginTurn should clear followUpQueued")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OnSystem
 // ---------------------------------------------------------------------------
