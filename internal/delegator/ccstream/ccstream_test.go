@@ -1727,6 +1727,202 @@ func TestBeginTurn_ClearsNudgePending(t *testing.T) {
 	}
 }
 
+func TestCheckAndSendSteers_SetsSteerInjected(t *testing.T) {
+	// When checkAndSendSteers successfully sends a steer to CC, it must
+	// flag the turn so OnResult takes the re-arm path instead of clearing
+	// the handler. Without this flag, the steered response is dropped
+	// (TODO #726).
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+	}
+	b.turnHandler = &delegator.EventHandler{
+		SteerCheckFunc: func() []string { return []string{"redirect"} },
+	}
+
+	b.checkAndSendSteers()
+
+	b.turnMu.Lock()
+	injected := b.steerInjected
+	b.turnMu.Unlock()
+
+	if !injected {
+		t.Error("steerInjected should be true after a steer is sent")
+	}
+}
+
+func TestCheckAndSendSteers_NoSendNoFlag(t *testing.T) {
+	// If SteerCheckFunc returns nothing, no PriorityNow is sent and
+	// steerInjected must remain false (no re-arm needed).
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+	}
+	b.turnHandler = &delegator.EventHandler{
+		SteerCheckFunc: func() []string { return nil },
+	}
+
+	b.checkAndSendSteers()
+
+	b.turnMu.Lock()
+	injected := b.steerInjected
+	b.turnMu.Unlock()
+
+	if injected {
+		t.Error("steerInjected should be false when no steer was sent")
+	}
+}
+
+func TestOnResult_SteerInjected_RearmsHandler(t *testing.T) {
+	// After a steer is injected via PriorityNow, CC aborts the in-flight
+	// turn and emits a (typically empty) result. OnResult must fire
+	// OnTurnComplete on that result AND re-arm a delivery-only handler so
+	// the steered response's text blocks reach OnText. Without the re-arm,
+	// b.turnHandler is cleared and CC's subsequent text is silently
+	// dropped — the failure shape captured in TODO #726.
+	t.Parallel()
+
+	var completed *delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
+		OnText:         func(string) {},
+		OnTextDelta:    func(string) {},
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.steerInjected = true // simulate checkAndSendSteers having sent one
+	b.turnMu.Unlock()
+
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	if completed == nil {
+		t.Fatal("OnTurnComplete should fire on steer-injected result")
+	}
+
+	b.turnMu.Lock()
+	rearmed := b.turnHandler
+	active := b.turnActive
+	stillFlagged := b.steerInjected
+	b.turnMu.Unlock()
+
+	if stillFlagged {
+		t.Error("steerInjected should be cleared by OnResult")
+	}
+	if !active {
+		t.Error("turnActive should remain true after steer re-arm")
+	}
+	if rearmed == nil {
+		t.Fatal("turnHandler should be non-nil after steer re-arm")
+	}
+	if rearmed.OnTurnComplete != nil {
+		t.Error("re-armed handler should have nil OnTurnComplete (avoid double-fire)")
+	}
+	if rearmed.OnText == nil {
+		t.Error("re-armed handler should preserve OnText for steered response delivery")
+	}
+}
+
+func TestOnResult_SteerInjected_DeliveryAfterRearm(t *testing.T) {
+	// Once re-armed, text blocks from the steered response must reach
+	// the original OnText callback. This is the user-visible contract:
+	// the user's redirected message gets answered.
+	t.Parallel()
+
+	var textCalls []string
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(*delegator.TurnResult) {},
+		OnText:         func(text string) { textCalls = append(textCalls, text) },
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.steerInjected = true
+	b.turnMu.Unlock()
+
+	// CC's abort-result for the cancelled in-flight turn.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	// CC then processes the steered message and emits text.
+	b.OnAssistant(&AssistantMessage{
+		Message: BetaMessage{
+			Content: []ContentBlock{{Type: "text", Text: "steered response"}},
+		},
+	})
+
+	if len(textCalls) != 1 || textCalls[0] != "steered response" {
+		t.Errorf("textCalls = %v, want [steered response]", textCalls)
+	}
+}
+
+func TestOnResult_SteerInjected_SecondResultCleansUp(t *testing.T) {
+	// When the steered response itself completes (second OnResult), the
+	// re-armed handler should clean up like any normal turn end —
+	// turnHandler nil, turnActive false, no panic from nil OnTurnComplete.
+	t.Parallel()
+
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(*delegator.TurnResult) {},
+		OnText:         func(string) {},
+	}
+
+	b := &Backend{}
+	b.typingFunc = func(bool) {}
+	b.beginTurn(handler)
+
+	b.turnMu.Lock()
+	b.steerInjected = true
+	b.turnMu.Unlock()
+
+	// Abort-result for cancelled turn → re-arm.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	// Steered response completes → normal cleanup.
+	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+
+	b.turnMu.Lock()
+	h := b.turnHandler
+	active := b.turnActive
+	b.turnMu.Unlock()
+
+	if h != nil {
+		t.Error("turnHandler should be nil after steered response completes")
+	}
+	if active {
+		t.Error("turnActive should be false after steered response completes")
+	}
+}
+
+func TestBeginTurn_ClearsSteerInjected(t *testing.T) {
+	// A new foci turn (beginTurn) should clear any stale steerInjected state.
+	t.Parallel()
+
+	b := &Backend{}
+	b.turnMu.Lock()
+	b.steerInjected = true
+	b.turnMu.Unlock()
+
+	b.beginTurn(&delegator.EventHandler{})
+
+	b.turnMu.Lock()
+	injected := b.steerInjected
+	b.turnMu.Unlock()
+
+	if injected {
+		t.Error("beginTurn should clear steerInjected")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // OnSystem
 // ---------------------------------------------------------------------------

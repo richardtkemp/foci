@@ -77,9 +77,10 @@ type Backend struct {
 	turnResultCh chan *ResultMessage    // buffered(1), receives result
 	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
-	turnText     strings.Builder       // accumulates text across assistant messages
-	turnTools    int                   // tool_use count this turn
-	nudgePending bool                  // set when PostToolNudge sends PriorityNow; cleared on next OnResult or beginTurn
+	turnText      strings.Builder       // accumulates text across assistant messages
+	turnTools     int                   // tool_use count this turn
+	nudgePending  bool                  // set when PostToolNudge sends PriorityNow; cleared on next OnResult or beginTurn
+	steerInjected bool                  // set when checkAndSendSteers sends PriorityNow; cleared on next OnResult or beginTurn. Triggers handler re-arm so the steered response isn't dropped after CC's abort-result fires (TODO #726).
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -408,6 +409,7 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.nudgePending = false
+	b.steerInjected = false
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -452,6 +454,7 @@ func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.nudgePending = false
+	b.steerInjected = false
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -601,7 +604,15 @@ func (b *Backend) checkAndSendSteers() {
 			preview = preview[:80] + "..."
 		}
 		log.Debugf("ccstream/steer", "sending PriorityNow steer to CC: bytes=%d preview=%q", len(text), preview)
-		_ = b.writer.SendUserWithPriority("[user] "+text, PriorityNow)
+		if err := b.writer.SendUserWithPriority("[user] "+text, PriorityNow); err == nil {
+			// PriorityNow aborts CC's in-flight tool execution and triggers
+			// a result message for the cancelled turn. Mark the turn so
+			// OnResult re-arms the handler instead of clearing it — the
+			// steered response that follows must reach OnText.
+			b.turnMu.Lock()
+			b.steerInjected = true
+			b.turnMu.Unlock()
+		}
 	}
 }
 
@@ -950,6 +961,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	handler := b.turnHandler
 	nudgePending := b.nudgePending
 	b.nudgePending = false
+	steerInjected := b.steerInjected
+	b.steerInjected = false
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -1037,6 +1050,33 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 		b.rearmForNudgeResponse(handler)
 		b.logger().Infof("OnResult: re-armed for pending nudge response")
+		if resultCh != nil {
+			select {
+			case resultCh <- msg:
+			default:
+			}
+		}
+		return
+	}
+
+	// Steer-injected re-arm: a steer was sent via PriorityNow during this
+	// turn. CC aborted the in-flight work and emitted this result; CC will
+	// then process the steered message and produce more output. Without
+	// re-arming, that output's text blocks hit b.turnHandler == nil and
+	// get silently dropped (TODO #726). Complete the foci turn normally
+	// (fire OnTurnComplete with whatever text accumulated before the
+	// abort), then re-arm with a delivery-only handler so the steered
+	// response reaches the platform via OnText.
+	if steerInjected && handler != nil {
+		b.agents.ClearAll()
+		if handler.OnTurnComplete != nil {
+			handler.OnTurnComplete(result)
+		}
+		if b.typingFunc != nil {
+			b.typingFunc(true)
+		}
+		b.rearmForNudgeResponse(handler)
+		b.logger().Infof("OnResult: re-armed for steered response (text=%d bytes)", len(text))
 		if resultCh != nil {
 			select {
 			case resultCh <- msg:
