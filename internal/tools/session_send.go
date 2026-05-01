@@ -37,10 +37,14 @@ type SessionKeyResolverFn func(partialKey string) string
 // versionTS) are resolved to the active session key.
 func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, sessionNotifyFn SessionNotifyFn, resolveKeyFn SessionKeyResolverFn) *Tool {
 	return &Tool{
-		Name:        "send_to_session",
-		ExecExport:  true,
-		Positional:  []string{"session_key", "message"},
-		StdinParam:  "message",
+		Name:       "send_to_session",
+		ExecExport: true,
+		// Generic shell generator supports one positional only — pick
+		// session_key (the routing target) and let message come via stdin
+		// or --message. Usage: foci_send_to_session <session_key> --message X
+		// or: echo "..." | foci_send_to_session <session_key>
+		Positional: []string{"session_key"},
+		StdinParam: "message",
 		Description: "Send a message to another session. The message is injected as a user-role message and the target session's agent will see and respond to it. Use this to communicate with branch sessions or the main session. By default the target's reply routes back to you (the caller); set reply_to to \"session\" to have the reply go to the target session's own chat instead.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
