@@ -144,6 +144,75 @@ func TestAgentWorker_OrphanDrainIsRecursive(t *testing.T) {
 	}
 }
 
+func TestCommandWorker_DispatchesConcurrentlyWithAgentTurn(t *testing.T) {
+	// Proves that slash commands queued during an in-flight agent turn are
+	// dispatched immediately by commandWorker, not held until the turn ends.
+	// Before the split, agentWorker consumed both message and command channels
+	// in the same goroutine, so a long turn would starve commands like /status.
+
+	cmdRan := make(chan struct{}, 1)
+	cmds := command.NewRegistry()
+	cmds.Register(&command.Command{
+		Name:        "ping",
+		Description: "test",
+		Execute: func(ctx context.Context, req command.Request, cc command.CommandContext) (command.Response, error) {
+			select {
+			case cmdRan <- struct{}{}:
+			default:
+			}
+			return command.Response{Text: "pong"}, nil
+		},
+	})
+
+	b, _ := testBot([]string{"111"}, cmds)
+
+	// Block the agent turn for the duration of the test.
+	turnStarted := make(chan struct{})
+	releaseTurn := make(chan struct{})
+	handler := &mockHandler{}
+	handler.onCall = func(_ []string) {
+		close(turnStarted)
+		<-releaseTurn
+	}
+	b.handler = handler
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	agentDone := make(chan struct{})
+	cmdDone := make(chan struct{})
+	go func() { defer close(agentDone); b.agentWorker(ctx) }()
+	go func() { defer close(cmdDone); b.commandWorker(ctx) }()
+
+	// Start a turn that blocks inside the handler.
+	msg := makeMsg(111, "owner", "stuck-turn")
+	b.mq.PushFlushed(platform.QueuedMessage{Original: msg, UserID: "111", Text: "stuck-turn", ChatID: 12345})
+
+	select {
+	case <-turnStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent turn never started")
+	}
+
+	// Now enqueue a command — it must be dispatched while the turn is still blocked.
+	pingMsg := makeMsg(111, "owner", "/ping")
+	b.mq.EnqueueCommand(platform.QueuedMessage{
+		Original: pingMsg, UserID: "111", Text: "/ping", ChatID: 12345,
+	})
+
+	select {
+	case <-cmdRan:
+		// Good — command ran while turn is still blocked.
+	case <-time.After(2 * time.Second):
+		t.Fatal("command did not run within 2s — it appears to be queued behind the agent turn")
+	}
+
+	close(releaseTurn)
+	cancel()
+	<-agentDone
+	<-cmdDone
+}
+
 func TestAgentWorker_QueueBatching(t *testing.T) {
 	// Proves that multiple messages queued while the agent is busy are
 	// batched into a single HandleMessageWithAttachments call with

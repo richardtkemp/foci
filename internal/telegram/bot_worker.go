@@ -12,28 +12,39 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// agentWorker processes queued messages and commands, batching messages that
-// arrive while busy. Commands are given priority over agent turns: they are
-// drained before starting a new turn, preventing long turns from starving
-// pending commands.
+// commandWorker processes queued slash commands in its own goroutine,
+// concurrent with the agent worker. Commands like /status, /mana, /model are
+// stateless reads or only touch session config — there is no good reason to
+// serialise them behind in-flight agent turns. Commands that must interrupt a
+// turn (e.g. /stop) are marked Immediate and dispatched inline by the polling
+// goroutine instead of going through this channel at all.
+//
+// Concurrency note: commands run on this goroutine while a turn may be active
+// on agentWorker. State-mutating commands (e.g. /reset, /compact) acquire
+// whatever locks they need via cc.Agent — the worker boundary itself does not
+// provide synchronisation.
+func (b *Bot) commandWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			b.logger().Debugf("commandWorker: ctx done, exiting")
+			return
+		case cmd := <-b.mq.CmdChan():
+			b.logger().Debugf("commandWorker: dequeued command %q", cmd.Text)
+			b.processQueuedCommand(ctx, cmd)
+		}
+	}
+}
+
+// agentWorker processes queued messages, batching messages that arrive while
+// busy. Slash commands are handled separately by commandWorker — they are not
+// dispatched here, so a long agent turn cannot delay command response.
 func (b *Bot) agentWorker(ctx context.Context) {
 	for {
-		// Priority: drain any pending commands before starting a new agent turn.
-		select {
-		case cmd := <-b.mq.CmdChan():
-			b.logger().Debugf("worker: dequeued command %q", cmd.Text)
-			b.processQueuedCommand(ctx, cmd)
-			continue
-		default:
-		}
-
 		select {
 		case <-ctx.Done():
 			b.logger().Debugf("worker: ctx done, exiting")
 			return
-		case cmd := <-b.mq.CmdChan():
-			b.logger().Debugf("worker: dequeued command %q", cmd.Text)
-			b.processQueuedCommand(ctx, cmd)
 		case qm := <-b.mq.Chan():
 			// Batch with any other immediately-available messages.
 			batch := append([]platform.QueuedMessage{qm}, b.mq.DrainQueue()...)

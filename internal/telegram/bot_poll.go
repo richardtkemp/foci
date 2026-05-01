@@ -58,6 +58,10 @@ func (b *Bot) Run(ctx context.Context) {
 	// Agent worker — processes queued messages sequentially
 	go b.agentWorker(ctx)
 
+	// Command worker — processes slash commands concurrently with agent turns,
+	// so /status etc. respond immediately instead of queueing behind tool calls.
+	go b.commandWorker(ctx)
+
 	for ctx.Err() == nil {
 		b.pollUpdates(ctx)
 
