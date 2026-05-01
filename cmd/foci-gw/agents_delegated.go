@@ -72,7 +72,8 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// Built before buildAutoApproveRules so its ExportedNames can drive the
 	// always-on FociShellRules — keeps the auto-approve list in sync with
 	// what's actually wired in (no hand-list to drift).
-	registry := buildExecRegistry(p, shared.wakeScheduleFn)
+	agLazy := func() *agent.Agent { return ag }
+	registry := buildExecRegistry(p, shared.wakeScheduleFn, agLazy)
 
 	// Build auto-approve rules from resolved config.
 	autoApproveRules := buildAutoApproveRules(p, registry.ExportedNames())
@@ -225,7 +226,12 @@ func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
 // wakeScheduleFn is the agent's scheduled-wake callback (built once
 // transport-independently in setupAgent). Pass nil to skip remind-tool
 // registration — useful when reminderStore is unconfigured.
-func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn) *tools.Registry {
+//
+// agLazy is a closure that returns the agent — used by the async notifier so
+// send_to_session can deliver replies back to the calling session. May be nil
+// in tests where the notifier path isn't exercised; when nil, send_to_session
+// is still registered but reply_to=caller deliveries are a no-op.
+func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLazy func() *agent.Agent) *tools.Registry {
 	registry := tools.NewRegistry()
 	acfg := p.acfg
 	connMgr := p.connMgr
@@ -237,6 +243,21 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn) *tool
 		}
 		return conn
 	}, nil))
+
+	// send_to_session: cross-session messaging. Wires the same async notifier
+	// and session-notify routes as the API path (registerSessionTools). The
+	// notifier handles reply_to=caller (response routes back); sessionNotifyFn
+	// handles reply_to=session (response goes to target's own chat).
+	var notifier *tools.AsyncNotifier
+	if agLazy != nil {
+		notifier = newAsyncNotifier(agLazy, acfg.ID, p.ctx, connMgr)
+	}
+	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
+	var resolveKeyFn tools.SessionKeyResolverFn
+	if p.sessionIndex != nil {
+		resolveKeyFn = p.sessionIndex.ResolvePartialKey
+	}
+	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
 
 	if p.todoStore != nil {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
