@@ -48,7 +48,7 @@ func TestBuildExecRegistryRegistersRemind(t *testing.T) {
 	p := minimalSetupParams(t, "test")
 	p.reminderStore = rs
 
-	registry := buildExecRegistry(p, stubWakeFn)
+	registry := buildExecRegistry(p, stubWakeFn, nil)
 	if got := registry.Get("remind"); got == nil {
 		t.Fatal("registry missing remind tool when reminderStore + wakeFn are set")
 	}
@@ -75,7 +75,7 @@ func TestBuildExecRegistrySkipsRemindWhenStoreNil(t *testing.T) {
 	p := minimalSetupParams(t, "test")
 	// p.reminderStore intentionally nil
 
-	registry := buildExecRegistry(p, stubWakeFn)
+	registry := buildExecRegistry(p, stubWakeFn, nil)
 	if got := registry.Get("remind"); got != nil {
 		t.Error("registry contains remind tool despite nil reminderStore")
 	}
@@ -114,13 +114,13 @@ func TestBuildExecRegistryAllToolsHaveShellFuncParity(t *testing.T) {
 	// just needs len > 0; the searcher value is never invoked here.
 	p.memBackends = map[string]memory.Searcher{"stub": nil}
 
-	registry := buildExecRegistry(p, stubWakeFn)
+	registry := buildExecRegistry(p, stubWakeFn, nil)
 
 	// Sanity: every conditional tool we expect should be present. If
 	// buildExecRegistry's wiring changes, update this list AND the test
 	// will still cover all registered tools because the parity check runs
 	// over registry.All().
-	for _, want := range []string{"send_to_chat", "web_fetch", "http_request", "todo", "web_search", "memory_search", "remind"} {
+	for _, want := range []string{"send_to_chat", "send_to_session", "web_fetch", "http_request", "todo", "web_search", "memory_search", "remind"} {
 		if registry.Get(want) == nil {
 			t.Errorf("expected tool %q to be registered with full deps", want)
 		}
@@ -135,6 +135,33 @@ func TestBuildExecRegistryAllToolsHaveShellFuncParity(t *testing.T) {
 		t.Fatalf("NewExecBridge: %v\n\nThis usually means a tool's schema gained a parameter without a matching --flag case arm in its generated shell-func body. Check generateShellFunc and generateGenericShellFunc.", err)
 	}
 	t.Cleanup(bridge.Close)
+}
+
+func TestBuildExecRegistryRegistersSendToSession(t *testing.T) {
+	// Delegated agents must have send_to_session for cross-session messaging
+	// (foci_send_to_session shell function). Prior to this wiring, only API
+	// agents had it — delegated/CC agents could send_to_chat but not address
+	// other sessions directly.
+	t.Parallel()
+
+	p := minimalSetupParams(t, "test")
+
+	registry := buildExecRegistry(p, stubWakeFn, nil)
+	if got := registry.Get("send_to_session"); got == nil {
+		t.Fatal("registry missing send_to_session tool")
+	}
+
+	exportedHas := func(names []string, target string) bool {
+		for _, n := range names {
+			if n == target {
+				return true
+			}
+		}
+		return false
+	}
+	if !exportedHas(registry.ExportedNames(), "foci_send_to_session") {
+		t.Errorf("ExportedNames() = %v, want to include foci_send_to_session", registry.ExportedNames())
+	}
 }
 
 func TestBuildExecRegistrySkipsRemindWhenWakeFnNil(t *testing.T) {
@@ -154,7 +181,7 @@ func TestBuildExecRegistrySkipsRemindWhenWakeFnNil(t *testing.T) {
 	p.reminderStore = rs
 
 	var nilFn tools.ScheduleWakeFn
-	registry := buildExecRegistry(p, nilFn)
+	registry := buildExecRegistry(p, nilFn, nil)
 	if got := registry.Get("remind"); got != nil {
 		t.Error("registry contains remind tool despite nil wakeFn")
 	}
