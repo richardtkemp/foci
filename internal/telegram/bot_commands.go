@@ -10,20 +10,20 @@ import (
 )
 
 // renderCommandOutcome renders a CommandOutcome using Telegram-native sends.
-// Returns true if the outcome was handled (i.e. not NotHandled).
-func (b *Bot) renderCommandOutcome(msg *gotgbot.Message, outcome *dispatch.CommandOutcome) bool {
+// NotHandled outcomes are silently ignored.
+func (b *Bot) renderCommandOutcome(msg *gotgbot.Message, outcome *dispatch.CommandOutcome) {
 	if outcome.NotHandled {
-		return false
+		return
 	}
 
 	if outcome.Keyboard != nil {
 		b.sendCommandKeyboard(outcome.Keyboard.CommandName, outcome.Keyboard.Header, outcome.Keyboard.Options)
-		return true
+		return
 	}
 
 	if outcome.Chain != nil {
 		_, _ = b.SendTextWithButtons(outcome.Chain.Label, dispatch.CmdButtons(outcome.Chain.CommandName, outcome.Chain.Options), "cmd:")
-		return true
+		return
 	}
 
 	if outcome.Response != nil {
@@ -50,8 +50,5 @@ func (b *Bot) renderCommandOutcome(msg *gotgbot.Message, outcome *dispatch.Comma
 			_ = b.SendDocumentToChat(msg.Chat.Id, result.Response.DocPath, "")
 			_ = os.Remove(result.Response.DocPath)
 		}
-		return true
 	}
-
-	return false
 }

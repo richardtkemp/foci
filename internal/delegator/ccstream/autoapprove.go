@@ -344,7 +344,7 @@ func isOutputRedirect(op syntax.RedirOperator) bool {
 	switch op {
 	case syntax.RdrOut, // >
 		syntax.AppOut, // >>
-		syntax.ClbOut, // >|
+		syntax.RdrClob, // >|
 		syntax.RdrAll, // &>
 		syntax.AppAll: // &>>
 		return true
@@ -397,7 +397,8 @@ func declHasDangerousVar(d *syntax.DeclClause) bool {
 		if arg.Naked && arg.Name == nil && arg.Value != nil {
 			// Naked args are flags (e.g. -n, -gn). Check for nameref flag.
 			var buf strings.Builder
-			syntax.NewPrinter().Print(&buf, arg.Value)
+			// Print errors only on broken Writers; strings.Builder never fails.
+			_ = syntax.NewPrinter().Print(&buf, arg.Value)
 			flag := buf.String()
 			if strings.HasPrefix(flag, "-") && strings.ContainsRune(flag, 'n') {
 				return true
@@ -431,7 +432,8 @@ func callExprCmdString(pr *syntax.Printer, ce *syntax.CallExpr) string {
 		if i > 0 {
 			buf.WriteByte(' ')
 		}
-		pr.Print(&buf, arg)
+		// Print errors only on broken Writers; strings.Builder never fails.
+		_ = pr.Print(&buf, arg)
 	}
 	return buf.String()
 }
