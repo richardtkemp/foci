@@ -731,8 +731,8 @@ func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 		t.Error("foci_todo should handle --sort flag")
 	}
 	// Should have a sort variable declared
-	if !strings.Contains(content, `local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" state=""`) {
-		t.Error("foci_todo should declare sort, reverse, limit, ids, and state variables")
+	if !strings.Contains(content, `local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit=""`) {
+		t.Error("foci_todo should declare sort, reverse, limit, and ids variables")
 	}
 	// Should pass sort parameter to list action
 	if !strings.Contains(content, `[ -n "$sort" ] && params="$(echo "$params" | jq --arg o "$sort" '. + {sort: $o}')"`) {
