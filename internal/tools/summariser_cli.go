@@ -17,14 +17,19 @@ import (
 //
 // Invocation:
 //
-//	claude --print --bare --no-session-persistence --model <model>
+//	claude --print --no-session-persistence --model <model>
 //	       --system-prompt "<summarisation instructions>"
 //
 // stdin receives the formatted user message (content + prompt). stdout is
-// the model's text response. --bare skips CLAUDE.md auto-discovery, hooks,
-// LSP, plugins, and keychain reads — keeping the subprocess cheap and
-// independent of the surrounding session's context. --no-session-persistence
-// avoids leaving a JSONL file behind.
+// the model's text response. --no-session-persistence avoids leaving a JSONL
+// file behind. --system-prompt replaces the default system prompt, so
+// CLAUDE.md auto-discovery and dynamic system-prompt sections (cwd, env, git
+// status) are skipped automatically.
+//
+// Note: --bare would skip more (hooks, LSP, plugins, keychain), but it also
+// disables OAuth auth — making the CLI fall back to ANTHROPIC_API_KEY only,
+// which defeats the purpose of routing through the subscription. Accepting
+// hooks/LSP/plugin overhead is the price of subscription-mana auth.
 type CLISummariser struct {
 	binary        string // path to claude binary; "claude" by default
 	model         string // model alias (e.g. "haiku")
@@ -58,7 +63,6 @@ func (s *CLISummariser) Summarise(ctx context.Context, content []byte, prompt, f
 
 	cmd := exec.CommandContext(ctx, s.binary,
 		"--print",
-		"--bare",
 		"--no-session-persistence",
 		"--model", s.model,
 		"--system-prompt", summarySystemPrompt,
