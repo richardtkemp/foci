@@ -101,7 +101,8 @@ func registerCoreTools(registry *tools.Registry, p setupParams, client provider.
 	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
 	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
 	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
-	registry.Register(tools.NewSummaryTool(client, p.clientProvider, groupResolver, acfg.Workspace, fallbackFn))
+	apiSummariser := tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, sc.MaxSummaryInputChars)
+	registry.Register(tools.NewSummaryTool(apiSummariser, acfg.Workspace))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier, fileMode))
 
 	return result

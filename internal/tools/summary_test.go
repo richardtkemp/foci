@@ -28,7 +28,7 @@ func TestSummaryTool_MissingParams(t *testing.T) {
 	t.Parallel()
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "", nil)
+	tool := NewSummaryTool(NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	tests := []struct {
 		name   string
@@ -59,7 +59,7 @@ func TestSummaryTool_FileNotFound(t *testing.T) {
 	t.Parallel()
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "", nil)
+	tool := NewSummaryTool(NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   "/tmp/nonexistent-summary-test-file-xyz",
@@ -83,7 +83,7 @@ func TestSummaryTool_EmptyFile(t *testing.T) {
 
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "", nil)
+	tool := NewSummaryTool(NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -109,7 +109,7 @@ func TestSummaryTool_BinaryFile(t *testing.T) {
 
 	client := newTestAnthropicClient("http://unused", "test-key")
 	gr := testGroupResolver("anthropic/claude-haiku-4-5")
-	tool := NewSummaryTool(client, nil, gr, "", nil)
+	tool := NewSummaryTool(NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -164,7 +164,7 @@ func TestSummaryTool_Success(t *testing.T) {
 		"fast":     "anthropic/claude-haiku-4-5",
 		"cheap":    "anthropic/claude-haiku-4-5",
 	}}, nil)
-	tool := NewSummaryTool(client, nil, gr, "", nil)
+	tool := NewSummaryTool(NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{
 		"file":   tmp,
@@ -232,7 +232,7 @@ func TestSummaryTool_ModelAlias(t *testing.T) {
 		"fast":     "anthropic/claude-haiku-4-5-custom",
 		"cheap":    "anthropic/claude-haiku-4-5-custom",
 	}}, nil)
-	tool := NewSummaryTool(client, nil, gr, "", nil)
+	tool := NewSummaryTool(NewAPISummariser(client, nil, gr, nil, 0), "")
 
 	params, _ := json.Marshal(map[string]string{"file": tmp, "prompt": "summarize"})
 	_, err := tool.Execute(context.Background(), params)
