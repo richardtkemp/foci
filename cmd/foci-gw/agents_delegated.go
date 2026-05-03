@@ -270,6 +270,13 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	registry.Register(tools.NewWebFetchTool())
 	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, 0, 0, nil, 0o644))
 
+	// Summary tool: piped/file content summarisation. Delegated agents shell
+	// out to `claude --print` (CLISummariser), routing through the parent CC
+	// subprocess's subscription auth so the call charges mana, not API spend.
+	// API agents register this in registerCoreTools with APISummariser.
+	cliSummariser := tools.NewCLISummariser("", "haiku", p.resolved.Summary.MaxSummaryInputChars)
+	registry.Register(tools.NewSummaryTool(cliSummariser, acfg.Workspace))
+
 	if len(p.memBackends) > 0 {
 		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))
 	}
