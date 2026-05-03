@@ -112,11 +112,10 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 
 	// Wait for CC to confirm compaction is underway before notifying the user.
 	// This prevents the ⏳ from racing ahead of buffered content messages.
+	// Timeout/error here is non-fatal: send the notification anyway and
+	// continue waiting for completion below.
 	if csw, ok := be.(delegator.CompactionStartWaiter); ok {
-		if err := csw.WaitForCompactionStart(cctx); err != nil {
-			// Timed out waiting for start — send the notification anyway
-			// and continue waiting for completion.
-		}
+		_ = csw.WaitForCompactionStart(cctx)
 	}
 	for _, fn := range a.CompactionStartFunc {
 		fn(sessionKey, "⏳ Compacting context...")

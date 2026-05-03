@@ -19,14 +19,6 @@ func IsCommandText(text string) bool {
 	return len(text) > 0 && (text[0] == '/' || text[0] == '.')
 }
 
-// IsImmediateCommand reports whether a command must be dispatched in the polling
-// goroutine rather than deferred to the worker. Currently only /stop, because it
-// cancels an active agent turn and must not wait in the command queue.
-func IsImmediateCommand(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	return lower == "/stop" || strings.HasPrefix(lower, "/stop ")
-}
-
 // Interceptor implements the shared message interception pipeline used by
 // both Telegram and Discord bots. It handles wizard intercept, last-message
 // recording, stale command drops, command dispatch, message transforms,
