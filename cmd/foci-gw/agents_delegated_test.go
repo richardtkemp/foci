@@ -25,9 +25,10 @@ func stubWakeFn(int64, time.Duration, string, string) error { return nil }
 func minimalSetupParams(t *testing.T, agentID string) setupParams {
 	t.Helper()
 	return setupParams{
-		acfg:    config.AgentConfig{ID: agentID},
-		cfg:     &config.Config{},
-		connMgr: stubConnMgr{},
+		acfg:     config.AgentConfig{ID: agentID},
+		cfg:      &config.Config{},
+		resolved: &config.ResolvedAgentConfig{},
+		connMgr:  stubConnMgr{},
 	}
 }
 

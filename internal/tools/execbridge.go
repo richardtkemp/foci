@@ -508,7 +508,7 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local action="$1"; shift 2>/dev/null || true
-  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit="" state=""
+  local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --text) text="$2"; shift 2 ;;
@@ -522,16 +522,15 @@ func generateShellFunc(t *Tool) string {
       --sort) sort="$2"; shift 2 ;;
       --limit) limit="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
-      --state) state="$2"; shift 2 ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit --state" >&2
+        echo "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit" >&2
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
           add|edit) text="$text $1" ;;
           search) query="$query $1" ;;
-          get|complete|remove) id="$1" ;;
+          get|complete|drop|remove) id="$1" ;;
         esac
         shift ;;
     esac
@@ -577,8 +576,14 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson id "$id" '{"tool":"todo","params":{"action":"get","id":$id}}')"
       ;;
     complete)
-      local params='{"action":"transition","state":"done"}'
-      [ -n "$state" ] && params="$(echo "$params" | jq --arg s "$state" '. + {state: $s}')"
+      local params='{"action":"complete"}'
+      [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
+      [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
+      [ -n "$reason" ] && params="$(echo "$params" | jq --arg r "$reason" '. + {reason: $r}')"
+      foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
+      ;;
+    drop)
+      local params='{"action":"drop"}'
       [ -n "$id" ] && params="$(echo "$params" | jq --argjson i "$id" '. + {id: $i}')"
       [ -n "$ids" ] && params="$(echo "$params" | jq --argjson i "$ids" '. + {ids: $i}')"
       [ -n "$reason" ] && params="$(echo "$params" | jq --arg r "$reason" '. + {reason: $r}')"
@@ -600,7 +605,7 @@ func generateShellFunc(t *Tool) string {
       foci-call "$(jq -nc --argjson p "$params" '{"tool":"todo","params":$p}')"
       ;;
     *)
-      echo "usage: %s <add|list|list-all|search|get|complete|edit|remove> [args...]" >&2
+      echo "usage: %s <add|list|list-all|search|get|complete|drop|edit|remove> [args...]" >&2
       return 1
       ;;
   esac

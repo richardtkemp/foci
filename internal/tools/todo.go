@@ -15,13 +15,13 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 	return &Tool{
 		Name:        "todo",
 		ExecExport:  true,
-		Description: "Manage a persistent todo list. Supports adding, listing, searching, getting, transitioning, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
+		Description: "Manage a persistent todo list. Supports adding, listing, searching, getting, completing, dropping, editing, and removing items. Items have priority (high/medium/low) and optional tags. Items survive restarts.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"action": {
 					"type": "string",
-					"enum": ["add", "list", "search", "get", "transition", "edit", "remove"],
+					"enum": ["add", "list", "search", "get", "complete", "drop", "edit", "remove"],
 					"description": "The operation to perform"
 				},
 				"text": {
@@ -39,20 +39,16 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"id": {
 					"type": "integer",
-					"description": "Todo item ID (required for 'get', 'transition', 'edit', and 'remove')"
+					"description": "Todo item ID (required for 'get', 'complete', 'drop', 'edit', and 'remove')"
 				},
 				"ids": {
 					"type": "array",
 					"items": {"type": "integer"},
-					"description": "Array of todo item IDs (alternative to 'id' for batch operations, used with 'transition', 'edit', 'remove')"
+					"description": "Array of todo item IDs (alternative to 'id' for batch operations, used with 'complete', 'drop', 'edit', 'remove')"
 				},
 				"status": {
 					"type": "string",
 					"description": "Filter by status (used with 'list' and 'search'). For 'list': default is active (excludes done/dropped). For 'search': default is all. Values: 'open', 'started', 'done', 'dropped', 'active', 'all'"
-				},
-				"state": {
-					"type": "string",
-					"description": "Target state for 'transition': 'open', 'started', 'done', or 'dropped'"
 				},
 				"query": {
 					"type": "string",
@@ -64,7 +60,7 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				},
 				"reason": {
 					"type": "string",
-					"description": "Reason for the transition (required for 'transition' to 'done' or 'dropped', e.g. 'implemented in abc1234', 'no longer relevant')"
+					"description": "Reason for closing (required for 'complete' and 'drop', e.g. 'implemented in abc1234', 'no longer relevant')"
 				},
 				"sort": {
 					"type": "string",
@@ -108,17 +104,21 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return todoSearch(store, agentID, p.Query, p.Status, p.Sort, p.Reverse, p.Limit)
 			case "get":
 				return todoGet(store, agentID, p.ID)
-			case "transition":
-				return todoTransition(store, agentID, p.ID, p.IDs, p.State, p.Reason)
 			case "complete":
-				// Back-compat: "complete" maps to transition → done.
 				return todoTransition(store, agentID, p.ID, p.IDs, "done", p.Reason)
+			case "drop":
+				return todoTransition(store, agentID, p.ID, p.IDs, "dropped", p.Reason)
+			case "transition":
+				// Back-compat: undocumented action for callers that send the
+				// raw transition+state pair (older API agents, format tests).
+				// New callers should use 'complete' or 'drop'.
+				return todoTransition(store, agentID, p.ID, p.IDs, p.State, p.Reason)
 			case "edit":
 				return todoEdit(store, agentID, p.ID, p.IDs, p.Text, p.Priority, p.Tag, params)
 			case "remove":
 				return todoRemove(store, agentID, p.ID, p.IDs)
 			default:
-				return ToolResult{}, fmt.Errorf("unknown action: %s (use add, list, search, get, transition, edit, or remove)", p.Action)
+				return ToolResult{}, fmt.Errorf("unknown action: %s (use add, list, search, get, complete, drop, edit, or remove)", p.Action)
 			}
 		},
 	}
