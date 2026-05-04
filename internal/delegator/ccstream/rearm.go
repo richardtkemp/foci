@@ -10,75 +10,78 @@
 // OnTurnComplete, then installs a delivery-only handler so the injected
 // event's response reaches OnText.
 //
-// All injection paths share an identical recovery shape, so the rearm state
-// is a binary flag: rearmNone (normal completion) or rearmPending (a queued
-// response is awaiting delivery).
+// pendingRearmCount semantics:
+//
+// When non-zero, OnResult must take the complete-and-rearm path: complete
+// the foci turn (the first time) or absorb the next queued response (every
+// time after), then install a delivery-only handler so the queued user-role
+// response reaches OnText. Each injected event increments the count; each
+// OnResult that takes the rearm path decrements it. When multiple events
+// stack within a single in-flight CC turn, the count drains across
+// successive OnResult cycles — each event gets its own delivery handler,
+// and the count reaches zero only after CC has emitted a result for every
+// queued event.
+//
+// The "fire OnTurnComplete only once" invariant falls out naturally: the
+// original handler (with a real OnTurnComplete) is captured by the first
+// rearm cycle; rearmForNudgeResponse then installs a delivery-only handler
+// whose OnTurnComplete is nil. Subsequent OnResult cycles capture that
+// nil-OnTurnComplete handler, so completeAndRearm's nil-check no-ops the
+// callback. Consumers see exactly one foci-turn boundary regardless of
+// how many CC result messages flow through.
+//
+// Pre-counter (single-bit rearmReason) the second event's response raced
+// against the first cycle's handler clear and was dropped — surfaced as
+// the production "text block dropped (no handler/OnText)" WARN. The
+// counter eliminates that race by giving every queued event its own
+// delivery cycle.
+//
+// The protocol assumes CC emits one result + one assistant cycle per
+// injected event. If CC fails to produce a result for some queued event,
+// the count stays positive — but it doesn't underflow (decRearm clamps at
+// zero) and the next beginTurn resets it.
 
 package ccstream
 
 import (
-	"fmt"
-
 	"foci/internal/delegator"
 )
 
-// rearmReason names the reason the next OnResult must take the
-// complete-and-rearm path instead of normal turn cleanup.
-type rearmReason int
-
-const (
-	// rearmNone means OnResult should clear the handler normally — no
-	// queued user-role injection is awaiting delivery.
-	rearmNone rearmReason = iota
-
-	// rearmPending means a user-role event has been injected mid-turn
-	// (post-tool nudge, urgent steer dispatch, or follow-up via SendCommand
-	// on an in-flight turn) and CC will produce a fresh round of assistant
-	// output for it after the current result message. OnResult must complete
-	// the foci turn with the pre-injection text, then install a delivery-only
-	// handler so the queued response reaches OnText.
-	rearmPending
-)
-
-// String returns a stable lower-case label for logging.
-func (r rearmReason) String() string {
-	switch r {
-	case rearmNone:
-		return "none"
-	case rearmPending:
-		return "pending"
-	default:
-		return fmt.Sprintf("rearmReason(%d)", int(r))
-	}
-}
-
-// setRearmReason records that the next OnResult must re-arm. Caller must
-// hold turnMu.
+// incRearm signals that a user-role event has been injected mid-turn and
+// the next OnResult must complete-and-rearm. Caller must hold turnMu.
 //
-// Stacking guard: the protocol assumes at most one queued user-role event
-// per CC turn — CC emits one result and one assistant cycle per injected
-// event, and the rearm flag is a single bit that re-arms once. If two
-// events stack within the same in-flight turn (e.g. a post-tool nudge fires
-// just as a Telegram-side urgent steer dispatches), the second event's
-// response will stream through the re-armed delivery-only handler from the
-// first event's recovery, but the cleanup cycle ends after the first
-// queued response — the second response races against handler clear. The
-// WARN here surfaces stacking when it happens; if real traffic shows it's
-// frequent the rearm state needs to become a counter or queue.
-func (b *Backend) setRearmReason(r rearmReason) {
-	if b.pendingRearmReason != rearmNone && r != rearmNone && b.pendingRearmReason == r {
-		b.logger().Warnf("rearm reason already pending — second event may lose its response (stacking)")
-	}
-	b.pendingRearmReason = r
+// Stacking is supported: two events queued within the same in-flight turn
+// increment the count to 2, and successive OnResult cycles drain it.
+func (b *Backend) incRearm() {
+	b.pendingRearmCount++
 }
 
-// completeAndRearm fires the original handler's OnTurnComplete, installs a
-// delivery-only handler for the queued response, and signals WaitForTurn.
+// decRearm consumes one pending rearm signal. Returns the count BEFORE
+// decrement, so callers can branch on whether the rearm path applies.
+// Clamps at zero on underflow (defensive — should not happen in practice
+// since OnResult only consumes when count > 0). Caller must hold turnMu.
+func (b *Backend) decRearm() int {
+	prev := b.pendingRearmCount
+	if prev > 0 {
+		b.pendingRearmCount--
+	}
+	return prev
+}
+
+// completeAndRearm fires the original handler's OnTurnComplete (if set),
+// installs a delivery-only handler for the queued response, and signals
+// WaitForTurn.
 //
 // Caller must NOT hold turnMu — rearmForNudgeResponse takes it. handler is
-// the original turn handler (captured before its OnResult clearing); result
-// and msg are passed through to the OnTurnComplete callback and the
-// WaitForTurn channel respectively.
+// the turn handler captured before its OnResult clearing; result and msg
+// are passed through to the OnTurnComplete callback and the WaitForTurn
+// channel respectively.
+//
+// Multi-cycle behaviour: on the first rearm cycle the handler is the
+// caller's original (real OnTurnComplete fires); on subsequent cycles the
+// handler is the delivery-only one installed by a prior rearmForNudgeResponse
+// (OnTurnComplete is nil and the nil-check no-ops). This keeps the foci-turn
+// boundary firing exactly once across stacked events.
 func (b *Backend) completeAndRearm(
 	handler *delegator.EventHandler,
 	result *delegator.TurnResult,

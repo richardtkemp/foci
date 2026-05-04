@@ -513,13 +513,13 @@ func TestHandleHookResponse_PostToolNudgeDispatched(t *testing.T) {
 		t.Errorf("priority field should be absent post-Phase-5, got: %q", buf.String())
 	}
 
-	// Rearm flag must be set so OnResult re-arms a delivery handler for
-	// the nudge response that follows.
+	// Rearm count must be incremented so OnResult re-arms a delivery
+	// handler for the nudge response that follows.
 	b.turnMu.Lock()
-	pending := b.pendingRearmReason
+	count := b.pendingRearmCount
 	b.turnMu.Unlock()
-	if pending != rearmPending {
-		t.Errorf("pendingRearmReason = %s, want pending after nudge dispatch", pending)
+	if count != 1 {
+		t.Errorf("pendingRearmCount = %d, want 1 after nudge dispatch", count)
 	}
 }
 
