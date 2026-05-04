@@ -60,10 +60,7 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 	}
 
 	b.storePendingPerm(pp)
-
-	if b.onPermPending != nil {
-		b.onPermPending()
-	}
+	b.outstanding.Register(msg.RequestID, OutstandingPermission)
 
 	if b.permPromptFn != nil {
 		log.Debugf("ccstream/perm", "calling permPromptFn for req_id=%s", msg.RequestID)
@@ -76,8 +73,7 @@ func (b *Backend) handleToolRequest(msg *PermissionRequest) {
 // RespondToPermission is called by the platform layer when the user responds
 // to a permission prompt. It sends an allow or deny control response to CC.
 func (b *Backend) RespondToPermission(requestID string, allow bool, message string) error {
-	pp, ok, noMorePending := b.removePendingPerm(requestID)
-
+	pp, ok := b.removePendingPerm(requestID)
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
 	}
@@ -106,18 +102,14 @@ func (b *Backend) RespondToPermission(requestID string, allow bool, message stri
 		return err
 	}
 
-	if noMorePending && b.onPermCleared != nil {
-		b.onPermCleared()
-	}
-
+	b.outstanding.Resolve(requestID)
 	return nil
 }
 
 // RespondToPermissionWithRule responds with "always allow" for a given prefix,
 // including the permission suggestion in updatedPermissions.
 func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) error {
-	pp, ok, noMorePending := b.removePendingPerm(requestID)
-
+	pp, ok := b.removePendingPerm(requestID)
 	if !ok {
 		return fmt.Errorf("ccstream: no pending permission with request ID %q", requestID)
 	}
@@ -135,39 +127,31 @@ func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) e
 		return err
 	}
 
-	if noMorePending && b.onPermCleared != nil {
-		b.onPermCleared()
-	}
-
+	b.outstanding.Resolve(requestID)
 	return nil
 }
 
 // handleControlCancel is called when CC cancels a permission request
-// (e.g. a hook resolved it before the user responded, or a PriorityNow
-// user message interrupted the in-flight tool execution). This is the
-// only non-user-driven path that clears a permission — surface it at
-// INFO so it shows up alongside the corresponding "permission cleared"
-// debug line and makes the cause attributable.
+// (e.g. a hook resolved it before the user responded, or a follow-up user
+// message interrupted the in-flight tool execution). This is the only
+// non-user-driven path that clears a permission — surface it at INFO so it
+// shows up alongside the corresponding "permission cleared" debug line and
+// makes the cause attributable.
 //
-// Fires permCancelFn (per-perm UI update) before onPermCleared (last-perm
-// signal). The platform layer uses permCancelFn to disable the orphaned
-// inline keyboard so the user can't click an already-resolved button.
+// The OutstandingRegistry fires any per-prompt cancel listeners registered
+// by the platform layer (e.g. to disable the orphaned inline keyboard so
+// the user can't click an already-resolved button) and the registry-wide
+// onEmpty hook if this was the last outstanding prompt.
 func (b *Backend) handleControlCancel(reqID string) {
-	pp, _, noMorePending := b.removePendingPerm(reqID)
+	pp, _ := b.removePendingPerm(reqID)
 
 	tool := ""
 	if pp != nil {
 		tool = pp.toolName
 	}
-	log.Infof("ccstream/perm", "permission auto-cancelled by CC control_cancel_request: reqID=%s tool=%s noMorePending=%v", reqID, tool, noMorePending)
+	log.Infof("ccstream/perm", "permission auto-cancelled by CC control_cancel_request: reqID=%s tool=%s", reqID, tool)
 
-	if pp != nil && b.permCancelFn != nil {
-		b.permCancelFn(reqID, tool, "tool request cancelled by follow-up message")
-	}
-
-	if noMorePending && b.onPermCleared != nil {
-		b.onPermCleared()
-	}
+	b.outstanding.Cancel(reqID, "tool request cancelled by follow-up message")
 }
 
 // PendingPermissions returns the count of pending permission requests
@@ -194,13 +178,14 @@ func (b *Backend) getPendingPerm(requestID string) *pendingPermission {
 	return pp
 }
 
-// removePendingPerm removes and returns a pending permission.
-// Returns the permission, whether it was found, and whether the map is now empty.
-func (b *Backend) removePendingPerm(requestID string) (pp *pendingPermission, found bool, noMorePending bool) {
+// removePendingPerm removes and returns a pending permission. The
+// "all-clear" signal is fired by OutstandingRegistry's onEmpty hook, not
+// inferred locally — both perms and elicitations live in one registry, so
+// the registry's view of "empty" is the only correct one.
+func (b *Backend) removePendingPerm(requestID string) (pp *pendingPermission, found bool) {
 	b.permMu.Lock()
 	pp, found = b.pendingPerms[requestID]
 	delete(b.pendingPerms, requestID)
-	noMorePending = len(b.pendingPerms) == 0
 	b.permMu.Unlock()
 	return
 }

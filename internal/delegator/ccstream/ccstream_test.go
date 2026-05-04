@@ -87,6 +87,7 @@ func TestCallbackSetters(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	// SetPermissionPromptFunc
@@ -102,26 +103,15 @@ func TestCallbackSetters(t *testing.T) {
 		t.Error("permPromptFn was not called")
 	}
 
-	// SetOnPermissionCleared
+	// SetOnPromptsCleared — registered via the OutstandingRegistry's onEmpty
+	// hook. We exercise it by registering+resolving a prompt and asserting the
+	// hook fired exactly once.
 	var clearedCalled bool
-	b.SetOnPermissionCleared(func() { clearedCalled = true })
-	if b.onPermCleared == nil {
-		t.Error("onPermCleared is nil after SetOnPermissionCleared")
-	}
-	b.onPermCleared()
+	b.SetOnPromptsCleared(func() { clearedCalled = true })
+	b.outstanding.Register("test-req", OutstandingPermission)
+	b.outstanding.Resolve("test-req")
 	if !clearedCalled {
-		t.Error("onPermCleared was not called")
-	}
-
-	// SetOnPermissionPending
-	var pendingCalled bool
-	b.SetOnPermissionPending(func() { pendingCalled = true })
-	if b.onPermPending == nil {
-		t.Error("onPermPending is nil after SetOnPermissionPending")
-	}
-	b.onPermPending()
-	if !pendingCalled {
-		t.Error("onPermPending was not called")
+		t.Error("SetOnPromptsCleared callback was not fired when the registry emptied")
 	}
 
 	// SetOnSessionReady
@@ -481,6 +471,7 @@ func TestSendCommand_DuringTurn_ArmsRearm(t *testing.T) {
 		t.Errorf("pendingRearmReason = %s, want pending for in-flight SendCommand", pending)
 	}
 }
+
 
 // ---------------------------------------------------------------------------
 // SendToPane
@@ -1885,6 +1876,7 @@ func TestOnSystem_Init(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 	b.SetOnSessionReady(func(id string) { readySessID = id })
 
@@ -1935,6 +1927,7 @@ func TestOnSystem_InitIdempotent(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	raw := json.RawMessage(`{
@@ -1962,6 +1955,7 @@ func TestOnSystem_InitBadJSON(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	b.OnSystem("init", json.RawMessage(`{invalid json`))
@@ -2798,20 +2792,23 @@ func TestGetContextUsage(t *testing.T) {
 
 func TestOnControlCancelRequest(t *testing.T) {
 	// Verifies OnControlCancelRequest removes the pending permission and
-	// fires onPermCleared when no more permissions are pending.
+	// fires the registry's onEmpty hook when no more prompts are outstanding.
 	t.Parallel()
 
 	var clearedCalled bool
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
-	b.SetOnPermissionCleared(func() { clearedCalled = true })
+	b.SetOnPromptsCleared(func() { clearedCalled = true })
 
-	// Add a pending permission.
+	// Add a pending permission via both stores (the production path stores
+	// in pendingPerms and registers in outstanding atomically).
 	b.pendingPerms["req-1"] = &pendingPermission{
 		requestID: "req-1",
 		toolName:  "Bash",
 	}
+	b.outstanding.Register("req-1", OutstandingPermission)
 
 	b.OnControlCancelRequest("req-1")
 
@@ -2823,28 +2820,31 @@ func TestOnControlCancelRequest(t *testing.T) {
 		t.Errorf("pending permissions count = %d, want 0", count)
 	}
 	if !clearedCalled {
-		t.Error("onPermCleared was not called")
+		t.Error("onPromptsCleared was not called")
 	}
 }
 
 func TestOnControlCancelRequest_StillPending(t *testing.T) {
-	// Verifies onPermCleared is NOT fired when other permissions are still
-	// pending after a cancel.
+	// Verifies onPromptsCleared is NOT fired when other prompts are still
+	// outstanding after a cancel.
 	t.Parallel()
 
 	var clearedCalled bool
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
-	b.SetOnPermissionCleared(func() { clearedCalled = true })
+	b.SetOnPromptsCleared(func() { clearedCalled = true })
 
 	b.pendingPerms["req-1"] = &pendingPermission{requestID: "req-1"}
 	b.pendingPerms["req-2"] = &pendingPermission{requestID: "req-2"}
+	b.outstanding.Register("req-1", OutstandingPermission)
+	b.outstanding.Register("req-2", OutstandingPermission)
 
 	b.OnControlCancelRequest("req-1")
 
 	if clearedCalled {
-		t.Error("onPermCleared should not be called when other permissions remain")
+		t.Error("onPromptsCleared should not be called when other prompts remain")
 	}
 	b.permMu.Lock()
 	count := len(b.pendingPerms)
@@ -2911,6 +2911,7 @@ func TestWaitReady_UnblockedByInit(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	done := make(chan error, 1)
@@ -2948,6 +2949,7 @@ func TestWaitReady_UnblockedByInitControlResponse(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 		initReqID:    "init-42",
 	}
 
@@ -2993,6 +2995,7 @@ func TestWaitReady_ControlResponseIgnoresNonInit(t *testing.T) {
 	b := &Backend{
 		readyCh:      make(chan struct{}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 		initReqID:    "init-42",
 	}
 

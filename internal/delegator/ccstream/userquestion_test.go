@@ -281,6 +281,7 @@ func testBackend(t *testing.T) (*Backend, *bytes.Buffer) {
 	b := &Backend{
 		writer:       w,
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 	return b, &buf
 }
@@ -308,9 +309,7 @@ func TestRespondToQuestion_SingleQuestion(t *testing.T) {
 	}
 
 	var clearedCount int
-	b.onPermCleared = func() { clearedCount++ }
-	var pendingCount int
-	b.onPermPending = func() { pendingCount++ }
+	b.SetOnPromptsCleared(func() { clearedCount++ })
 
 	// Simulate CC sending AskUserQuestion.
 	msg := &PermissionRequest{
@@ -325,9 +324,9 @@ func TestRespondToQuestion_SingleQuestion(t *testing.T) {
 	}
 	b.handleUserQuestion(msg)
 
-	// Should have stored a pending perm and called prompt.
-	if pendingCount != 1 {
-		t.Errorf("onPermPending called %d times, want 1", pendingCount)
+	// Should have stored a pending perm and registered it in the registry.
+	if !b.outstanding.Has("req-q1") {
+		t.Error("outstanding registry should contain req-q1 after handleUserQuestion")
 	}
 	if len(promptCalls) != 1 {
 		t.Fatalf("permPromptFn called %d times, want 1", len(promptCalls))
@@ -378,7 +377,7 @@ func TestRespondToQuestion_SingleQuestion(t *testing.T) {
 
 	// Permission should be cleared.
 	if clearedCount != 1 {
-		t.Errorf("onPermCleared called %d times, want 1", clearedCount)
+		t.Errorf("onPromptsCleared called %d times, want 1", clearedCount)
 	}
 	if b.PendingPermissions() != 0 {
 		t.Errorf("pending permissions = %d, want 0", b.PendingPermissions())
@@ -396,8 +395,6 @@ func TestRespondToQuestion_SequentialMultiQuestion(t *testing.T) {
 	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		promptCalls++
 	}
-	b.onPermCleared = func() {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -472,8 +469,6 @@ func TestRespondToQuestion_CustomText(t *testing.T) {
 
 	b, buf := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermCleared = func() {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -522,8 +517,6 @@ func TestCancelQuestion(t *testing.T) {
 
 	b, buf := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermCleared = func() {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -569,8 +562,6 @@ func TestCancelQuestion_MidSequence(t *testing.T) {
 
 	b, buf := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermCleared = func() {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -616,7 +607,6 @@ func TestHasPendingQuestion(t *testing.T) {
 
 	b, _ := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermPending = func() {}
 
 	// No pending question initially.
 	if got := b.HasPendingQuestion(); got != "" {
@@ -653,8 +643,6 @@ func TestRespondToQuestion_AlreadyAnswered(t *testing.T) {
 
 	b, _ := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermCleared = func() {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -686,7 +674,6 @@ func TestRespondToQuestion_InvalidOptionIndex(t *testing.T) {
 
 	b, _ := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -720,7 +707,6 @@ func TestHandleToolRequest_DetectsAskUserQuestion(t *testing.T) {
 			questionHandled = true
 		}
 	}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -759,7 +745,6 @@ func TestHandleToolRequest_RegularPermission(t *testing.T) {
 	b.permPromptFn = func(reqID, text, summary string, choices []delegator.PromptChoice) {
 		gotText = text
 	}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",
@@ -786,8 +771,6 @@ func TestRespondToQuestion_ConcurrentAccess(t *testing.T) {
 
 	b, _ := testBackend(t)
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
-	b.onPermCleared = func() {}
-	b.onPermPending = func() {}
 
 	msg := &PermissionRequest{
 		Type:      "control_request",

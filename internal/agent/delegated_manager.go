@@ -34,14 +34,12 @@ type DelegatedManager struct {
 	StartOpts delegator.StartOptions
 
 	// PermissionPromptFunc sends a permission prompt with keyboard choices.
-	// requestID is the CC protocol request ID.
+	// requestID is the CC protocol request ID. The platform layer should
+	// register a per-prompt cancel listener via RegisterPromptCancelListener
+	// at the same time it sends the interactive UI, so the UI is cleaned up
+	// if CC cancels the prompt before the user responds (e.g. follow-up
+	// message aborted the in-flight tool).
 	PermissionPromptFunc func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice)
-
-	// PermissionCancelFunc is called when CC cancels a previously-prompted
-	// permission (e.g. a PriorityNow steer aborted the in-flight tool).
-	// The platform layer uses this to disable the orphaned inline keyboard.
-	// reason is a short human-readable string suitable for display.
-	PermissionCancelFunc func(sessionKey, requestID, toolName, reason string)
 
 	// TypingFunc controls the platform typing indicator for a session.
 	// Called with true when CC starts working, false on turn complete.
@@ -273,6 +271,21 @@ func (m *DelegatedManager) StopSession(ctx context.Context, sessionKey string) e
 	return mb.be.Interrupt(ctx)
 }
 
+// RegisterPromptCancelListener appends a listener fired when the prompt with
+// requestID is cancelled by a non-user path (e.g. CC's control_cancel_request
+// after a follow-up message aborted the in-flight tool). The listener does
+// NOT fire on normal user responses. Used by the platform layer to clean up
+// per-prompt UI (e.g. disable the inline keyboard) so the user can't click
+// an already-resolved button. No-op if no managed backend exists for
+// sessionKey, or if the backend doesn't track outstanding prompts.
+func (m *DelegatedManager) RegisterPromptCancelListener(sessionKey, requestID string, fn func(reason string)) {
+	mb, ok := m.getManaged(sessionKey)
+	if !ok {
+		return
+	}
+	mb.be.RegisterPromptCancelListener(requestID, fn)
+}
+
 // SetPermissionPending marks a session as having an outstanding permission
 // prompt (pending=true) or clears it (pending=false). When pending, all
 // calls to WaitForPermission block until cleared.
@@ -434,14 +447,9 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			m.PermissionPromptFunc(key, requestID, text, summary, choices)
 		})
 	}
-	mb.be.SetOnPermissionCleared(func() {
+	mb.be.SetOnPromptsCleared(func() {
 		m.SetPermissionPending(sk(), false)
 	})
-	if m.PermissionCancelFunc != nil {
-		mb.be.SetOnPermissionCancelled(func(reqID, toolName, reason string) {
-			m.PermissionCancelFunc(sk(), reqID, toolName, reason)
-		})
-	}
 	if m.TypingFunc != nil {
 		mb.be.SetTypingFunc(func(typing bool) {
 			m.TypingFunc(sk(), typing)

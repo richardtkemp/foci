@@ -33,6 +33,7 @@ func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 		readyCh:        make(chan struct{}),
 		pendingPerms:   make(map[string]*pendingPermission),
 		pendingElicits: make(map[string]*pendingElicitation),
+		outstanding:    NewOutstandingRegistry(),
 	}
 	b.cfg = cfg
 	return b, nil
@@ -124,14 +125,18 @@ type Backend struct {
 	lastActivity atomic.Int64 // unix nanos of most recent stream event
 
 	// Callbacks (set before Start, read-only after)
-	permPromptFn       delegator.PermissionPromptFunc
-	permCancelFn       func(requestID, toolName, reason string)
-	onPermCleared      func()
-	onPermPending      func()
-	onSessionReady     func(sessionID string)
-	typingFunc         func(typing bool)
-	onCompactionStart  func()            // fired when status="compacting"
-	onCompactionDone   func(preTokens int) // fired on compact_boundary
+	permPromptFn      delegator.PermissionPromptFunc
+	onSessionReady    func(sessionID string)
+	typingFunc        func(typing bool)
+	onCompactionStart func()              // fired when status="compacting"
+	onCompactionDone  func(preTokens int) // fired on compact_boundary
+
+	// outstanding tracks every prompt awaiting a user response (permissions,
+	// AskUserQuestion sequences, MCP elicitations) under one lifecycle layer.
+	// The kind-specific stores (pendingPerms, pendingElicits) keep their own
+	// state — the registry coordinates registration, resolution, cancellation,
+	// and the "all clear" drain hook used by DelegatedManager.WaitForPermission.
+	outstanding *OutstandingRegistry
 }
 
 // newRequestID generates a simple unique request ID for control messages.
@@ -385,6 +390,13 @@ func (b *Backend) Restart(ctx context.Context) error {
 	b.pendingElicits = make(map[string]*pendingElicitation)
 	b.elicMu.Unlock()
 
+	// Drain the registry without firing onEmpty (subprocess restarts are not
+	// user-driven cancellations). Reset by replacing the registry while
+	// preserving the configured drain hook.
+	onEmpty := b.outstanding.onEmptyHook()
+	b.outstanding = NewOutstandingRegistry()
+	b.outstanding.SetOnEmpty(onEmpty)
+
 	return b.Start(ctx, b.startOpts)
 }
 
@@ -601,21 +613,23 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 // SetPermissionPromptFunc sets the function used to send permission prompts.
 func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) { b.permPromptFn = fn }
 
-// SetOnPermissionCleared sets a callback fired when permissions are resolved.
-func (b *Backend) SetOnPermissionCleared(fn func()) { b.onPermCleared = fn }
+// SetOnPromptsCleared sets a callback fired when the last outstanding prompt
+// (permission, question, or elicitation) is removed. Used by
+// DelegatedManager.WaitForPermission to unblock once all pending prompts have
+// been resolved or cancelled.
+func (b *Backend) SetOnPromptsCleared(fn func()) { b.outstanding.SetOnEmpty(fn) }
 
-// SetOnPermissionCancelled sets a callback fired when a specific pending
-// permission is cleared by CC's control_cancel_request (e.g. an urgent
-// steer dispatch aborted the in-flight tool execution). Distinct from
-// SetOnPermissionCleared, which fires only when the *last* pending
-// permission goes away — this fires for each individual cancellation,
-// allowing the platform layer to update per-prompt UI state.
-func (b *Backend) SetOnPermissionCancelled(fn func(requestID, toolName, reason string)) {
-	b.permCancelFn = fn
+// RegisterPromptCancelListener appends a callback fired when the prompt with
+// requestID is cancelled by a non-user path (e.g. CC's control_cancel_request
+// after a follow-up message aborted the in-flight tool execution). The
+// listener does NOT fire on normal user responses — use it to clean up
+// per-prompt UI state (e.g. disable the inline keyboard) so the user can't
+// click an already-resolved button. Multiple listeners may be registered for
+// the same requestID; they fire in registration order. If no prompt with
+// requestID is registered, the call is a silent no-op.
+func (b *Backend) RegisterPromptCancelListener(requestID string, fn func(reason string)) {
+	b.outstanding.AddCancelListener(requestID, fn)
 }
-
-// SetOnPermissionPending sets a callback fired when a new permission is pending.
-func (b *Backend) SetOnPermissionPending(fn func()) { b.onPermPending = fn }
 
 // SetOnSessionReady sets a callback fired once when the session ID is known.
 func (b *Backend) SetOnSessionReady(fn func(string)) { b.onSessionReady = fn }

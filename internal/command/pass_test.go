@@ -352,8 +352,8 @@ func (m *mockPassBackend) SendCommand(_ context.Context, cmd string) error {
 func (m *mockPassBackend) IsRunning() bool                                        { return true }
 func (m *mockPassBackend) Restart(context.Context) error                          { return nil }
 func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
-func (m *mockPassBackend) SetOnPermissionCleared(func())                          {}
-func (m *mockPassBackend) SetOnPermissionCancelled(func(string, string, string))  {}
+func (m *mockPassBackend) SetOnPromptsCleared(func())                             {}
+func (m *mockPassBackend) RegisterPromptCancelListener(string, func(string))      {}
 func (m *mockPassBackend) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackend) SetTypingFunc(func(bool))                               {}
 func (m *mockPassBackend) SendKeystroke(context.Context, string) error             { return nil }
@@ -392,8 +392,8 @@ func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd string) e
 func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }
 func (m *mockPassBackendNoCapturer) Restart(context.Context) error                          { return nil }
 func (m *mockPassBackendNoCapturer) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
-func (m *mockPassBackendNoCapturer) SetOnPermissionCleared(func())                          {}
-func (m *mockPassBackendNoCapturer) SetOnPermissionCancelled(func(string, string, string))  {}
+func (m *mockPassBackendNoCapturer) SetOnPromptsCleared(func())                             {}
+func (m *mockPassBackendNoCapturer) RegisterPromptCancelListener(string, func(string))      {}
 func (m *mockPassBackendNoCapturer) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackendNoCapturer) SetTypingFunc(func(bool))                               {}
 func (m *mockPassBackendNoCapturer) SendKeystroke(context.Context, string) error             { return nil }

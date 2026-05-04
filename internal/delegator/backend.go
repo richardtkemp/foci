@@ -60,18 +60,23 @@ type Delegator interface {
 	// backend logs and drops undeliverable prompts.
 	SetPermissionPromptFunc(fn PermissionPromptFunc)
 
-	// SetOnPermissionCleared sets a callback fired when a permission prompt
-	// is resolved (user responded, CC timed out, or cancelled).
-	// Used by DelegatedManager to unblock WaitForPermission.
-	SetOnPermissionCleared(fn func())
+	// SetOnPromptsCleared sets a callback fired when the last outstanding
+	// user-input prompt (permission, AskUserQuestion sequence, or MCP
+	// elicitation) is resolved or cancelled. Used by DelegatedManager to
+	// unblock WaitForPermission.
+	SetOnPromptsCleared(fn func())
 
-	// SetOnPermissionCancelled sets a callback fired when a specific pending
-	// permission is cleared by a non-user path (e.g. CC's control_cancel_request
-	// after a PriorityNow steer aborted the in-flight tool). Distinct from
-	// SetOnPermissionCleared: fires per-perm, not just on the last one. Used
-	// by the platform layer to disable the orphaned inline keyboard so the
-	// user can't click an already-resolved button.
-	SetOnPermissionCancelled(fn func(requestID, toolName, reason string))
+	// RegisterPromptCancelListener appends a callback fired when the prompt
+	// with requestID is cancelled by a non-user path (e.g. CC's
+	// control_cancel_request after a follow-up message aborted the in-flight
+	// tool). The listener does NOT fire on normal user responses — use it to
+	// clean up per-prompt UI state (e.g. disable the orphaned inline keyboard
+	// so the user can't click an already-resolved button). Multiple listeners
+	// may be registered for the same requestID; they fire in registration
+	// order. If no prompt with requestID is registered (or the backend
+	// doesn't track prompts — e.g. the legacy tmux backend), the call is a
+	// silent no-op.
+	RegisterPromptCancelListener(requestID string, fn func(reason string))
 
 	// SetOnSessionReady sets a callback fired once when the backend
 	// discovers its session ID. Used to persist the ID for resume-after-restart.

@@ -234,9 +234,7 @@ func (b *Backend) handleElicitation(msg *ElicitationRequest) {
 
 	if msg.Request.Mode == "url" {
 		b.storePendingElicit(pe)
-		if b.onPermPending != nil {
-			b.onPermPending()
-		}
+		b.outstanding.Register(msg.RequestID, OutstandingElicitation)
 		b.presentElicitationURL(pe)
 		return
 	}
@@ -249,9 +247,7 @@ func (b *Backend) handleElicitation(msg *ElicitationRequest) {
 	}
 
 	b.storePendingElicit(pe)
-	if b.onPermPending != nil {
-		b.onPermPending()
-	}
+	b.outstanding.Register(msg.RequestID, OutstandingElicitation)
 
 	if pe.schema == nil {
 		b.presentElicitationFallback(pe)
@@ -533,15 +529,13 @@ func (b *Backend) finishElicitation(pe *pendingElicitation, action string) error
 		resp.Content = raw
 	}
 
-	_, _, noMorePending := b.removePendingElicit(pe.requestID)
+	b.removePendingElicit(pe.requestID)
 
 	if err := b.writer.SendControlResponse(pe.requestID, resp); err != nil {
 		return err
 	}
 
-	if noMorePending && b.onPermCleared != nil {
-		b.onPermCleared()
-	}
+	b.outstanding.Resolve(pe.requestID)
 	return nil
 }
 
@@ -616,18 +610,14 @@ func (b *Backend) getPendingElicit(requestID string) *pendingElicitation {
 	return pe
 }
 
-// removePendingElicit removes and returns a pending elicitation. The second
-// bool reports whether the map is now empty — used to fire onPermCleared
-// when the last outstanding user-interaction completes.
-func (b *Backend) removePendingElicit(requestID string) (pe *pendingElicitation, found bool, noMorePending bool) {
+// removePendingElicit removes and returns a pending elicitation. The
+// "all-clear" signal is fired by OutstandingRegistry's onEmpty hook, not
+// inferred locally — both perms and elicitations live in one registry, so
+// the registry's view of "empty" is the only correct one.
+func (b *Backend) removePendingElicit(requestID string) (pe *pendingElicitation, found bool) {
 	b.elicMu.Lock()
 	pe, found = b.pendingElicits[requestID]
 	delete(b.pendingElicits, requestID)
-	// onPermCleared fires when *both* permission and elicitation maps are
-	// empty; otherwise the platform's "has pending prompt" indicator flaps.
-	b.permMu.Lock()
-	noMorePending = len(b.pendingElicits) == 0 && len(b.pendingPerms) == 0
-	b.permMu.Unlock()
 	b.elicMu.Unlock()
 	return
 }

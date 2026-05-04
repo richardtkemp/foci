@@ -19,6 +19,7 @@ func newTestBackend(buf *bytes.Buffer) *Backend {
 		writer:         NewWriter(nopWriteCloser{buf}),
 		pendingPerms:   make(map[string]*pendingPermission),
 		pendingElicits: make(map[string]*pendingElicitation),
+		outstanding:    NewOutstandingRegistry(),
 	}
 }
 
@@ -538,16 +539,17 @@ func TestReaderDispatchesElicitation(t *testing.T) {
 	}
 }
 
-// TestElicitationOnPermClearedFiresOnce proves that onPermCleared fires when
-// the last in-flight user-interaction (permission OR elicitation) resolves,
-// not when each individual one does. Prevents platform prompt flapping.
-func TestElicitationOnPermClearedFiresOnce(t *testing.T) {
+// TestElicitationOnPromptsClearedFiresOnce proves that the registry's onEmpty
+// hook fires when the last in-flight user-interaction (permission OR
+// elicitation) resolves, not when each individual one does. Prevents the
+// platform's "has pending prompt" indicator from flapping.
+func TestElicitationOnPromptsClearedFiresOnce(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	var cleared int
 	b := newTestBackend(&buf)
-	b.onPermCleared = func() { cleared++ }
+	b.SetOnPromptsCleared(func() { cleared++ })
 	b.permPromptFn = func(string, string, string, []delegator.PromptChoice) {}
 
 	// Two URL-mode elicitations outstanding.
