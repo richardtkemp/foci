@@ -349,6 +349,19 @@ func (m *mockPassBackend) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
 	return nil
 }
+func (m *mockPassBackend) Inject(ctx context.Context, inj delegator.Inject) error {
+	switch inj.Source {
+	case delegator.SourceUser, delegator.SourceSteer:
+		if !m.IsTurnInFlight() {
+			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			return err
+		}
+		return m.SendCommand(ctx, inj.Text)
+	case delegator.SourceCompact, delegator.SourcePass:
+		return m.SendCommand(ctx, inj.Text)
+	}
+	return nil
+}
 func (m *mockPassBackend) IsRunning() bool                                        { return true }
 func (m *mockPassBackend) Restart(context.Context) error                          { return nil }
 func (m *mockPassBackend) SetPermissionPromptFunc(delegator.PermissionPromptFunc)   {}
@@ -387,6 +400,19 @@ func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error          
 func (m *mockPassBackendNoCapturer) IsTurnInFlight() bool                          { return false }
 func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
+	return nil
+}
+func (m *mockPassBackendNoCapturer) Inject(ctx context.Context, inj delegator.Inject) error {
+	switch inj.Source {
+	case delegator.SourceUser, delegator.SourceSteer:
+		if !m.IsTurnInFlight() {
+			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			return err
+		}
+		return m.SendCommand(ctx, inj.Text)
+	case delegator.SourceCompact, delegator.SourcePass:
+		return m.SendCommand(ctx, inj.Text)
+	}
 	return nil
 }
 func (m *mockPassBackendNoCapturer) IsRunning() bool                                        { return true }

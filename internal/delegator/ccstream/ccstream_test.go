@@ -555,6 +555,264 @@ func (f *failingWriteCloser) Write([]byte) (int, error) { return 0, f.err }
 func (f *failingWriteCloser) Close() error              { return nil }
 
 // ---------------------------------------------------------------------------
+// Inject — canonical entry point for user-role events
+// ---------------------------------------------------------------------------
+
+// TestInject_User_Idle_BeginsTurn verifies Inject(SourceUser) at idle
+// dispatches to the begin-turn path: turnActive becomes true, the handler
+// is installed, and the writer receives the text.
+func TestInject_User_Idle_BeginsTurn(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	handler := &delegator.EventHandler{OnText: func(string) {}}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source:  delegator.SourceUser,
+		Text:    "hello",
+		Handler: handler,
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after begin-turn Inject; want true")
+	}
+	b.turnMu.Lock()
+	gotHandler := b.turnHandler
+	b.turnMu.Unlock()
+	if gotHandler != handler {
+		t.Error("turnHandler != supplied handler — Inject did not install it")
+	}
+	if !strings.Contains(buf.String(), "hello") {
+		t.Errorf("writer missing prompt text; got: %q", buf.String())
+	}
+}
+
+// TestInject_User_Idle_WithAttachments verifies Inject routes attachments
+// through the structured-content path when a turn is being begun. The
+// writer should see image/document blocks alongside the text.
+func TestInject_User_Idle_WithAttachments(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	handler := &delegator.EventHandler{OnText: func(string) {}}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceUser,
+		Text:   "describe this",
+		Attachments: []delegator.Attachment{
+			{MimeType: "image/png", Data: []byte{0x89, 0x50, 0x4e, 0x47}},
+		},
+		Handler: handler,
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "image") {
+		t.Errorf("writer did not emit image block; got: %q", out)
+	}
+	if !strings.Contains(out, "describe this") {
+		t.Errorf("writer missing prompt text; got: %q", out)
+	}
+}
+
+// TestInject_User_InFlight_QueuesAndArmsRearm verifies Inject(SourceUser)
+// during an in-flight turn queues the text via SendUser and increments
+// the rearm count so the queued response reaches the existing handler.
+// Attachments and Handler in the Inject struct are ignored on the
+// follow-up path — the in-flight turn already has its handler installed.
+func TestInject_User_InFlight_QueuesAndArmsRearm(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
+	}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceUser,
+		Text:   "follow-up",
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	b.turnMu.Lock()
+	count := b.pendingRearmCount
+	b.turnMu.Unlock()
+	if count != 1 {
+		t.Errorf("pendingRearmCount = %d after in-flight User Inject, want 1", count)
+	}
+	if !strings.Contains(buf.String(), "follow-up") {
+		t.Errorf("writer did not see follow-up text; got: %q", buf.String())
+	}
+}
+
+// TestInject_Steer_InFlight_InterruptsAndArms verifies Inject(SourceSteer)
+// during an in-flight turn calls Interrupt before queueing — the urgent
+// dispatch pattern that telegram/discord agent_setup currently spells out
+// as Interrupt + SendCommand. Empirically: writer captures both the
+// interrupt control message and the queued user text, and the rearm
+// count is incremented for the steer.
+func TestInject_Steer_InFlight_InterruptsAndArms(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:           NewWriter(nopWriteCloser{&buf}),
+		turnActive:       true,
+		pendingControls:  make(map[string]chan json.RawMessage),
+	}
+
+	// Interrupt sends a control_request — it expects a control_response
+	// from CC. We don't have a real CC stream, so we let it time out fast
+	// by giving Interrupt a short context. The point of the test is the
+	// ORDERING (Interrupt fires, then SendUser fires) and the rearm flag,
+	// not Interrupt's success — Inject logs and continues even if
+	// Interrupt errors.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_ = b.Inject(ctx, delegator.Inject{
+		Source: delegator.SourceSteer,
+		Text:   "urgent text",
+	})
+
+	out := buf.String()
+	// SendUser must have fired despite Interrupt timing out — the steer
+	// text should still reach CC.
+	if !strings.Contains(out, "urgent text") {
+		t.Errorf("Steer text missing from writer output; got: %q", out)
+	}
+	// Interrupt control message should appear in the writer too (it's
+	// emitted before SendUser).
+	if !strings.Contains(out, "interrupt") {
+		t.Errorf("interrupt control_request missing from writer; got: %q", out)
+	}
+
+	b.turnMu.Lock()
+	count := b.pendingRearmCount
+	b.turnMu.Unlock()
+	if count != 1 {
+		t.Errorf("pendingRearmCount = %d after Steer Inject, want 1", count)
+	}
+}
+
+// TestInject_Steer_Idle_BeginsTurn verifies the edge case where a steer
+// arrives at idle (race between turn end and platform queue dispatch):
+// Inject degrades to a fresh begin-turn rather than calling Interrupt
+// on a non-existent in-flight turn.
+func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+	handler := &delegator.EventHandler{OnText: func(string) {}}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source:  delegator.SourceSteer,
+		Text:    "steer-at-idle",
+		Handler: handler,
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after Steer-at-idle Inject; want true (degraded to begin-turn)")
+	}
+	if strings.Contains(buf.String(), "interrupt") {
+		t.Errorf("interrupt should NOT have fired at idle; writer: %q", buf.String())
+	}
+}
+
+// TestInject_Compact_NoRearm verifies Inject(SourceCompact) at idle sends
+// the slash command without arming the rearm count — /compact is
+// fire-and-forget, the response (compact_boundary system event) flows
+// through CompactionWaiter, not the user-text rearm cascade.
+func TestInject_Compact_NoRearm(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceCompact,
+		Text:   "/compact summarise everything",
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	b.turnMu.Lock()
+	count := b.pendingRearmCount
+	b.turnMu.Unlock()
+	if count != 0 {
+		t.Errorf("pendingRearmCount = %d after Compact Inject, want 0 (no rearm for slash commands)", count)
+	}
+	if !strings.Contains(buf.String(), "/compact") {
+		t.Errorf("writer missing /compact text; got: %q", buf.String())
+	}
+}
+
+// TestInject_Compact_InFlight_NoRearm verifies the slash-command path
+// stays rearm-free even when (defensively) called mid-turn. /compact
+// shouldn't be invoked mid-turn in practice, but if it is, the response
+// must NOT route through the user-text rearm cascade — that would
+// corrupt the in-flight turn's delivery handler.
+func TestInject_Compact_InFlight_NoRearm(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
+	}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceCompact,
+		Text:   "/compact x",
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	b.turnMu.Lock()
+	count := b.pendingRearmCount
+	b.turnMu.Unlock()
+	if count != 0 {
+		t.Errorf("pendingRearmCount = %d, want 0 (Compact must never arm rearm even mid-turn)", count)
+	}
+}
+
+// TestInject_Pass_NoRearm mirrors Compact for the /pass passthrough
+// path — slash commands like /context, /model don't rearm.
+func TestInject_Pass_NoRearm(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
+	}
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourcePass,
+		Text:   "/model opus",
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
+
+	b.turnMu.Lock()
+	count := b.pendingRearmCount
+	b.turnMu.Unlock()
+	if count != 0 {
+		t.Errorf("pendingRearmCount = %d, want 0 for Pass slash command", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // SendToPane
 // ---------------------------------------------------------------------------
 

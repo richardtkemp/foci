@@ -92,6 +92,25 @@ func (m *mockBackendDM) SendCommand(ctx context.Context, cmd string) error {
 	return nil
 }
 
+// Inject delegates to the existing SendToPane / SendCommand mocks based on
+// inj.Source so existing tests don't need rewriting. Routing mirrors
+// production's Inject: SourceUser routes to SendToPane at idle (begin
+// turn) or SendCommand mid-turn (follow-up); slash commands route to
+// SendCommand directly.
+func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error {
+	switch inj.Source {
+	case delegator.SourceUser, delegator.SourceSteer:
+		if !m.IsTurnInFlight() {
+			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			return err
+		}
+		return m.SendCommand(ctx, inj.Text)
+	case delegator.SourceCompact, delegator.SourcePass:
+		return m.SendCommand(ctx, inj.Text)
+	}
+	return nil
+}
+
 func (m *mockBackendDM) IsRunning() bool { return m.running }
 
 func (m *mockBackendDM) Restart(_ context.Context) error { return nil }

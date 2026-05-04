@@ -13,17 +13,46 @@ import (
 // Backend is the interface that all coding agent backends implement.
 // A Backend owns the entire turn: inference, tool execution, and context
 // management. Foci sends composed prompts (with metadata, nudges, reminders)
-// via SendToPane and receives streaming events back.
+// via Inject and receives streaming events back.
 type Delegator interface {
 	// Start launches the coding agent subprocess.
 	// Called once during agent setup. The backend should be ready to
 	// accept turns after Start returns.
 	Start(ctx context.Context, opts StartOptions) error
 
+	// Inject delivers a user-role event to the backend. Single funnel
+	// for every path that produces input to the coding agent: primary
+	// user turns, urgent steers, queued follow-ups, slash commands.
+	//
+	// The backend dispatches based on inj.Source and the current
+	// IsTurnInFlight() state:
+	//
+	//   Source   | Turn state | Action
+	//   ---------|------------|--------------------------------------------
+	//   User     | idle       | begin turn (with attachments if provided)
+	//   User     | in-flight  | queue follow-up; response routes via rearm
+	//   Steer    | in-flight  | Interrupt + queue; response via rearm
+	//   Steer    | idle       | begin turn — degrades to User-idle
+	//   Compact  | any        | send slash command; no rearm
+	//   Pass     | any        | send slash command; no rearm
+	//
+	// Returns whatever error the underlying writer/protocol returns. The
+	// turn result (when applicable) flows through inj.Handler.OnTurnComplete;
+	// callers that need the result wait on it via that callback or
+	// WaitForTurn.
+	//
+	// SendToPane / SendToPaneWithAttachments / SendCommand were the
+	// pre-Phase-4 entry points; they remain on the interface during the
+	// migration but route through Inject internally on backends that
+	// implement it. New callers should use Inject directly.
+	Inject(ctx context.Context, inj Inject) error
+
 	// SendToPane sends a composed prompt to the coding agent and streams
 	// events back via the handler. May return before the turn completes
 	// (implementation-dependent). Use WaitForTurn to block until the
 	// turn finishes.
+	//
+	// Deprecated: use Inject with SourceUser instead.
 	SendToPane(ctx context.Context, prompt string, handler *EventHandler) (*TurnResult, error)
 
 	// WaitForTurn blocks until the next turn completion (stop_reason
@@ -47,6 +76,9 @@ type Delegator interface {
 	//
 	// To abort the in-flight turn first (the "urgent steer" pattern), call
 	// Interrupt before SendCommand.
+	//
+	// Deprecated: use Inject with SourceUser (follow-up), SourceSteer
+	// (urgent), SourceCompact (/compact), or SourcePass (/pass) instead.
 	SendCommand(ctx context.Context, command string) error
 
 	// IsRunning reports whether the agent subprocess is alive.
@@ -121,10 +153,15 @@ type Delegator interface {
 // structured content blocks (images, documents) alongside text prompts.
 // When the delegated transport has attachments, it checks for this interface
 // and uses it instead of the text-only SendToPane path.
+//
+// Deprecated: Inject takes Attachments inline; this interface goes away
+// after all callsites migrate to Inject.
 type AttachmentSender interface {
 	// SendToPaneWithAttachments sends a composed prompt with file attachments
 	// as structured content blocks. Each attachment becomes an image or document
 	// ContentBlock alongside the text prompt.
+	//
+	// Deprecated: use Inject with SourceUser and Attachments instead.
 	SendToPaneWithAttachments(ctx context.Context, prompt string, attachments []Attachment, handler *EventHandler) (*TurnResult, error)
 }
 
@@ -316,6 +353,79 @@ type TurnResult struct {
 	ToolCalls int        // number of tool calls executed during the turn
 	Usage     *TurnUsage // token usage (nil if unavailable)
 	Model     string     // model used (e.g. "claude-opus-4-6")
+}
+
+// InjectSource identifies the semantic origin of an injected user-role
+// event. The backend's Inject method routes based on Source + the
+// current IsTurnInFlight() state — see Delegator.Inject for the
+// full routing matrix.
+type InjectSource int
+
+const (
+	// SourceUser is user-originated text. Begins a new turn at idle, or
+	// queues as a follow-up behind the in-flight turn (the response
+	// reaches the original handler via the rearm cascade).
+	SourceUser InjectSource = iota
+
+	// SourceSteer is an urgent platform-side dispatch (Telegram/Discord
+	// message arriving during an in-flight CC turn). Inject internally
+	// calls Interrupt before queueing the text so CC stops the in-flight
+	// task and processes the new message next. Response routes via rearm.
+	// At idle, degrades to SourceUser-idle (begin turn).
+	SourceSteer
+
+	// SourceCompact is a /compact slash command sent to CC. Fire-and-forget:
+	// CC processes the compaction internally; no rearm cascade applies.
+	// Caller is responsible for arming compaction-completion waiters
+	// (CompactionWaiter) before Inject if it wants to block on completion.
+	SourceCompact
+
+	// SourcePass is a passthrough slash command (/context, /model, etc.).
+	// Fire-and-forget: response (if any) flows through the agent's normal
+	// stream events; no rearm cascade applies.
+	SourcePass
+)
+
+// String returns a stable lower-case label for logging.
+func (s InjectSource) String() string {
+	switch s {
+	case SourceUser:
+		return "user"
+	case SourceSteer:
+		return "steer"
+	case SourceCompact:
+		return "compact"
+	case SourcePass:
+		return "pass"
+	default:
+		return "unknown"
+	}
+}
+
+// Inject describes a user-role event delivered to the backend via
+// Delegator.Inject. See InjectSource for source-specific routing.
+type Inject struct {
+	// Source identifies the semantic origin of the event. Drives routing
+	// and rearm policy.
+	Source InjectSource
+
+	// Text is the message body sent to CC. For SourceCompact / SourcePass
+	// this is the slash command including its leading "/" (e.g.
+	// "/compact summarise...").
+	Text string
+
+	// Attachments are optional structured content blocks (images, PDFs).
+	// Only honored when the inject begins a new turn (idle state with
+	// SourceUser); ignored otherwise. Backends that don't support
+	// attachments silently drop them.
+	Attachments []Attachment
+
+	// Handler is the EventHandler installed for the turn this inject
+	// begins. Required for SourceUser / SourceSteer at idle (when a new
+	// turn starts and needs an OnText/OnTurnComplete sink); ignored for
+	// in-flight injections (response routes through the existing turn
+	// handler via the rearm cascade) and for slash commands.
+	Handler *EventHandler
 }
 
 // TurnUsage holds token counts from a completed backend turn,

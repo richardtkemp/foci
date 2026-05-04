@@ -588,36 +588,36 @@ func (b *Backend) IsTurnInFlight() bool {
 	return b.turnActive
 }
 
-// SendCommand sends a slash command or queued user message directly to CC.
-// When called during an in-flight turn (IsTurnInFlight true), this is a
-// follow-up message that CC processes after the current turn ends OR a
-// post-Interrupt urgent dispatch — in either case the response streams
-// through the re-arm cascade. SendCommand sets the rearm flag itself so
-// the queued response reaches the original handler's OnText.
+// sendUserMessage is the internal primitive that writes a user-role
+// message to CC. autoRearm controls whether an in-flight turn's pending
+// rearm count is incremented — true for follow-up/steer paths (response
+// reaches the original handler via the rearm cascade), false for slash
+// commands like /compact and /pass (no rearm; fire-and-forget).
 //
-// Idle SendCommand calls (e.g. /compact at turn end) skip the rearm step
-// because no handler is armed to receive the response.
-func (b *Backend) SendCommand(ctx context.Context, command string) error {
-	// Order matters: arm rearm BEFORE sending to CC, so that if the reader
-	// goroutine processes the in-flight turn's result message after we
-	// release turnMu but before SendUser returns, OnResult sees rearmPending
-	// and re-installs the handler. The reverse order (SendUser → arm)
-	// races with OnResult's handler clear at ccstream.go:1073: between
-	// SendUser and the lock, OnResult can fire, see rearmReason == rearmNone,
-	// clear the handler, and CC's response to the queued command then hits
-	// turnHandler == nil and gets dropped (the "text block dropped (no
-	// handler/OnText)" WARN). Phase 5 follow-up fix.
+// Order matters when autoRearm is true: arm the rearm slot BEFORE sending
+// to CC, so that if the reader goroutine processes the in-flight turn's
+// result message after we release turnMu but before SendUser returns,
+// OnResult sees a non-zero count and re-installs the handler. The
+// reverse order (SendUser → arm) races with OnResult's handler clear in
+// ccstream.go:OnResult: between SendUser and the lock, OnResult can fire,
+// see count == 0, clear the handler, and CC's response to the queued
+// command then hits turnHandler == nil and gets dropped (the
+// "text block dropped (no handler/OnText)" WARN).
+func (b *Backend) sendUserMessage(_ context.Context, text string, autoRearm bool) error {
 	b.turnMu.Lock()
 	inFlight := b.turnActive
-	if inFlight {
+	armed := autoRearm && inFlight
+	if armed {
 		b.incRearm()
 	}
 	b.turnMu.Unlock()
 
-	if err := b.writer.SendUser(command); err != nil {
-		// Roll back the increment — no response is coming for this command.
-		// Other queued events still in pendingRearmCount stay intact.
-		if inFlight {
+	if err := b.writer.SendUser(text); err != nil {
+		if armed {
+			// Roll back the increment for THIS message — no response is
+			// coming. Other queued events still in pendingRearmCount stay
+			// intact (decRearm clamps at zero, so this is safe even if
+			// another path drained the slot first).
 			b.turnMu.Lock()
 			b.decRearm()
 			b.turnMu.Unlock()
@@ -625,6 +625,102 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 		return err
 	}
 	return nil
+}
+
+// SendCommand sends a slash command or queued user message directly to CC.
+// When called during an in-flight turn (IsTurnInFlight true), this is a
+// follow-up message that CC processes after the current turn ends OR a
+// post-Interrupt urgent dispatch — in either case the response streams
+// through the re-arm cascade. SendCommand auto-arms the rearm count so
+// the queued response reaches the original handler's OnText.
+//
+// Idle SendCommand calls skip the rearm step because no handler is armed.
+//
+// Deprecated: use Inject with SourceUser (follow-up), SourceSteer (urgent),
+// SourceCompact (/compact), or SourcePass (/pass) instead.
+func (b *Backend) SendCommand(ctx context.Context, command string) error {
+	return b.sendUserMessage(ctx, command, true)
+}
+
+// Inject is the canonical entry point for delivering a user-role event to
+// CC. It subsumes SendToPane / SendToPaneWithAttachments / SendCommand —
+// the routing decision (begin turn vs queue follow-up vs interrupt+queue
+// vs slash command) lives in one place rather than being scattered across
+// callsites.
+//
+// Routing matrix:
+//
+//	Source   | Turn state | Action
+//	---------|------------|--------------------------------------------
+//	User     | idle       | begin turn (with attachments if provided)
+//	User     | in-flight  | queue follow-up; response routes via rearm
+//	Steer    | in-flight  | Interrupt + queue; response via rearm
+//	Steer    | idle       | begin turn — degrades to User-idle
+//	Compact  | any        | send slash command; no rearm
+//	Pass     | any        | send slash command; no rearm
+//
+// inj.Handler is required for SourceUser/Steer at idle (a fresh turn needs
+// a sink for OnText/OnTurnComplete). Ignored for in-flight injections
+// (response routes through the existing turn handler) and for slash
+// commands (no rearm).
+//
+// inj.Attachments are honored only when beginning a new turn; ignored
+// otherwise. They become structured content blocks alongside the text.
+func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
+	inFlight := b.IsTurnInFlight()
+	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v",
+		inj.Source, len(inj.Text), len(inj.Attachments), inFlight)
+
+	switch inj.Source {
+	case delegator.SourceUser:
+		if !inFlight {
+			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Handler)
+		}
+		// Follow-up: queue behind in-flight turn. Response routes via rearm
+		// to the original handler. inj.Handler is intentionally ignored —
+		// the in-flight turn already has its handler installed.
+		return b.sendUserMessage(ctx, inj.Text, true)
+
+	case delegator.SourceSteer:
+		if !inFlight {
+			// Edge case: steer at idle. The platform queue dispatched a
+			// "now"-priority message but the turn ended between the
+			// IsTurnInFlight check and us getting here. Degrade to a fresh
+			// turn — the message still gets delivered, just without an
+			// in-flight turn to interrupt.
+			b.logger().Debugf("Inject(Steer): no turn in flight, degrading to begin-turn")
+			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Handler)
+		}
+		// In-flight: abort the current task, then queue. Interrupt errors
+		// are logged but don't block the dispatch — CC may have already
+		// finished the current step, and SendUser will queue regardless.
+		if err := b.Interrupt(ctx); err != nil {
+			b.logger().Warnf("Inject(Steer): Interrupt failed: %v (continuing with SendUser)", err)
+		}
+		return b.sendUserMessage(ctx, inj.Text, true)
+
+	case delegator.SourceCompact, delegator.SourcePass:
+		// Slash commands. Fire-and-forget — no rearm cascade. The caller
+		// is responsible for any synchronisation (e.g. compaction.go arms
+		// CompactionWaiter before calling Inject).
+		if inFlight {
+			b.logger().Warnf("Inject(%s): called with turn in flight — slash command will queue behind active turn", inj.Source)
+		}
+		return b.sendUserMessage(ctx, inj.Text, false)
+	}
+	return fmt.Errorf("ccstream: Inject: unknown source %d", inj.Source)
+}
+
+// beginTurnWithText starts a new turn, dispatching to the attachments path
+// when the inject carries them and to plain text otherwise. Internal to
+// Inject — callers reach turn-start through Inject(SourceUser) at idle.
+func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, handler *delegator.EventHandler) error {
+	if len(atts) > 0 {
+		_, err := b.SendToPaneWithAttachments(ctx, text, atts, handler)
+		return err
+	}
+	_, err := b.SendToPane(ctx, text, handler)
+	return err
 }
 
 // ---------------------------------------------------------------------------
