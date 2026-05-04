@@ -80,6 +80,7 @@ var CommonReadonlyRules = []string{
 	"Bash:mds",
 	"Bash:mdq",
 	"Bash:sqlite3 -readonly",
+	"Bash:/usr/bin/sqlite3 -readonly",
 }
 
 // FociShellRulesFor returns auto-approve rules for foci shell functions
