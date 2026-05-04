@@ -1249,7 +1249,7 @@ Codex and OpenCode backends are planned but not yet implemented.
 1. On startup, Foci spawns `claude` in a tmux window (`cc-{agentID}`) in the agent's workspace directory via a login shell (`sh -l -c`). The concatenated system prompt is written to `{workspace}/character/.full-prompt` and passed via `--system-prompt-file`.
 2. User messages are enriched with Foci's `[meta]`, `[reminders]`, `[state]`, and nudge blocks, then pasted into the tmux pane via `load-buffer`/`paste-buffer` (piped from stdin — no temp files).
 3. Foci watches Claude Code's session JSONL file (`~/.claude/projects/<slug>/<session-id>.jsonl`) for new entries via fsnotify. Session discovery is lazy — the watcher is created on the first message, not at startup.
-4. Assistant text is streamed to the platform in real-time via the platform connection (`connMgr.ForSessionOrPrimary`). Output delivery is asynchronous — `SendToPane` is fire-and-forget.
+4. Assistant text is streamed to the platform in real-time via the platform connection (`connMgr.ForSessionOrPrimary`). Output delivery is asynchronous — `Backend.Inject` is fire-and-forget; the response flows through the `EventHandler` installed at begin-turn time.
 5. Claude Code owns its own session, tools, and context management. Foci does not manage conversation history for delegated agents.
 
 ### Permissions
