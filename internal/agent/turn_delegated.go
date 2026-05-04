@@ -167,12 +167,15 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// normally and stack as follow-ups.
 	if be.IsTurnInFlight() {
 		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
-		log.Debugf("delegated", "RunInference: SendCommand (follow-up) start sk=%s", ts.SessionKey)
-		if err := be.SendCommand(ts.Ctx, ts.Prompt); err != nil {
+		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)
+		if err := be.Inject(ts.Ctx, delegator.Inject{
+			Source: delegator.SourceUser,
+			Text:   ts.Prompt,
+		}); err != nil {
 			close(ts.CompletionChan)
 			return err
 		}
-		log.Debugf("delegated", "RunInference: SendCommand (follow-up) done sk=%s", ts.SessionKey)
+		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
 		close(ts.CompletionChan)
 		return nil
 	}
@@ -320,28 +323,30 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		bt.LogUsage(ts)
 		close(ts.CompletionChan)
 	}
-	// Use structured content blocks when attachments are present and the
-	// backend supports it. This sends images/documents as proper content
-	// blocks instead of flattening them into the text prompt.
+	// Build the attachment list (empty when none); Inject's begin-turn path
+	// honors attachments only at idle+SourceUser, and backends that don't
+	// support structured content blocks (cctmux) silently drop them with a
+	// debug log. The agent layer no longer type-asserts AttachmentSender —
+	// the capability decision lives in the backend.
+	var atts []delegator.Attachment
 	if len(ts.Attachments) > 0 {
-		if as, ok := be.(delegator.AttachmentSender); ok {
-			atts := make([]delegator.Attachment, len(ts.Attachments))
-			for i, a := range ts.Attachments {
-				atts[i] = delegator.Attachment{
-					MimeType: a.MimeType,
-					Data:     a.Data,
-				}
+		atts = make([]delegator.Attachment, len(ts.Attachments))
+		for i, a := range ts.Attachments {
+			atts[i] = delegator.Attachment{
+				MimeType: a.MimeType,
+				Data:     a.Data,
 			}
-			log.Debugf("delegated", "RunInference: SendToPaneWithAttachments start sk=%s", ts.SessionKey)
-			_, err = as.SendToPaneWithAttachments(ts.Ctx, ts.Prompt, atts, handler)
-			log.Debugf("delegated", "RunInference: SendToPaneWithAttachments done sk=%s err=%v", ts.SessionKey, err)
-			return err
 		}
 	}
 
-	log.Debugf("delegated", "RunInference: SendToPane start sk=%s", ts.SessionKey)
-	_, err = be.SendToPane(ts.Ctx, ts.Prompt, handler)
-	log.Debugf("delegated", "RunInference: SendToPane done sk=%s err=%v", ts.SessionKey, err)
+	log.Debugf("delegated", "RunInference: Inject(SourceUser, begin-turn) start sk=%s attachments=%d", ts.SessionKey, len(atts))
+	err = be.Inject(ts.Ctx, delegator.Inject{
+		Source:      delegator.SourceUser,
+		Text:        ts.Prompt,
+		Attachments: atts,
+		Handler:     handler,
+	})
+	log.Debugf("delegated", "RunInference: Inject(SourceUser, begin-turn) done sk=%s err=%v", ts.SessionKey, err)
 	return err
 }
 

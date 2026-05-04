@@ -8,6 +8,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/secrets"
@@ -201,12 +202,13 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 				bot.logger().Warnf("urgent dispatch: backend lookup failed sk=%s: %v", sk, err)
 				return
 			}
-			if err := be.Interrupt(ctx); err != nil {
-				bot.logger().Warnf("urgent dispatch: interrupt failed sk=%s: %v", sk, err)
-				// Fall through — even without abort, the queued message
-				// will reach CC.
-			}
-			if err := be.SendCommand(ctx, msg.Text); err != nil {
+			// Inject(SourceSteer) chains Interrupt + SendUser internally —
+			// one callsite owns the urgent-steer semantics. Interrupt
+			// errors are logged inside Inject and don't block dispatch.
+			if err := be.Inject(ctx, delegator.Inject{
+				Source: delegator.SourceSteer,
+				Text:   msg.Text,
+			}); err != nil {
 				bot.logger().Warnf("urgent dispatch: send failed sk=%s: %v", sk, err)
 				return
 			}
