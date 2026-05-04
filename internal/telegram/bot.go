@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/chatmeta"
 	"foci/internal/command"
 	"foci/internal/dispatch"
@@ -82,7 +83,8 @@ type Bot struct {
 	transcriber voice.STT // nil = voice notes not supported
 	tts         voice.TTS // nil = TTS not available
 
-	mq             *platform.MessageQueue // shared message queue (receiver → agent worker)
+	mq             *platform.MessageQueue // shared message queue (commands + receive funnel)
+	agentRef       *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
 	turnCancel     context.CancelFunc     // cancel the current agent turn
 	turnMu         sync.Mutex             // protects turnCancel
 	chatID         int64                  // last known chat ID (for notifications)

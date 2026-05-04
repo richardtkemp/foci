@@ -45,8 +45,15 @@ type Envelope struct {
 	UserID      string
 	Username    string
 	SenderName  string
+	ChatID      int64 // platform-side chat/channel ID; opaque to the agent, used by the Driver for renderer/tracker setup
 	IsGroupChat bool
 	ReceivedAt  time.Time
+
+	// Original is the platform-specific raw message (e.g. *gotgbot.Message
+	// for telegram, *discordgo.Message for discord). Opaque to the agent;
+	// the Driver type-asserts to recover it for renderer/reply targeting.
+	// Mirrors platform.QueuedMessage.Original.
+	Original any
 
 	// Driver is the platform-specific turn execution callback. The
 	// session worker invokes Driver.Drive after batching. Set by the
@@ -423,8 +430,10 @@ func buildFollowUp(seed Envelope, orphans []SteerEntry, extras []Envelope) []Env
 			UserID:      seed.UserID,
 			Username:    seed.Username,
 			SenderName:  seed.SenderName,
+			ChatID:      seed.ChatID,
 			IsGroupChat: seed.IsGroupChat,
 			ReceivedAt:  s.ReceivedAt,
+			Original:    seed.Original,
 			Driver:      seed.Driver,
 		})
 	}
