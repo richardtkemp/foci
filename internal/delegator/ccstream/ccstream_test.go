@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1578,516 +1579,296 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Nudge re-arm
+// Re-arm cascade — behavior tests
+//
+// These tests verify foci's "complete-and-rearm" contract: when an in-flight
+// turn ends but a queued user-role injection (post-tool nudge, mid-turn
+// steer, follow-up) needs the next round of CC output delivered to the
+// original handler.
+//
+// The contract is asserted purely through observable behavior — no direct
+// reads or writes of internal flag fields. State is set up by invoking the
+// production trigger paths (handleHookResponse for nudge, checkAndSendSteers
+// for steer, SendCommand priority="next" for follow-up). These tests are
+// designed to survive an internal refactor that collapses the three flags
+// (nudgePending / steerInjected / followUpQueued) into a single re-arm-reason
+// representation, since they only depend on observable behavior:
+//
+//   - the original handler's OnTurnComplete fires exactly once,
+//   - subsequent OnAssistant text reaches the original OnText,
+//   - the second OnResult does NOT fire OnTurnComplete again,
+//   - after the second OnResult, IsTurnInFlight() returns false,
+//   - text arriving after the cycle ends is not delivered (handler cleared),
+//   - a fresh beginTurn supersedes any pending re-arm reason.
 // ---------------------------------------------------------------------------
 
-func TestOnResult_NudgePending_RearmsHandler(t *testing.T) {
-	// When a PostToolNudge was sent (nudgePending=true) and OnResult fires,
-	// the foci turn should complete (OnTurnComplete called) but the handler
-	// should be re-armed with a delivery-only handler for the nudge response.
-	t.Parallel()
+// rearmTrigger is one of the three production paths that sets up a
+// pending re-arm. arm() fires the trigger; it must leave the backend in a
+// state where the next OnResult takes the re-arm path. handler is the
+// already-armed turn handler — arm() may install fields on it (e.g.
+// SteerCheckFunc) that the production trigger reads.
+type rearmTrigger struct {
+	name string
+	arm  func(t *testing.T, b *Backend, handler *delegator.EventHandler)
+}
 
-	var completed *delegator.TurnResult
-	var textCalls []string
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
-		OnText:         func(text string) { textCalls = append(textCalls, text) },
-		OnTextDelta:    func(string) {},
-	}
-
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
-
-	b.turnMu.Lock()
-	b.turnText.WriteString("turn text")
-	b.nudgePending = true
-	b.turnMu.Unlock()
-
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	// Foci turn completed.
-	if completed == nil {
-		t.Fatal("OnTurnComplete should fire on nudge-pending result")
-	}
-	if completed.Text != "turn text" {
-		t.Errorf("result.Text = %q, want %q", completed.Text, "turn text")
-	}
-
-	// Handler re-armed for nudge response.
-	b.turnMu.Lock()
-	rearmed := b.turnHandler
-	active := b.turnActive
-	b.turnMu.Unlock()
-
-	if !active {
-		t.Error("turnActive should be true after re-arm")
-	}
-	if rearmed == nil {
-		t.Fatal("turnHandler should be non-nil after re-arm")
-	}
-	if rearmed.OnTurnComplete != nil {
-		t.Error("re-armed handler should have nil OnTurnComplete")
-	}
-	if rearmed.OnText == nil {
-		t.Error("re-armed handler should preserve OnText for delivery")
-	}
-	if rearmed.OnTextDelta == nil {
-		t.Error("re-armed handler should preserve OnTextDelta for streaming")
+func rearmTriggers() []rearmTrigger {
+	return []rearmTrigger{
+		{
+			name: "nudge",
+			arm: func(t *testing.T, b *Backend, handler *delegator.EventHandler) {
+				t.Helper()
+				// handleHookResponse requires:
+				//   - a matching hookInstallID,
+				//   - handler.OnToolEnd non-nil (early return otherwise),
+				//   - handler.PostToolNudgeFunc returning text — that's
+				//     what marks the turn for re-arm.
+				const installID = "test-install"
+				b.mu.Lock()
+				b.hookInstallID = installID
+				b.mu.Unlock()
+				if handler.OnToolEnd == nil {
+					handler.OnToolEnd = func(_, _, _ string, _ bool) {}
+				}
+				handler.PostToolNudgeFunc = func(_ string, _ bool) []string {
+					return []string{"nudge-text"}
+				}
+				stdout, err := json.Marshal(hookScriptOutput{
+					HookEvent:    eventPostToolUse,
+					InstallID:    installID,
+					ToolUseID:    "toolu_test",
+					ToolName:     "Bash",
+					ToolResponse: "ok",
+				})
+				if err != nil {
+					t.Fatalf("marshal hookScriptOutput: %v", err)
+				}
+				env, err := json.Marshal(hookResponseEnvelope{
+					HookEvent: eventPostToolUse,
+					Stdout:    string(stdout),
+				})
+				if err != nil {
+					t.Fatalf("marshal hookResponseEnvelope: %v", err)
+				}
+				b.handleHookResponse(env)
+			},
+		},
+		{
+			name: "steer",
+			arm: func(t *testing.T, b *Backend, handler *delegator.EventHandler) {
+				t.Helper()
+				handler.SteerCheckFunc = func() []string { return []string{"redirect"} }
+				b.checkAndSendSteers()
+			},
+		},
+		{
+			name: "followup",
+			arm: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
+				t.Helper()
+				if err := b.SendCommand(context.Background(), "follow-up text", "next"); err != nil {
+					t.Fatalf("SendCommand: %v", err)
+				}
+			},
+		},
 	}
 }
 
-func TestOnResult_NudgePending_DeliveryAfterRearm(t *testing.T) {
-	// After re-arm, assistant messages from the nudge response should be
-	// delivered through the re-armed handler's OnText callback.
-	t.Parallel()
-
-	var textCalls []string
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(*delegator.TurnResult) {},
-		OnText:         func(text string) { textCalls = append(textCalls, text) },
-	}
-
-	b := &Backend{}
+// newRearmBackend builds a backend wired up with the writer and typing func
+// that the trigger paths and OnResult cascade exercise. Caller still calls
+// beginTurn before triggering.
+func newRearmBackend() *Backend {
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
+	return b
+}
 
-	b.turnMu.Lock()
-	b.nudgePending = true
-	b.turnMu.Unlock()
-
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	// Simulate CC processing the nudge: assistant message with text.
+// emitText fires an OnAssistant event with a single top-level text block.
+// Used to (a) accumulate turnText pre-trigger and (b) verify post-rearm
+// delivery via OnText.
+func emitText(b *Backend, text string) {
 	b.OnAssistant(&AssistantMessage{
 		Message: BetaMessage{
-			Content: []ContentBlock{{Type: "text", Text: "nudge response text"}},
+			Content: []ContentBlock{{Type: "text", Text: text}},
 		},
 	})
-
-	if len(textCalls) != 1 || textCalls[0] != "nudge response text" {
-		t.Errorf("textCalls = %v, want [nudge response text]", textCalls)
-	}
 }
 
-func TestOnResult_NudgePending_SecondResultCleansUp(t *testing.T) {
-	// The nudge turn's result should clean up normally: turnHandler nil,
-	// turnActive false, no panic (OnTurnComplete is nil on the re-armed handler).
-	t.Parallel()
-
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(*delegator.TurnResult) {},
-		OnText:         func(string) {},
-	}
-
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
-
-	b.turnMu.Lock()
-	b.nudgePending = true
-	b.turnMu.Unlock()
-
-	// First result: foci turn completes, handler re-armed.
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	// Second result: nudge turn ends.
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	b.turnMu.Lock()
-	h := b.turnHandler
-	active := b.turnActive
-	b.turnMu.Unlock()
-
-	if h != nil {
-		t.Error("turnHandler should be nil after nudge turn completes")
-	}
-	if active {
-		t.Error("turnActive should be false after nudge turn completes")
-	}
+// successResult is a minimal CC result message used to drive turn completion
+// in the cascade tests. ModelUsage must be a non-nil map (OnResult iterates).
+func successResult() *ResultMessage {
+	return &ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}}
 }
 
-func TestBeginTurn_ClearsNudgePending(t *testing.T) {
-	// A new foci turn (beginTurn) should clear any stale nudgePending state.
-	t.Parallel()
-
-	b := &Backend{}
-	b.turnMu.Lock()
-	b.nudgePending = true
-	b.turnMu.Unlock()
-
-	b.beginTurn(&delegator.EventHandler{})
-
-	b.turnMu.Lock()
-	pending := b.nudgePending
-	b.turnMu.Unlock()
-
-	if pending {
-		t.Error("beginTurn should clear nudgePending")
-	}
-}
-
-func TestCheckAndSendSteers_SetsSteerInjected(t *testing.T) {
-	// When checkAndSendSteers successfully sends a steer to CC, it must
-	// flag the turn so OnResult takes the re-arm path instead of clearing
-	// the handler. Without this flag, the steered response is dropped
-	// (TODO #726).
-	t.Parallel()
-
-	var buf bytes.Buffer
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
-	}
-	b.turnHandler = &delegator.EventHandler{
-		SteerCheckFunc: func() []string { return []string{"redirect"} },
-	}
-
-	b.checkAndSendSteers()
-
-	b.turnMu.Lock()
-	injected := b.steerInjected
-	b.turnMu.Unlock()
-
-	if !injected {
-		t.Error("steerInjected should be true after a steer is sent")
-	}
-}
-
-func TestCheckAndSendSteers_NoSendNoFlag(t *testing.T) {
-	// If SteerCheckFunc returns nothing, no PriorityNow is sent and
-	// steerInjected must remain false (no re-arm needed).
-	t.Parallel()
-
-	var buf bytes.Buffer
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
-	}
-	b.turnHandler = &delegator.EventHandler{
-		SteerCheckFunc: func() []string { return nil },
-	}
-
-	b.checkAndSendSteers()
-
-	b.turnMu.Lock()
-	injected := b.steerInjected
-	b.turnMu.Unlock()
-
-	if injected {
-		t.Error("steerInjected should be false when no steer was sent")
-	}
-}
-
-func TestOnResult_SteerInjected_RearmsHandler(t *testing.T) {
-	// After a steer is injected via PriorityNow, CC aborts the in-flight
-	// turn and emits a (typically empty) result. OnResult must fire
-	// OnTurnComplete on that result AND re-arm a delivery-only handler so
-	// the steered response's text blocks reach OnText. Without the re-arm,
-	// b.turnHandler is cleared and CC's subsequent text is silently
-	// dropped — the failure shape captured in TODO #726.
-	t.Parallel()
-
-	var completed *delegator.TurnResult
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
-		OnText:         func(string) {},
-		OnTextDelta:    func(string) {},
-	}
-
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
-
-	b.turnMu.Lock()
-	b.steerInjected = true // simulate checkAndSendSteers having sent one
-	b.turnMu.Unlock()
-
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	if completed == nil {
-		t.Fatal("OnTurnComplete should fire on steer-injected result")
-	}
-
-	b.turnMu.Lock()
-	rearmed := b.turnHandler
-	active := b.turnActive
-	stillFlagged := b.steerInjected
-	b.turnMu.Unlock()
-
-	if stillFlagged {
-		t.Error("steerInjected should be cleared by OnResult")
-	}
-	if !active {
-		t.Error("turnActive should remain true after steer re-arm")
-	}
-	if rearmed == nil {
-		t.Fatal("turnHandler should be non-nil after steer re-arm")
-	}
-	if rearmed.OnTurnComplete != nil {
-		t.Error("re-armed handler should have nil OnTurnComplete (avoid double-fire)")
-	}
-	if rearmed.OnText == nil {
-		t.Error("re-armed handler should preserve OnText for steered response delivery")
-	}
-}
-
-func TestOnResult_SteerInjected_DeliveryAfterRearm(t *testing.T) {
-	// Once re-armed, text blocks from the steered response must reach
-	// the original OnText callback. This is the user-visible contract:
-	// the user's redirected message gets answered.
-	t.Parallel()
-
-	var textCalls []string
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(*delegator.TurnResult) {},
-		OnText:         func(text string) { textCalls = append(textCalls, text) },
-	}
-
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
-
-	b.turnMu.Lock()
-	b.steerInjected = true
-	b.turnMu.Unlock()
-
-	// CC's abort-result for the cancelled in-flight turn.
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	// CC then processes the steered message and emits text.
-	b.OnAssistant(&AssistantMessage{
-		Message: BetaMessage{
-			Content: []ContentBlock{{Type: "text", Text: "steered response"}},
-		},
-	})
-
-	if len(textCalls) != 1 || textCalls[0] != "steered response" {
-		t.Errorf("textCalls = %v, want [steered response]", textCalls)
-	}
-}
-
-func TestOnResult_SteerInjected_SecondResultCleansUp(t *testing.T) {
-	// When the steered response itself completes (second OnResult), the
-	// re-armed handler should clean up like any normal turn end —
-	// turnHandler nil, turnActive false, no panic from nil OnTurnComplete.
-	t.Parallel()
-
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(*delegator.TurnResult) {},
-		OnText:         func(string) {},
-	}
-
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
-
-	b.turnMu.Lock()
-	b.steerInjected = true
-	b.turnMu.Unlock()
-
-	// Abort-result for cancelled turn → re-arm.
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	// Steered response completes → normal cleanup.
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	b.turnMu.Lock()
-	h := b.turnHandler
-	active := b.turnActive
-	b.turnMu.Unlock()
-
-	if h != nil {
-		t.Error("turnHandler should be nil after steered response completes")
-	}
-	if active {
-		t.Error("turnActive should be false after steered response completes")
-	}
-}
-
-func TestBeginTurn_ClearsSteerInjected(t *testing.T) {
-	// A new foci turn (beginTurn) should clear any stale steerInjected state.
-	t.Parallel()
-
-	b := &Backend{}
-	b.turnMu.Lock()
-	b.steerInjected = true
-	b.turnMu.Unlock()
-
-	b.beginTurn(&delegator.EventHandler{})
-
-	b.turnMu.Lock()
-	injected := b.steerInjected
-	b.turnMu.Unlock()
-
-	if injected {
-		t.Error("beginTurn should clear steerInjected")
-	}
-}
-
-func TestSendCommand_NextPrioritySetsFollowUpQueued(t *testing.T) {
-	// SendCommand with priority="next" is the RunInference follow-up path:
-	// the new user message is queued behind an in-flight turn. Mark the
-	// flag so OnResult re-arms the handler instead of clearing — otherwise
-	// the follow-up's response text gets dropped (TODO #726 sub-mode 3).
-	t.Parallel()
-
-	var buf bytes.Buffer
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
-	}
-
-	if err := b.SendCommand(context.Background(), "follow-up text", "next"); err != nil {
-		t.Fatalf("SendCommand: %v", err)
-	}
-
-	b.turnMu.Lock()
-	queued := b.followUpQueued
-	b.turnMu.Unlock()
-
-	if !queued {
-		t.Error("followUpQueued should be true after SendCommand with priority=next")
-	}
-}
-
-func TestSendCommand_OtherPrioritiesDoNotSetFlag(t *testing.T) {
-	// Slash commands (/pass, /compact) and steer-priority messages don't
-	// represent queued user follow-ups awaiting a delivered response, so
-	// they must not set followUpQueued.
-	t.Parallel()
-
-	cases := []struct {
-		name     string
-		priority string
-	}{
-		{"empty (slash command)", ""},
-		{"now (steer)", PriorityNow},
-	}
-
-	for _, tc := range cases {
+// TestRearm_FullCycle exercises the complete-and-rearm contract end-to-end
+// for every trigger path. Replaces three near-identical RearmsHandler /
+// DeliveryAfterRearm / SecondResultCleansUp test families with a single
+// parameterised assertion of observable behavior.
+func TestRearm_FullCycle(t *testing.T) {
+	for _, tc := range rearmTriggers() {
 		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			b := &Backend{
-				writer: NewWriter(nopWriteCloser{&buf}),
+			t.Parallel()
+
+			var completes []*delegator.TurnResult
+			var textCalls []string
+			handler := &delegator.EventHandler{
+				OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
+				OnText:         func(text string) { textCalls = append(textCalls, text) },
+				OnTextDelta:    func(string) {},
 			}
 
-			if err := b.SendCommand(context.Background(), "msg", tc.priority); err != nil {
-				t.Fatalf("SendCommand: %v", err)
+			b := newRearmBackend()
+			b.beginTurn(handler)
+			emitText(b, "before injection")
+			tc.arm(t, b, handler)
+
+			// 1) First OnResult: original turn completes, handler re-arms.
+			b.OnResult(successResult())
+
+			if len(completes) != 1 {
+				t.Fatalf("OnTurnComplete fired %d times after first OnResult, want 1", len(completes))
+			}
+			if !strings.Contains(completes[0].Text, "before injection") {
+				t.Errorf("result.Text = %q, want it to include accumulated turn text", completes[0].Text)
+			}
+			if !b.IsTurnInFlight() {
+				t.Error("IsTurnInFlight = false after re-arm; expected handler to remain armed")
 			}
 
-			b.turnMu.Lock()
-			queued := b.followUpQueued
-			b.turnMu.Unlock()
+			// 2) Subsequent assistant text reaches OnText through the
+			//    re-armed handler.
+			emitText(b, "queued response text")
 
-			if queued {
-				t.Errorf("followUpQueued should remain false for priority=%q", tc.priority)
+			if !slices.Contains(textCalls, "queued response text") {
+				t.Errorf("textCalls = %v, want to include %q (handler not re-armed for delivery)",
+					textCalls, "queued response text")
+			}
+
+			// 3) Second OnResult: re-armed turn ends. OnTurnComplete must
+			//    NOT double-fire (re-armed handler has nil OnTurnComplete
+			//    by contract, so the result cycle ends silently).
+			b.OnResult(successResult())
+
+			if len(completes) != 1 {
+				t.Errorf("OnTurnComplete fired %d times overall, want 1 (re-armed handler must not double-fire)",
+					len(completes))
+			}
+			if b.IsTurnInFlight() {
+				t.Error("IsTurnInFlight = true after second OnResult; expected normal cleanup")
+			}
+
+			// 4) Late text after the cycle ends is not delivered — the
+			//    handler is cleared.
+			before := len(textCalls)
+			emitText(b, "post-end text")
+			if len(textCalls) != before {
+				t.Errorf("text after second OnResult was delivered (%d new calls); handler should be cleared",
+					len(textCalls)-before)
 			}
 		})
 	}
 }
 
-func TestOnResult_FollowUpQueued_RearmsHandler(t *testing.T) {
-	// When SendCommand queues a follow-up via priority="next", the
-	// follow-up's response arrives AFTER the current turn's result fires.
-	// OnResult must fire OnTurnComplete on the current result AND re-arm
-	// a delivery-only handler so the follow-up's text reaches OnText.
-	// Without this, the rearmed handler from a prior nudge gets cleared
-	// before CC produces the follow-up's response — the failure shape
-	// observed live with scout 2026-04-30 20:07 (TODO #726 sub-mode 3).
-	t.Parallel()
+// TestRearm_BeginTurnClearsStaleState verifies that a fresh user turn
+// supersedes any pending re-arm reason: after the trigger fires, beginTurn
+// for a new handler must reset the state so the next OnResult is a normal
+// turn end (handler2's OnTurnComplete fires, no spurious re-arm).
+//
+// Replaces TestBeginTurn_Clears{Nudge,Steer,FollowUp} with one
+// parameterised behavior assertion.
+func TestRearm_BeginTurnClearsStaleState(t *testing.T) {
+	for _, tc := range rearmTriggers() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	var completed *delegator.TurnResult
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completed = r },
-		OnText:         func(string) {},
-	}
+			handler1 := &delegator.EventHandler{
+				OnTurnComplete: func(*delegator.TurnResult) {
+					t.Error("handler1.OnTurnComplete must not fire — superseded by beginTurn")
+				},
+				OnText: func(string) {},
+			}
 
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
+			b := newRearmBackend()
+			b.beginTurn(handler1)
+			tc.arm(t, b, handler1)
 
-	b.turnMu.Lock()
-	b.followUpQueued = true // simulate SendCommand follow-up just sent
-	b.turnMu.Unlock()
+			// Fresh turn supersedes handler1 before any OnResult arrives.
+			var completes []*delegator.TurnResult
+			handler2 := &delegator.EventHandler{
+				OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
+				OnText:         func(string) {},
+			}
+			b.beginTurn(handler2)
 
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
+			// OnResult must take the normal-completion path: handler2's
+			// OnTurnComplete fires, turn ends, no re-arm.
+			b.OnResult(successResult())
 
-	if completed == nil {
-		t.Fatal("OnTurnComplete should fire on followUp-queued result")
-	}
-
-	b.turnMu.Lock()
-	rearmed := b.turnHandler
-	active := b.turnActive
-	stillFlagged := b.followUpQueued
-	b.turnMu.Unlock()
-
-	if stillFlagged {
-		t.Error("followUpQueued should be cleared by OnResult")
-	}
-	if !active {
-		t.Error("turnActive should remain true after follow-up re-arm")
-	}
-	if rearmed == nil {
-		t.Fatal("turnHandler should be non-nil after follow-up re-arm")
-	}
-	if rearmed.OnTurnComplete != nil {
-		t.Error("re-armed handler should have nil OnTurnComplete")
-	}
-	if rearmed.OnText == nil {
-		t.Error("re-armed handler should preserve OnText")
+			if len(completes) != 1 {
+				t.Fatalf("handler2.OnTurnComplete fired %d times, want 1 (stale re-arm reason leaked)", len(completes))
+			}
+			if b.IsTurnInFlight() {
+				t.Error("IsTurnInFlight = true after normal-completion OnResult on fresh turn")
+			}
+		})
 	}
 }
 
-func TestOnResult_FollowUpQueued_DeliveryAfterRearm(t *testing.T) {
-	// After follow-up re-arm, the queued message's response text reaches
-	// the original OnText callback.
-	t.Parallel()
-
-	var textCalls []string
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(*delegator.TurnResult) {},
-		OnText:         func(text string) { textCalls = append(textCalls, text) },
-	}
-
-	b := &Backend{}
-	b.typingFunc = func(bool) {}
-	b.beginTurn(handler)
-
-	b.turnMu.Lock()
-	b.followUpQueued = true
-	b.turnMu.Unlock()
-
-	// First OnResult clears the original turn but re-arms for follow-up.
-	b.OnResult(&ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}})
-
-	// CC then processes the follow-up and emits text.
-	b.OnAssistant(&AssistantMessage{
-		Message: BetaMessage{
-			Content: []ContentBlock{{Type: "text", Text: "follow-up response"}},
+// TestRearm_TriggerWithoutInjectionEndsNormally proves that when a trigger
+// path runs but elects NOT to inject (no steer text returned, follow-up uses
+// non-"next" priority), no re-arm reason is set and OnResult takes the
+// normal-completion path. Inverse of TestRearm_FullCycle.
+func TestRearm_TriggerWithoutInjectionEndsNormally(t *testing.T) {
+	cases := []struct {
+		name string
+		run  func(t *testing.T, b *Backend, handler *delegator.EventHandler)
+	}{
+		{
+			name: "steer returns nothing",
+			run: func(t *testing.T, b *Backend, handler *delegator.EventHandler) {
+				handler.SteerCheckFunc = func() []string { return nil }
+				b.checkAndSendSteers()
+			},
 		},
-	})
-
-	if len(textCalls) != 1 || textCalls[0] != "follow-up response" {
-		t.Errorf("textCalls = %v, want [follow-up response]", textCalls)
+		{
+			name: "follow-up uses empty priority (slash command)",
+			run: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
+				if err := b.SendCommand(context.Background(), "/compact", ""); err != nil {
+					t.Fatalf("SendCommand: %v", err)
+				}
+			},
+		},
+		{
+			name: "follow-up uses now priority (steer)",
+			run: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
+				if err := b.SendCommand(context.Background(), "redirect", PriorityNow); err != nil {
+					t.Fatalf("SendCommand: %v", err)
+				}
+			},
+		},
 	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestBeginTurn_ClearsFollowUpQueued(t *testing.T) {
-	// A new foci turn (beginTurn) should clear any stale followUpQueued state.
-	t.Parallel()
+			var completes []*delegator.TurnResult
+			handler := &delegator.EventHandler{
+				OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
+				OnText:         func(string) {},
+			}
+			b := newRearmBackend()
+			b.beginTurn(handler)
+			tc.run(t, b, handler)
 
-	b := &Backend{}
-	b.turnMu.Lock()
-	b.followUpQueued = true
-	b.turnMu.Unlock()
+			b.OnResult(successResult())
 
-	b.beginTurn(&delegator.EventHandler{})
-
-	b.turnMu.Lock()
-	queued := b.followUpQueued
-	b.turnMu.Unlock()
-
-	if queued {
-		t.Error("beginTurn should clear followUpQueued")
+			if len(completes) != 1 {
+				t.Fatalf("OnTurnComplete fired %d times, want 1 (spurious re-arm with no injection)", len(completes))
+			}
+			if b.IsTurnInFlight() {
+				t.Error("IsTurnInFlight = true after normal completion")
+			}
+		})
 	}
 }
 
