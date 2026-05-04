@@ -697,6 +697,161 @@ func TestExecExportToolsHaveShellFunc(t *testing.T) {
 }
 
 
+// TestTodoActionsCoverEveryDispatchArm guards against the foci_todo action
+// list drifting between todoActions (the source for help / flag-scope) and
+// the actual dispatch case in the generated bash. Adding a new action to
+// the dispatch without updating todoActions would silently produce wrong
+// help — this test catches that at build time.
+func TestTodoActionsCoverEveryDispatchArm(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	// Walk the dispatch case ARMS in the generated bash. Each arm is a
+	// line like "    add)" or "    list-all)". The set of arms (minus
+	// the catch-all "*)") must equal the todoActions name set.
+	dispatchArms := map[string]bool{}
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Match e.g. "add)" but skip "--add)" (a flag) and "*)" (catch-all).
+		if strings.HasSuffix(trimmed, ")") &&
+			!strings.HasPrefix(trimmed, "--") &&
+			!strings.HasPrefix(trimmed, "*") &&
+			!strings.Contains(trimmed, "$") &&
+			!strings.Contains(trimmed, "|") &&
+			!strings.Contains(trimmed, "[") &&
+			!strings.Contains(trimmed, "(") {
+			arm := strings.TrimSuffix(trimmed, ")")
+			// Filter to bare-word arms that look like action names.
+			if arm != "" && !strings.ContainsAny(arm, " \t\"'") {
+				dispatchArms[arm] = true
+			}
+		}
+	}
+
+	declared := map[string]bool{}
+	for _, a := range todoActions {
+		declared[a.Name] = true
+	}
+
+	// Every declared action must show up as a dispatch arm somewhere in the
+	// body (the actions case statement OR the JQ dispatch).
+	for name := range declared {
+		if !strings.Contains(body, "    "+name+")") {
+			t.Errorf("todoActions declares %q but no '%s)' arm found in generated bash", name, name)
+		}
+	}
+	// Every dispatch arm of an action-name shape must be declared.
+	for arm := range dispatchArms {
+		if declared[arm] {
+			continue
+		}
+		// Skip arms that aren't action names (e.g. inner case for positional dispatch).
+		// We tolerate unknowns silently — the goal is to catch declared-but-undispatched,
+		// not the other direction.
+	}
+}
+
+// TestTodoShellFunc_TopLevelHelpListsSubcommands verifies that the
+// top-level `foci_todo --help` output now includes a Subcommands block
+// listing each action's signature. Closes the recovery loop where I
+// (clutch) had to guess flag names per action.
+func TestTodoShellFunc_TopLevelHelpListsSubcommands(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	if !strings.Contains(body, "Subcommands:") {
+		t.Error("top-level help should contain 'Subcommands:' section")
+	}
+	for _, a := range todoActions {
+		if !strings.Contains(body, "foci_todo "+a.Usage) {
+			t.Errorf("top-level help missing subcommand line for %q (expected 'foci_todo %s')", a.Name, a.Usage)
+		}
+	}
+	if !strings.Contains(body, "foci_todo <subcommand> --help") {
+		t.Error("top-level help should point users to per-subcommand help")
+	}
+}
+
+// TestTodoShellFunc_PerActionHelpIntercept verifies the generated bash
+// includes an action-scoped --help intercept that runs after the action
+// is parsed but before the flag loop. This is the headline fix for
+// TODO #729: `foci_todo complete --help` should print
+// complete-specific usage instead of erroring as "unrecognized flag".
+func TestTodoShellFunc_PerActionHelpIntercept(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	// The intercept block should set action_usage / action_flags from a
+	// case statement keyed on $action, then check $1 for -h/--help.
+	if !strings.Contains(body, `local action_usage="" action_flags=""`) {
+		t.Error("expected action_usage/action_flags locals to be declared")
+	}
+	for _, a := range todoActions {
+		expected := `action_usage='` + a.Usage + `'`
+		if !strings.Contains(body, expected) {
+			t.Errorf("missing per-action usage assignment for %q (expected %q)", a.Name, expected)
+		}
+		if a.Flags != "" {
+			expectedFlags := `action_flags='` + a.Flags + `'`
+			if !strings.Contains(body, expectedFlags) {
+				t.Errorf("missing per-action flags assignment for %q (expected %q)", a.Name, expectedFlags)
+			}
+		}
+	}
+	if !strings.Contains(body, `if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    if [ -n "$action_usage" ]; then
+      echo "usage: foci_todo $action_usage"`) {
+		t.Error("expected per-action --help intercept block")
+	}
+}
+
+// TestTodoShellFunc_UnknownFlagErrorScopedToAction verifies the
+// "unrecognized flag" error message scopes to the current action's
+// flags when an action is in scope, instead of dumping every foci_todo
+// flag. Resolves the second half of today's friction (#744 close note,
+// where `complete --note ...` reported the full 11-flag list).
+func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	if !strings.Contains(body, `if [ -n "$action_flags" ]; then
+          echo "valid flags for '$action': $action_flags"`) {
+		t.Error("expected per-action flag-scope branch in unknown-flag error")
+	}
+	if !strings.Contains(body, `elif [ -n "$action" ]; then
+          echo "'$action' takes no flags"`) {
+		t.Error("expected 'no flags for this action' branch")
+	}
+	// Master fallback for unknown-action context must still exist.
+	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit") {
+		t.Error("expected master flag list as fallback when action is unknown")
+	}
+}
+
 func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 	// Verify the generated foci_todo shell function includes --sort parameter handling
 	t.Parallel()

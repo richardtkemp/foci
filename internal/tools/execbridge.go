@@ -438,6 +438,63 @@ func generateHelpText(t *Tool) string {
 	return b.String()
 }
 
+// todoActions defines per-subcommand usage and flag lists for foci_todo, the
+// only sub-actioned shell tool today. Single source of truth for both
+//
+//   - the "Subcommands" block appended to top-level `foci_todo --help`, and
+//   - the per-action `foci_todo <action> --help` intercept, and
+//   - the per-action "valid flags" list shown when an unknown flag is rejected
+//     while a known action is in scope.
+//
+// Closes the recovery loop documented in TODO #729: previously,
+// `foci_todo complete --help` was rejected as "unrecognized flag" and
+// `foci_todo complete --note ...` listed every foci_todo flag instead of
+// scoping to complete's actual three flags.
+//
+// Order is preserved (slice not map) so help output is stable.
+var todoActions = []struct {
+	Name  string
+	Usage string // single-line: e.g. "complete <id> [--reason TEXT]"
+	Flags string // space-separated --flag list valid for this action; empty = no flags
+}{
+	{"add", "add --text TEXT [--priority high|medium|low] [--tag TAGS]", "--text --priority --tag"},
+	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --status --priority --sort --reverse --limit"},
+	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
+	{"search", "search <query> [--sort F] [--reverse] [--limit N]", "--sort --reverse --limit"},
+	{"get", "get <id>", ""},
+	{"complete", "complete <id> [--reason TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason"},
+	{"drop", "drop <id> [--reason TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason"},
+	{"edit", "edit --id N [--text TEXT] [--priority P] [--tag T]", "--id --ids --text --priority --tag"},
+	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
+}
+
+// todoActionsBashCase emits the inner body of a `case "$action" in ... esac`
+// block that populates `action_usage` and `action_flags` for known actions.
+// Unknown actions leave both empty, which the surrounding bash treats as
+// "no action context" — falling back to the master usage line.
+func todoActionsBashCase() string {
+	var b strings.Builder
+	for _, a := range todoActions {
+		// Single-quote in bash is a literal — none of the usage strings
+		// contain ' so no escaping is required. If that ever changes,
+		// switch to the standard '\\'' bash escape.
+		fmt.Fprintf(&b, "    %s)\n      action_usage='%s'\n      action_flags='%s' ;;\n", a.Name, a.Usage, a.Flags)
+	}
+	return b.String()
+}
+
+// todoSubcommandsHelpBlock returns the "Subcommands:" section appended to
+// the top-level `foci_todo --help` output.
+func todoSubcommandsHelpBlock() string {
+	var b strings.Builder
+	b.WriteString("\n\nSubcommands:")
+	for _, a := range todoActions {
+		fmt.Fprintf(&b, "\n  foci_todo %s", a.Usage)
+	}
+	b.WriteString("\n\nRun 'foci_todo <subcommand> --help' for subcommand-specific usage.")
+	return b.String()
+}
+
 // generateShellFunc returns a bash function definition for a tool.
 // Each tool gets a function named foci_<toolname> with appropriate argument handling.
 // Every function starts with a help flag check, then a JSON passthrough guard:
@@ -503,11 +560,31 @@ func generateShellFunc(t *Tool) string {
 `, name, helpCheck, guard, name)
 
 	case "todo":
-		// action as first arg, rest varies by action
+		// action as first arg, rest varies by action. helpCheck above is the
+		// generic schema-driven help; override it here so top-level
+		// `foci_todo --help` also lists subcommands. Per-action --help is
+		// handled inline after the action is parsed below.
+		todoFullHelp := helpText + todoSubcommandsHelpBlock()
+		todoEscapedHelp := strings.ReplaceAll(todoFullHelp, "'", "'\\''")
+		todoHelpCheck := fmt.Sprintf("  if [ \"${1:-}\" = \"-h\" ] || [ \"${1:-}\" = \"--help\" ]; then\n    echo '%s'\n    return 0\n  fi", todoEscapedHelp)
 		return fmt.Sprintf(`%s() {
 %s
 %s
   local action="$1"; shift 2>/dev/null || true
+  # Per-action usage and flag scope for --help and unknown-flag errors.
+  # See todoActions in internal/tools/execbridge.go for the source of truth.
+  local action_usage="" action_flags=""
+  case "$action" in
+%s  esac
+  if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    if [ -n "$action_usage" ]; then
+      echo "usage: foci_todo $action_usage"
+    else
+      echo "usage: foci_todo <add|list|list-all|search|get|complete|drop|edit|remove> [args...]"
+      echo "Run 'foci_todo --help' for full help."
+    fi
+    return 0
+  fi
   local text="" priority="" tag="" query="" status="" id="" ids="" reason="" sort="" reverse="" limit=""
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -524,7 +601,13 @@ func generateShellFunc(t *Tool) string {
       --reverse) reverse=true; shift ;;
       --*)
         echo "error: unrecognized flag: $1" >&2
-        echo "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit" >&2
+        if [ -n "$action_flags" ]; then
+          echo "valid flags for '$action': $action_flags" >&2
+        elif [ -n "$action" ]; then
+          echo "'$action' takes no flags" >&2
+        else
+          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit" >&2
+        fi
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
         case "$action" in
@@ -610,7 +693,7 @@ func generateShellFunc(t *Tool) string {
       ;;
   esac
 }
-`, name, helpCheck, guard, name)
+`, name, todoHelpCheck, guard, todoActionsBashCase(), name)
 
 	case "summary":
 		// Prompt as argument; content from --file or stdin
