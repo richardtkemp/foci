@@ -8,7 +8,6 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/secrets"
@@ -157,42 +156,23 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	primaryBot.mq.SetRequireMention(reqMention)
 	primaryBot.mq.SetSteerMode(bc.SteerMode)
 
-	// Urgent steer dispatch: when the agent has a delegated CC backend,
-	// route mid-turn steer messages directly via Interrupt + SendCommand
-	// instead of buffering them for drain at the next tool boundary.
-	// The closure captures the agent's DelegatedManager and the bot for
-	// session-key resolution; agents without DelegatedManager (API-mode)
-	// keep using the AppendSteer buffer drained by Steerer.PendingSteers.
-	if a, ok := p.Agent.(*agent.Agent); ok && a != nil && a.DelegatedManager != nil {
-		dm := a.DelegatedManager
-		bot := primaryBot
-		ctx := p.Ctx
-		primaryBot.mq.SetDispatchUrgent(func(msg platform.QueuedMessage) {
-			sk := bot.SessionKeyForChatID(msg.ChatID)
-			if sk == "" {
-				bot.logger().Debugf("urgent dispatch: no session key for chatID=%d", msg.ChatID)
-				return
-			}
-			be, err := dm.Get(ctx, sk)
-			if err != nil {
-				bot.logger().Warnf("urgent dispatch: backend lookup failed sk=%s: %v", sk, err)
-				return
-			}
-			// Inject(SourceSteer) chains Interrupt + SendUser internally,
-			// matching the pre-Phase-4 manual sequence — collapses to one
-			// callsite that owns the urgent-steer semantics. Interrupt
-			// errors are logged inside Inject and don't block dispatch
-			// (matches the previous fall-through behaviour).
-			if err := be.Inject(ctx, delegator.Inject{
-				Source: delegator.SourceSteer,
-				Text:   msg.Text,
-			}); err != nil {
-				bot.logger().Warnf("urgent dispatch: send failed sk=%s: %v", sk, err)
-				return
-			}
-			bot.logger().Debugf("urgent dispatch: sent %d bytes to sk=%s", len(msg.Text), sk)
-		})
+	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
+	// The agent owns the per-session message queue, steer buffer,
+	// in-flight flag, and worker goroutines. The bot's pump drains the
+	// platform queue and calls a.Enqueue; each session's worker calls
+	// back into Bot.Drive for renderer/sink construction.
+	//
+	// agent.SetInboxSteerMode replaces the per-bot SteerMode flag —
+	// authority for "should mid-turn messages route to Inject(SourceSteer)?"
+	// now lives on the agent. The bot's MessageQueue keeps SteerMode=false
+	// so it doesn't double-route (the only path through bot's queue is to
+	// the pump → agent.Enqueue, which makes the steer decision).
+	if a, ok := p.Agent.(*agent.Agent); ok && a != nil {
+		primaryBot.agentRef = a
+		a.SetInboxSteerMode(bc.SteerMode)
+		a.StartInbox(p.Ctx)
 	}
+	primaryBot.mq.SetSteerMode(false)
 
 	primaryBot.SetCommandContext(p.CommandContext)
 

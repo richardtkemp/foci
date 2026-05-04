@@ -365,6 +365,62 @@ func TestInbox_Worker_DrainsOrphansAfterTurn(t *testing.T) {
 	}
 }
 
+// TestInbox_Worker_OrphanDrainIsRecursive verifies that orphan steers
+// arriving DURING orphan-drain processing are themselves drained on the
+// next iteration, not left stale until the next turn. This was the bug
+// the original telegram-side TestAgentWorker_OrphanDrainIsRecursive
+// caught — covering it at the agent level since the orphan loop now
+// lives in agent.driveAndDrainOrphans.
+func TestInbox_Worker_OrphanDrainIsRecursive(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	// Pre-seed orphan-1 before the primary turn.
+	inb := a.getOrCreateInbox("test/s")
+	inb.appendSteer("orphan-1", time.Now())
+
+	// Recording driver that, on seeing "orphan-1" arrive as a follow-up,
+	// pushes orphan-2 into the steer buffer mid-Drive — simulating a
+	// message that arrives during orphan processing.
+	d := &recursiveDriver{onText: "orphan-1", appendNext: "orphan-2", inb: inb}
+
+	a.Enqueue(Envelope{SessionKey: "test/s", Text: "primary", Driver: d})
+
+	// Expect 3 Drive calls: primary, orphan-1 (which appends orphan-2),
+	// orphan-2 (recursive drain).
+	if !waitFor(2*time.Second, func() bool { return d.NumCalls() == 3 }) {
+		t.Fatalf("expected 3 Drive calls, got %d", d.NumCalls())
+	}
+
+	calls := d.Calls()
+	want := []string{"primary", "orphan-1", "orphan-2"}
+	for i, w := range want {
+		if len(calls[i]) != 1 || calls[i][0].Text != w {
+			t.Errorf("call[%d] = %+v, want %q", i, calls[i], w)
+		}
+	}
+}
+
+// recursiveDriver wraps recordingDriver and appends a follow-up steer
+// when a configured trigger text appears in the batch. Used to test the
+// orphan-drain loop's recursive behaviour.
+type recursiveDriver struct {
+	recordingDriver
+	onText     string
+	appendNext string
+	inb        *sessionInbox
+	once       sync.Once
+}
+
+func (d *recursiveDriver) Drive(ctx context.Context, sk string, batch []Envelope, st turnevent.Steerer) error {
+	if len(batch) > 0 && batch[0].Text == d.onText {
+		d.once.Do(func() {
+			d.inb.appendSteer(d.appendNext, time.Now())
+		})
+	}
+	return d.recordingDriver.Drive(ctx, sk, batch, st)
+}
+
 // TestInbox_Worker_NoDriverDropsBatch verifies that an envelope without
 // a Driver doesn't crash the worker — the batch is dropped with a log.
 func TestInbox_Worker_NoDriverDropsBatch(t *testing.T) {

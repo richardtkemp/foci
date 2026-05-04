@@ -55,8 +55,10 @@ func (b *Bot) Run(ctx context.Context) {
 
 	b.RegisterCommands()
 
-	// Agent worker — processes queued messages sequentially
-	go b.agentWorker(ctx)
+	// Agent message pump — drains the platform queue and hands each message
+	// to the agent's per-session inbox, where per-session workers handle
+	// batching, in-flight tracking, and turn execution via Bot.Drive.
+	go b.agentMessagePump(ctx)
 
 	// Command worker — processes slash commands concurrently with agent turns,
 	// so /status etc. respond immediately instead of queueing behind tool calls.
