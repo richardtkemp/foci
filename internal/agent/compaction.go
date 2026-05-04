@@ -106,7 +106,10 @@ func (a *Agent) runDelegatedCompact(ctx context.Context, be delegator.Delegator,
 		csw.ArmCompactionStartWait()
 	}
 
-	if err := be.SendCommand(cctx, fmt.Sprintf("/compact %s", summaryPrompt)); err != nil {
+	if err := be.Inject(cctx, delegator.Inject{
+		Source: delegator.SourceCompact,
+		Text:   fmt.Sprintf("/compact %s", summaryPrompt),
+	}); err != nil {
 		return fmt.Errorf("send /compact: %w", err)
 	}
 
