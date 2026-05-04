@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/chatmeta"
 	"foci/internal/command"
 	"foci/internal/dispatch"
@@ -61,7 +62,8 @@ type Bot struct {
 	transcriber voice.STT
 	tts         voice.TTS
 
-	mq         *platform.MessageQueue // shared message queue (receiver → agent worker)
+	mq         *platform.MessageQueue // shared message queue (commands + receive funnel)
+	agentRef   *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
 	turnCancel context.CancelFunc
 	turnMu     sync.Mutex
 	channelID  int64 // last known channel ID (stored as int64 from snowflake)
