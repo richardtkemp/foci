@@ -10,6 +10,7 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/compaction"
 	"foci/internal/config"
+	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/mana"
 	"foci/internal/memory"
@@ -135,6 +136,17 @@ type Agent struct {
 	turnLocks        map[string]*sync.Mutex // per-session turn serialization
 	metaMu           sync.Mutex
 	meta             map[string]*sessionMeta // per-session metadata
+
+	// Inbox subsystem (Phase 6 — TODO #739): per-session message queue
+	// + worker. Bot calls Enqueue(envelope) after filtering; agent owns
+	// queueing, batching, steer dispatch, and turn execution via the
+	// platform-supplied Driver. See inbox.go.
+	inboxes        map[string]*sessionInbox // per-session inbox registry, lazy-created
+	inboxesMu      sync.Mutex               // protects inboxes map + StartInbox idempotency
+	inboxStarted   bool                     // true once StartInbox has been called
+	inboxCtx       context.Context          //nolint:containedctx // parent ctx for session worker goroutines
+	inboxSteerMode bool                     // urgent-steer dispatch enabled
+	inboxBackend   func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
 }
 
 // TransformMessage applies compiled message transforms to the text.
