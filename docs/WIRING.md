@@ -145,7 +145,7 @@ main
  ├── provider      (no deps — provider-neutral types and Client interface)
  ├── platform      → config, log, secrets, session, state, voice, warnings
  │                  (messaging types, interfaces, provider registry, Messaging facade,
- │                   shared MessageQueue + GroupThrottle for inbound message routing)
+ │                   MessageQueue thin filter+throttle helper + GroupThrottle for group chat batching)
  ├── anthropic     → provider, github.com/anthropics/anthropic-sdk-go
  ├── gemini        → provider, google.golang.org/genai
  ├── openai        → provider, github.com/openai/openai-go/v3
@@ -315,7 +315,7 @@ All three call `reloadAfterMutation()` internally, which reloads bootstrap, refr
 When `steer_mode` is enabled and a turn is active, user messages are buffered as "steers" and injected mid-turn rather than waiting for completion:
 
 - **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. `steerBlocks` pulls from the `turnevent.Steerer` supplied by `agent.Inbox` (one per session) — the inbox accumulates mid-turn text in its per-session steer buffer when the configured backend is API-mode (no `delegator.Delegator` registered).
-- **Delegated transport:** Steer messages are dispatched immediately by `agent.Inbox` (Phase 6 — TODO #739). On `Enqueue` of a text-only mid-turn message, the inbox calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: env.Text})` directly, looking up the session's backend via the agent's `DelegatedManager`. `Inject(SourceSteer)` internally chains `Interrupt` (abort the in-flight CC turn) followed by sending the steer text as the next user message and incrementing the rearm count so the queued response reaches the original handler. Mid-turn steer for delegated agents bypasses the steer buffer entirely; the buffer only matters for API-mode agents that have no equivalent stdin protocol primitives.
+- **Delegated transport:** Steer messages are dispatched immediately by `agent.Inbox`. On `Enqueue` of a text-only mid-turn message, the inbox calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: env.Text})` directly, looking up the session's backend via the agent's `DelegatedManager`. `Inject(SourceSteer)` internally chains `Interrupt` (abort the in-flight CC turn) followed by sending the steer text as the next user message and incrementing the rearm count so the queued response reaches the original handler. Mid-turn steer for delegated agents bypasses the steer buffer entirely; the buffer only matters for API-mode agents that have no equivalent stdin protocol primitives.
 
 ### Backend Watcher — tmux (`internal/delegator/cctmux/watcher.go`)
 
@@ -1115,28 +1115,32 @@ spare1 = "456789:JKL..."
 
 ## Telegram Bot (`telegram/bot.go`)
 
-Two goroutines:
+Three goroutines per bot:
 ```
 [receiver goroutine]   →  receive msg  →  wizard active?  →  yes: route to wizard, reply
                                        →  slash command?  →  yes: execute, reply
                                        →  voice note?     →  download OGG, transcribe via Whisper → text
                                        →  photo/doc/PDF?  →  download attachment via Telegram file API
                                                            →  MessageQueue.Enqueue() routes to:
-                                                              - steer buffer (mention + turn active + steer mode)
                                                               - GroupThrottle (group chat + throttle configured)
                                                               - drop (group + require_mention + no throttle + no mention)
                                                               - main channel (everything else)
-[agent worker goroutine]  →  dequeue msg  →  batch with DrainQueue()  →  HandleMessage  →  reply
+[agentMessagePump goroutine]  →  drain mq.Chan()  →  build Envelope  →  agent.Enqueue(env)
+[commandWorker goroutine]     →  drain mq.CmdChan()  →  execute command  →  reply
+
+[per-session worker goroutines — lazy, one per active session key, owned by agent.Inbox]
+  →  batch available Envelopes  →  Bot.Drive(ctx, sk, batch, steerer)  →  HandleMessage  →  reply
 ```
 
-Both platforms use a shared `platform.MessageQueue` that manages inbound message buffering, steer injection, and group chat throttling. The `MessageQueue` wraps a buffered channel with routing logic:
+`platform.MessageQueue` is a thin filter-and-throttle helper. It wraps a buffered channel (main messages) plus a command channel, with two routing rules:
 
-- **Steer mode** (`steer_mode`): During active turns, text-only messages go to the steer buffer for injection between tool calls.
 - **Group throttle** (`group_throttle`): Non-mention group messages accumulate in a `GroupThrottle` per chat ID. A fixed-window timer flushes them as a batch. @mentions flush immediately and reset the cooldown.
 - **Require mention** (`require_mention`): Without throttle, non-mention group messages are dropped. With throttle, they're buffered.
 - **Sender attribution**: Group chat batches prefix each message with `[senderName]` for multi-user context.
 
-The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages are processed sequentially by the worker.
+Steer routing moved out of `MessageQueue` and into `agent.Inbox.Enqueue`: mid-turn text-only messages are routed to the per-session steer buffer (API agents) or dispatched directly via `Backend.Inject(SourceSteer)` (CC agents) inside the agent layer, without the platform layer needing to know.
+
+The receiver never blocks on the agent. Slash commands (including `/stop`) execute immediately on the receiver goroutine. Agent messages fan out by session key via `agentMessagePump` → `agent.Enqueue`; per-session workers in `agent.Inbox` serialize turns within a session. Different sessions on the same bot run their turns in parallel.
 
 **Stale command filtering:** Slash commands older than 30s are silently dropped. Safety net for update replay after crashes — prevents stale `/reset` or `/stop` from firing on restart.
 
@@ -1155,7 +1159,7 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 When `stream_output = true` and `streaming = true`, model output is shown in Telegram in real-time as tokens arrive, rather than waiting for the full response.
 
 **Lifecycle:**
-1. `processAgentMessage` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet)
+1. `Bot.Drive` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet)
 2. On the first `TextDeltaObserver` delta, the stream writer sends an initial HTML-formatted message and starts a ticker goroutine
 3. Each tick, if new text has accumulated, the buffer is processed through `closePartialMarkdown` → `ConvertToTelegramHTML` and the message is edited with HTML formatting
 4. When `HandleMessage` returns, `Finish()` stops the ticker and returns the message ID
@@ -1172,7 +1176,7 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 
 ## Discord Bot (`discord/`)
 
-Same two-goroutine architecture as Telegram (receiver + agent worker), connected via a single WebSocket gateway instead of HTTP long-polling. Uses the same shared `platform.MessageQueue` for message routing, steer injection, and group chat throttling.
+Same architecture as Telegram (receiver + agentMessagePump + commandWorker + per-session agent workers), connected via a single WebSocket gateway instead of HTTP long-polling. Uses the same thin `platform.MessageQueue` filter-and-throttle helper. Commands drain `mq.CmdChan()` before pulling the main channel, preserving the original priority-drain behaviour.
 
 **Key differences from Telegram:**
 - **Gateway:** Single `discordgo.Session` WebSocket connection shared across all agents, vs one HTTP poller per Telegram bot.
