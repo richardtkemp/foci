@@ -1244,34 +1244,9 @@ The factory default grants CC agents free read/write access to `/tmp` so they ca
 
 Codex and OpenCode backends are planned but not yet implemented.
 
-### How it works (Claude Code)
+### See also
 
-1. On startup, Foci spawns `claude` in a tmux window (`cc-{agentID}`) in the agent's workspace directory via a login shell (`sh -l -c`). The concatenated system prompt is written to `{workspace}/character/.full-prompt` and passed via `--system-prompt-file`.
-2. User messages are enriched with Foci's `[meta]`, `[reminders]`, `[state]`, and nudge blocks, then pasted into the tmux pane via `load-buffer`/`paste-buffer` (piped from stdin — no temp files).
-3. Foci watches Claude Code's session JSONL file (`~/.claude/projects/<slug>/<session-id>.jsonl`) for new entries via fsnotify. Session discovery is lazy — the watcher is created on the first message, not at startup.
-4. Assistant text is streamed to the platform in real-time via the platform connection (`connMgr.ForSessionOrPrimary`). Output delivery is asynchronous — `Backend.Inject` is fire-and-forget; the response flows through the `EventHandler` installed at begin-turn time.
-5. Claude Code owns its own session, tools, and context management. Foci does not manage conversation history for delegated agents.
-
-### Permissions
-
-CC may prompt for tool or directory access approval. These permission requests are handled at two levels:
-
-1. **Auto-approval:** Foci checks against the `[permissions]` config rules (see above). Matched requests are approved automatically with an INFO log entry, without prompting the user. By default, common read-only tools and commands are auto-approved, along with workspace Edit/Write access.
-2. **User prompt:** Unmatched requests are forwarded to the user via their platform with an inline keyboard of choices (Allow, Deny, Always Allow).
-
-Every auto-approval is logged at INFO level (`ccstream/perm: auto-approved: tool=... summary=...`) for visibility.
-
-### What still applies
-
-Reminders, scratchpad, todos, task list, nudges, platform connections, command dispatch, message transforms, and keepalive all work with delegated agents. Metadata and state are injected into each prompt. Attachment path annotations (`[Image saved to: ...]`) are included so CC can read received files.
-
-### What's skipped
-
-Tool registry, compactor, cache management, fallback chain, server tools, MCP, spawn — these are handled by the coding agent or not applicable.
-
-### Command passthrough
-
-`/model` and `/compact` are forwarded to the backend via `Backend.Inject(SourcePass)` (a no-rearm send that bypasses the turn handler). Other Foci commands (`/sessions`, `/config`, `/mana`, etc.) are handled normally.
+For protocol details, what runs on the delegated path vs. what's skipped, command passthrough behaviour, and choosing between flavours, see [BACKENDS.md](BACKENDS.md). For the wiring (process spawn, JSONL watcher, paste-buffer mechanism, permission flow), see [WIRING.md](WIRING.md).
 
 ---
 
