@@ -595,14 +595,31 @@ func (b *Backend) IsTurnInFlight() bool {
 // Idle SendCommand calls (e.g. /compact at turn end) skip the rearm step
 // because no handler is armed to receive the response.
 func (b *Backend) SendCommand(ctx context.Context, command string) error {
-	if err := b.writer.SendUser(command); err != nil {
-		return err
-	}
+	// Order matters: arm rearm BEFORE sending to CC, so that if the reader
+	// goroutine processes the in-flight turn's result message after we
+	// release turnMu but before SendUser returns, OnResult sees rearmPending
+	// and re-installs the handler. The reverse order (SendUser → arm)
+	// races with OnResult's handler clear at ccstream.go:1073: between
+	// SendUser and the lock, OnResult can fire, see rearmReason == rearmNone,
+	// clear the handler, and CC's response to the queued command then hits
+	// turnHandler == nil and gets dropped (the "text block dropped (no
+	// handler/OnText)" WARN). Phase 5 follow-up fix.
 	b.turnMu.Lock()
-	if b.turnActive {
+	inFlight := b.turnActive
+	if inFlight {
 		b.setRearmReason(rearmPending)
 	}
 	b.turnMu.Unlock()
+
+	if err := b.writer.SendUser(command); err != nil {
+		// Roll back the rearm flag — no response is coming.
+		if inFlight {
+			b.turnMu.Lock()
+			b.pendingRearmReason = rearmNone
+			b.turnMu.Unlock()
+		}
+		return err
+	}
 	return nil
 }
 
