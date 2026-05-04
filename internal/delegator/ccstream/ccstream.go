@@ -313,8 +313,16 @@ func (b *Backend) Close() error {
 	b.closing = true
 	b.mu.Unlock()
 
-	// Try graceful shutdown: interrupt + close stdin (EOF).
-	_ = b.writer.SendInterrupt()
+	// Try graceful shutdown: only send an interrupt if a turn is in flight.
+	// CC's interrupt handler aborts the per-turn AbortController; sent after
+	// a clean turn end it cascades through stale post-turn async work and
+	// flips CC's exit code from 0 to 1 (CC keys exit code on the last result
+	// message's is_error flag — the abort can replace a success result with
+	// an error_during_execution one). Closing stdin alone is sufficient to
+	// shut CC down cleanly when there's nothing to abort.
+	if b.IsTurnInFlight() {
+		_ = b.writer.SendInterrupt()
+	}
 	_ = b.writer.Close()
 
 	// Wait for process exit with timeout. The waiter goroutine (launched in
