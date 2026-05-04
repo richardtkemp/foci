@@ -212,6 +212,13 @@ func (b *Backend) SetOnPermissionCleared(fn func()) {
 	b.onPermCleared = fn
 }
 
+// SetOnPermissionCancelled is a no-op for the legacy tmux backend. Tmux
+// state is polled rather than event-driven, so it doesn't expose per-perm
+// cancellations the way ccstream does. The Telegram-button race that
+// motivated the hook can't occur here because tmux backends don't use
+// inline keyboards in the same way.
+func (b *Backend) SetOnPermissionCancelled(fn func(requestID, toolName, reason string)) {}
+
 func (b *Backend) SetOnSessionReady(fn func(string)) {
 	b.replyMu.Lock()
 	defer b.replyMu.Unlock()

@@ -148,6 +148,10 @@ func (b *Backend) RespondToPermissionWithRule(requestID string, prefix string) e
 // only non-user-driven path that clears a permission — surface it at
 // INFO so it shows up alongside the corresponding "permission cleared"
 // debug line and makes the cause attributable.
+//
+// Fires permCancelFn (per-perm UI update) before onPermCleared (last-perm
+// signal). The platform layer uses permCancelFn to disable the orphaned
+// inline keyboard so the user can't click an already-resolved button.
 func (b *Backend) handleControlCancel(reqID string) {
 	pp, _, noMorePending := b.removePendingPerm(reqID)
 
@@ -156,6 +160,10 @@ func (b *Backend) handleControlCancel(reqID string) {
 		tool = pp.toolName
 	}
 	log.Infof("ccstream/perm", "permission auto-cancelled by CC control_cancel_request: reqID=%s tool=%s noMorePending=%v", reqID, tool, noMorePending)
+
+	if pp != nil && b.permCancelFn != nil {
+		b.permCancelFn(reqID, tool, "tool request cancelled by follow-up message")
+	}
 
 	if noMorePending && b.onPermCleared != nil {
 		b.onPermCleared()

@@ -64,6 +64,14 @@ type Delegator interface {
 	// Used by DelegatedManager to unblock WaitForPermission.
 	SetOnPermissionCleared(fn func())
 
+	// SetOnPermissionCancelled sets a callback fired when a specific pending
+	// permission is cleared by a non-user path (e.g. CC's control_cancel_request
+	// after a PriorityNow steer aborted the in-flight tool). Distinct from
+	// SetOnPermissionCleared: fires per-perm, not just on the last one. Used
+	// by the platform layer to disable the orphaned inline keyboard so the
+	// user can't click an already-resolved button.
+	SetOnPermissionCancelled(fn func(requestID, toolName, reason string))
+
 	// SetOnSessionReady sets a callback fired once when the backend
 	// discovers its session ID. Used to persist the ID for resume-after-restart.
 	SetOnSessionReady(fn func(sessionID string))
