@@ -18,7 +18,7 @@ func testSecondaryBot(name string) *Bot {
 	}
 	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
 		Size:       64,
-		TurnActive: b.isTurnActive,
+
 	})
 	return b
 }

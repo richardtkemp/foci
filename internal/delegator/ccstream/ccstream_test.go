@@ -1884,12 +1884,13 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 //   - nudge: handleHookResponse fires PostToolNudgeFunc, which sends a
 //     plain user message that auto-arms the rearm cascade.
 //   - urgent: SendCommand on an in-flight turn (covers both the follow-up
-//     path in turn_delegated.go and the dispatchUrgent path that pairs
-//     SendCommand with Interrupt).
+//     path in turn_delegated.go and the agent.Inbox urgent-dispatch path
+//     that pairs SendCommand with Interrupt via Backend.Inject(SourceSteer)).
 //
 // The third pre-Phase-5 path ("steer" via checkAndSendSteers) is gone —
-// its responsibilities moved to platform.MessageQueue.dispatchUrgent which
-// invokes the same Interrupt+SendCommand sequence as the urgent trigger.
+// its responsibilities moved to agent.Inbox in Phase 6, which invokes the
+// same Interrupt+SendCommand sequence as the urgent trigger via
+// Backend.Inject(SourceSteer).
 type rearmTrigger struct {
 	name string
 	arm  func(t *testing.T, b *Backend, handler *delegator.EventHandler)

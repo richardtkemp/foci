@@ -160,11 +160,11 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// (the original turn's handler will handle usage, compaction, etc.).
 	//
 	// Note: urgent steers (steer_mode=true) on CC backends don't reach
-	// this path — they're dispatched immediately at platform Enqueue via
-	// MessageQueue.dispatchUrgent (Interrupt + SendCommand) so they abort
-	// the in-flight turn rather than queuing behind it. This path handles
-	// the steer_mode=false case where messages flow through the channel
-	// normally and stack as follow-ups.
+	// this path — they're dispatched immediately by the agent.Inbox
+	// (Backend.Inject(SourceSteer)) so they abort the in-flight turn
+	// rather than queuing behind it. This path handles the steer_mode=false
+	// case where messages flow through the channel normally and stack as
+	// follow-ups.
 	if be.IsTurnInFlight() {
 		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) start sk=%s", ts.SessionKey)

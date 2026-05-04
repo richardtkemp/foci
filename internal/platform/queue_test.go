@@ -12,9 +12,7 @@ func TestMessageQueue_DMBypassesThrottleAndMention(t *testing.T) {
 	mq := NewMessageQueue(MessageQueueConfig{
 		Size:           64,
 		RequireMention: true,
-		SteerMode:      false,
 		Throttle:       nil,
-		TurnActive:     func() bool { return false },
 	})
 
 	mq.Enqueue(QueuedMessage{
@@ -41,7 +39,6 @@ func TestMessageQueue_GroupDropWithoutMention(t *testing.T) {
 		Size:           64,
 		RequireMention: true,
 		Throttle:       nil,
-		TurnActive:     func() bool { return false },
 	})
 
 	mq.Enqueue(QueuedMessage{
@@ -65,7 +62,6 @@ func TestMessageQueue_GroupMentionDelivered(t *testing.T) {
 		Size:           64,
 		RequireMention: true,
 		Throttle:       nil,
-		TurnActive:     func() bool { return false },
 	})
 
 	mq.Enqueue(QueuedMessage{
@@ -91,7 +87,6 @@ func TestMessageQueue_GroupThrottleBuffers(t *testing.T) {
 	mq := NewMessageQueue(MessageQueueConfig{
 		Size:           64,
 		RequireMention: true,
-		TurnActive:     func() bool { return false },
 	})
 
 	// Create throttle that flushes into the queue channel.
@@ -131,63 +126,10 @@ func TestMessageQueue_GroupThrottleBuffers(t *testing.T) {
 	}
 }
 
-// Tests that steer mode routes text-only messages to the steer buffer
-// when a turn is active.
-func TestMessageQueue_SteerMode(t *testing.T) {
-	mq := NewMessageQueue(MessageQueueConfig{
-		Size:       64,
-		SteerMode:  true,
-		TurnActive: func() bool { return true },
-	})
-
-	mq.Enqueue(QueuedMessage{
-		UserID: "u1",
-		Text:   "redirect this",
-	})
-
-	// Should be in steer buffer, not channel.
-	select {
-	case <-mq.Chan():
-		t.Fatal("steered message should not be in channel")
-	case <-time.After(10 * time.Millisecond):
-	}
-
-	parts := mq.DrainSteer()
-	if len(parts) != 1 || parts[0].Text != "redirect this" {
-		t.Fatalf("unexpected steer parts: %v", parts)
-	}
-}
-
-// Tests that a message with attachments bypasses steer even when steer mode
-// is active and a turn is in progress.
-func TestMessageQueue_SteerSkipsAttachments(t *testing.T) {
-	mq := NewMessageQueue(MessageQueueConfig{
-		Size:       64,
-		SteerMode:  true,
-		TurnActive: func() bool { return true },
-	})
-
-	mq.Enqueue(QueuedMessage{
-		UserID:      "u1",
-		Text:        "has attachment",
-		Attachments: []Attachment{{Data: []byte("img")}},
-	})
-
-	select {
-	case msg := <-mq.Chan():
-		if msg.Text != "has attachment" {
-			t.Fatalf("unexpected text: %s", msg.Text)
-		}
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("message with attachment should be in channel, not steered")
-	}
-}
-
 // Tests DrainQueue returns all buffered messages non-blocking.
 func TestMessageQueue_DrainQueue(t *testing.T) {
 	mq := NewMessageQueue(MessageQueueConfig{
-		Size:       64,
-		TurnActive: func() bool { return false },
+		Size: 64,
 	})
 
 	for i := 0; i < 5; i++ {
@@ -209,8 +151,7 @@ func TestMessageQueue_DrainQueue(t *testing.T) {
 // Tests that messages are dropped (not blocked) when the queue is full.
 func TestMessageQueue_FullQueueDrops(t *testing.T) {
 	mq := NewMessageQueue(MessageQueueConfig{
-		Size:       2,
-		TurnActive: func() bool { return false },
+		Size: 2,
 	})
 
 	// Fill the queue.
@@ -225,39 +166,6 @@ func TestMessageQueue_FullQueueDrops(t *testing.T) {
 	}
 }
 
-// Tests that DrainSteer returns nil when no messages are buffered.
-func TestMessageQueue_DrainSteerEmpty(t *testing.T) {
-	mq := NewMessageQueue(MessageQueueConfig{Size: 8})
-	if parts := mq.DrainSteer(); parts != nil {
-		t.Fatalf("expected nil, got %v", parts)
-	}
-}
-
-// Tests that group mention + steer mode + turn active routes to steer buffer
-// (rule 2: urgent redirect).
-func TestMessageQueue_GroupMentionSteer(t *testing.T) {
-	var active atomic.Bool
-	active.Store(true)
-
-	mq := NewMessageQueue(MessageQueueConfig{
-		Size:       64,
-		SteerMode:  true,
-		TurnActive: func() bool { return active.Load() },
-	})
-
-	mq.Enqueue(QueuedMessage{
-		UserID:      "u1",
-		Text:        "hey @bot do this",
-		IsGroupChat: true,
-		IsMention:   true,
-	})
-
-	parts := mq.DrainSteer()
-	if len(parts) != 1 || parts[0].Text != "hey @bot do this" {
-		t.Fatalf("expected mention to be steered, got: %v", parts)
-	}
-}
-
 // Tests Stop cancels throttle timers.
 func TestMessageQueue_Stop(t *testing.T) {
 	var flushed int32
@@ -266,9 +174,8 @@ func TestMessageQueue_Stop(t *testing.T) {
 	}, nil)
 
 	mq := NewMessageQueue(MessageQueueConfig{
-		Size:       64,
-		Throttle:   gt,
-		TurnActive: func() bool { return false },
+		Size:     64,
+		Throttle: gt,
 	})
 
 	mq.Enqueue(QueuedMessage{ChatID: 1, Text: "buffered", IsGroupChat: true})
@@ -277,5 +184,25 @@ func TestMessageQueue_Stop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if atomic.LoadInt32(&flushed) != 0 {
 		t.Fatal("throttle should not have flushed after Stop")
+	}
+}
+
+// Tests that EnqueueCommand routes to the cmd channel separately from
+// the main channel — commands bypass filter rules entirely.
+func TestMessageQueue_EnqueueCommand(t *testing.T) {
+	mq := NewMessageQueue(MessageQueueConfig{
+		Size:           64,
+		RequireMention: true, // would otherwise drop a non-mention group message
+	})
+
+	mq.EnqueueCommand(QueuedMessage{Text: "/status", IsGroupChat: true})
+
+	select {
+	case msg := <-mq.CmdChan():
+		if msg.Text != "/status" {
+			t.Fatalf("unexpected: %s", msg.Text)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatal("command not delivered to cmd channel")
 	}
 }
