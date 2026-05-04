@@ -303,13 +303,15 @@ func TestNotifyTurnComplete_BufferedNonBlocking(t *testing.T) {
 // SetTypingFunc, SetOnSessionReady, SessionID, SessionFilePath, and
 // IsTurnInFlight basic cases are tested in lifecycle_test.go.
 
-// TestSendCommand_NilPane verifies SendCommand returns an error when
-// the backend hasn't been started (no tmux pane).
+// TestSendCommand_NilPane verifies the internal sendCommand primitive
+// returns an error when the backend hasn't been started (no tmux pane).
+// This is the path Inject uses for follow-ups, slash commands, and
+// post-Interrupt steer dispatch on cctmux.
 func TestSendCommand_NilPane(t *testing.T) {
 	b := &Backend{}
-	err := b.SendCommand(context.Background(), "test")
+	err := b.sendCommand(context.Background(), "test")
 	if err == nil {
-		t.Fatal("SendCommand should return error when pane is nil")
+		t.Fatal("sendCommand should return error when pane is nil")
 	}
 }
 

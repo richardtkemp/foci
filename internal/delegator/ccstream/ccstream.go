@@ -485,36 +485,38 @@ func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
 	b.touchActivity()
 }
 
-// SendToPane sends a composed prompt to Claude Code and streams events back
-// via the handler. Returns immediately — the turn completes asynchronously.
-// Use WaitForTurn to block until the result is received.
-func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+// sendToPane is the internal begin-turn primitive: starts a fresh turn
+// with the given handler and sends a plain text user message. Called from
+// Inject's begin-turn path (SourceUser/Steer at idle); not part of the
+// public Delegator surface.
+func (b *Backend) sendToPane(_ context.Context, prompt string, handler *delegator.EventHandler) error {
 	b.beginTurn(handler)
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
 
-	b.logger().Debugf("SendToPane: calling writer.SendUser (%d bytes)", len(prompt))
+	b.logger().Debugf("sendToPane: calling writer.SendUser (%d bytes)", len(prompt))
 	sendStart := time.Now()
 	if err := b.writer.SendUser(prompt); err != nil {
 		b.cancelTurn()
-		return nil, fmt.Errorf("ccstream: send user message: %w", err)
+		return fmt.Errorf("ccstream: send user message: %w", err)
 	}
 	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
-		b.logger().Warnf("SendToPane: writer.SendUser took %s (slow — possible mutex contention or blocked stdin)", elapsed.Round(time.Millisecond))
+		b.logger().Warnf("sendToPane: writer.SendUser took %s (slow — possible mutex contention or blocked stdin)", elapsed.Round(time.Millisecond))
 	} else {
-		b.logger().Debugf("SendToPane: writer.SendUser returned in %s", elapsed.Round(time.Millisecond))
+		b.logger().Debugf("sendToPane: writer.SendUser returned in %s", elapsed.Round(time.Millisecond))
 	}
 
-	return &delegator.TurnResult{}, nil
+	return nil
 }
 
-// SendToPaneWithAttachments sends a prompt with file attachments as structured
-// content blocks. Images become "image" blocks, PDFs become "document" blocks,
-// all alongside the text prompt. This preserves binary data through to CC
-// instead of flattening to text.
-func (b *Backend) SendToPaneWithAttachments(ctx context.Context, prompt string, attachments []delegator.Attachment, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+// sendToPaneWithAttachments is the internal begin-turn primitive for
+// prompts that carry images/documents. Builds structured content blocks
+// (text first, then each attachment as image/document) and sends a single
+// user message containing all of them. Called from Inject's begin-turn
+// path when len(inj.Attachments) > 0.
+func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, handler *delegator.EventHandler) error {
 	b.beginTurn(handler)
 
 	if b.typingFunc != nil {
@@ -538,19 +540,19 @@ func (b *Backend) SendToPaneWithAttachments(ctx context.Context, prompt string, 
 		})
 	}
 
-	b.logger().Debugf("SendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
+	b.logger().Debugf("sendToPaneWithAttachments: calling writer.Send (%d blocks)", len(blocks))
 	sendStart := time.Now()
 	if err := b.writer.Send(NewUserMessageBlocks(blocks)); err != nil {
 		b.cancelTurn()
-		return nil, fmt.Errorf("ccstream: send user message with attachments: %w", err)
+		return fmt.Errorf("ccstream: send user message with attachments: %w", err)
 	}
 	if elapsed := time.Since(sendStart); elapsed > 5*time.Second {
-		b.logger().Warnf("SendToPaneWithAttachments: writer.Send took %s (slow)", elapsed.Round(time.Millisecond))
+		b.logger().Warnf("sendToPaneWithAttachments: writer.Send took %s (slow)", elapsed.Round(time.Millisecond))
 	} else {
-		b.logger().Debugf("SendToPaneWithAttachments: writer.Send returned in %s", elapsed.Round(time.Millisecond))
+		b.logger().Debugf("sendToPaneWithAttachments: writer.Send returned in %s", elapsed.Round(time.Millisecond))
 	}
 
-	return &delegator.TurnResult{}, nil
+	return nil
 }
 
 // attachmentBlockType returns the CC content block type for a MIME type.
@@ -627,20 +629,6 @@ func (b *Backend) sendUserMessage(_ context.Context, text string, autoRearm bool
 	return nil
 }
 
-// SendCommand sends a slash command or queued user message directly to CC.
-// When called during an in-flight turn (IsTurnInFlight true), this is a
-// follow-up message that CC processes after the current turn ends OR a
-// post-Interrupt urgent dispatch — in either case the response streams
-// through the re-arm cascade. SendCommand auto-arms the rearm count so
-// the queued response reaches the original handler's OnText.
-//
-// Idle SendCommand calls skip the rearm step because no handler is armed.
-//
-// Deprecated: use Inject with SourceUser (follow-up), SourceSteer (urgent),
-// SourceCompact (/compact), or SourcePass (/pass) instead.
-func (b *Backend) SendCommand(ctx context.Context, command string) error {
-	return b.sendUserMessage(ctx, command, true)
-}
 
 // Inject is the canonical entry point for delivering a user-role event to
 // CC. It subsumes SendToPane / SendToPaneWithAttachments / SendCommand —
@@ -716,11 +704,9 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 // Inject — callers reach turn-start through Inject(SourceUser) at idle.
 func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, handler *delegator.EventHandler) error {
 	if len(atts) > 0 {
-		_, err := b.SendToPaneWithAttachments(ctx, text, atts, handler)
-		return err
+		return b.sendToPaneWithAttachments(ctx, text, atts, handler)
 	}
-	_, err := b.SendToPane(ctx, text, handler)
-	return err
+	return b.sendToPane(ctx, text, handler)
 }
 
 // ---------------------------------------------------------------------------
