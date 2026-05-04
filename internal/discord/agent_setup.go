@@ -8,7 +8,6 @@ import (
 	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
-	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/secrets"
@@ -185,36 +184,18 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		log.Infof("discord", "agent %q: group throttle = %v", acfg.ID, dur)
 	}
 
-	// Urgent steer dispatch: see telegram/agent_setup.go for the rationale.
-	// Mirror wiring for Discord — closure resolves session via channel ID.
-	if a, ok := p.Agent.(*agent.Agent); ok && a != nil && a.DelegatedManager != nil {
-		dm := a.DelegatedManager
-		bot := primaryBot
-		ctx := p.Ctx
-		primaryBot.mq.SetDispatchUrgent(func(msg platform.QueuedMessage) {
-			sk := bot.SessionKeyForChannelID(msg.ChatID)
-			if sk == "" {
-				bot.logger().Debugf("urgent dispatch: no session key for channelID=%d", msg.ChatID)
-				return
-			}
-			be, err := dm.Get(ctx, sk)
-			if err != nil {
-				bot.logger().Warnf("urgent dispatch: backend lookup failed sk=%s: %v", sk, err)
-				return
-			}
-			// Inject(SourceSteer) chains Interrupt + SendUser internally —
-			// one callsite owns the urgent-steer semantics. Interrupt
-			// errors are logged inside Inject and don't block dispatch.
-			if err := be.Inject(ctx, delegator.Inject{
-				Source: delegator.SourceSteer,
-				Text:   msg.Text,
-			}); err != nil {
-				bot.logger().Warnf("urgent dispatch: send failed sk=%s: %v", sk, err)
-				return
-			}
-			bot.logger().Debugf("urgent dispatch: sent %d bytes to sk=%s", len(msg.Text), sk)
-		})
+	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
+	// See telegram/agent_setup.go for the architecture rationale. The
+	// agent owns the per-session message queue, steer buffer, in-flight
+	// flag, and worker goroutines. discord's MessageQueue keeps
+	// SteerMode=false so it doesn't double-route — the agent makes the
+	// steer decision in its own Enqueue routing.
+	if a, ok := p.Agent.(*agent.Agent); ok && a != nil {
+		primaryBot.agentRef = a
+		a.SetInboxSteerMode(bc.SteerMode)
+		a.StartInbox(p.Ctx)
 	}
+	primaryBot.mq.SetSteerMode(false)
 
 	primaryBot.SetCommandContext(p.CommandContext)
 

@@ -50,8 +50,11 @@ func (b *Bot) Run(ctx context.Context) {
 	})
 	defer removeInteraction()
 
-	// Agent worker -- processes queued messages sequentially
-	go b.agentWorker(ctx)
+	// Agent message pump — drains the platform queue and hands each message
+	// to the agent's per-session inbox, where per-session workers handle
+	// batching, in-flight tracking, and turn execution via Bot.Drive.
+	// Commands continue to flow on this goroutine (priority drain).
+	go b.agentMessagePump(ctx)
 
 	// Block until context is cancelled
 	<-ctx.Done()
