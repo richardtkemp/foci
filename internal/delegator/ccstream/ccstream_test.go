@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -1869,6 +1870,81 @@ func TestRearm_TriggerWithoutInjectionEndsNormally(t *testing.T) {
 				t.Error("IsTurnInFlight = true after normal completion")
 			}
 		})
+	}
+}
+
+// TestRearm_MutualExclusionGuard verifies setRearmReason logs a WARN when
+// a different reason is already pending. The three injection paths are
+// designed to be mutually exclusive per turn (a steer aborts in-flight
+// tools before a follow-up could queue; a nudge fires only at tool
+// boundaries where no steer is in flight). If real traffic ever stacks
+// them, this WARN is the signal that the scalar rearmReason needs to
+// become a queue.
+//
+// Not parallel: SetWarnHook is a process-wide singleton. The hook
+// callback filters on the rearm-overwrite text so unrelated warnings
+// from concurrent parallel tests in the same package don't pollute the
+// captured set. Restored on cleanup.
+func TestRearm_MutualExclusionGuard(t *testing.T) {
+	const wantTag = "rearm reason overwritten"
+
+	var (
+		mu       sync.Mutex
+		captured []string
+	)
+	log.SetWarnHook(func(_ log.Level, _ string, msg string) {
+		if !strings.Contains(msg, wantTag) {
+			return
+		}
+		mu.Lock()
+		captured = append(captured, msg)
+		mu.Unlock()
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
+
+	b := newRearmBackend()
+	b.beginTurn(&delegator.EventHandler{})
+
+	// Same reason twice — no warning (idempotent).
+	b.turnMu.Lock()
+	b.setRearmReason(rearmNudge)
+	b.setRearmReason(rearmNudge)
+	b.turnMu.Unlock()
+
+	if got := snapshot(); len(got) != 0 {
+		t.Errorf("idempotent setRearmReason produced warnings: %v", got)
+	}
+
+	// Different reason — guard must fire exactly once.
+	b.turnMu.Lock()
+	b.setRearmReason(rearmSteer)
+	b.turnMu.Unlock()
+
+	got := snapshot()
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 mutual-exclusion warning, got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "was=nudge") || !strings.Contains(got[0], "now=steer") {
+		t.Errorf("warning text %q missing was=nudge / now=steer context", got[0])
+	}
+
+	// Last write wins — the second reason is what OnResult will read.
+	// Field read is intrinsic to this test (it asserts the setter's
+	// post-condition); the cascade behaviour itself is covered without
+	// field reads in TestRearm_FullCycle.
+	b.turnMu.Lock()
+	got2 := b.pendingRearmReason
+	b.turnMu.Unlock()
+	if got2 != rearmSteer {
+		t.Errorf("pendingRearmReason = %s, want steer (last write wins)", got2)
 	}
 }
 

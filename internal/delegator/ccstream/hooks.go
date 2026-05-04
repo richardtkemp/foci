@@ -355,7 +355,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 				continue
 			}
 			b.turnMu.Lock()
-			b.nudgePending = true
+			b.setRearmReason(rearmNudge)
 			b.turnMu.Unlock()
 			_ = b.writer.SendUserWithPriority("[user] "+text, PriorityNow)
 		}

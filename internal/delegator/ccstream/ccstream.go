@@ -79,9 +79,7 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText      strings.Builder       // accumulates text across assistant messages
 	turnTools     int                   // tool_use count this turn
-	nudgePending  bool                  // set when PostToolNudge sends PriorityNow; cleared on next OnResult or beginTurn
-	steerInjected bool                  // set when checkAndSendSteers sends PriorityNow; cleared on next OnResult or beginTurn. Triggers handler re-arm so the steered response isn't dropped after CC's abort-result fires (TODO #726).
-	followUpQueued bool                 // set when SendCommand sends a follow-up via priority="next" (RunInference's IsTurnInFlight branch). Cleared on next OnResult or beginTurn. Triggers handler re-arm so the follow-up's response isn't dropped after the original turn's result clears the handler (TODO #726 sub-mode 3).
+	pendingRearmReason rearmReason      // when non-rearmNone, OnResult must complete the foci turn AND re-arm a delivery-only handler so the queued response (nudge / steer / follow-up) reaches OnText. Cleared on next OnResult or beginTurn. See completeAndRearm. Replaces the three pre-Phase-1 booleans nudgePending / steerInjected / followUpQueued.
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -418,9 +416,7 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnHandler = handler
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.nudgePending = false
-	b.steerInjected = false
-	b.followUpQueued = false
+	b.pendingRearmReason = rearmNone
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -464,9 +460,7 @@ func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
 	}
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.nudgePending = false
-	b.steerInjected = false
-	b.followUpQueued = false
+	b.pendingRearmReason = rearmNone
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -586,8 +580,8 @@ func (b *Backend) IsTurnInFlight() bool {
 //
 // Priority "next" is used by RunInference's follow-up path (turn_delegated.go)
 // when IsTurnInFlight is true: the new user message is queued behind the
-// in-flight turn rather than starting a fresh turn pipeline. Mark
-// followUpQueued so OnResult re-arms the handler instead of clearing it —
+// in-flight turn rather than starting a fresh turn pipeline. Mark the
+// re-arm reason so OnResult re-arms the handler instead of clearing it —
 // without this, the follow-up's response text hits b.turnHandler == nil
 // and gets silently dropped if an unrelated OnResult (e.g. a nudge response
 // completing) fires between SendCommand and CC processing the follow-up.
@@ -597,7 +591,7 @@ func (b *Backend) SendCommand(ctx context.Context, command string, priority stri
 		err := b.writer.SendUserWithPriority(command, priority)
 		if err == nil && priority == "next" {
 			b.turnMu.Lock()
-			b.followUpQueued = true
+			b.setRearmReason(rearmFollowUp)
 			b.turnMu.Unlock()
 		}
 		return err
@@ -637,7 +631,7 @@ func (b *Backend) checkAndSendSteers() {
 			// OnResult re-arms the handler instead of clearing it — the
 			// steered response that follows must reach OnText.
 			b.turnMu.Lock()
-			b.steerInjected = true
+			b.setRearmReason(rearmSteer)
 			b.turnMu.Unlock()
 		}
 	}
@@ -991,17 +985,13 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
 
-	// Capture turn state. Handler clearing is deferred — the nudge re-arm
+	// Capture turn state. Handler clearing is deferred — the re-arm cascade
 	// and pre-answer gate paths need the handler alive to re-arm or fire
 	// OnTurnComplete. The normal path clears handler/turnActive below.
 	b.turnMu.Lock()
 	handler := b.turnHandler
-	nudgePending := b.nudgePending
-	b.nudgePending = false
-	steerInjected := b.steerInjected
-	b.steerInjected = false
-	followUpQueued := b.followUpQueued
-	b.followUpQueued = false
+	rearmReason := b.pendingRearmReason
+	b.pendingRearmReason = rearmNone
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -1074,82 +1064,18 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
-	// Post-tool nudge re-arm: a nudge was injected via PriorityNow but CC
-	// ended the turn before processing it. CC will process the nudge as a
-	// new CC-internal turn. Complete the foci turn normally (fire
-	// OnTurnComplete), then re-arm with a delivery-only handler so the
-	// nudge response reaches the platform.
-	if nudgePending && handler != nil {
-		b.agents.ClearAll()
-		if handler.OnTurnComplete != nil {
-			handler.OnTurnComplete(result)
-		}
-		if b.typingFunc != nil {
-			b.typingFunc(true)
-		}
-		b.rearmForNudgeResponse(handler)
-		b.logger().Infof("OnResult: re-armed for pending nudge response")
-		if resultCh != nil {
-			select {
-			case resultCh <- msg:
-			default:
-			}
-		}
-		return
-	}
-
-	// Steer-injected re-arm: a steer was sent via PriorityNow during this
-	// turn. CC aborted the in-flight work and emitted this result; CC will
-	// then process the steered message and produce more output. Without
-	// re-arming, that output's text blocks hit b.turnHandler == nil and
-	// get silently dropped (TODO #726). Complete the foci turn normally
-	// (fire OnTurnComplete with whatever text accumulated before the
-	// abort), then re-arm with a delivery-only handler so the steered
-	// response reaches the platform via OnText.
-	if steerInjected && handler != nil {
-		b.agents.ClearAll()
-		if handler.OnTurnComplete != nil {
-			handler.OnTurnComplete(result)
-		}
-		if b.typingFunc != nil {
-			b.typingFunc(true)
-		}
-		b.rearmForNudgeResponse(handler)
-		b.logger().Infof("OnResult: re-armed for steered response (text=%d bytes)", len(text))
-		if resultCh != nil {
-			select {
-			case resultCh <- msg:
-			default:
-			}
-		}
-		return
-	}
-
-	// Follow-up re-arm: SendCommand queued a follow-up message via
-	// priority="next" while a turn was in-flight. CC will process the
-	// follow-up after the current result and produce more output. Without
-	// re-arming, the follow-up's text blocks hit b.turnHandler == nil
-	// when this OnResult clears the handler, and they're silently dropped
-	// (TODO #726 sub-mode 3 — observed live with scout 2026-04-30 20:07).
-	// Same shape as the nudge / steer re-arm: fire OnTurnComplete on this
-	// result, then re-arm with a delivery-only handler so the follow-up
-	// response reaches the platform via OnText.
-	if followUpQueued && handler != nil {
-		b.agents.ClearAll()
-		if handler.OnTurnComplete != nil {
-			handler.OnTurnComplete(result)
-		}
-		if b.typingFunc != nil {
-			b.typingFunc(true)
-		}
-		b.rearmForNudgeResponse(handler)
-		b.logger().Infof("OnResult: re-armed for queued follow-up response (text=%d bytes)", len(text))
-		if resultCh != nil {
-			select {
-			case resultCh <- msg:
-			default:
-			}
-		}
+	// Re-arm cascade: a user-role injection (post-tool nudge, mid-turn
+	// steer via PriorityNow, or SendCommand follow-up via priority="next")
+	// is awaiting delivery. CC will produce a fresh round of output for the
+	// queued event after this result; without re-arming, that output's text
+	// blocks hit b.turnHandler == nil and are silently dropped (TODO #726
+	// and sub-modes). Complete the foci turn normally (fire OnTurnComplete
+	// with whatever text accumulated before the boundary), then install a
+	// delivery-only handler so the queued response reaches OnText. The
+	// three reasons share an identical recovery shape — see completeAndRearm
+	// for the single funnel; only the log message varies by reason.
+	if rearmReason != rearmNone && handler != nil {
+		b.completeAndRearm(handler, result, msg, resultCh, rearmReason)
 		return
 	}
 
