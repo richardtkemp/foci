@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"foci/internal/delegator"
-	"foci/internal/log"
 )
 
 // ---------------------------------------------------------------------------
@@ -440,10 +439,10 @@ func TestSendCommand_Idle(t *testing.T) {
 	}
 
 	b.turnMu.Lock()
-	pending := b.pendingRearmReason
+	count := b.pendingRearmCount
 	b.turnMu.Unlock()
-	if pending != rearmNone {
-		t.Errorf("pendingRearmReason = %s, want none for idle SendCommand", pending)
+	if count != 0 {
+		t.Errorf("pendingRearmCount = %d, want 0 for idle SendCommand", count)
 	}
 }
 
@@ -465,29 +464,29 @@ func TestSendCommand_DuringTurn_ArmsRearm(t *testing.T) {
 	}
 
 	b.turnMu.Lock()
-	pending := b.pendingRearmReason
+	count := b.pendingRearmCount
 	b.turnMu.Unlock()
-	if pending != rearmPending {
-		t.Errorf("pendingRearmReason = %s, want pending for in-flight SendCommand", pending)
+	if count != 1 {
+		t.Errorf("pendingRearmCount = %d, want 1 for in-flight SendCommand", count)
 	}
 }
 
-// rearmCheckingWriter wraps a writer and snapshots the backend's rearm flag
-// on the first call to Write — the moment the bytes hit the wire. Used to
-// assert the flag was already set BEFORE the user message reaches CC, closing
-// the race where OnResult could see rearmReason==rearmNone, clear the
-// handler, and drop the queued response's text.
+// rearmCheckingWriter wraps a writer and snapshots the backend's rearm
+// counter on the first call to Write — the moment the bytes hit the wire.
+// Used to assert the count was already non-zero BEFORE the user message
+// reaches CC, closing the race where OnResult could see count==0, clear
+// the handler, and drop the queued response's text.
 type rearmCheckingWriter struct {
-	dst             *bytes.Buffer
-	b               *Backend
-	rearmAtFirstWrt rearmReason
-	wroteOnce       bool
+	dst              *bytes.Buffer
+	b                *Backend
+	rearmAtFirstWrt  int
+	wroteOnce        bool
 }
 
 func (w *rearmCheckingWriter) Write(p []byte) (int, error) {
 	if !w.wroteOnce {
 		w.b.turnMu.Lock()
-		w.rearmAtFirstWrt = w.b.pendingRearmReason
+		w.rearmAtFirstWrt = w.b.pendingRearmCount
 		w.b.turnMu.Unlock()
 		w.wroteOnce = true
 	}
@@ -519,8 +518,8 @@ func TestSendCommand_DuringTurn_RearmSetBeforeWrite(t *testing.T) {
 	if !checker.wroteOnce {
 		t.Fatal("writer was never called — SendCommand never reached the wire")
 	}
-	if checker.rearmAtFirstWrt != rearmPending {
-		t.Errorf("rearm flag at first byte = %s, want pending — order is wrong, race window open",
+	if checker.rearmAtFirstWrt < 1 {
+		t.Errorf("pendingRearmCount at first byte = %d, want >= 1 — order is wrong, race window open",
 			checker.rearmAtFirstWrt)
 	}
 }
@@ -543,10 +542,10 @@ func TestSendCommand_WriteFailureRollsBackRearm(t *testing.T) {
 	}
 
 	b.turnMu.Lock()
-	pending := b.pendingRearmReason
+	count := b.pendingRearmCount
 	b.turnMu.Unlock()
-	if pending != rearmNone {
-		t.Errorf("pendingRearmReason = %s after write failure, want none (rollback)", pending)
+	if count != 0 {
+		t.Errorf("pendingRearmCount = %d after write failure, want 0 (rollback)", count)
 	}
 }
 
@@ -1876,72 +1875,122 @@ func TestRearm_IdleSendCommandEndsNormally(t *testing.T) {
 	}
 }
 
-// TestRearm_StackingGuard verifies setRearmReason logs a WARN when a second
-// pending reason is set on top of an existing one. Post-Phase 5 the rearm
-// state is binary (none/pending) — the guard surfaces stacking, not reason
-// type collisions. Stacking happens when two user-role events queue within
-// the same in-flight CC turn; the cascade only re-arms once, so the second
-// event's response races against handler clear.
-//
-// Not parallel: SetWarnHook is a process-wide singleton. The hook callback
-// filters on the stacking-warning text so unrelated warnings from concurrent
-// parallel tests don't pollute the captured set. Restored on cleanup.
-func TestRearm_StackingGuard(t *testing.T) {
-	const wantTag = "rearm reason already pending"
-
-	var (
-		mu       sync.Mutex
-		captured []string
-	)
-	log.SetWarnHook(func(_ log.Level, _ string, msg string) {
-		if !strings.Contains(msg, wantTag) {
-			return
-		}
-		mu.Lock()
-		captured = append(captured, msg)
-		mu.Unlock()
-	})
-	t.Cleanup(func() { log.SetWarnHook(nil) })
-
-	snapshot := func() []string {
-		mu.Lock()
-		defer mu.Unlock()
-		out := make([]string, len(captured))
-		copy(out, captured)
-		return out
-	}
+// TestRearm_CounterStacks verifies pendingRearmCount accumulates across
+// multiple incRearm calls within a single in-flight turn. This is the
+// counter's reason for existing: pre-counter, two stacked events on the
+// same turn would race against handler clear and the second response
+// dropped silently. The counter records every queued event, and OnResult
+// drains them one delivery cycle at a time.
+func TestRearm_CounterStacks(t *testing.T) {
+	t.Parallel()
 
 	b := newRearmBackend()
 	b.beginTurn(&delegator.EventHandler{})
 
-	// First set — no warning.
 	b.turnMu.Lock()
-	b.setRearmReason(rearmPending)
+	if got := b.pendingRearmCount; got != 0 {
+		t.Errorf("pendingRearmCount after beginTurn = %d, want 0", got)
+	}
+	b.incRearm()
+	b.incRearm()
+	b.incRearm()
+	got := b.pendingRearmCount
 	b.turnMu.Unlock()
 
-	if got := snapshot(); len(got) != 0 {
-		t.Errorf("first setRearmReason produced warnings: %v", got)
+	if got != 3 {
+		t.Errorf("pendingRearmCount after three incRearm calls = %d, want 3", got)
 	}
+}
 
-	// Second set on top of first — guard must fire (stacking).
+// TestRearm_DecRearmClampsAtZero proves decRearm doesn't underflow when
+// called on an empty counter — a defence against ordering bugs where a
+// rollback path might decrement after another path already drained the
+// slot. Returns the count BEFORE decrement so callers can branch.
+func TestRearm_DecRearmClampsAtZero(t *testing.T) {
+	t.Parallel()
+
+	b := newRearmBackend()
+	b.beginTurn(&delegator.EventHandler{})
+
 	b.turnMu.Lock()
-	b.setRearmReason(rearmPending)
+	prev := b.decRearm()
+	count := b.pendingRearmCount
 	b.turnMu.Unlock()
 
-	got := snapshot()
-	if len(got) != 1 {
-		t.Fatalf("expected exactly 1 stacking warning, got %d: %v", len(got), got)
+	if prev != 0 {
+		t.Errorf("decRearm on empty returned %d, want 0", prev)
 	}
-	if !strings.Contains(got[0], "stacking") {
-		t.Errorf("warning text %q missing stacking context", got[0])
+	if count != 0 {
+		t.Errorf("pendingRearmCount after decRearm on empty = %d, want 0 (clamped)", count)
+	}
+}
+
+// TestRearm_StackedEventsBothDeliver is the integration test for the
+// counter fix. Two user-role events stacked within a single in-flight
+// turn (e.g. two post-tool nudges, or a nudge plus a follow-up
+// SendCommand) must each get their own delivery cycle through the
+// re-armed handler. Pre-counter, the second event's response was
+// silently dropped because pendingRearmReason cleared on the first
+// rearm cycle and the second OnResult took the normal-completion path
+// (clearing the handler) before CC's response arrived.
+func TestRearm_StackedEventsBothDeliver(t *testing.T) {
+	t.Parallel()
+
+	var (
+		completes []*delegator.TurnResult
+		textCalls []string
+	)
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
+		OnText:         func(text string) { textCalls = append(textCalls, text) },
+		OnTextDelta:    func(string) {},
+	}
+	b := newRearmBackend()
+	b.beginTurn(handler)
+	emitText(b, "before injection")
+
+	// Stack two pending rearm signals (e.g. two post-tool nudges fired
+	// within one in-flight CC turn).
+	b.turnMu.Lock()
+	b.incRearm()
+	b.incRearm()
+	b.turnMu.Unlock()
+
+	// Cycle 1: original turn boundary. OnTurnComplete fires once, count
+	// drops 2 → 1, delivery handler installed for first queued response.
+	b.OnResult(successResult())
+	emitText(b, "queued response 1")
+
+	if len(completes) != 1 {
+		t.Fatalf("OnTurnComplete after first OnResult fired %d times, want 1", len(completes))
+	}
+	if !slices.Contains(textCalls, "queued response 1") {
+		t.Errorf("queued response 1 missing from textCalls: %v", textCalls)
+	}
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after first OnResult; expected handler to remain armed for second event")
 	}
 
-	// State remains pending (single bit doesn't change).
-	b.turnMu.Lock()
-	got2 := b.pendingRearmReason
-	b.turnMu.Unlock()
-	if got2 != rearmPending {
-		t.Errorf("pendingRearmReason = %s, want pending", got2)
+	// Cycle 2: second queued response's boundary. Count drops 1 → 0,
+	// delivery handler re-installed (with nil OnTurnComplete by contract).
+	b.OnResult(successResult())
+	emitText(b, "queued response 2")
+
+	if len(completes) != 1 {
+		t.Errorf("OnTurnComplete after second OnResult fired %d times overall, want 1 (re-armed handler must not double-fire)", len(completes))
+	}
+	if !slices.Contains(textCalls, "queued response 2") {
+		t.Errorf("queued response 2 missing from textCalls: %v (the bug: pre-counter the second response was dropped here)", textCalls)
+	}
+	if !b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = false after second OnResult; expected the third (idle) cycle still pending")
+	}
+
+	// Cycle 3: count is 0, normal completion. Handler clears.
+	b.OnResult(successResult())
+
+	if b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = true after third OnResult; expected normal cleanup")
 	}
 }
 

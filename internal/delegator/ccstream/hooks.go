@@ -356,7 +356,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 				continue
 			}
 			b.turnMu.Lock()
-			b.setRearmReason(rearmPending)
+			b.incRearm()
 			b.turnMu.Unlock()
 			_ = b.writer.SendUser("[user] " + text)
 		}

@@ -80,7 +80,7 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText      strings.Builder       // accumulates text across assistant messages
 	turnTools     int                   // tool_use count this turn
-	pendingRearmReason rearmReason      // when non-rearmNone, OnResult must complete the foci turn AND re-arm a delivery-only handler so the queued user-role response (nudge / urgent dispatch / follow-up) reaches OnText. Cleared on next OnResult or beginTurn. See completeAndRearm.
+	pendingRearmCount int             // count of queued user-role injections (post-tool nudge / urgent dispatch / follow-up) awaiting their delivery cycle. Each OnResult with count > 0 decrements and re-arms a delivery-only handler so the queued response reaches OnText. Reset on beginTurn. See rearm.go.
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -428,7 +428,7 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnHandler = handler
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.pendingRearmReason = rearmNone
+	b.pendingRearmCount = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -471,7 +471,10 @@ func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
 	}
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.pendingRearmReason = rearmNone
+	// NOTE: do NOT reset pendingRearmCount here — OnResult already decremented
+	// the slot for the cycle that called us, and any remaining count belongs
+	// to further stacked events whose responses haven't arrived yet. Resetting
+	// would re-introduce the dropped-text race the counter was added to fix.
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -607,15 +610,16 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	b.turnMu.Lock()
 	inFlight := b.turnActive
 	if inFlight {
-		b.setRearmReason(rearmPending)
+		b.incRearm()
 	}
 	b.turnMu.Unlock()
 
 	if err := b.writer.SendUser(command); err != nil {
-		// Roll back the rearm flag — no response is coming.
+		// Roll back the increment — no response is coming for this command.
+		// Other queued events still in pendingRearmCount stay intact.
 		if inFlight {
 			b.turnMu.Lock()
-			b.pendingRearmReason = rearmNone
+			b.decRearm()
 			b.turnMu.Unlock()
 		}
 		return err
@@ -969,8 +973,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// OnTurnComplete. The normal path clears handler/turnActive below.
 	b.turnMu.Lock()
 	handler := b.turnHandler
-	rearmReason := b.pendingRearmReason
-	b.pendingRearmReason = rearmNone
+	rearmActive := b.decRearm() > 0
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -1051,7 +1054,7 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// Complete the foci turn normally (fire OnTurnComplete with whatever text
 	// accumulated before the boundary), then install a delivery-only handler
 	// so the queued response reaches OnText. See completeAndRearm.
-	if rearmReason != rearmNone && handler != nil {
+	if rearmActive && handler != nil {
 		b.completeAndRearm(handler, result, msg, resultCh)
 		return
 	}
