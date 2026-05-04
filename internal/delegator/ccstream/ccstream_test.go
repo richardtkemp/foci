@@ -472,6 +472,88 @@ func TestSendCommand_DuringTurn_ArmsRearm(t *testing.T) {
 	}
 }
 
+// rearmCheckingWriter wraps a writer and snapshots the backend's rearm flag
+// on the first call to Write — the moment the bytes hit the wire. Used to
+// assert the flag was already set BEFORE the user message reaches CC, closing
+// the race where OnResult could see rearmReason==rearmNone, clear the
+// handler, and drop the queued response's text.
+type rearmCheckingWriter struct {
+	dst             *bytes.Buffer
+	b               *Backend
+	rearmAtFirstWrt rearmReason
+	wroteOnce       bool
+}
+
+func (w *rearmCheckingWriter) Write(p []byte) (int, error) {
+	if !w.wroteOnce {
+		w.b.turnMu.Lock()
+		w.rearmAtFirstWrt = w.b.pendingRearmReason
+		w.b.turnMu.Unlock()
+		w.wroteOnce = true
+	}
+	return w.dst.Write(p)
+}
+
+func (w *rearmCheckingWriter) Close() error { return nil }
+
+// TestSendCommand_DuringTurn_RearmSetBeforeWrite proves that SendCommand
+// arms the rearm flag BEFORE bytes hit CC. This closes the race observed
+// in production as the "text block dropped (no handler/OnText)" WARN: if
+// SendUser fired first, OnResult could process the in-flight turn's result
+// (clearing the handler) before SendCommand had a chance to mark
+// rearmPending — the response to the queued command would then arrive at
+// turnHandler==nil and be dropped. Phase 5 follow-up.
+func TestSendCommand_DuringTurn_RearmSetBeforeWrite(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		turnActive: true,
+	}
+	checker := &rearmCheckingWriter{dst: &buf, b: b}
+	b.writer = NewWriter(checker)
+
+	if err := b.SendCommand(context.Background(), "follow-up"); err != nil {
+		t.Fatalf("SendCommand: %v", err)
+	}
+	if !checker.wroteOnce {
+		t.Fatal("writer was never called — SendCommand never reached the wire")
+	}
+	if checker.rearmAtFirstWrt != rearmPending {
+		t.Errorf("rearm flag at first byte = %s, want pending — order is wrong, race window open",
+			checker.rearmAtFirstWrt)
+	}
+}
+
+// TestSendCommand_WriteFailureRollsBackRearm proves that if SendUser fails
+// after the rearm flag was armed, the flag is rolled back to rearmNone — no
+// response is coming from CC, so leaving the flag set would mis-route the
+// next legitimate result through the rearm path.
+func TestSendCommand_WriteFailureRollsBackRearm(t *testing.T) {
+	t.Parallel()
+
+	failingWC := &failingWriteCloser{err: fmt.Errorf("boom")}
+	b := &Backend{
+		writer:     NewWriter(failingWC),
+		turnActive: true,
+	}
+
+	if err := b.SendCommand(context.Background(), "x"); err == nil {
+		t.Fatal("SendCommand: expected error, got nil")
+	}
+
+	b.turnMu.Lock()
+	pending := b.pendingRearmReason
+	b.turnMu.Unlock()
+	if pending != rearmNone {
+		t.Errorf("pendingRearmReason = %s after write failure, want none (rollback)", pending)
+	}
+}
+
+type failingWriteCloser struct{ err error }
+
+func (f *failingWriteCloser) Write([]byte) (int, error) { return 0, f.err }
+func (f *failingWriteCloser) Close() error              { return nil }
 
 // ---------------------------------------------------------------------------
 // SendToPane
