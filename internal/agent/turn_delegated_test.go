@@ -106,7 +106,7 @@ type mockBackendDT struct {
 	mu sync.Mutex
 
 	sendToPaneFn  func(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error)
-	sendCommandFn func(ctx context.Context, command string, priority string) error
+	sendCommandFn func(ctx context.Context, command string) error
 	waitForTurnFn func(ctx context.Context) error
 	turnInFlight  bool
 	sessionFile   string
@@ -146,9 +146,9 @@ func (m *mockBackendDT) SendToPane(ctx context.Context, prompt string, handler *
 	return &delegator.TurnResult{Text: "ok"}, nil
 }
 
-func (m *mockBackendDT) SendCommand(ctx context.Context, command string, priority string) error {
+func (m *mockBackendDT) SendCommand(ctx context.Context, command string) error {
 	if m.sendCommandFn != nil {
-		return m.sendCommandFn(ctx, command, priority)
+		return m.sendCommandFn(ctx, command)
 	}
 	return nil
 }
@@ -364,16 +364,17 @@ func TestDelegatedTransport_RunInference_GetError(t *testing.T) {
 }
 
 // TestDelegatedTransport_RunInference_TurnInFlight verifies the follow-up path:
-// when IsTurnInFlight is true, SendCommand is called with priority "next" and
+// when IsTurnInFlight is true, SendCommand is called with the prompt and
 // CompletionChan is closed immediately without creating a new turn pipeline.
+// The backend's SendCommand owns rearm-cascade wiring so the queued response
+// reaches the original handler — that wiring is asserted in ccstream_test.go,
+// not here.
 func TestDelegatedTransport_RunInference_TurnInFlight(t *testing.T) {
 	var capturedCmd string
-	var capturedPriority string
 	be := &mockBackendDT{
 		turnInFlight: true,
-		sendCommandFn: func(_ context.Context, command string, priority string) error {
+		sendCommandFn: func(_ context.Context, command string) error {
 			capturedCmd = command
-			capturedPriority = priority
 			return nil
 		},
 	}
@@ -392,9 +393,6 @@ func TestDelegatedTransport_RunInference_TurnInFlight(t *testing.T) {
 	if capturedCmd != "follow-up text" {
 		t.Errorf("SendCommand command = %q, want %q", capturedCmd, "follow-up text")
 	}
-	if capturedPriority != "next" {
-		t.Errorf("SendCommand priority = %q, want %q", capturedPriority, "next")
-	}
 
 	// CompletionChan should be closed.
 	select {
@@ -411,7 +409,7 @@ func TestDelegatedTransport_RunInference_TurnInFlight(t *testing.T) {
 func TestDelegatedTransport_RunInference_TurnInFlightSendCommandError(t *testing.T) {
 	be := &mockBackendDT{
 		turnInFlight: true,
-		sendCommandFn: func(_ context.Context, _ string, _ string) error {
+		sendCommandFn: func(_ context.Context, _ string) error {
 			return errors.New("send failed")
 		},
 	}
@@ -485,44 +483,6 @@ func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunInference did not complete after permission was cleared")
-	}
-}
-
-// TestDelegatedTransport_RunInference_SteerCheckFunc verifies that when a
-// SteerCheckFunc is present in the context, it is wired into the EventHandler
-// passed to SendToPane.
-func TestDelegatedTransport_RunInference_SteerCheckFunc(t *testing.T) {
-	var handlerSteerFunc func() []string
-	be := &mockBackendDT{
-		sessionFile: "/tmp/session.jsonl",
-		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
-			handlerSteerFunc = handler.SteerCheckFunc
-			if handler.OnTurnComplete != nil {
-				handler.OnTurnComplete(&delegator.TurnResult{Text: "ok"})
-			}
-			return nil, nil
-		},
-	}
-
-	mgr := newMockDelegatedManager(t, be)
-	a := &Agent{Model: "test-model", DelegatedManager: mgr}
-	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
-
-	steerFn := func() []string { return []string{"steer message"} }
-	ctx := turnevent.WithSteerer(context.Background(), turnevent.SteererFunc(steerFn))
-	ts := NewTurnState(ctx, "test/s", []string{"hi"}, nil)
-	ts.Prompt = "hi"
-	ts.StartedAt = time.Now()
-
-	if err := tr.RunInference(ts); err != nil {
-		t.Fatalf("RunInference: %v", err)
-	}
-
-	if handlerSteerFunc == nil {
-		t.Fatal("SteerCheckFunc should be wired into the EventHandler")
-	}
-	if got := handlerSteerFunc(); len(got) != 1 || got[0] != "steer message" {
-		t.Errorf("SteerCheckFunc returned %v, want [steer message]", got)
 	}
 }
 
@@ -1168,7 +1128,7 @@ func TestDelegatedTransport_LogUsage_NilUsage(t *testing.T) {
 func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
 	var capturedCmd string
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, cmd string, _ string) error {
+		sendCommandFn: func(_ context.Context, cmd string) error {
 			capturedCmd = cmd
 			return nil
 		},
@@ -1224,7 +1184,7 @@ func TestDelegatedTransport_RunCompaction_AboveThreshold(t *testing.T) {
 func TestDelegatedTransport_RunCompaction_BelowThreshold(t *testing.T) {
 	cmdSent := false
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, _ string, _ string) error {
+		sendCommandFn: func(_ context.Context, _ string) error {
 			cmdSent = true
 			return nil
 		},
@@ -1285,7 +1245,7 @@ func TestDelegatedTransport_RunCompaction_NilUsage(t *testing.T) {
 func TestDelegatedTransport_RunCompaction_NoCompactSession(t *testing.T) {
 	cmdSent := false
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, _ string, _ string) error {
+		sendCommandFn: func(_ context.Context, _ string) error {
 			cmdSent = true
 			return nil
 		},
@@ -1324,7 +1284,7 @@ func TestDelegatedTransport_RunCompaction_NoCompactSession(t *testing.T) {
 // fields are cleared.
 func TestDelegatedTransport_RunCompaction_NudgeReloadAndMetaReset(t *testing.T) {
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, _ string, _ string) error { return nil },
+		sendCommandFn: func(_ context.Context, _ string) error { return nil },
 	}
 
 	store := session.NewStore(t.TempDir())
@@ -1366,7 +1326,7 @@ func TestDelegatedTransport_RunCompaction_NudgeReloadAndMetaReset(t *testing.T) 
 // are not called.
 func TestDelegatedTransport_RunCompaction_SendCommandError(t *testing.T) {
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, _ string, _ string) error {
+		sendCommandFn: func(_ context.Context, _ string) error {
 			return errors.New("tmux send error")
 		},
 	}
@@ -1401,7 +1361,7 @@ func TestDelegatedTransport_RunCompaction_SendCommandError(t *testing.T) {
 // WaitForTurn times out, the notify callback is not called.
 func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, _ string, _ string) error { return nil },
+		sendCommandFn: func(_ context.Context, _ string) error { return nil },
 		waitForTurnFn: func(_ context.Context) error {
 			return errors.New("timeout waiting for compaction turn")
 		},
@@ -1438,7 +1398,7 @@ func TestDelegatedTransport_RunCompaction_WaitForTurnError(t *testing.T) {
 func TestDelegatedTransport_RunCompaction_EmptySummaryPrompt(t *testing.T) {
 	cmdSent := false
 	be := &mockBackendDT{
-		sendCommandFn: func(_ context.Context, _ string, _ string) error {
+		sendCommandFn: func(_ context.Context, _ string) error {
 			cmdSent = true
 			return nil
 		},

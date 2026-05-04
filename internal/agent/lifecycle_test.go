@@ -453,7 +453,7 @@ func TestCompactSession_Delegated(t *testing.T) {
 	dm := &DelegatedManager{
 		NewBackend: func() (delegator.Delegator, error) {
 			be := &mockBackendDM{running: true}
-			be.sendCommandFn = func(_ context.Context, cmd string, _ string) error {
+			be.sendCommandFn = func(_ context.Context, cmd string) error {
 				sentCommand = cmd
 				return nil
 			}

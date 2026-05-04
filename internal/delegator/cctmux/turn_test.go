@@ -307,7 +307,7 @@ func TestNotifyTurnComplete_BufferedNonBlocking(t *testing.T) {
 // the backend hasn't been started (no tmux pane).
 func TestSendCommand_NilPane(t *testing.T) {
 	b := &Backend{}
-	err := b.SendCommand(context.Background(), "test", "")
+	err := b.SendCommand(context.Background(), "test")
 	if err == nil {
 		t.Fatal("SendCommand should return error when pane is nil")
 	}

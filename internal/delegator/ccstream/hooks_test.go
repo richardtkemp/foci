@@ -470,12 +470,12 @@ func TestHandleHookResponse_EmptyStdoutSilent(t *testing.T) {
 	}
 }
 
-// TestHandleHookResponse_PostToolNudgeSentAsSteer proves that when the
+// TestHandleHookResponse_PostToolNudgeDispatched proves that when the
 // handler's PostToolNudgeFunc returns a nudge reminder, handleHookResponse
-// sends it to CC as a "now"-priority `[user]` message via the writer —
-// the same injection path as SteerCheckFunc. Matches the API transport's
-// CheckAfterTools injection into the tool_result batch.
-func TestHandleHookResponse_PostToolNudgeSentAsSteer(t *testing.T) {
+// sends it to CC as a plain `[user]` user message via the writer and arms
+// the rearm cascade so the response reaches the original handler. Matches
+// the API transport's CheckAfterTools injection into the tool_result batch.
+func TestHandleHookResponse_PostToolNudgeDispatched(t *testing.T) {
 	var buf bytes.Buffer
 	b := &Backend{
 		hookInstallID: "install-us",
@@ -509,8 +509,17 @@ func TestHandleHookResponse_PostToolNudgeSentAsSteer(t *testing.T) {
 	if !strings.Contains(buf.String(), "[user] reminder-text") {
 		t.Errorf("expected [user] reminder-text in writer output, got: %q", buf.String())
 	}
-	if !strings.Contains(buf.String(), PriorityNow) {
-		t.Errorf("expected priority=%q in writer output, got: %q", PriorityNow, buf.String())
+	if strings.Contains(buf.String(), `"priority"`) {
+		t.Errorf("priority field should be absent post-Phase-5, got: %q", buf.String())
+	}
+
+	// Rearm flag must be set so OnResult re-arms a delivery handler for
+	// the nudge response that follows.
+	b.turnMu.Lock()
+	pending := b.pendingRearmReason
+	b.turnMu.Unlock()
+	if pending != rearmPending {
+		t.Errorf("pendingRearmReason = %s, want pending after nudge dispatch", pending)
 	}
 }
 

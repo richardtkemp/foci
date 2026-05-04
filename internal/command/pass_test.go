@@ -345,7 +345,7 @@ func (m *mockPassBackend) SendToPane(context.Context, string, *delegator.EventHa
 }
 func (m *mockPassBackend) WaitForTurn(context.Context) error             { return nil }
 func (m *mockPassBackend) IsTurnInFlight() bool                          { return false }
-func (m *mockPassBackend) SendCommand(_ context.Context, cmd, _ string) error {
+func (m *mockPassBackend) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
 	return nil
 }
@@ -385,7 +385,7 @@ func (m *mockPassBackendNoCapturer) SendToPane(context.Context, string, *delegat
 }
 func (m *mockPassBackendNoCapturer) WaitForTurn(context.Context) error             { return nil }
 func (m *mockPassBackendNoCapturer) IsTurnInFlight() bool                          { return false }
-func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd, _ string) error {
+func (m *mockPassBackendNoCapturer) SendCommand(_ context.Context, cmd string) error {
 	m.sentCommand = cmd
 	return nil
 }

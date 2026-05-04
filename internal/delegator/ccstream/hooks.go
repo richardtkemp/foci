@@ -345,19 +345,20 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	}
 	handler.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
 
-	// Fire any post-tool nudges the caller wants to inject for this
-	// tool. Uses the same "now"-priority user-message path as steers —
-	// CC processes the reminder between tool executions, matching the
-	// API transport's CheckAfterTools injection point.
+	// Fire any post-tool nudges the caller wants to inject for this tool.
+	// Sends as a plain user message — CC processes it after the current
+	// tool boundary as a queued event, matching the API transport's
+	// CheckAfterTools injection point. The rearm flag tells OnResult to
+	// install a delivery-only handler so the nudge response reaches OnText.
 	if handler.PostToolNudgeFunc != nil {
 		for _, text := range handler.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
 			if text == "" {
 				continue
 			}
 			b.turnMu.Lock()
-			b.setRearmReason(rearmNudge)
+			b.setRearmReason(rearmPending)
 			b.turnMu.Unlock()
-			_ = b.writer.SendUserWithPriority("[user] "+text, PriorityNow)
+			_ = b.writer.SendUser("[user] " + text)
 		}
 	}
 }

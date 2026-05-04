@@ -195,6 +195,20 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 	return bot
 }
 
+// SessionKeyForChannelID returns the session key for a given channel ID,
+// accounting for facet/secondary bot routing. Exported so the urgent-steer
+// dispatcher (installed at agent-setup time) can resolve a queued message's
+// session without reaching into private bot state.
+func (b *Bot) SessionKeyForChannelID(channelID int64) string {
+	if b.isSecondary {
+		return b.SessionKey()
+	}
+	if b.agentID != "" {
+		return b.sessionKeyForMsg(channelID)
+	}
+	return b.SessionKey()
+}
+
 // SetTranscriber sets the STT provider for inbound voice notes.
 func (b *Bot) SetTranscriber(t voice.STT) {
 	b.transcriber = t

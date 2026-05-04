@@ -48,54 +48,30 @@ func TestWriterSendUser(t *testing.T) {
 	}
 }
 
-func TestWriterSendUserWithPriority(t *testing.T) {
-	// Verifies that SendUserWithPriority sets the priority field on the wire
-	// and that the default SendUser omits it.
+func TestWriterSendUser_NoPriorityField(t *testing.T) {
+	// Verifies SendUser writes a plain user message with no priority field.
+	// Post-Phase 5 the priority field is gone — interrupt semantics are
+	// expressed via SendInterrupt, not via priority="now". Guards against
+	// regression that would re-introduce the field on the wire.
 	t.Parallel()
 
-	tests := []struct {
-		name     string
-		priority string
-		wantKey  bool   // whether "priority" key should be present in JSON
-		wantVal  string // expected value if present
-	}{
-		{"now interrupts", PriorityNow, true, "now"},
-		{"next queues", PriorityNext, true, "next"},
-		{"later defers", PriorityLater, true, "later"},
-		{"empty omits field", "", false, ""},
+	var buf bytes.Buffer
+	w := NewWriter(nopWriteCloser{&buf})
+	if err := w.SendUser("test"); err != nil {
+		t.Fatalf("SendUser: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var buf bytes.Buffer
-			w := NewWriter(nopWriteCloser{&buf})
+	line := strings.TrimSpace(buf.String())
+	var got map[string]any
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\nraw: %s", err, line)
+	}
 
-			var err error
-			if tt.priority != "" {
-				err = w.SendUserWithPriority("test", tt.priority)
-			} else {
-				err = w.SendUser("test")
-			}
-			if err != nil {
-				t.Fatalf("send: %v", err)
-			}
-
-			line := strings.TrimSpace(buf.String())
-			var got map[string]any
-			if err := json.Unmarshal([]byte(line), &got); err != nil {
-				t.Fatalf("invalid JSON: %v\nraw: %s", err, line)
-			}
-
-			val, present := got["priority"]
-			if tt.wantKey && !present {
-				t.Errorf("priority key missing, want %q", tt.wantVal)
-			} else if !tt.wantKey && present {
-				t.Errorf("priority key present (%v), want absent", val)
-			} else if tt.wantKey && val != tt.wantVal {
-				t.Errorf("priority = %v, want %q", val, tt.wantVal)
-			}
-		})
+	if val, present := got["priority"]; present {
+		t.Errorf("priority key present (%v), want absent post-Phase-5", val)
+	}
+	if got["type"] != "user" {
+		t.Errorf("type = %v, want %q", got["type"], "user")
 	}
 }
 
