@@ -287,6 +287,13 @@ func (b *Backend) IsTurnInFlight() bool {
 	return b.turnCompleteFn != nil
 }
 
+// SendCommand sends a slash command or queued user message directly to
+// the tmux pane. The tmux backend has no rearm cascade — responses route
+// through the file watcher's per-turn callbacks, not a stream-based
+// re-arm. Steered follow-ups during an in-flight turn use this method
+// (text only, no handler) to avoid overwriting the per-turn callback.
+//
+// Deprecated: use Inject instead.
 func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	b.mu.Lock()
 	pane := b.pane
@@ -296,6 +303,50 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 		return fmt.Errorf("claude-code-tmux backend not started")
 	}
 	return pane.sendText(ctx, command)
+}
+
+// Inject is the canonical entry point for delivering a user-role event to
+// the tmux backend. Mirrors the ccstream Inject contract minus the rearm
+// cascade — the tmux backend uses the JSONL file watcher rather than a
+// stream-based re-arm, so follow-up responses route through the same
+// per-turn completion callback installed by SendToPane.
+//
+// Attachments are silently dropped on tmux: there's no protocol primitive
+// for structured content blocks via the tmux pane keystroke channel.
+// Callers who require attachments should run on the ccstream backend.
+//
+// Routing: see Delegator.Inject for the full matrix.
+func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
+	inFlight := b.IsTurnInFlight()
+	if len(inj.Attachments) > 0 {
+		log.Debugf("cctmux", "Inject(%s): %d attachment(s) dropped — tmux backend has no structured content channel",
+			inj.Source, len(inj.Attachments))
+	}
+
+	switch inj.Source {
+	case delegator.SourceUser:
+		if !inFlight {
+			_, err := b.SendToPane(ctx, inj.Text, inj.Handler)
+			return err
+		}
+		return b.SendCommand(ctx, inj.Text)
+
+	case delegator.SourceSteer:
+		if !inFlight {
+			// Edge case: idle steer. Degrade to begin-turn — message is
+			// still delivered, just without an in-flight task to interrupt.
+			_, err := b.SendToPane(ctx, inj.Text, inj.Handler)
+			return err
+		}
+		if err := b.Interrupt(ctx); err != nil {
+			log.Warnf("cctmux", "Inject(Steer): Interrupt failed: %v (continuing with SendCommand)", err)
+		}
+		return b.SendCommand(ctx, inj.Text)
+
+	case delegator.SourceCompact, delegator.SourcePass:
+		return b.SendCommand(ctx, inj.Text)
+	}
+	return fmt.Errorf("cctmux: Inject: unknown source %d", inj.Source)
 }
 
 // CaptureCommandOutput polls the tmux pane until content stabilises

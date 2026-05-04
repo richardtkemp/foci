@@ -153,6 +153,22 @@ func (m *mockBackendDT) SendCommand(ctx context.Context, command string) error {
 	return nil
 }
 
+// Inject mirrors production routing so tests written against the new
+// canonical entry point exercise the same code paths as the legacy mocks.
+func (m *mockBackendDT) Inject(ctx context.Context, inj delegator.Inject) error {
+	switch inj.Source {
+	case delegator.SourceUser, delegator.SourceSteer:
+		if !m.IsTurnInFlight() {
+			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			return err
+		}
+		return m.SendCommand(ctx, inj.Text)
+	case delegator.SourceCompact, delegator.SourcePass:
+		return m.SendCommand(ctx, inj.Text)
+	}
+	return nil
+}
+
 func (m *mockBackendDT) WaitForTurn(ctx context.Context) error {
 	if m.waitForTurnFn != nil {
 		return m.waitForTurnFn(ctx)
