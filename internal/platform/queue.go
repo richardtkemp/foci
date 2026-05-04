@@ -2,7 +2,6 @@ package platform
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"foci/internal/log"
@@ -24,44 +23,20 @@ type QueuedMessage struct {
 	ReceivedAt time.Time
 }
 
-// SteerEntry is a buffered steer message together with the time it was
-// received from the user. Preserving the receipt time lets orphaned steers
-// (drained after a turn completes and rebuilt as follow-up turns) show
-// accurate meta header timestamps.
-type SteerEntry struct {
-	Text       string
-	ReceivedAt time.Time
-}
-
-// MessageQueue manages inbound message buffering, steer injection, and
-// group chat throttling. Thread-safe. Used by both Telegram and Discord bots.
+// MessageQueue manages inbound message buffering and group-chat
+// throttling. Thread-safe. Used by both Telegram and Discord bots.
+//
+// Concerns owned here are platform-side (filter + throttle + bounded
+// channels). Agent-side concerns (steer buffering, in-flight tracking,
+// urgent-dispatch decisions) live in agent.Inbox — see internal/agent/inbox.go.
+// The bot's pump goroutine drains Chan() and hands messages to
+// agent.Enqueue, which decides routing per-session.
 type MessageQueue struct {
 	ch             chan QueuedMessage
 	cmdCh          chan QueuedMessage // commands bypass message routing rules
-	steerMu        sync.Mutex
-	steerParts     []SteerEntry
-	throttle       *GroupThrottle // nil = disabled
+	throttle       *GroupThrottle     // nil = disabled
 	requireMention bool
-	steerMode      bool
 	log            *log.ComponentLogger
-
-	// turnActive returns whether a turn is currently in progress.
-	// Set by the platform bot at construction time.
-	turnActive func() bool
-
-	// dispatchUrgent is an optional callback that delivers a steer message
-	// directly to the active backend (bypassing the AppendSteer buffer).
-	// Used by CC-backed agents whose backend exposes Interrupt+SendCommand
-	// primitives that are equivalent to — and a strict superset of — the
-	// buffer's "drain at next tool boundary" semantics: CC interrupts the
-	// in-flight turn immediately and processes the new user message,
-	// regardless of whether the turn is text- or tool-shaped.
-	//
-	// The full QueuedMessage is passed (not just the text) so the callback
-	// can resolve the destination session via msg.ChatID without depending
-	// on shared bot state. API-mode agents leave this nil and continue
-	// using the buffer drained at tool-loop boundaries by Steerer.PendingSteers.
-	dispatchUrgent func(msg QueuedMessage)
 }
 
 // MessageQueueConfig holds construction parameters for NewMessageQueue.
@@ -69,9 +44,7 @@ type MessageQueueConfig struct {
 	Size           int
 	CmdSize        int // command channel buffer size; 0 uses default (8)
 	RequireMention bool
-	SteerMode      bool
 	Throttle       *GroupThrottle
-	TurnActive     func() bool
 	Logger         *log.ComponentLogger
 }
 
@@ -90,25 +63,24 @@ func NewMessageQueue(cfg MessageQueueConfig) *MessageQueue {
 		cmdCh:          make(chan QueuedMessage, cmdSize),
 		throttle:       cfg.Throttle,
 		requireMention: cfg.RequireMention,
-		steerMode:      cfg.SteerMode,
-		turnActive:     cfg.TurnActive,
 		log:            cfg.Logger,
 	}
 	return mq
 }
 
-// Enqueue routes a message to the appropriate destination: steer buffer,
-// throttle, or main channel. The routing logic is:
+// Enqueue applies inbound filtering and routes the message to the main
+// channel or the throttle. Routing rules:
 //
-//  1. Group chat + requireMention + not a mention + no throttle -> drop silently
-//  2. Group chat + mention + steerMode + turn active -> AppendSteer (urgent redirect)
-//  3. Group chat + throttle active -> throttle.Add (mention flushes immediately, non-mention buffers)
-//  4. SteerMode + turn active + text-only -> AppendSteer
-//  5. Otherwise -> push to channel (drop + warn if full)
+//  1. Group chat + requireMention + not a mention + no throttle → drop silently.
+//  2. Group chat + throttle active → throttle.Add (mention flushes
+//     immediately, non-mention buffers until the throttle window closes).
+//  3. Otherwise → push to main channel.
+//
+// Steer / urgent-dispatch / in-flight gating moved to agent.Inbox in
+// Phase 6 (TODO #739) — those decisions need agent-level state that
+// the platform shouldn't reach into.
 func (q *MessageQueue) Enqueue(msg QueuedMessage) {
-	isActive := q.turnActive != nil && q.turnActive()
-
-	// Rule 1: group + require_mention + not a mention + no throttle -> drop
+	// Rule 1: group + require_mention + not a mention + no throttle → drop.
 	if msg.IsGroupChat && q.requireMention && !msg.IsMention && q.throttle == nil {
 		if q.log != nil {
 			q.log.Debugf("queue: dropping non-mention group message from %s", q.senderLabel(msg))
@@ -116,30 +88,13 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 		return
 	}
 
-	// Rule 2: group + mention + steer + turn active -> steer (urgent redirect)
-	if msg.IsGroupChat && msg.IsMention && q.steerMode && isActive && msg.Text != "" && len(msg.Attachments) == 0 {
-		q.routeUrgentSteer(msg, "mention")
-		return
-	}
-
-	// Rule 3: group + throttle -> buffer in throttle
-	if msg.IsGroupChat && q.throttle != nil && !msg.IsMention {
-		q.throttle.Add(msg)
-		return
-	}
-	// Mentions with throttle active still go through throttle (they flush immediately)
-	if msg.IsGroupChat && q.throttle != nil && msg.IsMention {
+	// Rule 2: group + throttle → buffer/flush via throttle.
+	if msg.IsGroupChat && q.throttle != nil {
 		q.throttle.Add(msg)
 		return
 	}
 
-	// Rule 4: steer mode + turn active + text-only -> steer
-	if q.steerMode && isActive && msg.Text != "" && len(msg.Attachments) == 0 {
-		q.routeUrgentSteer(msg, "message")
-		return
-	}
-
-	// Rule 5: push to channel
+	// Rule 3: push to main channel.
 	q.pushToChannel(msg)
 }
 
@@ -155,12 +110,14 @@ func (q *MessageQueue) pushToChannel(msg QueuedMessage) {
 	}
 }
 
-// Chan returns the receive-only channel for the worker select loop.
+// Chan returns the receive-only channel for the bot's pump goroutine.
 func (q *MessageQueue) Chan() <-chan QueuedMessage {
 	return q.ch
 }
 
-// DrainQueue non-blocking drains all immediately available messages from the queue.
+// DrainQueue non-blocking drains all immediately available messages from
+// the queue. Retained for parity with the per-bot pump pattern, even
+// though batching now happens at the agent.Inbox level.
 func (q *MessageQueue) DrainQueue() []QueuedMessage {
 	var msgs []QueuedMessage
 	for {
@@ -173,63 +130,6 @@ func (q *MessageQueue) DrainQueue() []QueuedMessage {
 	}
 }
 
-// routeUrgentSteer dispatches a steer message either through dispatchUrgent
-// (when set — typical for CC-backed agents) or to the AppendSteer buffer
-// (API-mode fallback). label appears in the log message and distinguishes
-// Rule 2 ("mention") from Rule 4 ("message") so the log is debuggable.
-func (q *MessageQueue) routeUrgentSteer(msg QueuedMessage, label string) {
-	if q.dispatchUrgent != nil {
-		q.dispatchUrgent(msg)
-		if q.log != nil {
-			q.log.Infof("steer: dispatched %s from %s", label, q.senderLabel(msg))
-		}
-		return
-	}
-	q.AppendSteer(msg.Text, msg.ReceivedAt)
-	if q.log != nil {
-		q.log.Infof("steer: buffered %s from %s", label, q.senderLabel(msg))
-	}
-}
-
-// AppendSteer adds text to the steer buffer together with the time the
-// message was received. Use the platform receipt time so that when the buffer
-// is later drained into a follow-up turn, the meta header shows the original
-// send time rather than the drain time.
-func (q *MessageQueue) AppendSteer(text string, receivedAt time.Time) {
-	q.steerMu.Lock()
-	q.steerParts = append(q.steerParts, SteerEntry{Text: text, ReceivedAt: receivedAt})
-	q.steerMu.Unlock()
-}
-
-// DrainSteer returns all pending steer entries and clears the buffer.
-// Returns nil if no messages are pending.
-func (q *MessageQueue) DrainSteer() []SteerEntry {
-	q.steerMu.Lock()
-	defer q.steerMu.Unlock()
-	if len(q.steerParts) == 0 {
-		return nil
-	}
-	parts := q.steerParts
-	q.steerParts = nil
-	return parts
-}
-
-// DrainSteerTexts drains the steer buffer and returns just the text portions,
-// discarding receipt timestamps. Used by mid-turn injection paths (ccstream,
-// API transport) that paste steers into an in-flight turn and never render a
-// new meta header for them.
-func (q *MessageQueue) DrainSteerTexts() []string {
-	entries := q.DrainSteer()
-	if len(entries) == 0 {
-		return nil
-	}
-	texts := make([]string, len(entries))
-	for i, e := range entries {
-		texts[i] = e.Text
-	}
-	return texts
-}
-
 // SetThrottle sets the group throttle. Must be called before messages arrive.
 func (q *MessageQueue) SetThrottle(t *GroupThrottle) {
 	q.throttle = t
@@ -240,25 +140,6 @@ func (q *MessageQueue) SetRequireMention(v bool) {
 	q.requireMention = v
 }
 
-// SetSteerMode sets the steer_mode flag. Must be called before messages arrive.
-func (q *MessageQueue) SetSteerMode(v bool) {
-	q.steerMode = v
-}
-
-// SetDispatchUrgent installs a callback that delivers steer messages directly
-// to the active backend, bypassing the AppendSteer buffer. CC-backed agents
-// wire this to a closure that resolves the destination session from the
-// message's ChatID and calls Backend.Interrupt + Backend.SendCommand, which
-// is a strict superset of the buffer's "drain at next tool boundary"
-// semantics — CC interrupts the in-flight turn immediately and processes the
-// new user message regardless of whether the turn is text- or tool-shaped.
-//
-// Pass nil to revert to buffer-only routing (the API-mode default). Must be
-// called before messages arrive.
-func (q *MessageQueue) SetDispatchUrgent(fn func(msg QueuedMessage)) {
-	q.dispatchUrgent = fn
-}
-
 // PushFlushed pushes a message from a throttle flush directly to the channel.
 // Used as the throttle's flush callback target.
 func (q *MessageQueue) PushFlushed(msg QueuedMessage) {
@@ -266,7 +147,7 @@ func (q *MessageQueue) PushFlushed(msg QueuedMessage) {
 }
 
 // EnqueueCommand sends a command message to the command channel, bypassing
-// all message routing rules (steer mode, group throttle, require-mention).
+// all message routing rules (group throttle, require-mention).
 // Commands must always reach the worker so they are never silently dropped.
 func (q *MessageQueue) EnqueueCommand(msg QueuedMessage) {
 	select {

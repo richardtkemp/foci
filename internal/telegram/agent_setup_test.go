@@ -8,7 +8,6 @@ import (
 	"foci/internal/platform"
 )
 
-
 // newBotForTest creates a Bot without connecting to the Telegram API.
 func newBotForTest() *Bot {
 	lg := log.NewComponentLogger("telegram:test")
@@ -17,7 +16,7 @@ func newBotForTest() *Bot {
 	}
 	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
 		Size:       64,
-		TurnActive: b.isTurnActive,
+
 		Logger:     lg,
 	})
 	return b

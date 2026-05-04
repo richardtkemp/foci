@@ -154,7 +154,6 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 		log.Infof("telegram", "agent %q: group throttle = %v", acfg.ID, dur)
 	}
 	primaryBot.mq.SetRequireMention(reqMention)
-	primaryBot.mq.SetSteerMode(bc.SteerMode)
 
 	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
 	// The agent owns the per-session message queue, steer buffer,
@@ -162,17 +161,14 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	// platform queue and calls a.Enqueue; each session's worker calls
 	// back into Bot.Drive for renderer/sink construction.
 	//
-	// agent.SetInboxSteerMode replaces the per-bot SteerMode flag —
-	// authority for "should mid-turn messages route to Inject(SourceSteer)?"
-	// now lives on the agent. The bot's MessageQueue keeps SteerMode=false
-	// so it doesn't double-route (the only path through bot's queue is to
-	// the pump → agent.Enqueue, which makes the steer decision).
+	// Steer authority now lives entirely on the agent (a.SetInboxSteerMode);
+	// MessageQueue's filter logic deals only with platform-side concerns
+	// (require_mention, throttle).
 	if a, ok := p.Agent.(*agent.Agent); ok && a != nil {
 		primaryBot.agentRef = a
 		a.SetInboxSteerMode(bc.SteerMode)
 		a.StartInbox(p.Ctx)
 	}
-	primaryBot.mq.SetSteerMode(false)
 
 	primaryBot.SetCommandContext(p.CommandContext)
 

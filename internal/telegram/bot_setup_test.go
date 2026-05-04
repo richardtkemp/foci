@@ -162,7 +162,7 @@ func testBot(allowedUsers []string, cmds *command.Registry) (*Bot, *mockClient) 
 	}
 	b.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
 		Size:       64,
-		TurnActive: b.isTurnActive,
+
 		Logger:     lg,
 	})
 	b.dispatcher = dispatch.NewDispatcher(cmds, command.CommandContext{}, "test")

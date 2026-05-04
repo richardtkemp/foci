@@ -314,8 +314,8 @@ All three call `reloadAfterMutation()` internally, which reloads bootstrap, refr
 
 When `steer_mode` is enabled and a turn is active, user messages are buffered as "steers" and injected mid-turn rather than waiting for completion:
 
-- **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. `steerBlocks` pulls from the `turnevent.Steerer` attached to ctx, which returns buffered steers from the platform's `MessageQueue`.
-- **Delegated transport:** Steer messages are dispatched immediately by `MessageQueue.dispatchUrgent` (wired at agent setup in `internal/{telegram,discord}/agent_setup.go`). The closure looks up the active session's CC backend via `DelegatedManager.Get` and calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: msg.Text})` — Inject internally chains `Interrupt` (abort the in-flight CC turn) followed by sending the steer text as the next user message and incrementing the rearm count so the queued response reaches the original handler. Mid-turn steer for delegated agents bypasses the AppendSteer buffer entirely; the buffer only matters for API-mode agents that have no equivalent stdin protocol primitives.
+- **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. `steerBlocks` pulls from the `turnevent.Steerer` supplied by `agent.Inbox` (one per session) — the inbox accumulates mid-turn text in its per-session steer buffer when the configured backend is API-mode (no `delegator.Delegator` registered).
+- **Delegated transport:** Steer messages are dispatched immediately by `agent.Inbox` (Phase 6 — TODO #739). On `Enqueue` of a text-only mid-turn message, the inbox calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: env.Text})` directly, looking up the session's backend via the agent's `DelegatedManager`. `Inject(SourceSteer)` internally chains `Interrupt` (abort the in-flight CC turn) followed by sending the steer text as the next user message and incrementing the rearm count so the queued response reaches the original handler. Mid-turn steer for delegated agents bypasses the steer buffer entirely; the buffer only matters for API-mode agents that have no equivalent stdin protocol primitives.
 
 ### Backend Watcher — tmux (`internal/delegator/cctmux/watcher.go`)
 
@@ -407,7 +407,7 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 1. `Inject(SourceUser)` at idle calls `sendToPane`, which calls `beginTurn` (sets handler, resets text/tools counters, creates result channel).
 2. `Writer.SendUser(prompt)` writes a user message to CC's stdin.
 3. CC processes the turn, emitting `assistant`, `tool_progress`, and `stream_event` messages.
-4. `OnAssistant` accumulates text, counts tool_use blocks, and fires `OnText`/`OnToolStart` callbacks. Mid-turn steer dispatch is handled at the platform Enqueue boundary (see `MessageQueue.dispatchUrgent`), not at tool boundaries — this lets text-only turns be steered too.
+4. `OnAssistant` accumulates text, counts tool_use blocks, and fires `OnText`/`OnToolStart` callbacks. Mid-turn steer dispatch is handled at the agent's per-session inbox (see `agent.Inbox.Enqueue` routing), not at tool boundaries — this lets text-only turns be steered too.
 5. `OnResult` captures final text/usage/model, fires `OnTurnComplete`, stops typing, signals `WaitForTurn`.
 
 **Permission handling:** CC sends `control_request` with subtype `can_use_tool`. The backend first checks compiled auto-approve rules (`autoApprovePermission`). Unmatched requests are stored as `pendingPermission` entries and forwarded to the platform via `permPromptFn` (interactive buttons: Allow, Deny, Always Allow). The user's response is sent back as a `control_response` with either `PermissionAllow` or `PermissionDeny`. CC can also cancel a pending request via `control_cancel_request` (e.g. when a hook resolves it).
@@ -579,19 +579,19 @@ type Sink interface {
 Both Telegram (`internal/telegram/bot_worker.go`) and Discord (`internal/discord/worker.go`) workers share the same ~10-line pattern:
 
 ```go
+// In Bot.Drive (called by agent.Inbox's per-session worker):
 tracker := newToolCallTracker(b, chatID, d)
 renderer := newTurnRenderer(b, origMsg, tracker, d)
 defer renderer.Cleanup()
 
 sink := turn.NewStreamingSink(renderer, tracker, b)
-ctx = turnevent.WithSink(ctx, sink)
-ctx = turnevent.WithSteerer(ctx, turnevent.SteererFunc(b.mq.DrainSteerTexts))
-ctx = agent.WithReceivedAt(ctx, batch[0].ReceivedAt) // first message's platform receipt time
-
-err := b.handler.HandleMessage(ctx, sk, texts, attachments)
+// Steerer comes from the agent's per-session inbox steer buffer (Phase 6).
+// API-mode agents drain it at tool boundaries; delegated agents leave it empty
+// because mid-turn messages route via Backend.Inject(SourceSteer) instead.
+err := turn.RunTurn(ctx, b.handler, sink, steerer, sk, texts, attachments)
 ```
 
-`DrainSteerTexts` returns just the text fields of the buffered `SteerEntry` values — mid-turn injection on the API path (`steerBlocks`) never renders a new meta header, so it discards receipt timestamps. The post-turn orphan-drain loop (when a turn finishes and the worker rebuilds leftover steers as a follow-up turn) calls `DrainSteer` and reads `SteerEntry.ReceivedAt` to construct the new `QueuedMessage` so the follow-up turn's meta header reflects the original user send time rather than the drain time. Note: CC-backed agents bypass the buffer entirely via `MessageQueue.dispatchUrgent`; the buffer only services API-mode agents and the orphan-drain fallback.
+The Steerer parameter, supplied by the agent worker, returns just the text fields of buffered steer entries — mid-turn injection on the API path (`steerBlocks`) never renders a new meta header, so it discards receipt timestamps. The post-turn orphan-drain loop (when a turn finishes and per-session worker rebuilds leftover steers as a follow-up turn) reads `SteerEntry.ReceivedAt` from the inbox so the follow-up turn's meta header reflects the original user send time rather than the drain time. Note: CC-backed agents bypass the buffer entirely via `agent.Inbox`'s `Backend.Inject(SourceSteer)` routing; the buffer only services API-mode agents and the orphan-drain fallback.
 
 `StreamingSink` routes each event type:
 - `TurnStart` → `conn.SetTyping(true)`
@@ -626,7 +626,7 @@ type Steerer interface {
 }
 ```
 
-Interactive platforms attach a `Steerer` via `turnevent.WithSteerer(ctx, ...)`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `MessageQueue.dispatchUrgent` calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})` directly when a steer arrives during an in-flight CC turn (Inject internally chains the Interrupt + SendUser sequence).
+Interactive platforms supply a `Steerer` to `turn.RunTurn` via the agent's per-session inbox (the bot's `Driver.Drive` receives it as a parameter and forwards it). The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `agent.Inbox.Enqueue` calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})` directly when a steer arrives during an in-flight CC turn (Inject internally chains the Interrupt + SendUser sequence).
 
 ## Deferred Replies
 

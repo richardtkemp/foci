@@ -172,7 +172,6 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	// Resolve behavior config from pre-merged config.
 	bc := p.Resolved.Behavior
 	primaryBot.mq.SetRequireMention(primaryBot.requireMention)
-	primaryBot.mq.SetSteerMode(bc.SteerMode)
 
 	if dur, err := time.ParseDuration(bc.GroupThrottle); err == nil && dur > 0 {
 		gt := platform.NewGroupThrottle(dur, func(msgs []platform.QueuedMessage) {
@@ -187,15 +186,14 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 	// Wire the bot to the agent's Inbox subsystem (Phase 6 — TODO #739).
 	// See telegram/agent_setup.go for the architecture rationale. The
 	// agent owns the per-session message queue, steer buffer, in-flight
-	// flag, and worker goroutines. discord's MessageQueue keeps
-	// SteerMode=false so it doesn't double-route — the agent makes the
-	// steer decision in its own Enqueue routing.
+	// flag, and worker goroutines. Steer authority lives entirely on the
+	// agent (a.SetInboxSteerMode); MessageQueue handles only filter +
+	// throttle.
 	if a, ok := p.Agent.(*agent.Agent); ok && a != nil {
 		primaryBot.agentRef = a
 		a.SetInboxSteerMode(bc.SteerMode)
 		a.StartInbox(p.Ctx)
 	}
-	primaryBot.mq.SetSteerMode(false)
 
 	primaryBot.SetCommandContext(p.CommandContext)
 

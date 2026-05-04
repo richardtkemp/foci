@@ -190,9 +190,8 @@ func NewBot(dg *discordgo.Session, allowedUsers []string, handler platform.Messa
 		},
 	}
 	bot.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
-		Size:       64,
-		TurnActive: bot.isTurnActive,
-		Logger:     lg,
+		Size:   64,
+		Logger: lg,
 	})
 	return bot
 }
@@ -242,14 +241,6 @@ func (b *Bot) streamInterval() time.Duration {
 		return b.display.StreamUpdateInterval
 	}
 	return 1200 * time.Millisecond
-}
-
-// isTurnActive returns true if an agent turn is currently in progress.
-func (b *Bot) isTurnActive() bool {
-	b.turnMu.Lock()
-	active := b.turnCancel != nil
-	b.turnMu.Unlock()
-	return active
 }
 
 // SetToolDetailStore sets the persistent store for tool call details.

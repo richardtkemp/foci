@@ -229,9 +229,8 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		},
 	}
 	bot.mq = platform.NewMessageQueue(platform.MessageQueueConfig{
-		Size:       64,
-		TurnActive: bot.isTurnActive,
-		Logger:     lg,
+		Size:   64,
+		Logger: lg,
 	})
 	return bot, nil
 }
@@ -287,14 +286,6 @@ func (b *Bot) streamInterval() time.Duration {
 		return b.display.StreamUpdateInterval
 	}
 	return 250 * time.Millisecond
-}
-
-// isTurnActive returns true if an agent turn is currently in progress.
-func (b *Bot) isTurnActive() bool {
-	b.turnMu.Lock()
-	active := b.turnCancel != nil
-	b.turnMu.Unlock()
-	return active
 }
 
 // messageContainsMention returns true if the message @mentions the bot.
