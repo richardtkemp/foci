@@ -250,10 +250,32 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		// Delegated agents: branching not supported via HTTP. Use the parent
-		// key directly (or named session key if req.Session was set).
+		// Delegated agents (e.g. Claude Code backend) don't support
+		// /wake's branching semantics — CC owns its session lifecycle and
+		// foci can't fork it. Fall through to /send semantics: deliver
+		// the text to the parent session directly. We log a warning so
+		// callers know the requested isolation (no_compact, no_reset_hook,
+		// silent, fresh-branch context) did not happen.
 		if inst.ag.DelegatedManager != nil {
-			http.Error(w, "branching not supported for delegated agents", http.StatusBadRequest)
+			log.Warnf("wake", "agent %q is delegated — falling through to send (branching options ignored: no_compact=%v no_reset_hook=%v silent=%v)", inst.id, req.NoCompact, req.NoResetHook, req.Silent)
+			if req.Model != "" {
+				if err := applyModelOverride(inst, parentKey, req.Model, d.cfg.Models); err != nil {
+					http.Error(w, fmt.Sprintf("bad model: %v", err), http.StatusBadRequest)
+					return
+				}
+			}
+			sendCtx := agent.WithTrigger(d.ctx, "wake")
+			if req.Async {
+				asyncDispatch(w, inst, d.connMgr, sendCtx, parentKey, req.Text, "wake", req.Silent)
+				return
+			}
+			resp, err := runAgentBuffered(sendCtx, inst.ag, parentKey, req.Text)
+			if err != nil {
+				log.Errorf("wake", "send fallback error: %v", err)
+				http.Error(w, "internal error", http.StatusInternalServerError)
+				return
+			}
+			writeJSONResponse(w, resp)
 			return
 		}
 
