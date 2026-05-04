@@ -127,6 +127,7 @@ type Backend struct {
 
 	// Callbacks (set before Start, read-only after)
 	permPromptFn       delegator.PermissionPromptFunc
+	permCancelFn       func(requestID, toolName, reason string)
 	onPermCleared      func()
 	onPermPending      func()
 	onSessionReady     func(sessionID string)
@@ -643,6 +644,16 @@ func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) { b
 
 // SetOnPermissionCleared sets a callback fired when permissions are resolved.
 func (b *Backend) SetOnPermissionCleared(fn func()) { b.onPermCleared = fn }
+
+// SetOnPermissionCancelled sets a callback fired when a specific pending
+// permission is cleared by CC's control_cancel_request (e.g. a PriorityNow
+// steer aborted the in-flight tool execution). Distinct from
+// SetOnPermissionCleared, which fires only when the *last* pending
+// permission goes away — this fires for each individual cancellation,
+// allowing the platform layer to update per-prompt UI state.
+func (b *Backend) SetOnPermissionCancelled(fn func(requestID, toolName, reason string)) {
+	b.permCancelFn = fn
+}
 
 // SetOnPermissionPending sets a callback fired when a new permission is pending.
 func (b *Backend) SetOnPermissionPending(fn func()) { b.onPermPending = fn }

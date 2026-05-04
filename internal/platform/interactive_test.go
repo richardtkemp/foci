@@ -5,34 +5,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
-
-// TestNextPromptID verifies that nextPromptID generates unique, monotonically
-// increasing IDs across sequential and concurrent calls.
-func TestNextPromptID(t *testing.T) {
-	// Record the starting counter so the test is independent of run order.
-	start := atomic.LoadUint64(&imCounter)
-
-	id1 := nextPromptID()
-	id2 := nextPromptID()
-
-	if id1 == id2 {
-		t.Errorf("expected unique IDs, got %q twice", id1)
-	}
-
-	// IDs should decode to sequential values.
-	n1, err1 := strconv.ParseUint(id1, 36, 64)
-	n2, err2 := strconv.ParseUint(id2, 36, 64)
-	if err1 != nil || err2 != nil {
-		t.Fatalf("IDs should be base-36: id1=%q err=%v, id2=%q err=%v", id1, err1, id2, err2)
-	}
-	if n1 != start+1 || n2 != start+2 {
-		t.Errorf("expected sequential values %d,%d but got %d,%d", start+1, start+2, n1, n2)
-	}
-}
 
 // TestSendInteractiveMessageWithButtonSender verifies the happy path: buttons
 // are stored, callback data is formatted correctly, and the ButtonSender
@@ -47,7 +22,7 @@ func TestSendInteractiveMessageWithButtonSender(t *testing.T) {
 	}
 
 	var cbCalled bool
-	err := SendInteractiveMessage(bs, "Choose:", buttons, func(choice ButtonChoice) string {
+	err := SendInteractiveMessageWithID(bs, "test-id", "Choose:", buttons, func(choice ButtonChoice) string {
 		cbCalled = true
 		return "You chose: " + choice.Label
 	})
@@ -108,7 +83,7 @@ func TestSendInteractiveMessageFallback(t *testing.T) {
 		{Label: "Cherry"},
 	}
 
-	err := SendInteractiveMessage(mc, "Pick a fruit:", buttons, nil)
+	err := SendInteractiveMessageWithID(mc, "test-id", "Pick a fruit:", buttons, nil)
 	if err != nil {
 		t.Fatalf("SendInteractiveMessage: %v", err)
 	}
@@ -141,7 +116,7 @@ func TestSendInteractiveMessageButtonSenderError(t *testing.T) {
 	bs := &mockButtonSender{err: fmt.Errorf("send failed")}
 	buttons := []ButtonChoice{{Label: "A", Data: "a"}}
 
-	err := SendInteractiveMessage(bs, "text", buttons, func(ButtonChoice) string { return "" })
+	err := SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "" })
 	if err == nil {
 		t.Fatal("expected error from SendInteractiveMessage")
 	}
@@ -163,7 +138,7 @@ func TestHandleInteractiveCallbackOneShot(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "99"}
 	buttons := []ButtonChoice{{Label: "OK", Data: "ok"}}
-	_ = SendInteractiveMessage(bs, "text", buttons, func(ButtonChoice) string { return "done" })
+	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "done" })
 
 	data := bs.buttons[0].Data
 	_, _, ok := HandleInteractiveCallback(data)
@@ -207,7 +182,7 @@ func TestHandleInteractiveCallbackOutOfBoundsIndex(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "1"}
 	buttons := []ButtonChoice{{Label: "Only", Data: "only"}}
-	_ = SendInteractiveMessage(bs, "text", buttons, func(ButtonChoice) string { return "" })
+	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "" })
 
 	promptID := strings.SplitN(bs.buttons[0].Data, ":", 2)[0]
 
@@ -225,7 +200,7 @@ func TestHandleInteractiveCallbackNilCallback(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "1"}
 	buttons := []ButtonChoice{{Label: "Go", Data: "go"}}
-	_ = SendInteractiveMessage(bs, "text", buttons, nil)
+	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, nil)
 
 	data := bs.buttons[0].Data
 	editText, _, ok := HandleInteractiveCallback(data)
@@ -294,7 +269,8 @@ func TestConcurrentSendAndHandle(t *testing.T) {
 
 			bs := &mockButtonSender{msgID: strconv.Itoa(n)}
 			buttons := []ButtonChoice{{Label: fmt.Sprintf("btn-%d", n), Data: fmt.Sprintf("d-%d", n)}}
-			err := SendInteractiveMessage(bs, "msg", buttons, func(choice ButtonChoice) string {
+			id := fmt.Sprintf("conc-%d", n)
+			err := SendInteractiveMessageWithID(bs, id, "msg", buttons, func(choice ButtonChoice) string {
 				return "ok-" + choice.Data
 			})
 			if err != nil {
@@ -342,17 +318,120 @@ func imStoreSize() int {
 	return len(imStore)
 }
 
+// ---------------------------------------------------------------------------
+// SendInteractiveMessageWithID & CancelInteractiveMessage
+// ---------------------------------------------------------------------------
+
+// TestSendInteractiveMessageWithIDUsesGivenID verifies that the caller-supplied
+// ID is used as the prompt ID — button data prefixes match it, and the entry
+// is keyed by it in the store. Lets the caller round-trip its own identifier
+// (e.g. a CC requestID) without an extra mapping table.
+func TestSendInteractiveMessageWithIDUsesGivenID(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockButtonSender{msgID: "42"}
+	buttons := []ButtonChoice{{Label: "Allow", Data: "allow"}}
+
+	err := SendInteractiveMessageWithID(bs, "req-abc-123", "Permit?", buttons, func(ButtonChoice) string { return "" })
+	if err != nil {
+		t.Fatalf("SendInteractiveMessageWithID: %v", err)
+	}
+
+	if !strings.HasPrefix(bs.buttons[0].Data, "req-abc-123:") {
+		t.Errorf("button data = %q, want prefix req-abc-123:", bs.buttons[0].Data)
+	}
+
+	imMu.Lock()
+	_, found := imStore["req-abc-123"]
+	imMu.Unlock()
+	if !found {
+		t.Error("store missing entry under caller-supplied id")
+	}
+}
+
+// TestCancelInteractiveMessageEditsAndRemoves verifies the happy-path cancel:
+// EditMessageText is called with the stored msgID and the supplied final
+// text, and the store entry is removed (so subsequent clicks become no-ops).
+func TestCancelInteractiveMessageEditsAndRemoves(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockButtonSender{msgID: "777"}
+	buttons := []ButtonChoice{{Label: "Allow", Data: "allow"}}
+	_ = SendInteractiveMessageWithID(bs, "req-X", "Permit?", buttons, func(ButtonChoice) string { return "" })
+
+	if err := CancelInteractiveMessage("req-X", "❌ cancelled"); err != nil {
+		t.Fatalf("CancelInteractiveMessage: %v", err)
+	}
+
+	if bs.editedMsgID != "777" {
+		t.Errorf("EditMessageText msgID = %q, want 777", bs.editedMsgID)
+	}
+	if bs.editedText != "❌ cancelled" {
+		t.Errorf("EditMessageText text = %q, want '❌ cancelled'", bs.editedText)
+	}
+
+	// Entry should be gone — subsequent click is no-op.
+	imMu.Lock()
+	_, found := imStore["req-X"]
+	imMu.Unlock()
+	if found {
+		t.Error("store entry should be removed after cancel")
+	}
+}
+
+// TestCancelInteractiveMessageRaceWithCallback verifies that calling Cancel
+// after the callback already fired (which deletes the entry) is a benign
+// no-op — no second edit, no error.
+func TestCancelInteractiveMessageRaceWithCallback(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockButtonSender{msgID: "55"}
+	buttons := []ButtonChoice{{Label: "OK", Data: "ok"}}
+	_ = SendInteractiveMessageWithID(bs, "req-race", "Pick?", buttons, func(ButtonChoice) string { return "done" })
+
+	// User clicks first — HandleInteractiveCallback removes the entry.
+	if _, _, ok := HandleInteractiveCallback("req-race:0"); !ok {
+		t.Fatal("expected callback to succeed")
+	}
+
+	// Reset edit-capture so we can detect any second edit.
+	bs.editedMsgID = ""
+	bs.editedText = ""
+
+	// Cancel arrives after click — should be a no-op.
+	if err := CancelInteractiveMessage("req-race", "shouldn't appear"); err != nil {
+		t.Fatalf("CancelInteractiveMessage: %v", err)
+	}
+
+	if bs.editedMsgID != "" || bs.editedText != "" {
+		t.Errorf("Cancel after click triggered second edit: msgID=%q text=%q", bs.editedMsgID, bs.editedText)
+	}
+}
+
+// TestCancelInteractiveMessageUnknownID verifies that cancelling an id that
+// was never stored is a benign no-op (no edit, no error).
+func TestCancelInteractiveMessageUnknownID(t *testing.T) {
+	clearIMStore(t)
+
+	if err := CancelInteractiveMessage("never-existed", "x"); err != nil {
+		t.Errorf("CancelInteractiveMessage(unknown) = %v, want nil", err)
+	}
+}
+
 // --- Mocks ---
 
 // mockButtonSender implements Connection (via embedding mockConnection) and
 // ButtonSender for testing the full interactive message flow.
 type mockButtonSender struct {
 	mockConnection
-	msgID   string
-	err     error
-	text    string
-	buttons []ButtonChoice
-	prefix  string
+	msgID       string
+	err         error
+	text        string
+	buttons     []ButtonChoice
+	prefix      string
+	editedMsgID string // captured by EditMessageText
+	editedText  string // captured by EditMessageText
+	editErr     error  // returned from EditMessageText
 }
 
 func (m *mockButtonSender) SendTextWithButtons(text string, buttons []ButtonChoice, prefix string) (string, error) {
@@ -362,7 +441,11 @@ func (m *mockButtonSender) SendTextWithButtons(text string, buttons []ButtonChoi
 	return m.msgID, m.err
 }
 
-func (m *mockButtonSender) EditMessageText(string, string) error                              { return nil }
+func (m *mockButtonSender) EditMessageText(msgID string, text string) error {
+	m.editedMsgID = msgID
+	m.editedText = text
+	return m.editErr
+}
 func (m *mockButtonSender) EditMessageWithButtons(string, string, []ButtonChoice, string) error { return nil }
 
 // Compile-time verification.

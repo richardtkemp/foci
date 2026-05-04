@@ -458,6 +458,85 @@ func TestHandleControlCancel_StillPending(t *testing.T) {
 	}
 }
 
+func TestHandleControlCancel_FiresPermCancelHook(t *testing.T) {
+	// Proves that handleControlCancel invokes permCancelFn with the requestID,
+	// the captured tool name, and the standard cancellation reason. This is
+	// the per-perm hook the platform layer uses to disable orphaned inline
+	// keyboards.
+	t.Parallel()
+
+	var (
+		gotReqID  string
+		gotTool   string
+		gotReason string
+		called    int
+	)
+	b := &Backend{
+		pendingPerms: make(map[string]*pendingPermission),
+		permCancelFn: func(reqID, toolName, reason string) {
+			called++
+			gotReqID = reqID
+			gotTool = toolName
+			gotReason = reason
+		},
+	}
+	b.storePendingPerm(&pendingPermission{requestID: "req-7", toolName: "Bash"})
+
+	b.handleControlCancel("req-7")
+
+	if called != 1 {
+		t.Fatalf("permCancelFn called %d times, want 1", called)
+	}
+	if gotReqID != "req-7" {
+		t.Errorf("reqID = %q, want req-7", gotReqID)
+	}
+	if gotTool != "Bash" {
+		t.Errorf("toolName = %q, want Bash", gotTool)
+	}
+	if !strings.Contains(gotReason, "follow-up") {
+		t.Errorf("reason = %q, want it to mention 'follow-up'", gotReason)
+	}
+}
+
+func TestHandleControlCancel_NoFireForUnknownID(t *testing.T) {
+	// Proves that permCancelFn is NOT invoked for an unknown reqID — there's
+	// no orphan keyboard to disable in that case.
+	t.Parallel()
+
+	called := 0
+	b := &Backend{
+		pendingPerms: make(map[string]*pendingPermission),
+		permCancelFn: func(string, string, string) { called++ },
+	}
+
+	b.handleControlCancel("ghost")
+
+	if called != 0 {
+		t.Errorf("permCancelFn called %d times for unknown id, want 0", called)
+	}
+}
+
+func TestHandleControlCancel_FireOrder(t *testing.T) {
+	// Proves that permCancelFn fires before onPermCleared. Order matters:
+	// the platform layer wants to update the per-prompt UI before any
+	// session-wide "all clear" actions trigger.
+	t.Parallel()
+
+	var order []string
+	b := &Backend{
+		pendingPerms:  make(map[string]*pendingPermission),
+		permCancelFn:  func(string, string, string) { order = append(order, "cancel") },
+		onPermCleared: func() { order = append(order, "cleared") },
+	}
+	b.storePendingPerm(&pendingPermission{requestID: "req-only"})
+
+	b.handleControlCancel("req-only")
+
+	if len(order) != 2 || order[0] != "cancel" || order[1] != "cleared" {
+		t.Errorf("hook order = %v, want [cancel cleared]", order)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // PendingPermissions
 // ---------------------------------------------------------------------------

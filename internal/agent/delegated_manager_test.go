@@ -29,6 +29,7 @@ type mockBackendDM struct {
 
 	permPromptFunc      delegator.PermissionPromptFunc
 	onPermCleared       func()
+	onPermCancelled     func(requestID, toolName, reason string)
 	onSessionReady      func(string)
 	typingFunc          func(bool)
 	sessionID           string
@@ -105,6 +106,12 @@ func (m *mockBackendDM) SetOnPermissionCleared(fn func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onPermCleared = fn
+}
+
+func (m *mockBackendDM) SetOnPermissionCancelled(fn func(requestID, toolName, reason string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onPermCancelled = fn
 }
 
 func (m *mockBackendDM) SetOnSessionReady(fn func(string)) {
@@ -1216,6 +1223,63 @@ func TestSetBackendCallbacks(t *testing.T) {
 
 	if opc == nil {
 		t.Fatal("onPermCleared not set")
+	}
+}
+
+func TestSetBackendCallbacks_PermissionCancel(t *testing.T) {
+	// Proves that setBackendCallbacks wires the per-perm cancel callback when
+	// PermissionCancelFunc is configured, and that it routes the session key
+	// + reqID + tool + reason through to the platform-level handler.
+	var (
+		gotSK, gotReq, gotTool, gotReason string
+		called                            int
+	)
+	mgr := &DelegatedManager{
+		AgentID: "test-agent",
+		PermissionCancelFunc: func(sk, reqID, tool, reason string) {
+			called++
+			gotSK = sk
+			gotReq = reqID
+			gotTool = tool
+			gotReason = reason
+		},
+	}
+
+	be := &mockBackendDM{running: true}
+	mb := &managedBackend{be: be, sessionKey: "test-agent/c-cancel"}
+	mgr.setBackendCallbacks(mb)
+
+	be.mu.Lock()
+	hook := be.onPermCancelled
+	be.mu.Unlock()
+	if hook == nil {
+		t.Fatal("onPermCancelled not wired on backend")
+	}
+
+	hook("req-9", "Bash", "tool request cancelled by follow-up message")
+
+	if called != 1 {
+		t.Fatalf("PermissionCancelFunc called %d times, want 1", called)
+	}
+	if gotSK != "test-agent/c-cancel" || gotReq != "req-9" || gotTool != "Bash" || gotReason == "" {
+		t.Errorf("got sk=%q reqID=%q tool=%q reason=%q", gotSK, gotReq, gotTool, gotReason)
+	}
+}
+
+func TestSetBackendCallbacks_NoCancelWhenUnset(t *testing.T) {
+	// Proves that when PermissionCancelFunc is nil, no cancel hook is wired.
+	// (Symmetric with how PermissionPromptFunc is gated above it.)
+	mgr := &DelegatedManager{AgentID: "test-agent"}
+
+	be := &mockBackendDM{running: true}
+	mb := &managedBackend{be: be, sessionKey: "test-agent/c"}
+	mgr.setBackendCallbacks(mb)
+
+	be.mu.Lock()
+	hook := be.onPermCancelled
+	be.mu.Unlock()
+	if hook != nil {
+		t.Error("onPermCancelled should not be wired when PermissionCancelFunc is nil")
 	}
 }
 
