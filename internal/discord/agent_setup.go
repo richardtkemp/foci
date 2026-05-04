@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -181,6 +182,36 @@ func setupDiscordBots(mgr *BotManager, p AgentSetupParams) {
 		}, primaryBot.log)
 		primaryBot.mq.SetThrottle(gt)
 		log.Infof("discord", "agent %q: group throttle = %v", acfg.ID, dur)
+	}
+
+	// Urgent steer dispatch: see telegram/agent_setup.go for the rationale.
+	// Mirror wiring for Discord — closure resolves session via channel ID.
+	if a, ok := p.Agent.(*agent.Agent); ok && a != nil && a.DelegatedManager != nil {
+		dm := a.DelegatedManager
+		bot := primaryBot
+		ctx := p.Ctx
+		primaryBot.mq.SetDispatchUrgent(func(msg platform.QueuedMessage) {
+			sk := bot.SessionKeyForChannelID(msg.ChatID)
+			if sk == "" {
+				bot.logger().Debugf("urgent dispatch: no session key for channelID=%d", msg.ChatID)
+				return
+			}
+			be, err := dm.Get(ctx, sk)
+			if err != nil {
+				bot.logger().Warnf("urgent dispatch: backend lookup failed sk=%s: %v", sk, err)
+				return
+			}
+			if err := be.Interrupt(ctx); err != nil {
+				bot.logger().Warnf("urgent dispatch: interrupt failed sk=%s: %v", sk, err)
+				// Fall through — even without abort, the queued message
+				// will reach CC.
+			}
+			if err := be.SendCommand(ctx, msg.Text); err != nil {
+				bot.logger().Warnf("urgent dispatch: send failed sk=%s: %v", sk, err)
+				return
+			}
+			bot.logger().Debugf("urgent dispatch: sent %d bytes to sk=%s", len(msg.Text), sk)
+		})
 	}
 
 	primaryBot.SetCommandContext(p.CommandContext)

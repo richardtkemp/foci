@@ -37,16 +37,17 @@ type Delegator interface {
 	// new turn pipeline (CC treats them as part of the same turn).
 	IsTurnInFlight() bool
 
-	// SendCommand sends a slash command or steered message directly to the
-	// agent (e.g. "/compact ...", "/model opus", or a user redirect).
-	// These bypass Foci's prompt composition — they're raw commands sent
-	// verbatim.
+	// SendCommand sends a slash command or queued user message directly to
+	// the agent (e.g. "/compact ...", "/model opus", or a follow-up message
+	// during an in-flight turn). These bypass Foci's prompt composition —
+	// they're raw commands sent verbatim. CC backends that observe a turn
+	// in flight when SendCommand is called wire the response into the
+	// re-arm cascade so the queued reply reaches the original handler;
+	// backends that don't track turn state (e.g. tmux) just send the text.
 	//
-	// priority controls CC's processing order: "now" interrupts the
-	// current operation (tool execution), "next" queues after the current
-	// turn, "later" defers. Empty string omits priority (CC defaults to
-	// "next"). Backends that don't support priority (e.g. tmux) ignore it.
-	SendCommand(ctx context.Context, command string, priority string) error
+	// To abort the in-flight turn first (the "urgent steer" pattern), call
+	// Interrupt before SendCommand.
+	SendCommand(ctx context.Context, command string) error
 
 	// IsRunning reports whether the agent subprocess is alive.
 	IsRunning() bool
@@ -284,14 +285,6 @@ type EventHandler struct {
 	OnToolStart      func(id, name, input string)                  // tool execution began
 	OnToolEnd        func(id, name, output string, isError bool)   // tool execution finished
 	OnTurnComplete   func(result *TurnResult)                      // turn finished
-
-	// SteerCheckFunc is called by the backend at tool execution boundaries
-	// to check for pending steer messages. Non-blocking; returns nil if no
-	// steer is pending. If non-nil text is returned, the backend injects
-	// it as a "now"-priority user message to interrupt the current tool
-	// execution. Used by the delegated transport to drain steer messages
-	// buffered by the platform's MessageQueue.
-	SteerCheckFunc func() []string
 
 	// PostToolNudgeFunc is called after each tool's completion signal
 	// (PostToolUse hook dispatch). The caller returns any nudge reminders

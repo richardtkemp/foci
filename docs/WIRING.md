@@ -315,7 +315,7 @@ All three call `reloadAfterMutation()` internally, which reloads bootstrap, refr
 When `steer_mode` is enabled and a turn is active, user messages are buffered as "steers" and injected mid-turn rather than waiting for completion:
 
 - **API transport:** Steer messages are collected via `steerBlocks(ctx)` and injected as text content blocks in the tool result message between tool execution loops. `steerBlocks` pulls from the `turnevent.Steerer` attached to ctx, which returns buffered steers from the platform's `MessageQueue`.
-- **Delegated transport:** Steer messages are drained via `checkAndSendSteers()` on the ccstream backend at tool execution boundaries (after `tool_use` blocks in `OnAssistant`, and during `OnToolProgress` heartbeats). Each steer is sent as a `SendUserWithPriority(text, PriorityNow)` message — "now" priority interrupts the current tool execution. The `SteerCheckFunc` on `delegator.EventHandler` is wired from the ctx-attached `turnevent.Steerer` at `RunInference` time.
+- **Delegated transport:** Steer messages are dispatched immediately by `MessageQueue.dispatchUrgent` (wired at agent setup in `internal/{telegram,discord}/agent_setup.go`). The closure looks up the active session's CC backend via `DelegatedManager.Get` and calls `Backend.Interrupt` followed by `Backend.SendCommand` — Interrupt aborts the in-flight CC turn (tool or text generation), and SendCommand queues the steer text as the next user message. The backend's SendCommand auto-arms the rearm cascade so the queued response reaches the original handler. Mid-turn steer for delegated agents bypasses the AppendSteer buffer entirely; the buffer only matters for API-mode agents that have no equivalent stdin protocol primitives.
 
 ### Backend Watcher — tmux (`internal/delegator/cctmux/watcher.go`)
 
@@ -390,7 +390,7 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 | `tool_progress` | Heartbeat during long-running tool execution |
 | `stream_event` | Token-level streaming (with `--include-partial-messages`) — `text_delta` and `thinking_delta` subtypes are extracted |
 
-**Message priority:** User messages carry an optional `priority` field. `PriorityNow` interrupts the current operation (aborts tool execution) — used for steer messages. `PriorityNext` queues after the current turn (default). `PriorityLater` defers for low-priority system messages.
+**Mid-turn injection:** Foci uses CC's `interrupt` control request (mirrors the public Agent SDK's `client.interrupt()`) plus a plain user message to abort + replace the in-flight turn. The previous design used a foci-specific `priority` field on user messages; that machinery was removed in favour of the SDK-aligned interrupt model. See `Backend.Interrupt(ctx)` + `Backend.SendCommand(ctx, text)`.
 
 **Lifecycle:**
 1. `Start` spawns `claude` with stream-json flags, creates stdin/stdout/stderr pipes.
@@ -405,7 +405,7 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 1. `SendToPane` calls `beginTurn` (sets handler, resets text/tools counters, creates result channel).
 2. `Writer.SendUser(prompt)` writes a user message to CC's stdin.
 3. CC processes the turn, emitting `assistant`, `tool_progress`, and `stream_event` messages.
-4. `OnAssistant` accumulates text, counts tool_use blocks, fires `OnText`/`OnToolStart` callbacks, and calls `checkAndSendSteers` after tool_use blocks.
+4. `OnAssistant` accumulates text, counts tool_use blocks, and fires `OnText`/`OnToolStart` callbacks. Mid-turn steer dispatch is handled at the platform Enqueue boundary (see `MessageQueue.dispatchUrgent`), not at tool boundaries — this lets text-only turns be steered too.
 5. `OnResult` captures final text/usage/model, fires `OnTurnComplete`, stops typing, signals `WaitForTurn`.
 
 **Permission handling:** CC sends `control_request` with subtype `can_use_tool`. The backend first checks compiled auto-approve rules (`autoApprovePermission`). Unmatched requests are stored as `pendingPermission` entries and forwarded to the platform via `permPromptFn` (interactive buttons: Allow, Deny, Always Allow). The user's response is sent back as a `control_response` with either `PermissionAllow` or `PermissionDeny`. CC can also cancel a pending request via `control_cancel_request` (e.g. when a hook resolves it).
@@ -589,7 +589,7 @@ ctx = agent.WithReceivedAt(ctx, batch[0].ReceivedAt) // first message's platform
 err := b.handler.HandleMessage(ctx, sk, texts, attachments)
 ```
 
-`DrainSteerTexts` returns just the text fields of the buffered `SteerEntry` values — mid-turn injection (ccstream's `checkAndSendSteers`, API-path `steerBlocks`) never renders a new meta header, so it discards receipt timestamps. The post-turn orphan-drain loop (when a turn finishes and the worker rebuilds leftover steers as a follow-up turn) calls `DrainSteer` and reads `SteerEntry.ReceivedAt` to construct the new `QueuedMessage` so the follow-up turn's meta header reflects the original user send time rather than the drain time.
+`DrainSteerTexts` returns just the text fields of the buffered `SteerEntry` values — mid-turn injection on the API path (`steerBlocks`) never renders a new meta header, so it discards receipt timestamps. The post-turn orphan-drain loop (when a turn finishes and the worker rebuilds leftover steers as a follow-up turn) calls `DrainSteer` and reads `SteerEntry.ReceivedAt` to construct the new `QueuedMessage` so the follow-up turn's meta header reflects the original user send time rather than the drain time. Note: CC-backed agents bypass the buffer entirely via `MessageQueue.dispatchUrgent`; the buffer only services API-mode agents and the orphan-drain fallback.
 
 `StreamingSink` routes each event type:
 - `TurnStart` → `conn.SetTyping(true)`
@@ -624,7 +624,7 @@ type Steerer interface {
 }
 ```
 
-Interactive platforms attach a `Steerer` via `turnevent.WithSteerer(ctx, ...)`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries (API path) or via the delegator's `SteerCheckFunc` hook (delegated path).
+Interactive platforms attach a `Steerer` via `turnevent.WithSteerer(ctx, ...)`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `MessageQueue.dispatchUrgent` calls `Backend.Interrupt` + `Backend.SendCommand` directly when a steer arrives during an in-flight CC turn.
 
 ## Deferred Replies
 
@@ -1446,7 +1446,7 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 **Delegated transport** (`turn_delegated.go`): CC owns the inference loop so foci can't edit in-flight messages. Instead:
 
 - **every_n_turns / regex** — prepended to the prompt string in `InjectNudges` before `SendToPane`, same as API content blocks but flattened to text.
-- **every_n_tools / after_error** — wired through `delegator.EventHandler.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as `[user] <text>` with `PriorityNow` via the writer. CC processes them between tool executions — the same injection point the SteerCheckFunc uses.
+- **every_n_tools / after_error** — wired through `delegator.EventHandler.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as plain `[user] <text>` user messages via the writer. CC processes them after the current tool boundary; the rearm cascade ensures the nudge response reaches the original handler.
 - **pre_answer** — wired through `delegator.EventHandler.PreAnswerNudgeFunc`. On `OnResult`, ccstream gives the handler a chance to return a verification follow-up. When non-empty, ccstream re-arms the same handler via `beginTurn`, sends the follow-up via `writer.SendUser`, and skips `OnTurnComplete` until the second round's `OnResult`. `turn_delegated.go` tracks `preAnswerFired` in a closure local so the gate fires at most once per user turn, stashes round-1 usage/text so the final `OnTurnComplete` can fold usage into `ts.FinalUsage`, and restores the original answer when round 2 echoes `NoResponseSentinel`. Unlike the API path, the round-1 answer has already streamed to the user as intermediate text — round 2's text becomes the authoritative final reply.
 
 ### Configuration

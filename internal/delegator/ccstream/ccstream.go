@@ -79,7 +79,7 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText      strings.Builder       // accumulates text across assistant messages
 	turnTools     int                   // tool_use count this turn
-	pendingRearmReason rearmReason      // when non-rearmNone, OnResult must complete the foci turn AND re-arm a delivery-only handler so the queued response (nudge / steer / follow-up) reaches OnText. Cleared on next OnResult or beginTurn. See completeAndRearm. Replaces the three pre-Phase-1 booleans nudgePending / steerInjected / followUpQueued.
+	pendingRearmReason rearmReason      // when non-rearmNone, OnResult must complete the foci turn AND re-arm a delivery-only handler so the queued user-role response (nudge / urgent dispatch / follow-up) reaches OnText. Cleared on next OnResult or beginTurn. See completeAndRearm.
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -443,8 +443,8 @@ func (b *Backend) cancelTurn() {
 // the foci turn (which already completed on the prior result).
 // PostToolNudgeFunc is preserved so chained nudges work correctly.
 func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
-	log.Debugf("ccstream", "rearmForNudgeResponse: installing nudge handler OnText=%v OnTurnComplete=nil(intentional) OnToolStart=%v OnToolEnd=%v PostToolNudgeFunc=%v SteerCheckFunc=%v",
-		orig.OnText != nil, orig.OnToolStart != nil, orig.OnToolEnd != nil, orig.PostToolNudgeFunc != nil, orig.SteerCheckFunc != nil)
+	log.Debugf("ccstream", "rearmForNudgeResponse: installing nudge handler OnText=%v OnTurnComplete=nil(intentional) OnToolStart=%v OnToolEnd=%v PostToolNudgeFunc=%v",
+		orig.OnText != nil, orig.OnToolStart != nil, orig.OnToolEnd != nil, orig.PostToolNudgeFunc != nil)
 	b.turnMu.Lock()
 	b.turnActive = true
 	b.turnHandler = &delegator.EventHandler{
@@ -454,7 +454,6 @@ func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
 		OnToolStart:       orig.OnToolStart,
 		OnToolEnd:         orig.OnToolEnd,
 		PostToolNudgeFunc: orig.PostToolNudgeFunc,
-		SteerCheckFunc:    orig.SteerCheckFunc,
 		// OnTurnComplete: nil — nudge CC turn doesn't end the foci turn.
 		// PreAnswerNudgeFunc: nil — pre-answer gate doesn't apply to nudge turns.
 	}
@@ -574,67 +573,25 @@ func (b *Backend) IsTurnInFlight() bool {
 	return b.turnActive
 }
 
-// SendCommand sends a slash command or steered message directly to CC.
-// priority controls CC's processing order — use PriorityNow for steer
-// messages that should interrupt tool execution, or "" for default.
+// SendCommand sends a slash command or queued user message directly to CC.
+// When called during an in-flight turn (IsTurnInFlight true), this is a
+// follow-up message that CC processes after the current turn ends OR a
+// post-Interrupt urgent dispatch — in either case the response streams
+// through the re-arm cascade. SendCommand sets the rearm flag itself so
+// the queued response reaches the original handler's OnText.
 //
-// Priority "next" is used by RunInference's follow-up path (turn_delegated.go)
-// when IsTurnInFlight is true: the new user message is queued behind the
-// in-flight turn rather than starting a fresh turn pipeline. Mark the
-// re-arm reason so OnResult re-arms the handler instead of clearing it —
-// without this, the follow-up's response text hits b.turnHandler == nil
-// and gets silently dropped if an unrelated OnResult (e.g. a nudge response
-// completing) fires between SendCommand and CC processing the follow-up.
-// See TODO #726 sub-mode 3.
-func (b *Backend) SendCommand(ctx context.Context, command string, priority string) error {
-	if priority != "" {
-		err := b.writer.SendUserWithPriority(command, priority)
-		if err == nil && priority == "next" {
-			b.turnMu.Lock()
-			b.setRearmReason(rearmFollowUp)
-			b.turnMu.Unlock()
-		}
+// Idle SendCommand calls (e.g. /compact at turn end) skip the rearm step
+// because no handler is armed to receive the response.
+func (b *Backend) SendCommand(ctx context.Context, command string) error {
+	if err := b.writer.SendUser(command); err != nil {
 		return err
 	}
-	return b.writer.SendUser(command)
-}
-
-// checkAndSendSteers drains the handler's SteerCheckFunc and sends any
-// pending steer messages to CC with "now" priority. Called at tool execution
-// boundaries (after tool_use blocks, during tool progress) so that steered
-// messages buffered by the platform MessageQueue are injected mid-turn
-// rather than waiting for the turn to complete.
-func (b *Backend) checkAndSendSteers() {
 	b.turnMu.Lock()
-	handler := b.turnHandler
+	if b.turnActive {
+		b.setRearmReason(rearmPending)
+	}
 	b.turnMu.Unlock()
-	if handler == nil || handler.SteerCheckFunc == nil {
-		return
-	}
-	steers := handler.SteerCheckFunc()
-	for _, text := range steers {
-		if text == "" {
-			continue
-		}
-		// Surface PriorityNow steer sends — these are documented to
-		// "interrupt the current operation (aborts tool execution)" on
-		// the CC side, so they're a leading suspect when a permission
-		// is auto-cancelled (handleControlCancel) without user input.
-		preview := text
-		if len(preview) > 80 {
-			preview = preview[:80] + "..."
-		}
-		log.Debugf("ccstream/steer", "sending PriorityNow steer to CC: bytes=%d preview=%q", len(text), preview)
-		if err := b.writer.SendUserWithPriority("[user] "+text, PriorityNow); err == nil {
-			// PriorityNow aborts CC's in-flight tool execution and triggers
-			// a result message for the cancelled turn. Mark the turn so
-			// OnResult re-arms the handler instead of clearing it — the
-			// steered response that follows must reach OnText.
-			b.turnMu.Lock()
-			b.setRearmReason(rearmSteer)
-			b.turnMu.Unlock()
-		}
-	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -648,8 +605,8 @@ func (b *Backend) SetPermissionPromptFunc(fn delegator.PermissionPromptFunc) { b
 func (b *Backend) SetOnPermissionCleared(fn func()) { b.onPermCleared = fn }
 
 // SetOnPermissionCancelled sets a callback fired when a specific pending
-// permission is cleared by CC's control_cancel_request (e.g. a PriorityNow
-// steer aborted the in-flight tool execution). Distinct from
+// permission is cleared by CC's control_cancel_request (e.g. an urgent
+// steer dispatch aborted the in-flight tool execution). Distinct from
 // SetOnPermissionCleared, which fires only when the *last* pending
 // permission goes away — this fires for each individual cancellation,
 // allowing the platform layer to update per-prompt UI state.
@@ -921,7 +878,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		return
 	}
 
-	hasToolUse := false
 	for _, block := range msg.Message.Content {
 		switch block.Type {
 		case "text":
@@ -945,7 +901,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			}
 
 		case "tool_use":
-			hasToolUse = true
 			b.turnMu.Lock()
 			b.turnTools++
 			b.turnMu.Unlock()
@@ -964,13 +919,6 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		case "thinking":
 			// Thinking blocks are informational; optionally log.
 		}
-	}
-
-	// Check for steer messages after processing tool_use blocks. CC is about
-	// to execute tools — this is the natural injection point for redirecting
-	// the agent mid-turn.
-	if hasToolUse {
-		b.checkAndSendSteers()
 	}
 
 	// Restart typing indicator if the turn hasn't ended.
@@ -1064,18 +1012,16 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
-	// Re-arm cascade: a user-role injection (post-tool nudge, mid-turn
-	// steer via PriorityNow, or SendCommand follow-up via priority="next")
-	// is awaiting delivery. CC will produce a fresh round of output for the
-	// queued event after this result; without re-arming, that output's text
-	// blocks hit b.turnHandler == nil and are silently dropped (TODO #726
-	// and sub-modes). Complete the foci turn normally (fire OnTurnComplete
-	// with whatever text accumulated before the boundary), then install a
-	// delivery-only handler so the queued response reaches OnText. The
-	// three reasons share an identical recovery shape — see completeAndRearm
-	// for the single funnel; only the log message varies by reason.
+	// Re-arm cascade: a user-role injection (post-tool nudge, urgent steer
+	// dispatch, or SendCommand follow-up on an in-flight turn) is awaiting
+	// delivery. CC will produce a fresh round of output for the queued event
+	// after this result; without re-arming, that output's text blocks hit
+	// b.turnHandler == nil and are silently dropped (TODO #726 and sub-modes).
+	// Complete the foci turn normally (fire OnTurnComplete with whatever text
+	// accumulated before the boundary), then install a delivery-only handler
+	// so the queued response reaches OnText. See completeAndRearm.
 	if rearmReason != rearmNone && handler != nil {
-		b.completeAndRearm(handler, result, msg, resultCh, rearmReason)
+		b.completeAndRearm(handler, result, msg, resultCh)
 		return
 	}
 
@@ -1336,9 +1282,6 @@ func (b *Backend) OnToolProgress(msg *ToolProgressMessage) {
 	if b.typingFunc != nil {
 		b.typingFunc(true)
 	}
-	// Check for steer messages during long-running tools. Without this,
-	// steers would only be checked between tool batches (OnAssistant).
-	b.checkAndSendSteers()
 }
 
 // OnStreamEvent handles token-level streaming events. CC wraps Anthropic

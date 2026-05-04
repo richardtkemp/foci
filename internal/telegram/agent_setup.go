@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -154,6 +155,40 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 	primaryBot.mq.SetRequireMention(reqMention)
 	primaryBot.mq.SetSteerMode(bc.SteerMode)
+
+	// Urgent steer dispatch: when the agent has a delegated CC backend,
+	// route mid-turn steer messages directly via Interrupt + SendCommand
+	// instead of buffering them for drain at the next tool boundary.
+	// The closure captures the agent's DelegatedManager and the bot for
+	// session-key resolution; agents without DelegatedManager (API-mode)
+	// keep using the AppendSteer buffer drained by Steerer.PendingSteers.
+	if a, ok := p.Agent.(*agent.Agent); ok && a != nil && a.DelegatedManager != nil {
+		dm := a.DelegatedManager
+		bot := primaryBot
+		ctx := p.Ctx
+		primaryBot.mq.SetDispatchUrgent(func(msg platform.QueuedMessage) {
+			sk := bot.SessionKeyForChatID(msg.ChatID)
+			if sk == "" {
+				bot.logger().Debugf("urgent dispatch: no session key for chatID=%d", msg.ChatID)
+				return
+			}
+			be, err := dm.Get(ctx, sk)
+			if err != nil {
+				bot.logger().Warnf("urgent dispatch: backend lookup failed sk=%s: %v", sk, err)
+				return
+			}
+			if err := be.Interrupt(ctx); err != nil {
+				bot.logger().Warnf("urgent dispatch: interrupt failed sk=%s: %v", sk, err)
+				// Fall through to SendCommand — even without abort, the
+				// queued message will reach CC.
+			}
+			if err := be.SendCommand(ctx, msg.Text); err != nil {
+				bot.logger().Warnf("urgent dispatch: send failed sk=%s: %v", sk, err)
+				return
+			}
+			bot.logger().Debugf("urgent dispatch: sent %d bytes to sk=%s", len(msg.Text), sk)
+		})
+	}
 
 	primaryBot.SetCommandContext(p.CommandContext)
 

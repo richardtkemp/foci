@@ -418,9 +418,10 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // SendCommand
 // ---------------------------------------------------------------------------
 
-func TestSendCommand_DefaultPriority(t *testing.T) {
-	// Verifies SendCommand with empty priority sends a standard user message
-	// without priority field.
+func TestSendCommand_Idle(t *testing.T) {
+	// Verifies SendCommand at idle (no turn in flight) sends a plain user
+	// message and does NOT set the rearm flag — the idle slash-command path
+	// (e.g. /compact at turn end) has no handler waiting for a response.
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -428,7 +429,7 @@ func TestSendCommand_DefaultPriority(t *testing.T) {
 		writer: NewWriter(nopWriteCloser{&buf}),
 	}
 
-	if err := b.SendCommand(context.Background(), "/compact", ""); err != nil {
+	if err := b.SendCommand(context.Background(), "/compact"); err != nil {
 		t.Fatalf("SendCommand: %v", err)
 	}
 
@@ -441,34 +442,43 @@ func TestSendCommand_DefaultPriority(t *testing.T) {
 		t.Errorf("type = %v, want %q", got["type"], "user")
 	}
 	if _, present := got["priority"]; present {
-		t.Errorf("priority should be absent for empty priority, got %v", got["priority"])
+		t.Errorf("priority field should be absent post-Phase-5, got %v", got["priority"])
 	}
 	msg := got["message"].(map[string]any)
 	if msg["content"] != "/compact" {
 		t.Errorf("content = %v, want %q", msg["content"], "/compact")
 	}
+
+	b.turnMu.Lock()
+	pending := b.pendingRearmReason
+	b.turnMu.Unlock()
+	if pending != rearmNone {
+		t.Errorf("pendingRearmReason = %s, want none for idle SendCommand", pending)
+	}
 }
 
-func TestSendCommand_WithPriority(t *testing.T) {
-	// Verifies SendCommand with "now" priority sets the priority field on the wire.
+func TestSendCommand_DuringTurn_ArmsRearm(t *testing.T) {
+	// Verifies SendCommand during an in-flight turn sets the rearm flag so
+	// the queued response reaches the original handler. This is the behaviour
+	// the follow-up path (turn_delegated.go IsTurnInFlight branch) and the
+	// urgent dispatch path (Interrupt+SendCommand) both rely on.
 	t.Parallel()
 
 	var buf bytes.Buffer
 	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true, // simulates an in-flight turn
 	}
 
-	if err := b.SendCommand(context.Background(), "redirect this", PriorityNow); err != nil {
+	if err := b.SendCommand(context.Background(), "follow-up text"); err != nil {
 		t.Fatalf("SendCommand: %v", err)
 	}
 
-	line := strings.TrimSpace(buf.String())
-	var got map[string]any
-	if err := json.Unmarshal([]byte(line), &got); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if got["priority"] != PriorityNow {
-		t.Errorf("priority = %v, want %q", got["priority"], PriorityNow)
+	b.turnMu.Lock()
+	pending := b.pendingRearmReason
+	b.turnMu.Unlock()
+	if pending != rearmPending {
+		t.Errorf("pendingRearmReason = %s, want pending for in-flight SendCommand", pending)
 	}
 }
 
@@ -818,71 +828,6 @@ func TestOnAssistant_NoTypingOnEndTurn(t *testing.T) {
 
 	if len(typingCalls) != 0 {
 		t.Errorf("typingCalls = %v, want empty (no restart on end_turn)", typingCalls)
-	}
-}
-
-func TestOnAssistant_ToolUseTriggersSteers(t *testing.T) {
-	// Verifies that when assistant message contains tool_use blocks,
-	// checkAndSendSteers is invoked.
-	t.Parallel()
-
-	var buf bytes.Buffer
-	var steerChecked bool
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
-	}
-
-	handler := &delegator.EventHandler{
-		SteerCheckFunc: func() []string {
-			steerChecked = true
-			return nil
-		},
-	}
-	b.beginTurn(handler)
-
-	msg := &AssistantMessage{
-		Message: BetaMessage{
-			Content: []ContentBlock{
-				{Type: "tool_use", Name: "Bash", Input: json.RawMessage(`{"command":"ls"}`)},
-			},
-			Usage: TokenUsage{},
-		},
-	}
-	b.OnAssistant(msg)
-
-	if !steerChecked {
-		t.Error("SteerCheckFunc was not called after tool_use")
-	}
-}
-
-func TestOnAssistant_NoSteersWithoutToolUse(t *testing.T) {
-	// Verifies that text-only assistant messages do NOT trigger steer checks.
-	t.Parallel()
-
-	var steerChecked bool
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&bytes.Buffer{}}),
-	}
-	handler := &delegator.EventHandler{
-		SteerCheckFunc: func() []string {
-			steerChecked = true
-			return nil
-		},
-	}
-	b.beginTurn(handler)
-
-	msg := &AssistantMessage{
-		Message: BetaMessage{
-			Content: []ContentBlock{
-				{Type: "text", Text: "just text, no tools"},
-			},
-			Usage: TokenUsage{},
-		},
-	}
-	b.OnAssistant(msg)
-
-	if steerChecked {
-		t.Error("SteerCheckFunc should NOT be called without tool_use blocks")
 	}
 }
 
@@ -1603,11 +1548,22 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 //   - a fresh beginTurn supersedes any pending re-arm reason.
 // ---------------------------------------------------------------------------
 
-// rearmTrigger is one of the three production paths that sets up a
-// pending re-arm. arm() fires the trigger; it must leave the backend in a
-// state where the next OnResult takes the re-arm path. handler is the
+// rearmTrigger is one of the production paths that sets up a pending
+// re-arm. arm() fires the trigger; it must leave the backend in a state
+// where the next OnResult takes the re-arm path. handler is the
 // already-armed turn handler — arm() may install fields on it (e.g.
-// SteerCheckFunc) that the production trigger reads.
+// PostToolNudgeFunc) that the production trigger reads.
+//
+// Post-Phase 5 there are two trigger shapes:
+//   - nudge: handleHookResponse fires PostToolNudgeFunc, which sends a
+//     plain user message that auto-arms the rearm cascade.
+//   - urgent: SendCommand on an in-flight turn (covers both the follow-up
+//     path in turn_delegated.go and the dispatchUrgent path that pairs
+//     SendCommand with Interrupt).
+//
+// The third pre-Phase-5 path ("steer" via checkAndSendSteers) is gone —
+// its responsibilities moved to platform.MessageQueue.dispatchUrgent which
+// invokes the same Interrupt+SendCommand sequence as the urgent trigger.
 type rearmTrigger struct {
 	name string
 	arm  func(t *testing.T, b *Backend, handler *delegator.EventHandler)
@@ -1655,18 +1611,10 @@ func rearmTriggers() []rearmTrigger {
 			},
 		},
 		{
-			name: "steer",
-			arm: func(t *testing.T, b *Backend, handler *delegator.EventHandler) {
-				t.Helper()
-				handler.SteerCheckFunc = func() []string { return []string{"redirect"} }
-				b.checkAndSendSteers()
-			},
-		},
-		{
-			name: "followup",
+			name: "urgent",
 			arm: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
 				t.Helper()
-				if err := b.SendCommand(context.Background(), "follow-up text", "next"); err != nil {
+				if err := b.SendCommand(context.Background(), "urgent text"); err != nil {
 					t.Fatalf("SendCommand: %v", err)
 				}
 			},
@@ -1815,78 +1763,58 @@ func TestRearm_BeginTurnClearsStaleState(t *testing.T) {
 	}
 }
 
-// TestRearm_TriggerWithoutInjectionEndsNormally proves that when a trigger
-// path runs but elects NOT to inject (no steer text returned, follow-up uses
-// non-"next" priority), no re-arm reason is set and OnResult takes the
-// normal-completion path. Inverse of TestRearm_FullCycle.
-func TestRearm_TriggerWithoutInjectionEndsNormally(t *testing.T) {
-	cases := []struct {
-		name string
-		run  func(t *testing.T, b *Backend, handler *delegator.EventHandler)
-	}{
-		{
-			name: "steer returns nothing",
-			run: func(t *testing.T, b *Backend, handler *delegator.EventHandler) {
-				handler.SteerCheckFunc = func() []string { return nil }
-				b.checkAndSendSteers()
-			},
-		},
-		{
-			name: "follow-up uses empty priority (slash command)",
-			run: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
-				if err := b.SendCommand(context.Background(), "/compact", ""); err != nil {
-					t.Fatalf("SendCommand: %v", err)
-				}
-			},
-		},
-		{
-			name: "follow-up uses now priority (steer)",
-			run: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
-				if err := b.SendCommand(context.Background(), "redirect", PriorityNow); err != nil {
-					t.Fatalf("SendCommand: %v", err)
-				}
-			},
-		},
+// TestRearm_IdleSendCommandEndsNormally proves SendCommand at idle (no turn
+// in flight, e.g. the /compact-at-turn-end path) does NOT set a rearm reason,
+// so OnResult takes the normal-completion path. Inverse of TestRearm_FullCycle.
+//
+// The rearm flag is only set when a turn is in flight at SendCommand time;
+// idle commands have no original handler to re-arm for.
+func TestRearm_IdleSendCommandEndsNormally(t *testing.T) {
+	t.Parallel()
+
+	var completes []*delegator.TurnResult
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
+		OnText:         func(string) {},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+	b := newRearmBackend()
+	b.beginTurn(handler)
 
-			var completes []*delegator.TurnResult
-			handler := &delegator.EventHandler{
-				OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
-				OnText:         func(string) {},
-			}
-			b := newRearmBackend()
-			b.beginTurn(handler)
-			tc.run(t, b, handler)
+	// Simulate an idle SendCommand by clearing turnActive before the call.
+	b.turnMu.Lock()
+	b.turnActive = false
+	b.turnMu.Unlock()
+	if err := b.SendCommand(context.Background(), "/compact"); err != nil {
+		t.Fatalf("SendCommand: %v", err)
+	}
+	// Restore turnActive so OnResult sees the turn handler the caller
+	// installed via beginTurn.
+	b.turnMu.Lock()
+	b.turnActive = true
+	b.turnMu.Unlock()
 
-			b.OnResult(successResult())
+	b.OnResult(successResult())
 
-			if len(completes) != 1 {
-				t.Fatalf("OnTurnComplete fired %d times, want 1 (spurious re-arm with no injection)", len(completes))
-			}
-			if b.IsTurnInFlight() {
-				t.Error("IsTurnInFlight = true after normal completion")
-			}
-		})
+	if len(completes) != 1 {
+		t.Fatalf("OnTurnComplete fired %d times, want 1 (idle SendCommand should not re-arm)", len(completes))
+	}
+	if b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = true after normal completion")
 	}
 }
 
-// TestRearm_MutualExclusionGuard verifies setRearmReason logs a WARN when
-// a different reason is already pending. The three injection paths are
-// designed to be mutually exclusive per turn (a steer aborts in-flight
-// tools before a follow-up could queue; a nudge fires only at tool
-// boundaries where no steer is in flight). If real traffic ever stacks
-// them, this WARN is the signal that the scalar rearmReason needs to
-// become a queue.
+// TestRearm_StackingGuard verifies setRearmReason logs a WARN when a second
+// pending reason is set on top of an existing one. Post-Phase 5 the rearm
+// state is binary (none/pending) — the guard surfaces stacking, not reason
+// type collisions. Stacking happens when two user-role events queue within
+// the same in-flight CC turn; the cascade only re-arms once, so the second
+// event's response races against handler clear.
 //
-// Not parallel: SetWarnHook is a process-wide singleton. The hook
-// callback filters on the rearm-overwrite text so unrelated warnings
-// from concurrent parallel tests in the same package don't pollute the
-// captured set. Restored on cleanup.
-func TestRearm_MutualExclusionGuard(t *testing.T) {
-	const wantTag = "rearm reason overwritten"
+// Not parallel: SetWarnHook is a process-wide singleton. The hook callback
+// filters on the stacking-warning text so unrelated warnings from concurrent
+// parallel tests don't pollute the captured set. Restored on cleanup.
+func TestRearm_StackingGuard(t *testing.T) {
+	const wantTag = "rearm reason already pending"
 
 	var (
 		mu       sync.Mutex
@@ -1913,38 +1841,34 @@ func TestRearm_MutualExclusionGuard(t *testing.T) {
 	b := newRearmBackend()
 	b.beginTurn(&delegator.EventHandler{})
 
-	// Same reason twice — no warning (idempotent).
+	// First set — no warning.
 	b.turnMu.Lock()
-	b.setRearmReason(rearmNudge)
-	b.setRearmReason(rearmNudge)
+	b.setRearmReason(rearmPending)
 	b.turnMu.Unlock()
 
 	if got := snapshot(); len(got) != 0 {
-		t.Errorf("idempotent setRearmReason produced warnings: %v", got)
+		t.Errorf("first setRearmReason produced warnings: %v", got)
 	}
 
-	// Different reason — guard must fire exactly once.
+	// Second set on top of first — guard must fire (stacking).
 	b.turnMu.Lock()
-	b.setRearmReason(rearmSteer)
+	b.setRearmReason(rearmPending)
 	b.turnMu.Unlock()
 
 	got := snapshot()
 	if len(got) != 1 {
-		t.Fatalf("expected exactly 1 mutual-exclusion warning, got %d: %v", len(got), got)
+		t.Fatalf("expected exactly 1 stacking warning, got %d: %v", len(got), got)
 	}
-	if !strings.Contains(got[0], "was=nudge") || !strings.Contains(got[0], "now=steer") {
-		t.Errorf("warning text %q missing was=nudge / now=steer context", got[0])
+	if !strings.Contains(got[0], "stacking") {
+		t.Errorf("warning text %q missing stacking context", got[0])
 	}
 
-	// Last write wins — the second reason is what OnResult will read.
-	// Field read is intrinsic to this test (it asserts the setter's
-	// post-condition); the cascade behaviour itself is covered without
-	// field reads in TestRearm_FullCycle.
+	// State remains pending (single bit doesn't change).
 	b.turnMu.Lock()
 	got2 := b.pendingRearmReason
 	b.turnMu.Unlock()
-	if got2 != rearmSteer {
-		t.Errorf("pendingRearmReason = %s, want steer (last write wins)", got2)
+	if got2 != rearmPending {
+		t.Errorf("pendingRearmReason = %s, want pending", got2)
 	}
 }
 
@@ -2523,35 +2447,6 @@ func TestOnToolProgress_KeepsTypingAlive(t *testing.T) {
 
 	if len(typingCalls) != 1 || !typingCalls[0] {
 		t.Errorf("typingCalls = %v, want [true]", typingCalls)
-	}
-}
-
-func TestOnToolProgress_TriggersSteers(t *testing.T) {
-	// Verifies OnToolProgress calls checkAndSendSteers during long-running
-	// tool execution.
-	t.Parallel()
-
-	var steerChecked bool
-	var buf bytes.Buffer
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
-	}
-	b.turnHandler = &delegator.EventHandler{
-		SteerCheckFunc: func() []string {
-			steerChecked = true
-			return nil
-		},
-	}
-
-	msg := &ToolProgressMessage{
-		ToolUseID:          "t1",
-		ToolName:           "Bash",
-		ElapsedTimeSeconds: 30,
-	}
-	b.OnToolProgress(msg)
-
-	if !steerChecked {
-		t.Error("SteerCheckFunc was not called during tool progress")
 	}
 }
 

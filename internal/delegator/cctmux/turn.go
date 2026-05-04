@@ -287,7 +287,7 @@ func (b *Backend) IsTurnInFlight() bool {
 	return b.turnCompleteFn != nil
 }
 
-func (b *Backend) SendCommand(ctx context.Context, command string, _ string) error {
+func (b *Backend) SendCommand(ctx context.Context, command string) error {
 	b.mu.Lock()
 	pane := b.pane
 	b.mu.Unlock()

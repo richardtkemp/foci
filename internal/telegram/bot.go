@@ -234,6 +234,20 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 	return bot, nil
 }
 
+// SessionKeyForChatID returns the session key for a given chat ID, accounting
+// for facet/secondary bot routing. Exported so the urgent-steer dispatcher
+// (installed by SetupAgent in agent_setup.go) can resolve a queued message's
+// session without reaching into private bot state.
+func (b *Bot) SessionKeyForChatID(chatID int64) string {
+	if b.isSecondary {
+		return b.SessionKey()
+	}
+	if b.agentID != "" {
+		return b.sessionKeyForMsg(chatID)
+	}
+	return b.SessionKey()
+}
+
 // SetTranscriber sets the STT provider for inbound voice notes.
 func (b *Bot) SetTranscriber(t voice.STT) {
 	b.transcriber = t

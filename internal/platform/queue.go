@@ -48,6 +48,20 @@ type MessageQueue struct {
 	// turnActive returns whether a turn is currently in progress.
 	// Set by the platform bot at construction time.
 	turnActive func() bool
+
+	// dispatchUrgent is an optional callback that delivers a steer message
+	// directly to the active backend (bypassing the AppendSteer buffer).
+	// Used by CC-backed agents whose backend exposes Interrupt+SendCommand
+	// primitives that are equivalent to — and a strict superset of — the
+	// buffer's "drain at next tool boundary" semantics: CC interrupts the
+	// in-flight turn immediately and processes the new user message,
+	// regardless of whether the turn is text- or tool-shaped.
+	//
+	// The full QueuedMessage is passed (not just the text) so the callback
+	// can resolve the destination session via msg.ChatID without depending
+	// on shared bot state. API-mode agents leave this nil and continue
+	// using the buffer drained at tool-loop boundaries by Steerer.PendingSteers.
+	dispatchUrgent func(msg QueuedMessage)
 }
 
 // MessageQueueConfig holds construction parameters for NewMessageQueue.
@@ -104,10 +118,7 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 
 	// Rule 2: group + mention + steer + turn active -> steer (urgent redirect)
 	if msg.IsGroupChat && msg.IsMention && q.steerMode && isActive && msg.Text != "" && len(msg.Attachments) == 0 {
-		q.AppendSteer(msg.Text, msg.ReceivedAt)
-		if q.log != nil {
-			q.log.Infof("steer: buffered mention from %s", q.senderLabel(msg))
-		}
+		q.routeUrgentSteer(msg, "mention")
 		return
 	}
 
@@ -124,10 +135,7 @@ func (q *MessageQueue) Enqueue(msg QueuedMessage) {
 
 	// Rule 4: steer mode + turn active + text-only -> steer
 	if q.steerMode && isActive && msg.Text != "" && len(msg.Attachments) == 0 {
-		q.AppendSteer(msg.Text, msg.ReceivedAt)
-		if q.log != nil {
-			q.log.Infof("steer: buffered message from %s", q.senderLabel(msg))
-		}
+		q.routeUrgentSteer(msg, "message")
 		return
 	}
 
@@ -162,6 +170,24 @@ func (q *MessageQueue) DrainQueue() []QueuedMessage {
 		default:
 			return msgs
 		}
+	}
+}
+
+// routeUrgentSteer dispatches a steer message either through dispatchUrgent
+// (when set — typical for CC-backed agents) or to the AppendSteer buffer
+// (API-mode fallback). label appears in the log message and distinguishes
+// Rule 2 ("mention") from Rule 4 ("message") so the log is debuggable.
+func (q *MessageQueue) routeUrgentSteer(msg QueuedMessage, label string) {
+	if q.dispatchUrgent != nil {
+		q.dispatchUrgent(msg)
+		if q.log != nil {
+			q.log.Infof("steer: dispatched %s from %s", label, q.senderLabel(msg))
+		}
+		return
+	}
+	q.AppendSteer(msg.Text, msg.ReceivedAt)
+	if q.log != nil {
+		q.log.Infof("steer: buffered %s from %s", label, q.senderLabel(msg))
 	}
 }
 
@@ -217,6 +243,20 @@ func (q *MessageQueue) SetRequireMention(v bool) {
 // SetSteerMode sets the steer_mode flag. Must be called before messages arrive.
 func (q *MessageQueue) SetSteerMode(v bool) {
 	q.steerMode = v
+}
+
+// SetDispatchUrgent installs a callback that delivers steer messages directly
+// to the active backend, bypassing the AppendSteer buffer. CC-backed agents
+// wire this to a closure that resolves the destination session from the
+// message's ChatID and calls Backend.Interrupt + Backend.SendCommand, which
+// is a strict superset of the buffer's "drain at next tool boundary"
+// semantics — CC interrupts the in-flight turn immediately and processes the
+// new user message regardless of whether the turn is text- or tool-shaped.
+//
+// Pass nil to revert to buffer-only routing (the API-mode default). Must be
+// called before messages arrive.
+func (q *MessageQueue) SetDispatchUrgent(fn func(msg QueuedMessage)) {
+	q.dispatchUrgent = fn
 }
 
 // PushFlushed pushes a message from a throttle flush directly to the channel.

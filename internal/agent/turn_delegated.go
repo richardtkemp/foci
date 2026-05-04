@@ -153,19 +153,22 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	log.Debugf("delegated", "RunInference: WaitForPermission done sk=%s", ts.SessionKey)
 
 	// Follow-up: a turn is already in-flight. Send the text to CC without
-	// creating a new turn pipeline. CC queues it after the current turn
-	// (priority "next"). Close CompletionChan immediately so runPostTurn
-	// exits without doing any post-turn work (the original turn's handler
-	// will handle usage, compaction, etc.).
+	// creating a new turn pipeline. CC queues it after the current turn,
+	// and the backend's SendCommand auto-arms the rearm cascade so the
+	// queued response reaches the original handler. Close CompletionChan
+	// immediately so runPostTurn exits without doing any post-turn work
+	// (the original turn's handler will handle usage, compaction, etc.).
 	//
-	// Note: urgent steers (steer_mode=true) don't reach this path — they're
-	// buffered in steerParts and injected mid-turn by the ccstream backend's
-	// checkAndSendSteers with priority "now". This path handles the
-	// steer_mode=false case where messages flow through the channel normally.
+	// Note: urgent steers (steer_mode=true) on CC backends don't reach
+	// this path — they're dispatched immediately at platform Enqueue via
+	// MessageQueue.dispatchUrgent (Interrupt + SendCommand) so they abort
+	// the in-flight turn rather than queuing behind it. This path handles
+	// the steer_mode=false case where messages flow through the channel
+	// normally and stack as follow-ups.
 	if be.IsTurnInFlight() {
 		log.Infof("delegated", "session=%s follow-up message queued behind in-flight turn", ts.SessionKey)
 		log.Debugf("delegated", "RunInference: SendCommand (follow-up) start sk=%s", ts.SessionKey)
-		if err := be.SendCommand(ts.Ctx, ts.Prompt, "next"); err != nil {
+		if err := be.SendCommand(ts.Ctx, ts.Prompt); err != nil {
 			close(ts.CompletionChan)
 			return err
 		}
@@ -317,12 +320,6 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		bt.LogUsage(ts)
 		close(ts.CompletionChan)
 	}
-	// Wire steer drain from the context-attached Steerer into the backend
-	// so ccstream can inject steered messages at tool execution boundaries.
-	if st := turnevent.SteererFromContext(ts.Ctx); st != nil {
-		handler.SteerCheckFunc = st.PendingSteers
-	}
-
 	// Use structured content blocks when attachments are present and the
 	// backend supports it. This sends images/documents as proper content
 	// blocks instead of flattening them into the text prompt.
