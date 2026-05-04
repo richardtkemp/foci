@@ -1271,7 +1271,7 @@ Tool registry, compactor, cache management, fallback chain, server tools, MCP, s
 
 ### Command passthrough
 
-`/model` and `/compact` commands should be forwarded to the backend via `SendCommand()`. Other Foci commands (`/sessions`, `/config`, `/mana`, etc.) are handled normally.
+`/model` and `/compact` are forwarded to the backend via `Backend.Inject(SourcePass)` (a no-rearm send that bypasses the turn handler). Other Foci commands (`/sessions`, `/config`, `/mana`, etc.) are handled normally.
 
 ---
 
