@@ -404,22 +404,23 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// SendCommand
+// sendUserMessage — internal primitive backing Inject's user-text paths
 // ---------------------------------------------------------------------------
 
-func TestSendCommand_Idle(t *testing.T) {
-	// Verifies SendCommand at idle (no turn in flight) sends a plain user
-	// message and does NOT set the rearm flag — the idle slash-command path
-	// (e.g. /compact at turn end) has no handler waiting for a response.
+// TestSendUserMessage_Idle_NoRearm verifies the internal sendUserMessage
+// primitive at idle emits a well-formed user message on the wire and
+// does NOT increment pendingRearmCount even when autoRearm=true — there's
+// no in-flight turn to rearm against. This is the wire-shape check that
+// pre-Phase-4 lived under TestSendCommand_Idle; protocol-level coverage
+// stays here, routing-level coverage lives in TestInject_*.
+func TestSendUserMessage_Idle_NoRearm(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	b := &Backend{
-		writer: NewWriter(nopWriteCloser{&buf}),
-	}
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 
-	if err := b.SendCommand(context.Background(), "/compact"); err != nil {
-		t.Fatalf("SendCommand: %v", err)
+	if err := b.sendUserMessage(context.Background(), "/compact", true); err != nil {
+		t.Fatalf("sendUserMessage: %v", err)
 	}
 
 	line := strings.TrimSpace(buf.String())
@@ -442,32 +443,7 @@ func TestSendCommand_Idle(t *testing.T) {
 	count := b.pendingRearmCount
 	b.turnMu.Unlock()
 	if count != 0 {
-		t.Errorf("pendingRearmCount = %d, want 0 for idle SendCommand", count)
-	}
-}
-
-func TestSendCommand_DuringTurn_ArmsRearm(t *testing.T) {
-	// Verifies SendCommand during an in-flight turn sets the rearm flag so
-	// the queued response reaches the original handler. This is the behaviour
-	// the follow-up path (turn_delegated.go IsTurnInFlight branch) and the
-	// urgent dispatch path (Interrupt+SendCommand) both rely on.
-	t.Parallel()
-
-	var buf bytes.Buffer
-	b := &Backend{
-		writer:     NewWriter(nopWriteCloser{&buf}),
-		turnActive: true, // simulates an in-flight turn
-	}
-
-	if err := b.SendCommand(context.Background(), "follow-up text"); err != nil {
-		t.Fatalf("SendCommand: %v", err)
-	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 1 {
-		t.Errorf("pendingRearmCount = %d, want 1 for in-flight SendCommand", count)
+		t.Errorf("pendingRearmCount = %d, want 0 for idle send (no turn to rearm against)", count)
 	}
 }
 
@@ -495,28 +471,26 @@ func (w *rearmCheckingWriter) Write(p []byte) (int, error) {
 
 func (w *rearmCheckingWriter) Close() error { return nil }
 
-// TestSendCommand_DuringTurn_RearmSetBeforeWrite proves that SendCommand
-// arms the rearm flag BEFORE bytes hit CC. This closes the race observed
-// in production as the "text block dropped (no handler/OnText)" WARN: if
-// SendUser fired first, OnResult could process the in-flight turn's result
-// (clearing the handler) before SendCommand had a chance to mark
-// rearmPending — the response to the queued command would then arrive at
-// turnHandler==nil and be dropped. Phase 5 follow-up.
-func TestSendCommand_DuringTurn_RearmSetBeforeWrite(t *testing.T) {
+// TestSendUserMessage_DuringTurn_RearmSetBeforeWrite proves that the
+// in-flight rearm path arms the count BEFORE bytes hit CC. Closes the
+// race observed in production as the "text block dropped (no
+// handler/OnText)" WARN: if SendUser fired first, OnResult could process
+// the in-flight turn's result (clearing the handler) before the rearm
+// slot had been marked — the response to the queued command would then
+// arrive at turnHandler==nil and be dropped. Phase 5 follow-up.
+func TestSendUserMessage_DuringTurn_RearmSetBeforeWrite(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	b := &Backend{
-		turnActive: true,
-	}
+	b := &Backend{turnActive: true}
 	checker := &rearmCheckingWriter{dst: &buf, b: b}
 	b.writer = NewWriter(checker)
 
-	if err := b.SendCommand(context.Background(), "follow-up"); err != nil {
-		t.Fatalf("SendCommand: %v", err)
+	if err := b.sendUserMessage(context.Background(), "follow-up", true); err != nil {
+		t.Fatalf("sendUserMessage: %v", err)
 	}
 	if !checker.wroteOnce {
-		t.Fatal("writer was never called — SendCommand never reached the wire")
+		t.Fatal("writer was never called — sendUserMessage never reached the wire")
 	}
 	if checker.rearmAtFirstWrt < 1 {
 		t.Errorf("pendingRearmCount at first byte = %d, want >= 1 — order is wrong, race window open",
@@ -524,11 +498,12 @@ func TestSendCommand_DuringTurn_RearmSetBeforeWrite(t *testing.T) {
 	}
 }
 
-// TestSendCommand_WriteFailureRollsBackRearm proves that if SendUser fails
-// after the rearm flag was armed, the flag is rolled back to rearmNone — no
-// response is coming from CC, so leaving the flag set would mis-route the
-// next legitimate result through the rearm path.
-func TestSendCommand_WriteFailureRollsBackRearm(t *testing.T) {
+// TestSendUserMessage_WriteFailureRollsBackRearm proves that if the
+// underlying write fails after the rearm slot was incremented, the
+// increment is rolled back — no response is coming from CC, so leaving
+// the slot set would mis-route the next legitimate OnResult through
+// the rearm path.
+func TestSendUserMessage_WriteFailureRollsBackRearm(t *testing.T) {
 	t.Parallel()
 
 	failingWC := &failingWriteCloser{err: fmt.Errorf("boom")}
@@ -537,8 +512,8 @@ func TestSendCommand_WriteFailureRollsBackRearm(t *testing.T) {
 		turnActive: true,
 	}
 
-	if err := b.SendCommand(context.Background(), "x"); err == nil {
-		t.Fatal("SendCommand: expected error, got nil")
+	if err := b.sendUserMessage(context.Background(), "x", true); err == nil {
+		t.Fatal("sendUserMessage: expected error, got nil")
 	}
 
 	b.turnMu.Lock()
@@ -546,6 +521,31 @@ func TestSendCommand_WriteFailureRollsBackRearm(t *testing.T) {
 	b.turnMu.Unlock()
 	if count != 0 {
 		t.Errorf("pendingRearmCount = %d after write failure, want 0 (rollback)", count)
+	}
+}
+
+// TestSendUserMessage_NoAutoRearm proves the slash-command path
+// (autoRearm=false) does NOT arm the count even when called mid-turn.
+// This is what keeps Inject(SourceCompact) safe to call defensively
+// without corrupting the in-flight rearm state.
+func TestSendUserMessage_NoAutoRearm(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
+	}
+
+	if err := b.sendUserMessage(context.Background(), "/compact", false); err != nil {
+		t.Fatalf("sendUserMessage: %v", err)
+	}
+
+	b.turnMu.Lock()
+	count := b.pendingRearmCount
+	b.turnMu.Unlock()
+	if count != 0 {
+		t.Errorf("pendingRearmCount = %d with autoRearm=false, want 0", count)
 	}
 }
 
@@ -817,8 +817,9 @@ func TestInject_Pass_NoRearm(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSendToPane_Success(t *testing.T) {
-	// Verifies SendToPane sends a user message, sets turn state, and fires
-	// the typing callback.
+	// Verifies sendToPane (the internal begin-turn primitive) sends a user
+	// message, sets turn state, and fires the typing callback. Wire-level
+	// coverage; routing-level lives in TestInject_*.
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -830,15 +831,11 @@ func TestSendToPane_Success(t *testing.T) {
 	b.SetTypingFunc(func(v bool) { typingCalls = append(typingCalls, v) })
 
 	handler := &delegator.EventHandler{}
-	result, err := b.SendToPane(context.Background(), "hello world", handler)
-	if err != nil {
-		t.Fatalf("SendToPane: %v", err)
-	}
-	if result == nil {
-		t.Fatal("result is nil")
+	if err := b.sendToPane(context.Background(), "hello world", handler); err != nil {
+		t.Fatalf("sendToPane: %v", err)
 	}
 	if !b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = false after SendToPane")
+		t.Error("IsTurnInFlight = false after sendToPane")
 	}
 	if len(typingCalls) != 1 || !typingCalls[0] {
 		t.Errorf("typingCalls = %v, want [true]", typingCalls)
@@ -860,8 +857,9 @@ func TestSendToPane_Success(t *testing.T) {
 }
 
 func TestSendToPaneWithAttachments(t *testing.T) {
-	// Verifies SendToPaneWithAttachments sends structured content blocks
-	// with text + image + document attachments.
+	// Verifies sendToPaneWithAttachments emits structured content blocks
+	// (text + image + document) on the wire. Wire-level coverage of the
+	// primitive Inject reaches when len(inj.Attachments) > 0 at idle.
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -875,15 +873,11 @@ func TestSendToPaneWithAttachments(t *testing.T) {
 		{MimeType: "image/jpeg", Data: []byte("fake-jpeg")},
 		{MimeType: "application/pdf", Data: []byte("fake-pdf")},
 	}
-	result, err := b.SendToPaneWithAttachments(context.Background(), "describe these", atts, handler)
-	if err != nil {
-		t.Fatalf("SendToPaneWithAttachments: %v", err)
-	}
-	if result == nil {
-		t.Fatal("result is nil")
+	if err := b.sendToPaneWithAttachments(context.Background(), "describe these", atts, handler); err != nil {
+		t.Fatalf("sendToPaneWithAttachments: %v", err)
 	}
 	if !b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = false after SendToPaneWithAttachments")
+		t.Error("IsTurnInFlight = false after sendToPaneWithAttachments")
 	}
 
 	// Parse the wire message.
@@ -936,7 +930,10 @@ func TestSendToPaneWithAttachments(t *testing.T) {
 }
 
 func TestSendToPane_WriterError(t *testing.T) {
-	// Verifies SendToPane cancels the turn if the writer fails.
+	// Verifies sendToPane cancels the turn if the writer fails — the
+	// turn must NOT remain in flight on a failed begin-turn, otherwise
+	// subsequent Inject calls would route through the follow-up path
+	// against a non-existent turn handler.
 	t.Parallel()
 
 	b := &Backend{
@@ -947,8 +944,7 @@ func TestSendToPane_WriterError(t *testing.T) {
 	b.writer.Close()
 
 	handler := &delegator.EventHandler{}
-	_, err := b.SendToPane(context.Background(), "hello", handler)
-	if err == nil {
+	if err := b.sendToPane(context.Background(), "hello", handler); err == nil {
 		t.Fatal("expected error from closed writer")
 	}
 	if b.IsTurnInFlight() {
@@ -1944,8 +1940,13 @@ func rearmTriggers() []rearmTrigger {
 			name: "urgent",
 			arm: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
 				t.Helper()
-				if err := b.SendCommand(context.Background(), "urgent text"); err != nil {
-					t.Fatalf("SendCommand: %v", err)
+				// Use the internal primitive directly — the rearm trigger
+				// test owns the in-flight assumption (caller called
+				// beginTurn first), so we exercise the same code path
+				// Inject(SourceUser) takes mid-turn without bringing the
+				// full Inject routing into the test.
+				if err := b.sendUserMessage(context.Background(), "urgent text", true); err != nil {
+					t.Fatalf("sendUserMessage: %v", err)
 				}
 			},
 		},
@@ -2110,12 +2111,14 @@ func TestRearm_IdleSendCommandEndsNormally(t *testing.T) {
 	b := newRearmBackend()
 	b.beginTurn(handler)
 
-	// Simulate an idle SendCommand by clearing turnActive before the call.
+	// Simulate an idle slash-command (Inject(SourceCompact)) by clearing
+	// turnActive before the call. The Compact path passes autoRearm=false
+	// so even if the slot were armable, no rearm would fire.
 	b.turnMu.Lock()
 	b.turnActive = false
 	b.turnMu.Unlock()
-	if err := b.SendCommand(context.Background(), "/compact"); err != nil {
-		t.Fatalf("SendCommand: %v", err)
+	if err := b.Inject(context.Background(), delegator.Inject{Source: delegator.SourceCompact, Text: "/compact"}); err != nil {
+		t.Fatalf("Inject: %v", err)
 	}
 	// Restore turnActive so OnResult sees the turn handler the caller
 	// installed via beginTurn.
@@ -2126,7 +2129,7 @@ func TestRearm_IdleSendCommandEndsNormally(t *testing.T) {
 	b.OnResult(successResult())
 
 	if len(completes) != 1 {
-		t.Fatalf("OnTurnComplete fired %d times, want 1 (idle SendCommand should not re-arm)", len(completes))
+		t.Fatalf("OnTurnComplete fired %d times, want 1 (idle slash command should not re-arm)", len(completes))
 	}
 	if b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight = true after normal completion")

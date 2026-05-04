@@ -13,8 +13,8 @@ import (
 
 // WaitForTurn blocks until the watcher observes the next turn completion
 // (assistant message with stop_reason "end_turn"). Returns ctx.Err() on
-// cancellation or deadline. Safe to call after SendToPane — if the turn
-// completes between SendToPane returning and WaitForTurn being called, the
+// cancellation or deadline. Safe to call after Inject — if the turn
+// completes between Inject returning and WaitForTurn being called, the
 // signal is buffered and WaitForTurn returns immediately.
 func (b *Backend) WaitForTurn(ctx context.Context) error {
 	ch := make(chan struct{}, 1)
@@ -79,19 +79,16 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 	}
 }
 
-// SendToPane sends a prompt to the Claude Code pane. It does not block waiting
-// for a response — output is delivered asynchronously via the persistent
-// watcher handler using the internal replyFunc. Returns immediately.
-// Use WaitForTurn to block until the turn completes.
-//
-// If handler.OnTurnComplete is set, it is registered as a per-turn callback
-// that fires once when the watcher sees end_turn, then auto-nils. This is
-// the preferred mechanism for TurnContract's CompletionChan pattern.
-func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+// sendToPane is the internal begin-turn primitive on the tmux backend.
+// Pastes the prompt into the Claude Code pane and registers a per-turn
+// completion callback (if handler.OnTurnComplete is set). Output is
+// delivered asynchronously via the persistent watcher handler using the
+// internal replyFunc; callers reach turn-start through Inject.
+func (b *Backend) sendToPane(ctx context.Context, prompt string, handler *delegator.EventHandler) error {
 	b.mu.Lock()
 	if b.pane == nil {
 		b.mu.Unlock()
-		return nil, fmt.Errorf("claude-code backend not started")
+		return fmt.Errorf("claude-code backend not started")
 	}
 	pane := b.pane
 	b.mu.Unlock()
@@ -113,7 +110,7 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delega
 
 	// Send the prompt to the pane.
 	if err := pane.sendText(ctx, prompt); err != nil {
-		return nil, fmt.Errorf("send prompt: %w", err)
+		return fmt.Errorf("send prompt: %w", err)
 	}
 
 	// Signal typing indicator — CC is now working. TypingFunc propagates
@@ -133,10 +130,10 @@ func (b *Backend) SendToPane(ctx context.Context, prompt string, handler *delega
 	// SessionFilePath, SessionID, etc. The method uses its own internal
 	// sync.Once to prevent concurrent discovery.
 	if err := b.ensureWatcher(ctx); err != nil {
-		return nil, fmt.Errorf("session discovery: %w", err)
+		return fmt.Errorf("session discovery: %w", err)
 	}
 
-	return &delegator.TurnResult{}, nil
+	return nil
 }
 
 // fireTurnComplete fires the per-turn callback (if set) with the given
@@ -278,23 +275,21 @@ func (b *Backend) Interrupt(ctx context.Context) error {
 	return b.SendSpecialKey(ctx, "C-c")
 }
 
-// IsTurnInFlight reports whether a SendToPane callback is registered but
-// hasn't fired yet. A steered follow-up message should be sent via
-// SendCommand (text only, no callback) to avoid overwriting the callback.
+// IsTurnInFlight reports whether a per-turn callback is registered but
+// hasn't fired yet. Inject consults this to choose between begin-turn
+// and follow-up routing on cctmux.
 func (b *Backend) IsTurnInFlight() bool {
 	b.turnCompleteMu.Lock()
 	defer b.turnCompleteMu.Unlock()
 	return b.turnCompleteFn != nil
 }
 
-// SendCommand sends a slash command or queued user message directly to
-// the tmux pane. The tmux backend has no rearm cascade — responses route
-// through the file watcher's per-turn callbacks, not a stream-based
-// re-arm. Steered follow-ups during an in-flight turn use this method
-// (text only, no handler) to avoid overwriting the per-turn callback.
-//
-// Deprecated: use Inject instead.
-func (b *Backend) SendCommand(ctx context.Context, command string) error {
+// sendCommand is the internal primitive for queued user-text and slash
+// commands on the tmux backend. The tmux backend has no rearm cascade —
+// responses route through the file watcher's per-turn callbacks, not a
+// stream-based re-arm. Called from Inject for the follow-up, steer, and
+// slash-command paths.
+func (b *Backend) sendCommand(ctx context.Context, command string) error {
 	b.mu.Lock()
 	pane := b.pane
 	b.mu.Unlock()
@@ -309,7 +304,7 @@ func (b *Backend) SendCommand(ctx context.Context, command string) error {
 // the tmux backend. Mirrors the ccstream Inject contract minus the rearm
 // cascade — the tmux backend uses the JSONL file watcher rather than a
 // stream-based re-arm, so follow-up responses route through the same
-// per-turn completion callback installed by SendToPane.
+// per-turn completion callback installed by sendToPane.
 //
 // Attachments are silently dropped on tmux: there's no protocol primitive
 // for structured content blocks via the tmux pane keystroke channel.
@@ -326,25 +321,23 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {
-			_, err := b.SendToPane(ctx, inj.Text, inj.Handler)
-			return err
+			return b.sendToPane(ctx, inj.Text, inj.Handler)
 		}
-		return b.SendCommand(ctx, inj.Text)
+		return b.sendCommand(ctx, inj.Text)
 
 	case delegator.SourceSteer:
 		if !inFlight {
 			// Edge case: idle steer. Degrade to begin-turn — message is
 			// still delivered, just without an in-flight task to interrupt.
-			_, err := b.SendToPane(ctx, inj.Text, inj.Handler)
-			return err
+			return b.sendToPane(ctx, inj.Text, inj.Handler)
 		}
 		if err := b.Interrupt(ctx); err != nil {
-			log.Warnf("cctmux", "Inject(Steer): Interrupt failed: %v (continuing with SendCommand)", err)
+			log.Warnf("cctmux", "Inject(Steer): Interrupt failed: %v (continuing with sendCommand)", err)
 		}
-		return b.SendCommand(ctx, inj.Text)
+		return b.sendCommand(ctx, inj.Text)
 
 	case delegator.SourceCompact, delegator.SourcePass:
-		return b.SendCommand(ctx, inj.Text)
+		return b.sendCommand(ctx, inj.Text)
 	}
 	return fmt.Errorf("cctmux: Inject: unknown source %d", inj.Source)
 }

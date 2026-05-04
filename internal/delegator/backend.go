@@ -40,20 +40,7 @@ type Delegator interface {
 	// turn result (when applicable) flows through inj.Handler.OnTurnComplete;
 	// callers that need the result wait on it via that callback or
 	// WaitForTurn.
-	//
-	// SendToPane / SendToPaneWithAttachments / SendCommand were the
-	// pre-Phase-4 entry points; they remain on the interface during the
-	// migration but route through Inject internally on backends that
-	// implement it. New callers should use Inject directly.
 	Inject(ctx context.Context, inj Inject) error
-
-	// SendToPane sends a composed prompt to the coding agent and streams
-	// events back via the handler. May return before the turn completes
-	// (implementation-dependent). Use WaitForTurn to block until the
-	// turn finishes.
-	//
-	// Deprecated: use Inject with SourceUser instead.
-	SendToPane(ctx context.Context, prompt string, handler *EventHandler) (*TurnResult, error)
 
 	// WaitForTurn blocks until the next turn completion (stop_reason
 	// "end_turn" in the session output). Returns immediately if no turn
@@ -61,25 +48,9 @@ type Delegator interface {
 	WaitForTurn(ctx context.Context) error
 
 	// IsTurnInFlight reports whether a turn callback is registered but
-	// hasn't fired yet. Used by RunInference to detect steered follow-up
-	// messages that should be pasted into the pane without creating a
-	// new turn pipeline (CC treats them as part of the same turn).
+	// hasn't fired yet. Inject consults this to decide between begin-turn
+	// and follow-up routing.
 	IsTurnInFlight() bool
-
-	// SendCommand sends a slash command or queued user message directly to
-	// the agent (e.g. "/compact ...", "/model opus", or a follow-up message
-	// during an in-flight turn). These bypass Foci's prompt composition —
-	// they're raw commands sent verbatim. CC backends that observe a turn
-	// in flight when SendCommand is called wire the response into the
-	// re-arm cascade so the queued reply reaches the original handler;
-	// backends that don't track turn state (e.g. tmux) just send the text.
-	//
-	// To abort the in-flight turn first (the "urgent steer" pattern), call
-	// Interrupt before SendCommand.
-	//
-	// Deprecated: use Inject with SourceUser (follow-up), SourceSteer
-	// (urgent), SourceCompact (/compact), or SourcePass (/pass) instead.
-	SendCommand(ctx context.Context, command string) error
 
 	// IsRunning reports whether the agent subprocess is alive.
 	IsRunning() bool
@@ -147,22 +118,6 @@ type Delegator interface {
 
 	// Close shuts down the agent subprocess gracefully.
 	Close() error
-}
-
-// AttachmentSender is optionally implemented by backends that support
-// structured content blocks (images, documents) alongside text prompts.
-// When the delegated transport has attachments, it checks for this interface
-// and uses it instead of the text-only SendToPane path.
-//
-// Deprecated: Inject takes Attachments inline; this interface goes away
-// after all callsites migrate to Inject.
-type AttachmentSender interface {
-	// SendToPaneWithAttachments sends a composed prompt with file attachments
-	// as structured content blocks. Each attachment becomes an image or document
-	// ContentBlock alongside the text prompt.
-	//
-	// Deprecated: use Inject with SourceUser and Attachments instead.
-	SendToPaneWithAttachments(ctx context.Context, prompt string, attachments []Attachment, handler *EventHandler) (*TurnResult, error)
 }
 
 // Attachment is a file attachment to include as a structured content block.
