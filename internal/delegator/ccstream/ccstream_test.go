@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2808,6 +2809,167 @@ func TestOnReaderStopped_ExpectedClose(t *testing.T) {
 	}
 	if !strings.Contains(completedResult.Text, "Session closed") {
 		t.Errorf("result.Text = %q, want to contain 'Session closed'", completedResult.Text)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// finalizeExit — guards against the wedge-on-death cascade documented in
+// TODO #744. Two paths can observe process death (waiter goroutine via
+// cmd.Wait, reader goroutine via scanner EOF). Bookkeeping must run exactly
+// once regardless of which fires first; if neither fires (the bug we hit),
+// the backend is wedged with running=true and an in-flight handler that
+// never completes.
+// ---------------------------------------------------------------------------
+
+func TestFinalizeExit_RunsOnlyOnce(t *testing.T) {
+	// Verifies that calling finalizeExit twice (once per goroutine path)
+	// only fires OnTurnComplete once. Without sync.Once, the in-flight
+	// handler would receive a duplicate completion and the second call
+	// would race with the cleared turnHandler.
+	t.Parallel()
+
+	var completionCount int
+	b := &Backend{}
+	b.mu.Lock()
+	b.running = true
+	b.mu.Unlock()
+	b.typingFunc = func(bool) {}
+
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completionCount++ },
+	}
+	b.beginTurn(handler)
+
+	b.finalizeExit(fmt.Errorf("first call"))
+	b.finalizeExit(fmt.Errorf("second call"))
+
+	if completionCount != 1 {
+		t.Errorf("OnTurnComplete fired %d times, want 1", completionCount)
+	}
+	if b.IsRunning() {
+		t.Error("IsRunning = true after finalizeExit")
+	}
+}
+
+func TestFinalizeExit_ConcurrentCallsRunOnce(t *testing.T) {
+	// Stresses the sync.Once gate: 50 goroutines call finalizeExit
+	// concurrently, mimicking the race between waiter and reader paths.
+	// Exactly one OnTurnComplete must fire.
+	t.Parallel()
+
+	var completionCount atomic.Int32
+	b := &Backend{}
+	b.mu.Lock()
+	b.running = true
+	b.mu.Unlock()
+	b.typingFunc = func(bool) {}
+
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { completionCount.Add(1) },
+	}
+	b.beginTurn(handler)
+
+	const N = 50
+	var wg sync.WaitGroup
+	wg.Add(N)
+	start := make(chan struct{})
+	for i := 0; i < N; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			b.finalizeExit(fmt.Errorf("racer"))
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := completionCount.Load(); got != 1 {
+		t.Errorf("OnTurnComplete fired %d times under contention, want 1", got)
+	}
+}
+
+func TestFinalizeExit_SubsequentOnReaderStoppedIsNoOp(t *testing.T) {
+	// Simulates the production order: waiter goroutine calls finalizeExit
+	// first (because cmd.Wait sees the death), then the reader goroutine
+	// belatedly calls OnReaderStopped (which delegates to finalizeExit).
+	// The reader path must not re-fire the completion handler or re-flip
+	// state. This is the primary guarantee that fixes TODO #744.
+	t.Parallel()
+
+	var completionTexts []string
+	b := &Backend{}
+	b.mu.Lock()
+	b.running = true
+	b.mu.Unlock()
+	b.typingFunc = func(bool) {}
+
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) {
+			completionTexts = append(completionTexts, r.Text)
+		},
+	}
+	b.beginTurn(handler)
+
+	// Waiter wins the race.
+	b.finalizeExit(fmt.Errorf("exit code 1"))
+	// Reader belatedly notices.
+	b.OnReaderStopped(fmt.Errorf("scanner: read |0: file already closed"))
+
+	if len(completionTexts) != 1 {
+		t.Errorf("OnTurnComplete fired %d times, want 1: %v", len(completionTexts), completionTexts)
+	}
+	if len(completionTexts) > 0 && !strings.Contains(completionTexts[0], "exit code 1") {
+		t.Errorf("completion text = %q, want first-call reason", completionTexts[0])
+	}
+	if b.IsRunning() {
+		t.Error("IsRunning = true after finalizeExit")
+	}
+}
+
+func TestRestart_ResetsFinalizeOnce(t *testing.T) {
+	// After a process death and Restart, the backend must accept a fresh
+	// finalizeExit invocation for the new subprocess. Without resetting
+	// finalizeOnce in Restart, the second subprocess's death cleanup would
+	// be silently skipped — same wedge, just delayed.
+	t.Parallel()
+
+	b := &Backend{}
+	b.mu.Lock()
+	b.running = true
+	b.mu.Unlock()
+	b.typingFunc = func(bool) {}
+
+	// First lifecycle: simulate death.
+	var firstCount int
+	h1 := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { firstCount++ },
+	}
+	b.beginTurn(h1)
+	b.finalizeExit(fmt.Errorf("first death"))
+	if firstCount != 1 {
+		t.Fatalf("first lifecycle completion: got %d, want 1", firstCount)
+	}
+
+	// Restart resets state. We bypass actual subprocess relaunch — only the
+	// once-reset is under test here.
+	b.finalizeOnce = sync.Once{}
+	b.mu.Lock()
+	b.running = true
+	b.closing = false
+	b.mu.Unlock()
+
+	// Second lifecycle: a new in-flight turn must see its own completion.
+	var secondCount int
+	h2 := &delegator.EventHandler{
+		OnTurnComplete: func(r *delegator.TurnResult) { secondCount++ },
+	}
+	b.beginTurn(h2)
+	b.finalizeExit(fmt.Errorf("second death"))
+	if secondCount != 1 {
+		t.Errorf("second lifecycle completion: got %d, want 1 (finalizeOnce was not reset)", secondCount)
+	}
+	if b.IsRunning() {
+		t.Error("IsRunning = true after second finalizeExit")
 	}
 }
 

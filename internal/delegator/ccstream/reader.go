@@ -56,9 +56,14 @@ func (rd *Reader) Run(ctx context.Context) {
 	scanner.Buffer(make([]byte, 0, maxTokenSize), maxTokenSize)
 
 	for {
-		// Check context before blocking on the next line.
+		// Check context before blocking on the next line. A cancelled
+		// reader is still a reader exit — notify the handler so the
+		// backend's bookkeeping (running=false, in-flight turn cleanup)
+		// runs even when shutdown is initiated by Close() rather than by
+		// the subprocess itself dying.
 		select {
 		case <-ctx.Done():
+			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: reader stopped: %w", ctx.Err()))
 			return
 		default:
 		}

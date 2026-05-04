@@ -71,6 +71,12 @@ type Backend struct {
 	readyOnce    sync.Once    // ensures readyCh closed once
 	initReqID    string       // request_id of the initialize control request
 
+	// finalizeOnce gates the dead-process cleanup so it runs exactly once,
+	// regardless of whether the waiter goroutine (cmd.Wait returned) or the
+	// reader goroutine (scanner EOF / ctx cancel) notices first. See
+	// finalizeExit. Reset in Restart() before relaunching the subprocess.
+	finalizeOnce sync.Once
+
 	// Turn state
 	turnMu       sync.Mutex
 	turnActive   bool
@@ -268,6 +274,12 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 
 	// Process waiter goroutine — reaps the subprocess and logs exit status.
 	// Without this, a dead subprocess becomes a zombie until Close() is called.
+	//
+	// This goroutine is the AUTHORITATIVE source of "process is dead". The
+	// reader goroutine may exit silently (ctx cancelled, partial line, etc.)
+	// and miss the death; cmd.Wait() cannot. After logging, we invoke
+	// finalizeExit to guarantee in-flight turn cleanup and `running=false`
+	// run exactly once, even if the reader path also reaches OnReaderStopped.
 	b.waitCh = make(chan error, 1)
 	b.exitCh = make(chan struct{})
 	go func() {
@@ -280,6 +292,10 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		} else {
 			log.Infof(comp, "process exited cleanly (status 0)")
 		}
+		// Drive cleanup regardless of whether the reader goroutine notices.
+		// finalizeExit is idempotent — if OnReaderStopped already ran, this
+		// is a no-op.
+		b.finalizeExit(err)
 		b.waitCh <- err
 	}()
 
@@ -378,6 +394,7 @@ func (b *Backend) Restart(ctx context.Context) error {
 	// Reset state for fresh start.
 	b.readyCh = make(chan struct{})
 	b.readyOnce = sync.Once{}
+	b.finalizeOnce = sync.Once{}
 	b.mu.Lock()
 	b.initReqID = ""
 	b.mu.Unlock()
@@ -1450,15 +1467,14 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 
 // OnReaderStopped handles the reader goroutine exiting for any reason, including
 // expected shutdown (Close), clean process exit (io.EOF), or unexpected errors
-// (broken pipe, scanner errors). It marks the backend as dead and completes
-// any in-flight turn so callers don't block forever.
+// (broken pipe, scanner errors). It logs the reader's observation, then defers
+// the actual cleanup to finalizeExit so the work runs exactly once even if the
+// waiter goroutine (cmd.Wait) reached the same conclusion first.
 func (b *Backend) OnReaderStopped(err error) {
 	component := b.logComponent()
 
-	// Check whether Close() initiated this shutdown.
 	b.mu.Lock()
 	expected := b.closing
-	b.running = false
 	b.mu.Unlock()
 
 	if expected {
@@ -1467,55 +1483,85 @@ func (b *Backend) OnReaderStopped(err error) {
 		log.Warnf(component, "subprocess reader stopped: %v", err)
 	}
 
-	// Wait briefly for the waiter goroutine to set exitErr. The process is
-	// already dead (we got EOF/error on stdout), so cmd.Wait should return
-	// almost immediately. exitCh is closed before waitCh is sent to, so
-	// this doesn't steal the value that Close() needs.
-	select {
-	case <-b.exitCh:
-	case <-time.After(2 * time.Second):
-	}
+	b.finalizeExit(err)
+}
 
-	if !expected && b.exitErr != nil {
-		exitDetail := describeExitError(b.exitErr)
-		log.Warnf(component, "process exit detail: %s", exitDetail)
-	}
+// finalizeExit performs the one-shot cleanup when the CC subprocess has died.
+//
+// Two independent goroutines can observe process death: the waiter goroutine
+// (cmd.Wait returns) and the reader goroutine (scanner EOF / read error / ctx
+// cancel). Historically only OnReaderStopped did the cleanup, so any failure
+// mode that caused the reader to exit silently (ctx cancelled, partial-line
+// read stuck, etc.) left the backend wedged: `running=true` so DelegatedManager
+// kept handing back the corpse, and any in-flight turn handler hung on
+// CompletionChan forever.
+//
+// finalizeExit is gated by sync.Once so whichever path notices first wins and
+// the other becomes a no-op. The waiter goroutine is the authoritative source
+// of truth (cmd.Wait cannot lie), but OnReaderStopped also calls in for the
+// case where the reader sees EOF before cmd.Wait has returned.
+//
+// Reset in Restart() before the subprocess is relaunched.
+func (b *Backend) finalizeExit(reason error) {
+	b.finalizeOnce.Do(func() {
+		component := b.logComponent()
 
-	// If a turn was in-flight, fire OnTurnComplete with an error indication
-	// so the caller doesn't block forever on CompletionChan.
-	b.turnMu.Lock()
-	handler := b.turnHandler
-	b.turnHandler = nil
-	b.turnActive = false
-	resultCh := b.turnResultCh
-	b.turnMu.Unlock()
+		b.mu.Lock()
+		expected := b.closing
+		b.running = false
+		b.mu.Unlock()
 
-	if handler != nil && handler.OnTurnComplete != nil {
-		var msg string
-		if expected {
-			msg = "Session closed while turn was in flight"
-		} else {
-			msg = fmt.Sprintf("Error: CC process exited unexpectedly: %v", err)
-			if b.exitErr != nil {
-				msg += " (" + describeExitError(b.exitErr) + ")"
+		// If the waiter goroutine has set exitErr, prefer its detail for the
+		// user-visible message. Wait briefly in case finalizeExit was invoked
+		// from the reader path before cmd.Wait returned. exitCh is closed by
+		// the waiter goroutine immediately after exitErr is assigned, so this
+		// doesn't race. exitCh is nil when finalizeExit is called from a unit
+		// test that bypasses Start; skip the wait in that case.
+		if b.exitCh != nil {
+			select {
+			case <-b.exitCh:
+			case <-time.After(2 * time.Second):
 			}
 		}
-		handler.OnTurnComplete(&delegator.TurnResult{
-			Text: msg,
-		})
-	}
 
-	if b.typingFunc != nil {
-		b.typingFunc(false)
-	}
-
-	// Unblock WaitForTurn.
-	if resultCh != nil {
-		select {
-		case resultCh <- &ResultMessage{Subtype: "error_during_execution", IsError: true}:
-		default:
+		if !expected && b.exitErr != nil {
+			log.Warnf(component, "process exit detail: %s", describeExitError(b.exitErr))
 		}
-	}
+
+		// Drain any in-flight turn so callers waiting on CompletionChan or
+		// WaitForTurn don't block forever.
+		b.turnMu.Lock()
+		handler := b.turnHandler
+		b.turnHandler = nil
+		b.turnActive = false
+		resultCh := b.turnResultCh
+		b.turnMu.Unlock()
+
+		if handler != nil && handler.OnTurnComplete != nil {
+			var msg string
+			if expected {
+				msg = "Session closed while turn was in flight"
+			} else {
+				msg = fmt.Sprintf("Error: CC process exited unexpectedly: %v", reason)
+				if b.exitErr != nil && b.exitErr != reason {
+					msg += " (" + describeExitError(b.exitErr) + ")"
+				}
+			}
+			handler.OnTurnComplete(&delegator.TurnResult{Text: msg})
+		}
+
+		if b.typingFunc != nil {
+			b.typingFunc(false)
+		}
+
+		// Unblock WaitForTurn.
+		if resultCh != nil {
+			select {
+			case resultCh <- &ResultMessage{Subtype: "error_during_execution", IsError: true}:
+			default:
+			}
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
