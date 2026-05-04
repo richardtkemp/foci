@@ -23,6 +23,7 @@ func TestRespondToPermission_Allow(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{
 		requestID: "req-1",
@@ -60,6 +61,7 @@ func TestRespondToPermission_Deny(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{
 		requestID: "req-2",
@@ -96,6 +98,7 @@ func TestRespondToPermission_UnknownRequestID(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	err := b.RespondToPermission("nonexistent", true, "")
@@ -110,20 +113,23 @@ func TestRespondToPermission_UnknownRequestID(t *testing.T) {
 	}
 }
 
-func TestRespondToPermission_FiresOnPermCleared(t *testing.T) {
-	// Proves that onPermCleared is called when the last pending permission
-	// is resolved, and NOT called when permissions remain.
+func TestRespondToPermission_FiresOnPromptsCleared(t *testing.T) {
+	// Proves that the registry's onEmpty hook is called when the last
+	// outstanding prompt is resolved, and NOT called when prompts remain.
 	t.Parallel()
 
 	var buf bytes.Buffer
 	cleared := 0
 	b := &Backend{
-		writer:        NewWriter(nopWriteCloser{&buf}),
-		pendingPerms:  make(map[string]*pendingPermission),
-		onPermCleared: func() { cleared++ },
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
+	b.SetOnPromptsCleared(func() { cleared++ })
 	b.storePendingPerm(&pendingPermission{requestID: "req-A", toolUseID: "a"})
 	b.storePendingPerm(&pendingPermission{requestID: "req-B", toolUseID: "b"})
+	b.outstanding.Register("req-A", OutstandingPermission)
+	b.outstanding.Register("req-B", OutstandingPermission)
 
 	// Resolve first — still one pending.
 	if err := b.RespondToPermission("req-A", true, ""); err != nil {
@@ -133,7 +139,7 @@ func TestRespondToPermission_FiresOnPermCleared(t *testing.T) {
 		t.Errorf("cleared called after first resolve, want 0 calls")
 	}
 
-	// Resolve second — map now empty → onPermCleared fires.
+	// Resolve second — registry now empty → onPromptsCleared fires.
 	if err := b.RespondToPermission("req-B", true, ""); err != nil {
 		t.Fatalf("second respond: %v", err)
 	}
@@ -156,6 +162,7 @@ func TestRespondToPermissionWithRule(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{
 		requestID: "req-rule",
@@ -201,6 +208,7 @@ func TestRespondToPermissionWithRule_UnknownRequestID(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	err := b.RespondToPermissionWithRule("nonexistent", "Bash:ls")
@@ -212,25 +220,27 @@ func TestRespondToPermissionWithRule_UnknownRequestID(t *testing.T) {
 	}
 }
 
-func TestRespondToPermissionWithRule_FiresOnPermCleared(t *testing.T) {
-	// Proves that onPermCleared fires when the last permission is resolved
-	// via RespondToPermissionWithRule.
+func TestRespondToPermissionWithRule_FiresOnPromptsCleared(t *testing.T) {
+	// Proves that onPromptsCleared fires when the last outstanding prompt is
+	// resolved via RespondToPermissionWithRule.
 	t.Parallel()
 
 	var buf bytes.Buffer
 	cleared := false
 	b := &Backend{
-		writer:        NewWriter(nopWriteCloser{&buf}),
-		pendingPerms:  make(map[string]*pendingPermission),
-		onPermCleared: func() { cleared = true },
+		writer:       NewWriter(nopWriteCloser{&buf}),
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
+	b.SetOnPromptsCleared(func() { cleared = true })
 	b.storePendingPerm(&pendingPermission{requestID: "req-rc", toolUseID: "x"})
+	b.outstanding.Register("req-rc", OutstandingPermission)
 
 	if err := b.RespondToPermissionWithRule("req-rc", "Read"); err != nil {
 		t.Fatalf("RespondToPermissionWithRule: %v", err)
 	}
 	if !cleared {
-		t.Error("onPermCleared not called after last permission resolved")
+		t.Error("onPromptsCleared not called after last prompt resolved")
 	}
 }
 
@@ -248,6 +258,7 @@ func TestHandlePermissionRequest_AutoApprove(t *testing.T) {
 	b := &Backend{
 		writer:           NewWriter(nopWriteCloser{&buf}),
 		pendingPerms:     make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 		autoApproveRules: parseAutoApproveRules([]string{"Read"}),
 		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
 			promptCalled = true
@@ -291,6 +302,7 @@ func TestHandlePermissionRequest_NoMatch_ForwardsToPrompt(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 		permPromptFn: func(reqID, text, summary string, choices []delegator.PromptChoice) {
 			gotReqID = reqID
 			gotText = text
@@ -341,6 +353,7 @@ func TestHandlePermissionRequest_NilPermPromptFn(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	msg := &PermissionRequest{
@@ -359,19 +372,17 @@ func TestHandlePermissionRequest_NilPermPromptFn(t *testing.T) {
 	}
 }
 
-func TestHandlePermissionRequest_FiresOnPermPending(t *testing.T) {
-	// Proves that onPermPending is called when a new permission request is
-	// stored (but not when auto-approved).
+func TestHandlePermissionRequest_RegistersOutstanding(t *testing.T) {
+	// Proves that handleToolRequest registers the prompt in the
+	// OutstandingRegistry so the cancel-listener and onEmpty hooks find it.
+	// Replaces the legacy onPermPending callback (which only existed in tests).
 	t.Parallel()
 
 	var buf bytes.Buffer
-	pendingCalled := 0
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
-		onPermPending: func() {
-			pendingCalled++
-		},
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	msg := &PermissionRequest{
@@ -385,8 +396,11 @@ func TestHandlePermissionRequest_FiresOnPermPending(t *testing.T) {
 
 	b.handleToolRequest(msg)
 
-	if pendingCalled != 1 {
-		t.Errorf("onPermPending called %d times, want 1", pendingCalled)
+	if !b.outstanding.Has("req-pend") {
+		t.Error("outstanding registry should contain req-pend after handleToolRequest")
+	}
+	if b.outstanding.Len() != 1 {
+		t.Errorf("registry Len = %d, want 1", b.outstanding.Len())
 	}
 }
 
@@ -396,15 +410,17 @@ func TestHandlePermissionRequest_FiresOnPermPending(t *testing.T) {
 
 func TestHandleControlCancel_RemovesPending(t *testing.T) {
 	// Proves that handleControlCancel removes the pending permission and fires
-	// onPermCleared when no permissions remain.
+	// onPromptsCleared when no prompts remain.
 	t.Parallel()
 
 	cleared := false
 	b := &Backend{
-		pendingPerms:  make(map[string]*pendingPermission),
-		onPermCleared: func() { cleared = true },
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
+	b.SetOnPromptsCleared(func() { cleared = true })
 	b.storePendingPerm(&pendingPermission{requestID: "req-cancel"})
+	b.outstanding.Register("req-cancel", OutstandingPermission)
 
 	b.handleControlCancel("req-cancel")
 
@@ -412,123 +428,130 @@ func TestHandleControlCancel_RemovesPending(t *testing.T) {
 		t.Errorf("pending = %d, want 0", b.PendingPermissions())
 	}
 	if !cleared {
-		t.Error("onPermCleared not called after cancel cleared last permission")
+		t.Error("onPromptsCleared not called after cancel cleared last prompt")
 	}
 }
 
+// TestHandleControlCancel_UnknownID proves that cancelling a non-existent
+// request is a no-op — the registry doesn't fire its onEmpty hook for a
+// no-op cancel. This is a deliberate behavior change from pre-Phase-2,
+// where onPermCleared could fire even when no actual prompt was removed
+// (the legacy logic checked `len(pendingPerms)==0` regardless of found).
 func TestHandleControlCancel_UnknownID(t *testing.T) {
-	// Proves that cancelling a non-existent request is a no-op (no panic,
-	// onPermCleared is still fired because the map is empty).
 	t.Parallel()
 
 	cleared := false
 	b := &Backend{
-		pendingPerms:  make(map[string]*pendingPermission),
-		onPermCleared: func() { cleared = true },
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
+	b.SetOnPromptsCleared(func() { cleared = true })
 
 	b.handleControlCancel("nonexistent")
 
-	// Map was already empty, so noMorePending = true → onPermCleared fires.
-	if !cleared {
-		t.Error("onPermCleared should fire when map is empty")
+	if cleared {
+		t.Error("onPromptsCleared should not fire on no-op cancel")
 	}
 }
 
 func TestHandleControlCancel_StillPending(t *testing.T) {
-	// Proves that onPermCleared is NOT called when other permissions remain
+	// Proves that onPromptsCleared is NOT called when other prompts remain
 	// after cancellation.
 	t.Parallel()
 
 	cleared := false
 	b := &Backend{
-		pendingPerms:  make(map[string]*pendingPermission),
-		onPermCleared: func() { cleared = true },
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
+	b.SetOnPromptsCleared(func() { cleared = true })
 	b.storePendingPerm(&pendingPermission{requestID: "req-stay"})
 	b.storePendingPerm(&pendingPermission{requestID: "req-go"})
+	b.outstanding.Register("req-stay", OutstandingPermission)
+	b.outstanding.Register("req-go", OutstandingPermission)
 
 	b.handleControlCancel("req-go")
 
 	if cleared {
-		t.Error("onPermCleared should not fire while permissions remain")
+		t.Error("onPromptsCleared should not fire while prompts remain")
 	}
 	if b.PendingPermissions() != 1 {
 		t.Errorf("pending = %d, want 1", b.PendingPermissions())
 	}
 }
 
-func TestHandleControlCancel_FiresPermCancelHook(t *testing.T) {
-	// Proves that handleControlCancel invokes permCancelFn with the requestID,
-	// the captured tool name, and the standard cancellation reason. This is
-	// the per-perm hook the platform layer uses to disable orphaned inline
-	// keyboards.
+// TestHandleControlCancel_FiresRegisteredCancelListener proves that the
+// per-prompt cancel listener (registered by the platform layer when sending
+// the interactive UI) fires with the cancellation reason. Replaces the
+// legacy permCancelFn(requestID, toolName, reason) signature — the toolName
+// is now captured by the closure that registers the listener.
+func TestHandleControlCancel_FiresRegisteredCancelListener(t *testing.T) {
 	t.Parallel()
 
 	var (
-		gotReqID  string
-		gotTool   string
 		gotReason string
 		called    int
 	)
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		permCancelFn: func(reqID, toolName, reason string) {
-			called++
-			gotReqID = reqID
-			gotTool = toolName
-			gotReason = reason
-		},
+		outstanding:  NewOutstandingRegistry(),
 	}
 	b.storePendingPerm(&pendingPermission{requestID: "req-7", toolName: "Bash"})
+	b.outstanding.Register("req-7", OutstandingPermission)
+	b.RegisterPromptCancelListener("req-7", func(reason string) {
+		called++
+		gotReason = reason
+	})
 
 	b.handleControlCancel("req-7")
 
 	if called != 1 {
-		t.Fatalf("permCancelFn called %d times, want 1", called)
-	}
-	if gotReqID != "req-7" {
-		t.Errorf("reqID = %q, want req-7", gotReqID)
-	}
-	if gotTool != "Bash" {
-		t.Errorf("toolName = %q, want Bash", gotTool)
+		t.Fatalf("cancel listener called %d times, want 1", called)
 	}
 	if !strings.Contains(gotReason, "follow-up") {
 		t.Errorf("reason = %q, want it to mention 'follow-up'", gotReason)
 	}
 }
 
+// TestHandleControlCancel_NoFireForUnknownID proves that no listener fires
+// for an unknown reqID — Cancel is a no-op when the prompt was never
+// registered, and AddCancelListener silently drops listeners for unknown IDs.
 func TestHandleControlCancel_NoFireForUnknownID(t *testing.T) {
-	// Proves that permCancelFn is NOT invoked for an unknown reqID — there's
-	// no orphan keyboard to disable in that case.
 	t.Parallel()
 
 	called := 0
 	b := &Backend{
 		pendingPerms: make(map[string]*pendingPermission),
-		permCancelFn: func(string, string, string) { called++ },
+		outstanding:  NewOutstandingRegistry(),
 	}
+	// Listener registration for an unknown ID is itself a no-op.
+	b.RegisterPromptCancelListener("ghost", func(string) { called++ })
 
 	b.handleControlCancel("ghost")
 
 	if called != 0 {
-		t.Errorf("permCancelFn called %d times for unknown id, want 0", called)
+		t.Errorf("cancel listener called %d times for unknown id, want 0", called)
 	}
 }
 
-func TestHandleControlCancel_FireOrder(t *testing.T) {
-	// Proves that permCancelFn fires before onPermCleared. Order matters:
-	// the platform layer wants to update the per-prompt UI before any
-	// session-wide "all clear" actions trigger.
+// TestHandleControlCancel_ListenersBeforeOnEmpty proves that per-prompt
+// cancel listeners fire before the registry-wide onEmpty hook. Order
+// matters: the platform layer wants to update the per-prompt UI before any
+// session-wide "all clear" actions trigger.
+func TestHandleControlCancel_ListenersBeforeOnEmpty(t *testing.T) {
 	t.Parallel()
 
 	var order []string
 	b := &Backend{
-		pendingPerms:  make(map[string]*pendingPermission),
-		permCancelFn:  func(string, string, string) { order = append(order, "cancel") },
-		onPermCleared: func() { order = append(order, "cleared") },
+		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
+	b.SetOnPromptsCleared(func() { order = append(order, "cleared") })
 	b.storePendingPerm(&pendingPermission{requestID: "req-only"})
+	b.outstanding.Register("req-only", OutstandingPermission)
+	b.RegisterPromptCancelListener("req-only", func(string) {
+		order = append(order, "cancel")
+	})
 
 	b.handleControlCancel("req-only")
 
@@ -930,6 +953,7 @@ func TestPermissions_ConcurrentAccess(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(nopWriteCloser{&buf}),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	const goroutines = 20

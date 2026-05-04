@@ -18,6 +18,7 @@ func TestSendControl_SetModel(t *testing.T) {
 	b := &Backend{
 		writer:       NewWriter(pw),
 		pendingPerms: make(map[string]*pendingPermission),
+		outstanding:  NewOutstandingRegistry(),
 	}
 
 	done := make(chan struct{})

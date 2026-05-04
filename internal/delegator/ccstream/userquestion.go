@@ -141,10 +141,7 @@ func (b *Backend) handleUserQuestion(msg *PermissionRequest) {
 	}
 
 	b.storePendingPerm(pp)
-
-	if b.onPermPending != nil {
-		b.onPermPending()
-	}
+	b.outstanding.Register(msg.RequestID, OutstandingPermission)
 
 	b.presentCurrentQuestion(pp)
 }
@@ -218,7 +215,7 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 		return fmt.Errorf("ccstream: build updatedInput: %w", err)
 	}
 
-	_, _, noMorePending := b.removePendingPerm(requestID)
+	b.removePendingPerm(requestID)
 
 	resp := &PermissionAllow{
 		Behavior:               "allow",
@@ -230,15 +227,13 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 		return err
 	}
 
-	if noMorePending && b.onPermCleared != nil {
-		b.onPermCleared()
-	}
+	b.outstanding.Resolve(requestID)
 	return nil
 }
 
 // CancelQuestion cancels a pending AskUserQuestion by sending PermissionDeny.
 func (b *Backend) CancelQuestion(requestID string) error {
-	pp, ok, noMorePending := b.removePendingPerm(requestID)
+	pp, ok := b.removePendingPerm(requestID)
 	if !ok {
 		return fmt.Errorf("ccstream: no pending question with request ID %q", requestID)
 	}
@@ -257,9 +252,7 @@ func (b *Backend) CancelQuestion(requestID string) error {
 		return err
 	}
 
-	if noMorePending && b.onPermCleared != nil {
-		b.onPermCleared()
-	}
+	b.outstanding.Resolve(requestID)
 	return nil
 }
 

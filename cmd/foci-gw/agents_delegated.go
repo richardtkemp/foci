@@ -143,9 +143,10 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				buttons = append(buttons, platform.ButtonChoice{Label: c.Label, Data: c.Data})
 			}
 			reqID := requestID // capture for closure
-			// Use the requestID as the platform prompt ID so PermissionCancelFunc
-			// (below) can find and edit this exact message later if CC cancels
-			// the request before the user responds.
+			// Use the requestID as the platform prompt ID so the cancel
+			// listener (registered below) can find and edit this exact
+			// message later if CC cancels the request before the user
+			// responds.
 			_ = platform.SendInteractiveMessageWithID(conn, requestID, text, buttons, func(choice platform.ButtonChoice) string {
 				log.Debugf("agent/"+agentID, "permission button pressed: sk=%s reqID=%s choice=%q", sessionKey, reqID, choice.Data)
 				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, choice.Data); err != nil {
@@ -166,22 +167,23 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					return "✅ Approved"
 				}
 			})
-		},
-		PermissionCancelFunc: func(sessionKey, requestID, toolName, reason string) {
-			// Permission was cancelled by CC (typically because a follow-up
-			// user message aborted the in-flight tool). Edit the inline
-			// keyboard message to mark it cancelled and remove the buttons,
-			// preventing the orphaned-button race that produces
-			// "no pending permission with request ID" errors.
-			finalText := "❌ tool request cancelled by follow-up message"
-			if toolName != "" {
-				finalText = fmt.Sprintf("❌ %s cancelled by follow-up message", toolName)
-			}
-			if err := platform.CancelInteractiveMessage(requestID, finalText); err != nil {
-				log.Warnf("agent/"+agentID, "cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, requestID, err)
-			} else {
-				log.Debugf("agent/"+agentID, "permission cancelled: sk=%s reqID=%s tool=%s reason=%q", sessionKey, requestID, toolName, reason)
-			}
+			// Register a cancel listener so the orphaned inline keyboard is
+			// disabled if CC aborts this prompt before the user responds
+			// (typically because a follow-up message interrupted the
+			// in-flight tool). This replaces the global PermissionCancelFunc
+			// chain with a per-prompt registration owned by the same closure
+			// that created the UI.
+			ag.DelegatedManager.RegisterPromptCancelListener(sessionKey, reqID, func(reason string) {
+				finalText := "❌ tool request cancelled by follow-up message"
+				if summary != "" {
+					finalText = fmt.Sprintf("❌ %s cancelled by follow-up message", summary)
+				}
+				if err := platform.CancelInteractiveMessage(reqID, finalText); err != nil {
+					log.Warnf("agent/"+agentID, "cancel interactive message: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
+				} else {
+					log.Debugf("agent/"+agentID, "permission cancelled: sk=%s reqID=%s reason=%q", sessionKey, reqID, reason)
+				}
+			})
 		},
 		TypingFunc: func(sessionKey string, typing bool) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)

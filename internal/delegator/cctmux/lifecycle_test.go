@@ -444,12 +444,12 @@ func TestSetPermissionPromptFunc(t *testing.T) {
 	}
 }
 
-// TestSetOnPermissionCleared verifies the onPermCleared callback is stored.
-func TestSetOnPermissionCleared(t *testing.T) {
+// TestSetOnPromptsCleared verifies the onPermCleared callback is stored.
+func TestSetOnPromptsCleared(t *testing.T) {
 	b := &Backend{}
 
 	called := false
-	b.SetOnPermissionCleared(func() { called = true })
+	b.SetOnPromptsCleared(func() { called = true })
 
 	b.lastPromptMu.Lock()
 	fn := b.onPermCleared

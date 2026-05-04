@@ -116,8 +116,8 @@ func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error
 func (m *mockBackendDT) IsRunning() bool                                                   { return true }
 func (m *mockBackendDT) Restart(_ context.Context) error                                   { return nil }
 func (m *mockBackendDT) SetPermissionPromptFunc(_ delegator.PermissionPromptFunc)            {}
-func (m *mockBackendDT) SetOnPermissionCleared(_ func())                                   {}
-func (m *mockBackendDT) SetOnPermissionCancelled(_ func(string, string, string))           {}
+func (m *mockBackendDT) SetOnPromptsCleared(_ func())                                      {}
+func (m *mockBackendDT) RegisterPromptCancelListener(_ string, _ func(string))             {}
 func (m *mockBackendDT) SetOnSessionReady(_ func(string))                                  {}
 func (m *mockBackendDT) SetTypingFunc(_ func(bool))                                        {}
 func (m *mockBackendDT) SendKeystroke(_ context.Context, _ string) error                   { return nil }
