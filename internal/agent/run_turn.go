@@ -30,7 +30,7 @@ func (a *Agent) RunTurn(
 	sk string,
 	batch []Envelope,
 	steerer turnevent.Steerer,
-	router *turnevent.SessionRouter,
+	router *sessionRouter,
 	driver Driver,
 ) error {
 	if len(batch) == 0 || sk == "" {
