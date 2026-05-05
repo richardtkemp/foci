@@ -124,6 +124,22 @@ func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessag
 	}
 }
 
+// NewLateDeliverySink implements agent.Driver. Returns a turn.SessionSink
+// that the SessionRouter will dispatch to when no per-turn sink is
+// registered (i.e. for events that arrive after Drive's defer chain has
+// cleared the per-turn StreamingSink). Late deliveries become fresh
+// standalone messages in the session's chat — semantically appropriate
+// for content that arrives after the previous turn's UI thread is past.
+//
+// See TODO #745 for the bug this fix addresses (rearmed responses lost
+// when ccstream emits text after the per-turn renderer is gone).
+func (b *Bot) NewLateDeliverySink(sk string) turnevent.Sink {
+	return turn.NewSessionSink(b, sk, "late-delivery",
+		turn.WithSessionSinkErrorHandler(func(trigger string, err error) {
+			b.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
+		}))
+}
+
 // Drive implements agent.Driver. Called by the agent's per-session worker
 // after batching a turn's worth of envelopes. Owns the platform-specific
 // concerns: renderer/tracker construction, sink wiring, cancellable turn
@@ -132,7 +148,14 @@ func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessag
 // Steerer is supplied by the agent for API-mode mid-turn buffer drain —
 // it returns texts queued in this session's inbox steer buffer since the
 // last drain, pasted into the user message at the next tool boundary.
-func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer) error {
+//
+// router is the session's SessionRouter (TODO #745). Drive registers its
+// per-turn StreamingSink with the router at start and clears at end via
+// defer; in-turn events flow through the streaming sink, late events
+// (post-Drive-exit) flow through the router's late-delivery fallback.
+// router may be nil if Drive is invoked outside the agent's session
+// worker context (defensive — current call sites always pass non-nil).
+func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -175,6 +198,18 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 
 	sink := turn.NewStreamingSink(renderer, tracker, b)
 
+	// Register the per-turn streaming sink with the session router (TODO
+	// #745). In-turn events route through `sink`; late events (those that
+	// arrive after this Drive's defer Clear runs — e.g. ccstream
+	// rearm-counter responses) fall through to the router's late-delivery
+	// fallback. router is nil only outside the agent session-worker path.
+	var dispatchSink turnevent.Sink = sink
+	if router != nil {
+		router.Register(sink)
+		defer router.Clear()
+		dispatchSink = router
+	}
+
 	turnCtx = agent.WithTrigger(turnCtx, "telegram")
 	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
 		UserID:   first.UserID,
@@ -201,7 +236,7 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 	}
 
 	b.logger().Debugf("Drive: calling turn.RunTurn sk=%s", sk)
-	err := turn.RunTurn(turnCtx, b.handler, sink, steerer, sk, texts, allAttachments)
+	err := turn.RunTurn(turnCtx, b.handler, dispatchSink, steerer, sk, texts, allAttachments)
 	b.logger().Debugf("Drive: RunTurn returned sk=%s err=%v", sk, err)
 	if err != nil && turnCtx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")

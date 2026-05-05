@@ -23,7 +23,7 @@ type recordingDriver struct {
 	doneCh chan struct{} // optional: signalled at end of each Drive
 }
 
-func (d *recordingDriver) Drive(ctx context.Context, sk string, batch []Envelope, _ turnevent.Steerer) error {
+func (d *recordingDriver) Drive(ctx context.Context, sk string, batch []Envelope, _ turnevent.Steerer, _ *turnevent.SessionRouter) error {
 	if d.hookCh != nil {
 		d.hookCh <- struct{}{}
 	}
@@ -41,6 +41,10 @@ func (d *recordingDriver) Drive(ctx context.Context, sk string, batch []Envelope
 	}
 	return nil
 }
+
+// NewLateDeliverySink returns nil — tests don't exercise late delivery, and
+// nil tells SessionRouter to use NopSink as fallback.
+func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
 
 func (d *recordingDriver) Calls() [][]Envelope {
 	d.mu.Lock()
@@ -412,13 +416,13 @@ type recursiveDriver struct {
 	once       sync.Once
 }
 
-func (d *recursiveDriver) Drive(ctx context.Context, sk string, batch []Envelope, st turnevent.Steerer) error {
+func (d *recursiveDriver) Drive(ctx context.Context, sk string, batch []Envelope, st turnevent.Steerer, router *turnevent.SessionRouter) error {
 	if len(batch) > 0 && batch[0].Text == d.onText {
 		d.once.Do(func() {
 			d.inb.appendSteer(d.appendNext, time.Now())
 		})
 	}
-	return d.recordingDriver.Drive(ctx, sk, batch, st)
+	return d.recordingDriver.Drive(ctx, sk, batch, st, router)
 }
 
 // TestInbox_Worker_NoDriverDropsBatch verifies that an envelope without
@@ -643,7 +647,7 @@ type driverGated struct {
 	count   atomic.Int32
 }
 
-func (d *driverGated) Drive(ctx context.Context, _ string, _ []Envelope, _ turnevent.Steerer) error {
+func (d *driverGated) Drive(ctx context.Context, _ string, _ []Envelope, _ turnevent.Steerer, _ *turnevent.SessionRouter) error {
 	d.count.Add(1)
 	select {
 	case d.ready <- struct{}{}:
@@ -660,4 +664,131 @@ func (d *driverGated) Drive(ctx context.Context, _ string, _ []Envelope, _ turne
 		d.done <- struct{}{}
 	}
 	return nil
+}
+
+func (d *driverGated) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
+
+// --- TODO #745 — SessionRouter wiring tests ---
+
+// routerObservingDriver records the *turnevent.SessionRouter passed to each
+// Drive call, so tests can assert the router is constructed once per session
+// and reused across follow-up turns.
+type routerObservingDriver struct {
+	mu      sync.Mutex
+	routers []*turnevent.SessionRouter
+	fallback turnevent.Sink
+}
+
+func (d *routerObservingDriver) Drive(_ context.Context, _ string, _ []Envelope, _ turnevent.Steerer, router *turnevent.SessionRouter) error {
+	d.mu.Lock()
+	d.routers = append(d.routers, router)
+	d.mu.Unlock()
+	return nil
+}
+
+func (d *routerObservingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return d.fallback }
+
+func (d *routerObservingDriver) seenRouters() []*turnevent.SessionRouter {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]*turnevent.SessionRouter, len(d.routers))
+	copy(out, d.routers)
+	return out
+}
+
+// TestInbox_SessionRouter_LazyConstructedAndReused verifies driveAndDrainOrphans
+// builds the SessionRouter once per session (via the Driver's
+// NewLateDeliverySink) and reuses the same instance across follow-up Drive
+// calls within the same session. Closes the lifecycle gap that TODO #745
+// addresses: the router must outlive any single Drive() invocation so late
+// deliveries from ccstream's rearm path land somewhere live.
+func TestInbox_SessionRouter_LazyConstructedAndReused(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	d := &routerObservingDriver{}
+	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "first", Driver: d})
+	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 1 }) {
+		t.Fatalf("first Drive call did not record a router")
+	}
+	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "second", Driver: d})
+	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 2 }) {
+		t.Fatalf("second Drive call did not record a router")
+	}
+
+	rs := d.seenRouters()
+	if rs[0] == nil {
+		t.Fatal("router passed to Drive is nil; sessionRouterFor must construct one")
+	}
+	if rs[0] != rs[1] {
+		t.Errorf("router reused across calls: got %p then %p, want same instance", rs[0], rs[1])
+	}
+}
+
+// TestInbox_SessionRouter_DistinctPerSession verifies different session keys
+// get different SessionRouter instances. Each session's late-delivery
+// fallback is bound to its own session ID (turn.SessionSink's sessionKey).
+func TestInbox_SessionRouter_DistinctPerSession(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	d := &routerObservingDriver{}
+	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "a", Driver: d})
+	a.Enqueue(Envelope{SessionKey: "test/sess-B", Text: "b", Driver: d})
+	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 2 }) {
+		t.Fatalf("two sessions did not produce two Drive calls")
+	}
+
+	rs := d.seenRouters()
+	if rs[0] == rs[1] {
+		t.Errorf("two different sessions shared a router; want distinct instances")
+	}
+}
+
+// TestInbox_SessionRouter_FallbackUsedForLateEmit verifies the contract that
+// matters in production: events emitted on the router after no per-turn sink
+// is registered route to the fallback sink supplied by the Driver. This is
+// the exact path coach's lost 56-byte response should have taken on
+// 2026-05-05.
+func TestInbox_SessionRouter_FallbackUsedForLateEmit(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	fallback := &recordingSink{name: "late"}
+	d := &routerObservingDriver{fallback: fallback}
+	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "go", Driver: d})
+	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 1 }) {
+		t.Fatalf("Drive did not run")
+	}
+
+	// Simulate a backend emitting late text after Drive has cleared its
+	// per-turn sink. The router's current slot is empty (Drive returned),
+	// so the event must reach the fallback.
+	router := d.seenRouters()[0]
+	router.Emit(context.Background(), turnevent.TextBlock{Text: "late!", Phase: turnevent.PhaseIntermediate})
+
+	if got := fallback.count(); got != 1 {
+		t.Errorf("fallback received %d events, want 1", got)
+	}
+}
+
+// recordingSink is a minimal turnevent.Sink that counts calls. Lives here
+// to keep the test file self-contained; the turnevent package has its own
+// in router_test.go but it's package-private.
+type recordingSink struct {
+	name string
+	mu   sync.Mutex
+	n    int
+}
+
+func (s *recordingSink) Emit(_ context.Context, _ turnevent.Event) {
+	s.mu.Lock()
+	s.n++
+	s.mu.Unlock()
+}
+
+func (s *recordingSink) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.n
 }

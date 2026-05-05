@@ -109,6 +109,16 @@ func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessag
 	}
 }
 
+// NewLateDeliverySink implements agent.Driver. Returns a turn.SessionSink
+// for late text deliveries that arrive after a Drive call's defer chain has
+// cleared the per-turn StreamingSink. See TODO #745.
+func (b *Bot) NewLateDeliverySink(sk string) turnevent.Sink {
+	return turn.NewSessionSink(b, sk, "late-delivery",
+		turn.WithSessionSinkErrorHandler(func(trigger string, err error) {
+			b.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
+		}))
+}
+
 // Drive implements agent.Driver. Called by the agent's per-session worker
 // after batching a turn's worth of envelopes. Owns the platform-specific
 // concerns: renderer/tracker construction, sink wiring, cancellable turn
@@ -116,7 +126,14 @@ func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessag
 //
 // Steerer is supplied by the agent for API-mode mid-turn buffer drain at
 // tool boundaries.
-func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer) error {
+//
+// router is the session's SessionRouter (TODO #745). Drive registers its
+// per-turn StreamingSink with the router at start and clears at end via
+// defer; in-turn events flow through the streaming sink, late events
+// (post-Drive-exit) flow through the router's late-delivery fallback.
+// router may be nil if Drive is invoked outside the agent's session
+// worker context (defensive — current call sites always pass non-nil).
+func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -155,6 +172,15 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 
 	sink := turn.NewStreamingSink(renderer, tracker, b)
 
+	// Register per-turn streaming sink with the session router (TODO #745).
+	// Late events fall through to the router's late-delivery fallback.
+	var dispatchSink turnevent.Sink = sink
+	if router != nil {
+		router.Register(sink)
+		defer router.Clear()
+		dispatchSink = router
+	}
+
 	turnCtx = agent.WithTrigger(turnCtx, "discord")
 	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
 		UserID:   first.UserID,
@@ -180,7 +206,7 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 		allAttachments = append(allAttachments, env.Attachments...)
 	}
 
-	err := turn.RunTurn(turnCtx, b.handler, sink, steerer, sk, texts, allAttachments)
+	err := turn.RunTurn(turnCtx, b.handler, dispatchSink, steerer, sk, texts, allAttachments)
 	if err != nil && turnCtx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return nil
