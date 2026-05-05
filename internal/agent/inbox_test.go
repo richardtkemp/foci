@@ -720,14 +720,14 @@ func (d *routerObservingDriver) Connection() platform.Connection { return nil }
 // seenRouters returns the SessionRouter from each driven turn's inbox.
 // Same sk → same router (router is session-scoped); test assertions on
 // reuse across calls map directly.
-func (d *routerObservingDriver) seenRouters() []*turnevent.SessionRouter {
+func (d *routerObservingDriver) seenRouters() []*sessionRouter {
 	if d.a == nil {
 		return nil
 	}
 	d.mu.Lock()
 	sks := append([]string(nil), d.sks...)
 	d.mu.Unlock()
-	out := make([]*turnevent.SessionRouter, 0, len(sks))
+	out := make([]*sessionRouter, 0, len(sks))
 	for _, sk := range sks {
 		d.a.inboxesMu.Lock()
 		inb := d.a.inboxes[sk]

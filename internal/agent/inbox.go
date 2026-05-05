@@ -143,13 +143,14 @@ type sessionInbox struct {
 
 	workerStarted sync.Once
 
-	// router is the session-scoped delivery dispatcher. Lazy-built on the
-	// first Drive call by sessionRouterFor — needs the Driver in scope to
-	// construct the late-delivery fallback. After construction the field
-	// stays alive for the session; only the per-turn sink registered on it
-	// changes per turn. Read/written exclusively from the per-session
-	// worker goroutine, so a plain pointer is safe.
-	router *turnevent.SessionRouter
+	// router is the session-scoped delivery dispatcher (see
+	// session_router.go). Lazy-built on the first Drive call by
+	// sessionRouterFor — needs the Driver in scope to construct the
+	// late-delivery fallback. After construction the field stays alive
+	// for the session; only the per-turn sink registered on it changes
+	// per turn. Read/written exclusively from the per-session worker
+	// goroutine, so a plain pointer is safe.
+	router *sessionRouter
 
 	// cancelMu guards turnCancel. Set by the session worker before each
 	// turn; cleared on turn return. Agent.CancelSession reads under the
@@ -453,16 +454,16 @@ func (a *Agent) CancelSession(sk string) bool {
 	return true
 }
 
-// sessionRouterFor returns inb's SessionRouter, lazy-constructing it on
+// sessionRouterFor returns inb's sessionRouter, lazy-constructing it on
 // first call. The fallback sink is built agent-side from the driver's
 // platform.Connection — see lateDeliverySink. Called only from the
 // per-session worker goroutine, so the read-then-init is single-threaded
 // and safe without locking.
-func (a *Agent) sessionRouterFor(inb *sessionInbox, driver Driver) *turnevent.SessionRouter {
+func (a *Agent) sessionRouterFor(inb *sessionInbox, driver Driver) *sessionRouter {
 	if inb.router != nil {
 		return inb.router
 	}
-	inb.router = turnevent.NewSessionRouter(a.lateDeliverySink(inb.sk, driver))
+	inb.router = newSessionRouter(a.lateDeliverySink(inb.sk, driver))
 	return inb.router
 }
 
@@ -529,7 +530,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 // driver.WrapTurn provides the platform-side lifecycle envelope (typing
 // indicators, notification drain, OnTurnEnd / OnTurnComplete hooks);
 // Agent.RunTurn does the actual turn execution.
-func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter, driver Driver) {
+func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, router *sessionRouter, driver Driver) {
 	turnCtx, cancel := context.WithCancel(ctx)
 	inb.cancelMu.Lock()
 	inb.turnCancel = cancel
