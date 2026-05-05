@@ -5,36 +5,43 @@
 // behind it. In both cases CC emits a result message for the original turn
 // AND will produce a fresh round of assistant output for the injected event.
 //
-// Without re-arming, that fresh output hits a cleared handler and the
-// text is silently dropped. completeAndRearm fires the original turn's
-// OnTurnComplete, then installs a delivery-only handler so the injected
-// event's response reaches OnText.
+// Post-TODO #746 the rearm machinery has a narrower job than it once did.
+// Delivery routing is no longer dependent on which handler is currently
+// installed: handler.OnText is a closure that emits via turnevent.Emit
+// against a session-scoped sessionRouter (in the agent package), so late
+// text from any handler instance routes correctly — to the registered
+// per-turn sink during a turn, or to the session-scoped late-delivery
+// fallback after the turn ends.
+//
+// What rearm STILL does:
+//   - Counts queued user-role injections (pendingRearmCount) so the
+//     OnTurnComplete fire-once invariant is preserved across stacked
+//     CC result cycles for one user-facing turn.
+//   - Swaps b.turnHandler with a delivery-only clone (OnTurnComplete=nil)
+//     so subsequent OnResult invocations don't fire OnTurnComplete twice.
+//   - Resets per-turn state (turnText, turnTools, turnResultCh) for the
+//     next CC round.
+//
+// What rearm USED TO do (pre-#746) and no longer needs to:
+//   - Preserve the OnText closure across handler swaps so late text
+//     reaches the original turn's renderer. The router handles that now;
+//     swapping/cloning OnText is incidental, not load-bearing.
+//
+// Could be simplified further (in-place mutation of OnTurnComplete=nil
+// instead of full clone; or a flag on the backend instead of a handler
+// swap). Deferred — pre-answer nudge and stacked-event tests are
+// intricate, simplification has low marginal value, and the architecture
+// is correct as-is. Tracked as TODO #747 for future cleanup.
 //
 // pendingRearmCount semantics:
 //
 // When non-zero, OnResult must take the complete-and-rearm path: complete
 // the foci turn (the first time) or absorb the next queued response (every
-// time after), then install a delivery-only handler so the queued user-role
-// response reaches OnText. Each injected event increments the count; each
-// OnResult that takes the rearm path decrements it. When multiple events
-// stack within a single in-flight CC turn, the count drains across
-// successive OnResult cycles — each event gets its own delivery handler,
-// and the count reaches zero only after CC has emitted a result for every
-// queued event.
-//
-// The "fire OnTurnComplete only once" invariant falls out naturally: the
-// original handler (with a real OnTurnComplete) is captured by the first
-// rearm cycle; rearmForNudgeResponse then installs a delivery-only handler
-// whose OnTurnComplete is nil. Subsequent OnResult cycles capture that
-// nil-OnTurnComplete handler, so completeAndRearm's nil-check no-ops the
-// callback. Consumers see exactly one foci-turn boundary regardless of
-// how many CC result messages flow through.
-//
-// Pre-counter (single-bit rearmReason) the second event's response raced
-// against the first cycle's handler clear and was dropped — surfaced as
-// the production "text block dropped (no handler/OnText)" WARN. The
-// counter eliminates that race by giving every queued event its own
-// delivery cycle.
+// time after). Each injected event increments the count; each OnResult
+// that takes the rearm path decrements it. When multiple events stack
+// within a single in-flight CC turn, the count drains across successive
+// OnResult cycles. The count reaches zero only after CC has emitted a
+// result for every queued event.
 //
 // The protocol assumes CC emits one result + one assistant cycle per
 // injected event. If CC fails to produce a result for some queued event,
