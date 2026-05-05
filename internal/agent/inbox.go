@@ -74,27 +74,27 @@ type Envelope struct {
 // (for /stop), OnTurnEnd / OnTurnComplete lifecycle hooks, error
 // sanitisation and logging.
 type Driver interface {
-	// Drive executes one batched turn for the given session key.
-	// Steerer is supplied for API-mode mid-turn buffer drain at tool
-	// boundaries — implementations pass it to turn.RunTurn so any
-	// messages that arrive during a long tool call are pasted into the
-	// next user message.
+	// WrapTurn invokes fn (which the agent supplies — typically a closure
+	// over Agent.RunTurn) inside whatever platform-side lifecycle the
+	// driver wants: typing-active flag, post-turn notification drain,
+	// platform-specific OnTurnEnd / OnTurnComplete hooks, error
+	// sanitisation, etc. The agent owns the cancellable turn ctx and
+	// per-session cancellation; the platform owns its own ancillary
+	// state.
 	//
-	// router is the session-scoped delivery dispatcher (TODO #745).
-	// Implementations should Register their per-turn sink (e.g.
-	// turn.StreamingSink) at turn start and Clear at turn end so that:
-	//   - in-turn events flow to the registered streaming sink, and
-	//   - late events (e.g. ccstream rearm-counter responses arriving
-	//     after the turn-end defer chain) flow to the router's fallback
-	//     sink (built via NewLateDeliverySink at session-router init).
-	// router is non-nil only when called from the agent's session worker;
-	// implementations that may run outside that context should nil-check
-	// and fall back to passing their per-turn sink directly to RunTurn.
-	Drive(ctx context.Context, sk string, batch []Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error
+	// Implementations should:
+	//   - flip any "turn active" indicator on entry and off via defer
+	//   - run fn() to execute the turn
+	//   - fire post-turn lifecycle hooks (drain notifications, OnTurnEnd,
+	//     OnTurnComplete) in whatever order they prefer
+	//   - return nil on user cancellation (ctx.Err() != nil after fn
+	//     returned) since "Stopped." has already been delivered
+	//   - return fn's error otherwise so the agent logs it
+	WrapTurn(fn func() error) error
 
 	// NewLateDeliverySink constructs the fallback sink the SessionRouter
 	// uses when no per-turn sink is registered (i.e. for events that
-	// arrive after Bot.Drive's defer chain has cleared the per-turn slot).
+	// arrive after the per-turn StreamingSink has been cleared).
 	// Called once per session by the agent layer to seed the router.
 	//
 	// Returning nil disables late delivery (the router substitutes a
@@ -110,19 +110,13 @@ type Driver interface {
 	// Returning a nil sink signals that the platform can't render this
 	// envelope — usually because env.Original isn't the platform's
 	// expected message type (e.g. discord receiving a telegram envelope).
-	// runTurn skips silently in that case.
-	//
-	// Added in TODO #746 Stage A — lets agent.runTurn own the per-turn
-	// pipeline without needing platform-specific renderer types.
+	// RunTurn skips silently in that case.
 	NewTurnSink(env Envelope) (turnevent.Sink, func())
 
 	// Connection exposes the platform's delivery interface. Used by the
 	// agent for session-scoped sinks (late-delivery, notify flows),
 	// platform-name discrimination in turn metadata, and cross-session
 	// dispatch. Bots typically return themselves.
-	//
-	// Added in TODO #746 Stage A — Stage D will collapse
-	// NewLateDeliverySink into agent-side construction using this.
 	Connection() platform.Connection
 }
 
@@ -434,6 +428,14 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	}
 }
 
+// SetTurnObserver installs a callback fired before each driver.WrapTurn
+// invocation, with the batch being driven. Test-only — production wires
+// nil. Replaces the recordingDriver.Drive batch-capture pattern after
+// TODO #746 Stage C moved batch ownership into the agent.
+func (a *Agent) SetTurnObserver(fn func(sk string, batch []Envelope)) {
+	a.turnObserver = fn
+}
+
 // CancelSession cancels the in-flight turn for sk, if any. Used by /stop
 // (and any other consumer that needs per-session cancellation precision).
 // No-op if the session has no inbox or no turn is currently in flight.
@@ -506,11 +508,15 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 	}
 }
 
-// driveOnce wraps a single driver.Drive invocation with a cancellable ctx
-// whose cancel func is registered with the inbox so Agent.CancelSession
-// can fire it (the per-session /stop path). The cancel is cleared on
-// return so post-turn /stop calls become no-ops rather than racing with
-// the next turn's setup.
+// driveOnce wraps a single turn invocation with a cancellable ctx whose
+// cancel func is registered with the inbox so Agent.CancelSession can
+// fire it (the per-session /stop path). The cancel is cleared on return
+// so post-turn /stop calls become no-ops rather than racing with the
+// next turn's setup.
+//
+// driver.WrapTurn provides the platform-side lifecycle envelope (typing
+// indicators, notification drain, OnTurnEnd / OnTurnComplete hooks);
+// Agent.RunTurn does the actual turn execution.
 func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter, driver Driver) {
 	turnCtx, cancel := context.WithCancel(ctx)
 	inb.cancelMu.Lock()
@@ -522,10 +528,14 @@ func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelo
 		inb.cancelMu.Unlock()
 		cancel()
 	}()
-	if err := driver.Drive(turnCtx, inb.sk, batch, steerer, router); err != nil {
-		if a.Log != nil {
-			a.Log.Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
-		}
+	if a.turnObserver != nil {
+		a.turnObserver(inb.sk, batch)
+	}
+	err := driver.WrapTurn(func() error {
+		return a.RunTurn(turnCtx, inb.sk, batch, steerer, router, driver)
+	})
+	if err != nil && a.Log != nil {
+		a.Log.Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
 	}
 }
 

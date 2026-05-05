@@ -139,28 +139,13 @@ func (b *Bot) Connection() platform.Connection {
 	return b
 }
 
-// Drive implements agent.Driver. Called by the agent's per-session worker
-// after batching a turn's worth of envelopes. Owns the platform-specific
-// concerns: renderer/tracker construction, sink wiring, cancellable turn
-// context (so /stop can cancel), error sanitisation, and lifecycle hooks.
-//
-// Steerer is supplied by the agent for API-mode mid-turn buffer drain at
-// tool boundaries.
-//
-// router is the session's SessionRouter (TODO #745). Drive registers its
-// per-turn StreamingSink with the router at start and clears at end via
-// defer; in-turn events flow through the streaming sink, late events
-// (post-Drive-exit) flow through the router's late-delivery fallback.
-// router may be nil if Drive is invoked outside the agent's session
-// worker context (defensive — current call sites always pass non-nil).
-func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error {
-	if len(batch) == 0 || sk == "" {
-		return nil
-	}
-
+// WrapTurn implements agent.Driver. Discord-side lifecycle envelope
+// around each agent turn — turnActive flag, notification drain,
+// OnTurnEnd / OnTurnComplete hooks, error sanitisation. See the
+// telegram Bot.WrapTurn for the equivalent on Telegram. TODO #746
+// Stage C.
+func (b *Bot) WrapTurn(fn func() error) error {
 	b.turnActive.Store(true)
-	// Cancellable turn ctx + /stop wiring moved to agent.driveOnce
-	// (TODO #746 Stage B).
 	defer func() {
 		b.turnActive.Store(false)
 		b.drainPendingNotifications()
@@ -169,15 +154,7 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 		}
 	}()
 
-	if b.agentRef == nil {
-		b.logger().Warnf("Drive: agentRef nil sk=%s, cannot run turn", sk)
-		return nil
-	}
-	err := b.agentRef.RunTurn(ctx, sk, batch, steerer, router, b)
-	if err != nil && ctx.Err() != nil {
-		b.logger().Infof("agent turn cancelled")
-		return nil
-	}
+	err := fn()
 	if err != nil {
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
 	}
@@ -185,7 +162,7 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 	if b.OnTurnComplete != nil {
 		b.OnTurnComplete()
 	}
-	return nil
+	return err
 }
 
 // cancelTurn cancels the in-flight agent turn for this bot's primary

@@ -65,14 +65,16 @@ type recordingDriver struct {
 	calls [][]agent.Envelope
 }
 
-func (d *recordingDriver) Drive(_ context.Context, _ string, batch []agent.Envelope, _ turnevent.Steerer, _ *turnevent.SessionRouter) error {
+// recordBatch is wired via Agent.SetTurnObserver so this driver captures
+// each turn's batch the way Drive used to (post-TODO #746 Stage C).
+func (d *recordingDriver) recordBatch(_ string, batch []agent.Envelope) {
 	d.mu.Lock()
 	d.calls = append(d.calls, batch)
 	d.mu.Unlock()
-	return nil
 }
 
-func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink            { return nil }
+func (d *recordingDriver) WrapTurn(fn func() error) error                          { return fn() }
+func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink             { return nil }
 func (d *recordingDriver) NewTurnSink(_ agent.Envelope) (turnevent.Sink, func())   { return nil, nil }
 func (d *recordingDriver) Connection() platform.Connection                          { return nil }
 
@@ -104,6 +106,7 @@ func TestAgentEnqueue_RoutesThroughInboxToDriver(t *testing.T) {
 	a.StartInbox(ctx)
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(agent.Envelope{
 		SessionKey: "agent:test:main",
 		Text:       "hello",
