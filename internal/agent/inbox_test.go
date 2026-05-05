@@ -23,23 +23,32 @@ type recordingDriver struct {
 	doneCh chan struct{} // optional: signalled at end of each Drive
 }
 
-func (d *recordingDriver) Drive(ctx context.Context, sk string, batch []Envelope, _ turnevent.Steerer, _ *turnevent.SessionRouter) error {
+// recordBatch captures a batch — wired into Agent.SetTurnObserver by
+// startedAgent so existing tests that asserted on d.Calls() / d.NumCalls()
+// keep their semantics after TODO #746 Stage C moved batch ownership into
+// the agent.
+func (d *recordingDriver) recordBatch(_ string, batch []Envelope) {
+	d.mu.Lock()
+	d.calls = append(d.calls, batch)
+	d.mu.Unlock()
+}
+
+// WrapTurn implements agent.Driver. recordingDriver doesn't actually
+// execute turns (NewTurnSink returns nil so RunTurn no-ops); it just
+// signals lifecycle for tests that gate on hookCh/doneCh and applies
+// the configured delay so concurrent-turn tests still work.
+func (d *recordingDriver) WrapTurn(fn func() error) error {
 	if d.hookCh != nil {
 		d.hookCh <- struct{}{}
 	}
 	if d.delay > 0 {
-		select {
-		case <-time.After(d.delay):
-		case <-ctx.Done():
-		}
+		time.Sleep(d.delay)
 	}
-	d.mu.Lock()
-	d.calls = append(d.calls, batch)
-	d.mu.Unlock()
+	err := fn()
 	if d.doneCh != nil {
 		d.doneCh <- struct{}{}
 	}
-	return nil
+	return err
 }
 
 // NewLateDeliverySink returns nil — tests don't exercise late delivery, and
@@ -132,6 +141,7 @@ func TestInbox_Enqueue_Idle_PushesToChannel(t *testing.T) {
 	defer cancel()
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{
 		SessionKey: "test/s",
 		Text:       "hello",
@@ -269,6 +279,7 @@ func TestInbox_Enqueue_EmptySessionKey_Drops(t *testing.T) {
 	defer cancel()
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{Text: "no sk", Driver: d})
 
 	// Give the worker a moment in case it picks up; nothing should fire.
@@ -293,6 +304,7 @@ func TestInbox_Worker_BatchesAvailableMessages(t *testing.T) {
 	hook := make(chan struct{}, 4)
 	done := make(chan struct{}, 4)
 	d := &recordingDriver{hookCh: hook, doneCh: done, delay: 50 * time.Millisecond}
+	a.SetTurnObserver(d.recordBatch)
 
 	// Push three messages quickly. The first triggers worker entry; while
 	// it's holding the Drive call, messages 2 and 3 land on the channel
@@ -328,6 +340,7 @@ func TestInbox_Worker_SetsTurnActiveAroundDrive(t *testing.T) {
 	hook := make(chan struct{}, 1)
 	done := make(chan struct{}, 1)
 	d := &recordingDriver{hookCh: hook, doneCh: done, delay: 30 * time.Millisecond}
+	a.SetTurnObserver(d.recordBatch)
 
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "x", Driver: d})
 
@@ -353,6 +366,7 @@ func TestInbox_Worker_DrainsOrphansAfterTurn(t *testing.T) {
 	hook := make(chan struct{}, 4)
 	done := make(chan struct{}, 4)
 	d := &recordingDriver{hookCh: hook, doneCh: done}
+	a.SetTurnObserver(d.recordBatch)
 
 	// Pre-seed the inbox so we can push an orphan steer before the
 	// worker creates it.
@@ -394,6 +408,7 @@ func TestInbox_Worker_OrphanDrainIsRecursive(t *testing.T) {
 	// pushes orphan-2 into the steer buffer mid-Drive — simulating a
 	// message that arrives during orphan processing.
 	d := &recursiveDriver{onText: "orphan-1", appendNext: "orphan-2", inb: inb}
+	a.SetTurnObserver(d.observeBatch)
 
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "primary", Driver: d})
 
@@ -423,13 +438,16 @@ type recursiveDriver struct {
 	once       sync.Once
 }
 
-func (d *recursiveDriver) Drive(ctx context.Context, sk string, batch []Envelope, st turnevent.Steerer, router *turnevent.SessionRouter) error {
+// observeBatch is the recursiveDriver's TurnObserver — captures the
+// batch via the agent's SetTurnObserver hook (TODO #746 Stage C
+// replacement for the old Drive-with-batch parameter).
+func (d *recursiveDriver) observeBatch(sk string, batch []Envelope) {
 	if len(batch) > 0 && batch[0].Text == d.onText {
 		d.once.Do(func() {
 			d.inb.appendSteer(d.appendNext, time.Now())
 		})
 	}
-	return d.recordingDriver.Drive(ctx, sk, batch, st, router)
+	d.recordingDriver.recordBatch(sk, batch)
 }
 
 // TestInbox_Worker_NoDriverDropsBatch verifies that an envelope without
@@ -443,6 +461,7 @@ func TestInbox_Worker_NoDriverDropsBatch(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	// Worker should still be alive — push another with a driver.
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "with driver", Driver: d})
 	if !waitFor(time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatalf("worker should still process subsequent envelopes")
@@ -522,6 +541,7 @@ func TestInbox_LazyWorkerSpawn(t *testing.T) {
 
 	const N = 50
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 
 	var wg sync.WaitGroup
 	for i := 0; i < N; i++ {
@@ -577,6 +597,7 @@ func TestInbox_StartInbox_Idempotent(t *testing.T) {
 	a.StartInbox(ctx) // still no-op
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{SessionKey: "sess/Y", Text: "x", Driver: d})
 	if !waitFor(time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatalf("worker did not fire after multiple StartInbox calls")
@@ -590,6 +611,7 @@ func TestInbox_StartInbox_BeforeEnqueue_SpawnsWorker(t *testing.T) {
 	defer cancel()
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{SessionKey: "sess/Z", Text: "x", Driver: d})
 	if !waitFor(time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatal("worker did not fire after Enqueue")
@@ -603,6 +625,7 @@ func TestInbox_EnqueueBeforeStart_Buffers(t *testing.T) {
 	a := newTestAgent(t)
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{SessionKey: "sess/W", Text: "early", Driver: d})
 
 	// No worker yet — Drive should not have fired.
@@ -629,6 +652,7 @@ func TestInbox_ContextCancellation_StopsWorker(t *testing.T) {
 	a.StartInbox(ctx)
 
 	d := &recordingDriver{}
+	a.SetTurnObserver(d.recordBatch)
 	a.Enqueue(Envelope{SessionKey: "sess/V", Text: "x", Driver: d})
 	if !waitFor(time.Second, func() bool { return d.NumCalls() == 1 }) {
 		t.Fatalf("first call did not fire")
@@ -654,23 +678,20 @@ type driverGated struct {
 	count   atomic.Int32
 }
 
-func (d *driverGated) Drive(ctx context.Context, _ string, _ []Envelope, _ turnevent.Steerer, _ *turnevent.SessionRouter) error {
+func (d *driverGated) WrapTurn(fn func() error) error {
 	d.count.Add(1)
 	select {
 	case d.ready <- struct{}{}:
 	default:
 	}
 	if d.release != nil {
-		select {
-		case <-d.release:
-		case <-ctx.Done():
-			return nil
-		}
+		<-d.release
 	}
+	err := fn()
 	if d.done != nil {
 		d.done <- struct{}{}
 	}
-	return nil
+	return err
 }
 
 func (d *driverGated) NewLateDeliverySink(_ string) turnevent.Sink         { return nil }
@@ -679,34 +700,61 @@ func (d *driverGated) Connection() platform.Connection                      { re
 
 // --- TODO #745 — SessionRouter wiring tests ---
 
-// routerObservingDriver records the *turnevent.SessionRouter passed to each
-// Drive call, so tests can assert the router is constructed once per session
-// and reused across follow-up turns.
+// routerObservingDriver tracks each turn's session key so tests can
+// look up the inbox's SessionRouter via the agent. Replaces the old
+// Drive-router-parameter capture pattern after TODO #746 Stage C
+// removed Drive from the Driver interface.
 type routerObservingDriver struct {
-	mu      sync.Mutex
-	routers []*turnevent.SessionRouter
+	mu       sync.Mutex
+	a        *Agent
+	sks      []string
 	fallback turnevent.Sink
 }
 
-func (d *routerObservingDriver) Drive(_ context.Context, _ string, _ []Envelope, _ turnevent.Steerer, router *turnevent.SessionRouter) error {
-	d.mu.Lock()
-	d.routers = append(d.routers, router)
-	d.mu.Unlock()
-	return nil
-}
+func (d *routerObservingDriver) WrapTurn(fn func() error) error { return fn() }
 
 func (d *routerObservingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return d.fallback }
-func (d *routerObservingDriver) NewTurnSink(_ Envelope) (turnevent.Sink, func()) {
+
+// NewTurnSink records the sk this turn is for; tests look up the router
+// for that sk via the inbox.
+func (d *routerObservingDriver) NewTurnSink(env Envelope) (turnevent.Sink, func()) {
+	d.mu.Lock()
+	d.sks = append(d.sks, env.SessionKey)
+	d.mu.Unlock()
 	return nil, nil
 }
 func (d *routerObservingDriver) Connection() platform.Connection { return nil }
 
+// seenRouters returns the SessionRouter from each driven turn's inbox.
+// Same sk → same router (router is session-scoped); test assertions on
+// reuse across calls map directly.
 func (d *routerObservingDriver) seenRouters() []*turnevent.SessionRouter {
+	if d.a == nil {
+		return nil
+	}
+	d.mu.Lock()
+	sks := append([]string(nil), d.sks...)
+	d.mu.Unlock()
+	out := make([]*turnevent.SessionRouter, 0, len(sks))
+	for _, sk := range sks {
+		d.a.inboxesMu.Lock()
+		inb := d.a.inboxes[sk]
+		d.a.inboxesMu.Unlock()
+		if inb == nil {
+			out = append(out, nil)
+			continue
+		}
+		out = append(out, inb.router)
+	}
+	return out
+}
+
+// numSeen returns the number of NewTurnSink invocations seen so far.
+// Used by waitFor in tests.
+func (d *routerObservingDriver) numSeen() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	out := make([]*turnevent.SessionRouter, len(d.routers))
-	copy(out, d.routers)
-	return out
+	return len(d.sks)
 }
 
 // TestInbox_SessionRouter_LazyConstructedAndReused verifies driveAndDrainOrphans
@@ -719,19 +767,19 @@ func TestInbox_SessionRouter_LazyConstructedAndReused(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 
-	d := &routerObservingDriver{}
+	d := &routerObservingDriver{a: a}
 	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "first", Driver: d})
-	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 1 }) {
-		t.Fatalf("first Drive call did not record a router")
+	if !waitFor(time.Second, func() bool { return d.numSeen() >= 1 }) {
+		t.Fatalf("first turn did not run; numSeen=%d", d.numSeen())
 	}
 	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "second", Driver: d})
-	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 2 }) {
-		t.Fatalf("second Drive call did not record a router")
+	if !waitFor(time.Second, func() bool { return d.numSeen() >= 2 }) {
+		t.Fatalf("second turn did not run")
 	}
 
 	rs := d.seenRouters()
 	if rs[0] == nil {
-		t.Fatal("router passed to Drive is nil; sessionRouterFor must construct one")
+		t.Fatal("inbox.router is nil; sessionRouterFor must construct one")
 	}
 	if rs[0] != rs[1] {
 		t.Errorf("router reused across calls: got %p then %p, want same instance", rs[0], rs[1])
@@ -745,11 +793,11 @@ func TestInbox_SessionRouter_DistinctPerSession(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 
-	d := &routerObservingDriver{}
+	d := &routerObservingDriver{a: a}
 	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "a", Driver: d})
 	a.Enqueue(Envelope{SessionKey: "test/sess-B", Text: "b", Driver: d})
-	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 2 }) {
-		t.Fatalf("two sessions did not produce two Drive calls")
+	if !waitFor(time.Second, func() bool { return d.numSeen() >= 2 }) {
+		t.Fatalf("two sessions did not produce two turns")
 	}
 
 	rs := d.seenRouters()
@@ -768,15 +816,15 @@ func TestInbox_SessionRouter_FallbackUsedForLateEmit(t *testing.T) {
 	defer cancel()
 
 	fallback := &recordingSink{name: "late"}
-	d := &routerObservingDriver{fallback: fallback}
+	d := &routerObservingDriver{a: a, fallback: fallback}
 	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "go", Driver: d})
-	if !waitFor(time.Second, func() bool { return len(d.seenRouters()) >= 1 }) {
-		t.Fatalf("Drive did not run")
+	if !waitFor(time.Second, func() bool { return d.numSeen() >= 1 }) {
+		t.Fatalf("turn did not run")
 	}
 
-	// Simulate a backend emitting late text after Drive has cleared its
-	// per-turn sink. The router's current slot is empty (Drive returned),
-	// so the event must reach the fallback.
+	// Simulate a backend emitting late text after the per-turn sink has
+	// been cleared. The router's current slot is empty, so the event
+	// must reach the fallback.
 	router := d.seenRouters()[0]
 	router.Emit(context.Background(), turnevent.TextBlock{Text: "late!", Phase: turnevent.PhaseIntermediate})
 

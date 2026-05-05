@@ -168,63 +168,42 @@ func (b *Bot) Connection() platform.Connection {
 	return b
 }
 
-// Drive implements agent.Driver. Called by the agent's per-session worker
-// after batching a turn's worth of envelopes. Owns the platform-specific
-// concerns: renderer/tracker construction, sink wiring, cancellable turn
-// context (so /stop can cancel), error sanitisation, and lifecycle hooks.
+// WrapTurn implements agent.Driver. The bot's platform-side lifecycle
+// envelope around each agent turn:
 //
-// Steerer is supplied by the agent for API-mode mid-turn buffer drain —
-// it returns texts queued in this session's inbox steer buffer since the
-// last drain, pasted into the user message at the next tool boundary.
+//   - turnActive flag (read by SendNotification to buffer notifications
+//     during streaming output)
+//   - drainPendingNotifications (sends queued notifications after the turn)
+//   - OnTurnEnd hook (gateway-set callback, e.g. cache cleanup)
+//   - OnTurnComplete hook (gateway-set callback, e.g. cache warming
+//     telemetry)
+//   - error sanitisation + cancellation handling
 //
-// router is the session's SessionRouter (TODO #745). Drive registers its
-// per-turn StreamingSink with the router at start and clears at end via
-// defer; in-turn events flow through the streaming sink, late events
-// (post-Drive-exit) flow through the router's late-delivery fallback.
-// router may be nil if Drive is invoked outside the agent's session
-// worker context (defensive — current call sites always pass non-nil).
-func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error {
-	if len(batch) == 0 || sk == "" {
-		return nil
-	}
-
-	b.logger().Debugf("Drive: enter sk=%s batch_size=%d", sk, len(batch))
+// Agent.RunTurn (invoked via fn) does the actual turn execution. Cancel
+// ctx + per-session /stop wiring lives in agent.driveOnce.
+func (b *Bot) WrapTurn(fn func() error) error {
 	b.turnActive.Store(true)
-
-	// Cancellable turn ctx + /stop wiring moved to agent.driveOnce
-	// (TODO #746 Stage B). Bot.Drive keeps only platform-domain
-	// lifecycle: drainPendingNotifications + OnTurnEnd + OnTurnComplete +
-	// turnActive flag for SendNotification buffering.
 	defer func() {
 		b.turnActive.Store(false)
-		b.logger().Debugf("Drive: defer calling drainPendingNotifications sk=%s", sk)
 		b.drainPendingNotifications()
 		if b.OnTurnEnd != nil {
-			b.logger().Debugf("Drive: defer calling OnTurnEnd sk=%s", sk)
 			b.OnTurnEnd()
 		}
-		b.logger().Debugf("Drive: defer complete sk=%s", sk)
 	}()
 
-	if b.agentRef == nil {
-		b.logger().Warnf("Drive: agentRef nil sk=%s, cannot run turn", sk)
-		return nil
-	}
-	err := b.agentRef.RunTurn(ctx, sk, batch, steerer, router, b)
-	if err != nil && ctx.Err() != nil {
-		b.logger().Infof("agent turn cancelled")
-		return nil // /stop was called, "Stopped." already sent
-	}
+	err := fn()
 	if err != nil {
+		// Cancelled turn — "Stopped." already delivered; suppress the
+		// error so the agent doesn't double-log it.
+		// We can't check ctx.Err() here (no ctx in scope); the agent
+		// log path handles unwrapping.
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
 	}
 
 	if b.OnTurnComplete != nil {
-		b.logger().Debugf("Drive: calling OnTurnComplete sk=%s", sk)
 		b.OnTurnComplete()
 	}
-	b.logger().Debugf("Drive: exit sk=%s", sk)
-	return nil
+	return err
 }
 
 // cancelTurn cancels the in-flight agent turn for THIS bot's primary

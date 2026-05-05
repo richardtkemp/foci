@@ -147,6 +147,7 @@ type Agent struct {
 	inboxCtx       context.Context          //nolint:containedctx // parent ctx for session worker goroutines
 	inboxSteerMode bool                     // urgent-steer dispatch enabled
 	inboxBackend   func(ctx context.Context, sk string) (delegator.Delegator, error) // test seam; nil = use DelegatedManager
+	turnObserver   func(sk string, batch []Envelope)                                 // test seam — see SetTurnObserver / TODO #746 Stage C
 }
 
 // TransformMessage applies compiled message transforms to the text.
