@@ -79,7 +79,28 @@ type Driver interface {
 	// boundaries — implementations pass it to turn.RunTurn so any
 	// messages that arrive during a long tool call are pasted into the
 	// next user message.
-	Drive(ctx context.Context, sk string, batch []Envelope, steerer turnevent.Steerer) error
+	//
+	// router is the session-scoped delivery dispatcher (TODO #745).
+	// Implementations should Register their per-turn sink (e.g.
+	// turn.StreamingSink) at turn start and Clear at turn end so that:
+	//   - in-turn events flow to the registered streaming sink, and
+	//   - late events (e.g. ccstream rearm-counter responses arriving
+	//     after the turn-end defer chain) flow to the router's fallback
+	//     sink (built via NewLateDeliverySink at session-router init).
+	// router is non-nil only when called from the agent's session worker;
+	// implementations that may run outside that context should nil-check
+	// and fall back to passing their per-turn sink directly to RunTurn.
+	Drive(ctx context.Context, sk string, batch []Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error
+
+	// NewLateDeliverySink constructs the fallback sink the SessionRouter
+	// uses when no per-turn sink is registered (i.e. for events that
+	// arrive after Bot.Drive's defer chain has cleared the per-turn slot).
+	// Called once per session by the agent layer to seed the router.
+	//
+	// Returning nil disables late delivery (the router substitutes a
+	// NopSink); appropriate for non-interactive callers (HTTP API, hook-
+	// driven internal turns) where late delivery has no consumer.
+	NewLateDeliverySink(sk string) turnevent.Sink
 }
 
 // SteerEntry is a buffered steer message together with the time it was
@@ -113,6 +134,14 @@ type sessionInbox struct {
 	turnActive atomic.Bool
 
 	workerStarted sync.Once
+
+	// router is the session-scoped delivery dispatcher. Lazy-built on the
+	// first Drive call by sessionRouterFor — needs the Driver in scope to
+	// construct the late-delivery fallback. After construction the field
+	// stays alive for the session; only the per-turn sink registered on it
+	// changes per turn. Read/written exclusively from the per-session
+	// worker goroutine, so a plain pointer is safe.
+	router *turnevent.SessionRouter
 
 	log *log.ComponentLogger
 }
@@ -375,6 +404,22 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	}
 }
 
+// sessionRouterFor returns inb's SessionRouter, lazy-constructing it on first
+// call using driver.NewLateDeliverySink as the fallback. Called only from the
+// per-session worker goroutine, so the read-then-init is single-threaded and
+// safe without locking.
+func (a *Agent) sessionRouterFor(inb *sessionInbox, driver Driver) *turnevent.SessionRouter {
+	if inb.router != nil {
+		return inb.router
+	}
+	var fallback turnevent.Sink
+	if driver != nil {
+		fallback = driver.NewLateDeliverySink(inb.sk)
+	}
+	inb.router = turnevent.NewSessionRouter(fallback)
+	return inb.router
+}
+
 // driveAndDrainOrphans runs a single batched turn plus the orphan/extras
 // drain loop. Split out so the worker stays readable. After the primary
 // turn completes, any orphan steers (text the user sent during the turn
@@ -389,7 +434,8 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		}
 		return
 	}
-	if err := driver.Drive(ctx, inb.sk, batch, steerer); err != nil {
+	router := a.sessionRouterFor(inb, driver)
+	if err := driver.Drive(ctx, inb.sk, batch, steerer, router); err != nil {
 		if a.Log != nil {
 			a.Log.Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
 		}
@@ -404,7 +450,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		if a.Log != nil {
 			a.Log.Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))
 		}
-		if err := driver.Drive(ctx, inb.sk, followUp, steerer); err != nil {
+		if err := driver.Drive(ctx, inb.sk, followUp, steerer, router); err != nil {
 			if a.Log != nil {
 				a.Log.Errorf("inbox: follow-up driver error sk=%s: %v", inb.sk, err)
 			}

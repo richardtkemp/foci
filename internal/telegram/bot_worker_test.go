@@ -65,12 +65,14 @@ type recordingDriver struct {
 	calls [][]agent.Envelope
 }
 
-func (d *recordingDriver) Drive(_ context.Context, _ string, batch []agent.Envelope, _ turnevent.Steerer) error {
+func (d *recordingDriver) Drive(_ context.Context, _ string, batch []agent.Envelope, _ turnevent.Steerer, _ *turnevent.SessionRouter) error {
 	d.mu.Lock()
 	d.calls = append(d.calls, batch)
 	d.mu.Unlock()
 	return nil
 }
+
+func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
 
 func (d *recordingDriver) numCalls() int {
 	d.mu.Lock()
