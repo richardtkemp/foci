@@ -189,20 +189,14 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 	}
 
 	b.logger().Debugf("Drive: enter sk=%s batch_size=%d", sk, len(batch))
+	b.turnActive.Store(true)
 
-	// Cancellable turn context — /stop calls b.cancelTurn() to fire this.
-	// Stage A leaves the cancellable ctx + b.turnCancel here; Stage C
-	// migrates them to per-session inbox.
-	turnCtx, cancel := context.WithCancel(ctx)
-	b.turnMu.Lock()
-	b.turnCancel = cancel
-	b.turnMu.Unlock()
+	// Cancellable turn ctx + /stop wiring moved to agent.driveOnce
+	// (TODO #746 Stage B). Bot.Drive keeps only platform-domain
+	// lifecycle: drainPendingNotifications + OnTurnEnd + OnTurnComplete +
+	// turnActive flag for SendNotification buffering.
 	defer func() {
-		b.logger().Debugf("Drive: defer start sk=%s", sk)
-		b.turnMu.Lock()
-		b.turnCancel = nil
-		b.turnMu.Unlock()
-		cancel()
+		b.turnActive.Store(false)
 		b.logger().Debugf("Drive: defer calling drainPendingNotifications sk=%s", sk)
 		b.drainPendingNotifications()
 		if b.OnTurnEnd != nil {
@@ -212,17 +206,12 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 		b.logger().Debugf("Drive: defer complete sk=%s", sk)
 	}()
 
-	// Core turn execution moved to agent.runTurn (TODO #746 Stage A).
-	// Bot.Drive keeps only the platform-domain wrapper: cancellable ctx
-	// for /stop, drain/OnTurnEnd defers, OnTurnComplete callback. Stage B
-	// will delete Drive entirely; the agent session worker will call
-	// runTurn directly.
 	if b.agentRef == nil {
 		b.logger().Warnf("Drive: agentRef nil sk=%s, cannot run turn", sk)
 		return nil
 	}
-	err := b.agentRef.RunTurn(turnCtx, sk, batch, steerer, router, b)
-	if err != nil && turnCtx.Err() != nil {
+	err := b.agentRef.RunTurn(ctx, sk, batch, steerer, router, b)
+	if err != nil && ctx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return nil // /stop was called, "Stopped." already sent
 	}
@@ -238,12 +227,23 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 	return nil
 }
 
-// cancelTurn cancels the in-flight agent turn, if any.
+// cancelTurn cancels the in-flight agent turn for THIS bot's primary
+// session, if any. Retained for /done compatibility (which uses the
+// command's StopFunc to cancel a secondary bot's turn before detaching).
+// /stop has migrated to agent.CancelSession(sk) directly — see
+// command/admin_session.go and TODO #746 Stage B.
+//
+// Multi-session bots: cancellation here targets the bot's currently-known
+// sk via the bot's own tracking; Agent.CancelSession is the precise per-
+// session API.
 func (b *Bot) cancelTurn() {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	if b.turnCancel != nil {
-		b.logger().Infof("cancelling agent turn via /stop")
-		b.turnCancel()
+	if b.agentRef == nil {
+		return
 	}
+	sk := b.SessionKey()
+	if sk == "" {
+		return
+	}
+	b.logger().Infof("cancelTurn → Agent.CancelSession sk=%s", sk)
+	b.agentRef.CancelSession(sk)
 }

@@ -45,10 +45,7 @@ func (b *Bot) SendNotification(text string) {
 	}
 
 	// Buffer during active turns to avoid interrupting streaming output.
-	b.turnMu.Lock()
-	active := b.turnCancel != nil
-	b.turnMu.Unlock()
-	if active {
+	if b.turnActive.Load() {
 		b.pendingNotifsMu.Lock()
 		b.pendingNotifs = append(b.pendingNotifs, text)
 		b.pendingNotifsMu.Unlock()

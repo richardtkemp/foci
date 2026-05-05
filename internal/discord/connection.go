@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -64,8 +65,10 @@ type Bot struct {
 
 	mq         *platform.MessageQueue // shared message queue (commands + receive funnel)
 	agentRef   *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
-	turnCancel context.CancelFunc
-	turnMu     sync.Mutex
+	// turnActive is true while Bot.Drive is executing an agent turn.
+	// Replaces the old turnCancel-as-activity-indicator after TODO #746
+	// moved cancellable ctx ownership into agent.driveOnce.
+	turnActive atomic.Bool
 	channelID  int64 // last known channel ID (stored as int64 from snowflake)
 	channelMu  sync.Mutex
 

@@ -31,15 +31,19 @@ func StopCommand() *Command {
 				if err := cc.Agent.DelegatedManager.StopSession(ctx, sk); err != nil {
 					return Response{}, fmt.Errorf("stop delegated: %w", err)
 				}
-				// Also cancel foci's side.
-				if cc.StopFunc != nil {
-					cc.StopFunc()
-				}
+				// Cancel foci's per-session turn ctx (TODO #743 — was a
+				// single bot.cancelTurn field; now precise per session via
+				// Agent.CancelSession).
+				cc.Agent.CancelSession(sk)
 				return Response{Text: "Stopped."}, nil
 			}
 
-			// Traditional mode: cancel the Go context.
-			if cc.StopFunc != nil {
+			// Traditional mode (API backend): per-session cancel via the
+			// inbox.
+			if sk := tools.SessionKeyFromContext(ctx); sk != "" && cc.Agent != nil {
+				cc.Agent.CancelSession(sk)
+			} else if cc.StopFunc != nil {
+				// Fallback for callers without a session key in context.
 				cc.StopFunc()
 			}
 			return Response{Text: "Stopped."}, nil
