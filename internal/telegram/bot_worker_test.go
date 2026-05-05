@@ -72,7 +72,9 @@ func (d *recordingDriver) Drive(_ context.Context, _ string, batch []agent.Envel
 	return nil
 }
 
-func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
+func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink            { return nil }
+func (d *recordingDriver) NewTurnSink(_ agent.Envelope) (turnevent.Sink, func())   { return nil, nil }
+func (d *recordingDriver) Connection() platform.Connection                          { return nil }
 
 func (d *recordingDriver) numCalls() int {
 	d.mu.Lock()

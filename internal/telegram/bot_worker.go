@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 
 	"foci/internal/agent"
 	"foci/internal/agent/turnevent"
@@ -140,6 +139,35 @@ func (b *Bot) NewLateDeliverySink(sk string) turnevent.Sink {
 		}))
 }
 
+// NewTurnSink implements agent.Driver. Builds the per-turn rendering glue:
+// renderer, tool tracker, StreamingSink. Returns the sink plus a cleanup
+// closure (renderer.Cleanup) for the agent to defer.
+//
+// Returns (nil, nil) when env.Original isn't a *gotgbot.Message — the
+// envelope is for a different platform and this Telegram bot can't render
+// it. agent.runTurn skips silently in that case.
+//
+// Part of TODO #746 Stage A — extracts the renderer/tracker/sink wiring
+// out of Drive so agent.runTurn can own per-turn pipeline assembly.
+func (b *Bot) NewTurnSink(env agent.Envelope) (turnevent.Sink, func()) {
+	origMsg, _ := env.Original.(*gotgbot.Message)
+	if origMsg == nil {
+		return nil, nil
+	}
+	d := b.resolveDisplay(env.SessionKey)
+	tracker := newToolCallTracker(b, env.ChatID, d)
+	renderer := newTurnRenderer(b, origMsg, tracker, d)
+	sink := turn.NewStreamingSink(renderer, tracker, b)
+	return sink, renderer.Cleanup
+}
+
+// Connection implements agent.Driver. Returns the bot itself, which
+// implements platform.Connection for delivery operations the agent
+// initiates (late-delivery sinks, notify flows, platform identification).
+func (b *Bot) Connection() platform.Connection {
+	return b
+}
+
 // Drive implements agent.Driver. Called by the agent's per-session worker
 // after batching a turn's worth of envelopes. Owns the platform-specific
 // concerns: renderer/tracker construction, sink wiring, cancellable turn
@@ -156,22 +184,15 @@ func (b *Bot) NewLateDeliverySink(sk string) turnevent.Sink {
 // router may be nil if Drive is invoked outside the agent's session
 // worker context (defensive — current call sites always pass non-nil).
 func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter) error {
-	if len(batch) == 0 {
+	if len(batch) == 0 || sk == "" {
 		return nil
-	}
-	first := batch[0]
-	origMsg, _ := first.Original.(*gotgbot.Message)
-	if origMsg == nil {
-		b.logger().Warnf("Drive: missing original message for sk=%s", sk)
-		return nil
-	}
-	if sk == "" {
-		return nil // no session assigned (idle secondary bot)
 	}
 
 	b.logger().Debugf("Drive: enter sk=%s batch_size=%d", sk, len(batch))
 
 	// Cancellable turn context — /stop calls b.cancelTurn() to fire this.
+	// Stage A leaves the cancellable ctx + b.turnCancel here; Stage C
+	// migrates them to per-session inbox.
 	turnCtx, cancel := context.WithCancel(ctx)
 	b.turnMu.Lock()
 	b.turnCancel = cancel
@@ -191,53 +212,16 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 		b.logger().Debugf("Drive: defer complete sk=%s", sk)
 	}()
 
-	d := b.resolveDisplay(sk)
-	tracker := newToolCallTracker(b, first.ChatID, d)
-	renderer := newTurnRenderer(b, origMsg, tracker, d)
-	defer renderer.Cleanup()
-
-	sink := turn.NewStreamingSink(renderer, tracker, b)
-
-	// Register the per-turn streaming sink with the session router (TODO
-	// #745). In-turn events route through `sink`; late events (those that
-	// arrive after this Drive's defer Clear runs — e.g. ccstream
-	// rearm-counter responses) fall through to the router's late-delivery
-	// fallback. router is nil only outside the agent session-worker path.
-	var dispatchSink turnevent.Sink = sink
-	if router != nil {
-		router.Register(sink)
-		defer router.Clear()
-		dispatchSink = router
+	// Core turn execution moved to agent.runTurn (TODO #746 Stage A).
+	// Bot.Drive keeps only the platform-domain wrapper: cancellable ctx
+	// for /stop, drain/OnTurnEnd defers, OnTurnComplete callback. Stage B
+	// will delete Drive entirely; the agent session worker will call
+	// runTurn directly.
+	if b.agentRef == nil {
+		b.logger().Warnf("Drive: agentRef nil sk=%s, cannot run turn", sk)
+		return nil
 	}
-
-	turnCtx = agent.WithTrigger(turnCtx, "telegram")
-	turnCtx = agent.WithTurnMetadata(turnCtx, &agent.TurnMetadata{
-		UserID:   first.UserID,
-		Username: origMsg.From.Username,
-		ChatID:   first.ChatID,
-	})
-	if !first.ReceivedAt.IsZero() {
-		turnCtx = agent.WithReceivedAt(turnCtx, first.ReceivedAt)
-	}
-
-	// Collect texts and attachments across the batch.
-	// Group chat messages get sender attribution.
-	var texts []string
-	var allAttachments []platform.Attachment
-	for _, env := range batch {
-		text := env.Text
-		if env.IsGroupChat && env.SenderName != "" {
-			text = fmt.Sprintf("[%s] %s", env.SenderName, text)
-		} else if env.IsGroupChat && env.UserID != "" {
-			text = fmt.Sprintf("[user:%s] %s", env.UserID, text)
-		}
-		texts = append(texts, text)
-		allAttachments = append(allAttachments, env.Attachments...)
-	}
-
-	b.logger().Debugf("Drive: calling turn.RunTurn sk=%s", sk)
-	err := turn.RunTurn(turnCtx, b.handler, dispatchSink, steerer, sk, texts, allAttachments)
-	b.logger().Debugf("Drive: RunTurn returned sk=%s err=%v", sk, err)
+	err := b.agentRef.RunTurn(turnCtx, sk, batch, steerer, router, b)
 	if err != nil && turnCtx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return nil // /stop was called, "Stopped." already sent

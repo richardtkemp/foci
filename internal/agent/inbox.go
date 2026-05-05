@@ -101,6 +101,29 @@ type Driver interface {
 	// NopSink); appropriate for non-interactive callers (HTTP API, hook-
 	// driven internal turns) where late delivery has no consumer.
 	NewLateDeliverySink(sk string) turnevent.Sink
+
+	// NewTurnSink constructs the per-turn rendering sink (renderer + tool
+	// tracker + streaming sink) for a turn seeded by env. Returns the
+	// sink plus a cleanup closure (typically renderer.Cleanup) that the
+	// agent invokes via defer after the turn completes.
+	//
+	// Returning a nil sink signals that the platform can't render this
+	// envelope — usually because env.Original isn't the platform's
+	// expected message type (e.g. discord receiving a telegram envelope).
+	// runTurn skips silently in that case.
+	//
+	// Added in TODO #746 Stage A — lets agent.runTurn own the per-turn
+	// pipeline without needing platform-specific renderer types.
+	NewTurnSink(env Envelope) (turnevent.Sink, func())
+
+	// Connection exposes the platform's delivery interface. Used by the
+	// agent for session-scoped sinks (late-delivery, notify flows),
+	// platform-name discrimination in turn metadata, and cross-session
+	// dispatch. Bots typically return themselves.
+	//
+	// Added in TODO #746 Stage A — Stage D will collapse
+	// NewLateDeliverySink into agent-side construction using this.
+	Connection() platform.Connection
 }
 
 // SteerEntry is a buffered steer message together with the time it was
