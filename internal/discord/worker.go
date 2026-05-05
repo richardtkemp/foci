@@ -108,16 +108,6 @@ func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessag
 	}
 }
 
-// NewLateDeliverySink implements agent.Driver. Returns a turn.SessionSink
-// for late text deliveries that arrive after a Drive call's defer chain has
-// cleared the per-turn StreamingSink. See TODO #745.
-func (b *Bot) NewLateDeliverySink(sk string) turnevent.Sink {
-	return turn.NewSessionSink(b, sk, "late-delivery",
-		turn.WithSessionSinkErrorHandler(func(trigger string, err error) {
-			b.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
-		}))
-}
-
 // NewTurnSink implements agent.Driver. Builds the per-turn rendering glue
 // (renderer + tracker + StreamingSink) from env. Returns (nil, nil) if
 // env.Original isn't a *discordgo.Message. Part of TODO #746 Stage A.
