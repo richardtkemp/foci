@@ -51,10 +51,6 @@ func (d *recordingDriver) WrapTurn(fn func() error) error {
 	return err
 }
 
-// NewLateDeliverySink returns nil — tests don't exercise late delivery, and
-// nil tells SessionRouter to use NopSink as fallback.
-func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
-
 // NewTurnSink returns nil — tests that use recordingDriver don't run the
 // turn pipeline, only assert on Drive batching/dispatch.
 func (d *recordingDriver) NewTurnSink(_ Envelope) (turnevent.Sink, func()) { return nil, nil }
@@ -694,9 +690,8 @@ func (d *driverGated) WrapTurn(fn func() error) error {
 	return err
 }
 
-func (d *driverGated) NewLateDeliverySink(_ string) turnevent.Sink         { return nil }
-func (d *driverGated) NewTurnSink(_ Envelope) (turnevent.Sink, func())      { return nil, nil }
-func (d *driverGated) Connection() platform.Connection                      { return nil }
+func (d *driverGated) NewTurnSink(_ Envelope) (turnevent.Sink, func()) { return nil, nil }
+func (d *driverGated) Connection() platform.Connection                 { return nil }
 
 // --- TODO #745 — SessionRouter wiring tests ---
 
@@ -705,15 +700,12 @@ func (d *driverGated) Connection() platform.Connection                      { re
 // Drive-router-parameter capture pattern after TODO #746 Stage C
 // removed Drive from the Driver interface.
 type routerObservingDriver struct {
-	mu       sync.Mutex
-	a        *Agent
-	sks      []string
-	fallback turnevent.Sink
+	mu  sync.Mutex
+	a   *Agent
+	sks []string
 }
 
 func (d *routerObservingDriver) WrapTurn(fn func() error) error { return fn() }
-
-func (d *routerObservingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return d.fallback }
 
 // NewTurnSink records the sk this turn is for; tests look up the router
 // for that sk via the inbox.
@@ -806,50 +798,7 @@ func TestInbox_SessionRouter_DistinctPerSession(t *testing.T) {
 	}
 }
 
-// TestInbox_SessionRouter_FallbackUsedForLateEmit verifies the contract that
-// matters in production: events emitted on the router after no per-turn sink
-// is registered route to the fallback sink supplied by the Driver. This is
-// the exact path coach's lost 56-byte response should have taken on
-// 2026-05-05.
-func TestInbox_SessionRouter_FallbackUsedForLateEmit(t *testing.T) {
-	a, cancel := startedAgent(t)
-	defer cancel()
+// (Late-delivery dispatch is covered by SessionRouter unit tests in
+// router_test.go and the lateDeliverySink construction is exercised
+// via the integration layer when a real Connection is wired.)
 
-	fallback := &recordingSink{name: "late"}
-	d := &routerObservingDriver{a: a, fallback: fallback}
-	a.Enqueue(Envelope{SessionKey: "test/sess-A", Text: "go", Driver: d})
-	if !waitFor(time.Second, func() bool { return d.numSeen() >= 1 }) {
-		t.Fatalf("turn did not run")
-	}
-
-	// Simulate a backend emitting late text after the per-turn sink has
-	// been cleared. The router's current slot is empty, so the event
-	// must reach the fallback.
-	router := d.seenRouters()[0]
-	router.Emit(context.Background(), turnevent.TextBlock{Text: "late!", Phase: turnevent.PhaseIntermediate})
-
-	if got := fallback.count(); got != 1 {
-		t.Errorf("fallback received %d events, want 1", got)
-	}
-}
-
-// recordingSink is a minimal turnevent.Sink that counts calls. Lives here
-// to keep the test file self-contained; the turnevent package has its own
-// in router_test.go but it's package-private.
-type recordingSink struct {
-	name string
-	mu   sync.Mutex
-	n    int
-}
-
-func (s *recordingSink) Emit(_ context.Context, _ turnevent.Event) {
-	s.mu.Lock()
-	s.n++
-	s.mu.Unlock()
-}
-
-func (s *recordingSink) count() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.n
-}

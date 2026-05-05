@@ -123,22 +123,6 @@ func (b *Bot) processQueuedCommand(ctx context.Context, qm platform.QueuedMessag
 	}
 }
 
-// NewLateDeliverySink implements agent.Driver. Returns a turn.SessionSink
-// that the SessionRouter will dispatch to when no per-turn sink is
-// registered (i.e. for events that arrive after Drive's defer chain has
-// cleared the per-turn StreamingSink). Late deliveries become fresh
-// standalone messages in the session's chat — semantically appropriate
-// for content that arrives after the previous turn's UI thread is past.
-//
-// See TODO #745 for the bug this fix addresses (rearmed responses lost
-// when ccstream emits text after the per-turn renderer is gone).
-func (b *Bot) NewLateDeliverySink(sk string) turnevent.Sink {
-	return turn.NewSessionSink(b, sk, "late-delivery",
-		turn.WithSessionSinkErrorHandler(func(trigger string, err error) {
-			b.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
-		}))
-}
-
 // NewTurnSink implements agent.Driver. Builds the per-turn rendering glue:
 // renderer, tool tracker, StreamingSink. Returns the sink plus a cleanup
 // closure (renderer.Cleanup) for the agent to defer.

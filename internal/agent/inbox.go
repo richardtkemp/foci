@@ -33,6 +33,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/turn"
 )
 
 // Envelope is a session-resolved, platform-neutral message ready for the
@@ -91,16 +92,6 @@ type Driver interface {
 	//     returned) since "Stopped." has already been delivered
 	//   - return fn's error otherwise so the agent logs it
 	WrapTurn(fn func() error) error
-
-	// NewLateDeliverySink constructs the fallback sink the SessionRouter
-	// uses when no per-turn sink is registered (i.e. for events that
-	// arrive after the per-turn StreamingSink has been cleared).
-	// Called once per session by the agent layer to seed the router.
-	//
-	// Returning nil disables late delivery (the router substitutes a
-	// NopSink); appropriate for non-interactive callers (HTTP API, hook-
-	// driven internal turns) where late delivery has no consumer.
-	NewLateDeliverySink(sk string) turnevent.Sink
 
 	// NewTurnSink constructs the per-turn rendering sink (renderer + tool
 	// tracker + streaming sink) for a turn seeded by env. Returns the
@@ -462,20 +453,41 @@ func (a *Agent) CancelSession(sk string) bool {
 	return true
 }
 
-// sessionRouterFor returns inb's SessionRouter, lazy-constructing it on first
-// call using driver.NewLateDeliverySink as the fallback. Called only from the
-// per-session worker goroutine, so the read-then-init is single-threaded and
-// safe without locking.
+// sessionRouterFor returns inb's SessionRouter, lazy-constructing it on
+// first call. The fallback sink is built agent-side from the driver's
+// platform.Connection — see lateDeliverySink. Called only from the
+// per-session worker goroutine, so the read-then-init is single-threaded
+// and safe without locking.
 func (a *Agent) sessionRouterFor(inb *sessionInbox, driver Driver) *turnevent.SessionRouter {
 	if inb.router != nil {
 		return inb.router
 	}
-	var fallback turnevent.Sink
-	if driver != nil {
-		fallback = driver.NewLateDeliverySink(inb.sk)
-	}
-	inb.router = turnevent.NewSessionRouter(fallback)
+	inb.router = turnevent.NewSessionRouter(a.lateDeliverySink(inb.sk, driver))
 	return inb.router
+}
+
+// lateDeliverySink builds the SessionRouter's fallback sink for sk, the
+// destination for events that arrive when no per-turn sink is registered
+// (the rearm-counter scenario from TODO #745). Uses the driver's
+// platform.Connection if exposed; returns nil otherwise so the router
+// falls back to NopSink (appropriate for non-interactive drivers).
+//
+// Replaces the per-driver NewLateDeliverySink method (TODO #746 Stage D)
+// — sink construction is platform-agnostic, so it belongs in the agent.
+func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
+	if driver == nil {
+		return nil
+	}
+	conn := driver.Connection()
+	if conn == nil {
+		return nil
+	}
+	logFn := func(trigger string, err error) {
+		if a.Log != nil {
+			a.Log.Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
+		}
+	}
+	return turn.NewSessionSink(conn, sk, "late-delivery", turn.WithSessionSinkErrorHandler(logFn))
 }
 
 // driveAndDrainOrphans runs a single batched turn plus the orphan/extras
