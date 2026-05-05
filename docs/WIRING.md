@@ -578,20 +578,21 @@ type Sink interface {
 
 ### How interactive platforms wire it
 
-Both Telegram (`internal/telegram/bot_worker.go`) and Discord (`internal/discord/worker.go`) workers share the same ~10-line pattern:
+After **TODO #746**, the agent owns turn execution; platforms contribute only renderer/tracker construction and a thin lifecycle envelope.
+
+The `agent.Driver` interface is three methods:
 
 ```go
-// In Bot.Drive (called by agent.Inbox's per-session worker):
-tracker := newToolCallTracker(b, chatID, d)
-renderer := newTurnRenderer(b, origMsg, tracker, d)
-defer renderer.Cleanup()
-
-sink := turn.NewStreamingSink(renderer, tracker, b)
-// Steerer comes from the agent's per-session inbox steer buffer (Phase 6).
-// API-mode agents drain it at tool boundaries; delegated agents leave it empty
-// because mid-turn messages route via Backend.Inject(SourceSteer) instead.
-err := turn.RunTurn(ctx, b.handler, sink, steerer, sk, texts, attachments)
+type Driver interface {
+    WrapTurn(fn func() error) error              // platform-side lifecycle envelope
+    NewTurnSink(env Envelope) (Sink, func())     // per-turn renderer/tracker/StreamingSink
+    Connection() platform.Connection             // delivery interface
+}
 ```
+
+Per-session worker (`agent.driveAndDrainOrphans`) wraps each turn with a cancellable ctx (registered with the inbox so `Agent.CancelSession(sk)` can fire it for `/stop`), then calls `driver.WrapTurn(func() { return a.RunTurn(...) })`. `Agent.RunTurn` does the per-turn work itself: builds turn metadata via `WithTrigger` / `WithTurnMetadata` / `WithReceivedAt`, gets the per-turn sink from `driver.NewTurnSink(envelope)`, registers it with the session router (see below), and calls `turn.RunTurn`.
+
+The platform's `WrapTurn` runs whatever bot-side lifecycle the bot wants — typing-active flag, post-turn notification drain, gateway-set `OnTurnEnd` / `OnTurnComplete` hooks, error sanitisation. Telegram and Discord both implement it as ~25 LOC.
 
 The Steerer parameter, supplied by the agent worker, returns just the text fields of buffered steer entries — mid-turn injection on the API path (`steerBlocks`) never renders a new meta header, so it discards receipt timestamps. The post-turn orphan-drain loop (when a turn finishes and per-session worker rebuilds leftover steers as a follow-up turn) reads `SteerEntry.ReceivedAt` from the inbox so the follow-up turn's meta header reflects the original user send time rather than the drain time. Note: CC-backed agents bypass the buffer entirely via `agent.Inbox`'s `Backend.Inject(SourceSteer)` routing; the buffer only services API-mode agents and the orphan-drain fallback.
 
@@ -628,7 +629,7 @@ type Steerer interface {
 }
 ```
 
-Interactive platforms supply a `Steerer` to `turn.RunTurn` via the agent's per-session inbox (the bot's `Driver.Drive` receives it as a parameter and forwards it). The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `agent.Inbox.Enqueue` calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})` directly when a steer arrives during an in-flight CC turn (Inject internally chains the Interrupt + SendUser sequence).
+Interactive platforms supply a `Steerer` indirectly: `agent.driveAndDrainOrphans` constructs the steerer from the inbox's steer buffer and passes it to `Agent.RunTurn`, which forwards it to `turn.RunTurn`. The agent drains steers via `steerBlocks(ctx)` at tool-loop boundaries on the API path. The delegated path bypasses the steerer for mid-turn injection — `agent.Inbox.Enqueue` calls `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})` directly when a steer arrives during an in-flight CC turn (Inject internally chains the Interrupt + SendUser sequence).
 
 ## Deferred Replies
 
@@ -1131,7 +1132,7 @@ Three goroutines per bot:
 [commandWorker goroutine]     →  drain mq.CmdChan()  →  execute command  →  reply
 
 [per-session worker goroutines — lazy, one per active session key, owned by agent.Inbox]
-  →  batch available Envelopes  →  Bot.Drive(ctx, sk, batch, steerer)  →  HandleMessage  →  reply
+  →  batch available Envelopes  →  Agent.RunTurn(ctx, sk, batch, steerer, router, driver)  →  HandleMessage  →  reply
 ```
 
 `platform.MessageQueue` is a thin filter-and-throttle helper. It wraps a buffered channel (main messages) plus a command channel, with two routing rules:
@@ -1152,7 +1153,7 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 
 **Attachment handling:** Photos (`msg.Photo`, largest size selected), image documents (`msg.Document` with image MIME type), and PDF documents (`msg.Document` with `application/pdf` MIME type) are downloaded via `GetFile()` + HTTP GET. The raw bytes are queued as `attachment` structs alongside the message text (which may come from `msg.Caption` for photos). PDFs over 32MB fall back to save-to-disk with a text annotation. The agent worker converts these to `platform.Attachment` and calls `HandleMessage`, which routes images to `ImageBlock()` and PDFs to `DocumentBlock()` content blocks.
 
-**Turn cancellation:** Each agent turn gets its own `context.WithCancel`. `/stop` calls `turnCancel()`, which propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). The agent loop checks `ctx.Err()` after API responses and between tool calls.
+**Turn cancellation:** Each agent turn gets its own `context.WithCancel`, owned by `agent.driveOnce` (post-TODO #746) and registered on the session's `sessionInbox.turnCancel`. `/stop` calls `Agent.CancelSession(sk)`, which fires that cancel. Cancellation propagates to in-flight API calls (HTTP client context) and tool executions (process group kill). Multi-user shared bots are precise per session — `/stop` from chat A doesn't affect chat B's in-flight turn.
 
 **Reset guard:** `/reset` refuses when `agent.IsProcessing()` is true — prevents clearing an active conversation mid-turn.
 
@@ -1161,7 +1162,7 @@ The receiver never blocks on the agent. Slash commands (including `/stop`) execu
 When `stream_output = true` and `streaming = true`, model output is shown in Telegram in real-time as tokens arrive, rather than waiting for the full response.
 
 **Lifecycle:**
-1. `Bot.Drive` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet)
+1. `Bot.NewTurnSink` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet) when `Agent.RunTurn` requests the per-turn sink
 2. On the first `TextDeltaObserver` delta, the stream writer sends an initial HTML-formatted message and starts a ticker goroutine
 3. Each tick, if new text has accumulated, the buffer is processed through `closePartialMarkdown` → `ConvertToTelegramHTML` and the message is edited with HTML formatting
 4. When `HandleMessage` returns, `Finish()` stops the ticker and returns the message ID
