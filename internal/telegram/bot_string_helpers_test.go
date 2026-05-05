@@ -1,40 +1,21 @@
 package telegram
 
 import (
-	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"foci/internal/command"
 )
 
-func TestCancelTurn_NoActiveTurn(t *testing.T) {
-	// Verifies that cancelTurn does not panic when
-	// no turn is active.
+// TestCancelTurn_NoAgentRef verifies that cancelTurn is safe to call when
+// the bot has no agentRef wired (test default). Migrated from the older
+// turnCancel-direct tests after TODO #746 Stage B moved cancellation
+// ownership to the agent's per-session inbox; cancelTurn is now a thin
+// shim that delegates to Agent.CancelSession.
+func TestCancelTurn_NoAgentRef(t *testing.T) {
 	b, _ := testBot([]string{}, command.NewRegistry())
-	// Should not panic when no turn is active
+	// Should not panic when agentRef is nil (test bots don't wire one).
 	b.cancelTurn()
-}
-
-func TestCancelTurn_CancelsContext(t *testing.T) {
-	// Verifies that cancelTurn properly cancels
-	// the active turn's context.
-	b, _ := testBot([]string{}, command.NewRegistry())
-
-	ctx, cancel := context.WithCancel(context.Background())
-	b.turnMu.Lock()
-	b.turnCancel = cancel
-	b.turnMu.Unlock()
-
-	b.cancelTurn()
-
-	select {
-	case <-ctx.Done():
-		// expected
-	case <-time.After(time.Second):
-		t.Error("context should be cancelled")
-	}
 }
 
 func TestSplitMessage_Short(t *testing.T) {

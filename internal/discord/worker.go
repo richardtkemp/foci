@@ -158,28 +158,23 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 		return nil
 	}
 
-	turnCtx, cancel := context.WithCancel(ctx)
-	b.turnMu.Lock()
-	b.turnCancel = cancel
-	b.turnMu.Unlock()
+	b.turnActive.Store(true)
+	// Cancellable turn ctx + /stop wiring moved to agent.driveOnce
+	// (TODO #746 Stage B).
 	defer func() {
-		b.turnMu.Lock()
-		b.turnCancel = nil
-		b.turnMu.Unlock()
-		cancel()
+		b.turnActive.Store(false)
 		b.drainPendingNotifications()
 		if b.OnTurnEnd != nil {
 			b.OnTurnEnd()
 		}
 	}()
 
-	// Core turn execution moved to agent.RunTurn (TODO #746 Stage A).
 	if b.agentRef == nil {
 		b.logger().Warnf("Drive: agentRef nil sk=%s, cannot run turn", sk)
 		return nil
 	}
-	err := b.agentRef.RunTurn(turnCtx, sk, batch, steerer, router, b)
-	if err != nil && turnCtx.Err() != nil {
+	err := b.agentRef.RunTurn(ctx, sk, batch, steerer, router, b)
+	if err != nil && ctx.Err() != nil {
 		b.logger().Infof("agent turn cancelled")
 		return nil
 	}
@@ -193,12 +188,17 @@ func (b *Bot) Drive(ctx context.Context, sk string, batch []agent.Envelope, stee
 	return nil
 }
 
-// cancelTurn cancels the in-flight agent turn, if any.
+// cancelTurn cancels the in-flight agent turn for this bot's primary
+// session. Retained for /done compatibility — /stop now uses
+// Agent.CancelSession(sk) directly. See TODO #746 Stage B.
 func (b *Bot) cancelTurn() {
-	b.turnMu.Lock()
-	defer b.turnMu.Unlock()
-	if b.turnCancel != nil {
-		b.logger().Infof("cancelling agent turn via /stop")
-		b.turnCancel()
+	if b.agentRef == nil {
+		return
 	}
+	sk := b.SessionKey()
+	if sk == "" {
+		return
+	}
+	b.logger().Infof("cancelTurn → Agent.CancelSession sk=%s", sk)
+	b.agentRef.CancelSession(sk)
 }

@@ -1,7 +1,6 @@
 package telegram
 
 import (
-	"context"
 	"testing"
 
 	"foci/internal/command"
@@ -13,12 +12,8 @@ func TestSendNotification_BufferedDuringActiveTurn(t *testing.T) {
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	b.SetChatID(12345)
 
-	// Simulate an active turn by setting turnCancel.
-	_, cancel := context.WithCancel(context.Background())
-	b.turnMu.Lock()
-	b.turnCancel = cancel
-	b.turnMu.Unlock()
-	defer cancel()
+	// Simulate an active turn by setting turnActive.
+	b.turnActive.Store(true)
 
 	b.SendNotification("alert 1")
 	b.SendNotification("alert 2")
@@ -34,10 +29,8 @@ func TestSendNotification_BufferedDuringActiveTurn(t *testing.T) {
 		t.Fatalf("expected 2 buffered notifications, got %d", buffered)
 	}
 
-	// Clear turnCancel (simulating turn end) and drain.
-	b.turnMu.Lock()
-	b.turnCancel = nil
-	b.turnMu.Unlock()
+	// Clear turnActive (simulating turn end) and drain.
+	b.turnActive.Store(false)
 
 	b.drainPendingNotifications()
 

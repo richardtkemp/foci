@@ -166,6 +166,13 @@ type sessionInbox struct {
 	// worker goroutine, so a plain pointer is safe.
 	router *turnevent.SessionRouter
 
+	// cancelMu guards turnCancel. Set by the session worker before each
+	// turn; cleared on turn return. Agent.CancelSession reads under the
+	// mutex to fire /stop with race safety against the worker's turn
+	// boundaries.
+	cancelMu   sync.Mutex
+	turnCancel context.CancelFunc
+
 	log *log.ComponentLogger
 }
 
@@ -427,6 +434,32 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 	}
 }
 
+// CancelSession cancels the in-flight turn for sk, if any. Used by /stop
+// (and any other consumer that needs per-session cancellation precision).
+// No-op if the session has no inbox or no turn is currently in flight.
+//
+// Replaces the old per-bot cancelTurn() which was a single field for all
+// sessions on a shared bot — TODO #743's per-session /stop precision.
+func (a *Agent) CancelSession(sk string) bool {
+	a.inboxesMu.Lock()
+	inb, ok := a.inboxes[sk]
+	a.inboxesMu.Unlock()
+	if !ok {
+		return false
+	}
+	inb.cancelMu.Lock()
+	cancel := inb.turnCancel
+	inb.cancelMu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	if a.Log != nil {
+		a.Log.Infof("CancelSession sk=%s firing turn cancel", sk)
+	}
+	cancel()
+	return true
+}
+
 // sessionRouterFor returns inb's SessionRouter, lazy-constructing it on first
 // call using driver.NewLateDeliverySink as the fallback. Called only from the
 // per-session worker goroutine, so the read-then-init is single-threaded and
@@ -458,11 +491,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		return
 	}
 	router := a.sessionRouterFor(inb, driver)
-	if err := driver.Drive(ctx, inb.sk, batch, steerer, router); err != nil {
-		if a.Log != nil {
-			a.Log.Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
-		}
-	}
+	a.driveOnce(ctx, inb, batch, steerer, router, driver)
 	for {
 		orphans := inb.drainSteer()
 		extras := inb.drainAvailable()
@@ -473,10 +502,29 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 		if a.Log != nil {
 			a.Log.Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))
 		}
-		if err := driver.Drive(ctx, inb.sk, followUp, steerer, router); err != nil {
-			if a.Log != nil {
-				a.Log.Errorf("inbox: follow-up driver error sk=%s: %v", inb.sk, err)
-			}
+		a.driveOnce(ctx, inb, followUp, steerer, router, driver)
+	}
+}
+
+// driveOnce wraps a single driver.Drive invocation with a cancellable ctx
+// whose cancel func is registered with the inbox so Agent.CancelSession
+// can fire it (the per-session /stop path). The cancel is cleared on
+// return so post-turn /stop calls become no-ops rather than racing with
+// the next turn's setup.
+func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, router *turnevent.SessionRouter, driver Driver) {
+	turnCtx, cancel := context.WithCancel(ctx)
+	inb.cancelMu.Lock()
+	inb.turnCancel = cancel
+	inb.cancelMu.Unlock()
+	defer func() {
+		inb.cancelMu.Lock()
+		inb.turnCancel = nil
+		inb.cancelMu.Unlock()
+		cancel()
+	}()
+	if err := driver.Drive(turnCtx, inb.sk, batch, steerer, router); err != nil {
+		if a.Log != nil {
+			a.Log.Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
 		}
 	}
 }

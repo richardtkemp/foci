@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -85,9 +86,13 @@ type Bot struct {
 
 	mq             *platform.MessageQueue // shared message queue (commands + receive funnel)
 	agentRef       *agent.Agent           // per-agent inbox + Enqueue access; nil for tests, set in agent_setup
-	turnCancel     context.CancelFunc     // cancel the current agent turn
-	turnMu         sync.Mutex             // protects turnCancel
-	chatID         int64                  // last known chat ID (for notifications)
+	// turnActive is true while Bot.Drive is executing an agent turn.
+	// Used by SendNotification to buffer notifications during turns. Set
+	// at Drive entry, cleared on return. Replaces the old turnCancel-as-
+	// activity-indicator after TODO #746 moved cancellable ctx ownership
+	// into agent.driveOnce.
+	turnActive atomic.Bool
+	chatID     int64 // last known chat ID (for notifications)
 	chatMu         sync.Mutex
 
 	sessionIndex platform.SessionIndex // nil = no session key persistence across restarts
