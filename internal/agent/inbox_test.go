@@ -46,6 +46,13 @@ func (d *recordingDriver) Drive(ctx context.Context, sk string, batch []Envelope
 // nil tells SessionRouter to use NopSink as fallback.
 func (d *recordingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
 
+// NewTurnSink returns nil — tests that use recordingDriver don't run the
+// turn pipeline, only assert on Drive batching/dispatch.
+func (d *recordingDriver) NewTurnSink(_ Envelope) (turnevent.Sink, func()) { return nil, nil }
+
+// Connection returns nil — these tests don't exercise platform-side ops.
+func (d *recordingDriver) Connection() platform.Connection { return nil }
+
 func (d *recordingDriver) Calls() [][]Envelope {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -666,7 +673,9 @@ func (d *driverGated) Drive(ctx context.Context, _ string, _ []Envelope, _ turne
 	return nil
 }
 
-func (d *driverGated) NewLateDeliverySink(_ string) turnevent.Sink { return nil }
+func (d *driverGated) NewLateDeliverySink(_ string) turnevent.Sink         { return nil }
+func (d *driverGated) NewTurnSink(_ Envelope) (turnevent.Sink, func())      { return nil, nil }
+func (d *driverGated) Connection() platform.Connection                      { return nil }
 
 // --- TODO #745 — SessionRouter wiring tests ---
 
@@ -687,6 +696,10 @@ func (d *routerObservingDriver) Drive(_ context.Context, _ string, _ []Envelope,
 }
 
 func (d *routerObservingDriver) NewLateDeliverySink(_ string) turnevent.Sink { return d.fallback }
+func (d *routerObservingDriver) NewTurnSink(_ Envelope) (turnevent.Sink, func()) {
+	return nil, nil
+}
+func (d *routerObservingDriver) Connection() platform.Connection { return nil }
 
 func (d *routerObservingDriver) seenRouters() []*turnevent.SessionRouter {
 	d.mu.Lock()
