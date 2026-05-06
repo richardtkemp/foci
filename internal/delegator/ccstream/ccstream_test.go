@@ -2973,6 +2973,67 @@ func TestRestart_ResetsFinalizeOnce(t *testing.T) {
 	}
 }
 
+func TestClose_BoundedWaitWhenWaiterStalls(t *testing.T) {
+	// Regression for the 2026-05-06 deadlock: when CC dies but the waiter
+	// goroutine fails to deliver to b.waitCh (e.g. a stalled callback inside
+	// finalizeExit), Close used to block forever on the post-SIGKILL receive.
+	// That kept m.mu held in ResetSession/Get and silently froze every
+	// subsequent inbound message for the agent. Close must now return within
+	// a bounded time so the caller can release locks and respawn.
+	t.Parallel()
+
+	// Shrink production timeouts for the test. Restore on cleanup.
+	prevG, prevT, prevK := closeGracefulWait, closeSigtermWait, closeSigkillWait
+	closeGracefulWait = 50 * time.Millisecond
+	closeSigtermWait = 25 * time.Millisecond
+	closeSigkillWait = 25 * time.Millisecond
+	t.Cleanup(func() {
+		closeGracefulWait = prevG
+		closeSigtermWait = prevT
+		closeSigkillWait = prevK
+	})
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+		cmd:    &exec.Cmd{}, // Process: nil → Signal/Kill skip cleanly
+		// waitCh intentionally never receives — simulates the stalled
+		// waiter goroutine observed in production.
+		waitCh: make(chan error, 1),
+		// done already closed so the reader-goroutine wait at the bottom
+		// of Close returns immediately.
+		done:   closedDone(),
+		cancel: func() {},
+	}
+	b.mu.Lock()
+	b.running = true
+	b.mu.Unlock()
+
+	// Cap the test to 5x the worst-case bounded shutdown — generous enough to
+	// tolerate scheduler jitter, tight enough to fail fast if the bound regresses.
+	worst := closeGracefulWait + closeSigtermWait + closeSigkillWait
+	deadline := time.Now().Add(5 * worst)
+
+	doneCh := make(chan struct{})
+	go func() {
+		_ = b.Close()
+		close(doneCh)
+	}()
+
+	select {
+	case <-doneCh:
+		// Close returned within the bound — exactly what we want.
+	case <-time.After(time.Until(deadline)):
+		t.Fatalf("Close did not return within %s; expected ~%s when waiter stalls", 5*worst, worst)
+	}
+}
+
+func closedDone() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
 // ---------------------------------------------------------------------------
 // OnToolProgress
 // ---------------------------------------------------------------------------
