@@ -153,6 +153,140 @@ func TestResetSession_APIPath(t *testing.T) {
 	}
 }
 
+func TestResetSessionHard_APIPath_RotatesEvenWhenProcessing(t *testing.T) {
+	// Proves that ResetSessionHard does NOT check IsProcessing and always
+	// proceeds to rotate the key. The whole point of /reset hard is to
+	// recover from a stuck turn — it must never refuse on the IsProcessing
+	// gate that ResetSession uses.
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	sessionKey := "test/hard/1000000000"
+
+	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
+		t.Fatal(err)
+	}
+
+	ag := &Agent{
+		Sessions:  store,
+		Bootstrap: bootstrap,
+	}
+	// Simulate an in-flight turn — ResetSession would refuse here.
+	ag.SetProcessingForTest(1)
+
+	var nudgeReloaded bool
+	ag.NudgeReloadFunc = func() { nudgeReloaded = true }
+
+	var rotatedOld, rotatedNew string
+	ag.SessionKeyRotatedFunc.Add(func(old, new string) {
+		rotatedOld = old
+		rotatedNew = new
+	})
+
+	newKey, err := ag.ResetSessionHard(context.Background(), sessionKey)
+	if err != nil {
+		t.Fatalf("ResetSessionHard: %v (must not refuse while processing)", err)
+	}
+	if newKey == "" || newKey == sessionKey {
+		t.Errorf("newKey = %q, want a rotated key different from %q", newKey, sessionKey)
+	}
+	if rotatedOld != sessionKey || rotatedNew != newKey {
+		t.Errorf("rotation: old=%q new=%q, want %q/%q", rotatedOld, rotatedNew, sessionKey, newKey)
+	}
+	if !nudgeReloaded {
+		t.Error("NudgeReloadFunc was not called after hard reset")
+	}
+}
+
+func TestResetSessionHard_NoSessionKey(t *testing.T) {
+	// Proves that ResetSessionHard rejects an empty session key with a
+	// clear error rather than panicking.
+	ag := &Agent{}
+	_, err := ag.ResetSessionHard(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error when session key is empty")
+	}
+	if !strings.Contains(err.Error(), "no active session") {
+		t.Errorf("error = %q, want to contain 'no active session'", err.Error())
+	}
+}
+
+func TestResetSessionHard_DelegatedPath_NoMemoryFormation(t *testing.T) {
+	// Proves that ResetSessionHard for a delegated agent skips the memory
+	// formation prompt entirely (the difference from ResetSession), still
+	// closes the backend, and rotates the session key. SessionEndEnabled is
+	// deliberately TRUE here — hard reset must skip memory formation
+	// regardless of config.
+	store := session.NewStore(t.TempDir())
+	bootstrap := workspace.NewBootstrap(t.TempDir(), []string{})
+	sessionKey := "test/hardDelegated/1000000000"
+
+	if err := store.TestAppend(sessionKey, provider.Message{Role: "user", Content: provider.TextContent("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.TestAppend(sessionKey, provider.Message{Role: "assistant", Content: provider.TextContent("hi")}); err != nil {
+		t.Fatal(err)
+	}
+
+	var memorySent atomic.Bool
+	var backendClosed atomic.Bool
+
+	dm := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			be := &mockBackendDM{running: true}
+			be.closeFn = func() error {
+				backendClosed.Store(true)
+				return nil
+			}
+			be.sendToPaneFn = func(_ context.Context, _ string, _ *delegator.EventHandler) (*delegator.TurnResult, error) {
+				memorySent.Store(true)
+				return &delegator.TurnResult{}, nil
+			}
+			return be, nil
+		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { dm.Close() })
+
+	if _, err := dm.Get(context.Background(), sessionKey); err != nil {
+		t.Fatalf("pre-create backend: %v", err)
+	}
+	mb, _ := dm.getManaged(sessionKey)
+	mock := mb.be.(*mockBackendDM)
+
+	ag := &Agent{
+		Sessions:         store,
+		Tools:            tools.NewRegistry(),
+		Bootstrap:        bootstrap,
+		DelegatedManager: dm,
+		Reflection: config.ResolvedReflection{
+			SessionEndEnabled: true, // would normally fire memory formation
+		},
+	}
+
+	newKey, err := ag.ResetSessionHard(context.Background(), sessionKey)
+	if err != nil {
+		t.Fatalf("ResetSessionHard (delegated): %v", err)
+	}
+	if newKey == "" || newKey == sessionKey {
+		t.Errorf("newKey = %q, want a rotated key different from %q", newKey, sessionKey)
+	}
+
+	if memorySent.Load() {
+		t.Error("memory formation was sent — hard reset must skip it")
+	}
+	if !mock.wasInterrupted() {
+		t.Error("backend Interrupt was not called by hard reset")
+	}
+	if !backendClosed.Load() {
+		t.Error("backend Close was not called by hard reset")
+	}
+}
+
 func TestResetSession_ErrorWhenProcessing(t *testing.T) {
 	// Proves that ResetSession returns an error when the agent is currently
 	// processing a message, so the user must stop the turn first.

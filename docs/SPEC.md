@@ -268,7 +268,7 @@ The sync/async split is handled by `TurnState.CompletionChan`: API closes it syn
 **Session lifecycle:**
 - **Session ID persistence:** CC session UUID is persisted on discovery. On restart, `--resume <sessionID>` reconnects to the existing session.
 - **Branch rejection:** Delegated agents return HTTP 400 for `/branch`. Three strategies by task type: inject into main session (reflection, compaction-memory), spawn independent `RunOnce` process (consolidation, background, nudge extraction), or reject (HTTP endpoint).
-- **/reset:** Sends memory formation prompt, waits for completion, kills tmux pane, starts fresh CC session.
+- **/reset:** Sends memory formation prompt, waits for completion, kills tmux pane, starts fresh CC session. `/reset hard` cancels the in-flight turn, skips memory formation, and destroys the backend without saving — used to recover from stuck turns.
 - **/stop:** Sends Escape×2 + Ctrl-C to the CC TUI to interrupt the current turn.
 - **Stable exec bridge sockets:** Socket path derived from session key (not random), so CC keeps the same `FOCI_SOCK` path across foci restarts.
 
@@ -673,7 +673,7 @@ No tool call should prevent the system from responding to interrupts. If it does
 
 ### Session reset guard
 
-`/reset` refuses when the agent is mid-turn, preventing accidental data loss. This is the only reset mechanism — foci has no automatic daily/idle session resets. Sessions persist until explicitly reset by the user or the process restarts.
+`/reset` refuses when the agent is mid-turn, preventing accidental data loss. The escape hatch is `/reset hard`, which cancels the live turn, skips memory formation, and destroys the backend — for recovering from stuck turns or when the user explicitly wants no memories saved. There are no automatic daily/idle session resets; sessions persist until explicitly reset by the user or the process restarts.
 
 **Session-end reflection:** Before clearing the session, the reflection pass fires asynchronously — creating a branch from the expiring session to preserve conversation history. Configured via `[reflection]` section (`session_end_enabled`, `session_end_prompt`). The branch has a 120-second timeout and is non-fatal — if it fails, the reset has already proceeded. Branch sessions can opt out via `NoResetHook` in their branch metadata. The same hook fires on facet TTL reclaim.
 
