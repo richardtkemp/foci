@@ -301,8 +301,10 @@ func buildButtonRows(buttons []platform.ButtonChoice, callbackPrefix string) [][
 }
 
 // SendText sends a text message to the default chat without any header.
-// Returns an error if no chat ID is available.
-// Delegates to SendTextToChat, which handles IsSilent filtering.
+// Returns an error if no chat ID is available. Sentinel/silent filtering is
+// handled upstream — at the renderer (OnReply/Finalize) for interactive
+// turns and at SessionSink for injected/notify flows; this method does not
+// re-check.
 func (b *Bot) SendText(text string) error {
 	chatID := b.DefaultChatID()
 	if chatID == 0 {
@@ -331,8 +333,8 @@ func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
 
 // SendToSession sends a text message (without header) to the chat
 // associated with the given session key. Falls back to the bot's default chat
-// if the session key doesn't contain a chat ID.
-// Delegates to SendTextToChat, which handles IsSilent filtering.
+// if the session key doesn't contain a chat ID. Sentinel/silent filtering
+// is handled upstream by SessionSink before this method is reached.
 func (b *Bot) SendToSession(sessionKey, text string) error {
 	chatID := session.ChatIDFromKey(sessionKey)
 	if chatID == 0 {

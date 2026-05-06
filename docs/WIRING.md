@@ -608,6 +608,14 @@ The Steerer parameter, supplied by the agent worker, returns just the text field
 
 The delivered flag lives on `StreamingSink`, not on `TurnRenderer`. The renderer is now stateless across `OnReply → Finalize` boundaries. Double-delivery suppression for delegated turns (which stream text via `OnText` and also emit a `TurnComplete` with the same final text) happens automatically: the first `TextBlock{Intermediate}` sets `delivered = true`, and the terminal `TurnComplete` falls through to cleanup-only.
 
+**Sentinel silencing — where IsSilent / IsSilencingPrefix live.** Agents emit `[[NO_RESPONSE]]` (and CC sometimes emits `"No response requested."`) to indicate the turn produced no user-visible response. Filtering happens at exactly four places, each guarding a delivery path no other site reaches:
+- **`TurnRenderer.OnReply`** — `IsSilent` at the top. Authoritative gate for intermediate-text delivery on interactive turns. Every downstream method (`editToolPreviewWithReply`, `SendReply`, `EditMessage` on the stream message) is reachable only past this check.
+- **`TurnRenderer.Finalize`** — `IsSilent` at the top. Authoritative gate for final-text delivery on interactive turns. Same property: all downstream send/edit calls inside Finalize live below this check.
+- **`StreamWriter.OnDelta`** — `IsSilencingPrefix` on the lazy-start branch. Prefix-aware, applied to the streamed buffer; while the buffer could still resolve to a sentinel, `sendInitial` is held. This is the only place that can prevent the streamed Telegram message from being *created* — `IsSilent` at the renderer's higher-level entry points can prevent new delivery but cannot un-send an in-progress streamed edit.
+- **`SessionSink.Emit`** — `IsSilent` on both `TextBlock{Intermediate}` and `TurnComplete`. SessionSink bypasses the renderer entirely (it calls `conn.SendToSession` directly), so it owns its own pair of gates. The intermediate gate explicitly does not set `delivered = true`, so a non-silent final text on `TurnComplete` is still permitted.
+
+What used to be at `StreamingSink.Emit` on `TurnComplete` (a single sink-level `IsSilent` check) was removed when the renderer's gates were added — it was redundant once `Finalize` had its own gate, and the sink-level check missed the case where `FinalText` was a *concatenation* of normal text + sentinel (text-then-tool-then-`[[NO_RESPONSE]]`), which `IsSilent` rejects but the streaming path had already partially delivered. The renderer's `OnReply` gate catches that case at the segment boundary.
+
 ### How headless callers wire it
 
 - **HTTP `/send`, `/wake`, voice, webhook** (`cmd/foci-gw/http_handlers.go`, `http.go`): build a `turnevent.NewBufferSink()`, attach via `WithSink`, call `HandleMessage`, return `buf.FinalText()` as the JSON response.
@@ -1163,7 +1171,7 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 
 **Lifecycle:**
 1. `Bot.NewTurnSink` creates a `streamWriter` with the bot's `tableOpts` (no goroutines started yet) when `Agent.RunTurn` requests the per-turn sink
-2. On the first `TextDeltaObserver` delta, the stream writer sends an initial HTML-formatted message and starts a ticker goroutine
+2. On the first `TextDeltaObserver` delta, the stream writer sends an initial HTML-formatted message and starts a ticker goroutine — gated by `platform.IsSilencingPrefix` (see below)
 3. Each tick, if new text has accumulated, the buffer is processed through `closePartialMarkdown` → `ConvertToTelegramHTML` and the message is edited with HTML formatting
 4. When `HandleMessage` returns, `Finish()` stops the ticker and returns the message ID
 5. The final HTML-formatted response is edited into the stream message (or sent as a new message if too long/has thinking)
@@ -1173,6 +1181,7 @@ When `stream_output = true` and `streaming = true`, model output is shown in Tel
 - **Partial markdown handling:** `closePartialMarkdown` detects unmatched delimiters by parity counting and strips the trailing unmatched instance. For code fences, everything from the unmatched fence onward is removed. This is lightweight (string counting, no regex) and runs on every tick.
 - **Truncation at 3900 chars:** Buffer is truncated with `"..."` to stay within Telegram's 4096-char limit (with headroom for HTML tag expansion). Truncation is rune-safe to avoid splitting multi-byte UTF-8 characters. The final response uses the normal chunking path if it exceeds 4096.
 - **Lazy start:** No goroutine or message until the first delta. If the agent returns no text (e.g. pure tool calls), the stream writer does nothing.
+- **Silencing-prefix gate:** Before the first delta triggers `sendInitial`, the accumulated buffer is checked against `platform.IsSilencingPrefix`. While the buffer is empty/whitespace or could still resolve to a silencing sentinel (`[[NO_RESPONSE]]`, `"No response requested."`), no Telegram message is created. Once the buffer diverges from every sentinel, the gate releases, `sendInitial` fires with the held content, and normal streaming resumes — subsequent deltas are not re-checked. If the stream ends while still in the prefix-ambiguous window (whole turn is `[[NO_RESPONSE]]`), no message is ever created. This is the only way to prevent a streamed message from briefly appearing on screen before being silenced; `IsSilent` at downstream chokepoints (see below) prevents *new* delivery but cannot un-send a message that was incrementally streamed.
 - **Stream message as edit target:** When a stream message exists, the final response is edited into it (taking priority over tool call preview messages). If the response can't be edited in-place (too long, has thinking blocks), the stream message is edited to a truncated preview with "(full response below)" and the full response is sent as a new message.
 
 **Config:** `stream_output` (bool) and `stream_update_interval` (string, default `"250ms"`) in `[display]` or `[[platforms]]`, or `stream_output` and `stream_interval` in `[[agents.platforms]]`.

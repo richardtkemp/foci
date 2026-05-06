@@ -100,13 +100,49 @@ type TextSender interface {
 	SendTextToChat(chatID int64, text string) error
 }
 
+// silencingSentinels are the literal strings (post-TrimSpace) that suppress
+// delivery: empty, the [[NO_RESPONSE]] marker agents emit when they have
+// nothing to say, and CC's synthetic "No response requested." message.
+// IsSilent and IsSilencingPrefix are both built from this list.
+var silencingSentinels = []string{"[[NO_RESPONSE]]", "No response requested."}
+
 // IsSilent returns true if text should not be sent to users.
-// Covers empty/whitespace-only text, the [[NO_RESPONSE]] sentinel that agents
-// use to indicate they have nothing to say, and CC's synthetic "No response
-// requested." message.
+// Covers empty/whitespace-only text and any of silencingSentinels.
 func IsSilent(text string) bool {
 	t := strings.TrimSpace(text)
-	return t == "" || t == "[[NO_RESPONSE]]" || t == "No response requested."
+	if t == "" {
+		return true
+	}
+	for _, s := range silencingSentinels {
+		if t == s {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSilencingPrefix returns true if the streamed text-so-far might still
+// resolve to a silencing sentinel (see IsSilent). Used by streaming
+// transports to gate partial flushes — while a stream's accumulated text
+// is a prefix of "[[NO_RESPONSE]]" or "No response requested.", hold
+// delivery. Once divergence is established (this returns false), release
+// the buffer and stream normally; the final IsSilent check at TurnComplete
+// remains the authoritative gate for the eventual full text.
+//
+// Whitespace is trimmed from both ends before the prefix check, mirroring
+// IsSilent's TrimSpace behaviour. An empty/whitespace-only buffer returns
+// true (could still go either way).
+func IsSilencingPrefix(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return true
+	}
+	for _, s := range silencingSentinels {
+		if strings.HasPrefix(s, t) {
+			return true
+		}
+	}
+	return false
 }
 
 

@@ -247,3 +247,73 @@ func TestAggregatingConnMgr(t *testing.T) {
 	mgr.StartAll(context.Background())
 	mgr.Wait()
 }
+
+// TestIsSilent covers the post-TrimSpace exact-match behaviour: empty and
+// whitespace-only text, the [[NO_RESPONSE]] sentinel, and CC's synthetic
+// "No response requested." message are silent; everything else is not.
+func TestIsSilent(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"empty", "", true},
+		{"whitespace_only", "   \n\t ", true},
+		{"no_response_exact", "[[NO_RESPONSE]]", true},
+		{"no_response_padded", "  [[NO_RESPONSE]] \n", true},
+		{"no_response_requested", "No response requested.", true},
+		{"prefix_only", "[[NO_RESP", false},
+		{"with_trailing_text", "[[NO_RESPONSE]] OK", false},
+		{"normal_text", "Hello, world", false},
+		{"diverged_prefix", "[[NO_RESPITE]]", false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSilent(tc.in); got != tc.want {
+				t.Errorf("IsSilent(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsSilencingPrefix covers the streaming gate: returns true while the
+// accumulated buffer could still resolve to a silencing sentinel, false
+// once divergence is established. The streaming transport uses this to
+// hold delivery during the prefix-ambiguous window at the start of a
+// stream, then release once it's clear the turn isn't being silenced.
+func TestIsSilencingPrefix(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"empty_could_be_anything", "", true},
+		{"whitespace_only", "  \n", true},
+		{"single_bracket", "[", true},
+		{"two_brackets", "[[", true},
+		{"partial_no_response", "[[NO_RESP", true},
+		{"full_sentinel_held", "[[NO_RESPONSE]]", true},
+		{"full_sentinel_padded_held", "  [[NO_RESPONSE]] \n", true},
+		{"diverged_letter", "[[NO_RESPI", false},
+		{"sentinel_then_text", "[[NO_RESPONSE]] continuing", false},
+		{"normal_text_first_char", "H", false},
+		{"normal_text", "Hello", false},
+		{"second_sentinel_partial", "No", true},
+		{"second_sentinel_full", "No response requested.", true},
+		{"second_sentinel_diverged", "No response requested. now what", false},
+		{"prefix_with_leading_whitespace", "\n\t  [", true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsSilencingPrefix(tc.in); got != tc.want {
+				t.Errorf("IsSilencingPrefix(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}

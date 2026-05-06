@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"foci/internal/log"
+	"foci/internal/platform"
 )
 
 // TurnBackend provides platform-specific message rendering operations.
@@ -101,10 +102,29 @@ func (r *TurnRenderer) Cleanup() {
 // preview. Otherwise, overwrite the tool call preview with the reply text
 // (preview mode) or send a new message.
 //
+// Silencing gate: silent text (sentinels, empty) skips delivery entirely.
+// This is the authoritative gate for intermediate text — every downstream
+// delivery method (editToolPreviewWithReply, SendReply, EditMessage on the
+// stream message) is reachable only past this check, so no subsequent code
+// needs to repeat it.
+//
 // Bug fix: previously, the non-streaming fallback was guarded by
 // "else if !streamOutput", which dropped text when streaming was configured
 // but no stream deltas arrived. Now always delivers when no stream message exists.
 func (r *TurnRenderer) OnReply(text string) {
+	if platform.IsSilent(text) {
+		// Silent intermediate text — clean up state without delivering.
+		// The streaming-prefix gate in StreamWriter.OnDelta keeps the sw
+		// from creating a Telegram message in the first place; this branch
+		// just stops the (already-empty) writer and clears any lingering
+		// tool preview so there's no orphaned UI.
+		r.sw.Finish()
+		r.tracker.CleanupPreview()
+		r.sw = r.newSW()
+		r.thinkingPhase = false
+		r.streamedThinkingLive = false
+		return
+	}
 	msgID := r.sw.Finish()
 	if msgID != "" {
 		// Streaming: reply content is in the stream message. Finalize it
@@ -255,6 +275,12 @@ func (r *TurnRenderer) OnActivity() {
 // StreamingSink owns the delivered flag and calls Cleanup()+tracker.CleanupPreview()
 // directly when intermediate delivery already happened. This keeps the
 // renderer stateless across delivery boundaries.
+//
+// Silencing gate: silent responses (sentinels, empty) skip delivery entirely.
+// This is the authoritative gate for final-text delivery; every downstream
+// path inside Finalize is reachable only past this check. The check is
+// applied AFTER the stream-content fallback so an empty FinalText that
+// the buffer fills in with real content is not mistaken for silence.
 func (r *TurnRenderer) Finalize(response string) {
 	// Finish the stream writer and get the message ID it created (if any).
 	// The agent's tool-loop accumulator only exposes text from the *last*
@@ -263,6 +289,14 @@ func (r *TurnRenderer) Finalize(response string) {
 	streamMsgID := r.sw.Finish()
 	if textContent := r.streamTextContent(); strings.TrimSpace(response) == "" && strings.TrimSpace(textContent) != "" {
 		response = textContent
+	}
+
+	if platform.IsSilent(response) {
+		// Silent final response — nothing to deliver. The streaming-prefix
+		// gate keeps the sw from having created a Telegram message when the
+		// content was sentinel-only; clean up any lingering tool preview.
+		r.tracker.CleanupPreview()
+		return
 	}
 
 	thinkingText := r.thinking.String()

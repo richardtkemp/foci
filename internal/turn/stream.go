@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"foci/internal/platform"
 )
 
 // StreamTransport sends and edits streaming messages on a specific platform.
@@ -53,7 +55,11 @@ func NewStreamWriter(transport StreamTransport, interval time.Duration, maxChars
 }
 
 // OnDelta appends a text delta to the buffer. On the first call (live mode),
-// sends the initial message and starts the periodic edit goroutine.
+// sends the initial message and starts the periodic edit goroutine — gated
+// by IsSilencingPrefix so that streams whose accumulated text might still
+// resolve to a silencing sentinel ([[NO_RESPONSE]] etc.) are held back from
+// Telegram until divergence is established. Once released, subsequent deltas
+// stream normally.
 func (sw *StreamWriter) OnDelta(delta string) {
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
@@ -66,7 +72,16 @@ func (sw *StreamWriter) OnDelta(delta string) {
 	sw.dirty = true
 
 	// Lazy start: first delta triggers initial message + edit loop (live mode only).
+	// Streaming-prefix gate: hold the start while the buffer could still resolve
+	// to a silencing sentinel. Once IsSilencingPrefix returns false, we know the
+	// turn isn't being silenced and release. If the stream ends while still in
+	// the prefix-ambiguous window (e.g. text == "[[NO_RESPONSE]]"), no message
+	// is ever sent — the StreamingSink's IsSilent check at TurnComplete is the
+	// authoritative final gate, but by then there's nothing to clean up here.
 	if sw.live && sw.ticker == nil {
+		if platform.IsSilencingPrefix(sw.buf.String()) {
+			return
+		}
 		sw.sendInitial()
 		sw.ticker = time.NewTicker(sw.interval)
 		go sw.editLoop()
