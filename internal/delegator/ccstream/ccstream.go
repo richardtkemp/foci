@@ -28,6 +28,14 @@ func init() {
 	delegator.Register("claude-code", newFromConfig)
 }
 
+// Close timeouts. Vars (not consts) so tests can shrink them; production
+// path keeps the ~9s worst-case shutdown documented in Close.
+var (
+	closeGracefulWait = 5 * time.Second // wait for clean exit before SIGTERM
+	closeSigtermWait  = 2 * time.Second // wait after SIGTERM before SIGKILL
+	closeSigkillWait  = 2 * time.Second // wait after SIGKILL before abandoning the waiter goroutine
+)
+
 func newFromConfig(cfg map[string]any) (delegator.Delegator, error) {
 	b := &Backend{
 		readyCh:        make(chan struct{}),
@@ -347,25 +355,43 @@ func (b *Backend) Close() error {
 	// Wait for process exit with timeout. The waiter goroutine (launched in
 	// Start) calls cmd.Wait() and sends the result to waitCh. If the process
 	// already exited, this returns immediately.
+	//
+	// Every wait has a bounded timeout: even after SIGKILL we cap the final
+	// wait, because the waiter goroutine has been observed to stall inside
+	// finalizeExit (e.g. handler callbacks holding locks, see TODO #749).
+	// An unbounded `<-waitCh` here held m.mu in the caller (ResetSession /
+	// Get) and froze the entire agent until manual restart. The timeout
+	// trades a possible zombie-process leak for liveness — Close must always
+	// return so callers can release locks and respawn.
 	component := b.logComponent()
 	select {
 	case <-b.waitCh:
 		// Process already exited (or just did).
-	case <-time.After(5 * time.Second):
+	case <-time.After(closeGracefulWait):
 		// SIGTERM.
-		log.Warnf(component, "process did not exit after 5s, sending SIGTERM")
+		log.Warnf(component, "process did not exit after %s, sending SIGTERM", closeGracefulWait)
 		if b.cmd.Process != nil {
 			_ = b.cmd.Process.Signal(syscall.SIGTERM)
 		}
 		select {
 		case <-b.waitCh:
-		case <-time.After(2 * time.Second):
+		case <-time.After(closeSigtermWait):
 			// SIGKILL.
 			log.Warnf(component, "process did not exit after SIGTERM, sending SIGKILL")
 			if b.cmd.Process != nil {
 				_ = b.cmd.Process.Kill()
 			}
-			<-b.waitCh
+			select {
+			case <-b.waitCh:
+			case <-time.After(closeSigkillWait):
+				// Bounded fallback — the waiter goroutine stalled (see
+				// finalizeExit instrumentation). Process is already SIGKILL'd
+				// so the OS will reap it; we just stop waiting for the
+				// goroutine to confirm. Without this cap, m.mu in the
+				// caller is held forever and no further messages can be
+				// processed for this agent.
+				log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
+			}
 		}
 	}
 
@@ -1505,6 +1531,16 @@ func (b *Backend) OnReaderStopped(err error) {
 func (b *Backend) finalizeExit(reason error) {
 	b.finalizeOnce.Do(func() {
 		component := b.logComponent()
+
+		// Instrumentation: bracket the cleanup so we can see whether it
+		// completed and where time goes when the waiter-goroutine
+		// signalling chain stalls (TODO #749). Should be sub-millisecond
+		// in the happy path; >1s indicates a callback or lock issue.
+		start := time.Now()
+		log.Debugf(component, "finalizeExit: enter reason=%v", reason)
+		defer func() {
+			log.Debugf(component, "finalizeExit: exit elapsed=%s", time.Since(start))
+		}()
 
 		b.mu.Lock()
 		expected := b.closing

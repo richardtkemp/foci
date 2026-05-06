@@ -642,6 +642,67 @@ func TestResetSession_NoBackend(t *testing.T) {
 	mgr.ResetSession("test-agent/nonexistent") // should not panic
 }
 
+func TestResetSession_DoesNotHoldManagerLockDuringClose(t *testing.T) {
+	// Regression for the 2026-05-06 deadlock. ResetSession used to hold m.mu
+	// across be.Close(), so a single stuck backend froze the entire agent —
+	// every subsequent inbound message blocked on m.mu trying to look up its
+	// session. This test installs a backend whose Close blocks, kicks off
+	// ResetSession in a goroutine, and verifies that an unrelated session's
+	// Get still completes promptly.
+	t.Parallel()
+
+	mgr, _ := newTestManager(t, nil)
+
+	stuck := "test-agent/stuck"
+	other := "test-agent/other"
+
+	// Spawn the stuck backend.
+	if _, err := mgr.Get(context.Background(), stuck); err != nil {
+		t.Fatalf("Get(stuck): %v", err)
+	}
+
+	// Wire its Close to block until we let it through.
+	release := make(chan struct{})
+	mgr.mu.Lock()
+	stuckMB := mgr.backends[stuck]
+	mgr.mu.Unlock()
+	stuckMock := stuckMB.be.(*mockBackendDM)
+	stuckMock.mu.Lock()
+	stuckMock.closeFn = func() error { <-release; return nil }
+	stuckMock.mu.Unlock()
+
+	// Reset in the background — Close will block.
+	resetDone := make(chan struct{})
+	go func() {
+		mgr.ResetSession(stuck)
+		close(resetDone)
+	}()
+
+	// Give ResetSession time to enter Close.
+	time.Sleep(20 * time.Millisecond)
+
+	// An unrelated session should still be reachable. If m.mu was held
+	// during Close, this would block.
+	getDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Get(context.Background(), other)
+		getDone <- err
+	}()
+
+	select {
+	case err := <-getDone:
+		if err != nil {
+			t.Fatalf("Get(other) while stuck close in progress: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Get(other) blocked while ResetSession's Close was in progress — m.mu is being held across Close")
+	}
+
+	// Let the stuck Close finish so the test goroutine cleans up.
+	close(release)
+	<-resetDone
+}
+
 func TestClose_ShutsDownAll(t *testing.T) {
 	// Proves that Close shuts down all managed backends and the idle reaper.
 	mgr, mocks := newTestManager(t, nil)

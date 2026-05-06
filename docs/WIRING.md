@@ -360,6 +360,8 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **/stop:** Interrupts the current turn. Tmux backend: sends Escape×2 + Ctrl-C via `send-keys`. Stream backend: sends an `interrupt` control message over stdin. Both halt the in-flight inference/tool execution inside Claude Code.
 
+**Bounded shutdown contract.** `Backend.Close` (ccstream) returns within ~9s in the worst case: graceful wait → SIGTERM → SIGKILL → bounded final wait on the waiter goroutine. The final wait *also* has a timeout — if the waiter goroutine stalls (observed when `finalizeExit` callbacks block), the OS still reaps the SIGKILL'd process and `Close` abandons the goroutine rather than hanging forever. `DelegatedManager.ResetSession` and `DelegatedManager.Get` consequently mutate `m.backends` under `m.mu` but call `be.Close()` *after* releasing the lock, so a slow shutdown can never freeze inbound message processing for the whole agent. Regression tests: `TestClose_BoundedWaitWhenWaiterStalls`, `TestResetSession_DoesNotHoldManagerLockDuringClose`.
+
 **Tool execution guarding and redaction:**
 - After a tool executes, `guardToolResult()` checks if result exceeds `MaxResultChars`
 - If exceeded, writes full result to temp file and returns a guard message (no partial content)

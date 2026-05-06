@@ -99,6 +99,15 @@ func (mb *managedBackend) clearPermission() {
 // Use RotateBackendKey after compaction to re-key the map entry.
 func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
 	m.mu.Lock()
+	// dead is the corpse to clean up after the lock is released. Holding
+	// m.mu across be.Close() risks deadlocking the entire agent if the
+	// subprocess can't shut down promptly (observed 2026-05-06: a /reset
+	// caught CC mid-rearm, CC died with exit 1, the waiter goroutine
+	// stalled, Close blocked forever, m.mu was held forever, and every
+	// subsequent inbound message silently stalled). Both the resume-ID
+	// save and the map delete happen under the lock so a concurrent caller
+	// observes a consistent state — only the slow IO is moved out.
+	var dead *managedBackend
 	if mb, ok := m.backends[sessionKey]; ok {
 		if mb.be.IsRunning() {
 			mb.lastActive = time.Now()
@@ -110,16 +119,22 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 		// Save the resume ID so the new subprocess can resume the CC session.
 		log.Warnf("delegated", "backend for %s is dead, respawning", sessionKey)
 		m.saveResumeID(sessionKey, mb.be.SessionID())
-		_ = mb.be.Close()
-		if mb.bridge != nil {
-			mb.bridge.Close()
-		}
 		delete(m.backends, sessionKey)
+		dead = mb
 	}
 
 	// Check for a saved session UUID to resume.
 	resumeID := m.loadResumeID(sessionKey)
 	m.mu.Unlock()
+
+	// Close the dead backend AFTER releasing m.mu — Close has bounded
+	// timeouts but can still take ~10s in the pathological case.
+	if dead != nil {
+		_ = dead.be.Close()
+		if dead.bridge != nil {
+			dead.bridge.Close()
+		}
+	}
 
 	// Create and start a new Backend for this session.
 	be, err := m.NewBackend()
@@ -387,21 +402,33 @@ func (m *DelegatedManager) WaitForTurn(ctx context.Context, sessionKey string) e
 
 // ResetSession closes the delegated backend for a specific session key WITHOUT saving
 // the resume ID, so the next Get() creates a completely fresh CC session.
+//
+// The map mutation is performed under m.mu, but the (potentially slow)
+// be.Close() runs after the lock is released. Holding m.mu across Close
+// risked freezing every other agent operation if the backend was unable
+// to shut down promptly — a single stuck CC subprocess could deadlock
+// inbound message handling for the entire agent (observed 2026-05-06).
+// Close itself has bounded timeouts (see ccstream Close), so even in the
+// pathological case this method returns within ~10s.
 func (m *DelegatedManager) ResetSession(sessionKey string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	mb, ok := m.backends[sessionKey]
 	if !ok {
+		m.mu.Unlock()
 		return
 	}
+	delete(m.backends, sessionKey)
+	// Clear any saved resume ID so next session starts fresh — done while
+	// the lock is held so a concurrent Get() observes a consistent state
+	// (no entry in m.backends, no resume ID to load).
+	m.clearResumeID(sessionKey)
+	m.mu.Unlock()
+
 	mb.clearPermission()
 	_ = mb.be.Close()
 	if mb.bridge != nil {
 		mb.bridge.Close()
 	}
-	delete(m.backends, sessionKey)
-	// Clear any saved resume ID so next session starts fresh.
-	m.clearResumeID(sessionKey)
 	log.Infof("delegated", "reset session %s (closed, resume ID cleared)", sessionKey)
 }
 
