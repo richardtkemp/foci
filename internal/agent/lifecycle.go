@@ -153,6 +153,45 @@ func (a *Agent) compactDelegatedSession(ctx context.Context, sessionKey string, 
 	return CompactResult{}, nil
 }
 
+// ResetSessionHard clears the session immediately, without waiting for any
+// in-flight turn and without sending memory formation prompts.
+//
+// Cancels the in-flight turn ctx (if any), interrupts the delegated backend
+// (best-effort), destroys the backend, rotates the session key, and reloads
+// the bootstrap. Use this when the agent is stuck or the user wants a clean
+// reset without saving session memories.
+//
+// Unlike ResetSession, this does not check IsProcessing — that's the whole
+// point. Cancellation propagates through the same paths /stop uses.
+//
+// Returns the new session key on success.
+func (a *Agent) ResetSessionHard(ctx context.Context, sessionKey string) (string, error) {
+	if sessionKey == "" {
+		return "", fmt.Errorf("no active session to reset")
+	}
+
+	// Cancel any in-flight turn ctx. CancelSession is a no-op if no turn is
+	// running, so this is safe to call unconditionally.
+	a.CancelSession(sessionKey)
+
+	if a.DelegatedManager != nil {
+		// Interrupt CC if there's a backend. Best-effort — backend may not
+		// exist yet, or interrupt may fail; we proceed to Close regardless.
+		if err := a.DelegatedManager.StopSession(ctx, sessionKey); err != nil {
+			log.Debugf("reset", "hard reset interrupt for %s: %v (proceeding to close)", sessionKey, err)
+		}
+		a.DelegatedManager.ResetSession(sessionKey)
+	}
+
+	newKey, err := a.Sessions.RotateKey(sessionKey)
+	if err != nil {
+		return "", err
+	}
+	a.RotateSession(sessionKey, newKey)
+	a.reloadAfterMutation()
+	return newKey, nil
+}
+
 // resetDelegatedSession handles session reset for backend-managed agents.
 // Sends memory formation prompt to the live backend session (blocking until
 // CC completes), then destroys the backend and rotates the session key.

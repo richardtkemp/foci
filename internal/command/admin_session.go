@@ -76,27 +76,59 @@ func DoneCommand() *Command {
 	}
 }
 
-// ResetCommand returns a /reset command that clears session history with memory formation.
+// ResetCommand returns a /reset command that clears session history.
+//
+// Default (`/reset`) saves memories before clearing and refuses while the
+// agent is processing — see Agent.ResetSession.
+//
+// `/reset hard` cancels the in-flight turn (if any), skips memory formation,
+// destroys the backend, and rotates the key. Marked Immediate at the
+// subcommand level so it runs inline in the polling goroutine and can
+// actually cancel a live turn (the worker is blocked while a turn runs).
 func ResetCommand() *Command {
-	return &Command{
+	softExec := func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+		sk := tools.SessionKeyFromContext(ctx)
+		if sk == "" {
+			return Response{}, fmt.Errorf("no active session to reset")
+		}
+		if _, err := cc.Agent.ResetSession(ctx, sk); err != nil {
+			return Response{}, err
+		}
+		if cc.Agent.DelegatedManager != nil {
+			return Response{Text: "Session reset — memories saved, fresh CC session will start on next message."}, nil
+		}
+		return Response{Text: "Session cleared."}, nil
+	}
+
+	hardExec := func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
+		sk := tools.SessionKeyFromContext(ctx)
+		if sk == "" {
+			return Response{}, fmt.Errorf("no active session to reset")
+		}
+		if _, err := cc.Agent.ResetSessionHard(ctx, sk); err != nil {
+			return Response{}, err
+		}
+		return Response{Text: "Session reset (hard) — turn cancelled, no memories saved."}, nil
+	}
+
+	cmd := &Command{
 		Name:        "reset",
 		Description: "Clear session history",
 		Category:    "operations",
-		Execute: func(ctx context.Context, _ Request, cc CommandContext) (Response, error) {
-			sk := tools.SessionKeyFromContext(ctx)
-			if sk == "" {
-				return Response{}, fmt.Errorf("no active session to reset")
-			}
-			_, err := cc.Agent.ResetSession(ctx, sk)
-			if err != nil {
-				return Response{}, err
-			}
-			if cc.Agent.DelegatedManager != nil {
-				return Response{Text: "Session reset — memories saved, fresh CC session will start on next message."}, nil
-			}
-			return Response{Text: "Session cleared."}, nil
+		Subcommands: []Subcommand{
+			{
+				Name:        "hard",
+				Description: "Reset immediately, cancel in-flight turn, skip memory formation",
+				Immediate:   true, // must run inline to cancel a live turn
+				Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+					return hardExec(ctx, req, cc)
+				},
+			},
 		},
+		DefaultExecute: softExec,
 	}
+	cmd.buildSubcommandDispatch()
+	return cmd
 }
 
 // CompactCommand creates a /compact command that triggers manual session compaction.

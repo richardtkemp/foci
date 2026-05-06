@@ -151,8 +151,10 @@ Show or set per-session display options.
 ### `/voice`
 Toggle voice mode — when on, all agent replies are sent as voice notes via TTS.
 
-### `/reset`
-Clear session history. Fires session-end memory formation (async) before clearing, rotates the session key, reloads bootstrap. Refuses if the agent is currently processing.
+### `/reset [hard]`
+Clear session history.
+- `/reset` — fires session-end memory formation (async for API agents, blocking for delegated) before clearing, rotates the session key, reloads bootstrap. Refuses if the agent is currently processing.
+- `/reset hard` — cancels any in-flight turn, skips memory formation, destroys the backend, rotates the session key. Use when the agent is stuck or you want a clean reset without saving memories. Dispatched immediately so it can interrupt a live turn.
 
 ### `/compact [dry-run]`
 Trigger manual context compaction.

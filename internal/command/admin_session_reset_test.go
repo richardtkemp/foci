@@ -74,6 +74,82 @@ func TestResetCommand_NoSessionKey(t *testing.T) {
 	}
 }
 
+// TestResetCommand_HardSubcommand verifies that /reset hard dispatches to
+// ResetSessionHard rather than ResetSession — including when the agent is
+// processing (the soft path would refuse).
+func TestResetCommand_HardSubcommand(t *testing.T) {
+	sessDir := t.TempDir()
+	store := session.NewStore(sessDir)
+
+	reqKey := "testagent/c12345/1000000000"
+	if err := store.TestAppend(reqKey, provider.Message{Role: "user", Content: []provider.ContentBlock{{Type: "text", Text: "hello"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	bs := workspace.NewBootstrap(t.TempDir(), nil)
+	ag := &agent.Agent{
+		Sessions:  store,
+		Bootstrap: bs,
+	}
+	// Simulate an in-flight turn — the soft path would return an error here.
+	ag.SetProcessingForTest(1)
+
+	cc := CommandContext{
+		Agent:     ag,
+		Sessions:  store,
+		Config:    &config.Config{},
+		Bootstrap: bs,
+	}
+
+	ctx := tools.WithSessionKey(context.Background(), reqKey)
+	cmd := ResetCommand()
+	resp, err := cmd.Execute(ctx, Request{Args: "hard"}, cc)
+	if err != nil {
+		t.Fatalf("/reset hard: unexpected error: %v", err)
+	}
+	if !strings.Contains(resp.Text, "hard") {
+		t.Errorf("response = %q, want to mention 'hard'", resp.Text)
+	}
+}
+
+// TestResetCommand_HardImmediate verifies that the parent /reset command
+// stays non-Immediate (so its default path doesn't tie up the polling
+// goroutine on memory formation), but the `hard` subcommand IS Immediate
+// (so it can cancel a live turn before the worker gets to it).
+func TestResetCommand_HardImmediate(t *testing.T) {
+	cmd := ResetCommand()
+	if cmd.Immediate {
+		t.Error("parent /reset must not be Immediate (soft path can block on memory formation)")
+	}
+	var hardSub *Subcommand
+	for i := range cmd.Subcommands {
+		if cmd.Subcommands[i].Name == "hard" {
+			hardSub = &cmd.Subcommands[i]
+			break
+		}
+	}
+	if hardSub == nil {
+		t.Fatal("`hard` subcommand not registered on /reset")
+	}
+	if !hardSub.Immediate {
+		t.Error("/reset hard subcommand must be Immediate (cancels live turn)")
+	}
+
+	// Registry-level: dispatch should classify "/reset hard" as immediate
+	// but "/reset" alone as deferred.
+	r := NewRegistry()
+	r.Register(cmd)
+	if !r.IsImmediateText("/reset hard") {
+		t.Error("IsImmediateText(\"/reset hard\") = false, want true")
+	}
+	if r.IsImmediateText("/reset") {
+		t.Error("IsImmediateText(\"/reset\") = true, want false")
+	}
+	if r.IsImmediateText("/reset soft") {
+		t.Error("IsImmediateText(\"/reset soft\") = true, want false (no `soft` subcommand)")
+	}
+}
+
 // TestCompactCommand_UsesSessionKeyFromContext verifies that /compact reads
 // the session key from the context.
 func TestCompactCommand_UsesSessionKeyFromContext(t *testing.T) {

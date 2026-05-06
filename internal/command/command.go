@@ -23,8 +23,15 @@ type Subcommand struct {
 	Aliases     []string // accepted in dispatch, not shown in keyboard
 	Description string   // one-line help text for auto-generated usage
 	Hidden      bool     // dispatched but excluded from keyboard (e.g. needs args)
-	Visible     func(ctx context.Context, cc CommandContext) bool
-	Execute     func(ctx context.Context, req Request, cc CommandContext) (Response, error)
+	// Immediate marks subcommands that must run inline in the polling
+	// goroutine rather than being deferred to the worker (mirrors
+	// Command.Immediate but at subcommand granularity). Set this on any
+	// subcommand that cancels or interrupts an active agent turn (e.g.
+	// /reset hard) — the worker is blocked while a turn is running and
+	// cannot process deferred work.
+	Immediate bool
+	Visible   func(ctx context.Context, cc CommandContext) bool
+	Execute   func(ctx context.Context, req Request, cc CommandContext) (Response, error)
 }
 
 // Requires declares what transport a command needs to function.
@@ -202,24 +209,58 @@ func (r *Registry) Get(name string) *Command {
 // IsImmediateText reports whether the command named in text has Immediate set.
 // Used by platform receive loops to decide whether to dispatch a command in the
 // polling goroutine (immediate) or defer it to the worker goroutine (non-immediate).
+//
+// Checks the parent command's Immediate flag first; if false, also checks
+// whether the first arg matches an Immediate subcommand. This lets a parent
+// command stay non-Immediate (so its default path doesn't tie up the polling
+// goroutine) while still dispatching specific subcommands (e.g. /reset hard)
+// inline.
 func (r *Registry) IsImmediateText(text string) bool {
-	name := commandNameFromText(text)
+	name, args := commandNameAndArgsFromText(text)
 	if name == "" {
 		return false
 	}
 	cmd, ok := r.commands[name]
-	return ok && cmd.Immediate
+	if !ok {
+		return false
+	}
+	if cmd.Immediate {
+		return true
+	}
+	if args == "" || len(cmd.Subcommands) == 0 {
+		return false
+	}
+	first := strings.ToLower(strings.Fields(args)[0])
+	for i := range cmd.Subcommands {
+		sub := &cmd.Subcommands[i]
+		if sub.Name == first {
+			return sub.Immediate
+		}
+		for _, alias := range sub.Aliases {
+			if alias == first {
+				return sub.Immediate
+			}
+		}
+	}
+	return false
 }
 
 // commandNameFromText extracts the lower-cased command name from slash/dot-prefixed
 // text (e.g. "/stop args" → "stop", ".reset" → "reset"). Returns "" if not a command.
 func commandNameFromText(text string) string {
+	name, _ := commandNameAndArgsFromText(text)
+	return name
+}
+
+// commandNameAndArgsFromText extracts both the lower-cased command name and the
+// trimmed args. Returns ("", "") if text is not a command.
+func commandNameAndArgsFromText(text string) (string, string) {
 	text = strings.TrimSpace(text)
 	if len(text) == 0 || (text[0] != '/' && text[0] != '.') {
-		return ""
+		return "", ""
 	}
-	name, _, _ := strings.Cut(text[1:], " ")
-	return strings.ToLower(name)
+	name, args, _ := strings.Cut(text[1:], " ")
+	return strings.ToLower(name), strings.TrimSpace(args)
 }
 
 // All returns all commands sorted by name.
