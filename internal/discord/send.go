@@ -249,8 +249,10 @@ func (b *Bot) SendStartupNotification(agentID string) {
 }
 
 // SendText sends a text message to the default channel without any header.
-// Returns an error if no channel ID is available.
-// Delegates to SendTextToChat, which handles IsSilent filtering.
+// Returns an error if no channel ID is available. Sentinel/silent filtering
+// is handled upstream — at the renderer (OnReply/Finalize) for interactive
+// turns and at SessionSink for injected/notify flows; this method does not
+// re-check.
 func (b *Bot) SendText(text string) error {
 	channelID := b.DefaultChatID()
 	if channelID == 0 {
@@ -279,8 +281,8 @@ func (b *Bot) SendInjectedMessage(sessionKey, text string) error {
 
 // SendToSession sends a text message (without header) to the channel
 // associated with the given session key. Falls back to the bot's default channel
-// if the session key doesn't contain a chat ID.
-// Delegates to SendTextToChat, which handles IsSilent filtering.
+// if the session key doesn't contain a chat ID. Sentinel/silent filtering
+// is handled upstream by SessionSink before this method is reached.
 func (b *Bot) SendToSession(sessionKey, text string) error {
 	chatID := session.ChatIDFromKey(sessionKey)
 	if chatID == 0 {
@@ -378,8 +380,10 @@ func (b *Bot) SendVoiceDataToChat(chatID int64, audioData []byte) error {
 // SendTextToChat sends a text message to a specific channel ID without any header.
 // This is the single convergence point for all text delivery — every other
 // send method (SendText, SendToSession, sendReply, etc.) delegates here.
-// Sentinel filtering (IsSilent) is handled upstream by the turn sinks;
-// this only guards against sending empty/whitespace to the platform API.
+// Sentinel filtering (IsSilent) is handled upstream by the renderer
+// (OnReply/Finalize) for interactive turns and by SessionSink for
+// injected/notify flows; this only guards against sending empty/whitespace
+// to the platform API.
 func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil

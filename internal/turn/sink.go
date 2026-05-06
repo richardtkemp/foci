@@ -111,20 +111,6 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			text = fmt.Sprintf("Error: %s", e.Err.Error())
 		}
 
-		// Silent responses (sentinels, empty) — clean up without delivering.
-		// This is the authoritative filter for interactive turns; downstream
-		// methods (SendTextToChat, renderer) no longer check IsSilent.
-		if platform.IsSilent(text) {
-			s.renderer.Cleanup()
-			if s.tracker != nil {
-				s.tracker.CleanupPreview()
-			}
-			if s.conn != nil {
-				s.conn.SetTyping(false)
-			}
-			return
-		}
-
 		if s.delivered {
 			// Content was already shown via OnReply during the turn — skip
 			// re-delivery. Matches the historical replyDelivered-on-renderer
@@ -135,6 +121,9 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 				s.tracker.CleanupPreview()
 			}
 		} else {
+			// Silent final text (sentinels, empty) is gated inside Finalize
+			// itself — the renderer's OnReply and Finalize methods are the
+			// authoritative gates for interactive-turn delivery.
 			s.renderer.Finalize(text)
 		}
 
@@ -192,6 +181,11 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		}
 	case turnevent.TextBlock:
 		if e.Phase != turnevent.PhaseIntermediate || s.conn == nil {
+			return
+		}
+		// Silent intermediate text — skip delivery. Don't set delivered=true,
+		// so a non-silent final text on TurnComplete is still permitted.
+		if platform.IsSilent(e.Text) {
 			return
 		}
 		if err := s.conn.SendToSession(s.sessionKey, e.Text); err != nil && s.onError != nil {

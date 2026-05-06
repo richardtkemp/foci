@@ -80,8 +80,10 @@ func (b *Bot) lastChatID() (int64, error) {
 // SendTextToChat sends a text message to a specific chat ID without any header.
 // This is the single convergence point for all text delivery — every other
 // send method (SendText, SendToSession, sendReply, etc.) delegates here.
-// Sentinel filtering (IsSilent) is handled upstream by the turn sinks;
-// this only guards against sending empty/whitespace to the platform API.
+// Sentinel filtering (IsSilent) is handled upstream by the renderer
+// (OnReply/Finalize) for interactive turns and by SessionSink for
+// injected/notify flows; this only guards against sending empty/whitespace
+// to the platform API.
 func (b *Bot) SendTextToChat(chatID int64, text string) error {
 	if strings.TrimSpace(text) == "" {
 		return nil
