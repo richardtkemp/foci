@@ -18,6 +18,12 @@ import (
 // DefaultIdleTimeout is the default duration after which idle delegated backends are closed.
 const DefaultIdleTimeout = 24 * time.Hour
 
+// typingFuncTimeout bounds how long the SetTypingFunc shim will wait for the
+// downstream platform call (e.g. Telegram SetChatTyping) before giving up.
+// Typing indicator is fire-and-forget by design — no caller cares about
+// completion. See TODO #749.
+const typingFuncTimeout = 2 * time.Second
+
 // DelegatedManager creates and manages per-session Backend instances lazily
 // for the delegated transport path. Each session key gets its own Backend
 // (own CC session). Idle backends are closed after IdleTimeout and resumed
@@ -479,7 +485,26 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 	})
 	if m.TypingFunc != nil {
 		mb.be.SetTypingFunc(func(typing bool) {
-			m.TypingFunc(sk(), typing)
+			// Typing indicator is fire-and-forget — no return value, no error.
+			// Run with a bounded timeout so a hung downstream call (e.g. a
+			// stale-connection-pool SetChatTyping waiting on a server response
+			// that won't come) cannot wedge the caller. This is the suspected
+			// stall site for TODO #749 (finalizeExit on the waiter goroutine
+			// blocks forever inside typingFunc(false) at session close, leaving
+			// waitCh never sent on). Defense-in-depth: even if typingFunc isn't
+			// the actual culprit, a fire-and-forget call should never block
+			// indefinitely.
+			done := make(chan struct{})
+			key := sk()
+			go func() {
+				defer close(done)
+				m.TypingFunc(key, typing)
+			}()
+			select {
+			case <-done:
+			case <-time.After(typingFuncTimeout):
+				log.Warnf("agent/delegated", "typingFunc(typing=%v) for %s did not return within %s — abandoning (possible Telegram SetChatTyping stall)", typing, key, typingFuncTimeout)
+			}
 		})
 	}
 	mb.be.SetOnSessionReady(func(sessionID string) {
