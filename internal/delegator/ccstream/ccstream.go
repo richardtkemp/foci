@@ -1546,6 +1546,7 @@ func (b *Backend) finalizeExit(reason error) {
 		expected := b.closing
 		b.running = false
 		b.mu.Unlock()
+		log.Debugf(component, "finalizeExit: post-mu elapsed=%s", time.Since(start))
 
 		// If the waiter goroutine has set exitErr, prefer its detail for the
 		// user-visible message. Wait briefly in case finalizeExit was invoked
@@ -1557,8 +1558,10 @@ func (b *Backend) finalizeExit(reason error) {
 			select {
 			case <-b.exitCh:
 			case <-time.After(2 * time.Second):
+				log.Debugf(component, "finalizeExit: exitCh wait timed out (waiter goroutine has not set exitErr) elapsed=%s", time.Since(start))
 			}
 		}
+		log.Debugf(component, "finalizeExit: post-exitCh-wait elapsed=%s", time.Since(start))
 
 		if !expected && b.exitErr != nil {
 			log.Warnf(component, "process exit detail: %s", describeExitError(b.exitErr))
@@ -1572,6 +1575,7 @@ func (b *Backend) finalizeExit(reason error) {
 		b.turnActive = false
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
+		log.Debugf(component, "finalizeExit: post-turnMu handler_nil=%v handler_otc_nil=%v elapsed=%s", handler == nil, handler == nil || handler.OnTurnComplete == nil, time.Since(start))
 
 		if handler != nil && handler.OnTurnComplete != nil {
 			var msg string
@@ -1583,11 +1587,15 @@ func (b *Backend) finalizeExit(reason error) {
 					msg += " (" + describeExitError(b.exitErr) + ")"
 				}
 			}
+			log.Debugf(component, "finalizeExit: pre-OnTurnComplete elapsed=%s", time.Since(start))
 			handler.OnTurnComplete(&delegator.TurnResult{Text: msg})
+			log.Debugf(component, "finalizeExit: post-OnTurnComplete elapsed=%s", time.Since(start))
 		}
 
 		if b.typingFunc != nil {
+			log.Debugf(component, "finalizeExit: pre-typingFunc(false) elapsed=%s", time.Since(start))
 			b.typingFunc(false)
+			log.Debugf(component, "finalizeExit: post-typingFunc(false) elapsed=%s", time.Since(start))
 		}
 
 		// Unblock WaitForTurn.

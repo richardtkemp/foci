@@ -919,6 +919,88 @@ func TestGet_TypingFuncRouting(t *testing.T) {
 	}
 }
 
+func TestGet_TypingFuncBoundedWhenDownstreamHangs(t *testing.T) {
+	// Proves that when the manager's TypingFunc hangs (e.g. Telegram
+	// SetChatTyping waiting on a stale connection), the wrapper returned by
+	// SetTypingFunc returns within typingFuncTimeout instead of blocking
+	// indefinitely. This is the defense-in-depth fix for TODO #749 — a
+	// fire-and-forget call should never wedge its caller.
+	mgr, mocks := newTestManager(t, nil)
+	hangCh := make(chan struct{})
+	defer close(hangCh)
+	mgr.TypingFunc = func(sk string, typing bool) {
+		<-hangCh // block until test cleanup
+	}
+
+	_, err := mgr.Get(context.Background(), "test-agent/c1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	mock := (*mocks)[0]
+	mock.mu.Lock()
+	tf := mock.typingFunc
+	mock.mu.Unlock()
+	if tf == nil {
+		t.Fatal("typingFunc not set on backend")
+	}
+
+	// Override the timeout so the test doesn't take 2 seconds. We can't change
+	// the const, but we can verify the wrapper returns within a generous bound
+	// shorter than the no-timeout case (which would block forever).
+	start := time.Now()
+	done := make(chan struct{})
+	go func() {
+		tf(false) // should return after ~typingFuncTimeout, not block forever
+		close(done)
+	}()
+	select {
+	case <-done:
+		elapsed := time.Since(start)
+		// Allow some slack: must complete close to the configured timeout, not
+		// hang forever and not return instantly (which would mean we bypassed
+		// the downstream call entirely).
+		if elapsed < 100*time.Millisecond {
+			t.Errorf("tf returned in %s — too fast, downstream should have been invoked", elapsed)
+		}
+		if elapsed > typingFuncTimeout+500*time.Millisecond {
+			t.Errorf("tf returned in %s — slower than typingFuncTimeout (%s) + slack", elapsed, typingFuncTimeout)
+		}
+	case <-time.After(typingFuncTimeout + 2*time.Second):
+		t.Fatalf("tf did not return within %s — bounded-timeout fix not working", typingFuncTimeout+2*time.Second)
+	}
+}
+
+func TestGet_TypingFuncReturnsImmediatelyWhenFast(t *testing.T) {
+	// Proves that when the manager's TypingFunc returns promptly, the wrapper
+	// returns shortly after — no unnecessary delay introduced by the
+	// bounded-timeout machinery.
+	mgr, mocks := newTestManager(t, nil)
+	mgr.TypingFunc = func(sk string, typing bool) {
+		// Return immediately.
+	}
+
+	_, err := mgr.Get(context.Background(), "test-agent/c1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	mock := (*mocks)[0]
+	mock.mu.Lock()
+	tf := mock.typingFunc
+	mock.mu.Unlock()
+	if tf == nil {
+		t.Fatal("typingFunc not set on backend")
+	}
+
+	start := time.Now()
+	tf(true)
+	elapsed := time.Since(start)
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("tf with fast downstream took %s — wrapper should be near-zero overhead", elapsed)
+	}
+}
+
 func TestGet_PermissionPromptFuncRouting(t *testing.T) {
 	// Proves that SetPermissionPromptFunc is called on the backend, and when
 	// invoked it both sets permission pending and calls the manager's func.
