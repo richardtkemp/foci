@@ -37,6 +37,8 @@ Structured NDJSON over stdin/stdout. CC runs with `--input-format stream-json --
 
 Pros: no tmux dependency, no screen-scraping, structured permission prompts, precise turn boundaries via `result` messages, token-level streaming via `stream_event`, clean `/stop` via `control_request` interrupt, per-tool completion hooks (`foci-cc-hook`) give real-time tool_result visibility.
 
+ccstream uses a **two-lifetime callback split** (TODO #747): `SessionEvents` (delivery — `OnText`, `OnTextDelta`, `OnThinkingDelta`, `OnToolStart`, `OnToolEnd`) is installed once per session via `Backend.AttachSessionEvents` and stored in an `atomic.Pointer` that's never nil after first attach, so text/tool emission paths never drop on a per-turn handler nilling. `TurnEvents` (bookkeeping — `OnTurnComplete`, `PostToolNudgeFunc`, `PreAnswerNudgeFunc`) is installed via `Inject.Turn` and cleared in `OnResult`. The pre-TODO #747 design bundled both into one `EventHandler` that nilled per-turn — its replacement isn't optional, it's the structural fix that makes "the turn ended but CC kept emitting" handle correctly. See [WIRING.md — ccstream Backend](WIRING.md#ccstream-backend-internaldelegatorccstream).
+
 ### `claude-code-tmux` — cctmux (legacy)
 
 CC runs interactively in a tmux pane. Foci pastes input via `load-buffer` / `paste-buffer` and tails CC's session JSONL file via fsnotify for output. Still supported; used when you want a human-visible CC pane or need CC's full TUI (for interactive slash commands, `/login` flows, etc.).
