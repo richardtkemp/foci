@@ -30,16 +30,16 @@ type Delegator interface {
 	//   Source   | Turn state | Action
 	//   ---------|------------|--------------------------------------------
 	//   User     | idle       | begin turn (with attachments if provided)
-	//   User     | in-flight  | queue follow-up; response routes via rearm
-	//   Steer    | in-flight  | Interrupt + queue; response via rearm
+	//   User     | in-flight  | send follow-up; CC's mid-turn drain folds it
+	//   Steer    | in-flight  | send at priority "now"; CC folds at next tool boundary
 	//   Steer    | idle       | begin turn — degrades to User-idle
-	//   Compact  | any        | send slash command; no rearm
-	//   Pass     | any        | send slash command; no rearm
+	//   Compact  | any        | send slash command (fire-and-forget)
+	//   Pass     | any        | send slash command (fire-and-forget)
 	//
 	// Returns whatever error the underlying writer/protocol returns. The
-	// turn result (when applicable) flows through inj.Handler.OnTurnComplete;
-	// callers that need the result wait on it via that callback or
-	// WaitForTurn.
+	// turn result (when applicable) flows through inj.Turn.OnTurnComplete;
+	// delivery (text, tool events) flows through the SessionEvents
+	// previously installed via AttachSessionEvents — independent of Turn.
 	Inject(ctx context.Context, inj Inject) error
 
 	// WaitForTurn blocks until the next turn completion (stop_reason
@@ -89,6 +89,16 @@ type Delegator interface {
 	// Called with true when the backend starts working (SendToPane), and false
 	// when the turn completes (end_turn). Optional — nil means no typing.
 	SetTypingFunc(fn func(typing bool))
+
+	// AttachSessionEvents installs the session-scoped delivery sink. Called
+	// once when the backend is acquired for a session, before the first
+	// Inject. Subsequent calls replace the previous attachment. The events
+	// live until the backend is closed — text/thinking/tool events flow
+	// through them regardless of whether a per-turn TurnEvents bookkeeping
+	// handler is currently armed. This is what divorces delivery (session
+	// lifetime) from bookkeeping (turn lifetime), eliminating the
+	// "text dropped: handler nil" failure mode at backend layer.
+	AttachSessionEvents(events *SessionEvents)
 
 	// SendKeystroke sends a single literal keypress to the agent's TUI.
 	// Used for permission prompt responses where paste+Enter doesn't work.
@@ -269,19 +279,58 @@ type StartOptions struct {
 	AutoApproveRules []string // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
 }
 
-// EventHandler receives streaming events during a turn.
-// All callbacks are optional — nil callbacks are silently skipped.
+// EventHandler is the legacy per-turn callback bundle: delivery callbacks
+// (OnText, OnTextDelta, OnThinkingDelta, OnToolStart, OnToolEnd) and
+// bookkeeping callbacks (OnTurnComplete, PostToolNudgeFunc, PreAnswerNudgeFunc)
+// in one struct. Used by cctmux's JSONL watcher path. ccstream has migrated
+// to the SessionEvents + TurnEvents split (see below) which divorces session-
+// lifetime delivery from per-turn bookkeeping.
+//
+// Deprecated: prefer SessionEvents (delivery) + TurnEvents (bookkeeping)
+// for new backends.
+type EventHandler struct {
+	OnText          func(text string)                           // complete text block from the agent
+	OnTextDelta     func(delta string)                          // streaming text delta
+	OnThinkingDelta func(delta string)                          // streaming thinking delta
+	OnToolStart     func(id, name, input string)                // tool execution began
+	OnToolEnd       func(id, name, output string, isError bool) // tool execution finished
+	OnTurnComplete  func(result *TurnResult)                    // turn finished
+
+	// PostToolNudgeFunc is called after each tool's completion signal.
+	// See TurnEvents.PostToolNudgeFunc for full semantics.
+	PostToolNudgeFunc func(toolName string, isError bool) []string
+
+	// PreAnswerNudgeFunc is called when the backend signals end_turn.
+	// See TurnEvents.PreAnswerNudgeFunc for full semantics.
+	PreAnswerNudgeFunc func(result *TurnResult) string
+}
+
+// SessionEvents are the session-scoped, always-callable delivery callbacks.
+// Set once on a Backend via AttachSessionEvents and live for the session's
+// lifetime. Never nil after attachment; the backend's text/tool emission
+// path always reads through them, so per-turn handler nilling never causes
+// a drop.
 //
 // Tool events carry the tool_use ID (from the JSONL/stream source) so
-// consumers can correlate OnToolEnd with the originating OnToolStart without
-// having to match by name or rely on ordering.
-type EventHandler struct {
-	OnText           func(text string)                             // complete text block from the agent
-	OnTextDelta      func(delta string)                            // streaming text delta (content_block_delta)
-	OnThinkingDelta  func(delta string)                            // streaming thinking delta (content_block_delta)
-	OnToolStart      func(id, name, input string)                  // tool execution began
-	OnToolEnd        func(id, name, output string, isError bool)   // tool execution finished
-	OnTurnComplete   func(result *TurnResult)                      // turn finished
+// consumers can correlate OnToolEnd with the originating OnToolStart
+// without having to match by name or rely on ordering.
+type SessionEvents struct {
+	OnText          func(text string)                           // complete text block from the agent
+	OnTextDelta     func(delta string)                          // streaming text delta (content_block_delta)
+	OnThinkingDelta func(delta string)                          // streaming thinking delta (content_block_delta)
+	OnToolStart     func(id, name, input string)                // tool execution began
+	OnToolEnd       func(id, name, output string, isError bool) // tool execution finished
+}
+
+// TurnEvents are the per-turn bookkeeping callbacks. Set when a turn begins
+// via Inject, cleared on OnResult. May be nil between turns; backend must
+// tolerate that. These are bookkeeping only — delivery (text, tool events)
+// flows through SessionEvents regardless.
+type TurnEvents struct {
+	// OnTurnComplete fires once when the turn finishes. The backend
+	// captures-then-nils TurnEvents under turnMu in OnResult so this
+	// invariant holds by construction (no counters needed).
+	OnTurnComplete func(result *TurnResult)
 
 	// PostToolNudgeFunc is called after each tool's completion signal
 	// (PostToolUse hook dispatch). The caller returns any nudge reminders
@@ -293,12 +342,10 @@ type EventHandler struct {
 
 	// PreAnswerNudgeFunc is called when CC signals end_turn on a result
 	// message. The caller returns a follow-up prompt (or "" to let the
-	// turn finalise as-is). When non-empty, the backend re-arms a second
-	// round under the SAME EventHandler — sends the returned text as a
-	// new user message and treats its result as the authoritative one.
-	// This wires every nudge rule of type pre_answer into delegated turns,
-	// at the cost of the original answer streaming to the user before the
-	// revised answer arrives (delegated can't retract a committed reply).
+	// turn finalise as-is). When non-empty, the backend sends the
+	// returned text as a new user message and treats its result as the
+	// authoritative one. The TurnEvents stays bound across both rounds;
+	// only the round-2 OnResult clears it.
 	PreAnswerNudgeFunc func(result *TurnResult) string
 }
 
@@ -380,11 +427,28 @@ type Inject struct {
 	// attachments silently drop them.
 	Attachments []Attachment
 
-	// Handler is the EventHandler installed for the turn this inject
-	// begins. Required for SourceUser / SourceSteer at idle (when a new
-	// turn starts and needs an OnText/OnTurnComplete sink); ignored for
-	// in-flight injections (response routes through the existing turn
-	// handler via the rearm cascade) and for slash commands.
+	// Turn is the per-turn TurnEvents installed for the turn this inject
+	// begins. Required for SourceUser / SourceSteer at idle when the
+	// caller needs OnTurnComplete fired; ignored for in-flight injections
+	// (the existing TurnEvents persists) and for slash commands.
+	//
+	// Delivery (text, tool events) does NOT route through Turn — it
+	// routes through the SessionEvents installed on the backend via
+	// AttachSessionEvents, which lives for the session's lifetime. Turn
+	// is strictly bookkeeping: turn completion, post-tool nudges,
+	// pre-answer gate.
+	//
+	// Used by ccstream. cctmux still uses the legacy Handler field; the
+	// two are mutually exclusive within a single Inject call.
+	Turn *TurnEvents
+
+	// Handler is the legacy combined per-turn EventHandler. Used by
+	// cctmux which still threads delivery + bookkeeping through one
+	// pointer via its session JSONL watcher. New code should use Turn
+	// (per-turn bookkeeping) plus AttachSessionEvents (session-scoped
+	// delivery). Will be removed once cctmux is migrated.
+	//
+	// Deprecated: use Turn + AttachSessionEvents.
 	Handler *EventHandler
 }
 

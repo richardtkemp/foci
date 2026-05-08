@@ -110,6 +110,7 @@ type mockBackendDT struct {
 	waitForTurnFn func(ctx context.Context) error
 	turnInFlight  bool
 	sessionFile   string
+	sessionEvents *delegator.SessionEvents // captured by AttachSessionEvents; Inject splices delivery callbacks back into handler
 }
 
 func (m *mockBackendDT) Start(_ context.Context, _ delegator.StartOptions) error             { return nil }
@@ -120,6 +121,11 @@ func (m *mockBackendDT) SetOnPromptsCleared(_ func())                           
 func (m *mockBackendDT) RegisterPromptCancelListener(_ string, _ func(string))             {}
 func (m *mockBackendDT) SetOnSessionReady(_ func(string))                                  {}
 func (m *mockBackendDT) SetTypingFunc(_ func(bool))                                        {}
+func (m *mockBackendDT) AttachSessionEvents(events *delegator.SessionEvents) {
+	m.mu.Lock()
+	m.sessionEvents = events
+	m.mu.Unlock()
+}
 func (m *mockBackendDT) SendKeystroke(_ context.Context, _ string) error                   { return nil }
 func (m *mockBackendDT) SendSpecialKey(_ context.Context, _ string) error                  { return nil }
 func (m *mockBackendDT) Interrupt(_ context.Context) error                                 { return nil }
@@ -155,11 +161,52 @@ func (m *mockBackendDT) SendCommand(ctx context.Context, command string) error {
 
 // Inject mirrors production routing so tests written against the new
 // canonical entry point exercise the same code paths as the legacy mocks.
+// Production passes inj.Turn (TurnEvents) post-TODO #747; we synthesise
+// an EventHandler so the SendToPane mock surface — which still uses
+// EventHandler — keeps working without per-test churn. Delivery callbacks
+// (OnText etc.) come from the SessionEvents previously installed via
+// AttachSessionEvents — that's how production routes them, so test
+// callbacks that fire handler.OnText exercise the new path.
 func (m *mockBackendDT) Inject(ctx context.Context, inj delegator.Inject) error {
+	m.mu.Lock()
+	se := m.sessionEvents
+	m.mu.Unlock()
+	handler := inj.Handler
+	if handler == nil {
+		handler = &delegator.EventHandler{}
+	}
+	if inj.Turn != nil {
+		if handler.OnTurnComplete == nil {
+			handler.OnTurnComplete = inj.Turn.OnTurnComplete
+		}
+		if handler.PostToolNudgeFunc == nil {
+			handler.PostToolNudgeFunc = inj.Turn.PostToolNudgeFunc
+		}
+		if handler.PreAnswerNudgeFunc == nil {
+			handler.PreAnswerNudgeFunc = inj.Turn.PreAnswerNudgeFunc
+		}
+	}
+	if se != nil {
+		if handler.OnText == nil {
+			handler.OnText = se.OnText
+		}
+		if handler.OnTextDelta == nil {
+			handler.OnTextDelta = se.OnTextDelta
+		}
+		if handler.OnThinkingDelta == nil {
+			handler.OnThinkingDelta = se.OnThinkingDelta
+		}
+		if handler.OnToolStart == nil {
+			handler.OnToolStart = se.OnToolStart
+		}
+		if handler.OnToolEnd == nil {
+			handler.OnToolEnd = se.OnToolEnd
+		}
+	}
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {
-			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			_, err := m.SendToPane(ctx, inj.Text, handler)
 			return err
 		}
 		return m.SendCommand(ctx, inj.Text)
@@ -931,11 +978,17 @@ func TestDelegatedTransport_OnText_LogsEachMessage(t *testing.T) {
 	// The session key must start with the agent ID so resolveConvLog routes
 	// to the right DB.
 	sk := agentID + "/chat/12345"
-	ctx := turnevent.WithSink(context.Background(), turnevent.NewBufferSink())
+	// Wrap the test's BufferSink with loggingSink so intermediate TextBlock
+	// events fire conversation-DB logging — production wires this in
+	// Agent.RunTurn (per-turn) and lateDeliverySink (fallback). Tests that
+	// call RunInference directly need to wire it themselves.
+	meta := &TurnMetadata{UserID: "u1", Username: "dick"}
+	wrappedSink := newLoggingSink(turnevent.NewBufferSink(), a, 42, meta, sk)
+	ctx := turnevent.WithSink(context.Background(), wrappedSink)
 	ts := NewTurnState(ctx, sk, []string{"hi"}, nil)
 	ts.Prompt = "hi"
 	ts.StartedAt = time.Now()
-	ts.Meta = &TurnMetadata{UserID: "u1", Username: "dick"}
+	ts.Meta = meta
 	ts.ConvChatID = 42
 
 	if err := tr.RunInference(ts); err != nil {

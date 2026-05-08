@@ -277,27 +277,30 @@ func TestBeginTurnAndCancel(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnText: func(text string) {},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	if !b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight = false after beginTurn")
 	}
 	b.turnMu.Lock()
-	if b.turnHandler != handler {
-		t.Error("turnHandler not set")
+	if b.turnEvents == nil {
+		t.Error("turnEvents not set after applyHandler")
 	}
 	if b.turnResultCh == nil {
 		t.Error("turnResultCh is nil")
 	}
 	b.turnMu.Unlock()
+	if b.sessionEvents.Load() == nil {
+		t.Error("sessionEvents not set after applyHandler")
+	}
 
 	b.cancelTurn()
 	if b.IsTurnInFlight() {
 		t.Error("IsTurnInFlight = true after cancelTurn")
 	}
 	b.turnMu.Lock()
-	if b.turnHandler != nil {
-		t.Error("turnHandler not nil after cancelTurn")
+	if b.turnEvents != nil {
+		t.Error("turnEvents not nil after cancelTurn")
 	}
 	b.turnMu.Unlock()
 }
@@ -315,7 +318,7 @@ func TestBeginTurnResetsState(t *testing.T) {
 	b.lastUsage = &TokenUsage{InputTokens: 100}
 
 	handler := &delegator.EventHandler{}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	b.turnMu.Lock()
 	if b.turnText.String() != "" {
@@ -487,10 +490,13 @@ func TestInject_User_Idle_BeginsTurn(t *testing.T) {
 		t.Error("IsTurnInFlight = false after begin-turn Inject; want true")
 	}
 	b.turnMu.Lock()
-	gotHandler := b.turnHandler
+	gotTurn := b.turnEvents
 	b.turnMu.Unlock()
-	if gotHandler != handler {
-		t.Error("turnHandler != supplied handler — Inject did not install it")
+	if gotTurn == nil {
+		t.Error("turnEvents nil — Inject did not install bookkeeping")
+	}
+	if b.sessionEvents.Load() == nil {
+		t.Error("sessionEvents nil — Inject did not install delivery")
 	}
 	if !strings.Contains(buf.String(), "hello") {
 		t.Errorf("writer missing prompt text; got: %q", buf.String())
@@ -706,8 +712,8 @@ func TestSendToPane_Success(t *testing.T) {
 	}
 	b.SetTypingFunc(func(v bool) { typingCalls = append(typingCalls, v) })
 
-	handler := &delegator.EventHandler{}
-	if err := b.sendToPane(context.Background(), "hello world", handler); err != nil {
+	turn := &delegator.TurnEvents{}
+	if err := b.sendToPane(context.Background(), "hello world", turn); err != nil {
 		t.Fatalf("sendToPane: %v", err)
 	}
 	if !b.IsTurnInFlight() {
@@ -744,12 +750,12 @@ func TestSendToPaneWithAttachments(t *testing.T) {
 		readyCh: make(chan struct{}),
 	}
 
-	handler := &delegator.EventHandler{}
+	turn := &delegator.TurnEvents{}
 	atts := []delegator.Attachment{
 		{MimeType: "image/jpeg", Data: []byte("fake-jpeg")},
 		{MimeType: "application/pdf", Data: []byte("fake-pdf")},
 	}
-	if err := b.sendToPaneWithAttachments(context.Background(), "describe these", atts, handler); err != nil {
+	if err := b.sendToPaneWithAttachments(context.Background(), "describe these", atts, turn); err != nil {
 		t.Fatalf("sendToPaneWithAttachments: %v", err)
 	}
 	if !b.IsTurnInFlight() {
@@ -819,8 +825,8 @@ func TestSendToPane_WriterError(t *testing.T) {
 	// Close the writer to force errors.
 	b.writer.Close()
 
-	handler := &delegator.EventHandler{}
-	if err := b.sendToPane(context.Background(), "hello", handler); err == nil {
+	turn := &delegator.TurnEvents{}
+	if err := b.sendToPane(context.Background(), "hello", turn); err == nil {
 		t.Fatal("expected error from closed writer")
 	}
 	if b.IsTurnInFlight() {
@@ -843,7 +849,7 @@ func TestOnAssistant_TextAccumulation(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -882,7 +888,7 @@ func TestOnAssistant_ToolUseTracking(t *testing.T) {
 			toolStarts = append(toolStarts, name)
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -917,7 +923,7 @@ func TestOnAssistant_ModelAndUsageExtraction(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -964,7 +970,7 @@ func TestOnAssistant_EmptyModel(t *testing.T) {
 
 	b := &Backend{}
 	b.lastModel = "claude-sonnet-4-20250514"
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -992,7 +998,7 @@ func TestOnAssistant_TypingRestarted(t *testing.T) {
 	var typingCalls []bool
 	b := &Backend{}
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	// No stop_reason — typing should restart.
 	msg := &AssistantMessage{
@@ -1016,7 +1022,7 @@ func TestOnAssistant_NoTypingOnEndTurn(t *testing.T) {
 	var typingCalls []bool
 	b := &Backend{}
 	b.typingFunc = func(v bool) { typingCalls = append(typingCalls, v) }
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	endTurn := "end_turn"
 	msg := &AssistantMessage{
@@ -1064,7 +1070,7 @@ func TestOnAssistant_NilCallbacks(t *testing.T) {
 	t.Parallel()
 
 	b := &Backend{}
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -1085,7 +1091,7 @@ func TestOnAssistant_ThinkingBlock(t *testing.T) {
 
 	var handlerTexts []string
 	b := &Backend{}
-	b.beginTurn(&delegator.EventHandler{
+	applyHandler(b, &delegator.EventHandler{
 		OnText: func(text string) { handlerTexts = append(handlerTexts, text) },
 	})
 
@@ -1120,7 +1126,7 @@ func TestOnAssistant_AgentToolUseTracking(t *testing.T) {
 	var statusMessages []string
 	b := &Backend{}
 	b.SetOnAgentStatus(func(text string) { statusMessages = append(statusMessages, text) })
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	agentInput := json.RawMessage(`{"description":"search for patterns"}`)
 	msg := &AssistantMessage{
@@ -1151,7 +1157,7 @@ func TestOnAssistant_AgentDuplicateIgnored(t *testing.T) {
 
 	b := &Backend{}
 	b.SetOnAgentStatus(func(string) {})
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 
 	msg := &AssistantMessage{
 		Message: BetaMessage{
@@ -1179,7 +1185,7 @@ func TestOnResult_ClearsTrackedAgents(t *testing.T) {
 	b.agents.Add("ag1", "still running")
 	statusMessages = nil // clear Add notification
 
-	b.beginTurn(&delegator.EventHandler{})
+	applyHandler(b, &delegator.EventHandler{})
 	b.OnResult(&ResultMessage{Subtype: "success", Usage: TokenUsage{}})
 
 	if b.agents.Pending() != 0 {
@@ -1212,7 +1218,7 @@ func TestOnResult_BasicTurnCompletion(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// Simulate assistant message setting model and usage.
 	b.mu.Lock()
@@ -1280,7 +1286,7 @@ func TestOnResult_UsesResultTextWhenPresent(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	b.turnMu.Lock()
 	b.turnText.WriteString("accumulated text")
@@ -1319,7 +1325,7 @@ func TestOnAssistant_SubagentSurfacesBlockquotedText(t *testing.T) {
 		OnText:      func(text string) { textEvents = append(textEvents, text) },
 		OnToolStart: func(_, name, _ string) { toolStarts = append(toolStarts, name) },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	parentID := "toolu_parent"
 	b.OnAssistant(&AssistantMessage{
@@ -1363,7 +1369,7 @@ func TestOnAssistant_SubagentMultilineBlockquote(t *testing.T) {
 
 	var textEvents []string
 	b := &Backend{}
-	b.beginTurn(&delegator.EventHandler{
+	applyHandler(b, &delegator.EventHandler{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	})
 
@@ -1390,7 +1396,7 @@ func TestOnAssistant_SubagentEmptyTextSkipped(t *testing.T) {
 
 	var textEvents []string
 	b := &Backend{}
-	b.beginTurn(&delegator.EventHandler{
+	applyHandler(b, &delegator.EventHandler{
 		OnText: func(text string) { textEvents = append(textEvents, text) },
 	})
 
@@ -1421,7 +1427,7 @@ func TestOnResult_SubagentDoesNotOverrideModel(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// Top-level assistant message sets the primary model.
 	b.OnAssistant(&AssistantMessage{
@@ -1483,7 +1489,7 @@ func TestOnResult_FallbackToResultUsage(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 	// Ensure lastUsage is nil (beginTurn already resets it).
 
 	result := &ResultMessage{
@@ -1524,7 +1530,7 @@ func TestOnResult_SignalsWaitForTurn(t *testing.T) {
 
 	b := &Backend{}
 	handler := &delegator.EventHandler{}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// Start WaitForTurn in a goroutine.
 	done := make(chan error, 1)
@@ -1576,7 +1582,7 @@ func TestOnResult_NilResultCh(t *testing.T) {
 	b := &Backend{}
 	b.turnMu.Lock()
 	b.turnActive = true
-	b.turnHandler = &delegator.EventHandler{
+	b.turnEvents = &delegator.TurnEvents{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
 	b.turnMu.Unlock()
@@ -1600,7 +1606,7 @@ func TestOnResult_ClearsLastUsage(t *testing.T) {
 
 	b := &Backend{}
 	handler := &delegator.EventHandler{}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// Set lastUsage as if from an assistant message.
 	b.mu.Lock()
@@ -1652,7 +1658,7 @@ func TestOnResult_PreAnswerReDispatches(t *testing.T) {
 			return ""
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	b.turnMu.Lock()
 	b.turnText.WriteString("original")
@@ -1708,7 +1714,7 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 		OnTurnComplete:     func(r *delegator.TurnResult) { completed = r },
 		PreAnswerNudgeFunc: func(_ *delegator.TurnResult) string { return "" },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 	b.turnMu.Lock()
 	b.turnText.WriteString("final answer")
 	b.turnMu.Unlock()
@@ -2162,7 +2168,7 @@ func TestOnReaderStopped_ClearsTurnState(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	testErr := fmt.Errorf("pipe broken")
 	b.OnReaderStopped(testErr)
@@ -2198,7 +2204,7 @@ func TestOnReaderStopped_UnblocksWaitForTurn(t *testing.T) {
 	b.running = true
 	b.mu.Unlock()
 	handler := &delegator.EventHandler{}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	done := make(chan error, 1)
 	go func() {
@@ -2267,7 +2273,7 @@ func TestOnReaderStopped_ExpectedClose(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completedResult = r },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	b.OnReaderStopped(io.EOF)
 
@@ -2308,7 +2314,7 @@ func TestFinalizeExit_RunsOnlyOnce(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completionCount++ },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	b.finalizeExit(fmt.Errorf("first call"))
 	b.finalizeExit(fmt.Errorf("second call"))
@@ -2337,7 +2343,7 @@ func TestFinalizeExit_ConcurrentCallsRunOnce(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { completionCount.Add(1) },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	const N = 50
 	var wg sync.WaitGroup
@@ -2378,7 +2384,7 @@ func TestFinalizeExit_SubsequentOnReaderStoppedIsNoOp(t *testing.T) {
 			completionTexts = append(completionTexts, r.Text)
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// Waiter wins the race.
 	b.finalizeExit(fmt.Errorf("exit code 1"))
@@ -2414,7 +2420,7 @@ func TestRestart_ResetsFinalizeOnce(t *testing.T) {
 	h1 := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { firstCount++ },
 	}
-	b.beginTurn(h1)
+	applyHandler(b, h1)
 	b.finalizeExit(fmt.Errorf("first death"))
 	if firstCount != 1 {
 		t.Fatalf("first lifecycle completion: got %d, want 1", firstCount)
@@ -2433,7 +2439,7 @@ func TestRestart_ResetsFinalizeOnce(t *testing.T) {
 	h2 := &delegator.EventHandler{
 		OnTurnComplete: func(r *delegator.TurnResult) { secondCount++ },
 	}
-	b.beginTurn(h2)
+	applyHandler(b, h2)
 	b.finalizeExit(fmt.Errorf("second death"))
 	if secondCount != 1 {
 		t.Errorf("second lifecycle completion: got %d, want 1 (finalizeOnce was not reset)", secondCount)
@@ -2541,9 +2547,9 @@ func TestOnStreamEvent_TextDelta(t *testing.T) {
 
 	var deltas []string
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnTextDelta: func(delta string) { deltas = append(deltas, delta) },
-	}
+	})
 
 	raw := json.RawMessage(`{
 		"type": "stream_event",
@@ -2568,9 +2574,9 @@ func TestOnStreamEvent_NonTextDelta(t *testing.T) {
 
 	var called bool
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnText: func(text string) { called = true },
-	}
+	})
 
 	raw := json.RawMessage(`{
 		"type": "stream_event",
@@ -2599,10 +2605,10 @@ func TestOnStreamEvent_ThinkingDelta(t *testing.T) {
 	var textDeltas []string
 	var thinkingDeltas []string
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnTextDelta:     func(delta string) { textDeltas = append(textDeltas, delta) },
 		OnThinkingDelta: func(delta string) { thinkingDeltas = append(thinkingDeltas, delta) },
-	}
+	})
 
 	raw := json.RawMessage(`{
 		"type": "stream_event",
@@ -2632,9 +2638,9 @@ func TestOnStreamEvent_EmptyThinking(t *testing.T) {
 
 	var called bool
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnThinkingDelta: func(delta string) { called = true },
-	}
+	})
 
 	raw := json.RawMessage(`{
 		"type": "stream_event",
@@ -2659,9 +2665,9 @@ func TestOnStreamEvent_EmptyText(t *testing.T) {
 
 	var called bool
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnText: func(text string) { called = true },
-	}
+	})
 
 	raw := json.RawMessage(`{
 		"type": "stream_event",
@@ -2702,9 +2708,9 @@ func TestOnStreamEvent_InvalidJSON(t *testing.T) {
 
 	var called bool
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnText: func(text string) { called = true },
-	}
+	})
 
 	b.OnStreamEvent(json.RawMessage(`{not valid json`))
 
@@ -2721,9 +2727,9 @@ func TestOnStreamEvent_SubagentFiltered(t *testing.T) {
 
 	var deltas []string
 	b := &Backend{}
-	b.turnHandler = &delegator.EventHandler{
+	b.sessionEvents.Store(&delegator.SessionEvents{
 		OnTextDelta: func(delta string) { deltas = append(deltas, delta) },
-	}
+	})
 
 	// Sub-agent stream event — should be filtered.
 	raw := json.RawMessage(`{
@@ -3146,7 +3152,7 @@ func TestConcurrentOnAssistantAndOnResult(t *testing.T) {
 		OnToolStart:    func(string, string, string) {},
 		OnTurnComplete: func(*delegator.TurnResult) {},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	var wg sync.WaitGroup
 	wg.Add(2)

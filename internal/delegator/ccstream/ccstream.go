@@ -85,15 +85,23 @@ type Backend struct {
 	// finalizeExit. Reset in Restart() before relaunching the subprocess.
 	finalizeOnce sync.Once
 
+	// Session-scoped delivery callbacks. Set once by AttachSessionEvents
+	// when the backend is acquired for a session, then live for the
+	// session's lifetime. Reads are atomic.Pointer-protected so concurrent
+	// readers (OnAssistant, OnTextDelta, OnThinkingDelta, hook dispatch)
+	// don't need to take turnMu. Never nil after the first attach — text
+	// and tool delivery never drop on a nil handler.
+	sessionEvents atomic.Pointer[delegator.SessionEvents]
+
 	// Turn state
 	turnMu       sync.Mutex
 	turnActive   bool
-	turnHandler  *delegator.EventHandler // current turn's handler
-	turnResultCh chan *ResultMessage    // buffered(1), receives result
-	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
-	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
-	turnText      strings.Builder       // accumulates text across assistant messages
-	turnTools     int                   // tool_use count this turn
+	turnEvents   *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
+	turnResultCh chan *ResultMessage   // buffered(1), receives result
+	compactDoneCh  chan struct{}       // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
+	compactStartCh chan struct{}       // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
+	turnText      strings.Builder      // accumulates text across assistant messages
+	turnTools     int                  // tool_use count this turn
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -463,11 +471,23 @@ func (b *Backend) WaitReady(ctx context.Context) error {
 // Turn methods
 // ---------------------------------------------------------------------------
 
-// beginTurn initialises all turn-related state for a new turn.
-func (b *Backend) beginTurn(handler *delegator.EventHandler) {
+// AttachSessionEvents installs the session-scoped delivery callbacks. Stored
+// in atomic.Pointer so concurrent readers (text/tool emission paths) don't
+// take turnMu. Idempotent — re-attachment replaces the previous events,
+// which is useful in tests and in the AttachSessionEvents-per-Get pattern
+// the agent layer uses.
+func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
+	b.sessionEvents.Store(events)
+}
+
+// beginTurn initialises all turn-related state for a new turn. turn carries
+// the per-turn bookkeeping callbacks (OnTurnComplete, nudges); may be nil
+// for fire-and-forget paths (slash commands, tests) that don't need
+// completion signalling.
+func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
 	b.turnActive = true
-	b.turnHandler = handler
+	b.turnEvents = turn
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
@@ -486,16 +506,16 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 func (b *Backend) cancelTurn() {
 	b.turnMu.Lock()
 	b.turnActive = false
-	b.turnHandler = nil
+	b.turnEvents = nil
 	b.turnMu.Unlock()
 }
 
 // sendToPane is the internal begin-turn primitive: starts a fresh turn
-// with the given handler and sends a plain text user message. Called from
-// Inject's begin-turn path (SourceUser/Steer at idle); not part of the
-// public Delegator surface.
-func (b *Backend) sendToPane(_ context.Context, prompt string, handler *delegator.EventHandler) error {
-	b.beginTurn(handler)
+// with the given bookkeeping callbacks and sends a plain text user message.
+// Called from Inject's begin-turn path (SourceUser/Steer at idle); not part
+// of the public Delegator surface.
+func (b *Backend) sendToPane(_ context.Context, prompt string, turn *delegator.TurnEvents) error {
+	b.beginTurn(turn)
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -521,8 +541,8 @@ func (b *Backend) sendToPane(_ context.Context, prompt string, handler *delegato
 // (text first, then each attachment as image/document) and sends a single
 // user message containing all of them. Called from Inject's begin-turn
 // path when len(inj.Attachments) > 0.
-func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, handler *delegator.EventHandler) error {
-	b.beginTurn(handler)
+func (b *Backend) sendToPaneWithAttachments(_ context.Context, prompt string, attachments []delegator.Attachment, turn *delegator.TurnEvents) error {
+	b.beginTurn(turn)
 
 	if b.typingFunc != nil {
 		b.typingFunc(true)
@@ -636,10 +656,11 @@ func (b *Backend) sendUserMessagePriority(text, priority string) error {
 // is produced for them. The model addresses the message in the same
 // turn and the response reaches the original handler.
 //
-// inj.Handler is required for SourceUser/Steer at idle (a fresh turn needs
-// a sink for OnText/OnTurnComplete). Ignored for in-flight injections
-// (response routes through the existing turn handler) and for slash
-// commands.
+// inj.Turn is required for SourceUser/Steer at idle (a fresh turn needs an
+// OnTurnComplete sink). Ignored for in-flight injections (the existing
+// TurnEvents persists) and for slash commands. Delivery (text, tool events)
+// flows through the SessionEvents installed via AttachSessionEvents — not
+// inj.Turn.
 //
 // inj.Attachments are honored only when beginning a new turn; ignored
 // otherwise. They become structured content blocks alongside the text.
@@ -648,24 +669,45 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 	b.logger().Debugf("Inject: source=%s text_bytes=%d attachments=%d in_flight=%v",
 		inj.Source, len(inj.Text), len(inj.Attachments), inFlight)
 
+	// Back-compat shim: legacy callers (cctmux-shaped mocks, older tests)
+	// still pass Inject.Handler. Split it into the new SessionEvents +
+	// TurnEvents form so the rest of ccstream only deals with the split
+	// types. Removed once all callers migrate (TODO #747 cleanup).
+	if inj.Turn == nil && inj.Handler != nil {
+		h := inj.Handler
+		b.AttachSessionEvents(&delegator.SessionEvents{
+			OnText:          h.OnText,
+			OnTextDelta:     h.OnTextDelta,
+			OnThinkingDelta: h.OnThinkingDelta,
+			OnToolStart:     h.OnToolStart,
+			OnToolEnd:       h.OnToolEnd,
+		})
+		inj.Turn = &delegator.TurnEvents{
+			OnTurnComplete:     h.OnTurnComplete,
+			PostToolNudgeFunc:  h.PostToolNudgeFunc,
+			PreAnswerNudgeFunc: h.PreAnswerNudgeFunc,
+		}
+	}
+
 	switch inj.Source {
 	case delegator.SourceUser:
 		if !inFlight {
-			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Handler)
+			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
 		}
 		// In-flight follow-up: SendUser at default priority. CC's mid-turn
 		// drain at the next tool boundary (claude-code's
 		// query.ts:1570-1589) folds the message as an attachment to the
 		// current turn's tool_results — the model responds in the same
-		// ask(), so the original handler's OnText/OnTurnComplete pipeline
-		// carries the response. inj.Handler is intentionally ignored.
+		// ask(), so the original turn's OnTurnComplete and the always-live
+		// SessionEvents.OnText carry the response. inj.Turn is
+		// intentionally ignored.
 		return b.sendUserMessage(inj.Text)
 
 	case delegator.SourceSteer:
 		if !inFlight {
 			// Edge case: steer at idle. Degrade to begin-turn.
 			b.logger().Debugf("Inject(Steer): no turn in flight, degrading to begin-turn")
-			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Handler)
+			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Turn)
 		}
 		// In-flight steer: SendUser at priority "now". CC dequeues "now"
 		// ahead of "next"/"later" at the next mid-turn drain, so the
@@ -689,11 +731,11 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 // beginTurnWithText starts a new turn, dispatching to the attachments path
 // when the inject carries them and to plain text otherwise. Internal to
 // Inject — callers reach turn-start through Inject(SourceUser) at idle.
-func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, handler *delegator.EventHandler) error {
+func (b *Backend) beginTurnWithText(ctx context.Context, text string, atts []delegator.Attachment, turn *delegator.TurnEvents) error {
 	if len(atts) > 0 {
-		return b.sendToPaneWithAttachments(ctx, text, atts, handler)
+		return b.sendToPaneWithAttachments(ctx, text, atts, turn)
 	}
-	return b.sendToPane(ctx, text, handler)
+	return b.sendToPane(ctx, text, turn)
 }
 
 // ---------------------------------------------------------------------------
@@ -960,18 +1002,21 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 	}
 	b.mu.Unlock()
 
-	b.turnMu.Lock()
-	handler := b.turnHandler
-	b.turnMu.Unlock()
+	// Delivery callbacks come from the session-scoped SessionEvents — never
+	// nil after first AttachSessionEvents, so text/tool blocks always have
+	// somewhere to go regardless of per-turn TurnEvents state. This is what
+	// kills the "text block dropped: handler nil" failure mode at backend
+	// layer; see TODO #747.
+	se := b.sessionEvents.Load()
 
 	if !isTopLevel {
 		// Surface sub-agent text as blockquoted intermediate replies so
 		// the user can follow sub-agent progress. Tool_use blocks are not
 		// forwarded — the parent tracker owns tool visibility.
-		if handler != nil && handler.OnText != nil {
+		if se != nil && se.OnText != nil {
 			for _, block := range msg.Message.Content {
 				if block.Type == "text" && block.Text != "" {
-					handler.OnText(blockquote(block.Text))
+					se.OnText(blockquote(block.Text))
 				}
 			}
 		}
@@ -989,19 +1034,8 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			b.turnText.WriteString(block.Text)
 			b.turnMu.Unlock()
 
-			if handler != nil && handler.OnText != nil {
-				handler.OnText(block.Text)
-			} else if block.Text != "" {
-				// Top-level text block produced but no handler is
-				// armed (or has no OnText) — text is silently dropped
-				// from the delivery path. This is the failure shape
-				// observed in TODO #726. Loud so it's caught quickly.
-				preview := block.Text
-				if len(preview) > 120 {
-					preview = preview[:120] + "..."
-				}
-				log.Warnf("ccstream", "text block dropped (no handler/OnText): bytes=%d handler_nil=%v preview=%q",
-					len(block.Text), handler == nil, preview)
+			if se != nil && se.OnText != nil {
+				se.OnText(block.Text)
 			}
 
 		case "tool_use":
@@ -1009,9 +1043,9 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 			b.turnTools++
 			b.turnMu.Unlock()
 
-			if handler != nil && handler.OnToolStart != nil {
+			if se != nil && se.OnToolStart != nil {
 				inputStr := string(block.Input)
-				handler.OnToolStart(block.ID, block.Name, inputStr)
+				se.OnToolStart(block.ID, block.Name, inputStr)
 			}
 
 			// Track Agent tool calls for status reporting (same as tmux backend).
@@ -1037,11 +1071,11 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
 
-	// Capture turn state. Handler clearing is deferred — the re-arm cascade
-	// Pre-answer gate path needs the handler alive to fire OnTurnComplete.
-	// Normal path clears handler/turnActive below.
+	// Capture turn state. TurnEvents clearing is deferred — the pre-answer
+	// gate path needs OnTurnComplete alive across rounds. Normal path
+	// clears turnEvents/turnActive below.
 	b.turnMu.Lock()
-	handler := b.turnHandler
+	turn := b.turnEvents
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
@@ -1117,9 +1151,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// Pre-answer nudge gate: give the caller a chance to re-dispatch this
 	// turn with a verification prompt before finalising. When the func
 	// returns a non-empty follow-up, the result is swallowed, beginTurn
-	// is called again with the same handler, and the follow-up is sent
-	// as a new user message — explicitly starting a fresh CC ask().
-	// The next OnResult delivers the revised answer as the authoritative
+	// is called again with the same TurnEvents, and the follow-up is sent
+	// as a new user message — explicitly starting a fresh CC ask(). The
+	// next OnResult delivers the revised answer as the authoritative
 	// outcome. The caller must stop returning a follow-up after the first
 	// fire to break the loop (guaranteed by the scheduler's internal
 	// state — CheckPreAnswer returns the same text every call but the
@@ -1127,9 +1161,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// from the mid-turn-drain path used by SourceUser/Steer/post-tool
 	// nudges: pre-answer needs a fresh ask() because it's a verification
 	// re-prompt, not a fold-in.
-	if handler != nil && handler.PreAnswerNudgeFunc != nil {
-		if followUp := handler.PreAnswerNudgeFunc(result); followUp != "" {
-			b.beginTurn(handler)
+	if turn != nil && turn.PreAnswerNudgeFunc != nil {
+		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
+			b.beginTurn(turn)
 			if err := b.writer.SendUser(followUp); err != nil {
 				b.logger().Errorf("pre-answer re-dispatch: send user: %v", err)
 				b.cancelTurn()
@@ -1147,21 +1181,23 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 	}
 
-	// Normal turn completion — clear handler.
+	// Normal turn completion — clear TurnEvents. SessionEvents stay live for
+	// the rest of the session so any post-turn text (e.g. CC running a
+	// follow-up ask() from a folded steer) still delivers cleanly.
 	b.turnMu.Lock()
-	hadHandler := b.turnHandler != nil
-	b.turnHandler = nil
+	hadTurn := b.turnEvents != nil
+	b.turnEvents = nil
 	b.turnActive = false
 	b.turnMu.Unlock()
-	b.logger().Debugf("OnResult: turn cleared (had_handler=%v)", hadHandler)
+	b.logger().Debugf("OnResult: turn cleared (had_turn_events=%v)", hadTurn)
 
 	// Clear any agents still tracked (safety net — task_notification should
 	// have already removed them individually during the turn).
 	b.agents.ClearAll()
 
-	// Fire handler callback OUTSIDE any lock.
-	if handler != nil && handler.OnTurnComplete != nil {
-		handler.OnTurnComplete(result)
+	// Fire OnTurnComplete OUTSIDE any lock.
+	if turn != nil && turn.OnTurnComplete != nil {
+		turn.OnTurnComplete(result)
 	}
 
 	// Stop typing indicator.
@@ -1409,20 +1445,20 @@ func (b *Backend) OnStreamEvent(raw json.RawMessage) {
 	if env.ParentToolUseID != nil {
 		return
 	}
-	b.turnMu.Lock()
-	handler := b.turnHandler
-	b.turnMu.Unlock()
-	if handler == nil {
+	// Deltas route through SessionEvents so they survive across stacked
+	// turns / post-OnResult emission, same reasoning as OnAssistant text.
+	se := b.sessionEvents.Load()
+	if se == nil {
 		return
 	}
 	switch env.Event.Delta.Type {
 	case "text_delta":
-		if env.Event.Delta.Text != "" && handler.OnTextDelta != nil {
-			handler.OnTextDelta(env.Event.Delta.Text)
+		if env.Event.Delta.Text != "" && se.OnTextDelta != nil {
+			se.OnTextDelta(env.Event.Delta.Text)
 		}
 	case "thinking_delta":
-		if env.Event.Delta.Thinking != "" && handler.OnThinkingDelta != nil {
-			handler.OnThinkingDelta(env.Event.Delta.Thinking)
+		if env.Event.Delta.Thinking != "" && se.OnThinkingDelta != nil {
+			se.OnThinkingDelta(env.Event.Delta.Thinking)
 		}
 	}
 }
@@ -1506,14 +1542,14 @@ func (b *Backend) finalizeExit(reason error) {
 		// Drain any in-flight turn so callers waiting on CompletionChan or
 		// WaitForTurn don't block forever.
 		b.turnMu.Lock()
-		handler := b.turnHandler
-		b.turnHandler = nil
+		turn := b.turnEvents
+		b.turnEvents = nil
 		b.turnActive = false
 		resultCh := b.turnResultCh
 		b.turnMu.Unlock()
-		log.Debugf(component, "finalizeExit: post-turnMu handler_nil=%v handler_otc_nil=%v elapsed=%s", handler == nil, handler == nil || handler.OnTurnComplete == nil, time.Since(start))
+		log.Debugf(component, "finalizeExit: post-turnMu turn_nil=%v turn_otc_nil=%v elapsed=%s", turn == nil, turn == nil || turn.OnTurnComplete == nil, time.Since(start))
 
-		if handler != nil && handler.OnTurnComplete != nil {
+		if turn != nil && turn.OnTurnComplete != nil {
 			var msg string
 			if expected {
 				msg = "Session closed while turn was in flight"
@@ -1524,7 +1560,7 @@ func (b *Backend) finalizeExit(reason error) {
 				}
 			}
 			log.Debugf(component, "finalizeExit: pre-OnTurnComplete elapsed=%s", time.Since(start))
-			handler.OnTurnComplete(&delegator.TurnResult{Text: msg})
+			turn.OnTurnComplete(&delegator.TurnResult{Text: msg})
 			log.Debugf(component, "finalizeExit: post-OnTurnComplete elapsed=%s", time.Since(start))
 		}
 

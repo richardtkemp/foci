@@ -332,18 +332,19 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 		return
 	}
 
-	b.turnMu.Lock()
-	handler := b.turnHandler
-	b.turnMu.Unlock()
-	if handler == nil || handler.OnToolEnd == nil {
-		return
+	// Tool delivery (OnToolEnd) goes through SessionEvents — always-live so
+	// late tool results from a stacked turn don't drop. Post-tool nudges
+	// are bookkeeping (require knowledge of the active turn's nudge
+	// scheduler), so they read TurnEvents which may legitimately be nil
+	// between turns.
+	se := b.sessionEvents.Load()
+	if se != nil && se.OnToolEnd != nil {
+		output := parsed.ToolResponse
+		if parsed.IsError && parsed.Error != "" {
+			output = parsed.Error
+		}
+		se.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
 	}
-
-	output := parsed.ToolResponse
-	if parsed.IsError && parsed.Error != "" {
-		output = parsed.Error
-	}
-	handler.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
 
 	// Fire any post-tool nudges the caller wants to inject for this tool.
 	// Sends as a plain user message at the default queue priority "next".
@@ -351,9 +352,12 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// (claude-code's query.ts:1570-1589) folds the message as an
 	// attachment to the current turn's tool_results — the model responds
 	// in the same ask(), so the nudge response reaches OnText through
-	// the existing turn handler. No separate OnResult cycle.
-	if handler.PostToolNudgeFunc != nil {
-		for _, text := range handler.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
+	// SessionEvents. No separate OnResult cycle.
+	b.turnMu.Lock()
+	turn := b.turnEvents
+	b.turnMu.Unlock()
+	if turn != nil && turn.PostToolNudgeFunc != nil {
+		for _, text := range turn.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
 			if text == "" {
 				continue
 			}

@@ -488,7 +488,15 @@ func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
 			a.Log.Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
 		}
 	}
-	return turn.NewSessionSink(conn, sk, "late-delivery", turn.WithSessionSinkErrorHandler(logFn))
+	// Conversation-DB logging for late-delivered text. No per-turn
+	// metadata available at this scope (the fallback fires when no per-
+	// turn sink is registered) — log with empty user fields, session
+	// key only. This is best-effort — late delivery is rare and the
+	// session/text fields are the load-bearing identifiers.
+	return newLoggingSink(
+		turn.NewSessionSink(conn, sk, "late-delivery", turn.WithSessionSinkErrorHandler(logFn)),
+		a, 0, &TurnMetadata{}, sk,
+	)
 }
 
 // driveAndDrainOrphans runs a single batched turn plus the orphan/extras

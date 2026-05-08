@@ -228,6 +228,17 @@ func (b *Backend) SetTypingFunc(fn func(bool)) {
 	b.typingFunc = fn
 }
 
+// AttachSessionEvents is a no-op on cctmux. Delivery flows through cctmux's
+// own JSONL watcher path which still uses the legacy combined EventHandler;
+// the SessionEvents/TurnEvents split is implemented in ccstream where the
+// drop-on-nil-handler bug lived. cctmux's watcher does not drop on nil
+// handler — it has a separate problem (screen-scraped permissions) that
+// isn't addressed by this restructure. Stub exists to satisfy the
+// Delegator interface.
+func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
+	// no-op: cctmux uses Inject.Handler (EventHandler) for delivery.
+}
+
 func (b *Backend) SessionID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

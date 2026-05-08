@@ -50,11 +50,24 @@ func (a *Agent) RunTurn(
 		defer cleanup()
 	}
 
+	// Wrap with conversation-DB logging using this turn's metadata. The
+	// log moved here from the per-turn OnText closure in turn_delegated.go
+	// when delivery was migrated to session-scoped SessionEvents (TODO
+	// #747) — the closures no longer have ts.Meta/ts.ConvChatID in
+	// lexical scope. The wrapper intercepts TextBlock events for logging
+	// and forwards everything else unchanged. SessionMeta is built from
+	// the first envelope (mirrors how WithTurnMetadata is set below).
+	sink = newLoggingSink(sink, a, first.ChatID, &TurnMetadata{
+		UserID:   first.UserID,
+		Username: first.SenderName,
+		ChatID:   first.ChatID,
+	}, sk)
+
 	// Register the per-turn streaming sink with the session router for
 	// late-delivery routing (TODO #745). In-turn events route through
 	// `sink`; events arriving after this turn ends — e.g. ccstream
-	// rearm-counter responses — fall through to the router's
-	// late-delivery fallback.
+	// post-OnResult text from a folded steer — fall through to the
+	// router's late-delivery fallback.
 	dispatchSink := sink
 	if router != nil {
 		router.Register(sink)

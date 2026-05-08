@@ -41,6 +41,7 @@ type mockBackendDM struct {
 	waitForTurnErr      error
 	waitForTurnBlock    chan struct{} // if non-nil, WaitForTurn blocks until closed
 	sendToPaneFn        func(context.Context, string, *delegator.EventHandler) (*delegator.TurnResult, error)
+	sessionEvents       *delegator.SessionEvents
 	sendCommandFn       func(context.Context, string) error
 	closeFn             func() error
 }
@@ -97,11 +98,51 @@ func (m *mockBackendDM) SendCommand(ctx context.Context, cmd string) error {
 // production's Inject: SourceUser routes to SendToPane at idle (begin
 // turn) or SendCommand mid-turn (follow-up); slash commands route to
 // SendCommand directly.
+//
+// Production callers (turn_delegated.go) pass inj.Turn (TurnEvents) rather
+// than inj.Handler post-TODO #747; we synthesise an EventHandler from
+// inj.Turn for the SendToPane mock so the existing test surface (which
+// invokes handler.OnTurnComplete) keeps working without per-test churn.
 func (m *mockBackendDM) Inject(ctx context.Context, inj delegator.Inject) error {
+	m.mu.Lock()
+	se := m.sessionEvents
+	m.mu.Unlock()
+	handler := inj.Handler
+	if handler == nil {
+		handler = &delegator.EventHandler{}
+	}
+	if inj.Turn != nil {
+		if handler.OnTurnComplete == nil {
+			handler.OnTurnComplete = inj.Turn.OnTurnComplete
+		}
+		if handler.PostToolNudgeFunc == nil {
+			handler.PostToolNudgeFunc = inj.Turn.PostToolNudgeFunc
+		}
+		if handler.PreAnswerNudgeFunc == nil {
+			handler.PreAnswerNudgeFunc = inj.Turn.PreAnswerNudgeFunc
+		}
+	}
+	if se != nil {
+		if handler.OnText == nil {
+			handler.OnText = se.OnText
+		}
+		if handler.OnTextDelta == nil {
+			handler.OnTextDelta = se.OnTextDelta
+		}
+		if handler.OnThinkingDelta == nil {
+			handler.OnThinkingDelta = se.OnThinkingDelta
+		}
+		if handler.OnToolStart == nil {
+			handler.OnToolStart = se.OnToolStart
+		}
+		if handler.OnToolEnd == nil {
+			handler.OnToolEnd = se.OnToolEnd
+		}
+	}
 	switch inj.Source {
 	case delegator.SourceUser, delegator.SourceSteer:
 		if !m.IsTurnInFlight() {
-			_, err := m.SendToPane(ctx, inj.Text, inj.Handler)
+			_, err := m.SendToPane(ctx, inj.Text, handler)
 			return err
 		}
 		return m.SendCommand(ctx, inj.Text)
@@ -146,6 +187,12 @@ func (m *mockBackendDM) SetTypingFunc(fn func(bool)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.typingFunc = fn
+}
+
+func (m *mockBackendDM) AttachSessionEvents(events *delegator.SessionEvents) {
+	m.mu.Lock()
+	m.sessionEvents = events
+	m.mu.Unlock()
 }
 
 func (m *mockBackendDM) SendKeystroke(_ context.Context, _ string) error { return nil }
