@@ -104,7 +104,20 @@ func (b *Backend) completeAndRearm(
 	}
 	b.rearmForNudgeResponse(handler)
 
-	b.logger().Infof("OnResult: re-armed for queued response (text=%d bytes)", len(result.Text))
+	// remaining is the count after this rearm cycle drained one slot. If
+	// remaining > 0, foci is still waiting for further OnResult cycles to
+	// drain the count to zero. If those cycles never come (e.g. CC folded
+	// post-tool nudges into the current turn), turnActive stays true and
+	// future user messages get queued behind a phantom in-flight turn.
+	// Surface the residual count so this failure mode is greppable.
+	b.turnMu.Lock()
+	remaining := b.pendingRearmCount
+	b.turnMu.Unlock()
+	b.logger().Infof("OnResult: re-armed for queued response (text=%d bytes) remaining_rearm_count=%d",
+		len(result.Text), remaining)
+	if remaining > 0 {
+		b.logger().Debugf("rearm: %d slot(s) still pending after this cycle — expecting %d more OnResult before turnActive clears", remaining, remaining)
+	}
 
 	if resultCh != nil {
 		select {

@@ -652,10 +652,17 @@ func (b *Backend) sendUserMessage(_ context.Context, text string, autoRearm bool
 	b.turnMu.Lock()
 	inFlight := b.turnActive
 	armed := autoRearm && inFlight
+	var newCount int
 	if armed {
 		b.incRearm()
+		newCount = b.pendingRearmCount
 	}
 	b.turnMu.Unlock()
+
+	if armed {
+		b.logger().Debugf("rearm: incRearm via sendUserMessage count=%d bytes=%d (auto_rearm=true, in_flight=true)",
+			newCount, len(text))
+	}
 
 	if err := b.writer.SendUser(text); err != nil {
 		if armed {
@@ -665,7 +672,10 @@ func (b *Backend) sendUserMessage(_ context.Context, text string, autoRearm bool
 			// another path drained the slot first).
 			b.turnMu.Lock()
 			b.decRearm()
+			rolledBackTo := b.pendingRearmCount
 			b.turnMu.Unlock()
+			b.logger().Debugf("rearm: decRearm via sendUserMessage rollback count=%d (SendUser failed: %v)",
+				rolledBackTo, err)
 		}
 		return err
 	}
@@ -1098,11 +1108,30 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// OnTurnComplete. The normal path clears handler/turnActive below.
 	b.turnMu.Lock()
 	handler := b.turnHandler
+	prevRearmCount := b.pendingRearmCount
 	rearmActive := b.decRearm() > 0
+	newRearmCount := b.pendingRearmCount
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
 	b.turnMu.Unlock()
+
+	// Surface the rearm decision in the log. Without this it's impossible to
+	// tell from logs alone whether a stuck turnActive was caused by an
+	// over-counted pendingRearmCount (e.g. post-tool nudges that CC folded
+	// into the current turn rather than producing per-message OnResult cycles)
+	// or by a genuinely missing CC response. See
+	// ~/clutch/docs/ccstream-rearm-overcount-bug.md for the failure mode.
+	stopReason := ""
+	if msg != nil && msg.StopReason != nil {
+		stopReason = *msg.StopReason
+	}
+	branch := "normal"
+	if rearmActive && handler != nil {
+		branch = "rearm"
+	}
+	b.logger().Debugf("OnResult: rearm decision prev_count=%d new_count=%d branch=%s stop_reason=%q text_bytes=%d handler_nil=%v",
+		prevRearmCount, newRearmCount, branch, stopReason, len(turnText), handler == nil)
 
 	// Build TurnResult. Prefer turnText (accumulated from all assistant
 	// messages in the turn) over msg.Result (which only contains the last
@@ -1215,9 +1244,13 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 
 	// Normal turn completion — clear handler.
 	b.turnMu.Lock()
+	hadHandler := b.turnHandler != nil
 	b.turnHandler = nil
 	b.turnActive = false
+	residualRearm := b.pendingRearmCount
 	b.turnMu.Unlock()
+	b.logger().Debugf("OnResult: normal completion turn_cleared had_handler=%v residual_rearm_count=%d (a non-zero residual means pendingRearmCount drifted — see ccstream-rearm-overcount-bug.md)",
+		hadHandler, residualRearm)
 
 	// Clear any agents still tracked (safety net — task_notification should
 	// have already removed them individually during the turn).
