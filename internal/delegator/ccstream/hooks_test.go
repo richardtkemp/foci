@@ -226,7 +226,7 @@ func TestHandleHookResponse_PostToolUse(t *testing.T) {
 			got = append(got, captured{id, name, output, isError})
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
@@ -269,7 +269,7 @@ func TestHandleHookResponse_PostToolUseFailure(t *testing.T) {
 			captured.isErr = isError
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent: "PostToolUseFailure",
@@ -303,7 +303,7 @@ func TestHandleHookResponse_FiltersForeignInstallID(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
@@ -333,7 +333,7 @@ func TestHandleHookResponse_FiltersUserHookNoID(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// Payload without install_id — the user's hook script doesn't echo one.
 	env, _ := json.Marshal(hookResponseEnvelope{
@@ -360,7 +360,7 @@ func TestHandleHookResponse_DropsEventsWhenHooksDisabled(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	// A user-configured hook fires with no install_id (it wasn't foci's).
 	env, _ := json.Marshal(hookResponseEnvelope{
@@ -383,7 +383,7 @@ func TestHandleHookResponse_SkipsSubagent(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
@@ -413,7 +413,7 @@ func TestHandleHookResponse_SkipsUnknownHookEvent(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	env, _ := json.Marshal(hookResponseEnvelope{
 		HookEvent: "PreToolUse",
@@ -435,7 +435,7 @@ func TestHandleHookResponse_MalformedStdoutGracefulSkip(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	env, _ := json.Marshal(hookResponseEnvelope{
 		HookEvent: "PostToolUse",
@@ -457,7 +457,7 @@ func TestHandleHookResponse_EmptyStdoutSilent(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) { fired = true },
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	env, _ := json.Marshal(hookResponseEnvelope{
 		HookEvent: "PostToolUse",
@@ -491,7 +491,7 @@ func TestHandleHookResponse_PostToolNudgeDispatched(t *testing.T) {
 			return nil
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
@@ -526,7 +526,7 @@ func TestHandleHookResponse_PostToolNudgeNilFunc(t *testing.T) {
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) {},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",
@@ -561,7 +561,7 @@ func TestHandleHookResponse_PostToolNudgeSkipsEmpty(t *testing.T) {
 			return []string{"", "real", ""}
 		},
 	}
-	b.beginTurn(handler)
+	applyHandler(b, handler)
 
 	stdout, _ := json.Marshal(hookScriptOutput{
 		HookEvent:    "PostToolUse",

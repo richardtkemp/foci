@@ -369,6 +369,7 @@ func (m *mockPassBackend) SetOnPromptsCleared(func())                           
 func (m *mockPassBackend) RegisterPromptCancelListener(string, func(string))      {}
 func (m *mockPassBackend) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackend) SetTypingFunc(func(bool))                               {}
+func (m *mockPassBackend) AttachSessionEvents(*delegator.SessionEvents)            {}
 func (m *mockPassBackend) SendKeystroke(context.Context, string) error             { return nil }
 func (m *mockPassBackend) SendSpecialKey(context.Context, string) error            { return nil }
 func (m *mockPassBackend) Interrupt(context.Context) error                         { return nil }
@@ -422,6 +423,7 @@ func (m *mockPassBackendNoCapturer) SetOnPromptsCleared(func())                 
 func (m *mockPassBackendNoCapturer) RegisterPromptCancelListener(string, func(string))      {}
 func (m *mockPassBackendNoCapturer) SetOnSessionReady(func(string))                         {}
 func (m *mockPassBackendNoCapturer) SetTypingFunc(func(bool))                               {}
+func (m *mockPassBackendNoCapturer) AttachSessionEvents(*delegator.SessionEvents)            {}
 func (m *mockPassBackendNoCapturer) SendKeystroke(context.Context, string) error             { return nil }
 func (m *mockPassBackendNoCapturer) SendSpecialKey(context.Context, string) error            { return nil }
 func (m *mockPassBackendNoCapturer) Interrupt(context.Context) error                         { return nil }

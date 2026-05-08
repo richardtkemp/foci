@@ -209,35 +209,49 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		thinkingBuf          strings.Builder // accumulates thinking deltas for conversation log
 	)
 
-	// Translate the delegator watcher's callbacks into turnevent.Sink events.
-	// OnTextDelta feeds the stream writer via TextDelta events (edit-in-place
-	// streaming). OnText delivers complete text blocks as intermediate TextBlocks
-	// so sinks can drive renderer.OnReply. The StreamingSink owns the delivered
-	// flag that used to live on the renderer — so intermediate delivery during
-	// the turn correctly suppresses re-delivery of the final text.
-	turnCtx := ts.Ctx
-	handler := &delegator.EventHandler{
+	// Wire session-scoped delivery callbacks via SessionEvents. These live
+	// for the session's lifetime, so text/thinking/tool events emitted by
+	// the backend are never dropped on per-turn handler nilling — that was
+	// the failure mode pre-TODO #747. Re-attached on every RunInference,
+	// idempotent (replace) by AttachSessionEvents.
+	//
+	// The captured sink is the session router (atomic.Pointer-protected,
+	// session-scoped, lazy-built once per session). The router forwards to
+	// the registered per-turn StreamingSink during a turn and to the
+	// fallback SessionSink for late-arriving text outside any turn.
+	//
+	// ctx for emits is intentionally not captured: turnCtx is per-turn and
+	// would be stale by the time late-delivery text fires. context.Background
+	// is correct for content events — cancellation logic lives on
+	// TurnComplete which is emitted by turn.RunTurn with the per-turn ctx.
+	sessionSink := turnevent.SinkFromContext(ts.Ctx)
+	sessionEvents := &delegator.SessionEvents{
+		OnText: func(text string) {
+			sessionSink.Emit(context.Background(), turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
+			// Conversation DB log moves to the sink layer in run_turn.go's
+			// loggingSink wrapper (per-turn metadata) and inbox.go's
+			// lateDeliverySink fallback (session-scoped). See TODO #747.
+		},
 		OnTextDelta: func(delta string) {
-			turnevent.Emit(turnCtx, turnevent.TextDelta{Delta: delta})
+			sessionSink.Emit(context.Background(), turnevent.TextDelta{Delta: delta})
 		},
 		OnThinkingDelta: func(delta string) {
-			turnevent.Emit(turnCtx, turnevent.ThinkingDelta{Delta: delta})
+			sessionSink.Emit(context.Background(), turnevent.ThinkingDelta{Delta: delta})
 			thinkingBuf.WriteString(delta)
 		},
-		OnText: func(text string) {
-			turnevent.Emit(turnCtx, turnevent.TextBlock{Text: text, Phase: turnevent.PhaseIntermediate})
-			// Log each intermediate text individually to the conversation DB.
-			// The API transport does this in sendOrBatchText; the delegated
-			// path was missing it, causing conversation.db to only record a
-			// single concatenated row at turn end.
-			a.logConversationSent(ts.ConvChatID, ts.Meta, ts.SessionKey, text)
-		},
 		OnToolStart: func(id, name, input string) {
-			turnevent.Emit(turnCtx, turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
+			sessionSink.Emit(context.Background(), turnevent.ToolCall{ID: id, Name: name, Args: []byte(input)})
 		},
 		OnToolEnd: func(id, name, output string, isError bool) {
-			turnevent.Emit(turnCtx, turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
+			sessionSink.Emit(context.Background(), turnevent.ToolResult{ID: id, Name: name, Output: output, IsError: isError})
 		},
+	}
+	be.AttachSessionEvents(sessionEvents)
+
+	// Per-turn bookkeeping callbacks via TurnEvents. These hold per-turn
+	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
+	// between turns; the backend tolerates that.
+	turnEvents := &delegator.TurnEvents{
 		PostToolNudgeFunc: func(toolName string, isError bool) []string {
 			if a.Nudger == nil {
 				return nil
@@ -287,7 +301,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return nudgeHeader + reminder + "\n\nIf your answer stands as-is, respond with `" + NoResponseSentinel + "` and nothing else."
 		},
 	}
-	handler.OnTurnComplete = func(result *delegator.TurnResult) {
+	turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
 		if result != nil {
 			ts.FinalText = result.Text
 			ts.FinalModel = result.Model
@@ -344,7 +358,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		Source:      delegator.SourceUser,
 		Text:        ts.Prompt,
 		Attachments: atts,
-		Handler:     handler,
+		Turn:        turnEvents,
 	})
 	log.Debugf("delegated", "RunInference: Inject(SourceUser, begin-turn) done sk=%s err=%v", ts.SessionKey, err)
 	return err
