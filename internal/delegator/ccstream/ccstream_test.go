@@ -875,6 +875,83 @@ func TestOnAssistant_TextAccumulation(t *testing.T) {
 	}
 }
 
+// TestTextDelivery_NoHandler_GoesToSessionEvents is the regression test for
+// TODO #747: text emitted AFTER a turn's OnResult clears the per-turn
+// TurnEvents must still deliver via the always-live SessionEvents path.
+//
+// Before the SessionEvents/TurnEvents split, ccstream's text-emit path read
+// `b.turnHandler` under turnMu and dropped on nil with a "text block dropped:
+// handler_nil=true" warning — re-exposed by commit 57445dc6 which removed
+// the rearm cascade that had been keeping turnHandler non-nil across stacked
+// CC results. The fix divorces delivery (session lifetime) from bookkeeping
+// (turn lifetime). This test pins that invariant: drive a turn to completion,
+// then emit more text, and assert the SessionEvents.OnText callback still
+// fires.
+func TestTextDelivery_NoHandler_GoesToSessionEvents(t *testing.T) {
+	t.Parallel()
+
+	var sessionTexts []string
+	var turnCompletedFired bool
+
+	b := &Backend{}
+	b.AttachSessionEvents(&delegator.SessionEvents{
+		OnText: func(text string) { sessionTexts = append(sessionTexts, text) },
+	})
+	b.beginTurn(&delegator.TurnEvents{
+		OnTurnComplete: func(_ *delegator.TurnResult) { turnCompletedFired = true },
+	})
+
+	// Round 1: text during the turn — SessionEvents.OnText should fire.
+	roundOne := &AssistantMessage{
+		Message: BetaMessage{
+			Model: "claude-sonnet-4-20250514",
+			Content: []ContentBlock{
+				{Type: "text", Text: "first round text"},
+			},
+		},
+	}
+	b.OnAssistant(roundOne)
+
+	// Turn ends. OnResult clears b.turnEvents but leaves b.sessionEvents
+	// untouched (the lifetime split). turnCompletedFired flips to true.
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "ok", Usage: TokenUsage{}})
+	if !turnCompletedFired {
+		t.Fatal("OnTurnComplete did not fire on OnResult")
+	}
+	b.turnMu.Lock()
+	turnEventsAfterResult := b.turnEvents
+	b.turnMu.Unlock()
+	if turnEventsAfterResult != nil {
+		t.Fatal("b.turnEvents not cleared after OnResult — invariant broken")
+	}
+	if b.sessionEvents.Load() == nil {
+		t.Fatal("b.sessionEvents was cleared by OnResult — should live for the session")
+	}
+
+	// Round 2: text emitted post-OnResult — this is the failure scenario
+	// that pre-TODO #747 dropped with the "text block dropped: handler nil"
+	// warning. Now SessionEvents.OnText should still fire.
+	roundTwo := &AssistantMessage{
+		Message: BetaMessage{
+			Model: "claude-sonnet-4-20250514",
+			Content: []ContentBlock{
+				{Type: "text", Text: "post-result text"},
+			},
+		},
+	}
+	b.OnAssistant(roundTwo)
+
+	if len(sessionTexts) != 2 {
+		t.Fatalf("got %d session texts, want 2; texts=%v", len(sessionTexts), sessionTexts)
+	}
+	if sessionTexts[0] != "first round text" {
+		t.Errorf("first round text = %q, want %q", sessionTexts[0], "first round text")
+	}
+	if sessionTexts[1] != "post-result text" {
+		t.Errorf("post-result text = %q, want %q", sessionTexts[1], "post-result text")
+	}
+}
+
 func TestOnAssistant_ToolUseTracking(t *testing.T) {
 	// Verifies OnAssistant increments the tool call counter for tool_use blocks
 	// and fires the handler's OnToolStart callback.

@@ -169,7 +169,7 @@ main
  ├── warnings      → log (leaf — warning queue and proactive dispatch)
  ├── messages      → provider (shared message-inspection utilities: HasToolUse, ToolUseIDs)
  ├── timeutil      (no deps — centralised timestamp formatting with configurable timezone)
- ├── delegator     (no deps — Delegator interface, registry, StartOptions, EventHandler)
+ ├── delegator     (no deps — Delegator interface, registry, StartOptions, SessionEvents/TurnEvents, EventHandler [deprecated])
  │   ├── delegator/cctmux     → delegator, fsnotify (tmux-based Claude Code; registers "claude-code-tmux" via init())
  │   └── delegator/ccstream   → delegator, log (stream-json Claude Code; registers "claude-code" via init())
  ├── agent         → delegator, compaction, config, display, log, mana, memory, nudge, platform, provider, session, state, tools, warnings, workspace
@@ -331,7 +331,7 @@ The tmux backend's session watcher tails Claude Code's JSONL session file via fs
 
 **Usage extraction:** Assistant messages in the JSONL carry a `usage` payload. The watcher extracts `TurnUsage` (InputTokens, OutputTokens, CacheCreationInputTokens, CacheReadInputTokens) from the last assistant message in each turn. This is reported via `TurnState.FinalUsage` on completion. The ccstream backend extracts the same from structured `AssistantMessage` objects on stdout.
 
-**Per-turn completion callbacks:** `Inject(SourceUser)`'s begin-turn path registers a one-shot `OnTurnComplete` handler (via `EventHandler`) that fires when the turn ends (`end_turn` in JSONL for tmux, `ResultMessage` on stdout for ccstream). The callback sets `TurnState.FinalText` and `TurnState.FinalUsage`, then closes `TurnState.CompletionChan` — triggering the post-turn goroutine (save, metadata, compaction, logging).
+**Per-turn completion callbacks:** `Inject(SourceUser)`'s begin-turn path registers a one-shot `OnTurnComplete` handler that fires when the turn ends (`end_turn` in JSONL for tmux, `ResultMessage` on stdout for ccstream). The callback sets `TurnState.FinalText` and `TurnState.FinalUsage`, then closes `TurnState.CompletionChan` — triggering the post-turn goroutine (save, metadata, compaction, logging). For ccstream this lives on `Inject.Turn` (`TurnEvents` — per-turn bookkeeping); for cctmux it lives on `Inject.Handler` (the legacy combined `EventHandler`).
 
 **Agent spawn tracking:** The tmux watcher tracks pending `tool_use` calls for the Agent tool. The ccstream backend receives task lifecycle events (`task_started`, `task_notification`) as system messages. Both report status via the `onAgentStatus` callback, allowing the platform to show agent activity state.
 
@@ -407,12 +407,19 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 6. `Close` sends interrupt + EOF, waits up to 5s, escalates SIGTERM → SIGKILL.
 7. `Restart` calls `Close`, resets state, calls `Start` with saved options.
 
+**Two-lifetime callback split (TODO #747):** ccstream divides backend callbacks across two distinct lifetimes that match the actual semantics — delivery is session-scoped, bookkeeping is per-turn:
+
+- **`SessionEvents`** (delivery: `OnText`, `OnTextDelta`, `OnThinkingDelta`, `OnToolStart`, `OnToolEnd`) — installed once per session via `Backend.AttachSessionEvents`, stored on the backend in an `atomic.Pointer[SessionEvents]` that's never nil after first attach. Text/tool emission paths (`OnAssistant`, `OnStreamEvent`, hook dispatch) read through this pointer without taking `turnMu` and never drop on a nil handler. The agent layer's `RunInference` re-attaches per turn (idempotent — replaces); closures capture the session router (lazy-built once per session in `inbox.sessionRouterFor`), so they remain safe to call any time the backend is alive.
+- **`TurnEvents`** (bookkeeping: `OnTurnComplete`, `PostToolNudgeFunc`, `PreAnswerNudgeFunc`) — installed via `Inject.Turn` for begin-turn paths, captured-then-nilled under `turnMu` in `OnResult` for the fire-once invariant. May legitimately be nil between turns; backend tolerates that. The pre-answer second round explicitly preserves `turnEvents` across rounds — only the round-2 `OnResult` clears it.
+
+This divorces "where does this text go?" (session lifetime — always somewhere) from "did this turn finish yet?" (turn lifetime — might be nil). The pre-TODO #747 design bundled both into one `EventHandler` pointer that nilled on `OnResult`, which made post-OnResult text drops a structural inevitability rather than a bug. The legacy `EventHandler` shape is retained as a deprecated alias for cctmux (which uses its own JSONL-watcher delivery path) and for back-compat in tests; ccstream's `Inject` has a shim that splits a legacy `inj.Handler` into the two new types.
+
 **Turn flow:**
-1. `Inject(SourceUser)` at idle calls `sendToPane`, which calls `beginTurn` (sets handler, resets text/tools counters, creates result channel).
+1. `Inject(SourceUser)` at idle calls `sendToPane`, which calls `beginTurn(turnEvents)` (sets `b.turnEvents`, resets text/tools counters, creates result channel). Delivery is unaffected — `b.sessionEvents` was already attached.
 2. `Writer.SendUser(prompt)` writes a user message to CC's stdin.
 3. CC processes the turn, emitting `assistant`, `tool_progress`, and `stream_event` messages.
-4. `OnAssistant` accumulates text, counts tool_use blocks, and fires `OnText`/`OnToolStart` callbacks. Mid-turn steer dispatch is handled at the agent's per-session inbox (see `agent.Inbox.Enqueue` routing), not at tool boundaries — this lets text-only turns be steered too.
-5. `OnResult` captures final text/usage/model, fires `OnTurnComplete`, stops typing, signals `WaitForTurn`.
+4. `OnAssistant` accumulates text, counts tool_use blocks, and fires `SessionEvents.OnText` / `SessionEvents.OnToolStart`. Mid-turn steer dispatch is handled at the agent's per-session inbox (see `agent.Inbox.Enqueue` routing), not at tool boundaries — this lets text-only turns be steered too.
+5. `OnResult` captures final text/usage/model, fires `TurnEvents.OnTurnComplete`, clears `b.turnEvents`, stops typing, signals `WaitForTurn`. `b.sessionEvents` is untouched.
 
 **Permission handling:** CC sends `control_request` with subtype `can_use_tool`. The backend first checks compiled auto-approve rules (`autoApprovePermission`). Unmatched requests are stored as `pendingPermission` entries and forwarded to the platform via `permPromptFn` (interactive buttons: Allow, Deny, Always Allow). The user's response is sent back as a `control_response` with either `PermissionAllow` or `PermissionDeny`. CC can also cancel a pending request via `control_cancel_request` (e.g. when a hook resolves it).
 
@@ -1466,8 +1473,8 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 **Delegated transport** (`turn_delegated.go`): CC owns the inference loop so foci can't edit in-flight messages. Instead:
 
 - **every_n_turns / regex** — prepended to the prompt string in `InjectNudges` before the agent layer's `Inject(SourceUser)` call, same as API content blocks but flattened to text.
-- **every_n_tools / after_error** — wired through `delegator.EventHandler.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as plain `[user] <text>` user messages via `writer.SendUser` at default queue priority. CC's mid-turn drain (`claude-code/src/query.ts:1570-1589`) folds the message into the current `ask()` as an attachment to the next tool-result batch, so the model addresses the nudge in the same turn and its response reaches the original handler through the existing `OnText` pipeline. There is no separate ask/result cycle for the nudge.
-- **pre_answer** — wired through `delegator.EventHandler.PreAnswerNudgeFunc`. On `OnResult`, ccstream gives the handler a chance to return a verification follow-up. When non-empty, ccstream re-arms the same handler via `beginTurn`, sends the follow-up via `writer.SendUser`, and skips `OnTurnComplete` until the second round's `OnResult`. `turn_delegated.go` tracks `preAnswerFired` in a closure local so the gate fires at most once per user turn, stashes round-1 usage/text so the final `OnTurnComplete` can fold usage into `ts.FinalUsage`, and restores the original answer when round 2 echoes `NoResponseSentinel`. Unlike the API path, the round-1 answer has already streamed to the user as intermediate text — round 2's text becomes the authoritative final reply.
+- **every_n_tools / after_error** — wired through `delegator.TurnEvents.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as plain `[user] <text>` user messages via `writer.SendUser` at default queue priority. CC's mid-turn drain (`claude-code/src/query.ts:1570-1589`) folds the message into the current `ask()` as an attachment to the next tool-result batch, so the model addresses the nudge in the same turn and its response reaches the user through the always-live `SessionEvents.OnText` path. There is no separate ask/result cycle for the nudge.
+- **pre_answer** — wired through `delegator.TurnEvents.PreAnswerNudgeFunc`. On `OnResult`, ccstream gives the bookkeeping callback a chance to return a verification follow-up. When non-empty, ccstream re-runs `beginTurn` with the same `TurnEvents`, sends the follow-up via `writer.SendUser`, and skips `OnTurnComplete` until the second round's `OnResult`. `turn_delegated.go` tracks `preAnswerFired` in a closure local so the gate fires at most once per user turn, stashes round-1 usage/text so the final `OnTurnComplete` can fold usage into `ts.FinalUsage`, and restores the original answer when round 2 echoes `NoResponseSentinel`. Unlike the API path, the round-1 answer has already streamed to the user as intermediate text via `SessionEvents.OnText` — round 2's text becomes the authoritative final reply.
 
 ### Configuration
 
