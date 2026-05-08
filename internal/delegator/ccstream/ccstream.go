@@ -94,7 +94,6 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText      strings.Builder       // accumulates text across assistant messages
 	turnTools     int                   // tool_use count this turn
-	pendingRearmCount int             // count of queued user-role injections (post-tool nudge / urgent dispatch / follow-up) awaiting their delivery cycle. Each OnResult with count > 0 decrements and re-arms a delivery-only handler so the queued response reaches OnText. Reset on beginTurn. See rearm.go.
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -471,7 +470,6 @@ func (b *Backend) beginTurn(handler *delegator.EventHandler) {
 	b.turnHandler = handler
 	b.turnText.Reset()
 	b.turnTools = 0
-	b.pendingRearmCount = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
 	b.turnMu.Unlock()
 
@@ -490,42 +488,6 @@ func (b *Backend) cancelTurn() {
 	b.turnActive = false
 	b.turnHandler = nil
 	b.turnMu.Unlock()
-}
-
-// rearmForNudgeResponse re-arms the turn with a delivery-only handler
-// derived from the original. The nudge turn delivers text and tracks
-// tools normally, but its OnTurnComplete is nil — it doesn't signal
-// the foci turn (which already completed on the prior result).
-// PostToolNudgeFunc is preserved so chained nudges work correctly.
-func (b *Backend) rearmForNudgeResponse(orig *delegator.EventHandler) {
-	log.Debugf("ccstream", "rearmForNudgeResponse: installing nudge handler OnText=%v OnTurnComplete=nil(intentional) OnToolStart=%v OnToolEnd=%v PostToolNudgeFunc=%v",
-		orig.OnText != nil, orig.OnToolStart != nil, orig.OnToolEnd != nil, orig.PostToolNudgeFunc != nil)
-	b.turnMu.Lock()
-	b.turnActive = true
-	b.turnHandler = &delegator.EventHandler{
-		OnTextDelta:       orig.OnTextDelta,
-		OnThinkingDelta:   orig.OnThinkingDelta,
-		OnText:            orig.OnText,
-		OnToolStart:       orig.OnToolStart,
-		OnToolEnd:         orig.OnToolEnd,
-		PostToolNudgeFunc: orig.PostToolNudgeFunc,
-		// OnTurnComplete: nil — nudge CC turn doesn't end the foci turn.
-		// PreAnswerNudgeFunc: nil — pre-answer gate doesn't apply to nudge turns.
-	}
-	b.turnText.Reset()
-	b.turnTools = 0
-	// NOTE: do NOT reset pendingRearmCount here — OnResult already decremented
-	// the slot for the cycle that called us, and any remaining count belongs
-	// to further stacked events whose responses haven't arrived yet. Resetting
-	// would re-introduce the dropped-text race the counter was added to fix.
-	b.turnResultCh = make(chan *ResultMessage, 1)
-	b.turnMu.Unlock()
-
-	b.mu.Lock()
-	b.lastUsage = nil
-	b.mu.Unlock()
-
-	b.touchActivity()
 }
 
 // sendToPane is the internal begin-turn primitive: starts a fresh turn
@@ -634,52 +596,20 @@ func (b *Backend) IsTurnInFlight() bool {
 }
 
 // sendUserMessage is the internal primitive that writes a user-role
-// message to CC. autoRearm controls whether an in-flight turn's pending
-// rearm count is incremented — true for follow-up/steer paths (response
-// reaches the original handler via the rearm cascade), false for slash
-// commands like /compact and /pass (no rearm; fire-and-forget).
-//
-// Order matters when autoRearm is true: arm the rearm slot BEFORE sending
-// to CC, so that if the reader goroutine processes the in-flight turn's
-// result message after we release turnMu but before SendUser returns,
-// OnResult sees a non-zero count and re-installs the handler. The
-// reverse order (SendUser → arm) races with OnResult's handler clear in
-// ccstream.go:OnResult: between SendUser and the lock, OnResult can fire,
-// see count == 0, clear the handler, and CC's response to the queued
-// command then hits turnHandler == nil and gets dropped (the
-// "text block dropped (no handler/OnText)" WARN).
-func (b *Backend) sendUserMessage(_ context.Context, text string, autoRearm bool) error {
-	b.turnMu.Lock()
-	inFlight := b.turnActive
-	armed := autoRearm && inFlight
-	var newCount int
-	if armed {
-		b.incRearm()
-		newCount = b.pendingRearmCount
-	}
-	b.turnMu.Unlock()
+// message to CC at the default priority ("next"). For mid-turn injections
+// (follow-up SourceUser, post-tool nudges, slash commands), CC's mid-turn
+// drain at the next tool boundary folds the message into the current
+// ask() — there is no separate ask/result cycle to wait for.
+func (b *Backend) sendUserMessage(text string) error {
+	return b.writer.SendUser(text)
+}
 
-	if armed {
-		b.logger().Debugf("rearm: incRearm via sendUserMessage count=%d bytes=%d (auto_rearm=true, in_flight=true)",
-			newCount, len(text))
-	}
-
-	if err := b.writer.SendUser(text); err != nil {
-		if armed {
-			// Roll back the increment for THIS message — no response is
-			// coming. Other queued events still in pendingRearmCount stay
-			// intact (decRearm clamps at zero, so this is safe even if
-			// another path drained the slot first).
-			b.turnMu.Lock()
-			b.decRearm()
-			rolledBackTo := b.pendingRearmCount
-			b.turnMu.Unlock()
-			b.logger().Debugf("rearm: decRearm via sendUserMessage rollback count=%d (SendUser failed: %v)",
-				rolledBackTo, err)
-		}
-		return err
-	}
-	return nil
+// sendUserMessagePriority writes a user-role message at the given queue
+// priority ("now" / "next" / "later"). Used by SourceSteer dispatch so
+// the message dequeues ahead of any other queued items at CC's next
+// mid-turn drain.
+func (b *Backend) sendUserMessagePriority(text, priority string) error {
+	return b.writer.SendUserPriority(text, priority)
 }
 
 
@@ -694,16 +624,22 @@ func (b *Backend) sendUserMessage(_ context.Context, text string, autoRearm bool
 //	Source   | Turn state | Action
 //	---------|------------|--------------------------------------------
 //	User     | idle       | begin turn (with attachments if provided)
-//	User     | in-flight  | queue follow-up; response routes via rearm
-//	Steer    | in-flight  | Interrupt + queue; response via rearm
+//	User     | in-flight  | SendUser at default priority; CC folds via mid-turn drain
+//	Steer    | in-flight  | SendUser at priority "now"; CC folds via mid-turn drain
 //	Steer    | idle       | begin turn — degrades to User-idle
-//	Compact  | any        | send slash command; no rearm
-//	Pass     | any        | send slash command; no rearm
+//	Compact  | any        | send slash command (fire-and-forget)
+//	Pass     | any        | send slash command (fire-and-forget)
+//
+// All in-flight injections rely on CC's mid-turn drain
+// (claude-code/src/query.ts:1570-1589) to fold the message as an
+// attachment into the current ask() — no separate ask/result cycle
+// is produced for them. The model addresses the message in the same
+// turn and the response reaches the original handler.
 //
 // inj.Handler is required for SourceUser/Steer at idle (a fresh turn needs
 // a sink for OnText/OnTurnComplete). Ignored for in-flight injections
 // (response routes through the existing turn handler) and for slash
-// commands (no rearm).
+// commands.
 //
 // inj.Attachments are honored only when beginning a new turn; ignored
 // otherwise. They become structured content blocks alongside the text.
@@ -717,37 +653,35 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		if !inFlight {
 			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Handler)
 		}
-		// Follow-up: queue behind in-flight turn. Response routes via rearm
-		// to the original handler. inj.Handler is intentionally ignored —
-		// the in-flight turn already has its handler installed.
-		return b.sendUserMessage(ctx, inj.Text, true)
+		// In-flight follow-up: SendUser at default priority. CC's mid-turn
+		// drain at the next tool boundary (claude-code's
+		// query.ts:1570-1589) folds the message as an attachment to the
+		// current turn's tool_results — the model responds in the same
+		// ask(), so the original handler's OnText/OnTurnComplete pipeline
+		// carries the response. inj.Handler is intentionally ignored.
+		return b.sendUserMessage(inj.Text)
 
 	case delegator.SourceSteer:
 		if !inFlight {
-			// Edge case: steer at idle. The platform queue dispatched a
-			// "now"-priority message but the turn ended between the
-			// IsTurnInFlight check and us getting here. Degrade to a fresh
-			// turn — the message still gets delivered, just without an
-			// in-flight turn to interrupt.
+			// Edge case: steer at idle. Degrade to begin-turn.
 			b.logger().Debugf("Inject(Steer): no turn in flight, degrading to begin-turn")
 			return b.beginTurnWithText(ctx, inj.Text, inj.Attachments, inj.Handler)
 		}
-		// In-flight: abort the current task, then queue. Interrupt errors
-		// are logged but don't block the dispatch — CC may have already
-		// finished the current step, and SendUser will queue regardless.
-		if err := b.Interrupt(ctx); err != nil {
-			b.logger().Warnf("Inject(Steer): Interrupt failed: %v (continuing with SendUser)", err)
-		}
-		return b.sendUserMessage(ctx, inj.Text, true)
+		// In-flight steer: SendUser at priority "now". CC dequeues "now"
+		// ahead of "next"/"later" at the next mid-turn drain, so the
+		// steer message folds in before any other queued items without
+		// aborting the current ask() and killing in-flight tool work.
+		// "Stop right now" semantics live in /reset hard, not Steer.
+		return b.sendUserMessagePriority(inj.Text, "now")
 
 	case delegator.SourceCompact, delegator.SourcePass:
-		// Slash commands. Fire-and-forget — no rearm cascade. The caller
-		// is responsible for any synchronisation (e.g. compaction.go arms
-		// CompactionWaiter before calling Inject).
+		// Slash commands. Fire-and-forget. The caller is responsible for
+		// any synchronisation (e.g. compaction.go arms CompactionWaiter
+		// before calling Inject).
 		if inFlight {
 			b.logger().Warnf("Inject(%s): called with turn in flight — slash command will queue behind active turn", inj.Source)
 		}
-		return b.sendUserMessage(ctx, inj.Text, false)
+		return b.sendUserMessage(inj.Text)
 	}
 	return fmt.Errorf("ccstream: Inject: unknown source %d", inj.Source)
 }
@@ -1104,34 +1038,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	b.touchActivity()
 
 	// Capture turn state. Handler clearing is deferred — the re-arm cascade
-	// and pre-answer gate paths need the handler alive to re-arm or fire
-	// OnTurnComplete. The normal path clears handler/turnActive below.
+	// Pre-answer gate path needs the handler alive to fire OnTurnComplete.
+	// Normal path clears handler/turnActive below.
 	b.turnMu.Lock()
 	handler := b.turnHandler
-	prevRearmCount := b.pendingRearmCount
-	rearmActive := b.decRearm() > 0
-	newRearmCount := b.pendingRearmCount
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
 	b.turnMu.Unlock()
-
-	// Surface the rearm decision in the log. Without this it's impossible to
-	// tell from logs alone whether a stuck turnActive was caused by an
-	// over-counted pendingRearmCount (e.g. post-tool nudges that CC folded
-	// into the current turn rather than producing per-message OnResult cycles)
-	// or by a genuinely missing CC response. See
-	// ~/clutch/docs/ccstream-rearm-overcount-bug.md for the failure mode.
-	stopReason := ""
-	if msg != nil && msg.StopReason != nil {
-		stopReason = *msg.StopReason
-	}
-	branch := "normal"
-	if rearmActive && handler != nil {
-		branch = "rearm"
-	}
-	b.logger().Debugf("OnResult: rearm decision prev_count=%d new_count=%d branch=%s stop_reason=%q text_bytes=%d handler_nil=%v",
-		prevRearmCount, newRearmCount, branch, stopReason, len(turnText), handler == nil)
 
 	// Build TurnResult. Prefer turnText (accumulated from all assistant
 	// messages in the turn) over msg.Result (which only contains the last
@@ -1200,28 +1114,19 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		Usage:     turnUsage,
 	}
 
-	// Re-arm cascade: a user-role injection (post-tool nudge, urgent steer
-	// dispatch, or SendCommand follow-up on an in-flight turn) is awaiting
-	// delivery. CC will produce a fresh round of output for the queued event
-	// after this result; without re-arming, that output's text blocks hit
-	// b.turnHandler == nil and are silently dropped (TODO #726 and sub-modes).
-	// Complete the foci turn normally (fire OnTurnComplete with whatever text
-	// accumulated before the boundary), then install a delivery-only handler
-	// so the queued response reaches OnText. See completeAndRearm.
-	if rearmActive && handler != nil {
-		b.completeAndRearm(handler, result, msg, resultCh)
-		return
-	}
-
 	// Pre-answer nudge gate: give the caller a chance to re-dispatch this
 	// turn with a verification prompt before finalising. When the func
-	// returns a non-empty follow-up, the result is swallowed, turn state
-	// is re-armed under the SAME handler, and the follow-up is sent as a
-	// new user message. The next OnResult delivers the revised answer as
-	// the authoritative outcome. The caller must stop returning a follow-up
-	// after the first fire to break the loop (guaranteed by the scheduler's
-	// internal state — CheckPreAnswer returns the same text every call but
-	// the turn_delegated closure tracks "fired" locally).
+	// returns a non-empty follow-up, the result is swallowed, beginTurn
+	// is called again with the same handler, and the follow-up is sent
+	// as a new user message — explicitly starting a fresh CC ask().
+	// The next OnResult delivers the revised answer as the authoritative
+	// outcome. The caller must stop returning a follow-up after the first
+	// fire to break the loop (guaranteed by the scheduler's internal
+	// state — CheckPreAnswer returns the same text every call but the
+	// turn_delegated closure tracks "fired" locally). This is distinct
+	// from the mid-turn-drain path used by SourceUser/Steer/post-tool
+	// nudges: pre-answer needs a fresh ask() because it's a verification
+	// re-prompt, not a fold-in.
 	if handler != nil && handler.PreAnswerNudgeFunc != nil {
 		if followUp := handler.PreAnswerNudgeFunc(result); followUp != "" {
 			b.beginTurn(handler)
@@ -1247,10 +1152,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	hadHandler := b.turnHandler != nil
 	b.turnHandler = nil
 	b.turnActive = false
-	residualRearm := b.pendingRearmCount
 	b.turnMu.Unlock()
-	b.logger().Debugf("OnResult: normal completion turn_cleared had_handler=%v residual_rearm_count=%d (a non-zero residual means pendingRearmCount drifted — see ccstream-rearm-overcount-bug.md)",
-		hadHandler, residualRearm)
+	b.logger().Debugf("OnResult: turn cleared (had_handler=%v)", hadHandler)
 
 	// Clear any agents still tracked (safety net — task_notification should
 	// have already removed them individually during the turn).

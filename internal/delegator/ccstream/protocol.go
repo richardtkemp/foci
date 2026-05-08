@@ -67,10 +67,18 @@ type PermSuggestion struct {
 // ---------------------------------------------------------------------------
 
 // UserMessage sends a conversational turn to Claude Code.
+//
+// Priority controls CC's queue dequeue order: "now" > "next" > "later".
+// When omitted, CC's enqueue defaults to "next" (per claude-code's
+// messageQueueManager.ts). foci sets "now" only for SourceSteer-flavoured
+// in-flight injections so they jump ahead of any other queued commands at
+// the next mid-turn drain (CC's query.ts:1570-1589) without aborting the
+// current ask().
 type UserMessage struct {
 	Type            string       `json:"type"`                          // always "user"
 	Message         UserPayload  `json:"message"`
 	ParentToolUseID *string      `json:"parent_tool_use_id,omitempty"` // nil for top-level turns
+	Priority        string       `json:"priority,omitempty"`           // "now" | "next" | "later" (omit for CC default of "next")
 	SessionID       string       `json:"session_id,omitempty"`
 	UUID            string       `json:"uuid,omitempty"`
 	IsSynthetic     *bool        `json:"isSynthetic,omitempty"`
@@ -466,6 +474,18 @@ func NewUserMessage(content string) *UserMessage {
 			ContentString: content,
 		},
 	}
+}
+
+// NewUserMessagePriority creates a simple text UserMessage with an explicit
+// queue priority ("now" / "next" / "later"). Used by SourceSteer dispatch
+// so the steer message jumps ahead of any other queued commands when CC's
+// mid-turn drain runs at the next tool boundary, without aborting the
+// current ask(). Empty priority produces an unset field — CC defaults to
+// "next" when the field is omitted.
+func NewUserMessagePriority(content, priority string) *UserMessage {
+	m := NewUserMessage(content)
+	m.Priority = priority
+	return m
 }
 
 // NewUserMessageBlocks creates a UserMessage with structured content blocks.

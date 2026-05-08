@@ -510,16 +510,7 @@ func TestHandleHookResponse_PostToolNudgeDispatched(t *testing.T) {
 		t.Errorf("expected [user] reminder-text in writer output, got: %q", buf.String())
 	}
 	if strings.Contains(buf.String(), `"priority"`) {
-		t.Errorf("priority field should be absent post-Phase-5, got: %q", buf.String())
-	}
-
-	// Rearm count must be incremented so OnResult re-arms a delivery
-	// handler for the nudge response that follows.
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 1 {
-		t.Errorf("pendingRearmCount = %d, want 1 after nudge dispatch", count)
+		t.Errorf("priority field should be absent on default-priority post-tool nudge, got: %q", buf.String())
 	}
 }
 

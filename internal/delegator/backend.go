@@ -318,26 +318,31 @@ type InjectSource int
 
 const (
 	// SourceUser is user-originated text. Begins a new turn at idle, or
-	// queues as a follow-up behind the in-flight turn (the response
-	// reaches the original handler via the rearm cascade).
+	// queues as a follow-up at default priority "next" behind the in-flight
+	// turn. CC's mid-turn drain at the next tool boundary folds the
+	// message as an attachment to the current ask() — the response
+	// reaches the original handler in the same turn.
 	SourceUser InjectSource = iota
 
 	// SourceSteer is an urgent platform-side dispatch (Telegram/Discord
-	// message arriving during an in-flight CC turn). Inject internally
-	// calls Interrupt before queueing the text so CC stops the in-flight
-	// task and processes the new message next. Response routes via rearm.
-	// At idle, degrades to SourceUser-idle (begin turn).
+	// message arriving during an in-flight CC turn). Inject queues the
+	// text at queue priority "now" — CC's mid-turn drain folds it ahead
+	// of any other queued items at the next tool boundary, without
+	// aborting the in-flight tool. The running tool finishes and the
+	// model responds in the same turn. Steer no longer interrupts; for
+	// "stop right now" semantics use /reset hard. At idle, degrades to
+	// SourceUser-idle (begin turn).
 	SourceSteer
 
 	// SourceCompact is a /compact slash command sent to CC. Fire-and-forget:
-	// CC processes the compaction internally; no rearm cascade applies.
-	// Caller is responsible for arming compaction-completion waiters
-	// (CompactionWaiter) before Inject if it wants to block on completion.
+	// CC processes the compaction internally. Caller is responsible for
+	// arming compaction-completion waiters (CompactionWaiter) before
+	// Inject if it wants to block on completion.
 	SourceCompact
 
 	// SourcePass is a passthrough slash command (/context, /model, etc.).
 	// Fire-and-forget: response (if any) flows through the agent's normal
-	// stream events; no rearm cascade applies.
+	// stream events.
 	SourcePass
 )
 

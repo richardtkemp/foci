@@ -52,12 +52,22 @@ func (wr *Writer) Send(msg interface{}) error {
 	return wr.enc.Encode(msg)
 }
 
-// SendUser sends a user-typed message to Claude Code. CC processes queued
-// user messages in FIFO order; to abort the in-flight turn first, call
-// SendInterrupt before SendUser. Mid-turn ordering and abort semantics live
-// at the protocol level — this is just a serialized line write.
+// SendUser sends a user-typed message to Claude Code. CC enqueues with the
+// default priority "next" and folds the message into the current ask() at
+// the next mid-turn drain (claude-code's query.ts:1570-1589) — there is
+// no separate ask/result cycle for in-flight injections. Use
+// SendUserPriority("now", ...) for steer-flavoured messages that should
+// jump ahead of other queued commands.
 func (wr *Writer) SendUser(content string) error {
 	return wr.Send(NewUserMessage(content))
+}
+
+// SendUserPriority is like SendUser but explicitly sets the queue priority.
+// Valid values: "now" | "next" | "later". Used by SourceSteer dispatch
+// where the message must dequeue ahead of any other queued items at the
+// next mid-turn drain.
+func (wr *Writer) SendUserPriority(content, priority string) error {
+	return wr.Send(NewUserMessagePriority(content, priority))
 }
 
 // SendControl sends a control request to Claude Code with the given request ID
