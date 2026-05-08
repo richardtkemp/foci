@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -408,19 +407,17 @@ func TestWaitForTurn_ContextCancellation(t *testing.T) {
 // sendUserMessage — internal primitive backing Inject's user-text paths
 // ---------------------------------------------------------------------------
 
-// TestSendUserMessage_Idle_NoRearm verifies the internal sendUserMessage
-// primitive at idle emits a well-formed user message on the wire and
-// does NOT increment pendingRearmCount even when autoRearm=true — there's
-// no in-flight turn to rearm against. This is the wire-shape check that
-// pre-Phase-4 lived under TestSendCommand_Idle; protocol-level coverage
-// stays here, routing-level coverage lives in TestInject_*.
-func TestSendUserMessage_Idle_NoRearm(t *testing.T) {
+// TestSendUserMessage_WireShape verifies the internal sendUserMessage
+// primitive emits a well-formed user message on the wire with the
+// default queue priority (omitted, so CC defaults to "next"). Wire-shape
+// coverage stays here; routing coverage lives in TestInject_*.
+func TestSendUserMessage_WireShape(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 
-	if err := b.sendUserMessage(context.Background(), "/compact", true); err != nil {
+	if err := b.sendUserMessage("hello"); err != nil {
 		t.Fatalf("sendUserMessage: %v", err)
 	}
 
@@ -433,127 +430,36 @@ func TestSendUserMessage_Idle_NoRearm(t *testing.T) {
 		t.Errorf("type = %v, want %q", got["type"], "user")
 	}
 	if _, present := got["priority"]; present {
-		t.Errorf("priority field should be absent post-Phase-5, got %v", got["priority"])
+		t.Errorf("priority field should be absent for default sendUserMessage, got %v", got["priority"])
 	}
 	msg := got["message"].(map[string]any)
-	if msg["content"] != "/compact" {
-		t.Errorf("content = %v, want %q", msg["content"], "/compact")
-	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 0 {
-		t.Errorf("pendingRearmCount = %d, want 0 for idle send (no turn to rearm against)", count)
+	if msg["content"] != "hello" {
+		t.Errorf("content = %v, want %q", msg["content"], "hello")
 	}
 }
 
-// rearmCheckingWriter wraps a writer and snapshots the backend's rearm
-// counter on the first call to Write — the moment the bytes hit the wire.
-// Used to assert the count was already non-zero BEFORE the user message
-// reaches CC, closing the race where OnResult could see count==0, clear
-// the handler, and drop the queued response's text.
-type rearmCheckingWriter struct {
-	dst              *bytes.Buffer
-	b                *Backend
-	rearmAtFirstWrt  int
-	wroteOnce        bool
-}
-
-func (w *rearmCheckingWriter) Write(p []byte) (int, error) {
-	if !w.wroteOnce {
-		w.b.turnMu.Lock()
-		w.rearmAtFirstWrt = w.b.pendingRearmCount
-		w.b.turnMu.Unlock()
-		w.wroteOnce = true
-	}
-	return w.dst.Write(p)
-}
-
-func (w *rearmCheckingWriter) Close() error { return nil }
-
-// TestSendUserMessage_DuringTurn_RearmSetBeforeWrite proves that the
-// in-flight rearm path arms the count BEFORE bytes hit CC. Closes the
-// race observed in production as the "text block dropped (no
-// handler/OnText)" WARN: if SendUser fired first, OnResult could process
-// the in-flight turn's result (clearing the handler) before the rearm
-// slot had been marked — the response to the queued command would then
-// arrive at turnHandler==nil and be dropped. Phase 5 follow-up.
-func TestSendUserMessage_DuringTurn_RearmSetBeforeWrite(t *testing.T) {
+// TestSendUserMessagePriority_WireShape verifies the priority-bearing
+// primitive emits the priority field in the envelope so CC's queue can
+// dequeue it ahead of default-priority items at the next mid-turn drain.
+func TestSendUserMessagePriority_WireShape(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
-	b := &Backend{turnActive: true}
-	checker := &rearmCheckingWriter{dst: &buf, b: b}
-	b.writer = NewWriter(checker)
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
 
-	if err := b.sendUserMessage(context.Background(), "follow-up", true); err != nil {
-		t.Fatalf("sendUserMessage: %v", err)
-	}
-	if !checker.wroteOnce {
-		t.Fatal("writer was never called — sendUserMessage never reached the wire")
-	}
-	if checker.rearmAtFirstWrt < 1 {
-		t.Errorf("pendingRearmCount at first byte = %d, want >= 1 — order is wrong, race window open",
-			checker.rearmAtFirstWrt)
-	}
-}
-
-// TestSendUserMessage_WriteFailureRollsBackRearm proves that if the
-// underlying write fails after the rearm slot was incremented, the
-// increment is rolled back — no response is coming from CC, so leaving
-// the slot set would mis-route the next legitimate OnResult through
-// the rearm path.
-func TestSendUserMessage_WriteFailureRollsBackRearm(t *testing.T) {
-	t.Parallel()
-
-	failingWC := &failingWriteCloser{err: fmt.Errorf("boom")}
-	b := &Backend{
-		writer:     NewWriter(failingWC),
-		turnActive: true,
+	if err := b.sendUserMessagePriority("urgent text", "now"); err != nil {
+		t.Fatalf("sendUserMessagePriority: %v", err)
 	}
 
-	if err := b.sendUserMessage(context.Background(), "x", true); err == nil {
-		t.Fatal("sendUserMessage: expected error, got nil")
+	line := strings.TrimSpace(buf.String())
+	var got map[string]any
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
 	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 0 {
-		t.Errorf("pendingRearmCount = %d after write failure, want 0 (rollback)", count)
+	if got["priority"] != "now" {
+		t.Errorf("priority = %v, want %q", got["priority"], "now")
 	}
 }
-
-// TestSendUserMessage_NoAutoRearm proves the slash-command path
-// (autoRearm=false) does NOT arm the count even when called mid-turn.
-// This is what keeps Inject(SourceCompact) safe to call defensively
-// without corrupting the in-flight rearm state.
-func TestSendUserMessage_NoAutoRearm(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	b := &Backend{
-		writer:     NewWriter(nopWriteCloser{&buf}),
-		turnActive: true,
-	}
-
-	if err := b.sendUserMessage(context.Background(), "/compact", false); err != nil {
-		t.Fatalf("sendUserMessage: %v", err)
-	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 0 {
-		t.Errorf("pendingRearmCount = %d with autoRearm=false, want 0", count)
-	}
-}
-
-type failingWriteCloser struct{ err error }
-
-func (f *failingWriteCloser) Write([]byte) (int, error) { return 0, f.err }
-func (f *failingWriteCloser) Close() error              { return nil }
 
 // ---------------------------------------------------------------------------
 // Inject — canonical entry point for user-role events
@@ -621,12 +527,13 @@ func TestInject_User_Idle_WithAttachments(t *testing.T) {
 	}
 }
 
-// TestInject_User_InFlight_QueuesAndArmsRearm verifies Inject(SourceUser)
-// during an in-flight turn queues the text via SendUser and increments
-// the rearm count so the queued response reaches the existing handler.
-// Attachments and Handler in the Inject struct are ignored on the
-// follow-up path — the in-flight turn already has its handler installed.
-func TestInject_User_InFlight_QueuesAndArmsRearm(t *testing.T) {
+// TestInject_User_InFlight_FoldsViaSendUser verifies Inject(SourceUser)
+// during an in-flight turn queues the text via SendUser at default
+// priority (no priority field on the wire; CC defaults to "next"). CC's
+// mid-turn drain at the next tool boundary folds the message into the
+// current ask() as an attachment — there is no rearm bookkeeping and
+// no separate result cycle to wait for.
+func TestInject_User_InFlight_FoldsViaSendUser(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -642,64 +549,54 @@ func TestInject_User_InFlight_QueuesAndArmsRearm(t *testing.T) {
 		t.Fatalf("Inject: %v", err)
 	}
 
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 1 {
-		t.Errorf("pendingRearmCount = %d after in-flight User Inject, want 1", count)
+	out := buf.String()
+	if !strings.Contains(out, "follow-up") {
+		t.Errorf("writer did not see follow-up text; got: %q", out)
 	}
-	if !strings.Contains(buf.String(), "follow-up") {
-		t.Errorf("writer did not see follow-up text; got: %q", buf.String())
+	// Follow-up SourceUser uses default priority — no priority field on the wire.
+	if strings.Contains(out, `"priority"`) {
+		t.Errorf("priority field should be absent on follow-up SourceUser; got: %q", out)
+	}
+	// No interrupt — only Steer would do that, and we removed it from Steer too.
+	if strings.Contains(out, "interrupt") {
+		t.Errorf("interrupt should NOT appear; got: %q", out)
 	}
 }
 
-// TestInject_Steer_InFlight_InterruptsAndArms verifies Inject(SourceSteer)
-// during an in-flight turn calls Interrupt before queueing — the urgent
-// dispatch pattern that telegram/discord agent_setup currently spells out
-// as Interrupt + SendCommand. Empirically: writer captures both the
-// interrupt control message and the queued user text, and the rearm
-// count is incremented for the steer.
-func TestInject_Steer_InFlight_InterruptsAndArms(t *testing.T) {
+// TestInject_Steer_InFlight_NoInterrupt_PriorityNow verifies that
+// Inject(SourceSteer) during an in-flight turn does NOT call Interrupt
+// (the rearm-cascade era required interrupting; we now rely on CC's
+// mid-turn drain instead). The steer text is queued at priority "now"
+// so it dequeues ahead of any other queued items at the next tool
+// boundary, without aborting the in-flight tool.
+func TestInject_Steer_InFlight_NoInterrupt_PriorityNow(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	b := &Backend{
-		writer:           NewWriter(nopWriteCloser{&buf}),
-		turnActive:       true,
-		pendingControls:  make(map[string]chan json.RawMessage),
+		writer:     NewWriter(nopWriteCloser{&buf}),
+		turnActive: true,
 	}
 
-	// Interrupt sends a control_request — it expects a control_response
-	// from CC. We don't have a real CC stream, so we let it time out fast
-	// by giving Interrupt a short context. The point of the test is the
-	// ORDERING (Interrupt fires, then SendUser fires) and the rearm flag,
-	// not Interrupt's success — Inject logs and continues even if
-	// Interrupt errors.
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	_ = b.Inject(ctx, delegator.Inject{
+	if err := b.Inject(context.Background(), delegator.Inject{
 		Source: delegator.SourceSteer,
 		Text:   "urgent text",
-	})
+	}); err != nil {
+		t.Fatalf("Inject: %v", err)
+	}
 
 	out := buf.String()
-	// SendUser must have fired despite Interrupt timing out — the steer
-	// text should still reach CC.
 	if !strings.Contains(out, "urgent text") {
 		t.Errorf("Steer text missing from writer output; got: %q", out)
 	}
-	// Interrupt control message should appear in the writer too (it's
-	// emitted before SendUser).
-	if !strings.Contains(out, "interrupt") {
-		t.Errorf("interrupt control_request missing from writer; got: %q", out)
+	// Critical: NO interrupt control_request should be emitted.
+	if strings.Contains(out, "interrupt") {
+		t.Errorf("interrupt should NOT appear post-rearm-removal; got: %q", out)
 	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 1 {
-		t.Errorf("pendingRearmCount = %d after Steer Inject, want 1", count)
+	// Priority="now" so CC dequeues ahead of default-priority items at the
+	// next mid-turn drain.
+	if !strings.Contains(out, `"priority":"now"`) {
+		t.Errorf("priority=\"now\" missing from Steer envelope; got: %q", out)
 	}
 }
 
@@ -730,11 +627,10 @@ func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 	}
 }
 
-// TestInject_Compact_NoRearm verifies Inject(SourceCompact) at idle sends
-// the slash command without arming the rearm count — /compact is
-// fire-and-forget, the response (compact_boundary system event) flows
-// through CompactionWaiter, not the user-text rearm cascade.
-func TestInject_Compact_NoRearm(t *testing.T) {
+// TestInject_Compact verifies Inject(SourceCompact) at idle sends the
+// slash command via SendUser. /compact is fire-and-forget: the response
+// (compact_boundary system event) flows through CompactionWaiter.
+func TestInject_Compact(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -747,23 +643,15 @@ func TestInject_Compact_NoRearm(t *testing.T) {
 		t.Fatalf("Inject: %v", err)
 	}
 
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 0 {
-		t.Errorf("pendingRearmCount = %d after Compact Inject, want 0 (no rearm for slash commands)", count)
-	}
 	if !strings.Contains(buf.String(), "/compact") {
 		t.Errorf("writer missing /compact text; got: %q", buf.String())
 	}
 }
 
-// TestInject_Compact_InFlight_NoRearm verifies the slash-command path
-// stays rearm-free even when (defensively) called mid-turn. /compact
-// shouldn't be invoked mid-turn in practice, but if it is, the response
-// must NOT route through the user-text rearm cascade — that would
-// corrupt the in-flight turn's delivery handler.
-func TestInject_Compact_InFlight_NoRearm(t *testing.T) {
+// TestInject_Compact_InFlight verifies the slash-command path is
+// callable mid-turn without disturbing turn state. /compact shouldn't
+// normally be invoked mid-turn, but if it is, the call must succeed.
+func TestInject_Compact_InFlight(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -778,18 +666,12 @@ func TestInject_Compact_InFlight_NoRearm(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
 	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 0 {
-		t.Errorf("pendingRearmCount = %d, want 0 (Compact must never arm rearm even mid-turn)", count)
-	}
 }
 
-// TestInject_Pass_NoRearm mirrors Compact for the /pass passthrough
-// path — slash commands like /context, /model don't rearm.
-func TestInject_Pass_NoRearm(t *testing.T) {
+// TestInject_Pass mirrors Compact for the /pass passthrough path —
+// slash commands like /context, /model are sent via SendUser and don't
+// disturb turn state.
+func TestInject_Pass(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
@@ -803,13 +685,6 @@ func TestInject_Pass_NoRearm(t *testing.T) {
 		Text:   "/model opus",
 	}); err != nil {
 		t.Fatalf("Inject: %v", err)
-	}
-
-	b.turnMu.Lock()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-	if count != 0 {
-		t.Errorf("pendingRearmCount = %d, want 0 for Pass slash command", count)
 	}
 }
 
@@ -1851,411 +1726,6 @@ func TestOnResult_PreAnswerEmptyReturnCompletesNormally(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Re-arm cascade — behavior tests
-//
-// These tests verify foci's "complete-and-rearm" contract: when an in-flight
-// turn ends but a queued user-role injection (post-tool nudge, mid-turn
-// steer, follow-up) needs the next round of CC output delivered to the
-// original handler.
-//
-// The contract is asserted purely through observable behavior — no direct
-// reads or writes of internal flag fields. State is set up by invoking the
-// production trigger paths (handleHookResponse for nudge, checkAndSendSteers
-// for steer, SendCommand priority="next" for follow-up). These tests are
-// designed to survive an internal refactor that collapses the three flags
-// (nudgePending / steerInjected / followUpQueued) into a single re-arm-reason
-// representation, since they only depend on observable behavior:
-//
-//   - the original handler's OnTurnComplete fires exactly once,
-//   - subsequent OnAssistant text reaches the original OnText,
-//   - the second OnResult does NOT fire OnTurnComplete again,
-//   - after the second OnResult, IsTurnInFlight() returns false,
-//   - text arriving after the cycle ends is not delivered (handler cleared),
-//   - a fresh beginTurn supersedes any pending re-arm reason.
-// ---------------------------------------------------------------------------
-
-// rearmTrigger is one of the production paths that sets up a pending
-// re-arm. arm() fires the trigger; it must leave the backend in a state
-// where the next OnResult takes the re-arm path. handler is the
-// already-armed turn handler — arm() may install fields on it (e.g.
-// PostToolNudgeFunc) that the production trigger reads.
-//
-// Post-Phase 5 there are two trigger shapes:
-//   - nudge: handleHookResponse fires PostToolNudgeFunc, which sends a
-//     plain user message that auto-arms the rearm cascade.
-//   - urgent: SendCommand on an in-flight turn (covers both the follow-up
-//     path in turn_delegated.go and the agent.Inbox urgent-dispatch path
-//     that pairs SendCommand with Interrupt via Backend.Inject(SourceSteer)).
-//
-// The third pre-Phase-5 path ("steer" via checkAndSendSteers) is gone —
-// its responsibilities moved to agent.Inbox in Phase 6, which invokes the
-// same Interrupt+SendCommand sequence as the urgent trigger via
-// Backend.Inject(SourceSteer).
-type rearmTrigger struct {
-	name string
-	arm  func(t *testing.T, b *Backend, handler *delegator.EventHandler)
-}
-
-func rearmTriggers() []rearmTrigger {
-	return []rearmTrigger{
-		{
-			name: "nudge",
-			arm: func(t *testing.T, b *Backend, handler *delegator.EventHandler) {
-				t.Helper()
-				// handleHookResponse requires:
-				//   - a matching hookInstallID,
-				//   - handler.OnToolEnd non-nil (early return otherwise),
-				//   - handler.PostToolNudgeFunc returning text — that's
-				//     what marks the turn for re-arm.
-				const installID = "test-install"
-				b.mu.Lock()
-				b.hookInstallID = installID
-				b.mu.Unlock()
-				if handler.OnToolEnd == nil {
-					handler.OnToolEnd = func(_, _, _ string, _ bool) {}
-				}
-				handler.PostToolNudgeFunc = func(_ string, _ bool) []string {
-					return []string{"nudge-text"}
-				}
-				stdout, err := json.Marshal(hookScriptOutput{
-					HookEvent:    eventPostToolUse,
-					InstallID:    installID,
-					ToolUseID:    "toolu_test",
-					ToolName:     "Bash",
-					ToolResponse: "ok",
-				})
-				if err != nil {
-					t.Fatalf("marshal hookScriptOutput: %v", err)
-				}
-				env, err := json.Marshal(hookResponseEnvelope{
-					HookEvent: eventPostToolUse,
-					Stdout:    string(stdout),
-				})
-				if err != nil {
-					t.Fatalf("marshal hookResponseEnvelope: %v", err)
-				}
-				b.handleHookResponse(env)
-			},
-		},
-		{
-			name: "urgent",
-			arm: func(t *testing.T, b *Backend, _ *delegator.EventHandler) {
-				t.Helper()
-				// Use the internal primitive directly — the rearm trigger
-				// test owns the in-flight assumption (caller called
-				// beginTurn first), so we exercise the same code path
-				// Inject(SourceUser) takes mid-turn without bringing the
-				// full Inject routing into the test.
-				if err := b.sendUserMessage(context.Background(), "urgent text", true); err != nil {
-					t.Fatalf("sendUserMessage: %v", err)
-				}
-			},
-		},
-	}
-}
-
-// newRearmBackend builds a backend wired up with the writer and typing func
-// that the trigger paths and OnResult cascade exercise. Caller still calls
-// beginTurn before triggering.
-func newRearmBackend() *Backend {
-	var buf bytes.Buffer
-	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
-	b.typingFunc = func(bool) {}
-	return b
-}
-
-// emitText fires an OnAssistant event with a single top-level text block.
-// Used to (a) accumulate turnText pre-trigger and (b) verify post-rearm
-// delivery via OnText.
-func emitText(b *Backend, text string) {
-	b.OnAssistant(&AssistantMessage{
-		Message: BetaMessage{
-			Content: []ContentBlock{{Type: "text", Text: text}},
-		},
-	})
-}
-
-// successResult is a minimal CC result message used to drive turn completion
-// in the cascade tests. ModelUsage must be a non-nil map (OnResult iterates).
-func successResult() *ResultMessage {
-	return &ResultMessage{Subtype: "success", ModelUsage: map[string]ModelUsage{}}
-}
-
-// TestRearm_FullCycle exercises the complete-and-rearm contract end-to-end
-// for every trigger path. Replaces three near-identical RearmsHandler /
-// DeliveryAfterRearm / SecondResultCleansUp test families with a single
-// parameterised assertion of observable behavior.
-func TestRearm_FullCycle(t *testing.T) {
-	for _, tc := range rearmTriggers() {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			var completes []*delegator.TurnResult
-			var textCalls []string
-			handler := &delegator.EventHandler{
-				OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
-				OnText:         func(text string) { textCalls = append(textCalls, text) },
-				OnTextDelta:    func(string) {},
-			}
-
-			b := newRearmBackend()
-			b.beginTurn(handler)
-			emitText(b, "before injection")
-			tc.arm(t, b, handler)
-
-			// 1) First OnResult: original turn completes, handler re-arms.
-			b.OnResult(successResult())
-
-			if len(completes) != 1 {
-				t.Fatalf("OnTurnComplete fired %d times after first OnResult, want 1", len(completes))
-			}
-			if !strings.Contains(completes[0].Text, "before injection") {
-				t.Errorf("result.Text = %q, want it to include accumulated turn text", completes[0].Text)
-			}
-			if !b.IsTurnInFlight() {
-				t.Error("IsTurnInFlight = false after re-arm; expected handler to remain armed")
-			}
-
-			// 2) Subsequent assistant text reaches OnText through the
-			//    re-armed handler.
-			emitText(b, "queued response text")
-
-			if !slices.Contains(textCalls, "queued response text") {
-				t.Errorf("textCalls = %v, want to include %q (handler not re-armed for delivery)",
-					textCalls, "queued response text")
-			}
-
-			// 3) Second OnResult: re-armed turn ends. OnTurnComplete must
-			//    NOT double-fire (re-armed handler has nil OnTurnComplete
-			//    by contract, so the result cycle ends silently).
-			b.OnResult(successResult())
-
-			if len(completes) != 1 {
-				t.Errorf("OnTurnComplete fired %d times overall, want 1 (re-armed handler must not double-fire)",
-					len(completes))
-			}
-			if b.IsTurnInFlight() {
-				t.Error("IsTurnInFlight = true after second OnResult; expected normal cleanup")
-			}
-
-			// 4) Late text after the cycle ends is not delivered — the
-			//    handler is cleared.
-			before := len(textCalls)
-			emitText(b, "post-end text")
-			if len(textCalls) != before {
-				t.Errorf("text after second OnResult was delivered (%d new calls); handler should be cleared",
-					len(textCalls)-before)
-			}
-		})
-	}
-}
-
-// TestRearm_BeginTurnClearsStaleState verifies that a fresh user turn
-// supersedes any pending re-arm reason: after the trigger fires, beginTurn
-// for a new handler must reset the state so the next OnResult is a normal
-// turn end (handler2's OnTurnComplete fires, no spurious re-arm).
-//
-// Replaces TestBeginTurn_Clears{Nudge,Steer,FollowUp} with one
-// parameterised behavior assertion.
-func TestRearm_BeginTurnClearsStaleState(t *testing.T) {
-	for _, tc := range rearmTriggers() {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			handler1 := &delegator.EventHandler{
-				OnTurnComplete: func(*delegator.TurnResult) {
-					t.Error("handler1.OnTurnComplete must not fire — superseded by beginTurn")
-				},
-				OnText: func(string) {},
-			}
-
-			b := newRearmBackend()
-			b.beginTurn(handler1)
-			tc.arm(t, b, handler1)
-
-			// Fresh turn supersedes handler1 before any OnResult arrives.
-			var completes []*delegator.TurnResult
-			handler2 := &delegator.EventHandler{
-				OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
-				OnText:         func(string) {},
-			}
-			b.beginTurn(handler2)
-
-			// OnResult must take the normal-completion path: handler2's
-			// OnTurnComplete fires, turn ends, no re-arm.
-			b.OnResult(successResult())
-
-			if len(completes) != 1 {
-				t.Fatalf("handler2.OnTurnComplete fired %d times, want 1 (stale re-arm reason leaked)", len(completes))
-			}
-			if b.IsTurnInFlight() {
-				t.Error("IsTurnInFlight = true after normal-completion OnResult on fresh turn")
-			}
-		})
-	}
-}
-
-// TestRearm_IdleSendCommandEndsNormally proves SendCommand at idle (no turn
-// in flight, e.g. the /compact-at-turn-end path) does NOT set a rearm reason,
-// so OnResult takes the normal-completion path. Inverse of TestRearm_FullCycle.
-//
-// The rearm flag is only set when a turn is in flight at SendCommand time;
-// idle commands have no original handler to re-arm for.
-func TestRearm_IdleSendCommandEndsNormally(t *testing.T) {
-	t.Parallel()
-
-	var completes []*delegator.TurnResult
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
-		OnText:         func(string) {},
-	}
-	b := newRearmBackend()
-	b.beginTurn(handler)
-
-	// Simulate an idle slash-command (Inject(SourceCompact)) by clearing
-	// turnActive before the call. The Compact path passes autoRearm=false
-	// so even if the slot were armable, no rearm would fire.
-	b.turnMu.Lock()
-	b.turnActive = false
-	b.turnMu.Unlock()
-	if err := b.Inject(context.Background(), delegator.Inject{Source: delegator.SourceCompact, Text: "/compact"}); err != nil {
-		t.Fatalf("Inject: %v", err)
-	}
-	// Restore turnActive so OnResult sees the turn handler the caller
-	// installed via beginTurn.
-	b.turnMu.Lock()
-	b.turnActive = true
-	b.turnMu.Unlock()
-
-	b.OnResult(successResult())
-
-	if len(completes) != 1 {
-		t.Fatalf("OnTurnComplete fired %d times, want 1 (idle slash command should not re-arm)", len(completes))
-	}
-	if b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = true after normal completion")
-	}
-}
-
-// TestRearm_CounterStacks verifies pendingRearmCount accumulates across
-// multiple incRearm calls within a single in-flight turn. This is the
-// counter's reason for existing: pre-counter, two stacked events on the
-// same turn would race against handler clear and the second response
-// dropped silently. The counter records every queued event, and OnResult
-// drains them one delivery cycle at a time.
-func TestRearm_CounterStacks(t *testing.T) {
-	t.Parallel()
-
-	b := newRearmBackend()
-	b.beginTurn(&delegator.EventHandler{})
-
-	b.turnMu.Lock()
-	if got := b.pendingRearmCount; got != 0 {
-		t.Errorf("pendingRearmCount after beginTurn = %d, want 0", got)
-	}
-	b.incRearm()
-	b.incRearm()
-	b.incRearm()
-	got := b.pendingRearmCount
-	b.turnMu.Unlock()
-
-	if got != 3 {
-		t.Errorf("pendingRearmCount after three incRearm calls = %d, want 3", got)
-	}
-}
-
-// TestRearm_DecRearmClampsAtZero proves decRearm doesn't underflow when
-// called on an empty counter — a defence against ordering bugs where a
-// rollback path might decrement after another path already drained the
-// slot. Returns the count BEFORE decrement so callers can branch.
-func TestRearm_DecRearmClampsAtZero(t *testing.T) {
-	t.Parallel()
-
-	b := newRearmBackend()
-	b.beginTurn(&delegator.EventHandler{})
-
-	b.turnMu.Lock()
-	prev := b.decRearm()
-	count := b.pendingRearmCount
-	b.turnMu.Unlock()
-
-	if prev != 0 {
-		t.Errorf("decRearm on empty returned %d, want 0", prev)
-	}
-	if count != 0 {
-		t.Errorf("pendingRearmCount after decRearm on empty = %d, want 0 (clamped)", count)
-	}
-}
-
-// TestRearm_StackedEventsBothDeliver is the integration test for the
-// counter fix. Two user-role events stacked within a single in-flight
-// turn (e.g. two post-tool nudges, or a nudge plus a follow-up
-// SendCommand) must each get their own delivery cycle through the
-// re-armed handler. Pre-counter, the second event's response was
-// silently dropped because pendingRearmReason cleared on the first
-// rearm cycle and the second OnResult took the normal-completion path
-// (clearing the handler) before CC's response arrived.
-func TestRearm_StackedEventsBothDeliver(t *testing.T) {
-	t.Parallel()
-
-	var (
-		completes []*delegator.TurnResult
-		textCalls []string
-	)
-	handler := &delegator.EventHandler{
-		OnTurnComplete: func(r *delegator.TurnResult) { completes = append(completes, r) },
-		OnText:         func(text string) { textCalls = append(textCalls, text) },
-		OnTextDelta:    func(string) {},
-	}
-	b := newRearmBackend()
-	b.beginTurn(handler)
-	emitText(b, "before injection")
-
-	// Stack two pending rearm signals (e.g. two post-tool nudges fired
-	// within one in-flight CC turn).
-	b.turnMu.Lock()
-	b.incRearm()
-	b.incRearm()
-	b.turnMu.Unlock()
-
-	// Cycle 1: original turn boundary. OnTurnComplete fires once, count
-	// drops 2 → 1, delivery handler installed for first queued response.
-	b.OnResult(successResult())
-	emitText(b, "queued response 1")
-
-	if len(completes) != 1 {
-		t.Fatalf("OnTurnComplete after first OnResult fired %d times, want 1", len(completes))
-	}
-	if !slices.Contains(textCalls, "queued response 1") {
-		t.Errorf("queued response 1 missing from textCalls: %v", textCalls)
-	}
-	if !b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = false after first OnResult; expected handler to remain armed for second event")
-	}
-
-	// Cycle 2: second queued response's boundary. Count drops 1 → 0,
-	// delivery handler re-installed (with nil OnTurnComplete by contract).
-	b.OnResult(successResult())
-	emitText(b, "queued response 2")
-
-	if len(completes) != 1 {
-		t.Errorf("OnTurnComplete after second OnResult fired %d times overall, want 1 (re-armed handler must not double-fire)", len(completes))
-	}
-	if !slices.Contains(textCalls, "queued response 2") {
-		t.Errorf("queued response 2 missing from textCalls: %v (the bug: pre-counter the second response was dropped here)", textCalls)
-	}
-	if !b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = false after second OnResult; expected the third (idle) cycle still pending")
-	}
-
-	// Cycle 3: count is 0, normal completion. Handler clears.
-	b.OnResult(successResult())
-
-	if b.IsTurnInFlight() {
-		t.Error("IsTurnInFlight = true after third OnResult; expected normal cleanup")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // OnSystem

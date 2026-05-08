@@ -346,36 +346,27 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	handler.OnToolEnd(parsed.ToolUseID, parsed.ToolName, output, parsed.IsError)
 
 	// Fire any post-tool nudges the caller wants to inject for this tool.
-	// Sends as a plain user message — CC processes it after the current
-	// tool boundary as a queued event, matching the API transport's
-	// CheckAfterTools injection point. The rearm flag tells OnResult to
-	// install a delivery-only handler so the nudge response reaches OnText.
-	//
-	// Diagnostic logging is wired here because this is the only call-site
-	// for incRearm outside of sendUserMessage, and post-tool nudges have
-	// historically over-counted pendingRearmCount when CC folds the nudge
-	// into the current turn rather than producing a separate OnResult
-	// cycle (see ccstream-rearm-overcount-bug.md).
+	// Sends as a plain user message at the default queue priority "next".
+	// CC's mid-turn drain at the next tool boundary
+	// (claude-code's query.ts:1570-1589) folds the message as an
+	// attachment to the current turn's tool_results — the model responds
+	// in the same ask(), so the nudge response reaches OnText through
+	// the existing turn handler. No separate OnResult cycle.
 	if handler.PostToolNudgeFunc != nil {
 		for _, text := range handler.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
 			if text == "" {
 				continue
 			}
-			b.turnMu.Lock()
-			b.incRearm()
-			newCount := b.pendingRearmCount
-			b.turnMu.Unlock()
 			preview := text
 			if len(preview) > 80 {
 				preview = preview[:80] + "..."
 			}
-			b.logger().Debugf("rearm: incRearm via post-tool nudge count=%d tool=%q is_error=%v preview=%q",
-				newCount, parsed.ToolName, parsed.IsError, preview)
 			if err := b.writer.SendUser("[user] " + text); err != nil {
-				b.logger().Warnf("post-tool nudge SendUser failed: tool=%q err=%v (pendingRearmCount stays at %d, may leave turnActive stuck)",
-					parsed.ToolName, err, newCount)
+				b.logger().Warnf("post-tool nudge SendUser failed: tool=%q err=%v preview=%q",
+					parsed.ToolName, err, preview)
 			} else {
-				b.logger().Debugf("post-tool nudge SendUser ok: tool=%q bytes=%d", parsed.ToolName, len(text)+len("[user] "))
+				b.logger().Debugf("post-tool nudge sent: tool=%q is_error=%v bytes=%d preview=%q",
+					parsed.ToolName, parsed.IsError, len(text)+len("[user] "), preview)
 			}
 		}
 	}
