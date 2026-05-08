@@ -350,6 +350,12 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	// tool boundary as a queued event, matching the API transport's
 	// CheckAfterTools injection point. The rearm flag tells OnResult to
 	// install a delivery-only handler so the nudge response reaches OnText.
+	//
+	// Diagnostic logging is wired here because this is the only call-site
+	// for incRearm outside of sendUserMessage, and post-tool nudges have
+	// historically over-counted pendingRearmCount when CC folds the nudge
+	// into the current turn rather than producing a separate OnResult
+	// cycle (see ccstream-rearm-overcount-bug.md).
 	if handler.PostToolNudgeFunc != nil {
 		for _, text := range handler.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
 			if text == "" {
@@ -357,8 +363,20 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 			}
 			b.turnMu.Lock()
 			b.incRearm()
+			newCount := b.pendingRearmCount
 			b.turnMu.Unlock()
-			_ = b.writer.SendUser("[user] " + text)
+			preview := text
+			if len(preview) > 80 {
+				preview = preview[:80] + "..."
+			}
+			b.logger().Debugf("rearm: incRearm via post-tool nudge count=%d tool=%q is_error=%v preview=%q",
+				newCount, parsed.ToolName, parsed.IsError, preview)
+			if err := b.writer.SendUser("[user] " + text); err != nil {
+				b.logger().Warnf("post-tool nudge SendUser failed: tool=%q err=%v (pendingRearmCount stays at %d, may leave turnActive stuck)",
+					parsed.ToolName, err, newCount)
+			} else {
+				b.logger().Debugf("post-tool nudge SendUser ok: tool=%q bytes=%d", parsed.ToolName, len(text)+len("[user] "))
+			}
 		}
 	}
 }
