@@ -31,11 +31,12 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 			"properties": {
 				"text": {
 					"type": "string",
-					"description": "Text message to send. Supports Markdown formatting."
+					"description": "Text message to send. Supports Markdown formatting. When piped on stdin and --text/--description is omitted, stdin populates this field."
 				},
 				"file": {
 					"type": "string",
-					"description": "Path to a file to send as a document attachment."
+					"format": "filepath",
+					"description": "Path to a file to send as a document attachment. Relative paths are resolved against the caller's working directory; absolute paths are passed through unchanged."
 				},
 				"filename": {
 					"type": "string",
