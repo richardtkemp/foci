@@ -128,7 +128,9 @@ type Agent struct {
 
 	rateLimitGates   map[string]*RateLimitGate // per-endpoint gates; key = endpoint name, lazy-init
 	rateLimitGatesMu sync.RWMutex              // protects rateLimitGates map access
-	processing       int32                     // atomic: number of in-flight HandleMessage calls
+	processing       int32                     // atomic: number of in-flight HandleMessage calls (API path only — see IsProcessing)
+	inFlightMu       sync.Mutex                // protects inFlight map access
+	inFlight         map[string]int32          // per-session-base count of in-flight OrchestrateFullTurn calls (key = SessionKeyBase) — see IsTurnInFlight
 	turnDetailsMu    sync.Mutex
 	turnDetails      map[uint64]*TurnDetail // keyed by unique turn ID
 	turnIDCounter    uint64                 // atomic: monotonic turn ID
