@@ -7,13 +7,15 @@ import (
 // TestParseSendFlags tests basic flag parsing with agent, session, and timing flags.
 func TestParseSendFlags(t *testing.T) {
 	tests := []struct {
-		name           string
-		args           []string
-		wantAgent      string
-		wantSession    string
-		wantIfActive   string
-		wantIfInactive string
-		wantRest       []string
+		name               string
+		args               []string
+		wantAgent          string
+		wantSession        string
+		wantIfActive       string
+		wantIfInactive     string
+		wantIfUserActive   string
+		wantIfUserInactive string
+		wantRest           []string
 	}{
 		{
 			name:     "no flags",
@@ -70,6 +72,50 @@ func TestParseSendFlags(t *testing.T) {
 			wantIfInactive: "30m",
 			wantRest:       []string{"hello"},
 		},
+		// --- TODO #753: user-attention gates ---
+		{
+			name:             "--if-user-active with value",
+			args:             []string{"--if-user-active", "2h", "hello"},
+			wantIfUserActive: "2h",
+			wantRest:         []string{"hello"},
+		},
+		{
+			name:             "--if-user-active=value",
+			args:             []string{"--if-user-active=45m", "hello"},
+			wantIfUserActive: "45m",
+			wantRest:         []string{"hello"},
+		},
+		{
+			name:               "--if-user-inactive with value",
+			args:               []string{"--if-user-inactive", "30m", "hello"},
+			wantIfUserInactive: "30m",
+			wantRest:           []string{"hello"},
+		},
+		{
+			name:               "--if-user-inactive=value",
+			args:               []string{"--if-user-inactive=1h", "hello"},
+			wantIfUserInactive: "1h",
+			wantRest:           []string{"hello"},
+		},
+		{
+			name:               "all four gate flags coexist",
+			args:               []string{"--if-active", "8h", "--if-inactive", "30m", "--if-user-active", "2h", "--if-user-inactive", "10m", "hello"},
+			wantIfActive:       "8h",
+			wantIfInactive:     "30m",
+			wantIfUserActive:   "2h",
+			wantIfUserInactive: "10m",
+			wantRest:           []string{"hello"},
+		},
+		{
+			name:     "--if-user-active without value at end",
+			args:     []string{"hello", "--if-user-active"},
+			wantRest: []string{"hello", "--if-user-active"},
+		},
+		{
+			name:     "--if-user-inactive without value at end",
+			args:     []string{"hello", "--if-user-inactive"},
+			wantRest: []string{"hello", "--if-user-inactive"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -86,6 +132,12 @@ func TestParseSendFlags(t *testing.T) {
 			}
 			if flags.ifInactive != tt.wantIfInactive {
 				t.Errorf("ifInactive = %q, want %q", flags.ifInactive, tt.wantIfInactive)
+			}
+			if flags.ifUserActive != tt.wantIfUserActive {
+				t.Errorf("ifUserActive = %q, want %q", flags.ifUserActive, tt.wantIfUserActive)
+			}
+			if flags.ifUserInactive != tt.wantIfUserInactive {
+				t.Errorf("ifUserInactive = %q, want %q", flags.ifUserInactive, tt.wantIfUserInactive)
 			}
 			if len(rest) == 0 && len(tt.wantRest) == 0 {
 				return
