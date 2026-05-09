@@ -569,13 +569,27 @@ System crontab can trigger `/wake` endpoint for external scheduling. For agent-i
 
 ### Activity gating
 
-Both `POST /send` and `POST /wake` accept optional activity gating fields:
-- `if_active` (Go duration, e.g. `"8h"`) — skip if no user activity within the window ("skipped: no recent user activity")
-- `if_inactive` (Go duration, e.g. `"30m"`) — skip if user WAS active within the window ("skipped: session recently active")
+Two domains of activity are tracked separately, each with its own pair of gate fields. `POST /send`, `POST /wake`, and `POST /webhook/...` all accept all four:
 
-"Real user activity" means messages from allowed Telegram users via the primary bot. It explicitly excludes: CLI-injected messages (`foci send`/`foci branch`), async notifications, agent-to-agent messages, and system-injected messages. This prevents the gate from defeating itself — a cron send cannot reset the activity timer.
+**Session-level activity** — did THIS session run a turn within the window?
 
-The timestamp is stored per-agent in the state store (`agent/<id>/last_user_activity`). The CLI exposes this as `--if-active <duration>` and `--if-inactive <duration>` on `send` and `branch` commands. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
+- `if_active` (Go duration, e.g. `"8h"`) — skip unless the session ran a turn within the window ("skipped: no recent activity")
+- `if_inactive` (Go duration, e.g. `"30m"`) — skip if the session ran a turn within the window ("skipped: session recently active")
+
+The timestamp is written by `OrchestrateFullTurn` for *every* turn-init path (user inbound, cron, CLI, webhook, agent-to-agent, system-injected) and stored under `session_metadata` keyed by `SessionKeyBase` (`agentID/cTYPE+ID`, branches share the parent's base). Use these for keepalive-shaped jobs that should yield to anything currently running on the session.
+
+**User-attention activity** — did the user themselves reach out within the window?
+
+- `if_user_active` (Go duration) — skip unless the user touched this agent within the window ("skipped: no recent user activity")
+- `if_user_inactive` (Go duration) — skip if the user was active within the window ("skipped: user recently active")
+
+"User activity" means messages from allowed users via the primary platform (Telegram or Discord). It explicitly excludes: CLI-injected messages (`foci send` / `foci branch`), async notifications, agent-to-agent messages, and system-injected messages. The timestamp is stored per-agent at `agent_metadata.last_user_activity`. Use these for nudges that should only fire when the user is engaged (or specifically away).
+
+**In-flight short-circuit (TODO #753).** A turn currently executing on the target session counts as "active" for *both* gate pairs. So `--if-inactive 30m` will skip while a turn is in flight even if no recent timestamp has been written, and `--if-user-active 1h` will pass during an in-flight turn even if the user has been silent for hours. The principle: never queue a duplicate when something is already running. Without this, keepalive crons would pile up behind a long turn, fire serially as it completes, and waste mana.
+
+Evaluation order when multiple gates are set: `if_user_active` → `if_user_inactive` → `if_active` → `if_inactive`. The first applicable skip wins; the JSON response body identifies which one fired.
+
+The CLI exposes all four as `--if-active`, `--if-inactive`, `--if-user-active`, `--if-user-inactive` on `send` and `branch`/`wake` commands, with corresponding `FOCI_IF_*` env vars. See [docs/CLI.md](docs/CLI.md) for full CLI reference.
 
 ### Keepalive & Background Work
 

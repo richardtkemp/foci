@@ -44,8 +44,12 @@ The request body is the webhook payload (max 1 MB). It's appended to the prompt 
 | Param | Description |
 |-------|-------------|
 | `sync=true` | Wait for agent response (default: async 202) |
-| `if_active=DURATION` | Only proceed if user was active within duration (e.g. `1h`) |
-| `if_inactive=DURATION` | Only proceed if user was **not** active within duration |
+| `if_active=DURATION` | **Session-level**: skip unless the agent's session ran a turn within duration (e.g. `1h`). A turn currently in flight always counts as active. |
+| `if_inactive=DURATION` | **Session-level**: skip if the session ran a turn within duration. In-flight always counts. Keepalive shape. |
+| `if_user_active=DURATION` | **User-attention**: skip unless the user touched this agent within duration. CLI/cron/agent-to-agent does not count. |
+| `if_user_inactive=DURATION` | **User-attention**: skip if the user touched this agent within duration. |
+
+See [SPEC.md](SPEC.md) Activity gating for the distinction between the two domains and the in-flight short-circuit semantics.
 
 ## Response Codes
 
