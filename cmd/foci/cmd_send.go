@@ -7,15 +7,17 @@ import (
 )
 
 type sendFlags struct {
-	agent       string
-	session     string
-	model       string // model override (group name, alias, or developer/model_id)
-	ifActive    string // Go duration for activity gating
-	ifInactive  string // Go duration for inactivity gating (opposite of ifActive)
-	messageText string // explicit --message-text / -mt
-	messageFile string // explicit --message-file / -mf
-	async       bool   // fire-and-forget mode
-	sync        bool   // wait for response (overrides async)
+	agent          string
+	session        string
+	model          string // model override (group name, alias, or developer/model_id)
+	ifActive       string // session-level activity gate (TODO #753): skip unless this session ran a turn within dur (or one is in flight)
+	ifInactive     string // session-level inactivity gate: skip if this session ran a turn within dur (or one is in flight) — keepalive shape
+	ifUserActive   string // user-attention gate: skip unless the user touched this agent within dur (or a turn is in flight)
+	ifUserInactive string // user-attention gate: skip if the user was active within dur (or a turn is in flight)
+	messageText    string // explicit --message-text / -mt
+	messageFile    string // explicit --message-file / -mf
+	async          bool   // fire-and-forget mode
+	sync           bool   // wait for response (overrides async)
 }
 
 func parseSendFlags(args []string) (flags sendFlags, rest []string) {
@@ -76,6 +78,24 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 		} else if strings.HasPrefix(args[i], "--if-inactive=") {
 			flags.ifInactive = args[i][len("--if-inactive="):]
 			consumed = true
+		} else if args[i] == "--if-user-active" {
+			if i+1 < len(args) {
+				flags.ifUserActive = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--if-user-active=") {
+			flags.ifUserActive = args[i][len("--if-user-active="):]
+			consumed = true
+		} else if args[i] == "--if-user-inactive" {
+			if i+1 < len(args) {
+				flags.ifUserInactive = args[i+1]
+				i++
+				consumed = true
+			}
+		} else if strings.HasPrefix(args[i], "--if-user-inactive=") {
+			flags.ifUserInactive = args[i][len("--if-user-inactive="):]
+			consumed = true
 		} else if args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt" {
 			if i+1 < len(args) {
 				flags.messageText = args[i+1]
@@ -117,6 +137,8 @@ func parseSendFlags(args []string) (flags sendFlags, rest []string) {
 	flags.model = envDefault(flags.model, "FOCI_MODEL")
 	flags.ifActive = envDefault(flags.ifActive, "FOCI_IF_ACTIVE")
 	flags.ifInactive = envDefault(flags.ifInactive, "FOCI_IF_INACTIVE")
+	flags.ifUserActive = envDefault(flags.ifUserActive, "FOCI_IF_USER_ACTIVE")
+	flags.ifUserInactive = envDefault(flags.ifUserInactive, "FOCI_IF_USER_INACTIVE")
 	flags.messageText = envDefault(flags.messageText, "FOCI_MESSAGE_TEXT")
 	flags.messageFile = envDefault(flags.messageFile, "FOCI_MESSAGE_FILE")
 	flags.async = envBool(flags.async, "FOCI_ASYNC")
@@ -148,7 +170,7 @@ func resolveMessage(flags sendFlags, trailingArgs []string) (string, error) {
 }
 
 func sendUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--sync] [-mt text | -mf file] <message>
+	fmt.Fprintf(os.Stderr, `Usage: foci send [-a agent] [-s session] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--sync] [-mt text | -mf file] <message>
 
 Send a message to the agent's session.
 
@@ -156,16 +178,26 @@ By default, send is asynchronous (fire-and-forget): the CLI returns immediately
 and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
+Activity gates (TODO #753):
+  --if-active / --if-inactive consult SESSION-level activity — whether THIS session
+    ran a turn within the duration. A turn currently in flight always counts as
+    active. Use these for keepalives that should yield to running work.
+  --if-user-active / --if-user-inactive consult USER-attention activity — whether
+    the user themselves messaged this agent within the duration. Use these for
+    nudges that should only fire when the user is engaged (or away).
+
 Flags:
-  -a, --agent <id>        Target agent (env: FOCI_AGENT)
-  -s, --session <id>      Target session (env: FOCI_SESSION, default: main)
-  -m, --model <model>     Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
-  --if-active <dur>       Skip if no user activity within duration (env: FOCI_IF_ACTIVE)
-  --if-inactive <dur>     Skip if user was active within duration (env: FOCI_IF_INACTIVE)
-  --sync, --wait          Wait for the response (env: FOCI_SYNC)
-  --async, --no-wait      Fire-and-forget (default) (env: FOCI_ASYNC)
-  -mt, --message-text     Message text (env: FOCI_MESSAGE_TEXT)
-  -mf, --message-file     Read message from file (env: FOCI_MESSAGE_FILE)
+  -a, --agent <id>          Target agent (env: FOCI_AGENT)
+  -s, --session <id>        Target session (env: FOCI_SESSION, default: main)
+  -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
+  --if-active <dur>         Skip if this session has not run a turn within duration (env: FOCI_IF_ACTIVE)
+  --if-inactive <dur>       Skip if this session has run a turn within duration (env: FOCI_IF_INACTIVE)
+  --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
+  --if-user-inactive <dur>  Skip if user has touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
+  --sync, --wait            Wait for the response (env: FOCI_SYNC)
+  --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)
+  -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)
+  -mf, --message-file       Read message from file (env: FOCI_MESSAGE_FILE)
 
 Trailing args without a flag are treated as implicit --message-text.
 Cannot use both -mt and -mf.
@@ -203,6 +235,12 @@ func cmdSend(base string, args []string) error {
 	if flags.ifInactive != "" {
 		body["if_inactive"] = flags.ifInactive
 	}
+	if flags.ifUserActive != "" {
+		body["if_user_active"] = flags.ifUserActive
+	}
+	if flags.ifUserInactive != "" {
+		body["if_user_inactive"] = flags.ifUserInactive
+	}
 	if flags.model != "" {
 		body["model"] = flags.model
 	}
@@ -210,7 +248,7 @@ func cmdSend(base string, args []string) error {
 }
 
 func branchUsage() {
-	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
+	fmt.Fprintf(os.Stderr, `Usage: foci branch [-a agent] [-m model] [--if-active <dur>] [--if-inactive <dur>] [--if-user-active <dur>] [--if-user-inactive <dur>] [--no-compact] [--no-reset-hook] [--oneshot] [--sync] [-mt text | -mf file] [text]
 
 Fork a branch session from the agent's main chat.
 
@@ -218,18 +256,26 @@ By default, branch is asynchronous (fire-and-forget): the CLI returns immediatel
 and the agent's response is delivered to the chat. Use --sync/--wait to block
 until the response is available.
 
+Activity gates (TODO #753):
+  --if-active / --if-inactive consult SESSION-level activity (whether the target
+    session ran a turn within the duration; a turn in flight always counts).
+  --if-user-active / --if-user-inactive consult USER-attention activity (whether
+    the user touched this agent within the duration).
+
 Flags:
-  -a, --agent <id>        Target agent (env: FOCI_AGENT)
-  -m, --model <model>     Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
-  --if-active <dur>       Skip if no user activity within duration (env: FOCI_IF_ACTIVE)
-  --if-inactive <dur>     Skip if user was active within duration (env: FOCI_IF_INACTIVE)
-  --no-compact            Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
-  --no-reset-hook         Skip pre-reset memory hook (env: FOCI_NO_RESET_HOOK)
-  --oneshot               Shorthand for --no-compact --no-reset-hook (env: FOCI_ONESHOT)
-  --sync, --wait          Wait for the response (env: FOCI_SYNC)
-  --async, --no-wait      Fire-and-forget (default) (env: FOCI_ASYNC)
-  -mt, --message-text     Message text (env: FOCI_MESSAGE_TEXT)
-  -mf, --message-file     Read message from file (env: FOCI_MESSAGE_FILE)
+  -a, --agent <id>          Target agent (env: FOCI_AGENT)
+  -m, --model <model>       Model override: group name, alias, or developer/model_id (env: FOCI_MODEL)
+  --if-active <dur>         Skip if target session has not run a turn within duration (env: FOCI_IF_ACTIVE)
+  --if-inactive <dur>       Skip if target session has run a turn within duration (env: FOCI_IF_INACTIVE)
+  --if-user-active <dur>    Skip if user has not touched this agent within duration (env: FOCI_IF_USER_ACTIVE)
+  --if-user-inactive <dur>  Skip if user has touched this agent within duration (env: FOCI_IF_USER_INACTIVE)
+  --no-compact              Skip compaction if context limit reached (env: FOCI_NO_COMPACT)
+  --no-reset-hook           Skip pre-reset memory hook (env: FOCI_NO_RESET_HOOK)
+  --oneshot                 Shorthand for --no-compact --no-reset-hook (env: FOCI_ONESHOT)
+  --sync, --wait            Wait for the response (env: FOCI_SYNC)
+  --async, --no-wait        Fire-and-forget (default) (env: FOCI_ASYNC)
+  -mt, --message-text       Message text (env: FOCI_MESSAGE_TEXT)
+  -mf, --message-file       Read message from file (env: FOCI_MESSAGE_FILE)
 
 Aliased as 'wake'.
 `)
@@ -249,6 +295,8 @@ func cmdBranch(base string, args []string) error {
 	model := ""
 	ifActive := ""
 	ifInactive := ""
+	ifUserActive := ""
+	ifUserInactive := ""
 	messageText := ""
 	messageFile := ""
 	var filtered []string
@@ -285,6 +333,16 @@ func cmdBranch(base string, args []string) error {
 			i++
 		case strings.HasPrefix(args[i], "--if-inactive="):
 			ifInactive = args[i][len("--if-inactive="):]
+		case args[i] == "--if-user-active" && i+1 < len(args):
+			ifUserActive = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--if-user-active="):
+			ifUserActive = args[i][len("--if-user-active="):]
+		case args[i] == "--if-user-inactive" && i+1 < len(args):
+			ifUserInactive = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--if-user-inactive="):
+			ifUserInactive = args[i][len("--if-user-inactive="):]
 		case (args[i] == "--message-text" || args[i] == "--mt" || args[i] == "-mt") && i+1 < len(args):
 			messageText = args[i+1]
 			i++
@@ -315,6 +373,8 @@ func cmdBranch(base string, args []string) error {
 	syncFlag = envBool(syncFlag, "FOCI_SYNC")
 	ifActive = envDefault(ifActive, "FOCI_IF_ACTIVE")
 	ifInactive = envDefault(ifInactive, "FOCI_IF_INACTIVE")
+	ifUserActive = envDefault(ifUserActive, "FOCI_IF_USER_ACTIVE")
+	ifUserInactive = envDefault(ifUserInactive, "FOCI_IF_USER_INACTIVE")
 	messageText = envDefault(messageText, "FOCI_MESSAGE_TEXT")
 	messageFile = envDefault(messageFile, "FOCI_MESSAGE_FILE")
 
@@ -347,6 +407,12 @@ func cmdBranch(base string, args []string) error {
 	}
 	if ifInactive != "" {
 		body["if_inactive"] = ifInactive
+	}
+	if ifUserActive != "" {
+		body["if_user_active"] = ifUserActive
+	}
+	if ifUserInactive != "" {
+		body["if_user_inactive"] = ifUserInactive
 	}
 	if silent {
 		body["silent"] = true
