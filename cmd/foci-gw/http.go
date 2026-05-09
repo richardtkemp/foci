@@ -33,31 +33,99 @@ type httpHandlerDeps struct {
 	reloadCredentials func() error
 }
 
-// checkActivityGate checks activity conditions (if_active/if_inactive) and returns false if the request should be skipped.
-// Returns true if the request should proceed, false if it should be skipped (response already written).
-func checkActivityGate(w http.ResponseWriter, agentID, ifActive, ifInactive string,
-	isActive func(string, time.Duration) bool, logTag, endpoint string) bool {
-	if ifActive != "" {
-		dur, err := time.ParseDuration(ifActive)
+// checkActivityGate evaluates the four activity gate conditions and returns
+// false if the request should be skipped (response already written).
+//
+// Two domains of activity are tracked separately:
+//
+//   - **User attention** — `last_user_activity` written by primary
+//     Telegram/Discord inbound paths. Reflects a real user reaching out to
+//     the agent. Read via isUserActive(agentID, within). Used by
+//     --if-user-active / --if-user-inactive.
+//   - **Session activity** — `last_activity` written by OrchestrateFullTurn
+//     for every turn-init path (user, cron, CLI, webhook, agent-to-agent,
+//     system-injected). Read via isSessionActive(sessionBase, within). Used
+//     by --if-active / --if-inactive together with the in-flight
+//     short-circuit.
+//
+// **In-flight short-circuit applies to both gates.** A turn currently
+// executing on the target session counts as "active" for both --if-active
+// and --if-user-active evaluations. The principle is "never queue a
+// duplicate when something is already running" — keepalive crons piling up
+// behind a long-running turn are exactly the bug this fixes (TODO #753).
+//
+// Returns true if the request should proceed, false if it has been
+// short-circuited (response already written).
+func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
+	isUserActive userActivityChecker, isSessionActive sessionActivityChecker) bool {
+
+	// userActiveWithin: did the user touch this agent within the duration,
+	// OR is a turn currently in flight? In-flight counts as user attention
+	// because the agent is currently engaged — sending another message
+	// would queue behind, which is what --if-user-inactive wants to avoid.
+	userActiveWithin := func(within time.Duration) bool {
+		if in.InFlight {
+			return true
+		}
+		return isUserActive(in.AgentID, within)
+	}
+
+	// sessionActiveWithin: did this session execute a turn within the
+	// duration, OR is one in flight now?
+	sessionActiveWithin := func(within time.Duration) bool {
+		if in.InFlight {
+			return true
+		}
+		return isSessionActive(in.SessionBase, within)
+	}
+
+	if in.IfUserActive != "" {
+		dur, err := time.ParseDuration(in.IfUserActive)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("bad if_user_active duration: %v", err), http.StatusBadRequest)
 			return false
 		}
-		if !isActive(agentID, dur) {
-			log.Debugf(logTag, "POST %s: skipping (no user activity within %s for agent %s)", endpoint, ifActive, agentID)
+		if !userActiveWithin(dur) {
+			log.Debugf(in.LogTag, "POST %s: skipping (no user activity within %s for agent %s)", in.Endpoint, in.IfUserActive, in.AgentID)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent user activity"})
 			return false
 		}
 	}
-	if ifInactive != "" {
-		dur, err := time.ParseDuration(ifInactive)
+	if in.IfUserInactive != "" {
+		dur, err := time.ParseDuration(in.IfUserInactive)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("bad if_user_inactive duration: %v", err), http.StatusBadRequest)
+			return false
+		}
+		if userActiveWithin(dur) {
+			log.Debugf(in.LogTag, "POST %s: skipping (user active within %s for agent %s)", in.Endpoint, in.IfUserInactive, in.AgentID)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: user recently active"})
+			return false
+		}
+	}
+	if in.IfActive != "" {
+		dur, err := time.ParseDuration(in.IfActive)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("bad if_active duration: %v", err), http.StatusBadRequest)
+			return false
+		}
+		if !sessionActiveWithin(dur) {
+			log.Debugf(in.LogTag, "POST %s: skipping (no activity within %s for session %s)", in.Endpoint, in.IfActive, in.SessionBase)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: no recent activity"})
+			return false
+		}
+	}
+	if in.IfInactive != "" {
+		dur, err := time.ParseDuration(in.IfInactive)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("bad if_inactive duration: %v", err), http.StatusBadRequest)
 			return false
 		}
-		if isActive(agentID, dur) {
-			log.Debugf(logTag, "POST %s: skipping (user active within %s for agent %s)", endpoint, ifInactive, agentID)
+		if sessionActiveWithin(dur) {
+			log.Debugf(in.LogTag, "POST %s: skipping (session active within %s for session %s)", in.Endpoint, in.IfInactive, in.SessionBase)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"response": "skipped: session recently active"})
 			return false
@@ -99,13 +167,13 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 
 // registerHTTPHandlers registers all HTTP endpoints (/send, /status, /command, /wake, /webhook, /voice).
 func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
-	resolveAgent, isAgentActive := buildResolvers(d)
+	resolveAgent, gate := buildResolvers(d)
 
-	mux.HandleFunc("/send", handleSend(d, resolveAgent, isAgentActive))
+	mux.HandleFunc("/send", handleSend(d, resolveAgent, gate))
 	mux.HandleFunc("/status", handleStatus(d, resolveAgent))
 	mux.HandleFunc("/command", handleCommand(d, resolveAgent))
-	mux.HandleFunc("/wake", handleWake(d, resolveAgent, isAgentActive))
-	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, isAgentActive))
+	mux.HandleFunc("/wake", handleWake(d, resolveAgent, gate))
+	mux.HandleFunc("/webhook/", handleWebhook(d, resolveAgent, gate))
 
 	endpointList := "/send, /status, /command, /wake, /webhook/{agent}/{hookid}"
 	if d.cfg.HTTP.WSEnabled && len(d.sttMap) > 0 {
