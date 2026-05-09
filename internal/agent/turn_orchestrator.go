@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"foci/internal/delegator"
+	"foci/internal/session"
 )
 
 // OrchestrateFullTurn executes a complete turn through the TurnContract pipeline.
@@ -36,6 +37,18 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	defer unlock()
 	dec := tc.IncrementProcessing(ts)
 	defer dec()
+	// markInFlight covers both API and delegated transports — sibling to
+	// IncrementProcessing (which is API-only). Keyed by SessionKeyBase so the
+	// gate can ask "is *this* session in-flight?" — branches and sub-agents
+	// have distinct bases (sub-agents) or share the parent's base (branches),
+	// matching the granularity the activity gate cares about. Released when
+	// OrchestrateFullTurn returns, which for delegated turns is after
+	// runPostTurn unblocks on CompletionChan. A permission-blocked CC turn
+	// keeps inFlight=1 until the user decides; that's exactly the gate
+	// signal we want (TODO #753).
+	sessionBase := session.SessionKeyBase(ts.SessionKey)
+	doneInFlight := a.markInFlight(sessionBase)
+	defer doneInFlight()
 	unreg := tc.RegisterTurn(ts)
 	defer unreg()
 	if err := tc.CheckStaleContext(ts); err != nil {
@@ -46,6 +59,16 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	tc.RegisterSessionIndex(ts)
 	tc.LogConversationRecv(ts)
 	tc.TouchActivity(ts)
+	// touchLastActivity records that *this session* is doing something *now*,
+	// regardless of trigger (user, cron, CLI, webhook, agent-to-agent,
+	// system-injected). Single chokepoint covers every turn-init path. Keyed
+	// by SessionKeyBase so the gate consults the specific session a CLI send
+	// would target (the agent's main session) rather than being confused by
+	// activity in unrelated branches or sub-agents. The per-receive-path
+	// last_user_activity write (telegram/discord) is deliberately separate —
+	// it tracks user attention, not agent activity, and lives in
+	// agent_metadata rather than session_metadata.
+	a.touchLastActivity(sessionBase)
 
 	// Phase 2: Preparation
 	tc.LoadSessionMeta(ts)
