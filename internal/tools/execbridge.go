@@ -462,8 +462,8 @@ var todoActions = []struct {
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
 	{"search", "search <query> [--sort F] [--reverse] [--limit N]", "--sort --reverse --limit"},
 	{"get", "get <id>", ""},
-	{"complete", "complete <id> [--reason TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason"},
-	{"drop", "drop <id> [--reason TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason"},
+	{"complete", "complete <id> [--reason|--notes|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --text"},
+	{"drop", "drop <id> [--reason|--notes|--text TEXT]   (or --id N / --ids 1,2,3)", "--id --ids --reason --notes --text"},
 	{"edit", "edit --id N [--text TEXT] [--priority P] [--tag T]", "--id --ids --text --priority --tag"},
 	{"remove", "remove --id N   (or --ids 1,2,3)", "--id --ids"},
 }
@@ -596,6 +596,7 @@ func generateShellFunc(t *Tool) string {
       --id) id="$2"; shift 2 ;;
       --ids) ids="$2"; shift 2 ;;
       --reason) reason="$2"; shift 2 ;;
+      --notes) reason="$2"; shift 2 ;;
       --sort) sort="$2"; shift 2 ;;
       --limit) limit="$2"; shift 2 ;;
       --reverse) reverse=true; shift ;;
@@ -606,7 +607,7 @@ func generateShellFunc(t *Tool) string {
         elif [ -n "$action" ]; then
           echo "'$action' takes no flags" >&2
         else
-          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit" >&2
+          echo "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --sort --reverse --limit" >&2
         fi
         return 1 ;;
       *) # positional: first positional is text/query/id depending on action
@@ -620,6 +621,17 @@ func generateShellFunc(t *Tool) string {
   done
   text="${text# }"
   query="${query# }"
+  # On complete/drop, --text aliases --reason (writes to close_reason).
+  # --notes is parsed directly into reason above. If both --text and --reason
+  # are supplied, --reason wins (explicit beats implicit).
+  case "$action" in
+    complete|drop)
+      if [ -z "$reason" ] && [ -n "$text" ]; then
+        reason="$text"
+        text=""
+      fi
+      ;;
+  esac
   case "$action" in
     add)
       local params='{"action":"add"}'

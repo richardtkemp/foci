@@ -847,8 +847,69 @@ func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
 		t.Error("expected 'no flags for this action' branch")
 	}
 	// Master fallback for unknown-action context must still exist.
-	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --sort --reverse --limit") {
+	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --sort --reverse --limit") {
 		t.Error("expected master flag list as fallback when action is unknown")
+	}
+}
+
+// TestTodoShellFunc_CloseReasonAliases verifies the close-reason alias surface
+// added for TODO #761: --notes is parsed straight into the reason var, and on
+// complete/drop --text falls back into reason if --reason wasn't given. This
+// lets users reach for any of {--reason, --notes, --text} when closing a todo
+// with rich detail. --reason wins if both --reason and --text are present
+// (explicit beats implicit fallback).
+func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	// --notes parses directly into the reason var, alongside --reason.
+	// Kept as two cases (rather than --reason|--notes alternation) so the
+	// schema-params validator at validateShellFunc still sees `--reason)`
+	// as a literal substring.
+	if !strings.Contains(body, `--reason) reason="$2"; shift 2 ;;`) {
+		t.Error("expected --reason flag parser case")
+	}
+	if !strings.Contains(body, `--notes) reason="$2"; shift 2 ;;`) {
+		t.Error("expected --notes flag parser case (writes to reason)")
+	}
+
+	// On complete/drop, --text falls back to reason when --reason absent.
+	// Tested by checking the post-parse case block exists.
+	if !strings.Contains(body, `case "$action" in
+    complete|drop)
+      if [ -z "$reason" ] && [ -n "$text" ]; then
+        reason="$text"
+        text=""
+      fi
+      ;;
+  esac`) {
+		t.Error("expected post-parse text→reason fallback for complete/drop")
+	}
+
+	// Per-action flags surface for complete/drop must list the new aliases
+	// so the unknown-flag error and --help output are accurate.
+	for _, name := range []string{"complete", "drop"} {
+		var found bool
+		for _, a := range todoActions {
+			if a.Name == name {
+				found = true
+				if !strings.Contains(a.Flags, "--text") || !strings.Contains(a.Flags, "--notes") {
+					t.Errorf("todoActions[%q].Flags = %q, want --text and --notes", name, a.Flags)
+				}
+				if !strings.Contains(a.Usage, "--reason|--notes|--text") {
+					t.Errorf("todoActions[%q].Usage = %q, want --reason|--notes|--text in usage", name, a.Usage)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("todoActions missing entry for %q", name)
+		}
 	}
 }
 
