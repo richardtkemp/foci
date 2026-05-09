@@ -868,7 +868,8 @@ func generateGenericShellFunc(t *Tool) string {
 
 	var schema struct {
 		Properties map[string]struct {
-			Type string `json:"type"`
+			Type   string `json:"type"`
+			Format string `json:"format"`
 		} `json:"properties"`
 		Required []string `json:"required"`
 	}
@@ -964,6 +965,25 @@ func generateGenericShellFunc(t *Tool) string {
 	if len(positional) == 1 {
 		p := positional[0]
 		fmt.Fprintf(&b, "  %s=\"${%s# }\"\n", p, p)
+	}
+
+	// Resolve relative paths for params with format: filepath. The shell
+	// function inherits the caller's cwd; foci-gw's cwd is unrelated, so
+	// relative paths sent verbatim fail with confusing "no such file" errors
+	// (TODO #754). POSIX case: leave absolute paths unchanged, prefix
+	// relatives with $PWD. filepath.Clean on the receive side normalises
+	// any . / .. segments.
+	for _, k := range paramNames {
+		if schema.Properties[k].Format != "filepath" {
+			continue
+		}
+		if schema.Properties[k].Type != "string" {
+			continue
+		}
+		fmt.Fprintf(&b,
+			"  [ -n \"$%s\" ] && case \"$%s\" in /*) ;; *) %s=\"$PWD/$%s\" ;; esac\n",
+			k, k, k, k,
+		)
 	}
 
 	// Stdin reader: if the StdinParam value is empty and stdin is not a TTY,
