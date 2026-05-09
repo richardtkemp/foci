@@ -71,6 +71,13 @@ type Runner struct {
 	hasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	drainFn            func() // called each tick to drain rate-limit queues
 
+	// In-flight check for the parent session. Mirrors the activity gate's
+	// IsTurnInFlight check used by the gateway send/branch handlers (TODO #753):
+	// internal periodic schedulers dispatch via branchFn directly, bypassing
+	// the gate, so they need their own in-flight signal to avoid injecting
+	// scheduler prompts into a busy CC session as SourceUser follow-ups.
+	isTurnInFlightFn func(parentBase string) bool
+
 	// Session-aware availability checking
 	sessionKeyFn   func() string                                                   // returns the session key these operations will run on
 	canFireFn      func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
@@ -113,6 +120,12 @@ type RunnerConfig struct {
 	HasActiveWorkFn    func() int // external check for async work (e.g. tmux watches); returns count, 0 = none
 	DrainFn            func() // called each tick to drain rate-limit queues; nil = skip
 
+	// IsTurnInFlightFunc reports whether a turn is currently executing on the
+	// session base passed in. Wired from cmd/foci-gw/periodic_setup.go to
+	// Agent.IsTurnInFlight. Nil = no in-flight gating (schedulers fire blindly,
+	// pre-TODO #760 behaviour). See Runner.isTurnInFlightFn.
+	IsTurnInFlightFunc func(parentBase string) bool
+
 	// Session-aware availability checking
 	SessionKeyFunc func() string                                                   // returns the session key these operations will run on
 	CanFireFunc    func(ctx context.Context, sessionKey string) (bool, string) // checks if background operations can fire
@@ -150,6 +163,7 @@ func New(cfg RunnerConfig) *Runner {
 		chatWarningDispatcher:  cfg.ChatWarningDispatcher,
 		hasActiveWorkFn:    cfg.HasActiveWorkFn,
 		drainFn:            cfg.DrainFn,
+		isTurnInFlightFn:   cfg.IsTurnInFlightFunc,
 		sessionKeyFn:       cfg.SessionKeyFunc,
 		canFireFn:          cfg.CanFireFunc,
 		isDelegatedAgent:   cfg.IsDelegatedAgent,
@@ -214,6 +228,21 @@ func (r *Runner) defaultParentKey() string {
 		return ""
 	}
 	return r.sessionKeyFn()
+}
+
+// parentTurnInFlight reports whether a turn is currently executing on the
+// session base derived from parentKey. Returns false if no in-flight callback
+// is wired (test runners) or parentKey is empty.
+//
+// Schedulers consult this before dispatching via branchFn so a periodic prompt
+// (reflection, consolidation, internal keepalive, background) doesn't get
+// queued behind the active turn as a SourceUser follow-up — see TODO #760
+// (companion to TODO #753 which added the same check on the gateway gate path).
+func (r *Runner) parentTurnInFlight(parentKey string) bool {
+	if r.isTurnInFlightFn == nil || parentKey == "" {
+		return false
+	}
+	return r.isTurnInFlightFn(session.SessionKeyBase(parentKey))
 }
 
 func (r *Runner) run(ctx context.Context) {
@@ -295,6 +324,11 @@ func (r *Runner) maybeKeepalive(ctx context.Context) { // nolint:unparam
 	parentKey := r.defaultParentKey()
 	if parentKey == "" {
 		skip = "no default session"
+		return
+	}
+
+	if r.parentTurnInFlight(parentKey) {
+		skip = "turn in flight on parent session"
 		return
 	}
 
@@ -396,6 +430,11 @@ func (r *Runner) maybeBackgroundWork(ctx context.Context) {
 		return
 	}
 
+	if r.parentTurnInFlight(parentKey) {
+		skip = "turn in flight on parent session"
+		return
+	}
+
 	promptText := prompts.ResolvePrompt(r.bgCfg.Prompt, "background.md", prompts.Background(), r.promptSearchDirs...)
 
 	r.mu.Lock()
@@ -479,6 +518,31 @@ func (r *Runner) maybeReflection() {
 	if len(keys) == 0 {
 		skip = "no sessions need reflection"
 		return
+	}
+
+	// Filter out sessions with a turn currently in flight. For delegated
+	// agents reflection injects into the main session — firing while the
+	// user's turn is mid-flight queues the reflection prompt as a SourceUser
+	// follow-up, which is the wrong source attribution and the wrong timing.
+	// Defer to the next 30s tick. (TODO #760)
+	if r.isTurnInFlightFn != nil {
+		filtered := keys[:0]
+		busy := 0
+		for _, k := range keys {
+			if r.isTurnInFlightFn(session.SessionKeyBase(k)) {
+				busy++
+				continue
+			}
+			filtered = append(filtered, k)
+		}
+		keys = filtered
+		if busy > 0 {
+			r.log.Debugf("reflection: deferred %d session(s) with in-flight turns", busy)
+		}
+		if len(keys) == 0 {
+			skip = "all candidate sessions have in-flight turns"
+			return
+		}
 	}
 
 	// Check availability (rate limit + mana)
@@ -576,6 +640,11 @@ func (r *Runner) maybeConsolidation() {
 	parentKey := r.defaultParentKey()
 	if parentKey == "" {
 		skip = "no default session"
+		return
+	}
+
+	if r.parentTurnInFlight(parentKey) {
+		skip = "turn in flight on parent session"
 		return
 	}
 
