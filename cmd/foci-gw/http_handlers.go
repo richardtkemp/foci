@@ -25,11 +25,49 @@ import (
 // agentResolver returns the agent instance for the given ID, or the first agent if empty.
 type agentResolver func(agentID string) (*agentInstance, bool)
 
-// activityChecker checks whether a real user has interacted with the agent within a duration.
-type activityChecker func(agentID string, within time.Duration) bool
+// userActivityChecker reports whether a real user has interacted with the agent
+// (Telegram/Discord inbound) within the given duration. Reads `last_user_activity`
+// from agent_metadata. This is the narrow signal used by --if-user-active /
+// --if-user-inactive — independent of any agent turns triggered by cron, CLI,
+// webhook, or the agent itself.
+type userActivityChecker func(agentID string, within time.Duration) bool
 
-// buildResolvers creates the resolveAgent and isAgentActive helpers from handler deps.
-func buildResolvers(d httpHandlerDeps) (agentResolver, activityChecker) {
+// sessionActivityChecker reports whether the session at the given base has
+// executed any turn within the given duration. Reads `last_activity` from
+// session_metadata, which is written by OrchestrateFullTurn for every
+// turn-init path (TODO #753). This is the broad signal used by --if-active /
+// --if-inactive together with the in-flight short-circuit applied at the
+// gate site.
+type sessionActivityChecker func(sessionBase string, within time.Duration) bool
+
+// activityGateInputs bundles the per-request facts the gate needs to evaluate
+// the four activity conditions. AgentID and SessionBase scope the lookups;
+// InFlight is the runtime "doing something now" signal computed by the
+// handler (Agent.IsTurnInFlight(SessionBase)). The four If* strings are
+// duration values from the request body or query string ("" = condition not
+// applied).
+type activityGateInputs struct {
+	AgentID        string
+	SessionBase    string
+	InFlight       bool
+	IfUserActive   string
+	IfUserInactive string
+	IfActive       string
+	IfInactive     string
+	LogTag         string
+	Endpoint       string
+}
+
+// gateEvaluator evaluates an activity gate against inputs and writes the
+// skip response if the gate trips. Returns true if the request should
+// proceed, false if it has been short-circuited (response already written).
+type gateEvaluator func(w http.ResponseWriter, in activityGateInputs) bool
+
+// buildResolvers creates the resolveAgent and gate helpers from handler deps.
+// The returned gate closure captures both activity checkers and applies the
+// four-condition gate logic; handlers compute SessionBase + InFlight and
+// pass them in via activityGateInputs.
+func buildResolvers(d httpHandlerDeps) (agentResolver, gateEvaluator) {
 	resolveAgent := func(agentID string) (*agentInstance, bool) {
 		if agentID == "" && len(d.agentOrder) > 0 {
 			return d.agents[d.agentOrder[0]], true
@@ -38,7 +76,7 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, activityChecker) {
 		return inst, ok
 	}
 
-	isAgentActive := func(agentID string, within time.Duration) bool {
+	isUserActive := func(agentID string, within time.Duration) bool {
 		if d.sessionIndex == nil {
 			return true
 		}
@@ -53,24 +91,45 @@ func buildResolvers(d httpHandlerDeps) (agentResolver, activityChecker) {
 		return time.Since(time.Unix(ts, 0)) <= within
 	}
 
-	return resolveAgent, isAgentActive
+	isSessionActive := func(sessionBase string, within time.Duration) bool {
+		if d.sessionIndex == nil || sessionBase == "" {
+			return false
+		}
+		raw, err := d.sessionIndex.GetSessionMetadata(sessionBase, "last_activity")
+		if err != nil || raw == "" {
+			return false
+		}
+		ts, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return false
+		}
+		return time.Since(time.Unix(ts, 0)) <= within
+	}
+
+	gate := func(w http.ResponseWriter, in activityGateInputs) bool {
+		return checkActivityGate(w, in, isUserActive, isSessionActive)
+	}
+
+	return resolveAgent, gate
 }
 
 // handleSend returns the handler for POST /send.
-func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive activityChecker) http.HandlerFunc {
+func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		var req struct {
-			Agent      string `json:"agent"`
-			Session    string `json:"session"`
-			Text       string `json:"text"`
-			Model      string `json:"model"`
-			IfActive   string `json:"if_active"`
-			IfInactive string `json:"if_inactive"`
-			Async      bool   `json:"async"`
+			Agent          string `json:"agent"`
+			Session        string `json:"session"`
+			Text           string `json:"text"`
+			Model          string `json:"model"`
+			IfUserActive   string `json:"if_user_active"`
+			IfUserInactive string `json:"if_user_inactive"`
+			IfActive       string `json:"if_active"`
+			IfInactive     string `json:"if_inactive"`
+			Async          bool   `json:"async"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
@@ -84,10 +143,9 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		if !checkActivityGate(w, inst.id, req.IfActive, req.IfInactive, isAgentActive, "http", "/send") {
-			return
-		}
-
+		// Resolve session before gating so the activity gate can consult
+		// last_activity / IsTurnInFlight for the session this request
+		// actually targets (TODO #753 — per-session granularity).
 		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
 			// HTTP named sessions are deterministic — same name yields same session
@@ -96,6 +154,21 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		if sessionKey == "" {
 			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+			return
+		}
+
+		sessionBase := session.SessionKeyBase(sessionKey)
+		if !gate(w, activityGateInputs{
+			AgentID:        inst.id,
+			SessionBase:    sessionBase,
+			InFlight:       inst.ag.IsTurnInFlight(sessionBase),
+			IfUserActive:   req.IfUserActive,
+			IfUserInactive: req.IfUserInactive,
+			IfActive:       req.IfActive,
+			IfInactive:     req.IfInactive,
+			LogTag:         "http",
+			Endpoint:       "/send",
+		}) {
 			return
 		}
 
@@ -199,7 +272,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 }
 
 // handleWake returns the handler for POST /wake.
-func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive activityChecker) http.HandlerFunc {
+func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -207,16 +280,18 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		}
 
 		var req struct {
-			Agent       string `json:"agent"`
-			Text        string `json:"text"`
-			Model       string `json:"model"`
-			Session     string `json:"session"`
-			NoCompact   bool   `json:"no_compact"`
-			NoResetHook bool   `json:"no_reset_hook"`
-			IfActive    string `json:"if_active"`
-			IfInactive  string `json:"if_inactive"`
-			Async       bool   `json:"async"`
-			Silent      bool   `json:"silent"`
+			Agent          string `json:"agent"`
+			Text           string `json:"text"`
+			Model          string `json:"model"`
+			Session        string `json:"session"`
+			NoCompact      bool   `json:"no_compact"`
+			NoResetHook    bool   `json:"no_reset_hook"`
+			IfUserActive   string `json:"if_user_active"`
+			IfUserInactive string `json:"if_user_inactive"`
+			IfActive       string `json:"if_active"`
+			IfInactive     string `json:"if_inactive"`
+			Async          bool   `json:"async"`
+			Silent         bool   `json:"silent"`
 		}
 		if r.ContentLength > 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -232,14 +307,14 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 			return
 		}
 
-		if !checkActivityGate(w, inst.id, req.IfActive, req.IfInactive, isAgentActive, "wake", "/wake") {
-			return
-		}
-
 		if req.Text == "" {
 			req.Text = "[WAKE]"
 		}
 
+		// Resolve parent session before gating so the activity gate can
+		// consult the parent's last_activity / IsTurnInFlight. Branches
+		// share the parent's SessionKeyBase, so a turn running in any
+		// branch correctly registers as in-flight under the parent.
 		parentKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
 			parentKey = session.NamedIndependentSessionKey(inst.id, req.Session)
@@ -247,6 +322,21 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive act
 		if parentKey == "" {
 			log.Warnf("wake", "no default session for agent %q, skipping", inst.id)
 			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+			return
+		}
+
+		parentBase := session.SessionKeyBase(parentKey)
+		if !gate(w, activityGateInputs{
+			AgentID:        inst.id,
+			SessionBase:    parentBase,
+			InFlight:       inst.ag.IsTurnInFlight(parentBase),
+			IfUserActive:   req.IfUserActive,
+			IfUserInactive: req.IfUserInactive,
+			IfActive:       req.IfActive,
+			IfInactive:     req.IfInactive,
+			LogTag:         "wake",
+			Endpoint:       "/wake",
+		}) {
 			return
 		}
 
@@ -368,7 +458,7 @@ const webhookMaxBodyBytes = 1 << 20
 // hook IDs to prompt file paths. The prompt is resolved via ResolvePrompt,
 // the request body is read as a webhook payload, and the combined message
 // is sent to the agent. Async (202) by default; ?sync=true for synchronous.
-func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive activityChecker) http.HandlerFunc {
+func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -398,7 +488,31 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 		}
 
 		q := r.URL.Query()
-		if !checkActivityGate(w, inst.id, q.Get("if_active"), q.Get("if_inactive"), isAgentActive, "http", "/webhook") {
+
+		// Resolve session before gating so the activity gate can consult
+		// last_activity / IsTurnInFlight for the targeted session.
+		webhookSessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
+		if s := q.Get("session"); s != "" {
+			webhookSessionKey = session.NamedIndependentSessionKey(inst.id, s)
+		}
+		if webhookSessionKey == "" {
+			log.Warnf("http", "POST /webhook: no default session for agent %q", inst.id)
+			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
+			return
+		}
+
+		webhookSessionBase := session.SessionKeyBase(webhookSessionKey)
+		if !gate(w, activityGateInputs{
+			AgentID:        inst.id,
+			SessionBase:    webhookSessionBase,
+			InFlight:       inst.ag.IsTurnInFlight(webhookSessionBase),
+			IfUserActive:   q.Get("if_user_active"),
+			IfUserInactive: q.Get("if_user_inactive"),
+			IfActive:       q.Get("if_active"),
+			IfInactive:     q.Get("if_inactive"),
+			LogTag:         "http",
+			Endpoint:       "/webhook",
+		}) {
 			return
 		}
 
@@ -433,15 +547,8 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, isAgentActive 
 			combined = promptText
 		}
 
-		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
-		if s := q.Get("session"); s != "" {
-			sessionKey = session.NamedIndependentSessionKey(inst.id, s)
-		}
-		if sessionKey == "" {
-			log.Warnf("http", "POST /webhook: no default session for agent %q", inst.id)
-			http.Error(w, "no active session — send a message to the bot first", http.StatusPreconditionFailed)
-			return
-		}
+		// Reuse the session resolved before the gate.
+		sessionKey := webhookSessionKey
 
 		log.Infof("http", "webhook (agent=%s, hook=%s, payload=%d bytes)", inst.id, hookID, len(payload))
 

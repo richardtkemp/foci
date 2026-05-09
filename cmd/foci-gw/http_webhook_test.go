@@ -318,7 +318,11 @@ func TestWebhook_NoSession(t *testing.T) {
 	}
 }
 
-// TestWebhook_IfInactive tests the if_inactive query param skips when agent is active.
+// TestWebhook_IfInactive tests that the if_inactive query param skips when
+// the targeted session has recent activity. Under TODO #753 semantics,
+// "activity" is read from session_metadata.last_activity (any turn-init
+// path) rather than agent_metadata.last_user_activity (user inbound only).
+// The narrower user-only behaviour now lives behind --if-user-inactive.
 func TestWebhook_IfInactive(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt"), 0644)
@@ -326,13 +330,15 @@ func TestWebhook_IfInactive(t *testing.T) {
 	webhooks := map[string]string{"test": "test.md"}
 	d, _ := webhookTestSetup(t, dir, "", webhooks)
 
-	// Simulate recent activity via session index.
+	// Simulate recent session activity. The webhook test setup wires a
+	// stubConnMgr with sessionKey="test-agent/i0/0", so SessionKeyBase is
+	// "test-agent/i0".
 	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatalf("NewSessionIndex: %v", err)
 	}
 	t.Cleanup(func() { _ = idx.Close() })
-	idx.SetAgentMetadata("test-agent", "last_user_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	idx.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
 	d.sessionIndex = idx
 
 	mux := newWebhookMux(d)
@@ -349,6 +355,46 @@ func TestWebhook_IfInactive(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["response"] != "skipped: session recently active" {
 		t.Errorf("response = %q, want skipped message", resp["response"])
+	}
+}
+
+// TestWebhook_IfUserInactive_LegacyUserActivityOnly verifies the new
+// --if-user-inactive flag preserves the OLD pre-TODO-#753 narrow semantics:
+// only `last_user_activity` (real user inbound) counts, not session-level
+// activity from cron/CLI/webhook turns. Confirms the split is honoured.
+func TestWebhook_IfUserInactive_LegacyUserActivityOnly(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "test.md"), []byte("prompt"), 0644)
+
+	webhooks := map[string]string{"test": "test.md"}
+	d, _ := webhookTestSetup(t, dir, "", webhooks)
+
+	idx, err := session.NewSessionIndex(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatalf("NewSessionIndex: %v", err)
+	}
+	t.Cleanup(func() { _ = idx.Close() })
+	// Recent SESSION activity (cron-injected turn) but NO recent user
+	// activity. --if-user-inactive should still allow the request through
+	// (user has not been engaged), even though the session has been busy.
+	idx.SetSessionMetadata("test-agent/i0", "last_activity", fmt.Sprintf("%d", time.Now().Unix()))
+	d.sessionIndex = idx
+
+	mux := newWebhookMux(d)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhook/test-agent/test?if_user_inactive=1h&sync=true", strings.NewReader("payload"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]string
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	// Should NOT have been skipped — webhook delivered to the agent.
+	if strings.HasPrefix(resp["response"], "skipped:") {
+		t.Errorf("response = %q, want webhook to deliver (user-inactive should not be tripped by session activity)", resp["response"])
 	}
 }
 
