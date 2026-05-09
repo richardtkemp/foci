@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"foci/internal/log"
@@ -35,6 +37,10 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 					"type": "string",
 					"description": "Path to a file to send as a document attachment."
 				},
+				"filename": {
+					"type": "string",
+					"description": "Optional display name for the attachment (overrides the file's basename). Useful when the source path has a temp/internal name. Path components are stripped — basename only."
+				},
 				"send_as": {
 					"type": "string",
 					"description": "How to send the file: 'document' (default), 'voice', 'video', 'photo', 'audio', or 'animation' (GIF).",
@@ -46,6 +52,7 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 			var p struct {
 				Text     string `json:"text"`
 				FilePath string `json:"file"`
+				Filename string `json:"filename"`
 				SendAs   string `json:"send_as"`
 			}
 			if err := json.Unmarshal(params, &p); err != nil {
@@ -54,8 +61,38 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 			if p.Text == "" && p.FilePath == "" {
 				return ToolResult{}, fmt.Errorf("at least one of text or file is required")
 			}
+			if p.Filename != "" && p.FilePath == "" {
+				return ToolResult{}, fmt.Errorf("filename requires file")
+			}
 			if p.SendAs == "" {
 				p.SendAs = "document"
+			}
+
+			// Custom display filename: symlink the source into a per-call temp
+			// dir under the desired basename, then send the symlink. Platform
+			// implementations use filepath.Base(path) to label the attachment,
+			// so the symlink name becomes the displayed filename. Symlinks are
+			// followed by os.Open, so size/mime detection still sees the real
+			// file. Per-call temp dir avoids collisions on concurrent sends.
+			if p.Filename != "" {
+				cleanName := filepath.Base(p.Filename) // strip any path components defensively
+				if cleanName == "." || cleanName == "/" || cleanName == "" {
+					return ToolResult{}, fmt.Errorf("invalid filename %q", p.Filename)
+				}
+				absSrc, err := filepath.Abs(p.FilePath)
+				if err != nil {
+					return ToolResult{}, fmt.Errorf("resolve source path: %w", err)
+				}
+				tmpDir, err := os.MkdirTemp("", "foci-send-")
+				if err != nil {
+					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
+				}
+				defer func() { _ = os.RemoveAll(tmpDir) }()
+				linkPath := filepath.Join(tmpDir, cleanName)
+				if err := os.Symlink(absSrc, linkPath); err != nil {
+					return ToolResult{}, fmt.Errorf("create filename symlink: %w", err)
+				}
+				p.FilePath = linkPath
 			}
 
 			sessionKey := SessionKeyFromContext(ctx)
