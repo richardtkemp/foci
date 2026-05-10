@@ -222,7 +222,7 @@ func restoreFacetSessions(
 
 			bot.SetSessionKeyDirect(savedKey)
 
-			agentID := extractAgentID(savedKey)
+			agentID := session.AgentIDFromKey(savedKey)
 			if handler, commands, commandContext, acfg, ok := params.Resolver(agentID); ok {
 				cmds, _ := commands.(*command.Registry)
 				bot.SetHandlerAndCommands(handler, cmds)

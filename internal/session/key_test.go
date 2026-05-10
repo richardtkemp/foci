@@ -237,6 +237,35 @@ func TestSessionKeyBase(t *testing.T) {
 	}
 }
 
+func TestAgentIDFromKey(t *testing.T) {
+	// Proves that AgentIDFromKey returns the first segment of a session key,
+	// or the empty string for malformed input. Mirrors ChatIDFromKey/
+	// SessionKeyBase coverage. Used by telegram/discord providers when
+	// resuming a saved session — they only need the agent ID, not the full
+	// parse, so failing soft (return "" on malformed input) matches the
+	// pre-existing extractAgentID helper this function replaces.
+	tests := []struct {
+		name string
+		key  string
+		want string
+	}{
+		{name: "chat root", key: "main/c123/1700000000", want: "main"},
+		{name: "branch", key: "main/c123/1700000000/b1700050000", want: "main"},
+		{name: "independent", key: "clutch/i1700000000/1700000000", want: "clutch"},
+		{name: "empty string", key: "", want: ""},
+		{name: "no separator", key: "main", want: ""},
+		{name: "leading slash", key: "/main/c123/1700000000", want: ""},
+		{name: "just slash", key: "/", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AgentIDFromKey(tt.key); got != tt.want {
+				t.Errorf("AgentIDFromKey(%q) = %q, want %q", tt.key, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChatID(t *testing.T) {
 	// Proves that ChatID() returns the numeric chat ID for 'c'-type sessions and
 	// zero for independent ('i'-type) sessions.

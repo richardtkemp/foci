@@ -280,11 +280,3 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.R
 	bot.display = d
 }
 
-// extractAgentID extracts the agent ID from a session key string.
-func extractAgentID(sessionKey string) string {
-	sk, err := session.ParseSessionKey(sessionKey)
-	if err != nil {
-		return ""
-	}
-	return sk.AgentID
-}
