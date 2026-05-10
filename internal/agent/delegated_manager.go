@@ -525,27 +525,27 @@ func (m *DelegatedManager) RotateBackendKey(oldKey, newKey string) {
 	delete(m.backends, oldKey)
 	mb.sessionKey = newKey
 	m.backends[newKey] = mb
-	// Migrate resume ID.
+	// Migrate resume ID via single-UPDATE rename.
 	if m.SessionIndex != nil {
-		if id := m.loadResumeID(oldKey); id != "" {
-			m.saveResumeID(newKey, id)
-			m.clearResumeID(oldKey)
+		if err := m.SessionIndex.RenameSessionMetadata(oldKey, newKey); err != nil {
+			log.Warnf("delegated", "rename session_metadata %s → %s: %v", oldKey, newKey, err)
 		}
 	}
 	log.Infof("delegated", "rotated backend key %s → %s", oldKey, newKey)
 }
 
-// stateKey returns the agent_metadata key for a CC session UUID.
-func (m *DelegatedManager) stateKey(sessionKey string) string {
-	return "cc_session:" + sessionKey
-}
+// resumeIDKey is the session_metadata key under which CC backend resume UUIDs
+// are stored. The data is session-scoped (each post-compact JSONL is a
+// distinct UUID) and the session key already encodes the agent ID, so we
+// don't store agent_id separately.
+const resumeIDKey = "cc_resume_id"
 
 // saveResumeID persists the CC session UUID to state.db.
 func (m *DelegatedManager) saveResumeID(sessionKey, sessionID string) {
 	if sessionID == "" || m.SessionIndex == nil {
 		return
 	}
-	if err := m.SessionIndex.SetAgentMetadata(m.AgentID, m.stateKey(sessionKey), sessionID); err != nil {
+	if err := m.SessionIndex.SetSessionMetadata(sessionKey, resumeIDKey, sessionID); err != nil {
 		log.Warnf("delegated", "save resume ID for %s: %v", sessionKey, err)
 	}
 }
@@ -555,7 +555,7 @@ func (m *DelegatedManager) clearResumeID(sessionKey string) {
 	if m.SessionIndex == nil {
 		return
 	}
-	if err := m.SessionIndex.DeleteAgentMetadata(m.AgentID, m.stateKey(sessionKey)); err != nil {
+	if err := m.SessionIndex.DeleteSessionMetadata(sessionKey, resumeIDKey); err != nil {
 		log.Warnf("delegated", "clear resume ID for %s: %v", sessionKey, err)
 	}
 }
@@ -565,7 +565,7 @@ func (m *DelegatedManager) loadResumeID(sessionKey string) string {
 	if m.SessionIndex == nil {
 		return ""
 	}
-	id, err := m.SessionIndex.GetAgentMetadata(m.AgentID, m.stateKey(sessionKey))
+	id, err := m.SessionIndex.GetSessionMetadata(sessionKey, resumeIDKey)
 	if err != nil {
 		return ""
 	}

@@ -119,6 +119,13 @@ func NewSessionIndex(dbPath string) (*SessionIndex, error) {
 	// Detects old schema by checking column count, then rebuilds the table in a transaction.
 	migrateChatMetadataPlatform(db)
 
+	// Migration: move CC resume IDs from agent_metadata (key='cc_session:<sk>')
+	// to session_metadata (session_key=<sk>, key='cc_resume_id'). The data is
+	// session-scoped (each post-compact JSONL has its own UUID), so it belongs
+	// in session_metadata where rotation gets a single-UPDATE rename via
+	// RenameSessionMetadata instead of the manual load/save/clear pattern.
+	migrateCcResumeIDs(db)
+
 	// Expression index for correct cross-timezone last_activity_at ordering.
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_session_activity_unix ON session_index(unixepoch(last_activity_at))`)
 
@@ -529,6 +536,44 @@ func migrateLastReflection(db *sql.DB) {
 	}
 	if _, err := db.Exec(`ALTER TABLE session_index DROP COLUMN last_memory_formation`); err != nil {
 		log.Warnf("session", "drop last_memory_formation (SQLite <3.35?): %v — leaving column in place", err)
+	}
+}
+
+// migrateCcResumeIDs moves CC backend resume UUIDs from agent_metadata
+// (where they were stored under key='cc_session:<sessionKey>') into
+// session_metadata (session_key=<sessionKey>, key='cc_resume_id'). The
+// agent_id is dropped: session keys begin with the agent ID, so no
+// information is lost. Idempotent — re-running after a successful migration
+// is a no-op because the source rows are deleted in the same transaction.
+func migrateCcResumeIDs(db *sql.DB) {
+	// Cheap probe: any rows to migrate?
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_metadata WHERE key LIKE 'cc_session:%'`).Scan(&n); err != nil || n == 0 {
+		return
+	}
+	log.Infof("session", "migrating %d cc_session row(s) from agent_metadata to session_metadata", n)
+	tx, err := db.Begin()
+	if err != nil {
+		log.Errorf("session", "cc_resume_id migration: begin tx: %v", err)
+		return
+	}
+	// Copy: session_key is the suffix after 'cc_session:'.
+	if _, err := tx.Exec(`
+		INSERT OR REPLACE INTO session_metadata (session_key, key, value)
+		SELECT substr(key, length('cc_session:')+1), 'cc_resume_id', value
+		FROM agent_metadata WHERE key LIKE 'cc_session:%'
+	`); err != nil {
+		log.Errorf("session", "cc_resume_id migration: copy: %v", err)
+		_ = tx.Rollback()
+		return
+	}
+	if _, err := tx.Exec(`DELETE FROM agent_metadata WHERE key LIKE 'cc_session:%'`); err != nil {
+		log.Errorf("session", "cc_resume_id migration: delete: %v", err)
+		_ = tx.Rollback()
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		log.Errorf("session", "cc_resume_id migration: commit: %v", err)
 	}
 }
 

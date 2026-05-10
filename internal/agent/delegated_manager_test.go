@@ -363,9 +363,8 @@ func TestGet_ResumePath(t *testing.T) {
 
 	// Simulate a previously saved session UUID.
 	base := "test-agent/c789"
-	stateKey := "cc_session:" + base
-	if err := idx.SetAgentMetadata("test-agent", stateKey, "saved-uuid-123"); err != nil {
-		t.Fatalf("SetAgentMetadata: %v", err)
+	if err := idx.SetSessionMetadata(base, "cc_resume_id", "saved-uuid-123"); err != nil {
+		t.Fatalf("SetSessionMetadata: %v", err)
 	}
 
 	_, err := mgr.Get(context.Background(), base)
@@ -403,9 +402,8 @@ func TestGet_ResumeFailsFallsBackToFresh(t *testing.T) {
 	t.Cleanup(func() { mgr.Close() })
 
 	base := "test-agent/c111"
-	stateKey := "cc_session:" + base
-	if err := idx.SetAgentMetadata("test-agent", stateKey, "stale-uuid"); err != nil {
-		t.Fatalf("SetAgentMetadata: %v", err)
+	if err := idx.SetSessionMetadata(base, "cc_resume_id", "stale-uuid"); err != nil {
+		t.Fatalf("SetSessionMetadata: %v", err)
 	}
 
 	be, err := mgr.Get(context.Background(), base)
@@ -653,9 +651,8 @@ func TestResetSession_ClosesAndClears(t *testing.T) {
 	sk := "test-agent/c1"
 
 	// Pre-populate a resume ID.
-	stateKey := "cc_session:" + sk
-	if err := idx.SetAgentMetadata("test-agent", stateKey, "some-uuid"); err != nil {
-		t.Fatalf("SetAgentMetadata: %v", err)
+	if err := idx.SetSessionMetadata(sk, "cc_resume_id", "some-uuid"); err != nil {
+		t.Fatalf("SetSessionMetadata: %v", err)
 	}
 
 	_, err := mgr.Get(context.Background(), sk)
@@ -677,7 +674,7 @@ func TestResetSession_ClosesAndClears(t *testing.T) {
 	}
 
 	// Resume ID should be cleared.
-	val, _ := idx.GetAgentMetadata("test-agent", stateKey)
+	val, _ := idx.GetSessionMetadata(sk, "cc_resume_id")
 	if val != "" {
 		t.Errorf("resume ID should be cleared, got %q", val)
 	}
@@ -798,9 +795,9 @@ func TestClose_SavesResumeIDs(t *testing.T) {
 	mgr.Close()
 
 	// Verify the resume ID was persisted.
-	val, err := idx.GetAgentMetadata("test-agent", "cc_session:test-agent/c1")
+	val, err := idx.GetSessionMetadata("test-agent/c1", "cc_resume_id")
 	if err != nil {
-		t.Fatalf("GetAgentMetadata: %v", err)
+		t.Fatalf("GetSessionMetadata: %v", err)
 	}
 	if val != "uuid-to-save" {
 		t.Errorf("saved resume ID = %q, want %q", val, "uuid-to-save")
@@ -927,7 +924,7 @@ func TestCloseIdle(t *testing.T) {
 	}
 
 	// Verify resume ID was saved for the idle backend.
-	val, _ := idx.GetAgentMetadata("test-agent", "cc_session:test-agent/c1")
+	val, _ := idx.GetSessionMetadata("test-agent/c1", "cc_resume_id")
 	if val != "uuid-idle-1" {
 		t.Errorf("saved resume ID = %q, want %q", val, "uuid-idle-1")
 	}
@@ -1148,9 +1145,9 @@ func TestGet_OnSessionReadyPersistsUUID(t *testing.T) {
 
 	osr("new-session-uuid-42")
 
-	val, err := idx.GetAgentMetadata("test-agent", "cc_session:test-agent/c1")
+	val, err := idx.GetSessionMetadata("test-agent/c1", "cc_resume_id")
 	if err != nil {
-		t.Fatalf("GetAgentMetadata: %v", err)
+		t.Fatalf("GetSessionMetadata: %v", err)
 	}
 	if val != "new-session-uuid-42" {
 		t.Errorf("persisted UUID = %q, want %q", val, "new-session-uuid-42")
@@ -1283,14 +1280,6 @@ func TestSaveResumeID_EmptySessionID(t *testing.T) {
 	}
 }
 
-func TestStateKey(t *testing.T) {
-	// Proves that stateKey returns the correct prefix format.
-	mgr := &DelegatedManager{}
-	if got := mgr.stateKey("agent/c1"); got != "cc_session:agent/c1" {
-		t.Errorf("stateKey = %q, want %q", got, "cc_session:agent/c1")
-	}
-}
-
 func TestClearResumeID(t *testing.T) {
 	// Proves that clearResumeID removes the stored session UUID so subsequent
 	// loads return empty.
@@ -1344,9 +1333,8 @@ func TestGet_RetryAfterInitDeath(t *testing.T) {
 
 	// Seed a resume ID.
 	base := "test-agent/c222"
-	stateKey := "cc_session:" + base
-	if err := idx.SetAgentMetadata("test-agent", stateKey, "stale-uuid"); err != nil {
-		t.Fatalf("SetAgentMetadata: %v", err)
+	if err := idx.SetSessionMetadata(base, "cc_resume_id", "stale-uuid"); err != nil {
+		t.Fatalf("SetSessionMetadata: %v", err)
 	}
 
 	be, err := mgr.Get(context.Background(), base)
