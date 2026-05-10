@@ -632,6 +632,16 @@ func generateShellFunc(t *Tool) string {
       fi
       ;;
   esac
+  # Accept comma-separated form for --ids alongside JSON array form (TODO #751).
+  # Help text and other foci tooling show "1,2,3" but jq --argjson rejects bare
+  # comma form. Normalise here so callers don't need to remember to wrap in [].
+  # Strip whitespace, then wrap if not already a JSON array.
+  if [ -n "$ids" ]; then
+    case "$ids" in
+      \[*\]) ;;  # already JSON array — pass through
+      *) ids="[$(echo "$ids" | tr -d ' ')]" ;;
+    esac
+  fi
   case "$action" in
     add)
       local params='{"action":"add"}'
