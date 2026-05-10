@@ -169,13 +169,20 @@ func (a *Agent) ChatWarnings() *warnings.Queue {
 	return a.ChatWarningQueue
 }
 
-// logger returns the agent's ComponentLogger, lazily creating a default if nil.
+// defaultAgentLog is returned by logger() when a.Log is nil. Production
+// always sets Log via the constructor in cmd/foci-gw/agents_shared.go;
+// this fallback exists for tests that bare-literal &Agent{} without
+// wiring logging. Read-only after package init — no race possible.
+var defaultAgentLog = log.NewComponentLogger("agent")
+
+// logger returns a.Log, or a package-level default if nil. Pure read —
+// no side effects, no race. Use this everywhere instead of touching
+// a.Log directly so the nil case is always handled centrally.
 func (a *Agent) logger() *log.ComponentLogger {
 	if a.Log != nil {
 		return a.Log
 	}
-	a.Log = log.NewComponentLogger("agent")
-	return a.Log
+	return defaultAgentLog
 }
 
 // ResolveCallSite resolves a call site to a (client, model, format) triple.
