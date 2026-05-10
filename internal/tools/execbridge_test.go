@@ -847,17 +847,20 @@ func TestTodoShellFunc_UnknownFlagErrorScopedToAction(t *testing.T) {
 		t.Error("expected 'no flags for this action' branch")
 	}
 	// Master fallback for unknown-action context must still exist.
-	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --sort --reverse --limit") {
+	if !strings.Contains(body, "valid flags: --text --priority --tag --query --status --id --ids --reason --notes --note --sort --reverse --limit") {
 		t.Error("expected master flag list as fallback when action is unknown")
 	}
 }
 
 // TestTodoShellFunc_CloseReasonAliases verifies the close-reason alias surface
-// added for TODO #761: --notes is parsed straight into the reason var, and on
-// complete/drop --text falls back into reason if --reason wasn't given. This
-// lets users reach for any of {--reason, --notes, --text} when closing a todo
-// with rich detail. --reason wins if both --reason and --text are present
-// (explicit beats implicit fallback).
+// added for TODO #761 and extended later: --notes and --note both parse
+// straight into the reason var, and on complete/drop --text falls back into
+// reason if --reason wasn't given. This lets users reach for any of
+// {--reason, --notes, --note, --text} when closing a todo with rich detail.
+// --reason wins if both --reason and --text are present (explicit beats
+// implicit fallback). The singular --note alias exists because the bare
+// English word is what naturally comes to mind, and the recurring
+// --note/--notes typo deserves a tooling fix not a memory-training fix.
 func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
 	t.Parallel()
 	r := NewRegistry()
@@ -877,6 +880,9 @@ func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
 	}
 	if !strings.Contains(body, `--notes) reason="$2"; shift 2 ;;`) {
 		t.Error("expected --notes flag parser case (writes to reason)")
+	}
+	if !strings.Contains(body, `--note) reason="$2"; shift 2 ;;`) {
+		t.Error("expected --note flag parser case (writes to reason)")
 	}
 
 	// On complete/drop, --text falls back to reason when --reason absent.
@@ -899,11 +905,11 @@ func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
 		for _, a := range todoActions {
 			if a.Name == name {
 				found = true
-				if !strings.Contains(a.Flags, "--text") || !strings.Contains(a.Flags, "--notes") {
-					t.Errorf("todoActions[%q].Flags = %q, want --text and --notes", name, a.Flags)
+				if !strings.Contains(a.Flags, "--text") || !strings.Contains(a.Flags, "--notes") || !strings.Contains(a.Flags, "--note") {
+					t.Errorf("todoActions[%q].Flags = %q, want --text, --notes, and --note", name, a.Flags)
 				}
-				if !strings.Contains(a.Usage, "--reason|--notes|--text") {
-					t.Errorf("todoActions[%q].Usage = %q, want --reason|--notes|--text in usage", name, a.Usage)
+				if !strings.Contains(a.Usage, "--reason|--notes|--note|--text") {
+					t.Errorf("todoActions[%q].Usage = %q, want --reason|--notes|--note|--text in usage", name, a.Usage)
 				}
 			}
 		}
