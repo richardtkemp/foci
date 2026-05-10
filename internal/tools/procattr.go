@@ -5,19 +5,40 @@ import (
 	"os/exec"
 	"os/user"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"foci/internal/log"
 	"foci/internal/secrets"
 )
 
-// childCredential is set at init time to drop the foci-secrets
-// supplementary group from exec'd child processes while preserving
-// all other groups (docker, git, etc.). If the foci-secrets group
-// doesn't exist or CAP_SETGID is unavailable, this remains nil.
+// childCredential is set by SetupChildCredential to drop the foci-secrets
+// supplementary group from exec'd child processes while preserving all
+// other groups (docker, git, etc.). If the foci-secrets group doesn't
+// exist or CAP_SETGID is unavailable, this remains nil and child processes
+// inherit the parent's groups.
 var childCredential *syscall.Credential
 
-func init() {
+// setupOnce guards SetupChildCredential so a redundant call is a no-op
+// rather than re-running the probe and re-emitting WARNs/debug logs.
+var setupOnce sync.Once
+
+// SetupChildCredential probes whether the process has CAP_SETGID and, if
+// so, stashes a Credential that drops the foci-secrets supplementary group
+// from child processes spawned via ChildSysProcAttr / ChildSysProcAttrSetsid.
+// Idempotent — safe to call more than once.
+//
+// Only foci-gw needs to call this. The foci CLI binary is a thin HTTP client
+// that doesn't exec children needing the credential drop, so calling Setup
+// there would just fail the probe (cron-spawned foci CLI lacks CAP_SETGID
+// because cron isn't a descendant of foci-gw) and emit noise. If a future
+// binary execs children that need foci-secrets dropped, it must call Setup
+// explicitly during startup.
+func SetupChildCredential() {
+	setupOnce.Do(setupChildCredentialImpl)
+}
+
+func setupChildCredentialImpl() {
 	uid := os.Getuid()
 	gid := os.Getgid()
 

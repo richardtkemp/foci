@@ -59,6 +59,13 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 		log.Infof("main", "generated HTTP API key (for remote/cross-user access): %s", httpAPIKey)
 	}
 
+	// Initialise the child-credential drop (probes CAP_SETGID, stashes a
+	// Credential that filters foci-secrets out of child processes' groups).
+	// Must run before ChildSysProcAttr is wired into the command package.
+	// Only foci-gw calls this — see internal/tools/procattr.go for why the
+	// foci CLI deliberately skips it (TODO #755 cron-log noise fix).
+	tools.SetupChildCredential()
+
 	// Wire child process group-dropping into the command package
 	// (so script commands also drop supplementary groups).
 	command.ChildSysProcAttr = tools.ChildSysProcAttr
