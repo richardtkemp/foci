@@ -278,9 +278,7 @@ func (a *Agent) StartInbox(ctx context.Context) {
 // to resolve the session key before calling Enqueue.
 func (a *Agent) Enqueue(env Envelope) {
 	if env.SessionKey == "" {
-		if a.Log != nil {
-			a.Log.Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
-		}
+		a.logger().Warnf("inbox: enqueue with empty session key, dropping (text=%dB)", len(env.Text))
 		return
 	}
 	inb := a.getOrCreateInbox(env.SessionKey)
@@ -291,9 +289,7 @@ func (a *Agent) Enqueue(env Envelope) {
 	if steerEligible {
 		be, err := a.resolveSessionBackend(a.inboxCtx, env.SessionKey)
 		if err != nil {
-			if a.Log != nil {
-				a.Log.Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
-			}
+			a.logger().Warnf("inbox: backend lookup failed sk=%s: %v (falling back to buffer)", env.SessionKey, err)
 			inb.appendSteer(env.Text, env.ReceivedAt)
 			return
 		}
@@ -302,21 +298,15 @@ func (a *Agent) Enqueue(env Envelope) {
 				Source: delegator.SourceSteer,
 				Text:   env.Text,
 			}); err != nil {
-				if a.Log != nil {
-					a.Log.Warnf("inbox: urgent dispatch sk=%s failed: %v", env.SessionKey, err)
-				}
+				a.logger().Warnf("inbox: urgent dispatch sk=%s failed: %v", env.SessionKey, err)
 				return
 			}
-			if a.Log != nil {
-				a.Log.Debugf("inbox: urgent dispatch sk=%s sent %dB", env.SessionKey, len(env.Text))
-			}
+			a.logger().Debugf("inbox: urgent dispatch sk=%s sent %dB", env.SessionKey, len(env.Text))
 			return
 		}
 		// API-mode fallback: buffer for next tool-boundary drain.
 		inb.appendSteer(env.Text, env.ReceivedAt)
-		if a.Log != nil {
-			a.Log.Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
-		}
+		a.logger().Debugf("inbox: buffered steer sk=%s %dB", env.SessionKey, len(env.Text))
 		return
 	}
 
@@ -324,9 +314,7 @@ func (a *Agent) Enqueue(env Envelope) {
 	select {
 	case inb.ch <- env:
 	default:
-		if a.Log != nil {
-			a.Log.Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
-		}
+		a.logger().Warnf("inbox: queue full for sk=%s, dropping message (%dB)", env.SessionKey, len(env.Text))
 	}
 }
 
@@ -380,7 +368,7 @@ func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 	if inb, ok := a.inboxes[sk]; ok {
 		return inb
 	}
-	inb := newSessionInbox(sk, a.Log)
+	inb := newSessionInbox(sk, a.logger())
 	a.inboxes[sk] = inb
 	if a.inboxStarted {
 		inb.workerStarted.Do(func() {
@@ -398,13 +386,9 @@ func (a *Agent) getOrCreateInbox(sk string) *sessionInbox {
 // is flipped around each Driver.Drive call so Enqueue's routing decisions
 // see "in-flight" while a turn is running and "idle" between turns.
 func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
-	if a.Log != nil {
-		a.Log.Debugf("inbox: session worker started sk=%s", inb.sk)
-	}
+	a.logger().Debugf("inbox: session worker started sk=%s", inb.sk)
 	defer func() {
-		if a.Log != nil {
-			a.Log.Debugf("inbox: session worker exiting sk=%s", inb.sk)
-		}
+		a.logger().Debugf("inbox: session worker exiting sk=%s", inb.sk)
 	}()
 	for {
 		select {
@@ -447,9 +431,7 @@ func (a *Agent) CancelSession(sk string) bool {
 	if cancel == nil {
 		return false
 	}
-	if a.Log != nil {
-		a.Log.Infof("CancelSession sk=%s firing turn cancel", sk)
-	}
+	a.logger().Infof("CancelSession sk=%s firing turn cancel", sk)
 	cancel()
 	return true
 }
@@ -484,9 +466,7 @@ func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
 		return nil
 	}
 	logFn := func(trigger string, err error) {
-		if a.Log != nil {
-			a.Log.Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
-		}
+		a.logger().Warnf("late-delivery send failed sk=%s trigger=%s: %v", sk, trigger, err)
 	}
 	// Conversation-DB logging for late-delivered text. No per-turn
 	// metadata available at this scope (the fallback fires when no per-
@@ -508,9 +488,7 @@ func (a *Agent) lateDeliverySink(sk string, driver Driver) turnevent.Sink {
 func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, batch []Envelope, steerer turnevent.Steerer, seed Envelope) {
 	driver := seed.Driver
 	if driver == nil {
-		if a.Log != nil {
-			a.Log.Warnf("inbox: no driver on envelope sk=%s, dropping batch (%d msgs)", inb.sk, len(batch))
-		}
+		a.logger().Warnf("inbox: no driver on envelope sk=%s, dropping batch (%d msgs)", inb.sk, len(batch))
 		return
 	}
 	router := a.sessionRouterFor(inb, driver)
@@ -522,9 +500,7 @@ func (a *Agent) driveAndDrainOrphans(ctx context.Context, inb *sessionInbox, bat
 			return
 		}
 		followUp := buildFollowUp(seed, orphans, extras)
-		if a.Log != nil {
-			a.Log.Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))
-		}
+		a.logger().Infof("inbox: follow-up sk=%s orphans=%d extras=%d", inb.sk, len(orphans), len(extras))
 		a.driveOnce(ctx, inb, followUp, steerer, router, driver)
 	}
 }
@@ -555,8 +531,8 @@ func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelo
 	err := driver.WrapTurn(func() error {
 		return a.RunTurn(turnCtx, inb.sk, batch, steerer, router, driver)
 	})
-	if err != nil && a.Log != nil {
-		a.Log.Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
+	if err != nil {
+		a.logger().Errorf("inbox: driver error sk=%s: %v", inb.sk, err)
 	}
 }
 
