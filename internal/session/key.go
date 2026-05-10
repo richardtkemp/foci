@@ -185,6 +185,22 @@ func ChatIDFromKey(key string) int64 {
 	return 0
 }
 
+// AgentIDFromKey extracts the agent ID (first segment) from a session key
+// string. Returns "" if the key is malformed. Equivalent to
+// ParseSessionKey(key).AgentID with the error path discarded — use it when
+// the agent ID is the only field needed and a parse failure should fall back
+// to "no agent" rather than surfacing as an error. Mirrors ChatIDFromKey.
+func AgentIDFromKey(key string) string {
+	idx := strings.Index(key, "/")
+	if idx <= 0 {
+		// No separator (or starts with /) — not a valid session key.
+		// Don't return the whole string as an "agent ID" — that hides
+		// the fact that it's malformed.
+		return ""
+	}
+	return key[:idx]
+}
+
 // SessionKeyBase extracts the stable {agentID}/{type}{id} prefix from a session
 // key string. This portion is invariant across compaction (version rotation) and
 // branching, making it suitable for ownership comparisons.
