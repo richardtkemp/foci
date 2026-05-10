@@ -36,10 +36,14 @@ func TestChildSysProcAttrSetsid(t *testing.T) {
 
 func TestChildCredentialPreservesOtherGroups(t *testing.T) {
 	// Verifies that when a child credential is set, the foci-secrets group is excluded from its group list while all other supplementary groups are preserved.
-	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("test requires non-root user")
 	}
+
+	// SetupChildCredential is idempotent (sync.Once), so calling it from
+	// multiple tests is safe. Not parallel because childCredential is a
+	// package-level var read here after Setup runs.
+	SetupChildCredential()
 
 	// If foci-secrets group doesn't exist, credential should be nil
 	// (nothing to drop). If it does exist but we lack CAP_SETGID,
@@ -108,7 +112,8 @@ func TestExecSetsidStillWorks(t *testing.T) {
 
 func TestNoCredentialWithoutSecretsGroup(t *testing.T) {
 	// Verifies that childCredential is nil when the foci-secrets group does not exist on this system, since there is no group to drop credentials for.
-	t.Parallel()
+	// Not parallel — reads package-level childCredential after SetupChildCredential.
+	SetupChildCredential()
 	_, err := user.LookupGroup(secrets.SecurityGroupName)
 	if err != nil {
 		// Group doesn't exist — credential must be nil
