@@ -1163,3 +1163,69 @@ func TestSessionsNeedingReflection(t *testing.T) {
 		t.Errorf("expected exactly 2 sessions needing reflection, got %d: %v", len(keys), keys)
 	}
 }
+
+// ========== cc_resume_id migration ==========
+
+func TestMigrateCcResumeIDs(t *testing.T) {
+	// Proves that pre-existing agent_metadata rows keyed 'cc_session:<sk>' are
+	// moved into session_metadata under key='cc_resume_id' on next open, with
+	// the source rows deleted. Verifies the structural fix for TODO #759.
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "migrate.db")
+
+	idx1, err := NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	// Seed pre-migration state: legacy rows in agent_metadata.
+	if err := idx1.SetAgentMetadata("clutch", "cc_session:clutch/c123", "uuid-A"); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+	if err := idx1.SetAgentMetadata("scout", "cc_session:scout/c456", "uuid-B"); err != nil {
+		t.Fatalf("seed B: %v", err)
+	}
+	// Also seed an unrelated agent_metadata row that must NOT be touched.
+	if err := idx1.SetAgentMetadata("clutch", "model", "claude-opus-4-7"); err != nil {
+		t.Fatalf("seed unrelated: %v", err)
+	}
+	idx1.Close()
+
+	// Re-open: migration runs in NewSessionIndex.
+	idx2, err := NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	defer idx2.Close()
+
+	// Migrated rows present in session_metadata.
+	if v, _ := idx2.GetSessionMetadata("clutch/c123", "cc_resume_id"); v != "uuid-A" {
+		t.Errorf("session_metadata clutch/c123 cc_resume_id = %q, want %q", v, "uuid-A")
+	}
+	if v, _ := idx2.GetSessionMetadata("scout/c456", "cc_resume_id"); v != "uuid-B" {
+		t.Errorf("session_metadata scout/c456 cc_resume_id = %q, want %q", v, "uuid-B")
+	}
+
+	// Source rows gone from agent_metadata.
+	if v, _ := idx2.GetAgentMetadata("clutch", "cc_session:clutch/c123"); v != "" {
+		t.Errorf("agent_metadata cc_session:clutch/c123 should be empty post-migration, got %q", v)
+	}
+	if v, _ := idx2.GetAgentMetadata("scout", "cc_session:scout/c456"); v != "" {
+		t.Errorf("agent_metadata cc_session:scout/c456 should be empty post-migration, got %q", v)
+	}
+
+	// Unrelated agent_metadata row preserved.
+	if v, _ := idx2.GetAgentMetadata("clutch", "model"); v != "claude-opus-4-7" {
+		t.Errorf("unrelated agent_metadata row clobbered: got %q", v)
+	}
+
+	// Idempotency: re-opening once more must not panic or undo anything.
+	idx2.Close()
+	idx3, err := NewSessionIndex(dbPath)
+	if err != nil {
+		t.Fatalf("third open: %v", err)
+	}
+	defer idx3.Close()
+	if v, _ := idx3.GetSessionMetadata("clutch/c123", "cc_resume_id"); v != "uuid-A" {
+		t.Errorf("idempotency: lost data on second migration pass, got %q", v)
+	}
+}
