@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/session"
 )
@@ -46,8 +47,17 @@ func (a *Agent) OrchestrateFullTurn(ctx context.Context, tc TurnContract, ts *Tu
 	// runPostTurn unblocks on CompletionChan. A permission-blocked CC turn
 	// keeps inFlight=1 until the user decides; that's exactly the gate
 	// signal we want (TODO #753).
+	//
+	// The delivering bit is sourced from the sink on ctx — if the sink
+	// routes to a user-facing platform (Telegram, Discord), the in-flight
+	// turn is delivering and Telegram follow-ups can safely fold into it
+	// via the existing inject path. If the sink is NopSink/BufferSink (e.g.
+	// reflection's no-sink ctx, see TODO #767), the in-flight turn is
+	// non-delivering and the inbox worker waits for it to clear before
+	// dispatching a new envelope, avoiding the discarded-response bug.
 	sessionBase := session.SessionKeyBase(ts.SessionKey)
-	doneInFlight := a.markInFlight(sessionBase)
+	delivering := turnevent.SinkFromContext(ctx).DeliversToPlatform()
+	doneInFlight := a.markInFlight(sessionBase, delivering)
 	defer doneInFlight()
 	unreg := tc.RegisterTurn(ts)
 	defer unreg()

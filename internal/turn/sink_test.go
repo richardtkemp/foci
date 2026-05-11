@@ -347,3 +347,26 @@ func TestSessionSinkErrorHandlerInvoked(t *testing.T) {
 		t.Errorf("error handler got %v, want network", captured)
 	}
 }
+
+// TestSinkDeliversToPlatform pins the DeliversToPlatform answer per
+// production sink in this package. StreamingSink drives a renderer backed by
+// a platform.Connection; SessionSink delivers via Connection.SendToSession.
+// Both must report true so the sink-delivery gate (TODO #767) allows
+// Telegram follow-ups to fold into in-flight turns that use them.
+func TestSinkDeliversToPlatform(t *testing.T) {
+	// StreamingSink with nil conn still reports true — nil-conn is a test
+	// affordance, not a deliberate non-delivery contract.
+	backend := newMockBackend()
+	tracker := &fakeSinkTracker{}
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	stream := NewStreamingSink(renderer, tracker, nil)
+	if !stream.DeliversToPlatform() {
+		t.Errorf("StreamingSink.DeliversToPlatform() = false, want true")
+	}
+
+	// SessionSink delivers to the user's chat via Connection.SendToSession.
+	sess := NewSessionSink(&fakeSessionConn{}, "sess-1", "test")
+	if !sess.DeliversToPlatform() {
+		t.Errorf("SessionSink.DeliversToPlatform() = false, want true")
+	}
+}

@@ -22,6 +22,12 @@ func (s *recordingRouterSink) Emit(_ context.Context, _ turnevent.Event) {
 	s.count.Add(1)
 }
 
+// DeliversToPlatform implements turnevent.Sink. Routing tests don't exercise
+// the gate, but the interface needs satisfying — declare true so the router
+// delegation tests below can assert sessionRouter.DeliversToPlatform()
+// against a known answer.
+func (s *recordingRouterSink) DeliversToPlatform() bool { return true }
+
 func TestSessionRouter_FallbackWhenNoSinkRegistered(t *testing.T) {
 	t.Parallel()
 	fallback := &recordingRouterSink{id: "fallback"}
@@ -161,4 +167,53 @@ func TestSessionRouter_ConcurrentRegisterEmitClear(t *testing.T) {
 func TestSessionRouter_ImplementsSinkInterface(t *testing.T) {
 	t.Parallel()
 	var _ turnevent.Sink = (*sessionRouter)(nil)
+}
+
+// nonDeliveringSink is a turnevent.Sink that reports DeliversToPlatform=false
+// — companion to recordingRouterSink for testing the router's delegation
+// behaviour.
+type nonDeliveringSink struct{}
+
+func (nonDeliveringSink) Emit(_ context.Context, _ turnevent.Event) {}
+func (nonDeliveringSink) DeliversToPlatform() bool                  { return false }
+
+// TestSessionRouter_DeliversToPlatformDelegates verifies that the router
+// forwards DeliversToPlatform to whichever sink Emit would currently route
+// to: the registered per-turn sink when one is set, or the fallback. This
+// is load-bearing for the sink-delivery gate (TODO #767), which asks the
+// agent's session-scoped sink whether the in-flight turn's output reaches
+// a user.
+func TestSessionRouter_DeliversToPlatformDelegates(t *testing.T) {
+	t.Parallel()
+
+	// Delivering fallback, no registered per-turn sink → reports delivering.
+	delivFallback := &recordingRouterSink{id: "fallback"}
+	r := newSessionRouter(delivFallback)
+	if !r.DeliversToPlatform() {
+		t.Errorf("router with delivering fallback: DeliversToPlatform = false, want true")
+	}
+
+	// Register a non-delivering per-turn sink — router now reports false.
+	r.Register(nonDeliveringSink{})
+	if r.DeliversToPlatform() {
+		t.Errorf("router with non-delivering registered sink: DeliversToPlatform = true, want false")
+	}
+
+	// Clear → falls back, delivering again.
+	r.Clear()
+	if !r.DeliversToPlatform() {
+		t.Errorf("router after Clear: DeliversToPlatform = false, want true")
+	}
+
+	// Non-delivering fallback path.
+	r2 := newSessionRouter(nonDeliveringSink{})
+	if r2.DeliversToPlatform() {
+		t.Errorf("router with non-delivering fallback: DeliversToPlatform = true, want false")
+	}
+
+	// Nil fallback installs the NopSink singleton (non-delivering).
+	r3 := newSessionRouter(nil)
+	if r3.DeliversToPlatform() {
+		t.Errorf("router with nil (NopSink) fallback: DeliversToPlatform = true, want false")
+	}
 }

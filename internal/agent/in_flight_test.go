@@ -28,7 +28,7 @@ func TestInFlight_CounterReflectsState(t *testing.T) {
 		t.Fatalf("IsTurnInFlight on fresh Agent: got true, want false")
 	}
 
-	done := a.markInFlight(testBaseA)
+	done := a.markInFlight(testBaseA, true)
 	if !a.IsTurnInFlight(testBaseA) {
 		t.Fatalf("after markInFlight(%s): got false, want true", testBaseA)
 	}
@@ -44,7 +44,7 @@ func TestInFlight_CounterReflectsState(t *testing.T) {
 // double-defer in some future call site.
 func TestInFlight_DoneIdempotent(t *testing.T) {
 	a := &Agent{}
-	done := a.markInFlight(testBaseA)
+	done := a.markInFlight(testBaseA, true)
 	done()
 	done()
 	done()
@@ -62,7 +62,9 @@ func TestInFlight_MultipleConcurrentTurnsSameBase(t *testing.T) {
 	const N = 10
 	var dones []func()
 	for i := 0; i < N; i++ {
-		dones = append(dones, a.markInFlight(testBaseA))
+		// Alternate delivering/non-delivering so the test exercises both
+		// counters under nested marks on the same base.
+		dones = append(dones, a.markInFlight(testBaseA, i%2 == 0))
 	}
 	if !a.IsTurnInFlight(testBaseA) {
 		t.Fatalf("after %d markInFlight: IsTurnInFlight returned false", N)
@@ -83,7 +85,7 @@ func TestInFlight_MultipleConcurrentTurnsSameBase(t *testing.T) {
 func TestInFlight_DistinctBases(t *testing.T) {
 	a := &Agent{}
 
-	doneA := a.markInFlight(testBaseA)
+	doneA := a.markInFlight(testBaseA, true)
 	if !a.IsTurnInFlight(testBaseA) {
 		t.Fatalf("IsTurnInFlight(%s) after mark: got false, want true", testBaseA)
 	}
@@ -91,7 +93,7 @@ func TestInFlight_DistinctBases(t *testing.T) {
 		t.Fatalf("IsTurnInFlight(%s) leaked from %s mark: got true, want false", testBaseB, testBaseA)
 	}
 
-	doneB := a.markInFlight(testBaseB)
+	doneB := a.markInFlight(testBaseB, true)
 	if !a.IsTurnInFlight(testBaseB) {
 		t.Fatalf("IsTurnInFlight(%s) after mark: got false, want true", testBaseB)
 	}
@@ -123,12 +125,15 @@ func TestInFlight_RaceSafe(t *testing.T) {
 		if i%2 == 0 {
 			base = testBaseB
 		}
-		go func(b string) {
+		// Mix delivering/non-delivering across goroutines so the parallel
+		// inFlightDelivering counter is exercised alongside inFlight.
+		delivering := i%3 != 0
+		go func(b string, d bool) {
 			defer wg.Done()
-			done := a.markInFlight(b)
+			done := a.markInFlight(b, d)
 			time.Sleep(time.Millisecond)
 			done()
-		}(base)
+		}(base, delivering)
 	}
 	wg.Wait()
 	if a.IsTurnInFlight(testBaseA) {
@@ -136,6 +141,118 @@ func TestInFlight_RaceSafe(t *testing.T) {
 	}
 	if a.IsTurnInFlight(testBaseB) {
 		t.Fatalf("after %d concurrent mark/done pairs: IsTurnInFlight(%s) = true, want false", N, testBaseB)
+	}
+	if a.IsInFlightDelivering(testBaseA) {
+		t.Fatalf("after %d concurrent mark/done pairs: IsInFlightDelivering(%s) = true, want false", N, testBaseA)
+	}
+	if a.IsInFlightDelivering(testBaseB) {
+		t.Fatalf("after %d concurrent mark/done pairs: IsInFlightDelivering(%s) = true, want false", N, testBaseB)
+	}
+}
+
+// TestInFlight_DeliveringSeparate verifies the delivering counter tracks
+// only delivering marks, with the total counter incremented either way.
+func TestInFlight_DeliveringSeparate(t *testing.T) {
+	a := &Agent{}
+
+	if a.IsInFlightDelivering(testBaseA) {
+		t.Fatalf("IsInFlightDelivering on fresh Agent: got true, want false")
+	}
+
+	// Non-delivering mark first — total goes up, delivering does not.
+	doneNop := a.markInFlight(testBaseA, false)
+	if !a.IsTurnInFlight(testBaseA) {
+		t.Fatalf("after markInFlight(_, false): IsTurnInFlight = false, want true")
+	}
+	if a.IsInFlightDelivering(testBaseA) {
+		t.Fatalf("after markInFlight(_, false): IsInFlightDelivering = true, want false")
+	}
+
+	// Layer a delivering mark on top — both counters go up.
+	doneDeliv := a.markInFlight(testBaseA, true)
+	if !a.IsTurnInFlight(testBaseA) {
+		t.Fatalf("after layered delivering mark: IsTurnInFlight = false, want true")
+	}
+	if !a.IsInFlightDelivering(testBaseA) {
+		t.Fatalf("after layered delivering mark: IsInFlightDelivering = false, want true")
+	}
+
+	// Drop the delivering mark — total still positive (nop mark held),
+	// delivering returns to false.
+	doneDeliv()
+	if !a.IsTurnInFlight(testBaseA) {
+		t.Fatalf("after delivering done: IsTurnInFlight = false, want true (nop still held)")
+	}
+	if a.IsInFlightDelivering(testBaseA) {
+		t.Fatalf("after delivering done: IsInFlightDelivering = true, want false")
+	}
+
+	doneNop()
+	if a.IsTurnInFlight(testBaseA) {
+		t.Fatalf("after both done: IsTurnInFlight = true, want false")
+	}
+}
+
+// TestInFlight_WaitChClosesOnChange verifies that InFlightWaitCh returns a
+// channel that closes on the next state change (mark or done) for that base,
+// and that a fresh channel is installed afterwards.
+func TestInFlight_WaitChClosesOnChange(t *testing.T) {
+	a := &Agent{}
+
+	ch := a.InFlightWaitCh(testBaseA)
+	select {
+	case <-ch:
+		t.Fatalf("InFlightWaitCh closed before any state change")
+	default:
+	}
+
+	done := a.markInFlight(testBaseA, false)
+	select {
+	case <-ch:
+		// expected — mark closes the existing waiter.
+	case <-time.After(time.Second):
+		t.Fatalf("InFlightWaitCh did not close after markInFlight")
+	}
+
+	// A new fetch must return a fresh, still-open channel.
+	ch2 := a.InFlightWaitCh(testBaseA)
+	select {
+	case <-ch2:
+		t.Fatalf("replacement channel closed prematurely")
+	default:
+	}
+
+	done()
+	select {
+	case <-ch2:
+		// expected — done closes the new waiter too.
+	case <-time.After(time.Second):
+		t.Fatalf("replacement InFlightWaitCh did not close after done()")
+	}
+}
+
+// TestInFlight_WaitChPerBase verifies that a state change on one base does
+// not wake waiters on another base.
+func TestInFlight_WaitChPerBase(t *testing.T) {
+	a := &Agent{}
+
+	chA := a.InFlightWaitCh(testBaseA)
+	chB := a.InFlightWaitCh(testBaseB)
+
+	doneA := a.markInFlight(testBaseA, true)
+	defer doneA()
+
+	select {
+	case <-chA:
+		// expected
+	case <-time.After(time.Second):
+		t.Fatalf("chA did not close after markInFlight(testBaseA)")
+	}
+	select {
+	case <-chB:
+		t.Fatalf("chB closed on testBaseA state change — bases leaked")
+	case <-time.After(50 * time.Millisecond):
+		// expected — no change on testBaseB.
 	}
 }
 

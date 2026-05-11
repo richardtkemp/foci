@@ -18,6 +18,14 @@ type fnSink func(context.Context, turnevent.Event)
 // Emit implements turnevent.Sink.
 func (f fnSink) Emit(ctx context.Context, ev turnevent.Event) { f(ctx, ev) }
 
+// DeliversToPlatform implements turnevent.Sink. Tests that adapt closures
+// through fnSink are observing the event stream, not delivering — but they
+// also wrap an existing sink whose answer ought to surface. Returning true
+// here keeps existing test wiring (which expects the in-flight tracking and
+// gate logic to treat the test sink as delivering, matching the platform
+// sinks it stands in for) behaviourally stable.
+func (f fnSink) DeliversToPlatform() bool { return true }
+
 // hmTest wraps HandleMessage with a fan-out sink that preserves any
 // previously-attached sink (so tests that want to observe intermediate
 // events keep working) and additionally captures TurnComplete.FinalText so

@@ -51,6 +51,12 @@ func NewStreamingSink(renderer *TurnRenderer, tracker SinkTracker, conn platform
 	}
 }
 
+// DeliversToPlatform implements turnevent.Sink. StreamingSink drives a
+// renderer backed by a platform.Connection (Telegram, Discord), so output is
+// always user-facing — even when conn is nil for tests, the renderer remains
+// the contractual delivery path. Returns true unconditionally.
+func (s *StreamingSink) DeliversToPlatform() bool { return true }
+
 // Emit implements turnevent.Sink.
 func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
@@ -167,6 +173,12 @@ func NewSessionSink(conn platform.Connection, sessionKey, trigger string, opts .
 	}
 	return s
 }
+
+// DeliversToPlatform implements turnevent.Sink. SessionSink delivers text via
+// Connection.SendToSession, so output reaches the user's platform chat.
+// Returns true unconditionally — a nil conn is a misconfiguration handled by
+// the per-event nil-guards below, not a deliberate non-delivery contract.
+func (s *SessionSink) DeliversToPlatform() bool { return true }
 
 // Emit implements turnevent.Sink.
 func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {

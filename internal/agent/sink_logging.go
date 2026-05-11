@@ -19,11 +19,11 @@ import (
 // delegated path doesn't double-log because intermediate delivery handles
 // the whole turn's text). Other event types pass through unchanged.
 type loggingSink struct {
-	inner   turnevent.Sink
-	a       *Agent
-	chatID  int64
-	meta    *TurnMetadata
-	sk      string
+	inner  turnevent.Sink
+	a      *Agent
+	chatID int64
+	meta   *TurnMetadata
+	sk     string
 }
 
 // newLoggingSink wraps inner with conv-DB logging using the supplied
@@ -46,4 +46,11 @@ func (s *loggingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		s.a.logConversationSent(s.chatID, s.meta, s.sk, e.Text)
 	}
 	s.inner.Emit(ctx, ev)
+}
+
+// DeliversToPlatform implements turnevent.Sink by forwarding the answer from
+// inner. loggingSink is a transparent wrapper — adding conv-DB logging
+// doesn't change whether the underlying sink reaches a user-facing platform.
+func (s *loggingSink) DeliversToPlatform() bool {
+	return s.inner.DeliversToPlatform()
 }

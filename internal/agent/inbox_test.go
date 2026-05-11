@@ -10,6 +10,7 @@ import (
 	"foci/internal/agent/turnevent"
 	"foci/internal/delegator"
 	"foci/internal/platform"
+	"foci/internal/session"
 )
 
 // --- Test fixtures ---
@@ -801,4 +802,148 @@ func TestInbox_SessionRouter_DistinctPerSession(t *testing.T) {
 // (Late-delivery dispatch is covered by SessionRouter unit tests in
 // router_test.go and the lateDeliverySink construction is exercised
 // via the integration layer when a real Connection is wired.)
+
+// TestInbox_Worker_SinkDeliveryGate_BlocksNonDelivering asserts the
+// sink-delivery gate in sessionWorker: when a non-delivering turn is in
+// flight on the session base, an enqueued envelope waits rather than
+// dispatching. Once the non-delivering turn ends, the worker proceeds.
+//
+// Repro of TODO #767: reflection/keepalive/compaction-memory turns dispatch
+// via handleDelegatedBranch with no sink on ctx, so their in-flight entry
+// is non-delivering. Without this gate, a Telegram message arriving during
+// that turn folds into the inject path and goes to NopSink.
+func TestInbox_Worker_SinkDeliveryGate_BlocksNonDelivering(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	hook := make(chan struct{}, 1)
+	done := make(chan struct{}, 1)
+	d := &recordingDriver{hookCh: hook, doneCh: done}
+	a.SetTurnObserver(d.recordBatch)
+
+	sk := "test/s"
+	base := session.SessionKeyBase(sk)
+
+	// Simulate a non-delivering turn in-flight (reflection-style).
+	releaseInFlight := a.markInFlight(base, false)
+
+	// Enqueue. The worker should NOT dispatch — it must wait on the gate.
+	a.Enqueue(Envelope{SessionKey: sk, Text: "hello", Driver: d})
+
+	select {
+	case <-hook:
+		releaseInFlight()
+		t.Fatalf("worker dispatched while non-delivering turn was in flight; expected to wait")
+	case <-time.After(150 * time.Millisecond):
+		// expected — worker is parked in InFlightWaitCh.
+	}
+
+	// Release the in-flight; the worker should now wake and dispatch.
+	releaseInFlight()
+	select {
+	case <-hook:
+		// expected — worker proceeded.
+	case <-time.After(time.Second):
+		t.Fatalf("worker did not dispatch after non-delivering in-flight released")
+	}
+	<-done
+
+	calls := d.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 Drive call after gate opened, got %d", len(calls))
+	}
+	if calls[0][0].Text != "hello" {
+		t.Errorf("dispatched batch unexpected: %+v", calls[0])
+	}
+}
+
+// TestInbox_Worker_SinkDeliveryGate_AllowsDelivering asserts the complement:
+// when the in-flight turn IS delivering (its sink reaches the user's
+// platform), the worker dispatches immediately. The existing in-flight
+// follow-up path is the legitimate behaviour for same-session mid-turn
+// addenda (Dick sending "in London" after "what's the weather"), and the
+// gate must not break it.
+func TestInbox_Worker_SinkDeliveryGate_AllowsDelivering(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	hook := make(chan struct{}, 1)
+	done := make(chan struct{}, 1)
+	d := &recordingDriver{hookCh: hook, doneCh: done}
+	a.SetTurnObserver(d.recordBatch)
+
+	sk := "test/s"
+	base := session.SessionKeyBase(sk)
+
+	// Simulate a delivering turn in-flight (a normal user-facing turn).
+	releaseInFlight := a.markInFlight(base, true)
+	defer releaseInFlight()
+
+	a.Enqueue(Envelope{SessionKey: sk, Text: "addendum", Driver: d})
+
+	select {
+	case <-hook:
+		// expected — gate let it through because delivering=true.
+	case <-time.After(time.Second):
+		t.Fatalf("worker did not dispatch while delivering turn was in flight")
+	}
+	<-done
+}
+
+// TestInbox_Worker_SinkDeliveryGate_BatchesArrivalsWhileWaiting asserts that
+// envelopes arriving while the worker is parked on the gate accumulate in
+// the channel and batch together when the gate opens — matching the
+// existing batches-available semantics for the non-gated case.
+func TestInbox_Worker_SinkDeliveryGate_BatchesArrivalsWhileWaiting(t *testing.T) {
+	a, cancel := startedAgent(t)
+	defer cancel()
+
+	hook := make(chan struct{}, 1)
+	done := make(chan struct{}, 1)
+	d := &recordingDriver{hookCh: hook, doneCh: done}
+	a.SetTurnObserver(d.recordBatch)
+
+	sk := "test/s"
+	base := session.SessionKeyBase(sk)
+
+	releaseInFlight := a.markInFlight(base, false)
+
+	a.Enqueue(Envelope{SessionKey: sk, Text: "first", Driver: d})
+	// Give the worker a moment to read the first envelope and park on the
+	// gate before further enqueues arrive on the channel.
+	time.Sleep(20 * time.Millisecond)
+	a.Enqueue(Envelope{SessionKey: sk, Text: "second", Driver: d})
+	a.Enqueue(Envelope{SessionKey: sk, Text: "third", Driver: d})
+
+	// Still no Drive — gate is closed.
+	select {
+	case <-hook:
+		releaseInFlight()
+		t.Fatalf("worker dispatched while non-delivering turn was in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseInFlight()
+
+	select {
+	case <-hook:
+	case <-time.After(time.Second):
+		t.Fatalf("worker did not dispatch after gate opened")
+	}
+	<-done
+
+	calls := d.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 batched Drive call, got %d", len(calls))
+	}
+	if len(calls[0]) != 3 {
+		t.Fatalf("expected 3 envelopes in batch, got %d: %+v", len(calls[0]), calls[0])
+	}
+	wantTexts := []string{"first", "second", "third"}
+	for i, env := range calls[0] {
+		if env.Text != wantTexts[i] {
+			t.Errorf("batch[%d].Text = %q, want %q", i, env.Text, wantTexts[i])
+		}
+	}
+}
 
