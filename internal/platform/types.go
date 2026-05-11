@@ -93,8 +93,14 @@ type SendOptions struct {
 }
 
 // TextSender is implemented by platform bots for text delivery.
-// Silent-message filtering (platform.IsSilent) is handled by each concrete
-// implementation's SendText/SendTextToChat methods.
+//
+// Silent-message filtering (platform.IsSilent) is applied upstream of the
+// platform layer, at the renderer/sink chokepoints (turn.TurnRenderer.OnReply
+// and Finalize, turn.SessionSink.Emit) and at the BufferSink→platform
+// forwarding site (asyncDispatch in cmd/foci-gw/http.go). SendText and
+// SendTextToChat themselves only filter whitespace-empty input — they trust
+// that any caller routing through them has already applied the silencing
+// policy, or has an explicit reason not to.
 type TextSender interface {
 	SendText(text string) error
 	SendTextToChat(chatID int64, text string) error
