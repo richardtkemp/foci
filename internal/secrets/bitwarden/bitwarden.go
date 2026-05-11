@@ -11,16 +11,17 @@ package bitwarden
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/procx"
 )
 
 // Item holds vault item metadata (never the password value).
@@ -79,7 +80,7 @@ func (e *DefaultExecutor) ShellCommand(args ...string) string {
 func (e *DefaultExecutor) Run(args ...string) (string, error) {
 	// Wrap: sudo -u bitwarden sh -c 'export BW_SESSION=$(cat FILE) && bw ...'
 	shellCmd := e.ShellCommand(args...)
-	cmd := exec.Command("sudo", "-u", "bitwarden", "sh", "-c", shellCmd)
+	cmd := procx.Spawn(context.Background(), "sudo", "-u", "bitwarden", "sh", "-c", shellCmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

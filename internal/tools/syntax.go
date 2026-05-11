@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"foci/internal/procx"
+
 	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
@@ -21,15 +24,15 @@ type SyntaxChecker func(content []byte) error
 
 // syntaxCheckers maps file extensions to their validators.
 var syntaxCheckers = map[string]SyntaxChecker{
-	".json":  checkJSON,
-	".toml":  checkTOML,
-	".go":    checkGo,
-	".yaml":  checkYAML,
-	".yml":   checkYAML,
-	".xml":   checkXML,
-	".py":    checkPython,
-	".sh":    checkShell,
-	".bash":  checkShell,
+	".json": checkJSON,
+	".toml": checkTOML,
+	".go":   checkGo,
+	".yaml": checkYAML,
+	".yml":  checkYAML,
+	".xml":  checkXML,
+	".py":   checkPython,
+	".sh":   checkShell,
+	".bash": checkShell,
 }
 
 // checkSyntax looks up a checker by file extension and validates content.
@@ -94,7 +97,7 @@ func checkPython(content []byte) error {
 	if err != nil {
 		return nil // python3 not available, skip
 	}
-	cmd := exec.Command(path, "-c", "import ast,sys; ast.parse(sys.stdin.read())")
+	cmd := procx.Spawn(context.Background(), path, "-c", "import ast,sys; ast.parse(sys.stdin.read())")
 	cmd.Stdin = bytes.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -108,7 +111,7 @@ func checkShell(content []byte) error {
 	if err != nil {
 		return nil // bash not available, skip
 	}
-	cmd := exec.Command(path, "-n")
+	cmd := procx.Spawn(context.Background(), path, "-n")
 	cmd.Stdin = bytes.NewReader(content)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

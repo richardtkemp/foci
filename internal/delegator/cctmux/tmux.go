@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"foci/internal/procx"
 )
 
 // tmuxPane manages a tmux pane running claude interactively.
@@ -369,9 +369,8 @@ func (p *tmuxPane) loadBufferFromStdin(ctx context.Context, text string) error {
 	if p.socketPath != "" {
 		args = append([]string{"-S", p.socketPath}, args...)
 	}
-	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
+	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
 	cmd.Stdin = strings.NewReader(text)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
@@ -387,8 +386,7 @@ func (p *tmuxPane) runTmux(ctx context.Context, args ...string) (string, error) 
 	if p.socketPath != "" {
 		args = append([]string{"-S", p.socketPath}, args...)
 	}
-	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

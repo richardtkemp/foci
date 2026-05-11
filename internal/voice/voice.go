@@ -10,12 +10,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"foci/internal/config"
-	"foci/internal/tempdir"
 	"foci/internal/log"
+	"foci/internal/procx"
+	"foci/internal/tempdir"
 )
 
 // STT transcribes audio to text.
@@ -177,7 +177,7 @@ func (e *EdgeTTS) Synthesize(ctx context.Context, text string) ([]byte, error) {
 		args = append(args, "--rate", rateToEdgeTTS(e.Rate))
 	}
 
-	ttsCmd := exec.CommandContext(ctx, cmd, args...)
+	ttsCmd := procx.Spawn(ctx, cmd, args...)
 	if output, err := ttsCmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("edge-tts: %w: %s", err, string(output))
 	}

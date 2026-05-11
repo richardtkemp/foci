@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 )
@@ -189,7 +190,16 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		}
 	}
 
-	proc := exec.CommandContext(ctx, execShell(), "-c", cmd)
+	var proc *exec.Cmd
+	if background {
+		proc = procx.SpawnSetsid(ctx, execShell(), "-c", cmd)
+		proc.WaitDelay = 2 * time.Second
+	} else {
+		proc = procx.Spawn(ctx, execShell(), "-c", cmd)
+		proc.Cancel = func() error {
+			return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
+		}
+	}
 	proc.Dir = workDir
 
 	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.) and FOCI_SOCK
@@ -197,16 +207,6 @@ func execDirect(ctx context.Context, cmd, displayCmd string, timeout time.Durati
 		proc.Env = append(os.Environ(), extraEnv...)
 		if bridge != nil {
 			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
-		}
-	}
-
-	if background {
-		proc.SysProcAttr = ChildSysProcAttrSetsid()
-		proc.WaitDelay = 2 * time.Second
-	} else {
-		proc.SysProcAttr = ChildSysProcAttr()
-		proc.Cancel = func() error {
-			return syscall.Kill(-proc.Process.Pid, syscall.SIGKILL)
 		}
 	}
 
@@ -262,9 +262,10 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 		}
 	}
 
-	// Use exec.Command (not CommandContext) so timeout doesn't kill the process.
-	// Auto-backgrounded commands should run to completion regardless of timeout.
-	proc := exec.Command(execShell(), "-c", cmd)
+	// Use context.Background() (not the caller's ctx) so timeout doesn't
+	// kill the process. Auto-backgrounded commands should run to completion
+	// regardless of timeout.
+	proc := procx.Spawn(context.Background(), execShell(), "-c", cmd)
 	proc.Dir = workDir
 
 	// Inject extra env vars (FOCI_ADDR, FOCI_GW_SOCK, etc.) and FOCI_SOCK
@@ -274,7 +275,6 @@ func execWithAutoBackground(ctx context.Context, cmd, displayCmd string, timeout
 			proc.Env = append(proc.Env, "FOCI_SOCK="+bridge.SockPath())
 		}
 	}
-	proc.SysProcAttr = ChildSysProcAttr()
 	// Don't set proc.Cancel — let the command run to completion
 
 	// Use pipes with LimitReader to cap memory usage (Bug #115)

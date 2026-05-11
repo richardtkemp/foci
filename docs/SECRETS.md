@@ -167,8 +167,9 @@ Secrets are protected at the operating system level using Unix groups:
 1. **Group `foci-secrets`** — a dedicated group that owns `secrets.toml`
 2. **File ownership** — `secrets.toml` is owned by `root:foci-secrets` with permissions `0660`
 3. **Supplementary groups** — the systemd unit grants `SupplementaryGroups=foci-secrets` so the main foci process can read and write secrets
-4. **Group dropping** — all child processes spawned by the exec tool, tmux tool, and script commands have the `foci-secrets` group removed from their supplementary group list. All other groups (e.g. `docker`, `git`, `sudo`) are preserved. The OS denies access to `secrets.toml` because the child no longer has `foci-secrets`
+4. **Group dropping** — every subprocess foci-gw spawns goes through `procx.Spawn` / `procx.SpawnSetsid` (`internal/procx`), which removes the `foci-secrets` group from the child's supplementary group list while preserving all other groups (e.g. `docker`, `git`, `sudo`). This covers delegated Claude Code agents, exec/tmux tools, MCP servers, TTS, document conversion, the credential-refresh probe — everything. The OS denies access to `secrets.toml` because the child no longer has `foci-secrets`.
 5. **CAP_SETGID** — the systemd unit grants `AmbientCapabilities=CAP_SETGID` so the process can call `setgroups()` to drop groups on child processes
+6. **forbidigo lint guard** — `.golangci.yml` bans raw `exec.Command` / `exec.CommandContext` repo-wide, with `internal/procx/procx.go` as the sole allowed caller. Any future code path that bypasses `procx.Spawn` fails `golangci-lint`. This prevents the security property from regressing under future refactors.
 
 This means even if an AI agent constructs a command to read `secrets.toml` using encoding tricks, glob patterns, interpreter string construction, or any other bypass technique, the OS kernel denies access. The protection is not bypassable from userspace.
 

@@ -9,13 +9,14 @@ import (
 	"strings"
 	"syscall"
 	"unicode"
+
+	"foci/internal/procx"
 )
 
-// runCmd runs a command via exec.CommandContext with process group kill.
+// runCmd runs a command via procx.Spawn with process group kill on cancel.
 // Returns combined stdout+stderr output.
 func runCmd(ctx context.Context, binary string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.SysProcAttr = ChildSysProcAttr()
+	cmd := procx.Spawn(ctx, binary, args...)
 	cmd.Cancel = func() error {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
@@ -247,17 +248,17 @@ func NewGrepTool(binary, name string) *Tool {
 
 // gitAllowedSubcommands are the read-only git subcommands allowed in explore mode.
 var gitAllowedSubcommands = map[string]bool{
-	"log":      true,
-	"show":     true,
-	"diff":     true,
-	"status":   true,
-	"blame":    true,
-	"branch":   true,
-	"tag":      true,
-	"shortlog": true,
+	"log":       true,
+	"show":      true,
+	"diff":      true,
+	"status":    true,
+	"blame":     true,
+	"branch":    true,
+	"tag":       true,
+	"shortlog":  true,
 	"rev-parse": true,
-	"ls-files": true,
-	"ls-tree":  true,
+	"ls-files":  true,
+	"ls-tree":   true,
 }
 
 // NewGitTool creates a read-only git exploration tool.

@@ -22,6 +22,7 @@ import (
 
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/procx"
 )
 
 func init() {
@@ -61,23 +62,23 @@ type Backend struct {
 	startOpts    delegator.StartOptions // saved for Restart
 
 	// Process
-	cmd    *exec.Cmd
-	writer *Writer
-	cancel context.CancelFunc // cancels reader goroutine + keep-alive
-	done      chan struct{} // closed when reader goroutine exits
-	waitCh    chan error   // receives cmd.Wait() result (reaps zombie)
-	exitCh    chan struct{} // closed when exitErr is set
-	exitErr   error        // set by waiter goroutine when process exits
+	cmd     *exec.Cmd
+	writer  *Writer
+	cancel  context.CancelFunc // cancels reader goroutine + keep-alive
+	done    chan struct{}      // closed when reader goroutine exits
+	waitCh  chan error         // receives cmd.Wait() result (reaps zombie)
+	exitCh  chan struct{}      // closed when exitErr is set
+	exitErr error              // set by waiter goroutine when process exits
 
 	// State
-	mu           sync.Mutex
-	running      bool
-	closing      bool // set by Close() before shutdown; tells OnReaderStopped this is expected
-	sessionID    string       // from init message
-	initMsg      *InitMessage // from init message
-	readyCh      chan struct{} // closed when init received
-	readyOnce    sync.Once    // ensures readyCh closed once
-	initReqID    string       // request_id of the initialize control request
+	mu        sync.Mutex
+	running   bool
+	closing   bool          // set by Close() before shutdown; tells OnReaderStopped this is expected
+	sessionID string        // from init message
+	initMsg   *InitMessage  // from init message
+	readyCh   chan struct{} // closed when init received
+	readyOnce sync.Once     // ensures readyCh closed once
+	initReqID string        // request_id of the initialize control request
 
 	// finalizeOnce gates the dead-process cleanup so it runs exactly once,
 	// regardless of whether the waiter goroutine (cmd.Wait returned) or the
@@ -94,14 +95,14 @@ type Backend struct {
 	sessionEvents atomic.Pointer[delegator.SessionEvents]
 
 	// Turn state
-	turnMu       sync.Mutex
-	turnActive   bool
-	turnEvents   *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
-	turnResultCh chan *ResultMessage   // buffered(1), receives result
-	compactDoneCh  chan struct{}       // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
-	compactStartCh chan struct{}       // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
-	turnText      strings.Builder      // accumulates text across assistant messages
-	turnTools     int                  // tool_use count this turn
+	turnMu         sync.Mutex
+	turnActive     bool
+	turnEvents     *delegator.TurnEvents // current turn's bookkeeping (OnTurnComplete, nudges); nil between turns
+	turnResultCh   chan *ResultMessage   // buffered(1), receives result
+	compactDoneCh  chan struct{}         // buffered(1), armed by ArmCompactionWait; fired on compact_boundary
+	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
+	turnText       strings.Builder       // accumulates text across assistant messages
+	turnTools      int                   // tool_use count this turn
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -227,7 +228,7 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 	// caller's context — otherwise the process is killed when the turn
 	// context expires or is cancelled.
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(cmdCtx, "claude", args...)
+	cmd := procx.Spawn(cmdCtx, "claude", args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = os.Environ()
 
@@ -631,7 +632,6 @@ func (b *Backend) sendUserMessage(text string) error {
 func (b *Backend) sendUserMessagePriority(text, priority string) error {
 	return b.writer.SendUserPriority(text, priority)
 }
-
 
 // Inject is the canonical entry point for delivering a user-role event to
 // CC. It subsumes SendToPane / SendToPaneWithAttachments / SendCommand —

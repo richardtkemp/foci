@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
+
+	"foci/internal/procx"
 )
 
 // BuildInfo holds version and build information.
@@ -49,7 +51,7 @@ var restartFunc = doRestart
 // SIGTERM (relying on a process supervisor or Docker restart policy).
 func doRestart() (string, error) {
 	if _, err := exec.LookPath("systemctl"); err == nil {
-		cmd := exec.Command("systemctl", "restart", "foci")
+		cmd := procx.Spawn(context.Background(), "systemctl", "restart", "foci")
 		if err := cmd.Start(); err != nil {
 			return "", fmt.Errorf("systemctl restart failed: %w", err)
 		}

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"foci/internal/procx"
 )
 
 // BitwardenStoreInfo provides read-only access to bitwarden store state
@@ -58,19 +60,19 @@ func bitwardenSetup() string {
 	}
 	sb.WriteString(fmt.Sprintf("✓ bw CLI: %s\n", bwPath))
 
-	if out, err := exec.Command("bw", "--version").Output(); err == nil {
+	if out, err := procx.Spawn(context.Background(), "bw", "--version").Output(); err == nil {
 		sb.WriteString(fmt.Sprintf("  Version: %s\n", strings.TrimSpace(string(out))))
 	}
 
 	userExists := false
-	if _, err := exec.Command("id", "bitwarden").Output(); err == nil {
+	if _, err := procx.Spawn(context.Background(), "id", "bitwarden").Output(); err == nil {
 		userExists = true
 		sb.WriteString("✓ bitwarden user: exists\n")
 	} else {
 		sb.WriteString("✗ bitwarden user: NOT FOUND\n")
 
 		sb.WriteString("  Creating bitwarden system user via aisudo...\n")
-		cmd := exec.Command("sudo", "useradd", "--system", "--create-home", "--shell", "/usr/sbin/nologin", "bitwarden")
+		cmd := procx.Spawn(context.Background(), "sudo", "useradd", "--system", "--create-home", "--shell", "/usr/sbin/nologin", "bitwarden")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
@@ -83,7 +85,7 @@ func bitwardenSetup() string {
 	}
 
 	if userExists {
-		cmd := exec.Command("sudo", "-u", "bitwarden", "bw", "status", "--nointeraction")
+		cmd := procx.Spawn(context.Background(), "sudo", "-u", "bitwarden", "bw", "status", "--nointeraction")
 		out, err := cmd.Output()
 		if err != nil {
 			sb.WriteString("✗ bw status: cannot check (aisudo may need approval)\n")
