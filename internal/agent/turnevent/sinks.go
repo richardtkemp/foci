@@ -14,6 +14,10 @@ type NopSink struct{}
 // Emit implements Sink.
 func (NopSink) Emit(context.Context, Event) {}
 
+// DeliversToPlatform implements Sink. NopSink discards every event, so it
+// never reaches a user-facing platform.
+func (NopSink) DeliversToPlatform() bool { return false }
+
 var nopSinkSingleton Sink = NopSink{}
 
 // BufferSink collects the final text and usage from a turn. It ignores
@@ -35,6 +39,13 @@ type BufferSink struct {
 
 // NewBufferSink constructs an empty BufferSink.
 func NewBufferSink() *BufferSink { return &BufferSink{} }
+
+// DeliversToPlatform implements Sink. BufferSink accumulates results for an
+// in-process caller (HTTP handler, spawn tool); it does not route to a
+// user-facing platform. Async wrappers around BufferSink may forward the
+// captured text via Connection.SendToSession after the turn, but that tail is
+// orthogonal to the sink contract itself.
+func (b *BufferSink) DeliversToPlatform() bool { return false }
 
 // Emit implements Sink.
 func (b *BufferSink) Emit(_ context.Context, ev Event) {

@@ -33,6 +33,7 @@ import (
 	"foci/internal/delegator"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/session"
 	"foci/internal/turn"
 )
 
@@ -395,6 +396,31 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 		case <-ctx.Done():
 			return
 		case env := <-inb.ch:
+			// Sink-delivery gate (TODO #767): if a turn is currently in
+			// flight on this session base AND its sink does NOT deliver to
+			// a user-facing platform (reflection, keepalive, compaction-
+			// memory, session-end-memory — all of which dispatch via
+			// handleDelegatedBranch with no sink on ctx), folding this
+			// envelope into that turn via the existing RunInference inject
+			// path would discard the response. Wait for the non-delivering
+			// turn to clear before dispatching a fresh turn whose own sink
+			// reaches the user.
+			//
+			// Each query is independent — the combination "in flight AND
+			// NOT delivering = wait" is visible at the call site rather
+			// than baked into a single overloaded predicate. While we wait,
+			// further envelopes accumulate in inb.ch (buffered) and will
+			// be batched together via drainAvailable once the gate opens.
+			base := session.SessionKeyBase(env.SessionKey)
+			for a.IsTurnInFlight(base) && !a.IsInFlightDelivering(base) {
+				wait := a.InFlightWaitCh(base)
+				select {
+				case <-ctx.Done():
+					return
+				case <-wait:
+					// State changed — re-check the predicate.
+				}
+			}
 			inb.turnActive.Store(true)
 			batch := append([]Envelope{env}, inb.drainAvailable()...)
 			steerer := turnevent.SteererFunc(inb.drainSteerTexts)

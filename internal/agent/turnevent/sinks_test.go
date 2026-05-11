@@ -68,6 +68,27 @@ func TestNopSinkDiscards(t *testing.T) {
 	// If it compiles and doesn't panic, it works.
 }
 
+// TestDeliversToPlatformByType pins the DeliversToPlatform answer per sink
+// type. NopSink discards everything and BufferSink accumulates for an
+// in-process caller, so both report false — the sink-delivery gate (TODO
+// #767) relies on these answers to decide whether a fresh Telegram message
+// can fold into an in-flight turn or must wait for a new turn with a
+// delivering sink.
+func TestDeliversToPlatformByType(t *testing.T) {
+	if (NopSink{}).DeliversToPlatform() {
+		t.Errorf("NopSink.DeliversToPlatform() = true, want false")
+	}
+	if NewBufferSink().DeliversToPlatform() {
+		t.Errorf("BufferSink.DeliversToPlatform() = true, want false")
+	}
+	// The SinkFromContext fallback (no sink attached) must also report
+	// false so callers that read it directly get the same gate signal as
+	// when they unwrap the singleton.
+	if SinkFromContext(context.Background()).DeliversToPlatform() {
+		t.Errorf("SinkFromContext(empty).DeliversToPlatform() = true, want false")
+	}
+}
+
 // TestSinkFromContextFallback asserts callers that emit into a ctx without a
 // sink attached get a no-op rather than a nil-pointer panic.
 func TestSinkFromContextFallback(t *testing.T) {

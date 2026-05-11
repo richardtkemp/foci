@@ -79,3 +79,14 @@ func (r *sessionRouter) Emit(ctx context.Context, ev turnevent.Event) {
 	}
 	r.fallback.Emit(ctx, ev)
 }
+
+// DeliversToPlatform implements turnevent.Sink by forwarding the answer from
+// whichever sink Emit would currently route to: the registered per-turn sink
+// when one is set, or the fallback. Lets callers ask "if I emit now, does it
+// reach a user-facing platform?" via the same dispatch shape as Emit.
+func (r *sessionRouter) DeliversToPlatform() bool {
+	if ref := r.current.Load(); ref != nil {
+		return ref.s.DeliversToPlatform()
+	}
+	return r.fallback.DeliversToPlatform()
+}

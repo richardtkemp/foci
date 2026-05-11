@@ -134,6 +134,19 @@ func (TurnComplete) turnEvent()  {}
 
 // Sink receives events during a turn. One sink per turn; sinks are constructed
 // fresh in each caller and attached to the turn context via WithSink.
+//
+// DeliversToPlatform reports whether this sink ultimately routes output to a
+// platform.Connection where a user can see it (Telegram, Discord, etc.).
+// Returns false for sinks that discard everything (NopSink), buffer for an
+// in-process caller (BufferSink), or otherwise lack a user-facing destination.
+// Delegating sinks (router, logging, late-delivery wrappers) forward the
+// answer from their inner sink.
+//
+// The inbox's session worker consults this — via a separate Agent-level query
+// keyed on session base — to decide whether a freshly arrived Telegram message
+// can fold into the currently in-flight turn or must wait for a fresh turn
+// with its own delivering sink (see TODO #767 / inbox.go sessionWorker).
 type Sink interface {
 	Emit(ctx context.Context, ev Event)
+	DeliversToPlatform() bool
 }
