@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/session"
 	"foci/internal/tools"
 )
@@ -609,7 +609,7 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 		args = append(args, "--system-prompt", systemPrompt)
 	}
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := procx.Spawn(ctx, "claude", args...)
 	cmd.Dir = m.StartOpts.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
 

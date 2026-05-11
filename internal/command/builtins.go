@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,20 +11,9 @@ import (
 	"time"
 
 	"foci/internal/display"
+	"foci/internal/procx"
 	"foci/internal/timeutil"
 )
-
-// ChildSysProcAttr is called to get the SysProcAttr for child processes.
-// Set this from main to drop supplementary groups (foci-secrets).
-// If nil, defaults to {Setpgid: true}.
-var ChildSysProcAttr func() *syscall.SysProcAttr
-
-func childSysProcAttr() *syscall.SysProcAttr {
-	if ChildSysProcAttr != nil {
-		return ChildSysProcAttr()
-	}
-	return &syscall.SysProcAttr{Setpgid: true}
-}
 
 type LastMessageStore struct {
 	mu       sync.RWMutex
@@ -327,8 +315,7 @@ func ScriptCommand(name, description, script string, timeout int) *Command {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 			defer cancel()
 
-			cmd := exec.CommandContext(ctx, "sh", "-c", script)
-			cmd.SysProcAttr = childSysProcAttr()
+			cmd := procx.Spawn(ctx, "sh", "-c", script)
 			cmd.Cancel = func() error {
 				return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}

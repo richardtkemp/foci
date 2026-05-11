@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 
 	"foci/internal/log"
+	"foci/internal/procx"
 )
 
 // CLISummariser implements Summariser by shelling out to `claude --print`.
@@ -61,7 +61,7 @@ func NewCLISummariser(binary, model string, maxInputChars int) *CLISummariser {
 func (s *CLISummariser) Summarise(ctx context.Context, content []byte, prompt, filePath string) (string, error) {
 	content = CapInputChars(content, s.maxInputChars)
 
-	cmd := exec.CommandContext(ctx, s.binary,
+	cmd := procx.Spawn(ctx, s.binary,
 		"--print",
 		"--no-session-persistence",
 		"--model", s.model,

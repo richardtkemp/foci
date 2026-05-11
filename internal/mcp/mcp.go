@@ -8,13 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/tools"
 
@@ -88,9 +88,9 @@ type serverConn struct {
 type Manager struct {
 	mu        sync.Mutex
 	servers   []serverConn
-	configDir string   // directory containing mcp.toml
-	agentID   string   // agent ID for server filtering
-	current   []ServerConfig // last-applied server configs (for change detection)
+	configDir string           // directory containing mcp.toml
+	agentID   string           // agent ID for server filtering
+	current   []ServerConfig   // last-applied server configs (for change detection)
 	tf        transportFactory // nil in production, set for testing
 }
 
@@ -159,7 +159,7 @@ func makeTransport(cfg ServerConfig) (mcp.Transport, error) {
 	if cfg.Command == "" {
 		return nil, fmt.Errorf("server %q has neither command nor url", cfg.Name)
 	}
-	cmd := exec.Command(cfg.Command, cfg.Args...)
+	cmd := procx.Spawn(context.Background(), cfg.Command, cfg.Args...)
 	if len(cfg.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), cfg.Env...)
 	}

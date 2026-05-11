@@ -19,6 +19,7 @@ linters:
 
     # Import restrictions
     - depguard       # forbid stdlib log packages
+    - forbidigo      # forbid raw exec.Command (must use procx.Spawn)
 
 linters-settings:
   dupl:
@@ -33,6 +34,20 @@ linters-settings:
             desc: "Use foci/internal/log instead of log/slog"
           - pkg: "log$"
             desc: "Use foci/internal/log instead of stdlib log"
+
+  forbidigo:
+    # Ban raw exec.Command / exec.CommandContext. All subprocess spawning
+    # must go through procx.Spawn / procx.SpawnSetsid so the
+    # foci-secrets supplementary group is stripped from children
+    # (otherwise child processes can read /home/foci/config/secrets.toml).
+    # Allowed callers: internal/procx/procx.go (the helper itself, which
+    # holds the bootstrap probe and the spawn entry points).
+    forbid:
+      - p: ^exec\.Command$
+        msg: "use procx.Spawn (raw exec.Command leaks the foci-secrets group to children)"
+      - p: ^exec\.CommandContext$
+        msg: "use procx.Spawn (raw exec.CommandContext leaks the foci-secrets group to children)"
+    analyze-types: false
 
   errcheck:
     exclude-functions:
@@ -68,9 +83,17 @@ issues:
         - dupl
         - unparam
         - ineffassign
+        - forbidigo
 
     # Ignore unused ctx in tool functions - keep signature consistent
     - path: tools/
       text: "ctx.*is unused"
       linters:
         - unparam
+
+    # forbidigo exemption: internal/procx/procx.go is the sole permitted
+    # caller of exec.Command* — it contains the spawn helpers (Spawn /
+    # SpawnSetsid) and the CAP_SETGID probe.
+    - path: internal/procx/procx\.go
+      linters:
+        - forbidigo

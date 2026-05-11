@@ -5,12 +5,12 @@ import (
 	"crypto/md5" // #nosec G501 - used for content checksums, not security
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/session"
 )
 
@@ -56,8 +56,8 @@ type tmuxInstance struct {
 	notifier          *AsyncNotifier
 	cols              int
 	rows              int
-	autopilot         bool // auto-unwatch on inactivity, auto-watch on send
-	watchThresholdSec int  // default watch threshold in seconds from config
+	autopilot         bool                  // auto-unwatch on inactivity, auto-watch on send
+	watchThresholdSec int                   // default watch threshold in seconds from config
 	sessionIndex      *session.SessionIndex // nil = no persistence
 	agentID           string                // agent ID for metadata keys
 	sendMu            sync.Mutex
@@ -431,11 +431,10 @@ func runTmuxWithSocket(ctx context.Context, socket string, args ...string) (stri
 	if socket != "" {
 		args = append([]string{"-S", socket}, args...)
 	}
-	cmd := exec.CommandContext(cmdCtx, "tmux", args...)
-	// Setsid puts the tmux process in its own session so it (and the tmux
-	// server it may spawn) won't be killed when the parent process group
-	// is cleaned up. Also drops supplementary groups (foci-secrets).
-	cmd.SysProcAttr = ChildSysProcAttrSetsid()
+	// procx.SpawnSetsid puts the tmux process in its own session so it (and
+	// the tmux server it may spawn) won't be killed when the parent process
+	// group is cleaned up. Also drops the foci-secrets supplementary group.
+	cmd := procx.SpawnSetsid(cmdCtx, "tmux", args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

@@ -3,13 +3,13 @@ package anthropic
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"sync"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/mana"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/secrets"
 )
@@ -188,7 +188,7 @@ func (r *AnthropicResolver) GetReloadFunc(secretsPath string) func() error {
 // claude auth status doesn't refresh tokens — only a real API call does.
 // Fire-and-forget — logs errors but never blocks.
 func startClaudeForRefresh() {
-	cmd := exec.Command("claude",
+	cmd := procx.Spawn(context.Background(), "claude",
 		"--model", "haiku",
 		"--system-prompt", "",
 		"--print",

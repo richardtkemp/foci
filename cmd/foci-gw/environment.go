@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/skills"
 	"foci/internal/tools"
 	"foci/internal/workspace"
@@ -30,7 +31,7 @@ func checkSkillSizes(registry *skills.Registry, maxResultChars int, agentID stri
 
 // countCrontabJobs counts the number of active cron jobs for the current user
 func countCrontabJobs() int {
-	cmd := exec.Command("sh", "-c", "crontab -l 2>/dev/null | grep -v '^#' | grep -v '^$' | wc -l")
+	cmd := procx.Spawn(context.Background(), "sh", "-c", "crontab -l 2>/dev/null | grep -v '^#' | grep -v '^$' | wc -l")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -178,4 +179,3 @@ func buildEnvironmentDelegated(acfg config.AgentConfig, configPath string, cfg *
 	writeVisibility(&b, rc)
 	return b.String()
 }
-

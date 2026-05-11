@@ -4,12 +4,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/procx"
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
-	"foci/internal/tools"
 )
 
 type secretsResult struct {
@@ -61,14 +60,11 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 
 	// Initialise the child-credential drop (probes CAP_SETGID, stashes a
 	// Credential that filters foci-secrets out of child processes' groups).
-	// Must run before ChildSysProcAttr is wired into the command package.
-	// Only foci-gw calls this — see internal/tools/procattr.go for why the
+	// Every subprocess foci-gw spawns goes through procx.Spawn /
+	// procx.SpawnSetsid, which read the credential populated here.
+	// Only foci-gw calls this — see internal/procx/procx.go for why the
 	// foci CLI deliberately skips it (TODO #755 cron-log noise fix).
-	tools.SetupChildCredential()
-
-	// Wire child process group-dropping into the command package
-	// (so script commands also drop supplementary groups).
-	command.ChildSysProcAttr = tools.ChildSysProcAttr
+	procx.Setup()
 
 	// Bitwarden store (optional)
 	var bwStore *bitwarden.Store

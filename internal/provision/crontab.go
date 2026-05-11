@@ -1,10 +1,12 @@
 package provision
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	"foci/internal/procx"
 )
 
 // GenerateCrontab reads a crontab template, replaces placeholders, strips comments,
@@ -71,5 +73,5 @@ func AppendCrontab(lines []string) error {
 // RunCrontabCmd is the function used to append crontab entries.
 // Overridden in tests to avoid real exec.
 var RunCrontabCmd = func(shellCmd string) error {
-	return exec.Command("sh", "-c", shellCmd).Run()
+	return procx.Spawn(context.Background(), "sh", "-c", shellCmd).Run()
 }

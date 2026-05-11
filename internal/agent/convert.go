@@ -12,6 +12,7 @@ import (
 
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/procx"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/go-shiori/go-readability"
@@ -84,7 +85,7 @@ const convertTimeout = 30 * time.Second
 func convertWithPandoc(path, format string) convertResult {
 	ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
+	cmd := procx.Spawn(ctx, "pandoc", "-f", format, "-t", "plain", "--wrap=none", path)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -110,7 +111,7 @@ func convertXlsx(path string) convertResult {
 	// Try ssconvert first (produces clean CSV output)
 	ctx, cancel := context.WithTimeout(context.Background(), convertTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ssconvert", "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
+	cmd := procx.Spawn(ctx, "ssconvert", "--export-type=Gnumeric_stf:stf_csv", path, "fd://1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
