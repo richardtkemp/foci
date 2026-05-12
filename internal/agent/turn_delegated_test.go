@@ -555,7 +555,7 @@ func TestDelegatedTransport_RunInference_WaitForPermission(t *testing.T) {
 // nudge header. This is the delegated equivalent of the API transport's
 // mid-loop CheckAfterTools call after each tool batch.
 func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
-	var capturedNudgeFunc func(string, bool) []string
+	var capturedNudgeFunc func(string, string, bool) []string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
@@ -591,14 +591,14 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 	}
 
 	// Two successful tools — no reminder yet (every_n_tools N=3, after_error needs isError).
-	if got := capturedNudgeFunc("Read", false); len(got) != 0 {
+	if got := capturedNudgeFunc("Read", "", false); len(got) != 0 {
 		t.Errorf("PostToolNudgeFunc after tool 1 = %v, want empty", got)
 	}
-	if got := capturedNudgeFunc("Edit", false); len(got) != 0 {
+	if got := capturedNudgeFunc("Edit", "", false); len(got) != 0 {
 		t.Errorf("PostToolNudgeFunc after tool 2 = %v, want empty", got)
 	}
 	// Third tool — every_n_tools should fire.
-	got := capturedNudgeFunc("Bash", false)
+	got := capturedNudgeFunc("Bash", "", false)
 	if len(got) == 0 {
 		t.Fatal("PostToolNudgeFunc after tool 3 should return a reminder")
 	}
@@ -620,7 +620,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeWired(t *testing.T) {
 // callback is safe when the agent has no Nudger — returns nil without panic
 // so hook_response dispatch keeps working for agents that don't nudge.
 func TestDelegatedTransport_RunInference_PostToolNudgeNilNudger(t *testing.T) {
-	var capturedNudgeFunc func(string, bool) []string
+	var capturedNudgeFunc func(string, string, bool) []string
 	be := &mockBackendDT{
 		sessionFile: "/tmp/session.jsonl",
 		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
@@ -645,7 +645,7 @@ func TestDelegatedTransport_RunInference_PostToolNudgeNilNudger(t *testing.T) {
 	if capturedNudgeFunc == nil {
 		t.Fatal("PostToolNudgeFunc should be wired even without Nudger")
 	}
-	if got := capturedNudgeFunc("Read", false); got != nil {
+	if got := capturedNudgeFunc("Read", "", false); got != nil {
 		t.Errorf("PostToolNudgeFunc with nil Nudger = %v, want nil", got)
 	}
 }

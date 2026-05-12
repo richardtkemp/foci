@@ -37,11 +37,21 @@ Trigger types (pick the most appropriate):
 - {"type": "pre_answer"} — remind just before returning a final answer to the user
 - {"type": "after_error"} — remind when a tool call returns an error
 - {"type": "regex", "pattern": "regex"} — remind when the user's message matches this pattern
+- {"type": "tool_pattern", "tool_pattern": "regex", "input_pattern": "regex", "consecutive": N}
+  — remind when the most recent tool calls match. tool_pattern matches the
+  tool name (e.g. "^Read$", "^(Read|Grep|Glob)$"); input_pattern matches the
+  raw tool_input JSON (e.g. "rm -rf", "/character/[^/]+\\.md"); consecutive
+  defaults to 1. Both pattern fields are optional — omitting one means "any".
+  Prefer tool_pattern over a high-N every_n_tools when the rule is really
+  about a specific kind of work (reading without engaging, editing character
+  files, running destructive bash). Common tool names: Read, Write, Edit,
+  Bash, Grep, Glob, Task, WebFetch, WebSearch, TodoWrite.
 
 Use your judgment on trigger type and frequency. For every_n_tools rules, keep N high —
 every 15 tool calls is already quite frequent. Only the most critical rules should
 fire that often; most should use N=25 or higher. Rules about edge cases can have
-even higher N or more specific triggers.
+even higher N or more specific triggers. tool_pattern is usually a better fit
+than every_n_tools when the rule has a clear "what kind of tool use" signal.
 
 Limit: return at most ONE rule for "pre_answer" and at most ONE rule for "after_error".
 If multiple rules would use the same trigger type, synthesize them into a single

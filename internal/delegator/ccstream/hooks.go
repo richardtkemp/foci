@@ -267,6 +267,7 @@ type hookScriptOutput struct {
 	InstallID    string `json:"install_id,omitempty"`
 	ToolUseID    string `json:"tool_use_id"`
 	ToolName     string `json:"tool_name"`
+	ToolInput    string `json:"tool_input,omitempty"`
 	ToolResponse string `json:"tool_response,omitempty"`
 	Error        string `json:"error,omitempty"`
 	AgentID      string `json:"agent_id,omitempty"`
@@ -357,7 +358,7 @@ func (b *Backend) handleHookResponse(raw json.RawMessage) {
 	turn := b.turnEvents
 	b.turnMu.Unlock()
 	if turn != nil && turn.PostToolNudgeFunc != nil {
-		for _, text := range turn.PostToolNudgeFunc(parsed.ToolName, parsed.IsError) {
+		for _, text := range turn.PostToolNudgeFunc(parsed.ToolName, parsed.ToolInput, parsed.IsError) {
 			if text == "" {
 				continue
 			}
