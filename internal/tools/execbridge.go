@@ -438,6 +438,47 @@ func generateHelpText(t *Tool) string {
 	return b.String()
 }
 
+// todoActionAliases maps user-friendly aliases to canonical action names.
+// Both the shell layer (foci_todo create) and the Go tool layer (action:
+// "create" in JSON params from CC tool calls) consult this map to normalize
+// to the canonical name before dispatch. New aliases added here propagate
+// automatically to both surfaces.
+//
+// The schema enum in NewTodoTool intentionally lists only canonical names —
+// aliases are a convenience layer, not part of the canonical surface (same
+// convention as `list-all`, which is shell-only and not in the schema).
+var todoActionAliases = map[string]string{
+	"create": "add",
+}
+
+// resolveTodoAction returns the canonical action for an input action,
+// applying todoActionAliases if applicable. Unknown actions pass through
+// unchanged so the downstream switch can produce its usage-style error.
+func resolveTodoAction(a string) string {
+	if canonical, ok := todoActionAliases[a]; ok {
+		return canonical
+	}
+	return a
+}
+
+// todoActionAliasesBashCase emits the body of a `case "$action" in ... esac`
+// block that rewrites alias action names to their canonical form. Emitted
+// near the top of the foci_todo shell function so every downstream lookup
+// (action_usage, positional dispatch, main dispatch) sees the canonical name.
+func todoActionAliasesBashCase() string {
+	// Sort for deterministic output across builds.
+	aliases := make([]string, 0, len(todoActionAliases))
+	for a := range todoActionAliases {
+		aliases = append(aliases, a)
+	}
+	sort.Strings(aliases)
+	var b strings.Builder
+	for _, a := range aliases {
+		fmt.Fprintf(&b, "    %s) action='%s' ;;\n", a, todoActionAliases[a])
+	}
+	return b.String()
+}
+
 // todoActions defines per-subcommand usage and flag lists for foci_todo, the
 // only sub-actioned shell tool today. Single source of truth for both
 //
@@ -457,7 +498,7 @@ var todoActions = []struct {
 	Usage string // single-line: e.g. "complete <id> [--reason TEXT]"
 	Flags string // space-separated --flag list valid for this action; empty = no flags
 }{
-	{"add", "add --text TEXT [--priority high|medium|low] [--tag TAGS]", "--text --priority --tag"},
+	{"add", "add --text TEXT [--priority high|medium|low] [--tag TAGS]   (alias: create)", "--text --priority --tag"},
 	{"list", "list [--tag T] [--status open|done|dropped|all] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --status --priority --sort --reverse --limit"},
 	{"list-all", "list-all [--tag T] [--priority P] [--sort F] [--reverse] [--limit N]", "--tag --priority --sort --reverse --limit"},
 	{"search", "search <query> [--sort F] [--reverse] [--limit N]", "--sort --reverse --limit"},
@@ -571,6 +612,10 @@ func generateShellFunc(t *Tool) string {
 %s
 %s
   local action="$1"; shift 2>/dev/null || true
+  # Normalize action aliases (e.g. "create" → "add"). Single source of truth:
+  # todoActionAliases in internal/tools/execbridge.go.
+  case "$action" in
+%s  esac
   # Per-action usage and flag scope for --help and unknown-flag errors.
   # See todoActions in internal/tools/execbridge.go for the source of truth.
   local action_usage="" action_flags=""
@@ -716,7 +761,7 @@ func generateShellFunc(t *Tool) string {
       ;;
   esac
 }
-`, name, todoHelpCheck, guard, todoActionsBashCase(), name)
+`, name, todoHelpCheck, guard, todoActionAliasesBashCase(), todoActionsBashCase(), name)
 
 	case "summary":
 		// Prompt as argument; content from --file or stdin

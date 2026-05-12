@@ -919,6 +919,82 @@ func TestTodoShellFunc_CloseReasonAliases(t *testing.T) {
 	}
 }
 
+// TestTodoActionAliases covers the action-alias surface (TODO: foci_todo
+// create as a valid synonym for add). Verifies both layers:
+//
+//   - The shell layer emits a normalization case so `foci_todo create ...`
+//     resolves to add before reaching action_usage / dispatch.
+//   - The Go layer's resolveTodoAction maps aliases to canonical names so a
+//     direct tool call with action="create" also dispatches to add.
+//
+// Adding a new alias to todoActionAliases should make this test continue to
+// pass without manual updates — the loop walks the map.
+func TestTodoActionAliases(t *testing.T) {
+	t.Parallel()
+
+	// Tool layer: every alias resolves to its canonical action.
+	for alias, canonical := range todoActionAliases {
+		if got := resolveTodoAction(alias); got != canonical {
+			t.Errorf("resolveTodoAction(%q) = %q, want %q", alias, got, canonical)
+		}
+	}
+	// Non-alias action passes through unchanged.
+	if got := resolveTodoAction("add"); got != "add" {
+		t.Errorf("resolveTodoAction(\"add\") = %q, want \"add\"", got)
+	}
+	if got := resolveTodoAction("nonsense"); got != "nonsense" {
+		t.Errorf("resolveTodoAction(\"nonsense\") = %q, want passthrough", got)
+	}
+
+	// Shell layer: generated bash contains a normalization case for every
+	// declared alias, placed before the action_usage lookup so downstream
+	// help / dispatch sees the canonical name.
+	r := NewRegistry()
+	r.Register(&Tool{
+		Name:       "todo",
+		ExecExport: true,
+		Parameters: json.RawMessage(`{"type":"object","properties":{"action":{"type":"string"}}}`),
+	})
+	body := generateShellFunc(r.All()[0])
+
+	for alias, canonical := range todoActionAliases {
+		expected := alias + ") action='" + canonical + "'"
+		if !strings.Contains(body, expected) {
+			t.Errorf("generated bash missing alias normalization for %q → %q (expected substring %q)", alias, canonical, expected)
+		}
+	}
+
+	// The normalization comment marks the block so it can't be silently
+	// removed by a refactor.
+	if !strings.Contains(body, "Normalize action aliases") {
+		t.Error("generated bash missing alias-normalization comment block")
+	}
+}
+
+// TestTodoActionAliasEndToEnd dispatches an alias through the real tool
+// callback and confirms it lands in the underlying store as if the canonical
+// name had been used. Belt-and-braces against future refactors that route
+// around resolveTodoAction.
+func TestTodoActionAliasEndToEnd(t *testing.T) {
+	t.Parallel()
+	store := newTestTodoStore(t)
+	tool := NewTodoTool(store, "agent-alias")
+
+	params := map[string]interface{}{
+		"action":   "create",
+		"text":     "alias-test item",
+		"priority": "medium",
+	}
+	if _, err := executeTodoTool(tool, params); err != nil {
+		t.Fatalf("create-aliased add: %v", err)
+	}
+
+	items, _ := store.List("agent-alias", "", nil, "", "", false, 0)
+	if len(items) != 1 || items[0].Text != "alias-test item" {
+		t.Errorf("expected one item from create-aliased add, got %+v", items)
+	}
+}
+
 func TestExecBridgeTodoShellFuncSortParam(t *testing.T) {
 	// Verify the generated foci_todo shell function includes --sort parameter handling
 	t.Parallel()
