@@ -126,6 +126,11 @@ func ResetCommand() *Command {
 			},
 		},
 		DefaultExecute: softExec,
+		// Suppress the auto-wired keyboard: bare /reset must execute the soft
+		// reset directly via DefaultExecute, not prompt the user to pick from
+		// a one-option `[hard]` keyboard. `/reset hard` is still discoverable
+		// from /help and the subcommand usage string.
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption { return nil },
 	}
 	cmd.buildSubcommandDispatch()
 	return cmd
