@@ -449,3 +449,226 @@ func TestNewSchedulerNilRuleSet(t *testing.T) {
 		t.Error("expected nil scheduler for nil RuleSet")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// tool_pattern trigger tests
+//
+// These cover the tool-context nudges that fire based on the ring buffer of
+// recent (toolName, toolInput) pairs maintained by RecordToolCall. The
+// scheduler treats an empty ToolPattern / InputPattern as "no constraint",
+// and Consecutive defaults to 1.
+// ---------------------------------------------------------------------------
+
+func TestToolPatternToolNameMatch(t *testing.T) {
+	// A bare tool_pattern with only ToolPattern fires when the most recent
+	// tool name matches.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "saw-bash", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Bash$"}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	s.RecordToolCall("Read", `{"file_path":"/x"}`)
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("Read tool: unexpected fire %v", got)
+	}
+
+	s.RecordToolCall("Bash", `{"command":"ls"}`)
+	got := s.CheckAfterTools(2, false)
+	if len(got) != 1 || got[0] != "saw-bash" {
+		t.Errorf("Bash tool: expected [saw-bash], got %v", got)
+	}
+}
+
+func TestToolPatternInputMatch(t *testing.T) {
+	// A tool_pattern with only InputPattern fires when the input JSON matches,
+	// regardless of tool name.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "danger", Trigger: Trigger{Type: "tool_pattern", InputPattern: `rm -rf`}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	s.RecordToolCall("Bash", `{"command":"ls"}`)
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("benign command: unexpected fire %v", got)
+	}
+
+	s.RecordToolCall("Bash", `{"command":"rm -rf /tmp/foo"}`)
+	got := s.CheckAfterTools(2, false)
+	if len(got) != 1 || got[0] != "danger" {
+		t.Errorf("rm -rf command: expected [danger], got %v", got)
+	}
+}
+
+func TestToolPatternConsecutive(t *testing.T) {
+	// Consecutive: N requires the N most-recent events to all match.
+	// One non-match breaks the streak.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "stop-reading", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^(Read|Grep|Glob)$", Consecutive: 3}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	// Two consecutive Reads — not enough.
+	s.RecordToolCall("Read", "")
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("1 Read: unexpected fire %v", got)
+	}
+	s.RecordToolCall("Read", "")
+	if got := s.CheckAfterTools(2, false); len(got) != 0 {
+		t.Errorf("2 Reads: unexpected fire %v", got)
+	}
+
+	// Third consecutive — fires.
+	s.RecordToolCall("Grep", "")
+	got := s.CheckAfterTools(3, false)
+	if len(got) != 1 || got[0] != "stop-reading" {
+		t.Errorf("3 reads: expected [stop-reading], got %v", got)
+	}
+
+	// A non-Read in the middle breaks the streak. Next single Read won't fire.
+	s.RecordToolCall("Bash", "")
+	if got := s.CheckAfterTools(4, false); len(got) != 0 {
+		t.Errorf("Bash after Reads: unexpected fire %v", got)
+	}
+	s.RecordToolCall("Read", "")
+	// Cooldown applies (cooldown=1 means need 1 tool between fires; 3→4 is 1, but
+	// the streak was broken so it shouldn't fire anyway).
+	if got := s.CheckAfterTools(5, false); len(got) != 0 {
+		t.Errorf("single Read after break: unexpected fire %v", got)
+	}
+}
+
+func TestToolPatternBothFields(t *testing.T) {
+	// When both ToolPattern and InputPattern are set, both must match.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "edit-character", Trigger: Trigger{
+				Type:         "tool_pattern",
+				ToolPattern:  "^(Write|Edit)$",
+				InputPattern: `/character/[^/]+\.md`,
+			}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	// Edit but wrong path → no fire.
+	s.RecordToolCall("Edit", `{"file_path":"/tmp/x.md"}`)
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("non-character edit: unexpected fire %v", got)
+	}
+
+	// Read of character file → no fire (wrong tool).
+	s.RecordToolCall("Read", `{"file_path":"/home/foci/clutch/character/SOUL.md"}`)
+	if got := s.CheckAfterTools(2, false); len(got) != 0 {
+		t.Errorf("Read of character: unexpected fire %v", got)
+	}
+
+	// Edit of character file → fires.
+	s.RecordToolCall("Edit", `{"file_path":"/home/foci/clutch/character/SOUL.md"}`)
+	got := s.CheckAfterTools(3, false)
+	if len(got) != 1 || got[0] != "edit-character" {
+		t.Errorf("character edit: expected [edit-character], got %v", got)
+	}
+}
+
+func TestToolPatternCompileFailureDoesNotFire(t *testing.T) {
+	// Malformed regex → rule never fires, scheduler stays functional.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "broken", Trigger: Trigger{Type: "tool_pattern", ToolPattern: `[unclosed`}, Priority: "high"},
+			{Text: "ok", Trigger: Trigger{Type: "tool_pattern", ToolPattern: `^Bash$`}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	s.RecordToolCall("Bash", "")
+	got := s.CheckAfterTools(1, false)
+	// "ok" should fire; "broken" must not.
+	if len(got) != 1 || got[0] != "ok" {
+		t.Errorf("expected only [ok], got %v", got)
+	}
+}
+
+func TestRingBufferDepthBound(t *testing.T) {
+	// Verifies the recent ring buffer caps at recentBufferDepth and tail
+	// matching keeps working after wraparound.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "bash-tail", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Bash$", Consecutive: 2}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("hello")
+
+	// Fill the buffer with non-matching Reads beyond capacity.
+	for i := 0; i < recentBufferDepth*2; i++ {
+		s.RecordToolCall("Read", "")
+	}
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("Reads only: unexpected fire %v", got)
+	}
+
+	// Two Bash calls become the tail — fires.
+	s.RecordToolCall("Bash", "")
+	s.RecordToolCall("Bash", "")
+	got := s.CheckAfterTools(2, false)
+	if len(got) != 1 || got[0] != "bash-tail" {
+		t.Errorf("tail Bash×2: expected [bash-tail], got %v", got)
+	}
+}
+
+func TestStartTurnClearsRecentBuffer(t *testing.T) {
+	// tool_pattern shouldn't match across turn boundaries.
+	t.Parallel()
+
+	rs := &RuleSet{
+		Rules: []Rule{
+			{Text: "two-reads", Trigger: Trigger{Type: "tool_pattern", ToolPattern: "^Read$", Consecutive: 2}, Priority: "high"},
+		},
+	}
+	s := NewScheduler(rs, 1, 1)
+	s.StartTurn("turn-1")
+
+	// One Read in turn 1.
+	s.RecordToolCall("Read", "")
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("turn1 single Read: unexpected fire %v", got)
+	}
+
+	// New turn — buffer should be cleared.
+	s.StartTurn("turn-2")
+	// One Read in turn 2 alone — must not fire (buffer reset).
+	s.RecordToolCall("Read", "")
+	if got := s.CheckAfterTools(1, false); len(got) != 0 {
+		t.Errorf("turn2 first Read should not fire (buffer should have cleared): %v", got)
+	}
+
+	// Second Read in turn 2 — now fires.
+	s.RecordToolCall("Read", "")
+	got := s.CheckAfterTools(2, false)
+	if len(got) != 1 || got[0] != "two-reads" {
+		t.Errorf("turn2 two Reads: expected [two-reads], got %v", got)
+	}
+}

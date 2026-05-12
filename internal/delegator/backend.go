@@ -298,7 +298,7 @@ type EventHandler struct {
 
 	// PostToolNudgeFunc is called after each tool's completion signal.
 	// See TurnEvents.PostToolNudgeFunc for full semantics.
-	PostToolNudgeFunc func(toolName string, isError bool) []string
+	PostToolNudgeFunc func(toolName, toolInput string, isError bool) []string
 
 	// PreAnswerNudgeFunc is called when the backend signals end_turn.
 	// See TurnEvents.PreAnswerNudgeFunc for full semantics.
@@ -336,9 +336,14 @@ type TurnEvents struct {
 	// (PostToolUse hook dispatch). The caller returns any nudge reminders
 	// that should be injected mid-turn as "now"-priority user messages,
 	// matching the API transport's CheckAfterTools path. Non-blocking.
-	// Used by the delegated transport to fire every_n_tools and
-	// after_error nudge rules during long CC turns.
-	PostToolNudgeFunc func(toolName string, isError bool) []string
+	// Used by the delegated transport to fire every_n_tools, after_error,
+	// and tool_pattern nudge rules during long CC turns.
+	//
+	// toolInput is the raw tool_input JSON forwarded by the CC hook helper
+	// (truncated at 64KB). Empty when the hook envelope omits it. Tool-
+	// pattern rules use this to match on specific Bash commands, file
+	// paths, etc. — see internal/nudge/scheduler.go.
+	PostToolNudgeFunc func(toolName, toolInput string, isError bool) []string
 
 	// PreAnswerNudgeFunc is called when CC signals end_turn on a result
 	// message. The caller returns a follow-up prompt (or "" to let the

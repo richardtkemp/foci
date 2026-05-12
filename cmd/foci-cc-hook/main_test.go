@@ -58,6 +58,9 @@ func runHook(t *testing.T, body []byte, installID string) hookOutput {
 		AgentID:   in.AgentID,
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
 	}
+	if len(in.ToolInput) > 0 {
+		out.ToolInput = truncate(string(in.ToolInput), maxFieldBytes)
+	}
 	if len(in.ToolResponse) > 0 {
 		out.ToolResponse = truncate(decodeToolResponse(in.ToolResponse), maxFieldBytes)
 	}
@@ -248,5 +251,97 @@ func TestMain_InstallIDEchoed(t *testing.T) {
 	out := runHook(t, body, "backend-xyz")
 	if out.InstallID != "backend-xyz" {
 		t.Errorf("InstallID = %q, want backend-xyz", out.InstallID)
+	}
+}
+
+// TestMain_ToolInputForwarded proves CC's PostToolUse tool_input field
+// (verified to exist in claude-code/src/entrypoints/sdk/coreSchemas.ts at
+// PostToolUseHookInputSchema) is forwarded through to hookOutput so the
+// downstream nudge scheduler can match tool_pattern triggers on Bash
+// commands, file paths, etc. Compact JSON round-trips byte-for-byte; we
+// don't reformat or parse field-by-field at this layer.
+func TestMain_ToolInputForwarded(t *testing.T) {
+	body := []byte(`{
+		"hook_event_name": "PostToolUse",
+		"tool_name": "Bash",
+		"tool_use_id": "toolu_1",
+		"tool_input": {"command":"git status"},
+		"tool_response": "ok"
+	}`)
+	out := runHook(t, body, "test-id")
+	if !strings.Contains(out.ToolInput, `"command":"git status"`) {
+		t.Errorf("ToolInput = %q, want substring %q", out.ToolInput, `"command":"git status"`)
+	}
+}
+
+// TestMain_ToolInputForwardedOnFailure proves the same forwarding works for
+// PostToolUseFailure (tool_input is present on both success and failure
+// envelopes per coreSchemas.ts).
+func TestMain_ToolInputForwardedOnFailure(t *testing.T) {
+	body := []byte(`{
+		"hook_event_name": "PostToolUseFailure",
+		"tool_name": "Edit",
+		"tool_use_id": "toolu_2",
+		"tool_input": {"file_path":"/etc/passwd","new_string":"x"},
+		"error": "Permission denied"
+	}`)
+	out := runHook(t, body, "test-id")
+	if !out.IsError {
+		t.Error("IsError = false, want true for PostToolUseFailure")
+	}
+	if !strings.Contains(out.ToolInput, `"file_path":"/etc/passwd"`) {
+		t.Errorf("ToolInput = %q, want substring with file_path", out.ToolInput)
+	}
+}
+
+// TestMain_ToolInputTruncated proves Write/Edit inputs containing large
+// content blobs are bounded at maxFieldBytes — without this, a multi-MB
+// file write would blow the ccstream scanner limit when stream-json
+// encodes the hook_response line.
+func TestMain_ToolInputTruncated(t *testing.T) {
+	big := strings.Repeat("y", 128*1024)
+	encoded, err := json.Marshal(map[string]string{
+		"file_path": "/tmp/big.txt",
+		"content":   big,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{
+		"hook_event_name": "PostToolUse",
+		"tool_name": "Write",
+		"tool_use_id": "toolu_big",
+		"tool_input": ` + string(encoded) + `,
+		"tool_response": "ok"
+	}`)
+	out := runHook(t, body, "test-id")
+	if out.ToolInput == "" {
+		t.Fatal("ToolInput empty — large input dropped instead of truncated")
+	}
+	if len(out.ToolInput) > maxFieldBytes+len("...[truncated]") {
+		t.Errorf("ToolInput length = %d, want <= %d", len(out.ToolInput), maxFieldBytes+len("...[truncated]"))
+	}
+	if !strings.HasSuffix(out.ToolInput, "...[truncated]") {
+		tail := out.ToolInput
+		if len(tail) > 20 {
+			tail = tail[len(tail)-20:]
+		}
+		t.Errorf("missing truncation marker; got last bytes: %q", tail)
+	}
+}
+
+// TestMain_ToolInputAbsent proves the omitempty contract holds when CC
+// doesn't include tool_input — hookOutput's ToolInput stays empty rather
+// than emitting a stray "tool_input":"" field.
+func TestMain_ToolInputAbsent(t *testing.T) {
+	body := []byte(`{
+		"hook_event_name": "PostToolUse",
+		"tool_name": "Read",
+		"tool_use_id": "toolu_3",
+		"tool_response": "ok"
+	}`)
+	out := runHook(t, body, "test-id")
+	if out.ToolInput != "" {
+		t.Errorf("ToolInput = %q, want empty when tool_input absent", out.ToolInput)
 	}
 }

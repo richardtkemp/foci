@@ -252,11 +252,14 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// state (preAnswerFired, toolCount, ts) and may legitimately be nil
 	// between turns; the backend tolerates that.
 	turnEvents := &delegator.TurnEvents{
-		PostToolNudgeFunc: func(toolName string, isError bool) []string {
+		PostToolNudgeFunc: func(toolName, toolInput string, isError bool) []string {
 			if a.Nudger == nil {
 				return nil
 			}
 			toolCount++
+			// Record before evaluating so tool_pattern rules see this tool
+			// in the ring buffer when shouldFire walks the recent events.
+			a.Nudger.RecordToolCall(toolName, toolInput)
 			reminders := a.Nudger.CheckAfterTools(toolCount, isError)
 			if len(reminders) == 0 {
 				return nil

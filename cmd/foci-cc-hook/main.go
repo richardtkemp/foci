@@ -48,6 +48,7 @@ type hookInput struct {
 	HookEventName string          `json:"hook_event_name"`
 	ToolName      string          `json:"tool_name"`
 	ToolUseID     string          `json:"tool_use_id"`
+	ToolInput     json.RawMessage `json:"tool_input,omitempty"`
 	ToolResponse  json.RawMessage `json:"tool_response,omitempty"`
 	Error         string          `json:"error,omitempty"`
 	AgentID       string          `json:"agent_id,omitempty"`
@@ -67,6 +68,7 @@ type hookOutput struct {
 	InstallID    string `json:"install_id,omitempty"`
 	ToolUseID    string `json:"tool_use_id"`
 	ToolName     string `json:"tool_name"`
+	ToolInput    string `json:"tool_input,omitempty"`
 	ToolResponse string `json:"tool_response,omitempty"`
 	Error        string `json:"error,omitempty"`
 	AgentID      string `json:"agent_id,omitempty"`
@@ -110,6 +112,13 @@ func main() {
 		ToolName:  in.ToolName,
 		AgentID:   in.AgentID,
 		IsError:   in.HookEventName == "PostToolUseFailure" || in.IsInterrupt || in.IsTimeout,
+	}
+	if len(in.ToolInput) > 0 {
+		// Forward the raw tool_input JSON so downstream nudge rules can match
+		// on any field (Bash.command, Read.file_path, Grep.pattern, etc.).
+		// Truncate to the same 64KB cap as tool_response — Write/Edit content
+		// is the realistic outlier; everything else is comfortably under 1KB.
+		out.ToolInput = truncate(string(in.ToolInput), maxFieldBytes)
 	}
 	if len(in.ToolResponse) > 0 {
 		out.ToolResponse = truncate(decodeToolResponse(in.ToolResponse), maxFieldBytes)

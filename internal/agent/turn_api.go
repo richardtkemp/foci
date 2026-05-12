@@ -442,6 +442,12 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		for _, block := range resp.Content {
 			if block.Type == "tool_use" {
 				toolCallCount++
+				// Record per-tool so tool_pattern rules see the
+				// full batch in the recent-tools ring buffer when
+				// CheckAfterTools evaluates below.
+				if a.Nudger != nil {
+					a.Nudger.RecordToolCall(block.Name, string(block.Input))
+				}
 			}
 		}
 		for _, tr := range toolResults {

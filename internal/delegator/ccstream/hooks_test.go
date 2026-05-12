@@ -484,7 +484,7 @@ func TestHandleHookResponse_PostToolNudgeDispatched(t *testing.T) {
 
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) {},
-		PostToolNudgeFunc: func(name string, isErr bool) []string {
+		PostToolNudgeFunc: func(name, _ string, isErr bool) []string {
 			if name == "Bash" && !isErr {
 				return []string{"reminder-text"}
 			}
@@ -557,7 +557,7 @@ func TestHandleHookResponse_PostToolNudgeSkipsEmpty(t *testing.T) {
 	}
 	handler := &delegator.EventHandler{
 		OnToolEnd: func(_, _, _ string, _ bool) {},
-		PostToolNudgeFunc: func(_ string, _ bool) []string {
+		PostToolNudgeFunc: func(_, _ string, _ bool) []string {
 			return []string{"", "real", ""}
 		},
 	}

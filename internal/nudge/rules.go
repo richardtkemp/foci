@@ -29,10 +29,27 @@ type Rule struct {
 }
 
 // Trigger describes when a rule should fire.
+//
+// Trigger types:
+//   - "every_n_tools" (uses N)        — every N tool calls during a turn
+//   - "every_n_turns" (uses N)        — every N turns (lifetime counter)
+//   - "after_error"                   — when the last tool returned an error
+//   - "regex" (uses Pattern)          — when user message matches a regex
+//   - "pre_answer"                    — before returning a final answer
+//   - "tool_pattern" (uses ToolPattern / InputPattern / Consecutive) —
+//     when recent tool invocations match a tool-name regex and/or a
+//     tool-input regex. Defaults to "any tool" / "any input" when the
+//     corresponding pattern is empty. Consecutive (default 1) requires
+//     that many tail events to all match.
 type Trigger struct {
-	Type    string `json:"type"`              // "every_n_tools", "every_n_turns", "after_error", "regex", "pre_answer"
+	Type    string `json:"type"`
 	N       int    `json:"n,omitempty"`       // parameter for every_n_tools/every_n_turns
 	Pattern string `json:"pattern,omitempty"` // regex pattern for regex trigger
+
+	// Tool-context fields (used when Type == "tool_pattern").
+	ToolPattern  string `json:"tool_pattern,omitempty"`  // regex against the tool name
+	InputPattern string `json:"input_pattern,omitempty"` // regex against the raw tool_input JSON
+	Consecutive  int    `json:"consecutive,omitempty"`   // require N consecutive matches in the recent buffer (default 1)
 }
 
 const rulesFileName = "nudge-rules.json"
