@@ -150,6 +150,25 @@ func TestResetCommand_HardImmediate(t *testing.T) {
 	}
 }
 
+// TestResetCommand_BareShowsNoKeyboard verifies that bare /reset executes the
+// soft reset directly via DefaultExecute rather than showing a one-option
+// keyboard built from the [hard] subcommand list.
+//
+// The subcommand dispatch auto-wires KeyboardOptions from Subcommands when
+// the field is nil. /reset suppresses that by setting KeyboardOptions to a
+// no-op that returns nil — preserving "bare /reset = soft reset" semantics
+// while keeping `/reset hard` discoverable via help/usage.
+func TestResetCommand_BareShowsNoKeyboard(t *testing.T) {
+	cmd := ResetCommand()
+	r := NewRegistry()
+	r.Register(cmd)
+
+	_, _, opts, ok := r.LookupKeyboard(context.Background(), "/reset", CommandContext{})
+	if ok {
+		t.Errorf("LookupKeyboard(\"/reset\") returned ok=true with opts=%+v; bare /reset must execute via DefaultExecute, not show a keyboard", opts)
+	}
+}
+
 // TestCompactCommand_UsesSessionKeyFromContext verifies that /compact reads
 // the session key from the context.
 func TestCompactCommand_UsesSessionKeyFromContext(t *testing.T) {
