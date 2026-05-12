@@ -12,8 +12,8 @@ import (
 	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/platform"
+	"foci/internal/provider"
 	"foci/internal/tools"
-	"foci/internal/workspace"
 )
 
 // configureDelegated sets up delegated transport agent state: DelegatedManager
@@ -26,16 +26,20 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	// groupResolver since their model comes from backendConfig.
 	ag.PromptSearchDirs = shared.promptSearchDirs
 
-	// Bootstrap for building the system prompt (workspace *.md files).
-	bs := workspace.NewBootstrap(p.acfg.Workspace, nil)
-	systemBlocks := bs.SystemBlocks()
-	var systemPrompt string
-	for _, block := range systemBlocks {
-		if systemPrompt != "" {
-			systemPrompt += "\n\n"
-		}
-		systemPrompt += block.Text
-	}
+	// Bootstrap and skill registry — shared loader with API agents.
+	//
+	// Fixes two latent gaps in the previous local NewBootstrap call:
+	//   1. p.acfg.System.SystemFiles is now honoured. The old call passed
+	//      nil for fileOrder, which fell through to DefaultFileOrder and
+	//      silently ignored per-agent system_files config.
+	//   2. The skill registry is populated, so the Available Skills system
+	//      block and the default skill nudge reach delegated agents (was
+	//      previously inert — 0 default rules across all delegated agents).
+	agentStore := p.store.ForAgent(p.acfg.ID)
+	br := setupBootstrapAndSkills(p, agentStore)
+	bs := br.bootstrap
+
+	systemPrompt := buildDelegatedSystemPrompt(bs.SystemBlocks(), br.extraSystemBlocks)
 
 	// Model for the backend — from backend_config, not from the group resolver.
 	model := ""
@@ -196,8 +200,35 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 	}
 
 	return finalizeParams{
-		bootstrap: bs,
+		bootstrap:     bs,
+		skillRegistry: br.skillRegistry,
+		skillsDirs:    br.skillsDirs,
 	}, true
+}
+
+// buildDelegatedSystemPrompt concatenates workspace bootstrap blocks and the
+// extra system blocks (Available Skills) into the single SystemPrompt string
+// that delegator.StartOptions takes. Skills come after workspace files so the
+// agent's identity/character is established first and skills land as reference
+// material below it. API agents inject extraSystemBlocks via
+// ag.ExtraSystemBlocks (separate provider block); delegated agents have to
+// concatenate because the CC subprocess takes a single string at start.
+//
+// Empty inputs are handled cleanly — no leading or trailing separator if
+// either side is empty.
+func buildDelegatedSystemPrompt(workspaceBlocks, extraBlocks []provider.SystemBlock) string {
+	var b strings.Builder
+	write := func(blocks []provider.SystemBlock) {
+		for _, blk := range blocks {
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(blk.Text)
+		}
+	}
+	write(workspaceBlocks)
+	write(extraBlocks)
+	return b.String()
 }
 
 // buildAutoApproveRules assembles the foci-level auto-approve rules for a
