@@ -301,6 +301,55 @@ func TestCheckSizes(t *testing.T) {
 	}
 }
 
+func TestCheckSizesMissingFileBeforeBig(t *testing.T) {
+	// Regression: when fileOrder lists a missing file before a present
+	// over-threshold file, the warning must name the real file, not the
+	// missing slot it would have occupied. Previously CheckSizes indexed
+	// fileOrder by the loaded-block position, causing the labels to drift
+	// when any earlier file in fileOrder was absent from disk.
+	dir := t.TempDir()
+
+	// MISSING.md not written. BIG.md is at fileOrder index 1, but after
+	// MISSING.md is skipped it becomes loaded-block index 0.
+	os.WriteFile(filepath.Join(dir, "BIG.md"), make([]byte, 25000), 0644)
+
+	b := NewBootstrap(dir, []string{"MISSING.md", "BIG.md"})
+	warnings := b.CheckSizes(20000, 200000)
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "BIG.md") {
+		t.Errorf("warning should mention BIG.md, got: %s", warnings[0])
+	}
+	if strings.Contains(warnings[0], "MISSING.md") {
+		t.Errorf("warning misattributes to MISSING.md: %s", warnings[0])
+	}
+}
+
+func TestSectionSizesMissingFileBeforePresent(t *testing.T) {
+	// Regression: SectionSizes must label loaded blocks with the file they
+	// came from, not fileOrder[block_index]. With MISSING.md skipped,
+	// indices drift and previously every block was mis-labelled.
+	dir := t.TempDir()
+
+	os.WriteFile(filepath.Join(dir, "A.md"), []byte("alpha"), 0644) // 5 chars
+	os.WriteFile(filepath.Join(dir, "B.md"), []byte("beta"), 0644)  // 4 chars
+	// MISSING.md in the middle — should be skipped
+
+	b := NewBootstrap(dir, []string{"A.md", "MISSING.md", "B.md"})
+	sizes := b.SectionSizes()
+
+	if len(sizes) != 2 {
+		t.Fatalf("len = %d, want 2", len(sizes))
+	}
+	if sizes[0].Name != "A.md" || sizes[0].Chars != 5 {
+		t.Errorf("sizes[0] = %+v, want {A.md, 5}", sizes[0])
+	}
+	if sizes[1].Name != "B.md" || sizes[1].Chars != 4 {
+		t.Errorf("sizes[1] = %+v, want {B.md, 4}", sizes[1])
+	}
+}
+
 func TestSectionSizes(t *testing.T) {
 	// Verifies SectionSizes reports name and char count for loaded files,
 	// skipping missing files.
@@ -433,7 +482,7 @@ func TestLoadFromDisk(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "B.md"), []byte("Soul content"), 0644)
 
 	b := NewBootstrap(dir, []string{"A.md", "B.md"})
-	blocks := b.loadFromDisk()
+	blocks, names := b.loadFromDisk()
 
 	if len(blocks) != 2 {
 		t.Fatalf("loadFromDisk returned %d blocks, want 2", len(blocks))
@@ -443,6 +492,9 @@ func TestLoadFromDisk(t *testing.T) {
 	}
 	if blocks[1].Text != "Soul content" {
 		t.Errorf("blocks[1].Text = %q", blocks[1].Text)
+	}
+	if len(names) != 2 || names[0] != "A.md" || names[1] != "B.md" {
+		t.Errorf("loadFromDisk names = %v, want [A.md B.md]", names)
 	}
 }
 
@@ -473,10 +525,13 @@ func TestLoadFromDisk_Empty(t *testing.T) {
 	dir := t.TempDir()
 	b := NewBootstrap(dir, nil)
 
-	blocks := b.loadFromDisk()
+	blocks, names := b.loadFromDisk()
 
 	// Should return empty slice when no files exist
 	if len(blocks) != 0 {
 		t.Errorf("Expected no blocks for empty dir, got %d", len(blocks))
+	}
+	if len(names) != 0 {
+		t.Errorf("Expected no names for empty dir, got %d", len(names))
 	}
 }
