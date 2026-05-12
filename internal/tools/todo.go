@@ -94,6 +94,13 @@ func NewTodoTool(store *memory.TodoStore, agentID string) *Tool {
 				return ToolResult{}, fmt.Errorf("parse params: %w", err)
 			}
 
+			// Normalize action aliases (e.g. "create" → "add") so direct
+			// tool callers reach the canonical dispatch. The shell layer
+			// applies the same normalization in bash; this is defense-in-
+			// depth for CC tool calls. Source: todoActionAliases in
+			// execbridge.go.
+			p.Action = resolveTodoAction(p.Action)
+
 			switch p.Action {
 			case "add":
 				return todoAdd(store, agentID, p.Text, p.Priority, p.Tag)
