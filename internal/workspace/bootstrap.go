@@ -30,6 +30,7 @@ type Bootstrap struct {
 	secretNames   []string // available secret names for {{secret:NAME}} templates
 	hasBitwarden  bool     // bitwarden integration is enabled
 	cached        []provider.SystemBlock
+	cachedNames   []string // source filename for each cached block (parallel to cached)
 	cachedWithSec []provider.SystemBlock // cached blocks with secrets injected
 	mu            sync.RWMutex
 }
@@ -41,7 +42,7 @@ func NewBootstrap(dir string, fileOrder []string) *Bootstrap {
 		fileOrder = DefaultFileOrder
 	}
 	b := &Bootstrap{dir: dir, fileOrder: fileOrder}
-	b.cached = b.loadFromDisk()
+	b.cached, b.cachedNames = b.loadFromDisk()
 	return b
 }
 
@@ -110,14 +111,12 @@ func (b *Bootstrap) SectionSizes() []SectionSize {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	var sizes []SectionSize
-	fileIdx := 0
-	for _, block := range b.cached {
+	sizes := make([]SectionSize, 0, len(b.cached))
+	for i, block := range b.cached {
 		name := "unknown"
-		if fileIdx < len(b.fileOrder) {
-			name = b.fileOrder[fileIdx]
+		if i < len(b.cachedNames) {
+			name = b.cachedNames[i]
 		}
-		fileIdx++
 		sizes = append(sizes, SectionSize{Name: name, Chars: len(block.Text)})
 	}
 	return sizes
@@ -125,9 +124,10 @@ func (b *Bootstrap) SectionSizes() []SectionSize {
 
 // Reload re-reads workspace files from disk. Call after compaction or session reset.
 func (b *Bootstrap) Reload() {
-	blocks := b.loadFromDisk()
+	blocks, names := b.loadFromDisk()
 	b.mu.Lock()
 	b.cached = blocks
+	b.cachedNames = names
 	b.cachedWithSec = nil // invalidate cached blocks with secrets
 	b.mu.Unlock()
 }
@@ -138,6 +138,7 @@ func (b *Bootstrap) Reload() {
 func (b *Bootstrap) CheckSizes(maxFileChars, maxTotalChars int) []string {
 	b.mu.RLock()
 	blocks := b.cached
+	names := b.cachedNames
 	b.mu.RUnlock()
 
 	var warnings []string
@@ -147,8 +148,8 @@ func (b *Bootstrap) CheckSizes(maxFileChars, maxTotalChars int) []string {
 		total += size
 		if maxFileChars > 0 && size > maxFileChars {
 			name := "unknown"
-			if i < len(b.fileOrder) {
-				name = b.fileOrder[i]
+			if i < len(names) {
+				name = names[i]
 			}
 			warnings = append(warnings, fmt.Sprintf("system prompt file %s is %d chars (threshold: %d)", name, size, maxFileChars))
 		}
@@ -160,8 +161,12 @@ func (b *Bootstrap) CheckSizes(maxFileChars, maxTotalChars int) []string {
 }
 
 // loadFromDisk reads workspace files and builds system blocks.
-func (b *Bootstrap) loadFromDisk() []provider.SystemBlock {
+// Returns blocks alongside a parallel slice of source filenames so callers
+// can label each block with the file it came from (missing/empty files are
+// skipped in both slices, so indices stay aligned).
+func (b *Bootstrap) loadFromDisk() ([]provider.SystemBlock, []string) {
 	var blocks []provider.SystemBlock
+	var names []string
 
 	for _, name := range b.fileOrder {
 		data, err := os.ReadFile(filepath.Join(b.dir, name))
@@ -179,7 +184,8 @@ func (b *Bootstrap) loadFromDisk() []provider.SystemBlock {
 			Type: "text",
 			Text: content,
 		})
+		names = append(names, name)
 	}
 
-	return blocks
+	return blocks, names
 }
