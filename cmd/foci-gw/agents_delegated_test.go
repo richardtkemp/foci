@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/memory"
+	"foci/internal/provider"
 	"foci/internal/tools"
 )
 
@@ -162,6 +164,68 @@ func TestBuildExecRegistryRegistersSendToSession(t *testing.T) {
 	}
 	if !exportedHas(registry.ExportedNames(), "foci_send_to_session") {
 		t.Errorf("ExportedNames() = %v, want to include foci_send_to_session", registry.ExportedNames())
+	}
+}
+
+// TestBuildDelegatedSystemPrompt locks in the structural rule that delegated
+// agents get the Available Skills block appended AFTER workspace identity
+// files. Delegated transport (CC subprocess) takes a single SystemPrompt
+// string at startup, unlike API agents which pass ExtraSystemBlocks as a
+// separate provider block — so ordering and separators are owned here, not
+// by the provider layer. If skills slip in front of workspace identity, the
+// character files lose their priming position in CC's context.
+func TestBuildDelegatedSystemPrompt(t *testing.T) {
+	t.Parallel()
+
+	workspace := []provider.SystemBlock{
+		{Type: "text", Text: "CRAFT content"},
+		{Type: "text", Text: "MEMORY content"},
+	}
+	extra := []provider.SystemBlock{
+		{Type: "text", Text: "Available Skills: foo, bar"},
+	}
+
+	got := buildDelegatedSystemPrompt(workspace, extra)
+	want := "CRAFT content\n\nMEMORY content\n\nAvailable Skills: foo, bar"
+	if got != want {
+		t.Errorf("buildDelegatedSystemPrompt() = %q, want %q", got, want)
+	}
+
+	// Skills must come AFTER all workspace blocks (lock the order — a
+	// regression that swapped them would still concatenate cleanly).
+	craftIdx := strings.Index(got, "CRAFT content")
+	memoryIdx := strings.Index(got, "MEMORY content")
+	skillsIdx := strings.Index(got, "Available Skills")
+	if !(craftIdx < memoryIdx && memoryIdx < skillsIdx) {
+		t.Errorf("expected workspace blocks before skills; got craft=%d memory=%d skills=%d", craftIdx, memoryIdx, skillsIdx)
+	}
+}
+
+func TestBuildDelegatedSystemPrompt_EmptyInputs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		workspace []provider.SystemBlock
+		extra     []provider.SystemBlock
+		want      string
+	}{
+		{"both empty", nil, nil, ""},
+		{"workspace only", []provider.SystemBlock{{Text: "only"}}, nil, "only"},
+		{"extra only", nil, []provider.SystemBlock{{Text: "skills"}}, "skills"},
+		{"workspace + empty extra slice", []provider.SystemBlock{{Text: "only"}}, []provider.SystemBlock{}, "only"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildDelegatedSystemPrompt(tc.workspace, tc.extra)
+			if got != tc.want {
+				t.Errorf("buildDelegatedSystemPrompt() = %q, want %q", got, tc.want)
+			}
+			// No leading or trailing separator.
+			if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
+				t.Errorf("unexpected leading/trailing newline in %q", got)
+			}
+		})
 	}
 }
 
