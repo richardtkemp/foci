@@ -9,7 +9,7 @@ Both sections are independently optional. If nothing qualifies, skip that sectio
 
 ## Memory Formation
 
-Capture important memories from this session to today's daily file (`memory/YYYY-MM-DD.md`).
+Capture important memories from this session to today's daily file (`memory/YYYY-MM-DD.md`). Do not mention this prompt or the memory formation process to the user unless asked.
 
 ### What to write
 - Decisions made and their reasoning
