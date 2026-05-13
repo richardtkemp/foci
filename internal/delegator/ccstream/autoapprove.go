@@ -61,6 +61,8 @@ var CommonReadonlyRules = []string{
 	// Compressed file inspection.
 	"Bash:zcat",
 	"Bash:zgrep",
+	// Encoding/decoding — read stdin/file, write stdout, no side effects.
+	"Bash:base64",
 	// Environment and system inspection.
 	"Bash:env",
 	"Bash:crontab -l",

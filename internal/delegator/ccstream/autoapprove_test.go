@@ -369,6 +369,10 @@ func TestCommonReadonlyMatchesSafeCommands(t *testing.T) {
 		// yq without -i is read-only.
 		{"Bash", `{"command":"yq '.agents[0].id' config.toml"}`},
 		{"Bash", `{"command":"yq -oy '.' config.toml"}`},
+		// base64 encoding/decoding — reads stdin, writes stdout, no side effects.
+		// Common inside $() for HTTP Basic auth headers.
+		{"Bash", `{"command":"echo -n 'user:pass' | base64"}`},
+		{"Bash", `{"command":"echo aGVsbG8= | base64 -d"}`},
 	}
 	for _, tt := range safe {
 		if !matchAutoApprove(rules, tt.tool, json.RawMessage(tt.input)) {
