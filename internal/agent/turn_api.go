@@ -201,10 +201,10 @@ func (t *APITransport) InjectNudges(ts *TurnState) {
 
 	var nudgeBlocks []provider.ContentBlock
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapNudge(r)})
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+		nudgeBlocks = append(nudgeBlocks, provider.ContentBlock{Type: "text", Text: wrapNudge(r)})
 	}
 	if len(nudgeBlocks) > 0 {
 		ts.UserMsg.Content = append(nudgeBlocks, ts.UserMsg.Content...)
@@ -377,7 +377,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",
-						Content: provider.TextContent(nudgeHeader + reminder + "\n\nIf your answer stands as-is, respond with `" + NoResponseSentinel + "` and nothing else."),
+						Content: provider.TextContent(wrapNudge(reminder)),
 					}
 					ts.Messages = append(ts.Messages, verifyMsg)
 					ts.NewMessages = append(ts.NewMessages, verifyMsg)
@@ -470,7 +470,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		if a.Nudger != nil {
 			if reminders := a.Nudger.CheckAfterTools(toolCallCount, lastToolError); len(reminders) > 0 {
 				for _, r := range reminders {
-					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: nudgeHeader + r})
+					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: wrapNudge(r)})
 				}
 				a.logger().Debugf("nudge: injected %d reminder(s) at loop %d for session %s", len(reminders), i, ts.SessionKey)
 			}

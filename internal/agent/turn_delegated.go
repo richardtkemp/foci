@@ -82,10 +82,10 @@ func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 
 	var nudges []string
 	for _, r := range a.Nudger.CheckTurnInterval() {
-		nudges = append(nudges, nudgeHeader+r)
+		nudges = append(nudges, wrapNudge(r))
 	}
 	for _, r := range a.Nudger.CheckRegex() {
-		nudges = append(nudges, nudgeHeader+r)
+		nudges = append(nudges, wrapNudge(r))
 	}
 	if len(nudges) > 0 {
 		ts.Prompt = strings.Join(nudges, "\n") + "\n" + ts.Prompt
@@ -266,7 +266,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			}
 			out := make([]string, 0, len(reminders))
 			for _, r := range reminders {
-				out = append(out, nudgeHeader+r)
+				out = append(out, wrapNudge(r))
 			}
 			a.logger().Debugf("nudge: injected %d reminder(s) after tool %q (count=%d, err=%v) for session %s",
 				len(out), toolName, toolCount, isError, ts.SessionKey)
@@ -301,7 +301,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			}
 			a.logger().Infof("nudge: pre-answer gate fired for session %s (tool_count=%d)",
 				ts.SessionKey, toolCount)
-			return nudgeHeader + reminder + "\n\nIf your answer stands as-is, respond with `" + NoResponseSentinel + "` and nothing else."
+			return wrapNudge(reminder)
 		},
 	}
 	turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
