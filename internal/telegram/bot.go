@@ -198,12 +198,20 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 	// GetUpdates long-poll holds 1 connection, the agent worker sends typing
 	// indicators + tool call messages on another, leaving 0 for the receiver
 	// goroutine to handle callback queries or slash commands.
+	// DefaultRequestOpts.Timeout=30s overrides gotgbot's 5s DefaultTimeout for
+	// all API calls (sendMessage, editMessage, etc.). Per-call RequestOpts still
+	// take precedence: long-poll getUpdates keeps its 65s, shutdown ack keeps 5s.
+	// 5s was too tight under transient network blips (observed scout sendMessage
+	// context-deadlining during a routine reply, 2026-05-14).
 	api, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
 			Client: http.Client{
 				Transport: &http.Transport{
 					MaxIdleConnsPerHost: 8,
 				},
+			},
+			DefaultRequestOpts: &gotgbot.RequestOpts{
+				Timeout: 30 * time.Second,
 			},
 		},
 	})
