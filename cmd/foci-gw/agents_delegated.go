@@ -320,7 +320,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	}
 
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, 0, 0, nil, 0o644))
+	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, p.resolved.Tools.ExecAutoBackground, p.resolved.Tools.MaxUploadFileSize, nil, 0o644))
 
 	// Summary tool: piped/file content summarisation. Delegated agents shell
 	// out to `claude --print` (CLISummariser), routing through the parent CC
