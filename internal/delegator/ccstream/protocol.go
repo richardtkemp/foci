@@ -214,6 +214,15 @@ type SetModelRequest struct {
 	Model   string `json:"model"`
 }
 
+// SetPermissionModeRequest asks CC to switch the permission mode mid-session.
+// Mode is the CC-native value ("default" | "acceptEdits" | "plan" | "auto" |
+// "bypassPermissions" | "dontAsk"). Fire-and-forget — CC sends a
+// control_response which the reader logs but no one waits on.
+type SetPermissionModeRequest struct {
+	Subtype string `json:"subtype"` // always "set_permission_mode"
+	Mode    string `json:"mode"`
+}
+
 // ---------------------------------------------------------------------------
 // Permission response payloads (used inside ControlResponse.Response)
 // ---------------------------------------------------------------------------

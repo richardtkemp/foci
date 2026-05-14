@@ -247,6 +247,89 @@ func SpeedCommand() *Command {
 	})
 }
 
+// ModeCommand returns a /mode command to show or switch the delegated
+// backend's permission mode. ccstream backend only — other backends are
+// rejected with a typed error from the agent layer.
+//
+// User-facing aliases ("normal", "accept") translate to CC's native mode
+// names ("default", "acceptEdits") before being sent. We bypass
+// newSessionSettingCommand because the setter is async and can fail
+// (unsupported backend, backend send error).
+func ModeCommand() *Command {
+	const optionsHint = "Options: 1) normal  2) accept  3) plan  4) auto"
+
+	// User input → (CC mode value, friendly response).
+	type modeChoice struct {
+		aliases  []string // every alias including the canonical label
+		ccMode   string   // CC-native mode value sent over the wire
+		response string   // success message
+	}
+	choices := []modeChoice{
+		{aliases: []string{"normal", "1", "default"}, ccMode: "default", response: "Permission mode: normal (default)"},
+		{aliases: []string{"accept", "2", "edits", "acceptedits"}, ccMode: "acceptEdits", response: "Permission mode: accept (auto-accept edits)"},
+		{aliases: []string{"plan", "3"}, ccMode: "plan", response: "Permission mode: plan (read-only)"},
+		{aliases: []string{"auto", "4"}, ccMode: "auto", response: "Permission mode: auto (classifier decides)"},
+	}
+	// Build alias → choice lookup.
+	lookup := make(map[string]*modeChoice, len(choices)*3)
+	for i := range choices {
+		c := &choices[i]
+		for _, a := range c.aliases {
+			lookup[a] = c
+		}
+	}
+
+	// displayMode renders the CC-native mode for the status / no-arg output.
+	displayMode := func(cur string) string {
+		if cur == "" {
+			return "normal (default)"
+		}
+		// Reverse-map CC mode → friendly label.
+		for _, c := range choices {
+			if c.ccMode == cur {
+				return c.aliases[0]
+			}
+		}
+		return cur // unknown — show raw value
+	}
+
+	return &Command{
+		Name:        "mode",
+		Description: "Show or set permission mode (ccstream backend only)",
+		Category:    "operations",
+		Execute: func(ctx context.Context, req Request, cc CommandContext) (Response, error) {
+			sk := tools.SessionKeyFromContext(ctx)
+			if req.Args == "" {
+				cur := cc.Agent.SessionPermissionMode(sk)
+				return Response{Text: fmt.Sprintf("Permission mode: %s\n%s", displayMode(cur), optionsHint)}, nil
+			}
+
+			arg := strings.ToLower(strings.TrimSpace(req.Args))
+			c, ok := lookup[arg]
+			if !ok {
+				return Response{Text: fmt.Sprintf("Invalid permission mode: %q\n%s", req.Args, optionsHint)}, nil
+			}
+
+			if err := cc.Agent.SetPermissionMode(ctx, sk, c.ccMode); err != nil {
+				return Response{Text: fmt.Sprintf("Mode switch failed: %v", err)}, nil
+			}
+			return Response{Text: c.response}, nil
+		},
+		KeyboardOptions: func(_ context.Context, _ CommandContext) []KeyboardOption {
+			return []KeyboardOption{
+				{Label: "normal", Data: "normal"},
+				{Label: "accept", Data: "accept"},
+				{Label: "plan", Data: "plan"},
+				{Label: "auto", Data: "auto"},
+			}
+		},
+		KeyboardHeader: func(ctx context.Context, _ Request, cc CommandContext) string {
+			cur := cc.Agent.SessionPermissionMode(tools.SessionKeyFromContext(ctx))
+			return fmt.Sprintf("/mode — Permission mode: %s", displayMode(cur))
+		},
+	}
+}
+
 // DisplayField represents one display setting with its effective value and override status.
 type DisplayField struct {
 	Key      string // config key name (e.g. "show_tool_calls")
