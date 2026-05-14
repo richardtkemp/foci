@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"foci/internal/agent"
+	"foci/internal/config"
 	"foci/internal/delegator"
 	"foci/internal/delegator/ccstream"
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/secrets"
 	"foci/internal/tools"
+	"foci/internal/voice"
 )
 
 // configureDelegated sets up delegated transport agent state: DelegatedManager
@@ -288,22 +291,35 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	acfg := p.acfg
 	connMgr := p.connMgr
 
+	// Shared infrastructure that mirrors the API path's tool wiring
+	// (cmd/foci-gw/agents_setup.go). Build once at registry construction so
+	// every tool gets the same agent-scoped store, async notifier, file
+	// permissions, and resolved TTS as their API-path counterparts.
+	var agentStore *secrets.Store
+	if p.store != nil {
+		agentStore = p.store.ForAgent(acfg.ID)
+	}
+	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
+	var notifier *tools.AsyncNotifier
+	if agLazy != nil {
+		notifier = newAsyncNotifier(agLazy, acfg.ID, p.ctx, connMgr)
+	}
+	vc := p.resolved.Voice
+	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
+	agentTTS := resolveTTS(p.ttsMap, p.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
+
 	registry.Register(tools.NewSendToChatTool(func(sessionKey string) platform.Sender {
 		conn := connMgr.ForSessionOrPrimary(sessionKey, acfg.ID)
 		if conn == nil {
 			return nil
 		}
 		return conn
-	}, nil))
+	}, agentTTS))
 
 	// send_to_session: cross-session messaging. Wires the same async notifier
 	// and session-notify routes as the API path (registerSessionTools). The
 	// notifier handles reply_to=caller (response routes back); sessionNotifyFn
 	// handles reply_to=session (response goes to target's own chat).
-	var notifier *tools.AsyncNotifier
-	if agLazy != nil {
-		notifier = newAsyncNotifier(agLazy, acfg.ID, p.ctx, connMgr)
-	}
 	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
 	var resolveKeyFn tools.SessionKeyResolverFn
 	if p.sessionIndex != nil {
@@ -320,7 +336,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	}
 
 	registry.Register(tools.NewWebFetchTool())
-	registry.Register(tools.NewHTTPRequestTool(p.store, p.bwStore, p.cfg.Tools.TempDir, p.resolved.Tools.ExecAutoBackground, p.resolved.Tools.MaxUploadFileSize, nil, 0o644))
+	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, p.resolved.Tools.ExecAutoBackground, p.resolved.Tools.MaxUploadFileSize, notifier, fileMode))
 
 	// Summary tool: piped/file content summarisation. Delegated agents shell
 	// out to `claude --print` (CLISummariser), routing through the parent CC
