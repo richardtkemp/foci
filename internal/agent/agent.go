@@ -33,6 +33,19 @@ const NoResponseSentinel = "[[NO_RESPONSE]]"
 // their origin and treats them as background guidance, not user input.
 const nudgeHeader = "[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]\n"
 
+// nudgeFooter is appended to every nudge so the agent has explicit guidance
+// on when to stay silent vs reply. If the nudge calls for an action or the
+// agent has other pending work, it should respond; otherwise it emits
+// NoResponseSentinel so the platform delivers nothing.
+const nudgeFooter = "\n\nIf this nudge needs a reply, send one. If not — and you've got nothing else to do or say — respond with `" + NoResponseSentinel + "` and nothing else."
+
+// wrapNudge composes a full nudge message: header + reminder body + footer.
+// All four nudge delivery paths (turn-interval, regex, after-tools,
+// pre-answer) go through this so the silence-vs-reply guidance is uniform.
+func wrapNudge(reminder string) string {
+	return nudgeHeader + reminder + nudgeFooter
+}
+
 // CacheBustFunc is called when a cache bust is detected (cache_read drops
 // significantly compared to the previous request).
 // session is the session key, prevRead is what we had, curRead is what we got.
