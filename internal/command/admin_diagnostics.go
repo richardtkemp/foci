@@ -116,6 +116,14 @@ func StatusCommand() *Command {
 			fmt.Fprintf(&sb, "   Messages: %d | Status: %s\n", mc, status)
 			fmt.Fprintf(&sb, "   Created: %s | Active: %s\n", created, active)
 
+			// Permission mode — always shown so the user knows the current
+			// permission posture. Empty session metadata = CC's baseline "default".
+			pmDisplay := cc.Agent.SessionPermissionMode(sk)
+			if pmDisplay == "" {
+				pmDisplay = "default"
+			}
+			fmt.Fprintf(&sb, "   Mode: %s\n", pmDisplay)
+
 			fmt.Fprintf(&sb, "\n⏱️  Uptime: %s (started %s)\n",
 				display.FormatDuration(time.Since(cc.StartTime)),
 				timeutil.Format(cc.StartTime))

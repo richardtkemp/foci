@@ -16,3 +16,15 @@ type SetModelRequest struct {
 }
 
 func (*SetModelRequest) controlRequest() {}
+
+// SetPermissionModeRequest asks the backend to switch its permission mode
+// mid-session. Mode is the backend-native value (for ccstream:
+// "default" | "acceptEdits" | "plan" | "auto" | "bypassPermissions" |
+// "dontAsk"). The command layer translates user-facing aliases ("normal",
+// "accept") before constructing this. Fire-and-forget — backends MUST NOT
+// block on a control_response.
+type SetPermissionModeRequest struct {
+	Mode string
+}
+
+func (*SetPermissionModeRequest) controlRequest() {}

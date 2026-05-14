@@ -29,6 +29,7 @@ type sessionMeta struct {
 	model           string                 // per-session model override (empty = use agent default)
 	modelEndpoint   string                 // per-session endpoint override (empty = use agent default)
 	modelFormat     string                 // per-session format override (empty = use agent default)
+	permissionMode  string                 // per-session CC permission mode (empty = ccstream default "default")
 	client          provider.Client        // per-session client override (nil = use a.Client)
 	usageClient     mana.UsageClient   // per-session usage client (nil may be intentional for non-Anthropic endpoints)
 	usageClientSet  bool                   // true if usageClient was explicitly set (distinguishes nil-from-set vs nil-from-default)
@@ -110,6 +111,13 @@ var (
 		getter: func(sm *sessionMeta) string { return sm.displayWidth },
 		setter: func(sm *sessionMeta, v string) { sm.displayWidth = v },
 	}
+	settingPermissionMode = sessionStringSetting{
+		prefix: "permission_mode",
+		getter: func(sm *sessionMeta) string { return sm.permissionMode },
+		setter: func(sm *sessionMeta, v string) { sm.permissionMode = v },
+		// No agentDefault — CC's intrinsic default is "default"; we
+		// surface "" as that in the UI rather than persisting it.
+	}
 )
 
 // allSessionStringSettings lists every string-based session setting.
@@ -119,6 +127,7 @@ var allSessionStringSettings = []sessionStringSetting{
 	settingModel, settingModelEndpoint, settingModelFormat,
 	settingShowToolCalls, settingDisplayShowThinking,
 	settingStreamOutput, settingDisplayWidth,
+	settingPermissionMode,
 }
 
 // sessionStringWithDefault returns a session-specific override
@@ -273,6 +282,51 @@ func (a *Agent) SetModel(ctx context.Context, sessionKey string, model, endpoint
 
 	return nil
 }
+
+// SessionPermissionMode returns the effective CC permission mode for the
+// session. Returns "" if never set — callers should display "default" in
+// that case (CC's intrinsic baseline).
+func (a *Agent) SessionPermissionMode(sessionKey string) string {
+	return a.getStringSetting(sessionKey, settingPermissionMode)
+}
+
+// SetSessionPermissionMode sets the per-session permission mode override
+// and persists it. Optimistic: caller is responsible for actually pushing
+// the change to the backend via SetPermissionMode.
+func (a *Agent) SetSessionPermissionMode(sessionKey, value string) {
+	a.setStringSetting(sessionKey, value, settingPermissionMode)
+}
+
+// SetPermissionMode is the high-level orchestrator for /mode. It tells the
+// delegated backend to switch permission mode (fire-and-forget — CC's
+// control_response is logged but not awaited) and optimistically updates
+// foci's session metadata. No persistence across CC restarts: if CC
+// restarts, the mode reverts to the --permission-mode flag (currently
+// "default"). Returns ErrModeUnsupported if the backend doesn't implement
+// ControlSender (e.g. cctmux).
+func (a *Agent) SetPermissionMode(ctx context.Context, sessionKey, mode string) error {
+	// Tell the backend first so we can refuse early for unsupported backends.
+	handled, err := a.SendBackendControl(ctx, sessionKey, &delegator.SetPermissionModeRequest{Mode: mode})
+	if err != nil {
+		return fmt.Errorf("backend set_permission_mode failed: %w", err)
+	}
+	if !handled {
+		return ErrModeUnsupported
+	}
+
+	// Optimistic update — fire-and-forget means we don't wait for CC's
+	// control_response to confirm. Bad mode values are validated by the
+	// command layer before we get here.
+	a.SetSessionPermissionMode(sessionKey, mode)
+	log.Infof("agent", "session=%s permission mode switched to %q", sessionKey, mode)
+	return nil
+}
+
+// ErrModeUnsupported is returned by SetPermissionMode when the session's
+// backend doesn't implement runtime control requests (e.g. the legacy
+// cctmux backend). The command layer surfaces this as a user-facing
+// "mode switch requires ccstream backend" message.
+var ErrModeUnsupported = fmt.Errorf("permission mode switching requires the ccstream backend")
 
 // refreshContextFromBackend queries the backend's context usage and updates
 // the session's context limit and model name. No-op if the backend doesn't

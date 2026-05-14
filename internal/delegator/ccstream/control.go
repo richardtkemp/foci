@@ -16,6 +16,11 @@ func (b *Backend) SendControl(ctx context.Context, req delegator.ControlRequest)
 			Subtype: "set_model",
 			Model:   r.Model,
 		})
+	case *delegator.SetPermissionModeRequest:
+		return b.writer.SendControl(newRequestID(), &SetPermissionModeRequest{
+			Subtype: "set_permission_mode",
+			Mode:    r.Mode,
+		})
 	default:
 		return fmt.Errorf("ccstream: unsupported control request type %T", req)
 	}
