@@ -3,9 +3,14 @@
 package integration
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/testharness"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
 // SessionLifecycle covers the SESSION-level lifecycle surface of foci's
@@ -21,6 +26,90 @@ import (
 // the scaffolding is greppable and the scenarios are immediately
 // reviewable.
 
+// --- local helpers --------------------------------------------------
+
+// sendText pushes a plain Telegram text update onto the given token's
+// queue. Kept short so test bodies stay readable.
+func sendText(h *testharness.Harness, token string, chatID, userID int64, text string) {
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: chatID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: text,
+		},
+	})
+}
+
+// waitForSendMessageContaining polls PeekSent for a sendMessage whose
+// "text" body contains substr. Returns the full text on hit, "" on
+// timeout. Useful for asserting that a slash command's reply (or an
+// error message) landed in Telegram.
+func waitForSendMessageContaining(h *testharness.Harness, token, substr string, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, call := range h.TelegramStub().PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if err := json.Unmarshal(call.Body, &body); err != nil {
+				continue
+			}
+			if text, _ := body["text"].(string); strings.Contains(text, substr) {
+				return text
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return ""
+}
+
+// userMessagesIn returns the user_message entries whose workdir contains
+// the given substring, preserving order.
+func userMessagesIn(entries []recorderEntry, workdirSubstr string) []recorderEntry {
+	var out []recorderEntry
+	for _, e := range entries {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, workdirSubstr) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// waitForInvocationCount blocks until the recorder shows at least n
+// invocation entries for the given workdir substring, or the deadline
+// elapses. Returns the matching invocations (possibly more than n on
+// hit) and a bool indicating whether the threshold was reached.
+func waitForInvocationCount(t *testing.T, h *testharness.Harness, workdirSubstr string, n int, timeout time.Duration) ([]recorderEntry, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), workdirSubstr)
+		if len(invs) >= n {
+			return invs, true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), workdirSubstr), false
+}
+
+// waitForUserMessageCount blocks until at least n user_message entries
+// appear for the workdir substring, or the deadline elapses.
+func waitForUserMessageCount(t *testing.T, h *testharness.Harness, workdirSubstr string, n int, timeout time.Duration) ([]recorderEntry, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), workdirSubstr)
+		if len(ums) >= n {
+			return ums, true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return userMessagesIn(readRecorderEntries(t, h.RecorderPath()), workdirSubstr), false
+}
+
+// --- tests ----------------------------------------------------------
+
 // TestL2_SessionLifecycle_ResumeIDPassedOnSecondTurn proves foci tracks
 // the cc_resume_id emitted in cc-stub's system/init message and passes
 // it as --resume on the NEXT subprocess invocation for the same session
@@ -30,8 +119,60 @@ import (
 // recorder carries the same resume_id field. Regression net for the
 // state.db "cc_resume_id" persistence path in DelegatedManager.
 func TestL2_SessionLifecycle_ResumeIDPassedOnSecondTurn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// HARNESS GAP: we can't force the first cc-stub process to exit
+	// between turns (CCSTUB_EXIT_CODE would have to be set on the SECOND
+	// spawn only — but the harness has no per-spawn env-var injection).
+	// Without forcing an exit, both turns share one long-lived stub
+	// process and no second invocation appears.
+	//
+	// We still get useful signal from the easier case: a single
+	// long-lived process serving two turns, where the SECOND user_message
+	// must carry the same session_id as the first (which is the value
+	// foci would persist as cc_resume_id).
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9001},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9001, 9001, "first turn")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first turn", 15*time.Second) {
+		t.Fatalf("first turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9001, 9001, "second turn")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second turn", 15*time.Second) {
+		t.Fatalf("second turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(ums) < 2 {
+		t.Fatalf("expected at least 2 user_message entries, got %d", len(ums))
+	}
+	if ums[0].SessionID == "" {
+		t.Fatalf("first user_message has empty session_id")
+	}
+	if ums[0].SessionID != ums[1].SessionID {
+		t.Errorf("session_id rotated between turns within one subprocess: first=%q second=%q",
+			ums[0].SessionID, ums[1].SessionID)
+	}
+
+	// If a second invocation DID happen (e.g. because foci spawned a
+	// fresh subprocess for some reason), its resume_id should match the
+	// first invocation's session_id. The harness can't force this, but
+	// we assert if it shows up.
+	invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(invs) >= 2 {
+		if invs[1].ResumeID == "" {
+			t.Errorf("second invocation has empty resume_id; want the persisted session id")
+		}
+		if invs[1].ResumeID != ums[0].SessionID {
+			t.Errorf("second invocation resume_id=%q does not match first turn session_id=%q",
+				invs[1].ResumeID, ums[0].SessionID)
+		}
+	}
 }
 
 // TestL2_SessionLifecycle_MultiTurnSharesSessionID proves three
@@ -43,8 +184,37 @@ func TestL2_SessionLifecycle_ResumeIDPassedOnSecondTurn(t *testing.T) {
 // session_id and assert cardinality of 1. Catches accidental
 // per-message subprocess spawning and session-key churn.
 func TestL2_SessionLifecycle_MultiTurnSharesSessionID(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9101},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	for i, text := range []string{"turn one", "turn two", "turn three"} {
+		sendText(h, token, 9101, 9101, text)
+		if !waitForUserMessage(t, h, "workspaces/alpha", text, 20*time.Second) {
+			t.Fatalf("turn %d (%q) never processed; stderr tail:\n%s", i+1, text, stderrTail(h.Stderr()))
+		}
+	}
+
+	ums, ok := waitForUserMessageCount(t, h, "workspaces/alpha", 3, 5*time.Second)
+	if !ok {
+		t.Fatalf("expected 3 user_message entries, got %d", len(ums))
+	}
+
+	sessIDs := map[string]struct{}{}
+	for _, e := range ums {
+		if e.SessionID == "" {
+			t.Errorf("user_message has empty session_id: %+v", e)
+			continue
+		}
+		sessIDs[e.SessionID] = struct{}{}
+	}
+	if len(sessIDs) != 1 {
+		t.Errorf("expected all 3 turns to share one session_id, got %d distinct: %v", len(sessIDs), sessIDs)
+	}
 }
 
 // TestL2_SessionLifecycle_ResetSoftRotatesSessionKey proves a /reset
@@ -55,8 +225,61 @@ func TestL2_SessionLifecycle_MultiTurnSharesSessionID(t *testing.T) {
 // invocations in the recorder where the second has empty resume_id
 // and a different session_id from the first.
 func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9201},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9201, 9201, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	primeUMs := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(primeUMs) < 1 {
+		t.Fatalf("no user_message after prime")
+	}
+	firstSession := primeUMs[0].SessionID
+
+	sendText(h, token, 9201, 9201, "/reset")
+	// Wait for the soft-reset confirmation to surface through Telegram.
+	if got := waitForSendMessageContaining(h, token, "Session reset", 10*time.Second); got == "" {
+		t.Fatalf("never saw soft-reset confirmation sendMessage; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9201, 9201, "after reset")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after reset", 15*time.Second) {
+		t.Fatalf("post-reset turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	invs, ok := waitForInvocationCount(t, h, "workspaces/alpha", 2, 5*time.Second)
+	if !ok {
+		t.Fatalf("expected >=2 invocations after reset, got %d", len(invs))
+	}
+	// The second invocation must be fresh — no --resume.
+	if invs[1].ResumeID != "" {
+		t.Errorf("post-reset invocation carried resume_id=%q; want empty (fresh session)", invs[1].ResumeID)
+	}
+
+	// And the post-reset user_message session_id must differ from the
+	// pre-reset one.
+	allUMs := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	var secondSession string
+	for _, e := range allUMs {
+		if strings.Contains(e.TextPrefix, "after reset") {
+			secondSession = e.SessionID
+			break
+		}
+	}
+	if secondSession == "" {
+		t.Fatalf("could not locate post-reset user_message")
+	}
+	if secondSession == firstSession {
+		t.Errorf("session_id did not rotate across /reset: %q == %q", firstSession, secondSession)
+	}
 }
 
 // TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn proves
@@ -69,8 +292,66 @@ func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
 // session_id. Catches the CancelSession + StopSession + RotateKey
 // sequencing in ResetSessionHard.
 func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// HARNESS GAP: CCSTUB_HANG is a process-level env var read once at
+	// spawn. It cannot be toggled per-turn from the test, and the
+	// harness has no per-agent env-var injection. Without the ability
+	// to make a SPECIFIC user message hang, we can't reliably set up an
+	// in-flight turn that /reset hard then cancels.
+	//
+	// We still implement the structural part: prime, then /reset hard,
+	// then a follow-up — and assert the session_id rotates and the next
+	// spawn has no --resume.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9301},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9301, 9301, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	primeUMs := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(primeUMs) < 1 {
+		t.Fatalf("no user_message after prime")
+	}
+	firstSession := primeUMs[0].SessionID
+
+	sendText(h, token, 9301, 9301, "/reset hard")
+	if got := waitForSendMessageContaining(h, token, "Session reset (hard)", 10*time.Second); got == "" {
+		t.Fatalf("never saw hard-reset confirmation sendMessage; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9301, 9301, "after hard reset")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after hard reset", 15*time.Second) {
+		t.Fatalf("post-hard-reset turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	invs, ok := waitForInvocationCount(t, h, "workspaces/alpha", 2, 5*time.Second)
+	if !ok {
+		t.Fatalf("expected >=2 invocations after hard reset, got %d", len(invs))
+	}
+	if invs[len(invs)-1].ResumeID != "" {
+		t.Errorf("post-hard-reset invocation carried resume_id=%q; want empty", invs[len(invs)-1].ResumeID)
+	}
+
+	allUMs := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	var secondSession string
+	for _, e := range allUMs {
+		if strings.Contains(e.TextPrefix, "after hard reset") {
+			secondSession = e.SessionID
+			break
+		}
+	}
+	if secondSession == "" {
+		t.Fatalf("could not locate post-hard-reset user_message")
+	}
+	if secondSession == firstSession {
+		t.Errorf("session_id did not rotate across /reset hard: %q == %q", firstSession, secondSession)
+	}
 }
 
 // TestL2_SessionLifecycle_ResetClearsPersistedResumeID proves /reset
@@ -80,8 +361,40 @@ func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
 // invocation in the recorder for that workdir has an empty resume_id
 // field. The negative half of ResumeIDPassedOnSecondTurn.
 func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9401},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9401, 9401, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9401, 9401, "/reset")
+	if got := waitForSendMessageContaining(h, token, "Session reset", 10*time.Second); got == "" {
+		t.Fatalf("never saw soft-reset confirmation; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9401, 9401, "follow-up")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "follow-up", 15*time.Second) {
+		t.Fatalf("follow-up turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	invs, ok := waitForInvocationCount(t, h, "workspaces/alpha", 2, 5*time.Second)
+	if !ok {
+		t.Fatalf("expected >=2 invocations, got %d", len(invs))
+	}
+	// Every invocation AFTER the prime one must have resume_id=="".
+	// The prime invocation is invs[0]; everything else must be empty.
+	for i := 1; i < len(invs); i++ {
+		if invs[i].ResumeID != "" {
+			t.Errorf("invocation #%d after /reset carried resume_id=%q; want empty", i, invs[i].ResumeID)
+		}
+	}
 }
 
 // TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh proves foci's
@@ -96,8 +409,7 @@ func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
 // Regression net for "delegated: backend died during init with
 // --resume <ID> — retrying without resume".
 func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: needs per-agent env-var injection so CCSTUB_FAIL_ON_RESUME=1 takes effect only on the resume respawn (not on the initial prime spawn). The current HarnessOptions has no field for per-agent env vars passed through to cc-stub.")
 }
 
 // TestL2_SessionLifecycle_BackendDeathMidSessionRespawns proves foci
@@ -111,8 +423,7 @@ func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
 // two invocations both in the same workdir with the second carrying
 // the first's session_id as --resume.
 func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: no way to forcibly kill the long-lived cc-stub between turns. Need either (a) per-spawn env-var injection so CCSTUB_EXIT_CODE / a 'die after one turn' var can be set on a specific spawn, or (b) a Harness helper that PIDs the running stub process and kills it. Without that, both turns share one long-lived process and the second-invocation assertion can't be made.")
 }
 
 // TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn proves
@@ -125,8 +436,46 @@ func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
 // for that session, in order. Catches inbox batching / queue-full
 // regressions.
 func TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// HARNESS GAP NOTE: CCSTUB_HANG is read once per spawn and only
+	// affects the time before the handshake, not subsequent turns.
+	// Without per-spawn env injection we can't make a specific user
+	// message hang. Still — the inbox queueing behaviour can be probed
+	// by sending two messages back-to-back (without waiting for the
+	// first to land in the recorder). Foci's per-session worker
+	// serialises them, and BOTH must show up as user_message entries in
+	// recorder order. If queueing were broken, the second would be
+	// dropped or processed in a parallel session.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9501},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Burst-send two messages without intermediate polling. Telegram's
+	// long-poll batches these in one getUpdates so the bot router sees
+	// them in the same tick — exactly the queue-while-busy condition.
+	sendText(h, token, 9501, 9501, "queued first")
+	sendText(h, token, 9501, 9501, "queued second")
+
+	ums, ok := waitForUserMessageCount(t, h, "workspaces/alpha", 2, 20*time.Second)
+	if !ok {
+		t.Fatalf("expected 2 user_message entries after burst, got %d\nrecorder:\n%s\nstderr tail:\n%s",
+			len(ums), recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Both turns must share the SAME session (queue must not spawn a
+	// parallel session) and appear in submission order.
+	if ums[0].SessionID != ums[1].SessionID {
+		t.Errorf("queued turns landed on different sessions: %q vs %q", ums[0].SessionID, ums[1].SessionID)
+	}
+	if !strings.Contains(ums[0].TextPrefix, "queued first") {
+		t.Errorf("first user_message text_prefix=%q; want it to contain %q", ums[0].TextPrefix, "queued first")
+	}
+	if !strings.Contains(ums[1].TextPrefix, "queued second") {
+		t.Errorf("second user_message text_prefix=%q; want it to contain %q", ums[1].TextPrefix, "queued second")
+	}
 }
 
 // TestL2_SessionLifecycle_PerChatSessionsIsolated proves two distinct
@@ -137,8 +486,49 @@ func TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn(t *testing.T) {
 // user_message session_ids in the recorder under the same agent
 // workdir. Catches regressions in chat-keyed session-key resolution.
 func TestL2_SessionLifecycle_PerChatSessionsIsolated(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// The single agent allows one user by config (UserID=9601). Foci's
+	// session key is per-(agent, user, chat) — we use two distinct
+	// chat IDs from the SAME user to spawn two parallel sessions on
+	// the same agent.
+	const userID = 9601
+	const chatA = 9601 // private chat = same id as user in Telegram convention
+	const chatB = -100 // a synthetic "group chat" id
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: userID},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, chatA, userID, "from chat A")
+	sendText(h, token, chatB, userID, "from chat B")
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "from chat A", 20*time.Second) {
+		t.Fatalf("chat A message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	if !waitForUserMessage(t, h, "workspaces/alpha", "from chat B", 20*time.Second) {
+		t.Fatalf("chat B message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	var sessA, sessB string
+	for _, e := range ums {
+		if strings.Contains(e.TextPrefix, "from chat A") && sessA == "" {
+			sessA = e.SessionID
+		}
+		if strings.Contains(e.TextPrefix, "from chat B") && sessB == "" {
+			sessB = e.SessionID
+		}
+	}
+	if sessA == "" || sessB == "" {
+		t.Fatalf("missing user_messages: sessA=%q sessB=%q\nrecorder:\n%s",
+			sessA, sessB, recorderTail(t, h.RecorderPath()))
+	}
+	if sessA == sessB {
+		t.Errorf("expected distinct session_ids per chat; both = %q", sessA)
+	}
 }
 
 // TestL2_SessionLifecycle_SlashCommandNotForwardedToBackend proves
@@ -150,8 +540,31 @@ func TestL2_SessionLifecycle_PerChatSessionsIsolated(t *testing.T) {
 // Negative scenario: protects the invariant that slash commands stay
 // out of session history.
 func TestL2_SessionLifecycle_SlashCommandNotForwardedToBackend(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9701},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9701, 9701, "/ping")
+	if got := waitForSendMessageContaining(h, token, "pong", 10*time.Second); got == "" {
+		t.Fatalf("never saw pong reply to /ping; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	// Now assert no user_message entry exists for alpha's workdir.
+	// Slash commands must never reach cc-stub. We tolerate any
+	// invocation that might have been triggered for some other reason
+	// (e.g. warmup), but a user_message containing "/ping" or "ping"
+	// would indicate the command leaked through.
+	ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	for _, e := range ums {
+		if strings.Contains(e.TextPrefix, "/ping") {
+			t.Errorf("slash command leaked to cc-stub: user_message text_prefix=%q", e.TextPrefix)
+		}
+	}
 }
 
 // TestL2_SessionLifecycle_EmptyMessageNotDispatched proves a Telegram
@@ -162,8 +575,41 @@ func TestL2_SessionLifecycle_SlashCommandNotForwardedToBackend(t *testing.T) {
 // Negative scenario: catches accidental dispatch of empty turns that
 // would burn a CC subprocess and write nothing useful.
 func TestL2_SessionLifecycle_EmptyMessageNotDispatched(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9801},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Push an Update with Text="" and no attachments.
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 9801, Type: "private"},
+			From: &gotgbot.User{Id: 9801, FirstName: "Tester"},
+			Text: "",
+		},
+	})
+
+	// Wait a generous window — long enough for any spurious dispatch
+	// to show up. The polling window in the harness is fast (~1s); 3s
+	// is plenty.
+	time.Sleep(3 * time.Second)
+
+	// Assert no user_message and no invocation for alpha (modulo any
+	// invocations that happened before the empty push — which there
+	// shouldn't be in a fresh harness).
+	entries := readRecorderEntries(t, h.RecorderPath())
+	ums := userMessagesIn(entries, "workspaces/alpha")
+	if len(ums) != 0 {
+		t.Errorf("expected zero user_message entries for alpha, got %d:\n%s",
+			len(ums), recorderTail(t, h.RecorderPath()))
+	}
+	invs := invocationsByWorkdir(entries, "workspaces/alpha")
+	if len(invs) != 0 {
+		t.Errorf("expected zero invocation entries for alpha, got %d", len(invs))
+	}
 }
 
 // TestL2_SessionLifecycle_StopCommandCancelsTurn proves /stop while a
@@ -176,8 +622,35 @@ func TestL2_SessionLifecycle_EmptyMessageNotDispatched(t *testing.T) {
 // fired through the Telegram stub. Regression net for the per-session
 // CancelSession path (replaces the old global bot.cancelTurn).
 func TestL2_SessionLifecycle_StopCommandCancelsTurn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// HARNESS GAP NOTE: CCSTUB_HANG affects only the pre-handshake
+	// startup phase, and is process-level. We can't make a specific
+	// turn hang without per-spawn env injection. Implement the
+	// structural portion: prime + /stop + follow-up, asserting the
+	// "Stopped." reply lands and the follow-up still processes.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 9901},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 9901, 9901, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9901, 9901, "/stop")
+	if got := waitForSendMessageContaining(h, token, "Stopped", 10*time.Second); got == "" {
+		t.Fatalf("never saw 'Stopped.' reply to /stop; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	sendText(h, token, 9901, 9901, "after stop")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after stop", 15*time.Second) {
+		t.Fatalf("follow-up turn after /stop never processed — session may be poisoned; stderr tail:\n%s",
+			stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SessionLifecycle_CompactCommandRoutesToBackend proves the
@@ -189,8 +662,63 @@ func TestL2_SessionLifecycle_StopCommandCancelsTurn(t *testing.T) {
 // in the same long-lived subprocess. Catches delegated-vs-API
 // compaction routing regressions.
 func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// Note: foci's CompactCommand for delegated agents calls
+	// Agent.CompactSession; for delegated mode this surfaces a "Context
+	// compacted (delegated)." sendMessage. Whether CC receives a
+	// dedicated /compact user_message depends on Agent.CompactSession's
+	// implementation. We assert structurally on the observable side
+	// effect: a confirmation Telegram reply AND that compact doesn't
+	// spawn a fresh subprocess (it's not a reset).
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 10001},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	sendText(h, token, 10001, 10001, "prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime", 15*time.Second) {
+		t.Fatalf("prime turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	preCompactInvs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	preCount := len(preCompactInvs)
+
+	sendText(h, token, 10001, 10001, "/compact")
+	// Foci's delegated compact path replies "Context compacted (delegated)."
+	if got := waitForSendMessageContaining(h, token, "compact", 10*time.Second); got == "" {
+		t.Fatalf("never saw /compact reply; sent calls:\n%s\nstderr tail:\n%s",
+			sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+	}
+
+	// Look for a user_message whose text_prefix surfaces the compact
+	// marker — this proves routing-to-backend rather than the
+	// API-side summariser. If foci doesn't pass a literal "/compact"
+	// string and instead uses a side-channel control message, the
+	// recorder won't see it; in that case at minimum the invocation
+	// count must not have grown (compact is not a reset).
+	allUMs := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	sawCompactMarker := false
+	for _, e := range allUMs {
+		if strings.Contains(strings.ToLower(e.TextPrefix), "compact") {
+			sawCompactMarker = true
+			break
+		}
+	}
+
+	postInvs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(postInvs) > preCount {
+		t.Errorf("compact spawned a fresh subprocess (pre=%d post=%d); compact must not reset", preCount, len(postInvs))
+	}
+
+	if !sawCompactMarker {
+		// Non-fatal: foci may dispatch compact via control_request
+		// rather than user_message text, which is invisible to the
+		// recorder. Log diagnostics so the failure mode is obvious if
+		// this becomes a flake.
+		t.Logf("no user_message with 'compact' marker; foci may route compact via a non-user-message channel. Recorder:\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_SessionLifecycle_ResetWhileProcessingRefused proves a bare
@@ -203,8 +731,7 @@ func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
 // during the hang window). Negative path complementing the soft-reset
 // happy path.
 func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: needs a way to keep a turn in-flight (so the IsProcessing gate in Agent.ResetSession returns true) while a /reset arrives. CCSTUB_HANG is process-level and pre-handshake only; there's no per-turn hang env var, no per-agent env-var injection through HarnessOptions, and no scripted 'sleep N seconds before completing this turn' tool_use the stub honours. Implementing this test would require extending cc-stub with e.g. a 'sleep_ms' field in stubScript that the stub respects before emitting the result envelope.")
 }
 
 // TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn
@@ -217,8 +744,7 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 // same session_id. Distinct from BackendDeathMidSessionRespawns by
 // asserting persistence across a CLEAN exit, not a crash.
 func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: needs per-spawn env-var injection so CCSTUB_EXIT_CODE=0 can be set on a SPECIFIC spawn (forcing a clean exit between turns), or a Harness helper that signals the running cc-stub PID. Without that, both turns share one long-lived process and no respawn happens — the persistence path the test is meant to cover isn't exercised.")
 }
 
 // TestL2_SessionLifecycle_HangBeyondReadyTimeoutSurfacesError proves
@@ -231,6 +757,6 @@ func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.
 // follow-up processes successfully. Catches startup-deadline
 // regressions in the delegated init path.
 func TestL2_SessionLifecycle_HangBeyondReadyTimeoutSurfacesError(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: needs per-agent env-var injection so CCSTUB_HANG can be set on the first spawn and CLEARED on a subsequent spawn. The current HarnessOptions has no field for passing env vars through to spawned cc-stub processes, and no way to vary them between spawns of the same agent. Implementing this requires extending HarnessOptions (e.g. AgentSpec.ExtraEnv plus a 'rotate after N spawns' mechanism, or a Harness method to set/clear stub env vars between turns).")
 }
+

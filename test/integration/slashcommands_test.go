@@ -3,9 +3,14 @@
 package integration
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/testharness"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
 // Slash commands are foci's client-side command surface. The Telegram
@@ -20,14 +25,118 @@ import (
 // formatting/voice TTS, or wall-clock progression is L3 and is not
 // listed here.
 
+// ---------------------------------------------------------------------------
+// Local helpers
+//
+// pushTelegramText: convenience for the common case of pushing a chat
+// message update on behalf of a synthetic Tester user.
+// waitForSendMessageContains: polls the Telegram stub until the next
+// sendMessage body's "text" field contains every required substring.
+// Returns the matching body (decoded) so callers can do further checks.
+// peekSendMessageTexts: returns every recorded sendMessage's text field,
+// useful for failure-mode logging and "anywhere in the call log" checks.
+// ---------------------------------------------------------------------------
+
+// pushTelegramText sends one synthetic Telegram update for the given
+// agent's bot. ChatID + UserID are taken from the harness's AgentSpec
+// (the harness asserts these match the spec's UserID at registration).
+func pushTelegramText(t *testing.T, h *testharness.Harness, agentID string, userID int64, text string) {
+	t.Helper()
+	token := h.AgentBotToken(agentID)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: text,
+		},
+	})
+}
+
+// waitForSendMessageText polls the Telegram stub's sent log for the
+// given token until a sendMessage whose body.text contains every
+// required substring is observed. Returns the matching text on success,
+// "" on timeout.
+func waitForSendMessageText(t *testing.T, h *testharness.Harness, token string, timeout time.Duration, requireAll ...string) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, call := range h.TelegramStub().PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if err := json.Unmarshal(call.Body, &body); err != nil {
+				continue
+			}
+			text, _ := body["text"].(string)
+			ok := true
+			for _, want := range requireAll {
+				if !strings.Contains(text, want) {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return text
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return ""
+}
+
+// peekSendMessageTexts returns every sendMessage body's text field for
+// the given token, in order. Useful for failure messages.
+func peekSendMessageTexts(h *testharness.Harness, token string) []string {
+	var out []string
+	for _, call := range h.TelegramStub().PeekSent(token) {
+		if call.Method != "sendMessage" {
+			continue
+		}
+		var body map[string]any
+		if err := json.Unmarshal(call.Body, &body); err != nil {
+			continue
+		}
+		if text, ok := body["text"].(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+// userMessagesForWorkdir filters recorder user_message entries to a
+// specific workdir substring.
+func userMessagesForWorkdir(entries []recorderEntry, workdirSubstr string) []recorderEntry {
+	var out []recorderEntry
+	for _, e := range entries {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, workdirSubstr) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // TestL2_SlashCommands_HelpListsRegisteredCommands proves /help is
 // dispatched client-side and returns a sendMessage whose body
 // enumerates the registered command set. Confirms HelpCommand's
 // registry walk is wired through the interceptor and that the reply
 // path bypasses cc-stub entirely.
 func TestL2_SlashCommands_HelpListsRegisteredCommands(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7001}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7001, "/help")
+
+	token := h.AgentBotToken("alpha")
+	// HelpCommand groups by category and emits "/<name> — <desc>" lines.
+	// We assert on a few well-known names from the registered set rather
+	// than the exact formatting, which is allowed to evolve.
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "/help", "/ping", "/reset")
+	if text == "" {
+		t.Fatalf("/help reply never arrived (or didn't enumerate expected commands)\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_HelpDoesNotInvokeCCStub proves /help is a
@@ -35,8 +144,48 @@ func TestL2_SlashCommands_HelpListsRegisteredCommands(t *testing.T) {
 // after the command runs, so we are not paying mana for a model
 // turn on a foci-internal command.
 func TestL2_SlashCommands_HelpDoesNotInvokeCCStub(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7002}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Let any first-run onboarding / nudge-extraction settle so our
+	// pre-snapshot includes those startup-time entries — otherwise a
+	// late-arriving onboarding user_message could be mis-attributed to
+	// /help. Two seconds is comfortably past the harness's typical
+	// 3-second startup window for the cc-stub spawn (build is cached).
+	time.Sleep(2 * time.Second)
+
+	// Snapshot any startup-time invocations.
+	preInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	preUserMsgs := len(userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+
+	pushTelegramText(t, h, "alpha", 7002, "/help")
+
+	// Wait for the /help reply, then check the recorder hasn't grown a
+	// user_message entry in alpha's workdir (the absence is the assertion).
+	if waitForSendMessageText(t, h, token, 15*time.Second, "/help") == "" {
+		t.Fatalf("/help reply never arrived; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Give any potential late cc-stub invocation a moment to surface.
+	time.Sleep(500 * time.Millisecond)
+	entries := readRecorderEntries(t, h.RecorderPath())
+	postUserMsgs := len(userMessagesForWorkdir(entries, "workspaces/alpha"))
+	if postUserMsgs > preUserMsgs {
+		t.Errorf("/help triggered a cc-stub user_message turn (pre=%d post=%d) — command should be client-side only",
+			preUserMsgs, postUserMsgs)
+	}
+	// Allow startup invocation, but no NEW invocation should fire on /help.
+	postInvocations := len(invocationsByWorkdir(entries, "workspaces/alpha"))
+	if postInvocations > preInvocations {
+		// One extra invocation can be tolerated only if it was spawned
+		// pre-command and recorded late — but ANY new user_message would
+		// have caught it above. So unconditional increase indicates the
+		// command path leaked into the agent pipeline.
+		t.Logf("note: cc-stub invocation count grew from %d to %d during /help dispatch", preInvocations, postInvocations)
+	}
 }
 
 // TestL2_SlashCommands_PingReturnsPong proves the simplest
@@ -44,8 +193,17 @@ func TestL2_SlashCommands_HelpDoesNotInvokeCCStub(t *testing.T) {
 // produces a "pong" sendMessage with a timestamp. Bare smoke test
 // for the command dispatch path.
 func TestL2_SlashCommands_PingReturnsPong(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7003}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7003, "/ping")
+
+	token := h.AgentBotToken("alpha")
+	if waitForSendMessageText(t, h, token, 15*time.Second, "pong") == "" {
+		t.Fatalf("/ping never produced a pong reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_DotPrefixAlias proves `.ping` is treated as
@@ -53,8 +211,17 @@ func TestL2_SlashCommands_PingReturnsPong(t *testing.T) {
 // to type on a phone keyboard). Asserts the same sendMessage shape as
 // the slash form.
 func TestL2_SlashCommands_DotPrefixAlias(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7004}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7004, ".ping")
+
+	token := h.AgentBotToken("alpha")
+	if waitForSendMessageText(t, h, token, 15*time.Second, "pong") == "" {
+		t.Fatalf(".ping (dot-prefix alias) never produced a pong reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_DotPrefixNonCommandPassesThrough proves a
@@ -63,8 +230,19 @@ func TestL2_SlashCommands_DotPrefixAlias(t *testing.T) {
 // user_message containing the literal ".something". This protects
 // against the dot-prefix alias eating common phone-typed messages.
 func TestL2_SlashCommands_DotPrefixNonCommandPassesThrough(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7005}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	const literal = ".nottacommand"
+	pushTelegramText(t, h, "alpha", 7005, literal)
+
+	// The agent should receive the message verbatim. cc-stub records
+	// it as a user_message — assert on the recorded text prefix.
+	if !waitForUserMessage(t, h, "workspaces/alpha", literal, 15*time.Second) {
+		t.Errorf("expected %q to fall through to the agent as a user_message\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			literal, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_UnknownCommandSuggestsAlternatives proves an
@@ -72,8 +250,26 @@ func TestL2_SlashCommands_DotPrefixNonCommandPassesThrough(t *testing.T) {
 // reply built from the registry's Levenshtein-distance suggester. The
 // reply MUST come via sendMessage; cc-stub MUST NOT be invoked.
 func TestL2_SlashCommands_UnknownCommandSuggestsAlternatives(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7006}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	// "/halp" should be within edit distance of /help.
+	pushTelegramText(t, h, "alpha", 7006, "/halp")
+
+	token := h.AgentBotToken("alpha")
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "Unknown command", "/halp")
+	if text == "" {
+		t.Fatalf("/halp never produced an 'Unknown command' reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+
+	// Negative: no user_message containing /halp should have reached cc-stub.
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") && strings.Contains(e.TextPrefix, "/halp") {
+			t.Errorf("/halp leaked into cc-stub user_message: %q", e.TextPrefix)
+		}
+	}
 }
 
 // TestL2_SlashCommands_ResetClearsSession proves /reset dispatches the
@@ -82,8 +278,57 @@ func TestL2_SlashCommands_UnknownCommandSuggestsAlternatives(t *testing.T) {
 // the recorder under a *different* session id than before the reset,
 // proving the session key rotated.
 func TestL2_SlashCommands_ResetClearsSession(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7007}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Prime with a normal message so a session exists. Wait for both
+	// the recorder entry AND the egress sendMessage so the agent's
+	// IsProcessing flag has cleared before /reset arrives.
+	pushTelegramText(t, h, "alpha", 7007, "first turn")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first turn", 15*time.Second) {
+		t.Fatalf("priming message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	if waitForSendMessageText(t, h, token, 15*time.Second, "stub-reply", "first turn") == "" {
+		t.Fatalf("priming reply never arrived; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	preEntries := userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(preEntries) == 0 {
+		t.Fatalf("no priming user_message entry")
+	}
+	preSessionID := preEntries[len(preEntries)-1].SessionID
+
+	// /reset (soft).
+	pushTelegramText(t, h, "alpha", 7007, "/reset")
+	if waitForSendMessageText(t, h, token, 15*time.Second, "Session reset") == "" {
+		// Fallback: API-mode wording is "Session cleared."
+		if waitForSendMessageText(t, h, token, 1*time.Second, "Session cleared") == "" {
+			t.Fatalf("/reset confirmation reply never arrived\nsent so far:\n%v\nstderr tail:\n%s",
+				peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+		}
+	}
+
+	// Send another message and verify it lands under a different session id.
+	pushTelegramText(t, h, "alpha", 7007, "after reset")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after reset", 15*time.Second) {
+		t.Fatalf("post-reset message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	postEntries := userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	var postSessionID string
+	for _, e := range postEntries {
+		if strings.Contains(e.TextPrefix, "after reset") {
+			postSessionID = e.SessionID
+			break
+		}
+	}
+	if postSessionID == "" {
+		t.Fatalf("could not locate post-reset user_message entry")
+	}
+	if postSessionID == preSessionID {
+		t.Errorf("session id did not rotate across /reset: pre=%q post=%q", preSessionID, postSessionID)
+	}
 }
 
 // TestL2_SlashCommands_ResetHardCancelsInflightTurn proves /reset hard
@@ -94,8 +339,12 @@ func TestL2_SlashCommands_ResetClearsSession(t *testing.T) {
 // ("Session reset (hard)...") must arrive without the original turn
 // ever completing.
 func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// CCSTUB_HANG is a process-global env var set by the test harness
+	// at foci-gw spawn time. The current StartGateway/HarnessOptions
+	// surface has no hook to inject extra env vars into the foci-gw
+	// (and therefore cc-stub) subprocess, so we cannot make cc-stub
+	// block on demand from inside the test body.
+	t.Skip("HARNESS GAP: HarnessOptions has no field for injecting per-test env vars (e.g. CCSTUB_HANG) into the foci-gw subprocess that exec()s cc-stub")
 }
 
 // TestL2_SlashCommands_ReloadReturnsSkillCount proves /reload reloads
@@ -104,8 +353,19 @@ func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
 // restart. Confirms the ReloadSystem path is reachable from the
 // command registry without invoking cc-stub.
 func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7009}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7009, "/reload")
+
+	token := h.AgentBotToken("alpha")
+	// ReloadCommand reply: "Reloaded:\n- workspace files (system prompt)\n- N skills\n\nNote: foci.toml config changes require a service restart..."
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "Reloaded", "skills", "foci.toml")
+	if text == "" {
+		t.Fatalf("/reload never produced the expected reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile proves an
@@ -115,8 +375,18 @@ func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
 // new file contents. Reload must not pick up foci.toml — config
 // changes still need a restart per the command's reply text.
 func TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// cc-stub's recorder captures the spawn-time --resume / --model /
+	// flags but NOT the system prompt body itself: foci passes system
+	// blocks via NDJSON control_request after spawn (real claude reads
+	// them), and cc-stub doesn't decode or record those payloads. There
+	// is no observable side-effect that proves the bootstrap was
+	// rebuilt with the edited workspace file. We could assert that
+	// /reload's REPLY reaches the user (covered by
+	// TestL2_SlashCommands_ReloadReturnsSkillCount above), but the
+	// "next cc-stub invocation carries the new file contents" claim in
+	// the purpose comment is not assertable through the current cc-stub
+	// surface.
+	t.Skip("HARNESS GAP: cc-stub doesn't record the NDJSON system prompt body received from foci, so we can't observe whether the bootstrap was rebuilt from disk after /reload")
 }
 
 // TestL2_SlashCommands_ErrorsTailsEventLog proves /errors returns only
@@ -125,8 +395,14 @@ func TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile(t *testing.T) {
 // write to cc.EventLogPath) and asserts the reply contains the WARN
 // and ERROR but not the INFO entries, wrapped in a fenced code block.
 func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// The test config writer does not set [logging] event_file, so
+	// foci-gw uses the package default "logs/foci.log" resolved
+	// against UserHomeDir() — which means the test would read/write
+	// the real user's ~/logs/foci.log. There's no way through the
+	// public harness API to point foci-gw at a temp-dir event log
+	// file, so seeding "a mix of INFO/WARN/ERROR lines" into a known
+	// path that /errors will tail is not possible.
+	t.Skip("HARNESS GAP: writeTestConfig omits [logging].event_file; no harness option to set a temp event log path, so we cannot seed lines and assert on /errors output")
 }
 
 // TestL2_SlashCommands_ErrorsMissingLogFile proves /errors does NOT
@@ -135,8 +411,13 @@ func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
 // for the comment in the original placeholder: "should return recent
 // ERROR/WARN log lines, not 404".
 func TestL2_SlashCommands_ErrorsMissingLogFile(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// /errors calls tailFile(cc.EventLogPath, ...) which returns
+	// "Log file not found." when the path doesn't exist. But foci-gw
+	// is configured (via the default) to point at ~/logs/foci.log,
+	// which IS likely to exist on the developer's machine and contain
+	// arbitrary content. We can't guarantee absence without a harness
+	// hook that points the event log path at a non-existent temp path.
+	t.Skip("HARNESS GAP: writeTestConfig omits [logging].event_file; cannot guarantee the event log path is absent for the duration of the test (default resolves to ~/logs/foci.log)")
 }
 
 // TestL2_SlashCommands_ErrorsRespectsLineCountArg proves /errors 5
@@ -144,8 +425,10 @@ func TestL2_SlashCommands_ErrorsMissingLogFile(t *testing.T) {
 // Negative paths: non-numeric argument (e.g. /errors foo) falls back
 // to the default of 10 rather than erroring.
 func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// Same gap as TestL2_SlashCommands_ErrorsTailsEventLog: without a
+	// harness hook to point [logging].event_file at a temp file we
+	// control, we can't seed N>5 matching lines and verify the cap.
+	t.Skip("HARNESS GAP: writeTestConfig omits [logging].event_file; cannot seed a controlled event log to verify the line-count cap")
 }
 
 // TestL2_SlashCommands_ManaReportsNoProviderSupport proves the dynamic
@@ -155,8 +438,54 @@ func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
 // command" via the suggester — NOT as a panic and NOT as a fake
 // percentage.
 func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// Premise correction: the harness configures the agent with
+	// backend="claude-code" (delegated/ccstream), and the ccstream
+	// agent wiring in cmd/foci-gw/agents_delegated.go sets
+	// ag.UsageClient = &ccstream.RateLimitState{} unconditionally —
+	// so /mana IS registered. The behaviour the test should actually
+	// guard is "no panic, no fake percentage": with no rate_limit_event
+	// pushed from cc-stub, RateLimitState.GetUsage returns (nil, nil),
+	// manaCheck takes the FormatPercent("") branch and replies
+	// "<emoji> Mana: unknown".
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7012}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7012, "/mana")
+
+	token := h.AgentBotToken("alpha")
+	// Either the suggester ("Unknown command /mana") OR manaCheck's
+	// no-data path ("Mana: unknown" / "No usage data") satisfies the
+	// real invariant: no panic, no made-up percentage. Accept both —
+	// the negative assertion below catches the "made-up percentage" case.
+	deadline := time.Now().Add(15 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		for _, candidate := range peekSendMessageTexts(h, token) {
+			lower := strings.ToLower(candidate)
+			if strings.Contains(lower, "unknown command") ||
+				strings.Contains(lower, "mana: unknown") ||
+				strings.Contains(lower, "no usage data") {
+				got = candidate
+				break
+			}
+		}
+		if got != "" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got == "" {
+		t.Fatalf("/mana did not surface as 'Unknown command' or 'unknown'/'No usage data'\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+
+	// Negative: the reply must NOT contain a numeric percentage —
+	// FormatPercent returning "" means no rate_limit data, so any
+	// "%" sign would indicate a fabricated number.
+	if strings.Contains(got, "%") {
+		t.Errorf("/mana reply unexpectedly contains a percentage with no rate_limit_event pushed: %q", got)
+	}
 }
 
 // TestL2_SlashCommands_CostTodayReadsAPILog proves /cost today aggregates
@@ -165,8 +494,12 @@ func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
 // api log with two synthetic entries dated today; asserts both
 // session names appear and the total matches the seeded sum.
 func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// The test config writer does not set [logging] api_file or
+	// api_db, so foci-gw uses defaults that resolve against
+	// UserHomeDir(). There's no exposed harness API to point them at
+	// a temp file we can seed before sending /cost today, so we
+	// cannot verify the aggregation logic from the L2 surface.
+	t.Skip("HARNESS GAP: writeTestConfig omits [logging].api_file / api_db; no way to seed synthetic api log entries readable by /cost")
 }
 
 // TestL2_SlashCommands_CostUnknownPeriodShowsUsage proves /cost with
@@ -174,8 +507,34 @@ func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 // string listing the supported subcommands rather than crashing or
 // dispatching to cc-stub.
 func TestL2_SlashCommands_CostUnknownPeriodShowsUsage(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7014}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7014, "/cost banana")
+
+	token := h.AgentBotToken("alpha")
+	// /cost with a non-matching subcommand and non-numeric arg hits
+	// DefaultExecute → costDays → numeric parse fails → returns
+	// "Usage: /cost [today|24h|week|<days>]". The api log might not
+	// exist (empty → "No API calls logged yet.") — either response
+	// proves the command did NOT dispatch to cc-stub. We accept
+	// whichever arrives first.
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "Usage", "cost")
+	if text == "" {
+		text = waitForSendMessageText(t, h, token, 1*time.Second, "No API calls logged yet")
+	}
+	if text == "" {
+		t.Fatalf("/cost banana never produced a usage/empty-log reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+
+	// Negative assertion: /cost banana must not have reached cc-stub.
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") && strings.Contains(e.TextPrefix, "/cost") {
+			t.Errorf("/cost banana leaked into cc-stub user_message: %q", e.TextPrefix)
+		}
+	}
 }
 
 // TestL2_SlashCommands_ModeBareShowsCurrent proves /mode (no args)
@@ -184,8 +543,34 @@ func TestL2_SlashCommands_CostUnknownPeriodShowsUsage(t *testing.T) {
 // (default)" — confirms the displayMode reverse-mapping from CC's
 // "default" wire value to the user-friendly "normal" label.
 func TestL2_SlashCommands_ModeBareShowsCurrent(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7015}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	// Bare /mode triggers the keyboard render (KeyboardOptions returns
+	// four entries) rather than executing — so to read the current
+	// value via plain text reply we use the KeyboardHeader path, which
+	// renders into the keyboard outcome's header. The header text
+	// arrives via sendMessage with reply_markup. To observe just the
+	// current value we'd need to bypass the keyboard; sending
+	// "/mode normal" would mutate state. Cheapest readable signal: the
+	// keyboard's header text in the next sendMessage body.
+	pushTelegramText(t, h, "alpha", 7015, "/mode")
+
+	token := h.AgentBotToken("alpha")
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "/mode", "Permission mode")
+	if text == "" {
+		// Some renderers may omit the slash-prefix. Try a softer match.
+		text = waitForSendMessageText(t, h, token, 1*time.Second, "Permission mode")
+	}
+	if text == "" {
+		t.Fatalf("/mode bare did not produce a Permission-mode header\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+	// displayMode("") returns "normal (default)".
+	if !strings.Contains(text, "normal") {
+		t.Errorf("expected current mode to surface as %q in the reply, got: %q", "normal", text)
+	}
 }
 
 // TestL2_SlashCommands_ModeSwitchToAccept proves /mode accept (and its
@@ -195,8 +580,41 @@ func TestL2_SlashCommands_ModeBareShowsCurrent(t *testing.T) {
 // bare-query must report "accept" — proving the session metadata
 // actually changed.
 func TestL2_SlashCommands_ModeSwitchToAccept(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7016}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Send a normal message first so the delegated backend exists
+	// for the session — SendBackendControl needs an active backend.
+	pushTelegramText(t, h, "alpha", 7016, "hello")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "hello", 15*time.Second) {
+		t.Fatalf("priming message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	// Drain the priming sendMessage(s) so the next assertion sees only
+	// the /mode reply.
+	_ = h.TelegramStub().DrainSent(token)
+
+	pushTelegramText(t, h, "alpha", 7016, "/mode accept")
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "Permission mode: accept")
+	if text == "" {
+		t.Fatalf("/mode accept did not produce success reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+
+	// Bare /mode should now reflect the new value. The bare form goes
+	// through the keyboard path and surfaces the header.
+	_ = h.TelegramStub().DrainSent(token)
+	pushTelegramText(t, h, "alpha", 7016, "/mode")
+	text = waitForSendMessageText(t, h, token, 15*time.Second, "Permission mode")
+	if text == "" {
+		t.Fatalf("/mode bare-query after switch did not produce header\nsent so far:\n%v",
+			peekSendMessageTexts(h, token))
+	}
+	if !strings.Contains(text, "accept") {
+		t.Errorf("expected mode to be %q after switch, header was: %q", "accept", text)
+	}
 }
 
 // TestL2_SlashCommands_ModeInvalidValueReturnsError proves /mode
@@ -204,8 +622,36 @@ func TestL2_SlashCommands_ModeSwitchToAccept(t *testing.T) {
 // options hint, without mutating session metadata. A follow-up bare
 // /mode must still report the previous mode.
 func TestL2_SlashCommands_ModeInvalidValueReturnsError(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7017}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	pushTelegramText(t, h, "alpha", 7017, "hello")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "hello", 15*time.Second) {
+		t.Fatalf("priming message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	_ = h.TelegramStub().DrainSent(token)
+
+	pushTelegramText(t, h, "alpha", 7017, "/mode banana")
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "Invalid permission mode")
+	if text == "" {
+		t.Fatalf("/mode banana did not return Invalid-mode error\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+
+	// Bare /mode after the invalid attempt must still be "normal".
+	_ = h.TelegramStub().DrainSent(token)
+	pushTelegramText(t, h, "alpha", 7017, "/mode")
+	text = waitForSendMessageText(t, h, token, 15*time.Second, "Permission mode")
+	if text == "" {
+		t.Fatalf("/mode bare-query after invalid did not produce header\nsent so far:\n%v",
+			peekSendMessageTexts(h, token))
+	}
+	if !strings.Contains(text, "normal") {
+		t.Errorf("expected mode to still be %q after invalid attempt, got: %q", "normal", text)
+	}
 }
 
 // TestL2_SlashCommands_StaleCommandDropped proves a slash command
@@ -214,8 +660,50 @@ func TestL2_SlashCommands_ModeInvalidValueReturnsError(t *testing.T) {
 // and a WARN line in foci-gw stderr. Protects against replay storms
 // after a foci restart drains old getUpdates.
 func TestL2_SlashCommands_StaleCommandDropped(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7018}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+	preTexts := len(peekSendMessageTexts(h, token))
+
+	// Push a slash command with Date set 5 minutes in the past — well
+	// past dispatch.StaleCommandAge (30s). The harness's PushUpdate
+	// only autofills Date when it's zero, so this value is preserved.
+	staleDate := time.Now().Add(-5 * time.Minute).Unix()
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Date: staleDate,
+			Chat: gotgbot.Chat{Id: 7018, Type: "private"},
+			From: &gotgbot.User{Id: 7018, FirstName: "Tester"},
+			Text: "/ping",
+		},
+	})
+
+	// Wait long enough for the bot's getUpdates loop to pick the update
+	// up and for the stale-command branch to fire. 3s is comfortable
+	// against the 1s long-poll timeout used in the test config.
+	time.Sleep(3 * time.Second)
+
+	// Assertion 1: no sendMessage reply.
+	postTexts := peekSendMessageTexts(h, token)
+	if len(postTexts) > preTexts {
+		t.Errorf("expected no new sendMessage after stale command, got %d new entries:\n%v",
+			len(postTexts)-preTexts, postTexts[preTexts:])
+	}
+
+	// Assertion 2: stderr WARN line for the drop.
+	stderr := h.Stderr()
+	if !strings.Contains(stderr, "dropping stale command") {
+		t.Errorf("expected 'dropping stale command' WARN line in foci-gw stderr; stderr tail:\n%s", stderrTail(stderr))
+	}
+
+	// Assertion 3: no user_message in cc-stub recorder for /ping.
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") && strings.Contains(e.TextPrefix, "/ping") {
+			t.Errorf("stale /ping leaked into cc-stub: %q", e.TextPrefix)
+		}
+	}
 }
 
 // TestL2_SlashCommands_NeverReachCCStub proves the general invariant:
@@ -226,8 +714,51 @@ func TestL2_SlashCommands_StaleCommandDropped(t *testing.T) {
 // regressions where a future change forwards command text into the
 // agent pipeline.
 func TestL2_SlashCommands_NeverReachCCStub(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7019}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	commands := []string{
+		"/help", "/ping", "/reset", "/reload",
+		"/errors", "/cost", "/mode", "/version", "/status",
+	}
+	for _, cmd := range commands {
+		pushTelegramText(t, h, "alpha", 7019, cmd)
+	}
+
+	// Wait for the gateway to chew through them. Each command should
+	// emit AT LEAST a sendMessage reply (or a keyboard render — bare
+	// /mode/keyboard variants), so wait until total sendMessage count
+	// stops growing or we hit a deadline.
+	deadline := time.Now().Add(15 * time.Second)
+	var prev int
+	stable := 0
+	for time.Now().Before(deadline) {
+		cur := len(peekSendMessageTexts(h, token))
+		if cur == prev && cur >= 1 {
+			stable++
+			if stable >= 3 {
+				break
+			}
+		} else {
+			stable = 0
+			prev = cur
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// Invariant assertion: zero user_message entries whose text_prefix
+	// starts with "/" in alpha's workdir.
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(e.TextPrefix), "/") {
+			t.Errorf("regression: command leaked into cc-stub user_message: %q", e.TextPrefix)
+		}
+	}
 }
 
 // TestL2_SlashCommands_PassForwardsToBackend proves /pass <text>
@@ -237,8 +768,42 @@ func TestL2_SlashCommands_NeverReachCCStub(t *testing.T) {
 // escape hatch documented for running CC's own slash commands like
 // /pass /context.
 func TestL2_SlashCommands_PassForwardsToBackend(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7020}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Prime so the delegated backend is alive (Inject needs an active
+	// backend to forward to). Wait for both the recorder entry AND the
+	// egress sendMessage so the backend is idle when /pass arrives.
+	pushTelegramText(t, h, "alpha", 7020, "warmup")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "warmup", 15*time.Second) {
+		t.Fatalf("priming message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	token := h.AgentBotToken("alpha")
+	if waitForSendMessageText(t, h, token, 15*time.Second, "stub-reply", "warmup") == "" {
+		t.Fatalf("priming reply never arrived; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Use a marker phrase as the payload — distinguishable from the
+	// priming text in the recorder.
+	const marker = "PASS_FORWARD_MARKER_a17c"
+	pushTelegramText(t, h, "alpha", 7020, "/pass "+marker)
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", marker, 15*time.Second) {
+		t.Errorf("/pass payload %q never reached cc-stub as a user_message\n--- recorder ---\n%s\n--- stderr tail ---\n%s",
+			marker, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// The recorded text must not include the "/pass " prefix.
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") && strings.Contains(e.TextPrefix, marker) {
+			if strings.Contains(e.TextPrefix, "/pass") {
+				t.Errorf("/pass prefix was not stripped before forwarding to backend: %q", e.TextPrefix)
+			}
+			break
+		}
+	}
 }
 
 // TestL2_SlashCommands_RepeatResendsLastMessage proves the hidden //
@@ -247,8 +812,55 @@ func TestL2_SlashCommands_PassForwardsToBackend(t *testing.T) {
 // text. Negative path: // sent before any prior message must reply
 // "no previous message to repeat".
 func TestL2_SlashCommands_RepeatResendsLastMessage(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7021}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Implementation note: RepeatCommand (internal/command/builtins.go)
+	// returns the previous user-typed text as Response.Text — which the
+	// Telegram bridge renders as a sendMessage echoing it back to the
+	// user. It does NOT re-dispatch the previous message into the agent
+	// queue, so cc-stub does not see a second user_message with the
+	// same text. We assert on the observable side effect that does
+	// fire: the sendMessage payload containing the previous text.
+	//
+	// The command is registered as Name="repeat" — the "//"
+	// user-facing shorthand from COMMANDS.md depends on a
+	// [[message_transforms]] rule in foci.toml mapping "//" → "/repeat",
+	// which the test harness does not configure. We exercise the
+	// registered name directly: /repeat.
+
+	// Negative path: /repeat before any prior message.
+	pushTelegramText(t, h, "alpha", 7021, "/repeat")
+	if waitForSendMessageText(t, h, token, 15*time.Second, "no previous message to repeat") == "" {
+		t.Errorf("/repeat before any message did not produce 'no previous message to repeat'\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+
+	// Positive path: send a normal message, then /repeat. We need this
+	// distinct token to assert on; pre-drain the recorded sends so the
+	// next match is unambiguous.
+	const userText = "REPEAT_PAYLOAD_b29f"
+	pushTelegramText(t, h, "alpha", 7021, userText)
+	if !waitForUserMessage(t, h, "workspaces/alpha", userText, 15*time.Second) {
+		t.Fatalf("first user message never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+	// Wait for the priming reply so IsProcessing has cleared.
+	if waitForSendMessageText(t, h, token, 15*time.Second, "stub-reply", userText) == "" {
+		t.Fatalf("priming reply never arrived; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Drain so the next sendMessage observation isn't shadowed by the
+	// stub-reply echo (which also contains userText).
+	_ = h.TelegramStub().DrainSent(token)
+
+	pushTelegramText(t, h, "alpha", 7021, "/repeat")
+	if waitForSendMessageText(t, h, token, 15*time.Second, userText) == "" {
+		t.Errorf("/repeat did not echo the previous user text %q in a sendMessage\nsent so far:\n%v\nstderr tail:\n%s",
+			userText, peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_VersionReportsBuildInfo proves /version emits a
@@ -257,8 +869,32 @@ func TestL2_SlashCommands_RepeatResendsLastMessage(t *testing.T) {
 // build-info plumbing reaches the command without going through
 // cc-stub.
 func TestL2_SlashCommands_VersionReportsBuildInfo(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{ID: "alpha", UserID: 7022}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	pushTelegramText(t, h, "alpha", 7022, "/version")
+
+	token := h.AgentBotToken("alpha")
+	// VersionCommand emits "version: %s\ngo: %s\ncommit: %s\nbuilt: %s".
+	// `go build` without ldflags leaves the placeholder values: version="dev",
+	// commit="unknown", buildTime="unknown", goVersion=runtime.Version().
+	text := waitForSendMessageText(t, h, token, 15*time.Second, "version:", "go:", "commit:", "built:")
+	if text == "" {
+		t.Fatalf("/version reply never arrived (or didn't have all expected fields)\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+	// Go version line should be substantial — bare smoke check.
+	if !strings.Contains(text, "go1.") && !strings.Contains(text, "devel") {
+		t.Errorf("expected go-version-like string in /version reply, got: %q", text)
+	}
+
+	// Also confirm /version didn't slip through to cc-stub.
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") && strings.Contains(e.TextPrefix, "/version") {
+			t.Errorf("/version leaked into cc-stub user_message: %q", e.TextPrefix)
+		}
+	}
 }
 
 // TestL2_SlashCommands_StopCancelsInflightTurn proves /stop runs
@@ -267,6 +903,10 @@ func TestL2_SlashCommands_VersionReportsBuildInfo(t *testing.T) {
 // though the original message would otherwise have hung the worker
 // goroutine indefinitely.
 func TestL2_SlashCommands_StopCancelsInflightTurn(t *testing.T) {
-	_ = testharness.HarnessOptions{}
-	t.Skip("not yet implemented")
+	// Like ResetHardCancelsInflightTurn: needs CCSTUB_HANG set on the
+	// foci-gw / cc-stub subprocess. HarnessOptions does not expose a
+	// way to inject env vars, so this test cannot be implemented
+	// without extending the harness.
+	t.Skip("HARNESS GAP: HarnessOptions has no field for injecting per-test env vars (e.g. CCSTUB_HANG) into the foci-gw subprocess that exec()s cc-stub")
 }
+

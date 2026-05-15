@@ -3,11 +3,151 @@
 package integration
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/testharness"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
 )
+
+// ----- file-level helpers ------------------------------------------------
+
+// harnessTempDir reconstructs the harness's tempDir from RecorderPath().
+// The harness writes the recorder at <tempDir>/cc-recorder.jsonl, so the
+// parent directory is the temp root. Used by tests that want to peek at
+// per-agent received_files dirs or workspaces from outside the harness.
+func harnessTempDir(h *testharness.Harness) string {
+	return filepath.Dir(h.RecorderPath())
+}
+
+// agentWorkspace returns the on-disk workspace path the harness allocated
+// for an agent. Mirrors writeWorkspaces in gateway_config.go.
+func agentWorkspace(h *testharness.Harness, agentID string) string {
+	return filepath.Join(harnessTempDir(h), "workspaces", agentID)
+}
+
+// receivedFilesDir is the auto-defaulted save dir for a Telegram agent
+// (config.load.go: <workspace>/received_files). Tests assert "no file
+// saved" by reading this directory.
+func receivedFilesDir(h *testharness.Harness, agentID string) string {
+	return filepath.Join(agentWorkspace(h, agentID), "received_files")
+}
+
+// dirEntryCount returns the number of entries under path, or 0 if the
+// directory does not exist. Failure to read for any other reason is
+// reported via t.Fatalf — this is a structural check.
+func dirEntryCount(t *testing.T, path string) int {
+	t.Helper()
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("read dir %s: %v", path, err)
+	}
+	return len(entries)
+}
+
+// writeSendToChatScript drops a cc-stub script that emits a Bash tool_use
+// running the supplied foci_send_to_chat command. The shell command
+// reaches foci's exec bridge via FOCI_SOCK and dispatches send_to_chat.
+// assistantText is the script's "text" field — pass "[[NO_RESPONSE]]" to
+// silence the assistant reply (platform.IsSilent filters that sentinel
+// at the egress chokepoint, so no extra sendMessage clutters the
+// Telegram stub's call log).
+func writeSendToChatScript(t *testing.T, h *testharness.Harness, agentID, bashCmd, assistantText string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"text": assistantText,
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": bashCmd}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal send_to_chat script: %v", err)
+	}
+	h.WriteCCStubScript(t, agentID, body)
+}
+
+// waitForSentMethod polls the Telegram stub for an outbound API call
+// whose Method equals the supplied string. Returns the first matching
+// SentCall and true, or zero value + false on timeout.
+func waitForSentMethod(h *testharness.Harness, token, method string, timeout time.Duration) (testharness.SentCall, bool) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, c := range h.TelegramStub().PeekSent(token) {
+			if c.Method == method {
+				return c, true
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return testharness.SentCall{}, false
+}
+
+// countSentMethod returns how many calls with the given method were
+// recorded for the token at the moment of the call.
+func countSentMethod(h *testharness.Harness, token, method string) int {
+	n := 0
+	for _, c := range h.TelegramStub().PeekSent(token) {
+		if c.Method == method {
+			n++
+		}
+	}
+	return n
+}
+
+// sentCallSummary renders the stub's call log for failure messages.
+func sentCallSummary(h *testharness.Harness, token string) string {
+	var sb strings.Builder
+	for _, c := range h.TelegramStub().PeekSent(token) {
+		sb.WriteString("  ")
+		sb.WriteString(c.Method)
+		sb.WriteString(" ")
+		sb.Write(c.Body)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// primeChatID sends one Telegram message to the agent and waits until
+// cc-stub records its user_message. This guarantees the bot's b.chatID
+// and the session's chat_id segment are populated so subsequent
+// send_to_chat tool calls reach the right chat. Returns the chatID used.
+func primeChatID(t *testing.T, h *testharness.Harness, agentID string, userID int64) int64 {
+	t.Helper()
+	token := h.AgentBotToken(agentID)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "priming chat",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/"+agentID, "priming chat", 15*time.Second) {
+		t.Fatalf("prime message never landed in %s workdir\nstderr:\n%s", agentID, stderrTail(h.Stderr()))
+	}
+	return userID
+}
+
+// ----- HARNESS-GAP tests -------------------------------------------------
+// All "file lands on disk" or "attachment reaches agent" tests share the
+// same blocker: bot_media.go:downloadFile hardcodes
+// https://api.telegram.org/file/bot<token>/<filePath>. The Telegram stub
+// at internal/testharness/telegram.go answers getFile but returns a
+// metadata stub only — the actual binary fetch hits the real internet
+// (fails or, worse, succeeds against a different domain). Until the
+// production code reads the API base from configuration for file
+// downloads (or the harness teaches downloadFile to dial a stub URL),
+// the saved-to-disk and attachment-content-block branches can't be
+// observed structurally; the download always fails and foci's
+// recover-and-keep-going path takes over.
 
 // TestL2_Files_DocumentSaved_PathInjectedToAgent proves that a non-image,
 // non-PDF, non-convertible document arriving over Telegram travels
@@ -17,8 +157,7 @@ import (
 // Document update → downloadAndSaveMedia → saveMedia → injected path
 // tag → Agent.HandleMessage → cc-stub recorder user_message entry.
 func TestL2_Files_DocumentSaved_PathInjectedToAgent(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; no stub for /file/bot<token>/<filePath> in TelegramStub means no successful download → no saved-to-disk path tag to assert on")
 }
 
 // TestL2_Files_PhotoAttachment_ReachesAgent proves photo updates take
@@ -29,8 +168,7 @@ func TestL2_Files_DocumentSaved_PathInjectedToAgent(t *testing.T) {
 // Photo update → downloadAttachment → platform.Attachment → user
 // envelope content blocks.
 func TestL2_Files_PhotoAttachment_ReachesAgent(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download the attachment is never built and never reaches the agent envelope")
 }
 
 // TestL2_Files_PDFUnderLimit_GoesViaAttachment proves that a PDF
@@ -39,8 +177,7 @@ func TestL2_Files_PhotoAttachment_ReachesAgent(t *testing.T) {
 // save-to-disk path. Distinguishes the small-PDF branch in
 // bot_receive.go from the over-size branch.
 func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download the attachment never materialises so the attachment branch can't be distinguished from the save-to-disk branch")
 }
 
 // TestL2_Files_PDFOverLimit_FallsBackToDiskSave proves a PDF over the
@@ -48,8 +185,17 @@ func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
 // "[PDF saved to: <path>]" tag, not the attachment path. Asserts the
 // branching threshold in bot_receive.handlePDF for file_size > 32MB.
 func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	// The bot_receive code routes PDFs with FileSize > 32MB through
+	// handleMediaMessage, which calls downloadAndSaveMedia. But
+	// downloadAndSaveMedia has its own hard limit at 20MB
+	// (fileTooLargeError), so any PDF claiming >32MB hits the
+	// too-large branch BEFORE the download attempt — the "[PDF saved
+	// to: <path>]" tag the test description asks for never fires on
+	// the over-32MB path. The only place that tag does fire is the
+	// inner `len(att.data) > maxPDFSize` branch after a successful
+	// download of a misreported size — which the harness cannot
+	// exercise because downloadFile uses the real Telegram CDN.
+	t.Skip("HARNESS GAP / test premise mismatch: the >32MB path always trips the 20MB downloadAndSaveMedia size guard before any save-to-disk happens, and the inner downloaded-too-big branch needs a real successful binary download")
 }
 
 // TestL2_Files_VideoAttachment_SavedAndPathInjected proves Video
@@ -58,8 +204,7 @@ func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
 // downloadAndSaveMedia with extForVideo → "[Video saved to: <path>]"
 // prepended to caption, both forwarded to agent.
 func TestL2_Files_VideoAttachment_SavedAndPathInjected(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download no file lands on disk and no '[Video saved to: ...]' tag is prepended")
 }
 
 // TestL2_Files_VideoNoteAttachment_SavedAndPathInjected proves the
@@ -68,8 +213,7 @@ func TestL2_Files_VideoAttachment_SavedAndPathInjected(t *testing.T) {
 // from the Video branch. Asserts the saved-path tag uses "Video" as
 // the human label.
 func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; same blocker as the Video test above")
 }
 
 // TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent proves that a
@@ -80,8 +224,7 @@ func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
 // convertible MIME → NormalizeMIME → downloadAttachment → attachment
 // reaching the agent with canonical mime_type.
 func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: convertible-doc branch calls downloadAttachment which calls downloadFile; without a stubbed binary download the attachment never reaches the agent so the normalized MIME can't be observed")
 }
 
 // TestL2_Files_SendToChatFile_RecordsSendDocument proves the egress
@@ -93,8 +236,40 @@ func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
 // dispatch → send_to_chat tool → bot.SendDocument → sendDocument API
 // call recorded.
 func TestL2_Files_SendToChatFile_RecordsSendDocument(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8001
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Stage a local file the tool will upload. Outside the agent's
+	// workspace so a stray glob can't trip on it.
+	filePath := filepath.Join(t.TempDir(), "egress.txt")
+	if err := os.WriteFile(filePath, []byte("test payload"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// Prime the bot so chatID is known by the time the scripted turn
+	// fires send_to_chat.
+	primeChatID(t, h, "alpha", userID)
+
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --description %q --file %q`, "look at this file", filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "please send it",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendDocument", 20*time.Second); !ok {
+		t.Errorf("no sendDocument call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Files_SendToChatVideo_RoutesToSendVideo proves the send_as
@@ -103,16 +278,78 @@ func TestL2_Files_SendToChatFile_RecordsSendDocument(t *testing.T) {
 // under test: scripted send_to_chat with --send-as video → sendVideo
 // (not sendDocument) recorded on the Telegram stub.
 func TestL2_Files_SendToChatVideo_RoutesToSendVideo(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8002
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "clip.mp4")
+	if err := os.WriteFile(filePath, []byte("fake mp4 bytes"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --file %q --send-as video`, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "send the clip",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendVideo", 20*time.Second); !ok {
+		t.Errorf("no sendVideo call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	if n := countSentMethod(h, token, "sendDocument"); n != 0 {
+		t.Errorf("expected no sendDocument calls (send_as=video should route to sendVideo) but saw %d", n)
+	}
 }
 
 // TestL2_Files_SendToChatPhoto_RoutesToSendPhoto proves the send_as=photo
 // branch lands on the sendPhoto API, distinct from sendDocument. Counter-
 // part of the video routing test for the photo branch of the switch.
 func TestL2_Files_SendToChatPhoto_RoutesToSendPhoto(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8003
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "pic.jpg")
+	if err := os.WriteFile(filePath, []byte("fake jpg bytes"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --file %q --send-as photo`, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "send the pic",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendPhoto", 20*time.Second); !ok {
+		t.Errorf("no sendPhoto call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	if n := countSentMethod(h, token, "sendDocument"); n != 0 {
+		t.Errorf("expected no sendDocument calls (send_as=photo should route to sendPhoto) but saw %d", n)
+	}
 }
 
 // TestL2_Files_SendToChatAnimation_RoutesToSendAnimation proves that
@@ -120,8 +357,39 @@ func TestL2_Files_SendToChatPhoto_RoutesToSendPhoto(t *testing.T) {
 // API call, distinct from sendDocument. Closes the GIF branch of the
 // send_as switch.
 func TestL2_Files_SendToChatAnimation_RoutesToSendAnimation(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8004
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "wave.gif")
+	if err := os.WriteFile(filePath, []byte("fake gif bytes"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --file %q --send-as animation`, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "send the gif",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendAnimation", 20*time.Second); !ok {
+		t.Errorf("no sendAnimation call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	if n := countSentMethod(h, token, "sendDocument"); n != 0 {
+		t.Errorf("expected no sendDocument calls (send_as=animation should route to sendAnimation) but saw %d", n)
+	}
 }
 
 // TestL2_Files_SendToChatAudio_RoutesToSendAudio proves the send_as=audio
@@ -129,8 +397,42 @@ func TestL2_Files_SendToChatAnimation_RoutesToSendAnimation(t *testing.T) {
 // sendVoice. Audio and voice are separate Telegram surfaces (sendVoice
 // only for OGG-Opus voice notes; sendAudio for general music files).
 func TestL2_Files_SendToChatAudio_RoutesToSendAudio(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8005
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "song.mp3")
+	if err := os.WriteFile(filePath, []byte("fake mp3 bytes"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --file %q --send-as audio`, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "send the song",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendAudio", 20*time.Second); !ok {
+		t.Errorf("no sendAudio call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	if n := countSentMethod(h, token, "sendDocument"); n != 0 {
+		t.Errorf("expected no sendDocument calls (send_as=audio should route to sendAudio) but saw %d", n)
+	}
+	if n := countSentMethod(h, token, "sendVoice"); n != 0 {
+		t.Errorf("expected no sendVoice calls (audio and voice are distinct surfaces) but saw %d", n)
+	}
 }
 
 // TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded proves that
@@ -138,8 +440,47 @@ func TestL2_Files_SendToChatAudio_RoutesToSendAudio(t *testing.T) {
 // the document's caption in a SINGLE sendDocument call — no separate
 // sendMessage. Counterpart of the long-text fallback test below.
 func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8006
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(filePath, []byte("report payload"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+	// Reset any stub call log accumulated by the priming turn so the
+	// "no sendMessage was made" assertion only sees the scripted turn.
+	h.TelegramStub().DrainSent(token)
+
+	caption := "short caption please attach"
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --description %q --file %q`, caption, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "ship it",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendDocument", 20*time.Second); !ok {
+		t.Fatalf("no sendDocument call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	// Give any (incorrect) extra sendMessage a chance to arrive before we
+	// assert "zero sendMessage" — the assistant-reply path can race.
+	time.Sleep(500 * time.Millisecond)
+	if n := countSentMethod(h, token, "sendMessage"); n != 0 {
+		t.Errorf("expected 0 sendMessage calls (caption should ride on sendDocument) but saw %d\n--- sent ---\n%s",
+			n, sentCallSummary(h, token))
+	}
 }
 
 // TestL2_Files_SendToChatFile_LongTextFallsBackToTwoMessages proves
@@ -148,8 +489,73 @@ func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
 // uncaptioned sendDocument. Verifies both calls land on the Telegram
 // stub in the expected order.
 func TestL2_Files_SendToChatFile_LongTextFallsBackToTwoMessages(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8007
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(filePath, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+	h.TelegramStub().DrainSent(token)
+
+	// 2KB caption > MaxCaptionLen(1024) so it must split.
+	longCaption := strings.Repeat("LONGCAPTION ", 200) // 12 * 200 = 2400 chars
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --description %q --file %q`, longCaption, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "ship the long one",
+		},
+	})
+
+	// Both calls must arrive. Poll a generous window.
+	deadline := time.Now().Add(25 * time.Second)
+	var sawMsg, sawDoc bool
+	var msgIdx, docIdx int
+	for time.Now().Before(deadline) {
+		calls := h.TelegramStub().PeekSent(token)
+		sawMsg, sawDoc = false, false
+		for i, c := range calls {
+			switch c.Method {
+			case "sendMessage":
+				if !sawMsg {
+					msgIdx = i
+				}
+				sawMsg = true
+			case "sendDocument":
+				if !sawDoc {
+					docIdx = i
+				}
+				sawDoc = true
+			}
+		}
+		if sawMsg && sawDoc {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !sawMsg || !sawDoc {
+		t.Errorf("expected both sendMessage and sendDocument (sawMsg=%v sawDoc=%v)\n--- sent ---\n%s\n--- stderr ---\n%s",
+			sawMsg, sawDoc, sentCallSummary(h, token), stderrTail(h.Stderr()))
+		return
+	}
+	// Order assertion: the standalone text goes first, then the
+	// uncaptioned document (tools/message.go does the text send before
+	// the file send when canCaption is false).
+	if msgIdx > docIdx {
+		t.Errorf("expected sendMessage to precede sendDocument (got msgIdx=%d docIdx=%d)\n--- sent ---\n%s",
+			msgIdx, docIdx, sentCallSummary(h, token))
+	}
 }
 
 // TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested
@@ -159,8 +565,60 @@ func TestL2_Files_SendToChatFile_LongTextFallsBackToTwoMessages(t *testing.T) {
 // Telegram multipart body should reference the custom filename, not
 // the source path's basename.
 func TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8008
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Source path has an internal-looking name; the requested display
+	// name should override it in the outbound multipart body.
+	filePath := filepath.Join(t.TempDir(), "tmp-internal-xyz.bin")
+	if err := os.WriteFile(filePath, []byte("renamed payload"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	customName := "ProjectReport_2026Q2.pdf"
+
+	primeChatID(t, h, "alpha", userID)
+	h.TelegramStub().DrainSent(token)
+
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --file %q --filename %q`, filePath, customName),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "send with custom name",
+		},
+	})
+
+	call, ok := waitForSentMethod(h, token, "sendDocument", 20*time.Second)
+	if !ok {
+		t.Fatalf("no sendDocument call landed on the stub\n--- sent ---\n%s\n--- stderr ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	// Multipart body is stored under `_raw_multipart` in the stub's
+	// recorded JSON envelope (see telegram.go parseFormToJSON). The
+	// custom basename must appear literally somewhere in that body
+	// (Content-Disposition: form-data; name="document"; filename="...").
+	var bodyMap map[string]any
+	if err := json.Unmarshal(call.Body, &bodyMap); err != nil {
+		t.Fatalf("parse stub body json: %v\nraw=%s", err, call.Body)
+	}
+	raw, _ := bodyMap["_raw_multipart"].(string)
+	if !strings.Contains(raw, customName) {
+		t.Errorf("multipart body did not reference custom filename %q\n--- body ---\n%s",
+			customName, raw)
+	}
+	// The internal-looking source basename must NOT appear (no leakage
+	// of the temp path's basename).
+	if strings.Contains(raw, filepath.Base(filePath)) {
+		t.Errorf("multipart body leaked source basename %q (should be replaced by symlink alias %q)\n--- body ---\n%s",
+			filepath.Base(filePath), customName, raw)
+	}
 }
 
 // TestL2_Files_SendToChatMarkdownCaption_RegressionFor771 is the
@@ -172,8 +630,55 @@ func TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested(t *testing.T
 // sendDocument multipart body must contain markdown formatting AND a
 // parse_mode hint (once the bug is fixed).
 func TestL2_Files_SendToChatMarkdownCaption_RegressionFor771(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8009
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	filePath := filepath.Join(t.TempDir(), "doc.txt")
+	if err := os.WriteFile(filePath, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	primeChatID(t, h, "alpha", userID)
+	h.TelegramStub().DrainSent(token)
+
+	mdCaption := "**bold** _italic_ token"
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --description %q --file %q`, mdCaption, filePath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "send markdown caption",
+		},
+	})
+
+	call, ok := waitForSentMethod(h, token, "sendDocument", 20*time.Second)
+	if !ok {
+		t.Fatalf("no sendDocument call landed on the stub\n--- sent ---\n%s\n--- stderr ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+	var bodyMap map[string]any
+	if err := json.Unmarshal(call.Body, &bodyMap); err != nil {
+		t.Fatalf("parse stub body json: %v\nraw=%s", err, call.Body)
+	}
+	raw, _ := bodyMap["_raw_multipart"].(string)
+	// The literal markdown markers must reach Telegram so the user sees
+	// formatting (with parse_mode set client-side).
+	if !strings.Contains(raw, "**bold**") || !strings.Contains(raw, "_italic_") {
+		t.Errorf("expected markdown literals to round-trip in caption; raw body:\n%s", raw)
+	}
+	// And the multipart body must include a parse_mode field. TODO #771
+	// is fixed when this assertion passes (today it fails — the caption
+	// rides without parse_mode and bold/italic render as raw asterisks).
+	if !strings.Contains(strings.ToLower(raw), "parse_mode") {
+		t.Errorf("regression: caption sent without parse_mode field — TODO #771 still open. raw body:\n%s", raw)
+	}
 }
 
 // TestL2_Files_CaptionOnPhotoUpdate_BecomesAgentText proves a
@@ -183,8 +688,33 @@ func TestL2_Files_SendToChatMarkdownCaption_RegressionFor771(t *testing.T) {
 // msg.Text is empty. cc-stub recorder's text_prefix should contain
 // the caption.
 func TestL2_Files_CaptionOnPhotoUpdate_BecomesAgentText(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8010
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	caption := "CAPTION_MARKER_FOR_PHOTO_FALLBACK"
+
+	// Photo update with empty Text. Photo download will fail (the
+	// harness doesn't stub the Bot API CDN), but the caption text
+	// must still reach the agent on its own.
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Photo: []gotgbot.PhotoSize{
+				{FileId: "photo-fileid-1", Width: 100, Height: 100, FileSize: 1024},
+			},
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", caption, 20*time.Second) {
+		t.Errorf("photo-with-caption never reached agent as user_message with caption text\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved proves
@@ -194,8 +724,14 @@ func TestL2_Files_CaptionOnPhotoUpdate_BecomesAgentText(t *testing.T) {
 // agent in one user message. Asserts the ordering: quote header,
 // saved-path tag, original caption.
 func TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	// The ordering assertion (quote header before saved-path tag before
+	// caption) requires the saved-path tag to fire, which needs
+	// downloadAndSaveMedia to succeed. That depends on the Bot API
+	// CDN download path, which the harness doesn't stub. The
+	// reply-context header alone could be asserted (it fires whether
+	// or not the download succeeds), but the spec's ordering claim
+	// can't be observed.
+	t.Skip("HARNESS GAP: ordering assertion needs a successful downloadAndSaveMedia to emit the saved-path tag; downloadFile hardcodes https://api.telegram.org with no harness stub")
 }
 
 // TestL2_Files_Photo_DownloadFails_AgentStillSeesText is a negative
@@ -205,8 +741,34 @@ func TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved(t *testing.T) {
 // crash, no silent message drop. Wire under test: failure in
 // downloadFile → att{} skipped → text-only message enqueued.
 func TestL2_Files_Photo_DownloadFails_AgentStillSeesText(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8011
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	caption := "TEXT_SURVIVES_FAILED_PHOTO_DOWNLOAD"
+
+	// The harness's Telegram stub doesn't proxy the Bot API CDN, so
+	// the inner downloadFile call from downloadAttachment will fail.
+	// The test asserts foci's recovery path: agent still sees the
+	// caption text as a user_message.
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Photo: []gotgbot.PhotoSize{
+				{FileId: "missing-fileid", Width: 200, Height: 200, FileSize: 4096},
+			},
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", caption, 20*time.Second) {
+		t.Errorf("caption text never reached agent after failed photo download\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Files_Document_TooLarge_SizeWarningPrepended is a negative
@@ -215,8 +777,46 @@ func TestL2_Files_Photo_DownloadFails_AgentStillSeesText(t *testing.T) {
 // agent sees "[Document too large to download (NN MB)]" prepended to
 // the caption. No file written to received_files_dir.
 func TestL2_Files_Document_TooLarge_SizeWarningPrepended(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8012
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	caption := "TOO_LARGE_DOC_TEST_CAPTION"
+	// 25 MB > 20 MB Bot-API download limit → fileTooLargeError fires
+	// before any network round trip, regardless of the missing CDN stub.
+	const oversize = int64(25 * 1024 * 1024)
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Document: &gotgbot.Document{
+				FileId:   "huge-doc-fileid",
+				FileName: "huge.bin",
+				MimeType: "application/octet-stream",
+				FileSize: oversize,
+			},
+		},
+	})
+
+	// handleMediaMessage's too-large branch returns
+	// "[Document too large to download (NN MB)]\n\n<caption>".
+	if !waitForUserMessage(t, h, "workspaces/alpha", "Document too large to download", 20*time.Second) {
+		t.Errorf("expected too-large warning in agent user_message\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	// And the original caption must survive.
+	if !waitForUserMessage(t, h, "workspaces/alpha", caption, 5*time.Second) {
+		t.Errorf("original caption was lost when too-large branch fired")
+	}
+	// Nothing should have landed on disk.
+	if n := dirEntryCount(t, receivedFilesDir(h, "alpha")); n != 0 {
+		t.Errorf("expected 0 files in received_files_dir for too-large doc, got %d", n)
+	}
 }
 
 // TestL2_Files_VideoTooLarge_AnnotatedNotSaved is the Video-branch
@@ -224,8 +824,40 @@ func TestL2_Files_Document_TooLarge_SizeWarningPrepended(t *testing.T) {
 // "[Video too large to download]" text, no file in received_files_dir,
 // agent still receives the user message.
 func TestL2_Files_VideoTooLarge_AnnotatedNotSaved(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8013
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	caption := "TOO_LARGE_VIDEO_TEST_CAPTION"
+	const oversize = int64(30 * 1024 * 1024)
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Video: &gotgbot.Video{
+				FileId:   "huge-video-fileid",
+				MimeType: "video/mp4",
+				FileSize: oversize,
+				Width:    1920, Height: 1080, Duration: 60,
+			},
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "Video too large to download", 20*time.Second) {
+		t.Errorf("expected too-large warning in agent user_message\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if !waitForUserMessage(t, h, "workspaces/alpha", caption, 5*time.Second) {
+		t.Errorf("original caption was lost when video-too-large branch fired")
+	}
+	if n := dirEntryCount(t, receivedFilesDir(h, "alpha")); n != 0 {
+		t.Errorf("expected 0 files in received_files_dir for too-large video, got %d", n)
+	}
 }
 
 // TestL2_Files_VoiceWithoutTranscriber_UserGetsErrorMessage is a
@@ -236,8 +868,78 @@ func TestL2_Files_VideoTooLarge_AnnotatedNotSaved(t *testing.T) {
 // voice. Wire under test: msg.Voice != nil && b.transcriber == nil
 // → sendReply + return false from buildReceivedMessage.
 func TestL2_Files_VoiceWithoutTranscriber_UserGetsErrorMessage(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8014
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Let any startup-side onboarding land before snapshotting.
+	time.Sleep(2 * time.Second)
+
+	// Snapshot the recorder length so a later "no new user_message"
+	// assertion can ignore any priming or onboarding entries from
+	// startup.
+	priorCount := 0
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") {
+			priorCount++
+		}
+	}
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Voice: &gotgbot.Voice{
+				FileId:   "voice-fileid",
+				MimeType: "audio/ogg",
+				Duration: 3,
+				FileSize: 1024,
+			},
+		},
+	})
+
+	// Foci should reply to the chat with the STT-not-configured error.
+	deadline := time.Now().Add(15 * time.Second)
+	sawReply := false
+	for time.Now().Before(deadline) {
+		for _, c := range h.TelegramStub().PeekSent(token) {
+			if c.Method != "sendMessage" {
+				continue
+			}
+			var m map[string]any
+			if err := json.Unmarshal(c.Body, &m); err != nil {
+				continue
+			}
+			text, _ := m["text"].(string)
+			if strings.Contains(text, "Voice notes require an STT provider") {
+				sawReply = true
+				break
+			}
+		}
+		if sawReply {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !sawReply {
+		t.Errorf("expected sendMessage with STT-required error; sent calls:\n%s\nstderr:\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+
+	// And the voice must NOT have produced a user_message in the agent.
+	time.Sleep(500 * time.Millisecond) // small slack for any racing dispatch
+	newCount := 0
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") {
+			newCount++
+		}
+	}
+	if newCount != priorCount {
+		t.Errorf("voice without transcriber was forwarded to agent (user_message count went %d → %d); voice path must drop after sendReply", priorCount, newCount)
+	}
 }
 
 // TestL2_Files_SendToChatFile_MissingFile_ReturnsError is a negative
@@ -246,8 +948,48 @@ func TestL2_Files_VoiceWithoutTranscriber_UserGetsErrorMessage(t *testing.T) {
 // exec bridge surfaces it as a non-zero exit / error result. No
 // sendDocument call should reach the Telegram stub.
 func TestL2_Files_SendToChatFile_MissingFile_ReturnsError(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8015
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	primeChatID(t, h, "alpha", userID)
+	h.TelegramStub().DrainSent(token)
+
+	bogusPath := filepath.Join(t.TempDir(), "does-not-exist.bin")
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --description %q --file %q`, "should fail", bogusPath),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "trigger missing file",
+		},
+	})
+
+	// Let the turn run. We assert what DIDN'T happen — no sendDocument.
+	// Wait long enough that the turn (which logs the error and finishes)
+	// has had a chance to complete.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if countSentMethod(h, token, "sendDocument") > 0 {
+			t.Fatalf("sendDocument fired despite nonexistent --file %q\n--- sent ---\n%s",
+				bogusPath, sentCallSummary(h, token))
+		}
+		// Also wait until we see at least one assistant reply or 1s of
+		// quiet so we know the turn ran.
+		if countSentMethod(h, token, "sendMessage") > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := countSentMethod(h, token, "sendDocument"); n != 0 {
+		t.Errorf("expected 0 sendDocument calls when --file is missing, got %d", n)
+	}
 }
 
 // TestL2_Files_SendToChat_FilenameWithoutFile_ReturnsError is a
@@ -255,8 +997,34 @@ func TestL2_Files_SendToChatFile_MissingFile_ReturnsError(t *testing.T) {
 // "filename requires file". A send_to_chat call with --filename but
 // no --file must error before any platform call.
 func TestL2_Files_SendToChat_FilenameWithoutFile_ReturnsError(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8016
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	primeChatID(t, h, "alpha", userID)
+	h.TelegramStub().DrainSent(token)
+
+	writeSendToChatScript(t, h, "alpha",
+		`foci_send_to_chat --description "no file but a filename" --filename made-up.bin`,
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "filename without file",
+		},
+	})
+
+	// Allow the turn to run. No sendDocument should ever land.
+	time.Sleep(3 * time.Second)
+	if n := countSentMethod(h, token, "sendDocument"); n != 0 {
+		t.Errorf("expected 0 sendDocument calls when --filename has no --file, got %d\n--- sent ---\n%s",
+			n, sentCallSummary(h, token))
+	}
 }
 
 // TestL2_Files_SendToChat_EmptyTextAndFile_ReturnsError is a negative
@@ -264,8 +1032,44 @@ func TestL2_Files_SendToChat_FilenameWithoutFile_ReturnsError(t *testing.T) {
 // validation. A send_to_chat call with neither text nor file must
 // error; no sendMessage or sendDocument lands on the Telegram stub.
 func TestL2_Files_SendToChat_EmptyTextAndFile_ReturnsError(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const userID = 8017
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	primeChatID(t, h, "alpha", userID)
+	priorMsgCount := countSentMethod(h, token, "sendMessage")
+	priorDocCount := countSentMethod(h, token, "sendDocument")
+
+	// Invoke the tool through `foci-call` directly (no flags ⇒ both
+	// fields empty). The shell-function wrapper checks `[ -z "$text" ]`
+	// against its emptiness path; bypassing it ensures the tool's own
+	// validator is what fires.
+	writeSendToChatScript(t, h, "alpha",
+		`foci-call '{"tool":"send_to_chat","params":{}}'`,
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "empty send_to_chat",
+		},
+	})
+
+	time.Sleep(3 * time.Second)
+	if n := countSentMethod(h, token, "sendDocument"); n != priorDocCount {
+		t.Errorf("sendDocument fired for empty send_to_chat (count %d → %d)", priorDocCount, n)
+	}
+	// The script's assistant text is [[NO_RESPONSE]], which platform.IsSilent
+	// filters at the egress chokepoint — so the only way a new sendMessage
+	// would appear is if the failed tool call somehow synthesised one,
+	// which the validator must prevent.
+	if n := countSentMethod(h, token, "sendMessage"); n != priorMsgCount {
+		t.Errorf("sendMessage fired for empty send_to_chat (count %d → %d)", priorMsgCount, n)
+	}
 }
 
 // TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved is a negative
@@ -275,8 +1079,66 @@ func TestL2_Files_SendToChat_EmptyTextAndFile_ReturnsError(t *testing.T) {
 // sendMessage outbound. Wire under test: allowedUsers check in
 // buildReceivedMessage returning false BEFORE downloadAttachment runs.
 func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	const allowedID = 8018
+	const intruderID = 9999
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: allowedID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Let any startup-side onboarding settle before snapshotting so the
+	// snapshot reflects steady state, not "halfway through onboarding".
+	time.Sleep(2 * time.Second)
+
+	// Snapshot existing recorder + stub state so we can detect "nothing
+	// new happened".
+	priorUserMessages := 0
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") {
+			priorUserMessages++
+		}
+	}
+	priorSendMsg := countSentMethod(h, token, "sendMessage")
+	priorSendDoc := countSentMethod(h, token, "sendDocument")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: intruderID, Type: "private"},
+			From:    &gotgbot.User{Id: intruderID, FirstName: "Intruder"},
+			Caption: "from-intruder",
+			Document: &gotgbot.Document{
+				FileId:   "intruder-doc",
+				FileName: "secret.bin",
+				MimeType: "application/octet-stream",
+				FileSize: 1024,
+			},
+		},
+	})
+
+	// Wait a few seconds for any processing that would happen if the
+	// auth gate had failed open. Then assert state is unchanged.
+	time.Sleep(3 * time.Second)
+
+	newUserMessages := 0
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") {
+			newUserMessages++
+		}
+	}
+	if newUserMessages != priorUserMessages {
+		t.Errorf("unauthorized document produced new user_message entries (%d → %d) — auth gate failed open",
+			priorUserMessages, newUserMessages)
+	}
+	if n := countSentMethod(h, token, "sendMessage"); n != priorSendMsg {
+		t.Errorf("unauthorized document triggered outbound sendMessage (count %d → %d)", priorSendMsg, n)
+	}
+	if n := countSentMethod(h, token, "sendDocument"); n != priorSendDoc {
+		t.Errorf("unauthorized document triggered outbound sendDocument (count %d → %d)", priorSendDoc, n)
+	}
+	if n := dirEntryCount(t, receivedFilesDir(h, "alpha")); n != 0 {
+		t.Errorf("unauthorized document landed on disk (received_files_dir has %d entries)", n)
+	}
 }
 
 // TestL2_Files_SendToChatVoice_WithTextSynthesizesTTS proves the TTS
@@ -287,6 +1149,5 @@ func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
 // stub TTS implementation that emits canned audio bytes (no real
 // OpenAI/ElevenLabs round-trip).
 func TestL2_Files_SendToChatVoice_WithTextSynthesizesTTS(t *testing.T) {
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("not yet implemented")
+	t.Skip("HARNESS GAP: harness has no TTS stub; tools/message.go's voice+text branch errors with 'tts not configured' instead of synthesizing — needs testharness to plug a stub voice.TTS into the agent setup")
 }
