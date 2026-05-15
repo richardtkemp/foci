@@ -606,8 +606,11 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 	if p.MessageQueueSize == 0 {
 		p.MessageQueueSize = defaults.MessageQueueSize
 	}
-	// Platform-specific: merge only if same platform
-	if p.Telegram != nil && defaults.Telegram != nil {
+	// Platform-specific: agent inherits the entire sub-block if not set.
+	if p.Telegram == nil && defaults.Telegram != nil {
+		copy := *defaults.Telegram
+		p.Telegram = &copy
+	} else if p.Telegram != nil && defaults.Telegram != nil {
 		if p.Telegram.LongPollTimeout == "" {
 			p.Telegram.LongPollTimeout = defaults.Telegram.LongPollTimeout
 		}
