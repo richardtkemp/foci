@@ -31,3 +31,4 @@ internal/tools/logs/tmux.debug
 .test-output.tmp
 cover.html
 COVERAGE-PROGRESS.md
+/cc-stub
