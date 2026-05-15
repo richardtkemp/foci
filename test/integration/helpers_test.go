@@ -5,9 +5,27 @@ package integration
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"foci/internal/testharness"
 )
+
+// harnessTempDir returns the harness's temp-dir root — parent of the
+// recorder file. All harness-allocated paths (workspaces, configs,
+// data dirs) live under this directory.
+func harnessTempDir(h *testharness.Harness) string {
+	return filepath.Dir(h.RecorderPath())
+}
+
+// agentWorkspace returns the on-disk workspace path the harness
+// allocated for an agent. Mirrors writeWorkspaces in gateway_config.go:
+// <tempDir>/workspaces/<agentID>. Replace with Harness.AgentWorkspace
+// once the harness exposes a public accessor.
+func agentWorkspace(h *testharness.Harness, agentID string) string {
+	return filepath.Join(harnessTempDir(h), "workspaces", agentID)
+}
 
 // recorderEntry mirrors the JSONL shape cc-stub writes. Kept private to
 // the integration test package — it's an internal contract between

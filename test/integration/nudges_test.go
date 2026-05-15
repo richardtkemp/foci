@@ -37,28 +37,11 @@ const noResponseSentinelMarker = "[[NO_RESPONSE]]"
 // and the auto-extractor doesn't overwrite the seeded rules.
 const testCraftBody = "# CRAFT.md\n\nTest-only workspace.\n"
 
-// tempDirOf derives the harness's t.TempDir from the recorder path. The
-// harness places the recorder at <tempDir>/cc-recorder.jsonl, so the
-// recorder's dirname is the tempDir. Tests use this to locate per-agent
-// workspaces at <tempDir>/workspaces/<id> for seeding nudge-rules.json
-// before pushing the first user update.
-func tempDirOf(h *testharness.Harness) string {
-	return filepath.Dir(h.RecorderPath())
-}
-
-// nudgeAgentWorkspace returns the absolute path to the named agent's
-// workspace directory under the harness's tempDir. Named to avoid
-// colliding with files_test.go's identical helper — both will collapse
-// into a shared helpers_test.go (or Harness.AgentWorkspace accessor)
-// once the harness exposes the lookup directly.
-func nudgeAgentWorkspace(h *testharness.Harness, agentID string) string {
-	return filepath.Join(tempDirOf(h), "workspaces", agentID)
-}
-
 // agentCharacterDir returns <workspace>/character — where workspace files
 // (CRAFT.md, nudge-rules.json) live for the harness's default layout.
+// agentWorkspace itself lives in helpers_test.go.
 func agentCharacterDir(h *testharness.Harness, agentID string) string {
-	return filepath.Join(nudgeAgentWorkspace(h, agentID), "character")
+	return filepath.Join(agentWorkspace(h, agentID), "character")
 }
 
 // seedNudgeRules writes a nudge.RuleSet to the agent's character-dir
@@ -585,7 +568,7 @@ func TestL2_Nudges_CharacterDirRulesPathPreferred(t *testing.T) {
 	// Workspace-root copy (the one that should be ignored). Same hash
 	// shape; if the precedence rule were broken and this file won, we'd
 	// see outerMarker in the prompt.
-	wsRoot := nudgeAgentWorkspace(h, "alpha")
+	wsRoot := agentWorkspace(h, "alpha")
 	rs := &nudge.RuleSet{
 		ContentHash: nudge.ContentHash([]string{testCraftBody}),
 		Rules: []nudge.Rule{{
