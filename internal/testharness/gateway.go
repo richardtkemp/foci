@@ -26,6 +26,12 @@ type AgentSpec struct {
 	BotToken  string // Telegram token to register; auto-generated if empty
 	UserID    int64  // synthetic Telegram user_id allowed to message this bot
 	BotUserID int64  // synthetic Telegram user_id for the bot itself
+	// SkipStubRegister, if true, skips registering this agent's bot
+	// token with the Telegram stub. Used to test misconfigurations where
+	// the foci.toml names a token the gateway can't reach. The token is
+	// still written into the generated config; only RegisterBot is
+	// skipped.
+	SkipStubRegister bool
 }
 
 // HarnessOptions configures a test foci-gw subprocess.
@@ -36,6 +42,25 @@ type HarnessOptions struct {
 	// ReadyTimeout caps how long to wait for the gateway to log the
 	// terminal startup line. Zero = 20s.
 	ReadyTimeout time.Duration
+	// ExtraConfigTOML, if non-empty, is appended verbatim to the
+	// generated foci.toml. Use to inject sections the default config
+	// writer doesn't emit ([keepalive], [reflection], [background],
+	// [platforms.display], [defaults.behavior], [logging], etc.).
+	ExtraConfigTOML string
+	// ExtraSecretsTOML, if non-empty, is appended verbatim to the
+	// generated secrets.toml. Use to inject custom secret sections
+	// (e.g. [custom] my_key = "...") for tests exercising
+	// {{secret:...}} template resolution from arbitrary sources.
+	ExtraSecretsTOML string
+	// SkipSecretsFile, if true, suppresses generation of secrets.toml
+	// entirely. Used to test foci-gw's behaviour when the secrets file
+	// is missing.
+	SkipSecretsFile bool
+	// ClaudeBinary, if non-empty, overrides the auto-built cc-stub
+	// binary path. Used to point at a non-existent file (missing-binary
+	// scenarios) or a custom stub variant. Empty value preserves the
+	// default behaviour of building cc-stub from source.
+	ClaudeBinary string
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -45,10 +70,13 @@ type HarnessOptions struct {
 type Harness struct {
 	t            *testing.T
 	tempDir      string
+	dataDir      string
+	logsDir      string
 	configPath   string
 	tgStub       *TelegramStub
 	recorderPath string
 	scriptDir    string
+	workspaces   map[string]string // agent id → workspace path
 	agents       []AgentSpec
 
 	cmd       *exec.Cmd
@@ -63,10 +91,35 @@ type Harness struct {
 // Build artefacts are cached under t.TempDir/bin so a test process can
 // reuse them across sub-tests via the harness; repeated test runs hit
 // Go's build cache and rebuild only on source change.
+//
+// Use [TryStartGateway] if the test expects the gateway to fail to
+// start (e.g. malformed config, duplicate bot token, expect-startup-
+// error scenarios) — StartGateway calls t.Fatalf on any startup error.
 func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	t.Helper()
+	h, err := tryStartGateway(t, opts)
+	if err != nil {
+		t.Fatalf("StartGateway: %v", err)
+	}
+	return h
+}
+
+// TryStartGateway is the non-Fatal variant of [StartGateway]. It returns
+// the startup error instead of calling t.Fatalf, letting tests assert on
+// the failure mode (e.g. config parse error in stderr, exit code, etc.).
+//
+// The returned *Harness is non-nil on success only; on error it may be
+// nil. Cleanup is still registered via t.Cleanup so any partial state
+// (telegram stub, spawned process) is torn down at end of test.
+func TryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
+	t.Helper()
+	return tryStartGateway(t, opts)
+}
+
+func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
+	t.Helper()
 	if len(opts.Agents) == 0 {
-		t.Fatal("StartGateway: at least one agent required")
+		return nil, fmt.Errorf("at least one agent required")
 	}
 	if opts.ReadyTimeout == 0 {
 		opts.ReadyTimeout = 20 * time.Second
@@ -80,7 +133,7 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	recorderPath := filepath.Join(tempDir, "cc-recorder.jsonl")
 	for _, d := range []string{binDir, dataDir, logsDir, scriptDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", d, err)
+			return nil, fmt.Errorf("mkdir %s: %w", d, err)
 		}
 	}
 
@@ -91,13 +144,23 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	gwBin := filepath.Join(binDir, "foci-gw")
 	stubBin := filepath.Join(binDir, "cc-stub")
 	buildBinary(t, repoRoot, "./cmd/foci-gw", gwBin)
+	// cc-stub is built unconditionally so the cached binary is available
+	// even when ClaudeBinary overrides where foci-gw looks for it; tests
+	// that swap the binary mid-flight rely on having a known-good stub
+	// in opts (via h.ScriptDir()/etc.).
 	buildBinary(t, repoRoot, "./cmd/cc-stub", stubBin)
+	claudeBinary := stubBin
+	if opts.ClaudeBinary != "" {
+		claudeBinary = opts.ClaudeBinary
+	}
 
 	// Telegram stub up before we spawn foci-gw so its getMe call lands.
 	tgStub := NewTelegramStub()
 	t.Cleanup(tgStub.Close)
 
-	// Assign bot tokens and register them with the stub.
+	// Assign bot tokens and register them with the stub. Tokens are
+	// always assigned (so the generated config is well-formed); the
+	// per-agent SkipStubRegister flag suppresses RegisterBot only.
 	for i := range opts.Agents {
 		a := &opts.Agents[i]
 		if a.BotToken == "" {
@@ -108,6 +171,9 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 		}
 		if a.UserID == 0 {
 			a.UserID = int64(2000 + i)
+		}
+		if a.SkipStubRegister {
+			continue
 		}
 		tgStub.RegisterBot(a.BotToken, gotgbot.User{
 			Id:        a.BotUserID,
@@ -122,16 +188,19 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	workspaces := writeWorkspaces(t, tempDir, opts.Agents)
 
 	writeTestConfig(t, configPath, testConfigOpts{
-		DataDir:      dataDir,
-		LogsDir:      logsDir,
-		ClaudeBinary: stubBin,
-		TelegramBase: tgStub.URL(),
-		SecretsPath:  secretsPath,
-		Agents:       opts.Agents,
-		Workspaces:   workspaces,
-		RecorderPath: recorderPath,
+		DataDir:         dataDir,
+		LogsDir:         logsDir,
+		ClaudeBinary:    claudeBinary,
+		TelegramBase:    tgStub.URL(),
+		SecretsPath:     secretsPath,
+		Agents:          opts.Agents,
+		Workspaces:      workspaces,
+		RecorderPath:    recorderPath,
+		ExtraConfigTOML: opts.ExtraConfigTOML,
 	})
-	writeTestSecrets(t, secretsPath, opts.Agents)
+	if !opts.SkipSecretsFile {
+		writeTestSecrets(t, secretsPath, opts.Agents, opts.ExtraSecretsTOML)
+	}
 
 	// Spawn foci-gw.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -143,16 +212,16 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cancel()
-		t.Fatalf("stderr pipe: %v", err)
+		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
-		t.Fatalf("stdout pipe: %v", err)
+		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		cancel()
-		t.Fatalf("start foci-gw: %v", err)
+		return nil, fmt.Errorf("start foci-gw: %w", err)
 	}
 
 	stderrBuf := newSyncBuffer()
@@ -174,10 +243,13 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	h := &Harness{
 		t:            t,
 		tempDir:      tempDir,
+		dataDir:      dataDir,
+		logsDir:      logsDir,
 		configPath:   configPath,
 		tgStub:       tgStub,
 		recorderPath: recorderPath,
 		scriptDir:    scriptDir,
+		workspaces:   workspaces,
 		agents:       opts.Agents,
 		cmd:          cmd,
 		stderrBuf:    stderrBuf,
@@ -201,9 +273,12 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	})
 
 	if err := waitForReady(stderrBuf, stoppedCh, opts.ReadyTimeout); err != nil {
-		t.Fatalf("foci-gw not ready: %v\n--- stderr ---\n%s", err, stderrBuf.String())
+		// On not-ready, return both the error and the captured stderr
+		// so callers (including StartGateway's t.Fatalf wrapper) can
+		// surface useful debug info without re-grabbing it.
+		return nil, fmt.Errorf("foci-gw not ready: %w\n--- stderr ---\n%s", err, stderrBuf.String())
 	}
-	return h
+	return h, nil
 }
 
 // TelegramStub returns the underlying Bot API stub so tests can push
@@ -252,6 +327,44 @@ func (h *Harness) WriteCCStubScript(t *testing.T, agentID string, body []byte) {
 // ScriptDir returns the on-disk directory cc-stub reads scripts from.
 // Useful for tests that want fine control over scripting state.
 func (h *Harness) ScriptDir() string { return h.scriptDir }
+
+// TempDir returns the root temp directory the harness allocated for
+// this test. All other harness-owned paths (data, logs, workspaces,
+// config, recorder, cc-scripts) live under it.
+func (h *Harness) TempDir() string { return h.tempDir }
+
+// DataDir returns the on-disk data directory foci-gw was configured
+// with. Tests use it to seed JSONL session files, mutate permissions,
+// or read foci's persisted state.
+func (h *Harness) DataDir() string { return h.dataDir }
+
+// LogsDir returns the on-disk logs directory foci-gw was configured
+// with. Tests use it to assert on log files (foci.log, etc.) when the
+// relevant config knob is also set.
+func (h *Harness) LogsDir() string { return h.logsDir }
+
+// SessionsDir returns the on-disk path where foci-gw persists per-
+// session state (JSONL files keyed by agent/session). It's a fixed
+// subdirectory of DataDir.
+func (h *Harness) SessionsDir() string {
+	return filepath.Join(h.dataDir, "sessions")
+}
+
+// AgentWorkspace returns the on-disk workspace path the harness
+// allocated for an agent. Each workspace has a pre-seeded
+// character/CRAFT.md and an empty memory/ directory.
+func (h *Harness) AgentWorkspace(agentID string) string {
+	if ws, ok := h.workspaces[agentID]; ok {
+		return ws
+	}
+	h.t.Fatalf("unknown agent %q in harness (no workspace)", agentID)
+	return ""
+}
+
+// ConfigPath returns the on-disk path of the generated foci.toml.
+// Used by tests that want to inspect or mutate the config file after
+// startup.
+func (h *Harness) ConfigPath() string { return h.configPath }
 
 // ----- Internal: ready-signal polling --------------------------------
 

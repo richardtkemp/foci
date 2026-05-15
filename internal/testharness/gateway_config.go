@@ -16,14 +16,15 @@ import (
 //   - Anthropic keys are stub strings (no real API calls made by cc-stub)
 //   - data/logs dirs are under t.TempDir()
 type testConfigOpts struct {
-	DataDir      string
-	LogsDir      string
-	ClaudeBinary string
-	TelegramBase string
-	SecretsPath  string
-	Agents       []AgentSpec
-	Workspaces   map[string]string // agent id → workspace path
-	RecorderPath string
+	DataDir         string
+	LogsDir         string
+	ClaudeBinary    string
+	TelegramBase    string
+	SecretsPath     string
+	Agents          []AgentSpec
+	Workspaces      map[string]string // agent id → workspace path
+	RecorderPath    string
+	ExtraConfigTOML string // appended verbatim at the end of the config
 }
 
 // writeTestConfig writes a minimal foci.toml at path. The config defines
@@ -78,6 +79,19 @@ allowed_users = [%q]
 		)
 	}
 
+	// Append any test-supplied extra TOML last so it can override
+	// preceding keys (TOML's last-wins semantics within a duplicate
+	// table) or add unrelated sections wholesale.
+	if o.ExtraConfigTOML != "" {
+		if !strings.HasPrefix(o.ExtraConfigTOML, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(o.ExtraConfigTOML)
+		if !strings.HasSuffix(o.ExtraConfigTOML, "\n") {
+			sb.WriteString("\n")
+		}
+	}
+
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
@@ -88,7 +102,12 @@ allowed_users = [%q]
 // Anthropic / OpenAI keys are placeholder values — cc-stub never makes
 // real API calls so any non-empty string suffices for foci's startup
 // checks (skip_security_checks=true in the config relaxes those further).
-func writeTestSecrets(t *testing.T, path string, agents []AgentSpec) {
+//
+// extraTOML, if non-empty, is appended verbatim after the generated
+// sections. Use to inject custom secret sections (e.g. [custom]
+// my_key = "...") for tests exercising {{secret:...}} template
+// resolution from arbitrary sources.
+func writeTestSecrets(t *testing.T, path string, agents []AgentSpec, extraTOML string) {
 	t.Helper()
 	var sb strings.Builder
 	sb.WriteString("# Auto-generated test secrets — not real credentials.\n\n")
@@ -96,6 +115,15 @@ func writeTestSecrets(t *testing.T, path string, agents []AgentSpec) {
 	sb.WriteString("[telegram]\n")
 	for _, a := range agents {
 		fmt.Fprintf(&sb, "%s = %q\n", a.ID, a.BotToken)
+	}
+	if extraTOML != "" {
+		if !strings.HasPrefix(extraTOML, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(extraTOML)
+		if !strings.HasSuffix(extraTOML, "\n") {
+			sb.WriteString("\n")
+		}
 	}
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
 		t.Fatalf("write test secrets: %v", err)

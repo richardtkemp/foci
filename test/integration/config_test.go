@@ -226,12 +226,32 @@ func TestL2_Config_UnknownSecretInTemplateFailsResolution(t *testing.T) {
 
 // TestL2_Config_MalformedTOMLFailsStartup proves that foci-gw refuses
 // to start on a syntactically invalid foci.toml — exits non-zero with a
-// parse error message naming the file. Mechanism: write a config with
-// an unterminated string or stray bracket, spawn foci-gw via the
-// harness, and assert the process exits before the "started N agent(s)"
-// ready line with a parse-error in stderr.
+// parse error message naming the file. Mechanism: append an unterminated
+// string to the generated config via ExtraConfigTOML and assert
+// TryStartGateway returns a non-Fatal error referencing parse failure.
 func TestL2_Config_MalformedTOMLFailsStartup(t *testing.T) {
-	t.Skip("HARNESS GAP: StartGateway always writes a syntactically valid TOML via writeTestConfig and calls t.Fatal on non-ready exit — needs either a HarnessOptions hook to inject raw TOML bytes OR a non-Fatal startup mode that returns the exit error to the test for inspection")
+	// Trailing line with an unterminated string is unambiguous TOML noise
+	// that survives any preceding-section validity. Place it as the very
+	// last appended block so the rest of the config is well-formed up to
+	// that point.
+	_, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7305},
+		},
+		ReadyTimeout:    10 * time.Second,
+		ExtraConfigTOML: "broken_key = \"unterminated string\nstray = 42\n",
+	})
+	if err == nil {
+		t.Fatalf("expected TryStartGateway to return a parse error on malformed TOML; got nil")
+	}
+	// The error should surface something parser-shaped — TOML libraries
+	// usually mention a line/column or "parse" or the offending token.
+	// Don't pin the exact wording (foci could swap TOML libs); look for
+	// a generic signal.
+	low := strings.ToLower(err.Error())
+	if !(strings.Contains(low, "parse") || strings.Contains(low, "toml") || strings.Contains(low, "config") || strings.Contains(low, "unterminated") || strings.Contains(low, "syntax") || strings.Contains(low, "not ready")) {
+		t.Errorf("expected parse-shaped error in startup failure; got:\n%v", err)
+	}
 }
 
 // TestL2_Config_InvalidDurationFailsValidation proves that a config
@@ -250,7 +270,21 @@ func TestL2_Config_InvalidDurationFailsValidation(t *testing.T) {
 // a foci.toml with `mysteryfield = 42` and assert foci-gw reaches ready
 // AND stderr contains a warning naming the key.
 func TestL2_Config_UnknownTopLevelKeyWarnsNotFails(t *testing.T) {
-	t.Skip("HARNESS GAP: needs HarnessOptions support for injecting an extra top-level TOML key (`mysteryfield = 42`) into the generated foci.toml so the UndefinedKeys soft-warning path is exercised")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7300},
+		},
+		ReadyTimeout:    30 * time.Second,
+		ExtraConfigTOML: "mysteryfield = 42\n",
+	})
+
+	// Reaching StartGateway's return means foci-gw logged the ready line
+	// — so the unknown key did NOT block startup. Now verify the soft
+	// warning fired: it should name "mysteryfield" in stderr.
+	stderr := h.Stderr()
+	if !strings.Contains(stderr, "mysteryfield") {
+		t.Errorf("expected stderr to mention unknown key 'mysteryfield' as a warning; got:\n%s", stderr)
+	}
 }
 
 // TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails proves the
