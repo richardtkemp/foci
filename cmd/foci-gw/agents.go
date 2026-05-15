@@ -179,7 +179,7 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 
 	// Per-agent tool registry and supporting services
 	registry := tools.NewRegistry()
-	notifier := newAsyncNotifier(agLazy, acfg.ID, p.ctx, connMgr)
+	notifier := newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
 	agentStore := p.store.ForAgent(acfg.ID)
 
 	// Register tools by category

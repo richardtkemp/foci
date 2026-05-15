@@ -302,7 +302,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	fileMode, _ := config.ParseFileMode(p.cfg.FileMode)
 	var notifier *tools.AsyncNotifier
 	if agLazy != nil {
-		notifier = newAsyncNotifier(agLazy, acfg.ID, p.ctx, connMgr)
+		notifier = newAsyncNotifier(agLazy, acfg.ID, p.agentResolverFn, p.ctx, connMgr)
 	}
 	vc := p.resolved.Voice
 	ttsRepls := voice.MergeReplacements(p.cfg.Voice.TTSReplacements, acfg.Voice.TTSReplacements)
