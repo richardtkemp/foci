@@ -609,7 +609,15 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 		args = append(args, "--system-prompt", systemPrompt)
 	}
 
-	cmd := procx.Spawn(ctx, "claude", args...)
+	// Honour the same claude_binary override that ccstream uses, so
+	// integration tests pointing foci at bin/cc-stub also intercept
+	// RunOnce invocations (nudge extraction, memory consolidation,
+	// first-run onboarding). Empty = "claude" on $PATH.
+	claudeBin := "claude"
+	if m.StartOpts.ClaudeBinary != "" {
+		claudeBin = m.StartOpts.ClaudeBinary
+	}
+	cmd := procx.Spawn(ctx, claudeBin, args...)
 	cmd.Dir = m.StartOpts.WorkDir
 	cmd.Stdin = strings.NewReader(prompt)
 
@@ -617,8 +625,8 @@ func (m *DelegatedManager) RunOnce(ctx context.Context, prompt string, systemPro
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	log.Infof("delegated", "RunOnce: starting claude --print (workdir=%s, system_prompt=%d bytes)",
-		m.StartOpts.WorkDir, len(systemPrompt))
+	log.Infof("delegated", "RunOnce: starting %s --print (workdir=%s, system_prompt=%d bytes)",
+		claudeBin, m.StartOpts.WorkDir, len(systemPrompt))
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("claude --print failed: %w (stderr: %s)", err, stderr.String())

@@ -144,6 +144,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 			TmuxCols:         p.cfg.Tools.TmuxCols,
 			TmuxRows:         p.cfg.Tools.TmuxRows,
 			AutoApproveRules: autoApproveRules,
+			// claude_binary is read from the same merged map ccstream
+			// consumes, but RunOnce doesn't see backendConfig — fold it
+			// onto StartOpts so DelegatedManager.RunOnce honours it.
+			ClaudeBinary: func() string {
+				v, _ := backendConfig["claude_binary"].(string)
+				return v
+			}(),
 		},
 		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
