@@ -221,14 +221,23 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 		args = append(args, "--settings", hookSettings)
 	}
 
-	log.Infof(component, "launching: claude %s (workdir=%s)", strings.Join(args, " "), opts.WorkDir)
+	// Resolve the binary to spawn. Production runs use "claude" (resolved
+	// via $PATH); integration tests inject a stub via the claude_binary
+	// config knob (folded into b.cfg by cmd/foci-gw/agents_delegated.go
+	// from global [cc_backend].claude_binary, with per-agent override).
+	claudeBin := "claude"
+	if v, ok := b.cfg["claude_binary"].(string); ok && v != "" {
+		claudeBin = v
+	}
+
+	log.Infof(component, "launching: %s %s (workdir=%s)", claudeBin, strings.Join(args, " "), opts.WorkDir)
 
 	// Create command with its own cancellable context. The CC process is
 	// long-lived (surviving across turns), so it must NOT be tied to the
 	// caller's context — otherwise the process is killed when the turn
 	// context expires or is cancelled.
 	cmdCtx, cmdCancel := context.WithCancel(context.Background())
-	cmd := procx.Spawn(cmdCtx, "claude", args...)
+	cmd := procx.Spawn(cmdCtx, claudeBin, args...)
 	cmd.Dir = opts.WorkDir
 	cmd.Env = os.Environ()
 
