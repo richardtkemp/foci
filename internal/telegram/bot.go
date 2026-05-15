@@ -12,6 +12,7 @@ import (
 	"foci/internal/agent"
 	"foci/internal/chatmeta"
 	"foci/internal/command"
+	"foci/internal/config"
 	"foci/internal/dispatch"
 	"foci/internal/display"
 	"foci/internal/log"
@@ -189,10 +190,25 @@ func (b *Bot) logger() *log.ComponentLogger {
 	return defaultLogger
 }
 
+// telegramAPIBaseOf extracts the Bot API base URL override from a platform
+// config. Returns "" if the config is nil or the [telegram] sub-block is
+// absent — NewBot then falls back to gotgbot's default
+// ("https://api.telegram.org"). Used by integration tests to point bots at
+// an httptest stub via foci.toml.
+func telegramAPIBaseOf(pc *config.PlatformConfig) string {
+	if pc == nil || pc.Telegram == nil {
+		return ""
+	}
+	return pc.Telegram.APIBase
+}
+
 // NewBot creates a new Telegram bot.
 // agentID is used for per-chat session key derivation (agent:ID:chat:CHATID).
 // For secondary (facet) bots, pass agentID="" — their session key is set dynamically via SetSessionKey.
-func NewBot(token string, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string) (*Bot, error) {
+// apiBase, if non-empty, overrides the Bot API base URL — used by integration
+// tests to point at an httptest stub. Empty falls back to gotgbot's default
+// ("https://api.telegram.org").
+func NewBot(token string, allowedUsers []string, handler platform.MessageHandler, cmds *command.Registry, lastMsgStore *command.LastMessageStore, agentID string, apiBase string) (*Bot, error) {
 	// Use a transport with enough connections for concurrent API calls.
 	// The default http.Transport has MaxIdleConnsPerHost=2 which is too low:
 	// GetUpdates long-poll holds 1 connection, the agent worker sends typing
@@ -203,6 +219,14 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 	// take precedence: long-poll getUpdates keeps its 65s, shutdown ack keeps 5s.
 	// 5s was too tight under transient network blips (observed scout sendMessage
 	// context-deadlining during a routine reply, 2026-05-14).
+	defaultReqOpts := &gotgbot.RequestOpts{
+		Timeout: 30 * time.Second,
+	}
+	if apiBase != "" {
+		// gotgbot trims trailing slashes itself; we hand it the raw value
+		// so the override is uniform across getUpdates, sendMessage, etc.
+		defaultReqOpts.APIURL = apiBase
+	}
 	api, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
 			Client: http.Client{
@@ -210,9 +234,7 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 					MaxIdleConnsPerHost: 8,
 				},
 			},
-			DefaultRequestOpts: &gotgbot.RequestOpts{
-				Timeout: 30 * time.Second,
-			},
+			DefaultRequestOpts: defaultReqOpts,
 		},
 	})
 	if err != nil {

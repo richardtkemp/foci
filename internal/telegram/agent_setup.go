@@ -129,7 +129,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 	}
 
 	allowedUsers := resolveAllowedUsers(acfg, cfg)
-	primaryBot, err := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID)
+	primaryBot, err := NewBot(telegramToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, acfg.ID,
+		telegramAPIBaseOf(tg))
 	if err != nil {
 		log.Errorf("telegram", "agent %q: create bot: %v (agent will run without platform)", acfg.ID, err)
 		return
@@ -216,7 +217,8 @@ func setupTelegramBots(mgr *BotManager, p AgentSetupParams) {
 			log.Errorf("telegram", "agent %q: facet bot %q: token not found", acfg.ID, facetName)
 			continue
 		}
-		facetBot, err := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "")
+		facetBot, err := NewBot(facetToken, allowedUsers, p.Agent, p.Commands, p.LastMsgStore, "",
+			telegramAPIBaseOf(tg))
 		if err != nil {
 			log.Errorf("telegram", "agent %q: create facet bot %q: %v", acfg.ID, facetName, err)
 			continue

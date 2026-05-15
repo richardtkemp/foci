@@ -103,7 +103,8 @@ func (p *telegramProvider) SetupSharedFacet(params platform.SharedFacetParams) {
 			continue
 		}
 		facetBot, err := NewBot(facetToken, tgPlat.Access.AllowedUsers,
-			params.FirstHandler, cmds, command.NewLastMessageStore(), "")
+			params.FirstHandler, cmds, command.NewLastMessageStore(), "",
+			telegramAPIBaseOf(tgPlat))
 		if err != nil {
 			log.Errorf("telegram", "shared facet bot %q: create: %v", botName, err)
 			continue

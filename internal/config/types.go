@@ -249,6 +249,13 @@ type CCBackendConfig struct {
 	// Factory default grants /tmp file writes so agents don't prompt for
 	// scratch-file access. Set to an empty list in TOML to disable.
 	DefaultAllowedTools []string `toml:"default_allowed_tools"`
+
+	// ClaudeBinary overrides the path/name of the `claude` executable
+	// foci spawns for CC-backed agents. Default "" → falls back to "claude"
+	// (resolved via $PATH). Used by integration tests to point at a stub
+	// binary (bin/cc-stub) that mimics the CC stream-json protocol.
+	// Per-agent backend_config.claude_binary takes precedence if set.
+	ClaudeBinary string `toml:"claude_binary"`
 }
 
 // GroupsConfig assigns named models to groups and call sites.
@@ -573,6 +580,12 @@ type TelegramSpecific struct {
 	LongPollTimeout string  `toml:"long_poll_timeout"` // default "65s"
 	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"max wrapped lines per table cell"` // default 5
 	TableStyle      *string `toml:"table_style"       desc:"table style: pretty or markdown" choices:"pretty,markdown"` // default "pretty"
+
+	// APIBase overrides the Telegram Bot API base URL (default
+	// "https://api.telegram.org"). Used by integration tests to point bots
+	// at a local httptest stub. Empty = library default. The trailing
+	// slash, if present, is trimmed by gotgbot.
+	APIBase string `toml:"api_base"`
 }
 
 // DiscordSpecific holds Discord-only config fields.
@@ -603,6 +616,9 @@ func (p *PlatformConfig) ApplyDefaults(defaults PlatformConfig) {
 		}
 		if p.Telegram.TableStyle == nil {
 			p.Telegram.TableStyle = defaults.Telegram.TableStyle
+		}
+		if p.Telegram.APIBase == "" {
+			p.Telegram.APIBase = defaults.Telegram.APIBase
 		}
 	}
 	if p.Discord != nil && defaults.Discord != nil {
