@@ -50,6 +50,8 @@ claude_binary = %q
 
 [[platforms]]
 id = "telegram"
+[platforms.access]
+allowed_users_only = false
 [platforms.telegram]
 api_base = %q
 long_poll_timeout = "1s"
