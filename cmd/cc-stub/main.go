@@ -28,6 +28,12 @@
 //   CCSTUB_FAIL_ON_RESUME — if "1"/"true" and --resume is set, exit 1 (simulates missing JSONL)
 //   CCSTUB_HANG           — duration to sleep before the handshake (e.g. "5s")
 //   CCSTUB_RESPONSE       — assistant reply text; default echoes the user prompt
+//   CCSTUB_SCRIPT_DIR     — directory holding per-workdir scripts; the file
+//                           named after the basename of $CWD (e.g. "fotini.json")
+//                           is read and its tool_uses[] emitted as a single
+//                           assistant message. Used by tests that need foci
+//                           to dispatch a specific tool call (e.g. Bash
+//                           running foci_send_to_session).
 //
 // Usage:
 //   cc-stub --print --input-format stream-json --output-format stream-json \
@@ -42,22 +48,54 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// invocation is one line written to the recorder file. Tests read this
-// file to assert on what foci handed to the (stubbed) CC subprocess —
-// crucially the working directory, which is the regression net for the
-// cross-agent session-key bug.
-type invocation struct {
+// scriptedToolUse describes one tool_use block a scripted cc-stub should
+// emit in response to a user message. Tests author these via JSON files.
+type scriptedToolUse struct {
+	Name  string         `json:"name"`  // "Bash", "Read", ...
+	Input map[string]any `json:"input"` // tool-specific input shape
+	ID    string         `json:"id"`    // optional; auto-generated if empty
+}
+
+// stubScript is the on-disk format for $CCSTUB_SCRIPT_DIR/<workdir>.json.
+// Text is the assistant text; ToolUses are emitted in the same assistant
+// message after the text block.
+type stubScript struct {
+	Text     string            `json:"text"`
+	ToolUses []scriptedToolUse `json:"tool_uses"`
+}
+
+// recorderEntry is one line written to the recorder file. Two event
+// kinds are emitted:
+//
+//   Kind="invocation" — at process spawn; captures workdir / resume / flags.
+//   Kind="user_message" — for each user message processed during the
+//     lifetime of the long-lived CC process; captures session_id +
+//     workdir + a short prefix of the text. This is the regression net
+//     for the cross-agent send_to_session bug: a turn that targets
+//     clutch's session MUST land in clutch's workdir.
+//
+// Tests read the JSONL file, group by kind, and assert structurally.
+type recorderEntry struct {
+	Kind      string   `json:"kind"`
 	Timestamp string   `json:"ts"`
 	Workdir   string   `json:"workdir"`
-	ResumeID  string   `json:"resume_id"`
-	Model     string   `json:"model"`
-	Flags     []string `json:"flags"`
-	PID       int      `json:"pid"`
+
+	// invocation-only
+	ResumeID string   `json:"resume_id,omitempty"`
+	Model    string   `json:"model,omitempty"`
+	Flags    []string `json:"flags,omitempty"`
+	PID      int      `json:"pid,omitempty"`
+
+	// user_message-only
+	SessionID  string `json:"session_id,omitempty"`
+	TextPrefix string `json:"text_prefix,omitempty"`
 }
 
 func main() {
@@ -173,7 +211,13 @@ func main() {
 	out.Flush()
 
 	// Now loop on user messages. For each, emit one assistant text block
-	// followed by a result message to close the turn.
+	// (plus any scripted tool_use blocks), followed by a result message
+	// to close the turn.
+	//
+	// Script is loaded PER user message — not once at startup — because
+	// cc-stub is long-lived (survives across turns) and the test may
+	// write a script after the stub spawned (e.g. fotini's first turn
+	// is onboarding, the second turn is the scripted send_to_session).
 	respText := os.Getenv("CCSTUB_RESPONSE")
 	for in.Scan() {
 		var env map[string]any
@@ -183,19 +227,47 @@ func main() {
 		switch env["type"] {
 		case "user":
 			userText := extractUserText(env)
+			recordUserMessage(sessionID, userText)
+			script := loadScript()
 			reply := respText
+			if script != nil && script.Text != "" {
+				reply = script.Text
+			}
 			if reply == "" {
 				// Default: echo back so tests can assert on round-trip
 				// without needing to set the env var.
 				reply = "stub-reply: " + userText
 			}
+			content := []map[string]any{
+				{"type": "text", "text": reply},
+			}
+			if script != nil {
+				for _, tu := range script.ToolUses {
+					id := tu.ID
+					if id == "" {
+						id = fmt.Sprintf("toolu_stub_%d", time.Now().UnixNano())
+					}
+					content = append(content, map[string]any{
+						"type":  "tool_use",
+						"id":    id,
+						"name":  tu.Name,
+						"input": tu.Input,
+					})
+					// Real CC runs the tool internally. For test fidelity
+					// with the exec bridge (foci_* shell functions live
+					// in BASH_ENV), the stub literally runs Bash tool_use
+					// commands itself. Other tool types are emitted but
+					// not executed — tests can extend this when needed.
+					if tu.Name == "Bash" {
+						runBashToolUse(tu.Input)
+					}
+				}
+			}
 			emit(out, map[string]any{
 				"type": "assistant",
 				"message": map[string]any{
-					"role": "assistant",
-					"content": []map[string]any{
-						{"type": "text", "text": reply},
-					},
+					"role":    "assistant",
+					"content": content,
 				},
 				"session_id": sessionID,
 			})
@@ -209,6 +281,21 @@ func main() {
 				},
 			})
 			out.Flush()
+			// One-shot: delete the script file after applying so the
+			// next user message in this long-lived process uses
+			// defaults. Critical for tests that trigger send_to_session
+			// — the SESSION RESPONSE injection comes back as a user
+			// message and would re-trigger the script in an infinite
+			// loop. Tests that need multi-turn scripted behaviour
+			// re-write the file between turns.
+			if script != nil {
+				dir := os.Getenv("CCSTUB_SCRIPT_DIR")
+				if dir != "" {
+					if wd, err := os.Getwd(); err == nil {
+						_ = os.Remove(filepath.Join(dir, filepath.Base(wd)+".json"))
+					}
+				}
+			}
 		case "control_request":
 			// e.g. interrupt — ack with a control_response.
 			if reqID, ok := env["request_id"].(string); ok {
@@ -251,19 +338,20 @@ func extractInitRequestID(env map[string]any) (string, bool) {
 }
 
 // extractUserText pulls the text body out of a `{"type":"user", ...}` envelope.
-// Foci sends a `message.contentString` field; fall back to other shapes
-// gracefully so unrecognised inputs don't break the stub.
+// Foci's UserPayload.MarshalJSON emits `{"role":"user","content":"<string>"}`
+// for the common case and `{"role":"user","content":[<blocks>]}` for
+// structured content. The stub handles both shapes.
 func extractUserText(env map[string]any) string {
 	msg, ok := env["message"].(map[string]any)
 	if !ok {
 		return ""
 	}
-	if s, ok := msg["contentString"].(string); ok {
-		return s
-	}
-	if blocks, ok := msg["content"].([]any); ok {
+	switch v := msg["content"].(type) {
+	case string:
+		return v
+	case []any:
 		var sb strings.Builder
-		for _, b := range blocks {
+		for _, b := range v {
 			if m, ok := b.(map[string]any); ok {
 				if t, ok := m["text"].(string); ok {
 					sb.WriteString(t)
@@ -275,31 +363,126 @@ func extractUserText(env map[string]any) string {
 	return ""
 }
 
-// recordInvocation appends one JSONL line to CCSTUB_RECORDER (if set).
-// Tests assert on this file to verify foci handed work to the correct
-// workdir / resume id / agent. Silent no-op if the env var is unset or
-// the file can't be opened — recorder failures must not break the stub.
+// recordInvocation appends one JSONL line tagged kind="invocation" to
+// CCSTUB_RECORDER (if set). Silent no-op if the env var is unset or the
+// file can't be opened — recorder failures must not break the stub.
 func recordInvocation(resume, model string) {
-	path := os.Getenv("CCSTUB_RECORDER")
-	if path == "" {
-		return
-	}
 	wd, _ := os.Getwd()
-	inv := invocation{
+	writeRecorder(recorderEntry{
+		Kind:      "invocation",
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Workdir:   wd,
 		ResumeID:  resume,
 		Model:     model,
 		Flags:     os.Args[1:],
 		PID:       os.Getpid(),
+	})
+}
+
+// recordUserMessage appends one JSONL line tagged kind="user_message" so
+// tests can assert which session+workdir handled the message. This is
+// the per-turn signal the cross-agent regression test asserts on — the
+// invocation-only recorder couldn't distinguish between turns inside a
+// long-lived CC process.
+func recordUserMessage(sessionID, text string) {
+	wd, _ := os.Getwd()
+	prefix := text
+	// send_to_session prepends a ~600-char SYSTEM INJECTION context
+	// note before the actual user payload; cap at 2k so tests can
+	// match markers that live past that header.
+	if len(prefix) > 2000 {
+		prefix = prefix[:2000]
+	}
+	writeRecorder(recorderEntry{
+		Kind:       "user_message",
+		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:    wd,
+		SessionID:  sessionID,
+		TextPrefix: prefix,
+	})
+}
+
+// writeRecorder appends one JSONL line to CCSTUB_RECORDER (if set).
+func writeRecorder(e recorderEntry) {
+	path := os.Getenv("CCSTUB_RECORDER")
+	if path == "" {
+		return
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	b, _ := json.Marshal(inv)
+	b, _ := json.Marshal(e)
 	_, _ = f.Write(append(b, '\n'))
+}
+
+// runBashToolUse runs the "command" field of a Bash tool_use input as
+// a non-interactive bash subshell, inheriting the stub's environment so
+// BASH_ENV / FOCI_SOCK (set by foci-gw) take effect — that's how
+// foci_send_to_session and the other shell-exported foci tools reach
+// the exec bridge. Output is forwarded to stderr for debugging; the
+// stub does not feed it back to foci as a tool_result (real CC handles
+// that internally; foci's reader doesn't currently consume tool_result
+// blocks, so emitting one would be silent at best).
+//
+// 10-second wall clock cap — enough for any exec-bridge round-trip,
+// short enough that runaway scripts fail loud rather than hanging tests.
+func runBashToolUse(input map[string]any) {
+	cmd, _ := input["command"].(string)
+	if cmd == "" {
+		fmt.Fprintln(os.Stderr, "cc-stub: Bash tool_use with empty command — skipped")
+		return
+	}
+	c := exec.Command("bash", "-c", cmd)
+	c.Stdout = os.Stderr // tee both to stderr so the test harness can fish them out
+	c.Stderr = os.Stderr
+	c.Env = os.Environ()
+	// Wall clock guard.
+	done := make(chan error, 1)
+	if err := c.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "cc-stub: Bash start failed: %v\n", err)
+		return
+	}
+	go func() { done <- c.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cc-stub: Bash command exited: %v\n", err)
+		}
+	case <-time.After(10 * time.Second):
+		_ = c.Process.Kill()
+		fmt.Fprintln(os.Stderr, "cc-stub: Bash command timed out after 10s, killed")
+	}
+}
+
+// loadScript reads the per-workdir script JSON from $CCSTUB_SCRIPT_DIR.
+// Returns nil if the env var is unset, the file doesn't exist, or the
+// content is unparseable — in any of those cases the stub falls back to
+// its echo-default behaviour.
+func loadScript() *stubScript {
+	dir := os.Getenv("CCSTUB_SCRIPT_DIR")
+	if dir == "" {
+		return nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cc-stub: loadScript getwd failed: %v\n", err)
+		return nil
+	}
+	path := filepath.Join(dir, filepath.Base(wd)+".json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cc-stub [error] loadScript: no file at %s (wd=%s)\n", path, wd)
+		return nil
+	}
+	var s stubScript
+	if err := json.Unmarshal(b, &s); err != nil {
+		fmt.Fprintf(os.Stderr, "cc-stub [error] failed to parse script %s: %v\n", path, err)
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "cc-stub [error] loaded script %s (text=%q tool_uses=%d)\n", path, s.Text, len(s.ToolUses))
+	return &s
 }
 
 func ifEmpty(s, fallback string) string {

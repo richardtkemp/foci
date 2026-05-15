@@ -48,6 +48,7 @@ type Harness struct {
 	configPath   string
 	tgStub       *TelegramStub
 	recorderPath string
+	scriptDir    string
 	agents       []AgentSpec
 
 	cmd       *exec.Cmd
@@ -75,8 +76,9 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	binDir := filepath.Join(tempDir, "bin")
 	dataDir := filepath.Join(tempDir, "data")
 	logsDir := filepath.Join(tempDir, "logs")
+	scriptDir := filepath.Join(tempDir, "cc-scripts")
 	recorderPath := filepath.Join(tempDir, "cc-recorder.jsonl")
-	for _, d := range []string{binDir, dataDir, logsDir} {
+	for _, d := range []string{binDir, dataDir, logsDir, scriptDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
@@ -136,6 +138,7 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 	cmd := exec.CommandContext(ctx, gwBin, "-config", configPath)
 	cmd.Env = append(os.Environ(),
 		"CCSTUB_RECORDER="+recorderPath,
+		"CCSTUB_SCRIPT_DIR="+scriptDir,
 	)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -174,6 +177,7 @@ func StartGateway(t *testing.T, opts HarnessOptions) *Harness {
 		configPath:   configPath,
 		tgStub:       tgStub,
 		recorderPath: recorderPath,
+		scriptDir:    scriptDir,
 		agents:       opts.Agents,
 		cmd:          cmd,
 		stderrBuf:    stderrBuf,
@@ -227,6 +231,27 @@ func (h *Harness) AgentBotToken(agentID string) string {
 func (h *Harness) Stderr() string {
 	return h.stderrBuf.String()
 }
+
+// WriteCCStubScript writes a script file consumed by cc-stub when it
+// runs in the named agent's workdir. The file content is a JSON object:
+//
+//	{"text": "<assistant text>", "tool_uses": [{"name":"Bash","input":{...}}]}
+//
+// cc-stub reads the file from $CCSTUB_SCRIPT_DIR/<workdir-basename>.json
+// on its NEXT user message after spawn, emits the scripted assistant
+// response, and clears its in-memory copy (one-shot). Tests can re-write
+// the file between turns if multi-turn scripting is needed.
+func (h *Harness) WriteCCStubScript(t *testing.T, agentID string, body []byte) {
+	t.Helper()
+	path := filepath.Join(h.scriptDir, agentID+".json")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("write cc-stub script for %s: %v", agentID, err)
+	}
+}
+
+// ScriptDir returns the on-disk directory cc-stub reads scripts from.
+// Useful for tests that want fine control over scripting state.
+func (h *Harness) ScriptDir() string { return h.scriptDir }
 
 // ----- Internal: ready-signal polling --------------------------------
 

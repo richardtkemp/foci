@@ -10,8 +10,6 @@
 package integration
 
 import (
-	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -49,53 +47,20 @@ func TestL2_Ingress_TelegramMessageReachesAgent(t *testing.T) {
 	})
 
 	deadline := time.Now().Add(15 * time.Second)
-	var invocations []recorderLine
+	var invocations []recorderEntry
 	for time.Now().Before(deadline) {
-		invocations = readRecorder(t, h.RecorderPath())
+		invocations = invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
 		if len(invocations) > 0 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	if len(invocations) == 0 {
-		t.Fatalf("cc-stub was never invoked; foci-gw stderr:\n%s", h.Stderr())
+		t.Fatalf("cc-stub for alpha was never invoked; foci-gw stderr:\n%s", h.Stderr())
 	}
 
 	inv := invocations[0]
 	if !strings.Contains(inv.Workdir, "workspaces/alpha") {
 		t.Errorf("cc-stub workdir = %q, want a path under workspaces/alpha", inv.Workdir)
 	}
-}
-
-// recorderLine mirrors the JSONL shape cc-stub appends to its recorder.
-// Kept private here (not exposed in testharness) because the recorder
-// format is an internal contract between cc-stub and integration tests.
-type recorderLine struct {
-	Timestamp string   `json:"ts"`
-	Workdir   string   `json:"workdir"`
-	ResumeID  string   `json:"resume_id"`
-	Model     string   `json:"model"`
-	Flags     []string `json:"flags"`
-	PID       int      `json:"pid"`
-}
-
-func readRecorder(t *testing.T, path string) []recorderLine {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		// Recorder may not exist yet — that's fine, caller will poll.
-		return nil
-	}
-	var out []recorderLine
-	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if line == "" {
-			continue
-		}
-		var r recorderLine
-		if err := json.Unmarshal([]byte(line), &r); err != nil {
-			t.Fatalf("decode recorder line %q: %v", line, err)
-		}
-		out = append(out, r)
-	}
-	return out
 }

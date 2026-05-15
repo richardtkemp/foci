@@ -277,6 +277,13 @@ type StartOptions struct {
 	TmuxCols        int      // tmux window width (0 = use tools.tmux_cols default)
 	TmuxRows        int      // tmux window height (0 = use tools.tmux_rows default)
 	AutoApproveRules []string // foci-level auto-approve patterns (e.g. "Bash:git *", "Read")
+
+	// ClaudeBinary overrides the path to the `claude` executable that
+	// delegated/RunOnce launches. Empty = use "claude" (resolved via
+	// $PATH). Folded from [cc_backend].claude_binary by
+	// cmd/foci-gw/agents_delegated.go. Used by integration tests to
+	// point at bin/cc-stub.
+	ClaudeBinary string
 }
 
 // EventHandler is the legacy per-turn callback bundle: delivery callbacks
