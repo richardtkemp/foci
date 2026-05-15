@@ -187,6 +187,75 @@ func TestNewSessionNotifyFnParsesIndependentKeys(t *testing.T) {
 	}
 }
 
+// TestNewAsyncNotifier_CrossAgentTarget_UsesResolver verifies that when the
+// async notifier handles a session key owned by a different agent, it
+// resolves the target's Agent via agentResolverFn rather than dispatching
+// on the caller's Agent. This is the regression test for the cross-agent
+// send_to_session bug: the caller's Agent has the wrong workdir / backend
+// for the target's session, and dispatching there silently leaks a
+// cross-workdir cc_resume_id that wedges the target's next turn.
+func TestNewAsyncNotifier_CrossAgentTarget_UsesResolver(t *testing.T) {
+	t.Parallel()
+
+	resolverCalls := make(chan string, 4)
+	resolver := func(aid string) *agentInstance {
+		resolverCalls <- aid
+		// Return nil so the notifier short-circuits with "unknown target
+		// agent" — keeps the test from needing a fully-wired Agent.
+		return nil
+	}
+
+	notifier := newAsyncNotifier(
+		func() *agent.Agent { return nil }, // caller agent — unused on cross-agent path
+		"caller",                            // caller's agentID
+		resolver,
+		context.Background(),
+		stubConnMgr{},
+	)
+	// reply_to=caller path: targetSession owned by "target", replyToSession owned by "caller".
+	notifier.InjectToAgent("target/c42/1000000000", "msg", "caller/c1/1000000001", "test")
+
+	select {
+	case got := <-resolverCalls:
+		if got != "target" {
+			t.Errorf("resolver called with %q, want %q", got, "target")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolver was not called — cross-agent target was dispatched on the caller's Agent (bug regression)")
+	}
+}
+
+// TestNewAsyncNotifier_SameAgentTarget_SkipsResolver verifies the same-agent
+// fast path: when the target session belongs to the caller's agent, the
+// resolver should NOT be consulted (it's a same-process dispatch, getAgent()
+// already returns the right Agent).
+func TestNewAsyncNotifier_SameAgentTarget_SkipsResolver(t *testing.T) {
+	t.Parallel()
+
+	resolverCalls := make(chan string, 4)
+	resolver := func(aid string) *agentInstance {
+		resolverCalls <- aid
+		return nil
+	}
+
+	notifier := newAsyncNotifier(
+		func() *agent.Agent { return nil },
+		"caller",
+		resolver,
+		context.Background(),
+		stubConnMgr{},
+	)
+	// Same-agent target — resolver path should not fire.
+	notifier.InjectToAgent("caller/c1/1000000001", "msg", "caller/c2/1000000002", "test")
+
+	select {
+	case got := <-resolverCalls:
+		t.Errorf("resolver should not be called for same-agent target; got call with %q", got)
+	case <-time.After(200 * time.Millisecond):
+		// Expected: resolver not called.
+	}
+}
+
 func TestBuildWakeSchedulerNilStore(t *testing.T) {
 	// Without a reminderStore the scheduler is disabled — buildWakeScheduler
 	// must return nil so callers can detect "reminders unsupported" and skip

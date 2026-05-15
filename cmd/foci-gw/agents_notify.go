@@ -41,20 +41,52 @@ func mostRecentSessionKey(ag *agent.Agent, connMgr platform.ConnectionManager, a
 
 // newAsyncNotifier creates the async notifier callback for exec/tmux auto-background results.
 // getAgent is a lazy getter since the agent is nil at creation time.
+//
+// agentResolverFn resolves a session-key's agent ID to the owning agent's
+// instance. For cross-agent targets (e.g. send_to_session with reply_to=caller
+// addressing another agent's session), the *target's* Agent must handle the
+// message — running it on the caller's Agent puts the foreign session in the
+// wrong workdir/backend/permission scope. Mirrors the routing already done by
+// newSessionNotifyFn (reply_to=session path).
 func newAsyncNotifier(
 	getAgent func() *agent.Agent,
 	agentID string,
+	agentResolverFn func(agentID string) *agentInstance,
 	ctx context.Context,
 	connMgr platform.ConnectionManager,
 ) *tools.AsyncNotifier {
 	return tools.NewAsyncNotifier(func(targetSession, message, replyToSession, trigger string) {
 		go func() {
+			// Async notifier dispatches are best-effort: a panic here
+			// (e.g. nil receiver on an unconfigured Agent) shouldn't take
+			// down the foci process. Log and move on.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Errorf(trigger, "async notifier goroutine panicked: %v (target=%s)", r, targetSession)
+				}
+			}()
 			target := targetSession
 			if target == "" {
 				target = mostRecentSessionKey(getAgent(), connMgr, agentID)
 			}
 			if trigger == "" {
 				trigger = "async_notify"
+			}
+
+			// Resolve which Agent owns the target session. Defaults to the
+			// caller's Agent (same-agent fast path); switches to the target's
+			// Agent if the session key parses to a different agent ID. An
+			// unknown agent ID is a hard error — the message has nowhere to go.
+			targetAg := getAgent()
+			targetAgentID := agentID
+			if sk, err := session.ParseSessionKey(target); err == nil && sk.AgentID != agentID {
+				inst := agentResolverFn(sk.AgentID)
+				if inst == nil {
+					log.Errorf(trigger, "unknown target agent %q for session %s, message dropped", sk.AgentID, target)
+					return
+				}
+				targetAg = inst.ag
+				targetAgentID = sk.AgentID
 			}
 
 			// If replyToSession is set, route the target's response back
@@ -64,7 +96,7 @@ func newAsyncNotifier(
 				buf := turnevent.NewBufferSink()
 				notifyCtx = turnevent.WithSink(notifyCtx, buf)
 
-				if err := getAgent().HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
+				if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
 					log.Errorf(trigger, "error processing on target %s: %v", target, err)
 					return
 				}
@@ -75,7 +107,9 @@ func newAsyncNotifier(
 
 				// Route the target session's response through HandleMessage on
 				// the calling session. This maintains role alternation and lets
-				// the agent process/relay the response.
+				// the agent process/relay the response. The reply lands in the
+				// caller's session, so the caller's Agent (getAgent()) and
+				// agentID are correct here.
 				formattedResp := "Response from session " + target + ":\n" + resp
 				injected := prompts.FormatInjectedMessage("SESSION RESPONSE", time.Now(), formattedResp,
 					"[Inter-session response — the target session processed your message and returned this result. Relay the result to the user.]")
@@ -84,7 +118,9 @@ func newAsyncNotifier(
 			}
 
 			// Otherwise deliver the response to the target session's chat.
-			conn := connMgr.ForSessionOrPrimary(target, agentID)
+			// Use targetAgentID for routing so cross-agent dispatches reach
+			// the target's bot (not the caller's first-primary fallback).
+			conn := connMgr.ForSessionOrPrimary(target, targetAgentID)
 
 			// Branch sessions without their own facet connection should not
 			// deliver replies to chat — they'd leak into the parent's chat.
@@ -94,14 +130,14 @@ func newAsyncNotifier(
 
 			notifyCtx := agent.WithTrigger(ctx, trigger)
 			if conn == nil || isBranchWithoutConn {
-				if err := getAgent().HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
+				if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
 					log.Errorf(trigger, "error: %v", err)
 					return
 				}
 				if isBranchWithoutConn {
 					log.Debugf(trigger, "branch session %s has no dedicated connection, skipping platform delivery", target)
 				} else {
-					log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", agentID, target)
+					log.Warnf(trigger, "no connection for agent %s session %s, response not delivered", targetAgentID, target)
 				}
 				return
 			}
@@ -116,7 +152,7 @@ func newAsyncNotifier(
 				}))
 			notifyCtx = turnevent.WithSink(notifyCtx, sink)
 
-			if err := getAgent().HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
+			if err := targetAg.HandleMessage(notifyCtx, target, []string{message}, nil); err != nil {
 				log.Errorf(trigger, "error: %v", err)
 				return
 			}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -287,6 +288,10 @@ func (a *Agent) turnLock(sessionKey string) *sync.Mutex {
 // accumulated FinalText, Usage, Cost, Model, and any error returned by the
 // turn orchestrator.
 func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []string, attachments []platform.Attachment) (err error) {
+	if err := a.validateSessionOwnership(sessionKey); err != nil {
+		return err
+	}
+
 	sink := turnevent.SinkFromContext(ctx)
 	sink.Emit(ctx, turnevent.TurnStart{})
 
@@ -317,6 +322,32 @@ func (a *Agent) HandleMessage(ctx context.Context, sessionKey string, texts []st
 
 	_, err = a.OrchestrateFullTurn(ctx, tc, ts)
 	return err
+}
+
+// validateSessionOwnership enforces the invariant that an Agent processes
+// only its own sessions. Returns an error if sessionKey parses to a structured
+// key whose AgentID differs from this Agent's own AgentID. This catches
+// cross-agent routing bugs where a foreign session ends up in the wrong
+// workdir / backend / permission scope (e.g. via send_to_session's
+// reply_to=caller path mis-dispatching to the caller's Agent).
+//
+// Exemptions:
+//   - Agents without an AgentID set (test mode) skip the check.
+//   - Legacy/unparseable session keys (test-only formats like "test/s")
+//     pass through — production code uses structured keys, but the agent
+//     test suite has many legacy keys we must not break.
+func (a *Agent) validateSessionOwnership(sessionKey string) error {
+	if a.AgentID == "" {
+		return nil
+	}
+	sk, parseErr := session.ParseSessionKey(sessionKey)
+	if parseErr != nil {
+		return nil
+	}
+	if sk.AgentID != a.AgentID {
+		return fmt.Errorf("HandleMessage invariant violation: agent %q received session key %q owned by agent %q", a.AgentID, sessionKey, sk.AgentID)
+	}
+	return nil
 }
 
 // TurnResult holds the result of a single agent turn.
