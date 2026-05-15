@@ -18,20 +18,6 @@ import (
 
 // ----- file-level helpers ------------------------------------------------
 
-// harnessTempDir reconstructs the harness's tempDir from RecorderPath().
-// The harness writes the recorder at <tempDir>/cc-recorder.jsonl, so the
-// parent directory is the temp root. Used by tests that want to peek at
-// per-agent received_files dirs or workspaces from outside the harness.
-func harnessTempDir(h *testharness.Harness) string {
-	return filepath.Dir(h.RecorderPath())
-}
-
-// agentWorkspace returns the on-disk workspace path the harness allocated
-// for an agent. Mirrors writeWorkspaces in gateway_config.go.
-func agentWorkspace(h *testharness.Harness, agentID string) string {
-	return filepath.Join(harnessTempDir(h), "workspaces", agentID)
-}
-
 // receivedFilesDir is the auto-defaulted save dir for a Telegram agent
 // (config.load.go: <workspace>/received_files). Tests assert "no file
 // saved" by reading this directory.
