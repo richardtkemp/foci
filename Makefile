@@ -9,7 +9,7 @@ LDFLAGS = -s -w -X main.version=$(VERSION) \
           -X main.gitCommit=$(GIT_COMMIT) \
           -X main.buildTime=$(BUILD_TIME)
 
-.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests test coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
+.PHONY: all build cli foci-call foci-cc-hook find-disconnected-tests test integration coverage coverage-report coverage-html coverage-check vet lint lint-fix lint-dupl lint-deadcode verify-persistence check clean setup-hooks
 
 all: build cli foci-call foci-cc-hook find-disconnected-tests
 
@@ -45,6 +45,16 @@ test:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
 	@mkdir -p $(TESTDIR)
 	TMPDIR=$(TESTDIR) go test -p=$(NPROC) -parallel=16 ./... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
+
+# Integration tests (L2): real foci-gw subprocess against stubbed CC and
+# stubbed Telegram. Build-tagged so they only run under this target — not
+# as part of `make test`. See test/integration/README.md for the
+# architecture, and internal/testharness/ for the scaffolding.
+integration:
+	@echo "=== Integration tests (L2: real foci-gw against stubbed edges) ==="
+	$(eval TESTDIR := /tmp/foci/integration-$(shell date +%s))
+	@mkdir -p $(TESTDIR)
+	@TMPDIR=$(TESTDIR) go test -tags=integration -count=1 -timeout 300s ./test/integration/... ./internal/testharness/... ; STATUS=$$? ; rm -rf $(TESTDIR) ; exit $$STATUS
 
 coverage:
 	$(eval TESTDIR := /tmp/foci/test-$(shell date +%s))
