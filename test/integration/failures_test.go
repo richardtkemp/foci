@@ -436,25 +436,11 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 	}
 }
 
-// TestL2_Failures_SendToSessionAmbiguousPartialKeyRejects proves the
-// partial-key resolver rejects ambiguous matches. Two agents are
-// registered for the same user_id (alpha and beta), and the script
-// calls `foci_send_to_session c<USER>/x --message hi` — a prefix that
-// matches both. Foci should refuse to dispatch and surface "ambiguous
-// session key" rather than silently picking one. Negative: neither
-// agent's workdir receives the marker.
-func TestL2_Failures_SendToSessionAmbiguousPartialKeyRejects(t *testing.T) {
-	// Premise check: ResolvePartialKey (internal/session/index.go:1106)
-	// requires the partial key to have format <agent>/<typeID>, where
-	// the agent ID is the FIRST segment. That means two distinct
-	// agents (alpha, beta) cannot share a partial key — the agent
-	// prefix disambiguates them at the format layer. The "ambiguous"
-	// case described here doesn't exist in the implementation: the
-	// resolver returns the most recently-active match within a single
-	// agent's session set, not across agents. There's no "ambiguous
-	// session key" error path to assert on.
-	t.Skip("INFEASIBLE: premise is incorrect — partial session keys are <agent>/<typeID>, so agent-level ambiguity is structurally impossible. ResolvePartialKey disambiguates same-agent matches by recency (index.go), not by rejection. There is no 'ambiguous session key' code path to exercise.")
-}
+// (TestL2_Failures_SendToSessionAmbiguousPartialKeyRejects removed —
+// premise was wrong: partial keys are <agent>/<typeID>, so agent-level
+// ambiguity is structurally impossible. The category is already covered
+// by TestL2_Failures_SendToSessionUnknownTargetLogged above, which
+// exercises the no-match path through the same resolver.)
 
 // TestL2_Failures_ExecBridgeSocketUnreachable proves a tool call that
 // can't reach the per-session bridge socket (e.g. FOCI_SOCK points at

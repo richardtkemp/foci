@@ -272,14 +272,61 @@ func TestL2_Config_BoolStringOnOffNormalised(t *testing.T) {
 	t.Skip("HARNESS GAP: writeTestConfig does not emit a [keepalive] section — needs HarnessOptions to inject `[keepalive] enabled = \"on\"` so the bool-string normalisation path is exercised")
 }
 
-// TestL2_Config_GroupsPowerfulModelReachesBackend proves that
-// `[groups] powerful = "X"` (where X is a key in [models.*]) resolves
-// to the underlying model spec and reaches cc-stub's --model flag. The
-// assertion checks the recorder's invocation entry for the model name
-// configured under [models.X] — proves group→model resolution actually
-// fires during agent startup, not just at backend.SelectModel time.
-func TestL2_Config_GroupsPowerfulModelReachesBackend(t *testing.T) {
-	t.Skip("HARNESS GAP / WRONG PREMISE: delegated backends read `model` directly from backend_config (cmd/foci-gw/agents_delegated.go) and pass the raw string as --model to cc-stub — they do NOT consult [groups] → [models.*] resolution. The harness sets backend_config.model = \"stub\", so cc-stub receives `--model stub`, never the [models.stub].model value. Asserting group→model resolution at the delegated boundary needs either a non-delegated test path or a foci change to resolve backend_config.model through the model registry; either way, harness-level support to inject a distinct group/model pair is also required")
+// TestL2_Config_DelegatedBackendReceivesModelVerbatim proves the
+// deliberate split documented at cmd/foci-gw/agents_delegated.go:47
+// ("Model for the backend — from backend_config, not from the group
+// resolver"): delegated backends read backend_config.model as a literal
+// string and pass it verbatim as cc-stub's --model flag — they do NOT
+// consult [groups] / [models.*] resolution. If that wiring ever
+// regressed (e.g. someone wired group resolution into the delegated
+// path), cc-stub would receive a resolved Anthropic model id instead of
+// the raw "stub" string. Assertion: the recorder's invocation entry for
+// alpha's workdir has Model == "stub" (the backend_config literal),
+// NOT the value at [models.stub].model.
+//
+// Note: group → model resolution at the API-agent path (agents.go:135,
+// periodic_setup.go:36, summariser, admin prompts) is a separate
+// behaviour worth its own test once the harness grows an API-backend
+// variant. See TODO #773 for that follow-up.
+func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7180},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 7180, Type: "private"},
+			From: &gotgbot.User{Id: 7180, FirstName: "Tester"},
+			Text: "ping",
+		},
+	})
+
+	// Poll for the BACKEND invocation entry under alpha's workdir. Note:
+	// the recorder also captures the nudge-extractor RunOnce spawn (which
+	// runs without --model), so we filter for invocations with a non-empty
+	// Model — that's the long-lived ccstream backend. If group resolution
+	// were leaking into the delegated path, Model would be
+	// "anthropic/claude-haiku-4-5-20251001" (the value at
+	// [models.stub].model) instead of "stub" (the literal
+	// backend_config value).
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, inv := range invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+			if inv.Model == "" {
+				continue // skip the nudge-extractor RunOnce spawn
+			}
+			if inv.Model != "stub" {
+				t.Errorf("delegated backend received --model %q, want %q (backend_config.model literal). Group resolution may have leaked into the delegated path.", inv.Model, "stub")
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("no cc-stub backend invocation (with --model) recorded for alpha\nstderr:\n%s", h.Stderr())
 }
 
 // TestL2_Config_GroupsFastDefaultsToPowerful proves the
