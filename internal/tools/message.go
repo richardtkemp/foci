@@ -114,7 +114,6 @@ func NewSendToChatTool(getSender func(sessionKey string) platform.Sender, tts vo
 				}
 				audioData, err := tts.Synthesize(ctx, p.Text)
 				if err != nil {
-					log.Errorf("voice", "session=%s tts synthesis failed: %v", sessionKey, err)
 					return ToolResult{}, fmt.Errorf("tts: %w", err)
 				}
 				if chatID != 0 {
