@@ -160,6 +160,12 @@ func (b *ExecBridge) handleConn(conn net.Conn) {
 	log.Debugf("execbridge", "session=%s call tool=%s", SessionKeyFromContext(b.ctx), req.Tool)
 	result, err := tool.Execute(b.ctx, req.Params)
 	if err != nil {
+		// Convergence-point logging: every exec-bridge tool error surfaces
+		// here at WARN so operators see the failure in service logs and
+		// integration tests can assert on a stable observable. Individual
+		// tools return errors via fmt.Errorf; without this log the error
+		// would only reach the calling agent's tool_result envelope.
+		log.Warnf("execbridge", "session=%s tool=%s error: %v", SessionKeyFromContext(b.ctx), req.Tool, err)
 		writeResponse(conn, "", err.Error())
 		return
 	}
