@@ -28,19 +28,26 @@ func agentWorkspace(h *testharness.Harness, agentID string) string {
 // the integration test package — it's an internal contract between
 // cc-stub and the L2 tests, not a public API.
 //
-// Two kinds:
-//   "invocation" — one per process spawn (workdir, resume_id, flags)
-//   "user_message" — one per user message processed (session_id, workdir, text_prefix)
+// Four kinds:
+//   "invocation"          — one per process spawn (workdir, resume_id, flags)
+//   "user_message"        — one per user message processed (session_id, workdir, text_prefix)
+//   "permission_request"  — one per scripted can_use_tool control_request the
+//                           stub emitted (control_request_id, outbound_tool_name)
+//   "control_response"    — one per inbound control_response received from foci
+//                           (control_request_id + raw inner payload)
 type recorderEntry struct {
-	Kind       string   `json:"kind"`
-	Timestamp  string   `json:"ts"`
-	Workdir    string   `json:"workdir"`
-	ResumeID   string   `json:"resume_id,omitempty"`
-	Model      string   `json:"model,omitempty"`
-	Flags      []string `json:"flags,omitempty"`
-	PID        int      `json:"pid,omitempty"`
-	SessionID  string   `json:"session_id,omitempty"`
-	TextPrefix string   `json:"text_prefix,omitempty"`
+	Kind             string          `json:"kind"`
+	Timestamp        string          `json:"ts"`
+	Workdir          string          `json:"workdir"`
+	ResumeID         string          `json:"resume_id,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	Flags            []string        `json:"flags,omitempty"`
+	PID              int             `json:"pid,omitempty"`
+	SessionID        string          `json:"session_id,omitempty"`
+	TextPrefix       string          `json:"text_prefix,omitempty"`
+	ControlRequestID string          `json:"control_request_id,omitempty"`
+	OutboundToolName string          `json:"outbound_tool_name,omitempty"`
+	ControlResponse  json.RawMessage `json:"control_response,omitempty"`
 }
 
 // readRecorderEntries parses every JSONL line from the recorder file.
