@@ -67,14 +67,39 @@ backend = "claude-code"
 
 [agents.backend_config]
 model = "stub"
-
+`,
+			a.ID, o.Workspaces[a.ID],
+		)
+		// Per-agent [agents.permissions] only emitted when at least one
+		// permission knob is set — keeps the generated config minimal
+		// for the common case.
+		if len(a.AutoApprove) > 0 || a.AutoApproveCommonReadonly != nil || a.AutoApproveCommonSafeWrite != nil {
+			sb.WriteString("\n[agents.permissions]\n")
+			if len(a.AutoApprove) > 0 {
+				sb.WriteString("auto_approve = [")
+				for i, rule := range a.AutoApprove {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					fmt.Fprintf(&sb, "%q", rule)
+				}
+				sb.WriteString("]\n")
+			}
+			if a.AutoApproveCommonReadonly != nil {
+				fmt.Fprintf(&sb, "auto_approve_common_readonly = %v\n", *a.AutoApproveCommonReadonly)
+			}
+			if a.AutoApproveCommonSafeWrite != nil {
+				fmt.Fprintf(&sb, "auto_approve_common_safe_write = %v\n", *a.AutoApproveCommonSafeWrite)
+			}
+		}
+		fmt.Fprintf(&sb, `
 [[agents.platforms]]
 id = "telegram"
 bot = %q
 [agents.platforms.access]
 allowed_users = [%q]
 `,
-			a.ID, o.Workspaces[a.ID], a.ID,
+			a.ID,
 			fmt.Sprintf("%d", a.UserID),
 		)
 	}
