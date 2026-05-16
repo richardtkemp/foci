@@ -112,6 +112,44 @@ func (s *TelegramStub) PushUpdate(token string, upd gotgbot.Update) {
 	st.updates = append(st.updates, upd)
 }
 
+// PushCallbackQuery enqueues a synthetic callback_query Update simulating
+// a user pressing an inline keyboard button.
+//
+// Foci's interactive-message machinery keys prompts by an ID it provided
+// when it sent the original sendMessage; the per-button callback strings
+// are encoded as "im:<promptID>:<buttonIndex>". For permission prompts,
+// promptID is the CC requestID (UUID-like). Tests therefore typically
+// call this as:
+//
+//	stub.PushCallbackQuery(token, "im:"+requestID+":0", chatID, userID, msgID)
+//
+// where index 0 = Allow, 1 = Deny, 2.. = "allow_always:<prefix>".
+//
+// fromUserID identifies the synthetic user pressing the button — must
+// match the agent's allowed_users so the bot accepts it. chatID + msgID
+// are stored on the embedded Message so the bot's callback handler can
+// resolve them; msgID can be 0 (auto-assigned) when the test doesn't
+// need to reference a specific message.
+func (s *TelegramStub) PushCallbackQuery(token string, data string, chatID int64, fromUserID int64, msgID int64) {
+	if msgID == 0 {
+		msgID = atomic.AddInt64(&s.nextMsg, 1)
+	}
+	upd := gotgbot.Update{
+		CallbackQuery: &gotgbot.CallbackQuery{
+			Id:   fmt.Sprintf("cb-%d", atomic.AddInt64(&s.nextUpd, 1)),
+			Data: data,
+			From: gotgbot.User{Id: fromUserID, FirstName: "Tester"},
+			// MaybeInaccessibleMessage interface satisfied by Message{}
+			// (value receiver — see gotgbot/v2/gen_types.go).
+			Message: gotgbot.Message{
+				Chat:      gotgbot.Chat{Id: chatID, Type: "private"},
+				MessageId: msgID,
+			},
+		},
+	}
+	s.PushUpdate(token, upd)
+}
+
 // DrainSent returns and clears the recorded outbound calls for a token.
 // Tests use this to assert what foci tried to send.
 func (s *TelegramStub) DrainSent(token string) []SentCall {

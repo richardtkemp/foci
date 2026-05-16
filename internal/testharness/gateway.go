@@ -32,6 +32,15 @@ type AgentSpec struct {
 	// still written into the generated config; only RegisterBot is
 	// skipped.
 	SkipStubRegister bool
+
+	// Permission knobs — populate [agents.permissions] subkeys. Used by
+	// the permission-test family (permissions_test.go) to verify foci's
+	// per-agent auto-approve behaviour. Nil/empty = inherit defaults
+	// (auto_approve_common_readonly defaults to true; the other two
+	// default to off / empty).
+	AutoApprove                []string
+	AutoApproveCommonReadonly  *bool
+	AutoApproveCommonSafeWrite *bool
 }
 
 // HarnessOptions configures a test foci-gw subprocess.
