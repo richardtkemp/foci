@@ -112,13 +112,32 @@ func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
 			testMarker, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
 
-	// Negative assertion: the marker MUST NOT land in fotini's workdir.
-	// If it does, the bug is back (fotini's Agent processed the
-	// clutch-prefixed session key).
+	// Negative assertion: the marker MUST NOT land in fotini's workdir
+	// AS THE ORIGINAL CROSS-AGENT DISPATCH. If the bug regresses, the
+	// marker text arrives directly (a raw "MESSAGE FROM SESSION ..."
+	// envelope addressed by fotini to itself). The reply_to=caller
+	// echo path is benign and ALSO contains the marker (clutch's
+	// default-echo response includes the original payload, then
+	// async-injected back to fotini wrapped in a "SESSION RESPONSE"
+	// header) — so plain "marker in fotini workdir" is racy: it
+	// fires whenever the echo lands first.
+	//
+	// Discriminator: the bug path lacks the "[SESSION RESPONSE @"
+	// header that send_to_session wraps every reply_to=caller round-
+	// trip in (see notifier.InjectToAgent). We ignore entries that
+	// carry that wrapper; what's left is original dispatch payload.
 	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
-		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/fotini") && strings.Contains(e.TextPrefix, testMarker) {
-			t.Errorf("regression: marker landed in fotini's workdir (%q) — fotini's Agent processed clutch's session key", e.Workdir)
+		if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/fotini") {
+			continue
 		}
+		if !strings.Contains(e.TextPrefix, testMarker) {
+			continue
+		}
+		if strings.Contains(e.TextPrefix, "[SESSION RESPONSE @") {
+			// Echo round-trip — expected with reply_to=caller. Not a regression.
+			continue
+		}
+		t.Errorf("regression: marker landed in fotini's workdir as a bare cross-agent dispatch (%q) — fotini's Agent processed clutch's session key\n--- entry text ---\n%s", e.Workdir, e.TextPrefix)
 	}
 }
 
