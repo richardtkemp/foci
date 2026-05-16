@@ -399,10 +399,17 @@ func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
 	logPath := tempDir + "/test-events.log"
 	// Seed a deterministic log: 1 INFO, 1 WARN, 1 ERROR. /errors should
 	// surface WARN+ERROR and not the INFO line.
-	seedLog := "" +
-		"2026-05-16T00:00:00+00:00 INFO  [test] benign noise line\n" +
-		"2026-05-16T00:00:01+00:00 WARN  [test] yellow flag for tests\n" +
-		"2026-05-16T00:00:02+00:00 ERROR [test] red flag for tests\n"
+	// Use time.Now()-relative timestamps so the seeded lines stay newer
+	// than foci's startup-rotation cutoff (Retention=0 → cutoff=now);
+	// hardcoded timestamps would get archived as soon as wall-clock
+	// passes them.
+	base := time.Now().Add(-3 * time.Second).UTC()
+	ts := func(offset int) string {
+		return base.Add(time.Duration(offset) * time.Second).Format(time.RFC3339)
+	}
+	seedLog := ts(0) + " INFO  [test] benign noise line\n" +
+		ts(1) + " WARN  [test] yellow flag for tests\n" +
+		ts(2) + " ERROR [test] red flag for tests\n"
 	if err := os.WriteFile(logPath, []byte(seedLog), 0o600); err != nil {
 		t.Fatalf("seed event log: %v", err)
 	}
@@ -410,8 +417,12 @@ func TestL2_SlashCommands_ErrorsTailsEventLog(t *testing.T) {
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7080}},
 		ReadyTimeout: 30 * time.Second,
+		// Disable log rotation: seeded lines must survive to be tailed
+		// by /errors. Default startup uses Retention=0 which archives
+		// every line older than now — incompatible with seeded fixtures.
 		ExtraConfigTOML: "[logging]\n" +
-			"event_file = \"" + logPath + "\"\n",
+			"event_file = \"" + logPath + "\"\n" +
+			"log_rotation = false\n",
 	})
 
 	pushTelegramText(t, h, "alpha", 7080, "/errors")
@@ -482,11 +493,14 @@ func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
 	tempDir := t.TempDir()
 	logPath := tempDir + "/test-events.log"
 	// Seed 8 distinct WARN lines so we can verify the cap of 5.
+	// Use time.Now()-relative timestamps; see ErrorsTailsEventLog for
+	// the rotation-cutoff rationale (hardcoded past timestamps get
+	// archived by foci's startup rotation pass).
+	base := time.Now().Add(-10 * time.Second).UTC()
 	var sb strings.Builder
 	for i := 1; i <= 8; i++ {
-		sb.WriteString("2026-05-16T00:00:0")
-		sb.WriteString(string(rune('0' + i)))
-		sb.WriteString("+00:00 WARN  [test] flag-")
+		sb.WriteString(base.Add(time.Duration(i) * time.Second).Format(time.RFC3339))
+		sb.WriteString(" WARN  [test] flag-")
 		sb.WriteString(string(rune('a' + i - 1)))
 		sb.WriteString("\n")
 	}
@@ -497,8 +511,10 @@ func TestL2_SlashCommands_ErrorsRespectsLineCountArg(t *testing.T) {
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 7082}},
 		ReadyTimeout: 30 * time.Second,
+		// Disable rotation so seeded lines survive (see ErrorsTailsEventLog).
 		ExtraConfigTOML: "[logging]\n" +
-			"event_file = \"" + logPath + "\"\n",
+			"event_file = \"" + logPath + "\"\n" +
+			"log_rotation = false\n",
 	})
 
 	pushTelegramText(t, h, "alpha", 7082, "/errors 5")
