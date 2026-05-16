@@ -208,7 +208,8 @@ func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
 	// is one-shot, so the next turn defaults to the small echo reply).
 	send("recovery message")
 	if !waitForUserMessage(t, h, "workspaces/alpha", "recovery message", 20*time.Second) {
-		t.Fatalf("agent did not recover after oversized JSON line; stderr tail:\n%s", stderrTail(h.Stderr()))
+		t.Fatalf("agent did not recover after oversized JSON line\n--- recorder ---\n%s--- stderr full ---\n%s",
+			recorderTail(t, h.RecorderPath()), h.Stderr())
 	}
 }
 
