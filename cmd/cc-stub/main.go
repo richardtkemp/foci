@@ -481,7 +481,11 @@ func loadScript() *stubScript {
 		fmt.Fprintf(os.Stderr, "cc-stub [error] failed to parse script %s: %v\n", path, err)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "cc-stub [error] loaded script %s (text=%q tool_uses=%d)\n", path, s.Text, len(s.ToolUses))
+	// Log script size, not contents — tests use multi-MB Text payloads
+	// to exercise foci's stdout scanner cap, and printing them here
+	// wedges the stub on its stderr pipe before stdout ever gets the
+	// payload. Length + tool-use count is the diagnostic value.
+	fmt.Fprintf(os.Stderr, "cc-stub [error] loaded script %s (text_len=%d tool_uses=%d)\n", path, len(s.Text), len(s.ToolUses))
 	return &s
 }
 
