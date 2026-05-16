@@ -110,70 +110,16 @@ func waitForUserMessageCount(t *testing.T, h *testharness.Harness, workdirSubstr
 
 // --- tests ----------------------------------------------------------
 
-// TestL2_SessionLifecycle_ResumeIDPassedOnSecondTurn proves foci tracks
-// the cc_resume_id emitted in cc-stub's system/init message and passes
-// it as --resume on the NEXT subprocess invocation for the same session
-// key. Mechanism: send two messages with a pause forcing the first
-// subprocess to exit (CCSTUB_EXIT_CODE on a control env, or by waiting
-// past the idle window); assert the second cc-stub invocation in the
-// recorder carries the same resume_id field. Regression net for the
-// state.db "cc_resume_id" persistence path in DelegatedManager.
-func TestL2_SessionLifecycle_ResumeIDPassedOnSecondTurn(t *testing.T) {
-	// HARNESS GAP: we can't force the first cc-stub process to exit
-	// between turns (CCSTUB_EXIT_CODE would have to be set on the SECOND
-	// spawn only — but the harness has no per-spawn env-var injection).
-	// Without forcing an exit, both turns share one long-lived stub
-	// process and no second invocation appears.
-	//
-	// We still get useful signal from the easier case: a single
-	// long-lived process serving two turns, where the SECOND user_message
-	// must carry the same session_id as the first (which is the value
-	// foci would persist as cc_resume_id).
-	h := testharness.StartGateway(t, testharness.HarnessOptions{
-		Agents: []testharness.AgentSpec{
-			{ID: "alpha", UserID: 9001},
-		},
-		ReadyTimeout: 30 * time.Second,
-	})
-	token := h.AgentBotToken("alpha")
-
-	sendText(h, token, 9001, 9001, "first turn")
-	if !waitForUserMessage(t, h, "workspaces/alpha", "first turn", 15*time.Second) {
-		t.Fatalf("first turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
-	}
-
-	sendText(h, token, 9001, 9001, "second turn")
-	if !waitForUserMessage(t, h, "workspaces/alpha", "second turn", 15*time.Second) {
-		t.Fatalf("second turn never processed; stderr tail:\n%s", stderrTail(h.Stderr()))
-	}
-
-	ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
-	if len(ums) < 2 {
-		t.Fatalf("expected at least 2 user_message entries, got %d", len(ums))
-	}
-	if ums[0].SessionID == "" {
-		t.Fatalf("first user_message has empty session_id")
-	}
-	if ums[0].SessionID != ums[1].SessionID {
-		t.Errorf("session_id rotated between turns within one subprocess: first=%q second=%q",
-			ums[0].SessionID, ums[1].SessionID)
-	}
-
-	// If a second invocation DID happen (e.g. because foci spawned a
-	// fresh subprocess for some reason), its resume_id should match the
-	// first invocation's session_id. The harness can't force this, but
-	// we assert if it shows up.
-	invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
-	if len(invs) >= 2 {
-		if invs[1].ResumeID == "" {
-			t.Errorf("second invocation has empty resume_id; want the persisted session id")
-		}
-		if invs[1].ResumeID != ums[0].SessionID {
-			t.Errorf("second invocation resume_id=%q does not match first turn session_id=%q",
-				invs[1].ResumeID, ums[0].SessionID)
-		}
-	}
-}
+// NOTE — TestL2_SessionLifecycle_ResumeIDPassedOnSecondTurn was removed
+// 2026-05-16. The test asked the wrong question: it asserted invs[1]
+// (the main session's INITIAL spawn) carries a --resume flag matching
+// the first turn's session_id. But in cc-stub's long-lived streaming
+// mode, the agent stays alive across turns — there is no per-turn
+// re-spawn, so no --resume is ever emitted by the harness. The
+// resume-id persistence path needs a different test that forces a
+// real respawn (per-spawn env injection or a kill helper).
+// TestL2_SessionLifecycle_BackendDeathMidSessionRespawns below already
+// names this gap.
 
 // TestL2_SessionLifecycle_MultiTurnSharesSessionID proves three
 // sequential user messages within the same Telegram chat all process
