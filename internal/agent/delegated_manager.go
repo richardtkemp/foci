@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/delegator"
@@ -439,21 +440,39 @@ func (m *DelegatedManager) ResetSession(sessionKey string) {
 }
 
 // Close shuts down all managed delegated backends and the idle reaper.
+//
+// Map mutation happens under m.mu; the (potentially slow) be.Close() calls
+// run after the lock is released. This mirrors the pattern in Get and
+// ResetSession (see 3af4dce5) — and is critical because the bounded
+// typingFunc wrapper in setBackendCallbacks acquires m.mu via sk() on the
+// waiter goroutine. Holding m.mu across be.Close would deadlock the
+// waiter against this caller, the 2s typingFunc timer would never arm
+// (sk() is synchronous, before the timer), and Close would only return
+// via the ccstream bounded-shutdown fallback. See TODO #749.
 func (m *DelegatedManager) Close() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.reaperStop != nil {
 		m.reaperStop()
 		m.reaperStop = nil
 	}
+	dead := make([]*managedBackend, 0, len(m.backends))
+	deadKeys := make([]string, 0, len(m.backends))
 	for key, mb := range m.backends {
 		mb.clearPermission()
 		m.saveResumeID(key, mb.be.SessionID())
+		dead = append(dead, mb)
+		deadKeys = append(deadKeys, key)
+	}
+	for _, key := range deadKeys {
+		delete(m.backends, key)
+	}
+	m.mu.Unlock()
+
+	for _, mb := range dead {
 		_ = mb.be.Close()
 		if mb.bridge != nil {
 			mb.bridge.Close()
 		}
-		delete(m.backends, key)
 	}
 }
 
@@ -488,22 +507,33 @@ func (m *DelegatedManager) setBackendCallbacks(mb *managedBackend) {
 			// Typing indicator is fire-and-forget — no return value, no error.
 			// Run with a bounded timeout so a hung downstream call (e.g. a
 			// stale-connection-pool SetChatTyping waiting on a server response
-			// that won't come) cannot wedge the caller. This is the suspected
-			// stall site for TODO #749 (finalizeExit on the waiter goroutine
-			// blocks forever inside typingFunc(false) at session close, leaving
-			// waitCh never sent on). Defense-in-depth: even if typingFunc isn't
-			// the actual culprit, a fire-and-forget call should never block
-			// indefinitely.
+			// that won't come) cannot wedge the caller.
+			//
+			// sk() MUST be called from inside the inner goroutine. It acquires
+			// m.mu, and this wrapper runs synchronously on the ccstream waiter
+			// goroutine during finalizeExit. If sk() ran outside the goroutine,
+			// and any caller of be.Close() held m.mu (the historical bug behind
+			// TODO #749 root-cause), the wrapper would block before its timer
+			// armed — defeating the 2s bound entirely. Inside the goroutine,
+			// the outer select fires its 2s timer regardless of what the inner
+			// goroutine is blocked on, so the wrapper always returns within
+			// typingFuncTimeout.
 			done := make(chan struct{})
-			key := sk()
+			var keyHolder atomic.Pointer[string]
 			go func() {
 				defer close(done)
+				key := sk()
+				keyHolder.Store(&key)
 				m.TypingFunc(key, typing)
 			}()
 			select {
 			case <-done:
 			case <-time.After(typingFuncTimeout):
-				log.Warnf("agent/delegated", "typingFunc(typing=%v) for %s did not return within %s — abandoning (possible Telegram SetChatTyping stall)", typing, key, typingFuncTimeout)
+				keyStr := "<unknown — sk() still blocked>"
+				if kp := keyHolder.Load(); kp != nil {
+					keyStr = *kp
+				}
+				log.Warnf("agent/delegated", "typingFunc(typing=%v) for %s did not return within %s — abandoning (possible Telegram SetChatTyping stall or m.mu held by a slow caller)", typing, keyStr, typingFuncTimeout)
 			}
 		})
 	}
@@ -670,11 +700,22 @@ func (m *DelegatedManager) BackendInfo(sessionKey string) string {
 }
 
 // closeIdle closes delegated backends that have been idle longer than timeout.
+//
+// Map mutation happens under m.mu; the (potentially slow) be.Close() calls
+// run after the lock is released. Holding m.mu across be.Close would
+// deadlock the waiter goroutine — it calls finalizeExit → typingFunc on
+// its way to waitCh, and the bounded typingFunc wrapper takes m.mu via
+// sk(). The 2s timer is set up *after* sk() returns, so the timer never
+// arms and Close blocks the full bounded-shutdown timeout. See TODO #749.
 func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	now := time.Now()
+	type corpse struct {
+		key string
+		mb  *managedBackend
+	}
+	var dead []corpse
 	for key, mb := range m.backends {
 		// Use backend stream activity if available (tracks actual CC events),
 		// falling back to lastActive (when foci last sent a message).
@@ -691,10 +732,15 @@ func (m *DelegatedManager) closeIdle(timeout time.Duration) {
 		m.saveResumeID(key, mb.be.SessionID())
 		log.Infof("delegated", "closing idle session %s (idle %s, session %s)",
 			key, now.Sub(lastSeen).Round(time.Minute), mb.be.SessionID())
-		_ = mb.be.Close()
-		if mb.bridge != nil {
-			mb.bridge.Close()
-		}
 		delete(m.backends, key)
+		dead = append(dead, corpse{key: key, mb: mb})
+	}
+	m.mu.Unlock()
+
+	for _, c := range dead {
+		_ = c.mb.be.Close()
+		if c.mb.bridge != nil {
+			c.mb.bridge.Close()
+		}
 	}
 }
