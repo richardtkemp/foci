@@ -930,6 +930,174 @@ func TestCloseIdle(t *testing.T) {
 	}
 }
 
+func TestCloseIdle_DoesNotHoldManagerLockDuringClose(t *testing.T) {
+	// Regression for TODO #749 root cause. closeIdle used to hold m.mu across
+	// be.Close(). The ccstream waiter goroutine, on its way to send waitCh,
+	// passes through the bounded typingFunc wrapper at SetTypingFunc — which
+	// calls sk() to read mb.sessionKey. sk() takes m.mu. With m.mu held by
+	// closeIdle, the waiter blocked, the 2s typingFunc timer never armed
+	// (sk() ran synchronously before the timer), and Close took the full
+	// 5s+2s bounded-shutdown fallback. Mirrors
+	// TestResetSession_DoesNotHoldManagerLockDuringClose.
+	t.Parallel()
+
+	mgr, _ := newTestManager(t, nil)
+
+	stuck := "test-agent/stuck"
+	other := "test-agent/other"
+
+	// Spawn the stuck backend.
+	if _, err := mgr.Get(context.Background(), stuck); err != nil {
+		t.Fatalf("Get(stuck): %v", err)
+	}
+
+	// Wire its Close to block until we let it through, and backdate
+	// lastActive so closeIdle picks it up.
+	release := make(chan struct{})
+	mgr.mu.Lock()
+	stuckMB := mgr.backends[stuck]
+	stuckMB.lastActive = time.Now().Add(-2 * time.Hour)
+	mgr.mu.Unlock()
+	stuckMock := stuckMB.be.(*mockBackendDM)
+	stuckMock.mu.Lock()
+	stuckMock.closeFn = func() error { <-release; return nil }
+	stuckMock.mu.Unlock()
+
+	// Run closeIdle in the background — Close on the stuck backend will block.
+	closeDone := make(chan struct{})
+	go func() {
+		mgr.closeIdle(time.Hour)
+		close(closeDone)
+	}()
+
+	// Give closeIdle time to enter the stuck Close.
+	time.Sleep(20 * time.Millisecond)
+
+	// An unrelated session should still be reachable. If m.mu was held
+	// during Close, this would block.
+	getDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Get(context.Background(), other)
+		getDone <- err
+	}()
+
+	select {
+	case err := <-getDone:
+		if err != nil {
+			t.Fatalf("Get(other) while stuck close in progress: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Get(other) blocked while closeIdle's Close was in progress — m.mu is being held across Close")
+	}
+
+	// Let the stuck Close finish so the test goroutine cleans up.
+	close(release)
+	<-closeDone
+}
+
+func TestClose_DoesNotHoldManagerLockDuringBackendClose(t *testing.T) {
+	// Regression for TODO #749 root cause. Manager Close used to hold m.mu
+	// across be.Close(). Same deadlock as closeIdle — at foci shutdown the
+	// waiter goroutine would block on m.mu via the bounded typingFunc
+	// wrapper's sk() call. This test installs a backend whose Close blocks,
+	// fires manager Close in a goroutine, and proves that taking m.mu
+	// from another goroutine succeeds promptly (the lock is no longer held
+	// during the slow Close).
+	t.Parallel()
+
+	mgr, _ := newTestManager(t, nil)
+
+	stuck := "test-agent/stuck"
+	if _, err := mgr.Get(context.Background(), stuck); err != nil {
+		t.Fatalf("Get(stuck): %v", err)
+	}
+
+	release := make(chan struct{})
+	mgr.mu.Lock()
+	stuckMB := mgr.backends[stuck]
+	mgr.mu.Unlock()
+	stuckMock := stuckMB.be.(*mockBackendDM)
+	stuckMock.mu.Lock()
+	stuckMock.closeFn = func() error { <-release; return nil }
+	stuckMock.mu.Unlock()
+
+	closeDone := make(chan struct{})
+	go func() {
+		mgr.Close()
+		close(closeDone)
+	}()
+
+	// Give Close time to enter the stuck backend's Close.
+	time.Sleep(20 * time.Millisecond)
+
+	// m.mu must be acquirable while the slow Close runs.
+	lockAcquired := make(chan struct{})
+	go func() {
+		mgr.mu.Lock()
+		mgr.mu.Unlock()
+		close(lockAcquired)
+	}()
+
+	select {
+	case <-lockAcquired:
+		// good
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("m.mu still held while manager Close's slow be.Close was in progress")
+	}
+
+	close(release)
+	<-closeDone
+}
+
+func TestGet_TypingFuncBoundedWhenManagerLockHeld(t *testing.T) {
+	// Defense-in-depth regression for TODO #749. Even if a future caller
+	// regresses and holds m.mu across be.Close (the original bug), the
+	// typingFunc wrapper must still return within typingFuncTimeout —
+	// because sk() now runs inside the inner goroutine, so the outer
+	// select's 2s timer fires regardless of what the inner goroutine
+	// is blocked on.
+	mgr, mocks := newTestManager(t, nil)
+	mgr.TypingFunc = func(sk string, typing bool) {}
+
+	if _, err := mgr.Get(context.Background(), "test-agent/c1"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	mock := (*mocks)[0]
+	mock.mu.Lock()
+	tf := mock.typingFunc
+	mock.mu.Unlock()
+	if tf == nil {
+		t.Fatal("typingFunc not set on backend")
+	}
+
+	// Hold m.mu — sk() inside the wrapper's inner goroutine will block on this.
+	mgr.mu.Lock()
+
+	start := time.Now()
+	done := make(chan struct{})
+	go func() {
+		tf(false) // must return within typingFuncTimeout despite m.mu being held
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		elapsed := time.Since(start)
+		if elapsed > typingFuncTimeout+500*time.Millisecond {
+			t.Errorf("tf returned in %s — slower than typingFuncTimeout (%s) + slack", elapsed, typingFuncTimeout)
+		}
+		if elapsed < typingFuncTimeout-200*time.Millisecond {
+			t.Errorf("tf returned in %s — faster than typingFuncTimeout (%s); did the 2s bound actually fire?", elapsed, typingFuncTimeout)
+		}
+	case <-time.After(typingFuncTimeout + 2*time.Second):
+		mgr.mu.Unlock()
+		t.Fatalf("tf did not return within %s — sk() is still running outside the inner goroutine and blocking the wrapper", typingFuncTimeout+2*time.Second)
+	}
+
+	mgr.mu.Unlock()
+}
+
 func TestGet_TypingFuncRouting(t *testing.T) {
 	// Proves that SetTypingFunc is called on the backend with a function that
 	// routes typing state through TypingFunc with the correct session key.
