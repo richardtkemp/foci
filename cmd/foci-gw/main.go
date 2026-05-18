@@ -78,8 +78,18 @@ Subcommands:
 
 	// Early log init: open the default event log file so that config parse
 	// errors are captured on disk, not just stderr/journal.
+	//
+	// FOCI_LOG_FILE override exists so the L2 integration harness can pin
+	// foci-gw's log to a tempdir BEFORE config load. Without this, every
+	// test-spawned foci-gw would open ~/logs/foci.log — which on dev hosts
+	// is the same file the production foci is actively writing to —
+	// causing rotation interleaving and production-log corruption.
+	earlyLogPath := os.Getenv("FOCI_LOG_FILE")
+	if earlyLogPath == "" {
+		earlyLogPath = config.ResolvePath("logs/foci.log")
+	}
 	if err := log.Init(log.Config{
-		EventFile: config.ResolvePath("logs/foci.log"),
+		EventFile: earlyLogPath,
 	}); err != nil {
 		log.Fatalf("main", "early log init: %v", err)
 	}
