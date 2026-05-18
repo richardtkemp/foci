@@ -143,6 +143,7 @@ func primeChatID(t *testing.T, h *testharness.Harness, agentID string, userID in
 // Document update → downloadAndSaveMedia → saveMedia → injected path
 // tag → Agent.HandleMessage → cc-stub recorder user_message entry.
 func TestL2_Files_DocumentSaved_PathInjectedToAgent(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; no stub for /file/bot<token>/<filePath> in TelegramStub means no successful download → no saved-to-disk path tag to assert on")
 }
 
@@ -154,6 +155,7 @@ func TestL2_Files_DocumentSaved_PathInjectedToAgent(t *testing.T) {
 // Photo update → downloadAttachment → platform.Attachment → user
 // envelope content blocks.
 func TestL2_Files_PhotoAttachment_ReachesAgent(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download the attachment is never built and never reaches the agent envelope")
 }
 
@@ -163,6 +165,7 @@ func TestL2_Files_PhotoAttachment_ReachesAgent(t *testing.T) {
 // save-to-disk path. Distinguishes the small-PDF branch in
 // bot_receive.go from the over-size branch.
 func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download the attachment never materialises so the attachment branch can't be distinguished from the save-to-disk branch")
 }
 
@@ -171,6 +174,7 @@ func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
 // "[PDF saved to: <path>]" tag, not the attachment path. Asserts the
 // branching threshold in bot_receive.handlePDF for file_size > 32MB.
 func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
+	t.Parallel()
 	// The bot_receive code routes PDFs with FileSize > 32MB through
 	// handleMediaMessage, which calls downloadAndSaveMedia. But
 	// downloadAndSaveMedia has its own hard limit at 20MB
@@ -190,6 +194,7 @@ func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
 // downloadAndSaveMedia with extForVideo → "[Video saved to: <path>]"
 // prepended to caption, both forwarded to agent.
 func TestL2_Files_VideoAttachment_SavedAndPathInjected(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download no file lands on disk and no '[Video saved to: ...]' tag is prepended")
 }
 
@@ -199,6 +204,7 @@ func TestL2_Files_VideoAttachment_SavedAndPathInjected(t *testing.T) {
 // from the Video branch. Asserts the saved-path tag uses "Video" as
 // the human label.
 func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; same blocker as the Video test above")
 }
 
@@ -210,6 +216,7 @@ func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
 // convertible MIME → NormalizeMIME → downloadAttachment → attachment
 // reaching the agent with canonical mime_type.
 func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: convertible-doc branch calls downloadAttachment which calls downloadFile; without a stubbed binary download the attachment never reaches the agent so the normalized MIME can't be observed")
 }
 
@@ -222,6 +229,7 @@ func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
 // dispatch → send_to_chat tool → bot.SendDocument → sendDocument API
 // call recorded.
 func TestL2_Files_SendToChatFile_RecordsSendDocument(t *testing.T) {
+	t.Parallel()
 	const userID = 8001
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -264,6 +272,7 @@ func TestL2_Files_SendToChatFile_RecordsSendDocument(t *testing.T) {
 // under test: scripted send_to_chat with --send-as video → sendVideo
 // (not sendDocument) recorded on the Telegram stub.
 func TestL2_Files_SendToChatVideo_RoutesToSendVideo(t *testing.T) {
+	t.Parallel()
 	const userID = 8002
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -303,6 +312,7 @@ func TestL2_Files_SendToChatVideo_RoutesToSendVideo(t *testing.T) {
 // branch lands on the sendPhoto API, distinct from sendDocument. Counter-
 // part of the video routing test for the photo branch of the switch.
 func TestL2_Files_SendToChatPhoto_RoutesToSendPhoto(t *testing.T) {
+	t.Parallel()
 	const userID = 8003
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -343,6 +353,7 @@ func TestL2_Files_SendToChatPhoto_RoutesToSendPhoto(t *testing.T) {
 // API call, distinct from sendDocument. Closes the GIF branch of the
 // send_as switch.
 func TestL2_Files_SendToChatAnimation_RoutesToSendAnimation(t *testing.T) {
+	t.Parallel()
 	const userID = 8004
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -383,6 +394,7 @@ func TestL2_Files_SendToChatAnimation_RoutesToSendAnimation(t *testing.T) {
 // sendVoice. Audio and voice are separate Telegram surfaces (sendVoice
 // only for OGG-Opus voice notes; sendAudio for general music files).
 func TestL2_Files_SendToChatAudio_RoutesToSendAudio(t *testing.T) {
+	t.Parallel()
 	const userID = 8005
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -426,6 +438,7 @@ func TestL2_Files_SendToChatAudio_RoutesToSendAudio(t *testing.T) {
 // the document's caption in a SINGLE sendDocument call — no separate
 // sendMessage. Counterpart of the long-text fallback test below.
 func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
+	t.Parallel()
 	const userID = 8006
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -475,6 +488,7 @@ func TestL2_Files_SendToChatFile_WithCaption_CaptionIncluded(t *testing.T) {
 // uncaptioned sendDocument. Verifies both calls land on the Telegram
 // stub in the expected order.
 func TestL2_Files_SendToChatFile_LongTextFallsBackToTwoMessages(t *testing.T) {
+	t.Parallel()
 	const userID = 8007
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -551,6 +565,7 @@ func TestL2_Files_SendToChatFile_LongTextFallsBackToTwoMessages(t *testing.T) {
 // Telegram multipart body should reference the custom filename, not
 // the source path's basename.
 func TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested(t *testing.T) {
+	t.Parallel()
 	const userID = 8008
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -616,6 +631,7 @@ func TestL2_Files_SendToChatFile_CustomFilename_DisplaysAsRequested(t *testing.T
 // sendDocument multipart body must contain markdown formatting AND a
 // parse_mode hint (once the bug is fixed).
 func TestL2_Files_SendToChatMarkdownCaption_RegressionFor771(t *testing.T) {
+	t.Parallel()
 	const userID = 8009
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -674,6 +690,7 @@ func TestL2_Files_SendToChatMarkdownCaption_RegressionFor771(t *testing.T) {
 // msg.Text is empty. cc-stub recorder's text_prefix should contain
 // the caption.
 func TestL2_Files_CaptionOnPhotoUpdate_BecomesAgentText(t *testing.T) {
+	t.Parallel()
 	const userID = 8010
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -710,6 +727,7 @@ func TestL2_Files_CaptionOnPhotoUpdate_BecomesAgentText(t *testing.T) {
 // agent in one user message. Asserts the ordering: quote header,
 // saved-path tag, original caption.
 func TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved(t *testing.T) {
+	t.Parallel()
 	// The ordering assertion (quote header before saved-path tag before
 	// caption) requires the saved-path tag to fire, which needs
 	// downloadAndSaveMedia to succeed. That depends on the Bot API
@@ -727,6 +745,7 @@ func TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved(t *testing.T) {
 // crash, no silent message drop. Wire under test: failure in
 // downloadFile → att{} skipped → text-only message enqueued.
 func TestL2_Files_Photo_DownloadFails_AgentStillSeesText(t *testing.T) {
+	t.Parallel()
 	const userID = 8011
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -763,6 +782,7 @@ func TestL2_Files_Photo_DownloadFails_AgentStillSeesText(t *testing.T) {
 // agent sees "[Document too large to download (NN MB)]" prepended to
 // the caption. No file written to received_files_dir.
 func TestL2_Files_Document_TooLarge_SizeWarningPrepended(t *testing.T) {
+	t.Parallel()
 	const userID = 8012
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -810,6 +830,7 @@ func TestL2_Files_Document_TooLarge_SizeWarningPrepended(t *testing.T) {
 // "[Video too large to download]" text, no file in received_files_dir,
 // agent still receives the user message.
 func TestL2_Files_VideoTooLarge_AnnotatedNotSaved(t *testing.T) {
+	t.Parallel()
 	const userID = 8013
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -854,6 +875,7 @@ func TestL2_Files_VideoTooLarge_AnnotatedNotSaved(t *testing.T) {
 // voice. Wire under test: msg.Voice != nil && b.transcriber == nil
 // → sendReply + return false from buildReceivedMessage.
 func TestL2_Files_VoiceWithoutTranscriber_UserGetsErrorMessage(t *testing.T) {
+	t.Parallel()
 	const userID = 8014
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -934,6 +956,7 @@ func TestL2_Files_VoiceWithoutTranscriber_UserGetsErrorMessage(t *testing.T) {
 // exec bridge surfaces it as a non-zero exit / error result. No
 // sendDocument call should reach the Telegram stub.
 func TestL2_Files_SendToChatFile_MissingFile_ReturnsError(t *testing.T) {
+	t.Parallel()
 	const userID = 8015
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -984,6 +1007,7 @@ func TestL2_Files_SendToChatFile_MissingFile_ReturnsError(t *testing.T) {
 // "filename requires file". A send_to_chat call with --filename but
 // no --file must error before any platform call.
 func TestL2_Files_SendToChat_FilenameWithoutFile_ReturnsError(t *testing.T) {
+	t.Parallel()
 	const userID = 8016
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -1019,6 +1043,7 @@ func TestL2_Files_SendToChat_FilenameWithoutFile_ReturnsError(t *testing.T) {
 // validation. A send_to_chat call with neither text nor file must
 // error; no sendMessage or sendDocument lands on the Telegram stub.
 func TestL2_Files_SendToChat_EmptyTextAndFile_ReturnsError(t *testing.T) {
+	t.Parallel()
 	const userID = 8017
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -1066,6 +1091,7 @@ func TestL2_Files_SendToChat_EmptyTextAndFile_ReturnsError(t *testing.T) {
 // sendMessage outbound. Wire under test: allowedUsers check in
 // buildReceivedMessage returning false BEFORE downloadAttachment runs.
 func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
+	t.Parallel()
 	const allowedID = 8018
 	const intruderID = 9999
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -1136,5 +1162,6 @@ func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
 // stub TTS implementation that emits canned audio bytes (no real
 // OpenAI/ElevenLabs round-trip).
 func TestL2_Files_SendToChatVoice_WithTextSynthesizesTTS(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: harness has no TTS stub; tools/message.go's voice+text branch errors with 'tts not configured' instead of synthesizing — needs testharness to plug a stub voice.TTS into the agent setup")
 }

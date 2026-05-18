@@ -25,6 +25,7 @@ import (
 // Telegram bridge to the stub's recorded sendMessage calls. Test polls
 // until the recorded sendMessage body contains the echo prefix.
 func TestL2_Egress_AssistantReplyReachesTelegram(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5555},
@@ -82,6 +83,7 @@ func TestL2_Egress_AssistantReplyReachesTelegram(t *testing.T) {
 // CC-harness-internal task-notification injection produced assistant
 // text outside any foci-side user message.
 func TestL2_Egress_LateAssistantTextReachesTelegram(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 5556},

@@ -134,6 +134,7 @@ func pushUserMessage(t *testing.T, h *testharness.Harness, agentID string, userI
 // workdir and looks for the rule's reminder body inside the text_prefix,
 // confirming foci injected the nudge before forwarding the user text.
 func TestL2_Nudges_RegexNudgePrependedToUserMessage(t *testing.T) {
+	t.Parallel()
 	const userID = 7100
 	const reminderBody = "REGEX_REMINDER_MARKER_ALPHA"
 
@@ -171,6 +172,7 @@ func TestL2_Nudges_RegexNudgePrependedToUserMessage(t *testing.T) {
 // with n=1) injects the nudge ahead of the user text. Asserts the
 // reminder body appears in the user_message text_prefix for that turn.
 func TestL2_Nudges_TurnIntervalNudgeFiresOnSchedule(t *testing.T) {
+	t.Parallel()
 	const userID = 7200
 	const reminderBody = "TURN_INTERVAL_MARKER_BETA"
 
@@ -203,6 +205,7 @@ func TestL2_Nudges_TurnIntervalNudgeFiresOnSchedule(t *testing.T) {
 // workdir whose text_prefix carries the reminder body — i.e. the tool
 // result and nudge were folded together and re-sent to CC.
 func TestL2_Nudges_AfterToolsNudgeFollowsToolBatch(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	// cc-stub does not emit CC PostToolUse hook events, so foci's
 	// PostToolNudgeFunc never fires under the L2 test rig — there's no
@@ -220,6 +223,7 @@ func TestL2_Nudges_AfterToolsNudgeFollowsToolBatch(t *testing.T) {
 // reminder text, confirming the gate fired and was delivered as a
 // follow-up prompt rather than dropped.
 func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	// Two compounding gaps:
 	//   1. The harness's writeTestConfig has no knob for setting
@@ -239,6 +243,7 @@ func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
 // three, and asserts the NoResponseSentinel marker from nudgeFooter
 // appears in each corresponding user_message text_prefix.
 func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	// Partial coverage is possible (regex + turn-interval both render
 	// through InjectNudges and would carry the footer), but the full
@@ -255,6 +260,7 @@ func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
 // user_message text_prefix for regex, turn-interval, and after-tools
 // fires.
 func TestL2_Nudges_HeaderPresentOnAllDeliveryPaths(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	t.Skip("HARNESS GAP: full coverage needs cc-stub to emit PostToolUse hook envelopes so the after-tools delivery path is observable in the recorder")
 }
@@ -267,6 +273,7 @@ func TestL2_Nudges_HeaderPresentOnAllDeliveryPaths(t *testing.T) {
 // text, bravo's carries only bravo's — confirms the scheduler is built
 // per-agent off the agent's own workspace rules file.
 func TestL2_Nudges_PerAgentRulesIsolated(t *testing.T) {
+	t.Parallel()
 	const alphaUser = 7301
 	const bravoUser = 7302
 	const alphaMarker = "ISOLATION_ALPHA_TAG_UNIQUE"
@@ -325,6 +332,7 @@ func TestL2_Nudges_PerAgentRulesIsolated(t *testing.T) {
 // text_prefix — not both. The negative half asserts the second rule's
 // reminder body is absent.
 func TestL2_Nudges_MaxPerBatchCapsAfterToolsReminders(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	t.Skip("HARNESS GAP: after-tools nudges depend on PostToolUse hook events which cc-stub does not synthesize — extend cmd/cc-stub to emit a system/hook_response envelope after each Bash tool_use")
 }
@@ -336,6 +344,7 @@ func TestL2_Nudges_MaxPerBatchCapsAfterToolsReminders(t *testing.T) {
 // to emit two Bash tool_uses back-to-back, then asserts the rule's
 // reminder appears in exactly one user_message text_prefix, not both.
 func TestL2_Nudges_CooldownSuppressesRepeatedAfterToolsNudge(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	t.Skip("HARNESS GAP: after-tools nudges require cc-stub to emit PostToolUse hook envelopes; without them PostToolNudgeFunc never fires and cooldown can't be exercised")
 }
@@ -349,6 +358,7 @@ func TestL2_Nudges_CooldownSuppressesRepeatedAfterToolsNudge(t *testing.T) {
 // extractor's one-shot subprocess. Distinguished by either resume_id
 // being empty AND a workdir that matches but a separate PID.
 func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
+	t.Parallel()
 	const userID = 7400
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -399,6 +409,7 @@ func TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity(t *testing.T) {
 // extra `claude --print` invocation entry appears in the recorder
 // beyond the normal agent CC spawn.
 func TestL2_Nudges_AutoExtractSkippedWhenContentHashMatches(t *testing.T) {
+	t.Parallel()
 	const userID = 7500
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -444,6 +455,7 @@ func TestL2_Nudges_AutoExtractSkippedWhenContentHashMatches(t *testing.T) {
 // a subsequent user message produces a user_message entry with no nudge
 // text — foci degrades to "no rules" gracefully.
 func TestL2_Nudges_MalformedRulesFileToleratedAtStartup(t *testing.T) {
+	t.Parallel()
 	const userID = 7600
 
 	// Seeding the bad file must happen BEFORE StartGateway — at startup
@@ -490,6 +502,7 @@ func TestL2_Nudges_MalformedRulesFileToleratedAtStartup(t *testing.T) {
 // the resulting user_message text_prefix contains no nudgeHeader
 // marker — i.e. nothing was injected.
 func TestL2_Nudges_EmptyRulesArrayProducesNoNudge(t *testing.T) {
+	t.Parallel()
 	const userID = 7700
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -517,6 +530,7 @@ func TestL2_Nudges_EmptyRulesArrayProducesNoNudge(t *testing.T) {
 // loop; the rule simply never fires. Asserts a normal user_message
 // entry appears and contains no nudgeHeader marker.
 func TestL2_Nudges_InvalidRegexPatternIgnored(t *testing.T) {
+	t.Parallel()
 	const userID = 7800
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
@@ -548,6 +562,7 @@ func TestL2_Nudges_InvalidRegexPatternIgnored(t *testing.T) {
 // workspace-dir file with "OUTER", sends a matching message, asserts
 // "INNER" appears in the user_message text_prefix and "OUTER" does not.
 func TestL2_Nudges_CharacterDirRulesPathPreferred(t *testing.T) {
+	t.Parallel()
 	const userID = 7900
 	const innerMarker = "INNER_CHAR_DIR_MARKER_PREFERRED"
 	const outerMarker = "OUTER_WORKSPACE_ROOT_MARKER_IGNORED"
@@ -605,6 +620,7 @@ func TestL2_Nudges_CharacterDirRulesPathPreferred(t *testing.T) {
 // contains the user text but no nudgeHeader marker — the scheduler was
 // never built, no injection happened.
 func TestL2_Nudges_DisabledByConfigSuppressesAllInjection(t *testing.T) {
+	t.Parallel()
 	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
 	// nudge_enable defaults to true and the harness's writeTestConfig
 	// has no path for overriding it (no global [nudge] section emitted,

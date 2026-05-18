@@ -92,6 +92,7 @@ func waitForSocket(t *testing.T, sockPath string, timeout time.Duration) {
 // workdir. The recorder should show an extra invocation for the agent
 // without any Telegram update having been pushed.
 func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig has no way to inject [keepalive] section " +
 		"(enabled, interval). Without that, keepalive is disabled by default " +
 		"and the tick will never fire within a test-scale window. Needs " +
@@ -106,6 +107,7 @@ func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
 // without a caching-capable model should leave the recorder free of
 // keepalive invocations across multiple ticks.
 func TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [keepalive] config injection AND a way to " +
 		"select a non-caching model in the test config. writeTestConfig only " +
 		"emits the anthropic/claude-haiku-4-5 stub model. Needs harness support " +
@@ -120,6 +122,7 @@ func TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable(t *testing.T) {
 // while the keepalive interval elapses, then verifies no keepalive
 // invocation was recorded until after the held turn completes.
 func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [keepalive] config injection so the periodic " +
 		"runner is actually configured. See TestL2_Cron_KeepaliveFiresAtConfiguredInterval.")
 }
@@ -132,6 +135,7 @@ func TestL2_Cron_KeepaliveSkippedWhenTurnInFlight(t *testing.T) {
 // stub. The assertion is the absence of any user-visible message for
 // the keepalive prompt body in the Telegram stub's call log.
 func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [keepalive] config injection. " +
 		"See TestL2_Cron_KeepaliveFiresAtConfiguredInterval.")
 }
@@ -144,6 +148,7 @@ func TestL2_Cron_KeepaliveDoesNotReplyToTelegram(t *testing.T) {
 // todo store path, leaves the agent idle past the interval, and
 // asserts a recorder entry with the background prompt appears.
 func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires (a) [background] config injection to set a " +
 		"sub-minute interval, and (b) a way to seed an open background-tagged " +
 		"todo into the per-agent todo.db before/while foci-gw is running. " +
@@ -158,6 +163,7 @@ func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
 // must not dispatch. Asserts the recorder shows no background-prompt
 // invocation across multiple ticks when the todo store is empty.
 func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [background] config injection (sub-minute " +
 		"interval). See TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos.")
 }
@@ -171,6 +177,7 @@ func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
 // the next. The test runs one background session, then verifies the
 // next tick declines despite open todos remaining.
 func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [background] config injection + todo seeding. " +
 		"See TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos.")
 }
@@ -181,6 +188,7 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 // idle time or open todos. Test wires a stub HasActiveWorkFn returning
 // 1 and confirms no dispatch occurs.
 func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: HasActiveWorkFn is wired internally in foci-gw " +
 		"(periodic_setup.go) from inst.tmuxWatchCount — there's no test " +
 		"surface to inject a stub. Needs harness support to override the " +
@@ -197,6 +205,7 @@ func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
 // assertion is a recorder entry whose text prefix matches the
 // reflection prompt header.
 func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [reflection] config injection (interval, " +
 		"interval_enabled). Defaults are 1h interval — the periodic ticker " +
 		"won't fire within any reasonable test window. Needs " +
@@ -210,6 +219,7 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 // most one reflection invocation per session across a window of
 // multiple ticks.
 func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [reflection] config injection. " +
 		"See TestL2_Cron_ReflectionFiresOnInterval.")
 }
@@ -221,6 +231,7 @@ func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 // Test holds a turn open via cc-stub and asserts no reflection
 // recorder entry appears for that session until the turn completes.
 func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [reflection] config injection. " +
 		"See TestL2_Cron_ReflectionFiresOnInterval.")
 }
@@ -230,6 +241,7 @@ func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 // short interval, the scheduler returns immediately without
 // dispatching. Asserts the recorder shows zero reflection invocations.
 func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [reflection] config injection (specifically " +
 		"interval_enabled=false). See TestL2_Cron_ReflectionFiresOnInterval.")
 }
@@ -241,6 +253,7 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 // once per interval. Asserts on the recorder for a consolidation
 // prompt invocation in the agent's workdir.
 func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [reflection] config injection " +
 		"(consolidation_interval, consolidation_enabled). Default is 20h. " +
 		"See TestL2_Cron_ReflectionFiresOnInterval.")
@@ -253,6 +266,7 @@ func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
 // reflection and asserts consolidation only runs after reflection
 // completes.
 func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [reflection] config injection for both " +
 		"reflection and consolidation timers. See TestL2_Cron_ReflectionFiresOnInterval.")
 }
@@ -265,6 +279,7 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 // interval. Asserts at most one consolidation invocation across both
 // processes.
 func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires (a) [reflection] config injection AND (b) a " +
 		"way to start a second harness against the same DataDir / workspaces. " +
 		"StartGateway always allocates a fresh t.TempDir() for both, so state " +
@@ -280,6 +295,7 @@ func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 // user_message containing the SCHEDULED WAKE header plus the original
 // reminder text.
 func TestL2_Cron_WakeReminderFiresAfterDelay(t *testing.T) {
+	t.Parallel()
 	const testUserID = 5101
 	const reminderText = "MARKER_WAKE_FIRES_AFTER_DELAY"
 
@@ -344,6 +360,7 @@ func TestL2_Cron_WakeReminderFiresAfterDelay(t *testing.T) {
 // should be re-scheduled and still fire. The injected turn lands in
 // the second process's recorder.
 func TestL2_Cron_WakeReminderSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: StartGateway always creates a fresh t.TempDir() and " +
 		"there's no way to (a) shut down the first instance from within the " +
 		"test (cleanup is via t.Cleanup), or (b) point a second StartGateway " +
@@ -358,6 +375,7 @@ func TestL2_Cron_WakeReminderSurvivesRestart(t *testing.T) {
 // the recorder shows no SCHEDULED WAKE injection and the tool exec
 // produced a non-zero result.
 func TestL2_Cron_WakeReminderRejectsNegativeDelay(t *testing.T) {
+	t.Parallel()
 	const testUserID = 5102
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -411,6 +429,7 @@ func TestL2_Cron_WakeReminderRejectsNegativeDelay(t *testing.T) {
 // fails the tool call. Asserts the tool returns "cannot parse when ..."
 // and no DB row or goroutine is created.
 func TestL2_Cron_WakeReminderRejectsUnparseableWhen(t *testing.T) {
+	t.Parallel()
 	const testUserID = 5103
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -471,6 +490,7 @@ func TestL2_Cron_WakeReminderRejectsUnparseableWhen(t *testing.T) {
 // one, and asserts the wake lands in the older session's recorder
 // entries (matched by session_id).
 func TestL2_Cron_WakeReminderRoutesToOriginatingSession(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: synthesising two distinct sessions on the same agent " +
 		"requires sending from two different Telegram chats. The harness ties " +
 		"each agent to one UserID, and platform.access.allowed_users = [UserID] " +
@@ -487,6 +507,7 @@ func TestL2_Cron_WakeReminderRoutesToOriginatingSession(t *testing.T) {
 // scripts cc-stub to hang for 3s, and asserts the SCHEDULED WAKE
 // user_message appears only after the held turn's user_message.
 func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
+	t.Parallel()
 	const testUserID = 5104
 	const reminderText = "MARKER_WAKE_WAITS_FOR_TURN"
 	const hangMarker = "HOLD_TURN_OPEN"
@@ -599,6 +620,7 @@ func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
 // recorder shows no SCHEDULED WAKE injection regardless of how long
 // the test waits.
 func TestL2_Cron_RemindToolUnavailableWithoutWakeFn(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig + initStandaloneStores always create " +
 		"a per-agent ReminderStore. There's no test surface to disable it. " +
 		"Needs harness support to suppress reminder store creation (e.g. " +
@@ -615,6 +637,7 @@ func TestL2_Cron_RemindToolUnavailableWithoutWakeFn(t *testing.T) {
 // Asserts the rendered lines contain the agent id and the agent's
 // resolved workspace path.
 func TestL2_Cron_GenerateCrontabRendersAgentPlaceholders(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	templatePath := filepath.Join(tmpDir, "crontab.template")
 	template := `# header comment, must be stripped
@@ -660,6 +683,7 @@ func TestL2_Cron_GenerateCrontabRendersAgentPlaceholders(t *testing.T) {
 // alone. Test generates entries for three agents and asserts the
 // minute fields differ by the stagger offset.
 func TestL2_Cron_GenerateCrontabStaggersMultipleAgents(t *testing.T) {
+	t.Parallel()
 	tmpDir := t.TempDir()
 	templatePath := filepath.Join(tmpDir, "crontab.template")
 	template := `0 4 * * * foci branch --oneshot -a AGENT_NAME -mf HOMEDIR/p.md
@@ -730,6 +754,7 @@ func TestL2_Cron_GenerateCrontabStaggersMultipleAgents(t *testing.T) {
 // for any system-cron-driven workflow (the weekly character review
 // in the template, future scheduled jobs).
 func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
+	t.Parallel()
 	const testUserID = 5201
 	const promptBody = "MARKER_BRANCH_ONESHOT_PROMPT"
 
@@ -795,6 +820,7 @@ func TestL2_Cron_BranchOneshotEndToEnd(t *testing.T) {
 // non-zero with a message naming the missing agent, and no recorder
 // invocation is created.
 func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
+	t.Parallel()
 	const testUserID = 5202
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -851,6 +877,7 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 // exits non-zero with a path-related error and the recorder shows no
 // branch invocation.
 func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: this is a CLI-side check (cmd/foci's cmdBranch reads " +
 		"the file before issuing the HTTP request). The harness builds " +
 		"foci-gw + cc-stub but not the foci CLI binary, and there's no public " +
@@ -867,6 +894,7 @@ func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
 // and confirms zero invocations across multiple ticks despite all
 // other conditions being met.
 func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: CanFireFunc is wired internally in foci-gw's " +
 		"periodic_setup.go from Agent.CanFireBackgroundOperation — there's no " +
 		"test surface to inject a stub. Needs harness support to override " +
@@ -884,6 +912,7 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 // keepalive recorder entry AND the user-message recorder entry are
 // present, in that order.
 func TestL2_Cron_IncomingMessageDuringKeepaliveQueues(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires [keepalive] config injection. " +
 		"See TestL2_Cron_KeepaliveFiresAtConfiguredInterval.")
 }

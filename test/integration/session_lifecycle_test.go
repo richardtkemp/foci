@@ -130,6 +130,7 @@ func waitForUserMessageCount(t *testing.T, h *testharness.Harness, workdirSubstr
 // session_id and assert cardinality of 1. Catches accidental
 // per-message subprocess spawning and session-key churn.
 func TestL2_SessionLifecycle_MultiTurnSharesSessionID(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9101},
@@ -171,6 +172,7 @@ func TestL2_SessionLifecycle_MultiTurnSharesSessionID(t *testing.T) {
 // invocations in the recorder where the second has empty resume_id
 // and a different session_id from the first.
 func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9201},
@@ -238,6 +240,7 @@ func TestL2_SessionLifecycle_ResetSoftRotatesSessionKey(t *testing.T) {
 // session_id. Catches the CancelSession + StopSession + RotateKey
 // sequencing in ResetSessionHard.
 func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
+	t.Parallel()
 	// HARNESS GAP: CCSTUB_HANG is a process-level env var read once at
 	// spawn. It cannot be toggled per-turn from the test, and the
 	// harness has no per-agent env-var injection. Without the ability
@@ -307,6 +310,7 @@ func TestL2_SessionLifecycle_ResetHardCancelsInFlightTurn(t *testing.T) {
 // invocation in the recorder for that workdir has an empty resume_id
 // field. The negative half of ResumeIDPassedOnSecondTurn.
 func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9401},
@@ -355,6 +359,7 @@ func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
 // Regression net for "delegated: backend died during init with
 // --resume <ID> — retrying without resume".
 func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs per-agent env-var injection so CCSTUB_FAIL_ON_RESUME=1 takes effect only on the resume respawn (not on the initial prime spawn). The current HarnessOptions has no field for per-agent env vars passed through to cc-stub.")
 }
 
@@ -369,6 +374,7 @@ func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
 // two invocations both in the same workdir with the second carrying
 // the first's session_id as --resume.
 func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: no way to forcibly kill the long-lived cc-stub between turns. Need either (a) per-spawn env-var injection so CCSTUB_EXIT_CODE / a 'die after one turn' var can be set on a specific spawn, or (b) a Harness helper that PIDs the running stub process and kills it. Without that, both turns share one long-lived process and the second-invocation assertion can't be made.")
 }
 
@@ -392,6 +398,7 @@ func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
 // every user_message that mentions either fragment, and the first
 // fragment's recorder entry comes before the second fragment's.
 func TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9501},
@@ -474,6 +481,7 @@ func TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn(t *testing.T) {
 // user_message session_ids in the recorder under the same agent
 // workdir. Catches regressions in chat-keyed session-key resolution.
 func TestL2_SessionLifecycle_PerChatSessionsIsolated(t *testing.T) {
+	t.Parallel()
 	// The single agent allows one user by config (UserID=9601). Foci's
 	// session key is per-(agent, user, chat) — we use two distinct
 	// chat IDs from the SAME user to spawn two parallel sessions on
@@ -528,6 +536,7 @@ func TestL2_SessionLifecycle_PerChatSessionsIsolated(t *testing.T) {
 // Negative scenario: protects the invariant that slash commands stay
 // out of session history.
 func TestL2_SessionLifecycle_SlashCommandNotForwardedToBackend(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9701},
@@ -563,6 +572,7 @@ func TestL2_SessionLifecycle_SlashCommandNotForwardedToBackend(t *testing.T) {
 // Negative scenario: catches accidental dispatch of empty turns that
 // would burn a CC subprocess and write nothing useful.
 func TestL2_SessionLifecycle_EmptyMessageNotDispatched(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9801},
@@ -610,6 +620,7 @@ func TestL2_SessionLifecycle_EmptyMessageNotDispatched(t *testing.T) {
 // fired through the Telegram stub. Regression net for the per-session
 // CancelSession path (replaces the old global bot.cancelTurn).
 func TestL2_SessionLifecycle_StopCommandCancelsTurn(t *testing.T) {
+	t.Parallel()
 	// HARNESS GAP NOTE: CCSTUB_HANG affects only the pre-handshake
 	// startup phase, and is process-level. We can't make a specific
 	// turn hang without per-spawn env injection. Implement the
@@ -650,6 +661,7 @@ func TestL2_SessionLifecycle_StopCommandCancelsTurn(t *testing.T) {
 // in the same long-lived subprocess. Catches delegated-vs-API
 // compaction routing regressions.
 func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
+	t.Parallel()
 	// Note: foci's CompactCommand for delegated agents calls
 	// Agent.CompactSession; for delegated mode this surfaces a "Context
 	// compacted (delegated)." sendMessage. Whether CC receives a
@@ -719,6 +731,7 @@ func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
 // during the hang window). Negative path complementing the soft-reset
 // happy path.
 func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs a way to keep a turn in-flight (so the IsProcessing gate in Agent.ResetSession returns true) while a /reset arrives. CCSTUB_HANG is process-level and pre-handshake only; there's no per-turn hang env var, no per-agent env-var injection through HarnessOptions, and no scripted 'sleep N seconds before completing this turn' tool_use the stub honours. Implementing this test would require extending cc-stub with e.g. a 'sleep_ms' field in stubScript that the stub respects before emitting the result envelope.")
 }
 
@@ -732,6 +745,7 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 // same session_id. Distinct from BackendDeathMidSessionRespawns by
 // asserting persistence across a CLEAN exit, not a crash.
 func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs per-spawn env-var injection so CCSTUB_EXIT_CODE=0 can be set on a SPECIFIC spawn (forcing a clean exit between turns), or a Harness helper that signals the running cc-stub PID. Without that, both turns share one long-lived process and no respawn happens — the persistence path the test is meant to cover isn't exercised.")
 }
 
@@ -745,6 +759,7 @@ func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.
 // follow-up processes successfully. Catches startup-deadline
 // regressions in the delegated init path.
 func TestL2_SessionLifecycle_HangBeyondReadyTimeoutSurfacesError(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs per-agent env-var injection so CCSTUB_HANG can be set on the first spawn and CLEARED on a subsequent spawn. The current HarnessOptions has no field for passing env vars through to spawned cc-stub processes, and no way to vary them between spawns of the same agent. Implementing this requires extending HarnessOptions (e.g. AgentSpec.ExtraEnv plus a 'rotate after N spawns' mechanism, or a Harness method to set/clear stub env vars between turns).")
 }
 
