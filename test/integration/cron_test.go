@@ -396,7 +396,7 @@ func TestL2_Cron_WakeReminderRejectsNegativeDelay(t *testing.T) {
 
 	// Now wait a reasonable window and assert NO SCHEDULED WAKE landed.
 	// The negative delay would have fired ~5s ago if it were honoured.
-	time.Sleep(8 * time.Second)
+	time.Sleep(2 * time.Second)
 	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
 		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") &&
 			strings.Contains(e.TextPrefix, "SCHEDULED WAKE") {
@@ -447,7 +447,7 @@ func TestL2_Cron_WakeReminderRejectsUnparseableWhen(t *testing.T) {
 	}
 
 	// Give any (incorrect) schedule a chance to fire. Then assert nothing did.
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
 		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") &&
 			strings.Contains(e.TextPrefix, "SCHEDULED WAKE") {

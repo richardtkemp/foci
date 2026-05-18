@@ -239,8 +239,10 @@ func TestL2_SlashCommands_DotPrefixNonCommandPassesThrough(t *testing.T) {
 	pushTelegramText(t, h, "alpha", 7005, literal)
 
 	// The agent should receive the message verbatim. cc-stub records
-	// it as a user_message — assert on the recorded text prefix.
-	if !waitForUserMessage(t, h, "workspaces/alpha", literal, 15*time.Second) {
+	// it as a user_message — assert on the recorded text prefix. 3s
+	// is plenty for the fall-through path; faster feedback on the
+	// #778 regression than the original 15s.
+	if !waitForUserMessage(t, h, "workspaces/alpha", literal, 3*time.Second) {
 		t.Errorf("expected %q to fall through to the agent as a user_message\n--- recorder ---\n%s\n--- stderr ---\n%s",
 			literal, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
@@ -642,8 +644,9 @@ func TestL2_SlashCommands_CostUnknownPeriodShowsUsage(t *testing.T) {
 	// "Usage: /cost [today|24h|week|<days>]". The api log might not
 	// exist (empty → "No API calls logged yet.") — either response
 	// proves the command did NOT dispatch to cc-stub. We accept
-	// whichever arrives first.
-	text := waitForSendMessageText(t, h, token, 15*time.Second, "Usage", "cost")
+	// whichever arrives first. 3s budget each — round-trip is <1s
+	// in normal operation.
+	text := waitForSendMessageText(t, h, token, 3*time.Second, "Usage", "cost")
 	if text == "" {
 		text = waitForSendMessageText(t, h, token, 1*time.Second, "No API calls logged yet")
 	}
