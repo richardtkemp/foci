@@ -39,10 +39,21 @@ func writeTestConfig(t *testing.T, path string, o testConfigOpts) {
 
 data_dir = %q
 skip_security_checks = true
+`, o.DataDir)
 
+	// Emit [logging] only if the test isn't supplying its own. Tests that
+	// need to override event_file / log_rotation / etc. inject a full
+	// [logging] section via ExtraConfigTOML; strict TOML parsers reject
+	// duplicate table definitions, so we skip the base emission in that
+	// case. Match exact `[logging]` headers (not `[logging.subsection]`).
+	if !extraConfigHasSection(o.ExtraConfigTOML, "logging") {
+		fmt.Fprintf(&sb, `
 [logging]
 event_file = %q
+`, filepath.Join(o.LogsDir, "foci.log"))
+	}
 
+	fmt.Fprintf(&sb, `
 [groups]
 powerful = "stub"
 
@@ -59,7 +70,7 @@ allowed_users_only = false
 [platforms.telegram]
 api_base = %q
 long_poll_timeout = "1s"
-`, o.DataDir, filepath.Join(o.LogsDir, "foci.log"), o.ClaudeBinary, o.TelegramBase)
+`, o.ClaudeBinary, o.TelegramBase)
 
 	for _, a := range o.Agents {
 		fmt.Fprintf(&sb, `
@@ -123,6 +134,25 @@ allowed_users = [%q]
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {
 		t.Fatalf("write test config: %v", err)
 	}
+}
+
+// extraConfigHasSection reports whether extra contains a top-level
+// `[name]` table header. Matches `[logging]` but not `[logging.subkey]`,
+// `[logging-other]`, or `[ logging ]` (leading whitespace is non-canonical
+// in TOML). Tolerant of CR-LF, leading/trailing whitespace on the line,
+// and the header appearing as the first character of the string.
+func extraConfigHasSection(extra, name string) bool {
+	if extra == "" {
+		return false
+	}
+	header := "[" + name + "]"
+	for _, line := range strings.Split(extra, "\n") {
+		line = strings.TrimSpace(line)
+		if line == header {
+			return true
+		}
+	}
+	return false
 }
 
 // writeTestSecrets writes a minimal secrets.toml mapping telegram.<bot>
