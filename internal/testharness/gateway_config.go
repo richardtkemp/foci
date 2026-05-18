@@ -40,6 +40,9 @@ func writeTestConfig(t *testing.T, path string, o testConfigOpts) {
 data_dir = %q
 skip_security_checks = true
 
+[logging]
+event_file = %q
+
 [groups]
 powerful = "stub"
 
@@ -56,7 +59,7 @@ allowed_users_only = false
 [platforms.telegram]
 api_base = %q
 long_poll_timeout = "1s"
-`, o.DataDir, o.ClaudeBinary, o.TelegramBase)
+`, o.DataDir, filepath.Join(o.LogsDir, "foci.log"), o.ClaudeBinary, o.TelegramBase)
 
 	for _, a := range o.Agents {
 		fmt.Fprintf(&sb, `

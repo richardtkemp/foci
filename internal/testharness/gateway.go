@@ -217,6 +217,10 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	cmd.Env = append(os.Environ(),
 		"CCSTUB_RECORDER="+recorderPath,
 		"CCSTUB_SCRIPT_DIR="+scriptDir,
+		// Pin the early log-init path to the test tempdir so foci-gw
+		// doesn't open the host's production ~/logs/foci.log before
+		// config load. See cmd/foci-gw/main.go:81 (FOCI_LOG_FILE).
+		"FOCI_LOG_FILE="+filepath.Join(logsDir, "foci.log"),
 	)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
