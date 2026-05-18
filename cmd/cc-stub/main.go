@@ -119,6 +119,12 @@ type stubScript struct {
 	Text               string                      `json:"text"`
 	ToolUses           []scriptedToolUse           `json:"tool_uses"`
 	PermissionRequests []scriptedPermissionRequest `json:"permission_requests"`
+	// LateText is emitted as a SECOND assistant message AFTER the result
+	// envelope (with a brief delay to let foci process turn completion).
+	// Simulates the CC-harness scenario where task-notifications or other
+	// internal injections produce assistant text outside any foci-side
+	// user message — exercising the session router's late-delivery path.
+	LateText string `json:"late_text,omitempty"`
 }
 
 // recorderEntry is one line written to the recorder file. Two event
@@ -385,6 +391,28 @@ func main() {
 				if len(script.PermissionRequests) > 0 {
 					out.Flush()
 				}
+			}
+			// Late-text injection: emit a SECOND assistant message AFTER
+			// result + permissions. Foci has already seen the result
+			// envelope and torn down the per-turn sink; this assistant
+			// arrives with no current sink registered and must route
+			// through the session router's late-delivery fallback to
+			// reach the platform. Simulates CC-harness-internal injections
+			// (task-notifications, system reminders) that produce
+			// assistant text outside any foci-side user message.
+			if script != nil && script.LateText != "" {
+				time.Sleep(200 * time.Millisecond)
+				emit(out, map[string]any{
+					"type": "assistant",
+					"message": map[string]any{
+						"role": "assistant",
+						"content": []map[string]any{
+							{"type": "text", "text": script.LateText},
+						},
+					},
+					"session_id": sessionID,
+				})
+				out.Flush()
 			}
 			// One-shot: delete the script file after applying so the
 			// next user message in this long-lived process uses
