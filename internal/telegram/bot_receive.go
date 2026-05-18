@@ -33,7 +33,7 @@ func (b *Bot) receiveMessage(ctx context.Context, msg *gotgbot.Message) {
 	// a long command (e.g. /reset) blocks getUpdates, preventing callback_query
 	// delivery for interactive prompts like permission "Allow" buttons.
 	// /stop is kept here because it must cancel a live turn immediately.
-	if dispatch.IsCommandText(qm.text) && !b.commands.IsImmediateText(qm.text) {
+	if dispatch.IsRoutableCommand(qm.text, b.commands) && !b.commands.IsImmediateText(qm.text) {
 		ts := time.Unix(int64(msg.Date), 0)
 		if !ts.IsZero() && time.Since(ts) > dispatch.StaleCommandAge {
 			b.logger().Warnf("dropping stale command %q (age=%s)", qm.text, time.Since(ts).Truncate(time.Second))

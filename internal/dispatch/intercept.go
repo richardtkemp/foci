@@ -15,8 +15,29 @@ import (
 const StaleCommandAge = 30 * time.Second
 
 // IsCommandText reports whether text begins with a command prefix (/ or .).
+// This is a syntactic check only — it does not consult the registry. Use
+// IsRoutableCommand when deciding whether to route to the command channel.
 func IsCommandText(text string) bool {
 	return len(text) > 0 && (text[0] == '/' || text[0] == '.')
+}
+
+// IsRoutableCommand reports whether text should be routed to the command
+// channel for dispatch. Slash-prefixed text always routes (unknown commands
+// produce a "Did you mean?" reply, which is intentional). Dot-prefixed text
+// routes only if the command is registered — unknown ".something" must fall
+// through to the agent as normal text so the dot-prefix alias doesn't eat
+// phone-typed messages like ".sigh" or sentence fragments.
+func IsRoutableCommand(text string, r *command.Registry) bool {
+	if len(text) == 0 {
+		return false
+	}
+	if text[0] == '/' {
+		return true
+	}
+	if text[0] == '.' && r != nil {
+		return r.IsKnownCommand(text)
+	}
+	return false
 }
 
 // Interceptor implements the shared message interception pipeline used by

@@ -245,6 +245,18 @@ func (r *Registry) IsImmediateText(text string) bool {
 	return false
 }
 
+// IsKnownCommand reports whether text is a slash- or dot-prefix command
+// that maps to a command in this registry. Used by routing code to decide
+// whether to send a message through the command channel.
+func (r *Registry) IsKnownCommand(text string) bool {
+	name, _ := commandNameAndArgsFromText(text)
+	if name == "" {
+		return false
+	}
+	_, ok := r.commands[name]
+	return ok
+}
+
 // commandNameFromText extracts the lower-cased command name from slash/dot-prefixed
 // text (e.g. "/stop args" → "stop", ".reset" → "reset"). Returns "" if not a command.
 func commandNameFromText(text string) string {
