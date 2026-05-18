@@ -73,7 +73,7 @@ func (d *recordingDriver) recordBatch(_ string, batch []agent.Envelope) {
 	d.mu.Unlock()
 }
 
-func (d *recordingDriver) WrapTurn(fn func() error) error                        { return fn() }
+func (d *recordingDriver) WrapTurn(_ context.Context, fn func() error) error    { return fn() }
 func (d *recordingDriver) NewTurnSink(_ agent.Envelope) (turnevent.Sink, func()) { return nil, nil }
 func (d *recordingDriver) Connection() platform.Connection                       { return nil }
 

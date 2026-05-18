@@ -176,6 +176,10 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return err
 		}
 		log.Debugf("delegated", "RunInference: Inject(SourceUser, follow-up) done sk=%s", ts.SessionKey)
+		// Backend has received the message — signal the inbox so steer
+		// routing opens for any further follow-ups arriving on the heels
+		// of this one. See WithOnPrimaryWritten / TODO #777.
+		OnPrimaryWrittenFromContext(ts.Ctx)()
 		close(ts.CompletionChan)
 		return nil
 	}
@@ -364,6 +368,13 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		Turn:        turnEvents,
 	})
 	log.Debugf("delegated", "RunInference: Inject(SourceUser, begin-turn) done sk=%s err=%v", ts.SessionKey, err)
+	if err == nil {
+		// Primary has reached the backend. Signal the inbox so turnActive
+		// flips true and any further follow-ups can safely steer via
+		// Inject(SourceSteer) instead of racing the primary's write. See
+		// WithOnPrimaryWritten / TODO #777.
+		OnPrimaryWrittenFromContext(ts.Ctx)()
+	}
 	return err
 }
 

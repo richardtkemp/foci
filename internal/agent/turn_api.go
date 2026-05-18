@@ -243,6 +243,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 	var toolCallCount int
 	var lastToolError bool
 	var batchedText strings.Builder
+	primaryWritten := false
 
 	// sendOrBatchText delivers text respecting batch mode.
 	sendOrBatchText := func(r provider.MessageResponse) {
@@ -339,6 +340,16 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 			}
 			a.metaMu.Unlock()
 			return a.classifyAPIError(ts.Ctx, err, ts.SessionKey, endpoint, duration)
+		}
+
+		// Primary HTTP roundtrip succeeded — analog of the delegated
+		// transport's stdin write completing. Signal the inbox so
+		// turnActive flips true and any further follow-ups can route via
+		// the steer buffer (drained at the next tool boundary) instead of
+		// the channel. See WithOnPrimaryWritten / TODO #777.
+		if !primaryWritten {
+			OnPrimaryWrittenFromContext(ts.Ctx)()
+			primaryWritten = true
 		}
 
 		if ts.Ctx.Err() != nil {

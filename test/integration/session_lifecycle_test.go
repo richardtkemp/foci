@@ -373,24 +373,25 @@ func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
 }
 
 // TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn proves
-// foci's per-session inbox queues a follow-up Telegram message that
-// arrives WHILE the current turn is still running, then drives it as
-// a follow-up turn (or batches it into the current turn) once the
-// first turn completes. Mechanism: script cc-stub with CCSTUB_HANG=2s
-// so the first user message holds the worker; push a second update
-// during the hang window; assert two user_message recorder entries
-// for that session, in order. Catches inbox batching / queue-full
-// regressions.
+// foci's per-session inbox correctly handles a burst of Telegram
+// messages on the same chat: both fragments reach the agent on the
+// SAME session, with the first delivered before the second. The
+// inbox may either (a) batch both fragments into one user_message
+// turn (separated by a "[follow-up]" marker) or (b) deliver them as
+// two sequential user_message turns — which one occurs depends on
+// internal queue timing (whether the worker is already mid-flush
+// when the second message arrives). Both are acceptable shapes of
+// the contract; what must NEVER happen is dropping a message,
+// reordering, or spawning a parallel session.
+//
+// Mechanism: burst-send two messages without intermediate polling.
+// Telegram's long-poll batches them in one getUpdates so the bot
+// router sees them in the same tick — exactly the queue-while-busy
+// condition. Wait until both fragment strings appear somewhere in
+// the recorder, then assert the contract: same session_id across
+// every user_message that mentions either fragment, and the first
+// fragment's recorder entry comes before the second fragment's.
 func TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn(t *testing.T) {
-	// HARNESS GAP NOTE: CCSTUB_HANG is read once per spawn and only
-	// affects the time before the handshake, not subsequent turns.
-	// Without per-spawn env injection we can't make a specific user
-	// message hang. Still — the inbox queueing behaviour can be probed
-	// by sending two messages back-to-back (without waiting for the
-	// first to land in the recorder). Foci's per-session worker
-	// serialises them, and BOTH must show up as user_message entries in
-	// recorder order. If queueing were broken, the second would be
-	// dropped or processed in a parallel session.
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9501},
@@ -405,22 +406,63 @@ func TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn(t *testing.T) {
 	sendText(h, token, 9501, 9501, "queued first")
 	sendText(h, token, 9501, 9501, "queued second")
 
-	ums, ok := waitForUserMessageCount(t, h, "workspaces/alpha", 2, 20*time.Second)
-	if !ok {
-		t.Fatalf("expected 2 user_message entries after burst, got %d\nrecorder:\n%s\nstderr tail:\n%s",
-			len(ums), recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	// Wait for BOTH fragments to land somewhere in the recorder —
+	// either in one batched entry or in two sequential entries.
+	if !waitForUserMessage(t, h, "workspaces/alpha", "queued first", 20*time.Second) {
+		t.Fatalf("never saw 'queued first' in any user_message; recorder:\n%s\nstderr tail:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if !waitForUserMessage(t, h, "workspaces/alpha", "queued second", 20*time.Second) {
+		t.Fatalf("never saw 'queued second' in any user_message; recorder:\n%s\nstderr tail:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
 	}
 
-	// Both turns must share the SAME session (queue must not spawn a
-	// parallel session) and appear in submission order.
-	if ums[0].SessionID != ums[1].SessionID {
-		t.Errorf("queued turns landed on different sessions: %q vs %q", ums[0].SessionID, ums[1].SessionID)
+	ums := userMessagesIn(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+
+	// Locate the recorder entries containing each fragment. The same
+	// entry may contain both (batched case) — that's fine.
+	firstIdx, secondIdx := -1, -1
+	var sessions = map[string]struct{}{}
+	for i, e := range ums {
+		hasFirst := strings.Contains(e.TextPrefix, "queued first")
+		hasSecond := strings.Contains(e.TextPrefix, "queued second")
+		if hasFirst && firstIdx == -1 {
+			firstIdx = i
+		}
+		if hasSecond && secondIdx == -1 {
+			secondIdx = i
+		}
+		if hasFirst || hasSecond {
+			if e.SessionID == "" {
+				t.Errorf("user_message has empty session_id: text_prefix=%q", e.TextPrefix)
+			} else {
+				sessions[e.SessionID] = struct{}{}
+			}
+		}
 	}
-	if !strings.Contains(ums[0].TextPrefix, "queued first") {
-		t.Errorf("first user_message text_prefix=%q; want it to contain %q", ums[0].TextPrefix, "queued first")
+
+	// Contract: both fragments must be observed.
+	if firstIdx == -1 {
+		t.Fatalf("could not locate 'queued first' in recorder ums:\n%s", recorderTail(t, h.RecorderPath()))
 	}
-	if !strings.Contains(ums[1].TextPrefix, "queued second") {
-		t.Errorf("second user_message text_prefix=%q; want it to contain %q", ums[1].TextPrefix, "queued second")
+	if secondIdx == -1 {
+		t.Fatalf("could not locate 'queued second' in recorder ums:\n%s", recorderTail(t, h.RecorderPath()))
+	}
+
+	// Contract: order preserved. The recorder entry containing the
+	// first fragment must not appear AFTER the one containing the
+	// second. (Equal is fine — batched case puts both in one entry.)
+	// CURRENTLY FAILS ~60% of runs due to a real foci reorder bug —
+	// see clutch/docs/inbox-steer-reorder-bug.md. When the bug fix
+	// lands this assertion will pass deterministically.
+	if firstIdx > secondIdx {
+		t.Errorf("inbox reordered the burst: 'queued first' at idx %d, 'queued second' at idx %d\nrecorder:\n%s",
+			firstIdx, secondIdx, recorderTail(t, h.RecorderPath()))
+	}
+
+	// Contract: same session — burst must not spawn a parallel session.
+	if len(sessions) != 1 {
+		t.Errorf("burst landed on %d distinct sessions; want exactly 1: %v", len(sessions), sessions)
 	}
 }
 
