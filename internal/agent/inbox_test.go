@@ -38,13 +38,19 @@ func (d *recordingDriver) recordBatch(_ string, batch []Envelope) {
 // execute turns (NewTurnSink returns nil so RunTurn no-ops); it just
 // signals lifecycle for tests that gate on hookCh/doneCh and applies
 // the configured delay so concurrent-turn tests still work.
-func (d *recordingDriver) WrapTurn(fn func() error) error {
+//
+// Fires OnPrimaryWrittenFromContext(ctx) just before fn() runs — the
+// recordingDriver substitutes for a real transport whose RunInference
+// would have done the primary write, and the inbox-side turnActive
+// lifecycle depends on that signal under the post-TODO #777 semantics.
+func (d *recordingDriver) WrapTurn(ctx context.Context, fn func() error) error {
 	if d.hookCh != nil {
 		d.hookCh <- struct{}{}
 	}
 	if d.delay > 0 {
 		time.Sleep(d.delay)
 	}
+	OnPrimaryWrittenFromContext(ctx)()
 	err := fn()
 	if d.doneCh != nil {
 		d.doneCh <- struct{}{}
@@ -328,9 +334,15 @@ func TestInbox_Worker_BatchesAvailableMessages(t *testing.T) {
 	}
 }
 
-// TestInbox_Worker_SetsTurnActiveAroundDrive verifies that the worker
-// flips inb.turnActive true during Drive and back to false after.
-func TestInbox_Worker_SetsTurnActiveAroundDrive(t *testing.T) {
+// TestInbox_Worker_TurnActiveLifecycle verifies the post-TODO #777
+// turnActive semantics: false on dequeue, flips to true only after the
+// transport writes the primary to the backend (via the OnPrimaryWritten
+// callback the worker installs on ctx), and back to false after the
+// drive returns.
+//
+// The recordingDriver fires OnPrimaryWrittenFromContext after hookCh and
+// before fn(), simulating a real transport's RunInference Inject path.
+func TestInbox_Worker_TurnActiveLifecycle(t *testing.T) {
 	a, cancel := startedAgent(t)
 	defer cancel()
 
@@ -341,14 +353,17 @@ func TestInbox_Worker_SetsTurnActiveAroundDrive(t *testing.T) {
 
 	a.Enqueue(Envelope{SessionKey: "test/s", Text: "x", Driver: d})
 
-	<-hook // inside Drive
-	if !a.InboxTurnActive("test/s") {
-		t.Error("turnActive should be true during Drive")
+	<-hook // inside WrapTurn, before OnPrimaryWritten fires
+	if a.InboxTurnActive("test/s") {
+		t.Error("turnActive should be false before primary-written signal")
 	}
-	<-done // Drive returned
+	<-done // WrapTurn returned — primary-written fired between hook and done
 
+	// After WrapTurn, turnActive is still true until the worker clears it
+	// at the end of driveAndDrainOrphans. The transition true→false happens
+	// asynchronously; waitFor catches it within the budget.
 	if !waitFor(time.Second, func() bool { return !a.InboxTurnActive("test/s") }) {
-		t.Error("turnActive should be false after Drive")
+		t.Error("turnActive should be cleared after driveAndDrainOrphans returns")
 	}
 }
 
@@ -675,7 +690,7 @@ type driverGated struct {
 	count   atomic.Int32
 }
 
-func (d *driverGated) WrapTurn(fn func() error) error {
+func (d *driverGated) WrapTurn(ctx context.Context, fn func() error) error {
 	d.count.Add(1)
 	select {
 	case d.ready <- struct{}{}:
@@ -684,6 +699,7 @@ func (d *driverGated) WrapTurn(fn func() error) error {
 	if d.release != nil {
 		<-d.release
 	}
+	OnPrimaryWrittenFromContext(ctx)()
 	err := fn()
 	if d.done != nil {
 		d.done <- struct{}{}
@@ -706,7 +722,10 @@ type routerObservingDriver struct {
 	sks []string
 }
 
-func (d *routerObservingDriver) WrapTurn(fn func() error) error { return fn() }
+func (d *routerObservingDriver) WrapTurn(ctx context.Context, fn func() error) error {
+	OnPrimaryWrittenFromContext(ctx)()
+	return fn()
+}
 
 // NewTurnSink records the sk this turn is for; tests look up the router
 // for that sk via the inbox.

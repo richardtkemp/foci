@@ -134,7 +134,7 @@ func (b *Bot) Connection() platform.Connection {
 // OnTurnEnd / OnTurnComplete hooks, error sanitisation. See the
 // telegram Bot.WrapTurn for the equivalent on Telegram. TODO #746
 // Stage C.
-func (b *Bot) WrapTurn(fn func() error) error {
+func (b *Bot) WrapTurn(_ context.Context, fn func() error) error {
 	b.turnActive.Store(true)
 	defer func() {
 		b.turnActive.Store(false)

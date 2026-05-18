@@ -84,6 +84,11 @@ type Driver interface {
 	// per-session cancellation; the platform owns its own ancillary
 	// state.
 	//
+	// ctx is the per-turn cancellable context. Implementations may
+	// consult ctx.Err() after fn returns to distinguish user cancellation
+	// from genuine errors, or thread it into platform-side calls that
+	// should cancel when the turn cancels.
+	//
 	// Implementations should:
 	//   - flip any "turn active" indicator on entry and off via defer
 	//   - run fn() to execute the turn
@@ -92,7 +97,7 @@ type Driver interface {
 	//   - return nil on user cancellation (ctx.Err() != nil after fn
 	//     returned) since "Stopped." has already been delivered
 	//   - return fn's error otherwise so the agent logs it
-	WrapTurn(fn func() error) error
+	WrapTurn(ctx context.Context, fn func() error) error
 
 	// NewTurnSink constructs the per-turn rendering sink (renderer + tool
 	// tracker + streaming sink) for a turn seeded by env. Returns the
@@ -421,10 +426,26 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 					// State changed — re-check the predicate.
 				}
 			}
-			inb.turnActive.Store(true)
+			// turnActive flips true only after the transport has written
+			// the primary message to the backend, not the moment we
+			// dequeue (TODO #777). This closes the reorder race where a
+			// fast follow-up Enqueue could match the steer predicate and
+			// reach ccstream's stdin via Inject(SourceSteer) before the
+			// primary's own Inject call completed inside RunInference,
+			// stripping the [meta] header off the displaced message. See
+			// clutch/docs/inbox-steer-reorder-bug.md.
+			//
+			// One sync.Once spans the entire driveAndDrainOrphans call so
+			// follow-up turns inside the orphan-drain loop don't reset the
+			// flag — once the backend has primary, steering stays open for
+			// the duration of this batch's processing.
+			var once sync.Once
+			workerCtx := WithOnPrimaryWritten(ctx, func() {
+				once.Do(func() { inb.turnActive.Store(true) })
+			})
 			batch := append([]Envelope{env}, inb.drainAvailable()...)
 			steerer := turnevent.SteererFunc(inb.drainSteerTexts)
-			a.driveAndDrainOrphans(ctx, inb, batch, steerer, env)
+			a.driveAndDrainOrphans(workerCtx, inb, batch, steerer, env)
 			inb.turnActive.Store(false)
 		}
 	}
@@ -554,7 +575,7 @@ func (a *Agent) driveOnce(ctx context.Context, inb *sessionInbox, batch []Envelo
 	if a.turnObserver != nil {
 		a.turnObserver(inb.sk, batch)
 	}
-	err := driver.WrapTurn(func() error {
+	err := driver.WrapTurn(turnCtx, func() error {
 		return a.RunTurn(turnCtx, inb.sk, batch, steerer, router, driver)
 	})
 	if err != nil {

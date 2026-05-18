@@ -165,7 +165,7 @@ func (b *Bot) Connection() platform.Connection {
 //
 // Agent.RunTurn (invoked via fn) does the actual turn execution. Cancel
 // ctx + per-session /stop wiring lives in agent.driveOnce.
-func (b *Bot) WrapTurn(fn func() error) error {
+func (b *Bot) WrapTurn(ctx context.Context, fn func() error) error {
 	b.turnActive.Store(true)
 	defer func() {
 		b.turnActive.Store(false)
@@ -178,9 +178,13 @@ func (b *Bot) WrapTurn(fn func() error) error {
 	err := fn()
 	if err != nil {
 		// Cancelled turn — "Stopped." already delivered; suppress the
-		// error so the agent doesn't double-log it.
-		// We can't check ctx.Err() here (no ctx in scope); the agent
-		// log path handles unwrapping.
+		// error so the agent doesn't double-log it. ctx is available
+		// here (per Driver.WrapTurn contract); current behaviour relies
+		// on the agent log path to unwrap cancellation, so we log
+		// unconditionally and leave the suppression decision upstream.
+		// Future: ctx.Err() check here could short-circuit, but that's
+		// a separate concern.
+		_ = ctx
 		b.logger().Errorf("agent error: %s", b.sanitizeError(err))
 	}
 
