@@ -47,6 +47,7 @@ import (
 // test would fail with a clear "send_to_session never reached clutch"
 // signal. With the fix in place, the entry appears as expected.
 func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
+	t.Parallel()
 	const testUserID = 4242
 	const testMarker = "MARKER_CROSS_AGENT_REGRESSION_NET"
 

@@ -30,6 +30,7 @@ import (
 // exec bridge which dispatches to internal/tools/http_request. The
 // side server records receipt; the test asserts on its log.
 func TestL2_Tools_HTTPRequest_ExecBridge(t *testing.T) {
+	t.Parallel()
 	// Side HTTP server records inbound request paths for the assertion.
 	var (
 		mu   sync.Mutex

@@ -85,6 +85,7 @@ func pushTrigger(t *testing.T, h *testharness.Harness, token, text string) {
 // instead receives an immediate stdio control_response with
 // behavior="allow".
 func TestL2_Permissions_AutoApproveCommonReadonlySkipsPrompt(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-readonly-1"
@@ -110,6 +111,7 @@ func TestL2_Permissions_AutoApproveCommonReadonlySkipsPrompt(t *testing.T) {
 // user-configured auto_approve entry (per-agent) is honoured and
 // short-circuits the prompt.
 func TestL2_Permissions_AutoApproveUserRuleSkipsPrompt(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{
 		ID:          "alpha",
 		UserID:      permTestUserID,
@@ -133,6 +135,7 @@ func TestL2_Permissions_AutoApproveUserRuleSkipsPrompt(t *testing.T) {
 // that with AutoApproveCommonSafeWrite left at its default false, a
 // Bash:curl request DOES surface to Telegram as an interactive prompt.
 func TestL2_Permissions_AutoApproveCommonSafeWriteDisabledByDefault(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-curl-default-1"
@@ -150,6 +153,7 @@ func TestL2_Permissions_AutoApproveCommonSafeWriteDisabledByDefault(t *testing.T
 // that toggling auto_approve_common_safe_write=true on the agent makes
 // the same Bash:curl request auto-approved without a prompt.
 func TestL2_Permissions_AutoApproveCommonSafeWriteEnabledSkipsPrompt(t *testing.T) {
+	t.Parallel()
 	enabled := true
 	h, token := permTestSetup(t, []testharness.AgentSpec{{
 		ID:                         "alpha",
@@ -174,6 +178,7 @@ func TestL2_Permissions_AutoApproveCommonSafeWriteEnabledSkipsPrompt(t *testing.
 // derived FociShellRulesFor allowlist covers every foci_* shell wrapper.
 // Asserts a Bash:foci_todo request is auto-approved without a prompt.
 func TestL2_Permissions_FociShellToolsAutoApproved(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-foci-tool-1"
@@ -193,6 +198,7 @@ func TestL2_Permissions_FociShellToolsAutoApproved(t *testing.T) {
 // command not covered by any allowlist surfaces to Telegram as a
 // sendMessage with an inline keyboard.
 func TestL2_Permissions_BashOutsideAllowlistPromptsUser(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-bash-outside-1"
@@ -215,6 +221,7 @@ func TestL2_Permissions_BashOutsideAllowlistPromptsUser(t *testing.T) {
 // TestL2_Permissions_SudoCommandPromptsUser proves that sudo always
 // prompts and the body contains the command in a fenced code block.
 func TestL2_Permissions_SudoCommandPromptsUser(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-sudo-1"
@@ -234,6 +241,7 @@ func TestL2_Permissions_SudoCommandPromptsUser(t *testing.T) {
 // data="allow" causes cc-stub to receive a control_response with
 // behavior="allow".
 func TestL2_Permissions_ApprovalCallbackUnblocksTool(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-approve-1"
@@ -256,6 +264,7 @@ func TestL2_Permissions_ApprovalCallbackUnblocksTool(t *testing.T) {
 
 // TestL2_Permissions_DenialCallbackReturnsDeny proves the deny path.
 func TestL2_Permissions_DenialCallbackReturnsDeny(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-deny-1"
@@ -283,6 +292,7 @@ func TestL2_Permissions_DenialCallbackReturnsDeny(t *testing.T) {
 // <prefix>" choice path produces a response with non-empty
 // updatedPermissions.
 func TestL2_Permissions_AllowAlwaysAddsSessionRule(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-allow-always-1"
@@ -319,6 +329,7 @@ func TestL2_Permissions_AllowAlwaysAddsSessionRule(t *testing.T) {
 // Either way the contract is: the command is visually distinguishable
 // as a code block, not inline text.
 func TestL2_Permissions_PromptContainsCommandInFencedBlock(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-fenced-1"
@@ -344,6 +355,7 @@ func TestL2_Permissions_PromptContainsCommandInFencedBlock(t *testing.T) {
 // TestL2_Permissions_PromptChoicesIncludeAllowDenyAndSuggestion proves
 // that permission_suggestions in the request produce a third button.
 func TestL2_Permissions_PromptChoicesIncludeAllowDenyAndSuggestion(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-3buttons-1"
@@ -379,6 +391,7 @@ func TestL2_Permissions_PromptChoicesIncludeAllowDenyAndSuggestion(t *testing.T)
 // while a permission prompt is pending, a second Telegram message
 // does NOT trigger a fresh cc-stub turn until the prompt is resolved.
 func TestL2_Permissions_WaitForPermissionBlocksFollowupMessage(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-block-1"
@@ -402,6 +415,7 @@ func TestL2_Permissions_WaitForPermissionBlocksFollowupMessage(t *testing.T) {
 // TestL2_Permissions_FollowupMessageProceedsAfterApproval proves the
 // release side: after approval, the queued message is delivered.
 func TestL2_Permissions_FollowupMessageProceedsAfterApproval(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-release-1"
@@ -429,6 +443,7 @@ func TestL2_Permissions_FollowupMessageProceedsAfterApproval(t *testing.T) {
 // + CancelInteractiveMessage). Skip-tag refined to name the residual gap
 // rather than the full N1 set.
 func TestL2_Permissions_ControlCancelDisablesInlineKeyboard(t *testing.T) {
+	t.Parallel()
 	t.Skip("RESIDUAL GAP (post-N1): cc-stub stubScript has no control_cancel_requests field. Need a follow-up extension to emit {\"type\":\"control_cancel_request\",\"request_id\":\"<prev>\"} after the assistant turn — single recordPermissionCancel entry needed alongside the existing permission_request emission. Estimated 20 lines in cmd/cc-stub/main.go")
 }
 
@@ -436,6 +451,7 @@ func TestL2_Permissions_ControlCancelDisablesInlineKeyboard(t *testing.T) {
 // garbage callback_data falls through SendPermissionResponse's allow/deny
 // branch as not-allow and sends deny.
 func TestL2_Permissions_UnknownCallbackChoiceTreatedAsDeny(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-unknown-1"
@@ -468,6 +484,7 @@ func TestL2_Permissions_UnknownCallbackChoiceTreatedAsDeny(t *testing.T) {
 // rejected by matchBashAutoApprove even though "Bash:ls" is in
 // CommonReadonlyRules.
 func TestL2_Permissions_BashUnsafeRedirectNotAutoApproved(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-redirect-1"
@@ -486,6 +503,7 @@ func TestL2_Permissions_BashUnsafeRedirectNotAutoApproved(t *testing.T) {
 // nested commands like "ls $(curl evil)" prompt even though Bash:ls
 // alone would auto-approve.
 func TestL2_Permissions_BashCommandSubstitutionNotAutoApproved(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-cmdsubst-1"
@@ -500,6 +518,7 @@ func TestL2_Permissions_BashCommandSubstitutionNotAutoApproved(t *testing.T) {
 // TestL2_Permissions_BashUnparseableCommandPromptsUser proves the
 // fail-safe behaviour of the AST parser.
 func TestL2_Permissions_BashUnparseableCommandPromptsUser(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqID = "req-unparse-1"
@@ -517,6 +536,7 @@ func TestL2_Permissions_BashUnparseableCommandPromptsUser(t *testing.T) {
 // AskUserQuestion is always routed to the sequential question handler
 // and never short-circuited by auto-approve, even with wildcard rules.
 func TestL2_Permissions_AskUserQuestionNeverAutoApproved(t *testing.T) {
+	t.Parallel()
 	// Configure wildcard auto_approve. AskUserQuestion handler runs
 	// BEFORE autoApprovePermission (see permissions.go:38-41), so the
 	// wildcard rule MUST NOT bypass the question flow.
@@ -555,6 +575,7 @@ func TestL2_Permissions_AskUserQuestionNeverAutoApproved(t *testing.T) {
 // agent's auto_approve rule is honoured while a sibling agent without
 // the rule still prompts for the same command.
 func TestL2_Permissions_PerAgentAutoApproveOverridesGlobal(t *testing.T) {
+	t.Parallel()
 	const secondUserID = 1818
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
@@ -623,6 +644,7 @@ func TestL2_Permissions_PerAgentAutoApproveOverridesGlobal(t *testing.T) {
 // multiple control_requests emitted in one turn produce distinct
 // pending permissions, and a callback on one resolves only that request.
 func TestL2_Permissions_ConcurrentPromptsKeyedByRequestID(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const reqA = "req-concurrent-A"
@@ -665,6 +687,7 @@ func TestL2_Permissions_ConcurrentPromptsKeyedByRequestID(t *testing.T) {
 // callback referencing a never-registered requestID is a silent no-op
 // and does not disrupt other in-flight prompts on the same agent.
 func TestL2_Permissions_CallbackForUnknownRequestIDIsIgnored(t *testing.T) {
+	t.Parallel()
 	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
 
 	const realReq = "req-real-1"

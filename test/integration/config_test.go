@@ -19,6 +19,7 @@ import (
 // recorded invocation flags — if the per-agent override silently lost
 // to the group default, the wrong model name would land in --model.
 func TestL2_Config_PerAgentModelOverridesGroupDefault(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig hard-codes [groups] powerful = \"stub\" and per-agent backend_config.model = \"stub\" — testing per-agent override beating a *different* group default requires HarnessOptions to inject custom [models.*], [groups], and per-agent backend_config blocks")
 }
 
@@ -30,6 +31,7 @@ func TestL2_Config_PerAgentModelOverridesGroupDefault(t *testing.T) {
 // either via a log line emitted by foci-gw on resolution or by triggering
 // a tool call and inspecting the Telegram stub's recorded message shape.
 func TestL2_Config_PlatformDisplayCascadesToAgentPlatform(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to inject a [platforms.display] block — writeTestConfig only emits [platforms.access] and [platforms.telegram]; no way to set show_tool_calls and assert it cascaded to the agent")
 }
 
@@ -39,6 +41,7 @@ func TestL2_Config_PlatformDisplayCascadesToAgentPlatform(t *testing.T) {
 // and assert the runtime value matches the per-agent one — proves the
 // cascade direction is correct, not just that some cascade fires.
 func TestL2_Config_PerAgentDisplayBeatsPlatformDisplay(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to inject both [platforms.display] and per-agent [agents.platforms.display] blocks with conflicting show_tool_calls values")
 }
 
@@ -49,6 +52,7 @@ func TestL2_Config_PerAgentDisplayBeatsPlatformDisplay(t *testing.T) {
 // `compaction_notify` (e.g. send a startup message vs. not) and assert
 // against the Telegram stub's call log.
 func TestL2_Config_PlatformNotifyAppliesWhenAgentUnset(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to inject a [platforms.notify] block with startup_notify=true and a chat_id — current writeTestConfig has no notify block and no way to opt in")
 }
 
@@ -59,6 +63,7 @@ func TestL2_Config_PlatformNotifyAppliesWhenAgentUnset(t *testing.T) {
 // and assert the steer path is NOT taken — proves the defaults section
 // actually wires through the cascade rather than being silently dropped.
 func TestL2_Config_DefaultsBehaviorAppliedWhenGlobalUnset(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to inject a [defaults.behavior] block — writeTestConfig has no defaults-section support")
 }
 
@@ -69,6 +74,7 @@ func TestL2_Config_DefaultsBehaviorAppliedWhenGlobalUnset(t *testing.T) {
 // message, then read cc-stub's recorder — the workdir entry confirms
 // the binary that ran was the stub configured globally.
 func TestL2_Config_CCBackendClaudeBinaryFromGlobal(t *testing.T) {
+	t.Parallel()
 	// The harness already sets [cc_backend].claude_binary = <cc-stub path>
 	// at the global level. If this knob ever regressed, foci-gw would
 	// spawn "claude" from $PATH instead of the stub, which would either
@@ -113,6 +119,7 @@ func TestL2_Config_CCBackendClaudeBinaryFromGlobal(t *testing.T) {
 // per-agent to B, send a message to that agent, and assert only
 // recorder-B got the invocation.
 func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to inject per-agent backend_config.claude_binary AND a way to point separate agents at separate recorder files — current harness shares a single CCSTUB_RECORDER env across all spawns")
 }
 
@@ -126,6 +133,7 @@ func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
 // existing api_base plumbing makes any future regression a hard failure
 // at startup.
 func TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil(t *testing.T) {
+	t.Parallel()
 	// The harness's writeTestConfig already emits the agent platform
 	// entry WITHOUT a per-agent [agents.platforms.telegram] sub-block —
 	// only [agents.platforms.access] is set. So if inheritance broke,
@@ -159,6 +167,7 @@ func TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil(t *testing.T) {
 // message, then check cc-stub's recorder for the invocation workdir —
 // it must match the derived path, not "" or the data_dir.
 func TestL2_Config_SmartDefaultWorkspaceFromAgentID(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig always sets workspace = <path> per agent — needs HarnessOptions option to omit the workspace key so the $HOME/<id> convention default fires")
 }
 
@@ -170,6 +179,7 @@ func TestL2_Config_SmartDefaultWorkspaceFromAgentID(t *testing.T) {
 // successfully — proven by the long-poll firing and a Telegram update
 // reaching cc-stub.
 func TestL2_Config_SmartDefaultPlatformBotFromAgentID(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig always emits an explicit `bot = <agent-id>` line — proving the *default* fires requires omitting it; needs HarnessOptions support")
 }
 
@@ -179,6 +189,7 @@ func TestL2_Config_SmartDefaultPlatformBotFromAgentID(t *testing.T) {
 // notify body) and assert the recorded sendMessage body contains the
 // title-cased form — proves load.go's runes-based capitalisation runs.
 func TestL2_Config_SmartDefaultAgentNameFromAgentID(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to enable a notify path that surfaces the resolved agent.Name (e.g. startup_notify=true with a chat_id), AND the agent config must omit `name = ...` so the title-cased ID default fires")
 }
 
@@ -189,6 +200,7 @@ func TestL2_Config_SmartDefaultAgentNameFromAgentID(t *testing.T) {
 // assert it returns results from a file the test wrote to
 // `<workspace>/memory/` — proves the default source got indexed.
 func TestL2_Config_SmartDefaultMemorySourceFromWorkspace(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: requires the ability to (1) write a known marker file to the agent's <workspace>/memory dir BEFORE foci-gw starts indexing (the workspace path is constructed inside writeWorkspaces but not exposed to the test until after StartGateway) and (2) capture foci_memory_search's stdout from a Bash tool_use, which cc-stub currently discards to stderr without surfacing tool_result back to the test")
 }
 
@@ -200,6 +212,7 @@ func TestL2_Config_SmartDefaultMemorySourceFromWorkspace(t *testing.T) {
 // HTTP server), then assert the server saw the literal secret — not
 // the unresolved template, not the empty string.
 func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestSecrets only emits [anthropic] and [telegram] sections — needs HarnessOptions support for arbitrary secret sections AND for an exec/tool command that references {{secret:...}} so the resolver path is exercised")
 }
 
@@ -210,6 +223,7 @@ func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
 // assert foci-gw stderr contains a warning naming the missing key —
 // proves RequiredSecrets / startup checks actually fire.
 func TestL2_Config_MissingSecretLoggedAtStartup(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to inject a config block that references {{secret:custom.absent}} (e.g. an env entry on the agent) without adding the secret to secrets.toml")
 }
 
@@ -221,6 +235,7 @@ func TestL2_Config_MissingSecretLoggedAtStartup(t *testing.T) {
 // Resolve() surfaces the error to the caller and foci doesn't ship the
 // bare template to the shell.
 func TestL2_Config_UnknownSecretInTemplateFailsResolution(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: same as SecretTemplateResolvedAtExec — needs custom-section secret support AND a way for the test to inspect tool result content (cc-stub currently tees Bash stdout to stderr without surfacing back to foci as a tool_result)")
 }
 
@@ -230,6 +245,7 @@ func TestL2_Config_UnknownSecretInTemplateFailsResolution(t *testing.T) {
 // string to the generated config via ExtraConfigTOML and assert
 // TryStartGateway returns a non-Fatal error referencing parse failure.
 func TestL2_Config_MalformedTOMLFailsStartup(t *testing.T) {
+	t.Parallel()
 	// Trailing line with an unterminated string is unambiguous TOML noise
 	// that survives any preceding-section validity. Place it as the very
 	// last appended block so the rest of the config is well-formed up to
@@ -261,6 +277,7 @@ func TestL2_Config_MalformedTOMLFailsStartup(t *testing.T) {
 // the field path. Catches regressions where a field is added without
 // being wired through validateDurations.
 func TestL2_Config_InvalidDurationFailsValidation(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: same as MalformedTOMLFailsStartup — needs raw-TOML injection and a non-Fatal startup path so the test can observe the validation error in stderr after exit")
 }
 
@@ -270,6 +287,7 @@ func TestL2_Config_InvalidDurationFailsValidation(t *testing.T) {
 // a foci.toml with `mysteryfield = 42` and assert foci-gw reaches ready
 // AND stderr contains a warning naming the key.
 func TestL2_Config_UnknownTopLevelKeyWarnsNotFails(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 7300},
@@ -293,6 +311,7 @@ func TestL2_Config_UnknownTopLevelKeyWarnsNotFails(t *testing.T) {
 // set on the same section and assert foci-gw refuses to start with an
 // error naming the section.
 func TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestSecrets emits a fixed shape — needs HarnessOptions support to inject a custom secrets section with both allowed_agents and denied_agents set, plus a non-Fatal startup path to observe the conflict error")
 }
 
@@ -303,6 +322,7 @@ func TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails(t *testing.T) {
 // the keepalive subsystem starts (a keepalive timer log line or a
 // keepalive-tagged user message in the recorder).
 func TestL2_Config_BoolStringOnOffNormalised(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig does not emit a [keepalive] section — needs HarnessOptions to inject `[keepalive] enabled = \"on\"` so the bool-string normalisation path is exercised")
 }
 
@@ -323,6 +343,7 @@ func TestL2_Config_BoolStringOnOffNormalised(t *testing.T) {
 // behaviour worth its own test once the harness grows an API-backend
 // variant. See TODO #773 for that follow-up.
 func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 7180},
@@ -370,6 +391,7 @@ func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
 // spawn tool) and assert the resolved model in the recorder matches
 // powerful's model — proves the default-on-load logic runs.
 func TestL2_Config_GroupsFastDefaultsToPowerful(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs (1) a way to trigger a fast-tier call site (e.g. spawn-raw) from cc-stub's scripted tool_uses — currently only Bash tool_uses are executed by cc-stub and no foci_spawn variant exists in the exec-bridge surface that's wired here, and (2) recorder capture of the *secondary* spawn's --model flag (the agent's own cc-stub captures only its own invocation)")
 }
 
@@ -380,6 +402,7 @@ func TestL2_Config_GroupsFastDefaultsToPowerful(t *testing.T) {
 // NOT invoked AND a denial log line appears in stderr — proves the
 // access check sits in front of agent dispatch, not buried in the loop.
 func TestL2_Config_AccessAllowedUsersOnlyTrueRejectsUnlisted(t *testing.T) {
+	t.Parallel()
 	// The harness's writeTestConfig sets [platforms.access]
 	// allowed_users_only = false hard-coded; the agent's
 	// allowed_users = [<UserID>] populates the bot-level map and
@@ -442,6 +465,7 @@ func TestL2_Config_AccessAllowedUsersOnlyTrueRejectsUnlisted(t *testing.T) {
 // stub-registered token — proves the override path resolves before
 // the convention path.
 func TestL2_Config_PerAgentBotSecretOverrideUsesNamedKey(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: needs HarnessOptions to (1) set a per-agent `bot_secret = \"custom.weird_token\"` on the agent's platform entry, and (2) register that custom secret section in secrets.toml mapped to a token the TelegramStub recognises")
 }
 
@@ -452,5 +476,6 @@ func TestL2_Config_PerAgentBotSecretOverrideUsesNamedKey(t *testing.T) {
 // braces companion to the rejection test; together they pin both
 // branches of the access gate.
 func TestL2_Config_AccessAllowedUsersOnlyFalseAcceptsAny(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: writeTestConfig always emits `allowed_users = [<UserID>]` on the per-agent platform entry, and the bot-level allowedUsers map rejects any user not in that list regardless of allowed_users_only — proving the empty-allowed_users + allowed_users_only=false branch requires HarnessOptions to suppress the allowed_users line entirely")
 }

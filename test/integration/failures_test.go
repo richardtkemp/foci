@@ -40,6 +40,7 @@ import (
 // panic the gateway. A subsequent Telegram message must still spawn a
 // fresh subprocess (the agent stays usable across the failure).
 func TestL2_Failures_BackendExitsNonZeroBeforeHandshake(t *testing.T) {
+	t.Parallel()
 	// Setting CCSTUB_EXIT_CODE=1 makes cc-stub exit before any
 	// handshake. Foci's WaitReady waits up to 60s
 	// (internal/agent/delegated_manager.go:240) before logging the
@@ -62,6 +63,7 @@ func TestL2_Failures_BackendExitsNonZeroBeforeHandshake(t *testing.T) {
 // with an error), restart the subprocess on the next user message, and
 // not leak the dangling turn-handler.
 func TestL2_Failures_BackendExitsAfterHandshakeMidTurn(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub has no env flag to exit between assistant and result lines; CCSTUB_EXIT_CODE fires before handshake. Need a new CCSTUB_EXIT_AFTER_ASSISTANT or similar in cmd/cc-stub/main.go.")
 }
 
@@ -77,6 +79,7 @@ func TestL2_Failures_BackendExitsAfterHandshakeMidTurn(t *testing.T) {
 // resume_id, the second with empty resume_id — and one user_message
 // entry confirming the turn finished.
 func TestL2_Failures_BackendFailsOnResumeRetriesFresh(t *testing.T) {
+	t.Parallel()
 	// To exercise the FAIL_ON_RESUME path we need: (1) prime a session so
 	// foci persists a cc_resume_id, then (2) force the existing
 	// long-lived cc-stub to exit so foci's NEXT user message triggers a
@@ -97,6 +100,7 @@ func TestL2_Failures_BackendFailsOnResumeRetriesFresh(t *testing.T) {
 // the platform poll loop. A second Telegram update after the timeout
 // must still trigger a fresh subprocess spawn.
 func TestL2_Failures_BackendHangsBeforeReady(t *testing.T) {
+	t.Parallel()
 	// Foci's WaitReady deadline is hardcoded at 60s
 	// (internal/agent/delegated_manager.go:240). To actually exercise
 	// the timeout path, CCSTUB_HANG must exceed 60s, making this test
@@ -121,6 +125,7 @@ func TestL2_Failures_BackendHangsBeforeReady(t *testing.T) {
 // subprocess prematurely, and a follow-up Telegram update must process
 // normally — proving the stall path is recoverable.
 func TestL2_Failures_BackendHangsDuringTurn(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub's CCSTUB_HANG sleeps before the handshake, not between init and result. Need a new CCSTUB_HANG_DURING_TURN or per-turn delay flag.")
 }
 
@@ -132,6 +137,7 @@ func TestL2_Failures_BackendHangsDuringTurn(t *testing.T) {
 // notice the death. Assertion: exactly one user_message entry per
 // dispatched turn — no duplicates, no losses.
 func TestL2_Failures_BackendKilledMidTurnByGateway(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: harness exposes no hook to force a mid-turn backend Close()/Restart() on a running agent. Need Harness.RestartAgent or Harness.CloseAgentBackend.")
 }
 
@@ -146,6 +152,7 @@ func TestL2_Failures_BackendKilledMidTurnByGateway(t *testing.T) {
 // assistant message; foci should not panic and should mark the backend
 // dead so the next user message triggers a clean relaunch.
 func TestL2_Failures_MalformedJSONLineSurfacesError(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub has no scripting hook to inject a raw malformed NDJSON line. Need a script field like 'raw_lines_before_assistant' or a CCSTUB_INJECT_MALFORMED env.")
 }
 
@@ -156,6 +163,7 @@ func TestL2_Failures_MalformedJSONLineSurfacesError(t *testing.T) {
 // system/init and the assistant message; foci should log+skip and let
 // the turn complete normally. Negative: no error reaches the user.
 func TestL2_Failures_UnknownEnvelopeTypeIgnored(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub has no scripting hook to inject arbitrary envelopes with custom 'type' fields. Need a script field for extra envelope blocks.")
 }
 
@@ -167,6 +175,7 @@ func TestL2_Failures_UnknownEnvelopeTypeIgnored(t *testing.T) {
 // contains the scanner-overflow log line and the second message lands
 // in the recorder.
 func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
+	t.Parallel()
 	// cc-stub's stubScript.Text is honoured in the assistant text
 	// block. Marshalled into a single NDJSON envelope, a >1MB text
 	// payload trips ccstream's bufio cap. The scripted Text path runs
@@ -221,6 +230,7 @@ func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
 // no sendMessage call (empty text suppressed) and the next turn
 // processes normally.
 func TestL2_Failures_AssistantMessageMissingContent(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub always emits a content array with a text block (default echo or scripted text). No script flag suppresses content. Need 'omit_content' on stubScript or a dedicated CCSTUB_EMPTY_CONTENT env.")
 }
 
@@ -231,6 +241,7 @@ func TestL2_Failures_AssistantMessageMissingContent(t *testing.T) {
 // — the session_id from the prior init message is the authoritative
 // one for resume purposes.
 func TestL2_Failures_ResultMessageMissingSessionID(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub unconditionally sets session_id on result envelopes. Need a script flag or env to suppress it.")
 }
 
@@ -245,6 +256,7 @@ func TestL2_Failures_ResultMessageMissingSessionID(t *testing.T) {
 // foci should record the failure in stderr and continue polling for
 // new updates (the bot stays alive).
 func TestL2_Failures_TelegramSendMessage5xxLogsAndDrops(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: TelegramStub has no InjectError(method, code) API. Need to add per-method fault injection to internal/testharness/telegram.go.")
 }
 
@@ -256,6 +268,7 @@ func TestL2_Failures_TelegramSendMessage5xxLogsAndDrops(t *testing.T) {
 // not retry within the retry_after window. After the window, a
 // subsequent send goes through.
 func TestL2_Failures_TelegramSendMessage429SurfacesRateLimit(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: TelegramStub can't return synthetic 429 responses with retry_after. Need fault-injection extension to internal/testharness/telegram.go.")
 }
 
@@ -267,6 +280,7 @@ func TestL2_Failures_TelegramSendMessage429SurfacesRateLimit(t *testing.T) {
 // once the stub stops injecting. A Telegram message sent after recovery
 // must process — proving the bot didn't permanently wedge.
 func TestL2_Failures_TelegramGetUpdatesConnectionDropReconnects(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: TelegramStub can't drop connections mid-request. Need a fault-injection hook (e.g. CloseOnNextGetUpdates) in internal/testharness/telegram.go.")
 }
 
@@ -277,6 +291,7 @@ func TestL2_Failures_TelegramGetUpdatesConnectionDropReconnects(t *testing.T) {
 // the "5 consecutive failures" line is present. Recovery: stop the
 // injection and confirm polling resumes.
 func TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: TelegramStub can't return persistent 5xx on getUpdates without extension; also the stub serves getMe with the same handler, and a 5xx there would prevent the gateway from coming ready. Need a per-method fault hook with a method allowlist.")
 }
 
@@ -286,6 +301,7 @@ func TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog(t *testing.T) {
 // extended to return `<html>...</html>` with HTTP 200; foci should log
 // the parse error via sanitizeError and continue polling.
 func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: TelegramStub has no per-method body override hook. Need an InjectBody(method, raw) API in internal/testharness/telegram.go.")
 }
 
@@ -296,6 +312,7 @@ func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 // harness's RegisterBot calls — silent token mismatches would
 // otherwise produce a 60s hang on the ready signal.
 func TestL2_Failures_TelegramUnknownTokenReceives404(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: StartGateway auto-registers every AgentSpec.BotToken with the stub. There's no way through the public harness API to write a config that names a token NOT registered with the stub. Need an option like HarnessOptions.SkipBotRegistration or per-agent SkipStubRegister bool.")
 }
 
@@ -313,6 +330,7 @@ func TestL2_Failures_TelegramUnknownTokenReceives404(t *testing.T) {
 // entry on the same workdir contains the error marker, confirming
 // foci re-fed it to CC.
 func TestL2_Failures_ToolReturnsErrorJSONReachesBackend(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub's runBashToolUse routes tool output to its own stderr and does NOT feed a tool_result back to foci (see cmd/cc-stub/main.go runBashToolUse comment). The premise — that the next user_message contains the error marker — relies on cc-stub mimicking real CC's internal tool execution and re-feeding the result. Need cc-stub extended to emit tool_result blocks on subsequent assistant turns.")
 }
 
@@ -323,6 +341,7 @@ func TestL2_Failures_ToolReturnsErrorJSONReachesBackend(t *testing.T) {
 // non-zero, but the assistant message + result still flow back and
 // the agent stays alive.
 func TestL2_Failures_UnknownToolInBashCommandFailsCleanly(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 1005},
@@ -383,6 +402,7 @@ func TestL2_Failures_UnknownToolInBashCommandFailsCleanly(t *testing.T) {
 // entry lands in any workspaces/* dir (the dispatch was correctly
 // dropped).
 func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
+	t.Parallel()
 	const testMarker = "MARKER_GHOST_SHOULD_NEVER_LAND"
 
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
@@ -451,6 +471,7 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 // tool's stderr. The harness simulates this by deleting the socket
 // file out from under cc-stub between init and the scripted tool_use.
 func TestL2_Failures_ExecBridgeSocketUnreachable(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: harness exposes no way to discover or delete the per-session FOCI_SOCK path. Need Harness.AgentExecSocket(agentID) or similar accessor on internal/testharness.")
 }
 
@@ -462,6 +483,7 @@ func TestL2_Failures_ExecBridgeSocketUnreachable(t *testing.T) {
 // Assertion: stderr contains "Bash command timed out" and a follow-up
 // Telegram message processes within the normal time budget.
 func TestL2_Failures_BashToolUseExceedsCCStubTimeout(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 1007},
@@ -541,6 +563,7 @@ func TestL2_Failures_BashToolUseExceedsCCStubTimeout(t *testing.T) {
 // log the drop and not panic; the calling agent's turn completes with
 // the error injected as a tool_result.
 func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: no API to stop a running agent without killing the entire gateway. Need Harness.StopAgent(agentID) or a /reload hook on internal/testharness.")
 }
 
@@ -552,6 +575,7 @@ func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
 // path with a deliberate panic-injection env flag (extension to
 // cc-stub).
 func TestL2_Failures_CrossAgentDispatchPanicIsRecovered(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: cc-stub has no panic-injection env flag. Need a CCSTUB_PANIC_ON_USER_MESSAGE or similar (note: cc-stub is a Go binary, so it'd need a runtime.Goexit or os.Exit path that mimics a Go panic surfacing through foci's reader).")
 }
 
@@ -566,6 +590,7 @@ func TestL2_Failures_CrossAgentDispatchPanicIsRecovered(t *testing.T) {
 // parse warnings and still serve the agent. Negative: foci-gw doesn't
 // crash on startup.
 func TestL2_Failures_SessionStoreCorruptedJSONLOnStartup(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: StartGateway creates and owns the data dir; there's no pre-StartGateway hook to seed JSONL files into it before the gateway boots. Need HarnessOptions.PreStartHook(dataDir string) or a SeedSession(...) helper.")
 }
 
@@ -575,6 +600,7 @@ func TestL2_Failures_SessionStoreCorruptedJSONLOnStartup(t *testing.T) {
 // missing the meta line; foci's session loader should log the
 // missing-meta warning and surface the session in /sessions.
 func TestL2_Failures_SessionStoreMissingBranchMetaTreatedAsRoot(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: same as SessionStoreCorruptedJSONLOnStartup — need a pre-startup data-dir seeding hook on the harness.")
 }
 
@@ -586,6 +612,7 @@ func TestL2_Failures_SessionStoreMissingBranchMetaTreatedAsRoot(t *testing.T) {
 // Recovery: restore permissions, send another message, confirm it
 // lands.
 func TestL2_Failures_SessionStoreReadOnlyDirSurfacesError(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: harness exposes no accessor for the data/sessions dir path so a test can't chmod it. Need Harness.DataDir() or Harness.SessionsDir() accessor.")
 }
 
@@ -602,6 +629,7 @@ func TestL2_Failures_SessionStoreReadOnlyDirSurfacesError(t *testing.T) {
 // starts AND, after the first-run onboarding triggers a spawn, stderr
 // records a spawn failure naming the missing path.
 func TestL2_Failures_MissingClaudeBinaryFailsAgentStartup(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9001},
@@ -640,6 +668,7 @@ func TestL2_Failures_MissingClaudeBinaryFailsAgentStartup(t *testing.T) {
 // Both alpha and beta are given the same fixed BotToken; TryStartGateway
 // should return an error before ready, with stderr naming the conflict.
 func TestL2_Failures_DuplicateBotTokenAcrossAgentsRejected(t *testing.T) {
+	t.Parallel()
 	dupToken := "test-token-duplicate:1"
 	_, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
@@ -664,6 +693,7 @@ func TestL2_Failures_DuplicateBotTokenAcrossAgentsRejected(t *testing.T) {
 // exit non-zero with the parse error on stderr, and TryStartGateway
 // must observe the failure cleanly.
 func TestL2_Failures_MalformedTOMLConfigFailsLoad(t *testing.T) {
+	t.Parallel()
 	// Companion to TestL2_Config_MalformedTOMLFailsStartup — same gate,
 	// different lens: that test checks "startup refuses" from the config
 	// category; this one anchors the assertion in the failures-domain
@@ -693,6 +723,7 @@ func TestL2_Failures_MalformedTOMLConfigFailsLoad(t *testing.T) {
 // NOT asserted because telegram.<id> is itself one of the missing
 // secrets — without it the bot can't auth, so no in-bound long-poll.
 func TestL2_Failures_MissingSecretsFileWarnsButStarts(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 9003},
@@ -723,6 +754,10 @@ func TestL2_Failures_MissingSecretsFileWarnsButStarts(t *testing.T) {
 // after the hang releases, all 3 should appear as user_message entries
 // in arrival order. Proves no inbox drop on slow turns.
 func TestL2_Failures_ConcurrentMessagesDuringHangNotLost(t *testing.T) {
+	// NOT t.Parallel: this test uses t.Setenv("CCSTUB_HANG") which is
+	// incompatible with parallel execution. The env var affects the
+	// cc-stub binary's process-startup behaviour, so it has to be set
+	// in the test's own goroutine before any harness spawn.
 	// CCSTUB_HANG sleeps BEFORE the handshake, so the FIRST cc-stub
 	// spawn pauses for the configured duration. The next two messages
 	// arrive while foci is waiting on init; they queue in the agent's
@@ -822,5 +857,6 @@ func TestL2_Failures_ConcurrentMessagesDuringHangNotLost(t *testing.T) {
 // and expects exactly one per dispatched Telegram update — not zero,
 // not two.
 func TestL2_Failures_RestartDuringInFlightTurnDoesNotDoubleCount(t *testing.T) {
+	t.Parallel()
 	t.Skip("HARNESS GAP: harness exposes no Restart() or per-agent backend kill hook. Need Harness.RestartAgent(agentID) or RestartGateway().")
 }

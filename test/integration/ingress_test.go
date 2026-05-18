@@ -30,6 +30,7 @@ import (
 // The assertion is structural: a JSONL line in the cc-stub recorder
 // with workdir == the test agent's workspace.
 func TestL2_Ingress_TelegramMessageReachesAgent(t *testing.T) {
+	t.Parallel()
 	h := testharness.StartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{
 			{ID: "alpha", UserID: 7777},
