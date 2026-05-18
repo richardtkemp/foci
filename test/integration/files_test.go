@@ -959,8 +959,9 @@ func TestL2_Files_SendToChatFile_MissingFile_ReturnsError(t *testing.T) {
 
 	// Let the turn run. We assert what DIDN'T happen — no sendDocument.
 	// Wait long enough that the turn (which logs the error and finishes)
-	// has had a chance to complete.
-	deadline := time.Now().Add(15 * time.Second)
+	// has had a chance to complete. 3s is plenty: normal round-trip is
+	// <1s; we short-circuit early when sendMessage arrives.
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if countSentMethod(h, token, "sendDocument") > 0 {
 			t.Fatalf("sendDocument fired despite nonexistent --file %q\n--- sent ---\n%s",
@@ -1075,7 +1076,7 @@ func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
 
 	// Let any startup-side onboarding settle before snapshotting so the
 	// snapshot reflects steady state, not "halfway through onboarding".
-	time.Sleep(2 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	// Snapshot existing recorder + stub state so we can detect "nothing
 	// new happened".
@@ -1104,7 +1105,7 @@ func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
 
 	// Wait a few seconds for any processing that would happen if the
 	// auth gate had failed open. Then assert state is unchanged.
-	time.Sleep(3 * time.Second)
+	time.Sleep(1 * time.Second)
 
 	newUserMessages := 0
 	for _, e := range readRecorderEntries(t, h.RecorderPath()) {

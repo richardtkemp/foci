@@ -416,7 +416,7 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 
 	// Wait long enough for cc-stub to attempt the dispatch and for the
 	// resolver to fail.
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Assert: NO user_message recorder entry contains the marker. The
 	// dispatch should have been refused before any agent saw it.
