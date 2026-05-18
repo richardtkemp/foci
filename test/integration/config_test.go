@@ -27,12 +27,47 @@ func TestL2_Config_PerAgentModelOverridesGroupDefault(t *testing.T) {
 // 5-level cascade `[[agents.platforms.display]]` → `[[platforms.display]]`
 // → `[defaults.display]` → code default works through real startup. Set
 // only `[platforms.display].show_tool_calls = "preview"` and assert the
-// runtime effective value on the agent's platform handler matches —
-// either via a log line emitted by foci-gw on resolution or by triggering
-// a tool call and inspecting the Telegram stub's recorded message shape.
+// runtime effective value on the agent's platform handler matches.
+//
+// Probe mechanism: send `/display show_tool_calls` via the Telegram stub
+// — the slash command's displayFieldValue (settings.go) walks the same
+// cascade as the runtime renderer, so its reply text is a faithful read
+// of the resolved value. If the cascade broke (global platform display
+// ignored), the response would fall to the code default "off".
+//
+// ExtraConfigTOML appends `[platforms.display]` after the agent stanzas,
+// and TOML semantics scope it back to the latest `[[platforms]]` (the
+// global one) because `agents` and `platforms` are independent root paths.
 func TestL2_Config_PlatformDisplayCascadesToAgentPlatform(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject a [platforms.display] block — writeTestConfig only emits [platforms.access] and [platforms.telegram]; no way to set show_tool_calls and assert it cascaded to the agent")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7400},
+		},
+		ReadyTimeout: 30 * time.Second,
+		ExtraConfigTOML: "[platforms.display]\n" +
+			"show_tool_calls = \"preview\"\n",
+	})
+
+	// `/config toml` dumps the resolved config as raw TOML. The injected
+	// value lands as a literal `show_tool_calls = "preview"` line inside
+	// the [[platforms]] block. The single-key /display form triggers a
+	// ChainKeyboard, /display alone triggers KeyboardOptions, and /config
+	// table renders a markdown grid that collides on the "preview"
+	// substring (a `tool_call_preview_chars` row exists). TOML output
+	// gives us an unambiguous literal pair.
+	pushTelegramText(t, h, "alpha", 7400, "/config toml")
+
+	token := h.AgentBotToken("alpha")
+	// `show_tool_calls = "preview"` is the exact TOML literal emitted by
+	// FormatConfigTOML for a non-nil ToolCallDisplay. If the cascade was
+	// silently dropped, the line would be absent (TOML omits zero/nil
+	// fields).
+	text := waitForSendMessageText(t, h, token, 15*time.Second, `show_tool_calls = "preview"`)
+	if text == "" {
+		t.Fatalf("expected /config toml to surface show_tool_calls = \"preview\" from [platforms.display]; sent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Config_PerAgentDisplayBeatsPlatformDisplay proves a per-agent
