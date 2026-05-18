@@ -118,6 +118,7 @@ func (r *TurnRenderer) OnReply(text string) {
 		// from creating a Telegram message in the first place; this branch
 		// just stops the (already-empty) writer and clears any lingering
 		// tool preview so there's no orphaned UI.
+		r.backend.Logger().Debugf("OnReply: silent text (len=%d), skipping delivery", len(text))
 		r.sw.Finish()
 		r.tracker.CleanupPreview()
 		r.sw = r.newSW()
@@ -126,6 +127,7 @@ func (r *TurnRenderer) OnReply(text string) {
 		return
 	}
 	msgID := r.sw.Finish()
+	r.backend.Logger().Debugf("OnReply: non-silent text (len=%d), stream_msg_id=%q", len(text), msgID)
 	if msgID != "" {
 		// Streaming: reply content is in the stream message. Finalize it
 		// and delete any lingering tool call preview.
@@ -287,7 +289,9 @@ func (r *TurnRenderer) Finalize(response string) {
 	// API call via FinalText — when response is empty but the stream has
 	// content, fall back to the stream buffer so the message is finalised.
 	streamMsgID := r.sw.Finish()
+	r.backend.Logger().Debugf("Finalize: response_len=%d stream_msg_id=%q", len(response), streamMsgID)
 	if textContent := r.streamTextContent(); strings.TrimSpace(response) == "" && strings.TrimSpace(textContent) != "" {
+		r.backend.Logger().Debugf("Finalize: response was empty, falling back to stream buffer (len=%d)", len(textContent))
 		response = textContent
 	}
 
@@ -295,9 +299,11 @@ func (r *TurnRenderer) Finalize(response string) {
 		// Silent final response — nothing to deliver. The streaming-prefix
 		// gate keeps the sw from having created a Telegram message when the
 		// content was sentinel-only; clean up any lingering tool preview.
+		r.backend.Logger().Debugf("Finalize: silent response (len=%d), skipping delivery", len(response))
 		r.tracker.CleanupPreview()
 		return
 	}
+	r.backend.Logger().Debugf("Finalize: delivering non-silent response (len=%d)", len(response))
 
 	thinkingText := r.thinking.String()
 	showThinkMode := r.display.ShowThinking
