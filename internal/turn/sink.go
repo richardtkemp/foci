@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"foci/internal/agent/turnevent"
+	"foci/internal/log"
 	"foci/internal/platform"
 )
 
@@ -44,11 +45,13 @@ type StreamingSink struct {
 // required; conn may be nil in tests where typing-indicator side effects are
 // irrelevant.
 func NewStreamingSink(renderer *TurnRenderer, tracker SinkTracker, conn platform.Connection) *StreamingSink {
-	return &StreamingSink{
+	s := &StreamingSink{
 		renderer: renderer,
 		tracker:  tracker,
 		conn:     conn,
 	}
+	log.Debugf("turn-sink", "sink=%p NewStreamingSink: created (conn=%v)", s, conn != nil)
+	return s
 }
 
 // DeliversToPlatform implements turnevent.Sink. StreamingSink drives a
@@ -61,6 +64,7 @@ func (s *StreamingSink) DeliversToPlatform() bool { return true }
 func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
+		log.Debugf("turn-sink", "sink=%p TurnStart: activating typing indicator", s)
 		if s.conn != nil {
 			s.conn.SetTyping(true)
 		}
@@ -73,8 +77,13 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		// blocks (tool-loop replies, mid-turn delegated text) are delivered
 		// incrementally here.
 		if e.Phase == turnevent.PhaseIntermediate {
+			silent := platform.IsSilent(e.Text)
+			log.Debugf("turn-sink", "sink=%p TextBlock(intermediate): text_len=%d silent=%v delivered_before=%v", s, len(e.Text), silent, s.delivered)
 			s.renderer.OnReply(e.Text)
 			s.delivered = true
+			log.Debugf("turn-sink", "sink=%p TextBlock(intermediate): delivered_after=true (unconditional)", s)
+		} else {
+			log.Debugf("turn-sink", "sink=%p TextBlock(final): text_len=%d (no-op — final text carried by TurnComplete)", s, len(e.Text))
 		}
 
 	case turnevent.ThinkingDelta:
@@ -113,15 +122,19 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 		//     replaces whatever FinalText had
 		//   - cancellation: nothing (caller showed "Stopped." separately)
 		text := e.FinalText
+		errReplaced := false
 		if e.Err != nil && ctx.Err() == nil {
 			text = fmt.Sprintf("Error: %s", e.Err.Error())
+			errReplaced = true
 		}
+		log.Debugf("turn-sink", "sink=%p TurnComplete: final_text_len=%d silent=%v delivered=%v err=%v err_replaced=%v ctx_err=%v", s, len(text), platform.IsSilent(text), s.delivered, e.Err, errReplaced, ctx.Err())
 
 		if s.delivered {
 			// Content was already shown via OnReply during the turn — skip
 			// re-delivery. Matches the historical replyDelivered-on-renderer
 			// behaviour where errors that land after partial delivery are
 			// swallowed in favour of keeping the visible stream intact.
+			log.Debugf("turn-sink", "sink=%p TurnComplete: branch=cleanup (delivered=true, FinalText suppressed)", s)
 			s.renderer.Cleanup()
 			if s.tracker != nil {
 				s.tracker.CleanupPreview()
@@ -130,6 +143,7 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			// Silent final text (sentinels, empty) is gated inside Finalize
 			// itself — the renderer's OnReply and Finalize methods are the
 			// authoritative gates for interactive-turn delivery.
+			log.Debugf("turn-sink", "sink=%p TurnComplete: branch=finalize (delivered=false, calling Finalize)", s)
 			s.renderer.Finalize(text)
 		}
 
@@ -171,6 +185,7 @@ func NewSessionSink(conn platform.Connection, sessionKey, trigger string, opts .
 	for _, opt := range opts {
 		opt(s)
 	}
+	log.Debugf("turn-sink", "sink=%p NewSessionSink: created session=%s trigger=%s conn=%v", s, sessionKey, trigger, conn != nil)
 	return s
 }
 
@@ -184,6 +199,7 @@ func (s *SessionSink) DeliversToPlatform() bool { return true }
 func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 	switch e := ev.(type) {
 	case turnevent.TurnStart:
+		log.Debugf("turn-sink", "sink=%p SessionSink TurnStart: session=%s trigger=%s", s, s.sessionKey, s.trigger)
 		if s.conn != nil {
 			s.conn.SetTyping(true)
 		}
@@ -193,27 +209,37 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		}
 	case turnevent.TextBlock:
 		if e.Phase != turnevent.PhaseIntermediate || s.conn == nil {
+			log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: skip (phase=%v conn_nil=%v)", s, e.Phase, s.conn == nil)
 			return
 		}
+		silent := platform.IsSilent(e.Text)
+		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock(intermediate): text_len=%d silent=%v delivered_before=%v", s, len(e.Text), silent, s.delivered)
 		// Silent intermediate text — skip delivery. Don't set delivered=true,
 		// so a non-silent final text on TurnComplete is still permitted.
-		if platform.IsSilent(e.Text) {
+		if silent {
 			return
 		}
 		if err := s.conn.SendToSession(s.sessionKey, e.Text); err != nil && s.onError != nil {
+			log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: SendToSession error=%v", s, err)
 			s.onError(s.trigger, err)
 			return
 		}
 		s.delivered = true
+		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: delivered_after=true", s)
 	case turnevent.TurnComplete:
+		log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: final_text_len=%d silent=%v delivered=%v conn_nil=%v", s, len(e.FinalText), platform.IsSilent(e.FinalText), s.delivered, s.conn == nil)
 		if s.conn != nil {
 			s.conn.SetTyping(false)
 		}
 		if s.delivered || platform.IsSilent(e.FinalText) || s.conn == nil {
+			log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: suppressed (delivered=%v silent=%v conn_nil=%v)", s, s.delivered, platform.IsSilent(e.FinalText), s.conn == nil)
 			return
 		}
 		if err := s.conn.SendToSession(s.sessionKey, e.FinalText); err != nil && s.onError != nil {
+			log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: SendToSession error=%v", s, err)
 			s.onError(s.trigger, err)
+		} else {
+			log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: delivered FinalText", s)
 		}
 	}
 }
