@@ -61,9 +61,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,6 +247,11 @@ func main() {
 		}
 	}
 
+	// Extract the install_id foci's prepareHooks wrote into --settings.
+	// Empty when foci didn't install hooks (binary missing / dev build),
+	// which is the natural opt-out for tests that need a no-hook path.
+	hookInstallID := installIDFromSettings(settings)
+
 	recordInvocation(resume, model)
 
 	// Generate or echo session_id. Fresh runs make a new one; resumes
@@ -346,6 +353,20 @@ func main() {
 			content := []map[string]any{
 				{"type": "text", "text": reply},
 			}
+			// Bash tool_uses are executed inline so the exec bridge fires
+			// before the assistant envelope reaches foci. We buffer each
+			// run's outcome so a system/hook_response can be emitted AFTER
+			// the assistant message and BEFORE the result envelope — that
+			// ordering matches real CC's per-tool hook dispatch and lets
+			// ccstream.handleHookResponse fire OnToolEnd + PostToolNudgeFunc
+			// while the turn is still open.
+			type bashRun struct {
+				toolUseID string
+				toolName  string
+				toolInput map[string]any
+				result    bashResult
+			}
+			var bashRuns []bashRun
 			if script != nil {
 				for _, tu := range script.ToolUses {
 					id := tu.ID
@@ -364,7 +385,12 @@ func main() {
 					// commands itself. Other tool types are emitted but
 					// not executed — tests can extend this when needed.
 					if tu.Name == "Bash" {
-						runBashToolUse(tu.Input)
+						bashRuns = append(bashRuns, bashRun{
+							toolUseID: id,
+							toolName:  tu.Name,
+							toolInput: tu.Input,
+							result:    runBashToolUse(tu.Input),
+						})
 					}
 				}
 			}
@@ -376,6 +402,18 @@ func main() {
 				},
 				"session_id": sessionID,
 			})
+			// Per-tool hook_response — one envelope per Bash run, carrying
+			// the install_id foci embedded in --settings so the backend's
+			// install-id filter dispatches OnToolEnd / PostToolNudgeFunc.
+			// Skipped when foci installed no hooks (install_id empty).
+			if hookInstallID != "" {
+				for _, br := range bashRuns {
+					emitHookResponse(out, hookInstallID, br.toolUseID, br.toolName, br.toolInput, br.result.Output, br.result.IsError)
+				}
+				if len(bashRuns) > 0 {
+					out.Flush()
+				}
+			}
 			emit(out, map[string]any{
 				"type":       "result",
 				"result":     reply,
@@ -625,43 +663,158 @@ func writeRecorder(e recorderEntry) {
 	_, _ = f.Write(append(b, '\n'))
 }
 
+// bashResult is the captured outcome of one runBashToolUse invocation.
+// Output is the combined stdout+stderr produced by the bash subshell so
+// emitHookResponse can feed a faithful tool_response back to foci. The
+// stub still tees output to its own stderr (via io.MultiWriter) so
+// test-harness diagnostics keep working.
+type bashResult struct {
+	Output  string
+	IsError bool
+}
+
 // runBashToolUse runs the "command" field of a Bash tool_use input as
 // a non-interactive bash subshell, inheriting the stub's environment so
 // BASH_ENV / FOCI_SOCK (set by foci-gw) take effect — that's how
 // foci_send_to_session and the other shell-exported foci tools reach
-// the exec bridge. Output is forwarded to stderr for debugging; the
-// stub does not feed it back to foci as a tool_result (real CC handles
-// that internally; foci's reader doesn't currently consume tool_result
-// blocks, so emitting one would be silent at best).
+// the exec bridge.
+//
+// Output is captured (combined stdout+stderr) and returned so the caller
+// can synthesise a system/hook_response envelope matching what real CC
+// emits after its internal tool execution (foci's PostToolNudgeFunc /
+// OnToolEnd both consume that). Output is ALSO teed to the stub's
+// stderr so existing tests that fished diagnostics out of the gateway
+// stderr stream keep working.
 //
 // 10-second wall clock cap — enough for any exec-bridge round-trip,
 // short enough that runaway scripts fail loud rather than hanging tests.
-func runBashToolUse(input map[string]any) {
+func runBashToolUse(input map[string]any) bashResult {
 	cmd, _ := input["command"].(string)
 	if cmd == "" {
 		fmt.Fprintln(os.Stderr, "cc-stub: Bash tool_use with empty command — skipped")
-		return
+		return bashResult{Output: "(no command)", IsError: true}
 	}
 	c := exec.Command("bash", "-c", cmd)
-	c.Stdout = os.Stderr // tee both to stderr so the test harness can fish them out
-	c.Stderr = os.Stderr
+	var buf bytes.Buffer
+	tee := io.MultiWriter(&buf, os.Stderr)
+	c.Stdout = tee
+	c.Stderr = tee
 	c.Env = os.Environ()
 	// Wall clock guard.
 	done := make(chan error, 1)
 	if err := c.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "cc-stub: Bash start failed: %v\n", err)
-		return
+		return bashResult{Output: err.Error(), IsError: true}
 	}
 	go func() { done <- c.Wait() }()
 	select {
 	case err := <-done:
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cc-stub: Bash command exited: %v\n", err)
+			return bashResult{Output: buf.String(), IsError: true}
 		}
+		return bashResult{Output: buf.String(), IsError: false}
 	case <-time.After(10 * time.Second):
 		_ = c.Process.Kill()
 		fmt.Fprintln(os.Stderr, "cc-stub: Bash command timed out after 10s, killed")
+		return bashResult{Output: buf.String() + "\n(timed out after 10s)", IsError: true}
 	}
+}
+
+// installIDFromSettings parses the --settings JSON foci passes via argv
+// to extract the install_id its prepareHooks generated. The settings
+// blob's shape is:
+//
+//	{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[
+//	  {"type":"command","command":"\"<hookbin>\" --install <id>", ...}
+//	]}], "PostToolUseFailure":[...]}}
+//
+// cc-stub needs the install_id to attach to every system/hook_response
+// it synthesises — ccstream.handleHookResponse drops events whose
+// install_id doesn't match the backend's recorded ID, so without this
+// echo no nudge / OnToolEnd dispatch ever fires.
+//
+// Returns "" if settings is empty, unparseable, or carries no --install
+// token. In that case the stub does NOT emit hook_response envelopes —
+// tests that need foci's no-hook path get clean stdout, and tests that
+// install hooks get fully-functional PostToolUse delivery.
+func installIDFromSettings(settings string) string {
+	if settings == "" {
+		return ""
+	}
+	var s struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal([]byte(settings), &s); err != nil {
+		return ""
+	}
+	const marker = "--install "
+	for _, matchers := range s.Hooks {
+		for _, m := range matchers {
+			for _, h := range m.Hooks {
+				idx := strings.Index(h.Command, marker)
+				if idx < 0 {
+					continue
+				}
+				rest := strings.TrimSpace(h.Command[idx+len(marker):])
+				if j := strings.IndexAny(rest, " \t"); j >= 0 {
+					rest = rest[:j]
+				}
+				if rest != "" {
+					return rest
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// emitHookResponse writes one system/hook_response NDJSON line matching
+// what real CC emits after running a tool. Outer envelope carries
+// hook_event + stdout (the hook script's verbatim stdout bytes) +
+// exit_code + outcome; the stdout field carries a JSON-encoded inner
+// hookScriptOutput that must include install_id (so the backend's
+// install-id filter accepts it) and tool_use_id (so per-tool tracking
+// dispatches correctly).
+//
+// installID — must equal what foci passed via --settings; if empty,
+// caller skips this emission.
+// isError — selects hook_event: PostToolUse vs PostToolUseFailure.
+// Foci's handler routes both to OnToolEnd, but failures additionally
+// populate the inner `error` field so the agent transcript shows the
+// failure body, not the (often empty) tool_response.
+func emitHookResponse(w *bufio.Writer, installID, toolUseID, toolName string, toolInput map[string]any, output string, isError bool) {
+	hookEvent := "PostToolUse"
+	if isError {
+		hookEvent = "PostToolUseFailure"
+	}
+	inputJSON, _ := json.Marshal(toolInput)
+	inner := map[string]any{
+		"hook_event":  hookEvent,
+		"install_id":  installID,
+		"tool_use_id": toolUseID,
+		"tool_name":   toolName,
+		"tool_input":  string(inputJSON),
+		"is_error":    isError,
+	}
+	if isError {
+		inner["error"] = output
+	} else {
+		inner["tool_response"] = output
+	}
+	innerJSON, _ := json.Marshal(inner)
+	emit(w, map[string]any{
+		"type":       "system",
+		"subtype":    "hook_response",
+		"hook_event": hookEvent,
+		"stdout":     string(innerJSON),
+		"exit_code":  0,
+		"outcome":    "ok",
+	})
 }
 
 // loadScript reads the per-workdir script JSON from $CCSTUB_SCRIPT_DIR.

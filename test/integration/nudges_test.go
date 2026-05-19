@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"foci/internal/agent"
 	"foci/internal/nudge"
 	"foci/internal/testharness"
 
@@ -202,17 +203,55 @@ func TestL2_Nudges_TurnIntervalNudgeFiresOnSchedule(t *testing.T) {
 // every_n_tools trigger path: a pre-seeded rule with n=1 plus a scripted
 // Bash tool_use forces foci's PostToolNudgeFunc to fire after the tool
 // batch. Asserts a SECOND user_message entry appears in the agent's
-// workdir whose text_prefix carries the reminder body — i.e. the tool
-// result and nudge were folded together and re-sent to CC.
+// workdir whose text_prefix carries the reminder body — i.e. the
+// post-tool reminder was re-fed as a user message back into the
+// agent's CC subprocess (the way after-tools nudges are delivered).
+//
+// Path proved end-to-end:
+//   cc-stub Bash tool_use → cc-stub system/hook_response →
+//   ccstream.handleHookResponse → turn.PostToolNudgeFunc →
+//   a.Nudger.CheckAfterTools → wrapNudge(...) → b.writer.SendUser →
+//   cc-stub reads new user envelope → recordUserMessage.
 func TestL2_Nudges_AfterToolsNudgeFollowsToolBatch(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	// cc-stub does not emit CC PostToolUse hook events, so foci's
-	// PostToolNudgeFunc never fires under the L2 test rig — there's no
-	// hook envelope on stdout for ccstream.handleHookResponse to consume.
-	// Wiring this needs cc-stub to synthesize a PostToolUse system/hook
-	// event after every Bash tool_use it runs, mirroring real CC.
-	t.Skip("HARNESS GAP: cc-stub does not emit PostToolUse hook envelopes — extend cmd/cc-stub to send a system/hook_response after each tool_use so ccstream's PostToolNudgeFunc bridge fires")
+	const userID = 7211
+	const reminderBody = "AFTER_TOOLS_REMINDER_MARKER_GAMMA"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{{
+		Text:       reminderBody,
+		SourceFile: "CRAFT.md",
+		Trigger:    nudge.Trigger{Type: "every_n_tools", N: 1},
+		Priority:   "high",
+	}})
+
+	// Script alpha's first turn to run a single Bash tool_use. cc-stub
+	// executes the command, captures its output, and emits one
+	// system/hook_response envelope after the assistant message so
+	// foci's PostToolNudgeFunc fires for this tool.
+	h.WriteCCStubScript(t, "alpha", []byte(`{
+		"text": "ack — running tool",
+		"tool_uses": [{
+			"name": "Bash",
+			"input": {"command": "echo nudge-fire-marker"}
+		}]
+	}`))
+
+	pushUserMessage(t, h, "alpha", userID, "trigger tool batch")
+
+	// Two user_messages must land in alpha's workdir: the original
+	// "trigger tool batch" turn, then a second carrying the nudge
+	// reminder body. waitForUserMessageContaining matches the second
+	// directly via reminderBody (the first turn's text_prefix doesn't
+	// include the reminder).
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 30*time.Second, reminderBody); !ok {
+		t.Fatalf("after-tools nudge never landed in alpha's user_message; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply proves the
@@ -224,33 +263,113 @@ func TestL2_Nudges_AfterToolsNudgeFollowsToolBatch(t *testing.T) {
 // follow-up prompt rather than dropped.
 func TestL2_Nudges_PreAnswerGateInjectsBeforeFinalReply(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	// Two compounding gaps:
-	//   1. The harness's writeTestConfig has no knob for setting
-	//      nudge_pre_answer_gate=true at the [nudge] or [agents.nudge]
-	//      level — gate defaults to false.
-	//   2. Pre-answer fires only after NudgePreAnswerMinTools (default 2)
-	//      tool calls and post-tool hook events, which cc-stub doesn't
-	//      emit (see TestL2_Nudges_AfterToolsNudgeFollowsToolBatch).
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject nudge_pre_answer_gate=true in the test config, AND cc-stub PostToolUse hook events to bump the tool counter past NudgePreAnswerMinTools")
+	const userID = 7711
+	const reminderBody = "PRE_ANSWER_GATE_REMINDER_MARKER"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+		// NudgePreAnswerMinTools defaults to 2; the scripted turn below
+		// runs exactly two Bash tool_uses so the gate condition
+		// (toolCount >= MinTools) is satisfied.
+		ExtraConfigTOML: "[nudge]\nnudge_pre_answer_gate = true\n",
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{{
+		Text:       reminderBody,
+		SourceFile: "CRAFT.md",
+		Trigger:    nudge.Trigger{Type: "pre_answer"},
+		Priority:   "high",
+	}})
+
+	h.WriteCCStubScript(t, "alpha", []byte(`{
+		"text": "first-round answer",
+		"tool_uses": [
+			{"name": "Bash", "input": {"command": "echo bump-1"}},
+			{"name": "Bash", "input": {"command": "echo bump-2"}}
+		]
+	}`))
+
+	pushUserMessage(t, h, "alpha", userID, "trigger pre-answer gate")
+
+	// The pre-answer follow-up is SendUser'd to cc-stub after the first
+	// result — cc-stub records it as a fresh user_message entry whose
+	// text_prefix carries the wrapped reminder body. We assert that
+	// reminder body shows up; the wrapping header is part of wrapNudge,
+	// not the asserted contract here.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 30*time.Second, reminderBody); !ok {
+		t.Fatalf("pre-answer gate reminder never landed; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Nudges_FooterPresentOnAllDeliveryPaths is the regression net
 // for the 2026-05-14 footer unification refactor (30f577c3). Pre-refactor
 // only the pre_answer path appended the silence-vs-reply footer; the
 // other three paths (turn-interval, regex, after-tools) shipped a bare
-// nudge. Loads one rule per path, drives a single turn that triggers all
-// three, and asserts the NoResponseSentinel marker from nudgeFooter
+// nudge. Loads one rule per path, drives a single turn that triggers
+// all three, and asserts the NoResponseSentinel marker from nudgeFooter
 // appears in each corresponding user_message text_prefix.
+//
+// Note: pre_answer is not covered here — it requires the
+// nudge_pre_answer_gate config knob plus a TurnResult-shape harness
+// path that's a separate gap. The three covered paths share the same
+// wrapNudge() helper so they're the meaningful regression surface.
 func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	// Partial coverage is possible (regex + turn-interval both render
-	// through InjectNudges and would carry the footer), but the full
-	// "all four paths" assertion in the purpose comment requires the
-	// after-tools path which cc-stub can't reach without PostToolUse
-	// hook events.
-	t.Skip("HARNESS GAP: full coverage needs cc-stub to emit PostToolUse hook envelopes (after-tools path) and a nudge_pre_answer_gate config knob (pre-answer path)")
+	const userID = 7511
+	const regexBody = "FOOTER_REGEX_MARKER"
+	const turnIntervalBody = "FOOTER_TURN_INTERVAL_MARKER"
+	const afterToolsBody = "FOOTER_AFTER_TOOLS_MARKER"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{
+		{Text: regexBody, SourceFile: "CRAFT.md",
+			Trigger: nudge.Trigger{Type: "regex", Pattern: "(?i)trigger"}, Priority: "high"},
+		{Text: turnIntervalBody, SourceFile: "CRAFT.md",
+			Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}, Priority: "high"},
+		{Text: afterToolsBody, SourceFile: "CRAFT.md",
+			Trigger: nudge.Trigger{Type: "every_n_tools", N: 1}, Priority: "high"},
+	})
+
+	h.WriteCCStubScript(t, "alpha", []byte(`{
+		"text": "running tool",
+		"tool_uses": [{"name": "Bash", "input": {"command": "echo footer-marker"}}]
+	}`))
+
+	pushUserMessage(t, h, "alpha", userID, "trigger all paths")
+
+	// Each rule body must appear in some user_message text_prefix that
+	// ALSO carries the NoResponseSentinel footer marker.
+	mustHaveFootered := []string{regexBody, turnIntervalBody, afterToolsBody}
+	deadline := time.Now().Add(30 * time.Second)
+	matched := map[string]bool{}
+	for time.Now().Before(deadline) && len(matched) < len(mustHaveFootered) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+				continue
+			}
+			if !strings.Contains(e.TextPrefix, agent.NoResponseSentinel) {
+				continue
+			}
+			for _, body := range mustHaveFootered {
+				if strings.Contains(e.TextPrefix, body) {
+					matched[body] = true
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	for _, body := range mustHaveFootered {
+		if !matched[body] {
+			t.Errorf("rule %q never appeared in a user_message that also carried the footer (%s); recorder:\n%s",
+				body, agent.NoResponseSentinel, recorderTail(t, h.RecorderPath()))
+		}
+	}
 }
 
 // TestL2_Nudges_HeaderPresentOnAllDeliveryPaths is the sibling
@@ -261,8 +380,57 @@ func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
 // fires.
 func TestL2_Nudges_HeaderPresentOnAllDeliveryPaths(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("HARNESS GAP: full coverage needs cc-stub to emit PostToolUse hook envelopes so the after-tools delivery path is observable in the recorder")
+	const userID = 7611
+	const regexBody = "HEADER_REGEX_MARKER"
+	const turnIntervalBody = "HEADER_TURN_INTERVAL_MARKER"
+	const afterToolsBody = "HEADER_AFTER_TOOLS_MARKER"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{
+		{Text: regexBody, SourceFile: "CRAFT.md",
+			Trigger: nudge.Trigger{Type: "regex", Pattern: "(?i)trigger"}, Priority: "high"},
+		{Text: turnIntervalBody, SourceFile: "CRAFT.md",
+			Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}, Priority: "high"},
+		{Text: afterToolsBody, SourceFile: "CRAFT.md",
+			Trigger: nudge.Trigger{Type: "every_n_tools", N: 1}, Priority: "high"},
+	})
+
+	h.WriteCCStubScript(t, "alpha", []byte(`{
+		"text": "running tool",
+		"tool_uses": [{"name": "Bash", "input": {"command": "echo header-marker"}}]
+	}`))
+
+	pushUserMessage(t, h, "alpha", userID, "trigger all paths")
+
+	mustHaveHeaders := []string{regexBody, turnIntervalBody, afterToolsBody}
+	deadline := time.Now().Add(30 * time.Second)
+	matched := map[string]bool{}
+	for time.Now().Before(deadline) && len(matched) < len(mustHaveHeaders) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+				continue
+			}
+			if !strings.Contains(e.TextPrefix, nudgeHeaderMarker) {
+				continue
+			}
+			for _, body := range mustHaveHeaders {
+				if strings.Contains(e.TextPrefix, body) {
+					matched[body] = true
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	for _, body := range mustHaveHeaders {
+		if !matched[body] {
+			t.Errorf("rule %q never appeared in a user_message that also carried the header (%s); recorder:\n%s",
+				body, nudgeHeaderMarker, recorderTail(t, h.RecorderPath()))
+		}
+	}
 }
 
 // TestL2_Nudges_PerAgentRulesIsolated proves that per-agent rules files
@@ -331,10 +499,75 @@ func TestL2_Nudges_PerAgentRulesIsolated(t *testing.T) {
 // in config, produce exactly one nudge in the resulting user_message
 // text_prefix — not both. The negative half asserts the second rule's
 // reminder body is absent.
+//
+// Cap is enforced inside CheckAfterTools (scheduler.go) per-call, so the
+// two rules race on rule-id sort order; whichever wins, the loser's
+// reminder must NOT appear anywhere in alpha's recorder. We pick the
+// "first wins" half as the positive assertion deterministically by
+// asserting only-one-of-the-two rather than which-one — both are valid
+// outcomes, the contract is the cap.
 func TestL2_Nudges_MaxPerBatchCapsAfterToolsReminders(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("HARNESS GAP: after-tools nudges depend on PostToolUse hook events which cc-stub does not synthesize — extend cmd/cc-stub to emit a system/hook_response envelope after each Bash tool_use")
+	const userID = 7311
+	const reminderA = "MAX_PER_BATCH_RULE_A_MARKER"
+	const reminderB = "MAX_PER_BATCH_RULE_B_MARKER"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:          []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout:    30 * time.Second,
+		ExtraConfigTOML: "[nudge]\nnudge_max_per_batch = 1\n",
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{
+		{
+			Text:       reminderA,
+			SourceFile: "CRAFT.md",
+			Trigger:    nudge.Trigger{Type: "every_n_tools", N: 1},
+			Priority:   "high",
+		},
+		{
+			Text:       reminderB,
+			SourceFile: "CRAFT.md",
+			Trigger:    nudge.Trigger{Type: "every_n_tools", N: 1},
+			Priority:   "high",
+		},
+	})
+
+	h.WriteCCStubScript(t, "alpha", []byte(`{
+		"text": "running tool",
+		"tool_uses": [{
+			"name": "Bash",
+			"input": {"command": "echo max-per-batch-marker"}
+		}]
+	}`))
+
+	pushUserMessage(t, h, "alpha", userID, "trigger max-per-batch")
+
+	// Wait until at least one of the two reminders lands as a separate
+	// user_message. Track which one.
+	var sawA, sawB bool
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && !sawA && !sawB {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+				continue
+			}
+			if strings.Contains(e.TextPrefix, reminderA) {
+				sawA = true
+			}
+			if strings.Contains(e.TextPrefix, reminderB) {
+				sawB = true
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !sawA && !sawB {
+		t.Fatalf("neither reminder landed after the tool batch; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if sawA && sawB {
+		t.Errorf("nudge_max_per_batch=1 violated: both reminders fired in the same batch")
+	}
 }
 
 // TestL2_Nudges_CooldownSuppressesRepeatedAfterToolsNudge proves the
@@ -342,11 +575,65 @@ func TestL2_Nudges_MaxPerBatchCapsAfterToolsReminders(t *testing.T) {
 // nudge_cooldown=5 should fire on the first tool call, then be
 // suppressed for the next four within the same turn. Scripts cc-stub
 // to emit two Bash tool_uses back-to-back, then asserts the rule's
-// reminder appears in exactly one user_message text_prefix, not both.
+// reminder appears in exactly one user_message — fires after tool 1,
+// suppressed after tool 2 because diff (1) < cooldown (5).
 func TestL2_Nudges_CooldownSuppressesRepeatedAfterToolsNudge(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	t.Skip("HARNESS GAP: after-tools nudges require cc-stub to emit PostToolUse hook envelopes; without them PostToolNudgeFunc never fires and cooldown can't be exercised")
+	const userID = 7411
+	const reminderBody = "COOLDOWN_REMINDER_MARKER_DELTA"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:          []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout:    30 * time.Second,
+		ExtraConfigTOML: "[nudge]\nnudge_cooldown = 5\n",
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{{
+		Text:       reminderBody,
+		SourceFile: "CRAFT.md",
+		Trigger:    nudge.Trigger{Type: "every_n_tools", N: 1},
+		Priority:   "high",
+	}})
+
+	// Two Bash tool_uses back-to-back in the same scripted assistant
+	// message. cc-stub emits one hook_response per tool, so foci's
+	// PostToolNudgeFunc is invoked twice; the second hit is within the
+	// 5-tool cooldown window and must return no reminders.
+	h.WriteCCStubScript(t, "alpha", []byte(`{
+		"text": "running two tools",
+		"tool_uses": [
+			{"name": "Bash", "input": {"command": "echo first-tool"}},
+			{"name": "Bash", "input": {"command": "echo second-tool"}}
+		]
+	}`))
+
+	pushUserMessage(t, h, "alpha", userID, "trigger cooldown gate")
+
+	// Wait for the first reminder to land, then poll for ~3s and
+	// confirm no second user_message carries the same reminder body.
+	if _, ok := waitForUserMessageContaining(t, h, "alpha", 30*time.Second, reminderBody); !ok {
+		t.Fatalf("first after-tools reminder never landed; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Quiet window: PostToolNudgeFunc fires per hook_response, so any
+	// suppression failure would re-inject within a second. 3s leaves
+	// ample slack.
+	time.Sleep(3 * time.Second)
+
+	var count int
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind != "user_message" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+			continue
+		}
+		if strings.Contains(e.TextPrefix, reminderBody) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly one after-tools reminder (cooldown=5 should suppress second tool's fire), got %d; recorder:\n%s",
+			count, recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_Nudges_AutoExtractInvocationRunsOnFirstActivity proves the
@@ -621,12 +908,35 @@ func TestL2_Nudges_CharacterDirRulesPathPreferred(t *testing.T) {
 // never built, no injection happened.
 func TestL2_Nudges_DisabledByConfigSuppressesAllInjection(t *testing.T) {
 	t.Parallel()
-	_ = testharness.HarnessOptions{ReadyTimeout: 30 * time.Second}
-	// nudge_enable defaults to true and the harness's writeTestConfig
-	// has no path for overriding it (no global [nudge] section emitted,
-	// no per-agent override exposed in HarnessOptions). The test as
-	// specified can only run with config injection support.
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject `nudge_enable=false` into either the global [nudge] table or per-agent [agents.nudge] override in writeTestConfig")
+	const userID = 7811
+	const reminderBody = "DISABLED_BY_CONFIG_MARKER_ZETA"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:          []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout:    30 * time.Second,
+		ExtraConfigTOML: "[nudge]\nnudge_enable = false\n",
+	})
+
+	seedNudgeRules(t, h, "alpha", []nudge.Rule{{
+		Text:       reminderBody,
+		SourceFile: "CRAFT.md",
+		Trigger:    nudge.Trigger{Type: "regex", Pattern: "(?i)deploy"},
+		Priority:   "high",
+	}})
+
+	pushUserMessage(t, h, "alpha", userID, "should we deploy now?")
+
+	entry, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, "should we deploy now?")
+	if !ok {
+		t.Fatalf("agent never processed message under nudge_enable=false; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if strings.Contains(entry.TextPrefix, nudgeHeaderMarker) {
+		t.Errorf("nudge_enable=false but a nudge fired anyway; text_prefix=%q", entry.TextPrefix)
+	}
+	if strings.Contains(entry.TextPrefix, reminderBody) {
+		t.Errorf("nudge_enable=false but the rule body still appeared; text_prefix=%q", entry.TextPrefix)
+	}
 }
 
 // invocationsTail summarises a slice of invocation recorderEntries for
