@@ -514,58 +514,246 @@ func TestL2_Failures_ResultMessageMissingSessionID(t *testing.T) {
 
 // TestL2_Failures_TelegramSendMessage5xxLogsAndDrops proves foci's
 // outbound sendMessage path logs a sanitized error and does NOT panic
-// when Telegram returns a 502/503. The harness extends TelegramStub
-// with InjectError(method, code) so the next sendMessage call fails;
-// foci should record the failure in stderr and continue polling for
-// new updates (the bot stays alive).
+// when Telegram returns a 502. TelegramStub.InjectErrorPersistent
+// arms a persistent 502 on sendMessage; foci's sendHTMLChunks falls
+// back from HTML to plain (also 502), then logs "send error". After
+// clearing the injection, a subsequent turn's reply lands normally,
+// proving the bot stayed alive across the failure.
 func TestL2_Failures_TelegramSendMessage5xxLogsAndDrops(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: TelegramStub has no InjectError(method, code) API. Need to add per-method fault injection to internal/testharness/telegram.go.")
+	const userID = 8401
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	// Arm the fault BEFORE pushing the message so the very first
+	// reply send hits 502. Persistent so the HTML→plain fallback
+	// also fails, guaranteeing the "send error" log fires.
+	stub.InjectErrorPersistent("sendMessage", 502, "Bad Gateway")
+
+	pushUserMessage(t, h, "alpha", userID, "first ping fails to send")
+
+	// Wait for cc-stub to process the user message (proves the turn
+	// completed and foci attempted the send under fault).
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first ping fails to send", 20*time.Second) {
+		t.Fatalf("user message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Poll for the sanitized error log. sendHTMLChunks logs
+	// "send error: ..." once both HTML and plain attempts fail.
+	if !waitForStderr(h, "send error:", 10*time.Second) {
+		t.Fatalf("expected 'send error:' in stderr after 502; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Lift the fault and confirm recovery: a fresh turn's reply
+	// lands as a recorded sendMessage with the stub-reply echo.
+	stub.ClearInjections("sendMessage")
+	pushUserMessage(t, h, "alpha", userID, "recovery ping")
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range stub.PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if json.Unmarshal(call.Body, &body) != nil {
+				continue
+			}
+			if text, _ := body["text"].(string); strings.Contains(text, "recovery ping") {
+				return // pass
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("never received a sendMessage with recovery echo; sent calls:\n%s\nstderr:\n%s",
+		sentCallsTail(stub, token), stderrTail(h.Stderr()))
 }
 
-// TestL2_Failures_TelegramSendMessage429SurfacesRateLimit proves foci
-// distinguishes Telegram's 429 (rate limited, retry_after present)
-// from generic 5xx. The stub returns
-// `{"ok":false,"error_code":429,"parameters":{"retry_after":2}}` on
-// the next sendMessage; foci should log the rate-limit condition and
-// not retry within the retry_after window. After the window, a
-// subsequent send goes through.
+// TestL2_Failures_TelegramSendMessage429RecoversAfterRetryWindow
+// proves foci tolerates a Telegram 429 with retry_after and recovers
+// on a subsequent send. NOTE on premise: foci's bot_send.go has no
+// 429-specific path — sanitizeError treats it as any other error.
+// What this test actually asserts is the durability surface: a 429
+// response is logged via sanitizeError, the gateway stays alive, and
+// the next reply (after the injected fault is consumed) lands. The
+// original "distinguishes 429 from 5xx with retry_after backoff" was
+// a wrong premise (no such code path exists in foci).
 func TestL2_Failures_TelegramSendMessage429SurfacesRateLimit(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: TelegramStub can't return synthetic 429 responses with retry_after. Need fault-injection extension to internal/testharness/telegram.go.")
+	const userID = 8402
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	// Inject 429 with retry_after=1. Two one-shots so both the
+	// HTML attempt and the plain fallback (in sendHTMLChunks) get
+	// the same response — driving the failure log path.
+	stub.Inject429("sendMessage", 1)
+	stub.Inject429("sendMessage", 1)
+
+	pushUserMessage(t, h, "alpha", userID, "rate-limit probe")
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "rate-limit probe", 20*time.Second) {
+		t.Fatalf("user message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// foci logs the sanitized error from a 429 the same way as any
+	// other send failure. We just confirm the error surfaces.
+	if !waitForStderr(h, "send error:", 10*time.Second) {
+		t.Fatalf("expected 'send error:' for 429 response; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Recovery: the two one-shots are now drained. A subsequent
+	// reply should land normally without explicit ClearInjections.
+	pushUserMessage(t, h, "alpha", userID, "post-429-recovery")
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range stub.PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if json.Unmarshal(call.Body, &body) != nil {
+				continue
+			}
+			if text, _ := body["text"].(string); strings.Contains(text, "post-429-recovery") {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("never received post-429 recovery sendMessage; sent calls:\n%s\nstderr:\n%s",
+		sentCallsTail(stub, token), stderrTail(h.Stderr()))
 }
 
 // TestL2_Failures_TelegramGetUpdatesConnectionDropReconnects proves
 // foci's polling loop in bot_poll.go recovers from a connection drop
-// mid-long-poll. The stub closes the connection after 100ms on the
-// next getUpdates; foci's consecutiveErrors counter should increment,
-// stay below the errorEscalateThreshold for a few cycles, then succeed
-// once the stub stops injecting. A Telegram message sent after recovery
-// must process — proving the bot didn't permanently wedge.
+// mid-long-poll. The stub hijacks and closes the conn on the next
+// few getUpdates; foci's consecutiveErrors counter increments below
+// the errorEscalateThreshold (5), the per-error sleep advances, and
+// when injection clears the loop succeeds. A Telegram update after
+// recovery must process — proving the bot didn't permanently wedge.
 func TestL2_Failures_TelegramGetUpdatesConnectionDropReconnects(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: TelegramStub can't drop connections mid-request. Need a fault-injection hook (e.g. CloseOnNextGetUpdates) in internal/testharness/telegram.go.")
+	const userID = 8403
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+
+	// Three conn drops — stays below escalate threshold (5). Each
+	// drop causes a 3s sleep in foci's poll loop, so the drops are
+	// consumed across ~9 seconds.
+	stub.InjectConnDrop("getUpdates", 3)
+
+	// Wait until the drops have been consumed by polling the stub's
+	// recorded calls: each getUpdates call records a SentCall, even
+	// when the response is faulted.
+	if !waitForGetUpdatesCount(stub, h.AgentBotToken("alpha"), 3, 30*time.Second) {
+		t.Fatalf("expected at least 3 getUpdates after conn drops; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Push a message AFTER drops are drained (queue is empty now).
+	pushUserMessage(t, h, "alpha", userID, "after-conn-drops")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after-conn-drops", 30*time.Second) {
+		t.Fatalf("post-recovery message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog proves
 // foci escalates the get-updates failure log from Debug to Error after
 // errorEscalateThreshold (5) consecutive failures. The stub returns
-// 502 to every getUpdates call; the test reads stderr and asserts that
-// the "5 consecutive failures" line is present. Recovery: stop the
-// injection and confirm polling resumes.
+// 502 to every getUpdates call until cleared; the test polls stderr
+// for the "5 consecutive failures" line. Per-method fault scope means
+// getMe stays clean, so the gateway came ready normally.
 func TestL2_Failures_TelegramGetUpdatesPersistent5xxEscalatesLog(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: TelegramStub can't return persistent 5xx on getUpdates without extension; also the stub serves getMe with the same handler, and a 5xx there would prevent the gateway from coming ready. Need a per-method fault hook with a method allowlist.")
+	const userID = 8404
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+
+	// 5 errors × 3s sleep = ~15s before the escalate log. Give a
+	// generous 30s budget. Persistent so the consecutive counter
+	// doesn't reset before threshold.
+	stub.InjectErrorPersistent("getUpdates", 502, "Bad Gateway")
+	defer stub.ClearInjections("getUpdates")
+
+	if !waitForStderr(h, "consecutive failures", 30*time.Second) {
+		t.Fatalf("expected 'consecutive failures' escalate log after 5x 502; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Lift the fault and confirm a fresh message processes — the
+	// poll loop should resume cleanly once getUpdates returns 200.
+	stub.ClearInjections("getUpdates")
+	pushUserMessage(t, h, "alpha", userID, "after-escalate-recovery")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after-escalate-recovery", 30*time.Second) {
+		t.Fatalf("post-escalate message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Failures_TelegramSendMessageMalformedJSONResponse proves
 // foci tolerates a Telegram response whose body isn't `{"ok":...}` —
-// e.g. a CDN error page intercepted between bot and stub. The stub is
-// extended to return `<html>...</html>` with HTTP 200; foci should log
-// the parse error via sanitizeError and continue polling.
+// e.g. a CDN error page intercepted between bot and stub. The stub
+// returns `<html>...</html>` with HTTP 200; foci's gotgbot client
+// fails to parse it as the expected Message schema, sendHTMLChunks
+// retries as plain (same parse failure), logs "send error", and
+// continues polling. A subsequent reply after clearing the
+// injection lands normally.
 func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: TelegramStub has no per-method body override hook. Need an InjectBody(method, raw) API in internal/testharness/telegram.go.")
+	const userID = 8405
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	// Two malformed-body injections to cover the HTML→plain
+	// fallback inside sendHTMLChunks.
+	stub.InjectBody("sendMessage", []byte("<html><body>cdn error</body></html>"), "text/html", 200)
+	stub.InjectBody("sendMessage", []byte("<html><body>cdn error</body></html>"), "text/html", 200)
+
+	pushUserMessage(t, h, "alpha", userID, "malformed-response-probe")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "malformed-response-probe", 20*time.Second) {
+		t.Fatalf("user message never reached cc-stub; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	if !waitForStderr(h, "send error:", 10*time.Second) {
+		t.Fatalf("expected 'send error:' for malformed JSON; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Recovery
+	stub.ClearInjections("sendMessage")
+	pushUserMessage(t, h, "alpha", userID, "after-malformed-recovery")
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range stub.PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if json.Unmarshal(call.Body, &body) != nil {
+				continue
+			}
+			if text, _ := body["text"].(string); strings.Contains(text, "after-malformed-recovery") {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("never received post-malformed recovery sendMessage; sent calls:\n%s\nstderr:\n%s",
+		sentCallsTail(stub, token), stderrTail(h.Stderr()))
 }
 
 // TestL2_Failures_TelegramUnknownTokenReceives404 proves the stub's
