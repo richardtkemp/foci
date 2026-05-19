@@ -2,9 +2,12 @@ package telegram
 
 import (
 	"context"
+	"strings"
+	"sync"
 	"testing"
 
 	"foci/internal/command"
+	"foci/internal/log"
 )
 
 func TestReceiveMessage_RejectsUnauthorizedUser(t *testing.T) {
@@ -42,6 +45,58 @@ func TestReceiveMessage_AcceptsAuthorizedUser(t *testing.T) {
 	}
 	if qm.UserID != "111" {
 		t.Errorf("queued userID = %q, want %q", qm.UserID, "111")
+	}
+}
+
+// TestReceiveMessage_LogsWarnOnRejection verifies that rejecting an
+// unauthorized message emits a WARN log line including the user ID and
+// username via formatUserInfo. The WARN surface is what operators see
+// when strangers find a bot — this test guards its presence and shape.
+func TestReceiveMessage_LogsWarnOnRejection(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		entries []struct {
+			level     log.Level
+			component string
+			msg       string
+		}
+	)
+	log.SetWarnHook(func(level log.Level, component, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		entries = append(entries, struct {
+			level     log.Level
+			component string
+			msg       string
+		}{level, component, msg})
+	})
+	t.Cleanup(func() { log.SetWarnHook(nil) })
+
+	b, _ := testBot([]string{"111"}, command.NewRegistry())
+
+	msg := makeMsg(999, "hacker", "hello")
+	b.receiveMessage(context.Background(), msg)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var found bool
+	for _, e := range entries {
+		if e.level != log.WARN {
+			continue
+		}
+		if !strings.HasPrefix(e.component, "telegram:") {
+			continue
+		}
+		if strings.Contains(e.msg, "rejected message from") &&
+			strings.Contains(e.msg, "999") &&
+			strings.Contains(e.msg, "hacker") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected WARN log with component telegram:* and rejection message containing user ID + username; got %+v", entries)
 	}
 }
 
