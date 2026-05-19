@@ -81,6 +81,7 @@ type Bot struct {
 	OnTurnComplete     func()                            // fires after each agent turn completes (for cache warming tracking)
 	OnTurnEnd          func()                            // fires after turn's final message is sent and cleanup is done
 	botToken           string                            // for building file download URLs
+	apiBase            string                            // override for /file/bot<token>/<path> base URL ("" = api.telegram.org)
 
 	transcriber voice.STT // nil = voice notes not supported
 	tts         voice.TTS // nil = TTS not available
@@ -257,6 +258,7 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		allowedUsers: allowed,
 		agentID:      agentID,
 		botToken:     token,
+		apiBase:      apiBase,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,

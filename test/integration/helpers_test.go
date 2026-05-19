@@ -26,6 +26,32 @@ func waitForStderr(h *testharness.Harness, substr string, timeout time.Duration)
 	return strings.Contains(h.Stderr(), substr)
 }
 
+// hasBlockType reports whether want appears anywhere in the recorded
+// content-block types list. Tiny helper kept here so attachment tests
+// don't redefine it.
+func hasBlockType(types []string, want string) bool {
+	for _, t := range types {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// hasNonTextBlock reports whether the recorded content-block list
+// contains any block that is NOT a plain "text" block. Used by
+// attachment tests where the exact non-text type ("image", "document",
+// etc.) is implementation-dependent but presence-of-any-non-text is
+// the structural contract.
+func hasNonTextBlock(types []string) bool {
+	for _, t := range types {
+		if t != "text" {
+			return true
+		}
+	}
+	return false
+}
+
 // waitForGetUpdatesCount polls the TelegramStub until at least n
 // getUpdates calls have been recorded for the given token. Used for
 // pacing assertions where the test needs to wait for fault-injection
@@ -86,6 +112,10 @@ type recorderEntry struct {
 	PID              int             `json:"pid,omitempty"`
 	SessionID        string          `json:"session_id,omitempty"`
 	TextPrefix       string          `json:"text_prefix,omitempty"`
+	// ContentBlockTypes — per-block "type" values from the user envelope
+	// (e.g. ["text", "image"]). Populated by cc-stub for structured
+	// content; empty when the user payload is a flat string.
+	ContentBlockTypes []string `json:"content_block_types,omitempty"`
 	ControlRequestID string          `json:"control_request_id,omitempty"`
 	OutboundToolName string          `json:"outbound_tool_name,omitempty"`
 	ControlResponse  json.RawMessage `json:"control_response,omitempty"`

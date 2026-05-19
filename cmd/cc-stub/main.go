@@ -219,6 +219,12 @@ type recorderEntry struct {
 	// user_message-only
 	SessionID  string `json:"session_id,omitempty"`
 	TextPrefix string `json:"text_prefix,omitempty"`
+	// ContentBlockTypes captures every block type observed in the user
+	// envelope's content array (e.g. ["text", "image"] for a photo with
+	// caption). Empty when content was a flat string. Used by attachment
+	// tests to assert foci forwarded a non-text block alongside the
+	// caption.
+	ContentBlockTypes []string `json:"content_block_types,omitempty"`
 
 	// permission_request / control_response shared
 	ControlRequestID string          `json:"control_request_id,omitempty"`
@@ -456,8 +462,8 @@ func main() {
 		}
 		switch env["type"] {
 		case "user":
-			userText := extractUserText(env)
-			recordUserMessage(sessionID, userText)
+			userText, blockTypes := extractUserContent(env)
+			recordUserMessage(sessionID, userText, blockTypes)
 			// CCSTUB_PANIC_ON_USER_MESSAGE: simulate a crashing CC.
 			// Writes a Go-style panic preamble to stderr (foci's reader
 			// surfaces a tail of stderr in the error log) before exiting
@@ -790,25 +796,41 @@ func extractInitSystemPrompt(env map[string]any) (string, string) {
 // for the common case and `{"role":"user","content":[<blocks>]}` for
 // structured content. The stub handles both shapes.
 func extractUserText(env map[string]any) string {
+	text, _ := extractUserContent(env)
+	return text
+}
+
+// extractUserContent returns both the flattened text and the list of
+// content block types observed. For flat-string content, blockTypes is
+// nil. For structured content, every block's "type" field is captured.
+// Tests use blockTypes to assert attachment presence (e.g. "image" for
+// a photo, "document" for a PDF).
+func extractUserContent(env map[string]any) (string, []string) {
 	msg, ok := env["message"].(map[string]any)
 	if !ok {
-		return ""
+		return "", nil
 	}
 	switch v := msg["content"].(type) {
 	case string:
-		return v
+		return v, nil
 	case []any:
 		var sb strings.Builder
+		var types []string
 		for _, b := range v {
-			if m, ok := b.(map[string]any); ok {
-				if t, ok := m["text"].(string); ok {
-					sb.WriteString(t)
-				}
+			m, ok := b.(map[string]any)
+			if !ok {
+				continue
+			}
+			if bt, ok := m["type"].(string); ok {
+				types = append(types, bt)
+			}
+			if t, ok := m["text"].(string); ok {
+				sb.WriteString(t)
 			}
 		}
-		return sb.String()
+		return sb.String(), types
 	}
-	return ""
+	return "", nil
 }
 
 // recordInvocation appends one JSONL line tagged kind="invocation" to
@@ -883,7 +905,11 @@ func recordInitSystem(systemPrompt, appendSystemPrompt string) {
 // the per-turn signal the cross-agent regression test asserts on — the
 // invocation-only recorder couldn't distinguish between turns inside a
 // long-lived CC process.
-func recordUserMessage(sessionID, text string) {
+//
+// blockTypes is the list of content-block types observed in the user
+// envelope (e.g. ["text", "image"] for a photo + caption). Empty for
+// flat-string content; populated only when the user payload is structured.
+func recordUserMessage(sessionID, text string, blockTypes []string) {
 	wd, _ := os.Getwd()
 	prefix := text
 	// send_to_session prepends a ~600-char SYSTEM INJECTION context
@@ -893,11 +919,12 @@ func recordUserMessage(sessionID, text string) {
 		prefix = prefix[:2000]
 	}
 	writeRecorder(recorderEntry{
-		Kind:       "user_message",
-		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
-		Workdir:    wd,
-		SessionID:  sessionID,
-		TextPrefix: prefix,
+		Kind:              "user_message",
+		Timestamp:         time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:           wd,
+		SessionID:         sessionID,
+		TextPrefix:        prefix,
+		ContentBlockTypes: blockTypes,
 	})
 }
 
