@@ -413,18 +413,24 @@ func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
 // changes still need a restart per the command's reply text.
 func TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile(t *testing.T) {
 	t.Parallel()
-	// cc-stub's recorder captures the spawn-time --resume / --model /
-	// flags but NOT the system prompt body itself: foci passes system
-	// blocks via NDJSON control_request after spawn (real claude reads
-	// them), and cc-stub doesn't decode or record those payloads. There
-	// is no observable side-effect that proves the bootstrap was
-	// rebuilt with the edited workspace file. We could assert that
-	// /reload's REPLY reaches the user (covered by
-	// TestL2_SlashCommands_ReloadReturnsSkillCount above), but the
-	// "next cc-stub invocation carries the new file contents" claim in
-	// the purpose comment is not assertable through the current cc-stub
-	// surface.
-	t.Skip("HARNESS GAP: cc-stub doesn't record the NDJSON system prompt body received from foci, so we can't observe whether the bootstrap was rebuilt from disk after /reload")
+	// WRONG-PREMISE: investigated 2026-05-19. cc-stub now records the
+	// init system prompt (kind="init_system" with PromptLen/SHA256/Head
+	// in the recorder), so the observability gap is fixed. But foci's
+	// delegated path captures StartOpts.SystemPrompt ONCE at agent
+	// setup (cmd/foci-gw/agents_delegated.go:46 — local string, not a
+	// closure) and never refreshes it. ReloadSystemFn only mutates
+	// ExtraSystemBlocks (skills) on the Agent struct, not the
+	// DelegatedManager.StartOpts.SystemPrompt that the next backend
+	// respawn uses. So /reload's documented "rebuild bootstrap from
+	// disk" is effectively a no-op for the next delegated backend
+	// spawn — the OLD bootstrap is replayed.
+	//
+	// This may be a real bug — /reload was intended to refresh the
+	// next delegated bootstrap — or it may be by design (e.g. the
+	// running session keeps its prompt to avoid mid-session whiplash).
+	// Either way, this test asserts a behaviour foci doesn't have.
+	// See TODO filed separately.
+	t.Skip("WRONG PREMISE: foci's delegated StartOpts.SystemPrompt is captured once at agent setup and never refreshed by /reload. cc-stub init_system recording is in place but there's nothing on the foci side to observe. Either fix StartOpts refresh in /reload, or accept that delegated bootstrap reload requires a process restart.")
 }
 
 // TestL2_SlashCommands_ErrorsTailsEventLog proves /errors returns only

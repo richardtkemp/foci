@@ -62,6 +62,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -191,6 +193,10 @@ type stubScript struct {
 //     (the answer to a can_use_tool request); captures the full inner
 //     payload (behavior / message / decisionClassification / updatedPermissions)
 //     so tests can assert on whatever they need.
+//   Kind="init_system" — captures the system_prompt + appendSystemPrompt
+//     foci sent on the initialize control_request, recorded once per
+//     subprocess at handshake. Tests can assert system-prompt rebuilds
+//     after /reload by comparing PromptLen + PromptSHA256 across spawns.
 //
 // Tests read the JSONL file, group by kind, and assert structurally.
 type recorderEntry struct {
@@ -217,6 +223,17 @@ type recorderEntry struct {
 	// Stored as raw JSON so tests can pick fields without coupling to the stub's
 	// view of the schema.
 	ControlResponse  json.RawMessage `json:"control_response,omitempty"`
+
+	// init_system only — system prompt observed on the initialize
+	// control_request. Stored as length + sha256-hex so tests can detect
+	// changes without persisting the (possibly large) prompt verbatim.
+	// Also keep a short head prefix (first 256 chars) for human-readable
+	// diffing in failure messages.
+	PromptLen    int    `json:"prompt_len,omitempty"`
+	PromptSHA256 string `json:"prompt_sha256,omitempty"`
+	PromptHead   string `json:"prompt_head,omitempty"`
+	AppendLen    int    `json:"append_len,omitempty"`
+	AppendSHA256 string `json:"append_sha256,omitempty"`
 }
 
 func main() {
@@ -346,6 +363,11 @@ func main() {
 				"session_id": sessionID,
 			},
 		})
+		// Record system prompt at handshake. Tests use this to assert
+		// the bootstrap was rebuilt from disk (e.g. /reload after a
+		// workspace file edit produces a different prompt sha256).
+		sp, asp := extractInitSystemPrompt(first)
+		recordInitSystem(sp, asp)
 	}
 	emit(out, map[string]any{
 		"type":       "system",
@@ -719,6 +741,25 @@ func extractInitRequestID(env map[string]any) (string, bool) {
 	return reqID, true
 }
 
+// extractInitSystemPrompt pulls the (systemPrompt, appendSystemPrompt)
+// strings out of an initialize control_request envelope. Returns empty
+// strings if the envelope isn't an initialize or the fields are absent.
+func extractInitSystemPrompt(env map[string]any) (string, string) {
+	if env["type"] != "control_request" {
+		return "", ""
+	}
+	req, ok := env["request"].(map[string]any)
+	if !ok {
+		return "", ""
+	}
+	if req["subtype"] != "initialize" {
+		return "", ""
+	}
+	sp, _ := req["systemPrompt"].(string)
+	asp, _ := req["appendSystemPrompt"].(string)
+	return sp, asp
+}
+
 // extractUserText pulls the text body out of a `{"type":"user", ...}` envelope.
 // Foci's UserPayload.MarshalJSON emits `{"role":"user","content":"<string>"}`
 // for the common case and `{"role":"user","content":[<blocks>]}` for
@@ -758,6 +799,30 @@ func recordInvocation(resume, model string) {
 		Model:     model,
 		Flags:     os.Args[1:],
 		PID:       os.Getpid(),
+	})
+}
+
+// recordInitSystem appends one JSONL line tagged kind="init_system"
+// capturing the system prompts foci sent on the initialize control_request.
+// Prompts can be large (multi-KB character files); store length + sha256
+// + a 256-char head for human-readable diffing.
+func recordInitSystem(systemPrompt, appendSystemPrompt string) {
+	wd, _ := os.Getwd()
+	head := systemPrompt
+	if len(head) > 256 {
+		head = head[:256]
+	}
+	hSys := sha256.Sum256([]byte(systemPrompt))
+	hApp := sha256.Sum256([]byte(appendSystemPrompt))
+	writeRecorder(recorderEntry{
+		Kind:         "init_system",
+		Timestamp:    time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:      wd,
+		PromptLen:    len(systemPrompt),
+		PromptSHA256: hex.EncodeToString(hSys[:]),
+		PromptHead:   head,
+		AppendLen:    len(appendSystemPrompt),
+		AppendSHA256: hex.EncodeToString(hApp[:]),
 	})
 }
 
