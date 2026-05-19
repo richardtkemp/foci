@@ -7,9 +7,46 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/testharness"
 )
+
+// waitForStderr polls the harness stderr until it contains substr or
+// the timeout expires. Returns true on hit. Used for assertions about
+// foci's log surface (escalate lines, sanitized error messages).
+func waitForStderr(h *testharness.Harness, substr string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Contains(h.Stderr(), substr) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return strings.Contains(h.Stderr(), substr)
+}
+
+// waitForGetUpdatesCount polls the TelegramStub until at least n
+// getUpdates calls have been recorded for the given token. Used for
+// pacing assertions where the test needs to wait for fault-injection
+// drains rather than for an external response. PeekSent doesn't drain,
+// so the count is monotonic.
+func waitForGetUpdatesCount(stub *testharness.TelegramStub, token string, n int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		count := 0
+		for _, c := range stub.PeekSent(token) {
+			if c.Method == "getUpdates" {
+				count++
+			}
+		}
+		if count >= n {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
+}
 
 // harnessTempDir returns the harness's temp-dir root. Kept as a
 // thin wrapper around the public accessor so older test sites don't
