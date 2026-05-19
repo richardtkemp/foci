@@ -197,6 +197,12 @@ type stubScript struct {
 //     foci sent on the initialize control_request, recorded once per
 //     subprocess at handshake. Tests can assert system-prompt rebuilds
 //     after /reload by comparing PromptLen + PromptSHA256 across spawns.
+//   Kind="bash_tool_use" — captures the Bash command + output + is_error
+//     for every Bash tool_use cc-stub executed inline. Tests use this to
+//     observe what `foci_*` shell functions returned (e.g. memory_search
+//     results, secret-template resolved values) without depending on
+//     foci's tool_result re-injection (which is CC-internal and not
+//     observable in foci's stdout).
 //
 // Tests read the JSONL file, group by kind, and assert structurally.
 type recorderEntry struct {
@@ -234,6 +240,18 @@ type recorderEntry struct {
 	PromptHead   string `json:"prompt_head,omitempty"`
 	AppendLen    int    `json:"append_len,omitempty"`
 	AppendSHA256 string `json:"append_sha256,omitempty"`
+
+	// bash_tool_use only — Bash tool_use observability. ToolUseID,
+	// BashCommand, and BashOutput let tests assert on what foci's exec
+	// bridge returned (memory_search hits, secret template resolution,
+	// etc.) without relying on foci's tool_result re-injection (which
+	// happens internally in real CC and is not observable in stdout).
+	// IsError mirrors the cc-stub's is_error decision (bash non-zero
+	// exit).
+	ToolUseID   string `json:"tool_use_id,omitempty"`
+	BashCommand string `json:"bash_command,omitempty"`
+	BashOutput  string `json:"bash_output,omitempty"`
+	IsError     bool   `json:"is_error,omitempty"`
 }
 
 func main() {
@@ -539,12 +557,19 @@ func main() {
 					// commands itself. Other tool types are emitted but
 					// not executed — tests can extend this when needed.
 					if tu.Name == "Bash" {
+						res := runBashToolUse(tu.Input)
 						bashRuns = append(bashRuns, bashRun{
 							toolUseID: id,
 							toolName:  tu.Name,
 							toolInput: tu.Input,
-							result:    runBashToolUse(tu.Input),
+							result:    res,
 						})
+						// Record so tests can assert on what foci's exec
+						// bridge returned (memory_search hits, secret
+						// resolution, etc.). Pull the literal command string
+						// out of tu.Input for the recorder entry.
+						cmd, _ := tu.Input["command"].(string)
+						recordBashToolUse(id, cmd, res.Output, res.IsError)
 					}
 				}
 			}
@@ -799,6 +824,33 @@ func recordInvocation(resume, model string) {
 		Model:     model,
 		Flags:     os.Args[1:],
 		PID:       os.Getpid(),
+	})
+}
+
+// recordBashToolUse appends one JSONL line tagged kind="bash_tool_use"
+// for every Bash command cc-stub ran inline. Captures the command and
+// the combined-stdout-and-stderr output so tests can assert on what
+// foci's exec bridge returned. Output is truncated to 4 KiB so the
+// recorder file stays manageable when foci_memory_search returns a
+// large hit list.
+func recordBashToolUse(toolUseID, command, output string, isError bool) {
+	wd, _ := os.Getwd()
+	out := output
+	if len(out) > 4096 {
+		out = out[:4096]
+	}
+	cmd := command
+	if len(cmd) > 1024 {
+		cmd = cmd[:1024]
+	}
+	writeRecorder(recorderEntry{
+		Kind:        "bash_tool_use",
+		Timestamp:   time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:     wd,
+		ToolUseID:   toolUseID,
+		BashCommand: cmd,
+		BashOutput:  out,
+		IsError:     isError,
 	})
 }
 
