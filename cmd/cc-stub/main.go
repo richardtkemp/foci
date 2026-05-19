@@ -136,6 +136,43 @@ type stubScript struct {
 	// internal injections produce assistant text outside any foci-side
 	// user message — exercising the session router's late-delivery path.
 	LateText string `json:"late_text,omitempty"`
+
+	// RawLinesBeforeAssistant are literal NDJSON lines written verbatim
+	// to stdout BEFORE the assistant envelope, after the user message is
+	// consumed. Use to inject malformed lines, unparseable bytes, or
+	// hand-crafted envelopes that don't fit the structured ExtraEnvelopes
+	// shape (e.g. truncated JSON like `{not json` for malformed-stream
+	// tests). No newline is appended — entries should already include
+	// `\n` if they're meant to terminate a line.
+	RawLinesBeforeAssistant []string `json:"raw_lines_before_assistant,omitempty"`
+
+	// ExtraEnvelopes are arbitrary JSON envelopes emitted between any
+	// pre-assistant scripted output and the main assistant envelope. Each
+	// is marshalled and written as one NDJSON line. Use to test foci's
+	// tolerance for unknown envelope types: e.g.
+	// {"type":"unknown_future_type","payload":{"k":"v"}}.
+	ExtraEnvelopes []map[string]any `json:"extra_envelopes,omitempty"`
+
+	// OmitContent, when true, suppresses the content array on the
+	// assistant envelope (no text, no tool_uses). Foci should treat
+	// the missing/empty content as a no-op assistant message and still
+	// finalize the turn cleanly via the result envelope. Used to test
+	// the empty-content tolerance path.
+	OmitContent bool `json:"omit_content,omitempty"`
+
+	// OmitSessionIDInResult, when true, drops the session_id field from
+	// the result envelope. Foci should tolerate (warn, not crash) and
+	// fall back to the session_id from the init envelope. Used to test
+	// session-id resilience on the result path.
+	OmitSessionIDInResult bool `json:"omit_session_id_in_result,omitempty"`
+
+	// SleepMs, when > 0, sleeps the cc-stub for that many ms between
+	// the user-message consumption and the first assistant envelope.
+	// Distinct from CCSTUB_HANG_DURING_TURN (which sleeps AFTER the
+	// assistant envelope): SleepMs delays the FIRST output of a turn,
+	// matching the stall-detector test premise (init succeeded, no
+	// progress past init).
+	SleepMs int `json:"sleep_ms,omitempty"`
 }
 
 // recorderEntry is one line written to the recorder file. Two event
@@ -383,6 +420,28 @@ func main() {
 				// without needing to set the env var.
 				reply = "stub-reply: " + userText
 			}
+			// Scripted raw-lines / extra envelopes / sleep land BEFORE
+			// any other pre-assistant emission. RawLinesBeforeAssistant is
+			// written verbatim (use for malformed JSON); ExtraEnvelopes is
+			// marshalled per-line (use for unknown type fields). SleepMs
+			// gates progress past init for stall-detector tests.
+			if script != nil {
+				for _, raw := range script.RawLinesBeforeAssistant {
+					out.WriteString(raw)
+				}
+				if len(script.RawLinesBeforeAssistant) > 0 {
+					out.Flush()
+				}
+				for _, env := range script.ExtraEnvelopes {
+					emit(out, env)
+				}
+				if len(script.ExtraEnvelopes) > 0 {
+					out.Flush()
+				}
+				if script.SleepMs > 0 {
+					time.Sleep(time.Duration(script.SleepMs) * time.Millisecond)
+				}
+			}
 			// Pre-emit intermediate-text assistant messages. Each entry
 			// becomes its own assistant envelope before the main one, all
 			// within the same turn (no result envelope between them).
@@ -450,12 +509,19 @@ func main() {
 					}
 				}
 			}
+			assistantMsg := map[string]any{
+				"role":    "assistant",
+				"content": content,
+			}
+			// OmitContent: drop the content key entirely (foci should
+			// treat as empty rather than panicking on a missing/null
+			// content array).
+			if script != nil && script.OmitContent {
+				delete(assistantMsg, "content")
+			}
 			emit(out, map[string]any{
-				"type": "assistant",
-				"message": map[string]any{
-					"role":    "assistant",
-					"content": content,
-				},
+				"type":       "assistant",
+				"message":    assistantMsg,
 				"session_id": sessionID,
 			})
 			out.Flush()
@@ -485,15 +551,21 @@ func main() {
 					out.Flush()
 				}
 			}
-			emit(out, map[string]any{
-				"type":       "result",
-				"result":     reply,
-				"session_id": sessionID,
+			resultEnv := map[string]any{
+				"type":   "result",
+				"result": reply,
 				"usage": map[string]any{
 					"input_tokens":  0,
 					"output_tokens": 0,
 				},
-			})
+			}
+			// OmitSessionIDInResult: drop the session_id key on result
+			// envelopes. Foci must tolerate (log+warn, not crash) and
+			// fall back to the init envelope's session_id.
+			if script == nil || !script.OmitSessionIDInResult {
+				resultEnv["session_id"] = sessionID
+			}
+			emit(out, resultEnv)
 			out.Flush()
 			// Emit any scripted can_use_tool control_requests AFTER the
 			// assistant + result envelopes. Foci processes them on its

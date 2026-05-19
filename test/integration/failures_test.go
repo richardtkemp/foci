@@ -216,7 +216,18 @@ func TestL2_Failures_BackendHangsBeforeReady(t *testing.T) {
 // normally — proving the stall path is recoverable.
 func TestL2_Failures_BackendHangsDuringTurn(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub's CCSTUB_HANG sleeps before the handshake, not between init and result. Need a new CCSTUB_HANG_DURING_TURN or per-turn delay flag.")
+	// WRONG-PREMISE skip. The cc-stub side is now scriptable
+	// (CCSTUB_HANG_DURING_TURN sleeps post-assistant; SleepMs script
+	// field sleeps pre-assistant), but foci's streamIdleTimeout is set
+	// to 24 hours (see internal/agent/turn_orchestrator.go const
+	// streamIdleTimeout). There is no sub-minute turn-stall detector
+	// to fire on. To test this we'd need either (a) a configurable
+	// per-agent stall threshold (would be invasive — the 24h value is
+	// a deliberate choice to avoid false warnings during long
+	// permission waits), or (b) to redefine the test to assert a
+	// different recovery surface (e.g. /reset cancels the in-flight
+	// turn — already covered by ResetHardCancelsInflightTurn).
+	t.Skip("WRONG PREMISE: foci has no sub-minute turn-stall detector. streamIdleTimeout is 24h by design (avoids false warnings during long permission waits). Covered indirectly by TestL2_SlashCommands_ResetHardCancelsInflightTurn.")
 }
 
 // TestL2_Failures_BackendKilledMidTurnByGateway proves Close()'s
@@ -243,7 +254,48 @@ func TestL2_Failures_BackendKilledMidTurnByGateway(t *testing.T) {
 // dead so the next user message triggers a clean relaunch.
 func TestL2_Failures_MalformedJSONLineSurfacesError(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub has no scripting hook to inject a raw malformed NDJSON line. Need a script field like 'raw_lines_before_assistant' or a CCSTUB_INJECT_MALFORMED env.")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 1101},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Script a raw malformed line (truncated JSON) emitted before the
+	// assistant envelope. ccstream's NDJSON reader should fail to parse,
+	// surface an error via OnReaderStopped, mark the backend dead, and
+	// the next user message must trigger a clean relaunch.
+	scriptBody, err := json.Marshal(map[string]any{
+		"raw_lines_before_assistant": []string{"{not json\n"},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	send := func(text string) {
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: 1101, Type: "private"},
+				From: &gotgbot.User{Id: 1101, FirstName: "Tester"},
+				Text: text,
+			},
+		})
+	}
+
+	send("trigger malformed line")
+	// Give foci time to receive the malformed line, surface the parse
+	// error, and tear down the backend.
+	time.Sleep(3 * time.Second)
+
+	// Recovery: next message must process normally. cc-stub's script is
+	// one-shot so the next turn defaults to the small echo reply.
+	send("recovery message")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "recovery message", 20*time.Second) {
+		t.Fatalf("agent did not recover after malformed JSON line\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Failures_UnknownEnvelopeTypeIgnored proves foci tolerates
@@ -254,7 +306,45 @@ func TestL2_Failures_MalformedJSONLineSurfacesError(t *testing.T) {
 // the turn complete normally. Negative: no error reaches the user.
 func TestL2_Failures_UnknownEnvelopeTypeIgnored(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub has no scripting hook to inject arbitrary envelopes with custom 'type' fields. Need a script field for extra envelope blocks.")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 1102},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Inject an envelope with a type field foci doesn't know about.
+	// Foci's ccstream switch on env.Type should log+skip rather than
+	// abort the turn. The normal assistant + result envelopes follow.
+	scriptBody, err := json.Marshal(map[string]any{
+		"extra_envelopes": []map[string]any{
+			{
+				"type":    "unknown_future_type",
+				"payload": map[string]any{"foo": "bar"},
+			},
+		},
+		"text": "stub-reply: ok",
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 1102, Type: "private"},
+			From: &gotgbot.User{Id: 1102, FirstName: "Tester"},
+			Text: "send with unknown envelope",
+		},
+	})
+
+	// The turn must complete normally: a user_message entry lands in
+	// the recorder with our text.
+	if !waitForUserMessage(t, h, "workspaces/alpha", "send with unknown envelope", 20*time.Second) {
+		t.Fatalf("turn did not complete after unknown envelope type\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Failures_OversizedJSONLineRejected proves foci's 1MB
@@ -321,7 +411,47 @@ func TestL2_Failures_OversizedJSONLineRejected(t *testing.T) {
 // processes normally.
 func TestL2_Failures_AssistantMessageMissingContent(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub always emits a content array with a text block (default echo or scripted text). No script flag suppresses content. Need 'omit_content' on stubScript or a dedicated CCSTUB_EMPTY_CONTENT env.")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 1103},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Script an assistant envelope with no content array. Foci must
+	// finalize the turn cleanly (the result envelope still arrives)
+	// and the next message must process normally.
+	scriptBody, err := json.Marshal(map[string]any{
+		"omit_content": true,
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	send := func(text string) {
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: 1103, Type: "private"},
+				From: &gotgbot.User{Id: 1103, FirstName: "Tester"},
+				Text: text,
+			},
+		})
+	}
+
+	send("first turn no content")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first turn no content", 20*time.Second) {
+		t.Fatalf("first turn did not complete\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Next turn defaults to echo reply (script is one-shot).
+	send("second turn after empty")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second turn after empty", 20*time.Second) {
+		t.Fatalf("agent did not process second turn\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Failures_ResultMessageMissingSessionID proves foci doesn't
@@ -332,7 +462,50 @@ func TestL2_Failures_AssistantMessageMissingContent(t *testing.T) {
 // one for resume purposes.
 func TestL2_Failures_ResultMessageMissingSessionID(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub unconditionally sets session_id on result envelopes. Need a script flag or env to suppress it.")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 1104},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Script the result envelope to drop session_id. Foci should fall
+	// back to the session_id from the prior init envelope and close the
+	// turn cleanly. Negative: next message must still process normally.
+	scriptBody, err := json.Marshal(map[string]any{
+		"omit_session_id_in_result": true,
+		"text":                      "stub-reply: ok",
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	send := func(text string) {
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: 1104, Type: "private"},
+				From: &gotgbot.User{Id: 1104, FirstName: "Tester"},
+				Text: text,
+			},
+		})
+	}
+
+	send("first turn no session_id")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first turn no session_id", 20*time.Second) {
+		t.Fatalf("turn did not complete with missing session_id\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Recovery: foci should still resume the same session on the second
+	// turn (init session_id was authoritative). Stable session is
+	// observed indirectly by absence of test crash and turn completing.
+	send("second turn after no session_id")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second turn after no session_id", 20*time.Second) {
+		t.Fatalf("second turn did not process\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -657,16 +830,84 @@ func TestL2_Failures_CrossAgentDispatchToStoppedAgentDrops(t *testing.T) {
 	t.Skip("HARNESS GAP: no API to stop a running agent without killing the entire gateway. Need Harness.StopAgent(agentID) or a /reload hook on internal/testharness.")
 }
 
-// TestL2_Failures_CrossAgentDispatchPanicIsRecovered proves the
-// notifier's per-dispatch defer-recover (the goroutine that calls
-// HandleMessage on the target Agent) catches a panic in the receiving
-// agent's path and logs a stack trace without taking down the
-// gateway. The harness uses a cc-stub script that triggers a code
-// path with a deliberate panic-injection env flag (extension to
-// cc-stub).
+// TestL2_Failures_CrossAgentDispatchPanicIsRecovered proves a panic-
+// shaped subprocess crash on the *receiving* agent's backend (during
+// a cross-agent dispatched user_message) doesn't take down the
+// gateway. cc-stub's CCSTUB_PANIC_ON_USER_MESSAGE writes a Go-style
+// panic preamble to stderr and exits non-zero; foci's per-backend
+// process supervisor reaps the subprocess, surfaces the error, and
+// keeps the agent registered so a follow-up message relaunches the
+// backend cleanly.
+//
+// (Original premise — "the notifier's per-dispatch defer-recover
+// catches a Go panic in foci's own goroutine" — was wrong: foci has
+// no such defer/recover in the dispatch path. This rewrite asserts
+// the actual recovery surface: subprocess crash on the receiving side
+// must not poison cross-agent routing.)
 func TestL2_Failures_CrossAgentDispatchPanicIsRecovered(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub has no panic-injection env flag. Need a CCSTUB_PANIC_ON_USER_MESSAGE or similar (note: cc-stub is a Go binary, so it'd need a runtime.Goexit or os.Exit path that mimics a Go panic surfacing through foci's reader).")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 1108},
+			{
+				ID:     "beta",
+				UserID: 1109,
+				ExtraEnv: map[string]string{
+					"CCSTUB_PANIC_ON_USER_MESSAGE": "panic-trigger",
+				},
+			},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Alpha sends a Bash tool_use that dispatches to beta. Beta's
+	// cc-stub crashes on receipt. Foci must surface the crash, keep
+	// alpha alive, and let the user send another message to beta that
+	// relaunches the backend cleanly.
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "dispatching to beta",
+		"tool_uses": []map[string]any{
+			{
+				"name": "Bash",
+				"input": map[string]any{
+					"command": "foci_send_to_session beta 'panic-trigger from alpha'",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	alphaToken := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(alphaToken, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 1108, Type: "private"},
+			From: &gotgbot.User{Id: 1108, FirstName: "Tester"},
+			Text: "dispatch to beta",
+		},
+	})
+
+	// Wait long enough for the dispatch to land on beta and beta's
+	// cc-stub to crash. Foci should NOT take down the gateway.
+	time.Sleep(3 * time.Second)
+
+	// Recovery: send a non-trigger message to beta directly via
+	// telegram. beta's backend was killed; foci must relaunch a fresh
+	// subprocess that handles the new turn normally.
+	betaToken := h.AgentBotToken("beta")
+	h.TelegramStub().PushUpdate(betaToken, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 1109, Type: "private"},
+			From: &gotgbot.User{Id: 1109, FirstName: "Tester"},
+			Text: "post-panic recovery",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/beta", "post-panic recovery", 30*time.Second) {
+		t.Fatalf("beta did not recover after cross-agent panic dispatch\n--- recorder ---\n%s--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // ---------------------------------------------------------------------------
