@@ -467,11 +467,19 @@ func (b *Backend) IsRunning() bool {
 	return b.running
 }
 
-// WaitReady blocks until the init message is received from CC.
+// WaitReady blocks until the init message is received from CC, the
+// subprocess reader exits (e.g. CC died before init — happens when
+// --resume points at a missing session and CC exits non-zero), or the
+// caller's context expires. Returning an error on early-exit lets
+// DelegatedManager's retry-without-resume path fire immediately rather
+// than burning the full ready-timeout budget waiting for an init that
+// can no longer arrive.
 func (b *Backend) WaitReady(ctx context.Context) error {
 	select {
 	case <-b.readyCh:
 		return nil
+	case <-b.done:
+		return fmt.Errorf("ccstream: subprocess exited before init")
 	case <-ctx.Done():
 		return ctx.Err()
 	}

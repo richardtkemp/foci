@@ -62,9 +62,45 @@ func TestL2_Failures_BackendExitsNonZeroBeforeHandshake(t *testing.T) {
 // turn and must finalize the in-flight turn (so OnTurnComplete fires
 // with an error), restart the subprocess on the next user message, and
 // not leak the dangling turn-handler.
+//
+// Verified by sending a SECOND user message after the crash and
+// asserting it lands as a user_message recorder entry — proving the
+// respawn happened and processing recovered.
 func TestL2_Failures_BackendExitsAfterHandshakeMidTurn(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: cc-stub has no env flag to exit between assistant and result lines; CCSTUB_EXIT_CODE fires before handshake. Need a new CCSTUB_EXIT_AFTER_ASSISTANT or similar in cmd/cc-stub/main.go.")
+	const userID = 8101
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			// CCSTUB_EXIT_AFTER_ASSISTANT gates on --resume being empty,
+			// so only the initial spawn dies mid-turn. Foci's respawn
+			// carries --resume and the stub proceeds normally.
+			ExtraEnv: map[string]string{"CCSTUB_EXIT_AFTER_ASSISTANT": "1"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// First turn — the stub will die between the assistant envelope and
+	// the result envelope. foci sees EOF mid-turn and must clean up.
+	pushUserMessage(t, h, "alpha", userID, "first turn dies mid-stream")
+
+	// Wait for the first user_message to land (the stub records the
+	// envelope before exiting).
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first turn dies mid-stream", 20*time.Second) {
+		t.Fatalf("first turn never reached cc-stub; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Second turn — the respawned stub (carrying --resume) processes
+	// normally. Confirms foci's mid-turn-crash recovery path didn't
+	// leave the agent stuck.
+	pushUserMessage(t, h, "alpha", userID, "second turn after crash recovers")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second turn after crash recovers", 30*time.Second) {
+		t.Fatalf("second turn never processed after mid-turn crash; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Failures_BackendFailsOnResumeRetriesFresh is the explicit
@@ -78,19 +114,73 @@ func TestL2_Failures_BackendExitsAfterHandshakeMidTurn(t *testing.T) {
 // recorder for the agent's workdir — the first with non-empty
 // resume_id, the second with empty resume_id — and one user_message
 // entry confirming the turn finished.
+//
+// End-to-end sequence:
+//   turn 1: cc-stub processes message, exits cleanly after 1 turn
+//           (CCSTUB_EXIT_AFTER_N_TURNS=1). foci saves the session id
+//           and tears down the dead backend.
+//   turn 2: foci's Get() sees IsRunning()==false, respawns cc-stub
+//           with --resume <session_id>. CCSTUB_FAIL_ON_RESUME=1 makes
+//           that respawn exit non-zero before handshake.
+//   retry:  foci catches the start error, clears the resume id, spawns
+//           cc-stub a third time WITHOUT --resume. Stub processes
+//           normally.
+//
+// Recorder assertion: at least one invocation with empty resume_id
+// (the initial spawn and the post-failure retry) AND at least one
+// with a non-empty resume_id (the failed respawn that triggered the
+// retry).
 func TestL2_Failures_BackendFailsOnResumeRetriesFresh(t *testing.T) {
 	t.Parallel()
-	// To exercise the FAIL_ON_RESUME path we need: (1) prime a session so
-	// foci persists a cc_resume_id, then (2) force the existing
-	// long-lived cc-stub to exit so foci's NEXT user message triggers a
-	// fresh spawn carrying --resume <id>, then (3) have that fresh spawn
-	// exit on resume, then (4) confirm foci retries without --resume.
-	//
-	// The harness exposes no way to make the long-lived cc-stub exit
-	// between turns (it keeps reading stdin until foci closes it). And
-	// CCSTUB_FAIL_ON_RESUME alone applied at startup wouldn't fire on
-	// the FIRST spawn (no --resume passed there).
-	t.Skip("HARNESS GAP: cannot force the existing long-lived cc-stub to exit between turns so foci respawns with --resume. Need a harness hook to signal the per-agent backend, or a CCSTUB env flag like CCSTUB_EXIT_AFTER_N_TURNS.")
+	const userID = 8201
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			ExtraEnv: map[string]string{
+				"CCSTUB_EXIT_AFTER_N_TURNS": "1",
+				"CCSTUB_FAIL_ON_RESUME":     "1",
+			},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Turn 1: stub processes, exits cleanly after one turn.
+	pushUserMessage(t, h, "alpha", userID, "turn-one-bootstrap")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "turn-one-bootstrap", 20*time.Second) {
+		t.Fatalf("turn 1 never reached cc-stub; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Turn 2: foci respawns with --resume, that spawn fails on resume,
+	// foci retries without --resume. Wait until the user_message lands.
+	pushUserMessage(t, h, "alpha", userID, "turn-two-after-resume-fail")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "turn-two-after-resume-fail", 30*time.Second) {
+		t.Fatalf("turn 2 never processed after FAIL_ON_RESUME retry; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Inspect invocations. We require at least one resume_id-bearing
+	// invocation (the failed respawn) plus at least one fresh
+	// invocation (initial spawn + post-failure retry).
+	var withResume, withoutResume int
+	for _, inv := range invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		if inv.ResumeID != "" {
+			withResume++
+		} else {
+			withoutResume++
+		}
+	}
+	if withResume == 0 {
+		t.Errorf("expected at least one invocation with --resume (the failed respawn) — got 0; invocations:\n%s",
+			invocationsTail(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")))
+	}
+	if withoutResume < 2 {
+		t.Errorf("expected at least 2 invocations without --resume (initial + post-failure retry), got %d; invocations:\n%s",
+			withoutResume,
+			invocationsTail(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")))
+	}
 }
 
 // TestL2_Failures_BackendHangsBeforeReady proves foci's WaitReady path

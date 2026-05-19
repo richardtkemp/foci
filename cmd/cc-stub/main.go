@@ -234,6 +234,11 @@ func main() {
 			os.Exit(n)
 		}
 	}
+	// recordInvocation BEFORE the FAIL_ON_RESUME exit so tests can
+	// observe that a respawn with --resume <id> was attempted (rather
+	// than infer it from the absence of a fresh invocation entry).
+	recordInvocation(resume, model)
+
 	if isTruthy(os.Getenv("CCSTUB_FAIL_ON_RESUME")) && resume != "" {
 		// Simulates a CC that received --resume but couldn't find the
 		// referenced session — exits non-zero, foci's delegated wrapper
@@ -251,8 +256,6 @@ func main() {
 	// Empty when foci didn't install hooks (binary missing / dev build),
 	// which is the natural opt-out for tests that need a no-hook path.
 	hookInstallID := installIDFromSettings(settings)
-
-	recordInvocation(resume, model)
 
 	// Generate or echo session_id. Fresh runs make a new one; resumes
 	// echo back the same id so foci's b.sessionID stays consistent.
@@ -308,6 +311,50 @@ func main() {
 	// write a script after the stub spawned (e.g. fotini's first turn
 	// is onboarding, the second turn is the scripted send_to_session).
 	respText := os.Getenv("CCSTUB_RESPONSE")
+
+	// Lifecycle env vars (all optional, all read once at the top of the
+	// loop so a partial flag flip mid-process doesn't desync):
+	//
+	//   CCSTUB_EXIT_AFTER_ASSISTANT — non-empty → exit 0 between the
+	//       assistant envelope and the result envelope on the first
+	//       user message. Only fires on a fresh spawn (--resume empty),
+	//       so foci's respawn-with-resume after the crash succeeds
+	//       normally — that's the recovery path the lifecycle tests
+	//       assert on. Without the --resume guard the respawn would
+	//       crash identically and the test would loop.
+	//   CCSTUB_EXIT_AFTER_N_TURNS=N — after N user_message envelopes
+	//       have been fully processed, exit 0 cleanly between turns
+	//       so foci respawns with --resume on the next inbound
+	//       message. Used by lifecycle tests that need the per-session
+	//       resume path to actually fire mid-test.
+	//   CCSTUB_HANG_DURING_TURN=duration — sleep this long AFTER the
+	//       assistant envelope and BEFORE the result envelope. Lets
+	//       a test trigger /reset or send a message while a turn is
+	//       intentionally in-flight (IsProcessing == true).
+	//   CCSTUB_PANIC_ON_USER_MESSAGE=substring — if the user text
+	//       contains the substring, write a Go-style "panic:"
+	//       traceback to stderr and exit with code 2. Mimics a real
+	//       CC subprocess crash.
+	exitAfterAssistant := os.Getenv("CCSTUB_EXIT_AFTER_ASSISTANT") != "" && resume == ""
+	exitAfterTurns := 0
+	if v := os.Getenv("CCSTUB_EXIT_AFTER_N_TURNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			exitAfterTurns = n
+		}
+	}
+	var hangDuringTurn time.Duration
+	if v := os.Getenv("CCSTUB_HANG_DURING_TURN"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			hangDuringTurn = d
+		}
+	}
+	// Panic-on-message also gates on resume so the respawn after the
+	// crash recovers cleanly — same pattern as CCSTUB_EXIT_AFTER_ASSISTANT.
+	panicOnMatch := ""
+	if resume == "" {
+		panicOnMatch = os.Getenv("CCSTUB_PANIC_ON_USER_MESSAGE")
+	}
+	turnCount := 0
 	for in.Scan() {
 		var env map[string]any
 		if err := json.Unmarshal(in.Bytes(), &env); err != nil {
@@ -317,6 +364,15 @@ func main() {
 		case "user":
 			userText := extractUserText(env)
 			recordUserMessage(sessionID, userText)
+			// CCSTUB_PANIC_ON_USER_MESSAGE: simulate a crashing CC.
+			// Writes a Go-style panic preamble to stderr (foci's reader
+			// surfaces a tail of stderr in the error log) before exiting
+			// non-zero. Match is substring so tests can target a specific
+			// message without coupling to the full payload.
+			if panicOnMatch != "" && strings.Contains(userText, panicOnMatch) {
+				fmt.Fprintf(os.Stderr, "panic: cc-stub forced crash on user message matching %q\n\ngoroutine 1 [running]:\nmain.main()\n\t/cc-stub/main.go:0 +0x0\n", panicOnMatch)
+				os.Exit(2)
+			}
 			script := loadScript()
 			reply := respText
 			if script != nil && script.Text != "" {
@@ -402,6 +458,21 @@ func main() {
 				},
 				"session_id": sessionID,
 			})
+			out.Flush()
+			// CCSTUB_EXIT_AFTER_ASSISTANT: exit 0 between assistant and
+			// result envelopes on the first turn. Foci sees stdout EOF
+			// mid-turn and reaps the subprocess; its watchdog fires the
+			// "backend died mid-turn" recovery path.
+			if exitAfterAssistant {
+				os.Exit(0)
+			}
+			// CCSTUB_HANG_DURING_TURN: sleep AFTER the assistant envelope
+			// has been flushed but BEFORE the result envelope. Foci's
+			// IsProcessing flag stays true for the duration, so concurrent
+			// /reset or steer messages can race the in-flight turn.
+			if hangDuringTurn > 0 {
+				time.Sleep(hangDuringTurn)
+			}
 			// Per-tool hook_response — one envelope per Bash run, carrying
 			// the install_id foci embedded in --settings so the backend's
 			// install-id filter dispatches OnToolEnd / PostToolNudgeFunc.
@@ -498,6 +569,18 @@ func main() {
 						_ = os.Remove(filepath.Join(dir, filepath.Base(wd)+".json"))
 					}
 				}
+			}
+			// CCSTUB_EXIT_AFTER_N_TURNS: bookend the turn loop so a
+			// clean exit happens AFTER the result envelope has been
+			// flushed. Foci processes the completion, persists the
+			// session id, then sees stdin EOF when the next user msg
+			// can't reach the dead process — DelegatedManager.Get
+			// observes IsRunning()==false on the next inbound message
+			// and respawns with --resume.
+			turnCount++
+			if exitAfterTurns > 0 && turnCount >= exitAfterTurns {
+				out.Flush()
+				os.Exit(0)
 			}
 		case "control_request":
 			// e.g. interrupt — ack with a control_response.

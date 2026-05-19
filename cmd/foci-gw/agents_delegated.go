@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -151,6 +152,12 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 				v, _ := backendConfig["claude_binary"].(string)
 				return v
 			}(),
+			// Per-agent backend_config.env propagates to the backend
+			// subprocess. Used by integration tests to inject CCSTUB_*
+			// env vars per agent (e.g. one agent gets CCSTUB_HANG, others
+			// don't). DelegatedManager.Get merges these with the exec
+			// bridge's BASH_ENV/FOCI_SOCK so both layers survive.
+			Env: backendConfigEnv(backendConfig),
 		},
 		PermissionPromptFunc: func(sessionKey, requestID, text, summary string, choices []delegator.PromptChoice) {
 			conn := connMgr.ForSessionOrPrimary(sessionKey, agentID)
@@ -369,6 +376,51 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 
 	log.Infof("agent/"+acfg.ID, "exec bridge registry: %d tools (%v)", len(registry.All()), registry.ExportedNames())
 	return registry
+}
+
+// backendConfigEnv reads the optional backend_config.env sub-table and
+// returns it as the env-var map shape StartOptions expects. Each value
+// is coerced to a string — TOML's tolerance of unquoted ints/bools
+// means a value like `CCSTUB_EXIT_CODE = 1` round-trips through any/int
+// rather than any/string, and we'd silently drop the entry otherwise.
+//
+// Returns nil when no env block is present (callers can pass nil into
+// StartOptions.Env safely — the bridge merge in DelegatedManager.Get
+// allocates as needed).
+func backendConfigEnv(cfg map[string]any) map[string]string {
+	raw, ok := cfg["env"]
+	if !ok {
+		return nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		switch x := v.(type) {
+		case string:
+			out[k] = x
+		case bool:
+			if x {
+				out[k] = "true"
+			} else {
+				out[k] = "false"
+			}
+		case int:
+			out[k] = strconv.Itoa(x)
+		case int64:
+			out[k] = strconv.FormatInt(x, 10)
+		case float64:
+			out[k] = strconv.FormatFloat(x, 'f', -1, 64)
+		default:
+			out[k] = fmt.Sprintf("%v", x)
+		}
+	}
+	return out
 }
 
 
