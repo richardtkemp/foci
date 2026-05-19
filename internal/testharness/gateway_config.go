@@ -24,6 +24,7 @@ type testConfigOpts struct {
 	Agents          []AgentSpec
 	Workspaces      map[string]string // agent id → workspace path
 	RecorderPath    string
+	HTTPPort        int    // kernel-assigned ephemeral port; 0 falls back to foci's default 18791 (collides under t.Parallel)
 	ExtraConfigTOML string // appended verbatim at the end of the config
 }
 
@@ -39,18 +40,55 @@ func writeTestConfig(t *testing.T, path string, o testConfigOpts) {
 
 data_dir = %q
 skip_security_checks = true
-`, o.DataDir)
+welcome_file = %q
+`, o.DataDir, filepath.Join(o.DataDir, "WELCOME.md"))
+	// welcome_file: scope to test DataDir. The default "data/WELCOME.md"
+	// resolves via ResolvePath to $HOME/data/WELCOME.md (e.g.
+	// /home/foci/data/WELCOME.md). readAndConsumeWelcomeFile in foci-gw
+	// reads the file then DELETES it. Without an override, any test that
+	// boots after a foci update has staged a welcome file would race-
+	// consume + delete that file before production foci ever shows it.
+	// Scoping to the test's DataDir means each test gets its own (never-
+	// written) welcome path, so the consume-and-delete is a safe no-op.
+
+	// Override the HTTP port so parallel tests don't all collide on the
+	// hardcoded default (127.0.0.1:18791). The harness picks an ephemeral
+	// port via the kernel before we get here; if HTTPPort is zero we skip
+	// the override and let foci's default apply.
+	if o.HTTPPort > 0 {
+		fmt.Fprintf(&sb, `
+[http]
+port = %d
+`, o.HTTPPort)
+	}
 
 	// Emit [logging] only if the test isn't supplying its own. Tests that
 	// need to override event_file / log_rotation / etc. inject a full
 	// [logging] section via ExtraConfigTOML; strict TOML parsers reject
 	// duplicate table definitions, so we skip the base emission in that
 	// case. Match exact `[logging]` headers (not `[logging.subsection]`).
+	//
+	// IMPORTANT: scope all log paths to the test's LogsDir. The defaults for
+	// api_file ("logs/api.jsonl") and payload_file ("logs/api-payload.jsonl")
+	// are relative paths that ResolvePath joins against $HOME — without an
+	// override, every test foci-gw writes (and at startup ROTATES) the host
+	// user's production logs. Concurrent tests then race the same shared
+	// files. Same hazard for archive_dir (which otherwise defaults to
+	// EventFile's parent + "/archive"). Tests that need to disable a
+	// specific log file should set its key to "" via ExtraConfigTOML.
 	if !extraConfigHasSection(o.ExtraConfigTOML, "logging") {
 		fmt.Fprintf(&sb, `
 [logging]
 event_file = %q
-`, filepath.Join(o.LogsDir, "foci.log"))
+api_file = %q
+payload_file = %q
+archive_dir = %q
+`,
+			filepath.Join(o.LogsDir, "foci.log"),
+			filepath.Join(o.LogsDir, "api.jsonl"),
+			filepath.Join(o.LogsDir, "api-payload.jsonl"),
+			filepath.Join(o.LogsDir, "archive"),
+		)
 	}
 
 	fmt.Fprintf(&sb, `
