@@ -325,7 +325,12 @@ func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
 	}
 
 	sendText(h, token, 9401, 9401, "/reset")
-	if got := waitForSendMessageContaining(h, token, "Session reset", 10*time.Second); got == "" {
+	// 30s rather than 10s — under t.Parallel() CPU pressure on a 4-core box
+	// with the prime turn still flushing its reply, /reset's confirmation
+	// can take 10-15s end-to-end (Telegram poll latency + inbox queuing
+	// behind the in-flight prime). 30s leaves headroom without masking a
+	// real hang. See docs/l2-flake-diagnosis-2026-05-19.md.
+	if got := waitForSendMessageContaining(h, token, "Session reset", 30*time.Second); got == "" {
 		t.Fatalf("never saw soft-reset confirmation; stderr tail:\n%s", stderrTail(h.Stderr()))
 	}
 
