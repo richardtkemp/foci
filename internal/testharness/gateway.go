@@ -42,6 +42,17 @@ type AgentSpec struct {
 	AutoApprove                []string
 	AutoApproveCommonReadonly  *bool
 	AutoApproveCommonSafeWrite *bool
+
+	// ExtraEnv populates [agents.backend_config.env] so the per-agent
+	// backend subprocess (cc-stub in L2 tests) receives the listed
+	// environment variables. Use for lifecycle env vars CCSTUB_HANG,
+	// CCSTUB_EXIT_CODE, CCSTUB_FAIL_ON_RESUME, etc. — these need to be
+	// scoped to one agent without polluting peers.
+	//
+	// Values are emitted as TOML strings, so consumers should treat all
+	// values as strings (foci's backendConfigEnv coerces back). Order
+	// in the TOML output is sorted by key for stable test snapshots.
+	ExtraEnv map[string]string
 }
 
 // HarnessOptions configures a test foci-gw subprocess.

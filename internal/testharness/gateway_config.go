@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -122,6 +123,34 @@ model = "stub"
 `,
 			a.ID, o.Workspaces[a.ID],
 		)
+		// Per-agent backend_config.env only emitted when the spec
+		// supplies env vars. Use INLINE-TABLE form ("env = {K=V, ...}")
+		// rather than a [agents.backend_config.env] sub-section: foci's
+		// BurntSushi/toml decoder reports sub-table keys under a
+		// map[string]any field as "unknown" (logged at WARN), even
+		// though the values are decoded correctly. The inline form
+		// goes through a single decode of the map[string]any value
+		// and avoids the warning.
+		//
+		// Keys are sorted so test snapshots stay stable. Values always
+		// emit as quoted strings (foci's backendConfigEnv coerces to
+		// whatever Go type the test needs at consumption time).
+		if len(a.ExtraEnv) > 0 {
+			keys := make([]string, 0, len(a.ExtraEnv))
+			for k := range a.ExtraEnv {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			sb.WriteString("env = {")
+			for i, k := range keys {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				fmt.Fprintf(&sb, "%s = %q", k, a.ExtraEnv[k])
+			}
+			sb.WriteString("}\n")
+		}
+
 		// Per-agent [agents.permissions] only emitted when at least one
 		// permission knob is set — keeps the generated config minimal
 		// for the common case.

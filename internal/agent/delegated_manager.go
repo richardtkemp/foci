@@ -172,10 +172,18 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 		if bridgeErr != nil {
 			log.Warnf("delegated", "exec bridge creation failed for %s (continuing without): %v", sessionKey, bridgeErr)
 		} else {
-			opts.Env = map[string]string{
-				"BASH_ENV":  bridge.FuncsPath(),
-				"FOCI_SOCK": bridge.SockPath(),
+			// Merge BASH_ENV/FOCI_SOCK into a copy of StartOpts.Env. The
+			// pre-existing map carries any per-agent backend_config.env
+			// entries (e.g. CCSTUB_* vars set by integration tests); a
+			// plain assignment here used to clobber them. Copy first so
+			// concurrent sessions don't end up mutating a shared map ref.
+			merged := make(map[string]string, len(opts.Env)+2)
+			for k, v := range opts.Env {
+				merged[k] = v
 			}
+			merged["BASH_ENV"] = bridge.FuncsPath()
+			merged["FOCI_SOCK"] = bridge.SockPath()
+			opts.Env = merged
 			log.Infof("delegated", "exec bridge started for %s: sock=%s funcs=%s", sessionKey, bridge.SockPath(), bridge.FuncsPath())
 		}
 	}

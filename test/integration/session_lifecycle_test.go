@@ -365,7 +365,63 @@ func TestL2_SessionLifecycle_ResetClearsPersistedResumeID(t *testing.T) {
 // --resume <ID> — retrying without resume".
 func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs per-agent env-var injection so CCSTUB_FAIL_ON_RESUME=1 takes effect only on the resume respawn (not on the initial prime spawn). The current HarnessOptions has no field for per-agent env vars passed through to cc-stub.")
+	const userID = 8311
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			ExtraEnv: map[string]string{
+				// First spawn processes one turn then exits cleanly so
+				// foci persists the cc_resume_id. Second spawn carries
+				// --resume and FAIL_ON_RESUME flips it to exit code 1
+				// during init, triggering foci's retry-without-resume.
+				"CCSTUB_EXIT_AFTER_N_TURNS": "1",
+				"CCSTUB_FAIL_ON_RESUME":     "1",
+			},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	pushUserMessage(t, h, "alpha", userID, "prime-the-session")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "prime-the-session", 20*time.Second) {
+		t.Fatalf("prime never reached cc-stub; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	pushUserMessage(t, h, "alpha", userID, "follow-up-after-resume-fail")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "follow-up-after-resume-fail", 30*time.Second) {
+		t.Fatalf("follow-up never processed after resume fallback; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Recorder should show the failed-respawn invocation carrying a
+	// non-empty --resume, followed by the retry without --resume.
+	var withResume, withoutResumeAfter bool
+	invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	for _, inv := range invs {
+		if inv.ResumeID != "" {
+			withResume = true
+		}
+	}
+	// The post-retry invocation (a fresh spawn without --resume) is the
+	// only one able to PROCESS follow-up-after-resume-fail. Confirm via
+	// the user_message recorder entry's session id (set to a stub-* id
+	// generated on a fresh spawn).
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, "follow-up-after-resume-fail") {
+			withoutResumeAfter = true
+			break
+		}
+	}
+	if !withResume {
+		t.Errorf("expected one invocation with --resume (the failed respawn); invocations:\n%s",
+			invocationsTail(invs))
+	}
+	if !withoutResumeAfter {
+		t.Errorf("expected the follow-up to land as a user_message via the retry-without-resume path; recorder:\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_SessionLifecycle_BackendDeathMidSessionRespawns proves foci
@@ -380,7 +436,62 @@ func TestL2_SessionLifecycle_ResumeFailureFallsBackToFresh(t *testing.T) {
 // the first's session_id as --resume.
 func TestL2_SessionLifecycle_BackendDeathMidSessionRespawns(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: no way to forcibly kill the long-lived cc-stub between turns. Need either (a) per-spawn env-var injection so CCSTUB_EXIT_CODE / a 'die after one turn' var can be set on a specific spawn, or (b) a Harness helper that PIDs the running stub process and kills it. Without that, both turns share one long-lived process and the second-invocation assertion can't be made.")
+	const userID = 8411
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			// EXIT_AFTER_N_TURNS=1 makes cc-stub exit cleanly after
+			// processing one turn. foci's DelegatedManager.Get observes
+			// IsRunning()==false on the next inbound message and
+			// respawns the subprocess with --resume <session_id>.
+			ExtraEnv: map[string]string{"CCSTUB_EXIT_AFTER_N_TURNS": "1"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	pushUserMessage(t, h, "alpha", userID, "first-turn-prime")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first-turn-prime", 20*time.Second) {
+		t.Fatalf("first turn never reached cc-stub; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	pushUserMessage(t, h, "alpha", userID, "second-turn-after-respawn")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second-turn-after-respawn", 30*time.Second) {
+		t.Fatalf("second turn never processed after backend respawn; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Two invocations in the alpha workdir, the second carrying the
+	// first's session_id as --resume.
+	invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	if len(invs) < 2 {
+		t.Fatalf("expected ≥2 invocations (initial + respawn), got %d:\n%s",
+			len(invs), invocationsTail(invs))
+	}
+	var firstSessionID string
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, "first-turn-prime") {
+			firstSessionID = e.SessionID
+			break
+		}
+	}
+	if firstSessionID == "" {
+		t.Fatalf("could not find first-turn-prime user_message session_id; recorder:\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
+	var sawResume bool
+	for _, inv := range invs {
+		if inv.ResumeID == firstSessionID {
+			sawResume = true
+			break
+		}
+	}
+	if !sawResume {
+		t.Errorf("respawn invocation never carried --resume %s; invocations:\n%s",
+			firstSessionID, invocationsTail(invs))
+	}
 }
 
 // TestL2_SessionLifecycle_QueuedMessageProcessedAfterBusyTurn proves
@@ -737,7 +848,56 @@ func TestL2_SessionLifecycle_CompactCommandRoutesToBackend(t *testing.T) {
 // happy path.
 func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs a way to keep a turn in-flight (so the IsProcessing gate in Agent.ResetSession returns true) while a /reset arrives. CCSTUB_HANG is process-level and pre-handshake only; there's no per-turn hang env var, no per-agent env-var injection through HarnessOptions, and no scripted 'sleep N seconds before completing this turn' tool_use the stub honours. Implementing this test would require extending cc-stub with e.g. a 'sleep_ms' field in stubScript that the stub respects before emitting the result envelope.")
+	const userID = 8611
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": "10s"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Drive the in-flight turn. CCSTUB_HANG_DURING_TURN holds the
+	// result envelope back so foci's IsProcessing flag stays true past
+	// the soft /reset arrival.
+	sendText(h, token, userID, userID, "hold this turn")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "hold this turn", 15*time.Second) {
+		t.Fatalf("first turn never reached cc-stub; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Now /reset (soft) arrives. Soft reset's IsProcessing gate should
+	// refuse the rotation; foci sends back a "send stop first" advisory.
+	sendText(h, token, userID, userID, "/reset")
+	got := waitForSendMessageContaining(h, token, "stop", 10*time.Second)
+	if got == "" {
+		t.Fatalf("expected /reset to be refused with a 'stop first' style reply while a turn was in-flight; sent calls:\n%s",
+			sentCallsTail(h.TelegramStub(), token))
+	}
+	// Soft reset must not have rotated the session: only ONE long-lived
+	// agent cc-stub invocation should be live for alpha. The auto-extract
+	// nudge spawns a separate cc-stub with --no-session-persistence —
+	// filter those out so the assertion is about session rotation, not
+	// total subprocess count.
+	var liveInvs []recorderEntry
+	for _, inv := range invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		extract := false
+		for _, f := range inv.Flags {
+			if f == "--no-session-persistence" {
+				extract = true
+				break
+			}
+		}
+		if !extract {
+			liveInvs = append(liveInvs, inv)
+		}
+	}
+	if len(liveInvs) > 1 {
+		t.Errorf("soft /reset while processing rotated the session anyway: long-lived invocations=%d (expected 1):\n%s",
+			len(liveInvs), invocationsTail(liveInvs))
+	}
 }
 
 // TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn

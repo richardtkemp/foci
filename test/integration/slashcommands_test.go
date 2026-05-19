@@ -350,12 +350,37 @@ func TestL2_SlashCommands_ResetClearsSession(t *testing.T) {
 // ever completing.
 func TestL2_SlashCommands_ResetHardCancelsInflightTurn(t *testing.T) {
 	t.Parallel()
-	// CCSTUB_HANG is a process-global env var set by the test harness
-	// at foci-gw spawn time. The current StartGateway/HarnessOptions
-	// surface has no hook to inject extra env vars into the foci-gw
-	// (and therefore cc-stub) subprocess, so we cannot make cc-stub
-	// block on demand from inside the test body.
-	t.Skip("HARNESS GAP: HarnessOptions has no field for injecting per-test env vars (e.g. CCSTUB_HANG) into the foci-gw subprocess that exec()s cc-stub")
+	const userID = 8511
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			// CCSTUB_HANG_DURING_TURN keeps a turn in-flight (assistant
+			// emitted, result pending) for the duration. 10s is far
+			// longer than the /reset hard round-trip, so the cancel
+			// must actually pre-empt the turn — if /reset waited for
+			// the in-flight completion the assertion below times out.
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": "10s"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Kick off the hanging turn. We don't wait for a reply here —
+	// CCSTUB_HANG_DURING_TURN blocks emission of the result envelope,
+	// so the foci-side completion never fires until /reset hard
+	// terminates the subprocess.
+	pushTelegramText(t, h, "alpha", userID, "this turn will hang")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "this turn will hang", 15*time.Second) {
+		t.Fatalf("priming hang message never reached cc-stub; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	pushTelegramText(t, h, "alpha", userID, "/reset hard")
+	if waitForSendMessageText(t, h, token, 15*time.Second, "Session reset", "hard") == "" {
+		t.Fatalf("/reset hard confirmation never arrived (turn was hung; cancel should have fired)\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_SlashCommands_ReloadReturnsSkillCount proves /reload reloads
