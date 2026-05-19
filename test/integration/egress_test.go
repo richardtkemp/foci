@@ -169,6 +169,84 @@ func TestL2_Egress_LateAssistantTextReachesTelegram(t *testing.T) {
 		lateReply, sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
 }
 
+// TestL2_Egress_SilentIntermediateThenRealReplyReachesTelegram exercises the
+// multi-text-block-in-turn shape: agent emits [[NO_RESPONSE]] as an
+// intermediate text, then a real reply also within the same turn (no tool
+// loop between them). The real reply must reach Telegram.
+//
+// This shape was NOT covered before — egress tests only covered single-text
+// and post-turn late-delivery. The 2026-05-18 22:33 production incident
+// involved a similar multi-text shape but with a pre-answer-gate-driven
+// re-round between the two texts (turnText.Reset in beginTurn means the
+// second round's text becomes FinalText alone). See
+// docs/delivery-gap-2026-05-18-2233.md for the corrected analysis.
+//
+// In THIS shape (no pre-answer round, two assistant messages back-to-back
+// before result), foci accumulates both texts into turnText, fires
+// se.OnText for each (emitting TextBlock intermediate to the sink), and the
+// second OnReply delivers via SendReply before TurnComplete fires. The
+// StreamingSink delivered-flag-set-on-silent bug exposed by the unit test
+// TestStreamingSinkSilentIntermediateDoesNotSuppressFinalize does NOT
+// manifest here because the second OnReply delivers the real text before
+// TurnComplete's delivered=true gate fires.
+//
+// Mechanism: cc-stub script sets intermediate_texts=["[[NO_RESPONSE]]"] +
+// text="real reply". The stub emits two assistant messages within one turn —
+// first the silent intermediate, then the real Text-bearing one — followed
+// by the result envelope. Passes on current code; locks in the shape so a
+// future regression in OnReply's delivery path is caught.
+func TestL2_Egress_SilentIntermediateThenRealReplyReachesTelegram(t *testing.T) {
+	t.Parallel()
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 5557},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	const realReply = "the real reply that must reach Telegram"
+	scriptBody, err := json.Marshal(map[string]any{
+		"intermediate_texts": []string{"[[NO_RESPONSE]]"},
+		"text":               realReply,
+	})
+	if err != nil {
+		t.Fatalf("marshal script body: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 5557, Type: "private"},
+			From: &gotgbot.User{Id: 5557, FirstName: "Tester"},
+			Text: "kick off a turn",
+		},
+	})
+
+	// Poll for the real reply on Telegram. The silent intermediate must NOT
+	// flip the sink's delivered flag — if it does, the real reply (carried
+	// by TurnComplete.FinalText) is swallowed and never sendMessage'd.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range h.TelegramStub().PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if err := json.Unmarshal(call.Body, &body); err != nil {
+				continue
+			}
+			text, _ := body["text"].(string)
+			if strings.Contains(text, realReply) {
+				return // pass
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("real reply %q never reached Telegram after a silent intermediate (the 22:33 bug); sent calls:\n%s\nstderr:\n%s",
+		realReply, sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+}
+
 // sentCallsTail summarises recorded sendMessage bodies for failure logs.
 func sentCallsTail(stub *testharness.TelegramStub, token string) string {
 	var sb strings.Builder
