@@ -285,7 +285,24 @@ func main() {
 	}
 	if hang := os.Getenv("CCSTUB_HANG"); hang != "" {
 		if d, err := time.ParseDuration(hang); err == nil {
-			time.Sleep(d)
+			// CCSTUB_HANG_ONCE_MARKER points at a file path. If the path
+			// is set AND already exists, skip the hang — subsequent
+			// spawns proceed normally. If the path is set and absent,
+			// touch it and proceed with the hang. Lets tests script
+			// "first spawn hangs past init deadline; second spawn does
+			// not" without per-spawn env injection.
+			marker := os.Getenv("CCSTUB_HANG_ONCE_MARKER")
+			skip := false
+			if marker != "" {
+				if _, err := os.Stat(marker); err == nil {
+					skip = true
+				} else {
+					_ = os.WriteFile(marker, []byte("1"), 0o600)
+				}
+			}
+			if !skip {
+				time.Sleep(d)
+			}
 		}
 	}
 
