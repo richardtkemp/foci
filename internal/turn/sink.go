@@ -80,8 +80,17 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			silent := platform.IsSilent(e.Text)
 			log.Debugf("turn-sink", "sink=%p TextBlock(intermediate): text_len=%d silent=%v delivered_before=%v", s, len(e.Text), silent, s.delivered)
 			s.renderer.OnReply(e.Text)
-			s.delivered = true
-			log.Debugf("turn-sink", "sink=%p TextBlock(intermediate): delivered_after=true (unconditional)", s)
+			// Gate delivered on !silent: OnReply's IsSilent path returns
+			// without surfacing anything to the user, so the sink must not
+			// claim delivery. Without this gate, a silent intermediate
+			// (e.g. [[NO_RESPONSE]]) followed by a TurnComplete carrying
+			// non-empty FinalText (from msg.Result when accumulated text
+			// is empty, or across pre-answer-gate rounds) would suppress
+			// Finalize and drop the real reply.
+			if !silent {
+				s.delivered = true
+			}
+			log.Debugf("turn-sink", "sink=%p TextBlock(intermediate): delivered_after=%v (silent_gated)", s, s.delivered)
 		} else {
 			log.Debugf("turn-sink", "sink=%p TextBlock(final): text_len=%d (no-op — final text carried by TurnComplete)", s, len(e.Text))
 		}

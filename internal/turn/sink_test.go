@@ -211,6 +211,57 @@ func TestStreamingSinkDeliveredFlagSuppressesFinalize(t *testing.T) {
 	}
 }
 
+// TestStreamingSinkSilentIntermediateDoesNotSuppressFinalize asserts that an
+// intermediate TextBlock containing a silencing sentinel ([[NO_RESPONSE]])
+// must NOT mark the sink as delivered. The agent never surfaced anything to
+// the user, so a subsequent non-silent FinalText on TurnComplete must still
+// reach the backend via Finalize.
+//
+// Regression for the 2026-05-18 22:33 delivery gap: a turn emitted
+// [[NO_RESPONSE]] as an intermediate TextBlock, then a real 1024-byte reply
+// as FinalText. The unconditional `s.delivered = true` swallowed the real
+// reply. See docs/delivery-gap-2026-05-18-2233.md.
+func TestStreamingSinkSilentIntermediateDoesNotSuppressFinalize(t *testing.T) {
+	backend := newMockBackend()
+	tracker := &fakeSinkTracker{}
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	sink := NewStreamingSink(renderer, tracker, nil)
+
+	ctx := context.Background()
+	// Silent intermediate — OnReply's IsSilent gate drops the text without
+	// delivering. The sink must NOT flip delivered=true because nothing
+	// reached the user.
+	sink.Emit(ctx, turnevent.TextBlock{Text: "[[NO_RESPONSE]]", Phase: turnevent.PhaseIntermediate})
+	// Real final text arrives — must reach the backend via Finalize.
+	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "the real reply"})
+
+	if len(backend.sendReplyCalls) != 1 || backend.sendReplyCalls[0] != "the real reply" {
+		t.Errorf("sendReply = %v, want [\"the real reply\"]; silent intermediate must not block final delivery",
+			backend.sendReplyCalls)
+	}
+}
+
+// TestSessionSinkSilentIntermediateAllowsFinalText asserts that a silent
+// intermediate TextBlock ([[NO_RESPONSE]]) does NOT set the SessionSink
+// delivered flag, so a subsequent non-silent FinalText on TurnComplete
+// reaches the user via SendToSession. Mirror of
+// TestStreamingSinkSilentIntermediateDoesNotSuppressFinalize for the
+// session-router fallback path. SessionSink already gates correctly; this
+// test pins the behaviour so future refactors don't regress it.
+func TestSessionSinkSilentIntermediateAllowsFinalText(t *testing.T) {
+	conn := &fakeSessionConn{}
+	sink := NewSessionSink(conn, "sess-1", "test")
+
+	ctx := context.Background()
+	sink.Emit(ctx, turnevent.TextBlock{Text: "[[NO_RESPONSE]]", Phase: turnevent.PhaseIntermediate})
+	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "the real reply"})
+
+	if len(conn.sendCalls) != 1 || conn.sendCalls[0] != "the real reply" {
+		t.Errorf("sendCalls = %v, want [\"the real reply\"]; silent intermediate must not block final delivery",
+			conn.sendCalls)
+	}
+}
+
 // TestStreamingSinkUnDeliveredCallsFinalize asserts the opposite: when no
 // intermediate delivery happened, TurnComplete drives renderer.Finalize with
 // FinalText. This is the path used by turns with no streaming/OnReply output.
