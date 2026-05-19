@@ -756,15 +756,41 @@ func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 		sentCallsTail(stub, token), stderrTail(h.Stderr()))
 }
 
-// TestL2_Failures_TelegramUnknownTokenReceives404 proves the stub's
-// own contract: a bot foci-gw starts for an unregistered token gets a
-// 404 on getMe and the gateway fails to come ready. This is a meta-
-// test guarding against config drift between agents.toml and the
-// harness's RegisterBot calls — silent token mismatches would
-// otherwise produce a 60s hang on the ready signal.
+// TestL2_Failures_TelegramUnknownTokenReceives404 captures the actual
+// production behavior when a bot token is configured in foci.toml but
+// unknown to the Bot API stub. NOTE on premise correction: the original
+// premise ("gateway fails to come ready") is wrong — foci-gw does NOT
+// fail-fast on an unknown token. gotgbot's NewBot calls getMe to
+// validate; on 404 foci logs ERROR, the bot is NOT created, and the
+// agent continues to run without a platform binding ("agent will run
+// without platform"). The gateway stays ready throughout.
+//
+// This is the safer behavior in production: a transient Telegram
+// outage shouldn't tear down a multi-agent gateway. The test now
+// asserts (a) gateway comes ready, (b) the unknown-token error is
+// surfaced in stderr, (c) the bot is reported as not started.
 func TestL2_Failures_TelegramUnknownTokenReceives404(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: StartGateway auto-registers every AgentSpec.BotToken with the stub. There's no way through the public harness API to write a config that names a token NOT registered with the stub. Need an option like HarnessOptions.SkipBotRegistration or per-agent SkipStubRegister bool.")
+	h, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:               "alpha",
+			UserID:           9200,
+			SkipStubRegister: true,
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("gateway should come ready despite unknown token; got start error: %v", err)
+	}
+
+	// getMe fails → "failed to check bot token: ... unknown bot token"
+	if !waitForStderr(h, "unknown bot token", 10*time.Second) {
+		t.Errorf("expected 'unknown bot token' in stderr; got:\n%s", stderrTail(h.Stderr()))
+	}
+	// Agent continues without platform; bot count is 0.
+	if !waitForStderr(h, "started 0 bot(s)", 5*time.Second) {
+		t.Errorf("expected 'started 0 bot(s)' in stderr; got:\n%s", stderrTail(h.Stderr()))
+	}
 }
 
 // ---------------------------------------------------------------------------
