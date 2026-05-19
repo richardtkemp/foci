@@ -103,12 +103,25 @@ func sentCallSummary(h *testharness.Harness, token string) string {
 }
 
 // primeChatID sends one Telegram message to the agent and waits until
-// cc-stub records its user_message. This guarantees the bot's b.chatID
-// and the session's chat_id segment are populated so subsequent
-// send_to_chat tool calls reach the right chat. Returns the chatID used.
+// the prime turn fully completes — both cc-stub recording the user_message
+// AND the resulting assistant reply landing in the Telegram stub. This
+// guarantees the bot's b.chatID and the session's chat_id segment are
+// populated AND that no in-flight prime reply will arrive later and
+// corrupt a subsequent countSentMethod snapshot.
+//
+// Returns the chatID used.
+//
+// Why the two-phase wait: under t.Parallel() CPU contention, returning
+// as soon as cc-stub records the user_message leaves the assistant reply
+// in flight (OnAssistant → SendReply → Telegram stub). Callers that
+// immediately snapshot priorMsgCount can see the count bumped during
+// later assertions, flaking. Pinning the sendMessage flush here is the
+// shared fix for all callers in this file. See
+// /home/foci/clutch/docs/l2-flake-diagnosis-2026-05-19.md.
 func primeChatID(t *testing.T, h *testharness.Harness, agentID string, userID int64) int64 {
 	t.Helper()
 	token := h.AgentBotToken(agentID)
+	priorSent := countSentMethod(h, token, "sendMessage")
 	h.TelegramStub().PushUpdate(token, gotgbot.Update{
 		Message: &gotgbot.Message{
 			Chat: gotgbot.Chat{Id: userID, Type: "private"},
@@ -119,6 +132,21 @@ func primeChatID(t *testing.T, h *testharness.Harness, agentID string, userID in
 	if !waitForUserMessage(t, h, "workspaces/"+agentID, "priming chat", 15*time.Second) {
 		t.Fatalf("prime message never landed in %s workdir\nstderr:\n%s", agentID, stderrTail(h.Stderr()))
 	}
+	// Wait for the prime-turn assistant reply to reach the Telegram stub.
+	// cc-stub's default behaviour echoes user text as "stub-reply: ...";
+	// without a per-test script that reply is what we wait for. Tests
+	// that pre-load a custom script before priming will see the scripted
+	// reply (or [[NO_RESPONSE]] silence) — the count only needs to
+	// stabilise, not match a specific body.
+	primeReplyDeadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(primeReplyDeadline) {
+		if countSentMethod(h, token, "sendMessage") > priorSent {
+			return userID
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("prime-turn reply never reached Telegram for %s (priorSent=%d still); stderr:\n%s",
+		agentID, priorSent, stderrTail(h.Stderr()))
 	return userID
 }
 
