@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,6 +197,15 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	secretsPath := filepath.Join(tempDir, "secrets.toml")
 	workspaces := writeWorkspaces(t, tempDir, opts.Agents)
 
+	// Pick an ephemeral HTTP port so parallel tests don't all collide on the
+	// default 18791. Brief race window between Close and foci-gw's bind, but
+	// acceptable for test purposes — kernel rarely reuses an ephemeral port
+	// that fast.
+	httpPort, err := pickFreePort()
+	if err != nil {
+		return nil, fmt.Errorf("pick free port: %w", err)
+	}
+
 	writeTestConfig(t, configPath, testConfigOpts{
 		DataDir:         dataDir,
 		LogsDir:         logsDir,
@@ -205,6 +215,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		Agents:          opts.Agents,
 		Workspaces:      workspaces,
 		RecorderPath:    recorderPath,
+		HTTPPort:        httpPort,
 		ExtraConfigTOML: opts.ExtraConfigTOML,
 	})
 	if !opts.SkipSecretsFile {
@@ -402,6 +413,22 @@ func waitForReady(buf *syncBuffer, stoppedCh chan struct{}, timeout time.Duratio
 }
 
 // ----- Internal: subprocess build & config --------------------------
+
+// pickFreePort asks the kernel for an ephemeral TCP port and returns it.
+// Listener is closed before return — there is a brief race window where
+// another process could grab the port, but it's small enough in practice
+// for parallel test isolation.
+func pickFreePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		return 0, err
+	}
+	return port, nil
+}
 
 func findRepoRoot(t *testing.T) string {
 	t.Helper()
