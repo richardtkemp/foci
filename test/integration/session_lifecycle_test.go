@@ -911,7 +911,71 @@ func TestL2_SessionLifecycle_ResetWhileProcessingRefused(t *testing.T) {
 // asserting persistence across a CLEAN exit, not a crash.
 func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs per-spawn env-var injection so CCSTUB_EXIT_CODE=0 can be set on a SPECIFIC spawn (forcing a clean exit between turns), or a Harness helper that signals the running cc-stub PID. Without that, both turns share one long-lived process and no respawn happens — the persistence path the test is meant to cover isn't exercised.")
+	const userID = 8412
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			// CCSTUB_EXIT_AFTER_N_TURNS=1 forces a CLEAN os.Exit(0)
+			// between turns. Distinct from a crash (BackendDeathMid...
+			// uses the same env but the test there asserts on the
+			// invocation/resume shape; this test asserts the *user_message*
+			// session_id stays consistent across both turns — the session
+			// keeps its identity through a process boundary).
+			ExtraEnv: map[string]string{"CCSTUB_EXIT_AFTER_N_TURNS": "1"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	pushUserMessage(t, h, "alpha", userID, "first-turn-A")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "first-turn-A", 20*time.Second) {
+		t.Fatalf("first turn never reached cc-stub; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	pushUserMessage(t, h, "alpha", userID, "second-turn-B")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second-turn-B", 30*time.Second) {
+		t.Fatalf("second turn never processed after respawn; recorder:\n%s\nstderr:\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Both user_messages should carry the same session_id (session
+	// persisted through the clean exit + respawn).
+	var sidA, sidB string
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind != "user_message" {
+			continue
+		}
+		if strings.Contains(e.TextPrefix, "first-turn-A") {
+			sidA = e.SessionID
+		}
+		if strings.Contains(e.TextPrefix, "second-turn-B") {
+			sidB = e.SessionID
+		}
+	}
+	if sidA == "" || sidB == "" {
+		t.Fatalf("missing recorder entries: sidA=%q sidB=%q\n%s", sidA, sidB,
+			recorderTail(t, h.RecorderPath()))
+	}
+	if sidA != sidB {
+		t.Errorf("session_id changed across clean-exit respawn: first=%s second=%s\n--- recorder ---\n%s",
+			sidA, sidB, recorderTail(t, h.RecorderPath()))
+	}
+
+	// And the respawn invocation must carry --resume <sidA>.
+	invs := invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha")
+	var sawResume bool
+	for _, inv := range invs {
+		if inv.ResumeID == sidA {
+			sawResume = true
+			break
+		}
+	}
+	if !sawResume {
+		t.Errorf("respawn invocation never carried --resume %s; invocations:\n%s",
+			sidA, invocationsTail(invs))
+	}
 }
 
 // TestL2_SessionLifecycle_HangBeyondReadyTimeoutSurfacesError proves
@@ -925,6 +989,17 @@ func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.
 // regressions in the delegated init path.
 func TestL2_SessionLifecycle_HangBeyondReadyTimeoutSurfacesError(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs per-agent env-var injection so CCSTUB_HANG can be set on the first spawn and CLEARED on a subsequent spawn. The current HarnessOptions has no field for passing env vars through to spawned cc-stub processes, and no way to vary them between spawns of the same agent. Implementing this requires extending HarnessOptions (e.g. AgentSpec.ExtraEnv plus a 'rotate after N spawns' mechanism, or a Harness method to set/clear stub env vars between turns).")
+	// ExtraEnv + CCSTUB_HANG_ONCE_MARKER now solve the per-spawn env
+	// injection gap (first spawn hangs, marker file persists so the
+	// retry skips). BUT foci's WaitReady deadline is hardcoded at 60s
+	// (internal/agent/delegated_manager.go:249), so even with one-shot
+	// hang the test still takes the full minute to observe the
+	// deadline path. Making this practical requires either (a) a
+	// configurable readyTimeout (would need new config + plumbing
+	// through DelegatedManager.Get), or (b) reframing the test to
+	// assert WaitReady's early-exit on subprocess-died path — but
+	// CCSTUB_HANG keeps the subprocess alive, so that's not the path
+	// this test wants.
+	t.Skip("INFRA GAP: foci's WaitReady deadline is hardcoded at 60s. Per-spawn env injection is now available (ExtraEnv + CCSTUB_HANG_ONCE_MARKER) but the test would still take 60s to observe the init-deadline path. Needs configurable WaitReady deadline before this can run in unit-test time.")
 }
 
