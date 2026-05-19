@@ -175,6 +175,18 @@ type stubScript struct {
 	// matching the stall-detector test premise (init succeeded, no
 	// progress past init).
 	SleepMs int `json:"sleep_ms,omitempty"`
+
+	// ControlCancelRequests is a list of permission request_ids the stub
+	// should cancel after emitting permission_requests + result envelope.
+	// Each entry produces one
+	//   {"type":"control_cancel_request","request_id":"<id>"}
+	// envelope, which foci's reader routes via OnControlCancelRequest →
+	// CancelInteractiveMessage (disables the Telegram inline keyboard
+	// for the matching prompt). Tests assert: a follow-up callback_query
+	// on the cancelled prompt is a no-op (the keyboard reference was
+	// cleared). The id should match one of the PermissionRequests above
+	// — if it doesn't, foci logs a "no listener" debug and drops it.
+	ControlCancelRequests []string `json:"control_cancel_requests,omitempty"`
 }
 
 // recorderEntry is one line written to the recorder file. Two event
@@ -674,6 +686,23 @@ func main() {
 				if len(script.PermissionRequests) > 0 {
 					out.Flush()
 				}
+				// Emit any scripted control_cancel_requests. Foci's reader
+				// routes each to OnControlCancelRequest →
+				// CancelInteractiveMessage, which clears the inline
+				// keyboard for the matching prompt. A subsequent
+				// callback_query against that prompt is then a no-op
+				// (HandleInteractiveCallback returns false because the
+				// listener was unregistered).
+				for _, cancelID := range script.ControlCancelRequests {
+					emit(out, map[string]any{
+						"type":       "control_cancel_request",
+						"request_id": cancelID,
+					})
+					recordPermissionCancel(cancelID)
+				}
+				if len(script.ControlCancelRequests) > 0 {
+					out.Flush()
+				}
 			}
 			// Late-text injection: emit a SECOND assistant message AFTER
 			// result + permissions. Foci has already seen the result
@@ -939,6 +968,20 @@ func recordPermissionRequest(reqID, toolName string) {
 		Workdir:          wd,
 		ControlRequestID: reqID,
 		OutboundToolName: toolName,
+	})
+}
+
+// recordPermissionCancel appends one JSONL line tagged
+// kind="permission_cancel" so tests can pair each scripted cancel with
+// the preceding permission_request entry and assert ordering. The id
+// is the request_id of the cancelled permission.
+func recordPermissionCancel(reqID string) {
+	wd, _ := os.Getwd()
+	writeRecorder(recorderEntry{
+		Kind:             "permission_cancel",
+		Timestamp:        time.Now().UTC().Format(time.RFC3339Nano),
+		Workdir:          wd,
+		ControlRequestID: reqID,
 	})
 }
 

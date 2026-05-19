@@ -91,11 +91,14 @@ func agentWorkspace(h *testharness.Harness, agentID string) string {
 // the integration test package — it's an internal contract between
 // cc-stub and the L2 tests, not a public API.
 //
-// Six kinds:
+// Seven kinds:
 //   "invocation"          — one per process spawn (workdir, resume_id, flags)
 //   "user_message"        — one per user message processed (session_id, workdir, text_prefix)
 //   "permission_request"  — one per scripted can_use_tool control_request the
 //                           stub emitted (control_request_id, outbound_tool_name)
+//   "permission_cancel"   — one per scripted control_cancel_request the stub
+//                           emitted (control_request_id). Tests pair with the
+//                           preceding permission_request to assert ordering.
 //   "control_response"    — one per inbound control_response received from foci
 //                           (control_request_id + raw inner payload)
 //   "init_system"         — one per spawn that received an initialize
