@@ -172,7 +172,49 @@ func primeChatID(t *testing.T, h *testharness.Harness, agentID string, userID in
 // tag → Agent.HandleMessage → cc-stub recorder user_message entry.
 func TestL2_Files_DocumentSaved_PathInjectedToAgent(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; no stub for /file/bot<token>/<filePath> in TelegramStub means no successful download → no saved-to-disk path tag to assert on")
+	const userID = 8021
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	const fileID = "doc-fileid-001"
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "documents/file_1.bin",
+		Data:     []byte("synthetic-document-bytes-DOC_SAVE_MARKER"),
+		MIMEType: "application/octet-stream",
+	})
+
+	caption := "DOC_SAVE_CAPTION_MARKER"
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Document: &gotgbot.Document{
+				FileId:   fileID,
+				FileName: "report.bin",
+				MimeType: "application/octet-stream",
+				FileSize: 4096,
+			},
+		},
+	})
+
+	// Both the saved-path tag and original caption must reach cc-stub.
+	if !waitForUserMessage(t, h, "workspaces/alpha", "Document saved to:", 20*time.Second) {
+		t.Errorf("expected '[Document saved to:]' tag in agent user_message\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if !waitForUserMessage(t, h, "workspaces/alpha", caption, 5*time.Second) {
+		t.Errorf("original caption was lost when document was saved")
+	}
+
+	// A file must land in received_files_dir for this agent.
+	if n := dirEntryCount(t, receivedFilesDir(h, "alpha")); n == 0 {
+		t.Errorf("expected at least 1 file in received_files_dir, got 0")
+	}
 }
 
 // TestL2_Files_PhotoAttachment_ReachesAgent proves photo updates take
@@ -184,7 +226,53 @@ func TestL2_Files_DocumentSaved_PathInjectedToAgent(t *testing.T) {
 // envelope content blocks.
 func TestL2_Files_PhotoAttachment_ReachesAgent(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download the attachment is never built and never reaches the agent envelope")
+	const userID = 8022
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	// 1×1 PNG (8 bytes header + minimal IDAT). The exact bytes don't
+	// matter — foci's downloadAttachment doesn't decode; it just
+	// forwards as a content block with the registered MIME.
+	const fileID = "photo-fileid-001"
+	pngBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d}
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "photos/file_1.jpg",
+		Data:     pngBytes,
+		MIMEType: "image/jpeg",
+	})
+
+	caption := "PHOTO_ATTACHMENT_MARKER"
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Photo: []gotgbot.PhotoSize{
+				{FileId: fileID, Width: 1, Height: 1, FileSize: int64(len(pngBytes))},
+			},
+		},
+	})
+
+	entry, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, caption)
+	if !ok {
+		t.Fatalf("photo caption never reached agent\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	// Photo arrives as a structured user envelope with an "image"
+	// content block alongside the caption text. Note: when
+	// ReceivedFilesDir is set (the harness default), downloadAttachment
+	// ALSO saves the bytes to disk and turn assembly prepends an
+	// "[Image saved to: ...]" annotation — so both signals appear. The
+	// distinguishing fact for "took attachment path" is the structured
+	// image block (would be absent on the save-to-disk-only branch).
+	if !hasBlockType(entry.ContentBlockTypes, "image") {
+		t.Errorf("expected 'image' content block on photo user_message; got block types %v text=%q",
+			entry.ContentBlockTypes, entry.TextPrefix)
+	}
 }
 
 // TestL2_Files_PDFUnderLimit_GoesViaAttachment proves that a PDF
@@ -194,7 +282,51 @@ func TestL2_Files_PhotoAttachment_ReachesAgent(t *testing.T) {
 // bot_receive.go from the over-size branch.
 func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download the attachment never materialises so the attachment branch can't be distinguished from the save-to-disk branch")
+	const userID = 8023
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	const fileID = "pdf-fileid-001"
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "documents/file_2.pdf",
+		Data:     []byte("%PDF-1.4\n%fake pdf bytes for test"),
+		MIMEType: "application/pdf",
+	})
+
+	caption := "PDF_ATTACHMENT_MARKER"
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Document: &gotgbot.Document{
+				FileId:   fileID,
+				FileName: "doc.pdf",
+				MimeType: "application/pdf",
+				FileSize: 1024, // well under 32MB cap
+			},
+		},
+	})
+
+	entry, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, caption)
+	if !ok {
+		t.Fatalf("PDF caption never reached agent\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	// Under-limit PDF arrives as an attachment content block (document
+	// or image type depending on how foci tags PDFs). The contract is
+	// "structured envelope with a non-text content block", which the
+	// flat-string ingress path would never produce. ReceivedFilesDir is
+	// auto-defaulted so a "saved to:" annotation may also appear; that
+	// doesn't disprove the attachment path.
+	if !hasNonTextBlock(entry.ContentBlockTypes) {
+		t.Errorf("PDF arrived without any non-text content block — types=%v text=%q",
+			entry.ContentBlockTypes, entry.TextPrefix)
+	}
 }
 
 // TestL2_Files_PDFOverLimit_FallsBackToDiskSave proves a PDF over the
@@ -223,7 +355,48 @@ func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
 // prepended to caption, both forwarded to agent.
 func TestL2_Files_VideoAttachment_SavedAndPathInjected(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; without a stubbed binary download no file lands on disk and no '[Video saved to: ...]' tag is prepended")
+	const userID = 8024
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	const fileID = "video-fileid-001"
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "videos/file_1.mp4",
+		Data:     []byte("synthetic-mp4-bytes-VIDEO_SAVE"),
+		MIMEType: "video/mp4",
+	})
+
+	caption := "VIDEO_SAVE_CAPTION_MARKER"
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Video: &gotgbot.Video{
+				FileId:   fileID,
+				MimeType: "video/mp4",
+				FileSize: 4096,
+				Width:    640,
+				Height:   480,
+				Duration: 5,
+			},
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "Video saved to:", 20*time.Second) {
+		t.Errorf("expected '[Video saved to:]' tag in agent user_message\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if !waitForUserMessage(t, h, "workspaces/alpha", caption, 5*time.Second) {
+		t.Errorf("original caption was lost when video was saved")
+	}
+	if n := dirEntryCount(t, receivedFilesDir(h, "alpha")); n == 0 {
+		t.Errorf("expected at least 1 file in received_files_dir after video save, got 0")
+	}
 }
 
 // TestL2_Files_VideoNoteAttachment_SavedAndPathInjected proves the
@@ -233,7 +406,44 @@ func TestL2_Files_VideoAttachment_SavedAndPathInjected(t *testing.T) {
 // the human label.
 func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: downloadFile hardcodes https://api.telegram.org; same blocker as the Video test above")
+	const userID = 8025
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	const fileID = "videonote-fileid-001"
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "video_notes/file_1.mp4",
+		Data:     []byte("synthetic-videonote-bytes-VN"),
+		MIMEType: "video/mp4",
+	})
+
+	// VideoNote messages typically have no caption in real Telegram.
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			VideoNote: &gotgbot.VideoNote{
+				FileId:   fileID,
+				FileSize: 4096,
+				Length:   240,
+				Duration: 5,
+			},
+		},
+	})
+
+	// The handleMediaMessage call uses label="Video" for VideoNote too —
+	// the videonote/Video naming asymmetry is in bot_receive.go.
+	if !waitForUserMessage(t, h, "workspaces/alpha", "Video saved to:", 20*time.Second) {
+		t.Errorf("expected '[Video saved to:]' tag for videonote\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	if n := dirEntryCount(t, receivedFilesDir(h, "alpha")); n == 0 {
+		t.Errorf("expected at least 1 file in received_files_dir after videonote save, got 0")
+	}
 }
 
 // TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent proves that a
@@ -245,7 +455,50 @@ func TestL2_Files_VideoNoteAttachment_SavedAndPathInjected(t *testing.T) {
 // reaching the agent with canonical mime_type.
 func TestL2_Files_ConvertibleDoc_NormalizedMIMEReachesAgent(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: convertible-doc branch calls downloadAttachment which calls downloadFile; without a stubbed binary download the attachment never reaches the agent so the normalized MIME can't be observed")
+	const userID = 8026
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	const fileID = "csv-fileid-001"
+	csvBody := "name,score\nAlice,42\nBob,17\n"
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "documents/file_3.csv",
+		Data:     []byte(csvBody),
+		MIMEType: "text/csv",
+	})
+
+	caption := "CONVERTIBLE_DOC_MARKER"
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Document: &gotgbot.Document{
+				FileId:   fileID,
+				FileName: "scores.csv",
+				MimeType: "text/csv",
+				FileSize: int64(len(csvBody)),
+			},
+		},
+	})
+
+	entry, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, caption)
+	if !ok {
+		t.Fatalf("convertible doc caption never reached agent\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	// Convertible doc takes the attachment branch. cc-stub records
+	// only block type strings — asserting MIME value would need a
+	// recorder-schema extension, so we assert structure: at least one
+	// non-text content block (the convertible doc itself).
+	if !hasNonTextBlock(entry.ContentBlockTypes) {
+		t.Errorf("convertible doc arrived without any non-text content block — types=%v text=%q",
+			entry.ContentBlockTypes, entry.TextPrefix)
+	}
 }
 
 // TestL2_Files_SendToChatFile_RecordsSendDocument proves the egress

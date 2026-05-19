@@ -74,6 +74,21 @@ type botState struct {
 	updates []gotgbot.Update // pending getUpdates queue
 	sent    []SentCall       // outbound API calls for assertion
 	offset  int64            // last acknowledged update id
+	// files maps a file_id → registered FileBlob. Used by RegisterFile +
+	// the /file/bot<token>/<filePath> download handler. Tests pre-register
+	// blobs and reference the file_id when building synthetic Voice /
+	// PhotoSize / Document Telegram payloads.
+	files map[string]FileBlob
+}
+
+// FileBlob is a synthetic binary payload registered against a file_id.
+// The Path field becomes the file_path returned by getFile; the Data is
+// served verbatim from /file/bot<token>/<path>. MIMEType is informational
+// (not echoed by the stub; foci's media handling sniffs separately).
+type FileBlob struct {
+	Path     string
+	Data     []byte
+	MIMEType string
 }
 
 // SentCall is one outbound API call captured from foci. Tests inspect
@@ -208,6 +223,26 @@ func (s *TelegramStub) RegisterBot(token string, user gotgbot.User) {
 		s.bots[token] = st
 	}
 	st.user = user
+	if st.files == nil {
+		st.files = map[string]FileBlob{}
+	}
+}
+
+// RegisterFile makes fileID downloadable for the given token. The next
+// getFile call for fileID returns blob.Path as file_path, and a request
+// to /file/bot<token>/<blob.Path> returns blob.Data verbatim. Used by
+// tests to drive end-to-end media-download paths against the stub.
+func (s *TelegramStub) RegisterFile(token, fileID string, blob FileBlob) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.bots[token]
+	if !ok {
+		panic(fmt.Sprintf("testharness: RegisterFile for unknown token %q — call RegisterBot first", token))
+	}
+	if st.files == nil {
+		st.files = map[string]FileBlob{}
+	}
+	st.files[fileID] = blob
 }
 
 // PushUpdate enqueues a synthetic update for the bot identified by token.
@@ -299,12 +334,16 @@ func (s *TelegramStub) PeekSent(token string) []SentCall {
 }
 
 // handle dispatches incoming HTTP requests. URL shape: /bot<token>/<method>.
+// File downloads come in as /file/bot<token>/<filePath> and route to the
+// per-token files map populated via RegisterFile.
 func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 	// Path is like /bot12345:ABCDEF/sendMessage
 	path := strings.TrimPrefix(r.URL.Path, "/")
+	if strings.HasPrefix(path, "file/bot") {
+		s.serveFileDownload(w, r, strings.TrimPrefix(path, "file/bot"))
+		return
+	}
 	if !strings.HasPrefix(path, "bot") {
-		// File downloads start with /file/bot<token>/<filePath>. We don't
-		// model those — first 5 L2 tests don't exercise file paths.
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -355,8 +394,22 @@ func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 	case "sendDocument", "sendVoice", "sendVideo", "sendPhoto", "sendAudio", "sendAnimation":
 		s.serveSendMedia(w, token, st)
 	case "getFile":
-		// Return a minimal File so tests don't crash on download path.
-		writeOK(w, map[string]any{"file_id": "stub", "file_path": "stub.bin"})
+		// Look up the registered file_path for this file_id. Tests use
+		// RegisterFile to seed a blob; bots that ask for an unknown
+		// file_id get a stub response (preserves backward compat).
+		fileID := extractField(body, "file_id")
+		s.mu.Lock()
+		blob, ok := st.files[fileID]
+		s.mu.Unlock()
+		if ok {
+			writeOK(w, map[string]any{
+				"file_id":   fileID,
+				"file_path": blob.Path,
+				"file_size": len(blob.Data),
+			})
+		} else {
+			writeOK(w, map[string]any{"file_id": fileID, "file_path": "stub.bin"})
+		}
 	case "answerCallbackQuery":
 		writeOK(w, true)
 	case "deleteMessage":
@@ -533,6 +586,62 @@ func buildMessage(s *TelegramStub, from gotgbot.User, chatID int64, text string)
 func writeOK(w http.ResponseWriter, r any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": r})
+}
+
+// serveFileDownload handles /file/bot<token>/<filePath> requests. The
+// `rest` argument is the path after the "file/bot" prefix — beginning
+// with <token>/<filePath>. Tests register blobs via RegisterFile keyed
+// by file_id; the file_path returned by getFile points the download
+// here. Fault injection on the synthetic method "fileDownload" lets
+// tests simulate transient download failures.
+func (s *TelegramStub) serveFileDownload(w http.ResponseWriter, r *http.Request, rest string) {
+	slash := strings.Index(rest, "/")
+	if slash < 0 {
+		http.Error(w, "bad file path", http.StatusBadRequest)
+		return
+	}
+	token := rest[:slash]
+	filePath := rest[slash+1:]
+
+	s.mu.Lock()
+	st, ok := s.bots[token]
+	s.mu.Unlock()
+	if !ok {
+		writeError(w, 404, "unknown bot token (RegisterBot first)")
+		return
+	}
+
+	// Record the download call against the synthetic "fileDownload"
+	// method so PeekSent gives tests a paper trail without colliding
+	// with real Bot API verbs.
+	s.recordCall(st, "fileDownload", []byte(filePath))
+
+	// Honour any fault injection on the fileDownload method.
+	if f, ok := s.takeFault("fileDownload"); ok {
+		s.applyFault(w, r, f)
+		return
+	}
+
+	// Find the blob whose Path matches.
+	s.mu.Lock()
+	var blob FileBlob
+	var found bool
+	for _, b := range st.files {
+		if b.Path == filePath {
+			blob = b
+			found = true
+			break
+		}
+	}
+	s.mu.Unlock()
+	if !found {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	if blob.MIMEType != "" {
+		w.Header().Set("Content-Type", blob.MIMEType)
+	}
+	_, _ = w.Write(blob.Data)
 }
 
 // applyFault writes the configured fault to the response. For ConnDrop, it

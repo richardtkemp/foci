@@ -203,7 +203,11 @@ func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 		return nil, fmt.Errorf("get file info: %w", err)
 	}
 
-	dlURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.botToken, file.FilePath)
+	base := b.apiBase
+	if base == "" {
+		base = "https://api.telegram.org"
+	}
+	dlURL := fmt.Sprintf("%s/file/bot%s/%s", base, b.botToken, file.FilePath)
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	const maxAttempts = 3
