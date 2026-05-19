@@ -53,6 +53,23 @@ type AgentSpec struct {
 	// values as strings (foci's backendConfigEnv coerces back). Order
 	// in the TOML output is sorted by key for stable test snapshots.
 	ExtraEnv map[string]string
+
+	// PreStartFiles maps workspace-relative paths to file contents that
+	// are written into the agent's workspace AFTER writeWorkspaces but
+	// BEFORE foci-gw spawns. Use for tests that need foci to discover
+	// files at startup — memory indexing, character file additions,
+	// skill seeds. Paths must be relative and may contain subdirectories
+	// (parent dirs are created with 0o755).
+	PreStartFiles map[string]string
+}
+
+// preStartFiles returns the AgentSpec's PreStartFiles map (nil-safe).
+// Centralised so the harness loop can iterate without nil-checks.
+func (a AgentSpec) preStartFiles() map[string]string {
+	if a.PreStartFiles == nil {
+		return nil
+	}
+	return a.PreStartFiles
 }
 
 // HarnessOptions configures a test foci-gw subprocess.
@@ -207,6 +224,28 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	configPath := filepath.Join(tempDir, "foci.toml")
 	secretsPath := filepath.Join(tempDir, "secrets.toml")
 	workspaces := writeWorkspaces(t, tempDir, opts.Agents)
+
+	// Pre-start files: tests that need foci to discover content at
+	// startup (memory indexing, custom character/* files, skill seeds)
+	// write here. Files go to <workspace>/<rel-path>; parents are
+	// created with 0o755. Validation: reject absolute or .. paths to
+	// keep tests honest about scope.
+	for _, a := range opts.Agents {
+		ws := workspaces[a.ID]
+		for rel, content := range a.preStartFiles() {
+			if strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {
+				t.Fatalf("PreStartFiles path %q on agent %s must be relative and within the workspace",
+					rel, a.ID)
+			}
+			full := filepath.Join(ws, rel)
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatalf("mkdir for PreStartFile %s: %v", full, err)
+			}
+			if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+				t.Fatalf("write PreStartFile %s: %v", full, err)
+			}
+		}
+	}
 
 	// Pick an ephemeral HTTP port so parallel tests don't all collide on the
 	// default 18791. Brief race window between Close and foci-gw's bind, but
