@@ -437,14 +437,76 @@ func TestL2_Permissions_FollowupMessageProceedsAfterApproval(t *testing.T) {
 }
 
 // TestL2_Permissions_ControlCancelDisablesInlineKeyboard proves the
-// orphan-keyboard cleanup path. NOTE: cc-stub today has no script entry
-// for emitting a control_cancel_request after a permission_request. The
-// underlying foci infrastructure is plumbed (RegisterPromptCancelListener
-// + CancelInteractiveMessage). Skip-tag refined to name the residual gap
-// rather than the full N1 set.
+// orphan-keyboard cleanup path: when CC emits a control_cancel_request
+// for a pending permission, foci removes the registered callback so a
+// subsequent click on the (now-stale) keyboard is a no-op AND edits
+// the Telegram message to clear the keyboard. cc-stub's new
+// control_cancel_requests script field emits the cancel envelope after
+// the matching permission_request.
 func TestL2_Permissions_ControlCancelDisablesInlineKeyboard(t *testing.T) {
 	t.Parallel()
-	t.Skip("RESIDUAL GAP (post-N1): cc-stub stubScript has no control_cancel_requests field. Need a follow-up extension to emit {\"type\":\"control_cancel_request\",\"request_id\":\"<prev>\"} after the assistant turn — single recordPermissionCancel entry needed alongside the existing permission_request emission. Estimated 20 lines in cmd/cc-stub/main.go")
+	h, token := permTestSetup(t, []testharness.AgentSpec{{ID: "alpha", UserID: permTestUserID}}, "")
+
+	const reqID = "req-cancel-1"
+	// Script: emit a permission_request, then immediately cancel it.
+	body, err := json.Marshal(map[string]any{
+		"text": "asking and then cancelling",
+		"permission_requests": []map[string]any{
+			{
+				"tool_name":  "Bash",
+				"input":      map[string]any{"command": "rm /tmp/cancelled"},
+				"request_id": reqID,
+			},
+		},
+		"control_cancel_requests": []string{reqID},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", body)
+	pushTrigger(t, h, token, "trigger cancel")
+
+	// Permission prompt lands first.
+	if _, ok := waitForPermissionPrompt(t, h.TelegramStub(), token, "rm /tmp/cancelled", 10*time.Second); !ok {
+		t.Fatalf("prompt never fired")
+	}
+
+	// After the cancel envelope, foci's CancelInteractiveMessage edits
+	// the message — the stub records an editMessageText call. Wait for
+	// it as the proxy for "the keyboard was disabled".
+	if _, ok := waitForSentMethod(h, token, "editMessageText", 5*time.Second); !ok {
+		t.Errorf("expected editMessageText after control_cancel_request; sent calls:\n%s",
+			sentCallSummary(h, token))
+	}
+
+	// Verify the cancel was actually recorded by cc-stub.
+	deadline := time.Now().Add(3 * time.Second)
+	var cancelled bool
+	for time.Now().Before(deadline) && !cancelled {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind == "permission_cancel" && e.ControlRequestID == reqID {
+				cancelled = true
+				break
+			}
+		}
+		if !cancelled {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	if !cancelled {
+		t.Errorf("cc-stub never recorded permission_cancel for %s; recorder:\n%s",
+			reqID, recorderTail(t, h.RecorderPath()))
+	}
+
+	// Now push a callback_query as if the user clicked Allow on the
+	// now-cancelled prompt. HandleInteractiveCallback should return
+	// ok=false because the listener was removed; no control_response
+	// goes back to cc-stub.
+	h.TelegramStub().PushCallbackQuery(token, callbackForAllow(reqID), permTestUserID, permTestUserID, 0)
+
+	if got := findControlResponse(t, h, reqID, 2*time.Second); got != nil {
+		t.Errorf("expected NO control_response for click on cancelled prompt; got %v", got)
+	}
 }
 
 // TestL2_Permissions_UnknownCallbackChoiceTreatedAsDeny proves that a
