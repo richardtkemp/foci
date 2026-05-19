@@ -3,7 +3,12 @@
 package integration
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -248,7 +253,79 @@ func TestL2_Config_SmartDefaultMemorySourceFromWorkspace(t *testing.T) {
 // the unresolved template, not the empty string.
 func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestSecrets only emits [anthropic] and [telegram] sections — needs HarnessOptions support for arbitrary secret sections AND for an exec/tool command that references {{secret:...}} so the resolver path is exercised")
+	// Side server records the Authorization header. The bash command
+	// references {{secret:custom.token}} which the bridge's secret
+	// resolver should substitute before the real HTTP call goes out.
+	var (
+		mu       sync.Mutex
+		authHits []string
+	)
+	side := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		authHits = append(authHits, r.Header.Get("Authorization"))
+		mu.Unlock()
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer side.Close()
+
+	const secretValue = "s3cret-v4l-2026"
+	// The bridge enforces allowed_hosts on secret usage — gate the
+	// secret to the side server's host (without port — the check
+	// compares bare hostnames).
+	sideHostPort := strings.TrimPrefix(strings.TrimPrefix(side.URL, "http://"), "https://")
+	sideHost := sideHostPort
+	if i := strings.Index(sideHostPort, ":"); i >= 0 {
+		sideHost = sideHostPort[:i]
+	}
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 4101},
+		},
+		ReadyTimeout: 30 * time.Second,
+		ExtraSecretsTOML: fmt.Sprintf("[custom]\ntoken = %q\nallowed_hosts = [%q]\n", secretValue, sideHost),
+	})
+
+	bashCmd := fmt.Sprintf(
+		`foci_http_request --header "Authorization: Bearer {{secret:custom.token}}" %s/probe`,
+		side.URL,
+	)
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "exercising secret template",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": bashCmd}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 4101, Type: "private"},
+			From: &gotgbot.User{Id: 4101, FirstName: "Tester"},
+			Text: "trigger secret resolution",
+		},
+	})
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := append([]string(nil), authHits...)
+		mu.Unlock()
+		for _, h := range got {
+			if strings.Contains(h, secretValue) {
+				return // pass: secret was resolved server-side before the bridge made the HTTP call
+			}
+			if strings.Contains(h, "{{secret:") {
+				t.Errorf("bridge sent the literal template, not the resolved value: %q", h)
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("side server never received an Authorization header with the resolved secret; hits=%v", authHits)
 }
 
 // TestL2_Config_MissingSecretLoggedAtStartup proves that a referenced
@@ -271,7 +348,85 @@ func TestL2_Config_MissingSecretLoggedAtStartup(t *testing.T) {
 // bare template to the shell.
 func TestL2_Config_UnknownSecretInTemplateFailsResolution(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: same as SecretTemplateResolvedAtExec — needs custom-section secret support AND a way for the test to inspect tool result content (cc-stub currently tees Bash stdout to stderr without surfacing back to foci as a tool_result)")
+	// Side server should NEVER be hit — the resolver fails before the
+	// HTTP call goes out. Count hits to prove the resolver short-
+	// circuited the request.
+	var (
+		mu   sync.Mutex
+		hits int
+	)
+	side := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		_, _ = w.Write([]byte("should-never-be-hit"))
+	}))
+	defer side.Close()
+
+	// Don't add custom.missing_key to secrets — that's the whole point.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 4102},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	bashCmd := fmt.Sprintf(
+		`foci_http_request --header "Authorization: Bearer {{secret:custom.missing_key}}" %s/probe`,
+		side.URL,
+	)
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "exercising missing-secret failure",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": bashCmd}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 4102, Type: "private"},
+			From: &gotgbot.User{Id: 4102, FirstName: "Tester"},
+			Text: "trigger missing-secret",
+		},
+	})
+
+	// Wait long enough for the bridge to attempt + fail the call.
+	if !waitForUserMessage(t, h, "workspaces/alpha", "trigger missing-secret", 20*time.Second) {
+		t.Fatalf("turn did not complete; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	time.Sleep(1 * time.Second) // settle
+
+	// Side server must never have been hit.
+	mu.Lock()
+	got := hits
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("side server hit %d times; resolver should have refused the call before any HTTP", got)
+	}
+	// The bash output for our tool_use should reflect the resolution
+	// failure (or be flagged is_error). The exact wording is bridge-
+	// internal, but the recorder must carry SOMETHING.
+	var found *recorderEntry
+	entries := readRecorderEntries(t, h.RecorderPath())
+	for i, e := range entries {
+		if e.Kind == "bash_tool_use" && strings.Contains(e.Workdir, "workspaces/alpha") &&
+			strings.Contains(e.BashCommand, "missing_key") {
+			found = &entries[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no bash_tool_use recorder entry for missing_key cmd; recorder:\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
+	if found.BashOutput == "" && !found.IsError {
+		t.Errorf("bridge silently dropped the missing-secret error: bash_output empty AND is_error=false")
+	}
 }
 
 // TestL2_Config_MalformedTOMLFailsStartup proves that foci-gw refuses
