@@ -119,6 +119,15 @@ type stubScript struct {
 	Text               string                      `json:"text"`
 	ToolUses           []scriptedToolUse           `json:"tool_uses"`
 	PermissionRequests []scriptedPermissionRequest `json:"permission_requests"`
+	// IntermediateTexts are emitted as SEPARATE assistant messages BEFORE
+	// the main Text-bearing assistant message, all within the same turn
+	// (before the result envelope). Each entry becomes its own
+	// `{"type":"assistant","message":{"content":[{"type":"text","text":...}]}}`
+	// envelope. Simulates the 2026-05-18 22:33 shape where CC produced
+	// multiple text blocks within a single turn — e.g. agent emits
+	// [[NO_RESPONSE]] then a real reply — to exercise turn-sink state
+	// across multiple intermediate text events.
+	IntermediateTexts []string `json:"intermediate_texts,omitempty"`
 	// LateText is emitted as a SECOND assistant message AFTER the result
 	// envelope (with a brief delay to let foci process turn completion).
 	// Simulates the CC-harness scenario where task-notifications or other
@@ -310,6 +319,29 @@ func main() {
 				// Default: echo back so tests can assert on round-trip
 				// without needing to set the env var.
 				reply = "stub-reply: " + userText
+			}
+			// Pre-emit intermediate-text assistant messages. Each entry
+			// becomes its own assistant envelope before the main one, all
+			// within the same turn (no result envelope between them).
+			// Matches the 2026-05-18 22:33 shape: multiple text blocks
+			// within a single turn, observed in production as N separate
+			// `ccstream OnAssistant: text_blocks=1` events.
+			if script != nil {
+				for _, t := range script.IntermediateTexts {
+					emit(out, map[string]any{
+						"type": "assistant",
+						"message": map[string]any{
+							"role": "assistant",
+							"content": []map[string]any{
+								{"type": "text", "text": t},
+							},
+						},
+						"session_id": sessionID,
+					})
+				}
+				if len(script.IntermediateTexts) > 0 {
+					out.Flush()
+				}
 			}
 			content := []map[string]any{
 				{"type": "text", "text": reply},
