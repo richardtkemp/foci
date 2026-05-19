@@ -241,7 +241,72 @@ func TestL2_Config_SmartDefaultAgentNameFromAgentID(t *testing.T) {
 // `<workspace>/memory/` — proves the default source got indexed.
 func TestL2_Config_SmartDefaultMemorySourceFromWorkspace(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires the ability to (1) write a known marker file to the agent's <workspace>/memory dir BEFORE foci-gw starts indexing (the workspace path is constructed inside writeWorkspaces but not exposed to the test until after StartGateway) and (2) capture foci_memory_search's stdout from a Bash tool_use, which cc-stub currently discards to stderr without surfacing tool_result back to the test")
+	// Pre-seed a memory file in alpha's workspace that foci will
+	// discover at startup. The marker text must be searchable via
+	// foci_memory_search after indexing — proving the smart-default
+	// memory source (<workspace>/memory) was registered automatically.
+	// Use a single-token marker — bleve stems and splits on hyphens.
+	const markerText = "smartdefaultmemorysourcemarker7e3a"
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{
+				ID:     "alpha",
+				UserID: 4104,
+				PreStartFiles: map[string]string{
+					"memory/2026-01-01.md": "# Test memory file\n\nThe marker is: " + markerText + "\n",
+				},
+			},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Drive foci_memory_search to look for the marker. Output flows
+	// into the bash_tool_use recorder entry — assert it contains the
+	// marker line, proving indexing discovered the seeded file.
+	bashCmd := "foci_memory_search " + markerText
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "searching memory",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": bashCmd}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 4104, Type: "private"},
+			From: &gotgbot.User{Id: 4104, FirstName: "Tester"},
+			Text: "find the marker",
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "find the marker", 20*time.Second) {
+		t.Fatalf("turn did not complete; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Find the bash_tool_use entry. The combined stdout/stderr should
+	// contain the marker (foci_memory_search returns hits to stdout).
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind != "bash_tool_use" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+				continue
+			}
+			if !strings.Contains(e.BashCommand, "foci_memory_search") {
+				continue
+			}
+			if strings.Contains(e.BashOutput, markerText) {
+				return // pass
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("foci_memory_search output never contained the marker %q; recorder:\n%s",
+		markerText, recorderTail(t, h.RecorderPath()))
 }
 
 // TestL2_Config_SecretTemplateResolvedAtExec proves that a
@@ -336,7 +401,35 @@ func TestL2_Config_SecretTemplateResolvedAtExec(t *testing.T) {
 // proves RequiredSecrets / startup checks actually fire.
 func TestL2_Config_MissingSecretLoggedAtStartup(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject a config block that references {{secret:custom.absent}} (e.g. an env entry on the agent) without adding the secret to secrets.toml")
+	// Inject a custom endpoint block referencing a secret key that
+	// doesn't exist in secrets.toml. EndpointConfig.APIKey carries
+	// toml:"api_key" which RequiredSecrets reflects on, so the
+	// missing-secret pass at startup fires a warning naming the key.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 4103},
+		},
+		ReadyTimeout: 30 * time.Second,
+		ExtraConfigTOML: `
+[endpoints.test_missing]
+format = "openai"
+url = "https://example.invalid"
+api_key = "custom.absent_at_startup"
+`,
+	})
+
+	// foci-gw's warn_secrets path runs during startup and logs at WARN
+	// level: `missing secret "custom.absent_at_startup" (needed by ...)`
+	// (see cmd/foci-gw/warn_secrets.go).
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(h.Stderr(), `missing secret "custom.absent_at_startup"`) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("expected stderr to contain 'missing secret \"custom.absent_at_startup\"'; got tail:\n%s",
+		stderrTail(h.Stderr()))
 }
 
 // TestL2_Config_UnknownSecretInTemplateFailsResolution proves that
