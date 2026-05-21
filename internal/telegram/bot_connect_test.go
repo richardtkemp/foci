@@ -12,14 +12,18 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
 
-// fastBackoff makes the retry loop near-instant for unit tests.
+// fastBackoff makes the retry loop near-instant for unit tests. We still
+// exercise the exponential-growth path via nextDelay tests; for the loop
+// tests we keep MaxAttempts bounded so failing cases terminate.
 var fastBackoff = connectBackoff{
-	MaxAttempts: 4,
-	Delays:      []time.Duration{0, 1 * time.Millisecond, 1 * time.Millisecond, 1 * time.Millisecond},
+	MaxAttempts:  4,
+	InitialDelay: 1 * time.Millisecond,
+	MaxDelay:     1 * time.Millisecond,
+	Multiplier:   2.0,
 }
 
 // stubBotFactory returns a factory that fails the first `failures` calls with
-// `err`, then succeeds. successCount holds the attempt index that succeeded.
+// `err`, then succeeds.
 func stubBotFactory(failures int, err error, success *gotgbot.Bot, attempts *int32) func(token string, opts *gotgbot.BotOpts) (*gotgbot.Bot, error) {
 	return func(token string, opts *gotgbot.BotOpts) (*gotgbot.Bot, error) {
 		n := atomic.AddInt32(attempts, 1)
@@ -57,7 +61,6 @@ func TestConnectBot_SuccessFirstTry(t *testing.T) {
 func TestConnectBot_RetriesTransientThenSucceeds(t *testing.T) {
 	var attempts int32
 	want := &gotgbot.Bot{Token: "tok"}
-	// Two transient failures, then success.
 	transientErr := &net.OpError{Op: "dial", Err: errors.New("i/o timeout")}
 	withStubFactory(t, stubBotFactory(2, transientErr, want, &attempts))
 
@@ -87,7 +90,10 @@ func TestConnectBot_FailsFastOnPermanent(t *testing.T) {
 	}
 }
 
-func TestConnectBot_GivesUpAfterMaxAttempts(t *testing.T) {
+// TestConnectBot_BoundedGivesUp exercises the bounded path. The production
+// default uses MaxAttempts == 0 (unbounded); we use a bounded variant here
+// so the test terminates.
+func TestConnectBot_BoundedGivesUp(t *testing.T) {
 	var attempts int32
 	transientErr := &net.OpError{Op: "dial", Err: errors.New("server misbehaving")}
 	withStubFactory(t, stubBotFactory(99, transientErr, nil, &attempts))
@@ -104,10 +110,37 @@ func TestConnectBot_GivesUpAfterMaxAttempts(t *testing.T) {
 	}
 }
 
+// TestConnectBot_UnboundedRetriesUntilSuccess verifies the production
+// "MaxAttempts == 0" behaviour: retries indefinitely on transient errors
+// until something succeeds. We let it eat 8 failures then succeed; the loop
+// must keep going past any prior cap.
+func TestConnectBot_UnboundedRetriesUntilSuccess(t *testing.T) {
+	var attempts int32
+	want := &gotgbot.Bot{Token: "tok"}
+	transientErr := &net.OpError{Op: "dial", Err: errors.New("server misbehaving")}
+	withStubFactory(t, stubBotFactory(8, transientErr, want, &attempts))
+
+	unbounded := connectBackoff{
+		MaxAttempts:  0, // unbounded
+		InitialDelay: 1 * time.Millisecond,
+		MaxDelay:     1 * time.Millisecond,
+		Multiplier:   2.0,
+	}
+	got, err := connectBot("tok", nil, nil, unbounded)
+	if err != nil {
+		t.Fatalf("connectBot: unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("got bot %v, want %v", got, want)
+	}
+	if attempts != 9 {
+		t.Errorf("attempts = %d, want 9", attempts)
+	}
+}
+
 func TestConnectBot_RedactsTokenInError(t *testing.T) {
 	var attempts int32
 	token := "123456:SECRET-DO-NOT-LEAK"
-	// gotgbot-style error including the URL+token.
 	leaky := errors.New(`Post "https://api.telegram.org/bot` + token + `/getMe": context deadline exceeded`)
 	withStubFactory(t, stubBotFactory(99, leaky, nil, &attempts))
 
@@ -120,6 +153,26 @@ func TestConnectBot_RedactsTokenInError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "[REDACTED]") {
 		t.Errorf("error should contain [REDACTED] marker, got %q", err.Error())
+	}
+}
+
+// TestConnectBot_PermanentErrorRedactsToken ensures the fail-fast path also
+// strips the token from the returned error.
+func TestConnectBot_PermanentErrorRedactsToken(t *testing.T) {
+	var attempts int32
+	token := "999999:OTHER-SECRET"
+	leaky := errors.New(`Post "https://api.telegram.org/bot` + token + `/getMe": Unauthorized`)
+	withStubFactory(t, stubBotFactory(99, leaky, nil, &attempts))
+
+	_, err := connectBot(token, nil, nil, fastBackoff)
+	if err == nil {
+		t.Fatal("connectBot: expected error, got nil")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("permanent-error path leaks token: %q", err.Error())
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d, want 1 (permanent fails fast)", attempts)
 	}
 }
 
@@ -170,5 +223,55 @@ func TestRedactToken(t *testing.T) {
 				t.Errorf("redactToken(%q, %q) = %q, want %q", tc.s, tc.token, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestNextDelay_ExponentialAndCapped verifies the production backoff
+// schedule: doubles each attempt, caps at MaxDelay, attempt 1 has zero
+// delay. This is what protects foci from both a too-eager DNS retry and an
+// hour-long gap between attempts in the long tail.
+func TestNextDelay_ExponentialAndCapped(t *testing.T) {
+	bo := connectBackoff{
+		InitialDelay: 2 * time.Second,
+		MaxDelay:     5 * time.Minute,
+		Multiplier:   2.0,
+	}
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{1, 0},                  // first try, no delay
+		{2, 2 * time.Second},    // initial
+		{3, 4 * time.Second},    // x2
+		{4, 8 * time.Second},    // x2
+		{5, 16 * time.Second},   // x2
+		{6, 32 * time.Second},   // x2
+		{7, 64 * time.Second},   // x2
+		{8, 128 * time.Second},  // x2
+		{9, 256 * time.Second},  // x2
+		{10, 5 * time.Minute},   // capped (would be 512s = 8m32s)
+		{20, 5 * time.Minute},   // stays capped
+		{1000, 5 * time.Minute}, // stays capped, no overflow
+	}
+	for _, tc := range cases {
+		got := bo.nextDelay(tc.attempt)
+		if got != tc.want {
+			t.Errorf("nextDelay(%d) = %v, want %v", tc.attempt, got, tc.want)
+		}
+	}
+}
+
+// TestNextDelay_ZeroMaxDelay disables capping — the delay grows without
+// bound. This isn't used in production but the function should behave
+// sensibly.
+func TestNextDelay_ZeroMaxDelay(t *testing.T) {
+	bo := connectBackoff{
+		InitialDelay: 1 * time.Second,
+		MaxDelay:     0, // no cap
+		Multiplier:   2.0,
+	}
+	// attempt=2 starts at InitialDelay (1s); doubles 3 times to reach attempt 5: 8s.
+	if got := bo.nextDelay(5); got != 8*time.Second {
+		t.Errorf("nextDelay(5) = %v, want 8s", got)
 	}
 }

@@ -4,16 +4,20 @@
 // username). If DNS or the network isn't ready at startup, that call fails and
 // the bot is permanently disabled — no retry, no recovery.
 //
-// This file wraps gotgbot.NewBot in a bounded retry loop with exponential
-// backoff so a transient blip at boot doesn't take an agent offline for hours
+// This file wraps gotgbot.NewBot in an unbounded exponential-backoff retry
+// loop so a transient blip at boot doesn't take an agent offline for hours
 // (see TODO #796 / the 2026-05-20 incident: foci restarted at 06:34 with DNS
 // not yet up, all six bots failed getMe with "server misbehaving", 27.5h
 // silence until manual restart).
 //
-// The retry classifier is intentionally permissive: only definitively
-// permanent errors (auth/token problems) bail immediately; everything else
-// (DNS, i/o timeout, connection refused, generic context deadlines) is
-// treated as transient.
+// "Unbounded" means: keep retrying as long as the error looks transient. If
+// Telegram is genuinely unreachable, foci sits on startup retrying — that's
+// loud (operator can see foci hasn't come up) and recoverable (DNS returns →
+// next retry succeeds → startup completes). The "agent runs without
+// platform" failure mode that caused the outage is eliminated.
+//
+// Permanent errors (auth/token problems) still bail immediately — no point
+// retrying a 401 forever.
 
 package telegram
 
@@ -31,70 +35,89 @@ import (
 // It's a package-level var so tests can substitute a deterministic fake.
 var botFactory = gotgbot.NewBot
 
-// connectBackoff describes the bounded retry schedule used by connectBot.
-// MaxAttempts includes the initial try (attempt 1 has zero delay).
-type connectBackoff struct {
-	MaxAttempts int
-	Delays      []time.Duration // index 0 unused; Delays[i] is the wait BEFORE attempt i+1
-}
-
-// defaultConnectBackoff is ~112s total over 6 attempts.
+// connectBackoff describes the retry schedule used by connectBot.
 //
-// Rationale: a typical DNS-not-ready window at boot resolves in <30s once
-// network-online.target fires; ~2 minutes per agent is plenty without
-// blocking startup intolerably. Six telegram agents serialised at worst case
-// adds ~12 minutes to startup, which is acceptable for the once-in-a-blue-
-// moon "DNS truly broken" scenario; the common case is that attempt 1 or 2
-// succeeds and startup feels normal.
-var defaultConnectBackoff = connectBackoff{
-	MaxAttempts: 6,
-	Delays: []time.Duration{
-		0,               // attempt 1 (unused)
-		2 * time.Second, // before attempt 2
-		5 * time.Second, // before attempt 3
-		15 * time.Second,
-		30 * time.Second,
-		60 * time.Second,
-	},
+// Schedule: InitialDelay grows by Multiplier each attempt, capped at MaxDelay.
+// MaxAttempts == 0 means unbounded (retry until success or permanent error).
+type connectBackoff struct {
+	MaxAttempts  int           // 0 = unbounded
+	InitialDelay time.Duration // delay before attempt 2
+	MaxDelay     time.Duration // cap on per-attempt delay
+	Multiplier   float64       // growth factor per attempt
 }
 
-// connectBot calls botFactory with bounded exponential backoff. Transient
-// errors are retried; permanent (auth/token) errors fail fast. All log lines
-// have the bot token redacted before emit.
-func connectBot(token string, opts *gotgbot.BotOpts, lg *log.ComponentLogger, bo connectBackoff) (*gotgbot.Bot, error) {
-	if bo.MaxAttempts <= 0 {
-		bo.MaxAttempts = 1
+// defaultConnectBackoff retries forever with exponential backoff, capping
+// the inter-attempt delay at 5 minutes.
+//
+// Schedule: 2s, 4s, 8s, 16s, 32s, 64s, 128s, 256s, 300s, 300s, …
+// After ~9 attempts (~8 minutes) we settle to a 5-minute heartbeat. In
+// practice a startup DNS hiccup resolves in the first few attempts; the
+// long tail exists so an extended outage eventually recovers without
+// requiring a manual restart.
+var defaultConnectBackoff = connectBackoff{
+	MaxAttempts:  0, // unbounded
+	InitialDelay: 2 * time.Second,
+	MaxDelay:     5 * time.Minute,
+	Multiplier:   2.0,
+}
+
+// nextDelay returns the delay to apply BEFORE the given (1-based) attempt.
+// Attempt 1 has no delay (it's the first try). Attempt N's delay is the
+// initial doubled (N-2) times, capped at MaxDelay.
+func (bo connectBackoff) nextDelay(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 0
 	}
+	d := bo.InitialDelay
+	if d <= 0 {
+		d = time.Second
+	}
+	mult := bo.Multiplier
+	if mult < 1 {
+		mult = 1
+	}
+	for i := 2; i < attempt; i++ {
+		d = time.Duration(float64(d) * mult)
+		if bo.MaxDelay > 0 && d >= bo.MaxDelay {
+			return bo.MaxDelay
+		}
+	}
+	if bo.MaxDelay > 0 && d > bo.MaxDelay {
+		return bo.MaxDelay
+	}
+	return d
+}
+
+// connectBot calls botFactory with exponential backoff. Transient errors
+// are retried (forever, if MaxAttempts == 0); permanent (auth/token) errors
+// fail fast. All log lines have the bot token redacted before emit.
+func connectBot(token string, opts *gotgbot.BotOpts, lg *log.ComponentLogger, bo connectBackoff) (*gotgbot.Bot, error) {
 	var lastErr error
-	for attempt := 1; attempt <= bo.MaxAttempts; attempt++ {
-		if attempt > 1 {
-			delay := time.Duration(0)
-			if attempt-1 < len(bo.Delays) {
-				delay = bo.Delays[attempt-1]
-			} else if len(bo.Delays) > 0 {
-				delay = bo.Delays[len(bo.Delays)-1]
-			}
-			if delay > 0 {
-				time.Sleep(delay)
-			}
+	for attempt := 1; ; attempt++ {
+		if delay := bo.nextDelay(attempt); delay > 0 {
+			time.Sleep(delay)
 		}
 
 		bot, err := botFactory(token, opts)
 		if err == nil {
 			if attempt > 1 && lg != nil {
-				lg.Infof("connected on attempt %d/%d", attempt, bo.MaxAttempts)
+				lg.Infof("connected on attempt %d", attempt)
 			}
 			return bot, nil
 		}
 		lastErr = err
 
 		if isPermanentTelegramErr(err) {
-			// Don't burn budget on a wrong token / disabled bot.
+			// Don't burn cycles on a wrong token / disabled bot.
 			return nil, fmt.Errorf("create telegram bot: %s", redactToken(err.Error(), token))
 		}
 
 		if lg != nil {
-			lg.Warnf("attempt %d/%d failed (transient): %s", attempt, bo.MaxAttempts, redactToken(err.Error(), token))
+			lg.Warnf("attempt %d failed (transient, will retry): %s", attempt, redactToken(err.Error(), token))
+		}
+
+		if bo.MaxAttempts > 0 && attempt >= bo.MaxAttempts {
+			break
 		}
 	}
 	final := "unknown error"
@@ -123,13 +146,13 @@ func isPermanentTelegramErr(err error) bool {
 // problem isn't going to resolve via retry. We match conservatively — when
 // in doubt, retry.
 var permanentMarkers = []string{
-	"Unauthorized",       // gotgbot returns this for 401
-	"unauthorized",       // case variant from some transports
-	"401",                // raw status
-	"bot was blocked",    // user-side, not relevant to startup but harmless
-	"Forbidden",          // 403 — token revoked / bot kicked
-	"invalid token",      // generic
-	"token is invalid",   // generic
+	"Unauthorized",     // gotgbot returns this for 401
+	"unauthorized",     // case variant from some transports
+	"401",              // raw status
+	"bot was blocked",  // user-side, not relevant to startup but harmless
+	"Forbidden",        // 403 — token revoked / bot kicked
+	"invalid token",    // generic
+	"token is invalid", // generic
 }
 
 func containsAny(s string, needles []string) bool {
