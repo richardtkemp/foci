@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"sync"
@@ -228,7 +227,11 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		// so the override is uniform across getUpdates, sendMessage, etc.
 		defaultReqOpts.APIURL = apiBase
 	}
-	api, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
+	// Construct via connectBot so a transient DNS/network blip at boot
+	// (e.g. systemd brings foci up before DNS is ready) doesn't permanently
+	// disable the bot. See bot_connect.go and TODO #796.
+	lg := log.NewComponentLogger("telegram:" + agentID)
+	api, err := connectBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
 			Client: http.Client{
 				Transport: &http.Transport{
@@ -237,9 +240,10 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 			},
 			DefaultRequestOpts: defaultReqOpts,
 		},
-	})
+	}, lg, defaultConnectBackoff)
 	if err != nil {
-		return nil, fmt.Errorf("create telegram bot: %w", err)
+		// err is already token-redacted by connectBot.
+		return nil, err
 	}
 
 	allowed := make(map[string]bool, len(allowedUsers))
@@ -247,7 +251,6 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		allowed[u] = true
 	}
 
-	lg := log.NewComponentLogger("telegram:" + agentID)
 	bot := &Bot{
 		log:          lg,
 		api:          api,

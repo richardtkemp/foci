@@ -285,9 +285,6 @@ func (b *Bot) sanitizeError(err error) string {
 	if err == nil {
 		return ""
 	}
-	if b.botToken == "" {
-		return err.Error()
-	}
-	return strings.ReplaceAll(err.Error(), b.botToken, "[REDACTED]")
+	return redactToken(err.Error(), b.botToken)
 }
 
