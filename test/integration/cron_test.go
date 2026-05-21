@@ -127,23 +127,28 @@ func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
 		t.Fatalf("initial user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
 	}
 
-	// Snapshot recorder count after the bootstrap turn settles.
+	// Settle the bootstrap turn before counting.
 	time.Sleep(500 * time.Millisecond)
-	before := len(readRecorderEntries(t, h.RecorderPath()))
 
 	// The keepalive scheduler ticks every 30s (internal/periodic
 	// tickInterval). With interval=1s, the cache-age threshold is already
 	// crossed; the next tick after the bootstrap turn should fire
-	// keepalive, which calls branchFn("keepalive", ...) and spawns a
-	// second cc-stub invocation in the agent's workdir. Wait one full
-	// tick plus buffer; no Telegram update is pushed in this window so
-	// any new recorder entries must come from the keepalive branch.
+	// keepalive. For the delegated (claude-code) backend keepalive does
+	// NOT spawn a new cc-stub process — it injects the keepalive prompt
+	// into the running main session as a user_message. So we assert on
+	// user_message TextPrefix carrying the keepalive prompt marker.
 	time.Sleep(35 * time.Second)
 
-	after := len(readRecorderEntries(t, h.RecorderPath()))
-	if after <= before {
-		t.Fatalf("keepalive did not fire: recorder entries before=%d after=%d; stderr:\n%s",
-			before, after, stderrTail(h.Stderr()))
+	found := false
+	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		if strings.Contains(e.TextPrefix, "[KEEPALIVE]") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("keepalive prompt never reached cc-stub as user_message; stderr:\n%s",
+			stderrTail(h.Stderr()))
 	}
 }
 
@@ -222,8 +227,52 @@ func TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos(t *testing.T) {
 // invocation across multiple ticks when the todo store is empty.
 func TestL2_Cron_BackgroundSkippedWithNoOpenTodos(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [background] config injection (sub-minute " +
-		"interval). See TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos.")
+	const testUserID = 5304
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// Background enabled with a sub-minute interval so the idle gate
+		// passes after the bootstrap turn settles. Background should
+		// still skip because the per-agent todo store is empty. We also
+		// disable reflection's interval + consolidation timers so they
+		// don't contribute recorder growth unrelated to this assertion.
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+
+	// One full 30s tick + buffer. With empty todo store the scheduler
+	// must not dispatch regardless of idle/interval state.
+	time.Sleep(35 * time.Second)
+
+	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if after != before {
+		t.Errorf("background fired with no open todos: recorder entries before=%d after=%d; stderr:\n%s",
+			before, after, stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_BackgroundCooldownPreventsSelfChaining proves the
@@ -264,10 +313,74 @@ func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
 // reflection prompt header.
 func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [reflection] config injection (interval, " +
-		"interval_enabled). Defaults are 1h interval — the periodic ticker " +
-		"won't fire within any reasonable test window. Needs " +
-		"HarnessOptions.Reflection / ExtraConfigTOML.")
+	const testUserID = 5302
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// interval=20s passes the lastReflection time-gate after one 30s
+		// tick AND keeps the idle-vs-interval window achievable. Reflection
+		// SKIPS when sinceLastInteraction > interval (dormant sessions);
+		// the test sends a refresh message before the tick so idle stays
+		// low. consolidation_enabled=false isolates the assertion.
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	// Bootstrap so SessionIndex has a session to consider.
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Wait, then push a refresh message so lastInteraction is recent
+	// when the 30s reflection tick lands. Without this the bootstrap-
+	// at-T+~3s becomes idle ~27s by tick time, which exceeds the
+	// 20s interval and reflection skips ("idle > interval").
+	time.Sleep(20 * time.Second)
+	refreshBody, _ := json.Marshal(map[string]any{"text": "refresh"})
+	h.WriteCCStubScript(t, "alpha", refreshBody)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "keep session warm",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "keep session warm", 15*time.Second) {
+		t.Fatalf("refresh never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Wait through the next 30s tick. With the refresh ~22s in, the
+	// next tick lands within a window where sinceLastInteraction < 20s
+	// interval AND lastReflection-time-gate has elapsed.
+	time.Sleep(20 * time.Second)
+
+	found := false
+	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		if strings.Contains(e.TextPrefix, "Reflection Pass") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("reflection prompt never reached cc-stub as user_message; stderr:\n%s",
+			stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_ReflectionStampPreventsImmediateRefire proves the
@@ -278,8 +391,107 @@ func TestL2_Cron_ReflectionFiresOnInterval(t *testing.T) {
 // multiple ticks.
 func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [reflection] config injection. " +
-		"See TestL2_Cron_ReflectionFiresOnInterval.")
+	// SKIP: structurally infeasible with the current implementation +
+	// 30s tickInterval. To observe "fires then skips" we need both:
+	//   - first 30s tick must fire (so interval ≤ 30s)
+	//   - second 30s tick must skip via the lastReflection time-gate
+	//     (so now < lastReflection + interval, i.e. interval > tick gap)
+	// Those two are unsatisfiable with a single interval value.
+	//
+	// The other potential guard — SessionIndex's "needs reflection" stamp
+	// — also can't isolate, because any user-message refresh used to keep
+	// the idle gate satisfied ALSO restamps the session as needing
+	// reflection on the next tick. Catch-22 with the warm-session
+	// requirement.
+	//
+	// Unblock paths: (a) make tickInterval configurable so a test can
+	// fit interval > tick gap, (b) expose a SessionIndex.MarkReflected
+	// helper for the harness so the test can stamp without a user msg.
+	t.Skip("INFEASIBLE: cannot observe 'fires then skips' isolated to the stamp with the current 30s tickInterval and idle-gate constraints. See comment for unblock paths.")
+	const testUserID = 5305
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// interval=20s — chosen so:
+		//   - lastReflection time-gate passes after one 30s tick
+		//   - sinceLastInteraction can stay < interval across two refreshes
+		// consolidation_enabled=false isolates the assertion to reflection.
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	countReflectionInjects := func() int {
+		n := 0
+		for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+			if strings.Contains(e.TextPrefix, "Reflection Pass") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Push a refresh ~20s in to keep lastInteraction recent for the
+	// next 30s tick — see TestL2_Cron_ReflectionFiresOnInterval for the
+	// idle-vs-interval gate reasoning.
+	pushRefresh := func(text string) {
+		body, _ := json.Marshal(map[string]any{"text": "refresh"})
+		h.WriteCCStubScript(t, "alpha", body)
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+				From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+				Text: text,
+			},
+		})
+		if !waitForUserMessage(t, h, "workspaces/alpha", text, 15*time.Second) {
+			t.Fatalf("refresh %q never processed; stderr:\n%s", text, stderrTail(h.Stderr()))
+		}
+	}
+
+	// First reflection cycle: warm session, wait through first 30s tick,
+	// assert reflection fired exactly once.
+	time.Sleep(20 * time.Second)
+	pushRefresh("warm-1")
+	time.Sleep(20 * time.Second)
+	afterFirstTick := countReflectionInjects()
+	if afterFirstTick == 0 {
+		t.Fatalf("reflection did not fire on first tick (no 'Reflection Pass' user_message recorded); stderr:\n%s",
+			stderrTail(h.Stderr()))
+	}
+
+	// Second reflection cycle: refresh again to keep idle gate satisfied,
+	// then wait through the next 30s tick. The session was just stamped
+	// by the first reflection, so SessionIndex should report "no sessions
+	// need reflection" and the count must not grow. With interval=20s
+	// the time-gate alone would not block (20s elapsed since first fire),
+	// so the stamp is the only remaining guard.
+	pushRefresh("warm-2")
+	time.Sleep(30 * time.Second)
+	afterSecondTick := countReflectionInjects()
+	if afterSecondTick != afterFirstTick {
+		t.Errorf("reflection refired despite recent stamp: afterFirst=%d afterSecond=%d; stderr:\n%s",
+			afterFirstTick, afterSecondTick, stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy proves the
@@ -290,8 +502,79 @@ func TestL2_Cron_ReflectionStampPreventsImmediateRefire(t *testing.T) {
 // recorder entry appears for that session until the turn completes.
 func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [reflection] config injection. " +
-		"See TestL2_Cron_ReflectionFiresOnInterval.")
+	const testUserID = 5306
+	const hangMarker = "REFL_DEFER_HOLD"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// interval=1s so the gate doesn't block; the in-flight filter is
+		// the only thing that should stop reflection. Disable
+		// consolidation so its timer doesn't muddy the count.
+		ExtraConfigTOML: "\n[reflection]\ninterval = \"1s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	// Bootstrap so the agent has a session at all.
+	bootstrapBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal bootstrap: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", bootstrapBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Second turn: hold the session in-flight for 35s so the first 30s
+	// tick lands while parent is still processing. Bash sleep is the
+	// canonical hold pattern (see TestL2_Cron_WakeReminderWaitsForActiveTurn).
+	hangBash := fmt.Sprintf(`echo %s; sleep 35`, hangMarker)
+	hangBody, err := json.Marshal(map[string]any{
+		"text": "holding",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": hangBash}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal hang: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", hangBody)
+
+	holdText := "hold the turn open"
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: holdText,
+		},
+	})
+
+	// Wait for the hang's user_message to be recorded (proves the turn
+	// started). The hang's bash will run for 35s.
+	if !waitForUserMessage(t, h, "workspaces/alpha", holdText, 15*time.Second) {
+		t.Fatalf("hang turn never started; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	beforeTick := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+
+	// Wait through the 30s tick (which lands during the 35s hold). The
+	// in-flight filter should defer reflection.
+	time.Sleep(33 * time.Second)
+	afterTick := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if afterTick != beforeTick {
+		t.Errorf("reflection fired while parent session was in-flight: before=%d after=%d; stderr:\n%s",
+			beforeTick, afterTick, stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse proves the
@@ -300,8 +583,53 @@ func TestL2_Cron_ReflectionDeferredWhenAllSessionsBusy(t *testing.T) {
 // dispatching. Asserts the recorder shows zero reflection invocations.
 func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [reflection] config injection (specifically " +
-		"interval_enabled=false). See TestL2_Cron_ReflectionFiresOnInterval.")
+	const testUserID = 5303
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// interval_enabled=false but interval=1s so the time gate would
+		// otherwise permit firing. The IntervalEnabled gate must short-
+		// circuit before the interval check is even consulted.
+		// consolidation_enabled=false suppresses the sibling memory-
+		// consolidation timer that otherwise fires on the first tick
+		// and would create recorder growth unrelated to this assertion.
+		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\ninterval = \"1s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = false\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+
+	// One tick + buffer. Since IntervalEnabled=false, reflection must
+	// not dispatch regardless of how long the interval has elapsed.
+	time.Sleep(35 * time.Second)
+
+	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if after != before {
+		t.Errorf("reflection fired despite interval_enabled=false: recorder entries before=%d after=%d; stderr:\n%s",
+			before, after, stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_ConsolidationFiresOnLongerInterval proves consolidation
@@ -312,9 +640,51 @@ func TestL2_Cron_ReflectionDisabledWhenIntervalEnabledFalse(t *testing.T) {
 // prompt invocation in the agent's workdir.
 func TestL2_Cron_ConsolidationFiresOnLongerInterval(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [reflection] config injection " +
-		"(consolidation_interval, consolidation_enabled). Default is 20h. " +
-		"See TestL2_Cron_ReflectionFiresOnInterval.")
+	const testUserID = 5307
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// Disable the interval-reflection timer to isolate consolidation,
+		// then enable consolidation with a sub-minute interval so it
+		// fires within the test window.
+		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+
+	// First 30s tick should see consolidation_interval elapsed and
+	// dispatch the consolidation branch. No Telegram update is pushed
+	// in this window so any recorder growth comes from consolidation.
+	time.Sleep(35 * time.Second)
+
+	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if after <= before {
+		t.Fatalf("consolidation did not fire: before=%d after=%d; stderr:\n%s",
+			before, after, stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_ConsolidationSkippedWhileReflectionRunning proves the
@@ -890,7 +1260,7 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 
 	// Snapshot recorder entry count before the bad call so we can
 	// assert nothing new lands.
-	before := len(readRecorderEntries(t, h.RecorderPath()))
+	before := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 
 	sockPath := gwSocketPath(h)
 	waitForSocket(t, sockPath, 5*time.Second)
@@ -923,7 +1293,7 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 
 	// Give the gateway time to NOT do work.
 	time.Sleep(2 * time.Second)
-	after := len(readRecorderEntries(t, h.RecorderPath()))
+	after := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
 	if after != before {
 		t.Errorf("rejected /wake still produced recorder entries (before=%d after=%d)", before, after)
 	}
