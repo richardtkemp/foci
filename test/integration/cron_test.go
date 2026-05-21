@@ -93,10 +93,58 @@ func waitForSocket(t *testing.T, sockPath string, timeout time.Duration) {
 // without any Telegram update having been pushed.
 func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig has no way to inject [keepalive] section " +
-		"(enabled, interval). Without that, keepalive is disabled by default " +
-		"and the tick will never fire within a test-scale window. Needs " +
-		"HarnessOptions.Keepalive / .ExtraConfigTOML or similar.")
+	const testUserID = 5301
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		ExtraConfigTOML: "\n[keepalive]\nenabled = true\ninterval = \"1s\"\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	// Keepalive requires a default parent session before it can fire
+	// (defaultParentKey returns "" otherwise). Push one Telegram message
+	// to create that session and consume the initial cc-stub script.
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "bootstrap",
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("initial user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Snapshot recorder count after the bootstrap turn settles.
+	time.Sleep(500 * time.Millisecond)
+	before := len(readRecorderEntries(t, h.RecorderPath()))
+
+	// The keepalive scheduler ticks every 30s (internal/periodic
+	// tickInterval). With interval=1s, the cache-age threshold is already
+	// crossed; the next tick after the bootstrap turn should fire
+	// keepalive, which calls branchFn("keepalive", ...) and spawns a
+	// second cc-stub invocation in the agent's workdir. Wait one full
+	// tick plus buffer; no Telegram update is pushed in this window so
+	// any new recorder entries must come from the keepalive branch.
+	time.Sleep(35 * time.Second)
+
+	after := len(readRecorderEntries(t, h.RecorderPath()))
+	if after <= before {
+		t.Fatalf("keepalive did not fire: recorder entries before=%d after=%d; stderr:\n%s",
+			before, after, stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable proves the
@@ -108,10 +156,20 @@ func TestL2_Cron_KeepaliveFiresAtConfiguredInterval(t *testing.T) {
 // keepalive invocations across multiple ticks.
 func TestL2_Cron_KeepaliveSkippedWhenCachingUnavailable(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [keepalive] config injection AND a way to " +
-		"select a non-caching model in the test config. writeTestConfig only " +
-		"emits the anthropic/claude-haiku-4-5 stub model. Needs harness support " +
-		"for selecting/overriding the model and enabling keepalive.")
+	// SCOPE: API-backend behaviour. The caching gate evaluates
+	// r.cachingOverride or r.client.IsCachingAvailable() at runtime
+	// (internal/periodic/keepalive.go:294-301). For L2's claude-code
+	// (delegated) backend the provider client isn't the path that
+	// reflects real caching capability — the test would be asserting
+	// against a stub, not the real gate. The interesting behaviour lives
+	// on the direct-API path (claude-anthropic backend) where
+	// provider.Client.IsCachingAvailable() is a real signal.
+	//
+	// Not covered for delegated backends. Unblock by either:
+	//   - adding a non-delegated L2 mode (harness backend selection), or
+	//   - covering the gate logic with a unit test against the Runner
+	//     in internal/periodic.
+	t.Skip("SCOPE: keepalive's caching gate is API-backend behaviour; L2 uses the claude-code (delegated) backend. Not tested for delegated backends. See comment above for unblock paths.")
 }
 
 // TestL2_Cron_KeepaliveSkippedWhenTurnInFlight proves the in-flight
