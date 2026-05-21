@@ -495,7 +495,8 @@ if $HAS_SYSTEMCTL; then
 cat > "$SERVICE_FILE" << 'EOF'
 [Unit]
 Description=Foci Agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
