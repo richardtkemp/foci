@@ -25,7 +25,14 @@ import (
 // to the group default, the wrong model name would land in --model.
 func TestL2_Config_PerAgentModelOverridesGroupDefault(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig hard-codes [groups] powerful = \"stub\" and per-agent backend_config.model = \"stub\" — testing per-agent override beating a *different* group default requires HarnessOptions to inject custom [models.*], [groups], and per-agent backend_config blocks")
+	t.Skip("SCOPE: For L2's claude-code (delegated) backend, the per-agent " +
+		"backend_config.model is read VERBATIM and never consults [groups] — " +
+		"see TestL2_Config_DelegatedBackendReceivesModelVerbatim. The " +
+		"\"override beats group\" path is API-backend behaviour " +
+		"(agents.go:135 group resolution); L2's delegated path makes the " +
+		"override trivially win by virtue of the architecture, not because " +
+		"the resolver chose right. Not testable end-to-end via L2 without an " +
+		"API-backend mode in the harness.")
 }
 
 // TestL2_Config_PlatformDisplayCascadesToAgentPlatform proves the
@@ -82,7 +89,38 @@ func TestL2_Config_PlatformDisplayCascadesToAgentPlatform(t *testing.T) {
 // cascade direction is correct, not just that some cascade fires.
 func TestL2_Config_PerAgentDisplayBeatsPlatformDisplay(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject both [platforms.display] and per-agent [agents.platforms.display] blocks with conflicting show_tool_calls values")
+	// Order matters: [agents.platforms.display] must come FIRST in the
+	// appended block so it scopes to the latest [[agents.platforms]] that
+	// writeTestConfig emitted. After it, [platforms.display] scopes back to
+	// the global [[platforms]] entry. Conflicting show_tool_calls values
+	// (off vs preview) make the cascade direction observable.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7401},
+		},
+		ReadyTimeout: 30 * time.Second,
+		ExtraConfigTOML: "\n[agents.platforms.display]\n" +
+			"show_tool_calls = \"off\"\n" +
+			"\n[platforms.display]\n" +
+			"show_tool_calls = \"preview\"\n",
+	})
+
+	pushTelegramText(t, h, "alpha", 7401, "/config toml")
+
+	token := h.AgentBotToken("alpha")
+	// Per-agent should win: the resolved per-agent platform's display
+	// stanza shows "off". If the cascade direction reversed (global wins),
+	// we'd see "preview" instead — which is the visible global value but
+	// it would arrive via the wrong code path.
+	text := waitForSendMessageText(t, h, token, 15*time.Second, `show_tool_calls = "off"`)
+	if text == "" {
+		t.Fatalf("expected /config toml to surface per-agent show_tool_calls = \"off\" overriding global \"preview\"; sent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+	// Sanity: the global level should still appear somewhere as "preview"
+	// (it's in the resolved [[platforms]] block too). The assertion is
+	// about which value the per-agent path resolved to — the presence of
+	// "preview" elsewhere doesn't invalidate the win.
 }
 
 // TestL2_Config_PlatformNotifyAppliesWhenAgentUnset proves that a
@@ -93,7 +131,16 @@ func TestL2_Config_PerAgentDisplayBeatsPlatformDisplay(t *testing.T) {
 // against the Telegram stub's call log.
 func TestL2_Config_PlatformNotifyAppliesWhenAgentUnset(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject a [platforms.notify] block with startup_notify=true and a chat_id — current writeTestConfig has no notify block and no way to opt in")
+	t.Skip("OBSERVABILITY GAP: [platforms.notify] startup_notify=true is parseable " +
+		"via ExtraConfigTOML, but the only sendNotification call path that " +
+		"actually fires (notifications.go:43-58) requires diagnosis.Class != " +
+		"ClassUnknown && != ClassClean. A fresh test gateway has no prior " +
+		"shutdown state, so diagnosis.Class defaults to ClassUnknown and the " +
+		"notification path is gated off regardless of the config knob. Unblock: " +
+		"a harness primitive that seeds a startup-state file (or an L2 " +
+		"primitive to simulate ungraceful prior shutdown) so diagnosis.Class " +
+		"becomes ClassReboot/etc — then startup_notify=true triggers a real " +
+		"sendNotification observable in TelegramStub.PeekSent.")
 }
 
 // TestL2_Config_DefaultsBehaviorAppliedWhenGlobalUnset proves the
@@ -104,7 +151,23 @@ func TestL2_Config_PlatformNotifyAppliesWhenAgentUnset(t *testing.T) {
 // actually wires through the cascade rather than being silently dropped.
 func TestL2_Config_DefaultsBehaviorAppliedWhenGlobalUnset(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject a [defaults.behavior] block — writeTestConfig has no defaults-section support")
+	// SCOPE: [defaults.behavior] is parseable via ExtraConfigTOML (the
+	// HarnessOptions field exists; FormatConfigTOML in internal/config
+	// just doesn't include [defaults] in its emission, so /config toml
+	// is silent about whether the cascade applied). The visible
+	// behaviour gated by SteerMode (mid-turn user message routing) IS
+	// observable end-to-end, but proving "defaults cascaded" requires
+	// either:
+	//   (a) FormatConfigTOML extension to surface the resolved value
+	//       (display.go:558, add cfg.Defaults to displayConfig), OR
+	//   (b) a paired test that ALSO exercises the default-true path
+	//       so the steer-vs-queue difference can be attributed to the
+	//       config change rather than to delegated-backend queueing
+	//       (which already queues during in-flight turns regardless
+	//       of steer_mode — see TestL2_Cron_IncomingMessageDuringKeepaliveQueues).
+	// Until one of those lands, this remains an observability gap, not a
+	// config-injection gap.
+	t.Skip("OBSERVABILITY GAP: [defaults.behavior] parses (ExtraConfigTOML works) but /config toml's FormatConfigTOML omits [defaults] sections, so the resolved cascade is not directly inspectable. Unblock: extend display.go:558 to include cfg.Defaults, OR pair with a behaviour-observing test that distinguishes steer_mode=false from the delegated-backend default queueing behaviour.")
 }
 
 // TestL2_Config_CCBackendClaudeBinaryFromGlobal proves the
@@ -595,7 +658,32 @@ func TestL2_Config_UnknownTopLevelKeyWarnsNotFails(t *testing.T) {
 // error naming the section.
 func TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestSecrets emits a fixed shape — needs HarnessOptions support to inject a custom secrets section with both allowed_agents and denied_agents set, plus a non-Fatal startup path to observe the conflict error")
+	// A section with both allowed_agents and denied_agents is a config
+	// authoring error — secrets.LoadOnce returns "use one or the other"
+	// (secrets.go:131). foci-gw treats it as Fatal at startup. Inject the
+	// invalid pair via ExtraSecretsTOML and assert the gateway refuses to
+	// come up.
+	_, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7700},
+		},
+		ReadyTimeout: 10 * time.Second,
+		ExtraSecretsTOML: "\n[bothlists]\n" +
+			"api_key = \"value\"\n" +
+			"allowed_agents = [\"alpha\"]\n" +
+			"denied_agents = [\"beta\"]\n",
+	})
+	if err == nil {
+		t.Fatalf("expected TryStartGateway to fail when a secret section sets both allowed_agents and denied_agents; got nil")
+	}
+	// Specific shape: the validation error names the section AND the words
+	// "allowed_agents" + "denied_agents".
+	msg := err.Error()
+	if !strings.Contains(msg, "bothlists") ||
+		!strings.Contains(msg, "allowed_agents") ||
+		!strings.Contains(msg, "denied_agents") {
+		t.Errorf("error message should name the offending section and both keys; got: %s", msg)
+	}
 }
 
 // TestL2_Config_BoolStringOnOffNormalised proves that the
@@ -606,7 +694,53 @@ func TestL2_Config_SecretsAllowedAndDeniedAgentsConflictFails(t *testing.T) {
 // keepalive-tagged user message in the recorder).
 func TestL2_Config_BoolStringOnOffNormalised(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig does not emit a [keepalive] section — needs HarnessOptions to inject `[keepalive] enabled = \"on\"` so the bool-string normalisation path is exercised")
+	const testUserID = 7600
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// `enabled = "on"` (string) exercises the normalizeBoolStrings
+		// preprocessor — if the bool-string allow-list regressed for
+		// keepalive.enabled, the loader would either reject the config
+		// at startup or treat "on" as falsy. Pairing with interval = "1s"
+		// makes the proof user-observable: keepalive injection within 35s.
+		ExtraConfigTOML: "\n[keepalive]\nenabled = \"on\"\ninterval = \"1s\"\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// One full 30s tickInterval + buffer.
+	time.Sleep(35 * time.Second)
+
+	found := false
+	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		if strings.Contains(e.TextPrefix, "[KEEPALIVE]") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf(`keepalive never fired with enabled = "on" — bool-string normalisation may have regressed; stderr:\n%s`,
+			stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Config_DelegatedBackendReceivesModelVerbatim proves the
