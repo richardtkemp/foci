@@ -1722,6 +1722,93 @@ func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 // present, in that order.
 func TestL2_Cron_IncomingMessageDuringKeepaliveQueues(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires [keepalive] config injection. " +
-		"See TestL2_Cron_KeepaliveFiresAtConfiguredInterval.")
+	const testUserID = 5308
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		ExtraConfigTOML: "\n[keepalive]\nenabled = true\ninterval = \"1s\"\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	// Bootstrap with a quick script — keepalive needs a default parent
+	// session before it can fire.
+	bootstrapBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal bootstrap script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", bootstrapBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+	time.Sleep(500 * time.Millisecond)
+
+	// Write a HANG script for the upcoming keepalive turn. branchFn
+	// (delegated, keepalive) injects the [KEEPALIVE] prompt as a
+	// user_message in the main session — cc-stub picks up this script
+	// to script the response. 4× sleep 9 ≈ 36s of in-flight time.
+	hangSleep := map[string]any{"name": "Bash", "input": map[string]any{"command": "sleep 9"}}
+	hangBody, _ := json.Marshal(map[string]any{
+		"text": "keepalive-acknowledged",
+		"tool_uses": []map[string]any{
+			hangSleep, hangSleep, hangSleep, hangSleep,
+		},
+	})
+	h.WriteCCStubScript(t, "alpha", hangBody)
+
+	// Wait until the keepalive tick at T+30s has fired and the hang turn
+	// is well underway. T+35s is safely inside the in-flight window.
+	time.Sleep(35 * time.Second)
+
+	// Push a Telegram message during the in-flight keepalive turn. foci's
+	// receive path should queue it (not drop it) and process once the
+	// keepalive turn completes.
+	const userMsgText = "queued-during-keepalive"
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: userMsgText,
+		},
+	})
+
+	// Wait until the hang completes (~T+66s) and the queued user message
+	// has a chance to process (cc-stub default echo, no script needed).
+	// 40s past push gives ~T+75s — comfortable.
+	time.Sleep(40 * time.Second)
+
+	// Recorder should contain BOTH the keepalive prompt AND the user
+	// message, with the keepalive arriving first.
+	var keepaliveTS, userMsgTS time.Time
+	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		ts, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
+		if strings.Contains(e.TextPrefix, "[KEEPALIVE]") && keepaliveTS.IsZero() {
+			keepaliveTS = ts
+		}
+		if strings.Contains(e.TextPrefix, userMsgText) && userMsgTS.IsZero() {
+			userMsgTS = ts
+		}
+	}
+	if keepaliveTS.IsZero() {
+		t.Fatalf("keepalive prompt never reached cc-stub — cannot prove queuing behaviour\n%s",
+			recorderTail(t, h.RecorderPath()))
+	}
+	if userMsgTS.IsZero() {
+		t.Fatalf("user message %q never processed — was dropped instead of queued\n%s",
+			userMsgText, recorderTail(t, h.RecorderPath()))
+	}
+	if !userMsgTS.After(keepaliveTS) {
+		t.Errorf("user message arrived before/equal to keepalive (ka=%s user=%s) — queue order violated",
+			keepaliveTS.Format(time.RFC3339Nano), userMsgTS.Format(time.RFC3339Nano))
+	}
 }
