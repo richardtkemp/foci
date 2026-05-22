@@ -1085,10 +1085,35 @@ func TestL2_SlashCommands_VersionReportsBuildInfo(t *testing.T) {
 // goroutine indefinitely.
 func TestL2_SlashCommands_StopCancelsInflightTurn(t *testing.T) {
 	t.Parallel()
-	// Like ResetHardCancelsInflightTurn: needs CCSTUB_HANG set on the
-	// foci-gw / cc-stub subprocess. HarnessOptions does not expose a
-	// way to inject env vars, so this test cannot be implemented
-	// without extending the harness.
-	t.Skip("HARNESS GAP: HarnessOptions has no field for injecting per-test env vars (e.g. CCSTUB_HANG) into the foci-gw subprocess that exec()s cc-stub")
+	const userID = 8512
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			// CCSTUB_HANG_DURING_TURN blocks the result envelope after the
+			// assistant message — turn stays in-flight long enough for
+			// /stop to fire its Immediate cancel path. Same mechanism as
+			// ResetHardCancelsInflightTurn.
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": "10s"},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	pushTelegramText(t, h, "alpha", userID, "this turn will hang")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "this turn will hang", 15*time.Second) {
+		t.Fatalf("priming hang message never reached cc-stub; stderr tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	pushTelegramText(t, h, "alpha", userID, "/stop")
+	// /stop registers under the alias map and replies with "Stopped." (the
+	// confirmation text from slashcommands/stop.go). If /stop waited for the
+	// hung turn rather than firing Immediate=true, this assertion times out
+	// at 15s while CCSTUB_HANG_DURING_TURN holds the result envelope back.
+	if waitForSendMessageText(t, h, token, 15*time.Second, "Stopped") == "" {
+		t.Fatalf("/stop confirmation never arrived (turn was hung; Immediate cancel should have fired)\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
 }
 
