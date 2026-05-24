@@ -195,9 +195,14 @@ model = "stub"
 		// `allowed_users = [...]` line is suppressed when
 		// OmitPlatformAllowedUsersKey is set (tests covering the
 		// empty-list + non-strict-mode branch of the access gate).
+		// bot_secret is emitted when PlatformBotSecret is non-empty
+		// (tests covering the named-secret override path).
 		sb.WriteString("\n[[agents.platforms]]\nid = \"telegram\"\n")
 		if !a.OmitPlatformBotKey {
 			fmt.Fprintf(&sb, "bot = %q\n", a.ID)
+		}
+		if a.PlatformBotSecret != "" {
+			fmt.Fprintf(&sb, "bot_secret = %q\n", a.PlatformBotSecret)
 		}
 		sb.WriteString("[agents.platforms.access]\n")
 		if !a.OmitPlatformAllowedUsersKey {
@@ -259,6 +264,14 @@ func writeTestSecrets(t *testing.T, path string, agents []AgentSpec, extraTOML s
 	sb.WriteString("[anthropic]\napi_key = \"sk-test-stub\"\n\n")
 	sb.WriteString("[telegram]\n")
 	for _, a := range agents {
+		// Per-agent OmitDefaultPlatformSecret suppresses the default
+		// telegram.<id> entry — used by tests that prove an override
+		// path (e.g. PlatformBotSecret + ExtraSecretsTOML) is being
+		// preferred. With this set AND no override, the bot can't
+		// authenticate at all.
+		if a.OmitDefaultPlatformSecret {
+			continue
+		}
 		fmt.Fprintf(&sb, "%s = %q\n", a.ID, a.BotToken)
 	}
 	if extraTOML != "" {
