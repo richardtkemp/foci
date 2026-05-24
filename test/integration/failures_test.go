@@ -1101,7 +1101,91 @@ func TestL2_Failures_SendToSessionUnknownTargetLogged(t *testing.T) {
 // file out from under cc-stub between init and the scripted tool_use.
 func TestL2_Failures_ExecBridgeSocketUnreachable(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: harness exposes no way to discover or delete the per-session FOCI_SOCK path. Need Harness.AgentExecSocket(agentID) or similar accessor on internal/testharness.")
+	// The previous skip claimed harness exposes no way to delete the
+	// per-session FOCI_SOCK path. That's accurate as far as offering a
+	// dedicated accessor goes — but the socket path is plumbed into the
+	// agent's shell as $FOCI_SOCK, so a scripted Bash tool_use can both
+	// see and delete it. Combined with a second tool_use that actually
+	// tries to use the bridge, the failure path is observable via
+	// cc-stub's bash_tool_use recorder entries (is_error + BashOutput).
+	const userID = 8600
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Script two tool_uses in one turn:
+	//   1) rm -f "$FOCI_SOCK" — removes the bridge socket file. The
+	//      env var is set by foci's exec_bridge wiring at spawn time.
+	//   2) foci_todo list — tries to use the bridge after deletion;
+	//      the unix-socket connect must fail with a clear error.
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "removing socket and probing bridge",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{
+				"command": `rm -f "$FOCI_SOCK" && echo "socket deleted"`,
+			}},
+			{"name": "Bash", "input": map[string]any{
+				"command": `foci_todo list 2>&1; echo "exit=$?"`,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	pushUserMessage(t, h, "alpha", userID, "kick the bridge over")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "kick the bridge over", 20*time.Second) {
+		t.Fatalf("initial turn never recorded; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Wait long enough for both Bash tool_uses to execute (each capped
+	// at 10s in cc-stub). The recorder should contain a bash_tool_use
+	// entry for the foci_todo command marked with is_error or a
+	// non-zero exit, AND a follow-up Telegram message must process
+	// (proving the turn completed cleanly rather than hanging).
+	deadline := time.Now().Add(25 * time.Second)
+	var probeSucceeded bool
+	for time.Now().Before(deadline) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind != "bash_tool_use" || !strings.Contains(e.Workdir, "workspaces/alpha") {
+				continue
+			}
+			// The second tool_use's command contains "foci_todo".
+			if !strings.Contains(e.BashCommand, "foci_todo") {
+				continue
+			}
+			// Either the bash function returned non-zero (captured as
+			// "exit=N" in our wrapper) or cc-stub marked is_error true.
+			lo := strings.ToLower(e.BashOutput)
+			if e.IsError || strings.Contains(lo, "connect") || strings.Contains(lo, "no such file") ||
+				strings.Contains(lo, "exit=") && !strings.Contains(lo, "exit=0") {
+				probeSucceeded = true
+				break
+			}
+		}
+		if probeSucceeded {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !probeSucceeded {
+		t.Errorf("expected the bridge probe to surface a connect-error after FOCI_SOCK deletion; recorder:\n%s", recorderTail(t, h.RecorderPath()))
+	}
+
+	// Recovery: a follow-up message must process. cc-stub spawns a
+	// new subprocess for the next foci-issued send (the dead-bridge
+	// session may also respawn). The follow-up's default-echo path
+	// doesn't hit the bridge.
+	pushUserMessage(t, h, "alpha", userID, "after-bridge-probe")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "after-bridge-probe", 30*time.Second) {
+		t.Fatalf("agent did not survive bridge-socket deletion; stderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_Failures_BashToolUseExceedsCCStubTimeout proves cc-stub's own
@@ -1693,5 +1777,26 @@ func TestL2_Failures_ConcurrentMessagesDuringHangNotLost(t *testing.T) {
 // not two.
 func TestL2_Failures_RestartDuringInFlightTurnDoesNotDoubleCount(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: harness exposes no Restart() or per-agent backend kill hook. Need Harness.RestartAgent(agentID) or RestartGateway().")
+	// Reclassified after attempting with Harness.Restart (commit 6cace364).
+	// The premise — "Close() races cc-stub's natural exit; finalizeOnce
+	// guarantees exactly-once" — is per-backend, not gateway-wide.
+	// Harness.Restart sends SIGTERM to foci-gw; the gateway then runs
+	// its own backend Close() path during shutdown. That's the right
+	// race shape on paper, but in practice the post-restart cc-stub
+	// resume + Telegram long-poll re-sync + session-state recovery all
+	// interact in ways that make the recorder count fragile:
+	//   - msgA may be re-delivered if foci hasn't acked its offset
+	//     before SIGTERM (so countA can hit 2)
+	//   - msgB may never land if the resumed cc-stub gets stuck in
+	//     unexpected state (so countB can hit 0)
+	// Distinguishing "finalizeOnce did its job" from "Telegram replay
+	// duplicated msgA" requires a per-backend hook that doesn't touch
+	// the long-poll cursor — Harness.CloseAgentBackend(agentID) or a
+	// scripted "exit-on-cue mid-turn" cc-stub mode.
+	//
+	// Indirect coverage: TestL2_Failures_BackendExitsAfterHandshakeMidTurn
+	// already exercises the natural-exit-mid-turn finalize path. The
+	// missing leg is the race AGAINST Close(), which is the per-backend
+	// hook above.
+	t.Skip("SCOPE: gateway-wide Restart() doesn't isolate the per-backend Close()-vs-natural-exit race the premise targets. Indirectly covered by BackendExitsAfterHandshakeMidTurn. Unblock: Harness.CloseAgentBackend(agentID) for a clean per-backend close that doesn't cascade through Telegram replay / long-poll reset.")
 }
