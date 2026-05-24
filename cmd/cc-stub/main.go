@@ -25,6 +25,8 @@
 // Env vars (all optional):
 //   CCSTUB_RECORDER       — path to a JSONL file; each invocation appends one line
 //   CCSTUB_EXIT_CODE      — exit with this code before any handshake (lifecycle tests)
+//   CCSTUB_EXIT_CODE_ONCE_MARKER — one-shot gate for CCSTUB_EXIT_CODE: first
+//                                  spawn exits, subsequent spawns proceed normally
 //   CCSTUB_FAIL_ON_RESUME — if "1"/"true" and --resume is set, exit 1 (simulates missing JSONL)
 //   CCSTUB_HANG           — duration to sleep before the handshake (e.g. "5s")
 //   CCSTUB_RESPONSE       — assistant reply text; default echoes the user prompt
@@ -321,7 +323,24 @@ func main() {
 	// observe a clean exit-without-output.
 	if code := os.Getenv("CCSTUB_EXIT_CODE"); code != "" {
 		if n, err := strconv.Atoi(code); err == nil {
-			os.Exit(n)
+			// CCSTUB_EXIT_CODE_ONCE_MARKER mirrors the HANG_ONCE_MARKER
+			// pattern: if the path is set AND already exists, skip the
+			// exit (subsequent spawns proceed normally); if absent,
+			// touch it and exit with the configured code. Lets tests
+			// script "first spawn dies before handshake; second spawn
+			// recovers" without per-spawn env injection.
+			marker := os.Getenv("CCSTUB_EXIT_CODE_ONCE_MARKER")
+			skip := false
+			if marker != "" {
+				if _, err := os.Stat(marker); err == nil {
+					skip = true
+				} else {
+					_ = os.WriteFile(marker, []byte("1"), 0o600)
+				}
+			}
+			if !skip {
+				os.Exit(n)
+			}
 		}
 	}
 	// recordInvocation BEFORE the FAIL_ON_RESUME exit so tests can

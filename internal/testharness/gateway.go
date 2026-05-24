@@ -99,6 +99,21 @@ type HarnessOptions struct {
 	// scenarios) or a custom stub variant. Empty value preserves the
 	// default behaviour of building cc-stub from source.
 	ClaudeBinary string
+	// BackendReadyTimeout, if non-zero, sets the WaitReady budget that
+	// foci-gw's delegated_manager gives a freshly-spawned coding-agent
+	// backend to complete its init handshake. Propagated via the
+	// FOCI_BACKEND_READY_TIMEOUT env var, read at backend-create time.
+	// Use to keep init-timeout-then-recovery tests inside CI wall-clock
+	// budgets — the production default is 60s, far too long for L2.
+	BackendReadyTimeout time.Duration
+	// PreStartDataFiles writes files into the gateway's data dir BEFORE
+	// foci-gw spawns. Keys are paths relative to DataDir() (e.g.
+	// "sessions/agentX/abc123.jsonl"); values are the file contents.
+	// Use for tests that need to seed corrupted/legacy session JSONLs,
+	// stale resume files, or other on-disk state foci should observe at
+	// startup. Parent dirs are created with 0o755; files are written
+	// with 0o600. Paths must be relative (no leading "/", no "..").
+	PreStartDataFiles map[string]string
 }
 
 // Harness drives one foci-gw subprocess against a Telegram stub. Tests
@@ -247,6 +262,24 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		}
 	}
 
+	// Pre-start data-dir files: tests that need foci to observe on-disk
+	// state at startup (corrupted session JSONLs, stale resume files,
+	// legacy formats) seed here. Paths are relative to dataDir; parents
+	// are created with 0o755 so seed paths like "sessions/X/Y.jsonl"
+	// don't require the test to create the subtree manually.
+	for rel, content := range opts.PreStartDataFiles {
+		if strings.HasPrefix(rel, "/") || strings.Contains(rel, "..") {
+			t.Fatalf("PreStartDataFiles path %q must be relative and within the data dir", rel)
+		}
+		full := filepath.Join(dataDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for PreStartDataFile %s: %v", full, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+			t.Fatalf("write PreStartDataFile %s: %v", full, err)
+		}
+	}
+
 	// Pick an ephemeral HTTP port so parallel tests don't all collide on the
 	// default 18791. Brief race window between Close and foci-gw's bind, but
 	// acceptable for test purposes — kernel rarely reuses an ephemeral port
@@ -283,6 +316,9 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		// config load. See cmd/foci-gw/main.go:81 (FOCI_LOG_FILE).
 		"FOCI_LOG_FILE="+filepath.Join(logsDir, "foci.log"),
 	)
+	if opts.BackendReadyTimeout > 0 {
+		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+opts.BackendReadyTimeout.String())
+	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cancel()
