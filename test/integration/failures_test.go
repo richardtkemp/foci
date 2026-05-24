@@ -232,20 +232,59 @@ func TestL2_Failures_BackendFailsOnResumeRetriesFresh(t *testing.T) {
 // must still trigger a fresh subprocess spawn.
 func TestL2_Failures_BackendHangsBeforeReady(t *testing.T) {
 	t.Parallel()
-	// Foci's WaitReady deadline is hardcoded at 60s
-	// (internal/agent/delegated_manager.go:240). To actually exercise
-	// the timeout path, CCSTUB_HANG must exceed 60s, making this test
-	// take well over a minute and pushing CI runtime budgets. A
-	// shorter hang (e.g. 20s) doesn't trigger the timeout because
-	// cc-stub completes the handshake before foci gives up, so the
-	// test would pass for the wrong reason.
+	// HarnessOptions.BackendReadyTimeout dials WaitReady down so the
+	// init-deadline path completes in CI wall-clock. CCSTUB_HANG_ONCE_MARKER
+	// makes the FIRST spawn hang past the deadline; the marker persists,
+	// so when the hang releases (or a subsequent spawn happens), cc-stub
+	// proceeds normally and the session recovers.
 	//
-	// Even with a 70s+ hang, foci's "proceeding anyway" path on init
-	// timeout (delegated_manager.go:243-276) means the dead/hung
-	// backend isn't actually replaced unless it's a resume case, so
-	// the recovery-via-second-message assertion needs additional
-	// scaffolding to verify the right code path was taken.
-	t.Skip("HARNESS GAP: the WaitReady deadline is hardcoded at 60s, making this test exceed reasonable CI runtime, and foci's 'proceed anyway' path on non-resume init timeout means the second-message recovery isn't a clean signal. Need either a configurable WaitReady timeout or a CCSTUB env var that times out an early phase below 60s.")
+	// Note on the "proceed anyway" path: for a non-resume initial spawn
+	// that exceeds WaitReady, foci's delegated_manager doesn't respawn —
+	// it returns the still-alive (just slow) backend. The recovery
+	// signal asserted here is "agent remains usable" — the second
+	// message eventually lands once cc-stub's hang clears. This is a
+	// weaker but correct signal: foci doesn't crash the agent, doesn't
+	// drop the message, and doesn't deadlock.
+	const userID = 8011
+	markerPath := t.TempDir() + "/hang-once"
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			ExtraEnv: map[string]string{
+				"CCSTUB_HANG":             "10s",
+				"CCSTUB_HANG_ONCE_MARKER": markerPath,
+			},
+		}},
+		ReadyTimeout:        30 * time.Second,
+		BackendReadyTimeout: 3 * time.Second,
+	})
+
+	// First turn: cc-stub hangs 10s; WaitReady times out at 3s.
+	pushUserMessage(t, h, "alpha", userID, "first-turn-during-hang")
+
+	// Wait for the WaitReady warning so we know the timeout path fired.
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		low := strings.ToLower(h.Stderr())
+		if strings.Contains(low, "waitready") || strings.Contains(low, "context deadline exceeded") {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	low := strings.ToLower(h.Stderr())
+	if !strings.Contains(low, "waitready") && !strings.Contains(low, "context deadline exceeded") {
+		t.Fatalf("expected WaitReady-timeout warning in stderr; tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Second turn — sent after the hang clears (the marker makes
+	// subsequent spawns proceed immediately, AND the first hang's 10s
+	// expires either way). The user_message must land in the recorder.
+	pushUserMessage(t, h, "alpha", userID, "second-turn-recovery")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "second-turn-recovery", 30*time.Second) {
+		t.Fatalf("agent did not recover after WaitReady deadline; stderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_Failures_BackendHangsDuringTurn proves foci's per-turn idle
