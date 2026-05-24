@@ -61,6 +61,29 @@ type AgentSpec struct {
 	// skill seeds. Paths must be relative and may contain subdirectories
 	// (parent dirs are created with 0o755).
 	PreStartFiles map[string]string
+
+	// OmitWorkspaceKey, if true, suppresses the `workspace = <path>` line
+	// in the generated [[agents]] block so load.go's convention default
+	// (`$HOME/<id>`) fires. Tests that flip this MUST also expect HOME
+	// inside foci-gw to point at the tempDir/workspaces dir — the
+	// harness automatically sets `HOME` on the gateway subprocess when
+	// any agent has this flag, so the resolved default matches the
+	// pre-seeded workspace path.
+	OmitWorkspaceKey bool
+
+	// OmitPlatformBotKey, if true, suppresses the `bot = <id>` line in
+	// the per-agent `[[agents.platforms]]` block so ensureAgentPlatform's
+	// convention default (bot name = agent ID) fires. Tests assert the
+	// resolved value via downstream behaviour (e.g. the bot's long-poll
+	// successfully registers).
+	OmitPlatformBotKey bool
+
+	// OmitPlatformAllowedUsersKey, if true, suppresses the
+	// `allowed_users = [...]` line in the per-agent
+	// `[agents.platforms.access]` block. Used together with a global
+	// `allowed_users_only = false` to prove the "empty list + non-strict
+	// mode accepts any user" branch of the access gate.
+	OmitPlatformAllowedUsersKey bool
 }
 
 // preStartFiles returns the AgentSpec's PreStartFiles map (nil-safe).
@@ -318,6 +341,19 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	)
 	if opts.BackendReadyTimeout > 0 {
 		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+opts.BackendReadyTimeout.String())
+	}
+	// If any agent has OmitWorkspaceKey set, override HOME so foci's
+	// load.go convention default ($HOME/<id>) resolves to the tempDir
+	// workspaces subdir that writeWorkspaces already populated with the
+	// per-agent character/CRAFT.md. Without this override, the host
+	// user's actual home would be the resolved root — workspaces don't
+	// exist there, foci's startup file loader complains, and the test
+	// is observing host state instead of the test artefact.
+	for _, a := range opts.Agents {
+		if a.OmitWorkspaceKey {
+			cmd.Env = append(cmd.Env, "HOME="+filepath.Join(tempDir, "workspaces"))
+			break
+		}
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {

@@ -271,7 +271,43 @@ func TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil(t *testing.T) {
 // it must match the derived path, not "" or the data_dir.
 func TestL2_Config_SmartDefaultWorkspaceFromAgentID(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig always sets workspace = <path> per agent — needs HarnessOptions option to omit the workspace key so the $HOME/<id> convention default fires")
+	const userID = 1500
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:               "alpha",
+			UserID:           userID,
+			OmitWorkspaceKey: true,
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// HOME is set to <tempDir>/workspaces by the harness, so foci's
+	// convention default resolves to <tempDir>/workspaces/alpha — the
+	// same path writeWorkspaces populated with character/CRAFT.md.
+	// AgentWorkspace returns that path, so the cc-stub invocation
+	// workdir should match it.
+	wantWorkdir := h.AgentWorkspace("alpha")
+
+	pushUserMessage(t, h, "alpha", userID, "workspace-default-check")
+	if !waitForUserMessage(t, h, wantWorkdir, "workspace-default-check", 25*time.Second) {
+		t.Fatalf("cc-stub never recorded a user_message at the convention-default workspace %q; recorder:\n%s\nstderr:\n%s",
+			wantWorkdir, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+
+	// Sanity: inspect the most recent invocation entry — its workdir
+	// must equal wantWorkdir, not the data_dir or an empty string.
+	entries := readRecorderEntries(t, h.RecorderPath())
+	var sawInvocation bool
+	for _, e := range entries {
+		if e.Kind == "invocation" && e.Workdir == wantWorkdir {
+			sawInvocation = true
+			break
+		}
+	}
+	if !sawInvocation {
+		t.Errorf("no invocation recorded at workdir=%q (convention default did not resolve correctly); recorder tail:\n%s",
+			wantWorkdir, recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_Config_SmartDefaultPlatformBotFromAgentID proves that an agent
@@ -283,7 +319,26 @@ func TestL2_Config_SmartDefaultWorkspaceFromAgentID(t *testing.T) {
 // reaching cc-stub.
 func TestL2_Config_SmartDefaultPlatformBotFromAgentID(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig always emits an explicit `bot = <agent-id>` line — proving the *default* fires requires omitting it; needs HarnessOptions support")
+	const userID = 1501
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:                 "alpha",
+			UserID:             userID,
+			OmitPlatformBotKey: true,
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// If the convention default failed to fire, the bot wouldn't be
+	// registered against the harness-allocated token (writeTestSecrets
+	// keys the secret under `telegram.alpha`, which the convention
+	// default maps to). A successful Telegram round-trip reaching
+	// cc-stub proves the default resolved correctly.
+	pushUserMessage(t, h, "alpha", userID, "platform-bot-default-check")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "platform-bot-default-check", 25*time.Second) {
+		t.Fatalf("agent's bot did not register/poll with the convention-default bot name; stderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_Config_SmartDefaultAgentNameFromAgentID proves the
@@ -894,5 +949,35 @@ func TestL2_Config_PerAgentBotSecretOverrideUsesNamedKey(t *testing.T) {
 // branches of the access gate.
 func TestL2_Config_AccessAllowedUsersOnlyFalseAcceptsAny(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig always emits `allowed_users = [<UserID>]` on the per-agent platform entry, and the bot-level allowedUsers map rejects any user not in that list regardless of allowed_users_only — proving the empty-allowed_users + allowed_users_only=false branch requires HarnessOptions to suppress the allowed_users line entirely")
+	const expectedUserID = 1502
+	const arbitraryUserID = 999999 // far outside any list
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:                          "alpha",
+			UserID:                      expectedUserID,
+			OmitPlatformAllowedUsersKey: true,
+		}},
+		ReadyTimeout: 30 * time.Second,
+		// allowed_users_only = false is already set on the global
+		// [platforms.access] block by writeTestConfig (line 108);
+		// dropping the per-agent allowed_users line is sufficient
+		// to test the empty-list-accepts-anyone branch.
+	})
+
+	// Send a message from an arbitrary user ID — neither
+	// expectedUserID nor any list member. With allowed_users empty
+	// and allowed_users_only=false, foci's access gate should accept
+	// the message and dispatch it to cc-stub.
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: arbitraryUserID, Type: "private"},
+			From: &gotgbot.User{Id: arbitraryUserID, FirstName: "Drifter"},
+			Text: "arbitrary-user-accepted",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "arbitrary-user-accepted", 25*time.Second) {
+		t.Fatalf("arbitrary user was rejected despite empty allowed_users + allowed_users_only=false; stderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
 }

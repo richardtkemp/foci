@@ -112,7 +112,22 @@ long_poll_timeout = "1s"
 `, o.ClaudeBinary, o.TelegramBase)
 
 	for _, a := range o.Agents {
-		fmt.Fprintf(&sb, `
+		// Workspace key: emit unless the spec asks us to suppress it
+		// (tests covering the convention-default at load.go:235). The
+		// harness sets HOME to <tempDir>/workspaces in that case so
+		// foci's default resolves to the same dir writeWorkspaces
+		// already populated.
+		if a.OmitWorkspaceKey {
+			fmt.Fprintf(&sb, `
+[[agents]]
+id = %q
+backend = "claude-code"
+
+[agents.backend_config]
+model = "stub"
+`, a.ID)
+		} else {
+			fmt.Fprintf(&sb, `
 [[agents]]
 id = %q
 workspace = %q
@@ -121,8 +136,9 @@ backend = "claude-code"
 [agents.backend_config]
 model = "stub"
 `,
-			a.ID, o.Workspaces[a.ID],
-		)
+				a.ID, o.Workspaces[a.ID],
+			)
+		}
 		// Per-agent backend_config.env only emitted when the spec
 		// supplies env vars. Use INLINE-TABLE form ("env = {K=V, ...}")
 		// rather than a [agents.backend_config.env] sub-section: foci's
@@ -173,16 +189,20 @@ model = "stub"
 				fmt.Fprintf(&sb, "auto_approve_common_safe_write = %v\n", *a.AutoApproveCommonSafeWrite)
 			}
 		}
-		fmt.Fprintf(&sb, `
-[[agents.platforms]]
-id = "telegram"
-bot = %q
-[agents.platforms.access]
-allowed_users = [%q]
-`,
-			a.ID,
-			fmt.Sprintf("%d", a.UserID),
-		)
+		// Per-agent platform block. The `bot = <id>` line is suppressed
+		// when OmitPlatformBotKey is set (tests covering
+		// ensureAgentPlatform's convention default). The
+		// `allowed_users = [...]` line is suppressed when
+		// OmitPlatformAllowedUsersKey is set (tests covering the
+		// empty-list + non-strict-mode branch of the access gate).
+		sb.WriteString("\n[[agents.platforms]]\nid = \"telegram\"\n")
+		if !a.OmitPlatformBotKey {
+			fmt.Fprintf(&sb, "bot = %q\n", a.ID)
+		}
+		sb.WriteString("[agents.platforms.access]\n")
+		if !a.OmitPlatformAllowedUsersKey {
+			fmt.Fprintf(&sb, "allowed_users = [%q]\n", fmt.Sprintf("%d", a.UserID))
+		}
 	}
 
 	// Append any test-supplied extra TOML last so it can override
