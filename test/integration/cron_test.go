@@ -1300,12 +1300,116 @@ func TestL2_Cron_WakeReminderRejectsUnparseableWhen(t *testing.T) {
 // entries (matched by session_id).
 func TestL2_Cron_WakeReminderRoutesToOriginatingSession(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: synthesising two distinct sessions on the same agent " +
-		"requires sending from two different Telegram chats. The harness ties " +
-		"each agent to one UserID, and platform.access.allowed_users = [UserID] " +
-		"rejects messages from other chat IDs. Needs HarnessOptions.AgentSpec " +
-		"to support multiple allowed users / chat IDs, or a way to drive a " +
-		"named session directly (e.g. via the unix socket /send endpoint).")
+	// NOTE: the previous skip claimed "allowed_users rejects messages
+	// from other chat IDs" — that's inaccurate. allowed_users gates on
+	// the sender's user_id (Update.Message.From.Id), not the chat id.
+	// Two different Telegram chats from the same user produce two
+	// distinct session keys (foci's session key includes the chat_id),
+	// so a single AgentSpec.UserID is sufficient.
+	const testUserID = 5320
+	const chatA = 5320 // older session
+	const chatB = 5321 // newer session
+	const reminderText = "MARKER_ROUTE_TO_ORIGIN"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: testUserID,
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	token := h.AgentBotToken("alpha")
+	sendFromChat := func(chatID int64, text string) {
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: chatID, Type: "private"},
+				From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+				Text: text,
+			},
+		})
+	}
+
+	// Session A (older): schedule a wake from this chat.
+	scheduleBash := fmt.Sprintf(`foci_remind --text %q --when 3s --wake`, reminderText)
+	scheduleBody, err := json.Marshal(map[string]any{
+		"text": "scheduled-from-A",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": scheduleBash}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal schedule script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scheduleBody)
+	sendFromChat(chatA, "schedule from session A")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "schedule from session A", 15*time.Second) {
+		t.Fatalf("schedule turn (A) never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Capture session A's cc-stub session_id from the schedule turn's
+	// user_message entry. Each foci session_key spawns its own cc-stub
+	// subprocess with a distinct session_id, so session_id is a stable
+	// proxy for "which foci session".
+	sessionAID := ""
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, "schedule from session A") {
+			sessionAID = e.SessionID
+			break
+		}
+	}
+	if sessionAID == "" {
+		t.Fatalf("could not capture session A's cc-stub session_id from recorder")
+	}
+
+	// Drive traffic to session B between schedule and fire. This
+	// ensures "most recent active session" != "originating session"
+	// so the routing assertion is meaningful.
+	sendFromChat(chatB, "traffic to session B before wake fires")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "traffic to session B before wake fires", 15*time.Second) {
+		t.Fatalf("session B turn never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	sessionBID := ""
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.TextPrefix, "traffic to session B before wake fires") {
+			sessionBID = e.SessionID
+			break
+		}
+	}
+	if sessionBID == "" || sessionBID == sessionAID {
+		t.Fatalf("session B did not spawn a distinct cc-stub subprocess (got session_id=%q, A=%q)",
+			sessionBID, sessionAID)
+	}
+
+	// Wait for the SCHEDULED WAKE injection to land. Cap at 12s — the
+	// 3s wake delay plus some slack for scheduler tick cadence.
+	deadline := time.Now().Add(12 * time.Second)
+	var wakeEntry recorderEntry
+	for time.Now().Before(deadline) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") &&
+				strings.Contains(e.TextPrefix, "SCHEDULED WAKE") &&
+				strings.Contains(e.TextPrefix, reminderText) {
+				wakeEntry = e
+				break
+			}
+		}
+		if wakeEntry.Kind != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if wakeEntry.Kind == "" {
+		t.Fatalf("SCHEDULED WAKE never landed; recorder:\n%s", recorderTail(t, h.RecorderPath()))
+	}
+
+	// The wake must route to session A (the originator), not session
+	// B (the most-recent). The cc-stub session_id distinguishes them.
+	if wakeEntry.SessionID != sessionAID {
+		t.Errorf("SCHEDULED WAKE routed to wrong cc-stub session: got session_id=%q, expected %q (session A originator); session B id was %q",
+			wakeEntry.SessionID, sessionAID, sessionBID)
+	}
 }
 
 // TestL2_Cron_WakeReminderWaitsForActiveTurn proves the
