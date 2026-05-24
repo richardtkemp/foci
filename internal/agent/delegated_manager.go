@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,31 @@ import (
 
 // DefaultIdleTimeout is the default duration after which idle delegated backends are closed.
 const DefaultIdleTimeout = 24 * time.Hour
+
+// defaultBackendReadyTimeout is the wall-clock budget WaitReady gets to see
+// the coding-agent backend complete its init handshake before foci moves on.
+// 60s is comfortable for cold starts on busy hosts; tests that want to
+// observe the timeout path explicitly can shrink it via the
+// FOCI_BACKEND_READY_TIMEOUT env var.
+const defaultBackendReadyTimeout = 60 * time.Second
+
+// backendReadyTimeout returns the duration WaitReady should wait. The
+// FOCI_BACKEND_READY_TIMEOUT env var (parsed via time.ParseDuration) lets
+// integration tests dial this down to a few seconds so the
+// init-timeout-then-recovery scenario completes in reasonable wall-clock.
+// Invalid or empty values fall back to defaultBackendReadyTimeout.
+func backendReadyTimeout() time.Duration {
+	raw := os.Getenv("FOCI_BACKEND_READY_TIMEOUT")
+	if raw == "" {
+		return defaultBackendReadyTimeout
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warnf("delegated", "ignoring invalid FOCI_BACKEND_READY_TIMEOUT=%q (using %s)", raw, defaultBackendReadyTimeout)
+		return defaultBackendReadyTimeout
+	}
+	return d
+}
 
 // typingFuncTimeout bounds how long the SetTypingFunc shim will wait for the
 // downstream platform call (e.g. Telegram SetChatTyping) before giving up.
@@ -246,7 +272,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 
 	// Wait for the coding agent to be ready to accept prompts.
 	// Without this, early SendToPane hits a CC that's still loading.
-	readyCtx, readyCancel := context.WithTimeout(ctx, 60*time.Second)
+	readyCtx, readyCancel := context.WithTimeout(ctx, backendReadyTimeout())
 	defer readyCancel()
 	if err := mb.be.WaitReady(readyCtx); err != nil {
 		log.Warnf("delegated", "WaitReady for %s: %v", sessionKey, err)
@@ -279,7 +305,7 @@ func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegato
 			m.backends[sessionKey] = mb
 			m.mu.Unlock()
 
-			readyCtx2, readyCancel2 := context.WithTimeout(ctx, 60*time.Second)
+			readyCtx2, readyCancel2 := context.WithTimeout(ctx, backendReadyTimeout())
 			defer readyCancel2()
 			if err := mb.be.WaitReady(readyCtx2); err != nil {
 				log.Warnf("delegated", "WaitReady for %s (retry): %v (proceeding anyway)", sessionKey, err)
