@@ -989,17 +989,53 @@ func TestL2_SessionLifecycle_ResumeIDPersistsAcrossSubprocessRespawn(t *testing.
 // regressions in the delegated init path.
 func TestL2_SessionLifecycle_HangBeyondReadyTimeoutSurfacesError(t *testing.T) {
 	t.Parallel()
-	// ExtraEnv + CCSTUB_HANG_ONCE_MARKER now solve the per-spawn env
-	// injection gap (first spawn hangs, marker file persists so the
-	// retry skips). BUT foci's WaitReady deadline is hardcoded at 60s
-	// (internal/agent/delegated_manager.go:249), so even with one-shot
-	// hang the test still takes the full minute to observe the
-	// deadline path. Making this practical requires either (a) a
-	// configurable readyTimeout (would need new config + plumbing
-	// through DelegatedManager.Get), or (b) reframing the test to
-	// assert WaitReady's early-exit on subprocess-died path — but
-	// CCSTUB_HANG keeps the subprocess alive, so that's not the path
-	// this test wants.
-	t.Skip("INFRA GAP: foci's WaitReady deadline is hardcoded at 60s. Per-spawn env injection is now available (ExtraEnv + CCSTUB_HANG_ONCE_MARKER) but the test would still take 60s to observe the init-deadline path. Needs configurable WaitReady deadline before this can run in unit-test time.")
+	// HarnessOptions.BackendReadyTimeout (propagated as
+	// FOCI_BACKEND_READY_TIMEOUT to foci-gw) now lets us dial WaitReady
+	// down to a few seconds so the deadline path completes inside CI
+	// wall-clock. CCSTUB_HANG_ONCE_MARKER scripts the per-spawn shape:
+	// first spawn hangs longer than the configured deadline; the marker
+	// persists, so the recovery spawn doesn't hang.
+	const userID = 7600
+	markerPath := t.TempDir() + "/hang-once"
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: userID,
+			ExtraEnv: map[string]string{
+				"CCSTUB_HANG":             "12s",
+				"CCSTUB_HANG_ONCE_MARKER": markerPath,
+			},
+		}},
+		ReadyTimeout:        30 * time.Second,
+		BackendReadyTimeout: 3 * time.Second,
+	})
+
+	// First turn — the cc-stub spawn sleeps 12s before any handshake;
+	// foci's WaitReady (3s budget) times out and logs the warning.
+	pushUserMessage(t, h, "alpha", userID, "hang-past-deadline-turn-1")
+
+	// Wait for the WaitReady warning to land. The init-deadline path
+	// emits "WaitReady for ... context deadline exceeded" or similar.
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		low := strings.ToLower(h.Stderr())
+		if strings.Contains(low, "waitready") || strings.Contains(low, "context deadline exceeded") {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	low := strings.ToLower(h.Stderr())
+	if !strings.Contains(low, "waitready") && !strings.Contains(low, "context deadline exceeded") {
+		t.Fatalf("expected WaitReady-timeout warning in stderr; tail:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Second turn — marker now exists, so cc-stub's hang is skipped
+	// and the recovery spawn completes the handshake. The user_message
+	// must land in the recorder, proving the agent recovered.
+	pushUserMessage(t, h, "alpha", userID, "recovery-after-hang")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "recovery-after-hang", 30*time.Second) {
+		t.Fatalf("agent did not recover after init-deadline timeout; stderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
 }
 
