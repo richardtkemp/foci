@@ -1170,11 +1170,83 @@ func TestL2_Cron_WakeReminderFiresAfterDelay(t *testing.T) {
 // the second process's recorder.
 func TestL2_Cron_WakeReminderSurvivesRestart(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: StartGateway always creates a fresh t.TempDir() and " +
-		"there's no way to (a) shut down the first instance from within the " +
-		"test (cleanup is via t.Cleanup), or (b) point a second StartGateway " +
-		"at the first DataDir/workspaces. Needs HarnessOptions.DataDir + " +
-		"Harness.Shutdown() (or equivalent) to drive cross-process restart.")
+	const testUserID = 5400
+	const reminderText = "MARKER_WAKE_SURVIVES_RESTART"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:     "alpha",
+			UserID: testUserID,
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Schedule a wake far enough in the future that we can shut down +
+	// restart before it fires. The reminder lives in ReminderStore
+	// (per-agent SQLite under workspace .data) which persists across
+	// restart.
+	scheduleBash := fmt.Sprintf(`foci_remind --text %q --when 10s --wake`, reminderText)
+	scheduleBody, err := json.Marshal(map[string]any{
+		"text": "scheduled",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": scheduleBash}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal schedule script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scheduleBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "schedule the wake",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "schedule the wake", 15*time.Second) {
+		t.Fatalf("schedule turn never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Sanity: the wake hasn't fired yet (only ~2s have passed).
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if strings.Contains(e.TextPrefix, "SCHEDULED WAKE") && strings.Contains(e.TextPrefix, reminderText) {
+			t.Fatalf("wake fired before restart — interval too short to exercise the survival path")
+		}
+	}
+
+	// Shut down the first foci-gw and start a fresh one against the
+	// same data_dir / configPath / workspaces. buildWakeScheduler in
+	// the new process must call ReminderStore.PendingWakes at startup
+	// and re-arm the persisted wake.
+	if err := h.Restart(); err != nil {
+		t.Fatalf("Restart(): %v", err)
+	}
+
+	// Wait for the SCHEDULED WAKE injection to land in the second
+	// process. Budget: 10s original delay + a few seconds of restart
+	// overhead — total ~15s.
+	deadline := time.Now().Add(15 * time.Second)
+	var fired bool
+	for time.Now().Before(deadline) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") &&
+				strings.Contains(e.TextPrefix, "SCHEDULED WAKE") &&
+				strings.Contains(e.TextPrefix, reminderText) {
+				fired = true
+				break
+			}
+		}
+		if fired {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !fired {
+		t.Errorf("SCHEDULED WAKE did not fire after restart — persistence/restore path may be broken; stderr (post-restart):\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
 }
 
 // TestL2_Cron_WakeReminderRejectsNegativeDelay proves the
@@ -1534,11 +1606,21 @@ func TestL2_Cron_WakeReminderWaitsForActiveTurn(t *testing.T) {
 // the test waits.
 func TestL2_Cron_RemindToolUnavailableWithoutWakeFn(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: writeTestConfig + initStandaloneStores always create " +
-		"a per-agent ReminderStore. There's no test surface to disable it. " +
-		"Needs harness support to suppress reminder store creation (e.g. " +
-		"HarnessOptions.DisableReminders) or set the workspace .data dir to a " +
-		"read-only location to force the store-init path to fail cleanly.")
+	// INFEASIBLE for L2 as written. The nil-reminderStore branch exists
+	// only as a unit-test construct (agents_delegated_test.go:79 omits
+	// p.reminderStore). In production, initStandaloneStores (memory_init.go:62)
+	// unconditionally creates the store and log.Fatalf's on failure — there
+	// is no path that reaches a running foci-gw with reminderStore == nil.
+	// The "read-only workspace .data" idea from the previous skip exits the
+	// gateway before ready (Fatalf), so the L2 startup observation fails too.
+	//
+	// To unblock, foci would need a real config opt-out for reminders (e.g.
+	// `[reminders] enabled = false`), and initStandaloneStores would have to
+	// honour it by skipping reminderStore creation. That's a small foci-side
+	// change — not just harness scaffolding. Covered already by the agents-
+	// shared unit test at agents_notify_test.go:260 which exercises the nil-
+	// store branch of buildWakeScheduler directly.
+	t.Skip("INFEASIBLE: foci has no production opt-out for reminderStore. The nil-store branch exists only as a unit-test construct (agents_delegated_test.go:79). Covered by agents_notify_test.go:260. Unblock: add `[reminders] enabled = false` config + skip-on-false in initStandaloneStores (memory_init.go:62).")
 }
 
 // TestL2_Cron_GenerateCrontabRendersAgentPlaceholders proves the

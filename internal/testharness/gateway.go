@@ -155,6 +155,12 @@ type Harness struct {
 	workspaces   map[string]string // agent id → workspace path
 	agents       []AgentSpec
 
+	// Spawn-time invariants captured so Restart can re-run spawnGateway
+	// without re-doing the build / config / stub-setup work.
+	gwBin        string
+	readyTimeout time.Duration
+	opts         HarnessOptions
+
 	cmd       *exec.Cmd
 	stderrBuf *syncBuffer
 	stoppedCh chan struct{}
@@ -328,19 +334,51 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		writeTestSecrets(t, secretsPath, opts.Agents, opts.ExtraSecretsTOML)
 	}
 
-	// Spawn foci-gw.
+	h := &Harness{
+		t:            t,
+		tempDir:      tempDir,
+		dataDir:      dataDir,
+		logsDir:      logsDir,
+		configPath:   configPath,
+		tgStub:       tgStub,
+		recorderPath: recorderPath,
+		scriptDir:    scriptDir,
+		workspaces:   workspaces,
+		gwBin:        gwBin,
+		agents:       opts.Agents,
+		readyTimeout: opts.ReadyTimeout,
+		opts:         opts,
+	}
+
+	if err := h.spawnGateway(); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// spawnGateway forks the foci-gw subprocess, wires up streaming I/O
+// into h.stderrBuf, and blocks until either the terminal "started N
+// agent(s)" log line appears or readyTimeout elapses. The caller is
+// responsible for assigning the harness fields (paths, opts) BEFORE
+// invoking this — spawnGateway only sets h.cmd / h.stderrBuf /
+// h.stoppedCh and registers cleanup.
+//
+// Reused by both initial StartGateway and Restart so the two paths
+// share spawn-time invariants (env, ready-signal scan, cleanup
+// registration).
+func (h *Harness) spawnGateway() error {
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, gwBin, "-config", configPath)
+	cmd := exec.CommandContext(ctx, h.gwBin, "-config", h.configPath)
 	cmd.Env = append(os.Environ(),
-		"CCSTUB_RECORDER="+recorderPath,
-		"CCSTUB_SCRIPT_DIR="+scriptDir,
+		"CCSTUB_RECORDER="+h.recorderPath,
+		"CCSTUB_SCRIPT_DIR="+h.scriptDir,
 		// Pin the early log-init path to the test tempdir so foci-gw
 		// doesn't open the host's production ~/logs/foci.log before
 		// config load. See cmd/foci-gw/main.go:81 (FOCI_LOG_FILE).
-		"FOCI_LOG_FILE="+filepath.Join(logsDir, "foci.log"),
+		"FOCI_LOG_FILE="+filepath.Join(h.logsDir, "foci.log"),
 	)
-	if opts.BackendReadyTimeout > 0 {
-		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+opts.BackendReadyTimeout.String())
+	if h.opts.BackendReadyTimeout > 0 {
+		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+h.opts.BackendReadyTimeout.String())
 	}
 	// If any agent has OmitWorkspaceKey set, override HOME so foci's
 	// load.go convention default ($HOME/<id>) resolves to the tempDir
@@ -349,25 +387,25 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	// user's actual home would be the resolved root — workspaces don't
 	// exist there, foci's startup file loader complains, and the test
 	// is observing host state instead of the test artefact.
-	for _, a := range opts.Agents {
+	for _, a := range h.agents {
 		if a.OmitWorkspaceKey {
-			cmd.Env = append(cmd.Env, "HOME="+filepath.Join(tempDir, "workspaces"))
+			cmd.Env = append(cmd.Env, "HOME="+filepath.Join(h.tempDir, "workspaces"))
 			break
 		}
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("stderr pipe: %w", err)
+		return fmt.Errorf("stderr pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
+		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		cancel()
-		return nil, fmt.Errorf("start foci-gw: %w", err)
+		return fmt.Errorf("start foci-gw: %w", err)
 	}
 
 	stderrBuf := newSyncBuffer()
@@ -386,24 +424,16 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		close(stoppedCh)
 	}()
 
-	h := &Harness{
-		t:            t,
-		tempDir:      tempDir,
-		dataDir:      dataDir,
-		logsDir:      logsDir,
-		configPath:   configPath,
-		tgStub:       tgStub,
-		recorderPath: recorderPath,
-		scriptDir:    scriptDir,
-		workspaces:   workspaces,
-		agents:       opts.Agents,
-		cmd:          cmd,
-		stderrBuf:    stderrBuf,
-		stoppedCh:    stoppedCh,
-	}
+	h.cmd = cmd
+	h.stderrBuf = stderrBuf
+	h.stoppedCh = stoppedCh
 
-	t.Cleanup(func() {
-		// Try graceful, then force.
+	// Register cleanup for THIS spawn. Multiple cleanups stack in
+	// reverse order; on Restart we register again so both the original
+	// (long-dead) and current cmd get a graceful-stop attempt — the
+	// dead-cmd attempt is a fast no-op.
+	logTail := h.opts.LogTail
+	h.t.Cleanup(func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Signal(syscall.SIGTERM)
 		}
@@ -413,18 +443,58 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 			cancel()
 			<-stoppedCh
 		}
-		if opts.LogTail || t.Failed() {
-			t.Logf("foci-gw stderr:\n%s", stderrBuf.String())
+		if logTail || h.t.Failed() {
+			h.t.Logf("foci-gw stderr:\n%s", stderrBuf.String())
 		}
 	})
 
-	if err := waitForReady(stderrBuf, stoppedCh, opts.ReadyTimeout); err != nil {
-		// On not-ready, return both the error and the captured stderr
-		// so callers (including StartGateway's t.Fatalf wrapper) can
-		// surface useful debug info without re-grabbing it.
-		return nil, fmt.Errorf("foci-gw not ready: %w\n--- stderr ---\n%s", err, stderrBuf.String())
+	timeout := h.readyTimeout
+	if timeout == 0 {
+		timeout = 20 * time.Second
 	}
-	return h, nil
+	if err := waitForReady(stderrBuf, stoppedCh, timeout); err != nil {
+		// On not-ready, surface both the error and the captured
+		// stderr so callers can debug without re-grabbing it.
+		return fmt.Errorf("foci-gw not ready: %w\n--- stderr ---\n%s", err, stderrBuf.String())
+	}
+	return nil
+}
+
+// Shutdown gracefully stops the running foci-gw subprocess. Sends
+// SIGTERM, waits for the process to exit (capped at the supplied
+// timeout, then SIGKILL if it overstays its welcome), and blocks
+// until the goroutines streaming stderr/stdout have drained. Safe to
+// call from a test goroutine — does not race with the t.Cleanup that
+// registered during spawn.
+func (h *Harness) Shutdown(timeout time.Duration) error {
+	if h.cmd == nil || h.cmd.Process == nil {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	_ = h.cmd.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-h.stoppedCh:
+		return nil
+	case <-time.After(timeout):
+		_ = h.cmd.Process.Kill()
+		<-h.stoppedCh
+		return fmt.Errorf("foci-gw did not exit cleanly within %s; killed", timeout)
+	}
+}
+
+// Restart shuts down the running foci-gw and spawns a fresh subprocess
+// against the SAME data_dir / configPath / tokens / workspaces. Used
+// for cross-process tests (wake-reminder survival, durable session
+// state, etc.) where the on-disk state must outlive the supervising
+// process. The stderr buffer resets — Stderr() after Restart returns
+// only the new process's output.
+func (h *Harness) Restart() error {
+	if err := h.Shutdown(5 * time.Second); err != nil {
+		return fmt.Errorf("restart: shutdown phase: %w", err)
+	}
+	return h.spawnGateway()
 }
 
 // TelegramStub returns the underlying Bot API stub so tests can push
