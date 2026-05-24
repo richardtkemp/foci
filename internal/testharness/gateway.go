@@ -84,6 +84,21 @@ type AgentSpec struct {
 	// `allowed_users_only = false` to prove the "empty list + non-strict
 	// mode accepts any user" branch of the access gate.
 	OmitPlatformAllowedUsersKey bool
+
+	// PlatformBotSecret, when non-empty, emits a `bot_secret = "<value>"`
+	// line on the per-agent `[[agents.platforms]]` block. Foci resolves
+	// the bot token via the named secret path (e.g. "custom.weird_token")
+	// instead of the `<platform>.<bot>` convention. Used together with
+	// ExtraSecretsTOML to register the actual token at the named path.
+	PlatformBotSecret string
+
+	// OmitDefaultPlatformSecret, if true, suppresses the default
+	// `<agentID> = "<token>"` entry that writeTestSecrets writes into
+	// the [telegram] section. Use to prove that an override path
+	// (e.g. PlatformBotSecret pointing at a custom section) is being
+	// preferred over the convention — without the convention secret
+	// present, the bot can only authenticate via the override.
+	OmitDefaultPlatformSecret bool
 }
 
 // preStartFiles returns the AgentSpec's PreStartFiles map (nil-safe).

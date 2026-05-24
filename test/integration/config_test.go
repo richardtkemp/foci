@@ -938,7 +938,35 @@ func TestL2_Config_AccessAllowedUsersOnlyTrueRejectsUnlisted(t *testing.T) {
 // the convention path.
 func TestL2_Config_PerAgentBotSecretOverrideUsesNamedKey(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to (1) set a per-agent `bot_secret = \"custom.weird_token\"` on the agent's platform entry, and (2) register that custom secret section in secrets.toml mapped to a token the TelegramStub recognises")
+	const userID = 7500
+	// Fix the BotToken so we can register the same value under a
+	// custom secret path. Using a fixed value (rather than the auto-
+	// generated time-based one) keeps the ExtraSecretsTOML stable.
+	const overrideToken = "override-test-token:99"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:                        "alpha",
+			UserID:                    userID,
+			BotToken:                  overrideToken,
+			PlatformBotSecret:         "custom.weird_token",
+			OmitDefaultPlatformSecret: true,
+		}},
+		ReadyTimeout:     30 * time.Second,
+		ExtraSecretsTOML: "[custom]\nweird_token = \"override-test-token:99\"\n",
+	})
+
+	// If the override path is honoured, the bot resolves to
+	// overrideToken (registered with the stub), getMe succeeds, the
+	// long-poll runs, and the user message reaches cc-stub. If foci
+	// instead fell back to the convention path it would look up
+	// `telegram.alpha`, which OmitDefaultPlatformSecret suppressed —
+	// so the bot would fail to register and no message would land.
+	pushUserMessage(t, h, "alpha", userID, "bot-secret-override-check")
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bot-secret-override-check", 25*time.Second) {
+		t.Fatalf("override path was not honoured — bot did not register against the custom-section secret; stderr:\n%s",
+			stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Config_AccessAllowedUsersOnlyFalseAcceptsAny proves the
