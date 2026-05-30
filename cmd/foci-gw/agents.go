@@ -59,8 +59,12 @@ type agentInstance struct {
 	// testCanFireOverride: nil means unset (fall back to
 	// CanFireBackgroundOperation), non-nil means CanFireFunc should
 	// return its allowed/reason verbatim.
+	// stopped: when true the agentResolverFn returns nil for this
+	// instance's ID, simulating a stopped bot for session_router /
+	// session_notify drop-path testing.
 	testActiveWorkOverride atomic.Int64
 	testCanFireOverride    atomic.Pointer[testCanFireState]
+	stopped                atomic.Bool
 }
 
 // testCanFireState is the override payload for CanFireFunc when set

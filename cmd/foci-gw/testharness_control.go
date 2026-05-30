@@ -197,6 +197,25 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 		inst.testCanFireOverride.Store(&testCanFireState{allowed: allowed, reason: reason})
 		log.Infof("testharness_control", "set_canfire %s = (%v, %q)", agentID, allowed, reason)
 		return "ok"
+	case "stop_agent":
+		// stop_agent <agentID>: flag the agent as stopped so the
+		// agentResolverFn returns nil for cross-agent dispatch lookups.
+		// Exercises the session_notify drop-and-log path without
+		// actually tearing down the agent's bot, session_router
+		// registration, or in-flight backends — the agent record stays
+		// in the map (so its own bot keeps serving messages), but
+		// cross-agent target resolution treats it as unreachable.
+		if len(fields) != 2 {
+			return "error: stop_agent requires <agentID>"
+		}
+		agentID := fields[1]
+		inst, ok := agents[agentID]
+		if !ok {
+			return "error: unknown agent " + agentID
+		}
+		inst.stopped.Store(true)
+		log.Infof("testharness_control", "stop_agent %s — flagged as stopped", agentID)
+		return "ok"
 	default:
 		return "error: unknown op " + op
 	}

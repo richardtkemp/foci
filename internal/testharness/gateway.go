@@ -686,6 +686,15 @@ func (h *Harness) SetActiveWork(agentID string, count int) error {
 	return h.sendControl(fmt.Sprintf("set_active_work %s %d", agentID, count))
 }
 
+// StopAgent flags the agent as stopped so the cross-agent
+// session_notify resolver returns nil for it — exercises the
+// "unknown target agent — message dropped" log path without tearing
+// down the bot or backend. The agent's own bot keeps serving inbound
+// messages (only the cross-agent resolver is affected).
+func (h *Harness) StopAgent(agentID string) error {
+	return h.sendControl("stop_agent " + agentID)
+}
+
 // SetCanFire pins the agent's CanFireFunc return value to (allowed,
 // reason) for subsequent periodic ticks. The shared rate-limit / mana
 // gate runs at the top of every scheduler (background, reflection,
