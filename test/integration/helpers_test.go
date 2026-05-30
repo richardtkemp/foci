@@ -113,6 +113,11 @@ type recorderEntry struct {
 	Model            string          `json:"model,omitempty"`
 	Flags            []string        `json:"flags,omitempty"`
 	PID              int             `json:"pid,omitempty"`
+	// Binary captures os.Args[0] from the spawned cc-stub — i.e. the
+	// resolved path foci called claude_binary at. Per-agent override
+	// tests use this to confirm a spawn landed at the override path
+	// rather than the global cc_backend.claude_binary path.
+	Binary           string          `json:"binary,omitempty"`
 	SessionID        string          `json:"session_id,omitempty"`
 	TextPrefix       string          `json:"text_prefix,omitempty"`
 	// ContentBlockTypes — per-block "type" values from the user envelope

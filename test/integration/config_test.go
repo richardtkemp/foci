@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -223,7 +225,124 @@ func TestL2_Config_CCBackendClaudeBinaryFromGlobal(t *testing.T) {
 // recorder-B got the invocation.
 func TestL2_Config_PerAgentClaudeBinaryOverridesGlobal(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: needs HarnessOptions to inject per-agent backend_config.claude_binary AND a way to point separate agents at separate recorder files — current harness shares a single CCSTUB_RECORDER env across all spawns")
+	// Build a second cc-stub binary at a distinct path. We can't easily
+	// `go build` from inside a test here without duplicating the harness's
+	// buildBinary machinery; the simplest correct approach is to symlink
+	// the harness's existing cc-stub to a fresh name in the test's
+	// TempDir. Both paths resolve to the same source, so behaviour is
+	// identical — but foci sees them as distinct claude_binary values,
+	// and cc-stub records os.Args[0] verbatim (Binary field on the
+	// invocation entry) so the test can tell which one foci picked.
+	//
+	// Per-agent recorder distinction goes through ExtraEnv —
+	// backend_config.env propagates to the cc-stub subprocess and
+	// CCSTUB_RECORDER points each agent's spawns at its own JSONL.
+	const userA = 7401
+	const userB = 7402
+
+	// Bootstrap a harness with the default global cc-stub so we know its
+	// build path. We immediately Shutdown and read h.tempDir to lay out
+	// the per-agent files. Then we start the *real* harness with the
+	// per-agent override and recorder routing in place.
+	scratch := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userA}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	scratchBin := filepath.Join(scratch.TempDir(), "bin", "cc-stub")
+	if _, err := os.Stat(scratchBin); err != nil {
+		t.Fatalf("scratch cc-stub binary missing at %s: %v", scratchBin, err)
+	}
+	_ = scratch.Shutdown(5 * time.Second)
+
+	// Stand up the override binary as a hard symlink so foci's exec path
+	// resolution sees a distinct file. Place it under a parallel-safe
+	// per-test dir.
+	overrideDir := t.TempDir()
+	overrideBin := filepath.Join(overrideDir, "cc-stub-override")
+	if err := os.Symlink(scratchBin, overrideBin); err != nil {
+		t.Fatalf("symlink override binary: %v", err)
+	}
+
+	recorderA := filepath.Join(overrideDir, "recorder-A.jsonl")
+	recorderB := filepath.Join(overrideDir, "recorder-B.jsonl")
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{
+				ID:     "alpha",
+				UserID: userA,
+				// No ClaudeBinary override — falls through to global.
+				ExtraEnv: map[string]string{"CCSTUB_RECORDER": recorderA},
+			},
+			{
+				ID:     "beta",
+				UserID: userB,
+				// Per-agent override that should beat the global.
+				ClaudeBinary: overrideBin,
+				ExtraEnv:     map[string]string{"CCSTUB_RECORDER": recorderB},
+			},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Send each agent a message, then verify each agent's invocations
+	// landed in its OWN recorder AND that beta's binary path matches
+	// the override (not the global).
+	pushTelegramText(t, h, "alpha", userA, "alpha boot ping")
+	pushTelegramText(t, h, "beta", userB, "beta boot ping")
+
+	deadline := time.Now().Add(20 * time.Second)
+	var entriesA, entriesB []recorderEntry
+	for time.Now().Before(deadline) {
+		entriesA = readRecorderEntries(t, recorderA)
+		entriesB = readRecorderEntries(t, recorderB)
+		invA := invocationsByWorkdir(entriesA, "workspaces/alpha")
+		invB := invocationsByWorkdir(entriesB, "workspaces/beta")
+		if len(invA) > 0 && len(invB) > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	invA := invocationsByWorkdir(entriesA, "workspaces/alpha")
+	invB := invocationsByWorkdir(entriesB, "workspaces/beta")
+	if len(invA) == 0 {
+		t.Fatalf("alpha (global binary) recorded no invocations in %s\nstderr:\n%s",
+			recorderA, stderrTail(h.Stderr()))
+	}
+	if len(invB) == 0 {
+		t.Fatalf("beta (per-agent override) recorded no invocations in %s\nstderr:\n%s",
+			recorderB, stderrTail(h.Stderr()))
+	}
+
+	// Negative: alpha's recorder must NOT contain any beta workdir
+	// invocation, and vice versa — proves the per-agent CCSTUB_RECORDER
+	// env routing is real.
+	if betaInA := invocationsByWorkdir(entriesA, "workspaces/beta"); len(betaInA) > 0 {
+		t.Errorf("alpha recorder leaked beta invocations: %d", len(betaInA))
+	}
+	if alphaInB := invocationsByWorkdir(entriesB, "workspaces/alpha"); len(alphaInB) > 0 {
+		t.Errorf("beta recorder leaked alpha invocations: %d", len(alphaInB))
+	}
+
+	// Binary attribution: beta's invocation must reference the override
+	// path (overrideBin). Don't strict-equal — foci may pass the
+	// argv[0] verbatim or canonicalize it; just check the basename or
+	// suffix matches "cc-stub-override".
+	hasOverride := false
+	for _, e := range invB {
+		if strings.Contains(e.Binary, "cc-stub-override") {
+			hasOverride = true
+			break
+		}
+	}
+	if !hasOverride {
+		var seen []string
+		for _, e := range invB {
+			seen = append(seen, e.Binary)
+		}
+		t.Errorf("beta invocation did not land at the per-agent override binary; expected basename 'cc-stub-override', saw %v", seen)
+	}
 }
 
 // TestL2_Config_PlatformTelegramSubBlockInheritedWhenNil is the

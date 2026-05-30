@@ -167,6 +167,13 @@ model = "stub"
 			sb.WriteString("}\n")
 		}
 
+		// Per-agent claude_binary override beats [cc_backend].claude_binary.
+		// Only emitted when the spec sets it — empty falls through to the
+		// global (which writeTestConfig points at the auto-built cc-stub).
+		if a.ClaudeBinary != "" {
+			fmt.Fprintf(&sb, "claude_binary = %q\n", a.ClaudeBinary)
+		}
+
 		// Per-agent [agents.permissions] only emitted when at least one
 		// permission knob is set — keeps the generated config minimal
 		// for the common case.

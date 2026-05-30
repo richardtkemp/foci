@@ -5,6 +5,7 @@ package integration
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -654,12 +655,47 @@ func TestL2_SlashCommands_ManaReportsNoProviderSupport(t *testing.T) {
 // session names appear and the total matches the seeded sum.
 func TestL2_SlashCommands_CostTodayReadsAPILog(t *testing.T) {
 	t.Parallel()
-	// The test config writer does not set [logging] api_file or
-	// api_db, so foci-gw uses defaults that resolve against
-	// UserHomeDir(). There's no exposed harness API to point them at
-	// a temp file we can seed before sending /cost today, so we
-	// cannot verify the aggregation logic from the L2 surface.
-	t.Skip("HARNESS GAP: writeTestConfig omits [logging].api_file / api_db; no way to seed synthetic api log entries readable by /cost")
+	// writeTestConfig DOES emit [logging].api_file pointing at the
+	// harness LogsDir (gateway_config.go:84); Harness.LogsDir() exposes
+	// the directory. /cost today reads via log.ReadAPILog fresh on every
+	// call (observability.go:194), so seeding entries AFTER startup is
+	// sufficient — no pre-start hook needed.
+	const userID = 7065
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	// Two synthetic entries dated today. Choose session names that won't
+	// collide with anything foci writes internally. Costs sum to 2.50.
+	apiLogPath := filepath.Join(h.LogsDir(), "api.jsonl")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	entries := []string{
+		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_A","model":"stub-model","input":100,"output":50,"cost_usd":1.00,"call_type":"conversation"}`,
+		`{"ts":"` + now + `","session":"L2_COST_TEST_SESSION_B","model":"stub-model","input":200,"output":100,"cost_usd":1.50,"call_type":"conversation"}`,
+	}
+	apiContent := strings.Join(entries, "\n") + "\n"
+	if err := os.WriteFile(apiLogPath, []byte(apiContent), 0o600); err != nil {
+		t.Fatalf("seed api.jsonl: %v", err)
+	}
+
+	pushTelegramText(t, h, "alpha", userID, "/cost today")
+
+	// Expect a sendMessage with the "Today: $2.50" header and BOTH
+	// session names. Total comes from sumCosts; per-session table comes
+	// from costToday's grouping.
+	text := waitForSendMessageText(t, h, token, 8*time.Second, "Today:")
+	if text == "" {
+		t.Fatalf("/cost today never produced a 'Today:' reply\nsent so far:\n%v\nstderr tail:\n%s",
+			peekSendMessageTexts(h, token), stderrTail(h.Stderr()))
+	}
+	if !strings.Contains(text, "$2.50") {
+		t.Errorf("expected total $2.50 in /cost today reply; got:\n%s", text)
+	}
+	if !strings.Contains(text, "L2_COST_TEST_SESSION_A") || !strings.Contains(text, "L2_COST_TEST_SESSION_B") {
+		t.Errorf("expected both seeded session names in /cost today reply; got:\n%s", text)
+	}
 }
 
 // TestL2_SlashCommands_CostUnknownPeriodShowsUsage proves /cost with
