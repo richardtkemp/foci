@@ -679,7 +679,27 @@ func TestL2_Config_MalformedTOMLFailsStartup(t *testing.T) {
 // being wired through validateDurations.
 func TestL2_Config_InvalidDurationFailsValidation(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: same as MalformedTOMLFailsStartup — needs raw-TOML injection and a non-Fatal startup path so the test can observe the validation error in stderr after exit")
+	// archive_after is one of the duration fields enforced by
+	// validateDurations (validate.go:256). Injecting a syntactically valid
+	// TOML key with a non-parseable Go duration value drives the
+	// validation path without tripping the TOML parser first.
+	_, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 7306},
+		},
+		ReadyTimeout:    10 * time.Second,
+		ExtraConfigTOML: "[sessions]\narchive_after = \"5xyz\"\n",
+	})
+	if err == nil {
+		t.Fatalf("expected TryStartGateway to return a validation error; got nil")
+	}
+	low := strings.ToLower(err.Error())
+	// validateDurations wraps the parse error with the field path; the
+	// error surface to the test is the startup-not-ready signal plus
+	// stderr. Accept any of these markers — exact wording can shift.
+	if !(strings.Contains(low, "archive_after") || strings.Contains(low, "duration") || strings.Contains(low, "sessions") || strings.Contains(low, "5xyz") || strings.Contains(low, "not ready")) {
+		t.Errorf("expected validation-shaped error naming archive_after / duration / sessions; got:\n%v", err)
+	}
 }
 
 // TestL2_Config_UnknownTopLevelKeyWarnsNotFails proves that an

@@ -1089,10 +1089,80 @@ func TestL2_Cron_ConsolidationSkippedWhileReflectionRunning(t *testing.T) {
 // processes.
 func TestL2_Cron_ConsolidationTimestampPersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: requires (a) [reflection] config injection AND (b) a " +
-		"way to start a second harness against the same DataDir / workspaces. " +
-		"StartGateway always allocates a fresh t.TempDir() for both, so state " +
-		"can't survive a restart. Needs HarnessOptions.ReuseDir / .DataDir.")
+	const testUserID = 5310
+	// Strategy: configure consolidation_interval = "1h" — well past the
+	// test wall-clock — so a SECOND consolidation would only fire if the
+	// persisted timestamp is NOT loaded on restart. The first
+	// consolidation fires on the very first cron tick because zero-time
+	// + interval rounds well into the past; that fire writes
+	// consolidation_last via SetAgentMetadata. After Restart, the new
+	// Runner reads consolidation_last in init (keepalive.go:178) and
+	// computes nextFire ~1h ahead — every post-restart tick must skip.
+	//
+	// Harness.Restart() reuses h.configPath (and therefore h.dataDir),
+	// so the SessionIndex sqlite file persists across the restart. The
+	// recorder file is shared across spawns, so invocations from both
+	// processes accumulate to the same JSONL.
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		ExtraConfigTOML: "\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = true\nconsolidation_interval = \"1h\"\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	scriptBody, err := json.Marshal(map[string]any{"text": "bootstrap"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	// Bootstrap the agent so lastInteraction is recent (consolidation's
+	// idle guard at keepalive.go:625 skips when idle > 1h).
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Wait for one cron tick — consolidation fires and writes
+	// consolidation_last via SetAgentMetadata. The cron tick interval
+	// is 30s; budget 40s to land inside the tick window comfortably.
+	time.Sleep(40 * time.Second)
+	firstInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if firstInvocations < 2 {
+		// 1 bootstrap + 1 consolidation expected. Surface stderr so a
+		// scheduling miss is debuggable.
+		t.Fatalf("expected at least 2 invocations (bootstrap + first consolidation) before restart; got %d. stderr:\n%s",
+			firstInvocations, stderrTail(h.Stderr()))
+	}
+
+	// Restart foci-gw — same DataDir, fresh subprocess. Runner re-init
+	// reads consolidation_last from the persisted SessionIndex.
+	if err := h.Restart(); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+
+	// Observe two full cron ticks post-restart (~70s). With
+	// consolidation_interval = "1h" and a fresh lastConsolidation from
+	// disk pointing at ~70s ago, nextFire is ~59m in the future, so
+	// every tick must skip.
+	time.Sleep(70 * time.Second)
+	secondInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if secondInvocations > firstInvocations {
+		// The persisted timestamp would mean nextFire is ~1h ahead, so
+		// no consolidation should fire. Any growth implies the persisted
+		// value did not gate the second process.
+		t.Errorf("consolidation fired after restart despite persisted timestamp: before=%d after=%d. Persisted consolidation_last was ignored.\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			firstInvocations, secondInvocations,
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
 }
 
 // TestL2_Cron_WakeReminderFiresAfterDelay proves the remind tool's
