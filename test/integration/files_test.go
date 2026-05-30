@@ -337,20 +337,16 @@ func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
 // 32MB content-block cap takes the save-to-disk path with a
 // "[PDF saved to: <path>]" tag, not the attachment path. Asserts the
 // branching threshold in bot_receive.handlePDF for file_size > 32MB.
+// COMMENTED OUT 2026-05-30 — WRONG PREMISE, see TODO #801 for review.
+// The >32MB path always trips the 20MB downloadAndSaveMedia size guard
+// before any save. Size-warning behaviour is covered by
+// TestL2_Files_Document_TooLarge_SizeWarningPrepended.
+/*
 func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
 	t.Parallel()
-	// The bot_receive code routes PDFs with FileSize > 32MB through
-	// handleMediaMessage, which calls downloadAndSaveMedia. But
-	// downloadAndSaveMedia has its own hard limit at 20MB
-	// (fileTooLargeError), so any PDF claiming >32MB hits the
-	// too-large branch BEFORE the download attempt — the "[PDF saved
-	// to: <path>]" tag the test description asks for never fires on
-	// the over-32MB path. The only place that tag does fire is the
-	// inner `len(att.data) > maxPDFSize` branch after a successful
-	// download of a misreported size — which the harness cannot
-	// exercise because downloadFile uses the real Telegram CDN.
 	t.Skip("HARNESS GAP / test premise mismatch: the >32MB path always trips the 20MB downloadAndSaveMedia size guard before any save-to-disk happens, and the inner downloaded-too-big branch needs a real successful binary download")
 }
+*/
 
 // TestL2_Files_VideoAttachment_SavedAndPathInjected proves Video
 // messages route through handleMediaMessage (save-to-disk + path tag)
