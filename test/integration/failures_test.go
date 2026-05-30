@@ -313,7 +313,115 @@ func TestL2_Failures_BackendHangsDuringTurn(t *testing.T) {
 // dispatched turn — no duplicates, no losses.
 func TestL2_Failures_BackendKilledMidTurnByGateway(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: harness exposes no hook to force a mid-turn backend Close()/Restart() on a running agent. Need Harness.RestartAgent or Harness.CloseAgentBackend.")
+	// Strategy: cc-stub is scripted to hang AFTER emitting the assistant
+	// envelope (CCSTUB_HANG_DURING_TURN), so the turn is in flight with
+	// IsProcessing=true when we call Harness.CloseAgentBackend. The
+	// close fires DelegatedManager.Close which SIGTERMs each managed
+	// backend; finalizeOnce in ccstream gates OnTurnComplete to fire at
+	// most once even when the waiter and reader goroutines both notice
+	// the death.
+	//
+	// Assertion: exactly one user_message recorded by cc-stub for the
+	// dispatched message (no duplicate driven by the close path, no
+	// loss driven by an early-finalize race). After the close, a
+	// follow-up message must spawn a fresh backend and record one more.
+	const userID = 8500
+	const hang = 30 * time.Second // long enough that Close races the sleep
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:       "alpha",
+			UserID:   userID,
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": hang.String()},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	const probe = "MARKER_BACKEND_KILL_MID_TURN_PROBE"
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: probe,
+		},
+	})
+
+	// Wait until cc-stub records the user_message — proves the turn is
+	// in flight (the assistant envelope was emitted before the hang).
+	if !waitForUserMessageContainingAlpha(t, h, probe, 20*time.Second) {
+		t.Fatalf("probe never reached cc-stub user_message; stderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
+
+	// Close the backend mid-hang. The hang is well past the SIGTERM
+	// grace; foci's ccstream escalation does SIGTERM then SIGKILL +2s.
+	if err := h.CloseAgentBackend("alpha"); err != nil {
+		t.Fatalf("CloseAgentBackend: %v", err)
+	}
+
+	// Allow finalizeOnce + cleanup to drain. Bound it generously enough
+	// for SIGKILL escalation (2s) and the reader/waiter race.
+	time.Sleep(5 * time.Second)
+
+	// Assertion: the probe must appear exactly ONCE in user_message
+	// entries. A duplicate would mean either the close path re-injected
+	// or telegram replay raced ahead before the offset advanced.
+	count := countUserMessagesContaining(t, h, "alpha", probe)
+	if count != 1 {
+		t.Errorf("probe %q appeared %d times in user_message entries; want exactly 1\nrecorder:\n%s",
+			probe, count, recorderTail(t, h.RecorderPath()))
+	}
+
+	// Follow-up message: the agent must recover by lazy-spawning a
+	// fresh backend on the next inbound message. The follow-up uses no
+	// hang (we override the existing env via a script that exits the
+	// next user message normally; cc-stub re-reads env per-process so
+	// the new spawn still has CCSTUB_HANG_DURING_TURN=30s — we'd need
+	// to override per-spawn for a clean re-test, which is out of scope
+	// here. Instead we just observe the user_message lands and finish.)
+	const followUp = "MARKER_BACKEND_KILL_FOLLOWUP"
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: followUp,
+		},
+	})
+	if !waitForUserMessageContainingAlpha(t, h, followUp, 20*time.Second) {
+		t.Errorf("follow-up message never reached cc-stub — respawn after close failed\nstderr:\n%s\nrecorder:\n%s",
+			stderrTail(h.Stderr()), recorderTail(t, h.RecorderPath()))
+	}
+}
+
+// waitForUserMessageContainingAlpha is a small local helper. The
+// existing waitForUserMessage takes a workdir-substring + text; this
+// variant uses the per-agent workdir convention.
+func waitForUserMessageContainingAlpha(t *testing.T, h *testharness.Harness, marker string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+			if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/alpha") && strings.Contains(e.TextPrefix, marker) {
+				return true
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
+}
+
+// countUserMessagesContaining returns the number of user_message
+// entries whose text contains marker, scoped to the agent's workdir.
+func countUserMessagesContaining(t *testing.T, h *testharness.Harness, agentID, marker string) int {
+	t.Helper()
+	n := 0
+	for _, e := range readRecorderEntries(t, h.RecorderPath()) {
+		if e.Kind == "user_message" && strings.Contains(e.Workdir, "workspaces/"+agentID) && strings.Contains(e.TextPrefix, marker) {
+			n++
+		}
+	}
+	return n
 }
 
 // ---------------------------------------------------------------------------
@@ -1771,26 +1879,64 @@ func TestL2_Failures_ConcurrentMessagesDuringHangNotLost(t *testing.T) {
 // not two.
 func TestL2_Failures_RestartDuringInFlightTurnDoesNotDoubleCount(t *testing.T) {
 	t.Parallel()
-	// Reclassified after attempting with Harness.Restart (commit 6cace364).
-	// The premise — "Close() races cc-stub's natural exit; finalizeOnce
-	// guarantees exactly-once" — is per-backend, not gateway-wide.
-	// Harness.Restart sends SIGTERM to foci-gw; the gateway then runs
-	// its own backend Close() path during shutdown. That's the right
-	// race shape on paper, but in practice the post-restart cc-stub
-	// resume + Telegram long-poll re-sync + session-state recovery all
-	// interact in ways that make the recorder count fragile:
-	//   - msgA may be re-delivered if foci hasn't acked its offset
-	//     before SIGTERM (so countA can hit 2)
-	//   - msgB may never land if the resumed cc-stub gets stuck in
-	//     unexpected state (so countB can hit 0)
-	// Distinguishing "finalizeOnce did its job" from "Telegram replay
-	// duplicated msgA" requires a per-backend hook that doesn't touch
-	// the long-poll cursor — Harness.CloseAgentBackend(agentID) or a
-	// scripted "exit-on-cue mid-turn" cc-stub mode.
+	// Per-backend close (via Harness.CloseAgentBackend, env-gated
+	// control socket) doesn't touch the Telegram long-poll offset, so
+	// the close vs natural-exit race for the in-flight turn can be
+	// observed cleanly without msgA replay or msgB getting eaten.
 	//
-	// Indirect coverage: TestL2_Failures_BackendExitsAfterHandshakeMidTurn
-	// already exercises the natural-exit-mid-turn finalize path. The
-	// missing leg is the race AGAINST Close(), which is the per-backend
-	// hook above.
-	t.Skip("SCOPE: gateway-wide Restart() doesn't isolate the per-backend Close()-vs-natural-exit race the premise targets. Indirectly covered by BackendExitsAfterHandshakeMidTurn. Unblock: Harness.CloseAgentBackend(agentID) for a clean per-backend close that doesn't cascade through Telegram replay / long-poll reset.")
+	// Two messages are dispatched sequentially with a 30s hang on each
+	// turn (CCSTUB_HANG_DURING_TURN). After each in-flight turn is
+	// confirmed via cc-stub's user_message entry, we close the
+	// per-agent backend. finalizeOnce must guarantee exactly one
+	// user_message recorded per dispatched Telegram update — no
+	// duplicates from the close-race, no losses.
+	const userID = 8501
+	const hang = 30 * time.Second
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{{
+			ID:       "alpha",
+			UserID:   userID,
+			ExtraEnv: map[string]string{"CCSTUB_HANG_DURING_TURN": hang.String()},
+		}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	token := h.AgentBotToken("alpha")
+
+	dispatchAndClose := func(marker string) {
+		h.TelegramStub().PushUpdate(token, gotgbot.Update{
+			Message: &gotgbot.Message{
+				Chat: gotgbot.Chat{Id: userID, Type: "private"},
+				From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+				Text: marker,
+			},
+		})
+		if !waitForUserMessageContainingAlpha(t, h, marker, 25*time.Second) {
+			t.Fatalf("marker %q never reached cc-stub user_message; recorder:\n%s",
+				marker, recorderTail(t, h.RecorderPath()))
+		}
+		if err := h.CloseAgentBackend("alpha"); err != nil {
+			t.Fatalf("CloseAgentBackend for %s: %v", marker, err)
+		}
+		// Drain finalize callbacks plus the SIGTERM/SIGKILL escalation
+		// window before issuing the next message — otherwise the next
+		// PushUpdate may land on a still-closing backend instance.
+		time.Sleep(3 * time.Second)
+	}
+
+	const markerA = "MARKER_RESTART_INFLIGHT_A"
+	const markerB = "MARKER_RESTART_INFLIGHT_B"
+	dispatchAndClose(markerA)
+	dispatchAndClose(markerB)
+
+	countA := countUserMessagesContaining(t, h, "alpha", markerA)
+	countB := countUserMessagesContaining(t, h, "alpha", markerB)
+	if countA != 1 {
+		t.Errorf("marker A appeared %d times; want exactly 1\nrecorder:\n%s",
+			countA, recorderTail(t, h.RecorderPath()))
+	}
+	if countB != 1 {
+		t.Errorf("marker B appeared %d times; want exactly 1\nrecorder:\n%s",
+			countB, recorderTail(t, h.RecorderPath()))
+	}
 }

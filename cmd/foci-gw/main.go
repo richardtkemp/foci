@@ -383,6 +383,11 @@ Subcommands:
 	}
 	setupInteractiveCleanup(ctx)
 	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, connMgr, ctx)
+	// L2 integration-test lifecycle control. Opens a UNIX-domain socket
+	// at FOCI_TESTHARNESS_CONTROL_SOCK if set; otherwise no-op. Tests
+	// drive per-agent backend close / etc. via a simple line protocol.
+	// Production foci-gw never has the env var set, so this is dormant.
+	setupTestharnessControl(ctx, agents)
 
 	// ========== Signal handling ==========
 	sigCh := make(chan os.Signal, 1)
