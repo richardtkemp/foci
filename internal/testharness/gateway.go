@@ -672,6 +672,40 @@ func (h *Harness) CloseAgentBackend(agentID string) error {
 	return h.sendControl("close_backend " + agentID)
 }
 
+// SetActiveWork pins the agent's HasActiveWorkFn return value to the
+// given count for subsequent periodic ticks. Counts ≥ 0 are returned
+// verbatim by the closure; pass a negative count to clear the override
+// (NOT YET WIRED — current production gateway treats any value ≥ 0 as
+// the override, so tests typically Set once at the start of the
+// scenario and let the harness tear down on cleanup).
+//
+// For delegated agents this is the only way to drive the background-
+// scheduler gate that defers when tmux watches are in flight, because
+// the production tmuxWatchCount closure is nil for delegated agents.
+func (h *Harness) SetActiveWork(agentID string, count int) error {
+	return h.sendControl(fmt.Sprintf("set_active_work %s %d", agentID, count))
+}
+
+// SetCanFire pins the agent's CanFireFunc return value to (allowed,
+// reason) for subsequent periodic ticks. The shared rate-limit / mana
+// gate runs at the top of every scheduler (background, reflection,
+// consolidation); pinning allowed=false with a non-empty reason
+// confirms all three schedulers consult the same gate.
+//
+// The reason string is passed verbatim over the line protocol after
+// the boolean — newlines are not supported (commands are line-framed).
+func (h *Harness) SetCanFire(agentID string, allowed bool, reason string) error {
+	allowedStr := "0"
+	if allowed {
+		allowedStr = "1"
+	}
+	cmd := fmt.Sprintf("set_canfire %s %s", agentID, allowedStr)
+	if reason != "" {
+		cmd += " " + reason
+	}
+	return h.sendControl(cmd)
+}
+
 // sendControl dials the gateway's control socket, writes one command
 // line, reads the one-line reply, and returns nil on "ok" or an error
 // shaped from the reply text.
