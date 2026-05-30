@@ -99,6 +99,14 @@ type AgentSpec struct {
 	// preferred over the convention — without the convention secret
 	// present, the bot can only authenticate via the override.
 	OmitDefaultPlatformSecret bool
+
+	// ClaudeBinary, when non-empty, emits
+	// `claude_binary = "<path>"` on this agent's
+	// `[agents.backend_config]` block. Per-agent override beats the
+	// global `[cc_backend].claude_binary`. Used by override tests that
+	// need to prove the per-agent path was picked up — empty falls back
+	// to the global cc-stub binary the harness builds.
+	ClaudeBinary string
 }
 
 // preStartFiles returns the AgentSpec's PreStartFiles map (nil-safe).

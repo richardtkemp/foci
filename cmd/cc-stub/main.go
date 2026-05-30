@@ -229,6 +229,11 @@ type recorderEntry struct {
 	Model    string   `json:"model,omitempty"`
 	Flags    []string `json:"flags,omitempty"`
 	PID      int      `json:"pid,omitempty"`
+	// Binary captures os.Args[0] — the path foci invoked cc-stub at.
+	// Per-agent claude_binary override tests use this to distinguish a
+	// spawn that landed at the global path from one that landed at the
+	// per-agent override path. Empty in older recordings.
+	Binary string `json:"binary,omitempty"`
 
 	// user_message-only
 	SessionID  string `json:"session_id,omitempty"`
@@ -894,6 +899,7 @@ func recordInvocation(resume, model string) {
 		Model:     model,
 		Flags:     os.Args[1:],
 		PID:       os.Getpid(),
+		Binary:    os.Args[0],
 	})
 }
 
