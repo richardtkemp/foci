@@ -411,27 +411,16 @@ func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
 // the cc-stub init-args (system prompt segment surface) carries the
 // new file contents. Reload must not pick up foci.toml — config
 // changes still need a restart per the command's reply text.
+// COMMENTED OUT 2026-05-30 — WRONG PREMISE, see TODO #799 for review.
+// foci's delegated StartOpts.SystemPrompt is captured once at agent setup;
+// ReloadSystemFn only mutates ExtraSystemBlocks (skills), never refreshes
+// the next-backend bootstrap. May be a real bug — TODO documents both paths.
+/*
 func TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile(t *testing.T) {
 	t.Parallel()
-	// WRONG-PREMISE: investigated 2026-05-19. cc-stub now records the
-	// init system prompt (kind="init_system" with PromptLen/SHA256/Head
-	// in the recorder), so the observability gap is fixed. But foci's
-	// delegated path captures StartOpts.SystemPrompt ONCE at agent
-	// setup (cmd/foci-gw/agents_delegated.go:46 — local string, not a
-	// closure) and never refreshes it. ReloadSystemFn only mutates
-	// ExtraSystemBlocks (skills) on the Agent struct, not the
-	// DelegatedManager.StartOpts.SystemPrompt that the next backend
-	// respawn uses. So /reload's documented "rebuild bootstrap from
-	// disk" is effectively a no-op for the next delegated backend
-	// spawn — the OLD bootstrap is replayed.
-	//
-	// This may be a real bug — /reload was intended to refresh the
-	// next delegated bootstrap — or it may be by design (e.g. the
-	// running session keeps its prompt to avoid mid-session whiplash).
-	// Either way, this test asserts a behaviour foci doesn't have.
-	// See TODO filed separately.
 	t.Skip("WRONG PREMISE: foci's delegated StartOpts.SystemPrompt is captured once at agent setup and never refreshed by /reload. cc-stub init_system recording is in place but there's nothing on the foci side to observe. Either fix StartOpts refresh in /reload, or accept that delegated bootstrap reload requires a process restart.")
 }
+*/
 
 // TestL2_SlashCommands_ErrorsTailsEventLog proves /errors returns only
 // ERROR/WARN level lines from the configured event log file. Seeds
