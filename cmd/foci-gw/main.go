@@ -212,7 +212,19 @@ Subcommands:
 	var agentOrder []string
 
 	agentResolverFn := func(agentID string) *agentInstance {
-		return agents[agentID]
+		inst, ok := agents[agentID]
+		if !ok {
+			return nil
+		}
+		// Test-only: when a test stops an agent via the harness
+		// control socket, present the agent as unreachable to the
+		// session_notify resolver so the "unknown target agent"
+		// drop-and-log path fires. Production code never sets this
+		// flag; the resolver returns the live instance.
+		if inst.stopped.Load() {
+			return nil
+		}
+		return inst
 	}
 
 	agentListFn := func() []command.AgentInfo {
