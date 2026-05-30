@@ -294,21 +294,15 @@ func TestL2_Failures_BackendHangsBeforeReady(t *testing.T) {
 // (Telegram sendMessage containing a stall error) without killing the
 // subprocess prematurely, and a follow-up Telegram update must process
 // normally — proving the stall path is recoverable.
+// COMMENTED OUT 2026-05-30 — WRONG PREMISE, see TODO #798 for review.
+// streamIdleTimeout is 24h by design; no sub-minute stall detector to fire on.
+// Covered indirectly by TestL2_SlashCommands_ResetHardCancelsInflightTurn.
+/*
 func TestL2_Failures_BackendHangsDuringTurn(t *testing.T) {
 	t.Parallel()
-	// WRONG-PREMISE skip. The cc-stub side is now scriptable
-	// (CCSTUB_HANG_DURING_TURN sleeps post-assistant; SleepMs script
-	// field sleeps pre-assistant), but foci's streamIdleTimeout is set
-	// to 24 hours (see internal/agent/turn_orchestrator.go const
-	// streamIdleTimeout). There is no sub-minute turn-stall detector
-	// to fire on. To test this we'd need either (a) a configurable
-	// per-agent stall threshold (would be invasive — the 24h value is
-	// a deliberate choice to avoid false warnings during long
-	// permission waits), or (b) to redefine the test to assert a
-	// different recovery surface (e.g. /reset cancels the in-flight
-	// turn — already covered by ResetHardCancelsInflightTurn).
 	t.Skip("WRONG PREMISE: foci has no sub-minute turn-stall detector. streamIdleTimeout is 24h by design (avoids false warnings during long permission waits). Covered indirectly by TestL2_SlashCommands_ResetHardCancelsInflightTurn.")
 }
+*/
 
 // TestL2_Failures_BackendKilledMidTurnByGateway proves Close()'s
 // SIGTERM→SIGKILL escalation works when cc-stub ignores SIGTERM. The
