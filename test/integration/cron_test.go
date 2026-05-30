@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1941,14 +1942,59 @@ func TestL2_Cron_BranchOneshotRejectsUnknownAgent(t *testing.T) {
 // path, rather than dispatching with an empty prompt. Asserts the CLI
 // exits non-zero with a path-related error and the recorder shows no
 // branch invocation.
+//
+// Implementation note: cmdBranch's resolveMessage() reads the message
+// file BEFORE issuing the HTTP /wake request, so the failure path is
+// purely CLI-side. We don't need to wire the CLI's transport to the
+// harness gateway — the file read fails before any connection attempt.
+// We still pass --addr <unreachable> for hygiene to guarantee the CLI
+// doesn't accidentally talk to a production foci-gw if one is running.
 func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: this is a CLI-side check (cmd/foci's cmdBranch reads " +
-		"the file before issuing the HTTP request). The harness builds " +
-		"foci-gw + cc-stub but not the foci CLI binary, and there's no public " +
-		"helper to do so. Could be implemented by adding a Harness.BuildFociCLI " +
-		"method (or by running 'go run ./cmd/foci' from the repo root in the " +
-		"test), but neither path uses the existing harness surface.")
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: 9300}},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	cliBin := h.FociCLI(t)
+	missingPath := filepath.Join(h.TempDir(), "does-not-exist", "prompt.txt")
+
+	// Snapshot recorder entries before invocation so we can assert no
+	// NEW invocations follow (filters out any startup-time RunOnce work).
+	before := len(readRecorderEntries(t, h.RecorderPath()))
+
+	cmd := exec.Command(cliBin,
+		"--addr", "127.0.0.1:1", // unreachable; CLI should never reach it
+		"branch",
+		"-a", "alpha",
+		"-mf", missingPath,
+	)
+	// Clear FOCI_* env that might leak from the test process (e.g.
+	// FOCI_GW_SOCK pointing at production /home/foci/...).
+	cmd.Env = []string{"HOME=" + h.TempDir(), "PATH=/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("CLI exit was 0 but should have failed on missing -mf path\nstdout+stderr:\n%s", string(out))
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("CLI did not exit with ExitError (run failed at exec level): %v\noutput:\n%s", err, string(out))
+	}
+	if exitErr.ExitCode() == 0 {
+		t.Fatalf("CLI exit code was 0 despite ExitError; want non-zero")
+	}
+	combined := string(out)
+	if !strings.Contains(combined, "reading message file") {
+		t.Errorf("CLI stderr/stdout missing expected file-read error tag.\ngot:\n%s", combined)
+	}
+
+	// Give any in-flight startup recorder writes ~500ms to settle, then
+	// assert no new entries appeared as a side effect of the failed CLI run.
+	time.Sleep(500 * time.Millisecond)
+	after := len(readRecorderEntries(t, h.RecorderPath()))
+	if after != before {
+		t.Errorf("recorder grew across failed CLI run (before=%d after=%d) — CLI may have dispatched a branch despite the malformed -mf", before, after)
+	}
 }
 
 // TestL2_Cron_RateLimitGateBlocksAllSchedulers proves the shared

@@ -187,6 +187,10 @@ type Harness struct {
 	// Spawn-time invariants captured so Restart can re-run spawnGateway
 	// without re-doing the build / config / stub-setup work.
 	gwBin        string
+	binDir       string // for lazy CLI build via FociCLI()
+	repoRoot     string // for lazy CLI build via FociCLI()
+	fociCLIBin   string // set on first FociCLI() call; "" until built
+	fociCLIOnce  sync.Once
 	readyTimeout time.Duration
 	opts         HarnessOptions
 
@@ -381,6 +385,8 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		workspaces:   workspaces,
 		controlSock:  controlSock,
 		gwBin:        gwBin,
+		binDir:       binDir,
+		repoRoot:     repoRoot,
 		agents:       opts.Agents,
 		readyTimeout: opts.ReadyTimeout,
 		opts:         opts,
@@ -551,6 +557,27 @@ func (h *Harness) TelegramStub() *TelegramStub { return h.tgStub }
 // RecorderPath returns the path to the cc-stub invocation recorder file.
 // Tests read this file (JSONL) to assert on what foci handed CC.
 func (h *Harness) RecorderPath() string { return h.recorderPath }
+
+// FociCLI lazily builds the foci CLI binary (cmd/foci) into the
+// harness binDir on first call and returns its path. Subsequent calls
+// reuse the cached binary path. Tests use this to drive CLI-side
+// command paths (e.g. `foci branch -mf ...`) that aren't exercised by
+// the foci-gw HTTP surface alone.
+//
+// The binary is built without --addr/--socket wiring; tests must pass
+// those flags (or env vars) themselves when the CLI needs to reach the
+// running harness gateway. Tests that only exercise CLI-local code
+// paths (flag parsing, file reads, malformed input) don't need any
+// gateway wiring.
+func (h *Harness) FociCLI(t *testing.T) string {
+	t.Helper()
+	h.fociCLIOnce.Do(func() {
+		bin := filepath.Join(h.binDir, "foci")
+		buildBinary(t, h.repoRoot, "./cmd/foci", bin)
+		h.fociCLIBin = bin
+	})
+	return h.fociCLIBin
+}
 
 // AgentBotToken returns the bot token assigned to an agent. Tests use
 // this to PushUpdate / DrainSent on the right bot.
