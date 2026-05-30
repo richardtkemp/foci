@@ -5,9 +5,13 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1505,5 +1509,91 @@ func TestL2_Files_UnauthorizedUserSendsDocument_NoFileSaved(t *testing.T) {
 // OpenAI/ElevenLabs round-trip).
 func TestL2_Files_SendToChatVoice_WithTextSynthesizesTTS(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: harness has no TTS stub; tools/message.go's voice+text branch errors with 'tts not configured' instead of synthesizing — needs testharness to plug a stub voice.TTS into the agent setup")
+	// Strategy: stand up an httptest server that mimics an
+	// OpenAI-compatible TTS endpoint (POST /audio/speech → returns
+	// canned bytes). Configure [[tts]] via ExtraConfigTOML to point at
+	// it, with [tts].api_key set in ExtraSecretsTOML. Foci's
+	// voice.NewTTS will instantiate an OpenAITTS that POSTs to our
+	// stub; the recorder lets us confirm the body shape.
+	//
+	// Foci's send_to_chat handler routes send_as=voice + text + no file
+	// → tts.Synthesize → bot.SendVoiceDataToChat → /sendVoice multipart.
+	// We assert: the TTS stub got hit AND the Telegram stub recorded
+	// sendVoice (NOT sendMessage for the same text).
+	const userID = 8050
+
+	var ttsRequests int
+	var ttsLastBody []byte
+	var ttsMu sync.Mutex
+	ttsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		ttsMu.Lock()
+		ttsRequests++
+		ttsLastBody = body
+		ttsMu.Unlock()
+		// Canned WAV header + a few junk bytes — Telegram doesn't decode
+		// in this test (the stub just records the multipart payload),
+		// any non-empty bytes suffice.
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write([]byte("RIFF____WAVEfmt STUB_AUDIO_PAYLOAD"))
+	}))
+	t.Cleanup(ttsSrv.Close)
+
+	ttsTOML := fmt.Sprintf("\n[[tts]]\nid = \"stub\"\nformat = \"openai\"\nendpoint = %q\nmodel = \"stub-tts-model\"\nvoice = \"alloy\"\nsecret = \"tts.api_key\"\n", ttsSrv.URL+"/audio/speech")
+	secretsTOML := "[tts]\napi_key = \"stub-tts-key\"\n"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:           []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout:     30 * time.Second,
+		ExtraConfigTOML:  ttsTOML,
+		ExtraSecretsTOML: secretsTOML,
+	})
+	token := h.AgentBotToken("alpha")
+
+	primeChatID(t, h, "alpha", userID)
+
+	const voiceText = "voice note from cc-stub script"
+	writeSendToChatScript(t, h, "alpha",
+		fmt.Sprintf(`foci_send_to_chat --text %q --send-as voice`, voiceText),
+		"[[NO_RESPONSE]]")
+
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: userID, Type: "private"},
+			From: &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Text: "please synthesise it",
+		},
+	})
+
+	if _, ok := waitForSentMethod(h, token, "sendVoice", 20*time.Second); !ok {
+		t.Errorf("no sendVoice call landed on the stub\n--- sent calls ---\n%s\n--- stderr tail ---\n%s",
+			sentCallSummary(h, token), stderrTail(h.Stderr()))
+	}
+
+	ttsMu.Lock()
+	gotRequests := ttsRequests
+	gotBody := string(ttsLastBody)
+	ttsMu.Unlock()
+	if gotRequests == 0 {
+		t.Errorf("TTS stub received no requests — voice synth path didn't fire")
+	}
+	if !strings.Contains(gotBody, voiceText) {
+		t.Errorf("TTS request body missing the input text %q; got body:\n%s", voiceText, gotBody)
+	}
+	if !strings.Contains(gotBody, "stub-tts-model") {
+		t.Errorf("TTS request body missing the configured model; got body:\n%s", gotBody)
+	}
+
+	// Negative: the same text must NOT have been sent as a plain text
+	// sendMessage — send_to_chat's voice branch early-returns, so no
+	// sendMessage with that text should exist.
+	for _, c := range h.TelegramStub().PeekSent(token) {
+		if c.Method == "sendMessage" && strings.Contains(string(c.Body), voiceText) {
+			t.Errorf("voice text leaked into a sendMessage — voice branch did NOT early-return: %s", string(c.Body))
+		}
+	}
 }
