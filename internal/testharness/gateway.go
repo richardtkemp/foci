@@ -178,6 +178,12 @@ type Harness struct {
 	workspaces   map[string]string // agent id → workspace path
 	agents       []AgentSpec
 
+	// controlSock is the absolute path to the unix-domain control
+	// socket foci-gw listens on for L2 lifecycle-control commands. Set
+	// at harness startup; foci-gw opens it when FOCI_TESTHARNESS_CONTROL_SOCK
+	// is set in its env. Empty means no control socket was requested.
+	controlSock string
+
 	// Spawn-time invariants captured so Restart can re-run spawnGateway
 	// without re-doing the build / config / stub-setup work.
 	gwBin        string
@@ -357,6 +363,12 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		writeTestSecrets(t, secretsPath, opts.Agents, opts.ExtraSecretsTOML)
 	}
 
+	// L2 lifecycle-control socket. Always allocate the path even if no
+	// test in this run uses it — the cost is one extra env var on the
+	// spawned subprocess and a small goroutine inside foci-gw. Tests
+	// that need it call h.CloseAgentBackend.
+	controlSock := filepath.Join(tempDir, "testharness-control.sock")
+
 	h := &Harness{
 		t:            t,
 		tempDir:      tempDir,
@@ -367,6 +379,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		recorderPath: recorderPath,
 		scriptDir:    scriptDir,
 		workspaces:   workspaces,
+		controlSock:  controlSock,
 		gwBin:        gwBin,
 		agents:       opts.Agents,
 		readyTimeout: opts.ReadyTimeout,
@@ -399,6 +412,10 @@ func (h *Harness) spawnGateway() error {
 		// doesn't open the host's production ~/logs/foci.log before
 		// config load. See cmd/foci-gw/main.go:81 (FOCI_LOG_FILE).
 		"FOCI_LOG_FILE="+filepath.Join(h.logsDir, "foci.log"),
+		// L2 lifecycle-control socket. foci-gw's testharness_control.go
+		// opens this path when set; harness commands like
+		// CloseAgentBackend dial it.
+		"FOCI_TESTHARNESS_CONTROL_SOCK="+h.controlSock,
 	)
 	if h.opts.BackendReadyTimeout > 0 {
 		cmd.Env = append(cmd.Env, "FOCI_BACKEND_READY_TIMEOUT="+h.opts.BackendReadyTimeout.String())
@@ -611,6 +628,56 @@ func (h *Harness) AgentWorkspace(agentID string) string {
 // Used by tests that want to inspect or mutate the config file after
 // startup.
 func (h *Harness) ConfigPath() string { return h.configPath }
+
+// CloseAgentBackend forces the running foci-gw to close every
+// DelegatedManager backend for the named agent — equivalent to a
+// mid-turn SIGTERM/SIGKILL escalation against the agent's cc-stub
+// subprocess(es), but scoped to one agent. Subsequent inbound messages
+// on that agent's bot lazy-spawn a fresh backend. Used by lifecycle
+// tests that need to assert OnTurnComplete fires exactly once on the
+// in-flight turn before the respawn fires.
+//
+// The command travels over the env-gated control socket
+// (FOCI_TESTHARNESS_CONTROL_SOCK). Errors include connection failures
+// (foci-gw not listening / control socket cleanup race) and protocol
+// errors ("unknown agent", "no delegated manager").
+func (h *Harness) CloseAgentBackend(agentID string) error {
+	return h.sendControl("close_backend " + agentID)
+}
+
+// sendControl dials the gateway's control socket, writes one command
+// line, reads the one-line reply, and returns nil on "ok" or an error
+// shaped from the reply text.
+func (h *Harness) sendControl(cmd string) error {
+	if h.controlSock == "" {
+		return fmt.Errorf("testharness control socket not allocated")
+	}
+	conn, err := net.DialTimeout("unix", h.controlSock, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", h.controlSock, err)
+	}
+	defer func() { _ = conn.Close() }()
+	// 20s budget: DelegatedManager.Close → ccstream.Close worst-case is
+	// closeGracefulWait (5s) + closeSigtermWait (2s) + closeSigkillWait
+	// (2s) = 9s per managed backend, and the harness may close multiple
+	// backends in one call. 20s leaves comfortable headroom.
+	if err := conn.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
+		return fmt.Errorf("set deadline: %w", err)
+	}
+	if _, err := conn.Write([]byte(cmd + "\n")); err != nil {
+		return fmt.Errorf("write command: %w", err)
+	}
+	br := bufio.NewReader(conn)
+	reply, err := br.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("read reply: %w", err)
+	}
+	reply = strings.TrimSpace(reply)
+	if reply == "ok" {
+		return nil
+	}
+	return fmt.Errorf("control reply: %s", reply)
+}
 
 // ----- Internal: ready-signal polling --------------------------------
 
