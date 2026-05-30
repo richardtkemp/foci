@@ -173,6 +173,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		WarningDispatcher:      warningDispatcher,
 		ChatWarningDispatcher:  chatWarningDispatcher,
 		HasActiveWorkFn: func() int {
+			// Test-only override: if the L2 control socket has set a
+			// value (≥ 0), use it verbatim. -1 sentinel means no
+			// override is active and we fall through to the production
+			// path (tmuxWatchCount, which is nil for delegated agents).
+			if v := inst.testActiveWorkOverride.Load(); v >= 0 {
+				return int(v)
+			}
 			if inst.tmuxWatchCount == nil {
 				return 0
 			}
@@ -185,6 +192,13 @@ func setupPeriodic(inst *agentInstance, acfg config.AgentConfig, p periodicParam
 		// Session-aware availability checking
 		SessionKeyFunc: func() string { return mostRecentSessionKey(inst.ag, p.connMgr, agentID) },
 		CanFireFunc: func(ctx context.Context, sessionKey string) (bool, string) {
+			// Test-only override: if the L2 control socket has set a
+			// state, return it verbatim. nil pointer means no override
+			// and we fall through to the production rate-limit / mana
+			// check on the agent.
+			if s := inst.testCanFireOverride.Load(); s != nil {
+				return s.allowed, s.reason
+			}
 			return inst.ag.CanFireBackgroundOperation(ctx, sessionKey)
 		},
 		IsDelegatedAgent: inst.ag.DelegatedManager != nil,

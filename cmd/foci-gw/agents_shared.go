@@ -220,7 +220,7 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		})
 	}
 
-	return &agentInstance{
+	inst := &agentInstance{
 		id:               acfg.ID,
 		ag:               ag,
 		cmds:             cmds,
@@ -236,4 +236,10 @@ func (s *sharedAgentSetup) finalize(ag *agent.Agent, fp finalizeParams) *agentIn
 		tmuxMigrateKey:   fp.tmuxMigrateKey,
 		mcpManager:       fp.mcpManager,
 	}
+	// testActiveWorkOverride uses -1 as the "unset" sentinel so the
+	// periodic HasActiveWorkFn closure can distinguish "test asked for
+	// zero" from "test set no override". Production code never reads or
+	// writes the override; tests drive it via the control socket.
+	inst.testActiveWorkOverride.Store(-1)
+	return inst
 }

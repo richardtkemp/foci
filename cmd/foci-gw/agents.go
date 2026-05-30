@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/agent"
@@ -45,6 +46,28 @@ type agentInstance struct {
 	webhooks          map[string]string // hook ID → prompt path (merged from global + per-agent)
 	kaRunner          *periodic.Runner  // keepalive & background work timer (nil if disabled)
 	mcpManager        *mcpkg.Manager    // nil if no MCP servers configured
+
+	// Test-only override fields. Used by the env-gated testharness
+	// control socket (see testharness_control.go). Production code never
+	// writes these; the periodic closures consult them only when the
+	// matching pointer/atomic indicates an override is set. Both fields
+	// are accessed concurrently from the periodic-fire goroutine and
+	// from the control-socket handler, so use atomics throughout.
+	//
+	// testActiveWorkOverride: -1 means unset (fall back to tmuxWatchCount),
+	// any value ≥ 0 means HasActiveWorkFn should return that value.
+	// testCanFireOverride: nil means unset (fall back to
+	// CanFireBackgroundOperation), non-nil means CanFireFunc should
+	// return its allowed/reason verbatim.
+	testActiveWorkOverride atomic.Int64
+	testCanFireOverride    atomic.Pointer[testCanFireState]
+}
+
+// testCanFireState is the override payload for CanFireFunc when set
+// via the testharness control socket. Used only by tests.
+type testCanFireState struct {
+	allowed bool
+	reason  string
 }
 
 // setupParams holds the shared resources needed by each agent.

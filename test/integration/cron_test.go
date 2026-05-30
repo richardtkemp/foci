@@ -558,17 +558,70 @@ func TestL2_Cron_BackgroundCooldownPreventsSelfChaining(t *testing.T) {
 }
 
 // TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches proves the
-// hasActiveWorkFn gate: when the agent has live tmux watches (the
-// callback returns >0), the background scheduler defers regardless of
-// idle time or open todos. Test wires a stub HasActiveWorkFn returning
-// 1 and confirms no dispatch occurs.
+// hasActiveWorkFn gate: when the callback returns >0, the background
+// scheduler defers regardless of idle time or open todos.
+//
+// Driver: the harness's testharness control socket pins the agent's
+// HasActiveWorkFn return value via h.SetActiveWork. Production
+// inst.tmuxWatchCount is nil for delegated agents — the override is
+// the only path that exercises this gate from L2.
 func TestL2_Cron_BackgroundSkippedWhileActiveTmuxWatches(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: HasActiveWorkFn is wired internally in foci-gw " +
-		"(periodic_setup.go) from inst.tmuxWatchCount — there's no test " +
-		"surface to inject a stub. Needs harness support to override the " +
-		"callback, OR a way to spawn a real foci_tmux watch in the agent's " +
-		"workdir to drive the count via the existing path.")
+	const testUserID = 5306
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// Background enabled at 1s interval so the idle gate would
+		// otherwise pass within the test window — we're proving the
+		// HasActiveWork gate alone blocks dispatch.
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval_enabled = false\nconsolidation_enabled = false\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	// Pin HasActiveWorkFn to 1 BEFORE any tick can fire. The override
+	// survives across all subsequent ticks until cleared.
+	if err := h.SetActiveWork("alpha", 1); err != nil {
+		t.Fatalf("SetActiveWork: %v", err)
+	}
+
+	// Seed a qualifying background todo so without the gate this test
+	// would fire (matches TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos).
+	seedBash := `foci_todo add --text "background test todo" --tag background`
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "bootstrap with seed",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": seedBash}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal bootstrap script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// One full 30s tick + buffer. With HasActiveWork pinned to 1 the
+	// background scheduler must not dispatch despite an open background
+	// todo and the idle gate having passed.
+	time.Sleep(35 * time.Second)
+
+	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		if strings.Contains(e.TextPrefix, "[background]") && strings.Contains(e.TextPrefix, "Background Work") {
+			t.Fatalf("background fired despite HasActiveWork override pinned to 1\nmatching entry: %q\nstderr:\n%s", e.TextPrefix, stderrTail(h.Stderr()))
+		}
+	}
 }
 
 // TestL2_Cron_ReflectionFiresOnInterval proves the periodic reflection
@@ -2001,17 +2054,102 @@ func TestL2_Cron_BranchOneshotMalformedPromptFile(t *testing.T) {
 // canFireFn / sessionKeyFn check at the top of every scheduler
 // (background, reflection, consolidation): when the rate-limit/mana
 // callback returns canFire=false with a reason, none of the three
-// schedulers dispatch. Test wires a stub canFireFn returning false
-// and confirms zero invocations across multiple ticks despite all
-// other conditions being met.
+// schedulers dispatch despite all other conditions being met.
+//
+// Driver: h.SetCanFire pins the agent's CanFireFunc return value via
+// the testharness control socket. The override is checked before the
+// final dispatch in maybeBackgroundWork, maybeReflection, and
+// maybeConsolidation — all three sit downstream of the eligibility
+// gates (open-todo count, idle-vs-interval, lastConsolidation), so
+// the test still must set up eligible conditions to prove canFire is
+// what's blocking.
 func TestL2_Cron_RateLimitGateBlocksAllSchedulers(t *testing.T) {
 	t.Parallel()
-	t.Skip("HARNESS GAP: CanFireFunc is wired internally in foci-gw's " +
-		"periodic_setup.go from Agent.CanFireBackgroundOperation — there's no " +
-		"test surface to inject a stub. Needs harness support to override " +
-		"the callback OR a way to force mana exhaustion / rate-limit state " +
-		"from the test side. Compounding gap: also requires [background], " +
-		"[reflection] config injection to enable the schedulers at all.")
+	const testUserID = 5311
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: testUserID},
+		},
+		// All three schedulers enabled with short intervals. With the
+		// canFire override locked to false, none should dispatch.
+		ExtraConfigTOML: "\n[background]\nenabled = true\ninterval = \"1s\"\n\n[reflection]\ninterval = \"20s\"\nbackend_quiet_period = \"1s\"\nconsolidation_enabled = true\nconsolidation_interval = \"1s\"\n",
+		ReadyTimeout:    30 * time.Second,
+	})
+
+	// Pin canFire to (false, "test-block-all") BEFORE any tick fires.
+	if err := h.SetCanFire("alpha", false, "test-block-all"); err != nil {
+		t.Fatalf("SetCanFire: %v", err)
+	}
+
+	// Bootstrap turn seeds a background-tagged todo so the bg
+	// open-todo gate is satisfied. Without the canFire block this
+	// matches TestL2_Cron_BackgroundFiresWhenIdleWithOpenTodos.
+	seedBash := `foci_todo add --text "background test todo" --tag background`
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "bootstrap with seed",
+		"tool_uses": []map[string]any{
+			{"name": "Bash", "input": map[string]any{"command": seedBash}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal bootstrap script: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "bootstrap session",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "bootstrap session", 15*time.Second) {
+		t.Fatalf("bootstrap user message never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	beforeInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+
+	// Push a refresh ~5s before the next 30s tick to keep reflection
+	// eligible (sinceLastInteraction < 20s interval). Without this the
+	// reflection eligibility gate skips before canFire is consulted,
+	// which weakens the "canFire blocked reflection" claim.
+	time.Sleep(20 * time.Second)
+	refreshBody, _ := json.Marshal(map[string]any{"text": "refresh"})
+	h.WriteCCStubScript(t, "alpha", refreshBody)
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "keep session warm",
+		},
+	})
+	if !waitForUserMessage(t, h, "workspaces/alpha", "keep session warm", 15*time.Second) {
+		t.Fatalf("refresh never processed; stderr:\n%s", stderrTail(h.Stderr()))
+	}
+
+	// Wait through the next 30s tick. With canFire blocked, no
+	// scheduler should dispatch.
+	time.Sleep(20 * time.Second)
+
+	// Consolidation creates new invocations; bg + reflection inject
+	// user_messages. Assert all three markers are absent.
+	afterInvocations := len(invocationsByWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha"))
+	if afterInvocations > beforeInvocations {
+		t.Errorf("consolidation may have fired despite canFire=false: invocations before=%d after=%d\nstderr:\n%s",
+			beforeInvocations, afterInvocations, stderrTail(h.Stderr()))
+	}
+
+	for _, e := range userMessagesForWorkdir(readRecorderEntries(t, h.RecorderPath()), "workspaces/alpha") {
+		if strings.Contains(e.TextPrefix, "[background]") && strings.Contains(e.TextPrefix, "Background Work") {
+			t.Errorf("background fired despite canFire=false: %q\nstderr:\n%s", e.TextPrefix, stderrTail(h.Stderr()))
+		}
+		if strings.Contains(e.TextPrefix, "Reflection Pass") {
+			t.Errorf("reflection fired despite canFire=false: %q\nstderr:\n%s", e.TextPrefix, stderrTail(h.Stderr()))
+		}
+	}
 }
 
 // TestL2_Cron_IncomingMessageDuringKeepaliveQueues proves the

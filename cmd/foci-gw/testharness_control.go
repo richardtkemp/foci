@@ -25,6 +25,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"foci/internal/log"
@@ -133,6 +134,68 @@ func dispatchTestharnessControl(line string, agents map[string]*agentInstance) s
 		}
 		inst.ag.DelegatedManager.Close()
 		log.Infof("testharness_control", "close_backend %s — closed all backends", agentID)
+		return "ok"
+	case "set_active_work":
+		// set_active_work <agentID> <count>: pin the agent's
+		// HasActiveWorkFn return value to <count> for subsequent
+		// periodic ticks. Use a negative value to clear the override.
+		// Drives the background-scheduler gate that defers when async
+		// work (tmux watches) is in flight; for delegated agents
+		// (which have nil tmuxWatchCount in production) this is the
+		// ONLY way to exercise the gate from a test.
+		if len(fields) != 3 {
+			return "error: set_active_work requires <agentID> <count>"
+		}
+		agentID := fields[1]
+		count, err := strconv.Atoi(fields[2])
+		if err != nil {
+			return "error: set_active_work count must be int: " + err.Error()
+		}
+		inst, ok := agents[agentID]
+		if !ok {
+			return "error: unknown agent " + agentID
+		}
+		inst.testActiveWorkOverride.Store(int64(count))
+		log.Infof("testharness_control", "set_active_work %s = %d", agentID, count)
+		return "ok"
+	case "set_canfire":
+		// set_canfire <agentID> <0|1> <reason...>: pin the agent's
+		// CanFireFunc return value to (allowed, reason) for subsequent
+		// periodic ticks. <0|1> is the boolean allowed value; the rest
+		// of the line is the reason string passed through verbatim.
+		// Drives the shared rate-limit / mana gate that all three
+		// schedulers (background, reflection, consolidation) consult
+		// before dispatching.
+		if len(fields) < 3 {
+			return "error: set_canfire requires <agentID> <0|1> [reason]"
+		}
+		agentID := fields[1]
+		allowedStr := fields[2]
+		var allowed bool
+		switch allowedStr {
+		case "0", "false":
+			allowed = false
+		case "1", "true":
+			allowed = true
+		default:
+			return "error: set_canfire allowed must be 0|1|true|false, got " + allowedStr
+		}
+		reason := ""
+		if len(fields) > 3 {
+			// Reason is everything after fields[2]; rejoin to preserve
+			// internal whitespace dropped by Fields().
+			idx := strings.Index(line, fields[2])
+			if idx >= 0 {
+				rest := strings.TrimSpace(line[idx+len(fields[2]):])
+				reason = rest
+			}
+		}
+		inst, ok := agents[agentID]
+		if !ok {
+			return "error: unknown agent " + agentID
+		}
+		inst.testCanFireOverride.Store(&testCanFireState{allowed: allowed, reason: reason})
+		log.Infof("testharness_control", "set_canfire %s = (%v, %q)", agentID, allowed, reason)
 		return "ok"
 	default:
 		return "error: unknown op " + op
