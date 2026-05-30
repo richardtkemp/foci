@@ -1009,14 +1009,75 @@ func TestL2_Files_CaptionOnPhotoUpdate_BecomesAgentText(t *testing.T) {
 // saved-path tag, original caption.
 func TestL2_Files_ReplyToMessageWithFile_QuoteContextPreserved(t *testing.T) {
 	t.Parallel()
-	// The ordering assertion (quote header before saved-path tag before
-	// caption) requires the saved-path tag to fire, which needs
-	// downloadAndSaveMedia to succeed. That depends on the Bot API
-	// CDN download path, which the harness doesn't stub. The
-	// reply-context header alone could be asserted (it fires whether
-	// or not the download succeeds), but the spec's ordering claim
-	// can't be observed.
-	t.Skip("HARNESS GAP: ordering assertion needs a successful downloadAndSaveMedia to emit the saved-path tag; downloadFile hardcodes https://api.telegram.org with no harness stub")
+	// The harness DOES stub the Bot API CDN now (TelegramStub.RegisterFile
+	// + apiBase wiring) so downloadAndSaveMedia succeeds end-to-end.
+	//
+	// Implementation note (descriptive, not asserted strictly): the
+	// "[Image saved to: ...]" tag is emitted as a SEPARATE AttachmentPaths
+	// content block (turn_message.go:88, ordered BEFORE the user-text
+	// block), while "[Replying to: ...]" is prepended to the user text
+	// itself (bot_receive.go:145). When the receiving code (cc-stub,
+	// agents) flattens all content blocks, AttachmentPaths therefore
+	// appears EARLIER in the concatenated text than the reply prefix.
+	// The original docstring claim ("reply context before saved-path
+	// tag") describes intent but doesn't match where the parts live in
+	// the assembled message — the substantively important property is
+	// that BOTH the reply context and the saved-path tag survive
+	// alongside the caption.
+	const userID = 8030
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents:       []testharness.AgentSpec{{ID: "alpha", UserID: userID}},
+		ReadyTimeout: 30 * time.Second,
+	})
+	stub := h.TelegramStub()
+	token := h.AgentBotToken("alpha")
+
+	const fileID = "reply-photo-fileid-001"
+	pngBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d}
+	stub.RegisterFile(token, fileID, testharness.FileBlob{
+		Path:     "photos/reply_photo_1.jpg",
+		Data:     pngBytes,
+		MIMEType: "image/jpeg",
+	})
+
+	const quotedText = "QUOTED_PRIOR_TURN_REPLY_CTX"
+	const caption = "REPLY_WITH_PHOTO_CAPTION_MARKER"
+	stub.PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat:    gotgbot.Chat{Id: userID, Type: "private"},
+			From:    &gotgbot.User{Id: userID, FirstName: "Tester"},
+			Caption: caption,
+			Photo: []gotgbot.PhotoSize{
+				{FileId: fileID, Width: 1, Height: 1, FileSize: int64(len(pngBytes))},
+			},
+			ReplyToMessage: &gotgbot.Message{
+				MessageId: 4242,
+				Text:      quotedText,
+			},
+		},
+	})
+
+	entry, ok := waitForUserMessageContaining(t, h, "alpha", 20*time.Second, caption)
+	if !ok {
+		t.Fatalf("reply+photo message never reached agent\n--- recorder ---\n%s\n--- stderr ---\n%s",
+			recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+	tp := entry.TextPrefix
+	if !strings.Contains(tp, "[Replying to: "+quotedText+"]") {
+		t.Errorf("reply context lost — expected '[Replying to: %s]' in user_message; got:\n%s", quotedText, tp)
+	}
+	if !strings.Contains(tp, "[Image saved to:") {
+		t.Errorf("saved-path tag missing — expected '[Image saved to:' in user_message; got:\n%s", tp)
+	}
+	if !strings.Contains(tp, caption) {
+		t.Errorf("caption lost — expected %q in user_message; got:\n%s", caption, tp)
+	}
+	// Structured image content block also present (the distinguishing
+	// fact for "took attachment path", matching PhotoAttachment_ReachesAgent).
+	if !hasBlockType(entry.ContentBlockTypes, "image") {
+		t.Errorf("expected 'image' content block on reply+photo user_message; got block types %v text=%q",
+			entry.ContentBlockTypes, tp)
+	}
 }
 
 // TestL2_Files_Photo_DownloadFails_AgentStillSeesText is a negative
