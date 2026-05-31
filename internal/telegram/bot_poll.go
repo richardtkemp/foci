@@ -128,10 +128,10 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 		go func() {
 			updates, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
 				Offset:         offset,
-				Timeout:        60,
+				Timeout:        25,
 				AllowedUpdates: []string{"message", "callback_query"},
 				RequestOpts: &gotgbot.RequestOpts{
-					Timeout: 65 * time.Second, // must exceed Telegram's long-poll timeout
+					Timeout: 30 * time.Second, // must exceed Telegram's long-poll timeout
 				},
 			})
 			ch <- updateResult{updates, err}
