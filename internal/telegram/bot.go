@@ -112,6 +112,12 @@ type Bot struct {
 
 	requireMention bool // require @mention in group chats (Telegram)
 
+	// longPollTimeout is the HTTP-client timeout for getUpdates.
+	// The Telegram-side long-poll timeout is derived as (longPollTimeout - 5s),
+	// preserving the buffer required for network roundtrip and Telegram-side
+	// processing. Set via ApplyAgentDisplaySettings; zero means use default.
+	longPollTimeout time.Duration
+
 	typingMu     sync.Mutex
 	typingCancel context.CancelFunc // non-nil while typing ticker is running
 }

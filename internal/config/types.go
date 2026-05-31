@@ -577,7 +577,7 @@ func (p *PlatformConfig) SafeDisplay() DisplayConfig {
 
 // TelegramSpecific holds Telegram-only config fields.
 type TelegramSpecific struct {
-	LongPollTimeout string  `toml:"long_poll_timeout"` // default "65s"
+	LongPollTimeout string  `toml:"long_poll_timeout"` // default "30s" (HTTP-client timeout; Telegram-side long-poll derived as -5s)
 	TableWrapLines  *int    `toml:"table_wrap_lines"  desc:"max wrapped lines per table cell"` // default 5
 	TableStyle      *string `toml:"table_style"       desc:"table style: pretty or markdown" choices:"pretty,markdown"` // default "pretty"
 
