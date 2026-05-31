@@ -345,7 +345,7 @@ allowed_users = ["YOUR_TELEGRAM_USER_ID"]
 # display_width = 44
 # received_files_dir = ""             # save received files (per-agent overrides)
 # [platforms.telegram]                # telegram-specific settings
-# long_poll_timeout = "65s"
+# long_poll_timeout = "30s"
 # table_wrap_lines = 5
 # table_style = "pretty"             # "pretty" or "markdown"
 

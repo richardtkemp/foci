@@ -200,7 +200,7 @@ func (p *telegramProvider) DefaultPlatformConfig() config.PlatformConfig {
 		FacetSessionTTL:  "60m",
 		MessageQueueSize: 64,
 		Telegram: &config.TelegramSpecific{
-			LongPollTimeout: "65s",
+			LongPollTimeout: "30s",
 			TableWrapLines:  &twl,
 			TableStyle:      &ts,
 		},

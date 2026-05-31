@@ -71,7 +71,7 @@ allowed_users = ["123456"]
 [platforms.display]
 show_tool_calls = "preview"
 [platforms.telegram]
-long_poll_timeout = "65s"
+long_poll_timeout = "30s"
 
 [[platforms]]
 id = "discord"
@@ -137,7 +137,7 @@ auto_thread = true
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `long_poll_timeout` | string | `"65s"` | Long-poll timeout for `getUpdates`. Should exceed 60s. |
+| `long_poll_timeout` | string | `"30s"` | HTTP-client timeout for `getUpdates`. Telegram-side long-poll is derived as this minus 5s. Lower values keep TCP connections active across stateful middleboxes (CGNAT, ISP routers) that silently drop idle state. Must exceed 5s. |
 | `table_wrap_lines` | int | `5` | Max wrapped lines per table cell. `0` truncates with `…`. |
 | `table_style` | string | `"pretty"` | Table style: `"pretty"` or `"markdown"`. |
 

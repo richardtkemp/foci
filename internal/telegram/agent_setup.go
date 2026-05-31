@@ -325,6 +325,11 @@ func ApplyAgentDisplaySettings(bot *Bot, dc config.ResolvedDisplay, dbg config.R
 		if tg.Telegram.TableStyle != nil {
 			d.TableStyle = *tg.Telegram.TableStyle
 		}
+		if tg.Telegram.LongPollTimeout != "" {
+			if dur, err := time.ParseDuration(tg.Telegram.LongPollTimeout); err == nil && dur > 0 {
+				bot.longPollTimeout = dur
+			}
+		}
 	}
 
 	d.MessagesInLog = dbg.MessagesInLog

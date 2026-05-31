@@ -123,15 +123,29 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			return
 		}
 
+		// Resolve poll timeouts: HTTP client timeout from config (default 30s);
+		// Telegram-side long-poll is derived as client-5s (floored at 0),
+		// preserving the network roundtrip buffer. A tg-side timeout of 0
+		// is a short-poll (Telegram returns immediately), which is what
+		// integration tests want against the httptest stub.
+		clientTimeout := b.longPollTimeout
+		if clientTimeout <= 0 {
+			clientTimeout = 30 * time.Second
+		}
+		tgTimeoutSeconds := int64((clientTimeout - 5*time.Second) / time.Second)
+		if tgTimeoutSeconds < 0 {
+			tgTimeoutSeconds = 0
+		}
+
 		// Poll in a goroutine so we can select on ctx.Done()
 		ch := make(chan updateResult, 1)
 		go func() {
 			updates, err := b.api.GetUpdates(&gotgbot.GetUpdatesOpts{
 				Offset:         offset,
-				Timeout:        25,
+				Timeout:        tgTimeoutSeconds,
 				AllowedUpdates: []string{"message", "callback_query"},
 				RequestOpts: &gotgbot.RequestOpts{
-					Timeout: 30 * time.Second, // must exceed Telegram's long-poll timeout
+					Timeout: clientTimeout, // must exceed Telegram's long-poll timeout
 				},
 			})
 			ch <- updateResult{updates, err}
