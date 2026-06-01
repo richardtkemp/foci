@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"runtime/debug"
 	"time"
 
@@ -97,6 +98,13 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 	var offset int64
 	var consecutiveErrors int
 	const errorEscalateThreshold = 5 // escalate to ERROR after this many consecutive failures
+	// Error backoff: exponential from baseBackoff, doubling per consecutive
+	// failure, capped at maxBackoff, reset on first success. This stops a
+	// fast-failing error (e.g. a 502 that returns immediately instead of
+	// holding the long-poll open) from collapsing the poll interval into a
+	// tight retry loop that hammers an already-struggling server.
+	const baseBackoff = 1 * time.Second
+	const maxBackoff = 30 * time.Second
 
 	// On exit, acknowledge processed updates so they aren't replayed on restart.
 	// Telegram acknowledges updates implicitly when the next getUpdates has a
@@ -163,10 +171,28 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				} else {
 					b.logger().Debugf("get updates (transient): %s", sanitized)
 				}
+
+				// Exponential backoff, capped.
+				wait := baseBackoff
+				for i := 1; i < consecutiveErrors && wait < maxBackoff; i++ {
+					wait *= 2
+				}
+				if wait > maxBackoff {
+					wait = maxBackoff
+				}
+				// Honour Telegram's flood-control Retry-After (429): never retry
+				// sooner than instructed. Pad by 1s for clock/roundtrip slack.
+				var tgErr *gotgbot.TelegramError
+				if errors.As(res.err, &tgErr) && tgErr.ResponseParams != nil && tgErr.ResponseParams.RetryAfter > 0 {
+					if ra := time.Duration(tgErr.ResponseParams.RetryAfter)*time.Second + time.Second; ra > wait {
+						wait = ra
+					}
+				}
+
 				select {
 				case <-ctx.Done():
 					return
-				case <-time.After(3 * time.Second):
+				case <-time.After(wait):
 				}
 				continue
 			}
