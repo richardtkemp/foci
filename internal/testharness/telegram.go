@@ -361,8 +361,12 @@ func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if !ok {
 		// Unknown token — surface loudly so misconfigured tests fail fast
-		// rather than hanging on long-polls.
-		writeError(w, 404, "unknown bot token (RegisterBot first)")
+		// rather than hanging on long-polls. Real Telegram returns 401
+		// Unauthorized for a bad/unknown token (404 is reserved for unknown
+		// *methods*); matching that lets foci's isPermanentTelegramErr
+		// fast-fail instead of retrying the token check with backoff. The
+		// "unknown bot token" phrase is preserved for test diagnostics.
+		writeError(w, 401, "Unauthorized: unknown bot token (RegisterBot first)")
 		return
 	}
 
