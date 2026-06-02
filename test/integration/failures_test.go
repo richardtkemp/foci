@@ -287,22 +287,11 @@ func TestL2_Failures_BackendHangsBeforeReady(t *testing.T) {
 	}
 }
 
-// TestL2_Failures_BackendHangsDuringTurn proves foci's per-turn idle
-// detector (the ActivityChecker path in delegator) fires when cc-stub
-// emits system/init then goes silent past the agent's turn-stall
-// threshold. Foci should surface a turn-failure result to the user
-// (Telegram sendMessage containing a stall error) without killing the
-// subprocess prematurely, and a follow-up Telegram update must process
-// normally — proving the stall path is recoverable.
-// COMMENTED OUT 2026-05-30 — WRONG PREMISE, see TODO #798 for review.
-// streamIdleTimeout is 24h by design; no sub-minute stall detector to fire on.
-// Covered indirectly by TestL2_SlashCommands_ResetHardCancelsInflightTurn.
-/*
-func TestL2_Failures_BackendHangsDuringTurn(t *testing.T) {
-	t.Parallel()
-	t.Skip("WRONG PREMISE: foci has no sub-minute turn-stall detector. streamIdleTimeout is 24h by design (avoids false warnings during long permission waits). Covered indirectly by TestL2_SlashCommands_ResetHardCancelsInflightTurn.")
-}
-*/
+// NOTE: a TestL2_Failures_BackendHangsDuringTurn test was removed here
+// (TODO #798): it asserted a sub-minute per-turn stall detector that foci
+// deliberately does not have (streamIdleTimeout is 24h by design, to avoid
+// false warnings during long permission waits). The recoverable-cancel
+// behaviour it aimed at is covered by TestL2_SlashCommands_ResetHardCancelsInflightTurn.
 
 // TestL2_Failures_BackendKilledMidTurnByGateway proves Close()'s
 // SIGTERM→SIGKILL escalation works when cc-stub ignores SIGTERM. The
