@@ -112,28 +112,50 @@ type TextSender interface {
 // IsSilent and IsSilencingPrefix are both built from this list.
 var silencingSentinels = []string{"[[NO_RESPONSE]]", "No response requested."}
 
+// decorationCutset is the set of markdown decoration characters that an agent
+// may wrap a silencing sentinel in — e.g. `[[NO_RESPONSE]]` (backticks),
+// **[[NO_RESPONSE]]** (bold), _[[NO_RESPONSE]]_ (italic). Models routinely
+// echo the backtick formatting the sentinel is shown with in prompts, and the
+// wrapped form must still suppress. These characters are peeled ONLY as part
+// of removing a sentinel (never from arbitrary text), so a normal reply that
+// merely ends in a backtick or asterisk is left untouched.
+const decorationCutset = " \t\r\n`*_~"
+
 // StripSilencingSuffix removes one or more trailing silencing sentinels (and
-// surrounding whitespace) from text. "real reply.[[NO_RESPONSE]]" becomes
-// "real reply."; text that is *entirely* sentinel(s) becomes "". The loop
-// handles stacked/repeated trailing sentinels (an agent emitting two in a
-// row). Only trailing sentinels are stripped — a sentinel embedded mid-text is
-// left untouched, matching the observed failure where agents append the marker
-// to a real reply. Idempotent: stripping already-clean text is a no-op.
+// surrounding whitespace / markdown decoration) from text.
+// "real reply.[[NO_RESPONSE]]" becomes "real reply."; a message that is
+// *entirely* sentinel(s) — including markdown-wrapped forms like
+// `[[NO_RESPONSE]]` or **[[NO_RESPONSE]]** — becomes "". The loop handles
+// stacked/repeated trailing sentinels (an agent emitting two in a row).
+//
+// Only trailing sentinels are stripped — a sentinel embedded mid-text
+// ("use `[[NO_RESPONSE]]` in code") is left untouched, matching the observed
+// failure where agents append the marker to a real reply. Decoration is peeled
+// only when it wraps a matched sentinel: a plain reply ending in a backtick or
+// asterisk ("see footnote *", "`**bold**`") is returned verbatim. Idempotent:
+// stripping already-clean text is a no-op.
 //
 // This is the single matcher; IsSilent is defined in terms of it so adding a
 // new sentinel to silencingSentinels updates both behaviours at once.
 func StripSilencingSuffix(text string) string {
 	s := strings.TrimSpace(text)
 	for {
+		// Peek past any trailing decoration to see whether a sentinel hides
+		// behind it. The peek is committed only if a sentinel actually matches,
+		// so non-sentinel text keeps its trailing decoration (we return s, not
+		// the peeled candidate, on no match).
+		candidate := strings.TrimRight(s, decorationCutset)
 		trimmed := false
 		for _, sent := range silencingSentinels {
-			if strings.HasSuffix(s, sent) {
-				s = strings.TrimSpace(strings.TrimSuffix(s, sent))
+			if strings.HasSuffix(candidate, sent) {
+				// Remove the sentinel, then peel the opening decoration that
+				// wrapped it (leading backtick/asterisk) plus any whitespace.
+				s = strings.TrimRight(strings.TrimSuffix(candidate, sent), decorationCutset)
 				trimmed = true
 			}
 		}
 		if !trimmed {
-			return s
+			return strings.TrimSpace(s)
 		}
 	}
 }
@@ -158,11 +180,13 @@ func IsSilent(text string) bool {
 // the buffer and stream normally; the final IsSilent check at TurnComplete
 // remains the authoritative gate for the eventual full text.
 //
-// Whitespace is trimmed from both ends before the prefix check, mirroring
-// IsSilent's TrimSpace behaviour. An empty/whitespace-only buffer returns
-// true (could still go either way).
+// Whitespace and leading markdown decoration (see decorationCutset) are
+// trimmed before the prefix check, mirroring StripSilencingSuffix's tolerance
+// so a wrapped sentinel like `[[NO_RESPONSE]] doesn't escape the streaming
+// hold on its opening backtick. An empty/decoration-only buffer returns true
+// (could still go either way).
 func IsSilencingPrefix(text string) bool {
-	t := strings.TrimSpace(text)
+	t := strings.Trim(strings.TrimSpace(text), decorationCutset)
 	if t == "" {
 		return true
 	}
