@@ -938,20 +938,23 @@ func TestL2_Failures_TelegramSendMessageMalformedJSONResponse(t *testing.T) {
 		sentCallsTail(stub, token), stderrTail(h.Stderr()))
 }
 
-// TestL2_Failures_TelegramUnknownTokenReceives404 captures the actual
+// TestL2_Failures_TelegramUnknownTokenFailsFast captures the actual
 // production behavior when a bot token is configured in foci.toml but
-// unknown to the Bot API stub. NOTE on premise correction: the original
-// premise ("gateway fails to come ready") is wrong — foci-gw does NOT
-// fail-fast on an unknown token. gotgbot's NewBot calls getMe to
-// validate; on 404 foci logs ERROR, the bot is NOT created, and the
-// agent continues to run without a platform binding ("agent will run
-// without platform"). The gateway stays ready throughout.
+// unknown to the Bot API stub. An unknown/bad token is a permanent auth
+// error: the stub returns 401 Unauthorized (as real Telegram does), so
+// gotgbot's NewBot — which calls getMe to validate — fails, foci's
+// isPermanentTelegramErr classifies it permanent and fast-fails the bot
+// (no retry/backoff), logs ERROR, and the agent continues to run without
+// a platform binding ("agent will run without platform"). The gateway
+// comes ready throughout.
 //
-// This is the safer behavior in production: a transient Telegram
-// outage shouldn't tear down a multi-agent gateway. The test now
-// asserts (a) gateway comes ready, (b) the unknown-token error is
-// surfaced in stderr, (c) the bot is reported as not started.
-func TestL2_Failures_TelegramUnknownTokenReceives404(t *testing.T) {
+// This is the safer behavior in production: a *transient* Telegram outage
+// shouldn't tear down a multi-agent gateway (genuine transient errors are
+// retried with backoff), while a *permanent* auth failure bails at once
+// instead of retrying forever. The test asserts (a) gateway comes ready,
+// (b) the unknown-token error is surfaced in stderr, (c) the bot is
+// reported as not started.
+func TestL2_Failures_TelegramUnknownTokenFailsFast(t *testing.T) {
 	t.Parallel()
 	h, err := testharness.TryStartGateway(t, testharness.HarnessOptions{
 		Agents: []testharness.AgentSpec{{

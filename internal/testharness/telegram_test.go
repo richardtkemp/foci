@@ -131,10 +131,13 @@ func TestTelegramStub_SendMessage_RecordsCall(t *testing.T) {
 	}
 }
 
-// TestTelegramStub_UnknownToken_Returns404 verifies the stub fails loudly
+// TestTelegramStub_UnknownToken_Returns401 verifies the stub fails loudly
 // for unregistered bots rather than serving a generic empty response (which
-// would let misconfigured tests run silently against the wrong bot).
-func TestTelegramStub_UnknownToken_Returns404(t *testing.T) {
+// would let misconfigured tests run silently against the wrong bot). It
+// returns 401 Unauthorized, matching real Telegram's response to a bad
+// token, so foci classifies it as a permanent auth error and fast-fails
+// instead of retrying the token check forever.
+func TestTelegramStub_UnknownToken_Returns401(t *testing.T) {
 	stub := NewTelegramStub()
 	defer stub.Close()
 
@@ -146,7 +149,7 @@ func TestTelegramStub_UnknownToken_Returns404(t *testing.T) {
 		t.Fatalf("request: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 404 {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != 401 {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
 }
