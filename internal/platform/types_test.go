@@ -270,6 +270,12 @@ func TestIsSilent(t *testing.T) {
 		{"prefix_only", "[[NO_RESP", false},
 		{"with_trailing_text", "[[NO_RESPONSE]] OK", false},
 		{"real_text_trailing_sentinel", "real reply [[NO_RESPONSE]]", false},
+		{"backtick_wrapped", "`[[NO_RESPONSE]]`", true},
+		{"bold_wrapped", "**[[NO_RESPONSE]]**", true},
+		{"italic_wrapped", "_[[NO_RESPONSE]]_", true},
+		{"backtick_wrapped_padded", "  `[[NO_RESPONSE]]`  \n", true},
+		{"backtick_real_text_not_silent", "real reply `[[NO_RESPONSE]]`", false},
+		{"bold_text_not_silent", "**bold**", false},
 		{"normal_text", "Hello, world", false},
 		{"diverged_prefix", "[[NO_RESPITE]]", false},
 	}
@@ -310,6 +316,19 @@ func TestStripSilencingSuffix(t *testing.T) {
 		{"sentinel_mid_text_untouched", "a [[NO_RESPONSE]] b", "a [[NO_RESPONSE]] b"},
 		{"sentinel_leading_text_following", "[[NO_RESPONSE]] then more", "[[NO_RESPONSE]] then more"},
 		{"clean_text_idempotent", "real reply", "real reply"},
+		// Markdown-wrapped sentinels: the observed leak was an agent emitting
+		// `[[NO_RESPONSE]]` (backticks) which the bare-literal matcher missed.
+		{"backtick_wrapped_pure", "`[[NO_RESPONSE]]`", ""},
+		{"bold_wrapped_pure", "**[[NO_RESPONSE]]**", ""},
+		{"italic_wrapped_pure", "_[[NO_RESPONSE]]_", ""},
+		{"backtick_wrapped_padded", "  `[[NO_RESPONSE]]`  \n", ""},
+		{"backtick_wrapped_trailing", "real reply `[[NO_RESPONSE]]`", "real reply"},
+		{"bold_wrapped_trailing", "real reply **[[NO_RESPONSE]]**", "real reply"},
+		// Negative cases: decoration is peeled ONLY when it wraps a matched
+		// sentinel — plain decorated text must survive verbatim.
+		{"trailing_asterisk_preserved", "see footnote *", "see footnote *"},
+		{"bold_text_preserved", "`**bold**`", "`**bold**`"},
+		{"sentinel_in_backticks_mid_text", "use `[[NO_RESPONSE]]` in code", "use `[[NO_RESPONSE]]` in code"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -349,6 +368,10 @@ func TestIsSilencingPrefix(t *testing.T) {
 		{"second_sentinel_full", "No response requested.", true},
 		{"second_sentinel_diverged", "No response requested. now what", false},
 		{"prefix_with_leading_whitespace", "\n\t  [", true},
+		{"leading_backtick_then_bracket", "`[", true},
+		{"backtick_partial_sentinel", "`[[NO_RESP", true},
+		{"backtick_diverged", "`[[NO_RESPI", false},
+		{"bold_text_diverged", "**Bold", false},
 	}
 	for _, tc := range cases {
 		tc := tc
