@@ -371,7 +371,19 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 	// test in this run uses it — the cost is one extra env var on the
 	// spawned subprocess and a small goroutine inside foci-gw. Tests
 	// that need it call h.CloseAgentBackend.
-	controlSock := filepath.Join(tempDir, "testharness-control.sock")
+	//
+	// The socket path must NOT live under t.TempDir(): that path embeds the
+	// (often long) test name, and combined with a long TMPDIR it overflows
+	// the kernel's sockaddr_un.sun_path 108-byte limit, failing bind/connect
+	// with "invalid argument" for the longest-named L2 tests (TODO #804).
+	// Allocate a short, test-name-independent dir directly under /tmp so the
+	// full path stays ~25 chars regardless of test name or TMPDIR.
+	sockDir, err := os.MkdirTemp("/tmp", "fcs")
+	if err != nil {
+		t.Fatalf("testharness: alloc control-socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	controlSock := filepath.Join(sockDir, "c.sock")
 
 	h := &Harness{
 		t:            t,
