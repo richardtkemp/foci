@@ -112,13 +112,18 @@ func (r *TurnRenderer) Cleanup() {
 // "else if !streamOutput", which dropped text when streaming was configured
 // but no stream deltas arrived. Now always delivers when no stream message exists.
 func (r *TurnRenderer) OnReply(text string) {
-	if platform.IsSilent(text) {
+	// Strip any trailing silencing sentinel(s) before delivery. An agent that
+	// appends "[[NO_RESPONSE]]" to a real reply leaves real content; deliver
+	// the content without the marker. Text that is *entirely* sentinel strips
+	// to "" and takes the silent branch below.
+	text = platform.StripSilencingSuffix(text)
+	if text == "" {
 		// Silent intermediate text — clean up state without delivering.
 		// The streaming-prefix gate in StreamWriter.OnDelta keeps the sw
 		// from creating a Telegram message in the first place; this branch
 		// just stops the (already-empty) writer and clears any lingering
 		// tool preview so there's no orphaned UI.
-		r.backend.Logger().Debugf("OnReply: silent text (len=%d), skipping delivery", len(text))
+		r.backend.Logger().Debugf("OnReply: silent text, skipping delivery")
 		r.sw.Finish()
 		r.tracker.CleanupPreview()
 		r.sw = r.newSW()
@@ -130,8 +135,10 @@ func (r *TurnRenderer) OnReply(text string) {
 	r.backend.Logger().Debugf("OnReply: non-silent text (len=%d), stream_msg_id=%q", len(text), msgID)
 	if msgID != "" {
 		// Streaming: reply content is in the stream message. Finalize it
-		// and delete any lingering tool call preview.
-		content := r.streamTextContent()
+		// and delete any lingering tool call preview. The stream buffer may
+		// itself end with a live-streamed sentinel — strip it from the
+		// committed edit so the final message is clean.
+		content := platform.StripSilencingSuffix(r.streamTextContent())
 		if strings.TrimSpace(content) != "" {
 			formatted := r.backend.FormatResponse(content)
 			_ = r.backend.EditMessage(msgID, formatted)
@@ -295,11 +302,18 @@ func (r *TurnRenderer) Finalize(response string) {
 		response = textContent
 	}
 
-	if platform.IsSilent(response) {
+	// Strip any trailing silencing sentinel(s) before delivery — covers both
+	// the FinalText path and the stream-buffer fallback above (either may end
+	// with a sentinel an agent appended to a real reply). A response that is
+	// entirely sentinel strips to "" and takes the silent branch below; every
+	// downstream delivery path uses `response`, so one strip here suffices.
+	response = platform.StripSilencingSuffix(response)
+
+	if response == "" {
 		// Silent final response — nothing to deliver. The streaming-prefix
 		// gate keeps the sw from having created a Telegram message when the
 		// content was sentinel-only; clean up any lingering tool preview.
-		r.backend.Logger().Debugf("Finalize: silent response (len=%d), skipping delivery", len(response))
+		r.backend.Logger().Debugf("Finalize: silent response, skipping delivery")
 		r.tracker.CleanupPreview()
 		return
 	}

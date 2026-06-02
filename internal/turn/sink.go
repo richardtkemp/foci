@@ -80,9 +80,10 @@ func (s *StreamingSink) Emit(ctx context.Context, ev turnevent.Event) {
 			silent := platform.IsSilent(e.Text)
 			log.Debugf("turn-sink", "sink=%p TextBlock(intermediate): text_len=%d silent=%v delivered_before=%v", s, len(e.Text), silent, s.delivered)
 			s.renderer.OnReply(e.Text)
-			// Gate delivered on !silent: OnReply's IsSilent path returns
-			// without surfacing anything to the user, so the sink must not
-			// claim delivery. Without this gate, a silent intermediate
+			// Gate delivered on !silent: OnReply's silent path (text empty
+			// after stripping trailing sentinels) returns without surfacing
+			// anything to the user, so the sink must not claim delivery.
+			// Without this gate, a silent intermediate
 			// (e.g. [[NO_RESPONSE]]) followed by a TurnComplete carrying
 			// non-empty FinalText (from msg.Result when accumulated text
 			// is empty, or across pre-answer-gate rounds) would suppress
@@ -221,14 +222,16 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 			log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: skip (phase=%v conn_nil=%v)", s, e.Phase, s.conn == nil)
 			return
 		}
-		silent := platform.IsSilent(e.Text)
-		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock(intermediate): text_len=%d silent=%v delivered_before=%v", s, len(e.Text), silent, s.delivered)
-		// Silent intermediate text — skip delivery. Don't set delivered=true,
-		// so a non-silent final text on TurnComplete is still permitted.
-		if silent {
+		// Strip trailing silencing sentinel(s) before delivery. Text that is
+		// entirely sentinel strips to "" — skip delivery, but don't set
+		// delivered=true, so a non-silent final text on TurnComplete is still
+		// permitted.
+		text := platform.StripSilencingSuffix(e.Text)
+		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock(intermediate): text_len=%d stripped_len=%d delivered_before=%v", s, len(e.Text), len(text), s.delivered)
+		if text == "" {
 			return
 		}
-		if err := s.conn.SendToSession(s.sessionKey, e.Text); err != nil && s.onError != nil {
+		if err := s.conn.SendToSession(s.sessionKey, text); err != nil && s.onError != nil {
 			log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: SendToSession error=%v", s, err)
 			s.onError(s.trigger, err)
 			return
@@ -236,15 +239,19 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		s.delivered = true
 		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: delivered_after=true", s)
 	case turnevent.TurnComplete:
-		log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: final_text_len=%d silent=%v delivered=%v conn_nil=%v", s, len(e.FinalText), platform.IsSilent(e.FinalText), s.delivered, s.conn == nil)
+		// Strip trailing silencing sentinel(s) so an agent that appended the
+		// marker to a real reply still delivers the clean text; a fully-silent
+		// FinalText strips to "" and is suppressed below.
+		text := platform.StripSilencingSuffix(e.FinalText)
+		log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: final_text_len=%d stripped_len=%d delivered=%v conn_nil=%v", s, len(e.FinalText), len(text), s.delivered, s.conn == nil)
 		if s.conn != nil {
 			s.conn.SetTyping(false)
 		}
-		if s.delivered || platform.IsSilent(e.FinalText) || s.conn == nil {
-			log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: suppressed (delivered=%v silent=%v conn_nil=%v)", s, s.delivered, platform.IsSilent(e.FinalText), s.conn == nil)
+		if s.delivered || text == "" || s.conn == nil {
+			log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: suppressed (delivered=%v stripped_empty=%v conn_nil=%v)", s, s.delivered, text == "", s.conn == nil)
 			return
 		}
-		if err := s.conn.SendToSession(s.sessionKey, e.FinalText); err != nil && s.onError != nil {
+		if err := s.conn.SendToSession(s.sessionKey, text); err != nil && s.onError != nil {
 			log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: SendToSession error=%v", s, err)
 			s.onError(s.trigger, err)
 		} else {

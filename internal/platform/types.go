@@ -112,19 +112,42 @@ type TextSender interface {
 // IsSilent and IsSilencingPrefix are both built from this list.
 var silencingSentinels = []string{"[[NO_RESPONSE]]", "No response requested."}
 
-// IsSilent returns true if text should not be sent to users.
-// Covers empty/whitespace-only text and any of silencingSentinels.
-func IsSilent(text string) bool {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return true
-	}
-	for _, s := range silencingSentinels {
-		if t == s {
-			return true
+// StripSilencingSuffix removes one or more trailing silencing sentinels (and
+// surrounding whitespace) from text. "real reply.[[NO_RESPONSE]]" becomes
+// "real reply."; text that is *entirely* sentinel(s) becomes "". The loop
+// handles stacked/repeated trailing sentinels (an agent emitting two in a
+// row). Only trailing sentinels are stripped — a sentinel embedded mid-text is
+// left untouched, matching the observed failure where agents append the marker
+// to a real reply. Idempotent: stripping already-clean text is a no-op.
+//
+// This is the single matcher; IsSilent is defined in terms of it so adding a
+// new sentinel to silencingSentinels updates both behaviours at once.
+func StripSilencingSuffix(text string) string {
+	s := strings.TrimSpace(text)
+	for {
+		trimmed := false
+		for _, sent := range silencingSentinels {
+			if strings.HasSuffix(s, sent) {
+				s = strings.TrimSpace(strings.TrimSuffix(s, sent))
+				trimmed = true
+			}
+		}
+		if !trimmed {
+			return s
 		}
 	}
-	return false
+}
+
+// IsSilent returns true if text should not be sent to users: empty/whitespace,
+// or text that is entirely silencing sentinel(s) (possibly stacked or padded).
+// Equivalently, nothing remains after stripping trailing sentinels.
+//
+// Note this is exact-suppression only: "real reply.[[NO_RESPONSE]]" is NOT
+// silent (it has real content). Callers that deliver must run the text through
+// StripSilencingSuffix first so the trailing marker is removed before sending —
+// IsSilent alone no longer guarantees a clean payload for non-silent text.
+func IsSilent(text string) bool {
+	return StripSilencingSuffix(text) == ""
 }
 
 // IsSilencingPrefix returns true if the streamed text-so-far might still

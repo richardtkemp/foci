@@ -141,6 +141,16 @@ type stubScript struct {
 	// user message — exercising the session router's late-delivery path.
 	LateText string `json:"late_text,omitempty"`
 
+	// StreamDeltas, when non-empty, are emitted as `stream_event` envelopes
+	// (each a verbatim Anthropic content_block_delta / text_delta) BEFORE
+	// the main assistant envelope, simulating CC's token-level streaming.
+	// They drive foci's OnStreamEvent → OnTextDelta → StreamWriter path,
+	// so tests can exercise the live-streaming delivery route (incremental
+	// message edits) rather than only whole-block assistant text. The
+	// concatenation of the deltas should equal Text so the final committed
+	// stream edit matches what a real CC turn would produce.
+	StreamDeltas []string `json:"stream_deltas,omitempty"`
+
 	// RawLinesBeforeAssistant are literal NDJSON lines written verbatim
 	// to stdout BEFORE the assistant envelope, after the user message is
 	// consumed. Use to inject malformed lines, unparseable bytes, or
@@ -539,6 +549,30 @@ func main() {
 				}
 				if script.SleepMs > 0 {
 					time.Sleep(time.Duration(script.SleepMs) * time.Millisecond)
+				}
+			}
+			// Pre-emit token-level stream_event deltas. Each becomes a
+			// content_block_delta/text_delta envelope, driving foci's
+			// OnStreamEvent → OnTextDelta → StreamWriter (the live-streaming
+			// delivery path). Emitted before the assistant envelope, matching
+			// real CC's ordering (deltas stream, then the final assistant
+			// block carrying the complete text arrives).
+			if script != nil {
+				for _, d := range script.StreamDeltas {
+					emit(out, map[string]any{
+						"type": "stream_event",
+						"event": map[string]any{
+							"type": "content_block_delta",
+							"delta": map[string]any{
+								"type": "text_delta",
+								"text": d,
+							},
+						},
+						"session_id": sessionID,
+					})
+				}
+				if len(script.StreamDeltas) > 0 {
+					out.Flush()
 				}
 			}
 			// Pre-emit intermediate-text assistant messages. Each entry

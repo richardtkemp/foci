@@ -224,12 +224,15 @@ func writeJSONResponse(w http.ResponseWriter, text string) {
 // asyncDispatch handles async fire-and-forget requests: sends the agent message
 // in a goroutine, writes a 202 response, and optionally delivers the result via platform.
 //
-// Silencing: the captured FinalText is routed through platform.IsSilent before
-// being forwarded to Connection.SendToSession. This is the convergence point
-// for the BufferSink→platform forwarding class — StreamingSink/SessionSink own
-// their own gates (renderer chokepoints and SessionSink.Emit respectively), so
-// asyncDispatch is the one path where a silencing sentinel reaches the user
-// without an upstream gate unless we apply one here.
+// Silencing: the captured FinalText is routed through
+// platform.StripSilencingSuffix before being forwarded to
+// Connection.SendToSession — this both suppresses fully-silent text (strips to
+// "") and removes a trailing sentinel an agent appended to a real reply. This
+// is the convergence point for the BufferSink→platform forwarding class —
+// StreamingSink/SessionSink own their own gates (renderer chokepoints and
+// SessionSink.Emit respectively), so asyncDispatch is the one path where a
+// silencing sentinel reaches the user without an upstream gate unless we apply
+// one here.
 func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.ConnectionManager,
 	ctx context.Context, sessionKey, text, logTag string, silent bool) {
 	go func() {
@@ -238,9 +241,10 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 			log.Errorf(logTag, "async error: %v", err)
 			return
 		}
-		if !silent && !platform.IsSilent(resp) && connMgr != nil {
+		cleaned := platform.StripSilencingSuffix(resp)
+		if !silent && cleaned != "" && connMgr != nil {
 			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
-				if err := conn.SendToSession(sessionKey, resp); err != nil {
+				if err := conn.SendToSession(sessionKey, cleaned); err != nil {
 					log.Errorf(logTag, "async platform delivery: %v", err)
 				}
 			}

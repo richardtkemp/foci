@@ -247,6 +247,148 @@ func TestL2_Egress_SilentIntermediateThenRealReplyReachesTelegram(t *testing.T) 
 		realReply, sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
 }
 
+// TestL2_Egress_TrailingSentinelStrippedNonStreaming demonstrates the
+// trailing-sentinel leak on the non-streaming delivery path. An agent emits
+// a SINGLE assistant text block consisting of a real reply immediately
+// followed by the [[NO_RESPONSE]] sentinel — the shape produced when an
+// agent staples the silence marker onto the end of a real message.
+//
+// platform.IsSilent is exact-match (TrimSpace(text) == sentinel), so a
+// message that merely *ends with* the sentinel is not silent and is
+// delivered verbatim — the literal "[[NO_RESPONSE]]" leaks to Telegram.
+//
+// Desired behaviour: the real reply reaches Telegram with the trailing
+// sentinel stripped. This test asserts that — so it FAILS on current code
+// (the marker leaks) and PASSES once the trim fix lands.
+func TestL2_Egress_TrailingSentinelStrippedNonStreaming(t *testing.T) {
+	t.Parallel()
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 5560},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	const realReply = "all clean, nothing uncommitted"
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": realReply + "\n[[NO_RESPONSE]]",
+	})
+	if err != nil {
+		t.Fatalf("marshal script body: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 5560, Type: "private"},
+			From: &gotgbot.User{Id: 5560, FirstName: "Tester"},
+			Text: "keepalive check",
+		},
+	})
+
+	// Wait for the reply to arrive, then assert it carries the real text
+	// WITHOUT the trailing sentinel literal.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range h.TelegramStub().PeekSent(token) {
+			if call.Method != "sendMessage" {
+				continue
+			}
+			var body map[string]any
+			if err := json.Unmarshal(call.Body, &body); err != nil {
+				continue
+			}
+			text, _ := body["text"].(string)
+			if !strings.Contains(text, realReply) {
+				continue
+			}
+			if strings.Contains(text, "[[NO_RESPONSE]]") {
+				t.Errorf("delivered message leaked the trailing sentinel:\n  %q\nexpected the [[NO_RESPONSE]] marker to be stripped", text)
+			}
+			return // found the reply; assertion above decides pass/fail
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("reply %q never reached Telegram; sent calls:\n%s\nstderr:\n%s",
+		realReply, sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+}
+
+// TestL2_Egress_TrailingSentinelStrippedStreaming is the streaming twin of
+// the test above. With stream_output enabled, the reply arrives as
+// token-level deltas that foci accumulates into a live-edited Telegram
+// message. The final delta is the [[NO_RESPONSE]] sentinel, appended after
+// real text — so by the time it arrives, the streaming-prefix gate
+// (IsSilencingPrefix) has already released (the buffer diverged from a pure
+// sentinel once real text streamed), and the sentinel is committed into the
+// final message edit.
+//
+// This is the path Dick suspected: the streamed message can't be un-sent, so
+// the trailing sentinel must be stripped at the final commit edit. Asserts
+// the committed message excludes the marker — FAILS on current code, PASSES
+// after the fix.
+func TestL2_Egress_TrailingSentinelStrippedStreaming(t *testing.T) {
+	t.Parallel()
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "alpha", UserID: 5561},
+		},
+		ReadyTimeout: 30 * time.Second,
+		// Enable live streaming so the reply is delivered via incremental
+		// message edits (StreamWriter), exercising chokepoint 3.
+		ExtraConfigTOML: "[defaults.display]\nstream_output = true\nstreaming = true\n",
+	})
+
+	const realReply = "streamed reply that must stay clean"
+	// Deltas concatenate to realReply + trailing sentinel. The sentinel is a
+	// separate final delta so the prefix gate has already released on the
+	// preceding real text.
+	scriptBody, err := json.Marshal(map[string]any{
+		"stream_deltas": []string{realReply + " ", "[[NO_RESPONSE]]"},
+		"text":          realReply + " [[NO_RESPONSE]]",
+	})
+	if err != nil {
+		t.Fatalf("marshal script body: %v", err)
+	}
+	h.WriteCCStubScript(t, "alpha", scriptBody)
+
+	token := h.AgentBotToken("alpha")
+	h.TelegramStub().PushUpdate(token, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: 5561, Type: "private"},
+			From: &gotgbot.User{Id: 5561, FirstName: "Tester"},
+			Text: "keepalive check",
+		},
+	})
+
+	// The streamed message is created then edited; inspect both sendMessage
+	// (initial) and editMessageText (final) calls. Assert the agent's reply
+	// is present and the final rendered text excludes the sentinel literal.
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range h.TelegramStub().PeekSent(token) {
+			if call.Method != "sendMessage" && call.Method != "editMessageText" {
+				continue
+			}
+			var body map[string]any
+			if err := json.Unmarshal(call.Body, &body); err != nil {
+				continue
+			}
+			text, _ := body["text"].(string)
+			if !strings.Contains(text, realReply) {
+				continue
+			}
+			if strings.Contains(text, "[[NO_RESPONSE]]") {
+				t.Errorf("streamed message leaked the trailing sentinel (method=%s):\n  %q\nexpected [[NO_RESPONSE]] to be stripped from the committed edit", call.Method, text)
+			}
+			return // found the reply; assertion above decides pass/fail
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("streamed reply %q never reached Telegram; sent calls:\n%s\nstderr:\n%s",
+		realReply, sentCallsTail(h.TelegramStub(), token), stderrTail(h.Stderr()))
+}
+
 // sentCallsTail summarises recorded sendMessage bodies for failure logs.
 func sentCallsTail(stub *testharness.TelegramStub, token string) string {
 	var sb strings.Builder
