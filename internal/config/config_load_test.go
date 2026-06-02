@@ -547,3 +547,57 @@ stream_output = false
 		t.Errorf("Platform(telegram).StreamOutput = %v, want false", tg.Display.StreamOutput)
 	}
 }
+
+// TestExtractGroupNames_FastCheapDefaultToPowerful pins the load-time
+// defaulting in extractGroupNames: when [groups] powerful is set but fast
+// and/or cheap are omitted, the missing ones inherit powerful's value. This
+// is the only layer that performs the defaulting — the GroupResolver tests
+// construct a GroupsConfig map directly and bypass it, and the behaviour is
+// API-backend-only (delegated backends take their model from backend_config),
+// so a unit test here is the correct and complete coverage for the logic.
+func TestExtractGroupNames_FastCheapDefaultToPowerful(t *testing.T) {
+	tests := []struct {
+		name string
+		toml string
+		want map[string]string
+	}{
+		{
+			name: "fast and cheap omitted default to powerful",
+			toml: "[groups]\npowerful = \"anthropic/opus\"\n",
+			want: map[string]string{"powerful": "anthropic/opus", "fast": "anthropic/opus", "cheap": "anthropic/opus"},
+		},
+		{
+			name: "all three explicit are left untouched",
+			toml: "[groups]\npowerful = \"anthropic/opus\"\nfast = \"anthropic/sonnet\"\ncheap = \"anthropic/haiku\"\n",
+			want: map[string]string{"powerful": "anthropic/opus", "fast": "anthropic/sonnet", "cheap": "anthropic/haiku"},
+		},
+		{
+			name: "only cheap inherits when fast is explicit",
+			toml: "[groups]\npowerful = \"anthropic/opus\"\nfast = \"anthropic/sonnet\"\n",
+			want: map[string]string{"powerful": "anthropic/opus", "fast": "anthropic/sonnet", "cheap": "anthropic/opus"},
+		},
+		{
+			name: "no powerful means no defaulting",
+			toml: "[groups]\nfast = \"anthropic/sonnet\"\n",
+			want: map[string]string{"fast": "anthropic/sonnet"},
+		},
+		{
+			name: "no groups section yields empty map",
+			toml: "name = \"x\"\n",
+			want: map[string]string{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractGroupNames([]byte(tt.toml))
+			if len(got) != len(tt.want) {
+				t.Fatalf("extractGroupNames(%q) = %v, want %v", tt.toml, got, tt.want)
+			}
+			for k, v := range tt.want {
+				if got[k] != v {
+					t.Errorf("group %q = %q, want %q (full: %v)", k, got[k], v, got)
+				}
+			}
+		})
+	}
+}
