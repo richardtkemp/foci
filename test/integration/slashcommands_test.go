@@ -406,22 +406,16 @@ func TestL2_SlashCommands_ReloadReturnsSkillCount(t *testing.T) {
 	}
 }
 
-// TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile proves an
-// in-flight edit to a character/workspace file under the agent's
-// workspace is reflected on the NEXT cc-stub invocation after /reload:
-// the cc-stub init-args (system prompt segment surface) carries the
-// new file contents. Reload must not pick up foci.toml — config
-// changes still need a restart per the command's reply text.
-// COMMENTED OUT 2026-05-30 — WRONG PREMISE, see TODO #799 for review.
-// foci's delegated StartOpts.SystemPrompt is captured once at agent setup;
-// ReloadSystemFn only mutates ExtraSystemBlocks (skills), never refreshes
-// the next-backend bootstrap. May be a real bug — TODO documents both paths.
-/*
-func TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile(t *testing.T) {
-	t.Parallel()
-	t.Skip("WRONG PREMISE: foci's delegated StartOpts.SystemPrompt is captured once at agent setup and never refreshed by /reload. cc-stub init_system recording is in place but there's nothing on the foci side to observe. Either fix StartOpts refresh in /reload, or accept that delegated bootstrap reload requires a process restart.")
-}
-*/
+// TestL2_SlashCommands_ReloadPicksUpEditedWorkspaceFile was REMOVED 2026-06-02
+// (TODO #799). It asserted that /reload makes the NEXT delegated (cc-stub)
+// invocation pick up an edited character/workspace file. That premise was
+// resolved as by-design-false and the behaviour intentionally removed: a
+// delegated backend captures StartOpts.SystemPrompt once at agent setup and
+// is never refreshed mid-session (ReloadSystemFn only mutates ExtraSystemBlocks
+// for skills). Rather than leave a misleading capability, /reload is now gated
+// to API backends only (foci 59ed8038 — see cmd/foci-gw/commands.go). Delegated
+// agents pick up edited base-prompt files via /restart, /reset, or compaction.
+// There is therefore nothing to test here.
 
 // TestL2_SlashCommands_ErrorsTailsEventLog proves /errors returns only
 // ERROR/WARN level lines from the configured event log file. Seeds
