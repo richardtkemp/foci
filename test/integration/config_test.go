@@ -995,16 +995,16 @@ func TestL2_Config_DelegatedBackendReceivesModelVerbatim(t *testing.T) {
 	t.Errorf("no cc-stub backend invocation (with --model) recorded for alpha\nstderr:\n%s", h.Stderr())
 }
 
-// TestL2_Config_GroupsFastDefaultsToPowerful proves the
-// extractGroupNames fallback: when `[groups] powerful = "X"` is set but
-// `fast` and `cheap` are omitted, both default to powerful's value.
-// Drive a flow that triggers a fast-tier call (e.g. spawn-raw via the
-// spawn tool) and assert the resolved model in the recorder matches
-// powerful's model — proves the default-on-load logic runs.
-func TestL2_Config_GroupsFastDefaultsToPowerful(t *testing.T) {
-	t.Parallel()
-	t.Skip("HARNESS GAP: needs (1) a way to trigger a fast-tier call site (e.g. spawn-raw) from cc-stub's scripted tool_uses — currently only Bash tool_uses are executed by cc-stub and no foci_spawn variant exists in the exec-bridge surface that's wired here, and (2) recorder capture of the *secondary* spawn's --model flag (the agent's own cc-stub captures only its own invocation)")
-}
+// TestL2_Config_GroupsFastDefaultsToPowerful was REMOVED 2026-06-02 (TODO #802).
+// It tried to prove the load-time extractGroupNames defaulting (fast/cheap
+// inherit powerful when omitted) end-to-end via a fast-tier spawn. That's the
+// wrong layer twice over: (1) model groups are an API-backend concept — the L2
+// harness drives a cc-stub *delegated* backend, which takes its model from
+// backend_config and never consults the GroupResolver, and foci's native spawn
+// tool (the thing that resolves the fast group) isn't even wired into delegated
+// agents; (2) the defaulting itself is a pure load-time function. Coverage now
+// lives where the logic runs: TestExtractGroupNames_FastCheapDefaultToPowerful
+// in internal/config/config_load_test.go.
 
 // TestL2_Config_AccessAllowedUsersOnlyTrueRejectsUnlisted proves the
 // access cascade: `[platforms.access] allowed_users_only = true` with
