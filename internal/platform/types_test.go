@@ -248,9 +248,12 @@ func TestAggregatingConnMgr(t *testing.T) {
 	mgr.Wait()
 }
 
-// TestIsSilent covers the post-TrimSpace exact-match behaviour: empty and
-// whitespace-only text, the [[NO_RESPONSE]] sentinel, and CC's synthetic
-// "No response requested." message are silent; everything else is not.
+// TestIsSilent covers the "entirely silent" behaviour: empty and
+// whitespace-only text, the [[NO_RESPONSE]] sentinel (possibly padded or
+// stacked), and CC's synthetic "No response requested." message are silent.
+// Text with real content — including a real reply that *ends with* a sentinel
+// — is NOT silent (IsSilent == false); such text is delivered after
+// StripSilencingSuffix removes the trailing marker.
 func TestIsSilent(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -263,8 +266,10 @@ func TestIsSilent(t *testing.T) {
 		{"no_response_exact", "[[NO_RESPONSE]]", true},
 		{"no_response_padded", "  [[NO_RESPONSE]] \n", true},
 		{"no_response_requested", "No response requested.", true},
+		{"stacked_sentinels", "[[NO_RESPONSE]][[NO_RESPONSE]]", true},
 		{"prefix_only", "[[NO_RESP", false},
 		{"with_trailing_text", "[[NO_RESPONSE]] OK", false},
+		{"real_text_trailing_sentinel", "real reply [[NO_RESPONSE]]", false},
 		{"normal_text", "Hello, world", false},
 		{"diverged_prefix", "[[NO_RESPITE]]", false},
 	}
@@ -274,6 +279,44 @@ func TestIsSilent(t *testing.T) {
 			t.Parallel()
 			if got := IsSilent(tc.in); got != tc.want {
 				t.Errorf("IsSilent(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStripSilencingSuffix covers trailing-sentinel removal: a real reply that
+// ends with one or more silencing sentinels keeps its content with the
+// marker(s) stripped; text that is entirely sentinel(s) collapses to "";
+// sentinels that are not at the end (or absent) leave the text untouched.
+func TestStripSilencingSuffix(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"whitespace_only", "  \n\t ", ""},
+		{"pure_sentinel", "[[NO_RESPONSE]]", ""},
+		{"pure_sentinel_padded", "  [[NO_RESPONSE]] \n", ""},
+		{"pure_no_response_requested", "No response requested.", ""},
+		{"trailing_space_sep", "real reply [[NO_RESPONSE]]", "real reply"},
+		{"trailing_newline_sep", "real reply\n[[NO_RESPONSE]]", "real reply"},
+		{"trailing_then_whitespace", "real reply [[NO_RESPONSE]]  \n", "real reply"},
+		{"stacked_trailing", "done [[NO_RESPONSE]][[NO_RESPONSE]]", "done"},
+		{"stacked_trailing_padded", "done [[NO_RESPONSE]] [[NO_RESPONSE]]", "done"},
+		{"mixed_trailing_sentinels", "done No response requested.[[NO_RESPONSE]]", "done"},
+		{"no_sentinel", "hello world", "hello world"},
+		{"sentinel_mid_text_untouched", "a [[NO_RESPONSE]] b", "a [[NO_RESPONSE]] b"},
+		{"sentinel_leading_text_following", "[[NO_RESPONSE]] then more", "[[NO_RESPONSE]] then more"},
+		{"clean_text_idempotent", "real reply", "real reply"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StripSilencingSuffix(tc.in); got != tc.want {
+				t.Errorf("StripSilencingSuffix(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
