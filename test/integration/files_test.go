@@ -333,20 +333,16 @@ func TestL2_Files_PDFUnderLimit_GoesViaAttachment(t *testing.T) {
 	}
 }
 
-// TestL2_Files_PDFOverLimit_FallsBackToDiskSave proves a PDF over the
-// 32MB content-block cap takes the save-to-disk path with a
-// "[PDF saved to: <path>]" tag, not the attachment path. Asserts the
-// branching threshold in bot_receive.handlePDF for file_size > 32MB.
-// COMMENTED OUT 2026-05-30 — WRONG PREMISE, see TODO #801 for review.
-// The >32MB path always trips the 20MB downloadAndSaveMedia size guard
-// before any save. Size-warning behaviour is covered by
-// TestL2_Files_Document_TooLarge_SizeWarningPrepended.
-/*
-func TestL2_Files_PDFOverLimit_FallsBackToDiskSave(t *testing.T) {
-	t.Parallel()
-	t.Skip("HARNESS GAP / test premise mismatch: the >32MB path always trips the 20MB downloadAndSaveMedia size guard before any save-to-disk happens, and the inner downloaded-too-big branch needs a real successful binary download")
-}
-*/
+// TestL2_Files_PDFOverLimit_FallsBackToDiskSave was REMOVED 2026-06-02 (TODO #801).
+// It asserted the >32MB PDF save-to-disk path, but that path is unreachable
+// against real Telegram: getFile caps downloads at 20MB (< the 32MB threshold),
+// so a >32MB PDF can never be downloaded to trigger the save. The stub serves
+// arbitrary bytes (no 20MB enforcement), so the test could be made green — but
+// it would validate behaviour real Telegram never produces. The 32MB guard
+// itself is correct defensive logic for transports that CAN deliver >32MB
+// (Telegram local Bot API server mode, or a higher-limit platform), but that
+// belongs in that transport's own harness, not here. Size-warning behaviour on
+// the >20MB path is covered by TestL2_Files_Document_TooLarge_SizeWarningPrepended.
 
 // TestL2_Files_VideoAttachment_SavedAndPathInjected proves Video
 // messages route through handleMediaMessage (save-to-disk + path tag)
