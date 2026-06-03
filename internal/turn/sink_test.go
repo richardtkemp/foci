@@ -91,7 +91,7 @@ func (f *fakeTypingConn) SendNotificationDirect(string) string   { panic("SendNo
 func TestStreamingSinkTypingLifecycle(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	conn := &fakeTypingConn{}
 	sink := NewStreamingSink(renderer, tracker, conn)
 
@@ -116,7 +116,7 @@ func TestStreamingSinkTypingLifecycle(t *testing.T) {
 func TestStreamingSinkNilConnSkipsTyping(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	// Must not panic.
@@ -131,9 +131,9 @@ func TestStreamingSinkNilConnSkipsTyping(t *testing.T) {
 func TestStreamingSinkRoutesThinkingDelta(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true, MaxChars: 4096}
-	transport := &mockTransport{sendMsgID: "100"}
-	renderer := NewTurnRenderer(backend, tracker, display, liveSWFactory(transport, 3900))
+	display := TurnDisplay{ShowThinking: "compact", StreamOutput: true}
+	streamSink := &mockSink{surfacedRet: true, msgIDsRet: []string{"100"}}
+	renderer := NewTurnRenderer(backend, tracker, display, liveSBFactory(streamSink))
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	ctx := context.Background()
@@ -157,7 +157,7 @@ func TestStreamingSinkRoutesThinkingDelta(t *testing.T) {
 func TestStreamingSinkRoutesToolEvents(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	ctx := context.Background()
@@ -187,7 +187,7 @@ func TestStreamingSinkRoutesToolEvents(t *testing.T) {
 func TestStreamingSinkDeliveredFlagSuppressesFinalize(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	ctx := context.Background()
@@ -195,13 +195,13 @@ func TestStreamingSinkDeliveredFlagSuppressesFinalize(t *testing.T) {
 	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "final"})
 
 	// OnReply delivered the intermediate text.
-	if len(backend.sendReplyCalls) != 1 || backend.sendReplyCalls[0] != "intermediate" {
-		t.Errorf("sendReply = %v, want [intermediate]", backend.sendReplyCalls)
+	if len(backend.deliverCalls) != 1 || backend.deliverCalls[0].Payload.Text != "intermediate" {
+		t.Errorf("deliver = %v, want [intermediate]", backend.deliverCalls)
 	}
 	// Finalize was NOT called — the final text must not reach the backend a
 	// second time.
-	for _, c := range backend.sendReplyCalls {
-		if c == "final" {
+	for _, c := range backend.deliverCalls {
+		if c.Payload.Text == "final" {
 			t.Error("final text re-delivered after intermediate; delivered flag not respected")
 		}
 	}
@@ -224,7 +224,7 @@ func TestStreamingSinkDeliveredFlagSuppressesFinalize(t *testing.T) {
 func TestStreamingSinkSilentIntermediateDoesNotSuppressFinalize(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	ctx := context.Background()
@@ -235,9 +235,9 @@ func TestStreamingSinkSilentIntermediateDoesNotSuppressFinalize(t *testing.T) {
 	// Real final text arrives — must reach the backend via Finalize.
 	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "the real reply"})
 
-	if len(backend.sendReplyCalls) != 1 || backend.sendReplyCalls[0] != "the real reply" {
-		t.Errorf("sendReply = %v, want [\"the real reply\"]; silent intermediate must not block final delivery",
-			backend.sendReplyCalls)
+	if len(backend.deliverCalls) != 1 || backend.deliverCalls[0].Payload.Text != "the real reply" {
+		t.Errorf("deliver = %v, want [\"the real reply\"]; silent intermediate must not block final delivery",
+			backend.deliverCalls)
 	}
 }
 
@@ -268,13 +268,13 @@ func TestSessionSinkSilentIntermediateAllowsFinalText(t *testing.T) {
 func TestStreamingSinkUnDeliveredCallsFinalize(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	sink.Emit(context.Background(), turnevent.TurnComplete{FinalText: "only final"})
 
-	if len(backend.sendReplyCalls) != 1 || backend.sendReplyCalls[0] != "only final" {
-		t.Errorf("sendReply = %v, want [only final]", backend.sendReplyCalls)
+	if len(backend.deliverCalls) != 1 || backend.deliverCalls[0].Payload.Text != "only final" {
+		t.Errorf("deliver = %v, want [only final]", backend.deliverCalls)
 	}
 }
 
@@ -284,7 +284,7 @@ func TestStreamingSinkUnDeliveredCallsFinalize(t *testing.T) {
 func TestStreamingSinkErrorOverridesFinalText(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	sink.Emit(context.Background(), turnevent.TurnComplete{
@@ -292,11 +292,11 @@ func TestStreamingSinkErrorOverridesFinalText(t *testing.T) {
 		Err:       errors.New("upstream 500"),
 	})
 
-	if len(backend.sendReplyCalls) != 1 {
-		t.Fatalf("sendReply calls = %d, want 1", len(backend.sendReplyCalls))
+	if len(backend.deliverCalls) != 1 {
+		t.Fatalf("deliver calls = %d, want 1", len(backend.deliverCalls))
 	}
-	if backend.sendReplyCalls[0] != "Error: upstream 500" {
-		t.Errorf("sendReply = %q, want %q", backend.sendReplyCalls[0], "Error: upstream 500")
+	if backend.deliverCalls[0].Payload.Text != "Error: upstream 500" {
+		t.Errorf("deliver = %q, want %q", backend.deliverCalls[0].Payload.Text, "Error: upstream 500")
 	}
 }
 
@@ -306,15 +306,15 @@ func TestStreamingSinkErrorOverridesFinalText(t *testing.T) {
 func TestStreamingSinkCancelledContextDropsError(t *testing.T) {
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	sink := NewStreamingSink(renderer, tracker, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	sink.Emit(ctx, turnevent.TurnComplete{FinalText: "", Err: errors.New("boom")})
 
-	for _, c := range backend.sendReplyCalls {
-		if c == "Error: boom" {
+	for _, c := range backend.deliverCalls {
+		if c.Payload.Text == "Error: boom" {
 			t.Error("error rendered despite cancelled context")
 		}
 	}
@@ -409,7 +409,7 @@ func TestSinkDeliversToPlatform(t *testing.T) {
 	// affordance, not a deliberate non-delivery contract.
 	backend := newMockBackend()
 	tracker := &fakeSinkTracker{}
-	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{MaxChars: 4096}, newTestSW)
+	renderer := NewTurnRenderer(backend, tracker, TurnDisplay{}, newTestSB)
 	stream := NewStreamingSink(renderer, tracker, nil)
 	if !stream.DeliversToPlatform() {
 		t.Errorf("StreamingSink.DeliversToPlatform() = false, want true")

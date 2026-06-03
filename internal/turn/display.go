@@ -9,6 +9,5 @@ type TurnDisplay struct {
 	ShowThinking  string
 	StreamOutput  bool
 	DisplayWidth  int
-	MaxChars      int                // Platform message limit: 4096 (Telegram), 2000 (Discord)
 	RenderOpts    display.RenderOpts
 }

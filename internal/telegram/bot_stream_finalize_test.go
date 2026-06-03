@@ -7,6 +7,7 @@ import (
 
 	"foci/internal/command"
 	"foci/internal/platform"
+	"foci/internal/turn"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -62,12 +63,16 @@ func TestEditStreamNoThinking_NotModifiedError(t *testing.T) {
 }
 
 func TestTelegramBackend_EditWithThinkingButton(t *testing.T) {
-	// Verifies that EditWithThinkingButton edits the message with an inline
-	// keyboard button and stores thinking data for later toggle.
+	// Verifies that EditInPlace in compact thinking mode edits the message with
+	// an inline keyboard button and stores thinking data for later toggle.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	backend := testBackend(b, 12345)
 
-	err := backend.EditWithThinkingButton("100", "Response HTML", "I thought about this")
+	err := backend.EditInPlace("100", turn.Payload{
+		Text:         "Response HTML",
+		ThinkingText: "I thought about this",
+		ThinkingMode: "compact",
+	})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -110,7 +115,11 @@ func TestTelegramBackend_EditWithThinkingButton_Error(t *testing.T) {
 	mock.editErr = fmt.Errorf("Bad Request: message too long")
 	backend := testBackend(b, 12345)
 
-	err := backend.EditWithThinkingButton("100", "Response", "Thinking")
+	err := backend.EditInPlace("100", turn.Payload{
+		Text:         "Response",
+		ThinkingText: "Thinking",
+		ThinkingMode: "compact",
+	})
 
 	if err == nil {
 		t.Fatal("expected error from failed edit")
@@ -125,12 +134,18 @@ func TestTelegramBackend_EditWithThinkingButton_Error(t *testing.T) {
 }
 
 func TestTelegramBackend_BuildThinkingCombined(t *testing.T) {
-	// Verifies that BuildThinkingCombined produces thinking + divider + response.
+	// Verifies that composeBody in full thinking mode produces thinking +
+	// divider + response.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	b.display.DisplayWidth = 40
 	backend := testBackend(b, 12345)
+	backend.width = 40
 
-	combined := backend.BuildThinkingCombined("Response text", "Deep thoughts")
+	combined, _, _ := backend.composeBody(turn.Payload{
+		Text:         "Response text",
+		ThinkingText: "Deep thoughts",
+		ThinkingMode: "full",
+	})
 
 	if !strings.Contains(combined, "<i>Deep thoughts</i>") {
 		t.Errorf("combined missing italic thinking, got: %s", combined)
@@ -143,12 +158,13 @@ func TestTelegramBackend_BuildThinkingCombined(t *testing.T) {
 	}
 }
 
-func TestTelegramBackend_EditMessage(t *testing.T) {
-	// Verifies that EditMessage calls the Telegram API with correct params.
+func TestTelegramBackend_EditInPlace_NoThinking(t *testing.T) {
+	// Verifies that EditInPlace with no thinking edits the message in place with
+	// HTML-converted content and no button.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
 	backend := testBackend(b, 12345)
 
-	err := backend.EditMessage("100", "<b>Hello</b>")
+	err := backend.EditInPlace("100", turn.Payload{Text: "**Hello**", ThinkingMode: "off"})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -162,54 +178,68 @@ func TestTelegramBackend_EditMessage(t *testing.T) {
 	if mock.lastEditOpts.ParseMode != "HTML" {
 		t.Errorf("parse mode = %q, want HTML", mock.lastEditOpts.ParseMode)
 	}
-}
-
-func TestTelegramBackend_FormatStreamPreview(t *testing.T) {
-	// Verifies the stream preview format includes HTML truncation indicator.
-	b, _ := testBot([]string{"111"}, command.NewRegistry())
-	backend := testBackend(b, 12345)
-
-	preview := backend.FormatStreamPreview("short text")
-
-	if !strings.Contains(preview, "(full response below)") {
-		t.Errorf("preview should contain indicator, got: %s", preview)
+	if !strings.Contains(mock.lastEditText, "<b>Hello</b>") {
+		t.Errorf("expected HTML bold in edit, got: %s", mock.lastEditText)
+	}
+	// No button on a plain edit.
+	if mock.lastEditOpts.ReplyMarkup.InlineKeyboard != nil {
+		t.Error("expected no inline keyboard on plain edit")
 	}
 }
 
-func TestTelegramBackend_FormatResponse(t *testing.T) {
-	// Verifies that FormatResponse converts markdown to Telegram HTML.
+func TestTelegramBackend_EditInPlace_TooLong(t *testing.T) {
+	// Verifies that EditInPlace refuses (ErrTooLongForEdit) when the body would
+	// need to split across more than one message — it must NOT edit.
+	b, mock := testBot([]string{"111"}, command.NewRegistry())
+	backend := testBackend(b, 12345)
+
+	long := strings.Repeat("x", telegramMaxChars+1)
+	err := backend.EditInPlace("100", turn.Payload{Text: long, ThinkingMode: "off"})
+
+	if err != turn.ErrTooLongForEdit {
+		t.Fatalf("err = %v, want ErrTooLongForEdit", err)
+	}
+	if mock.editCount() != 0 {
+		t.Errorf("editCount = %d, want 0 (must not edit when too long)", mock.editCount())
+	}
+}
+
+func TestTelegramBackend_ComposeBody_FormatsHTML(t *testing.T) {
+	// Verifies that composeBody converts markdown to Telegram HTML.
 	b, _ := testBot([]string{"111"}, command.NewRegistry())
 	backend := testBackend(b, 12345)
 
-	html := backend.FormatResponse("**bold text**")
+	html, hasButton, _ := backend.composeBody(turn.Payload{Text: "**bold text**", ThinkingMode: "off"})
 
 	if !strings.Contains(html, "<b>bold text</b>") {
 		t.Errorf("expected HTML bold, got: %s", html)
 	}
+	if hasButton {
+		t.Error("expected no button in off mode")
+	}
 }
 
-func TestStreamLongResponse_SendsNewAndPreview(t *testing.T) {
-	// Verifies that when the stream response exceeds 4096 chars, the code
-	// sends a new message and edits the stream message to a truncated preview.
+func TestTelegramBackend_Deliver_LongResponseSplitsNotTruncated(t *testing.T) {
+	// #738 guard at the platform layer: a terminal delivery longer than 4096
+	// chars must split into multiple messages (no preview, no truncation). With
+	// a fresh send (no stream surfaced) every chunk's full content is sent.
 	b, mock := testBot([]string{"111"}, command.NewRegistry())
-	msg := makeMsg(111, "111", "test")
-	backend := testBackend(b, msg.Chat.Id)
+	backend := testBackend(b, 12345)
 
-	longResponse := strings.Repeat("x", 4097)
-
-	// Simulate: send reply then edit stream to preview.
-	b.sendReply(msg, longResponse)
-	preview := backend.FormatStreamPreview("short")
-	_ = backend.EditMessage("100", preview)
-
-	if mock.sentCount() == 0 {
-		t.Error("expected at least one send for long response")
+	longResponse := strings.Repeat("x", telegramMaxChars+1)
+	res, err := backend.Deliver(turn.Payload{Text: longResponse, ThinkingMode: "off"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if mock.editCount() != 1 {
-		t.Errorf("editCount = %d, want 1 (stream preview edit)", mock.editCount())
+
+	if mock.sentCount() < 2 {
+		t.Errorf("sentCount = %d, want >= 2 (long response must split)", mock.sentCount())
 	}
-	if !strings.Contains(mock.lastEditText, "(full response below)") {
-		t.Errorf("preview should contain truncation indicator, got: %s", mock.lastEditText)
+	if mock.editCount() != 0 {
+		t.Errorf("editCount = %d, want 0 (fresh send, no preview edit)", mock.editCount())
+	}
+	if len(res.MsgIDs) < 2 {
+		t.Errorf("MsgIDs len = %d, want >= 2", len(res.MsgIDs))
 	}
 }
 

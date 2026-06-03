@@ -1,178 +1,203 @@
 package turn
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
 
-// mockTransport records SendInitial/EditStream calls for testing.
-type mockTransport struct {
-	mu        sync.Mutex
-	sendCalls []string
-	editCalls []transportEditCall
-	sendMsgID string
-	sendErr   error
-	editErr   error
+// mockSink is a configurable mock StreamSink. It records Update/Close calls and
+// reports a configurable surfaced flag and msgID sequence. It is mutex-guarded
+// since Update is driven by the pump goroutine while the test reads its state.
+type mockSink struct {
+	mu          sync.Mutex
+	updates     []string
+	closeCount  int
+	surfacedRet bool
+	msgIDsRet   []string
 }
 
-type transportEditCall struct {
-	msgID string
-	text  string
-}
-
-func (m *mockTransport) SendInitial(text string) (string, error) {
+func (m *mockSink) Update(fullText string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sendCalls = append(m.sendCalls, text)
-	if m.sendErr != nil {
-		return "", m.sendErr
-	}
-	return m.sendMsgID, nil
+	m.updates = append(m.updates, fullText)
 }
 
-func (m *mockTransport) EditStream(msgID, text string) error {
+func (m *mockSink) Close() (surfaced bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.editCalls = append(m.editCalls, transportEditCall{msgID, text})
-	return m.editErr
+	m.closeCount++
+	return m.surfacedRet
 }
 
-func TestStreamWriter_NonLive_BufferOnly(t *testing.T) {
-	// Verifies that when live=false, deltas are buffered but no messages are sent.
-	transport := &mockTransport{sendMsgID: "1"}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 1000, false)
+func (m *mockSink) MsgIDs() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.msgIDsRet
+}
 
-	sw.OnDelta("hello ")
-	sw.OnDelta("world")
+func (m *mockSink) updateCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.updates)
+}
 
-	msgID := sw.Finish()
-	if msgID != "" {
-		t.Errorf("msgID = %q, want empty (non-live)", msgID)
+func (m *mockSink) lastUpdate() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.updates) == 0 {
+		return ""
 	}
-	if got := sw.Content(); got != "hello world" {
+	return m.updates[len(m.updates)-1]
+}
+
+func TestStreamBuffer_NonLive_BufferOnly(t *testing.T) {
+	// When live=false, deltas are buffered but the sink is never driven.
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, 50*time.Millisecond, false)
+
+	sb.OnDelta("hello ")
+	sb.OnDelta("world")
+
+	gotSink, surfaced := sb.Finish()
+	if surfaced {
+		t.Errorf("surfaced = true, want false (non-live)")
+	}
+	if gotSink != sink {
+		t.Errorf("Finish returned wrong sink")
+	}
+	if got := sb.Content(); got != "hello world" {
 		t.Errorf("content = %q, want %q", got, "hello world")
 	}
-	if len(transport.sendCalls) != 0 {
-		t.Errorf("sendCalls = %d, want 0", len(transport.sendCalls))
+	if sink.updateCount() != 0 {
+		t.Errorf("Update calls = %d, want 0 (non-live never updates)", sink.updateCount())
 	}
 }
 
-func TestStreamWriter_Live_SendsInitial(t *testing.T) {
-	// Verifies that the first delta in live mode triggers SendInitial.
-	transport := &mockTransport{sendMsgID: "42"}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 1000, true)
+func TestStreamBuffer_Live_FirstDeltaImmediateUpdate(t *testing.T) {
+	// The first non-silencing delta in live mode fires an immediate Update so
+	// the first message appears promptly (before the ticker would fire).
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, time.Hour, true) // huge interval: only the immediate update can fire
 
-	sw.OnDelta("hello")
+	sb.OnDelta("hello")
 
-	msgID := sw.Finish()
-	if msgID != "42" {
-		t.Errorf("msgID = %q, want %q", msgID, "42")
+	// Immediate update should have happened synchronously in OnDelta.
+	if sink.updateCount() != 1 {
+		t.Fatalf("Update calls = %d, want 1 (immediate first update)", sink.updateCount())
 	}
-	if len(transport.sendCalls) != 1 {
-		t.Fatalf("sendCalls = %d, want 1", len(transport.sendCalls))
+	if sink.lastUpdate() != "hello" {
+		t.Errorf("first update = %q, want %q", sink.lastUpdate(), "hello")
 	}
-	if transport.sendCalls[0] != "hello" {
-		t.Errorf("sendInitial text = %q, want %q", transport.sendCalls[0], "hello")
+	sb.Finish()
+}
+
+func TestStreamBuffer_Live_SubsequentDeltasPump(t *testing.T) {
+	// After the first release, subsequent deltas are pushed by the pump.
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, 10*time.Millisecond, true)
+
+	sb.OnDelta("first")
+	time.Sleep(40 * time.Millisecond)
+	sb.OnDelta(" second")
+	time.Sleep(40 * time.Millisecond)
+	sb.Finish()
+
+	// Immediate update ("first") + at least one pump update carrying "first second".
+	if sink.updateCount() < 2 {
+		t.Fatalf("Update calls = %d, want >= 2 (immediate + pump)", sink.updateCount())
+	}
+	if got := sink.lastUpdate(); !strings.Contains(got, "first second") {
+		t.Errorf("last update = %q, want it to contain %q", got, "first second")
 	}
 }
 
-func TestStreamWriter_Truncation(t *testing.T) {
-	// Verifies that buffer contents are truncated at the maxChars boundary.
-	transport := &mockTransport{sendMsgID: "1"}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 10, true)
+func TestStreamBuffer_SilencingPrefixHeld(t *testing.T) {
+	// While the buffer could still resolve to a silencing sentinel, the pump is
+	// held and no Update fires. Once the text diverges, the pump releases.
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, time.Hour, true)
 
-	sw.OnDelta(strings.Repeat("x", 15))
-	sw.Finish()
+	// "[[NO_RESPONSE" is a prefix of the silencing sentinel — held.
+	sb.OnDelta("[[NO_RESPONSE")
+	if sink.updateCount() != 0 {
+		t.Fatalf("Update calls = %d while in silencing prefix, want 0", sink.updateCount())
+	}
 
-	if len(transport.sendCalls) == 0 {
-		t.Fatal("expected at least one send")
+	// Diverge: now it can't be a silencing sentinel — release + immediate update.
+	sb.OnDelta(" but actually real text")
+	if sink.updateCount() != 1 {
+		t.Fatalf("Update calls = %d after divergence, want 1 (released)", sink.updateCount())
 	}
-	sent := transport.sendCalls[0]
-	if !strings.HasSuffix(sent, "...") {
-		t.Errorf("truncated text should end with ..., got %q", sent)
+	sb.Finish()
+}
+
+func TestStreamBuffer_SilencingPrefix_NeverDiverges_NoUpdate(t *testing.T) {
+	// A stream that resolves entirely to a silencing sentinel never surfaces.
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, time.Hour, true)
+
+	sb.OnDelta("[[NO_RESPONSE]]")
+	_, surfaced := sb.Finish()
+
+	if sink.updateCount() != 0 {
+		t.Errorf("Update calls = %d, want 0 (never diverged)", sink.updateCount())
 	}
-	// 10 chars + "..." = 13
-	if len(sent) != 13 {
-		t.Errorf("truncated len = %d, want 13", len(sent))
+	if surfaced {
+		// surfaced reflects sink.Close()'s return; the mock returns false by default.
+		t.Errorf("surfaced = true, want false")
 	}
 }
 
-func TestStreamWriter_FullContent_NotTruncated(t *testing.T) {
-	// Verifies that Content() returns the full buffer even after truncation during send.
-	transport := &mockTransport{sendMsgID: "1"}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 10, true)
+func TestStreamBuffer_Finish_Idempotent(t *testing.T) {
+	// Finish is safe to call multiple times; the sink is closed exactly once and
+	// the cached surfaced value is returned on subsequent calls.
+	sink := &mockSink{surfacedRet: true}
+	sb := NewStreamBuffer(sink, 10*time.Millisecond, true)
 
-	sw.OnDelta(strings.Repeat("x", 15))
-	sw.Finish()
+	sb.OnDelta("test")
+	s1, surf1 := sb.Finish()
+	s2, surf2 := sb.Finish()
 
-	if got := sw.Content(); len(got) != 15 {
-		t.Errorf("content len = %d, want 15 (full buffer, not truncated)", len(got))
+	if s1 != sink || s2 != sink {
+		t.Errorf("Finish returned wrong sink")
+	}
+	if !surf1 || !surf2 {
+		t.Errorf("surfaced = (%v,%v), want (true,true)", surf1, surf2)
+	}
+	sink.mu.Lock()
+	closes := sink.closeCount
+	sink.mu.Unlock()
+	if closes != 1 {
+		t.Errorf("Close calls = %d, want 1 (idempotent)", closes)
 	}
 }
 
-func TestStreamWriter_Finish_Idempotent(t *testing.T) {
-	// Verifies that Finish is safe to call multiple times.
-	transport := &mockTransport{sendMsgID: "99"}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 1000, true)
+func TestStreamBuffer_DeltaAfterFinish_Ignored(t *testing.T) {
+	// Deltas after Finish are silently ignored and don't alter Content.
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, 50*time.Millisecond, true)
 
-	sw.OnDelta("test")
-	id1 := sw.Finish()
-	id2 := sw.Finish()
+	sb.OnDelta("before")
+	sb.Finish()
+	sb.OnDelta("after")
 
-	if id1 != "99" {
-		t.Errorf("first finish = %q, want %q", id1, "99")
-	}
-	if id2 != "99" {
-		t.Errorf("second finish = %q, want %q", id2, "99")
-	}
-}
-
-func TestStreamWriter_SendError_NoMsgID(t *testing.T) {
-	// Verifies that if SendInitial fails, the stream writer has no message ID.
-	transport := &mockTransport{sendErr: fmt.Errorf("API error")}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 1000, true)
-
-	sw.OnDelta("test")
-	msgID := sw.Finish()
-
-	if msgID != "" {
-		t.Errorf("msgID = %q, want empty (send failed)", msgID)
-	}
-}
-
-func TestStreamWriter_DeltaAfterFinish_Ignored(t *testing.T) {
-	// Verifies that deltas after Finish are silently ignored.
-	transport := &mockTransport{sendMsgID: "1"}
-	sw := NewStreamWriter(transport, 50*time.Millisecond, 1000, true)
-
-	sw.OnDelta("before")
-	sw.Finish()
-	sw.OnDelta("after")
-
-	if got := sw.Content(); got != "before" {
+	if got := sb.Content(); got != "before" {
 		t.Errorf("content = %q, want %q", got, "before")
 	}
 }
 
-func TestStreamWriter_EditLoop_FiresOnDirty(t *testing.T) {
-	// Verifies that the edit loop fires edits when the buffer is dirty.
-	transport := &mockTransport{sendMsgID: "1"}
-	sw := NewStreamWriter(transport, 10*time.Millisecond, 1000, true)
+func TestStreamBuffer_ContentAfterFinish(t *testing.T) {
+	// Content() must still return the full buffer after Finish (used by the
+	// empty-FinalText fallback in the renderer).
+	sink := &mockSink{}
+	sb := NewStreamBuffer(sink, 50*time.Millisecond, true)
 
-	sw.OnDelta("first")
-	// Wait for edit loop to fire at least once.
-	time.Sleep(50 * time.Millisecond)
-	sw.OnDelta(" second")
-	time.Sleep(50 * time.Millisecond)
-	sw.Finish()
+	sb.OnDelta("accumulated text")
+	sb.Finish()
 
-	transport.mu.Lock()
-	edits := len(transport.editCalls)
-	transport.mu.Unlock()
-	if edits == 0 {
-		t.Error("expected at least one edit from the edit loop")
+	if got := sb.Content(); got != "accumulated text" {
+		t.Errorf("content after Finish = %q, want %q", got, "accumulated text")
 	}
 }

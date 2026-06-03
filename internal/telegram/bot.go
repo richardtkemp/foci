@@ -166,7 +166,6 @@ func (b *Bot) resolveDisplay(sessionKey string) turn.TurnDisplay {
 		ShowThinking:  d.ShowThinking,
 		StreamOutput:  d.StreamOutput,
 		DisplayWidth:  d.DisplayWidth,
-		MaxChars:      4096,
 		RenderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth, WrapLines: d.TableWrapLines, Style: d.TableStyle},
 	}
 }
