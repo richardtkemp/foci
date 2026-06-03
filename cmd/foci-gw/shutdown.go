@@ -26,6 +26,13 @@ func runShutdown(
 	cfg shutdownConfig,
 	cancel func(),
 ) {
+	// Stop the liveness heartbeat first so it can't write a last_alive
+	// timestamp after the clean-shutdown record below — which would make the
+	// next startup misclassify this clean exit as a crash.
+	if cfg.stopHeartbeat != nil {
+		cfg.stopHeartbeat()
+	}
+
 	// Record clean shutdown immediately
 	if err := startup.RecordCleanShutdown(sessionIndex); err != nil {
 		log.Warnf("main", "record clean shutdown: %v", err)
@@ -86,6 +93,7 @@ func runShutdown(
 type shutdownConfig struct {
 	gracefulTimeout time.Duration
 	ctx             context.Context
+	stopHeartbeat   func()
 }
 
 // gracefulShutdown waits for all in-flight agent turns to complete, up to the

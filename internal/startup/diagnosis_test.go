@@ -34,6 +34,13 @@ func setStartupTime(t *testing.T, idx *session.SessionIndex, ts int64) {
 	}
 }
 
+func setAliveTime(t *testing.T, idx *session.SessionIndex, ts int64) {
+	t.Helper()
+	if err := idx.SetSystemState("last_alive", strconv.FormatInt(ts, 10)); err != nil {
+		t.Fatalf("set alive time: %v", err)
+	}
+}
+
 func TestDiagnoseRestart_CleanShutdown(t *testing.T) {
 	tmpDir := t.TempDir()
 	idx := newTestIndex(t, tmpDir)
@@ -510,5 +517,106 @@ func TestDiagnoseRestart_RecordsStartup(t *testing.T) {
 	}
 	if recorded != startTime.Unix() {
 		t.Errorf("last_startup = %d, want %d", recorded, startTime.Unix())
+	}
+}
+
+// TestRecordHeartbeat verifies the heartbeat writes a recent last_alive value.
+func TestRecordHeartbeat(t *testing.T) {
+	tmpDir := t.TempDir()
+	idx := newTestIndex(t, tmpDir)
+
+	before := time.Now().Truncate(time.Second)
+	if err := RecordHeartbeat(idx); err != nil {
+		t.Fatalf("record heartbeat: %v", err)
+	}
+	after := time.Now().Truncate(time.Second).Add(time.Second)
+
+	raw, err := idx.GetSystemState("last_alive")
+	if err != nil || raw == "" {
+		t.Fatal("last_alive not recorded")
+	}
+	ts, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		t.Fatalf("parse last_alive: %v", err)
+	}
+	if ts < before.Unix() || ts > after.Unix() {
+		t.Errorf("last_alive = %d, want within [%d, %d]", ts, before.Unix(), after.Unix())
+	}
+}
+
+// TestDiagnoseRestart_HeartbeatGapReflectsDowntime verifies that with a recent
+// heartbeat, the measured gap reflects time since the last beat (actual
+// downtime) rather than the much-older startup time. This is the whole point
+// of the heartbeat: a process that ran for 8h then rebooted should report a
+// short gap, not an 8h one.
+func TestDiagnoseRestart_HeartbeatGapReflectsDowntime(t *testing.T) {
+	tmpDir := t.TempDir()
+	idx := newTestIndex(t, tmpDir)
+
+	now := time.Now().Truncate(time.Second)
+	// Process started 8h ago, last heartbeat 10min ago, then the box rebooted.
+	setStartupTime(t, idx, now.Add(-8*time.Hour).Unix())
+	setAliveTime(t, idx, now.Add(-10*time.Minute).Unix())
+
+	orig := GetSystemUptime
+	GetSystemUptime = func() (time.Duration, error) { return 2 * time.Minute, nil }
+	defer func() { GetSystemUptime = orig }()
+
+	result := DiagnoseRestart(idx, now, tmpDir)
+
+	if result.Class != ClassReboot {
+		t.Errorf("expected ClassReboot, got %s (summary: %s)", result.Class, result.Summary)
+	}
+	gap := now.Sub(result.LastAliveTime)
+	if gap > 11*time.Minute {
+		t.Errorf("gap = %s, want ~10min (heartbeat should bound it, not the 8h startup)", gap)
+	}
+}
+
+// TestDiagnoseRestart_HeartbeatCrash verifies a crash (no reboot) with a recent
+// heartbeat is classified as a crash with a short gap from the last beat.
+func TestDiagnoseRestart_HeartbeatCrash(t *testing.T) {
+	tmpDir := t.TempDir()
+	idx := newTestIndex(t, tmpDir)
+
+	now := time.Now().Truncate(time.Second)
+	setShutdownTime(t, idx, now.Add(-20*time.Hour).Unix())
+	setStartupTime(t, idx, now.Add(-9*time.Hour).Unix())
+	setAliveTime(t, idx, now.Add(-15*time.Minute).Unix())
+
+	// System has been up a long time — not a reboot.
+	orig := GetSystemUptime
+	GetSystemUptime = func() (time.Duration, error) { return 30 * time.Hour, nil }
+	defer func() { GetSystemUptime = orig }()
+
+	result := DiagnoseRestart(idx, now, tmpDir)
+
+	if result.Class != ClassCrash {
+		t.Errorf("expected ClassCrash, got %s (summary: %s)", result.Class, result.Summary)
+	}
+	gap := now.Sub(result.LastAliveTime)
+	if gap > 16*time.Minute {
+		t.Errorf("gap = %s, want ~15min from last heartbeat", gap)
+	}
+}
+
+// TestDiagnoseRestart_CleanShutdownAfterHeartbeat verifies that a clean
+// shutdown recorded after the last heartbeat is still classified clean — the
+// shutdown timestamp is the most recent proof-of-life.
+func TestDiagnoseRestart_CleanShutdownAfterHeartbeat(t *testing.T) {
+	tmpDir := t.TempDir()
+	idx := newTestIndex(t, tmpDir)
+
+	now := time.Now().Truncate(time.Second)
+	startTime := now
+	// Heartbeat 5min before shutdown; shutdown 30s before restart.
+	setAliveTime(t, idx, now.Add(-5*time.Minute-30*time.Second).Unix())
+	setStartupTime(t, idx, now.Add(-2*time.Hour).Unix())
+	setShutdownTime(t, idx, now.Add(-30*time.Second).Unix())
+
+	result := DiagnoseRestart(idx, startTime, tmpDir)
+
+	if result.Class != ClassClean {
+		t.Errorf("expected ClassClean, got %s (summary: %s)", result.Class, result.Summary)
 	}
 }
