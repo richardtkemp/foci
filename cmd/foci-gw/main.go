@@ -427,6 +427,15 @@ Subcommands:
 		log.Infof("startup", "restart classified as %s: %s", diagnosis.Class, diagnosis.Summary)
 	}
 
+	// ========== Liveness heartbeat ==========
+	// Record a liveness timestamp every HeartbeatInterval so the next restart
+	// diagnosis measures actual downtime (time since the last beat) instead of
+	// time-since-startup. hbCancel is invoked at the top of runShutdown, before
+	// the clean-shutdown record is written, so a clean exit isn't misread as a
+	// crash by a heartbeat firing during shutdown.
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	go startup.RunHeartbeat(hbCtx, si.sessionIndex, startup.HeartbeatInterval)
+
 
 	// ========== HTTP server ==========
 	secretsPath := filepath.Join(filepath.Dir(configPath), "secrets.toml")
@@ -512,5 +521,5 @@ Subcommands:
 		shutdownTimeout = 30 * time.Second
 	}
 	runShutdown(agents, httpServer, &httpMu, connMgr, clients, si.sessionIndex,
-		shutdownConfig{gracefulTimeout: shutdownTimeout, ctx: ctx}, cancel)
+		shutdownConfig{gracefulTimeout: shutdownTimeout, ctx: ctx, stopHeartbeat: hbCancel}, cancel)
 }

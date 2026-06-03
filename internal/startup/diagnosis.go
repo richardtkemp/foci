@@ -2,6 +2,7 @@ package startup
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,8 +18,14 @@ import (
 const (
 	systemStateKeyLastCleanShutdown = "last_clean_shutdown"
 	systemStateKeyLastStartup       = "last_startup"
+	systemStateKeyLastAlive         = "last_alive"
 	cleanShutdownWindow             = 5 * time.Minute
 	maxDiagnosticLines              = 10
+
+	// HeartbeatInterval is how often the running process records a liveness
+	// timestamp so restart diagnosis can measure actual downtime rather than
+	// time-since-startup.
+	HeartbeatInterval = 15 * time.Minute
 )
 
 type RestartClass string
@@ -41,10 +48,13 @@ type DiagnosisResult struct {
 var GetSystemUptime = getSystemUptime
 
 func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir string) *DiagnosisResult {
-	// Read both timestamps to find the most recent proof-of-life.
+	// Read all proof-of-life timestamps to find the most recent.
 	// After a crash, last_clean_shutdown is stale, but last_startup
-	// still reflects when the crashed process started.
-	var shutdownUnix, startupUnix int64
+	// reflects when the crashed process started and last_alive (the
+	// periodic heartbeat) reflects roughly when it stopped running —
+	// so the measured gap approximates actual downtime, not the full
+	// time since the process started.
+	var shutdownUnix, startupUnix, aliveUnix int64
 	if raw, err := idx.GetSystemState(systemStateKeyLastCleanShutdown); err == nil && raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			shutdownUnix = v
@@ -53,6 +63,11 @@ func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir str
 	if raw, err := idx.GetSystemState(systemStateKeyLastStartup); err == nil && raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			startupUnix = v
+		}
+	}
+	if raw, err := idx.GetSystemState(systemStateKeyLastAlive); err == nil && raw != "" {
+		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			aliveUnix = v
 		}
 	}
 
@@ -66,11 +81,18 @@ func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir str
 		log.Debugf("startup", "could not read system uptime: %v", err)
 	}
 
-	// Use the most recent of shutdown/startup as the reference point.
+	// Use the most recent of shutdown/startup/heartbeat as the reference
+	// point. A clean shutdown only counts as clean if the shutdown record
+	// is the most recent — a later startup or heartbeat means the process
+	// ran (and stopped) after that shutdown was recorded.
 	lastAliveUnix := shutdownUnix
 	wasCleanShutdown := true
-	if startupUnix > shutdownUnix {
+	if startupUnix > lastAliveUnix {
 		lastAliveUnix = startupUnix
+		wasCleanShutdown = false
+	}
+	if aliveUnix > lastAliveUnix {
+		lastAliveUnix = aliveUnix
 		wasCleanShutdown = false
 	}
 
@@ -114,6 +136,35 @@ func DiagnoseRestart(idx *session.SessionIndex, startTime time.Time, logsDir str
 
 func RecordCleanShutdown(idx *session.SessionIndex) error {
 	return idx.SetSystemState(systemStateKeyLastCleanShutdown, strconv.FormatInt(time.Now().Unix(), 10))
+}
+
+// RecordHeartbeat writes the current time as the last_alive liveness timestamp.
+func RecordHeartbeat(idx *session.SessionIndex) error {
+	return idx.SetSystemState(systemStateKeyLastAlive, strconv.FormatInt(time.Now().Unix(), 10))
+}
+
+// RunHeartbeat records a liveness timestamp every interval until ctx is
+// cancelled. Intended to run in its own goroutine. The heartbeat lets restart
+// diagnosis measure actual downtime (time since the last beat) rather than the
+// full time since the process started. The caller must cancel ctx BEFORE
+// recording a clean shutdown so the shutdown timestamp stays the most recent
+// proof-of-life on a clean exit.
+func RunHeartbeat(ctx context.Context, idx *session.SessionIndex, interval time.Duration) {
+	if interval <= 0 {
+		interval = HeartbeatInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := RecordHeartbeat(idx); err != nil {
+				log.Warnf("startup", "record heartbeat: %v", err)
+			}
+		}
+	}
 }
 
 // WasCleanShutdown returns true if the last shutdown was clean (recorded
