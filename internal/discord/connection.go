@@ -138,7 +138,6 @@ func (b *Bot) resolveDisplay(sessionKey string) turn.TurnDisplay {
 		ShowThinking:  d.ShowThinking,
 		StreamOutput:  d.StreamOutput,
 		DisplayWidth:  d.DisplayWidth,
-		MaxChars:      discordMaxChars,
 		RenderOpts:    display.RenderOpts{MaxWidth: d.DisplayWidth},
 	}
 }

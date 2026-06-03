@@ -4,175 +4,162 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"foci/internal/platform"
 )
 
-// StreamTransport sends and edits streaming messages on a specific platform.
-// Implementations handle platform-specific formatting (e.g. HTML for Telegram).
-type StreamTransport interface {
-	// SendInitial sends the first streaming message with raw buffer text.
-	// Returns a string message ID for subsequent edits.
-	SendInitial(text string) (msgID string, err error)
-	// EditStream edits the streaming message with updated raw buffer text.
-	EditStream(msgID string, text string) error
+// StreamBuffer is a pure turn-side accumulator + silencing gate + pacing pump.
+// It holds NO msgID, NO maxChars, NO formatting. It wraps a StreamSink and
+// drives it: deltas accumulate into the buffer, and a ticker goroutine pushes
+// the latest snapshot to the sink at a fixed interval. All layout (chopping,
+// capping, rollover, message identity) lives in the StreamSink implementation
+// on the platform side.
+//
+// When live is false, the buffer accumulates text but never calls the sink —
+// the sink never surfaces and Finish returns (sink, false). This gives a
+// uniform interface regardless of streaming mode.
+type StreamBuffer struct {
+	sink     StreamSink
+	interval time.Duration
+	live     bool
+
+	mu       sync.Mutex
+	buf      strings.Builder
+	started  bool // pump started (first non-silencing delta released)
+	stopped  bool
+	surfaced bool // cached from sink.Close()
+	dirty    bool
+	stop     chan struct{}
+	done     chan struct{}
 }
 
-// StreamWriter accumulates text deltas and periodically edits a message
-// to show model output in real-time. The goroutine and initial message are
-// lazily started on the first delta (when live is true). When live is false,
-// the writer accumulates text into its buffer without sending any messages,
-// allowing a uniform interface regardless of streaming mode.
-type StreamWriter struct {
-	transport StreamTransport
-	interval  time.Duration
-	maxChars  int  // truncation limit for streaming
-	live      bool // when false, buffer-only (no messages or goroutines)
-
-	mu      sync.Mutex
-	buf     strings.Builder
-	msgID   string       // "" until first send
-	dirty   bool         // buffer changed since last edit
-	stopped bool         // true after Finish()
-	ticker  *time.Ticker // nil until first delta
-	stop    chan struct{} // signals editLoop to exit
-	done    chan struct{} // closed when editLoop goroutine exits
-}
-
-// NewStreamWriter creates a stream writer. When live is true, the first OnDelta
-// call sends a message and starts the periodic edit goroutine. When live is
-// false, deltas are accumulated in the buffer but no messages are sent.
-func NewStreamWriter(transport StreamTransport, interval time.Duration, maxChars int, live bool) *StreamWriter {
-	return &StreamWriter{
-		transport: transport,
-		interval:  interval,
-		maxChars:  maxChars,
-		live:      live,
-		stop:      make(chan struct{}),
-		done:      make(chan struct{}),
+// NewStreamBuffer creates a stream buffer wrapping the given sink. When live is
+// true, the first non-silencing OnDelta releases the pump (fires an immediate
+// Update and starts the ticker goroutine). When live is false, deltas are
+// accumulated but the sink is never driven.
+func NewStreamBuffer(sink StreamSink, interval time.Duration, live bool) *StreamBuffer {
+	return &StreamBuffer{
+		sink:     sink,
+		interval: interval,
+		live:     live,
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 }
 
-// OnDelta appends a text delta to the buffer. On the first call (live mode),
-// sends the initial message and starts the periodic edit goroutine — gated
-// by IsSilencingPrefix so that streams whose accumulated text might still
-// resolve to a silencing sentinel ([[NO_RESPONSE]] etc.) are held back from
-// Telegram until divergence is established. Once released, subsequent deltas
-// stream normally.
-func (sw *StreamWriter) OnDelta(delta string) {
-	sw.mu.Lock()
-	defer sw.mu.Unlock()
+// OnDelta appends a text delta to the buffer. On the first release (live mode),
+// it fires one immediate sink.Update so the first message appears promptly,
+// then starts the periodic pump goroutine.
+//
+// Streaming-prefix gate: the pump start is held while the accumulated buffer
+// could still resolve to a silencing sentinel ([[NO_RESPONSE]] etc.). Once
+// platform.IsSilencingPrefix returns false, the turn is known not to be
+// silenced and the pump is released. If the stream ends while still in the
+// prefix-ambiguous window, the sink is never driven and never surfaces — the
+// StreamingSink's IsSilent check at TurnComplete is the authoritative final
+// gate.
+func (b *StreamBuffer) OnDelta(delta string) {
+	b.mu.Lock()
 
-	if sw.stopped {
+	if b.stopped {
+		b.mu.Unlock()
 		return
 	}
 
-	sw.buf.WriteString(delta)
-	sw.dirty = true
+	b.buf.WriteString(delta)
+	b.dirty = true
 
-	// Lazy start: first delta triggers initial message + edit loop (live mode only).
-	// Streaming-prefix gate: hold the start while the buffer could still resolve
-	// to a silencing sentinel. Once IsSilencingPrefix returns false, we know the
-	// turn isn't being silenced and release. If the stream ends while still in
-	// the prefix-ambiguous window (e.g. text == "[[NO_RESPONSE]]"), no message
-	// is ever sent — the StreamingSink's IsSilent check at TurnComplete is the
-	// authoritative final gate, but by then there's nothing to clean up here.
-	if sw.live && sw.ticker == nil {
-		if platform.IsSilencingPrefix(sw.buf.String()) {
-			return
-		}
-		sw.sendInitial()
-		sw.ticker = time.NewTicker(sw.interval)
-		go sw.editLoop()
-	}
-}
-
-// sendInitial sends the first message with accumulated text. Called under lock.
-func (sw *StreamWriter) sendInitial() {
-	raw := sw.truncated()
-	msgID, err := sw.transport.SendInitial(raw)
-	if err != nil {
+	if !b.live || b.started {
+		b.mu.Unlock()
 		return
 	}
-	sw.msgID = msgID
-	sw.dirty = false
+
+	// Silencing gate: hold the start while the buffer could still resolve to a
+	// silencing sentinel.
+	if platform.IsSilencingPrefix(b.buf.String()) {
+		b.mu.Unlock()
+		return
+	}
+
+	// Release: snapshot for the immediate Update, then start the pump.
+	b.started = true
+	b.dirty = false
+	snapshot := b.buf.String()
+	b.mu.Unlock()
+
+	// Immediate first Update outside the lock (network I/O).
+	b.sink.Update(snapshot)
+
+	go b.pump()
 }
 
-// editLoop runs on a ticker goroutine, editing the message with the latest buffer contents.
-func (sw *StreamWriter) editLoop() {
-	defer close(sw.done)
+// pump runs on a ticker goroutine, pushing the latest buffer snapshot to the
+// sink whenever it is dirty.
+func (b *StreamBuffer) pump() {
+	defer close(b.done)
+
+	ticker := time.NewTicker(b.interval)
+	defer ticker.Stop()
 
 	for {
 		select {
-		case <-sw.stop:
+		case <-b.stop:
 			return
-		case <-sw.ticker.C:
+		case <-ticker.C:
 		}
 
-		sw.mu.Lock()
-		if !sw.dirty {
-			sw.mu.Unlock()
+		b.mu.Lock()
+		if !b.dirty {
+			b.mu.Unlock()
 			continue
 		}
-		raw := sw.truncated()
-		msgID := sw.msgID
-		sw.dirty = false
-		sw.mu.Unlock()
+		snapshot := b.buf.String()
+		b.dirty = false
+		b.mu.Unlock()
 
-		if msgID == "" {
-			continue
-		}
-
-		// Edit outside the lock to avoid holding during network I/O.
-		_ = sw.transport.EditStream(msgID, raw)
+		// Update outside the lock to avoid holding during network I/O.
+		b.sink.Update(snapshot)
 	}
 }
 
-// truncated returns the buffer contents, truncated to maxChars with "..." appended.
-// Truncation is rune-safe to avoid splitting multi-byte UTF-8 characters.
-// Called under lock.
-func (sw *StreamWriter) truncated() string {
-	s := sw.buf.String()
-	if len(s) > sw.maxChars {
-		// Find the last valid rune boundary at or before maxChars.
-		end := sw.maxChars
-		for end > 0 && !utf8.RuneStart(s[end]) {
-			end--
-		}
-		return s[:end] + "..."
-	}
-	return s
+// Content returns the full accumulated buffer contents. Safe to call after
+// Finish (used by the empty-FinalText fallback in the renderer).
+func (b *StreamBuffer) Content() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
-// Finish stops the edit loop and returns the message ID ("" if no deltas arrived).
-// Does NOT do a final flush — the caller handles the final edit with proper formatting.
-// Idempotent: safe to call multiple times (e.g. Finalize then deferred Cleanup).
-func (sw *StreamWriter) Finish() string {
-	sw.mu.Lock()
-	alreadyStopped := sw.stopped
-	sw.stopped = true
-	ticker := sw.ticker
-	msgID := sw.msgID
-	sw.mu.Unlock()
+// Finish stops the pump, closes the sink, caches whether it surfaced, and
+// returns the sink for the renderer to pass to Deliver. Idempotent: safe to
+// call multiple times (e.g. Finalize/OnReply then deferred Cleanup) — the pump
+// is stopped exactly once.
+func (b *StreamBuffer) Finish() (StreamSink, bool) {
+	b.mu.Lock()
+	alreadyStopped := b.stopped
+	b.stopped = true
+	started := b.started
+	b.mu.Unlock()
 
 	if alreadyStopped {
-		return msgID
+		b.mu.Lock()
+		surfaced := b.surfaced
+		b.mu.Unlock()
+		return b.sink, surfaced
 	}
 
-	if ticker != nil {
-		ticker.Stop()
-		close(sw.stop) // signal editLoop to exit
-		<-sw.done      // wait for editLoop to exit
+	// Stop the pump (if it was started) and wait for it to exit, so no Update
+	// races with the Close below.
+	if started {
+		close(b.stop)
+		<-b.done
 	}
 
-	return msgID
-}
+	surfaced := b.sink.Close()
 
-// Content returns the full accumulated buffer contents.
-// Safe to call after Finish.
-func (sw *StreamWriter) Content() string {
-	sw.mu.Lock()
-	defer sw.mu.Unlock()
-	return sw.buf.String()
+	b.mu.Lock()
+	b.surfaced = surfaced
+	b.mu.Unlock()
+
+	return b.sink, surfaced
 }

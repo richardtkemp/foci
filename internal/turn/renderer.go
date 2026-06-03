@@ -1,49 +1,11 @@
 package turn
 
 import (
+	"errors"
 	"strings"
 
-	"foci/internal/log"
 	"foci/internal/platform"
 )
-
-// TurnBackend provides platform-specific message rendering operations.
-type TurnBackend interface {
-	// FormatResponse converts raw response text to platform format
-	// (e.g. markdown to HTML for Telegram, passthrough for Discord).
-	FormatResponse(text string) string
-
-	// SendReply sends text as a response message (auto-formats and chunks).
-	SendReply(text string)
-
-	// SendChunked sends pre-formatted text, splitting into platform-appropriate chunks.
-	SendChunked(formatted string)
-
-	// EditMessage edits a message with pre-formatted text.
-	EditMessage(msgID string, formatted string) error
-
-	// SendWithThinkingButton sends formatted response with a thinking toggle
-	// button on the last chunk. Stores thinking data internally.
-	SendWithThinkingButton(formatted string, thinkingText string) error
-
-	// EditWithThinkingButton edits a message with formatted text and a thinking
-	// toggle button. Stores thinking data internally. Only stores if edit succeeds.
-	EditWithThinkingButton(msgID string, formatted string, thinkingText string) error
-
-	// BuildThinkingCombined builds a combined thinking + divider + response string
-	// in platform-specific format.
-	BuildThinkingCombined(responseFormatted string, thinkingText string) string
-
-	// FormatStreamPreview formats a truncated preview string for a stream message
-	// that was replaced by a full response below.
-	FormatStreamPreview(preview string) string
-
-	// SendTyping sends a typing indicator.
-	SendTyping()
-
-	// Logger returns the component logger.
-	Logger() *log.ComponentLogger
-}
 
 // ToolTracker exposes the subset of tool call tracker state needed by the renderer.
 type ToolTracker interface {
@@ -61,56 +23,53 @@ type ToolTracker interface {
 // Finalize method. The delivered/skip-re-delivery flag lives on the
 // StreamingSink that wraps the renderer (internal/turn/sink.go) — the renderer
 // itself is stateless across OnReply → Finalize boundaries.
+//
+// The renderer is platform-agnostic: it never measures text against a char
+// limit and never truncates. It hands the FULL response text to the platform
+// via Payload; the platform owns all layout (chopping, message identity,
+// streaming rollover, thinking-button placement). This is the #738 guarantee.
 type TurnRenderer struct {
-	backend  TurnBackend
+	platform Platform
 	tracker  ToolTracker
 	display  TurnDisplay
-	sw       *StreamWriter
-	newSW    func() *StreamWriter
+	sw       *StreamBuffer
+	newSB    func() *StreamBuffer
 	thinking strings.Builder
 
 	// thinkingPhase is true while thinking deltas are being streamed live
 	// (compact mode + streaming). Reset when the first text delta arrives.
 	thinkingPhase bool
 	// streamedThinkingLive is true when thinking was written to the current
-	// StreamWriter, so the Content() fallback knows to strip it.
+	// StreamBuffer, so the Content() fallback knows to strip it.
 	streamedThinkingLive bool
 }
 
-// NewTurnRenderer creates a TurnRenderer with the given backend, tracker, and display
-// settings. The newSW factory creates fresh StreamWriters for each segment (OnReply
-// creates a new writer after finishing the previous one).
-func NewTurnRenderer(backend TurnBackend, tracker ToolTracker, display TurnDisplay, newSW func() *StreamWriter) *TurnRenderer {
+// NewTurnRenderer creates a TurnRenderer with the given platform, tracker, and
+// display settings. The newSB factory creates fresh StreamBuffers for each
+// segment (it calls platform.OpenStream() and captures the streaming interval).
+// OnReply/Finalize recreate the buffer after each terminal delivery.
+func NewTurnRenderer(p Platform, tracker ToolTracker, display TurnDisplay, newSB func() *StreamBuffer) *TurnRenderer {
 	return &TurnRenderer{
-		backend: backend,
-		tracker: tracker,
-		display: display,
-		sw:      newSW(),
-		newSW:   newSW,
+		platform: p,
+		tracker:  tracker,
+		display:  display,
+		sw:       newSB(),
+		newSB:    newSB,
 	}
 }
 
-// Cleanup finishes the stream writer if it hasn't been finished yet.
+// Cleanup finishes the stream buffer if it hasn't been finished yet.
 // Safe to call from defer — Finish is idempotent.
 func (r *TurnRenderer) Cleanup() {
 	r.sw.Finish()
 }
 
 // OnReply handles intermediate text delivery invoked by the StreamingSink on
-// TextBlock events. When streaming is active, the text was already delivered
-// via the stream writer — finalize that message and clean up any tool call
-// preview. Otherwise, overwrite the tool call preview with the reply text
-// (preview mode) or send a new message.
+// TextBlock events. Intermediate replies never carry a thinking button
+// (matching the historical OnReply behaviour).
 //
 // Silencing gate: silent text (sentinels, empty) skips delivery entirely.
-// This is the authoritative gate for intermediate text — every downstream
-// delivery method (editToolPreviewWithReply, SendReply, EditMessage on the
-// stream message) is reachable only past this check, so no subsequent code
-// needs to repeat it.
-//
-// Bug fix: previously, the non-streaming fallback was guarded by
-// "else if !streamOutput", which dropped text when streaming was configured
-// but no stream deltas arrived. Now always delivers when no stream message exists.
+// This is the authoritative gate for intermediate text.
 func (r *TurnRenderer) OnReply(text string) {
 	// Strip any trailing silencing sentinel(s) before delivery. An agent that
 	// appends "[[NO_RESPONSE]]" to a real reply leaves real content; deliver
@@ -118,55 +77,58 @@ func (r *TurnRenderer) OnReply(text string) {
 	// to "" and takes the silent branch below.
 	text = platform.StripSilencingSuffix(text)
 	if text == "" {
-		// Silent intermediate text — clean up state without delivering.
-		// The streaming-prefix gate in StreamWriter.OnDelta keeps the sw
-		// from creating a Telegram message in the first place; this branch
-		// just stops the (already-empty) writer and clears any lingering
-		// tool preview so there's no orphaned UI.
-		r.backend.Logger().Debugf("OnReply: silent text, skipping delivery")
+		// Silent intermediate text — clean up state without delivering. The
+		// silencing gate in StreamBuffer.OnDelta keeps the sink from surfacing
+		// a message in the first place; this branch just stops the (already
+		// non-surfacing) buffer and clears any lingering tool preview.
+		r.platform.Logger().Debugf("OnReply: silent text, skipping delivery")
 		r.sw.Finish()
 		r.tracker.CleanupPreview()
-		r.sw = r.newSW()
-		r.thinkingPhase = false
-		r.streamedThinkingLive = false
+		r.resetStream()
 		return
 	}
-	msgID := r.sw.Finish()
-	r.backend.Logger().Debugf("OnReply: non-silent text (len=%d), stream_msg_id=%q", len(text), msgID)
-	if msgID != "" {
-		// Streaming: reply content is in the stream message. Finalize it
-		// and delete any lingering tool call preview. The stream buffer may
-		// itself end with a live-streamed sentinel — strip it from the
-		// committed edit so the final message is clean.
-		content := platform.StripSilencingSuffix(r.streamTextContent())
-		if strings.TrimSpace(content) != "" {
-			formatted := r.backend.FormatResponse(content)
-			_ = r.backend.EditMessage(msgID, formatted)
-		} else if strings.TrimSpace(text) != "" {
-			// Stream had no text content (e.g. only thinking deltas arrived,
-			// not the reply text), but OnReply has the reply. Edit the
-			// existing stream message with the reply — same as the happy path.
-			r.backend.Logger().Debugf("OnReply: stream text empty, editing with OnReply text (%d chars)", len(text))
-			formatted := r.backend.FormatResponse(text)
-			_ = r.backend.EditMessage(msgID, formatted)
+
+	sink, surfaced := r.sw.Finish()
+	r.platform.Logger().Debugf("OnReply: non-silent text (len=%d), stream_surfaced=%v", len(text), surfaced)
+
+	// Intermediate replies carry no thinking button — pass plain text. The full
+	// (uncut) text goes to Deliver; the platform splits as needed (#738).
+	p := Payload{Text: text}
+
+	if surfaced {
+		// The reply content already surfaced via the live stream. Deliver
+		// terminally, reusing the stream's message sequence, and clean up any
+		// lingering tool preview.
+		if _, err := r.platform.Deliver(p, sink); err != nil {
+			r.platform.Logger().Errorf("OnReply: deliver (stream) failed: %v", err)
 		}
 		r.tracker.CleanupPreview()
 	} else {
-		// No stream message. Always deliver — this fixes the bug where text
-		// was dropped when streaming was enabled but no deltas arrived.
-		if !r.editToolPreviewWithReply(text) {
-			r.backend.SendReply(text)
+		// No stream surfaced. Try to overwrite the tool-call preview in place;
+		// otherwise deliver as a fresh message (the sink has no msgIDs, so
+		// Deliver sends new).
+		if !r.tryEditPreview(p) {
+			if _, err := r.platform.Deliver(p, sink); err != nil {
+				r.platform.Logger().Errorf("OnReply: deliver failed: %v", err)
+			}
 		}
 		r.tracker.ResetMsgID()
 	}
-	// Fresh stream writer for the next segment.
-	r.sw = r.newSW()
+
+	r.resetStream()
+}
+
+// resetStream recreates the stream buffer for the next segment and clears the
+// per-segment thinking-phase flags.
+func (r *TurnRenderer) resetStream() {
+	r.sw = r.newSB()
 	r.thinkingPhase = false
 	r.streamedThinkingLive = false
 }
 
 // streamTextContent returns the text-only portion of the stream buffer.
 // When thinking was streamed live, it strips the thinking + divider prefix.
+// Safe to call after Finish (Content() still works post-Finish).
 func (r *TurnRenderer) streamTextContent() string {
 	content := r.sw.Content()
 	if !r.streamedThinkingLive {
@@ -180,29 +142,34 @@ func (r *TurnRenderer) streamTextContent() string {
 	return ""
 }
 
-// editToolPreviewWithReply edits the tool call preview message with intermediate
-// reply text, replacing the tool call indicator with the actual reply content.
-// Returns true if the edit succeeded. Falls back to false when there's no
-// preview, the mode isn't "preview", or the text is too long to edit in-place.
-func (r *TurnRenderer) editToolPreviewWithReply(text string) bool {
+// tryEditPreview attempts to overwrite the tool-call preview message in place
+// with the payload. Returns true when the edit succeeded. Falls back to false
+// when there's no preview, the mode isn't "preview", or the payload would chop
+// across messages (ErrTooLongForEdit) — in which case the preview is cleaned up
+// so the fresh split-send path doesn't leave an orphan. A genuine edit error
+// also returns false (caller falls through to a fresh send).
+//
+// Finalize additionally guards this behind !hasThinking, since previews can't
+// carry thinking buttons.
+func (r *TurnRenderer) tryEditPreview(p Payload) bool {
 	editID := r.tracker.LastMsgID()
 	if editID == "" || r.display.ShowToolCalls != "preview" {
 		return false
 	}
-	if strings.TrimSpace(text) == "" || len(text) > r.display.MaxChars {
+	err := r.platform.EditInPlace(editID, p)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, ErrTooLongForEdit):
 		r.tracker.CleanupPreview()
 		return false
-	}
-	formatted := r.backend.FormatResponse(text)
-	err := r.backend.EditMessage(editID, formatted)
-	if err != nil {
-		r.backend.Logger().Debugf("edit tool preview with reply: %v", err)
+	default:
+		r.platform.Logger().Debugf("edit tool preview: %v", err)
 		return false
 	}
-	return true
 }
 
-// OnThinkingDelta streams a thinking fragment to the current stream writer
+// OnThinkingDelta streams a thinking fragment to the current stream buffer
 // for live per-token progress. Does not accumulate into the builder — the
 // terminal ThinkingBlock (or OnThinking for non-streaming turns) is the
 // source of truth for the finalization button text.
@@ -223,17 +190,13 @@ func (r *TurnRenderer) OnThinkingDelta(delta string) {
 	r.sw.OnDelta(delta)
 	r.thinkingPhase = true
 	r.streamedThinkingLive = true
-	r.backend.SendTyping()
+	r.platform.SendTyping()
 }
 
 // OnThinking accumulates a complete thinking block for finalization and,
-// when no per-token streaming has already written to the stream writer,
+// when no per-token streaming has already written to the stream buffer,
 // also streams the full block in one chunk (legacy behaviour for callers
 // that don't emit ThinkingDelta events).
-//
-// Kept under the same name so existing tests and non-streaming call sites
-// keep working — the split between block and delta concerns is a pure
-// extension, not a rename.
 func (r *TurnRenderer) OnThinking(thinking string) {
 	mode := r.display.ShowThinking
 	if mode == "off" || mode == "" {
@@ -245,7 +208,7 @@ func (r *TurnRenderer) OnThinking(thinking string) {
 	r.thinking.WriteString(thinking)
 
 	// Stream the full block if per-token deltas didn't already write to the
-	// stream writer. When OnThinkingDelta has already fired for this block,
+	// stream buffer. When OnThinkingDelta has already fired for this block,
 	// streamedThinkingLive is set and we skip to avoid duplicating the text.
 	if r.streamedThinkingLive {
 		return
@@ -254,11 +217,11 @@ func (r *TurnRenderer) OnThinking(thinking string) {
 		r.sw.OnDelta(thinking)
 		r.thinkingPhase = true
 		r.streamedThinkingLive = true
-		r.backend.SendTyping()
+		r.platform.SendTyping()
 	}
 }
 
-// OnTextDelta handles streaming delta callbacks: updates the stream writer
+// OnTextDelta handles streaming delta callbacks: updates the stream buffer
 // and refreshes the typing indicator. When transitioning from a live thinking
 // phase (compact mode), inserts a divider so thinking and response are
 // visually separated during streaming.
@@ -268,160 +231,92 @@ func (r *TurnRenderer) OnTextDelta(delta string) {
 		r.thinkingPhase = false
 	}
 	r.sw.OnDelta(delta)
-	r.backend.SendTyping()
+	r.platform.SendTyping()
 }
 
 // OnActivity refreshes the typing indicator when tools complete.
 func (r *TurnRenderer) OnActivity() {
-	r.backend.SendTyping()
+	r.platform.SendTyping()
 }
 
 // Finalize renders the final agent response. It handles all combinations of
-// streaming/non-streaming, thinking modes, response length, and tool call
-// previews.
+// streaming/non-streaming, thinking modes, and tool call previews by building
+// a single Payload and handing it to the platform, which owns layout.
 //
 // Finalize is invoked exclusively on the "not-yet-delivered" path — the
 // StreamingSink owns the delivered flag and calls Cleanup()+tracker.CleanupPreview()
-// directly when intermediate delivery already happened. This keeps the
-// renderer stateless across delivery boundaries.
+// directly when intermediate delivery already happened.
 //
 // Silencing gate: silent responses (sentinels, empty) skip delivery entirely.
-// This is the authoritative gate for final-text delivery; every downstream
-// path inside Finalize is reachable only past this check. The check is
-// applied AFTER the stream-content fallback so an empty FinalText that
-// the buffer fills in with real content is not mistaken for silence.
+// The check is applied AFTER the stream-content fallback so an empty FinalText
+// that the buffer fills in with real content is not mistaken for silence.
 func (r *TurnRenderer) Finalize(response string) {
-	// Finish the stream writer and get the message ID it created (if any).
-	// The agent's tool-loop accumulator only exposes text from the *last*
-	// API call via FinalText — when response is empty but the stream has
-	// content, fall back to the stream buffer so the message is finalised.
-	streamMsgID := r.sw.Finish()
-	r.backend.Logger().Debugf("Finalize: response_len=%d stream_msg_id=%q", len(response), streamMsgID)
+	// Finish the stream buffer. The agent's tool-loop accumulator only exposes
+	// text from the *last* API call via FinalText — when response is empty but
+	// the stream has content, fall back to the stream buffer so the message is
+	// finalised.
+	sink, surfaced := r.sw.Finish()
+	r.platform.Logger().Debugf("Finalize: response_len=%d stream_surfaced=%v", len(response), surfaced)
 	if textContent := r.streamTextContent(); strings.TrimSpace(response) == "" && strings.TrimSpace(textContent) != "" {
-		r.backend.Logger().Debugf("Finalize: response was empty, falling back to stream buffer (len=%d)", len(textContent))
+		r.platform.Logger().Debugf("Finalize: response was empty, falling back to stream buffer (len=%d)", len(textContent))
 		response = textContent
 	}
 
 	// Strip any trailing silencing sentinel(s) before delivery — covers both
-	// the FinalText path and the stream-buffer fallback above (either may end
-	// with a sentinel an agent appended to a real reply). A response that is
-	// entirely sentinel strips to "" and takes the silent branch below; every
-	// downstream delivery path uses `response`, so one strip here suffices.
+	// the FinalText path and the stream-buffer fallback above. A response that
+	// is entirely sentinel strips to "" and takes the silent branch below.
 	response = platform.StripSilencingSuffix(response)
 
 	if response == "" {
-		// Silent final response — nothing to deliver. The streaming-prefix
-		// gate keeps the sw from having created a Telegram message when the
-		// content was sentinel-only; clean up any lingering tool preview.
-		r.backend.Logger().Debugf("Finalize: silent response, skipping delivery")
+		r.platform.Logger().Debugf("Finalize: silent response, skipping delivery")
 		r.tracker.CleanupPreview()
 		return
 	}
-	r.backend.Logger().Debugf("Finalize: delivering non-silent response (len=%d)", len(response))
+	r.platform.Logger().Debugf("Finalize: delivering non-silent response (len=%d)", len(response))
 
 	thinkingText := r.thinking.String()
-	showThinkMode := r.display.ShowThinking
-	hasThinking := thinkingText != "" && showThinkMode != "off" && showThinkMode != ""
+	mode := r.display.ShowThinking
+	hasThinking := thinkingText != "" && mode != "off" && mode != ""
 
-	// Stream finalization: edit the stream message in-place when possible.
-	if streamMsgID != "" && len(response) <= r.display.MaxChars {
-		r.finalizeStreamShort(streamMsgID, response, thinkingText, showThinkMode, hasThinking)
+	// Resolve the thinking mode into the platform-neutral Payload vocabulary.
+	// Current semantics: "true" → full-combined body, "compact" → button on
+	// last chunk, everything else → plain.
+	p := Payload{Text: response}
+	if hasThinking {
+		p.ThinkingText = thinkingText
+		switch mode {
+		case "true":
+			p.ThinkingMode = "full"
+		case "compact":
+			p.ThinkingMode = "compact"
+		default:
+			p.ThinkingMode = "off"
+		}
+	} else {
+		p.ThinkingMode = "off"
+	}
+
+	// Stream surfaced: deliver terminally, reusing the stream's message
+	// sequence. The platform handles thinking-button placement and rollover.
+	if surfaced {
+		if _, err := r.platform.Deliver(p, sink); err != nil {
+			r.platform.Logger().Errorf("Finalize: deliver (stream) failed: %v", err)
+		}
 		r.tracker.CleanupPreview()
 		return
 	}
 
-	// Stream message exists but response is too long — send as new message(s)
-	// and convert the stream message to a truncated preview.
-	if streamMsgID != "" {
-		r.sendWithThinkingMode(response, thinkingText, showThinkMode, hasThinking)
-		r.editStreamPreview(streamMsgID, response)
-		r.tracker.CleanupPreview()
+	// No stream surfaced. Try the tool-preview edit, but only when there's no
+	// thinking (previews can't carry thinking buttons — matching the historical
+	// guard).
+	if !hasThinking && r.tryEditPreview(p) {
 		return
 	}
 
-	// No streaming — try editing the tool call preview in-place.
-	if r.tryEditToolPreview(response, hasThinking) {
-		return
-	}
-
-	// Response sent as a new message — clean up any lingering tool call preview.
+	// Fresh terminal delivery. CleanupPreview first so no orphan preview
+	// lingers next to the new message(s).
 	r.tracker.CleanupPreview()
-	r.sendWithThinkingMode(response, thinkingText, showThinkMode, hasThinking)
-}
-
-// finalizeStreamShort edits the stream message in-place with the final response
-// (which fits within MaxChars).
-func (r *TurnRenderer) finalizeStreamShort(streamMsgID, response, thinkingText, showThinkMode string, hasThinking bool) {
-	formatted := r.backend.FormatResponse(response)
-	switch {
-	case hasThinking && showThinkMode == "compact":
-		err := r.backend.EditWithThinkingButton(streamMsgID, formatted, thinkingText)
-		if err != nil {
-			r.backend.Logger().Errorf("edit stream with thinking button: %v", err)
-		}
-	case hasThinking && showThinkMode == "true":
-		combined := r.backend.BuildThinkingCombined(formatted, thinkingText)
-		err := r.backend.EditMessage(streamMsgID, combined)
-		if err != nil {
-			r.backend.Logger().Errorf("edit stream with full thinking: %v", err)
-		}
-	default:
-		err := r.backend.EditMessage(streamMsgID, formatted)
-		if err != nil {
-			r.backend.Logger().Debugf("edit stream final: %v (stream already has content)", err)
-		}
+	if _, err := r.platform.Deliver(p, sink); err != nil {
+		r.platform.Logger().Errorf("Finalize: deliver failed: %v", err)
 	}
-}
-
-// sendWithThinkingMode sends a response as a new message, applying the
-// appropriate thinking display mode.
-func (r *TurnRenderer) sendWithThinkingMode(response, thinkingText, showThinkMode string, hasThinking bool) {
-	switch {
-	case hasThinking && showThinkMode == "true":
-		formatted := r.backend.FormatResponse(response)
-		combined := r.backend.BuildThinkingCombined(formatted, thinkingText)
-		r.backend.SendChunked(combined)
-	case hasThinking && showThinkMode == "compact":
-		formatted := r.backend.FormatResponse(response)
-		err := r.backend.SendWithThinkingButton(formatted, thinkingText)
-		if err != nil {
-			r.backend.Logger().Errorf("send reply with thinking button: %v", err)
-		}
-	default:
-		r.backend.SendReply(response)
-	}
-}
-
-// tryEditToolPreview attempts to edit the tool call preview message with the
-// final response. Returns true if successful.
-func (r *TurnRenderer) tryEditToolPreview(response string, hasThinking bool) bool {
-	editID := r.tracker.LastMsgID()
-	if editID == "" || r.display.ShowToolCalls != "preview" || hasThinking || len(response) > r.display.MaxChars {
-		return false
-	}
-	formatted := r.backend.FormatResponse(response)
-	err := r.backend.EditMessage(editID, formatted)
-	if err != nil {
-		r.backend.Logger().Debugf("edit final response failed, falling back: %v", err)
-		return false
-	}
-	return true
-}
-
-// editStreamPreview edits the stream message to a truncated preview when the
-// final response was sent as a separate message (too long, has thinking, etc.).
-func (r *TurnRenderer) editStreamPreview(streamMsgID, response string) {
-	if streamMsgID == "" {
-		return
-	}
-	preview := truncate(response, 200)
-	formatted := r.backend.FormatStreamPreview(preview)
-	_ = r.backend.EditMessage(streamMsgID, formatted)
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
 }
