@@ -97,7 +97,7 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 
 	var offset int64
 	var consecutiveErrors int
-	const errorEscalateThreshold = 5 // escalate to ERROR after this many consecutive failures
+	const errorEscalateThreshold = 5 // log one ERROR when failures reach this count; DEBUG before and after
 	// Error backoff: exponential from baseBackoff, doubling per consecutive
 	// failure, capped at maxBackoff, reset on first success. This stops a
 	// fast-failing error (e.g. a 502 that returns immediately instead of
@@ -166,10 +166,16 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			if res.err != nil {
 				consecutiveErrors++
 				sanitized := b.sanitizeError(res.err)
-				if consecutiveErrors >= errorEscalateThreshold {
-					b.logger().Errorf("get updates (%d consecutive failures): %s", consecutiveErrors, sanitized)
+				// Log ERROR exactly once — on the poll that crosses the
+				// escalation threshold. Every failure before and after that
+				// stays at DEBUG, so a sustained outage produces a single
+				// ERROR per bot rather than one per poll (a 14-min outage was
+				// emitting ~16 ERROR lines per bot). Recovery is logged once
+				// on the next success (see below).
+				if consecutiveErrors == errorEscalateThreshold {
+					b.logger().Errorf("get updates failing (%d consecutive failures; further failures logged at debug until recovery): %s", consecutiveErrors, sanitized)
 				} else {
-					b.logger().Debugf("get updates (transient): %s", sanitized)
+					b.logger().Debugf("get updates (failure #%d): %s", consecutiveErrors, sanitized)
 				}
 
 				// Exponential backoff, capped.
@@ -195,6 +201,11 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				case <-time.After(wait):
 				}
 				continue
+			}
+			// Recovery: if we had escalated to ERROR, log a single INFO line
+			// so the log shows the outage ended (paired with the one ERROR).
+			if consecutiveErrors >= errorEscalateThreshold {
+				b.logger().Infof("get updates recovered after %d consecutive failures", consecutiveErrors)
 			}
 			consecutiveErrors = 0
 
