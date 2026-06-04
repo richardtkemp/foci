@@ -128,8 +128,8 @@ func TestSessionsListWithSessions(t *testing.T) {
 }
 
 // TestSessionsDefaultValid verifies that "default <chatID>" successfully
-// updates the state store's default_chat entry when the target chat session
-// exists, and returns a confirmation message containing the new default chat ID.
+// updates the per-platform default chat (is_default) when the target chat
+// session exists, and returns a confirmation message containing the new default chat ID.
 func TestSessionsDefaultValid(t *testing.T) {
 	// Verifies that /sessions default <chatID> sets the default when the session exists.
 	cc, store, ss := sessionsTestCC(t, "test-agent")

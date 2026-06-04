@@ -243,24 +243,6 @@ func migrateStateJSON(jsonPath string, idx *session.SessionIndex) {
 				_ = idx.SetAgentMetadata(parts[1], "last_user_activity", strVal)
 			}
 
-		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/default_chat"):
-			parts := strings.SplitN(key, "/", 3)
-			if len(parts) == 3 {
-				chatID, err := strconv.ParseInt(strVal, 10, 64)
-				if err == nil && chatID != 0 {
-					_ = idx.SetDefaultChat(parts[1], "telegram", chatID)
-				}
-			}
-
-		case strings.HasPrefix(key, "agent/") && strings.HasSuffix(key, "/default_channel"):
-			parts := strings.SplitN(key, "/", 3)
-			if len(parts) == 3 {
-				chatID, err := strconv.ParseInt(strVal, 10, 64)
-				if err == nil && chatID != 0 {
-					_ = idx.SetDefaultChat(parts[1], "discord", chatID)
-				}
-			}
-
 		case strings.HasPrefix(key, "agent/") && strings.Contains(key, "/chat/") && strings.HasSuffix(key, "/username"):
 			// agent/<id>/chat/<cid>/username
 			parts := strings.SplitN(key, "/", 5) // agent, <id>, chat, <cid>, username
