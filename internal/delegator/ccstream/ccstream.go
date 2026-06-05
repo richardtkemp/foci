@@ -868,13 +868,25 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		// SessionEvents.OnText carry the response. inj.Turn is
 		// intentionally ignored.
 		//
-		// NOTE(#813): a plain in-flight follow-up is a sibling of the steer
-		// path and may ALSO produce a shadow turn (separate OnResult). It is
-		// NOT re-armed here yet: Phase 1 log-mining saw zero plain follow-ups,
-		// so unlike the steer case (double-OnResult confirmed 6/6 + the live
-		// incident) the fold behaviour is unverified. Re-arming on a follow-up
-		// that actually folds into the SAME ask() would delay its reply until
-		// the watchdog fires. Verify the OnResult-count first, then join.
+		// NOTE(#813): deliberately NOT re-armed here — this is the opposite
+		// decision from the SourceSteer branch below, and it is intentional.
+		// A plain follow-up does NOT create a shadow turn: because it goes in
+		// at default priority ("next"), CC drains it at the next tool boundary
+		// INTO the running ask(), producing a SINGLE OnResult that delivers the
+		// reply in-turn. A steer goes in at "now", which forces an immediate
+		// drain that aborts the current ask() and spawns the reply as a second,
+		// untracked result (the shadow turn) — that is the only path #813's
+		// re-arm exists to protect.
+		// Verified by log-mining (2026-06): every in-flight SourceUser inject
+		// produced exactly one OnResult(had_turn_events=true, delivered=true);
+		// no same-second output=0 abort, no second shadow result — across the
+		// 257 in-flight follow-ups in the archives, vs the steer's confirmed
+		// double-OnResult signature. (Phase 1's "zero follow-ups" was a sampling
+		// artefact of one short window, not the real frequency.)
+		// Re-arming here would be a REGRESSION: reArmForContinuation suppresses
+		// completion to wait for a second OnResult that never arrives, so the
+		// reply would sit idle until the ~45s watchdog fires — a visible delay
+		// on a common path, for no benefit.
 		return b.sendUserMessage(inj.Text)
 
 	case delegator.SourceSteer:
