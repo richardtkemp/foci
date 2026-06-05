@@ -198,6 +198,47 @@ func IsSilencingPrefix(text string) bool {
 	return false
 }
 
+// spuriousLeadingTokens are bare words the model has been observed to emit as a
+// standalone leading text block on system-injected turns (keepalive, cron) — a
+// decoding artifact, not content. Observed with Opus 4.8: a lone "court"
+// prepended before the turn's first tool call, which then ships to the user as
+// a junk message. The glitch never occurs on real user turns. Tokens here are
+// stripped from the START of delivered text only (see StripSpuriousPrefix).
+var spuriousLeadingTokens = []string{"court"}
+
+// StripSpuriousPrefix removes a single leading spurious token (see
+// spuriousLeadingTokens) when it stands alone at the very start of the text —
+// the token must be the entire text or be immediately followed by whitespace.
+// The whitespace after the token is consumed too, so "court\n\nreal reply"
+// becomes "real reply" and a bare "court" becomes "" (then suppressed by the
+// IsSilent gate upstream). A token embedded in a larger word ("courthouse",
+// "courtship") or appearing anywhere but the start ("see you in court") is
+// left untouched. Idempotent: clean text is returned verbatim.
+//
+// This mirrors StripSilencingSuffix but at the front of the message: it is the
+// single matcher for leading-junk removal, applied at the same delivery
+// chokepoints, before the silencing check.
+func StripSpuriousPrefix(text string) string {
+	s := strings.TrimLeft(text, " \t\r\n")
+	for _, tok := range spuriousLeadingTokens {
+		if !strings.HasPrefix(s, tok) {
+			continue
+		}
+		rest := s[len(tok):]
+		if rest == "" {
+			// The token is the entire (trimmed) message.
+			return ""
+		}
+		// Require a word boundary so we never bite into "courthouse": the
+		// character after the token must be ASCII whitespace.
+		switch rest[0] {
+		case ' ', '\t', '\r', '\n':
+			return strings.TrimLeft(rest, " \t\r\n")
+		}
+	}
+	return text
+}
+
 
 type Sender interface {
 	TextSender

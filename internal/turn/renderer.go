@@ -71,11 +71,12 @@ func (r *TurnRenderer) Cleanup() {
 // Silencing gate: silent text (sentinels, empty) skips delivery entirely.
 // This is the authoritative gate for intermediate text.
 func (r *TurnRenderer) OnReply(text string) {
-	// Strip any trailing silencing sentinel(s) before delivery. An agent that
-	// appends "[[NO_RESPONSE]]" to a real reply leaves real content; deliver
-	// the content without the marker. Text that is *entirely* sentinel strips
-	// to "" and takes the silent branch below.
-	text = platform.StripSilencingSuffix(text)
+	// Strip a leading spurious token (e.g. the "court" decoding artifact on
+	// injected turns) before anything else, then strip trailing silencing
+	// sentinel(s). An agent that appends "[[NO_RESPONSE]]" to a real reply
+	// leaves real content; deliver the content without the marker. Text that is
+	// *entirely* sentinel/junk strips to "" and takes the silent branch below.
+	text = platform.StripSilencingSuffix(platform.StripSpuriousPrefix(text))
 	if text == "" {
 		// Silent intermediate text — clean up state without delivering. The
 		// silencing gate in StreamBuffer.OnDelta keeps the sink from surfacing
@@ -262,10 +263,11 @@ func (r *TurnRenderer) Finalize(response string) {
 		response = textContent
 	}
 
-	// Strip any trailing silencing sentinel(s) before delivery — covers both
-	// the FinalText path and the stream-buffer fallback above. A response that
-	// is entirely sentinel strips to "" and takes the silent branch below.
-	response = platform.StripSilencingSuffix(response)
+	// Strip a leading spurious token then trailing silencing sentinel(s) before
+	// delivery — covers both the FinalText path and the stream-buffer fallback
+	// above. A response that is entirely sentinel/junk strips to "" and takes
+	// the silent branch below.
+	response = platform.StripSilencingSuffix(platform.StripSpuriousPrefix(response))
 
 	if response == "" {
 		r.platform.Logger().Debugf("Finalize: silent response, skipping delivery")

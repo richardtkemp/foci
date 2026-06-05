@@ -341,6 +341,42 @@ func TestStripSilencingSuffix(t *testing.T) {
 	}
 }
 
+// TestStripSpuriousPrefix covers leading-junk removal: a standalone leading
+// spurious token (the "court" Opus-4.8 decoding artifact) is stripped from the
+// start of the text; a bare token collapses to ""; the token embedded in a
+// larger word or appearing anywhere but the start is left untouched.
+func TestStripSpuriousPrefix(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"bare_token", "court", ""},
+		{"bare_token_padded", "  court \n", ""},
+		{"token_then_newlines_then_text", "court\n\nreal reply", "real reply"},
+		{"token_then_space_then_text", "court actual content", "actual content"},
+		{"leading_ws_then_token_then_text", "\n court\nrest", "rest"},
+		// Negative cases: must NOT strip.
+		{"embedded_in_word", "courthouse rules", "courthouse rules"},
+		{"courtship_untouched", "courtship is old", "courtship is old"},
+		{"token_not_at_start", "see you in court", "see you in court"},
+		{"normal_text", "hello world", "hello world"},
+		{"capitalized_word_untouched", "Court adjourned", "Court adjourned"},
+		{"clean_text_idempotent", "real reply", "real reply"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := StripSpuriousPrefix(tc.in); got != tc.want {
+				t.Errorf("StripSpuriousPrefix(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsSilencingPrefix covers the streaming gate: returns true while the
 // accumulated buffer could still resolve to a silencing sentinel, false
 // once divergence is established. The streaming transport uses this to
