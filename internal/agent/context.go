@@ -87,6 +87,17 @@ func isUserTrigger(trigger string) bool {
 	}
 }
 
+// nudgesAllowed reports whether automatic nudges should fire on this turn.
+// Nudges (turn-interval, regex, after-tools, pre-answer) exist to shape the
+// agent's user-facing reply. System-internal turns — reflection, keepalive,
+// consolidation, session-end memory — produce no user-facing answer, so every
+// nudge path is suppressed for them. Without this gate the pre-answer gate
+// fires "verify before answering" on reflection turns that wrote memory files,
+// and system turns inflate the every_n_turns lifetime counter. (#815)
+func nudgesAllowed(ts *TurnState) bool {
+	return isUserTrigger(ts.Trigger)
+}
+
 // triggerToPlatform maps a trigger label to a platform name for the [meta] header.
 // Platform tells the agent which transport delivered the message:
 //   - telegram: message arrived via Telegram text

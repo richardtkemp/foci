@@ -194,7 +194,9 @@ func (t *APITransport) BuildSystemAndTools(ts *TurnState) {
 // Extracted from agent.go:484-501.
 func (t *APITransport) InjectNudges(ts *TurnState) {
 	a := t.agent
-	if a.Nudger == nil {
+	// Skip before StartTurn on non-user turns so system turns don't advance
+	// the every_n_turns counter or fire nudges. (#815)
+	if a.Nudger == nil || !nudgesAllowed(ts) {
 		return
 	}
 	a.Nudger.StartTurn(ts.Texts[0])
@@ -384,7 +386,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 
 		if resp.StopReason != "tool_use" {
 			// Pre-answer verification gate.
-			if !verified && a.Nudger != nil && a.NudgePreAnswerGate && i >= a.NudgePreAnswerMinTools {
+			if !verified && a.Nudger != nil && a.NudgePreAnswerGate && i >= a.NudgePreAnswerMinTools && nudgesAllowed(ts) {
 				if reminder := a.Nudger.CheckPreAnswer(); reminder != "" {
 					verifyMsg := provider.Message{
 						Role:    "user",
@@ -478,7 +480,7 @@ func (t *APITransport) RunInference(ts *TurnState) error {
 		}
 
 		// Nudge reminders.
-		if a.Nudger != nil {
+		if a.Nudger != nil && nudgesAllowed(ts) {
 			if reminders := a.Nudger.CheckAfterTools(toolCallCount, lastToolError); len(reminders) > 0 {
 				for _, r := range reminders {
 					toolResults = append(toolResults, provider.ContentBlock{Type: "text", Text: wrapNudge(r)})

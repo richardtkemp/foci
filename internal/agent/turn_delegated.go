@@ -75,7 +75,10 @@ func (t *DelegatedTransport) BuildSystemAndTools(ts *TurnState) {}
 // InjectNudges prepends behavioral nudge reminders to the prompt string.
 func (t *DelegatedTransport) InjectNudges(ts *TurnState) {
 	a := t.agent
-	if a.Nudger == nil || len(ts.Texts) == 0 {
+	// Returning before StartTurn means non-user turns (reflection, keepalive,
+	// etc.) do not advance the every_n_turns lifetime counter — so the cadence
+	// tracks user turns only, and no nudge fires on a system turn. (#815)
+	if a.Nudger == nil || len(ts.Texts) == 0 || !nudgesAllowed(ts) {
 		return
 	}
 	a.Nudger.StartTurn(ts.Texts[0])
@@ -257,7 +260,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 	// between turns; the backend tolerates that.
 	turnEvents := &delegator.TurnEvents{
 		PostToolNudgeFunc: func(toolName, toolInput string, isError bool) []string {
-			if a.Nudger == nil {
+			if a.Nudger == nil || !nudgesAllowed(ts) {
 				return nil
 			}
 			toolCount++
@@ -277,7 +280,7 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 			return out
 		},
 		PreAnswerNudgeFunc: func(result *delegator.TurnResult) string {
-			if preAnswerFired || a.Nudger == nil || !a.NudgePreAnswerGate {
+			if preAnswerFired || a.Nudger == nil || !a.NudgePreAnswerGate || !nudgesAllowed(ts) {
 				return ""
 			}
 			if toolCount < a.NudgePreAnswerMinTools {

@@ -1477,6 +1477,15 @@ Rules are extracted once from character files via an LLM call, then cached in `{
 - **every_n_tools / after_error** — wired through `delegator.TurnEvents.PostToolNudgeFunc`. ccstream's `handleHookResponse` invokes this callback after each `OnToolEnd` dispatch (once per PostToolUse hook event), and sends any returned reminders to CC as plain `[user] <text>` user messages via `writer.SendUser` at default queue priority. CC's mid-turn drain (`claude-code/src/query.ts:1570-1589`) folds the message into the current `ask()` as an attachment to the next tool-result batch, so the model addresses the nudge in the same turn and its response reaches the user through the always-live `SessionEvents.OnText` path. There is no separate ask/result cycle for the nudge.
 - **pre_answer** — wired through `delegator.TurnEvents.PreAnswerNudgeFunc`. On `OnResult`, ccstream gives the bookkeeping callback a chance to return a verification follow-up. When non-empty, ccstream re-runs `beginTurn` with the same `TurnEvents`, sends the follow-up via `writer.SendUser`, and skips `OnTurnComplete` until the second round's `OnResult`. `turn_delegated.go` tracks `preAnswerFired` in a closure local so the gate fires at most once per user turn, stashes round-1 usage/text so the final `OnTurnComplete` can fold usage into `ts.FinalUsage`, and restores the original answer when round 2 echoes `NoResponseSentinel`. Unlike the API path, the round-1 answer has already streamed to the user as intermediate text via `SessionEvents.OnText` — round 2's text becomes the authoritative final reply.
 
+### Trigger Gate (`nudgesAllowed`, #815)
+
+All four nudge paths are gated on `nudgesAllowed(ts) == isUserTrigger(ts.Trigger)` (`context.go`). Nudges shape the agent's user-facing reply, so they fire **only on user-triggered turns**. System-internal turns — `reflection`, `keepalive`, `consolidation`, `session_end_memory` (trigger set in `cmd/foci-gw/agent_sessions.go` via `WithTrigger(ctx, branchType)`) — are exempt at every site:
+
+- `InjectNudges` (both transports) returns *before* `Scheduler.StartTurn`, so system turns also do not advance the `every_n_turns` lifetime counter — the cadence tracks user turns only.
+- `PostToolNudgeFunc` / API after-tools loop, and `PreAnswerNudgeFunc` / API pre-answer gate, each short-circuit on a non-user trigger.
+
+Without this gate, the pre-answer gate fired "verify before answering" on reflection turns that wrote memory files (observed 2026-06-05; `ts.Trigger` is populated at `turn_orchestrator.go` before any nudge site runs).
+
 ### Configuration
 
 Cooldown (min tool calls between repeating the same rule, default 5) and max-per-batch (max reminders per tool batch, default 1) prevent spam. All config is per-agent via `nudge_enable`, `nudge_cooldown`, `nudge_max_per_batch`, `nudge_pre_answer_gate`, `nudge_pre_answer_min_tools`, `nudge_default_enable`, `nudge_default_frequency`.
