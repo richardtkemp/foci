@@ -528,6 +528,40 @@ func (b *Backend) cancelTurn() {
 	b.turnMu.Unlock()
 }
 
+// reArmForContinuation keeps the current turn open for another ask() cycle
+// instead of completing it. It re-initialises turn state via beginTurn with the
+// SAME TurnEvents, so:
+//   - OnTurnComplete is NOT fired (the caller returns early), which keeps the
+//     agent-level in-flight refcount held — it releases only when
+//     OrchestrateFullTurn returns after OnTurnComplete fires; and
+//   - the same delivering sink carries the next ask()'s output.
+//
+// If followUp is non-empty it is sent as a fresh user message — the pre-answer
+// re-dispatch case, which needs an explicit new ask(). If followUp is empty the
+// caller has already written the continuation to CC's stdin (a folded
+// steer/user inject) and we only re-arm.
+//
+// Returns true if the turn was re-armed and the caller MUST return early.
+// Returns false only when a non-empty followUp failed to send: the turn is
+// cancelled and the caller should fall through to normal completion so the
+// first-round result is still delivered.
+func (b *Backend) reArmForContinuation(turn *delegator.TurnEvents, followUp string) bool {
+	b.beginTurn(turn)
+	if followUp != "" {
+		if err := b.writer.SendUser(followUp); err != nil {
+			b.logger().Errorf("re-arm continuation: send user: %v", err)
+			b.cancelTurn()
+			return false
+		}
+	}
+	if b.typingFunc != nil {
+		b.typingFunc(true)
+	}
+	// Restart the idle clock; the continuation is an active turn, not done.
+	b.touchActivity()
+	return true
+}
+
 // sendToPane is the internal begin-turn primitive: starts a fresh turn
 // with the given bookkeeping callbacks and sends a plain text user message.
 // Called from Inject's begin-turn path (SourceUser/Steer at idle); not part
@@ -1180,21 +1214,11 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// re-prompt, not a fold-in.
 	if turn != nil && turn.PreAnswerNudgeFunc != nil {
 		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
-			b.beginTurn(turn)
-			if err := b.writer.SendUser(followUp); err != nil {
-				b.logger().Errorf("pre-answer re-dispatch: send user: %v", err)
-				b.cancelTurn()
-				// Fall through to the normal completion path so the
-				// first-round result is still delivered on failure.
-			} else {
-				if b.typingFunc != nil {
-					b.typingFunc(true)
-				}
-				// Restart the idle clock; the second round is an active
-				// continuation, not a completed turn.
-				b.touchActivity()
+			if b.reArmForContinuation(turn, followUp) {
 				return
 			}
+			// Re-dispatch failed; fall through to the normal completion
+			// path so the first-round result is still delivered.
 		}
 	}
 
