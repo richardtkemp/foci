@@ -332,6 +332,41 @@ func TestDelegatedTransport_InjectNudges_NoMatchingNudges(t *testing.T) {
 	}
 }
 
+// TestDelegatedTransport_InjectNudges_ReflectionTriggerSuppressed verifies that
+// a non-user trigger (reflection/keepalive/etc.) suppresses turn-interval and
+// regex nudges entirely — and, because the early return precedes StartTurn, the
+// every_n_turns lifetime counter is NOT advanced by system turns. (#815)
+func TestDelegatedTransport_InjectNudges_ReflectionTriggerSuppressed(t *testing.T) {
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "interval-reminder", Trigger: nudge.Trigger{Type: "every_n_turns", N: 1}},
+			{Text: "regex-reminder", Trigger: nudge.Trigger{Type: "regex", Pattern: "hello"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 5, 2)
+	a := &Agent{Model: "test-model", Nudger: sched}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hello world"}, nil)
+	ts.Trigger = "reflection" // system-internal turn — no user-facing answer
+	ts.Prompt = "original prompt"
+
+	tr.InjectNudges(ts)
+
+	if ts.Prompt != "original prompt" {
+		t.Errorf("reflection turn should inject no nudges, got: %q", ts.Prompt)
+	}
+
+	// A subsequent *user* turn (Trigger="") must still fire — proves the gate
+	// keys off the trigger, not a permanent disable, and that the reflection
+	// turn did not consume the every_n_turns interval.
+	ts2 := NewTurnState(context.Background(), "test/s", []string{"hello world"}, nil)
+	ts2.Prompt = "user prompt"
+	tr.InjectNudges(ts2)
+	if !strings.Contains(ts2.Prompt, "interval-reminder") {
+		t.Errorf("user turn after reflection should fire interval nudge, got: %q", ts2.Prompt)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // RunInference tests
 // ---------------------------------------------------------------------------
@@ -715,6 +750,61 @@ func TestDelegatedTransport_RunInference_PreAnswerGateFiresOnce(t *testing.T) {
 	// Second call: gate should self-suppress.
 	if again := capturedPreAnswerFunc(&delegator.TurnResult{Text: "revised"}); again != "" {
 		t.Errorf("pre-answer gate should fire only once, got second follow-up: %q", again)
+	}
+}
+
+// TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection is the
+// #815 regression test: the pre-answer gate must NOT fire on a reflection turn.
+// Reproduces the observed 2026-06-05 22:14 firing — a reflection pass wrote
+// memory files (tool_count≥min) then hit end_turn, and the gate injected
+// "verify before answering" on a turn with no user-facing answer. With the
+// trigger gate, PreAnswerNudgeFunc returns "" for any non-user trigger even
+// when the gate is enabled and the tool threshold is met.
+func TestDelegatedTransport_RunInference_PreAnswerGateSuppressedOnReflection(t *testing.T) {
+	var capturedPreAnswerFunc func(*delegator.TurnResult) string
+	be := &mockBackendDT{
+		sessionFile: "/tmp/session.jsonl",
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			capturedPreAnswerFunc = handler.PreAnswerNudgeFunc
+			if handler.OnTurnComplete != nil {
+				handler.OnTurnComplete(&delegator.TurnResult{Text: "final"})
+			}
+			return nil, nil
+		},
+	}
+
+	rs := &nudge.RuleSet{
+		Rules: []nudge.Rule{
+			{Text: "verify-your-answer", Trigger: nudge.Trigger{Type: "pre_answer"}},
+		},
+	}
+	sched := nudge.NewScheduler(rs, 5, 2)
+	sched.StartTurn("reflection prompt")
+
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{
+		Model:                  "test-model",
+		DelegatedManager:       mgr,
+		Nudger:                 sched,
+		NudgePreAnswerGate:     true,
+		NudgePreAnswerMinTools: 0, // threshold met — only the trigger gate should suppress
+	}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"reflection prompt"}, nil)
+	ts.Trigger = "reflection" // system-internal turn — the #815 condition
+	ts.Prompt = "reflection prompt"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	if capturedPreAnswerFunc == nil {
+		t.Fatal("PreAnswerNudgeFunc should be wired into the EventHandler")
+	}
+
+	firstRound := &delegator.TurnResult{Text: "memory written"}
+	if followUp := capturedPreAnswerFunc(firstRound); followUp != "" {
+		t.Errorf("pre-answer gate must NOT fire on a reflection turn, got: %q", followUp)
 	}
 }
 
