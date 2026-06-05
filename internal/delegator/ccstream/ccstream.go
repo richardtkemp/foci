@@ -103,6 +103,15 @@ type Backend struct {
 	compactStartCh chan struct{}         // buffered(1), armed by ArmCompactionStartWait; fired on status="compacting"
 	turnText       strings.Builder       // accumulates text across assistant messages
 	turnTools      int                   // tool_use count this turn
+	pendingSteer   int                   // folded steer/user injects awaiting their shadow-reply OnResult; >0 ⇒ re-arm in OnResult (#813)
+	turnGen        int                   // bumped every beginTurn; identifies the current turn instance for the re-arm watchdog
+	completing     bool                  // a completer (OnResult or the watchdog) has claimed this turn; the other must stand down. Reset by beginTurn
+	heldResult     *delegator.TurnResult // round-1 result stashed at re-arm; the watchdog delivers it if no shadow reply arrives (#813)
+	watchdog       *time.Timer           // bounded re-arm safety net; nil when not armed (#813)
+
+	// reArmWatchdogBound overrides defaultReArmWatchdogBound. Set once at
+	// construction (or by tests) before any turn starts; read without a lock.
+	reArmWatchdogBound time.Duration
 
 	// Pending control responses (request_id → channel)
 	pendingControlMu sync.Mutex
@@ -509,6 +518,8 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
+	b.turnGen++         // new turn instance; stale watchdog ticks for prior gens no-op
+	b.completing = false // fresh turn is unclaimed
 	b.turnMu.Unlock()
 
 	b.mu.Lock()
@@ -560,6 +571,110 @@ func (b *Backend) reArmForContinuation(turn *delegator.TurnEvents, followUp stri
 	// Restart the idle clock; the continuation is an active turn, not done.
 	b.touchActivity()
 	return true
+}
+
+// markFoldedInject records that a mid-turn steer was just written to CC's
+// stdin. CC emits an immediate result for the write and then produces the real
+// reply as a SEPARATE result; OnResult consumes one pending mark to re-arm the
+// turn across that gap so the reply lands in a live, delivering turn rather
+// than an untracked shadow turn (#813). A counter, not a bool: multiple steers
+// can fold before the first OnResult, and each owes one re-arm. (Plain
+// in-flight follow-ups are a candidate to share this — see the SourceUser
+// branch in Inject — once their fold behaviour is verified.)
+func (b *Backend) markFoldedInject() {
+	b.turnMu.Lock()
+	b.pendingSteer++
+	b.turnMu.Unlock()
+}
+
+// unmarkFoldedInject reverses markFoldedInject when the stdin write failed
+// (no result will come for a message CC never received).
+func (b *Backend) unmarkFoldedInject() {
+	b.turnMu.Lock()
+	if b.pendingSteer > 0 {
+		b.pendingSteer--
+	}
+	b.turnMu.Unlock()
+}
+
+// defaultReArmWatchdogBound is how long a steer-driven re-armed turn waits in
+// SILENCE (no CC stream activity) before the watchdog force-completes it. The
+// happy path never reaches it — CC's shadow reply produces stream activity and
+// then a second OnResult that completes the turn normally, which disarms the
+// watchdog. The watchdog only fires when a folded steer produces NO shadow
+// reply at all: it converts a potential turn that would otherwise hang until
+// the orchestrator's 24h streamIdleTimeout into a bounded release. It is
+// activity-aware (reschedules while CC is working) so a re-armed turn that is
+// legitimately busy — e.g. waiting on a tool permission, which emits nothing in
+// pipe mode — is NOT prematurely completed.
+const defaultReArmWatchdogBound = 45 * time.Second
+
+func (b *Backend) watchdogBound() time.Duration {
+	if b.reArmWatchdogBound > 0 {
+		return b.reArmWatchdogBound
+	}
+	return defaultReArmWatchdogBound
+}
+
+// armReArmWatchdog starts (or restarts) the re-arm safety net for the current
+// turn generation. Called from OnResult immediately after a folded-steer
+// re-arm. See defaultReArmWatchdogBound.
+func (b *Backend) armReArmWatchdog() {
+	b.turnMu.Lock()
+	gen := b.turnGen
+	if b.watchdog != nil {
+		b.watchdog.Stop()
+	}
+	b.watchdog = time.AfterFunc(b.watchdogBound(), func() { b.watchdogTick(gen) })
+	b.turnMu.Unlock()
+}
+
+// watchdogTick is the timer callback for the re-arm safety net. It no-ops if
+// the turn it was armed for has already moved on (a newer turn began, or a
+// completer claimed it). If CC has shown activity within the bound it reschedules
+// (the turn is alive — keep waiting). Only sustained silence force-completes the
+// turn, delivering the stashed round-1 result so a folded steer that produced no
+// shadow reply still releases cleanly instead of hanging (#813).
+func (b *Backend) watchdogTick(gen int) {
+	b.turnMu.Lock()
+	if b.completing || b.turnGen != gen || !b.turnActive {
+		b.turnMu.Unlock()
+		return // superseded by a real completion, a new turn, or already claimed
+	}
+	if idle := time.Since(b.LastActivity()); idle < b.watchdogBound() {
+		// CC is still active (recent stream events) — wait out the remainder.
+		b.watchdog = time.AfterFunc(b.watchdogBound()-idle, func() { b.watchdogTick(gen) })
+		b.turnMu.Unlock()
+		return
+	}
+	// Sustained silence: claim and force-complete.
+	b.completing = true
+	turn := b.turnEvents
+	resultCh := b.turnResultCh
+	held := b.heldResult
+	b.turnEvents = nil
+	b.turnActive = false
+	b.pendingSteer = 0
+	b.heldResult = nil
+	b.watchdog = nil
+	b.turnMu.Unlock()
+
+	if held == nil {
+		held = &delegator.TurnResult{}
+	}
+	b.logger().Warnf("re-arm watchdog: folded steer produced no shadow reply within %s; force-completing turn to release it (#813)", b.watchdogBound())
+	if turn != nil && turn.OnTurnComplete != nil {
+		turn.OnTurnComplete(held)
+	}
+	if b.typingFunc != nil {
+		b.typingFunc(false)
+	}
+	if resultCh != nil {
+		select {
+		case resultCh <- &ResultMessage{Subtype: "rearm_watchdog_release"}:
+		default:
+		}
+	}
 }
 
 // sendToPane is the internal begin-turn primitive: starts a fresh turn
@@ -752,6 +867,14 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		// ask(), so the original turn's OnTurnComplete and the always-live
 		// SessionEvents.OnText carry the response. inj.Turn is
 		// intentionally ignored.
+		//
+		// NOTE(#813): a plain in-flight follow-up is a sibling of the steer
+		// path and may ALSO produce a shadow turn (separate OnResult). It is
+		// NOT re-armed here yet: Phase 1 log-mining saw zero plain follow-ups,
+		// so unlike the steer case (double-OnResult confirmed 6/6 + the live
+		// incident) the fold behaviour is unverified. Re-arming on a follow-up
+		// that actually folds into the SAME ask() would delay its reply until
+		// the watchdog fires. Verify the OnResult-count first, then join.
 		return b.sendUserMessage(inj.Text)
 
 	case delegator.SourceSteer:
@@ -765,7 +888,18 @@ func (b *Backend) Inject(ctx context.Context, inj delegator.Inject) error {
 		// steer message folds in before any other queued items without
 		// aborting the current ask() and killing in-flight tool work.
 		// "Stop right now" semantics live in /reset hard, not Steer.
-		return b.sendUserMessagePriority(inj.Text, "now")
+		//
+		// The stdin write makes CC emit an immediate result and then produce
+		// the real reply as a SEPARATE result. Mark a pending fold so OnResult
+		// re-arms the turn across that gap, keeping it in flight (refcount held,
+		// delivering sink attached) — otherwise the reply runs as an untracked
+		// shadow turn and can be lost to a colliding inject (#813).
+		b.markFoldedInject()
+		if err := b.sendUserMessagePriority(inj.Text, "now"); err != nil {
+			b.unmarkFoldedInject()
+			return err
+		}
+		return nil
 
 	case delegator.SourceCompact, delegator.SourcePass:
 		// Slash commands. Fire-and-forget. The caller is responsible for
@@ -1130,6 +1264,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
+	// A real result arrived: claim this turn against the re-arm watchdog and
+	// disarm it. If we go on to re-arm below, beginTurn resets `completing` and
+	// a fresh watchdog is armed for the new generation (#813).
+	b.completing = true
+	if b.watchdog != nil {
+		b.watchdog.Stop()
+		b.watchdog = nil
+	}
 	b.turnMu.Unlock()
 
 	// Build TurnResult. Prefer turnText (accumulated from all assistant
@@ -1222,6 +1364,33 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		}
 	}
 
+	// Folded-steer / follow-up re-arm gate. A mid-turn steer or in-flight
+	// user follow-up written to CC's stdin makes CC emit THIS result and then
+	// produce the real reply as a SEPARATE result. Re-arm the turn (same
+	// TurnEvents, same delivering sink, refcount stays held) so that reply has
+	// a live turn to land in instead of running as an untracked shadow turn
+	// that a colliding inject can lose (#813). Ordered AFTER the pre-answer
+	// gate (a verification re-prompt wins if both somehow apply) and BEFORE the
+	// normal clear. A counter: consume exactly one pending fold per result.
+	b.turnMu.Lock()
+	reArm := b.pendingSteer > 0
+	if reArm {
+		b.pendingSteer--
+	}
+	b.turnMu.Unlock()
+	if reArm && turn != nil {
+		// Stash this result BEFORE re-arming: reArmForContinuation's beginTurn
+		// resets turnText, so if no shadow reply ever arrives the watchdog
+		// delivers this (in the no-second-OnResult fold mode, it IS the answer).
+		b.turnMu.Lock()
+		b.heldResult = result
+		b.turnMu.Unlock()
+		b.logger().Debugf("OnResult: re-arming turn for folded steer/follow-up shadow reply (#813)")
+		b.reArmForContinuation(turn, "")
+		b.armReArmWatchdog()
+		return
+	}
+
 	// Normal turn completion — clear TurnEvents. SessionEvents stay live for
 	// the rest of the session so any post-turn text (e.g. CC running a
 	// follow-up ask() from a folded steer) still delivers cleanly.
@@ -1229,6 +1398,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	hadTurn := b.turnEvents != nil
 	b.turnEvents = nil
 	b.turnActive = false
+	b.pendingSteer = 0 // turn truly ended; drop any unconsumed fold marks
+	b.heldResult = nil // no longer need the stashed re-arm result
 	b.turnMu.Unlock()
 	b.logger().Debugf("OnResult: turn cleared (had_turn_events=%v)", hadTurn)
 
