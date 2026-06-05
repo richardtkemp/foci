@@ -222,11 +222,11 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 			log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: skip (phase=%v conn_nil=%v)", s, e.Phase, s.conn == nil)
 			return
 		}
-		// Strip trailing silencing sentinel(s) before delivery. Text that is
-		// entirely sentinel strips to "" — skip delivery, but don't set
-		// delivered=true, so a non-silent final text on TurnComplete is still
-		// permitted.
-		text := platform.StripSilencingSuffix(e.Text)
+		// Strip a leading spurious token then trailing silencing sentinel(s)
+		// before delivery. Text that is entirely junk/sentinel strips to "" —
+		// skip delivery, but don't set delivered=true, so a non-silent final
+		// text on TurnComplete is still permitted.
+		text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.Text))
 		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock(intermediate): text_len=%d stripped_len=%d delivered_before=%v", s, len(e.Text), len(text), s.delivered)
 		if text == "" {
 			return
@@ -239,10 +239,11 @@ func (s *SessionSink) Emit(_ context.Context, ev turnevent.Event) {
 		s.delivered = true
 		log.Debugf("turn-sink", "sink=%p SessionSink TextBlock: delivered_after=true", s)
 	case turnevent.TurnComplete:
-		// Strip trailing silencing sentinel(s) so an agent that appended the
-		// marker to a real reply still delivers the clean text; a fully-silent
-		// FinalText strips to "" and is suppressed below.
-		text := platform.StripSilencingSuffix(e.FinalText)
+		// Strip a leading spurious token then trailing silencing sentinel(s) so
+		// an agent that appended the marker to a real reply still delivers the
+		// clean text; a fully-silent/junk FinalText strips to "" and is
+		// suppressed below.
+		text := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(e.FinalText))
 		log.Debugf("turn-sink", "sink=%p SessionSink TurnComplete: final_text_len=%d stripped_len=%d delivered=%v conn_nil=%v", s, len(e.FinalText), len(text), s.delivered, s.conn == nil)
 		if s.conn != nil {
 			s.conn.SetTyping(false)

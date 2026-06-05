@@ -241,7 +241,7 @@ func asyncDispatch(w http.ResponseWriter, inst *agentInstance, connMgr platform.
 			log.Errorf(logTag, "async error: %v", err)
 			return
 		}
-		cleaned := platform.StripSilencingSuffix(resp)
+		cleaned := platform.StripSilencingSuffix(platform.StripSpuriousPrefix(resp))
 		if !silent && cleaned != "" && connMgr != nil {
 			if conn := connMgr.ForSessionOrPrimary(sessionKey, inst.id); conn != nil {
 				if err := conn.SendToSession(sessionKey, cleaned); err != nil {
