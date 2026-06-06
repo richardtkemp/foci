@@ -8,6 +8,18 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Isolate exec/shell tests from a live foci agent's bridge. When `go test`
+	// is run from inside a running agent's Bash session, the process inherits
+	// FOCI_SOCK (the production exec-bridge socket) and BASH_ENV (which defines
+	// the foci_* shell functions). ExecTool subprocesses inherit os.Environ(),
+	// so tests that exec `foci_http_request ... https://example.com` would
+	// connect to the PRODUCTION bridge with the real secret store — firing real
+	// (host-check-blocked, but log-noisy) requests through the live session.
+	// Tests that genuinely need a bridge set FOCI_SOCK explicitly themselves.
+	for _, k := range []string{"FOCI_SOCK", "BASH_ENV", "FOCI_GW_SOCK", "FOCI_ADDR"} {
+		os.Unsetenv(k)
+	}
+
 	dir, _ := os.MkdirTemp(os.TempDir(), "foci-tmux-test-*")
 	tmuxSocketPath = filepath.Join(dir, "tmux.sock")
 
