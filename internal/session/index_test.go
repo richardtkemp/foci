@@ -776,6 +776,60 @@ func TestDefaultSessionKeyForAgent_ExcludesChildren(t *testing.T) {
 	}
 }
 
+// ========== ResolveLooseKey tests ==========
+
+func TestResolveLooseKey_BareAgentName(t *testing.T) {
+	// Proves a bare agent name (0 slashes) dispatches to
+	// DefaultSessionKeyForAgent and resolves to the agent's session.
+	idx := tempIndex(t)
+
+	if err := idx.SetChatMetadata("scout", "", 123, "session_key", "scout/c123/1709590000"); err != nil {
+		t.Fatalf("set chat metadata: %v", err)
+	}
+
+	if key := idx.ResolveLooseKey("scout"); key != "scout/c123/1709590000" {
+		t.Errorf("bare name: expected scout/c123/1709590000, got %q", key)
+	}
+}
+
+func TestResolveLooseKey_PartialKey(t *testing.T) {
+	// Proves a partial key (1 slash, agent/typeID) dispatches to
+	// ResolvePartialKey and resolves to the most-recent active session there.
+	idx := tempIndex(t)
+
+	idx.Upsert(SessionIndexEntry{
+		SessionKey:     "scout/c123/1709590000",
+		FilePath:       "/tmp/test.jsonl",
+		CreatedAt:      time.Now(),
+		LastActivityAt: time.Now(),
+		SessionType:    SessionTypeChat,
+		Status:         SessionStatusActive,
+	})
+
+	if key := idx.ResolveLooseKey("scout/c123"); key != "scout/c123/1709590000" {
+		t.Errorf("partial key: expected scout/c123/1709590000, got %q", key)
+	}
+}
+
+func TestResolveLooseKey_FullKeyReturnsEmpty(t *testing.T) {
+	// Proves a full key (2+ slashes) returns "" — full keys are handled by
+	// ParseSessionKey before the resolver is consulted.
+	idx := tempIndex(t)
+
+	if key := idx.ResolveLooseKey("scout/c123/1709590000"); key != "" {
+		t.Errorf("full key: expected empty, got %q", key)
+	}
+}
+
+func TestResolveLooseKey_NoMatch(t *testing.T) {
+	// Proves an unknown bare name resolves to "".
+	idx := tempIndex(t)
+
+	if key := idx.ResolveLooseKey("ghost"); key != "" {
+		t.Errorf("unknown agent: expected empty, got %q", key)
+	}
+}
+
 func TestAgentMetadata_MultipleKeys(t *testing.T) {
 	// Proves that an agent can store independent values under multiple keys and
 	// that deleting one key leaves the others unaffected.

@@ -24,8 +24,9 @@ type SessionAppender interface {
 // own chat, rather than the calling session.
 type SessionNotifyFn func(sessionKey, message string)
 
-// SessionKeyResolverFn resolves a partial session key (e.g. "scout/c5970082313")
-// to the full active session key. Returns "" if no match is found.
+// SessionKeyResolverFn resolves a loose session target — a bare agent name
+// (e.g. "scout") or a partial key (e.g. "scout/c5970082313") — to the full
+// active session key. Returns "" if no match is found.
 type SessionKeyResolverFn func(partialKey string) string
 
 // NewSendToSessionTool creates a tool that injects a user-role message into
@@ -51,7 +52,7 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 			"properties": {
 				"session_key": {
 					"type": "string",
-					"description": "Target session key. Accepts full keys (e.g. scout/c5970082313/1772794601) or partial keys without the version timestamp (e.g. scout/c5970082313) which resolve to the agent's current active session."
+					"description": "Target session. Accepts a full key (e.g. scout/c5970082313/1772794601), a partial key without the version timestamp (e.g. scout/c5970082313), or a bare agent name (e.g. scout). Partial keys resolve to the most recent active session in that chat; a bare agent name resolves to the agent's default chat session."
 				},
 				"message": {
 					"type": "string",
@@ -87,14 +88,16 @@ func NewSendToSessionTool(sessions SessionAppender, notifier *AsyncNotifier, ses
 				return ToolResult{}, fmt.Errorf("reply_to must be 'caller' or 'session', got %q", p.ReplyTo)
 			}
 
-			// Resolve partial keys (e.g. "scout/c5970082313" → "scout/c5970082313/1772794601")
+			// Resolve loose targets — bare agent name ("scout") or partial key
+			// ("scout/c5970082313") — to a full active key. Full keys parse
+			// cleanly and skip resolution.
 			targetKey := p.SessionKey
 			if _, err := session.ParseSessionKey(targetKey); err != nil && resolveKeyFn != nil {
 				if resolved := resolveKeyFn(targetKey); resolved != "" {
 					targetKey = resolved
-					log.Infof("send_to_session", "resolved partial key %q → %s", p.SessionKey, targetKey)
+					log.Infof("send_to_session", "resolved %q → %s", p.SessionKey, targetKey)
 				} else {
-					return ToolResult{}, fmt.Errorf("could not resolve partial session key %q to an active session", p.SessionKey)
+					return ToolResult{}, fmt.Errorf("could not resolve %q to an active session (tried bare agent name and partial key)", p.SessionKey)
 				}
 			}
 

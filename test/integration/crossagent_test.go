@@ -142,6 +142,82 @@ func TestL2_CrossAgent_SendToSession_RoutesToTargetWorkdir(t *testing.T) {
 	}
 }
 
+// TestL2_CrossAgent_SendToSession_BareAgentName_RoutesToTarget exercises
+// the bare-agent-name resolution path added with SessionIndex.ResolveLooseKey:
+// a send_to_session target of just "clutch" (no chat segment, no version ts)
+// must resolve to clutch's default chat session and dispatch there.
+//
+// This is the end-to-end companion to the ResolveLooseKey unit tests in
+// internal/session/index_test.go — it proves the wiring all the way through
+// the exec bridge → resolveKeyFn (= SessionIndex.ResolveLooseKey) → notifier
+// → target Agent, for the 1-segment case that ResolvePartialKey alone rejects.
+//
+// Mechanism mirrors the partial-key test above, except fotini's scripted
+// Bash runs `foci_send_to_session clutch --message "..."`. The priming
+// Telegram message to clutch marks its session is_default, so the bare
+// name "clutch" resolves to clutch/c<USER>/<ts> via DefaultSessionKeyForAgent.
+func TestL2_CrossAgent_SendToSession_BareAgentName_RoutesToTarget(t *testing.T) {
+	t.Parallel()
+	const testUserID = 4343
+	const testMarker = "MARKER_CROSS_AGENT_BARE_NAME"
+
+	h := testharness.StartGateway(t, testharness.HarnessOptions{
+		Agents: []testharness.AgentSpec{
+			{ID: "fotini", UserID: testUserID},
+			{ID: "clutch", UserID: testUserID},
+		},
+		ReadyTimeout: 30 * time.Second,
+	})
+
+	// Step 1: prime clutch so its session exists and is marked is_default,
+	// which is what DefaultSessionKeyForAgent (the 1-segment branch of
+	// ResolveLooseKey) keys off.
+	clutchToken := h.AgentBotToken("clutch")
+	h.TelegramStub().PushUpdate(clutchToken, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "priming clutch",
+		},
+	})
+	waitForUserMessage(t, h, "workspaces/clutch", "priming clutch", 15*time.Second)
+
+	// Step 2: script fotini's cc-stub to emit a Bash tool_use that targets
+	// clutch by BARE AGENT NAME — the new ResolveLooseKey path.
+	bashCmd := fmt.Sprintf(`foci_send_to_session clutch --message %q`, testMarker+" from fotini")
+	scriptBody, err := json.Marshal(map[string]any{
+		"text": "okay, forwarding to clutch by bare name",
+		"tool_uses": []map[string]any{
+			{
+				"name":  "Bash",
+				"input": map[string]any{"command": bashCmd},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal script body: %v", err)
+	}
+	h.WriteCCStubScript(t, "fotini", scriptBody)
+
+	// Step 3: send fotini a Telegram message → cc-stub emits the scripted
+	// Bash → foci_send_to_session clutch → ResolveLooseKey("clutch") →
+	// clutch's default session → notifier dispatches to clutch's Agent.
+	fotiniToken := h.AgentBotToken("fotini")
+	h.TelegramStub().PushUpdate(fotiniToken, gotgbot.Update{
+		Message: &gotgbot.Message{
+			Chat: gotgbot.Chat{Id: testUserID, Type: "private"},
+			From: &gotgbot.User{Id: testUserID, FirstName: "Tester"},
+			Text: "fotini, tell clutch hi by bare name",
+		},
+	})
+
+	// Step 4: the marker must land as a user_message in clutch's workdir.
+	if !waitForUserMessage(t, h, "workspaces/clutch", testMarker, 20*time.Second) {
+		t.Errorf("bare-name send_to_session marker %q never reached a user_message in workspaces/clutch — ResolveLooseKey(\"clutch\") may have failed to resolve\n--- recorder ---\n%s\n--- stderr tail ---\n%s",
+			testMarker, recorderTail(t, h.RecorderPath()), stderrTail(h.Stderr()))
+	}
+}
+
 // waitForUserMessage polls the recorder until a user_message entry
 // appears with workdir containing workdirSubstr AND text_prefix
 // containing textSubstr. Returns true on hit, false on timeout.
