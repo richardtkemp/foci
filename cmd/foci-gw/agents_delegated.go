@@ -344,7 +344,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	sessionNotifyFn := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
 	var resolveKeyFn tools.SessionKeyResolverFn
 	if p.sessionIndex != nil {
-		resolveKeyFn = p.sessionIndex.ResolvePartialKey
+		resolveKeyFn = p.sessionIndex.ResolveLooseKey
 	}
 	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
 

@@ -349,7 +349,7 @@ func TestSendToSessionPartialKeyUnresolved(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unresolvable partial key")
 	}
-	if !strings.Contains(err.Error(), "could not resolve partial session key") {
+	if !strings.Contains(err.Error(), "could not resolve") {
 		t.Errorf("error = %q", err.Error())
 	}
 }

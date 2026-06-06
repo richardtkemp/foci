@@ -1134,3 +1134,21 @@ func (idx *SessionIndex) ResolvePartialKey(partialKey string) string {
 	}
 	return key
 }
+
+// ResolveLooseKey resolves a "loose" target — either a bare agent name
+// ("scout") or a partial key ("scout/c5970082313") — to a full active session
+// key. Bare names dispatch to DefaultSessionKeyForAgent (default-chat aware,
+// excludes branch/child sessions); partial keys dispatch to ResolvePartialKey
+// (most-recent active session within that chat). Full keys (3+ segments)
+// return "" — callers that accept full keys should ParseSessionKey them first.
+// Returns "" when nothing resolves.
+func (idx *SessionIndex) ResolveLooseKey(key string) string {
+	switch strings.Count(key, "/") {
+	case 0:
+		return idx.DefaultSessionKeyForAgent(key)
+	case 1:
+		return idx.ResolvePartialKey(key)
+	default:
+		return ""
+	}
+}

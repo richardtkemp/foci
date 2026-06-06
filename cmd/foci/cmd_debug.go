@@ -276,30 +276,17 @@ func renderLine(line []byte, format outputFormat) string {
 
 // resolveSessionKey resolves a user-provided key argument to a full session key.
 // Supports: bare agent name ("scout"), partial key ("scout/c123"), full key ("scout/c123/17095...").
+// Bare names and partial keys dispatch to SessionIndex.ResolveLooseKey (the same
+// resolver send_to_session uses); full keys (3+ segments) are returned as-is.
 func resolveSessionKey(idx *session.SessionIndex, keyArg string) (string, error) {
-	segments := strings.Count(keyArg, "/") + 1
-
-	switch {
-	case segments == 1:
-		// Bare agent name → find default session
-		key := idx.DefaultSessionKeyForAgent(keyArg)
-		if key == "" {
-			return "", fmt.Errorf("no active session found for agent %q", keyArg)
-		}
-		return key, nil
-
-	case segments == 2:
-		// Partial key → resolve to full key
-		key := idx.ResolvePartialKey(keyArg)
-		if key == "" {
-			return "", fmt.Errorf("no active session matching %q", keyArg)
-		}
-		return key, nil
-
-	default:
-		// Full key → use directly
+	if strings.Count(keyArg, "/") >= 2 {
+		// Full key (3+ segments) → use directly.
 		return keyArg, nil
 	}
+	if key := idx.ResolveLooseKey(keyArg); key != "" {
+		return key, nil
+	}
+	return "", fmt.Errorf("no active session found for %q", keyArg)
 }
 
 // printExistingContent reads and formats all existing lines in the session file.
