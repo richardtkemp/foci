@@ -1366,6 +1366,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// from the mid-turn-drain path used by SourceUser/Steer/post-tool
 	// nudges: pre-answer needs a fresh ask() because it's a verification
 	// re-prompt, not a fold-in.
+	//
+	// See docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)" for the
+	// full re-arm/heldResult/watchdog map (this is the pre-answer caller).
 	if turn != nil && turn.PreAnswerNudgeFunc != nil {
 		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
 			if b.reArmForContinuation(turn, followUp) {
@@ -1384,6 +1387,9 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// that a colliding inject can lose (#813). Ordered AFTER the pre-answer
 	// gate (a verification re-prompt wins if both somehow apply) and BEFORE the
 	// normal clear. A counter: consume exactly one pending fold per result.
+	//
+	// See docs/WIRING.md → "Shadow-turn re-arm + watchdog (#813)" for the
+	// full re-arm/heldResult/watchdog map (this is the steer re-arm caller).
 	b.turnMu.Lock()
 	reArm := b.pendingSteer > 0
 	if reArm {

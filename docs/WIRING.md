@@ -396,7 +396,7 @@ The ccstream backend replaces the tmux-based backend with structured NDJSON comm
 | `tool_progress` | Heartbeat during long-running tool execution |
 | `stream_event` | Token-level streaming (with `--include-partial-messages`) — `text_delta` and `thinking_delta` subtypes are extracted |
 
-**Mid-turn injection:** Foci uses CC's `interrupt` control request (mirrors the public Agent SDK's `client.interrupt()`) plus a plain user message to abort + replace the in-flight turn. The previous design used a foci-specific `priority` field on user messages; that machinery was removed in favour of the SDK-aligned interrupt model. The unified entry point is `Backend.Inject(ctx, Inject{Source: SourceSteer, Text: ...})`, which chains `Interrupt` and the SendUser internally.
+**Mid-turn injection:** The unified entry point is `Backend.Inject(ctx, Inject{Source: ..., Text: ...})`. A mid-turn **steer** (`SourceSteer`) folds into the *current* `ask()` **without aborting it**: `markFoldedInject()` records the fold, then `sendUserMessagePriority(text, "now")` (→ `writer.SendUserPriority`) writes the user message to CC's stdin at priority `"now"`. CC consumes it, emits the current turn's `result`, then produces the steered reply as a *separate* result — see **Shadow-turn re-arm + watchdog** below. An in-flight `SourceUser` follow-up folds the same way but at default priority `"next"`. The foci-specific `priority` field is therefore live, not removed. The `interrupt` control request (`Backend.Interrupt`, mirrors the Agent SDK's `client.interrupt()`) is wired to `/stop` **only** — it is *not* used by steer.
 
 **Lifecycle:**
 1. `Start` spawns `claude` with stream-json flags, creates stdin/stdout/stderr pipes.
@@ -420,6 +420,13 @@ This divorces "where does this text go?" (session lifetime — always somewhere)
 3. CC processes the turn, emitting `assistant`, `tool_progress`, and `stream_event` messages.
 4. `OnAssistant` accumulates text, counts tool_use blocks, and fires `SessionEvents.OnText` / `SessionEvents.OnToolStart`. Mid-turn steer dispatch is handled at the agent's per-session inbox (see `agent.Inbox.Enqueue` routing), not at tool boundaries — this lets text-only turns be steered too.
 5. `OnResult` captures final text/usage/model, fires `TurnEvents.OnTurnComplete`, clears `b.turnEvents`, stops typing, signals `WaitForTurn`. `b.sessionEvents` is untouched.
+
+**Shadow-turn re-arm + watchdog (#813):** A folded steer/follow-up makes CC emit the current turn's `result`, then produce the real reply as a SEPARATE result. Clearing the turn on the first result would leave that reply as an untracked **shadow turn** (no live `TurnEvents`/sink) that a colliding inject can route to a dead sink and silently lose. `OnResult` instead re-arms:
+- **Trigger = counter, not orphan-detection.** `markFoldedInject` increments `pendingSteer`; `OnResult` consumes exactly one fold per result (`pendingSteer--`). `had_turn_events`/orphan heuristics are NOT the trigger.
+- **`reArmForContinuation`** (`ccstream.go:559`) re-runs `beginTurn` with the SAME `TurnEvents`, holding sink + refcount so the shadow reply lands in a live turn. Two callers: pre-answer re-dispatch (`:1374`, fresh verification `ask()`) and steer re-arm (`:1407`, empty follow-up — just hold the turn open for the folded reply).
+- **`heldResult`.** Stashed before a fold re-arm (`beginTurn` resets `turnText`); if no shadow reply ever arrives, this stashed result IS the answer.
+- **Watchdog (MANDATORY).** `armReArmWatchdog` (`:622`) starts a `defaultReArmWatchdogBound = 45s` (`:610`) timer; `watchdogTick` (`:638`) delivers `heldResult` and clears the turn if no second result arrived and the turn is idle. Only turn COMPLETION is held ≤45s — reply text still streams live via `OnText`/`OnTextDelta`.
+- **`SourceUser` does NOT re-arm by this path** — priority-`"next"` follow-ups fold into a single `OnResult` (verified across 257 archive cases). Only steer's priority-`"now"` produces the shadow turn.
 
 **Permission handling:** CC sends `control_request` with subtype `can_use_tool`. The backend first checks compiled auto-approve rules (`autoApprovePermission`). Unmatched requests are stored as `pendingPermission` entries and forwarded to the platform via `permPromptFn` (interactive buttons: Allow, Deny, Always Allow). The user's response is sent back as a `control_response` with either `PermissionAllow` or `PermissionDeny`. CC can also cancel a pending request via `control_cancel_request` (e.g. when a hook resolves it).
 
