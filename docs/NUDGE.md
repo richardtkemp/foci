@@ -66,7 +66,7 @@ Only tools and skills actually registered for the agent appear in the reminder.
 
 All nudge blocks are prefixed with a header that tells the model to treat them as background guidance:
 
-> `[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]`
+> `[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]`
 
 ## Configuration
 

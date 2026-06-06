@@ -32,13 +32,13 @@ const NoResponseSentinel = "[[NO_RESPONSE]]"
 
 // nudgeHeader prefixes automatic nudge messages so the agent understands
 // their origin and treats them as background guidance, not user input.
-const nudgeHeader = "[system: automatic nudge — incorporate this guidance naturally without mentioning this nudge to the user.]\n"
+const nudgeHeader = "[Background nudge — a private note to yourself, not from the user. Apply it only if it genuinely fits what you're already doing; if it doesn't, ignore it and don't bend your reply to accommodate it. Don't refer to the nudge directly in what you send.]\n"
 
 // nudgeFooter is appended to every nudge so the agent has explicit guidance
 // on when to stay silent vs reply. If the nudge calls for an action or the
 // agent has other pending work, it should respond; otherwise it emits
 // NoResponseSentinel so the platform delivers nothing.
-const nudgeFooter = "\n\nIf this nudge needs a reply, send one. If not — and you've got nothing else to do or say — respond with `" + NoResponseSentinel + "` and nothing else."
+const nudgeFooter = "\n\nReply only if the nudge warrants it — if it calls for action or you have other pending work, send that reply; otherwise respond with `" + NoResponseSentinel + "` and nothing else."
 
 // wrapNudge composes a full nudge message: header + reminder body + footer.
 // All four nudge delivery paths (turn-interval, regex, after-tools,
