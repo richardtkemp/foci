@@ -313,7 +313,7 @@ func TestSaveMedia(t *testing.T) {
 	b.display.ReceivedFilesDir = dir
 
 	data := []byte("fake-mp4-data")
-	path, err := b.saveMedia(data, "video", 12345, ".mp4")
+	path, err := b.saveMedia(data, "video", 12345, ".mp4", "")
 	if err != nil {
 		t.Fatalf("saveMedia: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestSaveMediaDocument(t *testing.T) {
 	b.display.ReceivedFilesDir = dir
 
 	data := []byte("document content")
-	path, err := b.saveMedia(data, "document", 12345, ".pdf")
+	path, err := b.saveMedia(data, "document", 12345, ".pdf", "")
 	if err != nil {
 		t.Fatalf("saveMedia: %v", err)
 	}

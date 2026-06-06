@@ -326,7 +326,7 @@ func isFileTooLarge(err error) bool {
 
 // downloadAndSaveMedia downloads a file from Telegram and saves it to disk.
 // Returns the saved file path or an error (including fileTooLargeError if over 20MB).
-func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType string, chatID int64, ext string) (string, error) {
+func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType string, chatID int64, ext, mediaGroupID string) (string, error) {
 	const maxFileSize = 20 * 1024 * 1024 // 20MB Telegram Bot API limit
 
 	if fileSize > maxFileSize {
@@ -342,16 +342,87 @@ func (b *Bot) downloadAndSaveMedia(fileID string, fileSize int64, mediaType stri
 		return "", err
 	}
 
-	return b.saveMedia(data, mediaType, chatID, ext)
+	return b.saveMedia(data, mediaType, chatID, ext, mediaGroupID)
+}
+
+// mediaGroupTTL bounds how long a media-group entry survives. Albums arrive
+// within a second or two; 60s is ample and keeps the map from growing across
+// many separate albums.
+const mediaGroupTTL = 60 * time.Second
+
+// mediaGroupEntry holds the shared timestamp and running sequence number for
+// one Telegram media group (album).
+type mediaGroupEntry struct {
+	stamp   time.Time
+	seq     int
+	created time.Time
+}
+
+// mediaGroupStamp returns the timestamp and sequence number to use for a file.
+// For a non-empty mediaGroupID it returns the group's shared timestamp and an
+// incrementing sequence (1, 2, 3, …) — the first call for a group seeds it, so
+// every image in an album shares one timestamp and gets a _N suffix. For an
+// empty mediaGroupID (a standalone file, not part of an album) it returns the
+// current time and sequence 0, meaning "no numeric suffix". Stale group
+// entries (older than mediaGroupTTL) are evicted lazily on each call.
+func (b *Bot) mediaGroupStamp(mediaGroupID string) (time.Time, int) {
+	now := timeutil.Now()
+	if mediaGroupID == "" {
+		return now, 0
+	}
+	b.mediaGroupMu.Lock()
+	defer b.mediaGroupMu.Unlock()
+	if b.mediaGroups == nil {
+		b.mediaGroups = make(map[string]*mediaGroupEntry)
+	}
+	for id, e := range b.mediaGroups {
+		if now.Sub(e.created) > mediaGroupTTL {
+			delete(b.mediaGroups, id)
+		}
+	}
+	e := b.mediaGroups[mediaGroupID]
+	if e == nil {
+		e = &mediaGroupEntry{stamp: now, created: now}
+		b.mediaGroups[mediaGroupID] = e
+	}
+	e.seq++
+	return e.stamp, e.seq
+}
+
+// uniqueMediaPath returns desiredPath if free, otherwise inserts an
+// incrementing _N suffix before the extension until a free path is found.
+// Safety net for collisions the media-group counter doesn't cover — e.g. two
+// standalone images saved within the same second, or two distinct albums whose
+// shared timestamps land in the same second. (Best-effort: a stat/write race is
+// possible but benign — the prior behaviour silently overwrote.)
+func uniqueMediaPath(desiredPath string) string {
+	if _, err := os.Stat(desiredPath); os.IsNotExist(err) {
+		return desiredPath
+	}
+	ext := filepath.Ext(desiredPath)
+	stem := strings.TrimSuffix(desiredPath, ext)
+	for n := 1; ; n++ {
+		candidate := fmt.Sprintf("%s_%d%s", stem, n, ext)
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
 }
 
 // saveMedia writes media data to disk and returns the saved file path.
-func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string) (string, error) {
+// mediaGroupID is the Telegram media_group_id ("" for a standalone file);
+// files in the same album share one timestamp and get sequential _N suffixes.
+func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext, mediaGroupID string) (string, error) {
 	if err := os.MkdirAll(b.display.ReceivedFilesDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir: %w", err)
 	}
-	filename := fmt.Sprintf("%s_%s_chat-%d%s", timeutil.FormatFilename(timeutil.Now()), mediaType, chatID, ext)
-	path := filepath.Join(b.display.ReceivedFilesDir, filename)
+	stamp, seq := b.mediaGroupStamp(mediaGroupID)
+	prefix := fmt.Sprintf("%s_%s_chat-%d", timeutil.FormatFilename(stamp), mediaType, chatID)
+	filename := prefix + ext
+	if seq > 0 {
+		filename = fmt.Sprintf("%s_%d%s", prefix, seq, ext)
+	}
+	path := uniqueMediaPath(filepath.Join(b.display.ReceivedFilesDir, filename))
 	mode := b.fileMode
 	if mode == 0 {
 		mode = 0640
@@ -364,7 +435,7 @@ func (b *Bot) saveMedia(data []byte, mediaType string, chatID int64, ext string)
 
 // downloadAttachment downloads a file and returns it as an attachment,
 // optionally saving to disk. Returns (attachment, true) on success.
-func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachment, bool) {
+func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64, mediaGroupID string) (attachment, bool) {
 	data, err := b.downloadFile(fileID)
 	if err != nil {
 		b.logger().Errorf("download attachment: %s", b.sanitizeError(err))
@@ -379,7 +450,7 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachm
 		if ext == ".bin" {
 			ext = extForMIME(mimeType)
 		}
-		if path, err := b.saveMedia(data, "attachment", chatID, ext); err != nil {
+		if path, err := b.saveMedia(data, "attachment", chatID, ext, mediaGroupID); err != nil {
 			b.logger().Warnf("save attachment: %v", err)
 		} else {
 			att.savedPath = path
@@ -392,8 +463,8 @@ func (b *Bot) downloadAttachment(fileID, mimeType string, chatID int64) (attachm
 // handleMediaMessage downloads and saves a media file (video, video note,
 // document), prepending a status annotation to text. On success it prepends
 // "[Label saved to: path]"; on file-too-large it prepends a size warning.
-func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType, label string, chatID int64, ext string) string {
-	path, err := b.downloadAndSaveMedia(fileID, fileSize, mediaType, chatID, ext)
+func (b *Bot) handleMediaMessage(text, fileID string, fileSize int64, mediaType, label string, chatID int64, ext, mediaGroupID string) string {
+	path, err := b.downloadAndSaveMedia(fileID, fileSize, mediaType, chatID, ext, mediaGroupID)
 	if err != nil {
 		if isFileTooLarge(err) {
 			return fmt.Sprintf("[%s too large to download (%d MB)]\n\n%s", label, fileSize/(1024*1024), text)
