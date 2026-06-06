@@ -173,11 +173,11 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 	if len(msg.Photo) > 0 {
 		// Take the largest photo (last in the array)
 		photo := msg.Photo[len(msg.Photo)-1]
-		if att, ok := b.downloadAttachment(photo.FileId, "image/jpeg", msg.Chat.Id); ok {
+		if att, ok := b.downloadAttachment(photo.FileId, "image/jpeg", msg.Chat.Id, msg.MediaGroupId); ok {
 			attachments = append(attachments, att)
 		}
 	} else if msg.Document != nil && isImageMIME(msg.Document.MimeType) {
-		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
+		if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id, msg.MediaGroupId); ok {
 			attachments = append(attachments, att)
 		}
 	} else if msg.Document != nil && isPDFMIME(msg.Document.MimeType) {
@@ -185,8 +185,8 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		// over-size PDFs fall back to save-to-disk via handleMediaMessage.
 		const maxPDFSize = 32 * 1024 * 1024
 		if msg.Document.FileSize > 0 && msg.Document.FileSize > maxPDFSize {
-			text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "PDF", msg.Chat.Id, ".pdf")
-		} else if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id); ok {
+			text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "PDF", msg.Chat.Id, ".pdf", msg.MediaGroupId)
+		} else if att, ok := b.downloadAttachment(msg.Document.FileId, msg.Document.MimeType, msg.Chat.Id, msg.MediaGroupId); ok {
 			if len(att.data) > maxPDFSize {
 				// Downloaded size exceeded limit — save to disk instead
 				if att.savedPath != "" {
@@ -201,19 +201,19 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		// download and pass through the attachment pipeline for text conversion.
 		// Use normalized MIME so the agent layer sees a canonical type.
 		normalizedMIME := platform.NormalizeMIME(msg.Document.MimeType)
-		if att, ok := b.downloadAttachment(msg.Document.FileId, normalizedMIME, msg.Chat.Id); ok {
+		if att, ok := b.downloadAttachment(msg.Document.FileId, normalizedMIME, msg.Chat.Id, msg.MediaGroupId); ok {
 			attachments = append(attachments, att)
 		}
 	}
 
 	// Handle video messages
 	if msg.Video != nil {
-		text = b.handleMediaMessage(text, msg.Video.FileId, msg.Video.FileSize, "video", "Video", msg.Chat.Id, extForVideo(msg.Video.MimeType))
+		text = b.handleMediaMessage(text, msg.Video.FileId, msg.Video.FileSize, "video", "Video", msg.Chat.Id, extForVideo(msg.Video.MimeType), msg.MediaGroupId)
 	}
 
 	// Handle video notes (circular video messages)
 	if msg.VideoNote != nil {
-		text = b.handleMediaMessage(text, msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", "Video", msg.Chat.Id, ".mp4")
+		text = b.handleMediaMessage(text, msg.VideoNote.FileId, msg.VideoNote.FileSize, "videonote", "Video", msg.Chat.Id, ".mp4", msg.MediaGroupId)
 	}
 
 	// Handle remaining document types (not image, not PDF, not convertible)
@@ -222,7 +222,7 @@ func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (q
 		if ext == "" {
 			ext = extForMIME(msg.Document.MimeType)
 		}
-		text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "Document", msg.Chat.Id, ext)
+		text = b.handleMediaMessage(text, msg.Document.FileId, msg.Document.FileSize, "document", "Document", msg.Chat.Id, ext, msg.MediaGroupId)
 	}
 
 	// Drop messages with no text and no attachments

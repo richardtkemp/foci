@@ -120,6 +120,14 @@ type Bot struct {
 
 	typingMu     sync.Mutex
 	typingCancel context.CancelFunc // non-nil while typing ticker is running
+
+	// mediaGroups tracks Telegram media groups (albums). Album images arrive
+	// as separate bot messages sharing a media_group_id; this lets every file
+	// in a set share one timestamp and get a sequential suffix (_1, _2, …)
+	// instead of colliding on an identical seconds-resolution filename. Guarded
+	// by mediaGroupMu; lazily created; stale entries evicted in mediaGroupStamp.
+	mediaGroupMu sync.Mutex
+	mediaGroups  map[string]*mediaGroupEntry
 }
 
 // BotDisplayConfig groups all display-related settings. Write-once at startup
