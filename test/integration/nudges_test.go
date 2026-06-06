@@ -23,7 +23,7 @@ import (
 // load-bearing prefix here and assert on it as a substring. If the source
 // constant changes, this string changes too — the regression net catches
 // drift.
-const nudgeHeaderMarker = "[system: automatic nudge"
+const nudgeHeaderMarker = "[Background nudge"
 
 // noResponseSentinelMarker mirrors agent.NoResponseSentinel. The footer
 // embeds this token so we can use it as a structural assertion that the
@@ -374,7 +374,7 @@ func TestL2_Nudges_FooterPresentOnAllDeliveryPaths(t *testing.T) {
 
 // TestL2_Nudges_HeaderPresentOnAllDeliveryPaths is the sibling
 // regression net to the footer test: every nudge block must carry the
-// "[system: automatic nudge —" header so CC treats it as background
+// "[Background nudge —" header so CC treats it as background
 // guidance, not user input. Asserts the header marker appears in the
 // user_message text_prefix for regex, turn-interval, and after-tools
 // fires.
