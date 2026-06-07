@@ -875,6 +875,49 @@ func TestOnAssistant_TextAccumulation(t *testing.T) {
 	}
 }
 
+// TestOnAssistant_CrossMessageSeparation pins TODO #819: text from separate
+// assistant messages within one turn (segments split by tool calls) must be
+// joined with a blank line, not glued. Pre-tool-call narration was arriving
+// concatenated onto the next segment (e.g. "...correctly.Καλημέρα").
+func TestOnAssistant_CrossMessageSeparation(t *testing.T) {
+	t.Parallel()
+
+	b := &Backend{}
+	applyHandler(b, &delegator.EventHandler{})
+
+	mkMsg := func(blocks ...ContentBlock) *AssistantMessage {
+		return &AssistantMessage{Message: BetaMessage{
+			Model:   "claude-sonnet-4-20250514",
+			Content: blocks,
+			Usage:   TokenUsage{InputTokens: 100, OutputTokens: 20},
+		}}
+	}
+
+	// Segment 1: narration + tool call (same message).
+	b.OnAssistant(mkMsg(
+		ContentBlock{Type: "text", Text: "Daily quiz time."},
+		ContentBlock{Type: "tool_use", ID: "t1", Name: "Bash"},
+	))
+	// Segment 2: narration split across two text blocks in one message +
+	// another tool call. The intra-message split must NOT be separated.
+	b.OnAssistant(mkMsg(
+		ContentBlock{Type: "text", Text: "Good "},
+		ContentBlock{Type: "text", Text: "queue."},
+		ContentBlock{Type: "tool_use", ID: "t2", Name: "Bash"},
+	))
+	// Segment 3: final answer.
+	b.OnAssistant(mkMsg(ContentBlock{Type: "text", Text: "Καλημέρα!"}))
+
+	b.turnMu.Lock()
+	got := b.turnText.String()
+	b.turnMu.Unlock()
+
+	want := "Daily quiz time.\n\nGood queue.\n\nΚαλημέρα!"
+	if got != want {
+		t.Errorf("turnText = %q, want %q", got, want)
+	}
+}
+
 // TestTextDelivery_NoHandler_GoesToSessionEvents is the regression test for
 // TODO #747: text emitted AFTER a turn's OnResult clears the per-turn
 // TurnEvents must still deliver via the always-live SessionEvents path.

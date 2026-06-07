@@ -1224,11 +1224,27 @@ func (b *Backend) OnAssistant(msg *AssistantMessage) {
 		return
 	}
 
+	// Separate this message's text from any text already accumulated by PRIOR
+	// assistant messages in this turn (segments split by tool calls) with a
+	// blank line — otherwise pre-tool-call narration glues onto the next
+	// segment (e.g. "...correctly.Καλημέρα"). Text blocks WITHIN a single
+	// message are still concatenated directly: the model may split one sentence
+	// across blocks ("Hello " + "world!"). See TODO #819.
+	b.turnMu.Lock()
+	needSep := b.turnText.Len() > 0
+	b.turnMu.Unlock()
+
 	for _, block := range msg.Message.Content {
 		switch block.Type {
 		case "text":
 			b.turnMu.Lock()
-			b.turnText.WriteString(block.Text)
+			if block.Text != "" {
+				if needSep {
+					b.turnText.WriteString("\n\n")
+					needSep = false
+				}
+				b.turnText.WriteString(block.Text)
+			}
 			b.turnMu.Unlock()
 
 			if se != nil && se.OnText != nil {
