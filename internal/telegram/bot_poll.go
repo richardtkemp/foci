@@ -3,11 +3,91 @@ package telegram
 import (
 	"context"
 	"errors"
+	"net"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
+
+// ipv4SwitchThreshold is how many consecutive getUpdates *timeouts* (while
+// still dialing dual-stack) trigger the one-way switch to IPv4-only. Kept
+// small so we self-heal the IPv6 blackhole (TODO #809) within ~a minute or two
+// rather than the 34-minute outage observed on 2026-06-07, but >1 so a single
+// stray timeout (which would recover on its own) doesn't permanently abandon
+// IPv6. Each timeout costs roughly one long-poll interval plus backoff.
+const ipv4SwitchThreshold = 3
+
+// errorEscalateThreshold is the consecutive-failure count at which the poll
+// loop logs a single ERROR; failures before and after it stay at DEBUG until
+// recovery (so a sustained outage is one ERROR per bot, not one per poll).
+const errorEscalateThreshold = 5
+
+// isTimeoutErr reports whether a getUpdates error is a timeout — the signature
+// of the IPv6 read-stall (TODO #809). Covers both the http.Client deadline
+// ("context deadline exceeded") and the underlying socket read timeout
+// ("read: connection timed out" / "i/o timeout"), however the transport
+// layered them. Non-timeout failures (4xx/5xx, conn refused, DNS) are NOT
+// treated as the blackhole signature.
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "timed out") ||
+		strings.Contains(s, "i/o timeout")
+}
+
+// pollErrorAction is how the poll loop should react to a getUpdates failure.
+type pollErrorAction struct {
+	switchToIPv4 bool // latch the transport to IPv4-only (the silent self-heal)
+	escalate     bool // log this failure at ERROR (crossed escalation threshold)
+}
+
+// classifyPollError decides the reaction to a getUpdates failure.
+//
+//   - onIPv4: whether the bot has already latched to IPv4-only.
+//   - isTimeout: whether the error is a timeout (the IPv6-blackhole signature).
+//   - consecutiveErrors: failure count including this one.
+//
+// While still dual-stack, a run of timeouts is the suspected IPv6 blackhole: we
+// switch to IPv4 and stay quiet — the switch IS the recovery, so there is
+// nothing to alarm about (Dick's rule: "the switch-to-4 process does not error
+// or warn"). Once on IPv4 — or for any non-timeout error — normal escalation
+// applies, so an ERROR fires only if IPv4 itself keeps failing ("only error or
+// warn if we still get failures on 4").
+func classifyPollError(onIPv4, isTimeout bool, consecutiveErrors int) pollErrorAction {
+	if !onIPv4 && isTimeout {
+		if consecutiveErrors >= ipv4SwitchThreshold {
+			return pollErrorAction{switchToIPv4: true}
+		}
+		return pollErrorAction{} // keep counting on IPv6, silently
+	}
+	return pollErrorAction{escalate: consecutiveErrors == errorEscalateThreshold}
+}
+
+// switchToIPv4 latches the bot's transport to IPv4-only and drops pooled IPv6
+// sockets so the next dial takes the IPv4 path. Idempotent and safe on
+// test-constructed bots (nil forceIPv4). Logs at INFO — not WARN/ERROR —
+// because the switch is a successful self-heal, not a fault.
+func (b *Bot) switchToIPv4(afterFailures int) {
+	if b.forceIPv4 == nil {
+		return // test-constructed bot without transport wiring
+	}
+	if b.forceIPv4.Swap(true) {
+		return // already latched
+	}
+	if b.transport != nil {
+		b.transport.CloseIdleConnections()
+	}
+	b.logger().Infof("switched Telegram API to IPv4-only after %d consecutive IPv6 timeouts (suspected IPv6 blackhole to api.telegram.org — TODO #809); will not revert this process", afterFailures)
+}
 
 // RegisterCommands registers the bot's slash commands with Telegram via setMyCommands.
 // This makes commands appear as autocomplete suggestions when the user types "/" in chat.
@@ -97,7 +177,6 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 
 	var offset int64
 	var consecutiveErrors int
-	const errorEscalateThreshold = 5 // log one ERROR when failures reach this count; DEBUG before and after
 	// Error backoff: exponential from baseBackoff, doubling per consecutive
 	// failure, capped at maxBackoff, reset on first success. This stops a
 	// fast-failing error (e.g. a 502 that returns immediately instead of
@@ -166,15 +245,24 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 			if res.err != nil {
 				consecutiveErrors++
 				sanitized := b.sanitizeError(res.err)
-				// Log ERROR exactly once — on the poll that crosses the
-				// escalation threshold. Every failure before and after that
-				// stays at DEBUG, so a sustained outage produces a single
-				// ERROR per bot rather than one per poll (a 14-min outage was
-				// emitting ~16 ERROR lines per bot). Recovery is logged once
-				// on the next success (see below).
-				if consecutiveErrors == errorEscalateThreshold {
+				// Decide how to react. While dual-stack, a run of timeouts is
+				// the suspected IPv6 blackhole (TODO #809): switch to IPv4-only
+				// silently — the switch is the self-heal. Otherwise (already on
+				// IPv4, or a non-timeout error) escalate to ERROR exactly once,
+				// on the poll that crosses the threshold; every failure before
+				// and after stays at DEBUG so a sustained outage produces a
+				// single ERROR per bot rather than one per poll. Recovery is
+				// logged once on the next success (see below).
+				action := classifyPollError(b.ipv4Latched(), isTimeoutErr(res.err), consecutiveErrors)
+				switch {
+				case action.switchToIPv4:
+					b.switchToIPv4(consecutiveErrors)
+					// Restart escalation accounting on the new IPv4 path, so an
+					// ERROR fires only if IPv4 *also* racks up failures.
+					consecutiveErrors = 0
+				case action.escalate:
 					b.logger().Errorf("get updates failing (%d consecutive failures; further failures logged at debug until recovery): %s", consecutiveErrors, sanitized)
-				} else {
+				default:
 					b.logger().Debugf("get updates (failure #%d): %s", consecutiveErrors, sanitized)
 				}
 

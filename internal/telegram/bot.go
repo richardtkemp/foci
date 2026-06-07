@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -128,6 +129,25 @@ type Bot struct {
 	// by mediaGroupMu; lazily created; stale entries evicted in mediaGroupStamp.
 	mediaGroupMu sync.Mutex
 	mediaGroups  map[string]*mediaGroupEntry
+
+	// forceIPv4, once latched true, makes the bot's HTTP transport dial
+	// api.telegram.org over IPv4 only. It is set once by switchToIPv4 after a
+	// sustained run of IPv6 read timeouts (TODO #809) and never reverted for
+	// the process lifetime. Pointer (not value) so the dialer closure — built
+	// in NewBot before this struct exists — and the poll loop share one flag
+	// without copying an atomic. nil on test-constructed bots (struct literal);
+	// always read via ipv4Latched(), never directly.
+	forceIPv4 *atomic.Bool
+	// transport is the bot's HTTP transport. switchToIPv4 calls
+	// CloseIdleConnections on it so pooled IPv6 sockets are dropped and the
+	// next dial takes the IPv4-only path. nil on test-constructed bots.
+	transport *http.Transport
+}
+
+// ipv4Latched reports whether the bot has switched to IPv4-only dialing.
+// Safe on test-constructed bots where forceIPv4 is nil.
+func (b *Bot) ipv4Latched() bool {
+	return b.forceIPv4 != nil && b.forceIPv4.Load()
 }
 
 // BotDisplayConfig groups all display-related settings. Write-once at startup
@@ -240,6 +260,37 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		// so the override is uniform across getUpdates, sendMessage, etc.
 		defaultReqOpts.APIURL = apiBase
 	}
+	// IPv6 fallback dialer.
+	//
+	// Telegram's IPv6 address for api.telegram.org (2001:67c:4e8:f004::9) has
+	// intermittently *blackholed*: the TCP handshake completes but subsequent
+	// reads stall until the client timeout, so getUpdates long-polls fail in a
+	// sustained run while IPv4 stays perfectly healthy (TODO #809; the scout
+	// outage on 2026-06-07 ran 34 min / 36 consecutive failures). Happy-eyeballs
+	// (RFC 6555) does NOT save us here: it only races connection *setup*, and the
+	// v6 setup succeeds — the stall is on the data path, after the handshake.
+	//
+	// So we install a custom dialer whose address family can be flipped at
+	// runtime. Normal operation dials dual-stack ("tcp", v6-preferred). When the
+	// poll loop sees the timeout signature (see classifyPollError / switchToIPv4
+	// in bot_poll.go) it latches forceIPv4, and every subsequent dial uses
+	// "tcp4" — IPv4 only. The latch is one-way and never reverts for the process
+	// lifetime: v4 has been reliable, and not flapping back avoids re-entering
+	// the blackhole. A fresh process starts dual-stack again.
+	forceIPv4 := &atomic.Bool{}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	transport := &http.Transport{
+		MaxIdleConnsPerHost: 8,
+		// A custom DialContext disables Go's automatic HTTP/2 upgrade unless we
+		// opt back in; keep H2 so behaviour matches the previous bare transport.
+		ForceAttemptHTTP2: true,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if forceIPv4.Load() {
+				network = "tcp4"
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
+	}
 	// Construct via connectBot so a transient DNS/network blip at boot
 	// (e.g. systemd brings foci up before DNS is ready) doesn't permanently
 	// disable the bot. See bot_connect.go and TODO #796.
@@ -247,9 +298,7 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 	api, err := connectBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
 			Client: http.Client{
-				Transport: &http.Transport{
-					MaxIdleConnsPerHost: 8,
-				},
+				Transport: transport,
 			},
 			DefaultRequestOpts: defaultReqOpts,
 		},
@@ -275,6 +324,8 @@ func NewBot(token string, allowedUsers []string, handler platform.MessageHandler
 		agentID:      agentID,
 		botToken:     token,
 		apiBase:      apiBase,
+		forceIPv4:    forceIPv4,
+		transport:    transport,
 		chatmeta: &chatmeta.Resolver{
 			AgentID:      agentID,
 			PlatformName: platformName,
