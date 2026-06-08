@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"foci/internal/agent/turnevent"
+	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/turn"
 )
@@ -107,6 +109,23 @@ func (a *Agent) RunTurn(
 		}
 		texts = append(texts, text)
 		allAttachments = append(allAttachments, env.Attachments...)
+	}
+
+	// Route a typed reply that answers a pending foci_ask to the waiting ask
+	// instead of running a normal turn. `ask` is async — the asking turn already
+	// ended — so the user's typed ("Other") answer arrives here as a fresh
+	// inbound message. Gating on RunTurn (the platform-message path) means this
+	// never eats system injects (keepalive, reflection, session_notify), which
+	// reach HandleMessage directly and bypass this function.
+	if a.AskRouter != nil && a.AskRouter.PendingForSession != nil && len(texts) > 0 {
+		if reqID := a.AskRouter.PendingForSession(sk); reqID != "" {
+			answer := strings.TrimSpace(texts[0])
+			if answer != "" {
+				log.Debugf("ask", "session=%s routing typed text to pending ask req=%s: %q", sk, reqID, answer)
+				a.AskRouter.HandleResponse(reqID, answer)
+				return nil
+			}
+		}
 	}
 
 	return turn.RunTurn(ctx, a, dispatchSink, steerer, sk, texts, allAttachments)

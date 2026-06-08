@@ -490,6 +490,21 @@ Callback data format: `im:<promptID>:<buttonIndex>`. Prompt IDs are atomic uint6
 
 Used by permission prompts (delegated backends), config selection menus, and other platform interactions that need structured user choices.
 
+### Ask Tool (`ask` / `foci_ask`) and shared `internal/question`
+
+`ask` is a foci-native, **backend-agnostic** equivalent of Claude Code's `AskUserQuestion`, with **no 4-item cap** and an **async** delivery model. It works for delegated (CC) and API agents alike.
+
+**Shared core — `internal/question`:** the pure question machinery (types `Question`/`Option`, `Parse`, `FormatText`, `Choices`, `ResolveAnswer` — including the `qa:<index>`/`qa:cancel` button-data convention — `MergeAnswers`, and a sequential `Accumulator`). Zero backend deps. Consumed by **both** `internal/tools/ask.go` (async) and `internal/delegator/ccstream/userquestion.go` (CC's blocking `AskUserQuestion`, which keeps its control-response wiring but parses/formats/accumulates via the shared package). The 4-item cap only ever lived in CC's tool *schema*, never the parser.
+
+**Async flow (`internal/tools/ask.go`):**
+1. `Execute` reads the calling session key via `SessionKeyFromContext(ctx)` (set on the exec bridge ctx by `delegated_manager.go` for CC and `turn_api_tools.go` for API agents), parses questions, registers a `pendingAsk` in the in-memory `askState`, presents the first question, and **returns immediately** with `{"status":"asked",...}` — it does not block (sidesteps CC's 600s Bash ceiling).
+2. Each question is one one-shot interactive message (via the presenter, wired in `cmd/foci-gw/ask_setup.go` → `platform.SendInteractiveMessageWithID`). A button click runs the generic `imStore` callback → `askState.handleResponse` → `question.ResolveAnswer` → `Accumulator.Record`; the next question is presented or, when done, the batch is delivered.
+3. **Answer delivery** uses the same `SessionNotifyFn` (`newSessionNotifyFn`) as `send_to_session` — it calls `HandleMessage` on the asking session, waking the agent in a fresh turn with the `{questions, answers}` batch as a normal inbound user message. This single path works for both backends.
+
+**Typed ("Other") answers:** a pending ask is also keyed by session (`askState.bySession`, exposed via `AskRouter`, stored on `Agent.AskRouter`). `Agent.RunTurn` (`run_turn.go`, the platform-message path only) checks for a pending ask and routes a typed reply to `AskRouter.HandleResponse` instead of starting a turn. Gating on `RunTurn` (not the shared `HandleMessage`) ensures system injects (keepalive, reflection, `session_notify`) — which call `HandleMessage` directly — are never mistaken for answers.
+
+**Registration:** `registerAskTool` is called on both the API path (`agents.go`) and the delegated path (`agents_delegated.go` → `buildExecRegistry`), so `foci_ask` is available to every agent. Shell input is JSON-only (positional object, `--json`, or stdin); the hand-rolled shell func lives in `execbridge.go`'s `generateShellFunc` (`questions` is declared positional so the schema-parity validator skips it). `multiSelect` is accepted but currently single-select.
+
 ### API Tool Loop Detail
 
 ```

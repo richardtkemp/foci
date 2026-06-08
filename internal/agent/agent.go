@@ -61,6 +61,7 @@ type Agent struct {
 	Bootstrap       *workspace.Bootstrap
 	Compactor       *compaction.Compactor // nil disables auto-compaction
 	AsyncNotifier   *tools.AsyncNotifier  // nil disables async-pending compaction guard
+	AskRouter       *tools.AskRouter      // nil disables typed-answer routing for the foci-native `ask` tool
 	Reminders       *memory.ReminderStore // nil disables reminder injection
 	TaskListStore   *memory.TaskListStore // nil disables task list in state dashboard
 	TodoStore       *memory.TodoStore     // nil disables todo count in state dashboard

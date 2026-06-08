@@ -348,6 +348,16 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	}
 	registry.Register(tools.NewSendToSessionTool(p.sessions, notifier, sessionNotifyFn, resolveKeyFn))
 
+	// ask / foci_ask: async, backend-agnostic AskUserQuestion. Posts questions
+	// as interactive buttons and delivers the answer batch back into this
+	// session via the same session-notify route as send_to_session.
+	askRouter := registerAskTool(registry, acfg.ID, connMgr, sessionNotifyFn)
+	if agLazy != nil {
+		if a := agLazy(); a != nil {
+			a.AskRouter = askRouter
+		}
+	}
+
 	if p.todoStore != nil {
 		registry.Register(tools.NewTodoTool(p.todoStore, acfg.ID))
 	}

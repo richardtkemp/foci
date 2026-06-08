@@ -220,6 +220,12 @@ func configureAPI(ag *agent.Agent, p setupParams, shared *sharedAgentSetup, comp
 	// Session messaging tools (send_to_chat, send_to_session)
 	_, ttsRepls := registerSessionTools(registry, p, connMgr, notifier)
 
+	// ask / foci_ask: async, backend-agnostic AskUserQuestion. Registered on the
+	// API path too so non-delegated agents get the tool. Answers route back into
+	// this session via the same session-notify mechanism as send_to_session.
+	askDeliver := newSessionNotifyFn(p.agentResolverFn, p.ctx, connMgr)
+	ag.AskRouter = registerAskTool(registry, acfg.ID, connMgr, askDeliver)
+
 	// Per-agent environment block
 	var envBlock string
 	if p.resolved.Environment.Enabled {
