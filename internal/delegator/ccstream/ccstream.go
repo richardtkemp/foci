@@ -687,10 +687,28 @@ func (b *Backend) armReArmWatchdog() {
 // turn, delivering the stashed round-1 result so a folded steer that produced no
 // shadow reply still releases cleanly instead of hanging (#813).
 func (b *Backend) watchdogTick(gen int) {
+	// Snapshot outstanding-prompt count BEFORE taking turnMu: outstandingPrompts
+	// acquires the registry lock, and not nesting it inside turnMu keeps the two
+	// locks order-independent.
+	pending := b.outstandingPrompts()
+
 	b.turnMu.Lock()
 	if b.completing || b.turnGen != gen || !b.turnActive {
 		b.turnMu.Unlock()
 		return // superseded by a real completion, a new turn, or already claimed
+	}
+	// A turn blocked on a human (tool permission, AskUserQuestion, MCP
+	// elicitation) emits no stream events in pipe mode, so LastActivity goes
+	// stale and the idle check below would force-complete a turn that is alive
+	// and waiting correctly — not stalled. Reschedule instead: when the prompt
+	// resolves, activity resumes and the turn either completes (disarming this
+	// watchdog) or a later tick fires on genuine post-resolution silence. This
+	// mirrors a non-folded turn's behaviour at a permission prompt (#813).
+	if pending > 0 {
+		b.watchdog = time.AfterFunc(b.watchdogBound(), func() { b.watchdogTick(gen) })
+		b.turnMu.Unlock()
+		b.logger().Extra("steer_shadow event=watchdog_defer reason=outstanding_prompt outstanding_prompts=%d", pending)
+		return
 	}
 	if idle := time.Since(b.LastActivity()); idle < b.watchdogBound() {
 		// CC is still active (recent stream events) — wait out the remainder.

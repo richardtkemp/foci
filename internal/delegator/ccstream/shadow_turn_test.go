@@ -167,6 +167,71 @@ func TestSteerFold_WatchdogReleasesWhenNoShadowReply(t *testing.T) {
 	}
 }
 
+// TestSteerFold_WatchdogDefersWhileOutstandingPrompt proves the watchdog does
+// not force-complete a re-armed turn that is blocked on a human (tool
+// permission, AskUserQuestion, MCP elicitation). Such a wait emits NO stream
+// events in pipe mode, so LastActivity goes stale and the activity-aware check
+// alone would wrongly fire — truncating a turn that is alive and waiting. The
+// real helen incident (2026-06-08): a watchdog fired exactly bound-seconds
+// after an AskUserQuestion prompt. Once the prompt resolves and silence
+// persists, the watchdog must still release the turn (#813).
+func TestSteerFold_WatchdogDefersWhileOutstandingPrompt(t *testing.T) {
+	// Not parallel: real-timer test.
+	var buf bytes.Buffer
+	b := &Backend{
+		writer:             NewWriter(nopWriteCloser{&buf}),
+		reArmWatchdogBound: 60 * time.Millisecond,
+		outstanding:        NewOutstandingRegistry(),
+	}
+	b.typingFunc = func(bool) {}
+
+	var completedCount int32
+	done := make(chan struct{}, 1)
+	handler := &delegator.EventHandler{
+		OnTurnComplete: func(_ *delegator.TurnResult) {
+			atomic.AddInt32(&completedCount, 1)
+			select {
+			case done <- struct{}{}:
+			default:
+			}
+		},
+	}
+	applyHandler(b, handler)
+
+	if err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSteer,
+		Text:   "steer",
+	}); err != nil {
+		t.Fatalf("Inject(SourceSteer): %v", err)
+	}
+	// Re-arm + arm the watchdog, then immediately register an outstanding prompt
+	// (the steered reply called AskUserQuestion and is now blocked on the human).
+	b.OnResult(&ResultMessage{Subtype: "success", Result: "", ModelUsage: map[string]ModelUsage{}})
+	b.outstanding.Register("req-q", OutstandingPermission)
+
+	// Well past 2× the bound with the prompt still outstanding: the turn must NOT
+	// be force-completed, even though no activity is touched (the human is thinking).
+	time.Sleep(150 * time.Millisecond)
+	if atomic.LoadInt32(&completedCount) != 0 {
+		t.Fatal("watchdog fired while a prompt was outstanding — would truncate a turn blocked on the human")
+	}
+	if !b.IsTurnInFlight() {
+		t.Fatal("turn must stay in flight while blocked on an outstanding prompt")
+	}
+
+	// Human answers → prompt resolves. With no further activity, the next tick
+	// sees a stale LastActivity and must release the turn within ~one bound.
+	b.outstanding.Resolve("req-q")
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watchdog never fired after the outstanding prompt resolved")
+	}
+	if b.IsTurnInFlight() {
+		t.Error("turn must be released once the prompt clears and silence persists")
+	}
+}
+
 // TestSteerFold_WatchdogDefersWhileActive proves the watchdog is activity-aware:
 // a re-armed turn that is legitimately busy (CC streaming / awaiting a tool
 // permission — which emits nothing in pipe mode but does touch activity on its
