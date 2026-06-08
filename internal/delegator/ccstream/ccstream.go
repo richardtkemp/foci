@@ -637,6 +637,20 @@ func (b *Backend) watchdogBound() time.Duration {
 	return defaultReArmWatchdogBound
 }
 
+// outstandingPrompts returns the number of prompts (tool permissions,
+// AskUserQuestion sequences, MCP elicitations) currently awaiting a user
+// response, or 0 if none/unset. Used only by xtra:ccstream instrumentation: a
+// re-armed turn blocked on a human emits no activity in pipe mode, so a
+// watchdog fire or inflated rearm->result latency must be attributable to a
+// pending prompt vs a genuinely slow/absent shadow reply before the latency
+// distribution can inform the watchdog-bound decision (#813).
+func (b *Backend) outstandingPrompts() int {
+	if b.outstanding == nil {
+		return 0
+	}
+	return b.outstanding.Len()
+}
+
 // armReArmWatchdog starts (or restarts) the re-arm safety net for the current
 // turn generation. Called from OnResult immediately after a folded-steer
 // re-arm. See defaultReArmWatchdogBound.
@@ -688,7 +702,7 @@ func (b *Backend) watchdogTick(gen int) {
 		held = &delegator.TurnResult{}
 	}
 	b.logger().Warnf("re-arm watchdog: folded steer produced no shadow reply within %s; force-completing turn to release it (#813)", b.watchdogBound())
-	b.logger().Extra("steer_shadow event=watchdog outcome=no_shadow rearm_to_fire=%s", time.Since(shadowReArmAt).Round(time.Millisecond))
+	b.logger().Extra("steer_shadow event=watchdog outcome=no_shadow rearm_to_fire=%s outstanding_prompts=%d", time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
 	if turn != nil && turn.OnTurnComplete != nil {
 		turn.OnTurnComplete(held)
 	}
@@ -1454,8 +1468,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.logger().Debugf("OnResult: re-arming turn for folded steer/follow-up shadow reply (#813)")
 		b.reArmForContinuation(turn, "")
 		b.armReArmWatchdog()
-		b.logger().Extra("steer_shadow event=rearm round1_output=%d round1_textlen=%d watchdog_bound=%s",
-			result.Usage.OutputTokens, len(result.Text), b.watchdogBound())
+		b.logger().Extra("steer_shadow event=rearm round1_output=%d round1_textlen=%d watchdog_bound=%s outstanding_prompts=%d",
+			result.Usage.OutputTokens, len(result.Text), b.watchdogBound(), b.outstandingPrompts())
 		return
 	}
 
@@ -1475,8 +1489,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		if text == "" {
 			outcome = "empty"
 		}
-		b.logger().Extra("steer_shadow event=shadow_result outcome=%s output=%d textlen=%d rearm_to_result=%s",
-			outcome, turnUsage.OutputTokens, len(text), time.Since(shadowReArmAt).Round(time.Millisecond))
+		b.logger().Extra("steer_shadow event=shadow_result outcome=%s output=%d textlen=%d rearm_to_result=%s outstanding_prompts=%d",
+			outcome, turnUsage.OutputTokens, len(text), time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
 	}
 
 	// Clear any agents still tracked (safety net — task_notification should
