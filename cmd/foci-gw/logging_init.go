@@ -27,6 +27,20 @@ func initLogging(cfg *config.Config) func() {
 		log.Fatalf("main", "init logging: %v", err)
 	}
 
+	// Per-package "extra" verbose logging (top-level [debug] flags). Applied
+	// once here, process-global: enabling a package emits its xtra:<pkg> lines
+	// at INFO regardless of per-agent scope. Off by default.
+	for pkg, on := range map[string]bool{
+		"ccstream": config.DerefBool(cfg.Debug.ExtraCcstreamLogging),
+		"telegram": config.DerefBool(cfg.Debug.ExtraTelegramLogging),
+		"inbox":    config.DerefBool(cfg.Debug.ExtraInboxLogging),
+	} {
+		if on {
+			log.EnableExtra(pkg)
+			log.Infof("main", "extra logging enabled for %q (grep xtra:%s)", pkg, pkg)
+		}
+	}
+
 	var cleanups []func()
 	cleanups = append(cleanups, log.Close)
 

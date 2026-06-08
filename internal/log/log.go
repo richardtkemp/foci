@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"foci/internal/timeutil"
@@ -342,6 +343,69 @@ func (cl *ComponentLogger) Warnf(format string, args ...interface{}) {
 }
 func (cl *ComponentLogger) Errorf(format string, args ...interface{}) {
 	std.event(ERROR, cl.component, format, args...)
+}
+
+// Extra logs a verbose "xtra:" investigation line for this logger's component,
+// gated by the package's [debug] extra_<package>_logging flag. No-op (one
+// atomic load) when the package is not enabled. See package-level Extra.
+func (cl *ComponentLogger) Extra(format string, args ...interface{}) {
+	Extra(cl.component, format, args...)
+}
+
+// --- Per-package "extra" verbose logging (gated by [debug] config) ---
+//
+// Investigation-grade logging that is OFF by default and switched on per
+// package via [debug] extra_<package>_logging flags (see config.DebugConfig).
+// When a package is enabled, Extra() emits at INFO with the component tagged
+// "xtra:<component>" — so the lines surface at the default log level (no need
+// to drop the global level to DEBUG and flood every package) and are trivially
+// greppable: "xtra:" for all of them, "xtra:ccstream" for one (also matches a
+// labelled "xtra:ccstream:clutch"), "xtra:(ccstream|telegram)" for several.
+//
+// The enabled set is built once at startup (EnableExtra, from the resolved
+// [debug] flags) and read lock-free on hot logging paths via an atomic
+// snapshot pointer.
+var extraLogging atomic.Pointer[map[string]bool]
+
+// EnableExtra turns on "xtra:" verbose logging for a base package component
+// (e.g. "ccstream", "telegram", "inbox"). Call at startup, before serving
+// traffic. Idempotent; copy-on-write so concurrent readers never see a torn map.
+func EnableExtra(component string) {
+	next := map[string]bool{}
+	if cur := extraLogging.Load(); cur != nil {
+		for k, v := range *cur {
+			next[k] = v
+		}
+	}
+	next[component] = true
+	extraLogging.Store(&next)
+}
+
+// ExtraEnabled reports whether verbose logging is on for a component. A labelled
+// component ("ccstream:clutch") matches its base package enable ("ccstream"),
+// so a single flag covers all instances of a package.
+func ExtraEnabled(component string) bool {
+	m := extraLogging.Load()
+	if m == nil {
+		return false
+	}
+	if (*m)[component] {
+		return true
+	}
+	if i := strings.IndexByte(component, ':'); i > 0 {
+		return (*m)[component[:i]]
+	}
+	return false
+}
+
+// Extra logs a verbose investigation line for component, but only when that
+// package has been enabled via EnableExtra. Tagged "xtra:<component>" and
+// emitted at INFO. Cost when disabled is a single atomic load.
+func Extra(component string, format string, args ...interface{}) {
+	if !ExtraEnabled(component) {
+		return
+	}
+	std.event(INFO, "xtra:"+component, format, args...)
 }
 
 // Package-level functions for the global logger.

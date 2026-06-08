@@ -943,6 +943,14 @@ type DebugConfig struct {
 	MessagesInLog        *bool `toml:"messages_in_log"         desc:"log user message content"` // log user message content to event log (default false for privacy)
 	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"alert on cache_read drop"` // alert when cache_read drops >50% vs previous request
 	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"suppress cache bust alert if idle > N minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
+
+	// Per-package "extra" verbose logging. Each switches on investigation-grade
+	// logging for one package, tagged "xtra:<package>" in the log (grep
+	// "xtra:ccstream", or "xtra:" for all). Process-global (applied once at
+	// startup from the top-level [debug] section); default off. See log.Extra.
+	ExtraCcstreamLogging *bool `toml:"extra_ccstream_logging" default:"false" desc:"verbose ccstream logs tagged xtra:ccstream"` // verbose ccstream turn/steer logging
+	ExtraTelegramLogging *bool `toml:"extra_telegram_logging" default:"false" desc:"verbose telegram logs tagged xtra:telegram"` // verbose telegram poll/transport logging
+	ExtraInboxLogging    *bool `toml:"extra_inbox_logging"    default:"false" desc:"verbose inbox logs tagged xtra:inbox"`       // verbose inbox routing/gate logging
 }
 
 type Config struct {

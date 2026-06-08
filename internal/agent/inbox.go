@@ -417,6 +417,9 @@ func (a *Agent) sessionWorker(ctx context.Context, inb *sessionInbox) {
 			// further envelopes accumulate in inb.ch (buffered) and will
 			// be batched together via drainAvailable once the gate opens.
 			base := session.SessionKeyBase(env.SessionKey)
+			if a.IsTurnInFlight(base) && !a.IsInFlightDelivering(base) {
+				log.Extra("inbox", "gate_wait sk=%s base=%s reason=in_flight_non_delivering — holding fresh turn until non-delivering turn clears (#767)", env.SessionKey, base)
+			}
 			for a.IsTurnInFlight(base) && !a.IsInFlightDelivering(base) {
 				wait := a.InFlightWaitCh(base)
 				select {
