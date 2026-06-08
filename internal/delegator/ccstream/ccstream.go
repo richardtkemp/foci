@@ -116,6 +116,7 @@ type Backend struct {
 	// to measure steer fold-vs-shadow outcomes and catch collisions (#813).
 	reArmAt        time.Time
 	awaitingShadow bool
+	reArmDepth     int // chained-fold counter: 1 on first fold, N on the Nth consecutive re-arm; reset on normal completion / watchdog fire (#813 instrumentation)
 
 	// reArmWatchdogBound overrides defaultReArmWatchdogBound. Set once at
 	// construction (or by tests) before any turn starts; read without a lock.
@@ -527,8 +528,20 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	// Should be unreachable post-fix; logged (outside the lock) if it fires.
 	collision := b.awaitingShadow
 	prevGen := b.turnGen
+	var collisionAwaitedFor time.Duration
+	var collisionHeldOutput, collisionHeldTextlen int
 	if collision {
 		b.awaitingShadow = false
+		collisionAwaitedFor = time.Since(b.reArmAt).Round(time.Millisecond)
+		// Capture the round-1 result now at risk: the still-pending shadow reply
+		// for prevGen will be misattributed to this fresh turn and the stashed
+		// round-1 content can be lost. Logged below as the collision casualty.
+		if b.heldResult != nil {
+			if b.heldResult.Usage != nil {
+				collisionHeldOutput = b.heldResult.Usage.OutputTokens
+			}
+			collisionHeldTextlen = len(b.heldResult.Text)
+		}
 	}
 	b.turnActive = true
 	b.turnEvents = turn
@@ -540,7 +553,8 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Unlock()
 
 	if collision {
-		b.logger().Extra("steer_shadow event=collision detail=new_turn_began_during_shadow_window prev_gen=%d", prevGen)
+		b.logger().Extra("steer_shadow event=collision detail=new_turn_began_during_shadow_window prev_gen=%d awaited_for=%s held_output=%d held_textlen=%d",
+			prevGen, collisionAwaitedFor, collisionHeldOutput, collisionHeldTextlen)
 	}
 
 	b.mu.Lock()
@@ -690,11 +704,13 @@ func (b *Backend) watchdogTick(gen int) {
 	resultCh := b.turnResultCh
 	held := b.heldResult
 	shadowReArmAt := b.reArmAt
+	chainDepth := b.reArmDepth
 	b.turnEvents = nil
 	b.turnActive = false
 	b.awaitingShadow = false
 	b.pendingSteer = 0
 	b.heldResult = nil
+	b.reArmDepth = 0 // chain terminated by watchdog force-complete
 	b.watchdog = nil
 	b.turnMu.Unlock()
 
@@ -702,7 +718,7 @@ func (b *Backend) watchdogTick(gen int) {
 		held = &delegator.TurnResult{}
 	}
 	b.logger().Warnf("re-arm watchdog: folded steer produced no shadow reply within %s; force-completing turn to release it (#813)", b.watchdogBound())
-	b.logger().Extra("steer_shadow event=watchdog outcome=no_shadow rearm_to_fire=%s outstanding_prompts=%d", time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
+	b.logger().Extra("steer_shadow event=watchdog outcome=no_shadow depth=%d rearm_to_fire=%s outstanding_prompts=%d", chainDepth, time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
 	if turn != nil && turn.OnTurnComplete != nil {
 		turn.OnTurnComplete(held)
 	}
@@ -1434,6 +1450,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	if turn != nil && turn.PreAnswerNudgeFunc != nil {
 		if followUp := turn.PreAnswerNudgeFunc(result); followUp != "" {
 			if b.reArmForContinuation(turn, followUp) {
+				b.logger().Extra("steer_shadow event=preanswer_redispatch followup_len=%d round1_output=%d round1_textlen=%d",
+					len(followUp), result.Usage.OutputTokens, len(result.Text))
 				return
 			}
 			// Re-dispatch failed; fall through to the normal completion
@@ -1464,12 +1482,17 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		// delivers this (in the no-second-OnResult fold mode, it IS the answer).
 		b.turnMu.Lock()
 		b.heldResult = result
+		b.reArmDepth++
+		depth := b.reArmDepth
 		b.turnMu.Unlock()
 		b.logger().Debugf("OnResult: re-arming turn for folded steer/follow-up shadow reply (#813)")
 		b.reArmForContinuation(turn, "")
 		b.armReArmWatchdog()
-		b.logger().Extra("steer_shadow event=rearm round1_output=%d round1_textlen=%d watchdog_bound=%s outstanding_prompts=%d",
-			result.Usage.OutputTokens, len(result.Text), b.watchdogBound(), b.outstandingPrompts())
+		// depth=1 is a first fold (round_* is the round-1 result); depth>1 is a
+		// chained fold (the prior shadow reply itself folded — round_* is the
+		// round-N result, not round 1).
+		b.logger().Extra("steer_shadow event=rearm depth=%d round_output=%d round_textlen=%d watchdog_bound=%s outstanding_prompts=%d",
+			depth, result.Usage.OutputTokens, len(result.Text), b.watchdogBound(), b.outstandingPrompts())
 		return
 	}
 
@@ -1478,10 +1501,12 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// follow-up ask() from a folded steer) still delivers cleanly.
 	b.turnMu.Lock()
 	hadTurn := b.turnEvents != nil
+	chainDepth := b.reArmDepth
 	b.turnEvents = nil
 	b.turnActive = false
 	b.pendingSteer = 0 // turn truly ended; drop any unconsumed fold marks
 	b.heldResult = nil // no longer need the stashed re-arm result
+	b.reArmDepth = 0   // chain terminated by a real completion
 	b.turnMu.Unlock()
 	b.logger().Debugf("OnResult: turn cleared (had_turn_events=%v)", hadTurn)
 	if wasAwaitingShadow {
@@ -1489,8 +1514,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		if text == "" {
 			outcome = "empty"
 		}
-		b.logger().Extra("steer_shadow event=shadow_result outcome=%s output=%d textlen=%d rearm_to_result=%s outstanding_prompts=%d",
-			outcome, turnUsage.OutputTokens, len(text), time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
+		b.logger().Extra("steer_shadow event=shadow_result outcome=%s depth=%d output=%d textlen=%d rearm_to_result=%s outstanding_prompts=%d",
+			outcome, chainDepth, turnUsage.OutputTokens, len(text), time.Since(shadowReArmAt).Round(time.Millisecond), b.outstandingPrompts())
 	}
 
 	// Clear any agents still tracked (safety net — task_notification should
