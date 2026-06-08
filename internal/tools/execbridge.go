@@ -889,6 +889,37 @@ func generateShellFunc(t *Tool) string {
 }
 `, name, helpCheck, guard, name)
 
+	case "ask":
+		// JSON-only input (no flat per-field flags, per design): accept the
+		// questions object as a positional arg (also caught by the foci__json
+		// passthrough guard), via --json, or piped on stdin. Async tool —
+		// returns immediately after posting the first question.
+		return fmt.Sprintf(`%s() {
+%s
+%s
+  local json=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) json="$2"; shift 2 ;;
+      --*)
+        echo "error: unrecognized flag: $1" >&2
+        echo "valid: --json (or pass JSON positionally, or pipe it on stdin)" >&2
+        return 1 ;;
+      *) json="$1"; shift ;;
+    esac
+  done
+  if [ -z "$json" ] && [ ! -t 0 ]; then
+    json="$(cat)"
+  fi
+  if [ -z "$json" ]; then
+    echo "usage: %s '{\"questions\":[{\"question\":\"...\",\"options\":[{\"label\":\"...\"}]}]}'" >&2
+    echo "  or: %s --json '<json>'   or:  echo '<json>' | %s" >&2
+    return 1
+  fi
+  foci-call "$(jq -nc --argjson p "$json" '{"tool":"ask","params":$p}')"
+}
+`, name, helpCheck, guard, name, name, name)
+
 	default:
 		// Schema-driven generic: emits a flag-parsing function whose
 		// accepted flags are exactly those advertised by generateHelpText.

@@ -3,35 +3,28 @@ package ccstream
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"foci/internal/delegator"
 	"foci/internal/log"
+	"foci/internal/question"
 )
 
 // ---------------------------------------------------------------------------
 // AskUserQuestion types (matching CC's tool schema)
 // ---------------------------------------------------------------------------
 
-// userQuestion is a single question in an AskUserQuestion tool invocation.
-type userQuestion struct {
-	Question    string           `json:"question"`
-	Header      string           `json:"header"`
-	Options     []questionOption `json:"options"`
-	MultiSelect bool             `json:"multiSelect"`
-}
-
-// questionOption is one selectable option within a question.
-type questionOption struct {
-	Label       string `json:"label"`
-	Description string `json:"description"`
-}
+// userQuestion and questionOption are aliases for the shared question types.
+// The AskUserQuestion core (types, parse, format, choices, answer resolution,
+// merge) lives in internal/question so it is shared with the foci-native
+// `ask`/`foci_ask` tool; ccstream keeps only the CC-specific control-response
+// wiring. Aliases (not new types) keep existing call sites and tests unchanged.
+type userQuestion = question.Question
+type questionOption = question.Option
 
 // askUserQuestionInput is the parsed input of the AskUserQuestion tool.
 type askUserQuestionInput struct {
-	Questions []userQuestion `json:"questions"`
+	Questions []userQuestion
 }
 
 // ---------------------------------------------------------------------------
@@ -39,70 +32,34 @@ type askUserQuestionInput struct {
 // ---------------------------------------------------------------------------
 
 // parseAskUserQuestionInput parses and validates the AskUserQuestion tool
-// input. Returns nil if the input is invalid or has no questions.
+// input via the shared parser. Returns nil if the input is invalid or has no
+// questions (CC's tool path treats both as "nothing to present").
 func parseAskUserQuestionInput(raw json.RawMessage) *askUserQuestionInput {
-	var input askUserQuestionInput
-	if err := json.Unmarshal(raw, &input); err != nil {
+	qs, err := question.Parse(raw)
+	if err != nil || len(qs) == 0 {
 		return nil
 	}
-	if len(input.Questions) == 0 {
-		return nil
-	}
-	return &input
+	return &askUserQuestionInput{Questions: qs}
 }
 
 // ---------------------------------------------------------------------------
 // Display formatting
 // ---------------------------------------------------------------------------
 
-// formatQuestionText formats a single question for platform display.
-// index is 0-based; total is the number of questions in the sequence.
+// formatQuestionText formats a single question for platform display, delegating
+// to the shared formatter. index is 0-based; total is the sequence length.
 func formatQuestionText(q *userQuestion, index, total int) string {
-	var b strings.Builder
-
-	// Header line: bold header or "Question N/M" for multi-question.
-	if total > 1 {
-		if q.Header != "" {
-			b.WriteString(fmt.Sprintf("**%s** (%d/%d)\n\n", q.Header, index+1, total))
-		} else {
-			b.WriteString(fmt.Sprintf("**Question %d/%d**\n\n", index+1, total))
-		}
-	} else if q.Header != "" {
-		b.WriteString(fmt.Sprintf("**%s**\n\n", q.Header))
-	}
-
-	b.WriteString(q.Question)
-
-	// List options with descriptions.
-	if len(q.Options) > 0 {
-		b.WriteString("\n")
-		for i, opt := range q.Options {
-			b.WriteString("\n")
-			if opt.Description != "" {
-				b.WriteString(fmt.Sprintf("%d. **%s** — %s", i+1, opt.Label, opt.Description))
-			} else {
-				b.WriteString(fmt.Sprintf("%d. **%s**", i+1, opt.Label))
-			}
-		}
-	}
-
-	return b.String()
+	return question.FormatText(q, index, total)
 }
 
-// questionChoices creates button choices for a question's options.
-// Each option gets data "qa:<index>"; a Cancel button is appended.
+// questionChoices creates button choices for a question's options, adapting the
+// shared question.Choice values to delegator.PromptChoice for the prompt fn.
 func questionChoices(q *userQuestion) []delegator.PromptChoice {
-	choices := make([]delegator.PromptChoice, 0, len(q.Options)+1)
-	for i, opt := range q.Options {
-		choices = append(choices, delegator.PromptChoice{
-			Label: opt.Label,
-			Data:  "qa:" + strconv.Itoa(i),
-		})
+	shared := question.Choices(q)
+	choices := make([]delegator.PromptChoice, len(shared))
+	for i, c := range shared {
+		choices[i] = delegator.PromptChoice{Label: c.Label, Data: c.Data}
 	}
-	choices = append(choices, delegator.PromptChoice{
-		Label: "Cancel",
-		Data:  "qa:cancel",
-	})
 	return choices
 }
 
@@ -183,18 +140,14 @@ func (b *Backend) RespondToQuestion(requestID, choice string) error {
 	}
 
 	q := &pp.questions[pp.currentIndex]
-	var answer string
-
-	if strings.HasPrefix(choice, "qa:") {
-		suffix := strings.TrimPrefix(choice, "qa:")
-		idx, err := strconv.Atoi(suffix)
-		if err != nil || idx < 0 || idx >= len(q.Options) {
-			return fmt.Errorf("ccstream: invalid question option index %q", suffix)
-		}
-		answer = q.Options[idx].Label
-	} else {
-		// Custom typed text — use as-is.
-		answer = choice
+	answer, cancelled, err := question.ResolveAnswer(q, choice)
+	if err != nil {
+		return fmt.Errorf("ccstream: %w", err)
+	}
+	if cancelled {
+		// The permission layer routes qa:cancel to CancelQuestion, so a cancel
+		// reaching here is a stray; reject it rather than record it as an answer.
+		return fmt.Errorf("ccstream: cancel is not a valid answer for request %q", requestID)
 	}
 
 	pp.answers[q.Question] = answer
@@ -275,20 +228,10 @@ func (b *Backend) HasPendingQuestion() string {
 // ---------------------------------------------------------------------------
 
 // buildUpdatedInput merges the answers map into the original AskUserQuestion
-// input JSON, producing the updatedInput for PermissionAllow. CC expects:
+// input JSON via the shared merge, producing the updatedInput for
+// PermissionAllow. CC expects:
 //
 //	{"questions": [...original...], "answers": {"question text": "answer"}}
 func buildUpdatedInput(originalInput json.RawMessage, answers map[string]string) (json.RawMessage, error) {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(originalInput, &m); err != nil {
-		return nil, fmt.Errorf("unmarshal original input: %w", err)
-	}
-
-	answersJSON, err := json.Marshal(answers)
-	if err != nil {
-		return nil, fmt.Errorf("marshal answers: %w", err)
-	}
-	m["answers"] = json.RawMessage(answersJSON)
-
-	return json.Marshal(m)
+	return question.MergeAnswers(originalInput, answers)
 }
