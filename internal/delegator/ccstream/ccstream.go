@@ -109,6 +109,14 @@ type Backend struct {
 	heldResult     *delegator.TurnResult // round-1 result stashed at re-arm; the watchdog delivers it if no shadow reply arrives (#813)
 	watchdog       *time.Timer           // bounded re-arm safety net; nil when not armed (#813)
 
+	// Re-arm instrumentation — observation only, no control-flow effect.
+	// reArmAt stamps when the shadow-reply watchdog was armed; awaitingShadow is
+	// true across the window between re-arm and the shadow result (or watchdog
+	// fire). Surfaced via xtra:ccstream logging ([debug] extra_ccstream_logging)
+	// to measure steer fold-vs-shadow outcomes and catch collisions (#813).
+	reArmAt        time.Time
+	awaitingShadow bool
+
 	// reArmWatchdogBound overrides defaultReArmWatchdogBound. Set once at
 	// construction (or by tests) before any turn starts; read without a lock.
 	reArmWatchdogBound time.Duration
@@ -513,6 +521,15 @@ func (b *Backend) AttachSessionEvents(events *delegator.SessionEvents) {
 // completion signalling.
 func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnMu.Lock()
+	// Collision canary: a fresh turn starting while we were still awaiting a
+	// folded steer's shadow reply means the #813 re-arm protection did NOT keep
+	// this session marked in-flight — the shadow reply can be lost to this turn.
+	// Should be unreachable post-fix; logged (outside the lock) if it fires.
+	collision := b.awaitingShadow
+	prevGen := b.turnGen
+	if collision {
+		b.awaitingShadow = false
+	}
 	b.turnActive = true
 	b.turnEvents = turn
 	b.turnText.Reset()
@@ -521,6 +538,10 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnGen++         // new turn instance; stale watchdog ticks for prior gens no-op
 	b.completing = false // fresh turn is unclaimed
 	b.turnMu.Unlock()
+
+	if collision {
+		b.logger().Extra("steer_shadow event=collision detail=new_turn_began_during_shadow_window prev_gen=%d", prevGen)
+	}
 
 	b.mu.Lock()
 	b.lastUsage = nil
@@ -622,6 +643,8 @@ func (b *Backend) watchdogBound() time.Duration {
 func (b *Backend) armReArmWatchdog() {
 	b.turnMu.Lock()
 	gen := b.turnGen
+	b.reArmAt = time.Now()
+	b.awaitingShadow = true
 	if b.watchdog != nil {
 		b.watchdog.Stop()
 	}
@@ -652,8 +675,10 @@ func (b *Backend) watchdogTick(gen int) {
 	turn := b.turnEvents
 	resultCh := b.turnResultCh
 	held := b.heldResult
+	shadowReArmAt := b.reArmAt
 	b.turnEvents = nil
 	b.turnActive = false
+	b.awaitingShadow = false
 	b.pendingSteer = 0
 	b.heldResult = nil
 	b.watchdog = nil
@@ -663,6 +688,7 @@ func (b *Backend) watchdogTick(gen int) {
 		held = &delegator.TurnResult{}
 	}
 	b.logger().Warnf("re-arm watchdog: folded steer produced no shadow reply within %s; force-completing turn to release it (#813)", b.watchdogBound())
+	b.logger().Extra("steer_shadow event=watchdog outcome=no_shadow rearm_to_fire=%s", time.Since(shadowReArmAt).Round(time.Millisecond))
 	if turn != nil && turn.OnTurnComplete != nil {
 		turn.OnTurnComplete(held)
 	}
@@ -1292,6 +1318,12 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
+	// Capture (and close) any open shadow-reply window: this result IS that
+	// shadow reply (or the round-1 result of a fresh fold). Used only for
+	// xtra:ccstream instrumentation. A chained re-arm below re-opens the window.
+	wasAwaitingShadow := b.awaitingShadow
+	shadowReArmAt := b.reArmAt
+	b.awaitingShadow = false
 	// A real result arrived: claim this turn against the re-arm watchdog and
 	// disarm it. If we go on to re-arm below, beginTurn resets `completing` and
 	// a fresh watchdog is armed for the new generation (#813).
@@ -1422,6 +1454,8 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 		b.logger().Debugf("OnResult: re-arming turn for folded steer/follow-up shadow reply (#813)")
 		b.reArmForContinuation(turn, "")
 		b.armReArmWatchdog()
+		b.logger().Extra("steer_shadow event=rearm round1_output=%d round1_textlen=%d watchdog_bound=%s",
+			result.Usage.OutputTokens, len(result.Text), b.watchdogBound())
 		return
 	}
 
@@ -1436,6 +1470,14 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	b.heldResult = nil // no longer need the stashed re-arm result
 	b.turnMu.Unlock()
 	b.logger().Debugf("OnResult: turn cleared (had_turn_events=%v)", hadTurn)
+	if wasAwaitingShadow {
+		outcome := "delivered"
+		if text == "" {
+			outcome = "empty"
+		}
+		b.logger().Extra("steer_shadow event=shadow_result outcome=%s output=%d textlen=%d rearm_to_result=%s",
+			outcome, turnUsage.OutputTokens, len(text), time.Since(shadowReArmAt).Round(time.Millisecond))
+	}
 
 	// Clear any agents still tracked (safety net — task_notification should
 	// have already removed them individually during the turn).

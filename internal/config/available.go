@@ -123,6 +123,15 @@ func FormatAvailable(cfg *Config, agent AgentConfig) string {
 	if !DerefBool(cfg.Debug.CacheBustDetect) {
 		opts = append(opts, availableOption{"debug", "cache_bust_detect", "false", "alert on cache_read drop"})
 	}
+	if !DerefBool(cfg.Debug.ExtraCcstreamLogging) {
+		opts = append(opts, availableOption{"debug", "extra_ccstream_logging", "false", "verbose ccstream logs (xtra:ccstream)"})
+	}
+	if !DerefBool(cfg.Debug.ExtraTelegramLogging) {
+		opts = append(opts, availableOption{"debug", "extra_telegram_logging", "false", "verbose telegram logs (xtra:telegram)"})
+	}
+	if !DerefBool(cfg.Debug.ExtraInboxLogging) {
+		opts = append(opts, availableOption{"debug", "extra_inbox_logging", "false", "verbose inbox logs (xtra:inbox)"})
+	}
 
 	// Voice fields
 	if len(cfg.TTS) == 0 {

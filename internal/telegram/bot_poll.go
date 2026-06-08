@@ -265,6 +265,8 @@ func (b *Bot) pollUpdates(ctx context.Context) {
 				default:
 					b.logger().Debugf("get updates (failure #%d): %s", consecutiveErrors, sanitized)
 				}
+				b.logger().Extra("poll_error consecutive=%d on_ipv4=%v is_timeout=%v action_switch=%v action_escalate=%v err=%s",
+					consecutiveErrors, b.ipv4Latched(), isTimeoutErr(res.err), action.switchToIPv4, action.escalate, sanitized)
 
 				// Exponential backoff, capped.
 				wait := baseBackoff
