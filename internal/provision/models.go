@@ -6,6 +6,8 @@ import "strings"
 // Accepts full model IDs as pass-through. Empty input defaults to sonnet.
 func ResolveModelAlias(input string) string {
 	switch strings.ToLower(strings.TrimSpace(input)) {
+	case "fable":
+		return "anthropic/claude-fable-5"
 	case "opus":
 		return "anthropic/claude-opus-4-6"
 	case "sonnet", "":

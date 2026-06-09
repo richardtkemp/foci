@@ -130,7 +130,7 @@ func discoverModelFamily(store *secrets.Store, alias string) string {
 	// Determine which family to search for
 	family := strings.ToLower(strings.TrimSpace(alias))
 	switch family {
-	case "opus", "sonnet", "haiku":
+	case "opus", "sonnet", "haiku", "fable":
 		// proceed with API query
 	default:
 		// Full model ID or unknown alias — just use static resolution
