@@ -391,13 +391,19 @@ func (b *Backend) Close() error {
 	// Start) calls cmd.Wait() and sends the result to waitCh. If the process
 	// already exited, this returns immediately.
 	//
-	// Every wait has a bounded timeout: even after SIGKILL we cap the final
-	// wait, because the waiter goroutine has been observed to stall inside
-	// finalizeExit (e.g. handler callbacks holding locks, see TODO #749).
-	// An unbounded `<-waitCh` here held m.mu in the caller (ResetSession /
-	// Get) and froze the entire agent until manual restart. The timeout
-	// trades a possible zombie-process leak for liveness — Close must always
-	// return so callers can release locks and respawn.
+	// Every wait has a bounded timeout, including the final one after SIGKILL.
+	// This is a permanent liveness invariant, not a workaround: an unbounded
+	// `<-waitCh` here holds m.mu in the caller (ResetSession / Get), so if the
+	// waiter goroutine ever fails to report — for ANY reason — the whole agent
+	// freezes until manual restart. The cap guarantees Close always returns so
+	// callers can release locks and respawn, trading a possible (OS-reaped)
+	// zombie-process leak for that guarantee.
+	//
+	// The original trigger was the #749 lock-ordering deadlock, where the
+	// waiter stalled inside finalizeExit behind handler callbacks holding
+	// locks. That root cause is fixed (commit 85e49f26) and has logged zero
+	// stalls since 2026-05-17. The cap stays regardless: it is the backstop
+	// for whatever the next unforeseen stall turns out to be.
 	component := b.logComponent()
 	select {
 	case <-b.waitCh:
@@ -419,12 +425,13 @@ func (b *Backend) Close() error {
 			select {
 			case <-b.waitCh:
 			case <-time.After(closeSigkillWait):
-				// Bounded fallback — the waiter goroutine stalled (see
-				// finalizeExit instrumentation). Process is already SIGKILL'd
-				// so the OS will reap it; we just stop waiting for the
-				// goroutine to confirm. Without this cap, m.mu in the
-				// caller is held forever and no further messages can be
-				// processed for this agent.
+				// Liveness backstop — the waiter goroutine stalled. Process is
+				// already SIGKILL'd so the OS will reap it; we just stop
+				// waiting for the goroutine to confirm. Without this cap, m.mu
+				// in the caller is held forever and no further messages can be
+				// processed for this agent. Reaching here is unexpected post-#749
+				// (zero occurrences since the 85e49f26 fix) — if it fires, it is
+				// a NEW stall worth investigating, not the known deadlock.
 				log.Warnf(component, "waiter goroutine did not report after SIGKILL within %s — abandoning wait (possible zombie)", closeSigkillWait)
 			}
 		}
@@ -548,7 +555,7 @@ func (b *Backend) beginTurn(turn *delegator.TurnEvents) {
 	b.turnText.Reset()
 	b.turnTools = 0
 	b.turnResultCh = make(chan *ResultMessage, 1)
-	b.turnGen++         // new turn instance; stale watchdog ticks for prior gens no-op
+	b.turnGen++          // new turn instance; stale watchdog ticks for prior gens no-op
 	b.completing = false // fresh turn is unclaimed
 	b.turnMu.Unlock()
 
