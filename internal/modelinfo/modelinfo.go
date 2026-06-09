@@ -27,21 +27,27 @@ var registry = map[string]Model{
 	},
 	"claude-sonnet-4-5": {
 		ContextWindow: 200_000,
-		Effort: true, Thinking: true,
+		Effort:        true, Thinking: true,
 		InputPer1M: 3.00, OutputPer1M: 15.00,
 		CacheReadPer1M: 0.30, CacheWritePer1M: 3.75,
 	},
 	"claude-opus-4-6": {
 		ContextWindow: 1_000_000, // 1M with Claude Max subscription
-		Effort: true, Thinking: true, Speed: true,
+		Effort:        true, Thinking: true, Speed: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
 	},
 	"claude-opus-4-6[1m]": { // CC reports model with [1m] suffix for Max subscription
 		ContextWindow: 1_000_000,
-		Effort: true, Thinking: true, Speed: true,
+		Effort:        true, Thinking: true, Speed: true,
 		InputPer1M: 15.00, OutputPer1M: 75.00,
 		CacheReadPer1M: 1.50, CacheWritePer1M: 18.75,
+	},
+	"claude-fable-5": { // Mythos-class, GA 2026-06-09; tier above Opus
+		ContextWindow: 1_000_000, // full 1M at standard pricing
+		Effort:        true, Thinking: true,
+		InputPer1M: 10.00, OutputPer1M: 50.00,
+		CacheReadPer1M: 1.00, CacheWritePer1M: 12.50,
 	},
 
 	// Claude Code backends — default to largest available context window so
@@ -119,7 +125,7 @@ func ContextWindow(model string) int {
 		return 2_000_000
 	case strings.Contains(bare, "gemini-"):
 		return 1_000_000
-	case strings.Contains(bare, "opus"):
+	case strings.Contains(bare, "opus"), strings.Contains(bare, "fable"), strings.Contains(bare, "mythos"):
 		return 1_000_000
 	default:
 		return 200_000

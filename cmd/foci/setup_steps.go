@@ -250,7 +250,7 @@ func stepModel(reader *bufio.Reader, current, providerKey string, store *secrets
 
 	if prov != nil && prov.HasAliases {
 		// Anthropic: show aliases
-		fmt.Println("  Choose a model: opus, sonnet, haiku, or enter a full model ID.")
+		fmt.Println("  Choose a model: fable, opus, sonnet, haiku, or enter a full model ID.")
 	} else if providerKey == "custom" {
 		fmt.Println("  Enter a full model ID (developer/model_id, e.g. openai/my-model).")
 	} else {
