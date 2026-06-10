@@ -27,6 +27,9 @@ func isImageMIME(mime string) bool {
 // splitMessage splits text into chunks of at most maxLen bytes.
 // It prefers splitting at newline boundaries and preserves HTML formatting
 // by closing open tags at split points and reopening them in the next chunk.
+//
+//nolint:unparam // production always passes telegramMaxChars, but the tests
+// vary maxLen to exercise chunk-boundary handling on short inputs.
 func splitMessage(text string, maxLen int) []string {
 	if len(text) <= maxLen {
 		return []string{text}
