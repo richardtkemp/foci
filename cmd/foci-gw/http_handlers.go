@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -131,7 +132,12 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			IfInactive     string `json:"if_inactive"`
 			Async          bool   `json:"async"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
+			if bodyTooLarge(err) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
 			return
 		}
@@ -248,7 +254,12 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 			Agent   string `json:"agent"`
 			Command string `json:"command"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Command == "" {
+			if bodyTooLarge(err) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			http.Error(w, "bad request: need {\"command\": \"/ping\"}", http.StatusBadRequest)
 			return
 		}
@@ -300,7 +311,12 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 			Silent         bool   `json:"silent"`
 		}
 		if r.ContentLength > 0 {
+			r.Body = http.MaxBytesReader(w, r.Body, jsonMaxBodyBytes)
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				if bodyTooLarge(err) {
+					http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+					return
+				}
 				http.Error(w, "bad request: need {\"text\": \"...\"}", http.StatusBadRequest)
 				return
 			}
@@ -476,6 +492,18 @@ func intPtrOr(p *int, def int) int {
 
 // webhookMaxBodyBytes is the maximum request body size for webhook payloads (1 MB).
 const webhookMaxBodyBytes = 1 << 20
+
+// jsonMaxBodyBytes caps the request body of the JSON control endpoints
+// (/send, /command, /wake). These carry short control messages, so 1 MB is
+// generous; the cap stops an unbounded body from being buffered into memory.
+const jsonMaxBodyBytes = 1 << 20
+
+// bodyTooLarge reports whether err is the http.MaxBytesReader overflow error,
+// so a handler can answer 413 instead of a generic 400.
+func bodyTooLarge(err error) bool {
+	var mbe *http.MaxBytesError
+	return errors.As(err, &mbe)
+}
 
 // handleWebhook returns the handler for POST /webhook/{agent}/{hookid}.
 // The hookid must be declared in the agent's webhooks config map, which maps

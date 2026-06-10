@@ -954,6 +954,12 @@ type DebugConfig struct {
 	CacheBustDetect      *bool `toml:"cache_bust_detect"       default:"false" desc:"alert on cache_read drop"` // alert when cache_read drops >50% vs previous request
 	CacheBustIdleMinutes *int  `toml:"cache_bust_idle_minutes" default:"10"    desc:"suppress cache bust alert if idle > N minutes"` // suppress cache bust alert if session idle > N minutes (default 10)
 
+	// EnablePprof exposes the net/http/pprof endpoints under /debug/pprof/*.
+	// Off by default: they allow CPU/heap profiling and goroutine dumps, so they
+	// are gated behind an explicit opt-in even though the HTTP server is
+	// auth-gated. Process-global (top-level [debug] section).
+	EnablePprof *bool `toml:"enable_pprof" default:"false" desc:"expose /debug/pprof/* profiling endpoints"`
+
 	// Per-package "extra" verbose logging. Each switches on investigation-grade
 	// logging for one package, tagged "xtra:<package>" in the log (grep
 	// "xtra:ccstream", or "xtra:" for all). Process-global (applied once at

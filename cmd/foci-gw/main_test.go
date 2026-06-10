@@ -541,6 +541,52 @@ func TestReloadCredentialsEndpoint_NotRegisteredWithoutHolder(t *testing.T) {
 	}
 }
 
+func TestPprofGatedByConfig(t *testing.T) {
+	// Proves /debug/pprof/* is registered only when [debug] enable_pprof is
+	// set: off (nil/false) -> 404, on -> served. Keeps profiling endpoints off
+	// a normal deployment. (P3.)
+	enabled := true
+	cases := []struct {
+		name       string
+		cfg        *config.Config
+		wantStatus int
+	}{
+		{"default off", &config.Config{}, http.StatusNotFound},
+		{"explicitly on", &config.Config{Debug: config.DebugConfig{EnablePprof: &enabled}}, http.StatusOK},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			registerHTTPHandlers(mux, httpHandlerDeps{
+				agents: map[string]*agentInstance{}, agentOrder: []string{}, cfg: tc.cfg,
+			})
+			req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestSendBodySizeLimit(t *testing.T) {
+	// Proves POST /send rejects an over-cap request body with 413 before it is
+	// buffered, rather than reading an unbounded body into memory. (P3.)
+	mux := http.NewServeMux()
+	registerHTTPHandlers(mux, httpHandlerDeps{
+		agents: map[string]*agentInstance{}, agentOrder: []string{}, cfg: &config.Config{},
+	})
+	big := strings.Repeat("a", (1<<20)+1024) // just over the 1 MiB cap
+	body := `{"text":"` + big + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", w.Code)
+	}
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	const apiKey = "test-secret-key"
 
@@ -571,14 +617,23 @@ func TestAuthMiddleware(t *testing.T) {
 			wantStatus: http.StatusForbidden,
 		},
 		{
-			name:       "query param valid",
+			// The api_key query param is a credential-in-URL (leaks via proxy /
+			// access logs), so it is honored ONLY on /voice (WebSocket compat).
+			// On any other path a valid query key is ignored -> unauthenticated.
+			name:       "query param ignored off /voice",
 			path:       "/status",
+			queryKey:   apiKey,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "query param valid on /voice",
+			path:       "/voice",
 			queryKey:   apiKey,
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "query param invalid",
-			path:       "/status",
+			name:       "query param invalid on /voice",
+			path:       "/voice",
 			queryKey:   "wrong-key",
 			wantStatus: http.StatusForbidden,
 		},

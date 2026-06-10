@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +13,37 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// TestSameOriginOrNone proves the WebSocket origin policy allows native clients
+// (no Origin header) and same-origin browsers, and rejects cross-origin
+// connections — blocking cross-site WebSocket hijacking without an allowlist.
+// (P3.)
+func TestSameOriginOrNone(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+		host   string
+		want   bool
+	}{
+		{"no origin (native client)", "", "localhost:18791", true},
+		{"same origin", "http://localhost:18791", "localhost:18791", true},
+		{"same origin https", "https://foci.example", "foci.example", true},
+		{"cross origin", "http://evil.example", "localhost:18791", false},
+		{"malformed origin", "://bad", "localhost:18791", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/voice", nil)
+			r.Host = tc.host
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			if got := sameOriginOrNone(r); got != tc.want {
+				t.Errorf("sameOriginOrNone(origin=%q host=%q) = %v, want %v", tc.origin, tc.host, got, tc.want)
+			}
+		})
+	}
+}
 
 // --- Mock STT/TTS ---
 
