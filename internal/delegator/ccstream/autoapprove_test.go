@@ -618,6 +618,20 @@ func TestContainsUnsafeFlags(t *testing.T) {
 		// Commands not in unsafeFlags — never flagged.
 		{"grep -i pattern file.txt", false},
 		{"ls -la", false},
+		// git: the -c config override is an arbitrary-exec vector
+		// (core.sshCommand / core.pager / aliases), as is the config subcommand
+		// and --config-env.
+		{"git -c core.sshCommand=evil status", true},
+		{"git -c core.pager=evil log", true},
+		{"git --config-env=core.pager=EV log", true},
+		{"git config alias.x '!cmd'", true},
+		{"git config --global core.pager evil", true},
+		// git: ordinary read-only subcommands stay safe. -C (run-in-dir) is not
+		// itself an exec vector and is left unflagged to avoid prompting a very
+		// common pattern.
+		{"git status", false},
+		{"git log --oneline -5", false},
+		{"git diff HEAD", false},
 		{"git -C /tmp status", false},
 		// Empty segment.
 		{"", false},

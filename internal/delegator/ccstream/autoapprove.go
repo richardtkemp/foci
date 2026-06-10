@@ -557,6 +557,22 @@ var unsafeFlags = map[string]unsafeCmdFlags{
 		shortFlags: "i",
 		longFlags:  []string{"--inplace"},
 	},
+	// git -c sets an arbitrary config value for one command (core.sshCommand,
+	// core.pager, alias.*) — a direct arbitrary-exec vector; --config-env is the
+	// env-backed form; the `config` subcommand writes those same values. -C
+	// (run-in-dir) is deliberately NOT flagged: it is not itself an exec vector
+	// and is a very common safe pattern. (P2-8.)
+	"git": {
+		shortFlags: "c",
+		longFlags:  []string{"--config-env"},
+		argCheck:   gitArgUnsafe,
+	},
+}
+
+// gitArgUnsafe flags the git `config` subcommand, which can persist arbitrary
+// exec hooks (core.sshCommand / core.pager) and shell aliases (alias.x = !cmd).
+func gitArgUnsafe(arg string) bool {
+	return arg == "config"
 }
 
 // containsUnsafeFlags checks whether a command string contains flags or
