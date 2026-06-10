@@ -143,19 +143,29 @@ func TestReaderUnknownType(t *testing.T) {
 func TestReaderMalformedJSON(t *testing.T) {
 	t.Parallel()
 
-	// First line is malformed, second is valid.
+	// A non-JSON line and a well-formed-envelope-but-bad-body line, both
+	// followed by a valid result. Per-line parse failures must NOT finalize the
+	// backend (P1-9): a single bad stdout line (e.g. a CC schema change or a
+	// stray non-protocol line on fd 1) previously called OnReaderStopped, which
+	// finalized a still-alive process and leaked the subprocess. Now they are
+	// logged and skipped; only the genuine scanner exit (EOF) fires
+	// OnReaderStopped.
 	input := "this is not json\n" +
+		`{"type":"result","usage":"not-an-object"}` + "\n" +
 		`{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"ok","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}` + "\n"
 
 	h := &mockHandler{}
 	r := NewReader(strings.NewReader(input), h)
 	r.Run(context.Background())
 
-	// Expect 2 errors: one from the malformed JSON line, one from EOF.
-	if len(h.errors) != 2 {
-		t.Fatalf("got %d errors, want 2 (malformed JSON + EOF)", len(h.errors))
+	// Only EOF fires OnReaderStopped — the two malformed lines are skipped.
+	if len(h.errors) != 1 {
+		t.Fatalf("got %d errors, want 1 (EOF only; malformed lines must not finalize)", len(h.errors))
 	}
-	// The valid line should still dispatch.
+	if !strings.Contains(h.errors[0].Error(), "EOF") {
+		t.Errorf("error = %q, want EOF-related (not a per-line parse error)", h.errors[0])
+	}
+	// The valid line after the malformed ones should still dispatch.
 	if len(h.results) != 1 {
 		t.Fatalf("got %d results, want 1 (reader should continue after malformed JSON)", len(h.results))
 	}

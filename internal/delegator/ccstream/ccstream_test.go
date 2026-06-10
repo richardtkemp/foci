@@ -3255,6 +3255,51 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 }
 
+func TestClose_KillsLiveProcessWhenNotRunning(t *testing.T) {
+	// P1-9: even when `running` has already been flipped to false (e.g. by a
+	// finalize path), Close must still run the kill ladder and reap a live
+	// subprocess — otherwise the CC process, its goroutines and stdin pipe leak
+	// forever. Previously Close early-returned on !running and never killed.
+	//
+	// Not t.Parallel(): it mutates the package-global closeGracefulWait, which
+	// would race the (parallel) TestClose_BoundedWaitWhenWaiterStalls.
+	prevG := closeGracefulWait
+	closeGracefulWait = 50 * time.Millisecond
+	t.Cleanup(func() { closeGracefulWait = prevG })
+
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	waitCh := make(chan error, 1)
+	waited := make(chan struct{})
+	go func() {
+		waitCh <- cmd.Wait()
+		close(waited)
+	}()
+
+	var buf bytes.Buffer
+	b := &Backend{
+		writer: NewWriter(nopWriteCloser{&buf}),
+		cmd:    cmd,
+		waitCh: waitCh,
+		done:   closedDone(),
+		cancel: func() {},
+	}
+	// running stays false — the backend was already marked dead by a finalize.
+
+	if err := b.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-waited:
+		// Process was signalled and reaped — correct.
+	case <-time.After(2 * time.Second):
+		_ = cmd.Process.Kill() // cleanup so we don't leak the test process
+		t.Fatal("live subprocess was not killed by Close when running==false")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Concurrency
 // ---------------------------------------------------------------------------
