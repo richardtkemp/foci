@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -10,6 +11,20 @@ import (
 	"foci/internal/secrets"
 	"foci/internal/secrets/bitwarden"
 )
+
+// isLoopbackHost reports whether host (a URL hostname, no port) is a loopback
+// target: the literal "localhost" or a loopback IP literal (127.0.0.0/8, ::1).
+// Cleartext to loopback never crosses the network, so it is exempt from the
+// secrets-require-https rule.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
 
 // secretResolution holds the result of secret validation and resolution.
 type secretResolution struct {
@@ -109,6 +124,23 @@ func validateAndResolveSecrets(
 		}
 	}
 	hasSecrets := len(secretRefs) > 0
+
+	// Secrets must only ever travel over TLS. Reject a cleartext initial scheme
+	// up front — fail closed, because there is no safe way to send a credential
+	// over plain http across the network. Loopback is exempt: it never leaves
+	// the host, so http to 127.0.0.1/::1/localhost is not a network exposure
+	// (and the SSRF dialer blocks remote loopback regardless). The redirect
+	// guard (newSafeClient + the secret cross-host guard) blocks https->http
+	// downgrades after this point. (P2-2.)
+	if hasSecrets {
+		parsed, err := url.Parse(reqURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse request URL: %w", err)
+		}
+		if !strings.EqualFold(parsed.Scheme, "https") && !isLoopbackHost(parsed.Hostname()) {
+			return nil, fmt.Errorf("refusing to send secrets to %q over %q: https required (cleartext credential)", parsed.Hostname(), parsed.Scheme)
+		}
+	}
 
 	// Split refs into regular (custom.key) and bitwarden (bw.UUID) groups
 	var regularRefs, bwRefs []string

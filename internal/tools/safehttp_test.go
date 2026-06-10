@@ -86,6 +86,28 @@ func TestSafeClientRedirectPolicy(t *testing.T) {
 	}
 }
 
+// TestSafeClientBlocksHTTPSDowngrade proves the shared client refuses a redirect
+// that downgrades https->http, so a fetch (or secret-bearing request) that began
+// over TLS can't be silently bounced onto a cleartext hop. A chain that started
+// on http has no TLS expectation, so http->http stays allowed. (P2-2.)
+func TestSafeClientBlocksHTTPSDowngrade(t *testing.T) {
+	client := newSafeClient(5*time.Second, 5)
+	httpsStart := &http.Request{URL: &url.URL{Scheme: "https", Host: "example.com"}}
+	httpStart := &http.Request{URL: &url.URL{Scheme: "http", Host: "example.com"}}
+	toHTTP := &http.Request{URL: &url.URL{Scheme: "http", Host: "example.com"}}
+	toHTTPS := &http.Request{URL: &url.URL{Scheme: "https", Host: "example.com"}}
+
+	if err := client.CheckRedirect(toHTTP, []*http.Request{httpsStart}); err == nil {
+		t.Error("https->http downgrade redirect should be blocked")
+	}
+	if err := client.CheckRedirect(toHTTPS, []*http.Request{httpsStart}); err != nil {
+		t.Errorf("https->https redirect should be allowed: %v", err)
+	}
+	if err := client.CheckRedirect(toHTTP, []*http.Request{httpStart}); err != nil {
+		t.Errorf("http->http redirect should be allowed: %v", err)
+	}
+}
+
 // TestWebFetchBlocksUnspecified proves web_fetch — the default builtin, reachable
 // by any agent and by untrusted fetched content — refuses an SSRF target, where
 // previously it performed no filtering at all (P1-3).

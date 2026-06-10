@@ -244,6 +244,13 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 			if !strings.EqualFold(req.URL.Hostname(), originalHost) {
 				return fmt.Errorf("blocked cross-domain redirect from %q to %q (secrets present)", originalHost, req.URL.Hostname())
 			}
+			// Secrets only travel over TLS: even a same-host redirect must stay
+			// https (the base guard blocks https->http downgrades; this also
+			// rejects an http hop when the request somehow began on http via a
+			// loopback exemption). (P2-2.)
+			if !strings.EqualFold(req.URL.Scheme, "https") {
+				return fmt.Errorf("blocked non-https redirect to %q (secrets present)", req.URL.Scheme)
+			}
 			return nil
 		}
 	}

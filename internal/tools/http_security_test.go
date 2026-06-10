@@ -50,6 +50,32 @@ allowed_hosts = ["%s"]
 	}
 }
 
+func TestHTTPRequestRejectsSecretsOverHTTP(t *testing.T) {
+	// Proves a request carrying a secret to a non-loopback host over plain http
+	// is refused before the secret is resolved or sent — secrets must travel
+	// over TLS, never cleartext across the network. (P2-2.)
+	t.Parallel()
+	store := writeTestSecrets(t, `
+[custom]
+api_key = "sk-secret-123"
+allowed_hosts = ["api.allowed.com"]
+`)
+	tool := NewHTTPRequestTool(store, nil, "", 0, 50*1024*1024, nil, 0640)
+	params, _ := json.Marshal(map[string]interface{}{
+		"url": "http://api.allowed.com/x",
+		"headers": map[string]string{
+			"Authorization": "Bearer {{secret:custom.api_key}}",
+		},
+	})
+	_, err := tool.Execute(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected http+secret request to be rejected")
+	}
+	if !strings.Contains(err.Error(), "https") {
+		t.Errorf("error should mention the https requirement, got: %v", err)
+	}
+}
+
 func TestHTTPRequestBlockedHost(t *testing.T) {
 	// Proves that a request to a host not in allowed_hosts is blocked before sending, protecting secrets from being leaked to unauthorized endpoints.
 	t.Parallel()
