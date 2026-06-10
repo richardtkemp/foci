@@ -65,6 +65,33 @@ func NewWebSearchTool(braveAPIKey string) *Tool {
 	}
 }
 
+// readabilityFromReader is the readability entry point, indirected through a
+// package var so tests can substitute a slow/blocking parse.
+var readabilityFromReader = readability.FromReader
+
+// parseReadableWithTimeout runs readability extraction under a wall-clock
+// timeout. readability/html.Parse is not context-cancellable, so on timeout the
+// background goroutine is left to finish (and exit) on its own via the buffered
+// channel — bounded in practice because the network body is capped at 1 MiB and
+// the x/net bump removes the known infinite-loop inputs.
+func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duration) (readability.Article, error) {
+	type result struct {
+		article readability.Article
+		err     error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		a, err := readabilityFromReader(bytes.NewReader(body), parsed)
+		ch <- result{a, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.article, r.err
+	case <-time.After(timeout):
+		return readability.Article{}, fmt.Errorf("readability parse exceeded %s", timeout)
+	}
+}
+
 func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 	var p struct {
 		URL string `json:"url"`
@@ -106,9 +133,10 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		return TextResult(string(body)), nil
 	}
 
-	// Try readability extraction, then convert to markdown
+	// Try readability extraction, then convert to markdown. The parse is
+	// bounded by an independent wall-clock timeout (P2-1 defence-in-depth).
 	var htmlContent string
-	article, err := readability.FromReader(bytes.NewReader(body), parsed)
+	article, err := parseReadableWithTimeout(body, parsed, defaultFetchParseTimeout)
 	if err == nil && strings.TrimSpace(article.Content) != "" {
 		htmlContent = article.Content
 	} else {
