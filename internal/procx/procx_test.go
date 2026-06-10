@@ -2,11 +2,32 @@ package procx
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/user"
 	"strings"
 	"testing"
 )
+
+// TestCredentialSetupError proves the fail-closed decision: a process that
+// holds the foci-secrets group but whose CAP_SETGID probe failed must surface
+// an error (otherwise children silently inherit the group and can read
+// secrets.toml). Every other combination is safe and must not error. (P2-12.)
+func TestCredentialSetupError(t *testing.T) {
+	t.Parallel()
+	if err := credentialSetupError(true, errors.New("EPERM")); err == nil {
+		t.Error("held group + failed probe must fail closed (non-nil error)")
+	}
+	if err := credentialSetupError(false, errors.New("EPERM")); err != nil {
+		t.Errorf("no group membership must not fail closed: %v", err)
+	}
+	if err := credentialSetupError(true, nil); err != nil {
+		t.Errorf("successful probe must not fail closed: %v", err)
+	}
+	if err := credentialSetupError(false, nil); err != nil {
+		t.Errorf("no group + success must not fail closed: %v", err)
+	}
+}
 
 func TestChildAttrSetpgid(t *testing.T) {
 	// childAttr should always return a non-nil SysProcAttr with Setpgid

@@ -64,7 +64,13 @@ func initSecrets(configPath string, cfg *config.Config) secretsResult {
 	// procx.SpawnSetsid, which read the credential populated here.
 	// Only foci-gw calls this — see internal/procx/procx.go for why the
 	// foci CLI deliberately skips it (TODO #755 cron-log noise fix).
-	procx.Setup()
+	if err := procx.Setup(); err != nil {
+		if cfg.SkipSecurityChecks {
+			log.Warnf("security", "procx child-credential setup failed but skip_security_checks is set — continuing INSECURELY (subprocesses keep the %s group): %v", procx.SecurityGroupName, err)
+		} else {
+			log.Fatalf("security", "procx child-credential setup failed: %v — subprocesses would inherit the %s group and could read secrets.toml. Fix CAP_SETGID (see docs/SECRETS.md) or set skip_security_checks=true to override.", err, procx.SecurityGroupName)
+		}
+	}
 
 	// Bitwarden store (optional)
 	var bwStore *bitwarden.Store
