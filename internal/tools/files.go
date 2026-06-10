@@ -33,13 +33,39 @@ const readToolSchema = `{
 	"required": ["path"]
 }`
 
+// fileScope captures the path-containment context shared by every file-touching
+// tool. resolveFileArg is the single choke point: it resolves a caller-supplied
+// path (workspace-relative for normal tools), enforces isolated-directory
+// containment when baseDir is set, and rejects blocked paths (the secrets file,
+// /proc/self/environ, …) via the secrets store. Used by read/write/edit/summary
+// and http_request's body_file/files/save_to in every mode so no caller can
+// silently skip a check.
+type fileScope struct {
+	store     *secrets.Store
+	baseDir   string // non-empty => isolated: the resolved path must stay within it
+	workspace string // base for relative paths in non-isolated tools
+}
+
+// resolveFileArg canonicalises path and enforces containment + the blocklist.
+// The returned path is safe to hand to os.Open/ReadFile/WriteFile.
+func (fs fileScope) resolveFileArg(path string) (string, error) {
+	resolved, err := resolveAndValidatePath(resolveWorkspacePath(path, fs.workspace), fs.baseDir)
+	if err != nil {
+		return "", err
+	}
+	if err := checkBlockedPath(fs.store, resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
 func NewReadTool(store *secrets.Store, workspace string) *Tool {
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
 		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return readFile(ctx, params, store, "", workspace)
+			return readFile(ctx, params, fileScope{store: store, workspace: workspace})
 		},
 	}
 }
@@ -63,7 +89,7 @@ func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, store, "", workspace, fileMode, blockedPaths)
+			return writeFile(ctx, params, fileScope{store: store, workspace: workspace}, fileMode, blockedPaths)
 		},
 	}
 }
@@ -91,7 +117,7 @@ func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.B
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, store, "", workspace, fileMode, blockedPaths)
+			return editFile(ctx, params, fileScope{store: store, workspace: workspace}, fileMode, blockedPaths)
 		},
 	}
 }
@@ -102,7 +128,7 @@ func NewIsolatedReadTool(store *secrets.Store, baseDir string) *Tool {
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
 		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return readFile(ctx, params, store, baseDir, "")
+			return readFile(ctx, params, fileScope{store: store, baseDir: baseDir})
 		},
 	}
 }
@@ -126,7 +152,7 @@ func NewIsolatedWriteTool(store *secrets.Store, baseDir string, fileMode os.File
 			"required": ["path", "content"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return writeFile(ctx, params, store, baseDir, "", fileMode)
+			return writeFile(ctx, params, fileScope{store: store, baseDir: baseDir}, fileMode)
 		},
 	}
 }
@@ -154,7 +180,7 @@ func NewIsolatedEditTool(store *secrets.Store, baseDir string, fileMode os.FileM
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, store, baseDir, "", fileMode)
+			return editFile(ctx, params, fileScope{store: store, baseDir: baseDir}, fileMode)
 		},
 	}
 }
@@ -275,7 +301,7 @@ func checkConfigBlockedPath(blockedPaths []config.BlockedPath, resolved string) 
 	return "", false
 }
 
-func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string) (ToolResult, error) {
+func readFile(ctx context.Context, params json.RawMessage, fs fileScope) (ToolResult, error) {
 	var p struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`
@@ -285,12 +311,8 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	resolved, err := resolveAndValidatePath(resolveWorkspacePath(p.Path, workspace), baseDir)
+	resolved, err := fs.resolveFileArg(p.Path)
 	if err != nil {
-		return ToolResult{}, err
-	}
-
-	if err := checkBlockedPath(store, resolved); err != nil {
 		return ToolResult{}, err
 	}
 
@@ -384,7 +406,7 @@ func readFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 	return TextResult(out.String()), nil
 }
 
-func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, fileMode os.FileMode, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+func writeFile(ctx context.Context, params json.RawMessage, fs fileScope, fileMode os.FileMode, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
@@ -396,12 +418,8 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	resolved, err := resolveAndValidatePath(resolveWorkspacePath(p.Path, workspace), baseDir)
+	resolved, err := fs.resolveFileArg(p.Path)
 	if err != nil {
-		return ToolResult{}, err
-	}
-
-	if err := checkBlockedPath(store, resolved); err != nil {
 		return ToolResult{}, err
 	}
 
@@ -418,7 +436,7 @@ func writeFile(ctx context.Context, params json.RawMessage, store *secrets.Store
 	return TextResult(fmt.Sprintf("Wrote %d bytes to %s", len(p.Content), p.Path)), nil
 }
 
-func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store, baseDir, workspace string, fileMode os.FileMode, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
+func editFile(ctx context.Context, params json.RawMessage, fs fileScope, fileMode os.FileMode, blockedPaths ...[]config.BlockedPath) (ToolResult, error) {
 	if fileMode == 0 {
 		fileMode = 0640
 	}
@@ -431,12 +449,8 @@ func editFile(ctx context.Context, params json.RawMessage, store *secrets.Store,
 		return ToolResult{}, fmt.Errorf("parse params: %w", err)
 	}
 
-	resolved, err := resolveAndValidatePath(resolveWorkspacePath(p.Path, workspace), baseDir)
+	resolved, err := fs.resolveFileArg(p.Path)
 	if err != nil {
-		return ToolResult{}, err
-	}
-
-	if err := checkBlockedPath(store, resolved); err != nil {
 		return ToolResult{}, err
 	}
 
