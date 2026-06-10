@@ -34,6 +34,9 @@ func TestFociTodo_IDsCommaFormNormalised(t *testing.T) {
 	}
 }
 
+// disconnected-test-ok: black-box test — execs bash to validate the shell
+// normalisation logic; the sibling TestFociTodo_IDsCommaFormNormalised
+// references generateShellFunc and guards drift of the real snippet.
 func TestFociTodo_IDsNormalisationExecutesCorrectly(t *testing.T) {
 	// Run the normalization inline under bash with each input form and
 	// assert the resulting $ids value is valid JSON acceptable to
@@ -84,6 +87,9 @@ printf '%s' "$ids"
 	}
 }
 
+// disconnected-test-ok: black-box test — execs bash to validate the shell
+// normalisation output; drift of the real snippet is guarded by
+// TestFociTodo_IDsCommaFormNormalised, which references generateShellFunc.
 func TestFociTodo_IDsResultIsValidJSON(t *testing.T) {
 	// After normalization, the result should be valid JSON that jq's
 	// --argjson would accept. End-to-end check that the bash logic

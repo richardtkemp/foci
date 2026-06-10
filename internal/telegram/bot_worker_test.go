@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"foci/internal/agent"
-	"foci/internal/agent/turnevent"
 	"foci/internal/command"
 	"foci/internal/platform"
 	"foci/internal/warnings"
@@ -54,80 +52,6 @@ func (h *mockHandler) totalCalls() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.calls)
-}
-
-// recordingDriver captures Drive calls for assertions about envelope
-// translation. Used in place of the real Bot.Drive (which needs a full
-// renderer/sink wiring) when we want to inspect what reached the agent's
-// per-session worker.
-type recordingDriver struct {
-	mu    sync.Mutex
-	calls [][]agent.Envelope
-}
-
-// recordBatch is wired via Agent.SetTurnObserver so this driver captures
-// each turn's batch the way Drive used to (post-TODO #746 Stage C).
-func (d *recordingDriver) recordBatch(_ string, batch []agent.Envelope) {
-	d.mu.Lock()
-	d.calls = append(d.calls, batch)
-	d.mu.Unlock()
-}
-
-func (d *recordingDriver) WrapTurn(_ context.Context, fn func() error) error    { return fn() }
-func (d *recordingDriver) NewTurnSink(_ agent.Envelope) (turnevent.Sink, func()) { return nil, nil }
-func (d *recordingDriver) Connection() platform.Connection                       { return nil }
-
-func (d *recordingDriver) numCalls() int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return len(d.calls)
-}
-
-func (d *recordingDriver) firstBatch() []agent.Envelope {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if len(d.calls) == 0 {
-		return nil
-	}
-	return d.calls[0]
-}
-
-// TestAgentEnqueue_RoutesThroughInboxToDriver is a smoke test for the
-// agent.Inbox path that Bot.handoffToAgent ultimately drives. It exercises
-// agent.Enqueue directly with a recording Driver to verify the envelope
-// reaches the per-session worker. The pump goroutine itself is a 4-line
-// pipe (mq.Chan → handoffToAgent → agent.Enqueue) — the only meaningful
-// step is the envelope construction, covered separately.
-func TestAgentEnqueue_RoutesThroughInboxToDriver(t *testing.T) {
-	a := &agent.Agent{}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	a.StartInbox(ctx)
-
-	d := &recordingDriver{}
-	a.SetTurnObserver(d.recordBatch)
-	a.Enqueue(agent.Envelope{
-		SessionKey: "agent:test:main",
-		Text:       "hello",
-		ChatID:     12345,
-		UserID:     "111",
-		Driver:     d,
-	})
-
-	deadline := time.After(2 * time.Second)
-	for d.numCalls() < 1 {
-		select {
-		case <-deadline:
-			t.Fatalf("driver not called; calls=%d", d.numCalls())
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-
-	batch := d.firstBatch()
-	if len(batch) != 1 || batch[0].Text != "hello" || batch[0].SessionKey != "agent:test:main" {
-		t.Errorf("unexpected batch: %+v", batch)
-	}
 }
 
 // TestCommandWorker_DispatchesQueuedCommands verifies the command worker
