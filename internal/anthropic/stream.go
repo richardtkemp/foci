@@ -42,12 +42,21 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 
 	log.Debugf("anthropic", "stream_call_start: model=%s", req.Model)
 
-	stream := sc.Messages.NewStreaming(ctx, params, sdkRequestOptions(token, req.Speed)...)
+	// Streaming: bound the gap between chunks with an idle watchdog instead of
+	// a total wall-clock cap, so a long-but-progressing response is not
+	// truncated mid-stream (P2-6). Reuse the request timeout as the idle window
+	// (generous — chunks normally arrive sub-second), so a genuinely stalled
+	// stream is still aborted after one idle window of silence.
+	sctx, wd := provider.NewStreamIdleWatchdog(ctx, c.timeout)
+	defer wd.Stop()
+
+	stream := sc.Messages.NewStreaming(sctx, params, sdkRequestOptions(token, req.Speed)...)
 
 	var msg sdk.Message
 	deltasEmitted := false
 
 	for stream.Next() {
+		wd.Reset()
 		event := stream.Current()
 		if err := msg.Accumulate(event); err != nil {
 			log.Warnf("anthropic", "stream accumulate error: %v", err)
@@ -71,6 +80,15 @@ func (c *Client) streamOnce(ctx context.Context, req *MessageRequest, handler *p
 	}
 
 	if err := stream.Err(); err != nil {
+		// An idle-watchdog cancellation surfaces as a context error; report it
+		// as a clear stream-idle timeout rather than a generic cancel. (P2-6.)
+		if wd.Fired() {
+			idleErr := fmt.Errorf("stream idle timeout: no data for %s", c.timeout)
+			if deltasEmitted {
+				return nil, fmt.Errorf("mid-stream error (deltas already emitted): %w", idleErr)
+			}
+			return nil, idleErr
+		}
 		sdkErr := classifySDKError(err)
 		attachWireRequest(sdkErr, wireReq)
 		if deltasEmitted {

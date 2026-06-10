@@ -19,8 +19,9 @@ import (
 // Client wraps the OpenAI SDK to implement provider.Client.
 type Client struct {
 	client  *openai.Client
-	apiKey  string // kept for debug key-suffix logging
-	baseURL string // stored for Endpoint() identification
+	apiKey  string        // kept for debug key-suffix logging
+	baseURL string        // stored for Endpoint() identification
+	timeout time.Duration // total cap for non-streaming, inter-chunk idle cap for streaming
 }
 
 // Option configures a Client.
@@ -52,7 +53,11 @@ func NewClient(apiKey string, opts ...Option) *Client {
 
 	sdkOpts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(&http.Client{Timeout: cfg.httpTimeout}),
+		// No http.Client.Timeout: a wall-clock cap truncates long streaming
+		// responses mid-stream (P2-6). The timeout is applied per call instead —
+		// a total deadline for non-streaming, an inter-chunk idle watchdog for
+		// streaming.
+		option.WithHTTPClient(&http.Client{}),
 		option.WithMaxRetries(0), // disable SDK retries - provider layer handles retry
 	}
 	if cfg.baseURL != "" {
@@ -60,7 +65,7 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	}
 
 	client := openai.NewClient(sdkOpts...)
-	return &Client{client: &client, apiKey: apiKey, baseURL: cfg.baseURL}
+	return &Client{client: &client, apiKey: apiKey, baseURL: cfg.baseURL, timeout: cfg.httpTimeout}
 }
 
 // Endpoint returns a human-readable name for this client's API endpoint.
@@ -74,6 +79,14 @@ func (c *Client) Endpoint() string {
 // SendMessage sends a message to the OpenAI API and returns a provider-neutral response.
 func (c *Client) SendMessage(ctx context.Context, req *provider.MessageRequest) (*provider.MessageResponse, error) {
 	params := buildParams(req)
+
+	// Non-streaming: total wall-clock deadline via context (replacing the
+	// removed http.Client.Timeout). (P2-6.)
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
 
 	resp, err := c.client.Chat.Completions.New(ctx, params)
 	if err != nil {
