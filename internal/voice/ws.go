@@ -54,6 +54,14 @@ type HandlerConfig struct {
 	// SessionExists returns true if a session with the given key already exists.
 	// Used to allow clients to reattach to existing sessions.
 	SessionExists func(key string) bool
+
+	// MaxFrameBytes caps a single inbound WebSocket frame (applied via
+	// SetReadLimit). MaxAudioBytes caps the total accumulated audio buffer for
+	// one recording. Both guard against a client streaming volume to OOM the
+	// gateway (P1-10). A non-positive value disables that specific limit;
+	// production always supplies both from [voice] config defaults.
+	MaxFrameBytes int64
+	MaxAudioBytes int
 }
 
 var upgrader = websocket.Upgrader{
@@ -109,6 +117,14 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 		if err := c.sendJSON(ConnectedMsg{Type: "connected", Agents: items}); err != nil {
 			log.Errorf("voice-ws", "send connected: %v", err)
 			return
+		}
+
+		// Cap the size of any single inbound frame so an oversized text or
+		// binary message can't be buffered whole into memory before we look at
+		// it (P1-10). gorilla closes the connection and the read loop exits
+		// with ErrReadLimit when a frame exceeds this.
+		if cfg.MaxFrameBytes > 0 {
+			ws.SetReadLimit(cfg.MaxFrameBytes)
 		}
 
 		// Configure WebSocket timeouts.
@@ -216,14 +232,26 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 	}
 }
 
-// handleBinaryMessage appends audio data to the buffer during recording.
+// handleBinaryMessage appends audio data to the buffer during recording,
+// enforcing the total-buffer cap so a client cannot stream unbounded audio to
+// exhaust gateway memory (P1-10). On overflow it stops recording, drops the
+// buffer, and reports an error rather than growing without bound.
 func (c *conn) handleBinaryMessage(data []byte) {
 	c.audioMu.Lock()
-	defer c.audioMu.Unlock()
-
-	if c.recording {
-		c.audioBuf = append(c.audioBuf, data...)
+	if !c.recording {
+		c.audioMu.Unlock()
+		return
 	}
+	maxBytes := c.cfg.MaxAudioBytes
+	if maxBytes > 0 && len(c.audioBuf)+len(data) > maxBytes {
+		c.recording = false
+		c.audioBuf = nil
+		c.audioMu.Unlock()
+		c.sendError(fmt.Sprintf("audio exceeds maximum buffer size of %d bytes", maxBytes))
+		return
+	}
+	c.audioBuf = append(c.audioBuf, data...)
+	c.audioMu.Unlock()
 }
 
 // handleSelectAgent picks an agent and creates or reuses a voice session.

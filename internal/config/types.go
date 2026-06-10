@@ -367,6 +367,14 @@ type SummaryConfig struct {
 	MaxImagePixels       *int  `toml:"max_image_pixels"                       desc:"max image pixels before downscaling"`
 }
 
+// Voice WebSocket resource limits (P1-10). Defaults live in the VoiceConfig
+// `default:` tags; these consts are the single source the runtime falls back to
+// when a config value is absent (e.g. a config built without ApplyTagDefaults).
+const (
+	DefaultVoiceMaxFrameBytes = 1 << 20  // 1 MiB — max single inbound WS frame
+	DefaultVoiceMaxAudioBytes = 50 << 20 // 50 MiB — max accumulated audio buffer
+)
+
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
@@ -375,6 +383,8 @@ type VoiceConfig struct {
 	TTSRate         *float64          `toml:"tts_rate"  desc:"TTS speech rate multiplier"`
 	TTSReplacements map[string]string `toml:"tts_replacements"`
 	STTReplacements map[string]string `toml:"stt_replacements"`
+	MaxFrameBytes   *int              `toml:"max_frame_bytes" default:"1048576"  desc:"max single inbound websocket frame in bytes"`
+	MaxAudioBytes   *int              `toml:"max_audio_bytes" default:"52428800" desc:"max accumulated voice audio buffer in bytes"`
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().
