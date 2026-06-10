@@ -3,6 +3,8 @@ package session
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"foci/internal/provider"
@@ -40,6 +42,36 @@ func TestKeyToPath(t *testing.T) {
 		if err == nil {
 			t.Errorf("keyToPath(%q) should return error for malformed key", bad)
 		}
+	}
+}
+
+func TestSessionPathRejectsTraversal(t *testing.T) {
+	// Proves the SessionPath containment guard (P1-5 defense-in-depth) rejects any
+	// key whose joined path escapes the store dir, even if a bad key bypasses the
+	// key-layer validator. No returned path may point outside s.dir.
+	dir := t.TempDir()
+	s := NewStore(dir)
+
+	bad := []string{
+		"main/i../../../../../../../../../../etc/passwd/0",      // root-style escape
+		"../../../../../../../../../../etc/x/0/ichild",          // child-style escape
+		"../../../../../../../../../../etc/cron.d/x/0",          // leading escape
+	}
+	for _, key := range bad {
+		got, err := s.SessionPath(key)
+		if err == nil {
+			t.Errorf("SessionPath(%q) = %q, want error (escapes store dir)", key, got)
+		}
+	}
+
+	// A normal key must still resolve within the store dir.
+	good, err := s.SessionPath("main/iwork/0")
+	if err != nil {
+		t.Fatalf("SessionPath(valid) unexpected error: %v", err)
+	}
+	rel, err := filepath.Rel(dir, good)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		t.Errorf("SessionPath(valid) = %q escapes store dir %q", good, dir)
 	}
 }
 

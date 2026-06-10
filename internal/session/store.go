@@ -163,12 +163,30 @@ func (s *Store) SessionPath(key string) (string, error) {
 	lastSegment := parts[len(parts)-1]
 
 	// If last segment is pure number, it's a root session
+	var path string
 	if _, err := strconv.ParseInt(lastSegment, 10, 64); err == nil {
-		return filepath.Join(s.dir, key, "root.jsonl"), nil
+		path = filepath.Join(s.dir, key, "root.jsonl")
+	} else {
+		// Otherwise it's a child session
+		path = filepath.Join(s.dir, key+".jsonl")
 	}
 
-	// Otherwise it's a child session
-	return filepath.Join(s.dir, key+".jsonl"), nil
+	// Defense-in-depth (P1-5): filepath.Join cleans the result, so a key
+	// containing "../" segments can resolve outside s.dir. Reject any path
+	// that escapes the store directory even if a bad key reaches here.
+	if !s.withinDir(path) {
+		return "", fmt.Errorf("session key %q escapes store dir", key)
+	}
+	return path, nil
+}
+
+// withinDir reports whether path is contained within the store directory.
+func (s *Store) withinDir(path string) bool {
+	rel, err := filepath.Rel(s.dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // TestAppend is for testing only - appends without SessionWriter guard.
