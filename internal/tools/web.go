@@ -79,7 +79,11 @@ func webFetch(ctx context.Context, params json.RawMessage) (ToolResult, error) {
 		log.Debugf("web_fetch", "session=%s fetch url=%s raw=%v", SessionKeyFromContext(ctx), parsed.Hostname(), p.Raw)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Use the shared SSRF-safe client: web_fetch is the default builtin and is
+	// reachable both by any agent and by untrusted fetched content (prompt
+	// injection), so it must validate the resolved IP and re-check redirects in
+	// every mode. (P1-3.)
+	client := newSafeClient(defaultFetchTimeout, defaultMaxRedirects)
 	req, err := http.NewRequestWithContext(ctx, "GET", p.URL, nil)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("create request: %w", err)
