@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"os/user"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -243,12 +244,71 @@ func (s *Store) containsBlockedRef(text string) bool {
 	return false
 }
 
-// IsBlockedPath returns true if the given path matches any blocked path.
-func (s *Store) IsBlockedPath(path string) bool {
-	return s.containsBlockedRef(path)
+// CanonicalPath returns an absolute, symlink-resolved form of path. For a path
+// that does not exist yet, it resolves the deepest existing ancestor and
+// re-appends the remaining components, so a symlinked parent directory is still
+// followed. It is best-effort: on any error it falls back to filepath.Abs (or
+// the input). This is the canonical form used for security path comparisons —
+// both the blocked-path check here and the file-tool containment checks.
+func CanonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	dir := abs
+	var tail []string
+	for {
+		parent := filepath.Dir(dir)
+		tail = append(tail, filepath.Base(dir))
+		if parent == dir {
+			return abs // reached the root without finding an existing ancestor
+		}
+		dir = parent
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+	}
 }
 
-// IsBlockedCommand checks if a shell command references any blocked paths.
+// IsBlockedPath reports whether path refers to a protected file. Matching is
+// path-canonical (symlinks resolved, absolute), NOT substring: absolute blocked
+// entries match by exact path or directory prefix; relative entries (e.g.
+// "secrets.toml", ".ssh/id_rsa") match by component-aligned path suffix. This
+// rejects both substring false positives ("mysecrets.toml") and the symlink
+// bypass — a symlink whose target is the secrets file resolves to the canonical
+// path and is caught.
+func (s *Store) IsBlockedPath(path string) bool {
+	target := CanonicalPath(path)
+	sep := string(filepath.Separator)
+	for _, blocked := range s.blockedPaths {
+		if filepath.IsAbs(blocked) {
+			b := CanonicalPath(blocked)
+			if target == b || strings.HasPrefix(target, b+sep) {
+				return true
+			}
+			continue
+		}
+		// Relative entry: match as a whole trailing path-component sequence,
+		// so ".aws/credentials" matches "/home/u/.aws/credentials" but
+		// "secrets.toml" does not match "/home/u/mysecrets.toml".
+		r := filepath.Clean(blocked)
+		if strings.HasSuffix(target, sep+r) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsBlockedCommand checks if a shell command references any blocked paths. This
+// stays a substring scan: it inspects an unparsed command line, not a resolved
+// filesystem path, and is advisory only (the OS group-drop and the in-process
+// path checks are the real boundaries).
 func (s *Store) IsBlockedCommand(cmd string) bool {
 	return s.containsBlockedRef(cmd)
 }
