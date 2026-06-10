@@ -85,13 +85,13 @@ func TestBackgroundCooldown(t *testing.T) {
 	r.maybeBackgroundWork(context.Background())
 
 	// Wait for goroutine to complete (sets lastBackgroundEnded)
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	// Immediately try again — should be blocked by cooldown
 	// (lastBackgroundEnded was <1s ago)
 	r.maybeBackgroundWork(context.Background())
 
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	mu.Lock()
 	got := calls
@@ -169,7 +169,7 @@ func TestBackgroundNoSelfChaining(t *testing.T) {
 	r.maybeBackgroundWork(context.Background())
 
 	// Wait for goroutine
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	r.mu.Lock()
 	interactionAfter := r.lastInteraction
