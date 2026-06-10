@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"foci/internal/provider"
+	"foci/internal/tempdir"
 )
 
 func TestSpawnRawCreatesTempDir(t *testing.T) {
@@ -37,7 +38,7 @@ func TestSpawnRawCreatesTempDir(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
-	if strings.Contains(result.Text, "Files created in /tmp/foci/spawn/foci-spawn-") {
+	if strings.Contains(result.Text, "Files created in "+tempdir.SpawnDir()+"/foci-spawn-") {
 		spawnTempDir = extractTempDir(result.Text)
 	}
 	_ = spawnTempDir
@@ -90,7 +91,7 @@ func TestSpawnRawIsolationWritesToTempDir(t *testing.T) {
 		t.Errorf("expected result, got %q", result.Text)
 	}
 
-	if !strings.Contains(result.Text, "Files created in /tmp/foci/spawn/foci-spawn-") {
+	if !strings.Contains(result.Text, "Files created in "+tempdir.SpawnDir()+"/foci-spawn-") {
 		t.Errorf("expected file list in result, got %q", result.Text)
 	}
 
