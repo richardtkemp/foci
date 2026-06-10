@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"foci/internal/delegator"
+	"foci/internal/question"
 )
 
 // ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ func TestFormatQuestionText_Single(t *testing.T) {
 	q := &userQuestion{
 		Question: "Which library?",
 		Header:   "Library",
-		Options: []questionOption{
+		Options: []question.Option{
 			{Label: "React", Description: "UI framework"},
 			{Label: "Vue", Description: "Progressive framework"},
 		},
@@ -139,7 +140,7 @@ func TestFormatQuestionText_MultiQuestion(t *testing.T) {
 	q := &userQuestion{
 		Question: "Pick one",
 		Header:   "Step",
-		Options:  []questionOption{{Label: "X"}},
+		Options:  []question.Option{{Label: "X"}},
 	}
 
 	text := formatQuestionText(q, 1, 3)
@@ -155,7 +156,7 @@ func TestFormatQuestionText_NoHeader(t *testing.T) {
 
 	q := &userQuestion{
 		Question: "Pick one",
-		Options:  []questionOption{{Label: "X"}},
+		Options:  []question.Option{{Label: "X"}},
 	}
 
 	// Single question, no header — text should start directly with the question.
@@ -177,7 +178,7 @@ func TestFormatQuestionText_NoDescription(t *testing.T) {
 
 	q := &userQuestion{
 		Question: "Pick",
-		Options:  []questionOption{{Label: "Opt"}},
+		Options:  []question.Option{{Label: "Opt"}},
 	}
 
 	text := formatQuestionText(q, 0, 1)
@@ -198,7 +199,7 @@ func TestQuestionChoices(t *testing.T) {
 	t.Parallel()
 
 	q := &userQuestion{
-		Options: []questionOption{
+		Options: []question.Option{
 			{Label: "Alpha"},
 			{Label: "Beta"},
 			{Label: "Gamma"},

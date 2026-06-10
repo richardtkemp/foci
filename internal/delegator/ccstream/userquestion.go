@@ -14,13 +14,12 @@ import (
 // AskUserQuestion types (matching CC's tool schema)
 // ---------------------------------------------------------------------------
 
-// userQuestion and questionOption are aliases for the shared question types.
-// The AskUserQuestion core (types, parse, format, choices, answer resolution,
-// merge) lives in internal/question so it is shared with the foci-native
-// `ask`/`foci_ask` tool; ccstream keeps only the CC-specific control-response
-// wiring. Aliases (not new types) keep existing call sites and tests unchanged.
+// userQuestion is an alias for the shared question type. The AskUserQuestion
+// core (types, parse, format, choices, answer resolution, merge) lives in
+// internal/question so it is shared with the foci-native `ask`/`foci_ask` tool;
+// ccstream keeps only the CC-specific control-response wiring. The alias (not a
+// new type) keeps existing call sites unchanged.
 type userQuestion = question.Question
-type questionOption = question.Option
 
 // askUserQuestionInput is the parsed input of the AskUserQuestion tool.
 type askUserQuestionInput struct {

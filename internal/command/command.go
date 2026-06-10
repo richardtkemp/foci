@@ -257,13 +257,6 @@ func (r *Registry) IsKnownCommand(text string) bool {
 	return ok
 }
 
-// commandNameFromText extracts the lower-cased command name from slash/dot-prefixed
-// text (e.g. "/stop args" → "stop", ".reset" → "reset"). Returns "" if not a command.
-func commandNameFromText(text string) string {
-	name, _ := commandNameAndArgsFromText(text)
-	return name
-}
-
 // commandNameAndArgsFromText extracts both the lower-cased command name and the
 // trimmed args. Returns ("", "") if text is not a command.
 func commandNameAndArgsFromText(text string) (string, string) {
