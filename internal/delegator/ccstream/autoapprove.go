@@ -287,6 +287,15 @@ func validateParsedCommand(rules []autoApproveRule, stmts []*syntax.Stmt, depth 
 					safe = false
 				}
 			case *syntax.CallExpr:
+				// Inline command-prefix assignments (LD_PRELOAD=x cmd) and bare
+				// assignments (LD_PRELOAD=x) are CallExpr.Assigns — not a
+				// DeclClause — so they bypass declHasDangerousVar. Scan them
+				// here (P1-7).
+				for _, a := range n.Assigns {
+					if a.Name != nil && isDangerousVarName(a.Name.Value) {
+						safe = false
+					}
+				}
 				commands = append(commands, n)
 				hasContent = true
 			case *syntax.TestClause:
@@ -406,7 +415,15 @@ var dangerousVars = map[string]bool{
 	"BASH_ENV":         true, // executed on non-interactive bash startup
 	"ENV":              true, // executed on sh/dash startup
 	"HISTFILE":         true, // controls command history location
-	"BASH_FUNC_":      true, // function export (ShellShock-style)
+}
+
+// isDangerousVarName reports whether assigning to the named variable can lead to
+// arbitrary code execution or a security bypass. Shared by the export/declare
+// path (declHasDangerousVar) and the inline command-prefix / bare-assignment
+// path (CallExpr.Assigns). Exported-function names (BASH_FUNC_*, ShellShock
+// style) are matched by prefix.
+func isDangerousVarName(name string) bool {
+	return dangerousVars[name] || strings.HasPrefix(name, "BASH_FUNC_")
 }
 
 // declHasDangerousVar checks whether a DeclClause (export, declare, etc.)
@@ -431,15 +448,7 @@ func declHasDangerousVar(d *syntax.DeclClause) bool {
 		}
 	}
 	for _, arg := range d.Args {
-		if arg.Name == nil {
-			continue
-		}
-		name := arg.Name.Value
-		if dangerousVars[name] {
-			return true
-		}
-		// Check prefix for BASH_FUNC_ (exported functions).
-		if strings.HasPrefix(name, "BASH_FUNC_") {
+		if arg.Name != nil && isDangerousVarName(arg.Name.Value) {
 			return true
 		}
 	}

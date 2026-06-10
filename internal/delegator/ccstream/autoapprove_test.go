@@ -92,6 +92,38 @@ func TestMatchAutoApproveSymlinkEscape(t *testing.T) {
 	}
 }
 
+// TestInlineEnvVarPrefixRejected proves that inline command-prefix assignments
+// to dangerous variables (LD_PRELOAD=x cmd) — and the bare-assignment form
+// (LD_PRELOAD=x; cmd) — are no longer auto-approved (P1-7), closing the gap
+// where callExprCmdString stripped the assignment and matched only "cmd".
+// Benign inline assignments and the underlying safe command still approve, and
+// the export-clause form stays rejected.
+func TestInlineEnvVarPrefixRejected(t *testing.T) {
+	rules := parseAutoApproveRules([]string{"Bash:cat", "Bash:echo", "Bash:ls"})
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"plain cat approved", "cat README", true},
+		{"benign inline var approved", "FOO=bar cat README", true},
+		{"inline LD_PRELOAD rejected", "LD_PRELOAD=/tmp/evil.so cat README", false},
+		{"inline PATH rejected", "PATH=/tmp/evil cat README", false},
+		{"inline BASH_ENV rejected", "BASH_ENV=/tmp/x cat README", false},
+		{"inline BASH_FUNC_ rejected", "BASH_FUNC_foo=x cat README", false},
+		{"bare assignment then cmd rejected", "LD_PRELOAD=/tmp/evil.so; cat README", false},
+		{"export LD_PRELOAD still rejected", "export LD_PRELOAD=/tmp/evil.so", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := json.RawMessage(fmt.Sprintf(`{"command":%q}`, tt.cmd))
+			if got := matchAutoApprove(rules, "Bash", input); got != tt.want {
+				t.Errorf("matchAutoApprove(Bash, %q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestParseAutoApproveRule verifies that rule strings are split correctly into
 // tool name and pattern components.
 func TestParseAutoApproveRule(t *testing.T) {
