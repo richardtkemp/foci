@@ -293,7 +293,7 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 		tgStub.RegisterBot(a.BotToken, gotgbot.User{
 			Id:        a.BotUserID,
 			IsBot:     true,
-			FirstName: strings.Title(a.ID) + "Bot",
+			FirstName: titleFirst(a.ID) + "Bot",
 			Username:  a.ID + "_bot",
 		})
 	}
@@ -422,7 +422,10 @@ func tryStartGateway(t *testing.T, opts HarnessOptions) (*Harness, error) {
 // registration).
 func (h *Harness) spawnGateway() error {
 	ctx, cancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(ctx, h.gwBin, "-config", h.configPath)
+	// The harness launches the real foci-gw binary under test directly;
+	// procx.Spawn is the production secrets-dropping wrapper and must not wrap
+	// the test process.
+	cmd := exec.CommandContext(ctx, h.gwBin, "-config", h.configPath) //nolint:forbidigo // integration harness launches the gw under test
 	cmd.Env = append(os.Environ(),
 		"CCSTUB_RECORDER="+h.recorderPath,
 		"CCSTUB_SCRIPT_DIR="+h.scriptDir,
@@ -830,9 +833,21 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// titleFirst upper-cases the first ASCII letter of s. Used only for synthetic
+// bot display names in the stub; agent IDs are single tokens, so this matches
+// the old strings.Title behaviour without the deprecated call.
+func titleFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func buildBinary(t *testing.T, repoRoot, pkg, outPath string) {
 	t.Helper()
-	cmd := exec.Command("go", "build", "-o", outPath, pkg)
+	// Compiling a test binary with the go toolchain — not a foci subprocess, so
+	// procx.Spawn does not apply.
+	cmd := exec.Command("go", "build", "-o", outPath, pkg) //nolint:forbidigo // builds the gw test binary with the go toolchain
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -861,13 +876,3 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// ----- Internal: stderr scanner helper -------------------------------
-// (Not currently used directly; kept here for tests that want to wait
-// on arbitrary log lines beyond the ready signal.)
-func scanLines(r io.Reader, onLine func(string)) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		onLine(sc.Text())
-	}
-}
