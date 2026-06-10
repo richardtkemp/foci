@@ -459,7 +459,19 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			ttsRepls := voice.MergeReplacements(d.cfg.Voice.TTSReplacements, inst.agentCfg.Voice.TTSReplacements)
 			return resolveTTS(d.ttsMap, d.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 		},
+		MaxFrameBytes: int64(intPtrOr(d.cfg.Voice.MaxFrameBytes, config.DefaultVoiceMaxFrameBytes)),
+		MaxAudioBytes: intPtrOr(d.cfg.Voice.MaxAudioBytes, config.DefaultVoiceMaxAudioBytes),
 	}
+}
+
+// intPtrOr dereferences p, falling back to def when p is nil. Used to resolve
+// optional pointer config values that ApplyTagDefaults normally fills but a
+// directly-constructed config may leave unset.
+func intPtrOr(p *int, def int) int {
+	if p != nil {
+		return *p
+	}
+	return def
 }
 
 // webhookMaxBodyBytes is the maximum request body size for webhook payloads (1 MB).

@@ -957,6 +957,8 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 | `stt` | string | `""` | `[defaults.voice]` | Override STT entry by id (empty = default entry). |
 | `tts_replacements` | map | `{}` | `[defaults.voice]` | TTS word replacements (merged with `[[tts]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
 | `stt_replacements` | map | `{}` | `[defaults.voice]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
+| `max_frame_bytes` | int | `1048576` | `[voice]` | Max size in bytes of a single inbound `/voice` WebSocket frame. Frames over this close the connection (DoS guard). |
+| `max_audio_bytes` | int | `52428800` | `[voice]` | Max accumulated audio buffer in bytes for one recording. Exceeding it stops recording and returns an error (memory DoS guard). |
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 

@@ -595,3 +595,36 @@ func TestNilTTS_NoAudio(t *testing.T) {
 		t.Errorf("type = %q, want %q", end.Type, "response_end")
 	}
 }
+
+func TestAudioBuffer_CappedAtMaxAudioBytes(t *testing.T) {
+	// Proves the accumulated audio buffer cannot exceed MaxAudioBytes (P1-10):
+	// streaming binary frames past the cap stops recording and surfaces an error
+	// instead of growing memory without bound (DoS). With a small cap, two
+	// frames that together exceed it must trigger the limit error.
+	cfg := testConfig(func(c *HandlerConfig) {
+		c.MaxAudioBytes = 16 // tiny cap for the test
+	})
+	srv := httptest.NewServer(Handler(cfg))
+	defer srv.Close()
+
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/voice"
+	ws := dialWS(t, url)
+	defer ws.Close()
+
+	var connected ConnectedMsg
+	readJSON(t, ws, &connected)
+	sendJSON(t, ws, SelectAgentMsg{Type: "select_agent", AgentID: "agent1"})
+	var ready SessionReadyMsg
+	readJSON(t, ws, &ready)
+
+	sendJSON(t, ws, AudioStartMsg{Type: "audio_start", Format: "opus", SampleRate: 48000})
+	// Each frame is 10 bytes; the second pushes the total (20) over the 16-byte cap.
+	ws.WriteMessage(websocket.BinaryMessage, []byte("0123456789"))
+	ws.WriteMessage(websocket.BinaryMessage, []byte("0123456789"))
+
+	var errMsg ErrorMsg
+	readJSON(t, ws, &errMsg)
+	if errMsg.Type != "error" || !strings.Contains(errMsg.Message, "audio") {
+		t.Errorf("got %+v, want an audio-limit error", errMsg)
+	}
+}
