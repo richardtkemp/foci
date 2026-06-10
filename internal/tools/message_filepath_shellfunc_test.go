@@ -33,6 +33,9 @@ func TestSendToChat_ShellFuncResolvesRelativeFilePath(t *testing.T) {
 	}
 }
 
+// disconnected-test-ok: black-box test — execs bash to validate the filepath
+// resolution logic; the sibling TestSendToChat_ShellFuncResolvesRelativeFilePath
+// references generateShellFunc and guards drift of the real snippet.
 func TestSendToChat_ShellFuncResolutionExecutesCorrectly(t *testing.T) {
 	// End-to-end: extract the file-resolution lines from the generated body
 	// and run them under bash with PWD set, asserting the resolved value.

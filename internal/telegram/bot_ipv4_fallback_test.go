@@ -3,7 +3,6 @@ package telegram
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -136,27 +135,3 @@ func TestSwitchToIPv4_NilSafe(t *testing.T) {
 	}
 }
 
-// Sanity: the dialer closure flips address family based on the flag. This
-// mirrors the closure installed in NewBot without needing a live Telegram
-// connection — it proves the v6→v4 selection logic, capturing the same
-// *atomic.Bool the poll loop flips.
-func TestDialerForcesIPv4WhenLatched(t *testing.T) {
-	flag := &atomic.Bool{}
-	var gotNetwork string
-	dialFn := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if flag.Load() {
-			network = "tcp4"
-		}
-		gotNetwork = network
-		return nil, fmt.Errorf("dial intentionally skipped")
-	}
-	_, _ = dialFn(context.Background(), "tcp", "api.telegram.org:443")
-	if gotNetwork != "tcp" {
-		t.Fatalf("before latch: network = %q, want tcp", gotNetwork)
-	}
-	flag.Store(true)
-	_, _ = dialFn(context.Background(), "tcp", "api.telegram.org:443")
-	if gotNetwork != "tcp4" {
-		t.Fatalf("after latch: network = %q, want tcp4", gotNetwork)
-	}
-}

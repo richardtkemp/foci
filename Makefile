@@ -138,7 +138,10 @@ lint: find-disconnected-tests
 	@echo "=== golangci-lint ==="
 	@$(GOBIN)/golangci-lint run
 	@echo "=== deadcode (whole-program reachability, app code only) ==="
-	@output=$$($(GOBIN)/deadcode ./...); \
+	@# internal/testharness is test-only scaffolding: it is reachable solely
+	@# from -tags=integration tests, which deadcode ./... does not compile, so it
+	@# always appears unreachable. Exclude it to keep this gate on app code only.
+	@output=$$($(GOBIN)/deadcode ./... | grep -v '/testharness/'); \
 	if [ -n "$$output" ]; then echo "$$output"; exit 1; fi
 	@echo "=== find-disconnected-tests (Test* functions that don't touch prod) ==="
 	@./bin/find-disconnected-tests ./...

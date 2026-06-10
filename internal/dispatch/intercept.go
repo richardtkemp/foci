@@ -14,13 +14,6 @@ import (
 // queue after a foci restart) and silently discarded.
 const StaleCommandAge = 30 * time.Second
 
-// IsCommandText reports whether text begins with a command prefix (/ or .).
-// This is a syntactic check only — it does not consult the registry. Use
-// IsRoutableCommand when deciding whether to route to the command channel.
-func IsCommandText(text string) bool {
-	return len(text) > 0 && (text[0] == '/' || text[0] == '.')
-}
-
 // IsRoutableCommand reports whether text should be routed to the command
 // channel for dispatch. Slash-prefixed text always routes (unknown commands
 // produce a "Did you mean?" reply, which is intentional). Dot-prefixed text
