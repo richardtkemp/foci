@@ -106,6 +106,13 @@ func newSafeClient(timeout time.Duration, maxRedirects int) *http.Client {
 			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
 				return fmt.Errorf("blocked redirect to non-HTTP scheme %q", req.URL.Scheme)
 			}
+			// Block an https->http downgrade: a chain that began over TLS must
+			// not be bounced onto a cleartext hop (which would expose any secret
+			// header or sensitive response). A chain that started on http has no
+			// TLS expectation, so http->http stays allowed. (P2-2.)
+			if len(via) > 0 && via[0] != nil && via[0].URL.Scheme == "https" && req.URL.Scheme == "http" {
+				return fmt.Errorf("blocked https->http downgrade redirect to %q", req.URL.Host)
+			}
 			return nil
 		},
 	}
