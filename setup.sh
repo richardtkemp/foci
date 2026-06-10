@@ -243,11 +243,15 @@ id "$FOCI_USER" &>/dev/null || NEED_USERADD=true
 NEED_GROUPADD=false
 getent group "$SECRETS_GROUP" &>/dev/null || NEED_GROUPADD=true
 
-NEED_GROUPMEMBER=false
-if $NEED_USERADD || $NEED_GROUPADD; then
-    NEED_GROUPMEMBER=true
-elif ! id -nG "$FOCI_USER" 2>/dev/null | grep -qw "$SECRETS_GROUP"; then
-    NEED_GROUPMEMBER=true
+# The foci user must NOT be a permanent /etc/group member of $SECRETS_GROUP:
+# such membership is re-acquirable by ANY foci process via sg/newgrp, which
+# defeats the secrets boundary (P0-1). The group is granted to the foci-gw
+# *process* instead — systemd SupplementaryGroups=, runuser --supp-group, or
+# Docker setpriv --groups. Detect an existing membership so we can remove it
+# (hardening installs that predate this change).
+IS_GROUP_MEMBER=false
+if ! $NEED_USERADD && id -nG "$FOCI_USER" 2>/dev/null | grep -qw "$SECRETS_GROUP"; then
+    IS_GROUP_MEMBER=true
 fi
 
 HAS_CONFIG=false
@@ -295,6 +299,8 @@ if $HAS_SYSTEMCTL; then
     else
         grep -q "SupplementaryGroups=$SECRETS_GROUP" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "CapabilityBoundingSet=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "NoNewPrivileges=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "focigw" "$SERVICE_FILE" 2>/dev/null && NEED_SERVICE_PATCH=true
     fi
 fi
@@ -302,7 +308,7 @@ fi
 $IS_SELF && info "  Running as $FOCI_USER (self-mode)"
 $NEED_USERADD && info "  User $FOCI_USER needs to be created"
 $NEED_GROUPADD && info "  Group $SECRETS_GROUP needs to be created"
-$NEED_GROUPMEMBER && info "  $FOCI_USER needs to be added to $SECRETS_GROUP"
+$IS_GROUP_MEMBER && info "  $FOCI_USER will be removed from $SECRETS_GROUP (group is granted per-process)"
 $NEED_DIRS && info "  Directories need to be created"
 $HAS_CONFIG && info "  Config exists" || info "  Config needs to be created"
 $NEED_SECRETS_HARDEN && info "  secrets.toml needs hardening"
@@ -426,9 +432,13 @@ if $NEED_GROUPADD; then
 fi
 
 # --- Group membership ---
-if $NEED_GROUPMEMBER; then
-    emit_comment "Add $FOCI_USER to $SECRETS_GROUP"
-    emit "usermod -aG \"$SECRETS_GROUP\" \"$FOCI_USER\""
+# Do NOT add $FOCI_USER to $SECRETS_GROUP in /etc/group — that grant is
+# re-acquirable via sg/newgrp (P0-1). The foci-gw process gets the group
+# per-process (systemd SupplementaryGroups / runuser --supp-group / Docker
+# setpriv --groups). Remove any pre-existing membership to harden old installs.
+if $IS_GROUP_MEMBER; then
+    emit_comment "Remove $FOCI_USER from $SECRETS_GROUP (granted per-process instead)"
+    emit "gpasswd -d \"$FOCI_USER\" \"$SECRETS_GROUP\""
 fi
 
 # --- Install binaries ---
@@ -503,6 +513,8 @@ Type=simple
 User=$FOCI_USER
 SupplementaryGroups=$SECRETS_GROUP
 AmbientCapabilities=CAP_SETGID
+CapabilityBoundingSet=CAP_SETGID
+NoNewPrivileges=yes
 WorkingDirectory=$FOCI_HOME
 Environment="PATH=$SERVICE_PATH"
 ExecStart=$INSTALL_DIR/foci-gw -config $FOCI_HOME/config/foci.toml
@@ -518,12 +530,18 @@ EMIT_SERVICE
         emit "systemctl daemon-reload"
         emit "systemctl enable \"$SERVICE_NAME\""
     elif $NEED_SERVICE_PATCH; then
-        emit_comment "Patch systemd service — add secrets group, CAP_SETGID, and migrate binary name"
+        emit_comment "Patch systemd service — add secrets group, CAP_SETGID, NoNewPrivileges, and migrate binary name"
         if ! grep -q "SupplementaryGroups=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^User=/a SupplementaryGroups=$SECRETS_GROUP' \"$SERVICE_FILE\""
         fi
         if ! grep -q "AmbientCapabilities=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID' \"$SERVICE_FILE\""
+        fi
+        if ! grep -q "CapabilityBoundingSet=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^AmbientCapabilities=/a CapabilityBoundingSet=CAP_SETGID' \"$SERVICE_FILE\""
+        fi
+        if ! grep -q "NoNewPrivileges=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^AmbientCapabilities=/a NoNewPrivileges=yes' \"$SERVICE_FILE\""
         fi
         if grep -q "focigw" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i 's|/usr/local/bin/focigw|$INSTALL_DIR/foci-gw|g' \"$SERVICE_FILE\""
@@ -562,8 +580,13 @@ if $HAS_SYSTEMCTL; then
         emit "systemctl start \"$SERVICE_NAME\""
     fi
 else
+    # No systemd: grant the secrets group to the gw process only via runuser
+    # --supp-group (the foci user is no longer a permanent /etc/group member).
+    # Note: this path can't apply AmbientCapabilities/NoNewPrivileges, so procx's
+    # in-process group-drop for children is unavailable here — systemd/Docker are
+    # the hardened deployment paths.
     emit_comment "Start foci manually (no systemd available)"
-    emit "runuser -u \"$FOCI_USER\" -- nohup \"$INSTALL_DIR/foci-gw\" -config \"$FOCI_HOME/config/foci.toml\" >> \"$FOCI_HOME/logs/foci-gw.out\" 2>&1 &"
+    emit "runuser -u \"$FOCI_USER\" --supp-group \"$SECRETS_GROUP\" -- nohup \"$INSTALL_DIR/foci-gw\" -config \"$FOCI_HOME/config/foci.toml\" >> \"$FOCI_HOME/logs/foci-gw.out\" 2>&1 &"
 fi
 
 chmod +x "$INSTALL_SCRIPT"

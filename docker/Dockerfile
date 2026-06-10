@@ -20,10 +20,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	ca-certificates sqlite3 tmux jq curl \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Create foci user and secrets group
+# Create foci user and secrets group.
+# Deliberately do NOT add foci to foci-secrets in /etc/group: a permanent
+# membership is re-acquirable via sg/newgrp (P0-1). The group is granted to the
+# foci-gw process only, at launch, via `setpriv --groups foci-secrets`
+# (see docker/entrypoint.sh).
 RUN useradd --system --home-dir /home/foci --create-home --shell /bin/bash foci \
-	&& groupadd foci-secrets \
-	&& usermod -aG foci-secrets foci
+	&& groupadd foci-secrets
 
 # Install binaries
 COPY --from=builder /src/bin/foci-gw /usr/local/bin/foci-gw
