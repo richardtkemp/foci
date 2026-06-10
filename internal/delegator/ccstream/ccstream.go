@@ -86,6 +86,12 @@ type Backend struct {
 	// finalizeExit. Reset in Restart() before relaunching the subprocess.
 	finalizeOnce sync.Once
 
+	// closeOnce gates the shutdown kill-ladder so it runs exactly once and is
+	// driven off the subprocess being started, NOT the `running` flag — a
+	// finalize path can flip running=false on a still-alive process, and Close
+	// must still reap it (P1-9). Reset in Restart() before relaunching.
+	closeOnce sync.Once
+
 	// Session-scoped delivery callbacks. Set once by AttachSessionEvents
 	// when the backend is acquired for a session, then live for the
 	// session's lifetime. Reads are atomic.Pointer-protected so concurrent
@@ -366,14 +372,26 @@ func (b *Backend) Start(ctx context.Context, opts delegator.StartOptions) error 
 
 // Close shuts down the Claude Code subprocess gracefully.
 func (b *Backend) Close() error {
+	b.closeOnce.Do(b.closeInner)
+	return nil
+}
+
+// closeInner runs the shutdown kill-ladder exactly once (guarded by closeOnce).
+// It is gated on the subprocess having been started — NOT on `running` — so a
+// backend that a finalize path already marked dead (running=false) while its
+// process is still alive is still reaped rather than leaked (P1-9).
+func (b *Backend) closeInner() {
 	b.mu.Lock()
-	if !b.running {
-		b.mu.Unlock()
-		return nil
-	}
+	started := b.cmd != nil
 	b.running = false
 	b.closing = true
 	b.mu.Unlock()
+
+	// Never started (e.g. a unit-test backend, or Start failed before launch):
+	// nothing to tear down.
+	if !started {
+		return
+	}
 
 	// Try graceful shutdown: only send an interrupt if a turn is in flight.
 	// CC's interrupt handler aborts the per-turn AbortController; sent after
@@ -451,8 +469,6 @@ func (b *Backend) Close() error {
 	// --settings temp file still on disk, but it's owned by CC and the
 	// content-hash path is stable so it naturally de-dupes across
 	// backend restarts.
-
-	return nil
 }
 
 // Restart kills and relaunches the Claude Code subprocess.
@@ -463,6 +479,7 @@ func (b *Backend) Restart(ctx context.Context) error {
 	b.readyCh = make(chan struct{})
 	b.readyOnce = sync.Once{}
 	b.finalizeOnce = sync.Once{}
+	b.closeOnce = sync.Once{}
 	b.mu.Lock()
 	b.initReqID = ""
 	b.mu.Unlock()

@@ -102,11 +102,19 @@ type cancelEnvelope struct {
 
 // dispatch unmarshals a single NDJSON line and calls the appropriate handler
 // method.
+//
+// A per-line unmarshal failure logs and skips that line (P1-9). It must NOT call
+// OnReaderStopped: the scanner is still alive and the CC subprocess is still
+// running, so finalizing the backend here would mark a live process dead, leak
+// the subprocess (Close early-returns once running=false), and respawn a
+// duplicate CC. A single malformed line (a CC schema change, or a stray
+// non-protocol line on fd 1 from a hook/MCP server) must be survivable.
+// OnReaderStopped is reserved for the genuine scanner-exit paths in Run.
 func (rd *Reader) dispatch(line []byte) {
 	// Step 1: Discriminate on Type (and optionally Subtype).
 	var env StdoutEnvelope
 	if err := json.Unmarshal(line, &env); err != nil {
-		rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal envelope: %w", err))
+		log.Warnf("ccstream", "dropping unparseable stdout line (envelope): %v", err)
 		return
 	}
 
@@ -114,7 +122,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "assistant":
 		var msg AssistantMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal assistant: %w", err))
+			log.Warnf("ccstream", "dropping malformed assistant line: %v", err)
 			return
 		}
 		rd.handler.OnAssistant(&msg)
@@ -122,7 +130,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "result":
 		var msg ResultMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal result: %w", err))
+			log.Warnf("ccstream", "dropping malformed result line: %v", err)
 			return
 		}
 		rd.handler.OnResult(&msg)
@@ -130,14 +138,14 @@ func (rd *Reader) dispatch(line []byte) {
 	case "control_request":
 		var crEnv controlRequestEnvelope
 		if err := json.Unmarshal(line, &crEnv); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal control_request envelope: %w", err))
+			log.Warnf("ccstream", "dropping malformed control_request envelope: %v", err)
 			return
 		}
 		switch crEnv.Request.Subtype {
 		case "can_use_tool":
 			var msg PermissionRequest
 			if err := json.Unmarshal(line, &msg); err != nil {
-				rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal permission_request: %w", err))
+				log.Warnf("ccstream", "dropping malformed permission_request: %v", err)
 				return
 			}
 			log.Debugf("ccstream", "received permission request req_id=%s tool=%s", msg.RequestID, msg.Request.ToolName)
@@ -145,7 +153,7 @@ func (rd *Reader) dispatch(line []byte) {
 		case "elicitation":
 			var msg ElicitationRequest
 			if err := json.Unmarshal(line, &msg); err != nil {
-				rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal elicitation: %w", err))
+				log.Warnf("ccstream", "dropping malformed elicitation: %v", err)
 				return
 			}
 			log.Debugf("ccstream", "received elicitation req_id=%s server=%s mode=%s",
@@ -161,7 +169,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "control_cancel_request":
 		var ce cancelEnvelope
 		if err := json.Unmarshal(line, &ce); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal control_cancel_request: %w", err))
+			log.Warnf("ccstream", "dropping malformed control_cancel_request: %v", err)
 			return
 		}
 		rd.handler.OnControlCancelRequest(ce.RequestID)
@@ -169,7 +177,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "tool_progress":
 		var msg ToolProgressMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal tool_progress: %w", err))
+			log.Warnf("ccstream", "dropping malformed tool_progress: %v", err)
 			return
 		}
 		rd.handler.OnToolProgress(&msg)
@@ -201,7 +209,7 @@ func (rd *Reader) dispatch(line []byte) {
 	case "rate_limit_event":
 		var msg RateLimitEvent
 		if err := json.Unmarshal(line, &msg); err != nil {
-			rd.handler.OnReaderStopped(fmt.Errorf("ccstream: unmarshal rate_limit_event: %w", err))
+			log.Warnf("ccstream", "dropping malformed rate_limit_event: %v", err)
 			return
 		}
 		rd.handler.OnRateLimit(&msg)
