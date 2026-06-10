@@ -301,6 +301,10 @@ if $HAS_SYSTEMCTL; then
         grep -q "AmbientCapabilities=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "CapabilityBoundingSet=CAP_SETGID" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "NoNewPrivileges=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "RestrictSUIDSGID=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "ProtectKernelTunables=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "ProtectKernelModules=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
+        grep -q "LockPersonality=yes" "$SERVICE_FILE" 2>/dev/null || NEED_SERVICE_PATCH=true
         grep -q "focigw" "$SERVICE_FILE" 2>/dev/null && NEED_SERVICE_PATCH=true
     fi
 fi
@@ -515,6 +519,10 @@ SupplementaryGroups=$SECRETS_GROUP
 AmbientCapabilities=CAP_SETGID
 CapabilityBoundingSet=CAP_SETGID
 NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+LockPersonality=yes
 WorkingDirectory=$FOCI_HOME
 Environment="PATH=$SERVICE_PATH"
 ExecStart=$INSTALL_DIR/foci-gw -config $FOCI_HOME/config/foci.toml
@@ -542,6 +550,18 @@ EMIT_SERVICE
         fi
         if ! grep -q "NoNewPrivileges=" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i '/^AmbientCapabilities=/a NoNewPrivileges=yes' \"$SERVICE_FILE\""
+        fi
+        if ! grep -q "RestrictSUIDSGID=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^NoNewPrivileges=/a RestrictSUIDSGID=yes' \"$SERVICE_FILE\""
+        fi
+        if ! grep -q "ProtectKernelTunables=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^NoNewPrivileges=/a ProtectKernelTunables=yes' \"$SERVICE_FILE\""
+        fi
+        if ! grep -q "ProtectKernelModules=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^NoNewPrivileges=/a ProtectKernelModules=yes' \"$SERVICE_FILE\""
+        fi
+        if ! grep -q "LockPersonality=" "$SERVICE_FILE" 2>/dev/null; then
+            emit "sed -i '/^NoNewPrivileges=/a LockPersonality=yes' \"$SERVICE_FILE\""
         fi
         if grep -q "focigw" "$SERVICE_FILE" 2>/dev/null; then
             emit "sed -i 's|/usr/local/bin/focigw|$INSTALL_DIR/foci-gw|g' \"$SERVICE_FILE\""
