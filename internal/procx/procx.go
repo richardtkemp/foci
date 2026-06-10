@@ -39,6 +39,7 @@ package procx
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -80,8 +81,26 @@ var setupOnce sync.Once
 // lacks CAP_SETGID because cron isn't a descendant of foci-gw) and emit
 // noise. If a future binary execs children that need foci-secrets
 // dropped, it must call Setup explicitly during startup.
-func Setup() {
+func Setup() error {
 	setupOnce.Do(setupImpl)
+	return setupErr
+}
+
+// setupErr records a fail-closed condition from setupImpl: the process holds the
+// foci-secrets group but the child-credential drop could not be established, so
+// children would inherit the group and could read secrets.toml. nil on success
+// or when there is legitimately nothing to drop (root, no group, not a member).
+var setupErr error
+
+// credentialSetupError returns a non-nil error for the fail-closed condition:
+// the process holds the foci-secrets group (found) but the CAP_SETGID probe
+// failed (probeErr != nil), so the group cannot be dropped from children.
+// Every other combination is safe. (P2-12.)
+func credentialSetupError(found bool, probeErr error) error {
+	if found && probeErr != nil {
+		return fmt.Errorf("process holds %s group but cannot drop it from children (CAP_SETGID unavailable): %w", SecurityGroupName, probeErr)
+	}
+	return nil
 }
 
 func setupImpl() {
@@ -110,6 +129,9 @@ func setupImpl() {
 	currentGroups, err := syscall.Getgroups()
 	if err != nil {
 		log.Warnf("exec", "cannot read supplementary groups: %v", err)
+		// Can't verify whether we hold (and must drop) foci-secrets — fail
+		// closed rather than risk leaking the group to children. (P2-12.)
+		setupErr = fmt.Errorf("cannot read supplementary groups to verify %s drop: %w", SecurityGroupName, err)
 		return
 	}
 
@@ -156,6 +178,9 @@ func setupImpl() {
 	if err := probe.Run(); err != nil {
 		log.Warnf("exec", "cannot drop %s group (CAP_SETGID not available): %v", SecurityGroupName, err)
 		log.Warnf("exec", "child processes will inherit parent groups — add AmbientCapabilities=CAP_SETGID to systemd unit")
+		// found is true here (we passed the !found check above): the process
+		// holds foci-secrets but cannot drop it. Fail closed. (P2-12.)
+		setupErr = credentialSetupError(true, err)
 		return
 	}
 

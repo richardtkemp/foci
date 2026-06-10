@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -256,8 +257,20 @@ func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	messages, err := parseMessages(f, key)
+	if err != nil {
+		return nil, err
+	}
+	log.Debugf("session", "session loaded key=%s messages=%d", key, len(messages))
+	return messages, nil
+}
+
+// parseMessages reads NDJSON session lines from r, skipping branch_meta /
+// session_meta header lines, and returns the decoded messages. Shared by the
+// live-file loader and the archive-fallback loader.
+func parseMessages(r io.Reader, key string) ([]provider.Message, error) {
 	var messages []provider.Message
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -282,8 +295,6 @@ func (s *Store) loadUnlocked(key string) ([]provider.Message, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan session %s: %w", key, err)
 	}
-
-	log.Debugf("session", "session loaded key=%s messages=%d", key, len(messages))
 	return messages, nil
 }
 

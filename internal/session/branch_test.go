@@ -59,6 +59,53 @@ func TestCreateBranchAndLoadFull(t *testing.T) {
 	}
 }
 
+func TestLoadFullRecoversParentPrefixFromArchive(t *testing.T) {
+	// Proves that when a branch's parent root.jsonl has been rotated away to a
+	// timestamped archive (e.g. by compaction), LoadFull recovers the parent
+	// prefix from the archive instead of silently returning an empty prefix.
+	// BranchPoint indexes the pre-rotation list, so the archive is the correct
+	// source. (P2-5.)
+	s := NewStore(t.TempDir())
+	parentKey := "main/imain/1000000000"
+	branchKey := "main/imain/1000000000/b1000000001"
+
+	s.TestAppend(parentKey, msg("user", "hello"))
+	s.TestAppend(parentKey, msg("assistant", "hi"))
+	s.TestAppend(parentKey, msg("user", "how are you"))
+	s.TestAppend(parentKey, msg("assistant", "good"))
+
+	if err := s.createBranchFile(parentKey, branchKey, false, ""); err != nil {
+		t.Fatalf("createBranchFile: %v", err)
+	}
+	s.TestAppend(branchKey, msg("user", "branch q"))
+
+	// Simulate parent rotation: move the live root.jsonl to a timestamped
+	// archive sibling, leaving no live parent file.
+	parentPath, err := s.SessionPath(parentKey)
+	if err != nil {
+		t.Fatalf("SessionPath: %v", err)
+	}
+	archivePath := nextArchivePath(parentPath)
+	if err := os.Rename(parentPath, archivePath); err != nil {
+		t.Fatalf("rename parent to archive: %v", err)
+	}
+
+	msgs, err := s.LoadFull(branchKey)
+	if err != nil {
+		t.Fatalf("LoadFull: %v", err)
+	}
+	// 4 recovered parent + 1 branch. Before the fix this was 1 (prefix lost).
+	if len(msgs) != 5 {
+		t.Fatalf("len = %d, want 5 (4 recovered parent + 1 branch)", len(msgs))
+	}
+	if provider.TextOf(msgs[0].Content) != "hello" {
+		t.Errorf("msgs[0] = %q, want recovered parent 'hello'", provider.TextOf(msgs[0].Content))
+	}
+	if provider.TextOf(msgs[4].Content) != "branch q" {
+		t.Errorf("msgs[4] = %q, want 'branch q'", provider.TextOf(msgs[4].Content))
+	}
+}
+
 func TestBranchParentContinuesGrowing(t *testing.T) {
 	// Proves that a branch snapshot is fixed at creation time: messages appended to
 	// the parent after branching are not visible when loading the branch.

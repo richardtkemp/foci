@@ -204,6 +204,17 @@ func (s *Store) LoadFull(key string) ([]provider.Message, error) {
 		return nil, fmt.Errorf("load parent for branch: %w", err)
 	}
 
+	// If the live parent has fewer messages than the branch point needs, its
+	// root.jsonl was rotated/compacted away after the branch was created.
+	// Recover the pre-rotation prefix from the parent's newest archive rather
+	// than silently truncating to an empty/short prefix. BranchPoint indexes the
+	// pre-rotation list, so we must NOT repoint ParentKey. (P2-5.)
+	if len(parentMsgs) < meta.BranchPoint {
+		if archived, ok := s.loadParentArchiveUnlocked(meta.ParentKey); ok && len(archived) > len(parentMsgs) {
+			parentMsgs = archived
+		}
+	}
+
 	branchPoint := meta.BranchPoint
 	if branchPoint > len(parentMsgs) {
 		branchPoint = len(parentMsgs)

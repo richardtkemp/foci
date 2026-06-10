@@ -59,6 +59,82 @@ func (s *Store) decompressIfGzipped(jsonlPath string) error {
 	return nil
 }
 
+// latestArchivePath returns the path of the newest timestamped/numbered archive
+// sibling of rootPath (e.g. for ".../root.jsonl" it finds ".../root.<ts>.jsonl"
+// or ".../root.<ts>.jsonl.gz"), or "" if none exist. Archive names sort
+// chronologically, so the lexical max is the most recent rotation.
+func latestArchivePath(rootPath string) string {
+	dir := filepath.Dir(rootPath)
+	ext := filepath.Ext(rootPath) // ".jsonl"
+	stemBase := strings.TrimSuffix(filepath.Base(rootPath), ext)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	best := ""
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		plain := strings.TrimSuffix(name, ".gz") // archives may be gzipped
+		if !strings.HasPrefix(plain, stemBase+".") || !isArchiveFile(plain) {
+			continue
+		}
+		if name > best {
+			best = name
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return filepath.Join(dir, best)
+}
+
+// loadArchiveFile reads messages from an archive file, transparently
+// decompressing a .gz archive.
+func (s *Store) loadArchiveFile(path, key string) ([]provider.Message, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		gr, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, fmt.Errorf("gzip reader %s: %w", path, err)
+		}
+		defer func() { _ = gr.Close() }()
+		r = gr
+	}
+	return parseMessages(r, key)
+}
+
+// loadParentArchiveUnlocked recovers a branch parent's pre-rotation messages
+// from its newest archive when the live root.jsonl has been rotated away
+// (compaction). Returns false if no usable archive is found. Caller must hold
+// s.mu. (P2-5.)
+func (s *Store) loadParentArchiveUnlocked(key string) ([]provider.Message, bool) {
+	path, err := s.SessionPath(key)
+	if err != nil {
+		return nil, false
+	}
+	archivePath := latestArchivePath(path)
+	if archivePath == "" {
+		return nil, false
+	}
+	msgs, err := s.loadArchiveFile(archivePath, key)
+	if err != nil {
+		log.Warnf("session", "branch parent %s: archive %s load failed: %v", key, filepath.Base(archivePath), err)
+		return nil, false
+	}
+	log.Infof("session", "branch parent %s rotated away — recovered %d-message prefix from archive %s", key, len(msgs), filepath.Base(archivePath))
+	return msgs, true
+}
+
 // nextArchivePath returns the next available archive path for a session file.
 // E.g. for "5970082313.jsonl" it returns "5970082313.2026-03-04T02-30-00Z.jsonl".
 // If that timestamp already exists, it adds a counter: "5970082313.2026-03-04T02-30-00Z.2.jsonl".
