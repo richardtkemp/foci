@@ -2,15 +2,69 @@ package agent
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"foci/internal/platform"
+	"foci/internal/procx"
 	"foci/internal/provider"
 	"foci/internal/session"
 	"foci/internal/tools"
 	"foci/internal/workspace"
 )
+
+// TestLimitedBufferCapsAndCancels proves limitedBuffer stops accumulating at
+// its byte cap and fires onOverflow exactly once (used to kill the conversion
+// subprocess), so a zip-bomb expansion can't be buffered into memory. (P2-7.)
+func TestLimitedBufferCapsAndCancels(t *testing.T) {
+	var cancels int
+	lb := &limitedBuffer{max: 10, onOverflow: func() { cancels++ }}
+
+	n, err := lb.Write([]byte("12345"))
+	if err != nil || n != 5 {
+		t.Fatalf("under-cap write: n=%d err=%v", n, err)
+	}
+	if lb.overflowed {
+		t.Fatal("should not overflow under cap")
+	}
+	// 5 + 10 exceeds the cap of 10.
+	n, err = lb.Write([]byte("6789012345"))
+	if err != nil || n != 10 {
+		t.Fatalf("over-cap write should report full consumption: n=%d err=%v", n, err)
+	}
+	if !lb.overflowed {
+		t.Error("should be overflowed after exceeding cap")
+	}
+	if lb.buf.Len() != 10 {
+		t.Errorf("buffered = %d bytes, want capped at 10", lb.buf.Len())
+	}
+	lb.Write([]byte("more")) // further writes are swallowed
+	if cancels != 1 {
+		t.Errorf("onOverflow fired %d times, want exactly 1", cancels)
+	}
+}
+
+// TestConvertBoundedKillsRunaway proves a converter emitting unbounded output
+// (a proxy for a zip bomb) is capped and the subprocess killed promptly rather
+// than OOMing the gateway. (P2-7.)
+func TestConvertBoundedKillsRunaway(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	orig := maxConvertOutputBytes
+	maxConvertOutputBytes = 4096
+	defer func() { maxConvertOutputBytes = orig }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := procx.Spawn(ctx, "sh", "-c", "while true; do printf 'spamspamspamspam'; done")
+	_, _, overflowed, _ := runBounded(cmd, cancel)
+	if !overflowed {
+		t.Error("expected overflow + kill on runaway output")
+	}
+}
 
 func TestConvertCSV(t *testing.T) {
 	// Verifies that CSV documents pass through as plain text
