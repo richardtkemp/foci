@@ -105,7 +105,7 @@ func TestMaybeKeepalive_Fires(t *testing.T) {
 	}
 
 	r.maybeKeepalive(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 1 {
 		t.Errorf("keepalive not called, expected 1 call")
@@ -307,7 +307,7 @@ func TestMaybeReflection_Fires(t *testing.T) {
 	}
 
 	r.maybeReflection()
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 1 {
 		t.Errorf("memory formation not called, expected 1 call, got %d", calls)
@@ -394,7 +394,7 @@ func TestMaybeConsolidation_Fires(t *testing.T) {
 	}
 
 	r.maybeConsolidation()
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 1 {
 		t.Errorf("consolidation not called, expected 1 call, got %d", calls)
@@ -431,7 +431,7 @@ func TestMaybeConsolidation_UsesRunOnce(t *testing.T) {
 	}
 
 	r.maybeConsolidation()
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if branchCalls != 0 {
 		t.Errorf("branchFn should not be called when runOnceFn is set, got %d calls", branchCalls)

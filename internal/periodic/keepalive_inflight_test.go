@@ -24,6 +24,30 @@ import (
 	"foci/internal/session"
 )
 
+// waitIdle blocks until every periodic scheduler goroutine started by the
+// maybe* methods has finished (all *Running flags clear). Each goroutine clears
+// its flag under r.mu only after its branchFn callbacks return, so observing the
+// cleared flags under r.mu establishes a happens-before edge: any state those
+// callbacks wrote is then safe to read from the test goroutine. This replaces
+// the previous fixed time.Sleep, which both raced (no happens-before) and was
+// timing-fragile.
+func waitIdle(t *testing.T, r *Runner) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		r.mu.Lock()
+		busy := r.keepaliveRunning || r.backgroundRunning || r.reflectionRunning || r.consolidationRunning
+		r.mu.Unlock()
+		if !busy {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("periodic scheduler goroutine did not finish within 2s")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // inFlightFn returns a stub IsTurnInFlightFunc that reports the given base
 // keys as in-flight. Useful for asserting selective filtering in maybeReflection.
 func inFlightFn(t *testing.T, busyBases ...string) func(string) bool {
@@ -60,7 +84,7 @@ func TestMaybeKeepalive_SkipsWhenTurnInFlight(t *testing.T) {
 	}
 
 	r.maybeKeepalive(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 0 {
 		t.Errorf("keepalive fired %d times while turn in flight, want 0", calls)
@@ -92,7 +116,7 @@ func TestMaybeBackgroundWork_SkipsWhenTurnInFlight(t *testing.T) {
 	}
 
 	r.maybeBackgroundWork(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 0 {
 		t.Errorf("background fired %d times while turn in flight, want 0", calls)
@@ -146,7 +170,7 @@ func TestMaybeReflection_FiltersInFlightSessions(t *testing.T) {
 	}
 
 	r.maybeReflection()
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if got["test/c1/1"] != 0 {
 		t.Errorf("c1 fired despite in-flight turn (got %d calls)", got["test/c1/1"])
@@ -202,7 +226,7 @@ func TestMaybeReflection_SkipsWhenAllSessionsBusy(t *testing.T) {
 	}
 
 	r.maybeReflection()
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 0 {
 		t.Errorf("reflection fired %d times when all sessions busy, want 0", calls)
@@ -240,7 +264,7 @@ func TestMaybeConsolidation_SkipsWhenTurnInFlight(t *testing.T) {
 	}
 
 	r.maybeConsolidation()
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if calls != 0 {
 		t.Errorf("consolidation fired %d times while turn in flight, want 0", calls)

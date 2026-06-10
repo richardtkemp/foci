@@ -41,7 +41,7 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 
 	// Should be blocked by active work
 	r.maybeBackgroundWork(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	mu.Lock()
 	got := calls
@@ -53,7 +53,7 @@ func TestBackgroundBlockedByActiveWork(t *testing.T) {
 	// Clear active work — should now fire
 	activeCount = 0
 	r.maybeBackgroundWork(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	mu.Lock()
 	got = calls
@@ -85,7 +85,7 @@ func TestMaybeBackgroundWork_WithBadInvestInterval(t *testing.T) {
 	}
 
 	r.maybeBackgroundWork(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	// Even with bad InvestInterval, it should attempt background work
 	// (it just falls back to 30m for mana check)
@@ -197,7 +197,7 @@ func TestMaybeBackgroundWork_SkipsWhenRateLimited(t *testing.T) {
 	}
 
 	r.maybeBackgroundWork(context.Background())
-	time.Sleep(50 * time.Millisecond)
+	waitIdle(t, r)
 
 	if called {
 		t.Error("expected background work to skip when canFireFn returns false")
