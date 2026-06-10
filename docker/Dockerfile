@@ -1,6 +1,10 @@
 # Multi-stage build for foci
 # Stage 1: Build Go binaries
-FROM golang:1.24-bookworm AS builder
+# Pin to 1.25 to match `go 1.25.0` in go.mod; with GOTOOLCHAIN=local this fails
+# loudly on a mismatch instead of silently auto-downloading a toolchain at build
+# time (reproducible, no surprise network fetch). (P3 supply-chain.)
+FROM golang:1.25-bookworm AS builder
+ENV GOTOOLCHAIN=local
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
 	gcc libc6-dev make git \

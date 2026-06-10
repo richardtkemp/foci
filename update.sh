@@ -53,6 +53,26 @@ for svcfile in /etc/systemd/system/foci*.service; do
         echo "  Patching $svcfile: add NoNewPrivileges=yes"
         sed -i "/^AmbientCapabilities=/a NoNewPrivileges=yes" "$svcfile"
     fi
+    # Workload-safe sandbox hardening (P3 supply-chain). RestrictSUIDSGID
+    # reinforces NoNewPrivileges by stripping setuid/setgid bits; the Protect*
+    # and LockPersonality directives are inert for foci-gw's workload but shrink
+    # the kernel attack surface. Inserted after NoNewPrivileges, idempotently.
+    if ! grep -q "^RestrictSUIDSGID=" "$svcfile"; then
+        echo "  Patching $svcfile: add RestrictSUIDSGID=yes"
+        sed -i "/^NoNewPrivileges=/a RestrictSUIDSGID=yes" "$svcfile"
+    fi
+    if ! grep -q "^ProtectKernelTunables=" "$svcfile"; then
+        echo "  Patching $svcfile: add ProtectKernelTunables=yes"
+        sed -i "/^NoNewPrivileges=/a ProtectKernelTunables=yes" "$svcfile"
+    fi
+    if ! grep -q "^ProtectKernelModules=" "$svcfile"; then
+        echo "  Patching $svcfile: add ProtectKernelModules=yes"
+        sed -i "/^NoNewPrivileges=/a ProtectKernelModules=yes" "$svcfile"
+    fi
+    if ! grep -q "^LockPersonality=" "$svcfile"; then
+        echo "  Patching $svcfile: add LockPersonality=yes"
+        sed -i "/^NoNewPrivileges=/a LockPersonality=yes" "$svcfile"
+    fi
 
     # Remove the service user's permanent foci-secrets /etc/group membership — it
     # is re-acquirable via setuid sg/newgrp (P0-1). The group is now granted to
@@ -128,27 +148,10 @@ for svc in $s; do
     systemctl restart "$svc"
 done
 
-# Check if FOCI_API_KEY is missing from crontab
-if id foci &>/dev/null; then
-    if ! crontab -u foci -l 2>/dev/null | grep -q 'FOCI_API_KEY'; then
-        # Try to read the key from secrets.toml
-        for svcfile in /etc/systemd/system/foci*.service; do
-            [[ -f "$svcfile" ]] || continue
-            SVC_HOME="$(grep '^WorkingDirectory=' "$svcfile" | cut -d= -f2)" || continue
-            [[ -n "$SVC_HOME" ]] || continue
-            SECRETS_FILE="$SVC_HOME/config/secrets.toml"
-            if [[ -f "$SECRETS_FILE" ]]; then
-                API_KEY="$(grep -A5 '^\[http\]' "$SECRETS_FILE" | grep 'api_key' | head -1 | sed 's/.*= *"\(.*\)"/\1/')"
-                if [[ -n "$API_KEY" ]]; then
-                    echo ""
-                    echo "NOTE: FOCI_API_KEY is not set in foci's crontab."
-                    echo "  Add this line near the top of the crontab (crontab -u foci -e):"
-                    echo "  FOCI_API_KEY=$API_KEY"
-                    break
-                fi
-            fi
-        done
-    fi
-fi
+# (Removed: a block that grepped the api_key out of secrets.toml and echoed it
+# in cleartext to the terminal/scrollback/CI logs to suggest a crontab
+# FOCI_API_KEY line. It leaked a live remote-access key and isn't needed — cron
+# jobs reach the gateway over the auto-discovered unix socket, no key required.
+# P2-9.)
 
 echo "Done."

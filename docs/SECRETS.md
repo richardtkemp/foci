@@ -181,7 +181,7 @@ Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and t
 
 Several additional layers provide redundancy:
 
-- **`Redact()`** — all tool output is scanned for secret values. Any occurrence is replaced with `[REDACTED]`. This catches accidental leaks even if a secret appears in unexpected output. Values shorter than 4 characters are not redacted to avoid false positives.
+- **`Redact()`** — all tool output is scanned for secret values. Any occurrence is replaced with `[REDACTED]`. This catches accidental leaks even if a secret appears in unexpected output. Values shorter than 4 characters are not redacted to avoid false positives. Like `IsBlockedCommand`, this is **advisory/best-effort defence-in-depth, not a boundary**: it matches verbatim byte sequences, so an adversary who can encode, chunk, or otherwise transform a secret before it reaches output can evade it. The real boundaries are the OS group-drop (subprocesses) and `IsBlockedPath` (in-process file tools), which prevent the secret from being read in the first place.
 
 - **`IsBlockedPath()`** — canonical-path check (absolute, symlink-resolved; component-aligned matching, not substring) used by the in-process file tools to refuse blocked paths such as `secrets.toml` and `/proc/self/environ`. This is an enforcement boundary for those tools (see *In-process file tools* above), not merely advisory.
 
