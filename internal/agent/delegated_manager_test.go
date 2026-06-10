@@ -292,6 +292,60 @@ func newTestSessionIndex(t *testing.T) *session.SessionIndex {
 // Tests
 // ---------------------------------------------------------------------------
 
+func TestGet_ConcurrentSameKeySpawnsOne(t *testing.T) {
+	// Proves that many concurrent Get calls for the same session key spawn
+	// exactly one backend (not one per caller) and all callers receive the same
+	// instance — the singleflight serialization of creation. Run with -race to
+	// also catch the unsynchronized creation the old code allowed. (P2-3.)
+	var created int32
+	var mu sync.Mutex
+	var mocks []*mockBackendDM
+	mgr := &DelegatedManager{
+		NewBackend: func() (delegator.Delegator, error) {
+			atomic.AddInt32(&created, 1)
+			// Widen the creation window so concurrent callers reliably overlap
+			// between the lookup-miss and the insert (the racy gap).
+			time.Sleep(20 * time.Millisecond)
+			be := &mockBackendDM{running: true}
+			mu.Lock()
+			mocks = append(mocks, be)
+			mu.Unlock()
+			return be, nil
+		},
+		StartOpts:   delegator.StartOptions{WorkDir: t.TempDir()},
+		AgentID:     "test-agent",
+		IdleTimeout: time.Hour,
+	}
+	t.Cleanup(func() { mgr.Close() })
+
+	const N = 24
+	var wg sync.WaitGroup
+	backends := make([]delegator.Delegator, N)
+	errs := make([]error, N)
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			backends[i], errs[i] = mgr.Get(context.Background(), "test-agent/c1/1000")
+		}(i)
+	}
+	wg.Wait()
+
+	for i, e := range errs {
+		if e != nil {
+			t.Fatalf("Get[%d]: %v", i, e)
+		}
+	}
+	if got := atomic.LoadInt32(&created); got != 1 {
+		t.Errorf("NewBackend called %d times, want exactly 1", got)
+	}
+	for i := 1; i < N; i++ {
+		if backends[i] != backends[0] {
+			t.Errorf("Get[%d] returned a different backend instance", i)
+		}
+	}
+}
+
 func TestGet_LazyCreation(t *testing.T) {
 	// Proves that Get creates a new backend on first call and returns the same
 	// backend on subsequent calls with the same session key base.

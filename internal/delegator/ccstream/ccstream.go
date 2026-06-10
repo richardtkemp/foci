@@ -401,7 +401,9 @@ func (b *Backend) closeInner() {
 	// an error_during_execution one). Closing stdin alone is sufficient to
 	// shut CC down cleanly when there's nothing to abort.
 	if b.IsTurnInFlight() {
-		_ = b.writer.SendInterrupt()
+		// Best-effort, non-blocking: if a write is wedged on a hung pipe we must
+		// not block here — Close (below) evicts it. (P2-4.)
+		_ = b.writer.TrySendInterrupt()
 	}
 	_ = b.writer.Close()
 

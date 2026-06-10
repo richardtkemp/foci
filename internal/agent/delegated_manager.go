@@ -15,6 +15,8 @@ import (
 	"foci/internal/procx"
 	"foci/internal/session"
 	"foci/internal/tools"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // DefaultIdleTimeout is the default duration after which idle delegated backends are closed.
@@ -91,6 +93,11 @@ type DelegatedManager struct {
 
 	// reaperStop cancels the idle reaper goroutine.
 	reaperStop context.CancelFunc
+
+	// createGroup serializes backend creation per session key so concurrent
+	// Get callers for the same key spawn exactly one CC instead of racing to
+	// create (and orphan) duplicates. (P2-3.)
+	createGroup singleflight.Group
 }
 
 // managedBackend wraps a Backend with idle tracking and resume state.
@@ -131,6 +138,32 @@ func (mb *managedBackend) clearPermission() {
 // one if it doesn't exist yet. Each session key gets its own backend.
 // Use RotateBackendKey after compaction to re-key the map entry.
 func (m *DelegatedManager) Get(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
+	// Fast path: an existing, running backend needs no creation, so don't
+	// serialize it through the singleflight group.
+	m.mu.Lock()
+	if mb, ok := m.backends[sessionKey]; ok && mb.be.IsRunning() {
+		mb.lastActive = time.Now()
+		mb.sessionKey = sessionKey
+		m.mu.Unlock()
+		return mb.be, nil
+	}
+	m.mu.Unlock()
+
+	// Slow path: create (or replace a dead) backend. singleflight ensures that
+	// concurrent callers for the same key run getOrCreate once and share the
+	// result, so exactly one CC is spawned. (P2-3.)
+	v, err, _ := m.createGroup.Do(sessionKey, func() (interface{}, error) {
+		return m.getOrCreate(ctx, sessionKey)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(delegator.Delegator), nil
+}
+
+// getOrCreate looks up or creates the backend for sessionKey. It is always
+// invoked through createGroup.Do, so per-key creation is serialized.
+func (m *DelegatedManager) getOrCreate(ctx context.Context, sessionKey string) (delegator.Delegator, error) {
 	m.mu.Lock()
 	// dead is the corpse to clean up after the lock is released. Holding
 	// m.mu across be.Close() risks deadlocking the entire agent if the
