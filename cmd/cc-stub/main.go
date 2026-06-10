@@ -409,7 +409,7 @@ func main() {
 	in := bufio.NewScanner(os.Stdin)
 	in.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	out := bufio.NewWriter(os.Stdout)
-	defer out.Flush()
+	defer func() { _ = out.Flush() }()
 
 	// Process the first envelope — should be control_request initialize.
 	// Respond with control_response immediately so foci's readyCh closes,
@@ -446,7 +446,7 @@ func main() {
 		"model":      ifEmpty(model, "stub-model"),
 		"tools":      []string{},
 	})
-	out.Flush()
+	_ = out.Flush()
 
 	// Now loop on user messages. For each, emit one assistant text block
 	// (plus any scripted tool_use blocks), followed by a result message
@@ -536,16 +536,16 @@ func main() {
 			// gates progress past init for stall-detector tests.
 			if script != nil {
 				for _, raw := range script.RawLinesBeforeAssistant {
-					out.WriteString(raw)
+					_, _ = out.WriteString(raw)
 				}
 				if len(script.RawLinesBeforeAssistant) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 				for _, env := range script.ExtraEnvelopes {
 					emit(out, env)
 				}
 				if len(script.ExtraEnvelopes) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 				if script.SleepMs > 0 {
 					time.Sleep(time.Duration(script.SleepMs) * time.Millisecond)
@@ -572,7 +572,7 @@ func main() {
 					})
 				}
 				if len(script.StreamDeltas) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 			}
 			// Pre-emit intermediate-text assistant messages. Each entry
@@ -595,7 +595,7 @@ func main() {
 					})
 				}
 				if len(script.IntermediateTexts) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 			}
 			content := []map[string]any{
@@ -664,7 +664,7 @@ func main() {
 				"message":    assistantMsg,
 				"session_id": sessionID,
 			})
-			out.Flush()
+			_ = out.Flush()
 			// CCSTUB_EXIT_AFTER_ASSISTANT: exit 0 between assistant and
 			// result envelopes on the first turn. Foci sees stdout EOF
 			// mid-turn and reaps the subprocess; its watchdog fires the
@@ -688,7 +688,7 @@ func main() {
 					emitHookResponse(out, hookInstallID, br.toolUseID, br.toolName, br.toolInput, br.result.Output, br.result.IsError)
 				}
 				if len(bashRuns) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 			}
 			resultEnv := map[string]any{
@@ -706,7 +706,7 @@ func main() {
 				resultEnv["session_id"] = sessionID
 			}
 			emit(out, resultEnv)
-			out.Flush()
+			_ = out.Flush()
 			// Emit any scripted can_use_tool control_requests AFTER the
 			// assistant + result envelopes. Foci processes them on its
 			// reader goroutine and dispatches each to permPromptFn —
@@ -742,7 +742,7 @@ func main() {
 					recordPermissionRequest(reqID, pr.ToolName)
 				}
 				if len(script.PermissionRequests) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 				// Emit any scripted control_cancel_requests. Foci's reader
 				// routes each to OnControlCancelRequest →
@@ -759,7 +759,7 @@ func main() {
 					recordPermissionCancel(cancelID)
 				}
 				if len(script.ControlCancelRequests) > 0 {
-					out.Flush()
+					_ = out.Flush()
 				}
 			}
 			// Late-text injection: emit a SECOND assistant message AFTER
@@ -782,7 +782,7 @@ func main() {
 					},
 					"session_id": sessionID,
 				})
-				out.Flush()
+				_ = out.Flush()
 			}
 			// One-shot: delete the script file after applying so the
 			// next user message in this long-lived process uses
@@ -808,7 +808,7 @@ func main() {
 			// and respawns with --resume.
 			turnCount++
 			if exitAfterTurns > 0 && turnCount >= exitAfterTurns {
-				out.Flush()
+				_ = out.Flush()
 				os.Exit(0)
 			}
 		case "control_request":
@@ -819,7 +819,7 @@ func main() {
 					"request_id": reqID,
 					"response":   map[string]any{"subtype": "ack"},
 				})
-				out.Flush()
+				_ = out.Flush()
 			}
 		case "control_response":
 			// Inbound from foci — typically the answer to a can_use_tool
@@ -876,15 +876,6 @@ func extractInitSystemPrompt(env map[string]any) (string, string) {
 	sp, _ := req["systemPrompt"].(string)
 	asp, _ := req["appendSystemPrompt"].(string)
 	return sp, asp
-}
-
-// extractUserText pulls the text body out of a `{"type":"user", ...}` envelope.
-// Foci's UserPayload.MarshalJSON emits `{"role":"user","content":"<string>"}`
-// for the common case and `{"role":"user","content":[<blocks>]}` for
-// structured content. The stub handles both shapes.
-func extractUserText(env map[string]any) string {
-	text, _ := extractUserContent(env)
-	return text
 }
 
 // extractUserContent returns both the flattened text and the list of
@@ -1072,7 +1063,7 @@ func writeRecorder(e recorderEntry) {
 	if path == "" {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return
 	}
@@ -1112,7 +1103,10 @@ func runBashToolUse(input map[string]any) bashResult {
 		fmt.Fprintln(os.Stderr, "cc-stub: Bash tool_use with empty command — skipped")
 		return bashResult{Output: "(no command)", IsError: true}
 	}
-	c := exec.Command("bash", "-c", cmd)
+	// cc-stub is a test double for Claude Code; it legitimately runs the
+	// model-requested shell command directly. procx.Spawn is the production
+	// secrets-dropping wrapper and must not wrap this test binary.
+	c := exec.Command("bash", "-c", cmd) //nolint:forbidigo // test stub emulating CC's Bash tool
 	var buf bytes.Buffer
 	tee := io.MultiWriter(&buf, os.Stderr)
 	c.Stdout = tee

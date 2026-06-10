@@ -73,7 +73,6 @@ type botState struct {
 	user    gotgbot.User
 	updates []gotgbot.Update // pending getUpdates queue
 	sent    []SentCall       // outbound API calls for assertion
-	offset  int64            // last acknowledged update id
 	// files maps a file_id → registered FileBlob. Used by RegisterFile +
 	// the /file/bot<token>/<filePath> download handler. Tests pre-register
 	// blobs and reference the file_id when building synthetic Voice /
@@ -340,7 +339,7 @@ func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 	// Path is like /bot12345:ABCDEF/sendMessage
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	if strings.HasPrefix(path, "file/bot") {
-		s.serveFileDownload(w, r, strings.TrimPrefix(path, "file/bot"))
+		s.serveFileDownload(w, strings.TrimPrefix(path, "file/bot"))
 		return
 	}
 	if !strings.HasPrefix(path, "bot") {
@@ -371,14 +370,14 @@ func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body, _ := io.ReadAll(r.Body)
-	r.Body.Close()
+	_ = r.Body.Close()
 	s.recordCall(st, method, body)
 
 	// Apply injected fault (if any) before normal dispatch. Faults are
 	// per-method; getMe is intentionally not faulted in any current test
 	// path because gateway readiness depends on it.
 	if f, ok := s.takeFault(method); ok {
-		s.applyFault(w, r, f)
+		s.applyFault(w, f)
 		return
 	}
 
@@ -390,13 +389,13 @@ func (s *TelegramStub) handle(w http.ResponseWriter, r *http.Request) {
 	case "setMyCommands":
 		writeOK(w, true)
 	case "sendMessage":
-		s.serveSendMessage(w, token, st, body)
+		s.serveSendMessage(w, st, body)
 	case "editMessageText":
-		s.serveEditMessageText(w, token, st, body)
+		s.serveEditMessageText(w, st, body)
 	case "sendChatAction":
 		writeOK(w, true)
 	case "sendDocument", "sendVoice", "sendVideo", "sendPhoto", "sendAudio", "sendAnimation":
-		s.serveSendMedia(w, token, st)
+		s.serveSendMedia(w, st)
 	case "getFile":
 		// Look up the registered file_path for this file_id. Tests use
 		// RegisterFile to seed a blob; bots that ask for an unknown
@@ -544,7 +543,7 @@ func (s *TelegramStub) serveGetUpdates(w http.ResponseWriter, st *botState, body
 }
 
 // serveSendMessage returns a synthetic Message echoing the chat_id and text.
-func (s *TelegramStub) serveSendMessage(w http.ResponseWriter, token string, st *botState, body []byte) {
+func (s *TelegramStub) serveSendMessage(w http.ResponseWriter, st *botState, body []byte) {
 	chatID := parseInt64(extractField(body, "chat_id"))
 	text := extractField(body, "text")
 	msg := buildMessage(s, st.user, chatID, text)
@@ -552,7 +551,7 @@ func (s *TelegramStub) serveSendMessage(w http.ResponseWriter, token string, st 
 }
 
 // serveEditMessageText is a no-op edit returning a synthetic Message.
-func (s *TelegramStub) serveEditMessageText(w http.ResponseWriter, token string, st *botState, body []byte) {
+func (s *TelegramStub) serveEditMessageText(w http.ResponseWriter, st *botState, body []byte) {
 	chatID := parseInt64(extractField(body, "chat_id"))
 	msgID := parseInt64(extractField(body, "message_id"))
 	text := extractField(body, "text")
@@ -566,7 +565,7 @@ func (s *TelegramStub) serveEditMessageText(w http.ResponseWriter, token string,
 // serveSendMedia returns a synthetic Message for any sendXxx method. We
 // don't parse multipart payloads — tests assert on the SentCall body
 // recorded above (which keeps the raw multipart bytes).
-func (s *TelegramStub) serveSendMedia(w http.ResponseWriter, token string, st *botState) {
+func (s *TelegramStub) serveSendMedia(w http.ResponseWriter, st *botState) {
 	msg := buildMessage(s, st.user, 0, "")
 	writeOK(w, msg)
 }
@@ -598,7 +597,7 @@ func writeOK(w http.ResponseWriter, r any) {
 // by file_id; the file_path returned by getFile points the download
 // here. Fault injection on the synthetic method "fileDownload" lets
 // tests simulate transient download failures.
-func (s *TelegramStub) serveFileDownload(w http.ResponseWriter, r *http.Request, rest string) {
+func (s *TelegramStub) serveFileDownload(w http.ResponseWriter, rest string) {
 	slash := strings.Index(rest, "/")
 	if slash < 0 {
 		http.Error(w, "bad file path", http.StatusBadRequest)
@@ -622,7 +621,7 @@ func (s *TelegramStub) serveFileDownload(w http.ResponseWriter, r *http.Request,
 
 	// Honour any fault injection on the fileDownload method.
 	if f, ok := s.takeFault("fileDownload"); ok {
-		s.applyFault(w, r, f)
+		s.applyFault(w, f)
 		return
 	}
 
@@ -652,7 +651,7 @@ func (s *TelegramStub) serveFileDownload(w http.ResponseWriter, r *http.Request,
 // hijacks and closes the underlying TCP conn. For Body, it writes raw bytes
 // with the requested content-type and status. For Code, it emits a Bot API
 // error JSON. For 429s, it embeds parameters.retry_after.
-func (s *TelegramStub) applyFault(w http.ResponseWriter, r *http.Request, f injectedFault) {
+func (s *TelegramStub) applyFault(w http.ResponseWriter, f injectedFault) {
 	if f.ConnDrop {
 		// Hijack and close the TCP conn so the client sees io.EOF /
 		// "connection reset" / "broken pipe" depending on timing.
