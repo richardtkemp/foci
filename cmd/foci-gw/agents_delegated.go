@@ -374,7 +374,7 @@ func buildExecRegistry(p setupParams, wakeScheduleFn tools.ScheduleWakeFn, agLaz
 	// subprocess's subscription auth so the call charges mana, not API spend.
 	// API agents register this in registerCoreTools with APISummariser.
 	cliSummariser := tools.NewCLISummariser("", "haiku", p.resolved.Summary.MaxSummaryInputChars)
-	registry.Register(tools.NewSummaryTool(cliSummariser, acfg.Workspace))
+	registry.Register(tools.NewSummaryTool(agentStore, cliSummariser, acfg.Workspace))
 
 	if len(p.memBackends) > 0 {
 		registry.Register(tools.NewMemorySearchTool(p.memBackends, p.resolved.MemorySearch.SearchBackend, p.convReader))

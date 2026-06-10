@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"foci/internal/secrets"
 )
 
 // NewSummaryTool creates a tool that summarises or extracts information from
@@ -22,7 +24,7 @@ import (
 // piped input is written to a temp file and passed via the file param. So
 // `cat foo.txt | foci_summary "summarise this"` works without the Go-side
 // tool needing stdin awareness.
-func NewSummaryTool(summariser Summariser, workspace string) *Tool {
+func NewSummaryTool(store *secrets.Store, summariser Summariser, workspace string) *Tool {
 	return &Tool{
 		Name:        "summary",
 		Description: "Summarize or extract specific information from a file using a fast, cheap model call. Do NOT use this to read or dump full file contents — use the read tool for that. This tool is for targeted questions like 'what config options are defined?' or 'summarize the error handling approach', not for retrieving the file text itself.",
@@ -42,12 +44,12 @@ func NewSummaryTool(summariser Summariser, workspace string) *Tool {
 			"required": ["file", "prompt"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return summaryExecute(ctx, params, summariser, workspace)
+			return summaryExecute(ctx, params, fileScope{store: store, workspace: workspace}, summariser)
 		},
 	}
 }
 
-func summaryExecute(ctx context.Context, params json.RawMessage, summariser Summariser, workspace string) (ToolResult, error) {
+func summaryExecute(ctx context.Context, params json.RawMessage, fs fileScope, summariser Summariser) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
 		Prompt string `json:"prompt"`
@@ -63,7 +65,10 @@ func summaryExecute(ctx context.Context, params json.RawMessage, summariser Summ
 		return ToolResult{}, fmt.Errorf("prompt parameter is required")
 	}
 
-	filePath := resolveWorkspacePath(p.File, workspace)
+	filePath, err := fs.resolveFileArg(p.File)
+	if err != nil {
+		return ToolResult{}, err
+	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read file: %w", err)

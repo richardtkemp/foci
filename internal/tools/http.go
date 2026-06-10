@@ -156,6 +156,29 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		return ToolResult{}, fmt.Errorf("save_from_json_path requires save_to")
 	}
 
+	// Resolve and contain every file-path param before any I/O. body_file and
+	// files[] are read, and save_to is written, inside foci-gw at full gateway
+	// privilege, so each must pass the blocklist (secrets file, /proc/self/
+	// environ). Isolated-dir containment (baseDir) is added for spawn sandboxes
+	// in a follow-up. (P0-2.)
+	fs := fileScope{store: store}
+	var err error
+	if p.BodyFile != "" {
+		if p.BodyFile, err = fs.resolveFileArg(p.BodyFile); err != nil {
+			return ToolResult{}, err
+		}
+	}
+	for i := range p.Files {
+		if p.Files[i].FilePath, err = fs.resolveFileArg(p.Files[i].FilePath); err != nil {
+			return ToolResult{}, err
+		}
+	}
+	if p.SaveTo != "" {
+		if p.SaveTo, err = fs.resolveFileArg(p.SaveTo); err != nil {
+			return ToolResult{}, err
+		}
+	}
+
 	// Validate params and resolve secrets
 	resolved, err := validateAndResolveSecrets(SessionKeyFromContext(ctx), p.URL, p.Method, p.Body, p.BodyFile, p.Headers, p.FormFields, p.Files, maxUploadFileSize, store, bwStore)
 	if err != nil {
