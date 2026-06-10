@@ -166,12 +166,16 @@ Secrets are protected at the operating system level using Unix groups:
 
 1. **Group `foci-secrets`** — a dedicated group that owns `secrets.toml`
 2. **File ownership** — `secrets.toml` is owned by `root:foci-secrets` with permissions `0660`
-3. **Supplementary groups** — the systemd unit grants `SupplementaryGroups=foci-secrets` so the main foci process can read and write secrets
-4. **Group dropping** — every subprocess foci-gw spawns goes through `procx.Spawn` / `procx.SpawnSetsid` (`internal/procx`), which removes the `foci-secrets` group from the child's supplementary group list while preserving all other groups (e.g. `docker`, `git`, `sudo`). This covers delegated Claude Code agents, exec/tmux tools, MCP servers, TTS, document conversion, the credential-refresh probe — everything. The OS denies access to `secrets.toml` because the child no longer has `foci-secrets`.
-5. **CAP_SETGID** — the systemd unit grants `AmbientCapabilities=CAP_SETGID` so the process can call `setgroups()` to drop groups on child processes
+3. **Process-only group grant** — the `foci-secrets` group is granted to the **foci-gw process**, never to the foci *user*. systemd uses `SupplementaryGroups=foci-secrets`, Docker uses `setpriv --groups foci-secrets`, and the no-systemd path uses `runuser --supp-group`. The foci user is deliberately **not** a member in `/etc/group` (setup.sh and the Dockerfile no longer run `usermod -aG`; setup.sh removes any pre-existing membership). This is what lets the gw read and write secrets while preventing children from re-acquiring the group via the setuid `sg`/`newgrp` tools, which consult `/etc/group`.
+4. **Group dropping** — every subprocess foci-gw spawns goes through `procx.Spawn` / `procx.SpawnSetsid` (`internal/procx`), which removes the `foci-secrets` group from the child's supplementary group list while preserving all other groups (e.g. `docker`, `git`). This covers delegated Claude Code agents, exec/tmux tools, MCP servers, TTS, document conversion, the credential-refresh probe — everything. The OS denies access to `secrets.toml` because the child no longer has `foci-secrets`.
+5. **CAP_SETGID, ambient-cleared** — the systemd unit grants `AmbientCapabilities=CAP_SETGID` so foci-gw can `setgroups()` to drop the group on children. Critically, after the startup probe confirms the credential works, `procx` clears the process **ambient** capability set (`PR_CAP_AMBIENT_CLEAR_ALL`). Ambient capabilities survive `execve` for non-root processes, so without this a child would inherit effective `CAP_SETGID` and could simply add `foci-secrets` back. Clearing ambient (while keeping permitted/effective on the parent) means the fork-time drop still works but the exec'd child holds no `CAP_SETGID`. The unit also sets `NoNewPrivileges=yes` (blocks setuid `sg`/`newgrp`/`sudo` for the whole tree) and `CapabilityBoundingSet=CAP_SETGID`.
 6. **forbidigo lint guard** — `.golangci.yml` bans raw `exec.Command` / `exec.CommandContext` repo-wide, with `internal/procx/procx.go` as the sole allowed caller. Any future code path that bypasses `procx.Spawn` fails `golangci-lint`. This prevents the security property from regressing under future refactors.
 
-This means even if an AI agent constructs a command to read `secrets.toml` using encoding tricks, glob patterns, interpreter string construction, or any other bypass technique, the OS kernel denies access. The protection is not bypassable from userspace.
+This means even if an AI agent constructs a command to read `secrets.toml` using encoding tricks, glob patterns, interpreter string construction, or any other bypass technique, the OS kernel denies access from a spawned subprocess. The two historical escapes from this boundary — ambient `CAP_SETGID` surviving `execve`, and the foci user being a permanent `foci-secrets` member (re-acquirable via `sg`/`newgrp`) — are both closed (see items 3 and 5). Note this protects *subprocesses*; in-process tools are covered separately below.
+
+### In-process file tools
+
+Some tools run **inside** foci-gw (the main agent's `read`/`write`/`edit`, and the `ExecExport` tools `summary`/`http_request` invoked over the exec bridge), so the OS group-drop does not apply to them — they hold the gateway's credentials. These tools must therefore enforce the boundary themselves: every file-touching path goes through `fileScope.resolveFileArg` (`internal/tools/files.go`), which canonicalises the path (resolving symlinks), enforces isolated-directory containment for sandboxed spawns, and rejects blocked paths via `Store.IsBlockedPath`. This covers `read`/`write`/`edit`, `summary`, and `http_request`'s `body_file` / `files[]` / `save_to`, so none of them can read `secrets.toml` or `/proc/self/environ` even though they execute at gateway privilege.
 
 ### Defence in depth
 
@@ -179,7 +183,9 @@ Several additional layers provide redundancy:
 
 - **`Redact()`** — all tool output is scanned for secret values. Any occurrence is replaced with `[REDACTED]`. This catches accidental leaks even if a secret appears in unexpected output. Values shorter than 4 characters are not redacted to avoid false positives.
 
-- **`IsBlockedCommand()` / `IsBlockedPath()`** — the exec tool rejects commands that reference blocked paths (including `secrets.toml` and `/proc/self/environ`). This is a string-match check that catches obvious attempts but is not the primary protection.
+- **`IsBlockedPath()`** — canonical-path check (absolute, symlink-resolved; component-aligned matching, not substring) used by the in-process file tools to refuse blocked paths such as `secrets.toml` and `/proc/self/environ`. This is an enforcement boundary for those tools (see *In-process file tools* above), not merely advisory.
+
+- **`IsBlockedCommand()`** — a substring scan the exec tool applies to a command line referencing blocked paths. Because it inspects an unparsed string (not a resolved filesystem path) it is advisory only — it catches obvious attempts but the OS group-drop is the real boundary for subprocesses.
 
 - **No context injection** — secrets are stored in Go structs, never in the agent's message history. The agent sees `{{secret:NAME}}` templates, not values.
 

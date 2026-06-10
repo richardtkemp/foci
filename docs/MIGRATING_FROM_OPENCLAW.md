@@ -39,7 +39,7 @@ Foci extracts behavioral rules from character files and injects them as mid-turn
 
 ### What you gain
 
-- **Secret isolation and domain-locked HTTP.** Credentials never appear in the agent's context — OS-level process boundaries, not env vars with logging redaction. API calls carry credentials via `{{secret:NAME}}` templates, locked to allowed hostnames per-secret. The model cannot see, leak, or exfiltrate secrets.
+- **Secret isolation and domain-locked HTTP.** Credentials never appear in the agent's context — OS-level process boundaries, not env vars with logging redaction. API calls carry credentials via `{{secret:NAME}}` templates, locked to allowed hostnames per-secret. The model sees `{{secret:NAME}}` placeholders, not values; an OS group boundary keeps spawned subprocesses from reading the secrets file, in-process file tools enforce a path blocklist, and responses are redacted. (No design fully prevents a prompt-injected model from *using* a credential it's permitted to send — the goal is to stop it reading or exfiltrating the raw secret. See `docs/SECRETS.md`.)
 - **Cache-first architecture.** Session structure, branching, tool injection, and character file ordering are all designed to maximize cache hits. OpenClaw's architecture causes frequent cache busts — you'll see the difference in your API bill immediately.
 - **Operational simplicity.** One ~50 MB static binary, ~35 MB idle RAM. No Node.js runtime, no 560-package dependency tree. You `scp` it to a server and run it.
 - **Session branching with cache sharing.** Facet bots, spawn modes, and clone sessions share the parent session's cache prefix. Parallel conversations without parallel cost.
