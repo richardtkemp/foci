@@ -439,6 +439,78 @@ func TestDelegatedTransport_RunInference_Success(t *testing.T) {
 	}
 }
 
+// TestDelegatedTransport_RunInference_DoubleComplete proves the per-turn
+// sync.Once guard makes OnTurnComplete idempotent (P1-8). Both the normal
+// result path (OnResult) and the process-exit finalize path can fire
+// OnTurnComplete for the same turn; without the guard the second
+// close(CompletionChan) panics and crashes the gateway. Asserts: two sequential
+// completions do not panic, the channel is closed exactly once, and the first
+// completion's result wins.
+func TestDelegatedTransport_RunInference_DoubleComplete(t *testing.T) {
+	be := &mockBackendDT{
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			// Simulate the OnResult/finalizeExit race: both fire completion.
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "real answer"})
+			handler.OnTurnComplete(&delegator.TurnResult{Text: "process exited"})
+			return nil, nil
+		},
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	select {
+	case <-ts.CompletionChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CompletionChan was not closed")
+	}
+	if ts.FinalText != "real answer" {
+		t.Errorf("FinalText = %q, want %q (first completion wins)", ts.FinalText, "real answer")
+	}
+}
+
+// TestDelegatedTransport_RunInference_ConcurrentComplete is the -race variant of
+// the double-complete guard: many goroutines fire OnTurnComplete at once and the
+// sync.Once must still close CompletionChan exactly once with no panic or data
+// race. (make test does not run -race; run with `go test -race`.)
+func TestDelegatedTransport_RunInference_ConcurrentComplete(t *testing.T) {
+	var wg sync.WaitGroup
+	be := &mockBackendDT{
+		sendToPaneFn: func(_ context.Context, _ string, handler *delegator.EventHandler) (*delegator.TurnResult, error) {
+			for i := 0; i < 8; i++ {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					handler.OnTurnComplete(&delegator.TurnResult{Text: "x"})
+				}()
+			}
+			wg.Wait()
+			return nil, nil
+		},
+	}
+	mgr := newMockDelegatedManager(t, be)
+	a := &Agent{Model: "test-model", DelegatedManager: mgr}
+	tr := &DelegatedTransport{sharedTurnOps{agent: a}}
+	ts := NewTurnState(context.Background(), "test/s", []string{"hi"}, nil)
+	ts.Prompt = "hi"
+	ts.StartedAt = time.Now()
+
+	if err := tr.RunInference(ts); err != nil {
+		t.Fatalf("RunInference: %v", err)
+	}
+	select {
+	case <-ts.CompletionChan:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CompletionChan was not closed")
+	}
+}
+
 // TestDelegatedTransport_RunInference_GetError verifies that an error from
 // DelegatedManager.Get propagates back to the caller.
 func TestDelegatedTransport_RunInference_GetError(t *testing.T) {

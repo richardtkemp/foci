@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"foci/internal/delegator"
@@ -195,6 +196,13 @@ type TurnState struct {
 	// API: closed before RunInference returns (synchronous).
 	// Delegated: closed by the watcher's OnTurnComplete callback (async).
 	CompletionChan chan struct{}
+
+	// completeOnce guards turn completion. In the delegated path two
+	// independent code paths (the normal result and the process-exit finalize)
+	// can fire OnTurnComplete for the same turn; this makes the completion —
+	// including close(CompletionChan) — run exactly once, so the second caller
+	// is a no-op instead of a panic that would crash the gateway (P1-8).
+	completeOnce sync.Once
 
 	// --- Delegated-specific ---
 
