@@ -159,6 +159,15 @@ func setupImpl() {
 		return
 	}
 
+	// The probe proved CAP_SETGID is in our permitted/effective sets. Now clear
+	// the AMBIENT set so children don't inherit CAP_SETGID across execve and
+	// re-add the foci-secrets group themselves (P0-1). The credential mechanism
+	// keeps working because it relies on the parent's effective caps, not the
+	// ambient set.
+	if err := clearAmbientCaps(); err != nil {
+		log.Warnf("exec", "could not clear ambient capabilities: %v — children may inherit CAP_SETGID", err)
+	}
+
 	childCredential = cred
 	log.Debugf("exec", "child credential: uid=%d gid=%d groups=%v (dropped %s gid %d)",
 		uid, primaryGID, filteredGroups, SecurityGroupName, secretsGID)
