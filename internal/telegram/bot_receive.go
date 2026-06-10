@@ -87,6 +87,13 @@ func (b *Bot) toPlatformMessage(msg *gotgbot.Message, qm queuedMessage) platform
 // Returns a populated queuedMessage and true, or zero value and false if the
 // message should be silently dropped (unauthorized, empty, or failed voice).
 func (b *Bot) buildReceivedMessage(ctx context.Context, msg *gotgbot.Message) (queuedMessage, bool) {
+	// Anonymous / post-as-channel messages have no From. There is no sender to
+	// authorize, so drop them — and this avoids a nil-deref on msg.From.Id below
+	// (pre-auth DoS on the poll path).
+	if msg.From == nil {
+		b.logger().Debugf("dropping message with no sender (chat %d)", msg.Chat.Id)
+		return queuedMessage{}, false
+	}
 	userID := fmt.Sprintf("%d", msg.From.Id)
 
 	if len(b.allowedUsers) > 0 && !b.allowedUsers[userID] {

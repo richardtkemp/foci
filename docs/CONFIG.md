@@ -427,6 +427,7 @@ Developer and debugging knobs. All off by default.
 | `messages_in_log` | bool | `false` | Log user message content to the event log. When `false`, messages are logged at DEBUG level with no content for privacy. When `true`, messages are logged at INFO level with content (truncated to 100 chars). Per-agent override via `[agents.debug]`. |
 | `cache_bust_detect` | bool | `false` | Alert via Telegram when `cache_read` drops >50% vs previous request (indicates prefix changed). Per-agent override via `[agents.debug]`. |
 | `cache_bust_idle_minutes` | int | `10` | Suppress cache bust alerts if the session was idle longer than this many minutes. Anthropic's cache TTL is 5 min, so any gap >10 min means the cache expired naturally — not a genuine bust. Per-agent override via `[agents.debug]`. |
+| `enable_pprof` | bool | `false` | Expose the `net/http/pprof` profiling endpoints under `/debug/pprof/*` on the gateway HTTP server. Off by default — they allow CPU/heap profiling and goroutine dumps, so enable only when actively profiling. Process-global (top-level `[debug]` only). |
 
 ### `[database]`
 

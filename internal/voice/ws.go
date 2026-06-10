@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,7 +67,24 @@ type HandlerConfig struct {
 }
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: sameOriginOrNone,
+}
+
+// sameOriginOrNone is the WebSocket origin policy: allow native clients (which
+// send no Origin header) and same-origin browser connections (Origin host
+// matches the request Host), and reject everything else. This blocks
+// cross-site WebSocket hijacking from an attacker page without needing an
+// origin allowlist; the bundled browser client is served same-origin.
+func sameOriginOrNone(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // non-browser client (e.g. the voice CLI)
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 // conn is per-connection state.

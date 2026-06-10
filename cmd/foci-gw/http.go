@@ -136,8 +136,11 @@ func checkActivityGate(w http.ResponseWriter, in activityGateInputs,
 
 // authMiddleware returns an HTTP middleware that requires a valid API key on
 // all endpoints including /voice.
-// Checks Authorization: Bearer header first, then falls back to api_key query
-// param (for WebSocket compat). Uses constant-time comparison.
+// Checks Authorization: Bearer header first, then falls back to an api_key query
+// param — but ONLY on /voice, where the browser WebSocket API can't set request
+// headers. A credential in the URL leaks via proxy logs, browser history, and
+// access logs, so it is not accepted on the JSON endpoints. Uses constant-time
+// comparison.
 func authMiddleware(apiKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check Authorization: Bearer header
@@ -146,8 +149,8 @@ func authMiddleware(apiKey string, next http.Handler) http.Handler {
 			token = auth[len("Bearer "):]
 		}
 
-		// Fallback: api_key query param (WebSocket compat)
-		if token == "" {
+		// Fallback: api_key query param — WebSocket compat only (/voice).
+		if token == "" && r.URL.Path == "/voice" {
 			token = r.URL.Query().Get("api_key")
 		}
 
@@ -187,12 +190,17 @@ func registerHTTPHandlers(mux *http.ServeMux, d httpHandlerDeps) {
 		endpointList += ", /-/reload-credentials"
 	}
 
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	endpointList += ", /debug/pprof/*"
+	// pprof exposes profiling/goroutine-dump endpoints. Gated behind an explicit
+	// [debug] enable_pprof opt-in (default off) even though the server is
+	// auth-gated — profiling shouldn't be reachable on a normal deployment.
+	if config.DerefBool(d.cfg.Debug.EnablePprof) {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		endpointList += ", /debug/pprof/*"
+	}
 
 	log.Infof("http", "registered endpoints: %s", endpointList)
 }

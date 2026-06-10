@@ -81,6 +81,13 @@ func (b *Bot) toPlatformMessage(msg *discordgo.Message, qm queuedMessage) platfo
 // Returns a populated queuedMessage and true, or zero value and false if the
 // message should be silently dropped (unauthorized, empty, or failed voice).
 func (b *Bot) buildReceivedMessage(_ context.Context, msg *discordgo.Message) (queuedMessage, bool) {
+	// Webhook / system messages can have no Author. There is no sender to
+	// authorize, so drop them — and this avoids a nil-deref on msg.Author.ID
+	// below (pre-auth DoS on the receive path).
+	if msg.Author == nil {
+		b.logger().Debugf("dropping message with no author (channel %s)", msg.ChannelID)
+		return queuedMessage{}, false
+	}
 	userID := msg.Author.ID
 
 	if len(b.allowedUsers) > 0 && !b.allowedUsers[userID] {
