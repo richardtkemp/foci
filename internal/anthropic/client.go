@@ -22,6 +22,7 @@ import (
 type Client struct {
 	tokenFunc      func() (string, error) // returns the current Bearer token
 	httpClient     *http.Client
+	timeout        time.Duration // request timeout: total cap for non-streaming, inter-chunk idle cap for streaming
 	baseURL        string
 	retryBaseDelay time.Duration // initial backoff for server error retries; 0 = default 2s
 
@@ -48,8 +49,14 @@ func (c *Client) resolveToken() (string, error) {
 // Use StaticToken to wrap a fixed API key.
 func NewClient(tokenFunc func() (string, error), timeout time.Duration) *Client {
 	return &Client{
-		tokenFunc:  tokenFunc,
-		httpClient: &http.Client{Timeout: timeout},
+		tokenFunc: tokenFunc,
+		// No http.Client.Timeout: it is a wall-clock cap over the whole
+		// exchange, which truncates long streaming responses mid-stream as
+		// non-retryable (P2-6). The timeout is instead applied per call —
+		// a total deadline for non-streaming (sendOnce) and an inter-chunk
+		// idle watchdog for streaming (streamOnce).
+		httpClient: &http.Client{},
+		timeout:    timeout,
 		baseURL:    "https://api.anthropic.com",
 	}
 }
@@ -178,6 +185,14 @@ func (c *Client) sendOnce(ctx context.Context, req *MessageRequest) (*MessageRes
 	params := buildSDKParams(req)
 	wireReq, _ := json.Marshal(params)
 	sc := c.ensureSDKClient()
+
+	// Non-streaming: apply the request timeout as a total wall-clock deadline
+	// via context (replacing the removed http.Client.Timeout). (P2-6.)
+	if c.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.timeout)
+		defer cancel()
+	}
 
 	log.Debugf("anthropic", "sdk_call_start: model=%s", req.Model)
 	callStart := time.Now()

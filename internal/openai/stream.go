@@ -39,7 +39,12 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 
 	log.Debugf("openai", "stream_call_start: model=%s", req.Model)
 
-	stream := c.client.Chat.Completions.NewStreaming(ctx, params)
+	// Bound the gap between chunks with an idle watchdog instead of a total
+	// wall-clock cap, so a long-but-progressing stream is not truncated (P2-6).
+	sctx, wd := provider.NewStreamIdleWatchdog(ctx, c.timeout)
+	defer wd.Stop()
+
+	stream := c.client.Chat.Completions.NewStreaming(sctx, params)
 	defer func() { _ = stream.Close() }()
 
 	var acc openai.ChatCompletionAccumulator
@@ -58,6 +63,7 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 	var hasUsage bool
 
 	for stream.Next() {
+		wd.Reset()
 		chunk := stream.Current()
 		acc.AddChunk(chunk)
 
@@ -96,6 +102,15 @@ func (c *Client) streamOnce(ctx context.Context, req *provider.MessageRequest, h
 	}
 
 	if err := stream.Err(); err != nil {
+		// An idle-watchdog cancellation surfaces as a context error; report it
+		// as a clear stream-idle timeout rather than a generic cancel. (P2-6.)
+		if wd.Fired() {
+			idleErr := fmt.Errorf("stream idle timeout: no data for %s", c.timeout)
+			if deltasEmitted {
+				return nil, fmt.Errorf("mid-stream error (deltas already emitted): %w", idleErr)
+			}
+			return nil, idleErr
+		}
 		streamErr := classifyStreamError(err)
 		if deltasEmitted {
 			return nil, fmt.Errorf("mid-stream error (deltas already emitted): %w", streamErr)

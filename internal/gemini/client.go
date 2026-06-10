@@ -15,6 +15,14 @@ import (
 )
 
 // Client wraps the Google genai SDK to implement provider.Client.
+//
+// Note: unlike the Anthropic/OpenAI clients, this client keeps the
+// http.Client.Timeout (a per-request wall-clock cap). Gemini is non-streaming
+// here — it has no StreamMessage — so the P2-6 streaming-truncation bug does
+// not apply. The SDK also manages its own retries (HandlesOwnRetries); a
+// per-request timeout bounds each attempt, whereas a single total context
+// deadline would cut the SDK's retry/backoff sequence short. Left unchanged
+// deliberately.
 type Client struct {
 	client *genai.Client
 	cache  *CacheManager // nil if caching disabled

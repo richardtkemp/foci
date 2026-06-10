@@ -5,11 +5,55 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"foci/internal/provider"
 )
+
+func TestStreamMessageIdleTimeout(t *testing.T) {
+	// Proves a stream that goes silent past the idle window is aborted with a
+	// clear idle-timeout error, rather than hanging or being truncated by a
+	// total wall-clock cap. The server sends message_start then stalls. (P2-6.)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("server doesn't support flushing")
+		}
+		fmt.Fprintf(w, "%s\n\n", `event: message_start
+data: {"type":"message_start","message":{"id":"msg_x","type":"message","role":"assistant","content":[],"model":"claude-haiku-4-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`)
+		flusher.Flush()
+		<-r.Context().Done() // stall until the client aborts the request
+	}))
+	defer server.Close()
+
+	// Short idle window so the stall trips the watchdog quickly.
+	client := NewClient(StaticToken("test-key"), 300*time.Millisecond)
+	client.SetBaseURL(server.URL)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.StreamMessage(context.Background(), &MessageRequest{
+			Model: "claude-haiku-4-5", MaxTokens: 256,
+			Messages: []Message{{Role: "user", Content: TextContent("hi")}},
+		}, &provider.StreamHandler{})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected idle-timeout error, got nil")
+		}
+		if !strings.Contains(err.Error(), "idle timeout") {
+			t.Errorf("error = %v, want stream idle timeout", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("StreamMessage did not return after the idle window — watchdog did not fire")
+	}
+}
 
 func TestStreamMessageSSESuccess(t *testing.T) {
 	// Proves that StreamMessage correctly reassembles text deltas from a sequence of SSE events, invokes OnTextDelta for each delta, and produces a complete MessageResponse with the right ID, stop reason, and concatenated text.
