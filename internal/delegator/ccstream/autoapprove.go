@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"foci/internal/log"
+	"foci/internal/secrets"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -162,10 +163,31 @@ func matchAutoApprove(rules []autoApproveRule, toolName string, input json.RawMe
 	return matchToolAutoApprove(rules, toolName, input)
 }
 
+// pathTypedTools are tools whose match key is a filesystem path. Their candidate
+// path is canonicalized (absolute, symlink-resolved, ".." removed) before glob
+// matching so a path-scoped rule such as Write:<workspace>/* cannot be bypassed
+// by a traversal like <workspace>/../../../etc/cron.d/x — the trailing "*" would
+// otherwise swallow the "../" segments (P1-6). Kept in sync with toolMatchKeys
+// by TestPathTypedToolsMatchToolMatchKeys.
+var pathTypedTools = map[string]bool{
+	"Read":         true,
+	"Edit":         true,
+	"Write":        true,
+	"NotebookEdit": true,
+}
+
 // matchToolAutoApprove handles non-Bash tools: any single rule match suffices.
 func matchToolAutoApprove(rules []autoApproveRule, toolName string, input json.RawMessage) bool {
+	matchStr := extractMatchString(toolName, input)
+	// Canonicalize path-typed candidates once before matching. Comparing in the
+	// same canonical space the workspace rule is built in (see
+	// buildAutoApproveRules) closes the ".." traversal and symlink-escape
+	// bypasses (P1-6) while preserving legitimate nested-path matches.
+	if pathTypedTools[toolName] && filepath.IsAbs(matchStr) {
+		matchStr = secrets.CanonicalPath(matchStr)
+	}
 	for _, r := range rules {
-		if r.matchesTool(toolName, input) {
+		if r.matchesToolStr(toolName, matchStr) {
 			return true
 		}
 	}
@@ -480,20 +502,19 @@ func matchBashSegment(rules []autoApproveRule, segment string) bool {
 	return false
 }
 
-// matchesTool checks whether this rule matches the given non-Bash tool invocation.
-func (r autoApproveRule) matchesTool(toolName string, input json.RawMessage) bool {
+// matchesToolStr checks whether this rule matches the given non-Bash tool
+// invocation, against a match string already extracted (and canonicalized, for
+// path-typed tools) by matchToolAutoApprove.
+func (r autoApproveRule) matchesToolStr(toolName, matchStr string) bool {
 	if r.toolName != toolName {
 		return false
 	}
 	if r.pattern == "" {
 		return true // tool-name-only rule: match any invocation
 	}
-
-	matchStr := extractMatchString(toolName, input)
 	if matchStr == "" {
 		return false
 	}
-
 	return matchPattern(r.pattern, matchStr)
 }
 

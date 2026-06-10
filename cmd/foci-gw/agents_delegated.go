@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -279,14 +278,15 @@ func buildAutoApproveRules(p setupParams, fociExecNames []string) []string {
 	}
 
 	// Add workspace Edit/Write rules — delegated backends always need
-	// workspace file access without prompting.
-	absWorkspace, err := filepath.Abs(p.acfg.Workspace)
-	if err != nil {
-		absWorkspace = p.acfg.Workspace
-	}
+	// workspace file access without prompting. Use the canonical (symlink-
+	// resolved) workspace so the rule boundary lives in the same path space as
+	// the canonicalized candidate path the auto-approver compares against
+	// (P1-6) — otherwise a symlinked workspace parent would diverge and reject
+	// legitimate nested writes.
+	canonWorkspace := secrets.CanonicalPath(p.acfg.Workspace)
 	rules = append(rules,
-		fmt.Sprintf("Edit:%s/*", absWorkspace),
-		fmt.Sprintf("Write:%s/*", absWorkspace),
+		fmt.Sprintf("Edit:%s/*", canonWorkspace),
+		fmt.Sprintf("Write:%s/*", canonWorkspace),
 	)
 
 	// Append user-configured rules (already merged: agent ∪ global).
