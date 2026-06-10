@@ -2,8 +2,95 @@ package ccstream
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"foci/internal/secrets"
 )
+
+// TestPathTypedToolsMatchToolMatchKeys proves pathTypedTools stays in sync with
+// toolMatchKeys: every path-typed tool must use the "file_path" match key, and
+// every "file_path" tool must be listed as path-typed. Guards against a future
+// tool being added to one set but not the other (which would silently skip the
+// traversal canonicalization).
+func TestPathTypedToolsMatchToolMatchKeys(t *testing.T) {
+	for tool := range pathTypedTools {
+		if toolMatchKeys[tool] != "file_path" {
+			t.Errorf("pathTypedTools[%q] but toolMatchKeys[%q]=%q, want file_path", tool, tool, toolMatchKeys[tool])
+		}
+	}
+	for tool, key := range toolMatchKeys {
+		if key == "file_path" && !pathTypedTools[tool] {
+			t.Errorf("toolMatchKeys[%q]=file_path but not in pathTypedTools", tool)
+		}
+	}
+}
+
+// TestMatchAutoApprovePathTraversal proves that the always-appended workspace
+// rule (Write/Edit:<workspace>/*) cannot be bypassed by a ".." traversal in
+// file_path (P1-6), while legitimate nested writes inside the workspace still
+// auto-approve. Uses a canonicalized workspace base so the test matches how
+// buildAutoApproveRules constructs the rule.
+func TestMatchAutoApprovePathTraversal(t *testing.T) {
+	ws := secrets.CanonicalPath(t.TempDir())
+	rules := parseAutoApproveRules([]string{
+		fmt.Sprintf("Edit:%s/*", ws),
+		fmt.Sprintf("Write:%s/*", ws),
+	})
+
+	tests := []struct {
+		name string
+		tool string
+		path string
+		want bool
+	}{
+		{"traversal to cron.d", "Write", ws + "/../../../etc/cron.d/x", false},
+		{"traversal to bashrc", "Edit", ws + "/../.bashrc", false},
+		{"absolute outside", "Write", "/etc/passwd", false},
+		{"direct child", "Write", ws + "/notes.md", true},
+		{"nested child", "Edit", ws + "/sub/dir/file.txt", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, tt.path))
+			if got := matchAutoApprove(rules, tt.tool, input); got != tt.want {
+				t.Errorf("matchAutoApprove(%s, %q) = %v, want %v", tt.tool, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestMatchAutoApproveSymlinkEscape proves canonicalization also blocks a symlink
+// inside the workspace that points outside it: writing through the symlink must
+// not auto-approve under the workspace rule.
+func TestMatchAutoApproveSymlinkEscape(t *testing.T) {
+	root := secrets.CanonicalPath(t.TempDir())
+	ws := filepath.Join(root, "ws")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(ws, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// ws/evil -> outside
+	if err := os.Symlink(outside, filepath.Join(ws, "evil")); err != nil {
+		t.Fatal(err)
+	}
+
+	rules := parseAutoApproveRules([]string{fmt.Sprintf("Write:%s/*", ws)})
+	input := json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, ws+"/evil/payload"))
+	if matchAutoApprove(rules, "Write", input) {
+		t.Errorf("write through ws/evil symlink to outside should NOT be auto-approved")
+	}
+	// Sanity: a real file directly under ws still approves.
+	ok := json.RawMessage(fmt.Sprintf(`{"file_path":%q}`, ws+"/real.txt"))
+	if !matchAutoApprove(rules, "Write", ok) {
+		t.Errorf("write to real file under ws should be auto-approved")
+	}
+}
 
 // TestParseAutoApproveRule verifies that rule strings are split correctly into
 // tool name and pattern components.
