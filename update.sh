@@ -23,10 +23,45 @@ install -m 755 "$SCRIPT_DIR/bin/foci-call" "$INSTALL_DIR/foci-call"
 install -m 755 "$SCRIPT_DIR/bin/foci-cc-hook" "$INSTALL_DIR/foci-cc-hook"
 
 echo "Migrating service files..."
+SECRETS_GROUP="foci-secrets"
 for svcfile in /etc/systemd/system/foci*.service; do
-    if [[ -f "$svcfile" ]] && grep -q "focigw" "$svcfile"; then
+    [[ -f "$svcfile" ]] || continue
+
+    # Binary rename (focigw → foci-gw)
+    if grep -q "focigw" "$svcfile"; then
         echo "  Patching $svcfile: focigw → foci-gw"
         sed -i "s|${INSTALL_DIR}/focigw|${INSTALL_DIR}/foci-gw|g" "$svcfile"
+    fi
+
+    # Secrets-boundary hardening (P0-1). Ensure the secrets group is granted to
+    # the process (so removing the /etc/group membership below is safe), plus the
+    # ambient-capability and no-new-privs hardening. Idempotent — only inserts
+    # directives that are missing.
+    if ! grep -q "^SupplementaryGroups=" "$svcfile"; then
+        echo "  Patching $svcfile: add SupplementaryGroups=$SECRETS_GROUP"
+        sed -i "/^User=/a SupplementaryGroups=$SECRETS_GROUP" "$svcfile"
+    fi
+    if ! grep -q "^AmbientCapabilities=" "$svcfile"; then
+        echo "  Patching $svcfile: add AmbientCapabilities=CAP_SETGID"
+        sed -i "/^SupplementaryGroups=/a AmbientCapabilities=CAP_SETGID" "$svcfile"
+    fi
+    if ! grep -q "^CapabilityBoundingSet=" "$svcfile"; then
+        echo "  Patching $svcfile: add CapabilityBoundingSet=CAP_SETGID"
+        sed -i "/^AmbientCapabilities=/a CapabilityBoundingSet=CAP_SETGID" "$svcfile"
+    fi
+    if ! grep -q "^NoNewPrivileges=" "$svcfile"; then
+        echo "  Patching $svcfile: add NoNewPrivileges=yes"
+        sed -i "/^AmbientCapabilities=/a NoNewPrivileges=yes" "$svcfile"
+    fi
+
+    # Remove the service user's permanent foci-secrets /etc/group membership — it
+    # is re-acquirable via setuid sg/newgrp (P0-1). The group is now granted to
+    # the process only (SupplementaryGroups, above), so the gw keeps read+write
+    # while children cannot regain it.
+    SVC_USER="$(grep '^User=' "$svcfile" | cut -d= -f2 || true)"
+    if [[ -n "$SVC_USER" ]] && id -nG "$SVC_USER" 2>/dev/null | grep -qw "$SECRETS_GROUP"; then
+        echo "  Removing $SVC_USER from $SECRETS_GROUP (now granted per-process)"
+        gpasswd -d "$SVC_USER" "$SECRETS_GROUP" >/dev/null
     fi
 done
 systemctl daemon-reload
