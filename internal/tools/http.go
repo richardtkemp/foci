@@ -623,9 +623,13 @@ func isPrivateIP(hostname string) bool {
 	return false
 }
 
-// NewIsolatedHTTPRequestTool creates an http_request tool that blocks requests
-// to private/loopback/link-local IP addresses. Used in spawn raw-mode to prevent SSRF.
-func NewIsolatedHTTPRequestTool(base *Tool) *Tool {
+// NewIsolatedHTTPRequestTool wraps an http_request tool for raw/isolated spawns.
+// It blocks requests to private/loopback/link-local IPs (SSRF) and confines
+// body_file, save_to, and every files[].file_path to baseDir (plus the
+// blocklist), so a sandboxed spawn cannot read or write outside its temp dir
+// via file params.
+func NewIsolatedHTTPRequestTool(base *Tool, store *secrets.Store, baseDir string) *Tool {
+	fs := fileScope{store: store, baseDir: baseDir}
 	return &Tool{
 		Name:        base.Name,
 		Description: base.Description,
@@ -648,7 +652,11 @@ func NewIsolatedHTTPRequestTool(base *Tool) *Tool {
 				return ToolResult{}, fmt.Errorf("requests to private/loopback addresses are blocked in isolated mode")
 			}
 
-			return base.Execute(ctx, input)
+			contained, err := rewriteContainedPaths(input, fs, []string{"body_file", "save_to"}, "files", "file_path")
+			if err != nil {
+				return ToolResult{}, err
+			}
+			return base.Execute(ctx, contained)
 		},
 	}
 }

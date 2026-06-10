@@ -16,6 +16,7 @@ import (
 	"foci/internal/log"
 	"foci/internal/platform"
 	"foci/internal/provider"
+	"foci/internal/secrets"
 	"foci/internal/tempdir"
 )
 
@@ -101,6 +102,7 @@ type SpawnDeps struct {
 	OrientationTemplate string                                  // orientation template for branch sessions ({branch_key}, {parent_key}, {branch_type} resolved at creation)
 	SetNoCompact       func(sessionKey string, value bool)      // marks branch sessions as no_compact (prevents compaction)
 	FileMode           os.FileMode                              // permission bits for files created by spawned sessions
+	Store              *secrets.Store                           // secrets store for blocked-path enforcement in isolated tools
 }
 
 // NewSpawnTool creates the unified spawn tool that replaces request_model.
@@ -163,7 +165,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				if err != nil {
 					return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
 				}
-				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, tempDir, deps.FileMode)
+				toolDefs, tools := spawnIsolatedToolSet(deps.Registry, spawnRawBlacklist, deps.Store, tempDir, deps.FileMode)
 				result, err := spawnOneShot(ctx, client, model, format, nil, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
@@ -234,7 +236,7 @@ func spawnToolSet(reg *Registry, blacklist map[string]bool) ([]provider.ToolDef,
 	return defs, tools
 }
 
-func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir string, fileMode os.FileMode) ([]provider.ToolDef, map[string]*Tool) {
+func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, store *secrets.Store, baseDir string, fileMode os.FileMode) ([]provider.ToolDef, map[string]*Tool) {
 	if reg == nil {
 		return nil, nil
 	}
@@ -251,13 +253,15 @@ func spawnIsolatedToolSet(reg *Registry, blacklist map[string]bool, baseDir stri
 		defs = append(defs, provider.NewCustomTool(t.Name, t.Description, t.Parameters))
 		switch t.Name {
 		case "read":
-			tools[t.Name] = NewIsolatedReadTool(nil, baseDir)
+			tools[t.Name] = NewIsolatedReadTool(store, baseDir)
 		case "write":
-			tools[t.Name] = NewIsolatedWriteTool(nil, baseDir, fileMode)
+			tools[t.Name] = NewIsolatedWriteTool(store, baseDir, fileMode)
 		case "edit":
-			tools[t.Name] = NewIsolatedEditTool(nil, baseDir, fileMode)
+			tools[t.Name] = NewIsolatedEditTool(store, baseDir, fileMode)
 		case "http_request":
-			tools[t.Name] = NewIsolatedHTTPRequestTool(t)
+			tools[t.Name] = NewIsolatedHTTPRequestTool(t, store, baseDir)
+		case "summary":
+			tools[t.Name] = NewIsolatedSummaryTool(t, store, baseDir)
 		default:
 			tools[t.Name] = t
 		}
