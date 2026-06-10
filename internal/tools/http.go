@@ -229,16 +229,20 @@ func executeHTTPRequest(ctx context.Context, params json.RawMessage, store *secr
 		req.Header.Set("Content-Type", multipartContentType)
 	}
 
-	// Build client — block cross-domain redirects when secrets are present
-	client := &http.Client{Timeout: timeout}
+	// Shared SSRF-safe client: validates the resolved IP on every dial (covering
+	// redirects and DNS rebinding) and caps the redirect chain in all modes
+	// (P1-4). When secrets are present, additionally block cross-domain redirects
+	// so a secret header can't be replayed to another host.
+	client := newSafeClient(timeout, defaultMaxRedirects)
 	if resolved.hasSecrets {
 		originalHost := req.URL.Hostname()
+		base := client.CheckRedirect
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			if err := base(req, via); err != nil {
+				return err
+			}
 			if !strings.EqualFold(req.URL.Hostname(), originalHost) {
 				return fmt.Errorf("blocked cross-domain redirect from %q to %q (secrets present)", originalHost, req.URL.Hostname())
-			}
-			if len(via) >= 10 {
-				return fmt.Errorf("too many redirects")
 			}
 			return nil
 		}
@@ -608,15 +612,7 @@ func isPrivateIP(hostname string) bool {
 	}
 
 	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return true
-		}
-		// AWS/cloud metadata endpoint
-		if ip.Equal(net.ParseIP("169.254.169.254")) {
+		if isBlockedIP(net.ParseIP(ipStr)) {
 			return true
 		}
 	}
