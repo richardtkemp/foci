@@ -480,6 +480,7 @@ func registerSpawnTool(registry *tools.Registry, p setupParams, client provider.
 		OrientationTemplate: prompts.ResolveOrientationTemplate(spawnOrientPath, false, promptSearchDirs...),
 		SetNoCompact: setNoCompact,
 		FileMode:     fileMode,
+		Store:        p.store,
 	}
 	registry.Register(tools.NewSpawnTool(spawnDeps, agLazy))
 }

@@ -59,6 +59,50 @@ func (fs fileScope) resolveFileArg(path string) (string, error) {
 	return resolved, nil
 }
 
+// rewriteContainedPaths resolves the named path params in raw against fs and
+// returns a copy with each rewritten to its safe absolute form. stringFields
+// are top-level string params; if arrayField is set, objKey is resolved on each
+// object in that array. It lets isolated spawns wrap ExecExport tools (summary,
+// http_request) to enforce baseDir containment without re-plumbing their full
+// dependency sets — the wrapped tool then operates on already-contained paths.
+func rewriteContainedPaths(raw json.RawMessage, fs fileScope, stringFields []string, arrayField, objKey string) (json.RawMessage, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("parse params: %w", err)
+	}
+	for _, f := range stringFields {
+		if v, ok := m[f].(string); ok && v != "" {
+			r, err := fs.resolveFileArg(v)
+			if err != nil {
+				return nil, err
+			}
+			m[f] = r
+		}
+	}
+	if arrayField != "" {
+		if arr, ok := m[arrayField].([]any); ok {
+			for _, it := range arr {
+				obj, ok := it.(map[string]any)
+				if !ok {
+					continue
+				}
+				if v, ok := obj[objKey].(string); ok && v != "" {
+					r, err := fs.resolveFileArg(v)
+					if err != nil {
+						return nil, err
+					}
+					obj[objKey] = r
+				}
+			}
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("re-encode params: %w", err)
+	}
+	return out, nil
+}
+
 func NewReadTool(store *secrets.Store, workspace string) *Tool {
 	return &Tool{
 		Name:        "read",

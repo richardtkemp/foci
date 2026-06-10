@@ -49,6 +49,25 @@ func NewSummaryTool(store *secrets.Store, summariser Summariser, workspace strin
 	}
 }
 
+// NewIsolatedSummaryTool wraps a summary tool for raw/isolated spawns, confining
+// its file argument to baseDir (plus the blocklist) so a sandboxed spawn cannot
+// summarise — and thereby exfiltrate — files outside its temp dir.
+func NewIsolatedSummaryTool(base *Tool, store *secrets.Store, baseDir string) *Tool {
+	fs := fileScope{store: store, baseDir: baseDir}
+	return &Tool{
+		Name:        base.Name,
+		Description: base.Description,
+		Parameters:  base.Parameters,
+		Execute: func(ctx context.Context, input json.RawMessage) (ToolResult, error) {
+			contained, err := rewriteContainedPaths(input, fs, []string{"file"}, "", "")
+			if err != nil {
+				return ToolResult{}, err
+			}
+			return base.Execute(ctx, contained)
+		},
+	}
+}
+
 func summaryExecute(ctx context.Context, params json.RawMessage, fs fileScope, summariser Summariser) (ToolResult, error) {
 	var p struct {
 		File   string `json:"file"`
