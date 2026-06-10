@@ -312,40 +312,49 @@ func (t *DelegatedTransport) RunInference(ts *TurnState) error {
 		},
 	}
 	turnEvents.OnTurnComplete = func(result *delegator.TurnResult) {
-		if result != nil {
-			ts.FinalText = result.Text
-			ts.FinalModel = result.Model
-			if result.Usage != nil {
-				ts.FinalUsage = &provider.Usage{
-					InputTokens:              result.Usage.InputTokens,
-					OutputTokens:             result.Usage.OutputTokens,
-					CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
-					CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+		// Guard the whole completion with sync.Once: the delegated backend's
+		// normal-result path and its process-exit finalize path can both fire
+		// OnTurnComplete for the same turn. Running the body — and the final
+		// close(CompletionChan) — at most once makes the loser a no-op instead
+		// of a close-of-closed-channel panic that would crash the gateway
+		// (P1-8). The first caller wins, so a real result is not clobbered by a
+		// late "process exited" finalize.
+		ts.completeOnce.Do(func() {
+			if result != nil {
+				ts.FinalText = result.Text
+				ts.FinalModel = result.Model
+				if result.Usage != nil {
+					ts.FinalUsage = &provider.Usage{
+						InputTokens:              result.Usage.InputTokens,
+						OutputTokens:             result.Usage.OutputTokens,
+						CacheCreationInputTokens: result.Usage.CacheCreationInputTokens,
+						CacheReadInputTokens:     result.Usage.CacheReadInputTokens,
+					}
 				}
 			}
-		}
-		// Fold round-1 usage into the final totals when the pre-answer
-		// gate ran a second round. Token cost is the sum of both rounds
-		// so the API log reflects the true spend of the user's turn.
-		if preAnswerAccumulated != nil && ts.FinalUsage != nil {
-			ts.FinalUsage.InputTokens += preAnswerAccumulated.InputTokens
-			ts.FinalUsage.OutputTokens += preAnswerAccumulated.OutputTokens
-			ts.FinalUsage.CacheCreationInputTokens += preAnswerAccumulated.CacheCreationInputTokens
-			ts.FinalUsage.CacheReadInputTokens += preAnswerAccumulated.CacheReadInputTokens
-		}
-		// If the model chose to echo the sentinel the API path uses to
-		// mean "my original answer stands", replace the final text with
-		// the round-1 answer so the platform delivery reflects the
-		// user-visible intent. Otherwise the round-2 revised answer wins.
-		if preAnswerFirstText != "" && strings.TrimSpace(ts.FinalText) == NoResponseSentinel {
-			ts.FinalText = preAnswerFirstText
-		}
-		// Log accumulated thinking to conversation DB.
-		if thinking := thinkingBuf.String(); thinking != "" {
-			a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
-		}
-		bt.LogUsage(ts)
-		close(ts.CompletionChan)
+			// Fold round-1 usage into the final totals when the pre-answer
+			// gate ran a second round. Token cost is the sum of both rounds
+			// so the API log reflects the true spend of the user's turn.
+			if preAnswerAccumulated != nil && ts.FinalUsage != nil {
+				ts.FinalUsage.InputTokens += preAnswerAccumulated.InputTokens
+				ts.FinalUsage.OutputTokens += preAnswerAccumulated.OutputTokens
+				ts.FinalUsage.CacheCreationInputTokens += preAnswerAccumulated.CacheCreationInputTokens
+				ts.FinalUsage.CacheReadInputTokens += preAnswerAccumulated.CacheReadInputTokens
+			}
+			// If the model chose to echo the sentinel the API path uses to
+			// mean "my original answer stands", replace the final text with
+			// the round-1 answer so the platform delivery reflects the
+			// user-visible intent. Otherwise the round-2 revised answer wins.
+			if preAnswerFirstText != "" && strings.TrimSpace(ts.FinalText) == NoResponseSentinel {
+				ts.FinalText = preAnswerFirstText
+			}
+			// Log accumulated thinking to conversation DB.
+			if thinking := thinkingBuf.String(); thinking != "" {
+				a.logConversationThinking(ts.ConvChatID, ts.Meta, ts.SessionKey, thinking)
+			}
+			bt.LogUsage(ts)
+			close(ts.CompletionChan)
+		})
 	}
 	// Build the attachment list (empty when none); Inject's begin-turn path
 	// honors attachments only at idle+SourceUser, and backends that don't

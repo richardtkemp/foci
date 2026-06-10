@@ -1370,6 +1370,15 @@ func (b *Backend) OnResult(msg *ResultMessage) {
 	// clears turnEvents/turnActive below.
 	b.turnMu.Lock()
 	turn := b.turnEvents
+	// Claim the turn for this completion immediately: capture turn into a local
+	// and clear b.turnEvents in the SAME critical section that sets
+	// `completing`. This narrows the window in which finalizeExit (which reads
+	// b.turnEvents) could capture the same TurnEvents and fire a second
+	// OnTurnComplete (P1-8). The re-arm paths re-install b.turnEvents via
+	// beginTurn for the next round, and the current round fires completion via
+	// the local `turn`, so early-clearing is safe. The completion itself is
+	// also guarded by a sync.Once at the agent layer as the hard backstop.
+	b.turnEvents = nil
 	resultCh := b.turnResultCh
 	turnText := b.turnText.String()
 	turnTools := b.turnTools
