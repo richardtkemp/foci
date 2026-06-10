@@ -162,17 +162,44 @@ func NewChatSessionKey(agentID string, chatID int64) string {
 	return NewChatSession(agentID, chatID).String()
 }
 
+// ValidateSessionName checks that a request-controlled session name is a single
+// safe path segment. The name is placed verbatim into the session key (and hence
+// into a filesystem path), so it must not contain path separators, "."/".."
+// traversal, or control characters — otherwise a caller could escape the session
+// directory (P1-5).
+func ValidateSessionName(name string) error {
+	if name == "" {
+		return fmt.Errorf("session name must not be empty")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("session name %q is reserved", name)
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return fmt.Errorf("session name %q must not contain path separators", name)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("session name must not contain control characters")
+		}
+	}
+	return nil
+}
+
 // NamedIndependentSessionKey constructs a deterministic independent session key
 // for a given name. The name is used as the ID field so that repeated calls with
 // the same agentID and name return the same key. The version timestamp is fixed
-// at 0 to ensure stability.
-func NamedIndependentSessionKey(agentID, name string) string {
+// at 0 to ensure stability. The name is validated (see ValidateSessionName) so
+// that request-controlled names cannot escape the session directory.
+func NamedIndependentSessionKey(agentID, name string) (string, error) {
+	if err := ValidateSessionName(name); err != nil {
+		return "", err
+	}
 	return SessionKey{
 		AgentID:   agentID,
 		Type:      'i',
 		ID:        name,
 		VersionTS: 0,
-	}.String()
+	}.String(), nil
 }
 
 // ChatIDFromKey extracts the chat ID from a session key string.

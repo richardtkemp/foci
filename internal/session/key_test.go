@@ -131,6 +131,63 @@ func TestParseSessionKey(t *testing.T) {
 	}
 }
 
+func TestValidateSessionName(t *testing.T) {
+	// Proves that ValidateSessionName rejects names that could escape the session
+	// directory (path separators, "..", control chars, empty) and accepts plain
+	// single-segment identifiers. This is the primary P1-5 guard at the key layer.
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "plain word", input: "work", wantErr: false},
+		{name: "dashed", input: "proj-1", wantErr: false},
+		{name: "underscored", input: "my_session", wantErr: false},
+		{name: "dots inside", input: "v1.2.3", wantErr: false},
+		{name: "empty", input: "", wantErr: true},
+		{name: "dot", input: ".", wantErr: true},
+		{name: "dotdot", input: "..", wantErr: true},
+		{name: "forward slash traversal", input: "../../etc", wantErr: true},
+		{name: "embedded slash", input: "a/b", wantErr: true},
+		{name: "backslash", input: "a\\b", wantErr: true},
+		{name: "leading slash", input: "/etc/passwd", wantErr: true},
+		{name: "newline", input: "a\nb", wantErr: true},
+		{name: "null byte", input: "a\x00b", wantErr: true},
+		{name: "del char", input: "a\x7fb", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSessionName(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateSessionName(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNamedIndependentSessionKey(t *testing.T) {
+	// Proves that NamedIndependentSessionKey returns a stable key for valid names
+	// and an error for traversal-bearing names, so request-controlled session names
+	// cannot escape the session directory via the key.
+	got, err := NamedIndependentSessionKey("main", "work")
+	if err != nil {
+		t.Fatalf("NamedIndependentSessionKey(valid) unexpected error: %v", err)
+	}
+	if got != "main/iwork/0" {
+		t.Errorf("NamedIndependentSessionKey = %q, want %q", got, "main/iwork/0")
+	}
+	// Same inputs must yield the same key (deterministic).
+	again, _ := NamedIndependentSessionKey("main", "work")
+	if again != got {
+		t.Errorf("NamedIndependentSessionKey not deterministic: %q != %q", again, got)
+	}
+	for _, bad := range []string{"../../../../other/c123/0", "a/b", "..", ""} {
+		if _, err := NamedIndependentSessionKey("main", bad); err == nil {
+			t.Errorf("NamedIndependentSessionKey(%q) should return error", bad)
+		}
+	}
+}
+
 func TestSessionKeyBranch(t *testing.T) {
 	// Proves that Branch() returns a child key that inherits the parent's identity
 	// fields, sets ChildType to 'b', and generates a non-zero ChildTS timestamp.

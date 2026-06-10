@@ -149,7 +149,13 @@ func handleSend(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		sessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
 			// HTTP named sessions are deterministic — same name yields same session
-			sessionKey = session.NamedIndependentSessionKey(inst.id, req.Session)
+			sk, err := session.NamedIndependentSessionKey(inst.id, req.Session)
+			if err != nil {
+				log.Warnf("http", "POST /send: %v", err)
+				http.Error(w, fmt.Sprintf("invalid session name: %v", err), http.StatusBadRequest)
+				return
+			}
+			sessionKey = sk
 		}
 		if sessionKey == "" {
 			log.Warnf("http", "POST /send: no default session for agent %q", inst.id)
@@ -317,7 +323,13 @@ func handleWake(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvaluato
 		// branch correctly registers as in-flight under the parent.
 		parentKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if req.Session != "" {
-			parentKey = session.NamedIndependentSessionKey(inst.id, req.Session)
+			pk, err := session.NamedIndependentSessionKey(inst.id, req.Session)
+			if err != nil {
+				log.Warnf("wake", "POST /wake: %v", err)
+				http.Error(w, fmt.Sprintf("invalid session name: %v", err), http.StatusBadRequest)
+				return
+			}
+			parentKey = pk
 		}
 		if parentKey == "" {
 			log.Warnf("wake", "no default session for agent %q, skipping", inst.id)
@@ -493,7 +505,13 @@ func handleWebhook(d httpHandlerDeps, resolveAgent agentResolver, gate gateEvalu
 		// last_activity / IsTurnInFlight for the targeted session.
 		webhookSessionKey := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		if s := q.Get("session"); s != "" {
-			webhookSessionKey = session.NamedIndependentSessionKey(inst.id, s)
+			wk, err := session.NamedIndependentSessionKey(inst.id, s)
+			if err != nil {
+				log.Warnf("http", "POST /webhook: %v", err)
+				http.Error(w, fmt.Sprintf("invalid session name: %v", err), http.StatusBadRequest)
+				return
+			}
+			webhookSessionKey = wk
 		}
 		if webhookSessionKey == "" {
 			log.Warnf("http", "POST /webhook: no default session for agent %q", inst.id)
