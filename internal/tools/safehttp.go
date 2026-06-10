@@ -17,6 +17,11 @@ const (
 	defaultMaxRedirects = 10
 	// defaultFetchTimeout is the wall-clock cap for a single web_fetch.
 	defaultFetchTimeout = 30 * time.Second
+	// defaultFetchParseTimeout bounds the readability/HTML parse step, which
+	// runs on attacker-controlled HTML after the body is read. The x/net bump
+	// removes the known html.Parse DoS; this is independent defence-in-depth so
+	// a future parser pathology can't hang web_fetch past the network timeout.
+	defaultFetchParseTimeout = 10 * time.Second
 )
 
 // isBlockedIP reports whether ip is a non-public address that must not be the

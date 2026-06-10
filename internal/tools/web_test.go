@@ -3,11 +3,54 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	readability "github.com/go-shiori/go-readability"
 )
+
+func TestParseReadableWithTimeout(t *testing.T) {
+	// Proves the readability parse step is bounded by a wall-clock timeout: a
+	// parse that blocks past the deadline returns a timeout error rather than
+	// hanging web_fetch forever. (Defence-in-depth over the x/net DoS bump —
+	// the parser still runs on attacker-controlled HTML.)
+	orig := readabilityFromReader
+	defer func() { readabilityFromReader = orig }()
+	block := make(chan struct{})
+	defer close(block)
+	readabilityFromReader = func(r io.Reader, u *url.URL) (readability.Article, error) {
+		<-block // never returns before the deadline
+		return readability.Article{}, nil
+	}
+	_, err := parseReadableWithTimeout([]byte("<html></html>"), nil, 20*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("err = %v, want timeout error", err)
+	}
+}
+
+func TestParseReadableWithTimeoutFast(t *testing.T) {
+	// Proves a normal, fast parse returns its extracted article well within the
+	// timeout (the happy path is not penalised by the timeout wrapper).
+	t.Parallel()
+	u, _ := url.Parse("https://example.com")
+	art, err := parseReadableWithTimeout(
+		[]byte("<article><h1>Hi</h1><p>some body text here for readability</p></article>"),
+		u, 5*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if art.TextContent == "" && art.Content == "" {
+		t.Errorf("expected extracted content, got empty article")
+	}
+}
 
 func TestWebFetchSuccess(t *testing.T) {
 	// Proves that a successful fetch extracts HTML as markdown (no raw tags), sets the correct
