@@ -4,10 +4,47 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+// TestWriterCloseUnblocksWedgedSend proves Close returns promptly even when a
+// Send is wedged writing to a full pipe — Close closes the underlying fd
+// without waiting on the write mutex, which evicts the blocked write. Before
+// the fix Close took wr.mu and blocked forever behind the stuck Send, stalling
+// the whole shutdown ladder. (P2-4.)
+func TestWriterCloseUnblocksWedgedSend(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	wr := NewWriter(w)
+
+	// Never drain r, so the pipe buffer (~64 KiB) fills and Send blocks holding
+	// wr.mu. A >1 MiB payload guarantees the write blocks.
+	sendErr := make(chan error, 1)
+	go func() { sendErr <- wr.SendUser(strings.Repeat("x", 1<<20)) }()
+	time.Sleep(50 * time.Millisecond) // let the Send block on the full pipe
+
+	closed := make(chan error, 1)
+	go func() { closed <- wr.Close() }()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked behind a wedged Send")
+	}
+
+	// Closing the fd must unblock the stuck Send (write returns an error).
+	select {
+	case <-sendErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wedged Send did not unblock after Close")
+	}
+}
 
 // nopWriteCloser wraps an io.Writer to satisfy io.WriteCloser.
 type nopWriteCloser struct {

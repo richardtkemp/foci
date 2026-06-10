@@ -24,7 +24,7 @@ type Writer struct {
 	mu     sync.Mutex
 	w      io.WriteCloser
 	enc    *json.Encoder
-	closed bool
+	closed atomic.Bool
 }
 
 // NewWriter creates a Writer wrapping the given stdin pipe.
@@ -43,13 +43,29 @@ func NewWriter(w io.WriteCloser) *Writer {
 // Send marshals msg as a single JSON line to the pipe.
 // Returns an error if the writer is closed or the write fails.
 func (wr *Writer) Send(msg interface{}) error {
+	if wr.closed.Load() {
+		return errWriterClosed
+	}
 	wr.mu.Lock()
 	defer wr.mu.Unlock()
-
-	if wr.closed {
+	if wr.closed.Load() {
 		return errWriterClosed
 	}
 	return wr.enc.Encode(msg)
+}
+
+// trySend is like Send but never blocks waiting for the write mutex: if a write
+// is already in flight (e.g. wedged on a full pipe), it returns false instead of
+// queueing behind it. Used by the shutdown path so Close is always reached.
+func (wr *Writer) trySend(msg interface{}) bool {
+	if wr.closed.Load() || !wr.mu.TryLock() {
+		return false
+	}
+	defer wr.mu.Unlock()
+	if wr.closed.Load() {
+		return false
+	}
+	return wr.enc.Encode(msg) == nil
 }
 
 // SendUser sends a user-typed message to Claude Code. CC enqueues with the
@@ -101,22 +117,48 @@ func (wr *Writer) SendKeepAlive() error {
 // SendInterrupt sends an interrupt control request to Claude Code with an
 // auto-generated unique request ID.
 func (wr *Writer) SendInterrupt() error {
-	seq := interruptSeq.Add(1)
-	reqID := fmt.Sprintf("interrupt-%d", seq)
-	return wr.SendControl(reqID, InterruptRequest{
-		Subtype: "interrupt",
-	})
+	msg, err := interruptControl()
+	if err != nil {
+		return err
+	}
+	return wr.Send(msg)
 }
 
-// Close marks the writer as closed and closes the underlying pipe, sending
-// EOF to Claude Code. Idempotent — subsequent calls return nil.
-func (wr *Writer) Close() error {
-	wr.mu.Lock()
-	defer wr.mu.Unlock()
+// TrySendInterrupt sends an interrupt without blocking. If a write is already
+// in flight (the pipe is wedged), it returns false rather than waiting — the
+// caller then proceeds to Close, which evicts the wedged write. (P2-4.)
+func (wr *Writer) TrySendInterrupt() bool {
+	msg, err := interruptControl()
+	if err != nil {
+		return false
+	}
+	return wr.trySend(msg)
+}
 
-	if wr.closed {
+// interruptControl builds an interrupt control-request envelope with a unique
+// request ID.
+func interruptControl() (ControlRequest, error) {
+	raw, err := json.Marshal(InterruptRequest{Subtype: "interrupt"})
+	if err != nil {
+		return ControlRequest{}, fmt.Errorf("ccstream: marshal interrupt: %w", err)
+	}
+	seq := interruptSeq.Add(1)
+	return ControlRequest{
+		Type:      "control_request",
+		RequestID: fmt.Sprintf("interrupt-%d", seq),
+		Request:   json.RawMessage(raw),
+	}, nil
+}
+
+// Close marks the writer as closed and closes the underlying pipe, sending EOF
+// to Claude Code. It deliberately does NOT take wr.mu: a Send wedged writing to
+// a full/hung pipe holds the mutex, and waiting for it would stall shutdown
+// forever (P2-4). Closing the underlying fd evicts any such blocked write
+// (it returns EBADF/EPIPE), unblocking the stuck Send. os.File methods are
+// safe for concurrent Close vs. Write, so this is race-free. Idempotent.
+func (wr *Writer) Close() error {
+	if wr.closed.Swap(true) {
 		return nil
 	}
-	wr.closed = true
 	return wr.w.Close()
 }
