@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"foci/internal/log"
+	"foci/internal/peercred"
 	"foci/internal/tempdir"
 )
 
@@ -130,6 +131,25 @@ func (b *ExecBridge) acceptLoop() {
 func (b *ExecBridge) handleConn(conn net.Conn) {
 	defer b.wg.Done()
 	defer func() { _ = conn.Close() }()
+
+	// Same-user authentication (defence in depth alongside the 0600 socket
+	// mode): the exec bridge runs tools in-process at gateway privilege, so a
+	// connection from any other user must be refused before we look at the
+	// request — never let a different-UID peer drive these tools.
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		writeResponse(conn, "", "exec bridge: non-unix connection rejected")
+		return
+	}
+	if match, err := peercred.MatchesSelf(uc); err != nil {
+		log.Warnf("execbridge", "peer credential check failed: %v", err)
+		writeResponse(conn, "", "peer credential check failed")
+		return
+	} else if !match {
+		log.Warnf("execbridge", "peer UID mismatch, rejecting connection")
+		writeResponse(conn, "", "peer UID mismatch")
+		return
+	}
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

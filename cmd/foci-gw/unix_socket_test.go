@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -200,55 +199,6 @@ func TestPeerCredMiddleware_RejectsWrongUID(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.code)
-	}
-}
-
-func TestGetPeerUID(t *testing.T) {
-	// Verify that getPeerUID extracts the correct UID from a real Unix socket connection.
-	t.Parallel()
-	dir := t.TempDir()
-	sockPath := filepath.Join(dir, "peercred.sock")
-
-	ln, err := net.Listen("unix", sockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ln.Close() }()
-
-	done := make(chan error, 1)
-	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			done <- fmt.Errorf("accept: %w", err)
-			return
-		}
-		defer func() { _ = conn.Close() }()
-
-		uc, ok := conn.(*net.UnixConn)
-		if !ok {
-			done <- fmt.Errorf("not a UnixConn: %T", conn)
-			return
-		}
-		uid, err := getPeerUID(uc)
-		if err != nil {
-			done <- fmt.Errorf("getPeerUID: %w", err)
-			return
-		}
-		if uid != uint32(os.Getuid()) {
-			done <- fmt.Errorf("uid = %d, want %d", uid, os.Getuid())
-			return
-		}
-		done <- nil
-	}()
-
-	conn, err := net.Dial("unix", sockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = conn.Close()
-
-	if err := <-done; err != nil {
-		t.Fatal(err)
 	}
 }
 
