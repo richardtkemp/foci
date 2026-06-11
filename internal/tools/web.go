@@ -80,8 +80,12 @@ func parseReadableWithTimeout(body []byte, parsed *url.URL, timeout time.Duratio
 		err     error
 	}
 	ch := make(chan result, 1)
+	// Capture the parse func in the caller goroutine before spawning, so the
+	// background goroutine never reads the readabilityFromReader package var —
+	// otherwise a test that swaps that var would race the goroutine's read.
+	parse := readabilityFromReader
 	go func() {
-		a, err := readabilityFromReader(bytes.NewReader(body), parsed)
+		a, err := parse(bytes.NewReader(body), parsed)
 		ch <- result{a, err}
 	}()
 	select {
