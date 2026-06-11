@@ -390,6 +390,11 @@ const (
 // [voice] http_timeout is unset (mirrors the VoiceConfig default tag).
 const DefaultVoiceHTTPTimeout = "60s"
 
+// DefaultMaxFileReadBytes is the fallback cap the read/edit tools apply to a
+// file's size before loading it, when [tools] max_file_read_bytes is unset
+// (mirrors the ToolConfig default tag). Guards against large-file OOM.
+const DefaultMaxFileReadBytes int64 = 50 << 20 // 50 MiB
+
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
 type VoiceConfig struct {
@@ -439,6 +444,7 @@ type ToolConfig struct {
 	MaxConcurrentSpawns *int    `toml:"max_concurrent_spawns" default:"3"         desc:"max concurrent spawn sessions"`
 	ExploreMaxDepth     *int    `toml:"explore_max_depth"     default:"100"       desc:"max tool loops for explore spawn"`
 	MaxUploadFileSize   *int64  `toml:"max_upload_file_size"  default:"52428800"  desc:"max upload file size in bytes"` // 50MB
+	MaxFileReadBytes    *int64  `toml:"max_file_read_bytes"   default:"52428800"  desc:"max file size the read/edit tools will load in bytes"` // 50MB
 	TmuxAutopilot       *bool   `toml:"tmux_autopilot"        default:"true"      desc:"auto-unwatch on inactivity"`
 	TmuxWatchThreshold  *string `toml:"tmux_watch_threshold"  default:"30s"       desc:"default watch threshold duration" type:"duration"`
 	TmuxSessionTTL      *string `toml:"tmux_session_ttl"      default:"24h"       desc:"auto-kill idle tmux sessions after" type:"duration"`

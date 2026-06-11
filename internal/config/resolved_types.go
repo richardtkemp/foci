@@ -105,6 +105,7 @@ type ResolvedTool struct {
 	MaxConcurrentSpawns int
 	ExploreMaxDepth     int
 	MaxUploadFileSize   int64
+	MaxFileReadBytes    int64
 	TmuxAutopilot       bool
 	TmuxWatchThreshold  string
 	TmuxSessionTTL      string
@@ -119,6 +120,7 @@ func resolveTool(m ToolConfig) ResolvedTool {
 		MaxConcurrentSpawns: DerefInt(m.MaxConcurrentSpawns),
 		ExploreMaxDepth:     DerefInt(m.ExploreMaxDepth),
 		MaxUploadFileSize:   DerefInt64(m.MaxUploadFileSize),
+		MaxFileReadBytes:    DerefInt64(m.MaxFileReadBytes),
 		TmuxAutopilot:       DerefBool(m.TmuxAutopilot),
 		TmuxWatchThreshold:  DerefStr(m.TmuxWatchThreshold),
 		TmuxSessionTTL:      DerefStr(m.TmuxSessionTTL),

@@ -98,9 +98,9 @@ func registerCoreTools(registry *tools.Registry, p setupParams, client provider.
 	if len(blockedPaths) > 0 {
 		log.Infof("setup", "agent %s: %d blocked write/edit path(s) configured", acfg.ID, len(blockedPaths))
 	}
-	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace))
+	registry.Register(tools.NewReadTool(agentStore, acfg.Workspace, tc.MaxFileReadBytes))
 	registry.Register(tools.NewWriteTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
-	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths, fileMode))
+	registry.Register(tools.NewEditTool(agentStore, acfg.Workspace, blockedPaths, fileMode, tc.MaxFileReadBytes))
 	apiSummariser := tools.NewAPISummariser(client, p.clientProvider, groupResolver, fallbackFn, sc.MaxSummaryInputChars)
 	registry.Register(tools.NewSummaryTool(agentStore, apiSummariser, acfg.Workspace))
 	registry.Register(tools.NewHTTPRequestTool(agentStore, p.bwStore, p.cfg.Tools.TempDir, execAutoBg, maxUploadSize, notifier, fileMode))
