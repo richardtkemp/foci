@@ -191,6 +191,8 @@ Several additional layers provide redundancy:
 
 - **No context injection** — secrets are stored in Go structs, never in the agent's message history. The agent sees `{{secret:NAME}}` templates, not values.
 
+- **MCP server env scrubbing** — MCP servers are third-party subprocesses, so unlike the agent's own shell (which is deliberately given `FOCI_SOCK` etc. so the `foci_*` tools work) they are **not** handed the gateway's full environment. `makeTransport` (`internal/mcp/mcp.go`) sets `cmd.Env` to a minimal allowlist (`PATH`, `HOME`, `LANG`/`LC_*`, …) plus the explicit `env` from `mcp.toml`, so a server can't read `FOCI_GW_SOCK` / `FOCI_SOCK` (the control + exec-bridge sockets) or operator vars from inherited env. Anything a server needs must be declared in its `mcp.toml` `env`.
+
 ### Why encoding attacks don't work
 
 Red team testing showed that an AI agent could bypass string-based defences by:

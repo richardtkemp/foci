@@ -160,10 +160,46 @@ func makeTransport(cfg ServerConfig) (mcp.Transport, error) {
 		return nil, fmt.Errorf("server %q has neither command nor url", cfg.Name)
 	}
 	cmd := procx.Spawn(context.Background(), cfg.Command, cfg.Args...)
-	if len(cfg.Env) > 0 {
-		cmd.Env = append(cmd.Environ(), cfg.Env...)
-	}
+	// MCP servers are third-party subprocesses. Never inherit the gateway's
+	// full environment — that would hand them FOCI_GW_SOCK / FOCI_SOCK (the
+	// unauthenticated control + exec-bridge sockets) and any secret-bearing
+	// operator vars. Give them a minimal allowlist plus the explicit env from
+	// mcp.toml instead.
+	cmd.Env = allowlistedEnv(cfg.Env)
 	return &mcp.CommandTransport{Command: cmd}, nil
+}
+
+// mcpEnvAllowlist names the environment variables an MCP server subprocess may
+// inherit from the gateway. LC_* is matched by prefix in allowlistedEnv. Servers
+// that need anything else must be given it explicitly via mcp.toml `env`.
+var mcpEnvAllowlist = map[string]bool{
+	"PATH":    true,
+	"HOME":    true,
+	"USER":    true,
+	"LOGNAME": true,
+	"SHELL":   true,
+	"TERM":    true,
+	"TZ":      true,
+	"LANG":    true,
+	"TMPDIR":  true,
+}
+
+// allowlistedEnv builds a minimal environment for an MCP server subprocess: the
+// allowlisted subset of the gateway's own environment plus the explicit extras
+// from mcp.toml. The gateway's full env is never inherited wholesale, so a
+// third-party MCP server cannot read FOCI_* socket paths or operator secrets.
+func allowlistedEnv(extra []string) []string {
+	env := make([]string, 0, len(mcpEnvAllowlist)+len(extra))
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if mcpEnvAllowlist[name] || strings.HasPrefix(name, "LC_") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, extra...)
 }
 
 // Close closes all connected MCP sessions.
