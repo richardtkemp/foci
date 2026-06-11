@@ -234,7 +234,7 @@ func handleStatus(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFun
 		}
 		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		cmdReq := command.RequestFromText("/status", sk, "", 0)
-		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(context.Background(), sk), cmdReq, inst.cc)
+		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(r.Context(), sk), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "status command not available", http.StatusInternalServerError)
 			return
@@ -271,7 +271,7 @@ func handleCommand(d httpHandlerDeps, resolveAgent agentResolver) http.HandlerFu
 		}
 		sk := mostRecentSessionKey(inst.ag, d.connMgr, inst.id)
 		cmdReq := command.RequestFromText(req.Command, sk, "", 0)
-		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(context.Background(), sk), cmdReq, inst.cc)
+		result, ok, _ := inst.cmds.Dispatch(tools.WithSessionKey(r.Context(), sk), cmdReq, inst.cc)
 		if !ok {
 			http.Error(w, "unknown command", http.StatusNotFound)
 			return
