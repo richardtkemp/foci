@@ -1,6 +1,8 @@
 package main
 
 import (
+	"time"
+
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/secrets"
@@ -27,15 +29,30 @@ func resolveVoiceAPIKey(store *secrets.Store, explicit, endpoint string) string 
 	return ""
 }
 
+// voiceHTTPOpts resolves the [voice] HTTP timeout + response cap that bound
+// STT/TTS calls, falling back to the package defaults when unset/invalid.
+func voiceHTTPOpts(cfg *config.Config) voice.HTTPOpts {
+	timeout, err := time.ParseDuration(config.DerefStr(cfg.Voice.HTTPTimeout))
+	if err != nil || timeout <= 0 {
+		timeout, _ = time.ParseDuration(config.DefaultVoiceHTTPTimeout)
+	}
+	return voice.HTTPOpts{
+		Timeout:     timeout,
+		MaxResponse: int64(intPtrOr(cfg.Voice.HTTPMaxResponseBytes, config.DefaultVoiceHTTPMaxResponseBytes)),
+	}
+}
+
 // initVoice sets up TTS and STT providers from [[tts]] and [[stt]] config arrays.
 // Returns maps keyed by entry ID; the first entry is also keyed as "" (default).
 func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voice.TTS, sttMap map[string]voice.STT) {
 	ttsMap = make(map[string]voice.TTS)
 	sttMap = make(map[string]voice.STT)
 
+	httpOpts := voiceHTTPOpts(cfg)
+
 	for i, entry := range cfg.TTS {
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
-		t, err := voice.NewTTS(entry, apiKey)
+		t, err := voice.NewTTS(entry, apiKey, httpOpts)
 		if err != nil {
 			log.Warnf("main", "tts[%d] %q: %v", i, entry.ID, err)
 			continue
@@ -49,7 +66,7 @@ func initVoice(cfg *config.Config, store *secrets.Store) (ttsMap map[string]voic
 
 	for i, entry := range cfg.STT {
 		apiKey := resolveVoiceAPIKey(store, entry.Secret, entry.Endpoint)
-		s, err := voice.NewSTT(entry.Format, entry.Endpoint, apiKey, entry.Model)
+		s, err := voice.NewSTT(entry.Format, entry.Endpoint, apiKey, entry.Model, httpOpts)
 		if err != nil {
 			log.Warnf("main", "stt[%d] %q: %v", i, entry.ID, err)
 			continue

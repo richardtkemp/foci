@@ -961,6 +961,9 @@ All platform fields from `[[platforms]]` can be overridden per-agent via `[[agen
 | `stt_replacements` | map | `{}` | `[defaults.voice]` | STT word replacements (merged with `[[stt]]` entry replacements; per-agent wins). Case-insensitive whole-word matching. |
 | `max_frame_bytes` | int | `1048576` | `[voice]` | Max size in bytes of a single inbound `/voice` WebSocket frame. Frames over this close the connection (DoS guard). |
 | `max_audio_bytes` | int | `52428800` | `[voice]` | Max accumulated audio buffer in bytes for one recording. Exceeding it stops recording and returns an error (memory DoS guard). |
+| `max_concurrent_turns` | int | `4` | `[voice]` | Max in-flight STT→agent→TTS turns per `/voice` connection. A client that floods frames beyond this is told to slow down rather than spawning unbounded goroutines. |
+| `http_timeout` | duration | `60s` | `[voice]` | Timeout for outbound STT/TTS HTTP calls (replaces the previously-unbounded `http.DefaultClient`). |
+| `http_max_response_bytes` | int | `67108864` | `[voice]` | Max STT/TTS HTTP response body read (via `io.LimitReader`), guarding against an unbounded upstream. |
 
 ### Keepalive (`[keepalive]` / `[[agents.keepalive]]`)
 

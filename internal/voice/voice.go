@@ -11,11 +11,40 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
 	"foci/internal/procx"
 	"foci/internal/tempdir"
+)
+
+// HTTPOpts bounds outbound STT/TTS HTTP calls: a request timeout and a cap on
+// the response body read. Zero values fall back to the package defaults so
+// direct struct construction (e.g. in tests) stays safe.
+type HTTPOpts struct {
+	Timeout     time.Duration
+	MaxResponse int64
+}
+
+func (o HTTPOpts) client() *http.Client {
+	t := o.Timeout
+	if t <= 0 {
+		t = defaultHTTPTimeout
+	}
+	return &http.Client{Timeout: t}
+}
+
+func (o HTTPOpts) maxResponse() int64 {
+	if o.MaxResponse <= 0 {
+		return defaultMaxResponseBytes
+	}
+	return o.MaxResponse
+}
+
+const (
+	defaultHTTPTimeout      = 60 * time.Second
+	defaultMaxResponseBytes = 64 << 20 // 64 MiB
 )
 
 // STT transcribes audio to text.
@@ -49,8 +78,9 @@ func WithRate(t TTS, rate float64) TTS {
 }
 
 // NewTTS creates a TTS provider from a TTSConfig and resolved API key.
-// Rate is NOT baked in — apply at resolution time via WithRate.
-func NewTTS(cfg config.TTSConfig, apiKey string) (TTS, error) {
+// Rate is NOT baked in — apply at resolution time via WithRate. http bounds the
+// outbound HTTP call for API-backed providers (ignored by the CLI edge-tts).
+func NewTTS(cfg config.TTSConfig, apiKey string, http HTTPOpts) (TTS, error) {
 	switch cfg.Format {
 	case "edge-tts":
 		return &EdgeTTS{Command: cfg.Command, Voice: cfg.Voice}, nil
@@ -61,20 +91,23 @@ func NewTTS(cfg config.TTSConfig, apiKey string) (TTS, error) {
 			Model:          cfg.Model,
 			Voice:          cfg.Voice,
 			ResponseFormat: cfg.ResponseFormat,
+			HTTP:           http,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown TTS format %q (must be \"openai\" or \"edge-tts\")", cfg.Format)
 	}
 }
 
-// NewSTT creates an STT provider from config values.
-func NewSTT(format, endpoint, apiKey, model string) (STT, error) {
+// NewSTT creates an STT provider from config values. http bounds the outbound
+// transcription HTTP call.
+func NewSTT(format, endpoint, apiKey, model string, http HTTPOpts) (STT, error) {
 	switch format {
 	case "openai":
 		return &OpenAISTT{
 			Endpoint: endpoint,
 			APIKey:   apiKey,
 			Model:    model,
+			HTTP:     http,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown STT format %q (must be \"openai\")", format)
@@ -89,6 +122,7 @@ type OpenAISTT struct {
 	Endpoint string // e.g. "https://api.groq.com/openai/v1/audio/transcriptions"
 	APIKey   string // Bearer token
 	Model    string // e.g. "whisper-large-v3"
+	HTTP     HTTPOpts
 }
 
 func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename string) (string, error) {
@@ -125,13 +159,13 @@ func (w *OpenAISTT) Transcribe(ctx context.Context, audioData []byte, filename s
 		req.Header.Set("Authorization", "Bearer "+w.APIKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := w.HTTP.client().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("whisper request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, w.HTTP.maxResponse()))
 	if err != nil {
 		return "", fmt.Errorf("read response: %w", err)
 	}
@@ -207,6 +241,7 @@ type OpenAITTS struct {
 	Voice          string  // e.g. "alloy"
 	Speed          float64 // 0.25–4.0 (default 1.0, 0 means omit)
 	ResponseFormat string  // e.g. "mp3", "wav" (default: "wav")
+	HTTP           HTTPOpts
 }
 
 // ttsRequest is the JSON payload for an OpenAI-compatible TTS API call.
@@ -249,13 +284,13 @@ func (o *OpenAITTS) Synthesize(ctx context.Context, text string) ([]byte, error)
 		req.Header.Set("Authorization", "Bearer "+o.APIKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := o.HTTP.client().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("tts request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	audioData, err := io.ReadAll(resp.Body)
+	audioData, err := io.ReadAll(io.LimitReader(resp.Body, o.HTTP.maxResponse()))
 	if err != nil {
 		return nil, fmt.Errorf("read tts response: %w", err)
 	}
