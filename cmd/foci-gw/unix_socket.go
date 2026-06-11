@@ -5,11 +5,11 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"syscall"
 	"time"
 
 	"foci/internal/config"
 	"foci/internal/log"
+	"foci/internal/peercred"
 )
 
 // peerUIDKey is the context key for the peer UID extracted from Unix socket connections.
@@ -87,7 +87,7 @@ func injectPeerUID(ctx context.Context, c net.Conn) context.Context {
 	if !ok {
 		return ctx
 	}
-	uid, err := getPeerUID(uc)
+	uid, err := peercred.UID(uc)
 	if err != nil {
 		log.Debugf("http", "unix socket peer cred error: %v", err)
 		return ctx
@@ -112,27 +112,6 @@ func peerCredMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// getPeerUID extracts the UID of the process on the other end of a Unix socket
-// connection using SO_PEERCRED.
-func getPeerUID(conn *net.UnixConn) (uint32, error) {
-	raw, err := conn.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-	var cred *syscall.Ucred
-	var credErr error
-	controlErr := raw.Control(func(fd uintptr) {
-		cred, credErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
-	})
-	if controlErr != nil {
-		return 0, controlErr
-	}
-	if credErr != nil {
-		return 0, credErr
-	}
-	return cred.Uid, nil
 }
 
 // cleanupSocket removes the socket file and closes the listener.
