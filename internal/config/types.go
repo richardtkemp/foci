@@ -373,7 +373,22 @@ type SummaryConfig struct {
 const (
 	DefaultVoiceMaxFrameBytes = 1 << 20  // 1 MiB — max single inbound WS frame
 	DefaultVoiceMaxAudioBytes = 50 << 20 // 50 MiB — max accumulated audio buffer
+
+	// DefaultVoiceMaxConcurrentTurns bounds in-flight STT→agent→TTS goroutines
+	// per WebSocket connection so a client can't spawn unbounded goroutines by
+	// flooding audio_end/text frames. Turns serialise on turnMu anyway; this
+	// just caps how many may queue.
+	DefaultVoiceMaxConcurrentTurns = 4
+
+	// DefaultVoiceHTTPMaxResponseBytes caps an STT/TTS HTTP response body
+	// (TTS audio is the larger side). Guards io.ReadAll against an
+	// unbounded/malicious upstream.
+	DefaultVoiceHTTPMaxResponseBytes = 64 << 20 // 64 MiB
 )
+
+// DefaultVoiceHTTPTimeout is the fallback timeout for STT/TTS HTTP calls when
+// [voice] http_timeout is unset (mirrors the VoiceConfig default tag).
+const DefaultVoiceHTTPTimeout = "60s"
 
 // VoiceConfig holds TTS/STT settings.
 // Global: [voice], per-agent: [[agents]].voice.*
@@ -385,6 +400,9 @@ type VoiceConfig struct {
 	STTReplacements map[string]string `toml:"stt_replacements"`
 	MaxFrameBytes   *int              `toml:"max_frame_bytes" default:"1048576"  desc:"max single inbound websocket frame in bytes"`
 	MaxAudioBytes   *int              `toml:"max_audio_bytes" default:"52428800" desc:"max accumulated voice audio buffer in bytes"`
+	MaxConcurrentTurns   *int         `toml:"max_concurrent_turns" default:"4" desc:"max in-flight STT/agent/TTS turns per voice connection"`
+	HTTPTimeout          *string      `toml:"http_timeout" default:"60s" desc:"timeout for STT/TTS HTTP calls"`
+	HTTPMaxResponseBytes *int         `toml:"http_max_response_bytes" default:"67108864" desc:"max STT/TTS HTTP response size in bytes"`
 }
 
 // AgentLoopConfig holds settings consumed by agent.HandleTurn().

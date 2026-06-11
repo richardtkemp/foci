@@ -64,6 +64,13 @@ type HandlerConfig struct {
 	// production always supplies both from [voice] config defaults.
 	MaxFrameBytes int64
 	MaxAudioBytes int
+
+	// MaxConcurrentTurns bounds the number of in-flight STT→agent→TTS
+	// goroutines per connection. Turns serialise on turnMu, so without a cap a
+	// client flooding audio_end/text frames would pile up goroutines all
+	// blocked on the lock. A non-positive value disables the cap; production
+	// supplies it from [voice] config.
+	MaxConcurrentTurns int
 }
 
 var upgrader = websocket.Upgrader{
@@ -96,12 +103,37 @@ type conn struct {
 	turnMu  sync.Mutex // serializes agent turns (prevents concurrent STT→agent→TTS)
 	audioMu sync.Mutex // protects recording state and buffer
 
+	turnSem chan struct{} // bounds in-flight turn goroutines; nil = unbounded
+
 	agentID    string // selected agent (empty until select_agent)
 	sessionKey string // voice session key
 
 	recording  bool   // true between audio_start and audio_end
 	audioBuf   []byte // accumulated audio data during recording
 	sampleRate int    // sample rate from audio_start (default 24000)
+}
+
+// acquireTurn reserves a turn-processing slot without blocking. Returns false
+// when the per-connection limit is saturated (caller should reject the frame).
+// A nil turnSem means the cap is disabled — always succeeds.
+func (c *conn) acquireTurn() bool {
+	if c.turnSem == nil {
+		return true
+	}
+	select {
+	case c.turnSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseTurn frees a slot reserved by acquireTurn.
+func (c *conn) releaseTurn() {
+	if c.turnSem == nil {
+		return
+	}
+	<-c.turnSem
 }
 
 // Handler returns an http.HandlerFunc that handles /voice WebSocket connections.
@@ -121,6 +153,9 @@ func Handler(cfg HandlerConfig) http.HandlerFunc {
 		c := &conn{
 			ws:  ws,
 			cfg: &cfg,
+		}
+		if cfg.MaxConcurrentTurns > 0 {
+			c.turnSem = make(chan struct{}, cfg.MaxConcurrentTurns)
 		}
 
 		// Send connected message with agent list.
@@ -228,8 +263,16 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 			return
 		}
 
-		// Process audio in a goroutine with turn lock.
-		go c.processAudio(ctx, connID, audio, sampleRate)
+		// Process audio in a goroutine with turn lock, bounded by turnSem so a
+		// frame flood can't spawn unbounded goroutines.
+		if !c.acquireTurn() {
+			c.sendError("busy: too many in-flight requests, slow down")
+			return
+		}
+		go func() {
+			defer c.releaseTurn()
+			c.processAudio(ctx, connID, audio, sampleRate)
+		}()
 
 	case "text":
 		var txt TextMsg
@@ -241,7 +284,14 @@ func (c *conn) handleTextMessage(ctx context.Context, connID string, data []byte
 			return
 		}
 
-		go c.processText(ctx, connID, txt.Content)
+		if !c.acquireTurn() {
+			c.sendError("busy: too many in-flight requests, slow down")
+			return
+		}
+		go func() {
+			defer c.releaseTurn()
+			c.processText(ctx, connID, txt.Content)
+		}()
 
 	case "ping":
 		_ = c.sendJSON(PongMsg{Type: "pong"})

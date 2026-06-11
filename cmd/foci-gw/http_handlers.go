@@ -475,8 +475,9 @@ func buildVoiceConfig(d httpHandlerDeps) voice.HandlerConfig {
 			ttsRepls := voice.MergeReplacements(d.cfg.Voice.TTSReplacements, inst.agentCfg.Voice.TTSReplacements)
 			return resolveTTS(d.ttsMap, d.cfg.TTS, vc.TTS, vc.TTSRate, ttsRepls)
 		},
-		MaxFrameBytes: int64(intPtrOr(d.cfg.Voice.MaxFrameBytes, config.DefaultVoiceMaxFrameBytes)),
-		MaxAudioBytes: intPtrOr(d.cfg.Voice.MaxAudioBytes, config.DefaultVoiceMaxAudioBytes),
+		MaxFrameBytes:      int64(intPtrOr(d.cfg.Voice.MaxFrameBytes, config.DefaultVoiceMaxFrameBytes)),
+		MaxAudioBytes:      intPtrOr(d.cfg.Voice.MaxAudioBytes, config.DefaultVoiceMaxAudioBytes),
+		MaxConcurrentTurns: intPtrOr(d.cfg.Voice.MaxConcurrentTurns, config.DefaultVoiceMaxConcurrentTurns),
 	}
 }
 

@@ -322,7 +322,7 @@ func TestNewTTS_OpenAI(t *testing.T) {
 		Voice:          "alloy",
 		ResponseFormat: "mp3",
 	}
-	tts, err := NewTTS(cfg, "key123")
+	tts, err := NewTTS(cfg, "key123", HTTPOpts{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestNewTTS_EdgeTTS(t *testing.T) {
 		Voice:   "en-US-AndrewNeural",
 		Command: "/usr/bin/edge-tts",
 	}
-	tts, err := NewTTS(cfg, "")
+	tts, err := NewTTS(cfg, "", HTTPOpts{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestNewTTS_EdgeTTS(t *testing.T) {
 
 func TestNewTTS_UnknownFormat(t *testing.T) {
 	// Verifies that NewTTS rejects unknown format strings.
-	_, err := NewTTS(config.TTSConfig{Format: "whisper"}, "")
+	_, err := NewTTS(config.TTSConfig{Format: "whisper"}, "", HTTPOpts{})
 	if err == nil {
 		t.Fatal("expected error for unknown format")
 	}
@@ -388,7 +388,7 @@ func TestNewTTS_UnknownFormat(t *testing.T) {
 func TestNewSTT_OpenAI(t *testing.T) {
 	// Verifies that NewSTT("openai", ...) returns an *OpenAISTT
 	// with all fields wired correctly.
-	stt, err := NewSTT("openai", "https://api.groq.com/stt", "groq-key", "whisper-large-v3")
+	stt, err := NewSTT("openai", "https://api.groq.com/stt", "groq-key", "whisper-large-v3", HTTPOpts{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestNewSTT_OpenAI(t *testing.T) {
 
 func TestNewSTT_UnknownFormat(t *testing.T) {
 	// Verifies that NewSTT rejects unknown format strings.
-	_, err := NewSTT("edge-tts", "", "", "")
+	_, err := NewSTT("edge-tts", "", "", "", HTTPOpts{})
 	if err == nil {
 		t.Fatal("expected error for unknown format")
 	}

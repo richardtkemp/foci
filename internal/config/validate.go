@@ -208,6 +208,12 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	if t := DerefStr(cfg.Voice.HTTPTimeout); t != "" {
+		if _, err := time.ParseDuration(t); err != nil {
+			return fmt.Errorf("[voice] http_timeout = %q: %w", t, err)
+		}
+	}
+
 	// Special case: tmux_session_ttl allows "0" to disable
 	if ttl := DerefStr(cfg.Tools.TmuxSessionTTL); ttl != "" && ttl != "0" {
 		if _, err := time.ParseDuration(ttl); err != nil {
