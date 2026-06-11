@@ -141,6 +141,41 @@ func TestAppendAll(t *testing.T) {
 	}
 }
 
+// TestAppendAll_NoEventOnWriteFailure proves the "session created" event is not
+// fired when the underlying write fails — previously a deferred fireEvent ran
+// even on failure, announcing a session whose file was never written.
+func TestAppendAll_NoEventOnWriteFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("write-permission failure cannot be forced as root")
+	}
+	s := NewStore(t.TempDir())
+	var fired int
+	s.OnSessionEvent(func(SessionEvent) { fired++ })
+
+	key := "test/imain/1000000000"
+	path, err := s.SessionPath(key)
+	if err != nil {
+		t.Fatalf("SessionPath: %v", err)
+	}
+	// Pre-create the session dir read-only so opening the JSONL file for append
+	// fails after the createdEvent would otherwise have been registered.
+	sdir := filepath.Dir(path)
+	if err := os.MkdirAll(filepath.Dir(sdir), 0755); err != nil {
+		t.Fatalf("mkdir parents: %v", err)
+	}
+	if err := os.Mkdir(sdir, 0500); err != nil {
+		t.Fatalf("mkdir read-only session dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sdir, 0755) })
+
+	if err := s.TestAppendAll(key, []provider.Message{msg("user", "hi")}); err == nil {
+		t.Fatal("expected write failure on read-only session dir")
+	}
+	if fired != 0 {
+		t.Errorf("SessionCreated fired %d times despite write failure, want 0", fired)
+	}
+}
+
 func TestClear(t *testing.T) {
 	// Proves that Clear removes all messages from a session so that subsequent
 	// Load returns nil.
