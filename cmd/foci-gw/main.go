@@ -19,6 +19,7 @@ import (
 	_ "foci/internal/discord"            // register discord messaging provider
 	_ "foci/internal/telegram"           // register telegram messaging provider
 
+	"foci/internal/agent"
 	"foci/internal/command"
 	"foci/internal/config"
 	"foci/internal/log"
@@ -393,7 +394,11 @@ Subcommands:
 	if stop := setupGoroutineMonitor(cfg, len(agents), ctx); stop != nil {
 		defer stop()
 	}
-	setupInteractiveCleanup(ctx)
+	promptTTL := agent.DefaultIdleTimeout
+	if d, err := time.ParseDuration(cfg.Permissions.PromptTTL); err == nil && d > 0 {
+		promptTTL = d
+	}
+	setupInteractiveCleanup(ctx, promptTTL)
 	setupToolDetailCleanup(toolDetailStore, agents, agentOrder, connMgr, ctx)
 	// L2 integration-test lifecycle control. Opens a UNIX-domain socket
 	// at FOCI_TESTHARNESS_CONTROL_SOCK if set; otherwise no-op. Tests

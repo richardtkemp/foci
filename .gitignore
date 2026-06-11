@@ -32,3 +32,5 @@ internal/tools/logs/tmux.debug
 cover.html
 COVERAGE-PROGRESS.md
 /cc-stub
+ARCHITECTURE-REVIEW-2026-06.md
+SECURITY_REVIEW_2026-06.md

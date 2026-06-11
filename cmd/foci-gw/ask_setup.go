@@ -29,6 +29,10 @@ func newAskPresentFn(agentID string, connMgr platform.ConnectionManager) tools.A
 				return "❌ Cancelled"
 			}
 			return "✅ " + choice.Label
+		}, func() {
+			// Expiry: resolve the question as cancelled so the asking session
+			// isn't left waiting on an answer that will never come.
+			onResponse(question.CancelData)
 		})
 		if err != nil {
 			log.Warnf("ask", "present question for session=%s failed: %v", sessionKey, err)

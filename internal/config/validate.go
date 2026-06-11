@@ -202,6 +202,12 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
+	if ttl := cfg.Permissions.PromptTTL; ttl != "" {
+		if _, err := time.ParseDuration(ttl); err != nil {
+			return fmt.Errorf("[permissions] prompt_ttl = %q: %w", ttl, err)
+		}
+	}
+
 	// Special case: tmux_session_ttl allows "0" to disable
 	if ttl := DerefStr(cfg.Tools.TmuxSessionTTL); ttl != "" && ttl != "0" {
 		if _, err := time.ParseDuration(ttl); err != nil {

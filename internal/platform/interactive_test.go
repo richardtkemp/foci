@@ -25,7 +25,7 @@ func TestSendInteractiveMessageWithButtonSender(t *testing.T) {
 	err := SendInteractiveMessageWithID(bs, "test-id", "Choose:", buttons, func(choice ButtonChoice) string {
 		cbCalled = true
 		return "You chose: " + choice.Label
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("SendInteractiveMessage: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestSendInteractiveMessageFallback(t *testing.T) {
 		{Label: "Cherry"},
 	}
 
-	err := SendInteractiveMessageWithID(mc, "test-id", "Pick a fruit:", buttons, nil)
+	err := SendInteractiveMessageWithID(mc, "test-id", "Pick a fruit:", buttons, nil, nil)
 	if err != nil {
 		t.Fatalf("SendInteractiveMessage: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestSendInteractiveMessageButtonSenderError(t *testing.T) {
 	bs := &mockButtonSender{err: fmt.Errorf("send failed")}
 	buttons := []ButtonChoice{{Label: "A", Data: "a"}}
 
-	err := SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "" })
+	err := SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "" }, nil)
 	if err == nil {
 		t.Fatal("expected error from SendInteractiveMessage")
 	}
@@ -138,7 +138,7 @@ func TestHandleInteractiveCallbackOneShot(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "99"}
 	buttons := []ButtonChoice{{Label: "OK", Data: "ok"}}
-	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "done" })
+	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "done" }, nil)
 
 	data := bs.buttons[0].Data
 	_, _, ok := HandleInteractiveCallback(data)
@@ -182,7 +182,7 @@ func TestHandleInteractiveCallbackOutOfBoundsIndex(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "1"}
 	buttons := []ButtonChoice{{Label: "Only", Data: "only"}}
-	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "" })
+	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, func(ButtonChoice) string { return "" }, nil)
 
 	promptID := strings.SplitN(bs.buttons[0].Data, ":", 2)[0]
 
@@ -200,7 +200,7 @@ func TestHandleInteractiveCallbackNilCallback(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "1"}
 	buttons := []ButtonChoice{{Label: "Go", Data: "go"}}
-	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, nil)
+	_ = SendInteractiveMessageWithID(bs, "test-id", "text", buttons, nil, nil)
 
 	data := bs.buttons[0].Data
 	editText, _, ok := HandleInteractiveCallback(data)
@@ -231,7 +231,7 @@ func TestCleanupExpiredInteractive(t *testing.T) {
 	}
 	imMu.Unlock()
 
-	CleanupExpiredInteractive()
+	CleanupExpiredInteractive(24 * time.Hour)
 
 	imMu.Lock()
 	_, hasOld := imStore["old"]
@@ -246,11 +246,45 @@ func TestCleanupExpiredInteractive(t *testing.T) {
 	}
 }
 
+// TestCleanupExpiredInteractiveResolves verifies that expiring a prompt invokes
+// its onExpire resolver (so an upstream waiter is denied/cancelled rather than
+// orphaned) and edits the message to the expired notice.
+func TestCleanupExpiredInteractiveResolves(t *testing.T) {
+	clearIMStore(t)
+
+	bs := &mockButtonSender{msgID: "m1"}
+	resolved := false
+	imMu.Lock()
+	imStore["old"] = &interactiveMsg{
+		bs:       bs,
+		msgID:    "m1",
+		buttons:  []ButtonChoice{{Label: "Allow", Data: "allow"}, {Label: "Deny", Data: "deny"}},
+		onExpire: func() { resolved = true },
+		created:  time.Now().Add(-25 * time.Hour),
+	}
+	imMu.Unlock()
+
+	CleanupExpiredInteractive(24 * time.Hour)
+
+	if !resolved {
+		t.Error("onExpire should have been invoked to resolve the orphaned prompt")
+	}
+	if bs.editedMsgID != "m1" || bs.editedText != expiredInteractiveText {
+		t.Errorf("edited msgID=%q text=%q, want m1 / %q", bs.editedMsgID, bs.editedText, expiredInteractiveText)
+	}
+	imMu.Lock()
+	_, hasOld := imStore["old"]
+	imMu.Unlock()
+	if hasOld {
+		t.Error("expired entry should have been removed from the store")
+	}
+}
+
 // TestCleanupExpiredInteractiveEmpty verifies that cleanup on an empty store
 // does not panic.
 func TestCleanupExpiredInteractiveEmpty(t *testing.T) {
 	clearIMStore(t)
-	CleanupExpiredInteractive() // should not panic
+	CleanupExpiredInteractive(24 * time.Hour) // should not panic
 }
 
 // TestConcurrentSendAndHandle verifies that concurrent goroutines calling
@@ -272,7 +306,7 @@ func TestConcurrentSendAndHandle(t *testing.T) {
 			id := fmt.Sprintf("conc-%d", n)
 			err := SendInteractiveMessageWithID(bs, id, "msg", buttons, func(choice ButtonChoice) string {
 				return "ok-" + choice.Data
-			})
+			}, nil)
 			if err != nil {
 				t.Errorf("goroutine %d: SendInteractiveMessage: %v", n, err)
 				return
@@ -332,7 +366,7 @@ func TestSendInteractiveMessageWithIDUsesGivenID(t *testing.T) {
 	bs := &mockButtonSender{msgID: "42"}
 	buttons := []ButtonChoice{{Label: "Allow", Data: "allow"}}
 
-	err := SendInteractiveMessageWithID(bs, "req-abc-123", "Permit?", buttons, func(ButtonChoice) string { return "" })
+	err := SendInteractiveMessageWithID(bs, "req-abc-123", "Permit?", buttons, func(ButtonChoice) string { return "" }, nil)
 	if err != nil {
 		t.Fatalf("SendInteractiveMessageWithID: %v", err)
 	}
@@ -357,7 +391,7 @@ func TestCancelInteractiveMessageEditsAndRemoves(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "777"}
 	buttons := []ButtonChoice{{Label: "Allow", Data: "allow"}}
-	_ = SendInteractiveMessageWithID(bs, "req-X", "Permit?", buttons, func(ButtonChoice) string { return "" })
+	_ = SendInteractiveMessageWithID(bs, "req-X", "Permit?", buttons, func(ButtonChoice) string { return "" }, nil)
 
 	if err := CancelInteractiveMessage("req-X", "❌ cancelled"); err != nil {
 		t.Fatalf("CancelInteractiveMessage: %v", err)
@@ -387,7 +421,7 @@ func TestCancelInteractiveMessageRaceWithCallback(t *testing.T) {
 
 	bs := &mockButtonSender{msgID: "55"}
 	buttons := []ButtonChoice{{Label: "OK", Data: "ok"}}
-	_ = SendInteractiveMessageWithID(bs, "req-race", "Pick?", buttons, func(ButtonChoice) string { return "done" })
+	_ = SendInteractiveMessageWithID(bs, "req-race", "Pick?", buttons, func(ButtonChoice) string { return "done" }, nil)
 
 	// User clicks first — HandleInteractiveCallback removes the entry.
 	if _, _, ok := HandleInteractiveCallback("req-race:0"); !ok {

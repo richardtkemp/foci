@@ -758,6 +758,12 @@ type PermissionsConfig struct {
 	AutoApprove               []string `toml:"auto_approve"`                                                                                        // glob patterns (e.g. "Bash:git *") to auto-approve without prompting
 	AutoApproveCommonReadonly *bool    `toml:"auto_approve_common_readonly"  default:"true"  desc:"auto-approve common read-only tools and commands"` // enable built-in read-only tool/command allowlist
 	AutoApproveCommonSafeWrite *bool   `toml:"auto_approve_common_safe_write" default:"false" desc:"auto-approve common side-effecting commands (curl, wget, mkdir, touch)"` // enable built-in safe-write allowlist (default false — not path-scoped)
+	// PromptTTL is how long an unanswered interactive prompt (permission
+	// request, AskUserQuestion) stays live before it auto-expires. On expiry
+	// the prompt is resolved as a denial/cancel so the waiting backend doesn't
+	// orphan, and its message is edited to show it expired. Aligns with the
+	// delegated-backend idle_timeout default. Parsed via time.ParseDuration.
+	PromptTTL string `toml:"prompt_ttl" default:"24h" desc:"lifetime of an unanswered permission/question prompt before it auto-denies"`
 }
 
 // AutoApproveCommonReadonlyEnabled returns the resolved value (default: true).
