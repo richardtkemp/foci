@@ -389,9 +389,12 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 	// Marshal everything into a buffer first so a marshal failure writes nothing
 	var buf bytes.Buffer
 
+	// createdEvent is set for a new session and fired only after the write
+	// below succeeds — a failed write must not announce a "session created"
+	// for a file that doesn't exist (or is empty).
+	var createdEvent *SessionEvent
 	if !exists {
 		now := timeutil.Now()
-		log.Infof("session", "session created key=%s", key)
 		meta := SessionMeta{
 			Type:      "session_meta",
 			CreatedAt: timeutil.Format(now),
@@ -403,14 +406,13 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 		buf.Write(metaData)
 		buf.WriteByte('\n')
 
-		// Defer event firing until after successful write
-		defer s.fireEvent(SessionEvent{
+		createdEvent = &SessionEvent{
 			Key:       key,
 			Type:      ClassifySessionKey(key),
 			Status:    SessionStatusActive,
 			FilePath:  path,
 			CreatedAt: now,
-		})
+		}
 	}
 
 	for _, msg := range msgs {
@@ -435,6 +437,11 @@ func (s *Store) appendAllUnlocked(key string, msgs []provider.Message) error {
 
 	if _, err := f.Write(buf.Bytes()); err != nil {
 		return fmt.Errorf("write messages: %w", err)
+	}
+
+	if createdEvent != nil {
+		log.Infof("session", "session created key=%s", key)
+		s.fireEvent(*createdEvent)
 	}
 
 	return nil
