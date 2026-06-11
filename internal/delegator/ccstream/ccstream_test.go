@@ -607,9 +607,11 @@ func TestInject_Steer_InFlight_NoInterrupt_PriorityNow(t *testing.T) {
 }
 
 // TestInject_Steer_Idle_BeginsTurn verifies the edge case where a steer
-// arrives at idle (race between turn end and platform queue dispatch):
-// Inject degrades to a fresh begin-turn rather than calling Interrupt
-// on a non-existent in-flight turn.
+// arrives at idle (race between turn end and platform queue dispatch) and
+// carries turn bookkeeping (here via the legacy Handler, which the shim turns
+// into a Turn): Inject degrades to a fresh begin-turn rather than calling
+// Interrupt on a non-existent in-flight turn. (The Turn-less inbox shape is
+// covered by TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight.)
 func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 	t.Parallel()
 
@@ -630,6 +632,32 @@ func TestInject_Steer_Idle_BeginsTurn(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "interrupt") {
 		t.Errorf("interrupt should NOT have fired at idle; writer: %q", buf.String())
+	}
+}
+
+// TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight verifies the inbox
+// race fix: a steer that arrives at idle with neither Turn nor Handler (the
+// shape the inbox builds) is declined with ErrTurnNotInFlight rather than
+// beginning an untracked turn (nil TurnEvents → no OnTurnComplete). No turn
+// must start and nothing must be written to the backend.
+func TestInject_Steer_Idle_NoTurn_ReturnsErrTurnNotInFlight(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	b := &Backend{writer: NewWriter(nopWriteCloser{&buf})}
+
+	err := b.Inject(context.Background(), delegator.Inject{
+		Source: delegator.SourceSteer,
+		Text:   "steer-at-idle-no-turn",
+	})
+	if !errors.Is(err, delegator.ErrTurnNotInFlight) {
+		t.Fatalf("Inject err = %v, want ErrTurnNotInFlight", err)
+	}
+	if b.IsTurnInFlight() {
+		t.Error("IsTurnInFlight = true; a declined steer must not begin a turn")
+	}
+	if buf.Len() != 0 {
+		t.Errorf("nothing should have been written; got: %q", buf.String())
 	}
 }
 
