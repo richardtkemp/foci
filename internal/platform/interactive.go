@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"foci/internal/log"
 )
 
 // ButtonCallback is called when an interactive message button is pressed.
@@ -13,12 +15,17 @@ import (
 // (empty string = no edit).
 type ButtonCallback func(choice ButtonChoice) string
 
+// expiredInteractiveText replaces an interactive message that auto-expired
+// before the user responded.
+const expiredInteractiveText = "⌛ This request expired."
+
 // interactiveMsg stores the state for an active interactive message.
 type interactiveMsg struct {
 	bs       ButtonSender    // who to call to edit the message later (e.g. for cancellation)
 	msgID    string          // platform-side message ID, used by CancelInteractiveMessage
 	buttons  []ButtonChoice
 	callback ButtonCallback
+	onExpire func() // resolves the upstream waiter on expiry (e.g. deny to CC); nil = no-op
 	created  time.Time
 }
 
@@ -38,7 +45,11 @@ var (
 //
 // If id collides with an existing entry in the store, the older entry is
 // overwritten silently.
-func SendInteractiveMessageWithID(conn Connection, id string, text string, buttons []ButtonChoice, cb ButtonCallback) error {
+//
+// onExpire (may be nil) is invoked if the prompt auto-expires unanswered (see
+// CleanupExpiredInteractive) — callers use it to resolve the upstream waiter,
+// e.g. send a denial to CC, so an unanswered prompt doesn't orphan the turn.
+func SendInteractiveMessageWithID(conn Connection, id string, text string, buttons []ButtonChoice, cb ButtonCallback, onExpire func()) error {
 	bs, ok := conn.(ButtonSender)
 	if !ok {
 		// Fallback: plain text with numbered choices.
@@ -57,6 +68,7 @@ func SendInteractiveMessageWithID(conn Connection, id string, text string, butto
 		bs:       bs,
 		buttons:  buttons,
 		callback: cb,
+		onExpire: onExpire,
 		created:  time.Now(),
 	}
 	imMu.Unlock()
@@ -150,15 +162,34 @@ func HandleInteractiveCallback(callbackData string) (editText, choiceData string
 	return edit, choice.Data, true
 }
 
-// CleanupExpiredInteractive removes interactive message callbacks older than 24h.
-// Called periodically (e.g. from a background goroutine).
-func CleanupExpiredInteractive() {
-	cutoff := time.Now().Add(-24 * time.Hour)
+// CleanupExpiredInteractive removes interactive message callbacks older than
+// maxAge. For each expired prompt it resolves the upstream waiter via onExpire
+// (e.g. a denial to CC, so a turn blocked in WaitForPermission doesn't orphan)
+// and edits the message to show it expired. Called periodically from a
+// background goroutine.
+func CleanupExpiredInteractive(maxAge time.Duration) {
+	cutoff := time.Now().Add(-maxAge)
 	imMu.Lock()
-	defer imMu.Unlock()
+	var expired []*interactiveMsg
 	for id, msg := range imStore {
 		if msg.created.Before(cutoff) {
+			expired = append(expired, msg)
 			delete(imStore, id)
+		}
+	}
+	imMu.Unlock()
+
+	// Resolve and edit outside the lock: onExpire and EditMessageText may call
+	// back into the platform/agent layers, and we must not hold imMu across
+	// those (CancelInteractiveMessage and the callback router both take it).
+	for _, msg := range expired {
+		if msg.onExpire != nil {
+			msg.onExpire()
+		}
+		if msg.bs != nil && msg.msgID != "" {
+			if err := msg.bs.EditMessageText(msg.msgID, expiredInteractiveText); err != nil {
+				log.Warnf("interactive", "edit expired message %s: %v", msg.msgID, err)
+			}
 		}
 	}
 }

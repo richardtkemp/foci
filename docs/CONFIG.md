@@ -629,6 +629,7 @@ Controls foci-level auto-approval of delegated backend permission requests. When
 | `auto_approve` | string[] | `[]` | Patterns to auto-approve. Format: `"ToolName"` (any input) or `"ToolName:pattern"` (match input). See below for pattern matching and Bash safety details. |
 | `auto_approve_common_readonly` | bool | `true` | Enable built-in allowlist of read-only tools (Search, Glob, Grep, Read, WebSearch, WebFetch) and safe shell commands (ls, cat, grep, jq, etc.). |
 | `auto_approve_common_safe_write` | bool | `false` | Enable built-in allowlist of side-effecting commands that are typically low-risk for a coding agent: `curl`, `wget`, `mkdir`, `touch`. **Opt-in** — see the warning below. |
+| `prompt_ttl` | duration | `24h` | How long an unanswered interactive prompt (permission request, AskUserQuestion) stays live. On expiry it is resolved as a denial/cancel — so a turn blocked waiting on it doesn't orphan — and its message is edited to show it expired. Aligns with the delegated-backend `idle_timeout` default. |
 
 Rules from global `[permissions]` and per-agent `[[agents]].permissions` are combined (union) — both sets apply. Both bools follow standard cascade (per-agent overrides global).
 

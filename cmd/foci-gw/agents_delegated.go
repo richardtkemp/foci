@@ -193,6 +193,13 @@ func configureDelegated(ag *agent.Agent, p setupParams, shared *sharedAgentSetup
 					}
 					return "✅ Approved"
 				}
+			}, func() {
+				// Expiry: deny the prompt so a turn blocked in WaitForPermission
+				// unblocks instead of orphaning. The message edit to an "expired"
+				// notice is handled by CleanupExpiredInteractive.
+				if err := ag.SendPermissionResponse(context.Background(), sessionKey, reqID, "deny"); err != nil {
+					log.Warnf("agent/"+agentID, "expire permission deny failed: sk=%s reqID=%s err=%v", sessionKey, reqID, err)
+				}
 			})
 			// Register a cancel listener so the orphaned inline keyboard is
 			// disabled if CC aborts this prompt before the user responds

@@ -159,8 +159,9 @@ func setupGoroutineMonitor(cfg *config.Config, numAgents int, ctx context.Contex
 }
 
 // setupInteractiveCleanup starts periodic cleanup of expired interactive message
-// callbacks (unanswered button presses). Runs every hour.
-func setupInteractiveCleanup(ctx context.Context) {
+// callbacks (unanswered button presses). Runs every hour; prompts older than
+// maxAge are expired (resolved as a denial/cancel, see CleanupExpiredInteractive).
+func setupInteractiveCleanup(ctx context.Context, maxAge time.Duration) {
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
@@ -169,7 +170,7 @@ func setupInteractiveCleanup(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				platform.CleanupExpiredInteractive()
+				platform.CleanupExpiredInteractive(maxAge)
 			}
 		}
 	}()
