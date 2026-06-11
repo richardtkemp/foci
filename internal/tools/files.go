@@ -41,9 +41,20 @@ const readToolSchema = `{
 // and http_request's body_file/files/save_to in every mode so no caller can
 // silently skip a check.
 type fileScope struct {
-	store     *secrets.Store
-	baseDir   string // non-empty => isolated: the resolved path must stay within it
-	workspace string // base for relative paths in non-isolated tools
+	store        *secrets.Store
+	baseDir      string // non-empty => isolated: the resolved path must stay within it
+	workspace    string // base for relative paths in non-isolated tools
+	maxReadBytes int64  // cap on a file's size before read/edit loads it; <=0 uses the default
+}
+
+// readLimit returns the effective max file size the read/edit tools will load,
+// falling back to the package default when unset (e.g. isolated-spawn scopes
+// and tests that construct a fileScope directly).
+func (fs fileScope) readLimit() int64 {
+	if fs.maxReadBytes > 0 {
+		return fs.maxReadBytes
+	}
+	return config.DefaultMaxFileReadBytes
 }
 
 // resolveFileArg canonicalises path and enforces containment + the blocklist.
@@ -103,13 +114,13 @@ func rewriteContainedPaths(raw json.RawMessage, fs fileScope, stringFields []str
 	return out, nil
 }
 
-func NewReadTool(store *secrets.Store, workspace string) *Tool {
+func NewReadTool(store *secrets.Store, workspace string, maxReadBytes int64) *Tool {
 	return &Tool{
 		Name:        "read",
 		Description: "Read the contents of a file (line-numbered) or list a directory. Use offset/limit to read a specific range of lines.",
 		Parameters: json.RawMessage(readToolSchema),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return readFile(ctx, params, fileScope{store: store, workspace: workspace})
+			return readFile(ctx, params, fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes})
 		},
 	}
 }
@@ -138,7 +149,7 @@ func NewWriteTool(store *secrets.Store, workspace string, blockedPaths []config.
 	}
 }
 
-func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode) *Tool {
+func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.BlockedPath, fileMode os.FileMode, maxReadBytes int64) *Tool {
 	return &Tool{
 		Name:        "edit",
 		Description: "Find and replace text in a file. The old_string must appear exactly once in the file.",
@@ -161,7 +172,7 @@ func NewEditTool(store *secrets.Store, workspace string, blockedPaths []config.B
 			"required": ["path", "old_string", "new_string"]
 		}`),
 		Execute: func(ctx context.Context, params json.RawMessage) (ToolResult, error) {
-			return editFile(ctx, params, fileScope{store: store, workspace: workspace}, fileMode, blockedPaths)
+			return editFile(ctx, params, fileScope{store: store, workspace: workspace, maxReadBytes: maxReadBytes}, fileMode, blockedPaths)
 		},
 	}
 }
@@ -384,6 +395,12 @@ func readFile(ctx context.Context, params json.RawMessage, fs fileScope) (ToolRe
 		return TextResult(out.String()), nil
 	}
 
+	// Reject oversized files by their stat size before loading them whole into
+	// memory (large-file OOM guard).
+	if limit := fs.readLimit(); info.Size() > limit {
+		return ToolResult{}, fmt.Errorf("file too large: %d bytes (max %d) — use offset/limit or a streaming tool", info.Size(), limit)
+	}
+
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("read file: %w", err)
@@ -502,6 +519,14 @@ func editFile(ctx context.Context, params json.RawMessage, fs fileScope, fileMod
 		if rebuke, blocked := checkConfigBlockedPath(blockedPaths[0], resolved); blocked {
 			return TextResult(rebuke), nil
 		}
+	}
+
+	// Reject oversized files by their stat size before loading them whole into
+	// memory (large-file OOM guard).
+	if info, err := os.Stat(resolved); err != nil {
+		return ToolResult{}, fmt.Errorf("edit file: %w", err)
+	} else if limit := fs.readLimit(); info.Size() > limit {
+		return ToolResult{}, fmt.Errorf("file too large to edit: %d bytes (max %d)", info.Size(), limit)
 	}
 
 	data, err := os.ReadFile(resolved)

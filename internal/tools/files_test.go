@@ -12,6 +12,52 @@ import (
 	"foci/internal/secrets"
 )
 
+// TestReadFile_RejectsOversized proves the read tool refuses a file whose stat
+// size exceeds the configured limit *before* loading it (large-file OOM guard),
+// while a file under the limit reads normally.
+func TestReadFile_RejectsOversized(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x", 2048)), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := NewReadTool(nil, "", 1024) // 1 KiB cap
+	params, _ := json.Marshal(map[string]string{"path": big})
+	if _, err := tool.Execute(context.Background(), params); err == nil {
+		t.Fatal("expected error for oversized file, got nil")
+	} else if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("error = %v, want 'too large'", err)
+	}
+
+	small := filepath.Join(dir, "small.txt")
+	if err := os.WriteFile(small, []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pSmall, _ := json.Marshal(map[string]string{"path": small})
+	if _, err := tool.Execute(context.Background(), pSmall); err != nil {
+		t.Errorf("under-limit read failed: %v", err)
+	}
+}
+
+// TestEditFile_RejectsOversized proves the edit tool applies the same size gate.
+func TestEditFile_RejectsOversized(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x", 2048)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewEditTool(nil, "", nil, 0640, 1024)
+	params, _ := json.Marshal(map[string]string{"path": big, "old_string": "x", "new_string": "y"})
+	if _, err := tool.Execute(context.Background(), params); err == nil {
+		t.Fatal("expected error for oversized file, got nil")
+	} else if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("error = %v, want 'too large'", err)
+	}
+}
+
 func TestReadFile(t *testing.T) {
 	// Verifies that the read tool returns file content with line numbers in the expected format.
 	t.Parallel()
@@ -19,7 +65,7 @@ func TestReadFile(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("line one\nline two\nline three\n"), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -43,7 +89,7 @@ func TestReadDirectory(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "aaa.txt"), []byte("x"), 0644)
 	os.Mkdir(filepath.Join(dir, "subdir"), 0755)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": dir})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -63,7 +109,7 @@ func TestReadDirectoryEmpty(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": dir})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -78,7 +124,7 @@ func TestReadDirectoryEmpty(t *testing.T) {
 func TestReadFileMissing(t *testing.T) {
 	// Verifies that reading a path that does not exist returns an error rather than empty output.
 	t.Parallel()
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": "/nonexistent/file.txt"})
 
 	_, err := tool.Execute(context.Background(), params)
@@ -141,7 +187,7 @@ func TestEditFile(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("hello world, hello"), 0644)
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 
 	// "hello world" is unique, should work
 	params, _ := json.Marshal(map[string]interface{}{
@@ -171,7 +217,7 @@ func TestEditFileNotFound(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("foo bar baz"), 0644)
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "nonexistent string",
@@ -189,7 +235,7 @@ func TestEditFileNonUnique(t *testing.T) {
 	path := filepath.Join(dir, "edit.txt")
 	os.WriteFile(path, []byte("aaa bbb aaa"), 0644)
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "aaa",
@@ -203,7 +249,7 @@ func TestEditFileNonUnique(t *testing.T) {
 func TestEditFileMissing(t *testing.T) {
 	// Verifies that editing a file path that does not exist returns an error.
 	t.Parallel()
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       "/nonexistent/file.txt",
 		"old_string": "x",
@@ -223,7 +269,7 @@ func TestEditFileSyntaxValidToValid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "old"}`), 0644)
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "old",
@@ -251,7 +297,7 @@ func TestEditFileSyntaxValidToInvalid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"}`), 0644)
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"}`,
@@ -280,7 +326,7 @@ func TestEditFileSyntaxInvalidToValid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": "value"`), 0644)  // missing closing brace
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": `"value"`,
@@ -303,7 +349,7 @@ func TestEditFileSyntaxInvalidToInvalid(t *testing.T) {
 	path := filepath.Join(dir, "test.json")
 	os.WriteFile(path, []byte(`{"key": bad}`), 0644)  // already invalid
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "bad",
@@ -326,7 +372,7 @@ func TestEditFileNoSyntaxCheckForUnknownExt(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("hello"), 0644)
 
-	tool := NewEditTool(nil, "", nil, 0640)
+	tool := NewEditTool(nil, "", nil, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "hello",
@@ -354,7 +400,7 @@ func TestReadLargeFile(t *testing.T) {
 	}
 	os.WriteFile(path, []byte(sb.String()), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -374,7 +420,7 @@ func TestReadFileOffset(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]interface{}{"path": path, "offset": 3})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -401,7 +447,7 @@ func TestReadFileLimit(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]interface{}{"path": path, "limit": 2})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -427,7 +473,7 @@ func TestReadFileOffsetAndLimit(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\nccc\nddd\neee\n"), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]interface{}{"path": path, "offset": 2, "limit": 2})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -453,7 +499,7 @@ func TestReadFileOffsetPastEnd(t *testing.T) {
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("aaa\nbbb\n"), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]interface{}{"path": path, "offset": 100})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -488,11 +534,11 @@ func TestBlockedPathsAccessDenied(t *testing.T) {
 		tool   *Tool
 		params interface{}
 	}{
-		{"read secrets.toml", NewReadTool(store, ""), map[string]string{"path": "secrets.toml"}},
-		{"read secrets.toml full path", NewReadTool(store, ""), map[string]string{"path": "/home/user/config/secrets.toml"}},
-		{"read /proc/self/environ", NewReadTool(store, ""), map[string]string{"path": "/proc/self/environ"}},
+		{"read secrets.toml", NewReadTool(store, "", 0), map[string]string{"path": "secrets.toml"}},
+		{"read secrets.toml full path", NewReadTool(store, "", 0), map[string]string{"path": "/home/user/config/secrets.toml"}},
+		{"read /proc/self/environ", NewReadTool(store, "", 0), map[string]string{"path": "/proc/self/environ"}},
 		{"write secrets.toml", NewWriteTool(store, "", nil, 0640), map[string]interface{}{"path": "secrets.toml", "content": "malicious"}},
-		{"edit secrets.toml", NewEditTool(store, "", nil, 0640), map[string]interface{}{"path": "secrets.toml", "old_string": "old", "new_string": "new"}},
+		{"edit secrets.toml", NewEditTool(store, "", nil, 0640, 0), map[string]interface{}{"path": "secrets.toml", "old_string": "old", "new_string": "new"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -512,7 +558,7 @@ func TestReadPDF(t *testing.T) {
 	pdfData := []byte("%PDF-1.4 fake content")
 	os.WriteFile(path, pdfData, 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -554,7 +600,7 @@ func TestReadPDFCaseInsensitive(t *testing.T) {
 	path := filepath.Join(dir, "report.PDF")
 	os.WriteFile(path, []byte("%PDF-1.4"), 0644)
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -773,7 +819,7 @@ func TestReadAllowedWithStore(t *testing.T) {
 	path := filepath.Join(dir, "allowed.txt")
 	os.WriteFile(path, []byte("safe content\n"), 0644)
 
-	tool := NewReadTool(store, "")
+	tool := NewReadTool(store, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": path})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -852,7 +898,7 @@ func TestEditBlockedByConfig(t *testing.T) {
 	blocked := []config.BlockedPath{
 		{Path: dir, Rebuke: "Use claude via tmux for this workspace."},
 	}
-	tool := NewEditTool(nil, "", blocked, 0640)
+	tool := NewEditTool(nil, "", blocked, 0640, 0)
 	params, _ := json.Marshal(map[string]interface{}{
 		"path":       path,
 		"old_string": "old content",
@@ -954,7 +1000,7 @@ func TestReadFileTildePath(t *testing.T) {
 	os.WriteFile(path, []byte("tilde test content\n"), 0644)
 	t.Cleanup(func() { os.Remove(path) })
 
-	tool := NewReadTool(nil, "")
+	tool := NewReadTool(nil, "", 0)
 	params, _ := json.Marshal(map[string]string{"path": "~/.foci-test-tilde-" + t.Name()})
 
 	result, err := tool.Execute(context.Background(), params)
@@ -976,7 +1022,7 @@ func TestWorkspaceResolution(t *testing.T) {
 	os.WriteFile(filepath.Join(workspace, "subdir", "hello.txt"), []byte("workspace file\n"), 0644)
 
 	// Read with relative path should resolve against workspace
-	readTool := NewReadTool(nil, workspace)
+	readTool := NewReadTool(nil, workspace, 0)
 	params, _ := json.Marshal(map[string]string{"path": "subdir/hello.txt"})
 	result, err := readTool.Execute(context.Background(), params)
 	if err != nil {
@@ -999,7 +1045,7 @@ func TestWorkspaceResolution(t *testing.T) {
 	}
 
 	// Edit with relative path should resolve against workspace
-	editTool := NewEditTool(nil, workspace, nil, 0640)
+	editTool := NewEditTool(nil, workspace, nil, 0640, 0)
 	params, _ = json.Marshal(map[string]interface{}{
 		"path": "subdir/hello.txt", "old_string": "workspace file", "new_string": "edited file",
 	})
