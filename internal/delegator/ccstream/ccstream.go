@@ -1902,21 +1902,26 @@ func (b *Backend) finalizeExit(reason error) {
 
 		// If the waiter goroutine has set exitErr, prefer its detail for the
 		// user-visible message. Wait briefly in case finalizeExit was invoked
-		// from the reader path before cmd.Wait returned. exitCh is closed by
-		// the waiter goroutine immediately after exitErr is assigned, so this
-		// doesn't race. exitCh is nil when finalizeExit is called from a unit
-		// test that bypasses Start; skip the wait in that case.
+		// from the reader path before cmd.Wait returned. The waiter writes
+		// exitErr immediately before closing exitCh, so the read is only
+		// happens-before-safe once we've received from exitCh — snapshot it
+		// inside the receive arm. On the timeout path the waiter hasn't
+		// finished, so exitErr stays nil (detail unknown) rather than racing on
+		// b.exitErr. exitCh is nil when finalizeExit is called from a unit test
+		// that bypasses Start; skip the wait in that case.
+		var exitErr error
 		if b.exitCh != nil {
 			select {
 			case <-b.exitCh:
+				exitErr = b.exitErr
 			case <-time.After(2 * time.Second):
 				log.Debugf(component, "finalizeExit: exitCh wait timed out (waiter goroutine has not set exitErr) elapsed=%s", time.Since(start))
 			}
 		}
 		log.Debugf(component, "finalizeExit: post-exitCh-wait elapsed=%s", time.Since(start))
 
-		if !expected && b.exitErr != nil {
-			log.Warnf(component, "process exit detail: %s", describeExitError(b.exitErr))
+		if !expected && exitErr != nil {
+			log.Warnf(component, "process exit detail: %s", describeExitError(exitErr))
 		}
 
 		// Drain any in-flight turn so callers waiting on CompletionChan or
@@ -1935,8 +1940,8 @@ func (b *Backend) finalizeExit(reason error) {
 				msg = "Session closed while turn was in flight"
 			} else {
 				msg = fmt.Sprintf("Error: CC process exited unexpectedly: %v", reason)
-				if b.exitErr != nil && b.exitErr != reason {
-					msg += " (" + describeExitError(b.exitErr) + ")"
+				if exitErr != nil && exitErr != reason {
+					msg += " (" + describeExitError(exitErr) + ")"
 				}
 			}
 			log.Debugf(component, "finalizeExit: pre-OnTurnComplete elapsed=%s", time.Since(start))

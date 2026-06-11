@@ -422,7 +422,13 @@ func (m *DelegatedManager) WaitForPermission(ctx context.Context, sessionKey str
 	go func() {
 		select {
 		case <-ctx.Done():
+			// Hold permMu around the broadcast: otherwise it can land between
+			// the waiter's predicate check and its Wait() call, and the wakeup
+			// is lost — the waiter then blocks until the next clearPermission
+			// broadcast, which on a cancelled turn may never come.
+			mb.permMu.Lock()
 			mb.permCond.Broadcast() // wake up the waiter
+			mb.permMu.Unlock()
 		case <-done:
 		}
 	}()
