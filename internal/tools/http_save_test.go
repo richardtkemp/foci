@@ -130,6 +130,51 @@ func TestHTTPRequestBinaryAutoSave(t *testing.T) {
 	t.Error("could not find Saved line in result")
 }
 
+// TestHTTPRequestBinaryAutoSaveUniqueAtomic proves auto-save uses an
+// atomically-created temp file: two identical responses land at distinct paths
+// (no predictable collision/overwrite) and the file carries the configured mode.
+func TestHTTPRequestBinaryAutoSaveUniqueAtomic(t *testing.T) {
+	t.Parallel()
+	pngData := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngData)
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	tool := NewHTTPRequestTool(nil, nil, tmpDir, 0, 50*1024*1024, nil, 0640)
+	params, _ := json.Marshal(map[string]interface{}{"url": srv.URL + "/image.png"})
+
+	savedPath := func() string {
+		t.Helper()
+		result, err := tool.Execute(context.Background(), params)
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		for _, line := range strings.Split(result.Text, "\n") {
+			if strings.HasPrefix(line, "Saved") {
+				f := strings.Fields(line)
+				return f[len(f)-1]
+			}
+		}
+		t.Fatalf("no Saved line: %s", result.Text)
+		return ""
+	}
+
+	p1, p2 := savedPath(), savedPath()
+	if p1 == p2 {
+		t.Fatalf("two auto-saves collided at the same path %q", p1)
+	}
+	info, err := os.Stat(p1)
+	if err != nil {
+		t.Fatalf("stat %s: %v", p1, err)
+	}
+	if info.Mode().Perm() != 0640 {
+		t.Errorf("file mode = %o, want 0640", info.Mode().Perm())
+	}
+}
+
 func TestHTTPRequestTextNotAutoSaved(t *testing.T) {
 	// Proves that text/JSON responses are returned inline in the result text and not auto-saved to file.
 	t.Parallel()

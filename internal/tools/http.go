@@ -3,9 +3,7 @@ package tools
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -293,23 +291,31 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 
 	contentType := resp.Header.Get("Content-Type")
 
-	// Determine if we need to save to file
+	// Determine if we need to save to file. An explicit save_to uses WriteFile
+	// (the caller chose the path and may intend to overwrite); auto-saved binary
+	// responses go to an atomically-created temp file (os.CreateTemp, O_EXCL) so
+	// a predictable name in world-writable /tmp can't be pre-created or
+	// symlinked by another process.
 	savePath := saveTo
+	autoSave := false
+	var autoDir, autoExt string
 	if savePath == "" && isBinaryContentType(contentType) {
-		// Auto-save binary responses to temp file
-		dir := tempDir
-		if dir == "" {
-			dir = tempdir.Dir()
+		autoSave = true
+		autoDir = tempDir
+		if autoDir == "" {
+			autoDir = tempdir.Dir()
 		}
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
+		autoExt = extensionForContentType(contentType)
+	}
+
+	// writeAndClose writes data to an already-created file, sets its mode, and
+	// closes it — used for the atomically-created auto-save temp file.
+	writeAndClose := func(f *os.File, data []byte, mode os.FileMode) error {
+		defer func() { _ = f.Close() }()
+		if _, err := f.Write(data); err != nil {
+			return err
 		}
-		ext := extensionForContentType(contentType)
-		var randBytes [4]byte
-		if _, err := rand.Read(randBytes[:]); err != nil {
-			return ToolResult{}, fmt.Errorf("generate random filename: %w", err)
-		}
-		savePath = filepath.Join(dir, "http-"+hex.EncodeToString(randBytes[:])+ext)
+		return f.Chmod(mode)
 	}
 
 	// Format response header block
@@ -324,7 +330,7 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 		return hdr.String()
 	}
 
-	if savePath != "" {
+	if savePath != "" || autoSave {
 		saveData := body
 
 		// Extract from JSON response if save_from_json_path is set
@@ -342,11 +348,26 @@ func processHTTPResponse(sessionKey string, resp *http.Response, reqURL, method,
 			}
 		}
 
-		if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
-			return ToolResult{}, fmt.Errorf("create parent dirs for save_to: %w", err)
-		}
-		if err := os.WriteFile(savePath, saveData, fileMode); err != nil {
-			return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, err)
+		if autoSave {
+			if err := os.MkdirAll(autoDir, 0755); err != nil {
+				return ToolResult{}, fmt.Errorf("create temp dir: %w", err)
+			}
+			f, err := os.CreateTemp(autoDir, "http-*"+autoExt)
+			if err != nil {
+				return ToolResult{}, fmt.Errorf("create temp file: %w", err)
+			}
+			savePath = f.Name()
+			if werr := writeAndClose(f, saveData, fileMode); werr != nil {
+				_ = os.Remove(savePath)
+				return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, werr)
+			}
+		} else {
+			if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
+				return ToolResult{}, fmt.Errorf("create parent dirs for save_to: %w", err)
+			}
+			if err := os.WriteFile(savePath, saveData, fileMode); err != nil {
+				return ToolResult{}, fmt.Errorf("write response to %s: %w", savePath, err)
+			}
 		}
 		log.Debugf("http_request", "session=%s saved %d bytes to %s", sessionKey, len(saveData), savePath)
 		return TextResult(fmt.Sprintf("%s\nSaved %d bytes to %s", formatHeaders(), len(saveData), savePath)), nil
