@@ -58,6 +58,16 @@ var spawnRawBlacklist = map[string]bool{
 	"todo":                 true,
 }
 
+// spawnCharacterBlacklist lists tools excluded from "character" mode spawns.
+// A character spawn is an ephemeral one-shot sub-call with no persistent session
+// identity of its own — it returns its result straight to the caller. So it has
+// no need to inject into other sessions, and giving a throwaway spawn that reach
+// is surface it doesn't need (the real agent can still use send_to_session).
+// raw/explore already exclude it; this brings character into line for that tool.
+var spawnCharacterBlacklist = map[string]bool{
+	"send_to_session": true,
+}
+
 // exploreSystemPrompt is the system prompt for explore spawn mode.
 const exploreSystemPrompt = `You are a read-only code explorer. You have access to tools but must NOT write, edit, create, or delete anything.
 
@@ -184,7 +194,7 @@ func NewSpawnTool(deps SpawnDeps, agentFn func() SpawnAgent) *Tool {
 				if deps.Bootstrap != nil {
 					system = deps.Bootstrap.SystemBlocks()
 				}
-				toolDefs, tools := spawnToolSet(deps.Registry, nil)
+				toolDefs, tools := spawnToolSet(deps.Registry, spawnCharacterBlacklist)
 				result, err := spawnOneShot(ctx, client, model, format, system, p.Prompt, timeout, toolDefs, tools, deps.Sessions, spawnMaxResultChars, deps.MaxToolLoops, deps.FallbackFunc, deps.ClientProvider)
 				if err != nil {
 					return ToolResult{}, err
